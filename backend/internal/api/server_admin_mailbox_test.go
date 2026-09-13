@@ -115,3 +115,53 @@ func TestAdminDeletesIMAPConfig(t *testing.T) {
 		t.Fatal("config still present")
 	}
 }
+
+func TestAdminAssignsManagedCardDAVClient(t *testing.T) {
+	allowLoopbackOutboundForTest(t)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer fake.Close()
+	srv, admin, member := adminAndMember(t)
+	rec := doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/carddav-client", map[string]any{
+		"serverUrl": fake.URL + "/dav/", "username": "m", "password": "s3cret", "managed": true,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, exists, err := readCardDAVClientConfigPayload(srv.userCardDAVClientConfigPath(member.ID), srv.imapConfigKeyPath)
+	if err != nil || !exists || !stored.Managed || stored.Password != "s3cret" {
+		t.Fatalf("stored=%+v exists=%v err=%v", stored, exists, err)
+	}
+	if rec := doJSONAs(t, srv, member.ID, http.MethodDelete, "/api/contacts/carddav-client/config", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("member delete while locked: status=%d", rec.Code)
+	}
+}
+
+func TestAdminCardDAVClientRejectsPlainHTTP(t *testing.T) {
+	srv, admin, member := adminAndMember(t)
+	rec := doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/carddav-client", map[string]any{
+		"serverUrl": "http://contacts.example.test/dav/", "username": "m", "password": "p",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400", rec.Code)
+	}
+}
+
+func TestAdminCardDAVClientBlankPasswordKeepsStored(t *testing.T) {
+	allowLoopbackOutboundForTest(t)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer fake.Close()
+	srv, admin, member := adminAndMember(t)
+	doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/carddav-client", map[string]any{
+		"serverUrl": fake.URL + "/dav/", "username": "m", "password": "keep-me", "managed": true,
+	})
+	rec := doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/carddav-client", map[string]any{
+		"serverUrl": fake.URL + "/dav/", "username": "m", "managed": false,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, _, _ := readCardDAVClientConfigPayload(srv.userCardDAVClientConfigPath(member.ID), srv.imapConfigKeyPath)
+	if stored.Password != "keep-me" || stored.Managed {
+		t.Fatalf("stored=%+v", stored)
+	}
+}

@@ -89,3 +89,71 @@ func (s *Server) handleAdminUserIMAPConfig(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+func (s *Server) handleAdminUserCardDAVClient(w http.ResponseWriter, r *http.Request) {
+	ac, _ := authFromContext(r)
+	target, err := s.users.Get(r.PathValue("id"))
+	if err != nil {
+		writeUserStoreError(w, err)
+		return
+	}
+	path := s.userCardDAVClientConfigPath(target.ID)
+	switch r.Method {
+	case http.MethodGet:
+		payload, exists, err := readCardDAVClientConfigPayload(path, s.imapConfigKeyPath)
+		if err != nil {
+			http.Error(w, "failed to read carddav client configuration", http.StatusInternalServerError)
+			return
+		}
+		if !exists {
+			writeJSON(w, http.StatusOK, map[string]any{"configured": false})
+			return
+		}
+		writeJSON(w, http.StatusOK, cardDAVClientStatusResponse(payload))
+	case http.MethodPut:
+		var payload carddavClientConfigPayload
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload); err != nil {
+			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			return
+		}
+		payload = normalizeCardDAVClientPayload(payload)
+		stored, exists, err := readCardDAVClientConfigPayload(path, s.imapConfigKeyPath)
+		if err != nil {
+			http.Error(w, "failed to read carddav client configuration", http.StatusInternalServerError)
+			return
+		}
+		if payload.Password == "" && exists {
+			payload.Password = stored.Password
+		}
+		if payload.ServerURL == "" || payload.Username == "" || payload.Password == "" {
+			http.Error(w, "serverUrl, username, and password are required", http.StatusBadRequest)
+			return
+		}
+		// Same https-only SSRF guard as the user route; see carddav_client.go.
+		if err := validateOutboundURL(payload.ServerURL, outboundCardDAVSchemes...); err != nil {
+			s.logger.Info("carddav server url refused", "user_id", target.ID, "admin_id", ac.UserID, "error", err.Error())
+			http.Error(w, "serverUrl is not reachable", http.StatusBadRequest)
+			return
+		}
+		payload.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			http.Error(w, "failed to prepare config directory", http.StatusInternalServerError)
+			return
+		}
+		if err := writeCardDAVClientConfigPayload(path, s.imapConfigKeyPath, payload); err != nil {
+			http.Error(w, "failed to save carddav client configuration", http.StatusInternalServerError)
+			return
+		}
+		s.logger.Info("user carddav client assigned by admin", "user_id", target.ID, "admin_id", ac.UserID, "managed", strconv.FormatBool(payload.Managed), "server_url", payload.ServerURL)
+		writeJSON(w, http.StatusOK, cardDAVClientStatusResponse(payload))
+	case http.MethodDelete:
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "failed to remove carddav client configuration", http.StatusInternalServerError)
+			return
+		}
+		s.logger.Info("user carddav client removed by admin", "user_id", target.ID, "admin_id", ac.UserID)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "configured": false})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
