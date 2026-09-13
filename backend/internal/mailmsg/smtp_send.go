@@ -23,13 +23,17 @@ import (
 // poller's own notification path — can share one definition without an
 // api->processor->api import cycle.
 type IMAPConfigPayload struct {
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
-	Mailbox   string `json:"mailbox"`
-	SMTPHost  string `json:"smtpHost,omitempty"`
-	SMTPPort  int    `json:"smtpPort,omitempty"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Mailbox  string `json:"mailbox"`
+	SMTPHost string `json:"smtpHost,omitempty"`
+	SMTPPort int    `json:"smtpPort,omitempty"`
+	// Managed is set only by an admin (handleAdminUserIMAPConfig). While true
+	// the owning user's own POST/DELETE refuse, and their settings tab renders
+	// read-only. The poller ignores it.
+	Managed   bool   `json:"managed,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 

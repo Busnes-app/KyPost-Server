@@ -39,20 +39,16 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"configured": false, "path": imapConfigPath, "keyPath": s.imapConfigKeyPath})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"configured":      true,
-			"path":            imapConfigPath,
-			"keyPath":         s.imapConfigKeyPath,
-			"host":            payload.Host,
-			"port":            payload.Port,
-			"username":        payload.Username,
-			"mailbox":         payload.Mailbox,
-			"smtpHost":        payload.SMTPHost,
-			"smtpPort":        payload.SMTPPort,
-			"updatedAt":       payload.UpdatedAt,
-			"encryptedAtRest": true,
-		})
+		writeJSON(w, http.StatusOK, imapConfigStatus(imapConfigPath, s.imapConfigKeyPath, payload))
 	case http.MethodPost:
+		if managed, err := s.imapConfigManaged(imapConfigPath); err != nil {
+			http.Error(w, "failed to read imap configuration", http.StatusInternalServerError)
+			return
+		} else if managed {
+			http.Error(w, "mail settings are managed by your administrator", http.StatusForbidden)
+			return
+		}
+
 		var payload imapConfigPayload
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload); err != nil {
 			http.Error(w, "invalid JSON body", http.StatusBadRequest)
@@ -60,6 +56,7 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 		}
 
 		payload = mailmsg.NormalizeIMAPPayload(payload)
+		payload.Managed = false
 		if payload.Host == "" || payload.Username == "" || payload.Password == "" {
 			http.Error(w, "host, username, and password are required", http.StatusBadRequest)
 			return
@@ -84,21 +81,17 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		s.invalidateUserMail(ac.UserID)
 
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":              true,
-			"configured":      true,
-			"path":            imapConfigPath,
-			"keyPath":         s.imapConfigKeyPath,
-			"host":            payload.Host,
-			"port":            payload.Port,
-			"username":        payload.Username,
-			"mailbox":         payload.Mailbox,
-			"smtpHost":        payload.SMTPHost,
-			"smtpPort":        payload.SMTPPort,
-			"updatedAt":       payload.UpdatedAt,
-			"encryptedAtRest": true,
-		})
+		status := imapConfigStatus(imapConfigPath, s.imapConfigKeyPath, payload)
+		status["ok"] = true
+		writeJSON(w, http.StatusOK, status)
 	case http.MethodDelete:
+		if managed, err := s.imapConfigManaged(imapConfigPath); err != nil {
+			http.Error(w, "failed to read imap configuration", http.StatusInternalServerError)
+			return
+		} else if managed {
+			http.Error(w, "mail settings are managed by your administrator", http.StatusForbidden)
+			return
+		}
 		if err := os.Remove(imapConfigPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			http.Error(w, "failed to remove imap configuration", http.StatusInternalServerError)
 			return
@@ -106,6 +99,31 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 		s.invalidateUserMail(ac.UserID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "configured": false})
 	}
+}
+
+// imapConfigStatus is the password-free view of a stored config, shared by the
+// user route and the admin route so both report the same fields.
+func imapConfigStatus(path, keyPath string, p imapConfigPayload) map[string]any {
+	return map[string]any{
+		"configured":      true,
+		"path":            path,
+		"keyPath":         keyPath,
+		"host":            p.Host,
+		"port":            p.Port,
+		"username":        p.Username,
+		"mailbox":         p.Mailbox,
+		"smtpHost":        p.SMTPHost,
+		"smtpPort":        p.SMTPPort,
+		"updatedAt":       p.UpdatedAt,
+		"encryptedAtRest": true,
+		"managed":         p.Managed,
+	}
+}
+
+// imapConfigManaged reports whether an admin has locked this user's config.
+func (s *Server) imapConfigManaged(path string) (bool, error) {
+	stored, exists, err := mailmsg.ReadIMAPConfigPayload(path, s.imapConfigKeyPath)
+	return exists && stored.Managed, err
 }
 
 func (s *Server) handleIMAPTest(w http.ResponseWriter, r *http.Request) {
