@@ -512,6 +512,8 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("/api/status", s.withAuth(s.handleStatus))
 	mux.HandleFunc("GET /api/config", s.withAuth(s.handleConfig))
 	mux.HandleFunc("PUT /api/config", s.withAdmin(s.handleConfig))
+	mux.HandleFunc("GET /api/mail-defaults", s.withAuth(s.handleMailDefaults))
+	mux.HandleFunc("PUT /api/mail-defaults", s.withAdmin(s.handleMailDefaults))
 	mux.HandleFunc("GET /api/admin/sso", s.withAdmin(s.handleAdminSSOGet))
 	mux.HandleFunc("PUT /api/admin/sso", s.withAdmin(s.handleAdminSSOPut))
 	mux.HandleFunc("POST /api/sync/webhook", withPublicRoute(s.handleSyncWebhook))
