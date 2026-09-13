@@ -22,6 +22,7 @@ export type IMAPConfigStatus = {
   smtpPort?: number;
   updatedAt?: string;
   encryptedAtRest?: boolean;
+  managed?: boolean;
 };
 
 export type IMAPForm = {
