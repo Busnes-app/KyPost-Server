@@ -36,6 +36,9 @@ type carddavClientConfigPayload struct {
 	Password        string `json:"password"`
 	AddressBookPath string `json:"addressBookPath,omitempty"`
 	UpdatedAt       string `json:"updatedAt,omitempty"`
+	// Managed mirrors IMAPConfigPayload.Managed: admin-set, user-read-only.
+	// Sync reads and rewrites the whole struct, so it survives sync updates.
+	Managed bool `json:"managed,omitempty"`
 
 	LastSyncedAt           string                  `json:"lastSyncedAt,omitempty"`
 	LastSyncError          string                  `json:"lastSyncError,omitempty"`
@@ -112,12 +115,21 @@ func (s *Server) handleContactsCardDAVClientConfig(w http.ResponseWriter, r *htt
 		}
 		writeJSON(w, http.StatusOK, cardDAVClientStatusResponse(payload))
 	case http.MethodPost:
+		if managed, err := s.cardDAVClientManaged(cfgPath); err != nil {
+			http.Error(w, "failed to read carddav client configuration", http.StatusInternalServerError)
+			return
+		} else if managed {
+			http.Error(w, "contact sync settings are managed by your administrator", http.StatusForbidden)
+			return
+		}
+
 		var payload carddavClientConfigPayload
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload); err != nil {
 			http.Error(w, "invalid JSON body", http.StatusBadRequest)
 			return
 		}
 		payload = normalizeCardDAVClientPayload(payload)
+		payload.Managed = false
 		if payload.ServerURL == "" || payload.Username == "" || payload.Password == "" {
 			http.Error(w, "serverUrl, username, and password are required", http.StatusBadRequest)
 			return
@@ -146,6 +158,13 @@ func (s *Server) handleContactsCardDAVClientConfig(w http.ResponseWriter, r *htt
 		}
 		writeJSON(w, http.StatusOK, cardDAVClientStatusResponse(payload))
 	case http.MethodDelete:
+		if managed, err := s.cardDAVClientManaged(cfgPath); err != nil {
+			http.Error(w, "failed to read carddav client configuration", http.StatusInternalServerError)
+			return
+		} else if managed {
+			http.Error(w, "contact sync settings are managed by your administrator", http.StatusForbidden)
+			return
+		}
 		if err := os.Remove(cfgPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			http.Error(w, "failed to remove carddav client configuration", http.StatusInternalServerError)
 			return
@@ -168,7 +187,14 @@ func cardDAVClientStatusResponse(payload carddavClientConfigPayload) map[string]
 		"lastSyncImported":       payload.LastSyncImported,
 		"lastSyncUpdated":        payload.LastSyncUpdated,
 		"discoveredAddressBooks": payload.DiscoveredAddressBooks,
+		"managed":                payload.Managed,
 	}
+}
+
+// cardDAVClientManaged reports whether an admin has locked this user's config.
+func (s *Server) cardDAVClientManaged(path string) (bool, error) {
+	stored, exists, err := readCardDAVClientConfigPayload(path, s.imapConfigKeyPath)
+	return exists && stored.Managed, err
 }
 
 // handleContactsCardDAVClientSync pulls the caller's address book down from
