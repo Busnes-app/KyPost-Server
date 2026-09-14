@@ -1,3 +1,5 @@
+import type { MimeAttachment } from "../../lib/mimeContent";
+
 // Shared shapes for the read view: the message record the inbox API returns,
 // its decrypted counterpart, and the list's sort/swipe state.
 export type InboxEmail = {
@@ -74,6 +76,14 @@ export type DecryptedView = {
    * one, and the badge says so.
    */
   signerConflict: boolean;
+  /**
+   * Attachments decoded out of the same bytes as `body`. Held in memory here
+   * and handed to the user as blob downloads; never posted back to the server,
+   * which for a client-protected account has no business seeing them.
+   */
+  attachments?: MimeAttachment[];
+  /** Parts the MIME limits refused. Shown as a count so nothing is silently missing. */
+  attachmentsOmitted?: number;
 };
 
 // AttachmentInfo mirrors the /api/mail/attachments wire shape.

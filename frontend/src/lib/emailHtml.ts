@@ -168,7 +168,16 @@ export function resolveBodyMode(body: string, mode?: string): "html" | "plain" {
   return looksLikeHtml(body) ? "html" : "plain";
 }
 
-export function processEmailHtml(html: string, showImages: boolean): string {
+/**
+ * Inline images by Content-ID, as data: URLs, for the `cid:` references a
+ * decrypted body makes. Built by the reader from the attachments it decoded;
+ * nothing here is fetched. DOMPurify lets data: through on <img> by default
+ * while ALLOWED_URI_REGEXP still refuses it on links, which is the split this
+ * relies on: an image the message carried may render, a data: link may not.
+ */
+export type InlineImages = ReadonlyMap<string, string>;
+
+export function processEmailHtml(html: string, showImages: boolean, inlineImages?: InlineImages): string {
   // Parse the whole thing as a document and work on its <body>. Never wrap in an
   // element and read that element's innerHTML back: the HTML parser closes the
   // wrapper on the first stray "</div>" in the message, so everything after it
@@ -199,8 +208,29 @@ export function processEmailHtml(html: string, showImages: boolean): string {
     anchor.setAttribute("rel", "noopener noreferrer");
   });
 
+  // A cid: reference the message itself carried is not remote content: the
+  // bytes came out of the ciphertext with the body, so it renders under the
+  // remote-content block. One the message did not carry stays blocked.
+  const inlined = new Set<Element>();
+  root.querySelectorAll("img[src]").forEach((image) => {
+    const src = (image.getAttribute("src") ?? "").replace(attrWhitespace, "");
+    if (!/^cid:/i.test(src)) return;
+    let ref = src.slice(4);
+    try {
+      ref = decodeURIComponent(ref);
+    } catch {
+      // A malformed escape is just a reference nothing will match.
+    }
+    const dataUrl = inlineImages?.get(ref.replace(/^<|>$/g, ""));
+    if (dataUrl) {
+      image.setAttribute("src", dataUrl);
+      inlined.add(image);
+    }
+  });
+
   if (!showImages) {
     root.querySelectorAll("img").forEach((image) => {
+      if (inlined.has(image)) return;
       image.replaceWith(doc.createTextNode("[Image Blocked]"));
     });
   }
