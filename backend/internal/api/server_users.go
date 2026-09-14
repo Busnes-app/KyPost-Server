@@ -300,6 +300,14 @@ func writeUserStoreError(w http.ResponseWriter, err error) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if errors.Is(err, users.ErrPGPRevisionChanged) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "pgpStateChanged": true})
+		return
+	}
+	if errors.Is(err, users.ErrInvalidPGPRevision) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if errors.Is(err, users.ErrPGPIdentityChanged) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return

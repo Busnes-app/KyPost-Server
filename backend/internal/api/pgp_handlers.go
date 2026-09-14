@@ -10,6 +10,7 @@ import (
 )
 
 type pgpIdentityResponse struct {
+	PGPRevision uint64 `json:"pgpRevision"`
 	Fingerprint string `json:"fingerprint"`
 	KeyID       string `json:"keyId"`
 	PublicKey   string `json:"publicKey"`
@@ -69,6 +70,7 @@ func (s *Server) handlePGPIdentity(w http.ResponseWriter, r *http.Request) {
 		status, _ := pgpmail.CheckKeyStatus(u.PGPPublicKey)
 		writeJSON(w, http.StatusOK, pgpIdentityResponse{
 			Fingerprint: u.PGPFingerprint,
+			PGPRevision: u.PGPRevision,
 			KeyID:       u.PGPKeyID,
 			PublicKey:   u.PGPPublicKey,
 			Source:      u.PGPKeySource,
@@ -82,8 +84,9 @@ func (s *Server) handlePGPIdentity(w http.ResponseWriter, r *http.Request) {
 		// key stays unreadable once the key is gone. A session alone is not
 		// enough — see pgp_stepup.go.
 		var req struct {
-			Password   string `json:"password,omitempty"`
-			AuthSecret string `json:"authSecret,omitempty"`
+			ExpectedRevision *uint64 `json:"expectedRevision,omitempty"`
+			Password         string  `json:"password,omitempty"`
+			AuthSecret       string  `json:"authSecret,omitempty"`
 		}
 		// An empty body is fine and stays a 401 rather than a 400: an account
 		// with no identity has nothing to delete and nothing to confirm, and one
@@ -101,13 +104,14 @@ func (s *Server) handlePGPIdentity(w http.ResponseWriter, r *http.Request) {
 		if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
 			return
 		}
-		if _, err := s.users.ClearPGPIdentity(ac.UserID); err != nil {
-			http.Error(w, "failed to delete pgp identity", http.StatusInternalServerError)
+		u, err := s.users.ClearPGPIdentity(ac.UserID, req.ExpectedRevision)
+		if err != nil {
+			writeUserStoreError(w, err)
 			return
 		}
 		s.clearDeviceEnrollmentsFor(ac.UserID, "identity deleted")
 		s.logger.Info("pgp identity deleted", "user_id", ac.UserID)
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pgpRevision": u.PGPRevision})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

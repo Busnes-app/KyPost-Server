@@ -46,6 +46,7 @@ const (
 // User is a single account record. Files/directories owned by a user are
 // always keyed by ID, never Username, so a rename never requires moving data.
 type User struct {
+	PGPRevision        uint64 `json:"pgpRevision,omitempty"`
 	ID                 string `json:"id"`
 	Username           string `json:"username"`
 	PasswordHash       string `json:"passwordHash"`
@@ -1048,6 +1049,7 @@ func (s *Store) LinkSSO(userID, ssoSub, ssoUsername, ssoEmail string) error {
 				// after spending a step-up grant, so this is the user proving
 				// the account credential and asking for the link back.
 				f.Users[i].SSOLinkRevokedAt = 0
+
 				f.Users[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 				found = true
 				break
@@ -1334,6 +1336,7 @@ func (s *Store) mutateGuarded(id string, guard func(all []User, target User) err
 			// week, permanently, with the visible slot count pinned at 33 and
 			// no operator surface that could even see it. This is the one place
 			// every write passes.
+			beforePGP := pgpState(f.Users[i])
 			compacted := compactExpiredEnvelopes(&f.Users[i])
 			if err := fn(&f.Users[i]); err != nil {
 				// A mutation that changes nothing must not cost a write. Every
@@ -1353,6 +1356,12 @@ func (s *Store) mutateGuarded(id string, guard func(all []User, target User) err
 				if !errors.Is(err, errNoChangeNeeded) {
 					return err
 				}
+			}
+			if pgpState(f.Users[i]) != beforePGP {
+				if f.Users[i].PGPRevision >= MaxPGPRevision {
+					return errors.New("PGP revision exhausted; update refused without changing data")
+				}
+				f.Users[i].PGPRevision++
 			}
 			f.Users[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 			if err := s.writeFileUnlocked(f); err != nil {
@@ -1384,7 +1393,7 @@ func (s *Store) SetRole(id string, role Role) (User, error) {
 
 // SetPassword sets a new password. If requireChange is true the user must
 // change it again on next login (used for admin-initiated resets).
-func (s *Store) SetPassword(ctx context.Context, id, newPassword string, requireChange bool) (User, error) {
+func (s *Store) SetPassword(ctx context.Context, id, newPassword string, requireChange bool, expectedRevision ...*uint64) (User, error) {
 	if err := ValidatePassword(newPassword); err != nil {
 		return User{}, err
 	}
@@ -1392,7 +1401,7 @@ func (s *Store) SetPassword(ctx context.Context, id, newPassword string, require
 	if err != nil {
 		return User{}, err
 	}
-	return s.mutate(id, func(u *User) error {
+	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		u.PasswordHash = hash
 		u.MustChangePassword = requireChange
 		// Back to legacy derivation. This path stores a hash of a PLAINTEXT password,
@@ -1623,14 +1632,14 @@ func (s *Store) UpdatePGPKeyMaterial(id, expectFingerprint, armoredPublicKey, pr
 // password; this store never interprets it. Clearing PGPPrivateKeyEnc is the
 // point — after this call no copy of the private key on this server is one this
 // server can open.
-func (s *Store) SetPGPIdentityClientProtected(id, fingerprint, keyID, armoredPublicKey, wrapped, source, createdAt string) (User, error) {
+func (s *Store) SetPGPIdentityClientProtected(id, fingerprint, keyID, armoredPublicKey, wrapped, source, createdAt string, expectedRevision ...*uint64) (User, error) {
 	if err := ValidateWrappedEnvelope(wrapped); err != nil {
 		return User{}, err
 	}
 	if strings.TrimSpace(wrapped) == "" {
 		return User{}, errors.New("wrapped private key is required for client-protected identities")
 	}
-	return s.mutate(id, func(u *User) error {
+	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		previousFingerprint := u.PGPFingerprint
 		u.PGPFingerprint = fingerprint
 		u.PGPKeyID = keyID
@@ -1666,14 +1675,14 @@ var ErrPGPIdentityChanged = errors.New("PGP identity changed; reload and try aga
 // user changes their password: the wrapping key is derived from that password,
 // so the browser unwraps with the old one and rewraps with the new one.
 // A non-empty expectedFingerprint is checked under the mutation lock.
-func (s *Store) RewrapPGPPrivateKey(id, wrapped, expectedFingerprint string) (User, error) {
+func (s *Store) RewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, expectedRevision ...*uint64) (User, error) {
 	if err := ValidateWrappedEnvelope(wrapped); err != nil {
 		return User{}, err
 	}
 	if strings.TrimSpace(wrapped) == "" {
 		return User{}, errors.New("wrapped private key is required")
 	}
-	return s.mutate(id, func(u *User) error {
+	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		if expectedFingerprint != "" && !strings.EqualFold(u.PGPFingerprint, expectedFingerprint) {
 			return ErrPGPIdentityChanged
 		}
@@ -1701,7 +1710,7 @@ func (s *Store) RewrapPGPPrivateKey(id, wrapped, expectedFingerprint string) (Us
 // would leave the unlock path with no deterministic answer about which sealing
 // a given secret opens. expectedFingerprint is optional for older clients;
 // a supplied value must match under the mutation lock.
-func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFingerprint string) (User, error) {
+func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFingerprint string, expectedRevision ...*uint64) (User, error) {
 	if err := ValidateWrappedEnvelope(envelope); err != nil {
 		return User{}, err
 	}
@@ -1715,7 +1724,7 @@ func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFinge
 	if strings.HasPrefix(slot, EnvelopeSlotDevicePrefix) {
 		expiresAt = time.Now().UTC().Add(DeviceEnvelopeTTL).Format(time.RFC3339)
 	}
-	return s.mutate(id, func(u *User) error {
+	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		if expectedFingerprint != "" && !strings.EqualFold(u.PGPFingerprint, expectedFingerprint) {
 			return ErrPGPIdentityChanged
 		}
@@ -1762,11 +1771,11 @@ func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFinge
 // Deleting an absent slot succeeds: the caller's goal is that the slot is gone,
 // and it already is. Refusing the password slot is what keeps this from being a
 // way to make an account permanently unopenable.
-func (s *Store) DeletePGPWrappedEnvelope(id, slot string) (User, error) {
+func (s *Store) DeletePGPWrappedEnvelope(id, slot string, expectedRevision ...*uint64) (User, error) {
 	if !ValidEnvelopeSlot(slot) {
 		return User{}, ErrInvalidEnvelopeSlot
 	}
-	return s.mutate(id, func(u *User) error {
+	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		kept := u.PGPWrappedEnvelopes[:0]
 		for _, e := range u.PGPWrappedEnvelopes {
 			if e.Slot != slot {
@@ -1786,8 +1795,8 @@ func (s *Store) DeletePGPWrappedEnvelope(id, slot string) (User, error) {
 }
 
 // ClearPGPIdentity removes a user's PGP identity entirely.
-func (s *Store) ClearPGPIdentity(id string) (User, error) {
-	return s.mutate(id, func(u *User) error {
+func (s *Store) ClearPGPIdentity(id string, expectedRevision ...*uint64) (User, error) {
+	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		u.PGPFingerprint = ""
 		u.PGPKeyID = ""
 		u.PGPPublicKey = ""
@@ -2492,7 +2501,7 @@ func (s *Store) SetDerivedAuth(ctx context.Context, id, authSecret, loginSalt st
 // has — permanently, since a later rewrap re-derives from the CURRENT password.
 // The only way back is deleting the identity and losing every message encrypted
 // to it.
-func (s *Store) SetDerivedAuthAndRewrapPGP(ctx context.Context, id, authSecret, loginSalt string, iterations int, requireChange bool, rewrapped string) (User, error) {
+func (s *Store) SetDerivedAuthAndRewrapPGP(ctx context.Context, id, authSecret, loginSalt string, iterations int, requireChange bool, rewrapped string, expectedRevision ...*uint64) (User, error) {
 	if err := ValidateAuthSecret(authSecret); err != nil {
 		return User{}, err
 	}
@@ -2509,7 +2518,7 @@ func (s *Store) SetDerivedAuthAndRewrapPGP(ctx context.Context, id, authSecret, 
 	if err != nil {
 		return User{}, err
 	}
-	return s.mutate(id, func(u *User) error {
+	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		if rewrapped != "" {
 			// Only a client-protected identity has an envelope to replace, and
 			// silently ignoring a rewrap for an account that does not is how a

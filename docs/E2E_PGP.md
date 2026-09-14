@@ -295,6 +295,33 @@ Implemented:
 - Client-protected accounts fetch ciphertext per message from
   `/api/mail/pgp-payload` and decrypt locally.
 
+### PGP revision preconditions
+
+`pgpRevision` is a persisted nonnegative safe integer returned with bootstrap,
+identity, wrapped-key, legacy-export and slot snapshots. Initial old records read
+as zero. Successful PGP mutations and password changes return their committed
+revision; identity deletion preserves the monotonic counter.
+
+The JSON bodies of client identity POST, rewrap POST, slot PUT/DELETE, identity
+DELETE and `/api/auth/password` accept `expectedRevision`. A supplied value must
+match inside the users-store disk lock. A mismatch returns 409 with
+`pgpStateChanged: true` and commits neither credentials nor key material. Invalid
+numeric values return 400. Omission or null retains current single-key client
+compatibility; zero is a real comparison, not a request to skip it. Existing
+`expectedFingerprint` checks remain independent and both supplied guards must pass.
+
+The revision changes when public/private identity material, its password envelope,
+the recovery slot or credential derivation fields change, including admin password
+reset and credential rehash/upgrade. Device-slot changes and unrelated account
+settings do not advance it. This is a concurrency token, not the future key-material
+generation: a password change must not obsolete a complete recovery backup.
+
+Prepare a write from one snapshot and submit that snapshot's revision. On conflict,
+reload and prepare again; fetching a fresh revision and attaching it to old
+ciphertext defeats the guard. Revision support alone does not validate encrypted
+contents, establish backup completeness or enable account conversion. Browser
+adoption and mandatory converted-account checks ship with lifecycle transactions.
+
 ### Browser recovery
 
 Security → Encryption creates `kypost-pgp-recovery-v1` files with a random

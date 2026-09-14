@@ -814,7 +814,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		// password changed and the envelope still sealed under the old one —
 		// permanently, because the only rewrap path re-derives from the CURRENT
 		// password and could never open it again.
-		RewrappedPGPKey string `json:"rewrappedPgpKey,omitempty"`
+		RewrappedPGPKey  string  `json:"rewrappedPgpKey,omitempty"`
+		ExpectedRevision *uint64 `json:"expectedRevision,omitempty"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -901,6 +902,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// stays only for clients that have not converted; it is the one that still
 	// lets the server see a password, so it must never be the path taken when
 	// the better one is available.
+	var updated users.User
 	switch {
 	case req.NewAuthSecret != "":
 		if req.NewLoginSalt == "" {
@@ -912,9 +914,14 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 			iterations = clientLoginIterations
 		}
 		// One mutation for the credential and the PGP envelope, or neither.
-		if _, err := s.users.SetDerivedAuthAndRewrapPGP(
-			r.Context(), u.ID, req.NewAuthSecret, req.NewLoginSalt, iterations, false, req.RewrappedPGPKey,
-		); err != nil {
+		updated, err = s.users.SetDerivedAuthAndRewrapPGP(
+			r.Context(), u.ID, req.NewAuthSecret, req.NewLoginSalt, iterations, false, req.RewrappedPGPKey, req.ExpectedRevision,
+		)
+		if err != nil {
+			if errors.Is(err, users.ErrPGPRevisionChanged) || errors.Is(err, users.ErrInvalidPGPRevision) {
+				writeUserStoreError(w, err)
+				return
+			}
 			if errors.Is(err, users.ErrKDFBusy) {
 				writeKDFBusy(w)
 				return
@@ -940,7 +947,12 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "rewrappedPgpKey requires newAuthSecret", http.StatusBadRequest)
 			return
 		}
-		if _, err := s.users.SetPassword(r.Context(), u.ID, req.NewPassword, false); err != nil {
+		updated, err = s.users.SetPassword(r.Context(), u.ID, req.NewPassword, false, req.ExpectedRevision)
+		if err != nil {
+			if errors.Is(err, users.ErrPGPRevisionChanged) || errors.Is(err, users.ErrInvalidPGPRevision) {
+				writeUserStoreError(w, err)
+				return
+			}
 			if errors.Is(err, users.ErrKDFBusy) {
 				writeKDFBusy(w)
 				return
@@ -959,7 +971,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "password changed but credential revocation failed; retry immediately", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pgpRevision": updated.PGPRevision})
 }
 
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {

@@ -104,8 +104,12 @@ Let OpenPGP validate packets and authentication. Retired or revoked keys remain
 available for historical decryption, never for new encryption/signing. Their
 presence grants no sender trust and changes no contact pin.
 
-Add an explicit account keyring version and monotonic PGP revision to bootstrap
-and mutation responses. Every keyring/public-identity/recovery/credential writer
+The server revision foundation now persists `pgpRevision`, returns it with
+bootstrap/identity/envelope snapshots and mutation responses, and checks optional
+`expectedRevision` in existing PGP and password write APIs under the disk lock.
+Current browser writers have not adopted it yet; omission remains compatible with
+single-key clients. Account keyring versioning and mandatory guards for converted
+accounts remain prerequisites for enabling lifecycle writes. Every keyring/public-identity/recovery/credential writer
 on a converted account must supply the expected revision, checked inside the
 users-store mutation. Bump it for password changes, admin resets, recovery changes,
 UID changes, retirement and revocation. Reject stale requests with 409 and preserve
