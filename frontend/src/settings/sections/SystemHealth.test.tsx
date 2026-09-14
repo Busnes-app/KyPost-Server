@@ -316,7 +316,7 @@ describe("retry backlog", () => {
     renderPage();
 
     await screen.findByText("Messages waiting to be retried");
-    expect(screen.getByText(/30m/)).toBeTruthy();
+    expect(screen.getByText(/checkpoint has been held back for 30m/)).toBeTruthy();
     expect(screen.getByText(/3 message\(s\)/)).toBeTruthy();
     // Says mail is not lost — the deferral is the correct behaviour.
     expect(screen.getByText(/mail is\s+not lost/)).toBeTruthy();

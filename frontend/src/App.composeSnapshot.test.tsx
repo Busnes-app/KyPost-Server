@@ -81,6 +81,7 @@ beforeEach(() => {
   getJSON.mockImplementation(async (url: string) => {
     if (url === "/api/auth/me") return { authenticated: true, userId: "u1", username: "gwen", role: "user" };
     if (url.startsWith("/api/inbox/folders")) return { folders: [] };
+    if (url.startsWith("/api/contacts/search")) return { contacts: [] };
     if (url.startsWith("/api/sendas")) return { aliases: [] };
     return {};
   });
