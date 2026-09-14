@@ -2,8 +2,9 @@
 import { describe, it, expect } from "vitest";
 import * as openpgp from "openpgp";
 
-import { buildEncryptedDraft, buildEncryptedSentCopy, decryptMessage, encryptedAttachmentBudget, openSealedToSelf, sealToSelf, verifySignedMessage } from "./pgpClient";
+import { buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, decryptMessage, encryptedAttachmentBudget, openSealedToSelf, sealToSelf, verifySignedMessage } from "./pgpClient";
 import { unlockWithArmoredKey, lock } from "./keyVault";
+import { decodeRFC2047 } from "./mimeContent";
 
 // run-4 finding H7: decryptMessage offered every contact public key as a
 // verification key and set verified=true on the first signature that validated
@@ -440,6 +441,77 @@ describe("encryptedAttachmentBudget", () => {
     expect(encryptedAttachmentBudget(37)).toBeGreaterThanOrEqual(0);
     expect(encryptedAttachmentBudget(500)).toBe(0);
   });
+});
+
+/**
+ * Splits an RFC 3156 multipart/signed message the way the server's
+ * ExtractSignedParts does: exactly two parts, the CRLF before each boundary
+ * belongs to the delimiter, first part verbatim.
+ */
+function splitSigned(message: string): { headers: string; signedPart: string; signature: string } {
+  const [headers, body] = message.split("\r\n\r\n", 2).length === 2 ? [message.slice(0, message.indexOf("\r\n\r\n")), message.slice(message.indexOf("\r\n\r\n") + 4)] : ["", message];
+  const boundary = /boundary="([^"]+)"/.exec(headers)?.[1] ?? "";
+  const search = "\r\n" + body;
+  const delim = "\r\n--" + boundary;
+  const offsets: number[] = [];
+  for (let i = search.indexOf(delim); i !== -1; i = search.indexOf(delim, i + 1)) offsets.push(i);
+  expect(offsets).toHaveLength(3);
+  const afterOpen = search.indexOf("\r\n", offsets[0] + delim.length) + 2;
+  const signedPart = search.slice(afterOpen, offsets[1]);
+  const afterSep = search.indexOf("\r\n", offsets[1] + delim.length) + 2;
+  const sigPart = search.slice(afterSep, offsets[2]);
+  const signature = sigPart.slice(sigPart.indexOf("-----BEGIN PGP SIGNATURE-----"));
+  return { headers, signedPart, signature };
+}
+
+describe("signed-only deliveries", () => {
+  it("builds multipart/signed that verifies over the exact signed bytes, with no recipient keys", async () => {
+    const me = await generateTestKey("Me", "me@example.com");
+    unlockWithArmoredKey(me.privateKey);
+    try {
+      const delivery = await buildSignedDelivery(
+        { from: "me@example.com", to: ["a@example.com"], cc: ["c@example.com"], subject: "Plans — ünïcode" },
+        "text/html; charset=UTF-8",
+        "<p>signed, not secret — ünïcode</p>",
+        ["a@example.com", "c@example.com", "hidden@example.com"],
+        [{ name: "n.txt", mimeType: "text/plain", dataBase64: btoa("note") }]
+      );
+      expect(delivery.recipients).toEqual(["a@example.com", "c@example.com", "hidden@example.com"]);
+      const { headers, signedPart, signature } = splitSigned(delivery.ciphertext);
+      const outerSubject = /Subject: (.*)/.exec(headers)?.[1] ?? "";
+      expect(outerSubject).toMatch(/^=\?UTF-8\?B\?/);
+      expect(decodeRFC2047(outerSubject)).toBe("Plans — ünïcode");
+      expect(headers).not.toContain("[Encrypted]");
+      expect(headers).not.toContain("hidden@example.com");
+      expect(headers).toMatch(/Content-Type: multipart\/signed; micalg="pgp-sha\d+"; protocol="application\/pgp-signature"/);
+      expect(delivery.ciphertext).not.toContain("-----BEGIN PGP MESSAGE-----");
+      // 7-bit safe: no raw non-ASCII in the signed part.
+      expect(/[^\x00-\x7f]/.test(signedPart)).toBe(false);
+
+      const bytes = new TextEncoder().encode(signedPart);
+      const result = await verifySignedMessage(toBase64(bytes), signature, [bound(me, "me@example.com")], "me@example.com");
+      expect(result.verified).toBe(true);
+      expect(result.body).toContain("signed, not secret — ünïcode");
+      expect(result.protectedHeaders.subject).toBe("Plans — ünïcode");
+      expect(result.attachments.map((a) => a.name)).toEqual(["n.txt"]);
+    } finally {
+      lock();
+    }
+  }, 30000);
+
+  it("fails verification when one signed byte changes", async () => {
+    const me = await generateTestKey("Me", "me@example.com");
+    unlockWithArmoredKey(me.privateKey);
+    try {
+      const delivery = await buildSignedDelivery({ from: "me@example.com", to: ["a@example.com"], subject: "s" }, "text/plain", "body", ["a@example.com"]);
+      const { signedPart, signature } = splitSigned(delivery.ciphertext);
+      const tampered = new TextEncoder().encode(signedPart.replace("Subject: s", "Subject: t"));
+      const result = await verifySignedMessage(toBase64(tampered), signature, [bound(me, "me@example.com")], "me@example.com");
+      expect(result.verified).toBe(false);
+    } finally {
+      lock();
+    }
+  }, 30000);
 });
 
 describe("encrypted drafts and sealed state", () => {

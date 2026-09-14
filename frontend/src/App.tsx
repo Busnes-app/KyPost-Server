@@ -13,7 +13,7 @@ import { RecipientField } from "./components/RecipientField";
 import { useDialogOpen } from "./hooks/useDialogOpen";
 import { contactToToken, isDuplicateInField, parseRecipientField, pickupFallbackFlag, serializeRecipientField, splitAddressList } from "./lib/recipients";
 import { accountAddress, clearPGPSession, isClientProtected, loadPGPSession, needsUnlock, pgpCustody } from "./lib/pgpSession";
-import { buildEncryptedDeliveries, buildEncryptedDraft, buildEncryptedSentCopy, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "./lib/pgpClient";
+import { buildEncryptedDeliveries, buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "./lib/pgpClient";
 import { sealPickup } from "./lib/pickupCrypto";
 import { createSealedPickup, resolveRecipientKeys, sendClientEncryptedMail } from "./api/pgp";
 import { PgpUnlockDialog } from "./components/PgpUnlockDialog";
@@ -872,6 +872,48 @@ export function App() {
    * key protection exists to prevent — so it is not available here, and
    * quietly sending in the clear instead would be worse than failing.
    */
+  /**
+   * Sign without Encrypt: one RFC 3156 multipart/signed delivery to every
+   * recipient, built and signed here. Needs no recipient keys, so nothing is
+   * resolved and nothing is refused for a missing key. The Sent copy is still
+   * encrypted to our own key: the server stores only ciphertext for this
+   * account, whatever went out on the wire.
+   */
+  async function sendComposeSignedLocally(to: string, body: string): Promise<string> {
+    if (needsUnlock()) {
+      setComposeUnlockOpen(true);
+      throw new Error("Your PGP key is locked — unlock it, then press Send again.");
+    }
+    const toList = splitAddressList(to);
+    const ccList = splitAddressList(serializeRecipientField(composeCc));
+    const bccList = splitAddressList(serializeRecipientField(composeBcc));
+    const recipients = [...toList, ...ccList, ...bccList];
+    if (recipients.length === 0) {
+      throw new Error("Nothing to send: no recipients.");
+    }
+    // One delivery plus the Sent copy carry the attachments.
+    const budget = encryptedAttachmentBudget(2);
+    const attached = composeAttachments.reduce((sum, a) => sum + a.size, 0);
+    if (composeAttachments.length > 0 && attached > budget) {
+      throw new Error(`Attachments too large for a signed message: ${formatBytes(attached)} attached, ${formatBytes(budget)} allowed.`);
+    }
+    const envelope = { from: clientSenderAddress(), to: toList, cc: ccList, subject: composeSubject };
+    const delivery = await buildSignedDelivery(envelope, "text/html; charset=UTF-8", body, recipients, composeAttachments);
+    const sentCopy = await buildEncryptedSentCopy(envelope, "text/html; charset=UTF-8", body, true, composeAttachments);
+    const result = await sendClientEncryptedMail({
+      from: clientSenderAddress(),
+      subject: OUTER_PLACEHOLDER_SUBJECT,
+      deliveries: [delivery],
+      to: toList,
+      cc: ccList,
+      bcc: bccList,
+      sentCopy,
+      sentCopyEncrypted: true,
+      mode: "html"
+    });
+    return result.warning ?? "";
+  }
+
   async function sendComposeEncryptedLocally(to: string, body: string) {
     if (needsUnlock()) {
       // Open the prompt and stop. The composed body is deliberately not
@@ -1026,7 +1068,7 @@ export function App() {
       // (the server refuses rather than silently sending in the clear).
       let warning = "";
       if ((composeEncrypt || composeSign) && isClientProtected()) {
-        warning = await sendComposeEncryptedLocally(to, body);
+        warning = composeEncrypt ? await sendComposeEncryptedLocally(to, body) : await sendComposeSignedLocally(to, body);
       } else {
         const result = await postJSON<{ ok: boolean; sentSaved?: boolean; warning?: string }>("/api/mail/send", {
           from: composeFrom,

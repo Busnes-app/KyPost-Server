@@ -485,6 +485,51 @@ export async function buildEncryptedDeliveries(
 }
 
 /**
+ * Builds a signed, unencrypted delivery: RFC 3156 multipart/signed with a
+ * detached signature over the exact bytes of the signed part. Needs no
+ * recipient keys, so every recipient shares one delivery; Bcc addresses are
+ * envelope recipients only and never appear in the headers.
+ *
+ * The signed part is the same protected-headers entity an encrypted send
+ * carries (Subject repeated inside, body, attachments), base64 so it is 7-bit
+ * safe. The signature is a binary signature over those bytes, which is what
+ * verifySignedMessage and GnuPG both hash.
+ */
+export async function buildSignedDelivery(
+  envelope: MessageEnvelope,
+  contentType: string,
+  body: string,
+  recipients: string[],
+  attachments: EncryptedAttachment[] = []
+): Promise<EncryptedDelivery> {
+  const pgp = await openpgp();
+  const signingKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
+  const signedPart = buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments, true);
+  const armoredSignature = String(
+    await pgp.sign({
+      message: await pgp.createMessage({ binary: new TextEncoder().encode(signedPart) }),
+      signingKeys: signingKey,
+      detached: true,
+      format: "armored"
+    })
+  );
+  const signature = await pgp.readSignature({ armoredSignature });
+  const hash = MICALG_BY_HASH[signature.packets[0].hashAlgorithm ?? -1] ?? "pgp-sha256";
+  return { recipients, ciphertext: wrapAsSignedMime(envelope, signedPart, armoredSignature, hash) };
+}
+
+/** RFC 3156 micalg names by OpenPGP hash algorithm id (RFC 9580 section 9.5). */
+const MICALG_BY_HASH: Record<number, string> = {
+  2: "pgp-sha1",
+  8: "pgp-sha256",
+  9: "pgp-sha384",
+  10: "pgp-sha512",
+  11: "pgp-sha224",
+  12: "pgp-sha3-256",
+  14: "pgp-sha3-512"
+};
+
+/**
  * Builds the Sent-folder copy: the same protected content the recipients get,
  * encrypted to the SENDER'S OWN key and wrapped as PGP/MIME.
  *
@@ -593,9 +638,12 @@ function buildProtectedContent(
   contentType: string,
   body: string,
   protectedHeaders: ProtectedHeaders,
-  attachments: EncryptedAttachment[] = []
+  attachments: EncryptedAttachment[] = [],
+  encodeBody = false
 ): string {
-  const clean = sanitizeHeaderValue(protectedHeaders.subject ?? "");
+  // A signed part must be 7-bit safe, headers included; an encrypted one is
+  // never seen by transport, and readers decode either form.
+  const clean = encodeBody ? encodeHeaderWord(sanitizeHeaderValue(protectedHeaders.subject ?? "")) : sanitizeHeaderValue(protectedHeaders.subject ?? "");
   const boundary = `kypost-protected-${randomToken()}`;
   const lines = [`Content-Type: multipart/mixed; boundary="${boundary}"; protected-headers="v1"`, ""];
   // Address headers are protected only when a caller asks (drafts). They sit
@@ -616,7 +664,13 @@ function buildProtectedContent(
       ""
     );
   }
-  lines.push(`--${boundary}`, `Content-Type: ${contentType}`, "", body, "");
+  if (encodeBody) {
+    // A signed part travels in the clear and must be 7-bit safe (RFC 3156
+    // section 5): base64 keeps every byte the signature covers intact.
+    lines.push(`--${boundary}`, `Content-Type: ${contentType}`, "Content-Transfer-Encoding: base64", "", ...wrapBase64(base64Utf8(body)), "");
+  } else {
+    lines.push(`--${boundary}`, `Content-Type: ${contentType}`, "", body, "");
+  }
   for (const attachment of attachments) {
     const name = attachmentFilenameParams(attachment.name);
     lines.push(
@@ -758,6 +812,62 @@ function wrapAsPGPMime(envelope: MessageEnvelope, armoredMessage: string): strin
     `--${boundary}--`,
     ""
   ].join("\r\n");
+}
+
+/**
+ * Wraps a signed part and its detached signature as a complete RFC 5322
+ * message with an RFC 3156 multipart/signed body. Unlike the encrypted
+ * wrapper the real Subject goes on the outside: nothing here is secret, only
+ * attributable. The CRLF before each boundary belongs to the delimiter (RFC
+ * 2046 5.1.1), so the signed part is reproduced byte for byte.
+ */
+function wrapAsSignedMime(envelope: MessageEnvelope, signedPart: string, armoredSignature: string, micalg: string): string {
+  const from = sanitizeHeaderValue(envelope.from);
+  if (!from) {
+    throw new Error("No sender address is known for this account yet. Reload and try again.");
+  }
+  const boundary = `${PGP_MIME_BOUNDARY}-${randomToken()}`;
+  const headers = [
+    `From: ${from}`,
+    `To: ${envelope.to.map(sanitizeHeaderValue).filter(Boolean).join(", ")}`
+  ];
+  const cc = (envelope.cc ?? []).map(sanitizeHeaderValue).filter(Boolean);
+  if (cc.length > 0) {
+    headers.push(`Cc: ${cc.join(", ")}`);
+  }
+  headers.push(`Subject: ${encodeHeaderWord(sanitizeHeaderValue(envelope.subject))}`);
+  headers.push(`Date: ${(envelope.date ?? new Date()).toUTCString()}`);
+  headers.push("MIME-Version: 1.0");
+  headers.push(`Content-Type: multipart/signed; micalg="${micalg}"; protocol="application/pgp-signature"; boundary="${boundary}"`);
+
+  return [
+    ...headers,
+    "",
+    "This is an OpenPGP/MIME signed message (RFC 4880 and 3156).",
+    `--${boundary}`,
+    signedPart,
+    `--${boundary}`,
+    'Content-Type: application/pgp-signature; name="signature.asc"',
+    "Content-Description: OpenPGP digital signature",
+    'Content-Disposition: attachment; filename="signature.asc"',
+    "",
+    armoredSignature.trim(),
+    "",
+    `--${boundary}--`,
+    ""
+  ].join("\r\n");
+}
+
+/** An RFC 2047 encoded word when the value is not plain ASCII, else as is. */
+function encodeHeaderWord(value: string): string {
+  return /^[\x20-\x7e]*$/.test(value) ? value : `=?UTF-8?B?${base64Utf8(value)}?=`;
+}
+
+/** UTF-8 text as standard base64. */
+function base64Utf8(text: string): string {
+  let binary = "";
+  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 /**
