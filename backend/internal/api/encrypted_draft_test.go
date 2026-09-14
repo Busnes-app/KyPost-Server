@@ -129,6 +129,23 @@ func TestPlaintextDraftRefusedForClientCustody(t *testing.T) {
 	}
 }
 
+func TestPlaintextDraftRefusedWithoutAuthContext(t *testing.T) {
+	srv := newTestServer(t)
+	testUserWithClientKey(t, srv)
+	fake := &fakeMailClient{}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/mail/draft", draftRequestBody(t, map[string]any{
+		"to": "a@example.com", "subject": "the real subject", "body": "the real body", "mode": "html",
+	}))
+	// No auth context: the custody check cannot run, so the save must not either.
+	srv.serveDraftSave(rec, req, fake)
+
+	if rec.Code != 401 || len(fake.savedDrafts) != 0 {
+		t.Fatalf("status = %d, saved=%d, want 401 and nothing saved; body=%s", rec.Code, len(fake.savedDrafts), rec.Body.String())
+	}
+}
+
 func TestEncryptedDraftRefusesEmptyFrom(t *testing.T) {
 	srv := newTestServer(t)
 	userID, identity := testUserWithServerKey(t, srv)
