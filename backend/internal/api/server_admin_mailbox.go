@@ -18,6 +18,15 @@ import (
 // the user's own route writes, so the poller and every reader pick it up
 // unchanged. Managed=true additionally locks the user's own route (Task 1).
 
+// sameIMAPDestination reports whether a and b would connect to the same
+// mailbox, ignoring credentials. A blank password may only be reused from
+// storage when this holds — otherwise an admin could repoint a user's
+// stored secret at a destination of the admin's choosing.
+func sameIMAPDestination(a, b imapConfigPayload) bool {
+	return a.Host == b.Host && a.Port == b.Port && a.SMTPHost == b.SMTPHost &&
+		a.SMTPPort == b.SMTPPort && a.Username == b.Username
+}
+
 func (s *Server) handleAdminUserIMAPConfig(w http.ResponseWriter, r *http.Request) {
 	ac, _ := authFromContext(r)
 	target, err := s.users.Get(r.PathValue("id"))
@@ -51,8 +60,13 @@ func (s *Server) handleAdminUserIMAPConfig(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		// Blank password means "keep what is stored", so an admin can flip the
-		// lock or fix a host without knowing the secret.
+		// lock without knowing the secret — but only when the destination is
+		// unchanged, so a blank password can never repoint a stored secret.
 		if payload.Password == "" && exists {
+			if !sameIMAPDestination(payload, stored) {
+				http.Error(w, "a new destination requires a new password", http.StatusBadRequest)
+				return
+			}
 			payload.Password = stored.Password
 		}
 		if payload.Host == "" || payload.Username == "" || payload.Password == "" {
@@ -90,6 +104,13 @@ func (s *Server) handleAdminUserIMAPConfig(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// sameCardDAVDestination mirrors sameIMAPDestination for the CardDAV client
+// config: a blank password may only be reused from storage when the
+// destination it would authenticate against is unchanged.
+func sameCardDAVDestination(a, b carddavClientConfigPayload) bool {
+	return a.ServerURL == b.ServerURL && a.Username == b.Username
+}
+
 func (s *Server) handleAdminUserCardDAVClient(w http.ResponseWriter, r *http.Request) {
 	ac, _ := authFromContext(r)
 	target, err := s.users.Get(r.PathValue("id"))
@@ -123,6 +144,10 @@ func (s *Server) handleAdminUserCardDAVClient(w http.ResponseWriter, r *http.Req
 			return
 		}
 		if payload.Password == "" && exists {
+			if !sameCardDAVDestination(payload, stored) {
+				http.Error(w, "a new destination requires a new password", http.StatusBadRequest)
+				return
+			}
 			payload.Password = stored.Password
 		}
 		// Carry forward informational sync state: this route only ever changes
@@ -142,6 +167,10 @@ func (s *Server) handleAdminUserCardDAVClient(w http.ResponseWriter, r *http.Req
 			http.Error(w, "serverUrl, username, and password are required", http.StatusBadRequest)
 			return
 		}
+		if err := rejectURLUserinfo(payload.ServerURL); err != nil {
+			http.Error(w, "serverUrl must not embed credentials", http.StatusBadRequest)
+			return
+		}
 		// Same https-only SSRF guard as the user route; see carddav_client.go.
 		if err := validateOutboundURL(payload.ServerURL, outboundCardDAVSchemes...); err != nil {
 			s.logger.Info("carddav server url refused", "user_id", target.ID, "admin_id", ac.UserID, "error", err.Error())
@@ -157,7 +186,7 @@ func (s *Server) handleAdminUserCardDAVClient(w http.ResponseWriter, r *http.Req
 			http.Error(w, "failed to save carddav client configuration", http.StatusInternalServerError)
 			return
 		}
-		s.logger.Info("user carddav client assigned by admin", "user_id", target.ID, "admin_id", ac.UserID, "managed", strconv.FormatBool(payload.Managed), "server_url", payload.ServerURL)
+		s.logger.Info("user carddav client assigned by admin", "user_id", target.ID, "admin_id", ac.UserID, "managed", strconv.FormatBool(payload.Managed))
 		writeJSON(w, http.StatusOK, cardDAVClientStatusResponse(payload))
 	case http.MethodDelete:
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {

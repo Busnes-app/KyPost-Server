@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Busness-app/kypost-server/backend/internal/logging"
 	"github.com/Busness-app/kypost-server/backend/internal/mailmsg"
 )
 
@@ -58,6 +59,109 @@ func TestAdminBlankPasswordKeepsStored(t *testing.T) {
 	stored, _, _ := mailmsg.ReadIMAPConfigPayload(srv.userIMAPConfigPath(member.ID), srv.imapConfigKeyPath)
 	if stored.Password != "keep-me" || stored.Managed {
 		t.Fatalf("stored=%+v", stored)
+	}
+}
+
+func TestAdminCannotRepointStoredCredential(t *testing.T) {
+	srv, admin, member := adminAndMember(t)
+	doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/imap-config", map[string]any{
+		"host": "imap.example.test", "username": "m", "password": "orig-pw", "smtpHost": "smtp.example.test",
+	})
+
+	// Different host, blank password -> refused, stored destination and
+	// password untouched.
+	rec := doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/imap-config", map[string]any{
+		"host": "imap.evil.test", "username": "m", "password": "",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("different host: status=%d, want 400", rec.Code)
+	}
+	stored, _, _ := mailmsg.ReadIMAPConfigPayload(srv.userIMAPConfigPath(member.ID), srv.imapConfigKeyPath)
+	if stored.Host != "imap.example.test" || stored.Password != "orig-pw" {
+		t.Fatalf("stored mutated: %+v", stored)
+	}
+
+	// Different smtpHost, blank password -> refused, stored untouched.
+	rec = doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/imap-config", map[string]any{
+		"host": "imap.example.test", "username": "m", "password": "", "smtpHost": "smtp.evil.test",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("different smtpHost: status=%d, want 400", rec.Code)
+	}
+	stored, _, _ = mailmsg.ReadIMAPConfigPayload(srv.userIMAPConfigPath(member.ID), srv.imapConfigKeyPath)
+	if stored.SMTPHost != "smtp.example.test" || stored.Password != "orig-pw" {
+		t.Fatalf("stored mutated: %+v", stored)
+	}
+
+	// Same destination, managed toggled, blank password -> allowed, password
+	// retained. The convenience the lock flip depends on must still work.
+	rec = doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/imap-config", map[string]any{
+		"host": "imap.example.test", "username": "m", "password": "", "smtpHost": "smtp.example.test", "managed": true,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("same destination: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, _, _ = mailmsg.ReadIMAPConfigPayload(srv.userIMAPConfigPath(member.ID), srv.imapConfigKeyPath)
+	if stored.Password != "orig-pw" || !stored.Managed {
+		t.Fatalf("stored=%+v", stored)
+	}
+
+	// CardDAV: different serverUrl, blank password -> refused, stored untouched.
+	allowLoopbackOutboundForTest(t)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer fake.Close()
+	fake2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer fake2.Close()
+
+	doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/carddav-client", map[string]any{
+		"serverUrl": fake.URL + "/dav/", "username": "m", "password": "cd-pw",
+	})
+	rec = doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/carddav-client", map[string]any{
+		"serverUrl": fake2.URL + "/dav/", "username": "m", "password": "",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("different serverUrl: status=%d, want 400", rec.Code)
+	}
+	cdStored, _, _ := readCardDAVClientConfigPayload(srv.userCardDAVClientConfigPath(member.ID), srv.imapConfigKeyPath)
+	if cdStored.ServerURL != fake.URL+"/dav/" || cdStored.Password != "cd-pw" {
+		t.Fatalf("carddav stored mutated: %+v", cdStored)
+	}
+}
+
+func TestAdminCardDAVLogOmitsURLCredentials(t *testing.T) {
+	srv, admin, member := adminAndMember(t)
+	var buf bytes.Buffer
+	logger, err := logging.NewWithOutput(&buf)
+	if err != nil {
+		t.Fatalf("logging.NewWithOutput: %v", err)
+	}
+	srv.logger = logger
+
+	rec := doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/carddav-client", map[string]any{
+		"serverUrl": "https://gwen:hunter2-distinctive@contacts.example.test/dav/", "username": "gwen", "password": "p",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("userinfo url: status=%d, want 400", rec.Code)
+	}
+	if bytes.Contains(buf.Bytes(), []byte("hunter2-distinctive")) {
+		t.Fatalf("credential leaked into log: %s", buf.String())
+	}
+
+	buf.Reset()
+	allowLoopbackOutboundForTest(t)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer fake.Close()
+	rec = doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/carddav-client", map[string]any{
+		"serverUrl": fake.URL + "/dav/", "username": "m", "password": "s3cret",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid put: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("user_id")) || !bytes.Contains(buf.Bytes(), []byte("admin_id")) {
+		t.Fatalf("expected audit fields in log: %s", buf.String())
+	}
+	if bytes.Contains(buf.Bytes(), []byte(fake.URL)) {
+		t.Fatalf("server url leaked into log: %s", buf.String())
 	}
 }
 

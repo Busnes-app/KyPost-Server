@@ -65,6 +65,21 @@ func normalizeCardDAVClientPayload(p carddavClientConfigPayload) carddavClientCo
 	return p
 }
 
+// rejectURLUserinfo rejects a URL that embeds credentials (user:pass@host).
+// Basic auth is always supplied from the stored username/password, so
+// userinfo in the URL is never load-bearing — and validateOutboundURL does
+// not strip it, so letting it through risks it reaching a log line verbatim.
+func rejectURLUserinfo(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	if u.User != nil {
+		return errors.New("url must not embed credentials")
+	}
+	return nil
+}
+
 func readCardDAVClientConfigPayload(path, keyPath string) (carddavClientConfigPayload, bool, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -133,6 +148,10 @@ func (s *Server) handleContactsCardDAVClientConfig(w http.ResponseWriter, r *htt
 		payload.Managed = false
 		if payload.ServerURL == "" || payload.Username == "" || payload.Password == "" {
 			http.Error(w, "serverUrl, username, and password are required", http.StatusBadRequest)
+			return
+		}
+		if err := rejectURLUserinfo(payload.ServerURL); err != nil {
+			http.Error(w, "serverUrl must not embed credentials", http.StatusBadRequest)
 			return
 		}
 		// https only. Every request to this URL carries the user's address-book

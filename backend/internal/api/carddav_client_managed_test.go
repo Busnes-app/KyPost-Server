@@ -56,3 +56,17 @@ func TestCardDAVClientPOSTAndDELETERefusedWhenManaged(t *testing.T) {
 		t.Fatalf("config removed despite lock: %v", err)
 	}
 }
+
+func TestCardDAVClientRejectsURLWithUserinfo(t *testing.T) {
+	srv, u := newTestServerWithUser(t)
+	body, _ := json.Marshal(map[string]any{
+		"serverUrl": "https://gwen:hunter2@contacts.example.test/dav/", "username": "gwen", "password": "p",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/contacts/carddav-client/config", bytes.NewReader(body))
+	authRequestAs(srv, req, u.ID)
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400", rec.Code)
+	}
+}
