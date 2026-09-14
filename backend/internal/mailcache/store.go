@@ -115,6 +115,7 @@ func clearPGPVerdict(e *Entry) {
 	e.PGPVerified = false
 	e.PGPSignerFingerprint = ""
 	e.PGPVerdictSchemaVersion = 0
+	e.PGPBodyOmitted = false
 	e.Body = ""
 	e.BodyMode = ""
 }
@@ -201,7 +202,9 @@ func (s *Store) Snapshot(mailboxKey string, limit int) ([]Entry, bool, error) {
 	start := len(win.Entries) - limit
 	out := append([]Entry{}, win.Entries[start:]...)
 	for _, e := range out {
-		if e.Body == "" {
+		// An encrypted message the server does not decrypt has no body to
+		// warm and never will; its classification is what the client needs.
+		if e.Body == "" && !e.PGPBodyOmitted {
 			return out, false, nil
 		}
 		// A body is not enough. The daemon poller writes a body but never looks
@@ -400,13 +403,11 @@ func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64)
 // callers already read an empty Body as "not warmed yet, fetch live if needed"
 // rather than "empty message" (see Entry.Body).
 //
-// The cost is real and larger than one fetch: Snapshot reports a window as
-// warmed only when every entry has a body, so one encrypted message makes the
-// whole mailbox read as cold and handleInbox's cache-first branch is skipped.
-// Serving that branch from a window with empty PGP bodies would emit
-// pgpEncrypted with no body and no pgpDecryptError, which is exactly the wire
-// signature of a CLIENT-protected message, so clients would tell a server-mode
-// user their own mail is unreadable. See docs/E2E_PGP.md.
+// Snapshot still counts such an entry as warm, through PGPBodyOmitted: the
+// server never decrypts (client custody is the only mode; server custody
+// returns a migration error, which is a decrypt error and so never sets the
+// flag), so an encrypted row served from cache with no body and no
+// pgpDecryptError is exactly what the live path emits for it too.
 //
 // A Sent body is never written either: that folder holds every message the owner
 // has ever sent, in plaintext, on the disk of a server whose claim for
@@ -423,6 +424,13 @@ func warmBody(mailboxKey string, in Entry) string {
 		return ""
 	}
 	return redactPickupLinkFragments(in.Body)
+}
+
+// bodyOmitted says whether in is an encrypted message the server holds no
+// plaintext for: classified by the API, encrypted, and not a failed decrypt
+// (which is transient and must stay cold so it is retried).
+func bodyOmitted(in Entry) bool {
+	return in.PGPClassified && in.PGPEncrypted && in.PGPDecryptError == ""
 }
 
 // sentMailboxLeaf matches the last path component of a Sent folder across the
@@ -520,6 +528,7 @@ func (s *Store) Upsert(mailboxKey string, entries []Entry) error {
 			win.Seq++
 			e := in
 			e.Body = warmBody(mailboxKey, in)
+			e.PGPBodyOmitted = bodyOmitted(in)
 			e.Rev = win.Seq
 			e.FirstRev = win.Seq
 			// PGPDecryptError is a transient signal for this Upsert call's
@@ -572,6 +581,7 @@ func (s *Store) Upsert(mailboxKey string, entries []Entry) error {
 			// for the browser's verification, so that silently turned the
 			// check off rather than merely dropping a badge.
 			if in.PGPClassified || !updated.PGPClassified {
+				updated.PGPBodyOmitted = bodyOmitted(in)
 				updated.PGPEncrypted = in.PGPEncrypted
 				updated.PGPSigned = in.PGPSigned
 				updated.PGPVerified = in.PGPVerified

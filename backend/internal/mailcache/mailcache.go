@@ -156,6 +156,18 @@ type Entry struct {
 	// subject instead.
 	PGPProtectedSubject string `json:"pgpProtectedSubject,omitempty"`
 
+	// PGPBodyOmitted records that a classifying writer found this message
+	// encrypted and that the server, by design, holds no plaintext for it:
+	// the browser fetches the ciphertext on open. It is the one case where
+	// an empty Body means "nothing to warm, ever" rather than "not warmed
+	// yet", so Snapshot counts such an entry as warm. Without it one
+	// encrypted message made the whole mailbox read cold on every load.
+	//
+	// Set only from a classified write with no decrypt error, and cleared
+	// with the verdict by clearPGPVerdict, so a rules change or a contact
+	// key change still forces the next read through the live path.
+	PGPBodyOmitted bool `json:"pgpBodyOmitted,omitempty"`
+
 	// PGPDecryptError is the transient outcome of the caller's decrypt
 	// ATTEMPT, not durable state — hence `json:"-"`, unlike every other
 	// field here.

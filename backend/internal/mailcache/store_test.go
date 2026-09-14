@@ -441,6 +441,58 @@ func TestSnapshot_FullyWarmedBoundary(t *testing.T) {
 	}
 }
 
+// One encrypted message must not make the whole window cold: the server
+// holds no plaintext for it by design, and the client fetches the ciphertext
+// on open, so a classified encrypted entry is as warm as it will ever get.
+func TestSnapshot_ClassifiedEncryptedEntryCountsAsWarm(t *testing.T) {
+	s := newTestStore(t)
+	plain := entry(1, "a", "unread", "body-1")
+	encrypted := entry(2, "[Encrypted] Email Sent by KyPost", "unread", "")
+	encrypted.PGPEncrypted = true
+	if err := s.Upsert("INBOX", []Entry{plain, encrypted}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	out, warmed := mustSnapshot(t, s, "INBOX", 2)
+	if !warmed {
+		t.Fatal("a classified encrypted entry without a body must count as warm")
+	}
+	if !out[1].PGPEncrypted || out[1].Body != "" || !out[1].PGPBodyOmitted {
+		t.Fatalf("served entry = %+v, want encrypted, bodyless, body-omitted", out[1])
+	}
+
+	// A failed decrypt is transient and must stay cold so it is retried.
+	failed := entry(3, "c", "unread", "")
+	failed.PGPEncrypted = true
+	failed.PGPDecryptError = "boom"
+	if err := s.Upsert("INBOX", []Entry{failed}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if _, warmed := mustSnapshot(t, s, "INBOX", 3); warmed {
+		t.Fatal("a failed decrypt must not read as warm")
+	}
+
+	// A poller write never classifies, so it must not read as warm either.
+	unclassified := entry(4, "d", "unread", "")
+	unclassified.PGPEncrypted = true
+	unclassified.PGPClassified = false
+	if err := s.Upsert("INBOX", []Entry{unclassified}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if _, warmed := mustSnapshot(t, s, "INBOX", 4); warmed {
+		t.Fatal("an unclassified encrypted entry must not read as warm")
+	}
+}
+
+// Invalidating a verdict must also drop the body-omitted warmth, or a rules
+// or key change would never force the message back through the live path.
+func TestClearPGPVerdictDropsBodyOmitted(t *testing.T) {
+	e := Entry{PGPEncrypted: true, PGPSigned: true, PGPBodyOmitted: true, PGPClassified: true}
+	clearPGPVerdict(&e)
+	if e.PGPBodyOmitted {
+		t.Fatal("clearPGPVerdict left PGPBodyOmitted set")
+	}
+}
+
 // A client-protected message is encrypted AND has no body, by design — the
 // server does not decrypt it. The flags must survive an Upsert into an
 // existing entry anyway, or the message is cached as ordinary mail and the
