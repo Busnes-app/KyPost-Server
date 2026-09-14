@@ -212,7 +212,7 @@ function EnrollPanel({
       }
 
       const snapshot = unlockedPGPIdentity();
-      if (snapshot.fingerprint !== fingerprint) throw new Error("PGP identity changed. Reload and unlock the current key.");
+      if (snapshot.fingerprint.toUpperCase() !== fingerprint.toUpperCase()) throw new Error("PGP identity changed. Reload and unlock the current key.");
 
       // THE GATE. Everything below it is unreachable without a match.
       if (!(await verifyEnrollmentCode(publicKey, device.deviceId, code))) {

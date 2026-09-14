@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
+import { getPasswordSnapshot } from "../api/pgp";
 import { postJSON, toErrorMessage } from "../api/client";
 import { credentialFields, deriveCredential, deriveNewCredential } from "../api/auth";
 import { defaultIterations, newLoginSalt } from "../lib/authSecret";
@@ -33,11 +34,18 @@ export function ChangePasswordForm({
   const [newPassword, setNewPassword] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [passwordSnapshot, setPasswordSnapshot] = useState<Awaited<ReturnType<typeof getPasswordSnapshot>> | null>(null);
   const [pgpSession, setPgpSession] = useState<PGPSessionState | null>(null);
   useEffect(() => {
+    let mounted = true;
+    void getPasswordSnapshot().then((snapshot) => {
+      if (mounted) setPasswordSnapshot(snapshot);
+    }).catch(() => {
+      if (mounted) setStatus("Password preparation is unavailable. Reload before changing your password.");
+    });
     const unsubscribe = subscribePGPSession(setPgpSession);
     void loadPGPSession();
-    return unsubscribe;
+    return () => { mounted = false; unsubscribe(); };
   }, []);
 
   async function submitPasswordChange(e: FormEvent) {
@@ -121,7 +129,7 @@ export function ChangePasswordForm({
           <p className="notice">No server recovery copy is confirmed for your PGP key. Keep a recovery file and its secret before changing this password. You can create one in Security → Encryption.</p>
         ) : null}
 
-        {initialCurrentPassword ? <p className="notice">After an administrator resets your password, an existing PGP key still needs its previous password or recovery secret. Recover it in Security → Encryption after continuing.</p> : null}
+        {passwordSnapshot?.mustChangePassword && passwordSnapshot.protection === "client" ? <p className="notice">This change will not re-encrypt your existing PGP key; it stays sealed under your previous password. Recover it with that password or your recovery secret in Security → Encryption after continuing.</p> : null}
 
         <label className="auth-field">
           <span className="auth-label">Username</span>
@@ -148,7 +156,7 @@ export function ChangePasswordForm({
           />
         </label>
 
-        <button type="submit" className="auth-submit" disabled={busy}>
+        <button type="submit" className="auth-submit" disabled={busy || !passwordSnapshot}>
           {busy ? "Updating…" : "Update password"}
         </button>
       </form>

@@ -63,6 +63,9 @@ function stubFetch(loginResponse: Response) {
     "fetch",
     vi.fn((input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
+      if (url === "/api/auth/password") {
+        return Promise.resolve(jsonResponse(200, { pgpRevision: 0, protection: "", wrappedPrivateKey: "", mustChangePassword: true }));
+      }
       if (url.startsWith("/api/auth/captcha-config")) {
         // No provider configured: the form must not wait on this to submit.
         return Promise.resolve(jsonResponse(404, { error: "not found" }));

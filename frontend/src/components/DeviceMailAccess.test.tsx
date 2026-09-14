@@ -1,3 +1,4 @@
+import { acceptCommittedPGPKey } from "../lib/pgpSession";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
@@ -22,12 +23,13 @@ vi.mock("../api/pgp", async (importOriginal) => ({
   deleteDeviceEnvelope: (id: string, password: string, revision: number) => deleteDeviceEnvelope(id, password, revision)
 }));
 
-vi.mock("../lib/pgpSession", () => ({
-  unlockedPGPIdentity: () => ({ fingerprint: "AAAA1111BBBB2222", pgpRevision: 7 }),
+vi.mock("../lib/pgpSession", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/pgpSession")>(),
   pgpSessionState: () => ({ bootstrap: { pgpRevision: 7 } })
 }));
 
-vi.mock("../lib/keyVault", () => ({
+vi.mock("../lib/keyVault", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/keyVault")>(),
   requireUnlockedKey: () => requireUnlockedKey()
 }));
 
@@ -152,6 +154,7 @@ beforeEach(() => {
   putDeviceEnvelope.mockResolvedValue({ ok: true });
   deleteDeviceEnvelope.mockResolvedValue({ ok: true });
   requireUnlockedKey.mockReturnValue("-----BEGIN PGP PRIVATE KEY BLOCK-----");
+  acceptCommittedPGPKey("ARMORED", { fingerprint: "AAAA1111BBBB2222", pgpRevision: 7 });
 });
 
 describe("the status cell", () => {
@@ -591,4 +594,14 @@ describe("panel exclusivity", () => {
     await userEvent.click(screen.getByRole("button", { name: "Remove sealing" }));
     expect((screen.getByLabelText("Account password") as HTMLInputElement).value).toBe("");
   });
+});
+
+
+it("enrolls after a recovery commit with different fingerprint casing", async () => {
+  acceptCommittedPGPKey("ARMORED", { fingerprint: "AAAA1111BBBB2222", pgpRevision: 7 });
+  render(<Harness fingerprint="aaaa1111bbbb2222" />);
+  await startCeremony();
+  await submitCeremony(await codeFor(HONEST_KEY));
+  await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledExactlyOnceWith("d1", expect.anything(), "hunter2", 7));
+  expect(screen.queryByText(/PGP identity changed/)).toBeNull();
 });
