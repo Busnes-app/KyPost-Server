@@ -150,7 +150,7 @@ func TestPasswordChangeOnMustChangeStillRequiresTheCurrentCredential(t *testing.
 	}
 	// An admin-set temporary password, which is how a real account arrives at
 	// MustChangePassword.
-	u, err = srv.users.SetPassword(context.Background(), u.ID, "temporary-issued-password", true)
+	u, err = srv.users.SetPassword(context.Background(), u.ID, "temporary-issued-password", true, nil)
 	if err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}

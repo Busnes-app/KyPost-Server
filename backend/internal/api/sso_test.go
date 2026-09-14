@@ -192,7 +192,7 @@ func TestSSOLoginAndCallback(t *testing.T) {
 	// Unlinking needs somewhere to sign in from afterwards; an auto-provisioned
 	// account has nowhere until it sets a password. See
 	// TestUnlinkRefusesWhenTheLinkIsTheOnlyCredential.
-	if _, err := srv.users.SetPassword(context.Background(), u.ID, "a-local-password-123", false); err != nil {
+	if _, err := srv.users.SetPassword(context.Background(), u.ID, "a-local-password-123", false, nil); err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}
 	rec = httptest.NewRecorder()
@@ -471,7 +471,7 @@ func TestSyncWebhookCanReactivateAfterRevocation(t *testing.T) {
 	// HasLocalCredential skip and RevokeSSOLink is never reached — which would
 	// make everything below assert sync round-trips on a link that was never
 	// revoked, passing even if revocation went back to erasing the subject.
-	if _, err := srv.users.SetPassword(context.Background(), created.ID, "a-local-password-123", false); err != nil {
+	if _, err := srv.users.SetPassword(context.Background(), created.ID, "a-local-password-123", false, nil); err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}
 	clearMustChangePassword(t, srv, created.ID)

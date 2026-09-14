@@ -120,7 +120,7 @@ func TestStoreLifecycle(t *testing.T) {
 		t.Fatalf("Role = %v, want admin", got.Role)
 	}
 
-	if _, err := store.SetPassword(context.Background(), u.ID, "new-password-testpassword", true); err != nil {
+	if _, err := store.SetPassword(context.Background(), u.ID, "new-password-testpassword", true, nil); err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}
 	got, _ = store.Get(u.ID)

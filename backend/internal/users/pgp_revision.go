@@ -38,16 +38,13 @@ func pgpState(u User) pgpRevisionState {
 // Optional only for compatibility with existing single-key callers. New callers
 // supply the revision from the snapshot used to prepare their ciphertext. Zero
 // is a real expectation for records predating revisions, not "skip the guard".
-func (s *Store) mutatePGP(id string, expected []*uint64, fn func(*User) error) (User, error) {
-	if len(expected) > 1 {
-		return User{}, ErrInvalidPGPRevision
-	}
+func (s *Store) mutatePGP(id string, expected *uint64, fn func(*User) error) (User, error) {
 	guard := func(_ []User, u User) error {
-		if len(expected) == 1 && expected[0] != nil {
-			if *expected[0] > MaxPGPRevision {
+		if expected != nil {
+			if *expected > MaxPGPRevision {
 				return ErrInvalidPGPRevision
 			}
-			if *expected[0] != u.PGPRevision {
+			if *expected != u.PGPRevision {
 				return ErrPGPRevisionChanged
 			}
 		}

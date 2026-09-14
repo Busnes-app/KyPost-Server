@@ -103,7 +103,7 @@ func testUserWithClientKey(t *testing.T, srv *Server) string {
 		t.Fatalf("users.List: %v (%d users)", err, len(all))
 	}
 	id := all[0].ID
-	if _, err := srv.users.SetPGPIdentityClientProtected(id, "FPR", "KEYID", "-----BEGIN PGP PUBLIC KEY BLOCK-----", `{"v":2}`, "generated", "2026-01-01T00:00:00Z"); err != nil {
+	if _, err := srv.users.SetPGPIdentityClientProtected(id, "FPR", "KEYID", "-----BEGIN PGP PUBLIC KEY BLOCK-----", `{"v":2}`, "generated", "2026-01-01T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
 	return id

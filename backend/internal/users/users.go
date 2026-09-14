@@ -1393,7 +1393,7 @@ func (s *Store) SetRole(id string, role Role) (User, error) {
 
 // SetPassword sets a new password. If requireChange is true the user must
 // change it again on next login (used for admin-initiated resets).
-func (s *Store) SetPassword(ctx context.Context, id, newPassword string, requireChange bool, expectedRevision ...*uint64) (User, error) {
+func (s *Store) SetPassword(ctx context.Context, id, newPassword string, requireChange bool, expectedRevision *uint64) (User, error) {
 	if err := ValidatePassword(newPassword); err != nil {
 		return User{}, err
 	}
@@ -1632,7 +1632,7 @@ func (s *Store) UpdatePGPKeyMaterial(id, expectFingerprint, armoredPublicKey, pr
 // password; this store never interprets it. Clearing PGPPrivateKeyEnc is the
 // point — after this call no copy of the private key on this server is one this
 // server can open.
-func (s *Store) SetPGPIdentityClientProtected(id, fingerprint, keyID, armoredPublicKey, wrapped, source, createdAt string, expectedRevision ...*uint64) (User, error) {
+func (s *Store) SetPGPIdentityClientProtected(id, fingerprint, keyID, armoredPublicKey, wrapped, source, createdAt string, expectedRevision *uint64) (User, error) {
 	if err := ValidateWrappedEnvelope(wrapped); err != nil {
 		return User{}, err
 	}
@@ -1675,7 +1675,7 @@ var ErrPGPIdentityChanged = errors.New("PGP identity changed; reload and try aga
 // user changes their password: the wrapping key is derived from that password,
 // so the browser unwraps with the old one and rewraps with the new one.
 // A non-empty expectedFingerprint is checked under the mutation lock.
-func (s *Store) RewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, expectedRevision ...*uint64) (User, error) {
+func (s *Store) RewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, expectedRevision *uint64) (User, error) {
 	if err := ValidateWrappedEnvelope(wrapped); err != nil {
 		return User{}, err
 	}
@@ -1710,7 +1710,7 @@ func (s *Store) RewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, exp
 // would leave the unlock path with no deterministic answer about which sealing
 // a given secret opens. expectedFingerprint is optional for older clients;
 // a supplied value must match under the mutation lock.
-func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFingerprint string, expectedRevision ...*uint64) (User, error) {
+func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFingerprint string, expectedRevision *uint64) (User, error) {
 	if err := ValidateWrappedEnvelope(envelope); err != nil {
 		return User{}, err
 	}
@@ -1771,7 +1771,7 @@ func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFinge
 // Deleting an absent slot succeeds: the caller's goal is that the slot is gone,
 // and it already is. Refusing the password slot is what keeps this from being a
 // way to make an account permanently unopenable.
-func (s *Store) DeletePGPWrappedEnvelope(id, slot string, expectedRevision ...*uint64) (User, error) {
+func (s *Store) DeletePGPWrappedEnvelope(id, slot string, expectedRevision *uint64) (User, error) {
 	if !ValidEnvelopeSlot(slot) {
 		return User{}, ErrInvalidEnvelopeSlot
 	}
@@ -1795,7 +1795,7 @@ func (s *Store) DeletePGPWrappedEnvelope(id, slot string, expectedRevision ...*u
 }
 
 // ClearPGPIdentity removes a user's PGP identity entirely.
-func (s *Store) ClearPGPIdentity(id string, expectedRevision ...*uint64) (User, error) {
+func (s *Store) ClearPGPIdentity(id string, expectedRevision *uint64) (User, error) {
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
 		u.PGPFingerprint = ""
 		u.PGPKeyID = ""
@@ -2488,7 +2488,7 @@ func VerifyAuthSecret(ctx context.Context, u User, candidate string) (bool, erro
 // is written in the same mutation when rewrapped is non-empty — see
 // SetDerivedAuthAndRewrapPGP.
 func (s *Store) SetDerivedAuth(ctx context.Context, id, authSecret, loginSalt string, iterations int, requireChange bool) (User, error) {
-	return s.SetDerivedAuthAndRewrapPGP(ctx, id, authSecret, loginSalt, iterations, requireChange, "")
+	return s.SetDerivedAuthAndRewrapPGP(ctx, id, authSecret, loginSalt, iterations, requireChange, "", nil)
 }
 
 // SetDerivedAuthAndRewrapPGP replaces id's credential AND, when rewrapped is
@@ -2501,7 +2501,7 @@ func (s *Store) SetDerivedAuth(ctx context.Context, id, authSecret, loginSalt st
 // has — permanently, since a later rewrap re-derives from the CURRENT password.
 // The only way back is deleting the identity and losing every message encrypted
 // to it.
-func (s *Store) SetDerivedAuthAndRewrapPGP(ctx context.Context, id, authSecret, loginSalt string, iterations int, requireChange bool, rewrapped string, expectedRevision ...*uint64) (User, error) {
+func (s *Store) SetDerivedAuthAndRewrapPGP(ctx context.Context, id, authSecret, loginSalt string, iterations int, requireChange bool, rewrapped string, expectedRevision *uint64) (User, error) {
 	if err := ValidateAuthSecret(authSecret); err != nil {
 		return User{}, err
 	}

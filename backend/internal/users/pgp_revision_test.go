@@ -91,7 +91,7 @@ func TestPGPRevisionTracksRecoveryAndCredentialButNotDevices(t *testing.T) {
 		t.Fatalf("in-place recovery replacement: %v", err)
 	}
 	prior = u.PGPRevision
-	u, err = s.SetPassword(context.Background(), id, "admin-reset-test-password", true)
+	u, err = s.SetPassword(context.Background(), id, "admin-reset-test-password", true, nil)
 	if err != nil || u.PGPRevision != prior+1 {
 		t.Fatalf("admin reset: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestPGPRevisionZeroAndExhaustion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RewrapPGPPrivateKey(id, `{"v":2,"overflow":true}`, "FPR"); err == nil {
+	if _, err := s.RewrapPGPPrivateKey(id, `{"v":2,"overflow":true}`, "FPR", nil); err == nil {
 		t.Fatal("revision wrapped")
 	}
 	after, err := os.ReadFile(s.path)

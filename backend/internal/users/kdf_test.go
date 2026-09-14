@@ -160,7 +160,7 @@ func TestEveryDerivationEntryPointSharesTheOneLimit(t *testing.T) {
 			return err
 		}},
 		{"Store.SetPassword", func() error {
-			_, err := store.SetPassword(ctx, bootstrap.ID, "another-long-enough-password", false)
+			_, err := store.SetPassword(ctx, bootstrap.ID, "another-long-enough-password", false, nil)
 			return err
 		}},
 		{"Store.SetDerivedAuth", func() error {
