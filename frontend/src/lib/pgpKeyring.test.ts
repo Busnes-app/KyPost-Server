@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as pgp from "openpgp";
 import fixture from "../../../testdata/pgp-keyring-v1.json";
 import { decryptionKeysFor, parseKeyring } from "./pgpKeyring";
-import { createRecoveryBackup, lock, requireUnlockedKey, unlockWithArmoredKey, VaultLockedError } from "./keyVault";
+import { lock, requireUnlockedKey, unlockWithArmoredKey, VaultLockedError } from "./keyVault";
 import { buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, decryptMessage, openSealedToSelf, sealToSelf } from "./pgpClient";
 
 const raw = JSON.stringify(fixture.ring);
@@ -68,7 +68,6 @@ describe("keyring readers", () => {
   it("refuses all current single-key writers for a ring until lifecycle writes ship", async () => {
     unlockWithArmoredKey(raw);
     expect(() => requireUnlockedKey()).toThrow(/lifecycle upgrade/);
-    await expect(createRecoveryBackup(raw, active.fingerprint, "unused")).rejects.toThrow(/lifecycle upgrade/);
     await expect(sealToSelf("new")).rejects.toThrow(/lifecycle upgrade/);
     await expect(buildEncryptedDraft(envelope, "text/plain", "new")).rejects.toThrow(/lifecycle upgrade/);
     await expect(buildEncryptedSentCopy(envelope, "text/plain", "new", false)).rejects.toThrow(/lifecycle upgrade/);

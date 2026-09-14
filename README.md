@@ -21,7 +21,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - Contacts address book with groups, dedupe, bulk delete, CSV and vCard import and export, and photo support
 - CardDAV server (`/dav`, `/.well-known/carddav`) to sync contacts to phones and desktop apps. An optional CardDAV client syncs against an external address book.
 - Browser PGP writes reject stale snapshots, including same-key edits concurrent with password changes or recovery uploads.
-- PGP recovery copies stored as ciphertext, downloadable backups checked before creation completes, and browser-local recovery drills.
+- PGP recovery copies stored as ciphertext, downloadable backups checked before creation completes, and browser-local recovery drills. Complete-ring offline export/drills are prepared; conversion and complete-ring restore/uploads remain gated.
 - Multi-factor authentication: TOTP authenticator apps, one-time recovery codes, and push-approval sign-in
 - Single Sign-On against any standard OpenID Connect provider — KySignOn (one-click preset), Authentik and Keycloak have their admin-group claims mapped. Authorization code + PKCE, ID tokens verified against the issuer's JWKS. Accounts are claimed by the provider's `sub` and never by username or email. Admin-configured under Admin > Server > SSO; **requires `SERVER_BASE_URL`**.
 - Send-as aliases, each verified by a DKIM-signed challenge from the alias's own domain before it can be used

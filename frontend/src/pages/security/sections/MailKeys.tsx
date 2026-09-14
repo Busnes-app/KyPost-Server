@@ -18,10 +18,12 @@ import {
   type DiscoverySettings,
   type DiscoverySuppression
 } from "../../../api/pgp";
+import { validateKeyringSnapshot } from "../../../lib/pgpKeyring";
 import { generateIdentity, importIdentity } from "../../../lib/pgpClient";
 import {
   createRecoveryBackup,
   requireUnlockedKey,
+  requireUnlockedKeyMaterial,
   restoreRecoveryBackup,
   wrapPrivateKey,
   type RecoveryBackup
@@ -338,12 +340,24 @@ export function MailKeys({
       if (requirePGPRevision(current) !== snapshot.pgpRevision || current.protection !== "client") {
         throw new Error("Your PGP state changed. Reload and unlock the current key before making a backup.");
       }
+      if (current.keyring != null) {
+        const raw = requireUnlockedKeyMaterial();
+        const { backup, secret } = await createRecoveryBackup(raw, current);
+        const fresh = await getPGPBootstrap();
+        if (requirePGPRevision(fresh) !== snapshot.pgpRevision || fresh.protection !== "client") {
+          throw new Error("Your PGP state changed while preparing the backup. Reload and unlock the current key.");
+        }
+        if (!mounted.current) return;
+        saveRecoveryBackup(backup, backup.fingerprint, secret, snapshot.pgpRevision);
+        setPgpStatus("Complete keyring recovery file checked. Download requested; keep its secret separately. It cannot recover keys added after this backup.");
+        return;
+      }
       const imported = await importIdentity(requireUnlockedKey(), "");
       if (imported.fingerprint.toUpperCase() !== snapshot.fingerprint.toUpperCase()) {
         throw new Error("Your PGP identity changed. Reload and unlock the current key before making a backup.");
       }
       const { backup, secret } = await createRecoveryBackup(
-        imported.armoredPrivateKey, imported.fingerprint, imported.armoredPublicKey
+        imported.armoredPrivateKey, { fingerprint: imported.fingerprint, publicKey: imported.armoredPublicKey }
       );
       if (!mounted.current) return; // Do not start a download after leaving during creation.
       saveRecoveryBackup(backup, backup.fingerprint, secret, snapshot.pgpRevision);
@@ -357,6 +371,10 @@ export function MailKeys({
 
   async function handleStoreRecoveryBackup() {
     if (!recoveryBackup || !recoverySecret || !preparedRecovery) return;
+    if (recoveryBackup.format === "kypost-pgp-recovery-v2") {
+      setPgpStatus("Complete keyring uploads require the lifecycle update. Keep the downloaded file and secret.");
+      return;
+    }
     const password = window.prompt(
       "Enter your account password to store the recovery copy.\n\n" +
       "You have confirmed that you saved its secret. This replaces any previous server recovery copy and its secret. Older downloaded files still work with their own secrets."
@@ -403,7 +421,7 @@ export function MailKeys({
       const exported = await exportLegacyPGPKey(legacyBackupPassword);
       const imported = await importIdentity(exported.privateKey, "");
       const { backup, secret } = await createRecoveryBackup(
-        imported.armoredPrivateKey, imported.fingerprint, imported.armoredPublicKey
+        imported.armoredPrivateKey, { fingerprint: imported.fingerprint, publicKey: imported.armoredPublicKey }
       );
       if (!mounted.current) return;
       saveRecoveryBackup(backup, backup.fingerprint, secret, requirePGPRevision(exported));
@@ -460,10 +478,30 @@ export function MailKeys({
     setPgpStatus("");
     setDrillDate("");
     try {
-      const current = await getPGPBootstrap();
       // Read server bytes again: a drill must test the copy currently offered.
+      if (restoreSource.kind === "file" && restoreSource.file.size > (512 << 10)) {
+        throw new Error("The recovery backup is too large.");
+      }
       const raw = restoreSource.kind === "file" ? await restoreSource.file.text() : JSON.stringify(await getRecoveryBackup());
       const restored = await restoreRecoveryBackup(raw, restoreSecret);
+      // KDF/OpenPGP parsing may take time; compare against a fresh snapshot afterward.
+      const current = await getPGPBootstrap();
+      if (restored.format === "kypost-pgp-recovery-v2" || current.keyring != null) {
+        if (restored.format !== "kypost-pgp-recovery-v2" || current.keyring == null || current.protection !== "client") {
+          throw new Error("This backup is not the current complete keyring. A legacy backup cannot replace retained keys.");
+        }
+        await validateKeyringSnapshot(restored.privateKey, { ...current, keyring: current.keyring });
+        if (!drill) throw new Error("Complete keyring restoration requires the lifecycle update. Use Test recovery to check this copy; no keys were changed.");
+        const backup: RecoveryBackup = { format: restored.format, fingerprint: restored.fingerprint,
+          publicKey: restored.publicKey, envelope: restored.envelope, keyring: restored.keyring };
+        setRestoreSecret("");
+        setRestorePassword("");
+        try {
+          setDrillDate(await recordRecoveryDrill(userId ?? "", backup));
+          setPgpStatus("Recovery drill passed. Every retained key and the current public identity match; the date was saved in this browser. No keys were changed.");
+        } catch { setPgpStatus("Recovery drill passed, but this browser could not save the date. No keys were changed."); }
+        return;
+      }
       const imported = await importIdentity(restored.privateKey, "");
       const expected = current.fingerprint.toUpperCase();
       if (current.protection !== "client" || !expected || imported.fingerprint.toUpperCase() !== expected ||
@@ -875,7 +913,7 @@ export function MailKeys({
                   >
                     Copy secret
                   </button>
-                  {recoveryBackup && pgpSession?.bootstrap?.protection === "client" ? (
+                  {recoveryBackup?.format === "kypost-pgp-recovery-v1" && pgpSession?.bootstrap?.protection === "client" ? (
                     <button type="button" disabled={pgpBusy} onClick={() => void handleStoreRecoveryBackup()}>
                       I saved the secret — store server copy
                     </button>

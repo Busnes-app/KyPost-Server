@@ -14,8 +14,10 @@ admin user-delete route exists.
 
 The browser vault holds opaque plaintext in memory (`keyVault.ts`).
 `pgpKeyring.ts` validates legacy armor or the complete ring for mail, saved drafts
-and local sealed autosave decryption. Existing signing/enrollment/recovery writers
-still require single-key armor; no account conversion is exposed.
+and local sealed autosave decryption. Existing signing/enrollment/legacy upload writers
+still require single-key armor; no account conversion is exposed. Complete-ring
+offline export and read-only recovery drills are implemented; v2 restore/upload
+remains refused until the lifecycle transaction HTTP writer ships.
 The users store holds one current public identity and opaque password/recovery/
 device envelopes. Replacing its fingerprint clears device slots; a same-key
 update does not. Fingerprint guards cannot detect concurrent same-key edits.
@@ -63,8 +65,12 @@ public-only keys and, for JSON rings, any missing or still-passphrase-protected
 private packet. Legacy armor keeps its prior decryption policy, including GnuPG
 exports with a dummy primary and usable encryption subkey, large UID/certification
 sets, and text surrounding armor. JSON ring plaintext parsing is bounded to
-128 KiB before JSON/OpenPGP work; the future writer must
-separately enforce the serialized sealed-envelope limit below.
+128 KiB before JSON/OpenPGP work; recovery creation also enforces the serialized
+sealed-envelope limit below, including base64 expansion. Reader capacity is broader
+than storage admission: both password and recovery envelopes must fit 128 KiB,
+so the effective stored plaintext ceiling is below 96 KiB. Wrapping the same bytes
+with either secret produces equal envelope sizes; keep the broader reader bound
+for inspection and salvage.
 
 `revocationCertificate` is optional for imported keys. Keep unpublished
 certificates sealed: possession permits premature revocation. Derive and compare
@@ -145,7 +151,11 @@ this general revision: changing a password should not break a device's key copy.
    fingerprint before retrying; never silently generate another replacement.
 5. Re-enroll every device using the complete ring, including historical keys.
 
-Use a new `kypost-pgp-recovery-v2` file format for the ring. Keep v1 readers for
+`kypost-pgp-recovery-v2` file creation and read-only drills are implemented for the ring.
+The file carries public identity/metadata and seals the original complete plaintext;
+creation roundtrips every byte. File opening checks encrypted generation/inventories
+against file metadata; drills check a fresh post-decrypt server snapshot too, including
+the complete active public packet multiset. V2 restore and upload remain gated. Keep v1 readers for
 legacy accounts. A v1 or older backup must never replace a converted account's
 ring and erase newer members. A v2 backup matching the current material generation
 and complete primary/subkey inventory can restore a locked vault. An older
@@ -236,8 +246,9 @@ pass:
    legacy import, duplicate/invalid members, subkey IDs, hidden recipients, revoked
    history, drafts and autosaves. Preserve active-only signing.
 2. Revision guards and the internal whole-ring transaction are implemented; browser
-   whole-ring password/recovery, retirement and their HTTP writer remain.
-   test races with password reset, same-key edits, recovery and device publication,
+   complete-ring recovery export/drills are implemented. Whole-ring password changes,
+   recovery restore/merge, retirement and their HTTP writer remain.
+   Test races with password reset, same-key edits, recovery and device publication,
    storage failures and uncertain HTTP outcomes. Prove no partial credential/ring
    commit and no history loss from legacy writers or old backups.
 3. V3 vectors and Android/Mac/Linux persistence/import upgrades. Exercise fresh
@@ -260,5 +271,6 @@ Shared synthetic reader vectors: [testdata/pgp-keyring-v1.json](../testdata/pgp-
 `frontend/src/lib/pgpKeyring.test.ts` exercises them through the real mail and
 autosave readers, plus draft/Sent attachments, revoked history, malformed rings
 and refusal of legacy writes. The fixture private keys are public test data.
-Server generation/inventory comparison remains an implementation gate; this
-reader alone cannot establish backup freshness or authorize conversion.
+Recovery drills now compare server generation/inventories and current public packets;
+this does not authorize conversion. Lifecycle HTTP transactions, restore/merge and
+native compatibility remain implementation gates.
