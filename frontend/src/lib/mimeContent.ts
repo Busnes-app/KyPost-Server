@@ -23,9 +23,21 @@
 /** Which MIME part the body was taken from. Matches the server's wire values. */
 export type BodyMode = "html" | "plain";
 
+/** One non-body part of a decrypted entity, decoded to its bytes. */
+export type MimeAttachment = {
+  name: string;
+  mimeType: string;
+  bytes: Uint8Array;
+  /** Content-ID without its angle brackets, for `cid:` references in the body. */
+  contentId?: string;
+};
+
 export type MimeContent = {
   body: string;
   mode: BodyMode;
+  attachments: MimeAttachment[];
+  /** Parts dropped by MimeLimits rather than decoded. The reader says so. */
+  attachmentsOmitted: number;
 };
 
 /**
@@ -34,6 +46,25 @@ export type MimeContent = {
  * by definition, so the walk must terminate on its own.
  */
 const MAX_DEPTH = 8;
+
+export type MimeLimits = {
+  /** Attachments kept per message; the rest are counted, not decoded. */
+  maxAttachments: number;
+  /** Decoded attachment bytes kept per message, estimated before decoding. */
+  maxAttachmentBytes: number;
+};
+
+/**
+ * Defaults mirror mailmsg.MaxInboundMessageBytes (25 MiB): a decrypted entity
+ * cannot legitimately carry more than the message that delivered it. The count
+ * cap has no server twin because the server never opens these; it exists so a
+ * hostile message cannot cost one allocation per part. Both are applied to
+ * attachments only, never to body selection, so the shared corpus is unaffected.
+ */
+export const DEFAULT_MIME_LIMITS: MimeLimits = {
+  maxAttachments: 200,
+  maxAttachmentBytes: 25 * 1024 * 1024
+};
 
 /** Splits a raw MIME entity into its header block and its body. */
 function splitHeaders(raw: string): { headers: Map<string, string>; body: string } {
@@ -72,14 +103,17 @@ function splitHeaders(raw: string): { headers: Map<string, string>; body: string
  * message.
  */
 function contentTypeParam(value: string, name: string): string {
+  // RFC 2231 extended value: name*=charset'language'percent-encoded. Checked
+  // before the plain form because a sender that emits both (this client does,
+  // so old readers still see a name) means the extended one, and Go's
+  // mime.ParseMediaType resolves the pair the same way.
+  const extended = new RegExp(`;\\s*${name}\\*\\s*=\\s*"?([^;"]*)"?`, "i").exec(value);
+  if (extended) return decodeRFC2231(extended[1]);
+
   const quoted = new RegExp(`;\\s*${name}\\s*=\\s*"([^"]*)"`, "i").exec(value);
   if (quoted) return quoted[1];
   const bare = new RegExp(`;\\s*${name}\\s*=\\s*([^;\\s]+)`, "i").exec(value);
   if (bare) return bare[1];
-
-  // RFC 2231 extended value: name*=charset'language'percent-encoded
-  const extended = new RegExp(`;\\s*${name}\\*\\s*=\\s*"?([^;"]*)"?`, "i").exec(value);
-  if (extended) return decodeRFC2231(extended[1]);
 
   // RFC 2231 continuations: name*0=…; name*1=… (each optionally *-encoded).
   let joined = "";
@@ -119,36 +153,22 @@ function modeFor(contentType: string): BodyMode {
   return mediaType(contentType) === "text/html" ? "html" : "plain";
 }
 
-/** Reverses Content-Transfer-Encoding so the body is readable text. */
-function decodePart(body: string, encoding: string, charset?: string): string {
-  const enc = encoding.trim().toLowerCase();
-  // ponytail: respect charset when available — base64/quoted-printable bytes are
-  // in that charset, and ignoring it produces mojibake (e.g. =C3=A9 → Â). Fall
-  // back to utf-8; if that charset is unsupported, try utf-8 before giving up.
-  const tryDecode = (bytes: Uint8Array, cs?: string) => {
-    const label = (cs || "utf-8").trim().toLowerCase() || "utf-8";
-    try {
-      return new TextDecoder(label).decode(bytes);
-    } catch {
-      try {
-        return new TextDecoder("utf-8").decode(bytes);
-      } catch {
-        return null;
-      }
-    }
-  };
-  switch (enc) {
+/**
+ * Reverses Content-Transfer-Encoding to the part's bytes. Returns null when
+ * the encoding is malformed, so the caller can keep the raw text instead.
+ *
+ * The default branch re-encodes the text as UTF-8: a decrypted entity arrives
+ * as text, so an unencoded part has already been through a UTF-8 decode and
+ * binary bytes cannot be recovered exactly. Every client that sends binary
+ * inside PGP/MIME uses base64, as this one does.
+ */
+function decodePartBytes(body: string, encoding: string): Uint8Array | null {
+  switch (encoding.trim().toLowerCase()) {
     case "base64":
       try {
-        // atob yields one byte per char; run it back through TextDecoder so
-        // multi-byte UTF-8 does not come out as mojibake.
-        const binary = atob(body.replace(/\s+/g, ""));
-        const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-        return tryDecode(bytes, charset) ?? body;
+        return Uint8Array.from(atob(body.replace(/\s+/g, "")), (c) => c.charCodeAt(0));
       } catch {
-        // Malformed base64 from a hostile or truncated message: show the raw
-        // text rather than throwing away the part.
-        return body;
+        return null;
       }
     case "quoted-printable": {
       // Whitespace at the end of an encoded line is transport padding (RFC 2045
@@ -170,11 +190,43 @@ function decodePart(body: string, encoding: string, charset?: string): string {
           i += 1;
         }
       }
-      const decoded = tryDecode(Uint8Array.from(bytes), charset);
-      return decoded ?? body;
+      return Uint8Array.from(bytes);
     }
     default:
+      return new TextEncoder().encode(body);
+  }
+}
+
+/**
+ * Decoded size of a part before decoding it, so a hostile message is refused
+ * before the allocation it was trying to cause rather than after.
+ */
+function estimateDecodedBytes(body: string, encoding: string): number {
+  return encoding.trim().toLowerCase() === "base64" ? Math.ceil((body.length * 3) / 4) : body.length;
+}
+
+/** Reverses Content-Transfer-Encoding so the body is readable text. */
+function decodePart(body: string, encoding: string, charset?: string): string {
+  const enc = encoding.trim().toLowerCase();
+  if (enc !== "base64" && enc !== "quoted-printable") {
+    return body;
+  }
+  // Malformed base64 from a hostile or truncated message: show the raw text
+  // rather than throwing away the part.
+  const bytes = decodePartBytes(body, enc);
+  if (!bytes) return body;
+  // ponytail: respect charset when available — base64/quoted-printable bytes are
+  // in that charset, and ignoring it produces mojibake (e.g. =C3=A9 → Â). Fall
+  // back to utf-8; if that charset is unsupported, try utf-8 before giving up.
+  const label = (charset || "utf-8").trim().toLowerCase() || "utf-8";
+  try {
+    return new TextDecoder(label).decode(bytes);
+  } catch {
+    try {
+      return new TextDecoder("utf-8").decode(bytes);
+    } catch {
       return body;
+    }
   }
 }
 
@@ -222,12 +274,23 @@ function splitParts(body: string, boundary: string): string[] {
   return parts;
 }
 
+/** Accumulates one walk: the first body wins, every other part is an attachment. */
+type Collector = {
+  body: MimeContent | null;
+  attachments: MimeAttachment[];
+  attachmentsOmitted: number;
+  attachmentBytes: number;
+  limits: MimeLimits;
+};
+
 /**
- * Walks a multipart body, returning the first part that qualifies as the
- * display body. Returns null when there is none.
+ * Walks a multipart body. The first part that qualifies as the display body
+ * becomes `out.body`; other recognised parts become attachments, exactly as
+ * pgpmail.parseMultipart files them. The walk continues past the body so
+ * attachments after it are found.
  */
-function walkMultipart(body: string, boundary: string, depth: number): MimeContent | null {
-  if (depth >= MAX_DEPTH) return null;
+function walkMultipart(body: string, boundary: string, depth: number, out: Collector): void {
+  if (depth >= MAX_DEPTH) return;
 
   for (const segment of splitParts(body, boundary)) {
     // A part begins with CRLF after the delimiter; splitHeaders tolerates it.
@@ -238,8 +301,7 @@ function walkMultipart(body: string, boundary: string, depth: number): MimeConte
     if (type.startsWith("multipart/")) {
       const nestedBoundary = contentTypeParam(contentType, "boundary");
       if (nestedBoundary) {
-        const nested = walkMultipart(partBody, nestedBoundary, depth + 1);
-        if (nested) return nested;
+        walkMultipart(partBody, nestedBoundary, depth + 1, out);
       }
       continue;
     }
@@ -249,23 +311,48 @@ function walkMultipart(body: string, boundary: string, depth: number): MimeConte
     // shows the user a header dump. Skipped server-side for the same reason.
     if (type === "text/rfc822-headers") continue;
 
-    // A named part is an attachment, not the display body.
+    const encoding = headers.get("content-transfer-encoding") ?? "";
     const disposition = headers.get("content-disposition") ?? "";
     const filename = contentTypeParam(contentType, "name") || contentTypeParam(disposition, "filename");
-    if (filename) continue;
 
-    if (type === "text/plain" || type === "text/html" || type === "") {
-      return {
-        body: decodePart(
-          partBody,
-          headers.get("content-transfer-encoding") ?? "",
-          charsetFromContentType(contentType)
-        ),
-        mode: modeFor(contentType)
-      };
+    // An unnamed text part is a body candidate: the first wins, the rest are
+    // dropped rather than misfiled as attachments. A named one is a genuine
+    // text attachment (note.txt) and falls through.
+    if (!filename && (type === "text/plain" || type === "text/html" || type === "")) {
+      if (!out.body) {
+        out.body = {
+          body: decodePart(partBody, encoding, charsetFromContentType(contentType)),
+          mode: modeFor(contentType),
+          attachments: [],
+          attachmentsOmitted: 0
+        };
+      }
+      continue;
     }
+
+    // Refused before decoding: the estimate is what the allocation would be.
+    const estimated = estimateDecodedBytes(partBody, encoding);
+    if (
+      out.attachments.length >= out.limits.maxAttachments ||
+      out.attachmentBytes + estimated > out.limits.maxAttachmentBytes
+    ) {
+      out.attachmentsOmitted += 1;
+      continue;
+    }
+    const bytes = decodePartBytes(partBody, encoding);
+    if (!bytes) {
+      out.attachmentsOmitted += 1;
+      continue;
+    }
+    out.attachmentBytes += bytes.length;
+    const contentId = (headers.get("content-id") ?? "").trim().replace(/^<|>$/g, "");
+    out.attachments.push({
+      name: filename || "attachment",
+      mimeType: type || "application/octet-stream",
+      bytes,
+      ...(contentId ? { contentId } : {})
+    });
   }
-  return null;
 }
 
 /**
@@ -275,7 +362,7 @@ function walkMultipart(body: string, boundary: string, depth: number): MimeConte
  * decrypts to bare text with no headers, and that must be shown as-is rather
  * than mangled by a parser looking for structure that was never there.
  */
-export function parseMimeContent(raw: string): MimeContent | null {
+export function parseMimeContent(raw: string, limits: MimeLimits = DEFAULT_MIME_LIMITS): MimeContent | null {
   const { headers, body } = splitHeaders(raw);
   const contentType = headers.get("content-type") ?? "";
   if (!contentType) {
@@ -288,11 +375,18 @@ export function parseMimeContent(raw: string): MimeContent | null {
   if (type.startsWith("multipart/")) {
     const boundary = contentTypeParam(contentType, "boundary");
     if (!boundary) {
-      return { body, mode: "plain" };
+      return { body, mode: "plain", attachments: [], attachmentsOmitted: 0 };
     }
+    const out: Collector = { body: null, attachments: [], attachmentsOmitted: 0, attachmentBytes: 0, limits };
+    walkMultipart(body, boundary, 0, out);
     // A multipart with no usable display part still renders as something rather
     // than as nothing: better an empty body than the raw boundaries.
-    return walkMultipart(body, boundary, 0) ?? { body: "", mode: "plain" };
+    return {
+      body: out.body?.body ?? "",
+      mode: out.body?.mode ?? "plain",
+      attachments: out.attachments,
+      attachmentsOmitted: out.attachmentsOmitted
+    };
   }
 
   return {
@@ -301,6 +395,8 @@ export function parseMimeContent(raw: string): MimeContent | null {
       headers.get("content-transfer-encoding") ?? "",
       charsetFromContentType(contentType)
     ),
-    mode: modeFor(contentType)
+    mode: modeFor(contentType),
+    attachments: [],
+    attachmentsOmitted: 0
   };
 }
