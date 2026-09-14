@@ -355,9 +355,13 @@ Still open:
   alias verified after key creation is not yet added to the key. Until that
   lands, regenerate the key after verifying a new alias if you need WKD or
   Autocrypt to serve it for that address.
-- **Nothing here has been exercised against a real IMAP server or a real
-  recipient.** The unit and HTTP-level tests pass; an end-to-end manual run
-  is still required before relying on this.
+
+Interoperability, as of 2026-09-13: a live mailbox of encrypted mail was
+exercised against Proton Mail in both directions (KyPost to Proton, Proton
+to KyPost) and worked. Not yet recorded for that run: attachments (the browser
+path currently drops them), sign-only, protected Subject, Bcc, reply and
+forward, revoked or expired keys, and large messages. A per-feature matrix
+is still owed before calling this a full interoperability pass.
 
 Because the default *key-custody mode* (`client`) is unchanged, offering this
 choice was safe to ship incrementally: existing installs keep generating
