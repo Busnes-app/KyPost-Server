@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { postJSON } from "../api/client";
+import { postJSON, toErrorMessage } from "../api/client";
 import { credentialFields, deriveCredential, deriveNewCredential } from "../api/auth";
 import { defaultIterations, newLoginSalt } from "../lib/authSecret";
 import { loadPGPSession, rewrappedEnvelopeFor, subscribePGPSession, type PGPSessionState } from "../lib/pgpSession";
@@ -77,14 +77,14 @@ export function ChangePasswordForm({
       // credential form it stores — which keeps a converted account's plaintext
       // password off the wire here. See credentialFields.
       const oldCredential = await deriveCredential("", currentPassword);
-      const rewrappedPgpKey = await rewrappedEnvelopeFor(currentPassword, newPassword);
+      const pgpUpdate = await rewrappedEnvelopeFor(currentPassword, newPassword);
 
       await postJSON<{ ok: boolean }>("/api/auth/password", {
         ...credentialFields(oldCredential, "old"),
         newAuthSecret,
         newLoginSalt: salt,
         newIterations: iterations,
-        ...(rewrappedPgpKey ? { rewrappedPgpKey } : {})
+        ...pgpUpdate
       });
 
       // The envelope, if there was one, is already committed alongside the
@@ -100,7 +100,7 @@ export function ChangePasswordForm({
       if (message.includes("401")) {
         setStatus("Password change failed. Sign in first, then try again.");
       } else {
-        setStatus("Password change failed. Verify current password.");
+        setStatus(`Password change failed: ${toErrorMessage(err, "verify current password")}`);
       }
     } finally {
       setBusy(false);
@@ -120,6 +120,8 @@ export function ChangePasswordForm({
         ) : pgpSession.bootstrap.protection === "client" && !pgpSession.bootstrap.envelopeSlots?.includes("recovery") ? (
           <p className="notice">No server recovery copy is confirmed for your PGP key. Keep a recovery file and its secret before changing this password. You can create one in Security → Encryption.</p>
         ) : null}
+
+        {initialCurrentPassword ? <p className="notice">After an administrator resets your password, an existing PGP key still needs its previous password or recovery secret. Recover it in Security → Encryption after continuing.</p> : null}
 
         <label className="auth-field">
           <span className="auth-label">Username</span>

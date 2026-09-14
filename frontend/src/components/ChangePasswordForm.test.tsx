@@ -10,6 +10,7 @@ const onSuccess = vi.fn();
 const TEST_LEDE = "This account needs a new password before you can go any further.";
 
 vi.mock("../api/client", () => ({
+  toErrorMessage: (e: unknown, fallback: string) => e instanceof Error ? e.message : fallback,
   postJSON: (url: string, body: unknown) => postJSON(url, body)
 }));
 
@@ -29,7 +30,7 @@ vi.mock("../lib/pgpSession", () => ({
     fn({ loaded: true, error: "", bootstrap: { protection, envelopeSlots: recoverySlots } });
     return () => {};
   },
-  rewrappedEnvelopeFor: async () => undefined,
+  rewrappedEnvelopeFor: async () => ({ expectedRevision: 7, rewrappedPgpKey: "sealed" }),
   loadPGPSession: async () => undefined
 }));
 
@@ -62,6 +63,7 @@ describe("ChangePasswordForm", () => {
 
     await waitFor(() => expect(postJSON).toHaveBeenCalledWith("/api/auth/password", expect.anything()));
     expect(onSuccess).toHaveBeenCalledOnce();
+    expect(postJSON).toHaveBeenCalledWith("/api/auth/password", expect.objectContaining({ expectedRevision: 7, rewrappedPgpKey: "sealed" }));
   });
 
   it("uses the password carried in from sign-in when the current-password field is left blank", async () => {
@@ -98,4 +100,16 @@ describe("PGP recovery warning", () => {
     render(<ChangePasswordForm username="gwen" lede={TEST_LEDE} onSuccess={onSuccess} />);
     expect(screen.queryByText(/No server recovery copy is confirmed/)).toBeNull();
   });
+});
+
+
+it("shows stale-write failure without retrying or reporting success", async () => {
+  postJSON.mockRejectedValue(new Error("PGP state changed; reload before preparing the update again"));
+  render(<ChangePasswordForm username="gwen" lede={TEST_LEDE} onSuccess={onSuccess} />);
+  await userEvent.type(screen.getByLabelText("Current password"), "currentpassword");
+  await userEvent.type(screen.getByLabelText("New password"), "a-long-enough-password");
+  await userEvent.click(screen.getByRole("button", { name: /update password/i }));
+  expect((await screen.findByRole("status")).textContent).toContain("PGP state changed; reload");
+  expect(postJSON).toHaveBeenCalledTimes(1);
+  expect(onSuccess).not.toHaveBeenCalled();
 });

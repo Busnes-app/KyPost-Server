@@ -4,6 +4,7 @@ import { toErrorMessage } from "../../../api/client";
 import {
   deletePGPIdentity,
   getPGPBootstrap,
+  requirePGPRevision,
   getRecoveryBackup,
   putRecoveryEnvelope,
   storeClientPGPIdentity,
@@ -27,16 +28,19 @@ import {
 } from "../../../lib/keyVault";
 import {
   lockPGPSession,
+  acceptCommittedPGPKey,
+  unlockedPGPIdentity,
   loadPGPSession,
   rewrapUnlockedKeyUnder,
   unlockPGPSession,
   type PGPSessionState
 } from "../../../lib/pgpSession";
-import { unlockWithArmoredKey } from "../../../lib/keyVault";
 import { listContacts, type Contact } from "../../../api/contacts";
 
 import { useAuth } from "../../../auth";
 import { lastRecoveryDrill, recordRecoveryDrill } from "../../../lib/recoveryDrill";
+
+export type PreparedRecoveryBackup = { backup: RecoveryBackup; expectedRevision: number };
 
 const noop = () => {};
 
@@ -56,8 +60,8 @@ export type MailKeysProps = {
   // by switching to Sign-in or Devices and back. Lifting it, like
   // recoveryCodes on SignIn, means it is simply still there when this
   // remounts.
-  recoveryBackup?: RecoveryBackup | null;
-  setRecoveryBackup?: (backup: RecoveryBackup | null) => void;
+  recoveryBackup?: PreparedRecoveryBackup | null;
+  setRecoveryBackup?: (backup: PreparedRecoveryBackup | null) => void;
   recoverySecret?: string;
   setRecoverySecret?: (secret: string) => void;
 };
@@ -68,12 +72,13 @@ export function MailKeys({
   pgpLoading = false,
   pgpSession = null,
   setUnlockOpen = noop,
-  recoveryBackup = null,
+  recoveryBackup: preparedRecovery = null,
   setRecoveryBackup = noop,
   recoverySecret = "",
   setRecoverySecret = noop
 }: MailKeysProps = {}) {
   const { userId } = useAuth();
+  const recoveryBackup = preparedRecovery?.backup ?? null;
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -199,6 +204,7 @@ export function MailKeys({
       // Addresses come from the server, which knows the IMAP account address
       // and every verified send-as alias. Guessing here would mint a key that
       // WKD and Autocrypt then refuse to serve.
+      const expectedRevision = requirePGPRevision(pgpSession?.bootstrap);
       const session = await loadPGPSession();
       const addresses = session.bootstrap?.suggestedUserIDs ?? [];
       if (addresses.length === 0) {
@@ -214,11 +220,12 @@ export function MailKeys({
         generated.armoredPublicKey,
         JSON.stringify(wrapped),
         "generated",
-        password
+        password,
+        expectedRevision
       );
       // Hold the fresh key for this page so the user is not immediately asked
       // to unlock a key they just made.
-      unlockWithArmoredKey(generated.armoredPrivateKey);
+      acceptCommittedPGPKey(generated.armoredPrivateKey, id);
       setPgpIdentity(id);
       await loadPGPSession();
       setPgpStatus("New PGP identity generated. Create a recovery copy and keep its secret before you need a password reset.");
@@ -245,9 +252,10 @@ export function MailKeys({
         exported.publicKey,
         JSON.stringify(wrapped),
         "imported",
-        migratePassword
+        migratePassword,
+        requirePGPRevision(exported)
       );
-      unlockWithArmoredKey(exported.privateKey);
+      acceptCommittedPGPKey(exported.privateKey, id);
       setPgpIdentity(id);
       setMigrateOpen(false);
       setMigratePassword("");
@@ -307,9 +315,9 @@ export function MailKeys({
    * server still holds. The file format, the one-time secret and the warning
    * that follows must not differ between them.
    */
-  function saveRecoveryBackup(backup: RecoveryBackup, fingerprint: string, secret: string) {
+  function saveRecoveryBackup(backup: RecoveryBackup, fingerprint: string, secret: string, expectedRevision: number) {
     // Reveal before any fallible download/upload, including a lost PUT response.
-    setRecoveryBackup(backup);
+    setRecoveryBackup({ backup, expectedRevision });
     setRecoverySecret(secret);
     const url = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: "application/json" }));
     const link = document.createElement("a");
@@ -325,17 +333,20 @@ export function MailKeys({
     setPgpBusy(true);
     setPgpStatus("");
     try {
-      const bootstrap = await getPGPBootstrap();
+      const snapshot = unlockedPGPIdentity();
+      const current = await getPGPBootstrap();
+      if (requirePGPRevision(current) !== snapshot.pgpRevision || current.protection !== "client") {
+        throw new Error("Your PGP state changed. Reload and unlock the current key before making a backup.");
+      }
       const imported = await importIdentity(requireUnlockedKey(), "");
-      if (bootstrap.protection !== "client" || !bootstrap.fingerprint ||
-          imported.fingerprint.toUpperCase() !== bootstrap.fingerprint.toUpperCase()) {
+      if (imported.fingerprint.toUpperCase() !== snapshot.fingerprint.toUpperCase()) {
         throw new Error("Your PGP identity changed. Reload and unlock the current key before making a backup.");
       }
       const { backup, secret } = await createRecoveryBackup(
         imported.armoredPrivateKey, imported.fingerprint, imported.armoredPublicKey
       );
       if (!mounted.current) return; // Do not start a download after leaving during creation.
-      saveRecoveryBackup(backup, backup.fingerprint, secret);
+      saveRecoveryBackup(backup, backup.fingerprint, secret, snapshot.pgpRevision);
       setPgpStatus("Recovery file checked in memory. Download requested; check that the file arrived and store the secret separately before saving a server copy.");
     } catch (err) {
       setPgpStatus(`Backup failed: ${toErrorMessage(err, "unlock your key first")}`);
@@ -345,7 +356,7 @@ export function MailKeys({
   }
 
   async function handleStoreRecoveryBackup() {
-    if (!recoveryBackup || !recoverySecret) return;
+    if (!recoveryBackup || !recoverySecret || !preparedRecovery) return;
     const password = window.prompt(
       "Enter your account password to store the recovery copy.\n\n" +
       "You have confirmed that you saved its secret. This replaces any previous server recovery copy and its secret. Older downloaded files still work with their own secrets."
@@ -354,7 +365,7 @@ export function MailKeys({
     setPgpBusy(true);
     setPgpStatus("");
     try {
-      await putRecoveryEnvelope(recoveryBackup.envelope, password, recoveryBackup.fingerprint);
+      await putRecoveryEnvelope(recoveryBackup.envelope, password, recoveryBackup.fingerprint, preparedRecovery.expectedRevision);
       await loadPGPSession();
       setPgpStatus("Recovery copy saved on the server. Keep the file and secret for server loss or identity deletion.");
     } catch (err) {
@@ -395,7 +406,7 @@ export function MailKeys({
         imported.armoredPrivateKey, imported.fingerprint, imported.armoredPublicKey
       );
       if (!mounted.current) return;
-      saveRecoveryBackup(backup, backup.fingerprint, secret);
+      saveRecoveryBackup(backup, backup.fingerprint, secret, requirePGPRevision(exported));
       setLegacyBackupOpen(false);
       setLegacyBackupPassword("");
     } catch (err) {
@@ -449,11 +460,11 @@ export function MailKeys({
     setPgpStatus("");
     setDrillDate("");
     try {
+      const current = await getPGPBootstrap();
       // Read server bytes again: a drill must test the copy currently offered.
       const raw = restoreSource.kind === "file" ? await restoreSource.file.text() : JSON.stringify(await getRecoveryBackup());
       const restored = await restoreRecoveryBackup(raw, restoreSecret);
       const imported = await importIdentity(restored.privateKey, "");
-      const current = await getPGPBootstrap();
       const expected = current.fingerprint.toUpperCase();
       if (current.protection !== "client" || !expected || imported.fingerprint.toUpperCase() !== expected ||
           restored.fingerprint.toUpperCase() !== expected) {
@@ -472,9 +483,10 @@ export function MailKeys({
         }
         return;
       }
+      const expectedRevision = requirePGPRevision(current);
       const wrapped = await wrapPrivateKey(imported.armoredPrivateKey, restorePassword);
-      await rewrapPGPPrivateKey(JSON.stringify(wrapped), restorePassword, expected);
-      if (mounted.current) unlockWithArmoredKey(imported.armoredPrivateKey);
+      const committed = await rewrapPGPPrivateKey(JSON.stringify(wrapped), restorePassword, expected, expectedRevision);
+      if (mounted.current) acceptCommittedPGPKey(imported.armoredPrivateKey, { fingerprint: expected, pgpRevision: committed.pgpRevision });
       cancelRestore();
       await loadPGPSession();
       setPgpStatus("PGP key restored and re-encrypted with your current account password.");
@@ -499,15 +511,17 @@ export function MailKeys({
       // The key's own passphrase (if any) only unlocks it for the import; it
       // is then rewrapped under the account password, so the user has one
       // secret to remember rather than two.
+      const expectedRevision = requirePGPRevision(pgpSession?.bootstrap);
       const imported = await importIdentity(pgpImportKey, pgpImportPassphrase);
       const wrapped = await wrapPrivateKey(imported.armoredPrivateKey, password);
       const id = await storeClientPGPIdentity(
         imported.armoredPublicKey,
         JSON.stringify(wrapped),
         "imported",
-        password
+        password,
+        expectedRevision
       );
-      unlockWithArmoredKey(imported.armoredPrivateKey);
+      acceptCommittedPGPKey(imported.armoredPrivateKey, id);
       setPgpIdentity(id);
       setPgpImportOpen(false);
       setPgpImportKey("");
@@ -542,7 +556,7 @@ export function MailKeys({
     setPgpBusy(true);
     setPgpStatus("");
     try {
-      await deletePGPIdentity(password);
+      await deletePGPIdentity(password, requirePGPRevision(pgpIdentity));
       lockPGPSession();
       setPgpIdentity(null);
       await loadPGPSession();
@@ -866,8 +880,8 @@ export function MailKeys({
                       I saved the secret — store server copy
                     </button>
                   ) : null}
-                  {recoveryBackup ? <button type="button" onClick={() => {
-                    try { saveRecoveryBackup(recoveryBackup, recoveryBackup.fingerprint, recoverySecret); }
+                  {recoveryBackup && preparedRecovery ? <button type="button" onClick={() => {
+                    try { saveRecoveryBackup(recoveryBackup, recoveryBackup.fingerprint, recoverySecret, preparedRecovery.expectedRevision); }
                     catch (err) { setPgpStatus(`Download failed: ${toErrorMessage(err, "try again")}`); }
                   }}>Download file again</button> : null}
                   <button type="button" disabled={pgpBusy} onClick={() => { setRecoverySecret(""); setRecoveryBackup(null); }}>I saved the file and secret</button>

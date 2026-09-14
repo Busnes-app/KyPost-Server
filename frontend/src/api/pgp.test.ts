@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { deleteDeviceEnvelope, putDeviceEnvelope, putRecoveryEnvelope, getRecoveryBackup } from "./pgp";
+import { deleteDeviceEnvelope, putDeviceEnvelope, putRecoveryEnvelope, getRecoveryBackup, getPasswordSnapshot } from "./pgp";
 import type { DeviceEnvelope } from "../lib/deviceEnrollment";
 
 const getJSON = vi.fn();
@@ -38,11 +38,11 @@ beforeEach(() => {
 
 describe("putDeviceEnvelope", () => {
   it("writes the device slot with the id escaped and the prefix literal", async () => {
-    await putDeviceEnvelope("dev:1", ENVELOPE, "hunter2");
+    await putDeviceEnvelope("dev:1", ENVELOPE, "hunter2", 0);
 
     expect(putJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/device:dev%3A1", {
       envelope: JSON.stringify(ENVELOPE),
-      password: "hunter2"
+      password: "hunter2", expectedRevision: 0
     });
   });
 });
@@ -52,10 +52,10 @@ describe("deleteDeviceEnvelope", () => {
   // rather than treating it as "no credential needed" — so the credential must
   // travel in the body, not as a query parameter.
   it("sends the step-up in the body", async () => {
-    await deleteDeviceEnvelope("dev:1", "hunter2");
+    await deleteDeviceEnvelope("dev:1", "hunter2", 0);
 
     expect(deleteJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/device:dev%3A1", {
-      password: "hunter2"
+      password: "hunter2", expectedRevision: 0
     });
   });
 });
@@ -64,9 +64,9 @@ describe("deleteDeviceEnvelope", () => {
 describe("recovery envelope", () => {
   const envelope = { v: 2, kdf: "PBKDF2-SHA256", iterations: 600000, salt: "AA==", iv: "AA==", ciphertext: "AA==" } as const;
   it("includes both account step-up and the expected identity on upload", async () => {
-    await putRecoveryEnvelope(envelope, "hunter2", "FPR");
+    await putRecoveryEnvelope(envelope, "hunter2", "FPR", 0);
     expect(putJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/recovery", {
-      envelope: JSON.stringify(envelope), expectedFingerprint: "FPR", password: "hunter2"
+      envelope: JSON.stringify(envelope), expectedFingerprint: "FPR", password: "hunter2", expectedRevision: 0
     });
   });
   it("rebuilds a recovery file from one server snapshot", async () => {
@@ -80,5 +80,25 @@ describe("recovery envelope", () => {
   ])("refuses an unreadable copy or missing identity snapshot", async (value) => {
     getJSON.mockResolvedValue(value);
     await expect(getRecoveryBackup()).rejects.toThrow(/cannot be read/);
+  });
+});
+
+
+describe("password snapshot boundary", () => {
+  it("accepts a forced-reset snapshot with revision zero and no key bytes", async () => {
+    const snapshot = { pgpRevision: 0, protection: "client", wrappedPrivateKey: "", mustChangePassword: true };
+    getJSON.mockResolvedValue(snapshot);
+    expect(await getPasswordSnapshot()).toEqual(snapshot);
+    expect(getJSON).toHaveBeenCalledWith("/api/auth/password");
+  });
+  it.each([
+    {},
+    { pgpRevision: 0, wrappedPrivateKey: "", mustChangePassword: false },
+    { pgpRevision: 0, protection: "client", mustChangePassword: false },
+    { pgpRevision: 0, protection: "other", wrappedPrivateKey: "", mustChangePassword: false },
+    { pgpRevision: -1, protection: "", wrappedPrivateKey: "", mustChangePassword: false }
+  ])("refuses incomplete preparation data instead of assuming a keyless account", async (snapshot) => {
+    getJSON.mockResolvedValue(snapshot);
+    await expect(getPasswordSnapshot()).rejects.toThrow();
   });
 });

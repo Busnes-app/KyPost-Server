@@ -15,10 +15,16 @@ const putDeviceEnvelope = vi.fn();
 const deleteDeviceEnvelope = vi.fn();
 const requireUnlockedKey = vi.fn();
 
-vi.mock("../api/pgp", () => ({
-  putDeviceEnvelope: (id: string, envelope: unknown, password: string) =>
-    putDeviceEnvelope(id, envelope, password),
-  deleteDeviceEnvelope: (id: string, password: string) => deleteDeviceEnvelope(id, password)
+vi.mock("../api/pgp", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../api/pgp")>(),
+  putDeviceEnvelope: (id: string, envelope: unknown, password: string, revision: number) =>
+    putDeviceEnvelope(id, envelope, password, revision),
+  deleteDeviceEnvelope: (id: string, password: string, revision: number) => deleteDeviceEnvelope(id, password, revision)
+}));
+
+vi.mock("../lib/pgpSession", () => ({
+  unlockedPGPIdentity: () => ({ fingerprint: "AAAA1111BBBB2222", pgpRevision: 7 }),
+  pgpSessionState: () => ({ bootstrap: { pgpRevision: 7 } })
 }));
 
 vi.mock("../lib/keyVault", () => ({
@@ -543,7 +549,7 @@ describe("revocation", () => {
     await userEvent.type(screen.getByLabelText("Account password"), "hunter2");
     await userEvent.click(screen.getByRole("button", { name: "Remove it" }));
 
-    await vi.waitFor(() => expect(deleteDeviceEnvelope).toHaveBeenCalledWith("d1", "hunter2"));
+    await vi.waitFor(() => expect(deleteDeviceEnvelope).toHaveBeenCalledWith("d1", "hunter2", 7));
   });
 
   // Pins the review finding: a wrong step-up credential is a routine failure

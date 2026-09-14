@@ -303,7 +303,7 @@ as zero. Successful PGP mutations and password changes return their committed
 revision; identity deletion preserves the monotonic counter.
 
 The JSON bodies of client identity POST, rewrap POST, slot PUT/DELETE, identity
-DELETE and `/api/auth/password` accept `expectedRevision`. A supplied value must
+DELETE and `POST /api/auth/password` accept `expectedRevision`. A supplied value must
 match inside the users-store disk lock. A mismatch returns 409 with
 `pgpStateChanged: true` and commits neither credentials nor key material. Invalid
 numeric values return 400. Omission or null retains current single-key client
@@ -319,8 +319,24 @@ generation: a password change must not obsolete a complete recovery backup.
 Prepare a write from one snapshot and submit that snapshot's revision. On conflict,
 reload and prepare again; fetching a fresh revision and attaching it to old
 ciphertext defeats the guard. Revision support alone does not validate encrypted
-contents, establish backup completeness or enable account conversion. Browser
-adoption and mandatory converted-account checks ship with lifecycle transactions.
+contents, establish backup completeness or enable account conversion.
+
+Browser identity, password, recovery and device-slot writers now require a valid
+snapshot revision; older servers remain readable but writes require an update.
+The vault retains the revision of its unlock or confirmed commit, even when
+bootstrap refreshes. Prepared recovery ciphertext retains that revision across
+confirmation, tab switches and failed uploads; it is never retried with a newer
+revision. Conflict messages ask the user to reload and prepare again.
+Mandatory server checks for converted accounts remain lifecycle work.
+
+`GET /api/auth/password` is an authenticated, `Cache-Control: no-store` preparation
+snapshot: `{pgpRevision, protection, wrappedPrivateKey, mustChangePassword}`.
+It remains available during a forced password change on the already-exempt
+password route. A forced-change snapshot withholds `wrappedPrivateKey`; the browser
+changes the credential with the supplied revision and preserves the existing
+opaque key for recovery after sign-in. Ordinary changes unwrap and re-seal the
+snapshot's envelope, then submit that envelope and revision together. Missing
+revision, failed snapshot reads and corrupt ordinary envelopes abort preparation.
 
 ### Browser recovery
 

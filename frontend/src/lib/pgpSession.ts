@@ -9,6 +9,9 @@
 
 import {
   getPGPBootstrap,
+  getPasswordSnapshot,
+  requirePGPRevision,
+  type PGPIdentity,
   rewrapPGPPrivateKey,
   type BoundSignerKey,
   type PGPBootstrap
@@ -21,6 +24,7 @@ import {
   requireUnlockedKey,
   requireSinglePrivateKey,
   unlock,
+  unlockWithArmoredKey,
   unwrapPrivateKey,
   wrapPrivateKey
 } from "./keyVault";
@@ -35,6 +39,7 @@ export type PGPSessionState = {
 };
 
 let state: PGPSessionState = { loaded: false, bootstrap: null, unlocked: false, error: "" };
+let unlockedIdentity: Pick<PGPIdentity, "fingerprint" | "pgpRevision"> | null = null;
 const listeners = new Set<(s: PGPSessionState) => void>();
 
 function emit() {
@@ -51,6 +56,7 @@ function setState(patch: Partial<PGPSessionState>) {
 // Keep `unlocked` in step with the vault even when something else locks it
 // (logout, an explicit lock button).
 onVaultChange((unlockedNow) => {
+  unlockedIdentity = null;
   if (state.unlocked !== unlockedNow) {
     setState({ unlocked: unlockedNow });
   }
@@ -124,13 +130,29 @@ export function needsUnlock(): boolean {
  * Throws WrongPasswordError from keyVault when the password does not fit.
  */
 export async function unlockPGPSession(password: string): Promise<void> {
-  const wrapped = state.bootstrap?.wrappedPrivateKey ?? "";
+  const snapshot = state.bootstrap;
+  const wrapped = snapshot?.wrappedPrivateKey ?? "";
   const envelope = parseEnvelope(wrapped);
   if (!envelope) {
     throw new Error("No wrapped private key is stored for this account.");
   }
   await unlock(envelope, password);
+  unlockedIdentity = snapshot ? { fingerprint: snapshot.fingerprint, pgpRevision: snapshot.pgpRevision } : null;
   setState({ unlocked: true });
+}
+
+/** Bind generated/restored plaintext to its confirmed commit, never a later fetch. */
+export function acceptCommittedPGPKey(armored: string, identity: Pick<PGPIdentity, "fingerprint" | "pgpRevision">): void {
+  unlockWithArmoredKey(armored);
+  unlockedIdentity = { fingerprint: identity.fingerprint, pgpRevision: identity.pgpRevision };
+}
+
+/** A refreshed bootstrap must never give an older unlocked key a newer revision. */
+export function unlockedPGPIdentity(): { fingerprint: string; pgpRevision: number } {
+  requireUnlockedKey();
+  const pgpRevision = requirePGPRevision(unlockedIdentity);
+  if (!unlockedIdentity) throw new Error("Reload and unlock the current PGP key.");
+  return { fingerprint: unlockedIdentity.fingerprint, pgpRevision };
 }
 
 export function lockPGPSession(): void {
@@ -148,8 +170,8 @@ export function knownSignerKeys(): BoundSignerKey[] {
 }
 
 /**
- * Returns the PGP private-key envelope re-sealed under newPassword, or null when
- * there is nothing to re-seal (no key, or a legacy server-held one).
+ * Returns the revision and optional re-sealed envelope from one password snapshot.
+ * Forced resets preserve the previous envelope for recovery after sign-in.
  *
  * The wrapping key is derived from the account password, so changing the
  * password without re-sealing strands the key: the stored envelope still only
@@ -167,18 +189,15 @@ export function knownSignerKeys(): BoundSignerKey[] {
 export async function rewrappedEnvelopeFor(
   oldPassword: string,
   newPassword: string
-): Promise<string | null> {
-  const bootstrap = state.bootstrap ?? (await loadPGPSession()).bootstrap;
-  if (!bootstrap || bootstrap.protection !== "client" || !bootstrap.wrappedPrivateKey) {
-    return null;
-  }
+): Promise<{ expectedRevision: number; rewrappedPgpKey?: string }> {
+  const bootstrap = await getPasswordSnapshot();
+  const expectedRevision = requirePGPRevision(bootstrap);
+  if (bootstrap.mustChangePassword || bootstrap.protection !== "client") return { expectedRevision };
   const envelope = parseEnvelope(bootstrap.wrappedPrivateKey);
-  if (!envelope) {
-    return null;
-  }
+  if (!envelope) throw new Error("Your stored PGP envelope cannot be read. Restore it before changing your password.");
   // Unwrapped eagerly, while the old password is known to be correct.
   const armored = requireSinglePrivateKey(await unwrapPrivateKey(envelope, oldPassword));
-  return JSON.stringify(await wrapPrivateKey(armored, newPassword));
+  return { expectedRevision, rewrappedPgpKey: JSON.stringify(await wrapPrivateKey(armored, newPassword)) };
 }
 
 /**
@@ -197,6 +216,8 @@ export async function rewrappedEnvelopeFor(
  */
 export async function rewrapUnlockedKeyUnder(password: string): Promise<void> {
   const armored = requireUnlockedKey();
-  await rewrapPGPPrivateKey(JSON.stringify(await wrapPrivateKey(armored, password)), password);
+  const snapshot = unlockedPGPIdentity();
+  await rewrapPGPPrivateKey(JSON.stringify(await wrapPrivateKey(armored, password)), password, snapshot.fingerprint, snapshot.pgpRevision);
+  lockPGPSession();
   await loadPGPSession();
 }
