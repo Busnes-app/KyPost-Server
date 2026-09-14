@@ -913,7 +913,9 @@ func (s *Server) serveDraftSave(w http.ResponseWriter, r *http.Request, mailClie
 	// key, so it is appended verbatim like the Sent copy is. The plaintext
 	// fields of the same request are ignored: the browser sends the
 	// placeholder subject and an empty body, and honouring anything else
-	// would store beside the ciphertext the very text it protects.
+	// would store beside the ciphertext the very text it protects. Cc and
+	// Bcc are not carried at all: To is already visible in the wrapper, the
+	// rest travels only inside the ciphertext.
 	if req.PGPDraft != "" {
 		if err := validatePGPMimeDeliveryShape(req.PGPDraft); err != nil {
 			http.Error(w, "encrypted draft: "+err.Error(), http.StatusBadRequest)
@@ -921,8 +923,6 @@ func (s *Server) serveDraftSave(w http.ResponseWriter, r *http.Request, mailClie
 		}
 		if err := mailClient.SaveDraft(r.Context(), imapadapter.DraftMessage{
 			To:      req.To,
-			CC:      req.CC,
-			BCC:     req.BCC,
 			Subject: pgpmail.OuterPlaceholderSubject,
 			Raw:     []byte(req.PGPDraft),
 		}); err != nil {

@@ -716,9 +716,15 @@ function randomToken(): string {
  * so anything omitted here is simply absent from the delivered mail.
  */
 function wrapAsPGPMime(envelope: MessageEnvelope, armoredMessage: string): string {
+  const from = sanitizeHeaderValue(envelope.from);
+  if (!from) {
+    // The server binds every delivery's From to the account and refuses an
+    // empty one; better to say so here than to emit an unparseable header.
+    throw new Error("No sender address is known for this account yet. Reload and try again.");
+  }
   const boundary = `${PGP_MIME_BOUNDARY}-${randomToken()}`;
   const headers = [
-    `From: ${sanitizeHeaderValue(envelope.from)}`,
+    `From: ${from}`,
     `To: ${envelope.to.map(sanitizeHeaderValue).filter(Boolean).join(", ")}`
   ];
   const cc = (envelope.cc ?? []).map(sanitizeHeaderValue).filter(Boolean);

@@ -197,11 +197,14 @@ describe("sealed snapshots on a client-custody account", () => {
     expect(await load(USER)).toMatchObject({ to: "a@b.test", subject: "secret", body: "<p>plaintext</p>" });
   });
 
-  it("writes nothing while the vault is locked, and drops what was there", async () => {
+  it("writes nothing while the vault is locked, and keeps what was there", async () => {
     await saveDraftSnapshot(USER, draft({ subject: "before lock" }));
     vault.locked = true;
     await saveDraftSnapshot(USER, draft({ subject: "typed while locked" }));
-    expect(window.sessionStorage.getItem(`kypost-compose-draft:${USER}`)).toBeNull();
+    // The sealed snapshot is the user's own ciphertext, and the UI has just
+    // promised it is recoverable after unlock. Nothing here may destroy it.
+    vault.locked = false;
+    expect((await load(USER))?.subject).toBe("before lock");
   });
 
   it("reports locked rather than null when the vault closes, and opens it after unlock", async () => {

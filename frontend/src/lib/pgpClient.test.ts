@@ -443,6 +443,18 @@ describe("encryptedAttachmentBudget", () => {
 });
 
 describe("encrypted drafts and sealed state", () => {
+  it("refuses to build a draft without a sender address", async () => {
+    const me = await generateTestKey("Me", "me@example.com");
+    unlockWithArmoredKey(me.privateKey);
+    try {
+      await expect(
+        buildEncryptedDraft({ from: "  ", to: ["a@example.com"], subject: "Plans" }, "text/plain", "x")
+      ).rejects.toThrow(/sender address/i);
+    } finally {
+      lock();
+    }
+  });
+
   it("round-trips recipients, subject, body and attachments through a draft", async () => {
     const me = await generateTestKey("Me", "me@example.com");
     unlockWithArmoredKey(me.privateKey);

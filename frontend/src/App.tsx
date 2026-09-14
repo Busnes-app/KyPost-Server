@@ -12,7 +12,7 @@ import { ContactPickerModal } from "./components/ContactPickerModal";
 import { RecipientField } from "./components/RecipientField";
 import { useDialogOpen } from "./hooks/useDialogOpen";
 import { contactToToken, isDuplicateInField, parseRecipientField, pickupFallbackFlag, serializeRecipientField, splitAddressList } from "./lib/recipients";
-import { isClientProtected, needsUnlock, loadPGPSession, clearPGPSession } from "./lib/pgpSession";
+import { accountAddress, clearPGPSession, isClientProtected, loadPGPSession, needsUnlock } from "./lib/pgpSession";
 import { buildEncryptedDeliveries, buildEncryptedDraft, buildEncryptedSentCopy, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "./lib/pgpClient";
 import { sealPickup } from "./lib/pickupCrypto";
 import { createSealedPickup, resolveRecipientKeys, sendClientEncryptedMail } from "./api/pgp";
@@ -49,6 +49,7 @@ import {
 } from "./app/compose";
 import {
   clearDraftSnapshot,
+  hasContent,
   loadDraftSnapshot,
   purgeExpiredDraftSnapshots,
   restoreNotice,
@@ -640,14 +641,37 @@ export function App() {
     void restoreComposeSnapshot();
   }
 
+  /** The From the browser-encrypted paths put on the wire: the chosen
+   *  send-as alias, else the account address the bootstrap reported. */
+  function clientSenderAddress(): string {
+    return composeFrom || accountAddress();
+  }
+
+  /** True while the compose window holds nothing the user typed. */
+  function composeIsBlank(): boolean {
+    return !hasContent({
+      to: serializeRecipientField(composeTo),
+      cc: serializeRecipientField(composeCc),
+      bcc: serializeRecipientField(composeBcc),
+      subject: composeSubject,
+      body: quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody,
+      attachments: composeAttachments
+    });
+  }
+
   /**
    * Restores the autosaved snapshot into a blank compose window. A sealed
    * snapshot behind a locked vault opens the unlock prompt instead; the
-   * dialog's onUnlocked calls this again, and the guard on
-   * composeSnapshotPending keeps a later unlock from overwriting typing.
+   * dialog's onUnlocked calls this again. Nothing is ever restored over
+   * typing: if the user dismissed the prompt and started writing, a later
+   * unlock leaves the window alone and the snapshot where it is.
    */
   async function restoreComposeSnapshot() {
     if (!auth?.userId) return;
+    if (!composeIsBlank()) {
+      composeSnapshotPending.current = false;
+      return;
+    }
     const snapshot = await loadDraftSnapshot(auth.userId);
     if (snapshot === "locked") {
       composeSnapshotPending.current = true;
@@ -656,7 +680,7 @@ export function App() {
       return;
     }
     composeSnapshotPending.current = false;
-    if (snapshot) {
+    if (snapshot && composeIsBlank()) {
       setComposeTo(parseRecipientField(snapshot.to));
       setComposeCc(parseRecipientField(snapshot.cc));
       setComposeBcc(parseRecipientField(snapshot.bcc));
@@ -899,7 +923,7 @@ export function App() {
     const [keyedTo, keyedCc, keyedBcc] = keyed;
 
     const envelope = {
-      from: composeFrom || "",
+      from: clientSenderAddress(),
       to: keyedTo,
       cc: keyedCc,
       subject: composeSubject
@@ -945,7 +969,7 @@ export function App() {
       // so this is not optional.
       const sentCopy = await buildEncryptedSentCopy(envelope, "text/html; charset=UTF-8", body, composeSign, composeAttachments);
       const result = await sendClientEncryptedMail({
-        from: composeFrom || "",
+        from: clientSenderAddress(),
         // The real subject travels inside the ciphertext as a protected
         // header, exactly as it does for the deliveries.
         subject: OUTER_PLACEHOLDER_SUBJECT,
@@ -1079,7 +1103,7 @@ export function App() {
         }
         const pgpDraft = await buildEncryptedDraft(
           {
-            from: composeFrom || "",
+            from: clientSenderAddress(),
             to: splitAddressList(to),
             cc: splitAddressList(cc),
             bcc: splitAddressList(bcc),
@@ -1091,11 +1115,10 @@ export function App() {
         );
         // The plaintext fields carry the placeholder and nothing else; the
         // server ignores them for an encrypted draft but must not be handed
-        // the real text anyway.
+        // the real text anyway. To is already in the wrapper's outer headers;
+        // Cc and Bcc travel only inside the ciphertext, so they stay here.
         await postJSON<{ ok: boolean }>("/api/mail/draft", {
           to,
-          cc,
-          bcc,
           subject: OUTER_PLACEHOLDER_SUBJECT,
           body: "",
           mode: "html",
@@ -1595,7 +1618,10 @@ export function App() {
                   void restoreComposeSnapshot();
                 }
               }}
-              onCancel={() => setComposeUnlockOpen(false)}
+              onCancel={() => {
+                setComposeUnlockOpen(false);
+                composeSnapshotPending.current = false;
+              }}
             />
             {composeSuccess ? <p className="notice notice-success" style={{ margin: 0 }}>{composeSuccess}</p> : null}
             {composeNotice ? <p className="notice notice-warning">{composeNotice}</p> : null}

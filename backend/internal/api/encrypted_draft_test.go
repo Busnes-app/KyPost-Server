@@ -75,7 +75,8 @@ func TestEncryptedDraftPlaintextFieldsAreIgnored(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/mail/draft", draftRequestBody(t, map[string]any{
-		"to": "a@example.com", "subject": "the real subject", "body": "the real body", "mode": "html",
+		"to": "a@example.com", "cc": "cc@example.com", "bcc": "hidden@example.com",
+		"subject": "the real subject", "body": "the real body", "mode": "html",
 		"pgpDraft": encryptedDraftFor(t, identity),
 	}))
 	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, AuthContext{UserID: userID}))
@@ -87,6 +88,31 @@ func TestEncryptedDraftPlaintextFieldsAreIgnored(t *testing.T) {
 	if strings.Contains(string(fake.savedDrafts[0].Raw), "the real body") || fake.savedDrafts[0].Body != "" ||
 		fake.savedDrafts[0].Subject == "the real subject" {
 		t.Fatal("a plaintext field from an encrypted-draft request was stored")
+	}
+	// Cc and Bcc travel inside the ciphertext; the server is never handed them.
+	if len(fake.savedDrafts[0].CC) != 0 || len(fake.savedDrafts[0].BCC) != 0 {
+		t.Fatalf("cc/bcc from an encrypted-draft request reached the draft: cc=%v bcc=%v",
+			fake.savedDrafts[0].CC, fake.savedDrafts[0].BCC)
+	}
+}
+
+func TestEncryptedDraftRefusesEmptyFrom(t *testing.T) {
+	srv := newTestServer(t)
+	userID, identity := testUserWithServerKey(t, srv)
+	fake := &fakeMailClient{}
+	// The wrapper the browser emitted before it knew the account address.
+	draft := strings.Replace(encryptedDraftFor(t, identity), "From: me@example.com", "From: ", 1)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/mail/draft", draftRequestBody(t, map[string]any{
+		"to": "a@example.com", "subject": pgpmail.OuterPlaceholderSubject, "body": "", "mode": "html",
+		"pgpDraft": draft,
+	}))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, AuthContext{UserID: userID}))
+	srv.serveDraftSave(rec, req, fake)
+
+	if rec.Code != 400 || len(fake.savedDrafts) != 0 {
+		t.Fatalf("status = %d, saved=%d, want 400 and nothing saved; body=%s", rec.Code, len(fake.savedDrafts), rec.Body.String())
 	}
 }
 
