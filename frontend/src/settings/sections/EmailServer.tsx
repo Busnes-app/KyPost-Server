@@ -113,71 +113,69 @@ export function EmailServer() {
           not change it.
         </p>
       ) : null}
-      <fieldset className="config-fieldset" disabled={managed}>
-        <div className="config-grid config-grid-two">
-          <label>
-            <div>Host</div>
-            <input
-              value={imapForm.host}
-              disabled={managed}
-              onChange={(event) => setImapForm((prev) => ({ ...prev, host: event.target.value }))}
-            />
-          </label>
-          <label>
-            <div>Port</div>
-            <input
-              type="number"
-              value={imapForm.port}
-              disabled={managed}
-              onChange={(event) => setImapForm((prev) => ({ ...prev, port: Number(event.target.value) || 993 }))}
-            />
-          </label>
-          <label>
-            <div>Username</div>
-            <input
-              value={imapForm.username}
-              disabled={managed}
-              onChange={(event) => setImapForm((prev) => ({ ...prev, username: event.target.value }))}
-            />
-          </label>
-          <label>
-            <div>Password or App Password</div>
-            <input
-              type="password"
-              value={imapForm.password}
-              disabled={managed}
-              onChange={(event) => setImapForm((prev) => ({ ...prev, password: event.target.value }))}
-              placeholder="Required when saving changes"
-            />
-          </label>
-          <label>
-            <div>Mailbox</div>
-            <input
-              value={imapForm.mailbox}
-              disabled={managed}
-              onChange={(event) => setImapForm((prev) => ({ ...prev, mailbox: event.target.value }))}
-            />
-          </label>
-          <label>
-            <div>SMTP Host (optional)</div>
-            <input
-              value={imapForm.smtpHost}
-              disabled={managed}
-              onChange={(event) => setImapForm((prev) => ({ ...prev, smtpHost: event.target.value }))}
-              placeholder="Defaults to IMAP-derived host"
-            />
-          </label>
-          <label>
-            <div>SMTP Port (optional)</div>
-            <input
-              type="number"
-              value={imapForm.smtpPort}
-              disabled={managed}
-              onChange={(event) => setImapForm((prev) => ({ ...prev, smtpPort: Number(event.target.value) || 587 }))}
-            />
-          </label>
-        </div>
-      </fieldset>
+      <div className="config-grid config-grid-two">
+        <label>
+          <div>Host</div>
+          <input
+            value={imapForm.host}
+            disabled={managed}
+            onChange={(event) => setImapForm((prev) => ({ ...prev, host: event.target.value }))}
+          />
+        </label>
+        <label>
+          <div>Port</div>
+          <input
+            type="number"
+            value={imapForm.port}
+            disabled={managed}
+            onChange={(event) => setImapForm((prev) => ({ ...prev, port: Number(event.target.value) || 993 }))}
+          />
+        </label>
+        <label>
+          <div>Username</div>
+          <input
+            value={imapForm.username}
+            disabled={managed}
+            onChange={(event) => setImapForm((prev) => ({ ...prev, username: event.target.value }))}
+          />
+        </label>
+        <label>
+          <div>Password or App Password</div>
+          <input
+            type="password"
+            value={imapForm.password}
+            disabled={managed}
+            onChange={(event) => setImapForm((prev) => ({ ...prev, password: event.target.value }))}
+            placeholder="Required when saving changes"
+          />
+        </label>
+        <label>
+          <div>Mailbox</div>
+          <input
+            value={imapForm.mailbox}
+            disabled={managed}
+            onChange={(event) => setImapForm((prev) => ({ ...prev, mailbox: event.target.value }))}
+          />
+        </label>
+        <label>
+          <div>SMTP Host (optional)</div>
+          <input
+            value={imapForm.smtpHost}
+            disabled={managed}
+            onChange={(event) => setImapForm((prev) => ({ ...prev, smtpHost: event.target.value }))}
+            placeholder="Defaults to IMAP-derived host"
+          />
+        </label>
+        <label>
+          <div>SMTP Port (optional)</div>
+          <input
+            type="number"
+            value={imapForm.smtpPort}
+            disabled={managed}
+            onChange={(event) => setImapForm((prev) => ({ ...prev, smtpPort: Number(event.target.value) || 587 }))}
+          />
+        </label>
+      </div>
       <div className="config-actions">
         {managed ? null : (
           <button type="button" onClick={saveIMAPConfig} disabled={imapBusy}>
