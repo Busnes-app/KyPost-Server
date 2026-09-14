@@ -12,6 +12,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Support complete-keyring password changes for already-converted records with explicit version/revision guards. Preserve recovery copies (including absent slots), public identity and material generation; conversion remains gated.
 - Add complete-ring recovery-v2 offline export and read-only drills. Preserve original private packets and revocation certificates, enforce sealed size limits, and compare every member/generation plus active public packets against fresh snapshots. Reject legacy backups for converted records; conversion and lifecycle restore/uploads remain gated.
 
 - Prepare atomic whole-keyring storage for password/recovery envelopes, retained fingerprint inventories and credentials. Guard converted records against legacy writers (including plaintext forced password completion) and stale admin resets; expose keyring metadata in authenticated snapshots. No conversion or lifecycle HTTP writer is enabled.

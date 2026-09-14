@@ -358,7 +358,16 @@ It remains available during a forced password change on the already-exempt
 password route. A forced-change snapshot withholds `wrappedPrivateKey`; the browser
 changes the credential with the supplied revision and preserves the existing
 opaque key for recovery after sign-in. Ordinary changes unwrap and re-seal the
-snapshot's envelope, then submit that envelope and revision together. Missing
+snapshot's envelope, then submit that envelope and revision together. Converted
+accounts opt in with `keyringVersion: 1` on `POST /api/auth/password`, alongside
+`rewrappedPgpKey`, `expectedRevision` and the existing derived credential fields.
+The browser validates every member and current public packets before wrapping the
+original complete bytes. The server binds the revision to the verified credential
+snapshot and atomically replaces only credential/password ciphertext. Recovery
+ciphertext (including an absent slot), public identity, inventories and material
+generation remain unchanged. Missing/unknown versions never invoke this writer;
+forced-reset sessions cannot use it. Existing session/device revocation still
+runs after commit. Conversion and other lifecycle writes remain unavailable. Missing
 revision, failed snapshot reads and corrupt ordinary envelopes abort preparation.
 
 ### Browser recovery

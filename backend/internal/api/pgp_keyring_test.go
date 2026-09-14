@@ -94,6 +94,39 @@ func TestPGPKeyringHTTPCompatibilityAndReset(t *testing.T) {
 	if after.PGPRevision != u.PGPRevision || after.PasswordHash != u.PasswordHash || after.PGPPrivateKeyWrapped != u.PGPPrivateKeyWrapped || !reflect.DeepEqual(after.PGPWrappedEnvelopes, u.PGPWrappedEnvelopes) {
 		t.Fatal("rejected legacy requests changed data")
 	}
+
+	// Version opt-in is explicit, and the revision belongs to the verified credential snapshot.
+	body := map[string]any{"oldAuthSecret": authSecret, "newAuthSecret": authSecret, "newLoginSalt": salt,
+		"newIterations": 600000, "rewrappedPgpKey": `{"v":2,"password":"rewrapped-ring"}`, "keyringVersion": 1}
+	for _, version := range []int{0, 2, 1} {
+		body["keyringVersion"] = version
+		if version != 1 {
+			body["expectedRevision"] = u.PGPRevision
+		} else {
+			delete(body, "expectedRevision")
+		}
+		rec := changePasswordAs(t, srv, u.ID, body)
+		if rec.Code == http.StatusOK {
+			t.Fatal("unknown version or missing revision accepted")
+		}
+	}
+	body["expectedRevision"] = u.PGPRevision + 1
+	if rec := changePasswordAs(t, srv, u.ID, body); rec.Code != http.StatusConflict {
+		t.Fatalf("future revision: %d", rec.Code)
+	}
+	body["expectedRevision"] = u.PGPRevision
+	if rec := changePasswordAs(t, srv, u.ID, body); rec.Code != http.StatusOK {
+		t.Fatalf("ring password: %d %s", rec.Code, rec.Body.String())
+	}
+	changed, err := srv.users.Get(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.PGPRevision != u.PGPRevision+1 || changed.PGPPrivateKeyWrapped != body["rewrappedPgpKey"] ||
+		!reflect.DeepEqual(changed.PGPKeyring, u.PGPKeyring) || !reflect.DeepEqual(changed.PGPWrappedEnvelopes, u.PGPWrappedEnvelopes) {
+		t.Fatal("ring password transaction lost material")
+	}
+	u = changed
 	admin, err := srv.users.Create(context.Background(), "ring-admin", "admin-test-password", users.RoleAdmin)
 	if err != nil {
 		t.Fatal(err)

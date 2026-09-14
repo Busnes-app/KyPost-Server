@@ -1,6 +1,7 @@
 # PGP key lifecycle — proposed Tier 5 design
 
-Status: lifecycle conversion and HTTP writers are **not shipped**. Internal atomic
+Status: lifecycle conversion and retirement/recovery HTTP writers are **not shipped**.
+Ordinary whole-ring password changes are implemented for already-converted records. Internal atomic
 whole-ring storage and legacy-writer guards are implemented. The first reader
 implementation accepts legacy armor and bounded versioned rings for historical
 mail, draft and autosave decryption. Single-key writers refuse ring plaintext
@@ -274,3 +275,14 @@ and refusal of legacy writes. The fixture private keys are public test data.
 Recovery drills now compare server generation/inventories and current public packets;
 this does not authorize conversion. Lifecycle HTTP transactions, restore/merge and
 native compatibility remain implementation gates.
+
+## Implemented password writer
+
+`POST /api/auth/password` accepts `keyringVersion: 1` only for existing rings,
+with the complete rewrapped password envelope, derived credential and expected
+revision. Client validation binds exact plaintext to matching password/bootstrap
+snapshots. The store mutation changes only credential and password ciphertext;
+recovery presence/bytes/timestamps, public identity and inventories are preserved.
+The revision increments, material generation does not. Forced changes retain the
+existing opaque-preservation flow. All existing credential revocation applies.
+No conversion, recovery restore or retirement is exposed by this opt-in.

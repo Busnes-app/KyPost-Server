@@ -2522,6 +2522,16 @@ func (s *Store) SetDerivedAuth(ctx context.Context, id, authSecret, loginSalt st
 // The only way back is deleting the identity and losing every message encrypted
 // to it.
 func (s *Store) SetDerivedAuthAndRewrapPGP(ctx context.Context, id, authSecret, loginSalt string, iterations int, requireChange bool, rewrapped string, expectedRevision *uint64) (User, error) {
+	return s.setDerivedAuthAndRewrapPGP(ctx, id, authSecret, loginSalt, iterations, requireChange, rewrapped, expectedRevision, false)
+}
+
+// ChangeKeyringPassword preserves all public, recovery and historical metadata.
+// Only an existing ring with a current revision can opt into this writer.
+func (s *Store) ChangeKeyringPassword(ctx context.Context, id string, credential PGPKeyringCredential, wrapped string, expectedRevision *uint64) (User, error) {
+	return s.setDerivedAuthAndRewrapPGP(ctx, id, credential.AuthSecret, credential.LoginSalt, credential.Iterations, false, wrapped, expectedRevision, true)
+}
+
+func (s *Store) setDerivedAuthAndRewrapPGP(ctx context.Context, id, authSecret, loginSalt string, iterations int, requireChange bool, rewrapped string, expectedRevision *uint64, keyring bool) (User, error) {
 	if err := ValidateAuthSecret(authSecret); err != nil {
 		return User{}, err
 	}
@@ -2539,7 +2549,11 @@ func (s *Store) SetDerivedAuthAndRewrapPGP(ctx context.Context, id, authSecret, 
 		return User{}, err
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
-		if u.PGPKeyring != nil && (rewrapped != "" || (!requireChange && !u.MustChangePassword)) {
+		if keyring {
+			if u.PGPKeyring == nil || u.PGPKeyring.Version != 1 || u.MustChangePassword || !u.UsesDerivedAuth() || strings.TrimSpace(rewrapped) == "" {
+				return ErrPGPKeyringUpgradeRequired
+			}
+		} else if u.PGPKeyring != nil && (rewrapped != "" || (!requireChange && !u.MustChangePassword)) {
 			return ErrPGPKeyringUpgradeRequired
 		}
 		if rewrapped != "" {

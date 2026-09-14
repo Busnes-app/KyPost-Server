@@ -1,5 +1,8 @@
+// @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { wrapPrivateKey } from "./keyVault";
+import fixture from "../../../testdata/pgp-keyring-v1.json";
+import { parseKeyring } from "./pgpKeyring";
+import { unwrapPrivateKey, wrapPrivateKey } from "./keyVault";
 
 // The API module is mocked so these tests exercise the session logic — the
 // state machine a cold-starting client depends on — without a server.
@@ -263,3 +266,21 @@ describe("revision-bound preparation", () => {
     await expect(session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD)).resolves.toEqual({ expectedRevision: 7 });
   });
 });
+
+it("rewraps exact complete ring bytes against a matching current snapshot", async () => {
+  const raw = JSON.stringify(fixture.ring);
+  const ring = await parseKeyring(raw);
+  if (ring.kind !== "keyring") throw new Error("expected ring");
+  const snapshot = bootstrapFixture({ fingerprint: ring.activeKey.getFingerprint(), publicKey: ring.activeKey.toPublic().armor(),
+    keyring: ring.metadata, wrappedPrivateKey: JSON.stringify(await wrapPrivateKey(raw, OLD_PASSWORD)) });
+  getPGPBootstrap.mockResolvedValue(snapshot);
+  const prepared = await session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD);
+  expect(prepared.keyringVersion).toBe(1);
+  expect(prepared.expectedRevision).toBe(7);
+  expect(await unwrapPrivateKey(JSON.parse(prepared.rewrappedPgpKey ?? ""), NEW_PASSWORD)).toBe(raw);
+  expect(session.pgpSessionState().unlocked).toBe(false);
+  getPGPBootstrap.mockResolvedValueOnce(snapshot).mockResolvedValueOnce({ ...snapshot, pgpRevision: 8 });
+  await expect(session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD)).rejects.toThrow(/state changed/);
+  getPGPBootstrap.mockResolvedValue({ ...snapshot, keyring: { ...ring.metadata, materialGeneration: 99 } });
+  await expect(session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD)).rejects.toThrow(/complete keyring/);
+}, TIMEOUT);
