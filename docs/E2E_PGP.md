@@ -703,3 +703,12 @@ with no local unwrap support and show a clear message ("this account's key is
 end-to-end protected; update the app to read encrypted mail here") rather
 than surfacing a generic decryption failure. Add that check first, ahead of
 the crypto work, so an old app fails legibly.
+
+## Planned multi-key lifecycle
+
+[PGP_KEY_LIFECYCLE.md](PGP_KEY_LIFECYCLE.md) defines the proposed Tier 5 design,
+not the current wire format. Android and Mac currently replace a single enrolled
+key; Linux retains GnuPG keys but accepts only one primary key per enrollment
+import. All three need explicit versioned bundle support before retirement can
+safely distribute historical keys. Mac is now Swift; the earlier Qt/mobile
+implementation guidance above is historical, not evidence of current storage.
