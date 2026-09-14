@@ -6,7 +6,9 @@ import { wrapPrivateKey } from "./keyVault";
 const getPGPBootstrap = vi.fn();
 const rewrapPGPPrivateKey = vi.fn();
 
-vi.mock("../api/pgp", () => ({
+vi.mock("../api/pgp", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../api/pgp")>(),
+  getPasswordSnapshot: (...args: unknown[]) => getPGPBootstrap(...args),
   getPGPBootstrap: (...args: unknown[]) => getPGPBootstrap(...args),
   rewrapPGPPrivateKey: (...args: unknown[]) => rewrapPGPPrivateKey(...args)
 }));
@@ -18,6 +20,7 @@ const TIMEOUT = 30_000;
 
 function bootstrapFixture(overrides: Record<string, unknown> = {}) {
   return {
+    pgpRevision: 7,
     hasIdentity: true,
     protection: "client",
     fingerprint: "FPR",
@@ -115,7 +118,7 @@ describe("password change rewrap", () => {
       // them stranded the key permanently.
       expect(rewrapPGPPrivateKey).not.toHaveBeenCalled();
 
-      const parsed = JSON.parse(rewrapped!);
+      const parsed = JSON.parse(rewrapped.rewrappedPgpKey!);
       const { unwrapPrivateKey } = await import("./keyVault");
       await expect(unwrapPrivateKey(parsed, NEW_PASSWORD)).resolves.toBe(SECRET);
       await expect(unwrapPrivateKey(parsed, OLD_PASSWORD)).rejects.toBeTruthy();
@@ -141,7 +144,7 @@ describe("password change rewrap", () => {
   it("is a no-op for an account with no client-protected key", async () => {
     getPGPBootstrap.mockResolvedValue(bootstrapFixture({ protection: "server", wrappedPrivateKey: "" }));
     await session.loadPGPSession();
-    await expect(session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD)).resolves.toBeNull();
+    await expect(session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD)).resolves.toEqual({ expectedRevision: 7 });
     expect(rewrapPGPPrivateKey).not.toHaveBeenCalled();
   });
 });
@@ -218,3 +221,45 @@ it("refuses keyring rewrap through the legacy password-change API", async () => 
   await expect(session.rewrapUnlockedKeyUnder(NEW_PASSWORD)).rejects.toThrow(/lifecycle upgrade/);
   expect(rewrapPGPPrivateKey).not.toHaveBeenCalled();
 }, TIMEOUT);
+
+
+describe("revision-bound preparation", () => {
+  it("does not rebind an unlocked key when a newer same-key bootstrap arrives", async () => {
+    const wrappedPrivateKey = JSON.stringify(await wrapPrivateKey(SECRET, OLD_PASSWORD));
+    getPGPBootstrap.mockResolvedValue(bootstrapFixture({ wrappedPrivateKey, pgpRevision: 7 }));
+    await session.loadPGPSession();
+    await session.unlockPGPSession(OLD_PASSWORD);
+    getPGPBootstrap.mockResolvedValue(bootstrapFixture({ wrappedPrivateKey, pgpRevision: 8 }));
+    await session.loadPGPSession();
+    expect(session.unlockedPGPIdentity()).toEqual({ fingerprint: "FPR", pgpRevision: 7 });
+    rewrapPGPPrivateKey.mockRejectedValue(new Error("PGP state changed; reload"));
+    await expect(session.rewrapUnlockedKeyUnder(NEW_PASSWORD)).rejects.toThrow(/state changed/);
+    expect(rewrapPGPPrivateKey).toHaveBeenCalledExactlyOnceWith(expect.any(String), NEW_PASSWORD, "FPR", 7);
+    session.lockPGPSession();
+    expect(() => session.unlockedPGPIdentity()).toThrow();
+  }, TIMEOUT);
+
+  it("returns the revision belonging to the rewrapped bytes despite a concurrent refresh", async () => {
+    const wrappedPrivateKey = JSON.stringify(await wrapPrivateKey(SECRET, OLD_PASSWORD));
+    getPGPBootstrap.mockResolvedValue(bootstrapFixture({ wrappedPrivateKey, pgpRevision: 0 }));
+    const preparing = session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD);
+    getPGPBootstrap.mockResolvedValue(bootstrapFixture({ wrappedPrivateKey: "bad", pgpRevision: 9 }));
+    await session.loadPGPSession();
+    const result = await preparing;
+    expect(result.expectedRevision).toBe(0);
+    const { unwrapPrivateKey } = await import("./keyVault");
+    expect(await unwrapPrivateKey(JSON.parse(result.rewrappedPgpKey!), NEW_PASSWORD)).toBe(SECRET);
+  }, TIMEOUT);
+
+  it.each([undefined, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])("refuses missing/invalid revision %s", async (pgpRevision) => {
+    getPGPBootstrap.mockResolvedValue(bootstrapFixture({ pgpRevision, protection: "" }));
+    await expect(session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD)).rejects.toThrow(/revision unavailable/);
+  });
+
+  it("refuses a corrupt normal envelope but preserves it on a forced reset", async () => {
+    getPGPBootstrap.mockResolvedValue(bootstrapFixture({ wrappedPrivateKey: "bad" }));
+    await expect(session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD)).rejects.toThrow(/cannot be read/);
+    getPGPBootstrap.mockResolvedValue(bootstrapFixture({ wrappedPrivateKey: "", mustChangePassword: true }));
+    await expect(session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD)).resolves.toEqual({ expectedRevision: 7 });
+  });
+});

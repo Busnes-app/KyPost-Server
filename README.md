@@ -20,6 +20,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - PGP mail encryption and signing. Signing defaults on with an unlocked browser key; compose labels unsigned mail, and the reader distinguishes encrypted but unsigned mail from a verified signature. Generate or import a key, search for recipient keys on keys.openpgp.org, and check recipient key status before you send. KyPost has two key-protection modes. Read [Where your PGP private key lives](#where-your-pgp-private-key-lives) before you rely on this.
 - Contacts address book with groups, dedupe, bulk delete, CSV and vCard import and export, and photo support
 - CardDAV server (`/dav`, `/.well-known/carddav`) to sync contacts to phones and desktop apps. An optional CardDAV client syncs against an external address book.
+- Browser PGP writes reject stale snapshots, including same-key edits concurrent with password changes or recovery uploads.
 - PGP recovery copies stored as ciphertext, downloadable backups checked before creation completes, and browser-local recovery drills.
 - Multi-factor authentication: TOTP authenticator apps, one-time recovery codes, and push-approval sign-in
 - Single Sign-On against any standard OpenID Connect provider — KySignOn (one-click preset), Authentik and Keycloak have their admin-group claims mapped. Authorization code + PKCE, ID tokens verified against the issuer's JWKS. Accounts are claimed by the provider's `sub` and never by username or email. Admin-configured under Admin > Server > SSO; **requires `SERVER_BASE_URL`**.
@@ -728,7 +729,7 @@ Auth:
 - `GET /api/auth/csrf`
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
-- `POST /api/auth/password`
+- `GET|POST /api/auth/password` (read a private password-change snapshot, then atomically commit credential and optional PGP rewrap; forced resets preserve the previous sealed key for recovery)
 - `POST /api/auth/step-up` (re-confirms the password, and a second factor when one is enrolled, before the Security page renders)
 
 Single Sign-On (OpenID Connect):
@@ -811,7 +812,7 @@ Filter Rules (the caller's own rules):
 
 PGP:
 
-- PGP snapshots expose `pgpRevision`; identity, envelope and password writes accept optional `expectedRevision` and reject stale updates with 409. Clients must use the revision from the snapshot that produced their ciphertext. Existing single-key clients may omit it; multi-key conversion is not enabled. See [the revision contract](docs/E2E_PGP.md#pgp-revision-preconditions).
+- PGP snapshots expose `pgpRevision`; identity, envelope and password writes accept optional `expectedRevision` and reject stale updates with 409. Clients must use the revision from the snapshot that produced their ciphertext. The browser requires revision support for these writes; older clients may still omit it. Multi-key conversion is not enabled. See [the revision contract](docs/E2E_PGP.md#pgp-revision-preconditions).
 
 - `POST /api/pgp/identity/generate` and `POST /api/pgp/identity/import`
 - `GET|DELETE /api/pgp/identity`

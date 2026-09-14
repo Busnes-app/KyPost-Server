@@ -107,8 +107,9 @@ presence grants no sender trust and changes no contact pin.
 The server revision foundation now persists `pgpRevision`, returns it with
 bootstrap/identity/envelope snapshots and mutation responses, and checks optional
 `expectedRevision` in existing PGP and password write APIs under the disk lock.
-Current browser writers have not adopted it yet; omission remains compatible with
-single-key clients. Account keyring versioning and mandatory guards for converted
+Browser writers supply snapshot-bound revisions, preserving vault provenance and
+prepared recovery revisions across refreshes and failed uploads. Older clients
+may still omit the guard; the server retains single-key compatibility. Account keyring versioning and mandatory guards for converted
 accounts remain prerequisites for enabling lifecycle writes. Every keyring/public-identity/recovery/credential writer
 on a converted account must supply the expected revision, checked inside the
 users-store mutation. Bump it for password changes, admin resets, recovery changes,

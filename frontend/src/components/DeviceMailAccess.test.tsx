@@ -1,3 +1,4 @@
+import { acceptCommittedPGPKey } from "../lib/pgpSession";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
@@ -15,13 +16,20 @@ const putDeviceEnvelope = vi.fn();
 const deleteDeviceEnvelope = vi.fn();
 const requireUnlockedKey = vi.fn();
 
-vi.mock("../api/pgp", () => ({
-  putDeviceEnvelope: (id: string, envelope: unknown, password: string) =>
-    putDeviceEnvelope(id, envelope, password),
-  deleteDeviceEnvelope: (id: string, password: string) => deleteDeviceEnvelope(id, password)
+vi.mock("../api/pgp", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../api/pgp")>(),
+  putDeviceEnvelope: (id: string, envelope: unknown, password: string, revision: number) =>
+    putDeviceEnvelope(id, envelope, password, revision),
+  deleteDeviceEnvelope: (id: string, password: string, revision: number) => deleteDeviceEnvelope(id, password, revision)
 }));
 
-vi.mock("../lib/keyVault", () => ({
+vi.mock("../lib/pgpSession", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/pgpSession")>(),
+  pgpSessionState: () => ({ bootstrap: { pgpRevision: 7 } })
+}));
+
+vi.mock("../lib/keyVault", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/keyVault")>(),
   requireUnlockedKey: () => requireUnlockedKey()
 }));
 
@@ -146,6 +154,7 @@ beforeEach(() => {
   putDeviceEnvelope.mockResolvedValue({ ok: true });
   deleteDeviceEnvelope.mockResolvedValue({ ok: true });
   requireUnlockedKey.mockReturnValue("-----BEGIN PGP PRIVATE KEY BLOCK-----");
+  acceptCommittedPGPKey("ARMORED", { fingerprint: "AAAA1111BBBB2222", pgpRevision: 7 });
 });
 
 describe("the status cell", () => {
@@ -543,7 +552,7 @@ describe("revocation", () => {
     await userEvent.type(screen.getByLabelText("Account password"), "hunter2");
     await userEvent.click(screen.getByRole("button", { name: "Remove it" }));
 
-    await vi.waitFor(() => expect(deleteDeviceEnvelope).toHaveBeenCalledWith("d1", "hunter2"));
+    await vi.waitFor(() => expect(deleteDeviceEnvelope).toHaveBeenCalledWith("d1", "hunter2", 7));
   });
 
   // Pins the review finding: a wrong step-up credential is a routine failure
@@ -585,4 +594,14 @@ describe("panel exclusivity", () => {
     await userEvent.click(screen.getByRole("button", { name: "Remove sealing" }));
     expect((screen.getByLabelText("Account password") as HTMLInputElement).value).toBe("");
   });
+});
+
+
+it("enrolls after a recovery commit with different fingerprint casing", async () => {
+  acceptCommittedPGPKey("ARMORED", { fingerprint: "AAAA1111BBBB2222", pgpRevision: 7 });
+  render(<Harness fingerprint="aaaa1111bbbb2222" />);
+  await startCeremony();
+  await submitCeremony(await codeFor(HONEST_KEY));
+  await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledExactlyOnceWith("d1", expect.anything(), "hunter2", 7));
+  expect(screen.queryByText(/PGP identity changed/)).toBeNull();
 });

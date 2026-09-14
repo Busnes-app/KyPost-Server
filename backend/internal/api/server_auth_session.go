@@ -785,6 +785,33 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handlePasswordSnapshot exposes only preparation data for the password change.
+// Forced-reset credentials cannot open the previous PGP envelope: preserve it
+// for recovery, and do not widen the reset session's access to key material.
+func (s *Server) handlePasswordSnapshot(w http.ResponseWriter, r *http.Request) {
+	ac, ok := authFromContext(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	u, err := s.users.Get(ac.UserID)
+	if err != nil {
+		writeUserStoreError(w, err)
+		return
+	}
+	wrapped := u.PGPPrivateKeyWrapped
+	if u.MustChangePassword {
+		wrapped = ""
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pgpRevision":        u.PGPRevision,
+		"protection":         u.PGPProtection(),
+		"wrappedPrivateKey":  wrapped,
+		"mustChangePassword": u.MustChangePassword,
+	})
+}
+
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	ac, ok := authFromContext(r)
 	if !ok {

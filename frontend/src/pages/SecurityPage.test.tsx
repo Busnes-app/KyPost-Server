@@ -20,6 +20,7 @@ vi.mock("../api/client", () => ({
 
 const SESSION = {
   bootstrap: {
+    pgpRevision: 7,
     protection: "client" as const,
     envelopeSlots: ["password"],
     fingerprint: "ABCDEF0123456789",
@@ -37,6 +38,8 @@ vi.mock("../lib/pgpSession", () => ({
     return () => {};
   },
   loadPGPSession: async () => SESSION,
+  unlockedPGPIdentity: () => ({ fingerprint: BACKUP.fingerprint, pgpRevision: 7 }),
+  acceptCommittedPGPKey: (armored: string) => unlockWithArmoredKey(armored),
   lockPGPSession: () => {},
   unlockPGPSession: async () => {},
   rewrapUnlockedKeyUnder: async () => {}
@@ -81,11 +84,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   SESSION.unlocked = true;
+  SESSION.bootstrap.pgpRevision = 7;
   SESSION.bootstrap.envelopeSlots = ["password"];
   importIdentity.mockResolvedValue({ fingerprint: BACKUP.fingerprint, armoredPrivateKey: "ARMORED", armoredPublicKey: "PUB" });
   restoreRecoveryBackup.mockResolvedValue({ ...BACKUP, privateKey: "ARMORED" });
   putJSON.mockResolvedValue({ ok: true });
-  postJSON.mockResolvedValue({ ok: true });
+  postJSON.mockResolvedValue({ ok: true, pgpRevision: 8 });
   vi.spyOn(window, "prompt").mockReturnValue("account-password");
   // jsdom has no object URL implementation; saveRecoveryBackup needs one.
   (URL as unknown as { createObjectURL: unknown }).createObjectURL = () => "blob:x";
@@ -104,6 +108,7 @@ beforeEach(() => {
     }
     if (url === "/api/pgp/identity") {
       return Promise.resolve({
+        pgpRevision: 7,
         fingerprint: "ABCDEF0123456789",
         keyId: "0123456789",
         publicKey: "PUB",
@@ -283,7 +288,8 @@ describe("a failed device refetch", () => {
       }
       if (url === "/api/pgp/identity") {
         return Promise.resolve({
-          fingerprint: "ABCDEF0123456789",
+          pgpRevision: 7,
+        fingerprint: "ABCDEF0123456789",
           keyId: "0123456789",
           publicKey: "PUB",
           source: "generated",
@@ -348,7 +354,8 @@ describe("the encryption summary", () => {
       }
       if (url === "/api/pgp/identity") {
         return Promise.resolve({
-          fingerprint: "ABCDEF0123456789",
+          pgpRevision: 7,
+        fingerprint: "ABCDEF0123456789",
           keyId: "0123456789",
           publicKey: "PUB",
           source: "generated",
@@ -533,7 +540,7 @@ describe("server recovery", () => {
     expect(putJSON).not.toHaveBeenCalled();
     await userEvent.click(await screen.findByRole("button", { name: "I saved the secret — store server copy" }));
     await waitFor(() => expect(putJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/recovery", {
-      envelope: JSON.stringify(BACKUP.envelope), expectedFingerprint: BACKUP.fingerprint, authSecret: "derived-account-credential"
+      envelope: JSON.stringify(BACKUP.envelope), expectedFingerprint: BACKUP.fingerprint, expectedRevision: 7, authSecret: "derived-account-credential"
     }));
     expect(JSON.stringify(putJSON.mock.calls)).not.toMatch(/SECRET-ABCD|ARMORED|account-password/);
   });
@@ -574,7 +581,7 @@ describe("server recovery", () => {
     await userEvent.click(screen.getByRole("button", { name: "Restore" }));
     await screen.findByText(/PGP key restored and re-encrypted/);
     expect(postJSON).toHaveBeenCalledWith("/api/pgp/identity/rewrap", {
-      wrapped: "{}", expectedFingerprint: BACKUP.fingerprint, authSecret: "derived-account-credential"
+      wrapped: "{}", expectedFingerprint: BACKUP.fingerprint, expectedRevision: 7, authSecret: "derived-account-credential"
     });
     expect(unlockWithArmoredKey).toHaveBeenCalledWith("ARMORED");
   });
@@ -635,4 +642,20 @@ it("starts a delayed recovery PUT only after secret-save acknowledgement", async
   await waitFor(() => expect(putJSON).toHaveBeenCalledTimes(1));
   page.unmount();
   finish();
+});
+
+
+it("retains a prepared recovery revision across refresh, tab switch and rejected upload", async () => {
+  renderPage();
+  await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
+  await screen.findByText("SECRET-ABCD-1234");
+  SESSION.bootstrap.pgpRevision = 8;
+  await userEvent.click(screen.getByRole("tab", { name: "Devices" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Encryption" }));
+  putJSON.mockRejectedValue(new Error("PGP state changed; reload"));
+  await userEvent.click(await screen.findByRole("button", { name: "I saved the secret — store server copy" }));
+  await screen.findByText(/PGP state changed/);
+  expect(putJSON).toHaveBeenCalledExactlyOnceWith("/api/pgp/identity/envelope/recovery", expect.objectContaining({ expectedRevision: 7 }));
+  expect(screen.getByText("SECRET-ABCD-1234")).toBeTruthy();
+  expect(createRecoveryBackup).toHaveBeenCalledTimes(1);
 });

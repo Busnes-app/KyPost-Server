@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { toErrorMessage } from "../api/client";
 import { waitForDeviceEnrollment, type NativeDevice } from "../api/devices";
-import { deleteDeviceEnvelope, putDeviceEnvelope } from "../api/pgp";
+import { deleteDeviceEnvelope, putDeviceEnvelope, requirePGPRevision } from "../api/pgp";
+import { pgpSessionState, unlockedPGPIdentity } from "../lib/pgpSession";
 import { requireUnlockedKey } from "../lib/keyVault";
 import type { MailAccess } from "../pages/security/deviceJoin";
 import {
@@ -210,6 +211,9 @@ function EnrollPanel({
         return;
       }
 
+      const snapshot = unlockedPGPIdentity();
+      if (snapshot.fingerprint.toUpperCase() !== fingerprint.toUpperCase()) throw new Error("PGP identity changed. Reload and unlock the current key.");
+
       // THE GATE. Everything below it is unreachable without a match.
       if (!(await verifyEnrollmentCode(publicKey, device.deviceId, code))) {
         // Strictly downstream of the refusal: this only chooses which message
@@ -234,7 +238,7 @@ function EnrollPanel({
       }
 
       const envelope = await sealEnvelopeForDevice(publicKey, device.deviceId, fingerprint, armored);
-      await putDeviceEnvelope(device.deviceId, envelope, password);
+      await putDeviceEnvelope(device.deviceId, envelope, password, snapshot.pgpRevision);
 
       // PAST THE POINT OF FAILURE. The sealing is stored; nothing below may
       // word itself as an error. All that is left is whether the device has
@@ -399,6 +403,7 @@ function RemovePanel({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const [snapshot] = useState(() => pgpSessionState().bootstrap);
   const [removePassword, setRemovePassword] = useState("");
   const [removeError, setRemoveError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -408,7 +413,7 @@ function RemovePanel({
     if (busy) return;
     setBusy(true);
     try {
-      await deleteDeviceEnvelope(device.deviceId, removePassword);
+      await deleteDeviceEnvelope(device.deviceId, removePassword, requirePGPRevision(snapshot));
       onChanged();
       setRemoved(true);
     } catch (e) {

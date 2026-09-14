@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
-import { postJSON } from "../api/client";
+import { getPasswordSnapshot } from "../api/pgp";
+import { postJSON, toErrorMessage } from "../api/client";
 import { credentialFields, deriveCredential, deriveNewCredential } from "../api/auth";
 import { defaultIterations, newLoginSalt } from "../lib/authSecret";
 import { loadPGPSession, rewrappedEnvelopeFor, subscribePGPSession, type PGPSessionState } from "../lib/pgpSession";
@@ -33,11 +34,18 @@ export function ChangePasswordForm({
   const [newPassword, setNewPassword] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [passwordSnapshot, setPasswordSnapshot] = useState<Awaited<ReturnType<typeof getPasswordSnapshot>> | null>(null);
   const [pgpSession, setPgpSession] = useState<PGPSessionState | null>(null);
   useEffect(() => {
+    let mounted = true;
+    void getPasswordSnapshot().then((snapshot) => {
+      if (mounted) setPasswordSnapshot(snapshot);
+    }).catch(() => {
+      if (mounted) setStatus("Password preparation is unavailable. Reload before changing your password.");
+    });
     const unsubscribe = subscribePGPSession(setPgpSession);
     void loadPGPSession();
-    return unsubscribe;
+    return () => { mounted = false; unsubscribe(); };
   }, []);
 
   async function submitPasswordChange(e: FormEvent) {
@@ -77,14 +85,14 @@ export function ChangePasswordForm({
       // credential form it stores — which keeps a converted account's plaintext
       // password off the wire here. See credentialFields.
       const oldCredential = await deriveCredential("", currentPassword);
-      const rewrappedPgpKey = await rewrappedEnvelopeFor(currentPassword, newPassword);
+      const pgpUpdate = await rewrappedEnvelopeFor(currentPassword, newPassword);
 
       await postJSON<{ ok: boolean }>("/api/auth/password", {
         ...credentialFields(oldCredential, "old"),
         newAuthSecret,
         newLoginSalt: salt,
         newIterations: iterations,
-        ...(rewrappedPgpKey ? { rewrappedPgpKey } : {})
+        ...pgpUpdate
       });
 
       // The envelope, if there was one, is already committed alongside the
@@ -100,7 +108,7 @@ export function ChangePasswordForm({
       if (message.includes("401")) {
         setStatus("Password change failed. Sign in first, then try again.");
       } else {
-        setStatus("Password change failed. Verify current password.");
+        setStatus(`Password change failed: ${toErrorMessage(err, "verify current password")}`);
       }
     } finally {
       setBusy(false);
@@ -120,6 +128,8 @@ export function ChangePasswordForm({
         ) : pgpSession.bootstrap.protection === "client" && !pgpSession.bootstrap.envelopeSlots?.includes("recovery") ? (
           <p className="notice">No server recovery copy is confirmed for your PGP key. Keep a recovery file and its secret before changing this password. You can create one in Security → Encryption.</p>
         ) : null}
+
+        {passwordSnapshot?.mustChangePassword && passwordSnapshot.protection === "client" ? <p className="notice">This change will not re-encrypt your existing PGP key; it stays sealed under your previous password. Recover it with that password or your recovery secret in Security → Encryption after continuing.</p> : null}
 
         <label className="auth-field">
           <span className="auth-label">Username</span>
@@ -146,7 +156,7 @@ export function ChangePasswordForm({
           />
         </label>
 
-        <button type="submit" className="auth-submit" disabled={busy}>
+        <button type="submit" className="auth-submit" disabled={busy || !passwordSnapshot}>
           {busy ? "Updating…" : "Update password"}
         </button>
       </form>

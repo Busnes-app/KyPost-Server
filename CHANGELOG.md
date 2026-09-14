@@ -12,7 +12,9 @@ non-prerelease version.
 
 ## Unreleased
 
-- Add persisted PGP revisions and optional atomic write preconditions to identity, envelope and password APIs. Stale same-key updates are rejected without changing credentials or ciphertext; admin resets advance the revision. Existing clients remain compatible; multi-key transactions and browser adoption follow separately.
+- Bind browser PGP and password writes to the snapshot used for preparation. Preserve prepared recovery revisions across tab switches and upload failures; refuse missing revision support. Add a narrow password-change snapshot so forced resets remain possible while preserving old sealed PGP material for recovery; show that consequence even when the form is reopened. Device enrollment treats fingerprint casing consistently after recovery.
+
+- Add persisted PGP revisions and optional atomic write preconditions to identity, envelope and password APIs. Stale same-key updates are rejected without changing credentials or ciphertext; admin resets advance the revision. Existing clients remain compatible; multi-key transactions follow separately.
 
 - Prepare browser historical-key decryption with a bounded, validated keyring reader for mail, drafts and autosaves. Conversion remains unavailable; existing single-key signing, enrollment, recovery creation and rewrap paths refuse keyring plaintext until lifecycle write support is ready.
 

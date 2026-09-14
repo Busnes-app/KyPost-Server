@@ -4,12 +4,22 @@ import type { DeviceEnvelope } from "../lib/deviceEnrollment";
 import { parseEnvelope, type RecoveryBackup, type WrappedKeyEnvelope } from "../lib/keyVault";
 
 export type PGPIdentity = {
+  pgpRevision?: number;
   fingerprint: string;
   keyId: string;
   publicKey: string;
   source: "generated" | "imported";
   createdAt: string;
 };
+
+/** Older servers remain readable, but cannot safely accept browser key writes. */
+export function requirePGPRevision(snapshot: { pgpRevision?: number } | null | undefined): number {
+  const revision = snapshot?.pgpRevision;
+  if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0) {
+    throw new Error("PGP revision unavailable. Reload; if this persists, update the server before changing keys or passwords.");
+  }
+  return revision;
+}
 
 // PGPRecipientTier mirrors the backend's resolveTier ladder. The
 // recipients-check endpoint currently only ever emits "verified" (a usable
@@ -65,8 +75,8 @@ async function stepUp(password: string): Promise<Record<string, string>> {
 // wraps it itself — see generateIdentity/importIdentity in lib/pgpClient and
 // storeClientPGPIdentity below.
 
-export async function deletePGPIdentity(password = ""): Promise<{ ok: boolean }> {
-  return deleteJSON<{ ok: boolean }>("/api/pgp/identity", await stepUp(password));
+export async function deletePGPIdentity(password: string, expectedRevision: number): Promise<{ ok: boolean }> {
+  return deleteJSON<{ ok: boolean }>("/api/pgp/identity", { expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password)) });
 }
 
 export function checkPGPRecipients(addresses: string[]): Promise<{ results: PGPRecipientStatus[] }> {
@@ -193,6 +203,7 @@ export type BoundSignerKey = {
 
 /** The cold-start snapshot — see docs/E2E_PGP.md "Cold start". */
 export type PGPBootstrap = {
+  pgpRevision?: number;
   hasIdentity: boolean;
   /** "client" (end-to-end), "server" (legacy), or "" (no key). */
   protection: "client" | "server" | "";
@@ -225,20 +236,35 @@ export function getPGPBootstrap(): Promise<PGPBootstrap> {
   return getJSON<PGPBootstrap>("/api/pgp/bootstrap");
 }
 
+/** Available to forced-reset sessions, unlike the full bootstrap. */
+export async function getPasswordSnapshot() {
+  const result = await getJSON<unknown>("/api/auth/password");
+  if (!result || typeof result !== "object" || !("pgpRevision" in result) ||
+      typeof result.pgpRevision !== "number" || !("protection" in result) ||
+      (result.protection !== "" && result.protection !== "client" && result.protection !== "server") ||
+      !("wrappedPrivateKey" in result) || typeof result.wrappedPrivateKey !== "string" ||
+      !("mustChangePassword" in result) || typeof result.mustChangePassword !== "boolean") {
+    throw new Error("Password preparation data is unavailable. Reload or update the server before changing your password.");
+  }
+  return { pgpRevision: requirePGPRevision({ pgpRevision: result.pgpRevision }), protection: result.protection,
+    wrappedPrivateKey: result.wrappedPrivateKey, mustChangePassword: result.mustChangePassword };
+}
+
 /**
  * Stores a browser-generated or imported identity. `wrapped` is opaque to the
  * server.
  *
- * `password` is required only when this REPLACES an existing identity; first-
- * time setup passes "" and the server does not ask. See stepUp above.
+ * The caller retains the revision from before preparation; every upload requires step-up.
  */
 export async function storeClientPGPIdentity(
   publicKey: string,
   wrapped: string,
   source: "generated" | "imported",
-  password = ""
+  password: string,
+  expectedRevision: number
 ): Promise<PGPIdentity> {
   return postJSON<PGPIdentity>("/api/pgp/identity/client", {
+    expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }),
     publicKey,
     wrapped,
     source,
@@ -258,13 +284,13 @@ export async function storeClientPGPIdentity(
  * re-sealed envelope inside /api/auth/password, which verifies the old password
  * already (see LoginPage).
  */
-export async function rewrapPGPPrivateKey(wrapped: string, password: string, expectedFingerprint?: string): Promise<{ ok: boolean }> {
-  return postJSON<{ ok: boolean }>("/api/pgp/identity/rewrap", { wrapped, expectedFingerprint, ...(await stepUp(password)) });
+export async function rewrapPGPPrivateKey(wrapped: string, password: string, expectedFingerprint: string, expectedRevision: number): Promise<{ ok: boolean; pgpRevision: number }> {
+  return postJSON<{ ok: boolean; pgpRevision: number }>("/api/pgp/identity/rewrap", { wrapped, expectedFingerprint, expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password)) });
 }
 
-export async function putRecoveryEnvelope(envelope: WrappedKeyEnvelope, password: string, expectedFingerprint: string): Promise<void> {
+export async function putRecoveryEnvelope(envelope: WrappedKeyEnvelope, password: string, expectedFingerprint: string, expectedRevision: number): Promise<void> {
   await putJSON("/api/pgp/identity/envelope/recovery", {
-    envelope: JSON.stringify(envelope), expectedFingerprint, ...(await stepUp(password))
+    envelope: JSON.stringify(envelope), expectedFingerprint, expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password))
   });
 }
 
@@ -286,9 +312,9 @@ export async function getRecoveryBackup(): Promise<RecoveryBackup> {
 // parameters come from the caller's own session, so no username is needed here.
 export async function exportLegacyPGPKey(
   password: string
-): Promise<{ privateKey: string; publicKey: string }> {
+): Promise<{ privateKey: string; publicKey: string; pgpRevision?: number }> {
   const credential = await deriveCredential("", password);
-  return postJSON<{ privateKey: string; publicKey: string }>("/api/pgp/identity/export-legacy", {
+  return postJSON<{ privateKey: string; publicKey: string; pgpRevision?: number }>("/api/pgp/identity/export-legacy", {
     ...credentialFields(credential)
   });
 }
@@ -385,10 +411,12 @@ export function createSealedPickup(
 export async function putDeviceEnvelope(
   deviceId: string,
   envelope: DeviceEnvelope,
-  password: string
+  password: string,
+  expectedRevision: number
 ): Promise<{ ok: boolean }> {
   return putJSON<{ ok: boolean }>(`/api/pgp/identity/envelope/device:${encodeURIComponent(deviceId)}`, {
     envelope: JSON.stringify(envelope),
+    expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }),
     ...(await stepUp(password))
   });
 }
@@ -401,9 +429,9 @@ export async function putDeviceEnvelope(
  * re-sealed it under its own keystore key, the server has no reach into it at
  * all, and revoking that device means rotating the identity.
  */
-export async function deleteDeviceEnvelope(deviceId: string, password: string): Promise<{ ok: boolean }> {
+export async function deleteDeviceEnvelope(deviceId: string, password: string, expectedRevision: number): Promise<{ ok: boolean }> {
   return deleteJSON<{ ok: boolean }>(
     `/api/pgp/identity/envelope/device:${encodeURIComponent(deviceId)}`,
-    await stepUp(password)
+    { expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password)) }
   );
 }
