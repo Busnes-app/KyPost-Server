@@ -250,7 +250,8 @@ export async function getPasswordSnapshot() {
     throw new Error("Password preparation data is unavailable. Reload or update the server before changing your password.");
   }
   return { pgpRevision: requirePGPRevision({ pgpRevision: result.pgpRevision }), protection: result.protection,
-    wrappedPrivateKey: result.wrappedPrivateKey, mustChangePassword: result.mustChangePassword };
+    wrappedPrivateKey: result.wrappedPrivateKey, mustChangePassword: result.mustChangePassword,
+    ...("keyring" in result && result.keyring != null ? { keyring: parseKeyringMetadata(result.keyring) } : {}) };
 }
 
 /**

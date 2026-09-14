@@ -30,6 +30,8 @@ import {
   wrapPrivateKey
 } from "./keyVault";
 
+import { validateKeyringSnapshot } from "./pgpKeyring";
+
 export type PGPSessionState = {
   loaded: boolean;
   bootstrap: PGPBootstrap | null;
@@ -190,15 +192,29 @@ export function knownSignerKeys(): BoundSignerKey[] {
 export async function rewrappedEnvelopeFor(
   oldPassword: string,
   newPassword: string
-): Promise<{ expectedRevision: number; rewrappedPgpKey?: string }> {
+): Promise<{ expectedRevision: number; rewrappedPgpKey?: string; keyringVersion?: 1 }> {
   const bootstrap = await getPasswordSnapshot();
   const expectedRevision = requirePGPRevision(bootstrap);
   if (bootstrap.mustChangePassword || bootstrap.protection !== "client") return { expectedRevision };
   const envelope = parseEnvelope(bootstrap.wrappedPrivateKey);
   if (!envelope) throw new Error("Your stored PGP envelope cannot be read. Restore it before changing your password.");
   // Unwrapped eagerly, while the old password is known to be correct.
-  const armored = requireSinglePrivateKey(await unwrapPrivateKey(envelope, oldPassword));
-  return { expectedRevision, rewrappedPgpKey: JSON.stringify(await wrapPrivateKey(armored, newPassword)) };
+  const raw = await unwrapPrivateKey(envelope, oldPassword);
+  if (bootstrap.keyring != null) {
+    const current = await getPGPBootstrap();
+    if (requirePGPRevision(current) !== expectedRevision || current.protection !== "client" || current.keyring == null) {
+      throw new Error("Your PGP state changed. Reload before changing your password.");
+    }
+    await validateKeyringSnapshot(raw, { ...current, keyring: bootstrap.keyring });
+    await validateKeyringSnapshot(raw, { ...current, keyring: current.keyring });
+    const rewrappedPgpKey = JSON.stringify(await wrapPrivateKey(raw, newPassword));
+    if (new TextEncoder().encode(rewrappedPgpKey).length > 128 << 10) {
+      throw new Error("The complete keyring exceeds storage capacity. No password was changed.");
+    }
+    return { expectedRevision, rewrappedPgpKey, keyringVersion: 1 };
+  }
+  requireSinglePrivateKey(raw);
+  return { expectedRevision, rewrappedPgpKey: JSON.stringify(await wrapPrivateKey(raw, newPassword)) };
 }
 
 /**

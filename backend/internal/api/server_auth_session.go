@@ -843,6 +843,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		// permanently, because the only rewrap path re-derives from the CURRENT
 		// password and could never open it again.
 		RewrappedPGPKey  string  `json:"rewrappedPgpKey,omitempty"`
+		KeyringVersion   *int    `json:"keyringVersion,omitempty"`
 		ExpectedRevision *uint64 `json:"expectedRevision,omitempty"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
@@ -926,6 +927,21 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	s.passwordChangeLockout.recordSuccess(lockKey)
 
+	if req.KeyringVersion != nil {
+		if req.ExpectedRevision == nil || *req.ExpectedRevision == 0 {
+			writeUserStoreError(w, users.ErrInvalidPGPRevision)
+			return
+		}
+		if *req.ExpectedRevision != u.PGPRevision {
+			writeUserStoreError(w, users.ErrPGPRevisionChanged)
+			return
+		}
+	}
+	if req.KeyringVersion != nil && (*req.KeyringVersion != 1 || req.NewAuthSecret == "" || req.RewrappedPGPKey == "") {
+		http.Error(w, "keyringVersion 1 requires a complete rewrapped keyring and derived credential", http.StatusBadRequest)
+		return
+	}
+
 	// Prefer the derived form when the client supplied it. The plaintext branch
 	// stays only for clients that have not converted; it is the one that still
 	// lets the server see a password, so it must never be the path taken when
@@ -942,9 +958,15 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 			iterations = clientLoginIterations
 		}
 		// One mutation for the credential and the PGP envelope, or neither.
-		updated, err = s.users.SetDerivedAuthAndRewrapPGP(
-			r.Context(), u.ID, req.NewAuthSecret, req.NewLoginSalt, iterations, false, req.RewrappedPGPKey, req.ExpectedRevision,
-		)
+		if req.KeyringVersion != nil {
+			updated, err = s.users.ChangeKeyringPassword(r.Context(), u.ID, users.PGPKeyringCredential{
+				AuthSecret: req.NewAuthSecret, LoginSalt: req.NewLoginSalt, Iterations: iterations,
+			}, req.RewrappedPGPKey, req.ExpectedRevision)
+		} else {
+			updated, err = s.users.SetDerivedAuthAndRewrapPGP(
+				r.Context(), u.ID, req.NewAuthSecret, req.NewLoginSalt, iterations, false, req.RewrappedPGPKey, req.ExpectedRevision,
+			)
+		}
 		if err != nil {
 			if errors.Is(err, users.ErrPGPRevisionChanged) || errors.Is(err, users.ErrInvalidPGPRevision) || errors.Is(err, users.ErrPGPKeyringUpgradeRequired) {
 				writeUserStoreError(w, err)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -390,5 +391,79 @@ func TestPGPKeyringRejectsSigningOnlyRetirement(t *testing.T) {
 	after, err := os.ReadFile(s.path)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("rejected retirement changed disk")
+	}
+}
+
+func TestChangeKeyringPasswordPreservesMaterial(t *testing.T) {
+	for _, recovery := range []bool{true, false} {
+		t.Run(map[bool]string{true: "with recovery", false: "without recovery"}[recovery], func(t *testing.T) {
+			s, id, update := keyringCandidate(t)
+			u, err := s.CommitPGPKeyring(context.Background(), id, update)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !recovery {
+				u, err = s.DeletePGPWrappedEnvelope(id, EnvelopeSlotRecovery, &u.PGPRevision)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			u, err = s.Get(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			credential := PGPKeyringCredential{AuthSecret: strings.Repeat("b", 64), LoginSalt: u.LoginSalt, Iterations: 600000}
+			for _, revision := range []*uint64{nil, &update.ExpectedRevision} {
+				if _, err := s.ChangeKeyringPassword(context.Background(), id, credential, `{"v":2,"new":true}`, revision); err == nil {
+					t.Fatal("unguarded/stale change accepted")
+				}
+			}
+			changed, err := s.ChangeKeyringPassword(context.Background(), id, credential, `{"v":2,"new":true}`, &u.PGPRevision)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed.PGPRevision != u.PGPRevision+1 || changed.PGPPrivateKeyWrapped != `{"v":2,"new":true}` {
+				t.Fatal("missing password envelope/revision")
+			}
+			if ok, err := VerifyAuthSecret(context.Background(), changed, credential.AuthSecret); err != nil || !ok {
+				t.Fatal("credential not committed")
+			}
+			changed.UpdatedAt = u.UpdatedAt // Every store mutation stamps its ordinary audit time.
+			changed.PasswordHash, changed.LoginSalt, changed.LoginIterations = u.PasswordHash, u.LoginSalt, u.LoginIterations
+			changed.PGPRevision, changed.PGPPrivateKeyWrapped = u.PGPRevision, u.PGPPrivateKeyWrapped
+			if !reflect.DeepEqual(changed, u) {
+				t.Fatal("password change altered retained material or metadata")
+			}
+		})
+	}
+}
+
+func TestChangeKeyringPasswordRefusesWrongState(t *testing.T) {
+	s, id, update := keyringCandidate(t)
+	credential := PGPKeyringCredential{AuthSecret: strings.Repeat("b", 64), LoginSalt: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef")), Iterations: 600000}
+	if _, err := s.ChangeKeyringPassword(context.Background(), id, credential, `{"v":2}`, &update.ExpectedRevision); !errors.Is(err, ErrPGPKeyringUpgradeRequired) {
+		t.Fatalf("legacy: %v", err)
+	}
+	u, err := s.CommitPGPKeyring(context.Background(), id, update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ChangeKeyringPassword(context.Background(), id, credential, "", &u.PGPRevision); !errors.Is(err, ErrPGPKeyringUpgradeRequired) {
+		t.Fatalf("empty: %v", err)
+	}
+	before := u
+	u, err = s.SetPassword(context.Background(), id, "temporary-ring-password", true, &u.PGPRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ChangeKeyringPassword(context.Background(), id, credential, `{"v":2}`, &u.PGPRevision); !errors.Is(err, ErrPGPKeyringUpgradeRequired) {
+		t.Fatalf("forced: %v", err)
+	}
+	after, err := s.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PGPRevision != u.PGPRevision || after.PasswordHash != u.PasswordHash || after.PGPPrivateKeyWrapped != before.PGPPrivateKeyWrapped {
+		t.Fatal("refused change wrote data")
 	}
 }
