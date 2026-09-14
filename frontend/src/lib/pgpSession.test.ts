@@ -207,3 +207,14 @@ describe("logout", () => {
     TIMEOUT
   );
 });
+
+
+it("refuses keyring rewrap through the legacy password-change API", async () => {
+  const envelope = await wrapPrivateKey(JSON.stringify({ format: "kypost-pgp-keyring-v1" }), OLD_PASSWORD);
+  getPGPBootstrap.mockResolvedValue(bootstrapFixture({ wrappedPrivateKey: JSON.stringify(envelope) }));
+  await session.loadPGPSession();
+  await expect(session.rewrappedEnvelopeFor(OLD_PASSWORD, NEW_PASSWORD)).rejects.toThrow(/lifecycle upgrade/);
+  await session.unlockPGPSession(OLD_PASSWORD);
+  await expect(session.rewrapUnlockedKeyUnder(NEW_PASSWORD)).rejects.toThrow(/lifecycle upgrade/);
+  expect(rewrapPGPPrivateKey).not.toHaveBeenCalled();
+}, TIMEOUT);

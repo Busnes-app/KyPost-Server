@@ -707,7 +707,9 @@ the crypto work, so an old app fails legibly.
 ## Planned multi-key lifecycle
 
 [PGP_KEY_LIFECYCLE.md](PGP_KEY_LIFECYCLE.md) defines the proposed Tier 5 design,
-not the current wire format. Android and Mac currently replace a single enrolled
+not the current wire format. The preparatory browser reader validates complete
+versioned rings for historical decryption; conversion is unavailable, and legacy
+single-key writes refuse ring plaintext. Android and Mac currently replace a single enrolled
 key; Linux retains GnuPG keys but accepts only one primary key per enrollment
 import. All three need explicit versioned bundle support before retirement can
 safely distribute historical keys. Mac is now Swift; the earlier Qt/mobile

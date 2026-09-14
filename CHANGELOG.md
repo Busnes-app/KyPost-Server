@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Prepare browser historical-key decryption with a bounded, validated keyring reader for mail, drafts and autosaves. Conversion remains unavailable; existing single-key signing, enrollment, recovery creation and rewrap paths refuse keyring plaintext until lifecycle write support is ready.
+
 - Document the proposed PGP multi-key lifecycle and its native-client upgrade gates, with a runnable crypto feasibility check. No lifecycle behavior ships in this design change.
 
 - PGP recovery now stores a sealed server copy as well as requesting a tested offline download. Restore the current identity without the file using its recovery secret; test a copy with a non-destructive drill and keep its date in this browser. Password changes warn when no server copy is confirmed, and identity deletion warns that it removes server recovery too. Recovery writes refuse a concurrently replaced identity.
