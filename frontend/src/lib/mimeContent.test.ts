@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parseMimeContent } from "./mimeContent";
+import { decodeRFC2047, parseMimeContent } from "./mimeContent";
 
 // What a client-protected account's mail goes through. Before it existed,
 // decryptMessage handed the reader the whole MIME entity — headers, boundaries
@@ -15,7 +15,7 @@ describe("parseMimeContent", () => {
 
   it("reads the mode off a simple text/html entity", () => {
     const raw = "Content-Type: text/html; charset=utf-8\r\n\r\n<p>Hello</p>";
-    expect(parseMimeContent(raw)).toEqual({ body: "<p>Hello</p>", mode: "html", attachments: [], attachmentsOmitted: 0 });
+    expect(parseMimeContent(raw)).toEqual({ body: "<p>Hello</p>", mode: "html", attachments: [], attachmentsOmitted: 0, protectedHeaders: {} });
   });
 
   it("reads the mode off a simple text/plain entity", () => {
@@ -26,7 +26,8 @@ describe("parseMimeContent", () => {
       body: "Contact <admin@example.com> today",
       mode: "plain",
       attachments: [],
-      attachmentsOmitted: 0
+      attachmentsOmitted: 0,
+      protectedHeaders: {}
     });
   });
 
@@ -158,14 +159,14 @@ describe("parseMimeContent", () => {
   it("survives a multipart whose boundary never appears", () => {
     const raw = 'Content-Type: multipart/mixed; boundary="missing"\r\n\r\nno parts at all';
     expect(() => parseMimeContent(raw)).not.toThrow();
-    expect(parseMimeContent(raw)).toEqual({ body: "", mode: "plain", attachments: [], attachmentsOmitted: 0 });
+    expect(parseMimeContent(raw)).toEqual({ body: "", mode: "plain", attachments: [], attachmentsOmitted: 0, protectedHeaders: {} });
   });
 
   it("tolerates bare LF line endings", () => {
     // Real mail uses CRLF, but the decrypted payload has been through a library
     // that may have normalized it.
     const raw = "Content-Type: text/html\n\n<p>lf only</p>";
-    expect(parseMimeContent(raw)).toEqual({ body: "<p>lf only</p>", mode: "html", attachments: [], attachmentsOmitted: 0 });
+    expect(parseMimeContent(raw)).toEqual({ body: "<p>lf only</p>", mode: "html", attachments: [], attachmentsOmitted: 0, protectedHeaders: {} });
   });
 
   it("unfolds a wrapped Content-Type header", () => {
@@ -271,6 +272,44 @@ describe("attachments", () => {
     const parsed = parseMimeContent(raw)!;
     expect(parsed.attachments).toHaveLength(0);
     expect(parsed.attachmentsOmitted).toBe(1);
+  });
+});
+
+describe("protected headers", () => {
+  it("reads Subject, To, Cc and Bcc off the entity's own header block", () => {
+    const raw = [
+      "Subject: =?utf-8?q?Caf=C3=A9_plans?=",
+      "To: a@example.com, b@example.com",
+      "Bcc: hidden@example.com",
+      'Content-Type: multipart/mixed; boundary="P"; protected-headers="v1"',
+      "",
+      "--P",
+      "Content-Type: text/plain",
+      "",
+      "body",
+      "--P--",
+      ""
+    ].join("\r\n");
+    const parsed = parseMimeContent(raw)!;
+    expect(parsed.protectedHeaders).toEqual({
+      subject: "Caf\u00e9 plans",
+      to: "a@example.com, b@example.com",
+      bcc: "hidden@example.com"
+    });
+    expect(parsed.body.trim()).toBe("body");
+  });
+
+  it("does not invent headers a plain entity never carried", () => {
+    expect(parseMimeContent("Content-Type: text/plain\r\n\r\nhi")!.protectedHeaders).toEqual({});
+  });
+});
+
+describe("decodeRFC2047", () => {
+  it("decodes B and Q words and leaves malformed ones as written", () => {
+    expect(decodeRFC2047("=?UTF-8?B?w6l0w6k=?=")).toBe("\u00e9t\u00e9");
+    expect(decodeRFC2047("=?iso-8859-1?q?caf=E9?=")).toBe("caf\u00e9");
+    expect(decodeRFC2047("=?x-nonsense?B?!!?=")).toBe("=?x-nonsense?B?!!?=");
+    expect(decodeRFC2047("plain")).toBe("plain");
   });
 });
 

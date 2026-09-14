@@ -12,8 +12,8 @@ import { ContactPickerModal } from "./components/ContactPickerModal";
 import { RecipientField } from "./components/RecipientField";
 import { useDialogOpen } from "./hooks/useDialogOpen";
 import { contactToToken, isDuplicateInField, parseRecipientField, pickupFallbackFlag, serializeRecipientField, splitAddressList } from "./lib/recipients";
-import { isClientProtected, needsUnlock, loadPGPSession, clearPGPSession } from "./lib/pgpSession";
-import { buildEncryptedDeliveries, buildEncryptedSentCopy, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "./lib/pgpClient";
+import { accountAddress, clearPGPSession, isClientProtected, loadPGPSession, needsUnlock, pgpCustody } from "./lib/pgpSession";
+import { buildEncryptedDeliveries, buildEncryptedDraft, buildEncryptedSentCopy, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "./lib/pgpClient";
 import { sealPickup } from "./lib/pickupCrypto";
 import { createSealedPickup, resolveRecipientKeys, sendClientEncryptedMail } from "./api/pgp";
 import { PgpUnlockDialog } from "./components/PgpUnlockDialog";
@@ -49,6 +49,7 @@ import {
 } from "./app/compose";
 import {
   clearDraftSnapshot,
+  hasContent,
   loadDraftSnapshot,
   purgeExpiredDraftSnapshots,
   restoreNotice,
@@ -113,6 +114,8 @@ export function App() {
   const [composeHtmlBody, setComposeHtmlBody] = useState("");
   const [composeSending, setComposeSending] = useState(false);
   const [composeUnlockOpen, setComposeUnlockOpen] = useState(false);
+  /** A sealed snapshot was found while the vault was locked; restore on unlock. */
+  const composeSnapshotPending = useRef(false);
   // Opt-in: send keyless recipients a one-time pickup link rather than
   // failing the send. Off by default because it is weaker than PGP. For
   // client-custody accounts this drives a browser-side sealed-pickup flow;
@@ -603,7 +606,7 @@ export function App() {
     }
     const userId = auth.userId;
     const timer = setTimeout(() => {
-      saveDraftSnapshot(userId, {
+      void saveDraftSnapshot(userId, {
         to: serializeRecipientField(composeTo),
         cc: serializeRecipientField(composeCc),
         bcc: serializeRecipientField(composeBcc),
@@ -630,11 +633,54 @@ export function App() {
     setComposeError("");
     setComposeSuccess("");
     setComposeNotice("");
+    setComposeOpen(true);
+    loadSendAsOptions();
     // Recover anything the last session left behind. Only on a blank compose:
     // openDraftInCompose has explicit content and must never be overwritten by
     // a stale snapshot.
-    const snapshot = auth?.userId ? loadDraftSnapshot(auth.userId) : null;
-    if (snapshot) {
+    void restoreComposeSnapshot();
+  }
+
+  /** The From the browser-encrypted paths put on the wire: the chosen
+   *  send-as alias, else the account address the bootstrap reported. */
+  function clientSenderAddress(): string {
+    return composeFrom || accountAddress();
+  }
+
+  /** True while the compose window holds nothing the user typed. */
+  function composeIsBlank(): boolean {
+    return !hasContent({
+      to: serializeRecipientField(composeTo),
+      cc: serializeRecipientField(composeCc),
+      bcc: serializeRecipientField(composeBcc),
+      subject: composeSubject,
+      body: quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody,
+      attachments: composeAttachments
+    });
+  }
+
+  /**
+   * Restores the autosaved snapshot into a blank compose window. A sealed
+   * snapshot behind a locked vault opens the unlock prompt instead; the
+   * dialog's onUnlocked calls this again. Nothing is ever restored over
+   * typing: if the user dismissed the prompt and started writing, a later
+   * unlock leaves the window alone and the snapshot where it is.
+   */
+  async function restoreComposeSnapshot() {
+    if (!auth?.userId) return;
+    if (!composeIsBlank()) {
+      composeSnapshotPending.current = false;
+      return;
+    }
+    const snapshot = await loadDraftSnapshot(auth.userId);
+    if (snapshot === "locked") {
+      composeSnapshotPending.current = true;
+      setComposeNotice("An unsent draft is waiting. Unlock your PGP key to restore it.");
+      setComposeUnlockOpen(true);
+      return;
+    }
+    composeSnapshotPending.current = false;
+    if (snapshot && composeIsBlank()) {
       setComposeTo(parseRecipientField(snapshot.to));
       setComposeCc(parseRecipientField(snapshot.cc));
       setComposeBcc(parseRecipientField(snapshot.bcc));
@@ -642,8 +688,6 @@ export function App() {
       setComposeHtmlBody(snapshot.body);
       setComposeNotice(restoreNotice(snapshot));
     }
-    setComposeOpen(true);
-    loadSendAsOptions();
   }
 
   function openDraftInCompose(payload: DraftComposePayload) {
@@ -653,6 +697,7 @@ export function App() {
     setComposeBcc(parseRecipientField(payload.bcc ?? ""));
     setComposeSubject(payload.subject ?? "");
     setComposeHtmlBody(payload.body ?? "");
+    setComposeAttachments(payload.attachments ?? []);
     setComposeError("");
     setComposeSuccess("");
     setComposeOpen(true);
@@ -878,7 +923,7 @@ export function App() {
     const [keyedTo, keyedCc, keyedBcc] = keyed;
 
     const envelope = {
-      from: composeFrom || "",
+      from: clientSenderAddress(),
       to: keyedTo,
       cc: keyedCc,
       subject: composeSubject
@@ -924,7 +969,7 @@ export function App() {
       // so this is not optional.
       const sentCopy = await buildEncryptedSentCopy(envelope, "text/html; charset=UTF-8", body, composeSign, composeAttachments);
       const result = await sendClientEncryptedMail({
-        from: composeFrom || "",
+        from: clientSenderAddress(),
         // The real subject travels inside the ciphertext as a protected
         // header, exactly as it does for the deliveries.
         subject: OUTER_PLACEHOLDER_SUBJECT,
@@ -1040,15 +1085,63 @@ export function App() {
     setComposeSuccess("");
     const body = quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody;
     try {
-      await postJSON<{ ok: boolean }>("/api/mail/draft", {
-        to,
-        cc: serializeRecipientField(composeCc),
-        bcc: serializeRecipientField(composeBcc),
-        subject: composeSubject,
-        body,
-        mode: "html",
-        attachments: composeAttachments.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 }))
-      });
+      const cc = serializeRecipientField(composeCc);
+      const bcc = serializeRecipientField(composeBcc);
+      // Tri-state on purpose: an unloaded or failed bootstrap must not read
+      // as "not client custody" and send the draft in the clear.
+      const custody = pgpCustody();
+      if (custody === "unknown") {
+        throw new Error("Your PGP state could not be confirmed, so the draft was not saved. Reload and try again.");
+      }
+      if (custody === "client") {
+        // A client-custody draft is encrypted to the user's own key before it
+        // leaves the browser: the Drafts folder sits on the same IMAP server
+        // as the Sent copy, and a plaintext draft there gave that server the
+        // text of a message the user was about to encrypt.
+        if (needsUnlock()) {
+          setComposeUnlockOpen(true);
+          throw new Error("Your PGP key is locked — unlock it, then save again.");
+        }
+        const budget = encryptedAttachmentBudget(2);
+        const attached = composeAttachments.reduce((sum, a) => sum + a.size, 0);
+        if (composeAttachments.length > 0 && attached > budget) {
+          throw new Error(`Attachments too large for an encrypted draft: ${formatBytes(attached)} attached, ${formatBytes(budget)} allowed.`);
+        }
+        const pgpDraft = await buildEncryptedDraft(
+          {
+            from: clientSenderAddress(),
+            to: splitAddressList(to),
+            cc: splitAddressList(cc),
+            bcc: splitAddressList(bcc),
+            subject: composeSubject
+          },
+          "text/html; charset=UTF-8",
+          body,
+          composeAttachments
+        );
+        // The plaintext fields carry the placeholder and nothing else; the
+        // server ignores them for an encrypted draft but must not be handed
+        // the real text anyway. To is already in the wrapper's outer headers;
+        // Cc and Bcc travel only inside the ciphertext, so they stay here.
+        await postJSON<{ ok: boolean }>("/api/mail/draft", {
+          to,
+          subject: OUTER_PLACEHOLDER_SUBJECT,
+          body: "",
+          mode: "html",
+          attachments: [],
+          pgpDraft
+        });
+      } else {
+        await postJSON<{ ok: boolean }>("/api/mail/draft", {
+          to,
+          cc,
+          bcc,
+          subject: composeSubject,
+          body,
+          mode: "html",
+          attachments: composeAttachments.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 }))
+        });
+      }
       // The work is now a real IMAP draft, so the local safety net has
       // nothing left to protect. Clear it rather than leave a stale copy to
       // resurrect over the saved one on next open.
@@ -1523,9 +1616,18 @@ export function App() {
             {composeError ? <p className="notice notice-error" style={{ margin: 0 }}>Send failed: {composeError}</p> : null}
             <PgpUnlockDialog
               open={composeUnlockOpen}
-              reason="to sign and encrypt this message"
-              onUnlocked={() => setComposeUnlockOpen(false)}
-              onCancel={() => setComposeUnlockOpen(false)}
+              reason={composeSnapshotPending.current ? "to restore your unsent draft" : "to sign and encrypt this message"}
+              onUnlocked={() => {
+                setComposeUnlockOpen(false);
+                if (composeSnapshotPending.current) {
+                  setComposeNotice("");
+                  void restoreComposeSnapshot();
+                }
+              }}
+              onCancel={() => {
+                setComposeUnlockOpen(false);
+                composeSnapshotPending.current = false;
+              }}
             />
             {composeSuccess ? <p className="notice notice-success" style={{ margin: 0 }}>{composeSuccess}</p> : null}
             {composeNotice ? <p className="notice notice-warning">{composeNotice}</p> : null}

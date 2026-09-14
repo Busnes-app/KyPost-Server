@@ -26,14 +26,23 @@
 // Explicit "Save Draft" still writes a real IMAP draft. This is the safety
 // net underneath it, not a replacement.
 //
-// Neither store is encrypted, so same-origin XSS reads it either way — that is
-// not what changed here. What changed is how long the plaintext outlives the
-// session that produced it.
+// On a client-custody account the snapshot is SEALED to the user's own PGP key
+// before it is stored, so what sits in sessionStorage is ciphertext. Same-origin
+// XSS with the vault unlocked can still open it, exactly as it can read the
+// compose window itself; what changed is that storage on its own no longer
+// holds plaintext. The trade is that a reload locks the vault, so the snapshot
+// is restored only once the user unlocks again — loadDraftSnapshot says
+// "locked" for that case. While the vault is locked nothing is written, since
+// there is no key to seal to; the accounts with no PGP identity keep the
+// plaintext snapshot, because there is nothing to encrypt to and nothing the
+// message itself would be encrypted with.
 
 import type { ComposeAttachment } from "./types";
+import { needsUnlock, pgpCustody } from "../lib/pgpSession";
+import { openSealedToSelf, sealToSelf } from "../lib/pgpClient";
 
 /** Bump when the stored shape changes; a mismatch discards rather than guesses. */
-const SNAPSHOT_VERSION = 1;
+const SNAPSHOT_VERSION = 2;
 
 /**
  * How long a snapshot stays restorable before it is discarded on sight.
@@ -104,7 +113,7 @@ export function purgeExpiredDraftSnapshots(now: number = Date.now()): void {
       if (!key?.startsWith(KEY_PREFIX)) continue;
       let savedAt: unknown = null;
       try {
-        savedAt = (JSON.parse(storage.getItem(key) ?? "") as Partial<DraftSnapshot>)?.savedAt;
+        savedAt = (JSON.parse(storage.getItem(key) ?? "") as Partial<StoredSnapshot>)?.savedAt;
       } catch {
         // Unparseable is unreadable is unrestorable — and it is still
         // plaintext, so it goes.
@@ -140,6 +149,14 @@ function purgeLegacyPersistentDrafts(): void {
     // Storage disabled or unavailable. See saveDraftSnapshot.
   }
 }
+
+/** The stored record: either the fields in the clear, or the same JSON sealed. */
+type StoredSnapshot = {
+  version: number;
+  savedAt: string;
+  sealed?: string;
+  fields?: Omit<DraftSnapshot, "version" | "savedAt">;
+};
 
 export type DraftSnapshot = {
   version: number;
@@ -191,63 +208,106 @@ export function hasContent(draft: DraftInput): boolean {
  * saveDraftSnapshot persists a draft, or clears the stored one when the draft
  * is empty. Never throws: a quota error or a browser with storage disabled
  * must not surface as an exception in the middle of typing.
+ *
+ * On a client-custody account the fields are sealed to the user's key first.
+ * With the vault locked, autosave touches nothing: it can neither seal new
+ * text nor tell whether the stored ciphertext is superseded, and the blank
+ * window behind the unlock prompt must not clear the snapshot the prompt is
+ * offering to restore. Explicit clears and the age sweep still run. While
+ * the PGP state is still unknown nothing is written either: a plaintext
+ * snapshot for what may be a client-custody account is the wrong default.
  */
-export function saveDraftSnapshot(userId: string, draft: DraftInput): void {
+export async function saveDraftSnapshot(userId: string, draft: DraftInput): Promise<void> {
   if (!userId) return;
+  const custody = pgpCustody();
+  if (custody === "unknown") return;
+  if (custody === "client" && needsUnlock()) return;
+  // Sealing is asynchronous and a clear is not. A clear that lands while
+  // the seal is in flight (Save Draft, Trash, logout, all a second after the
+  // last keystroke) must win, or the write below resurrects what was just
+  // discarded.
+  const generation = clearGeneration.get(userId) ?? 0;
   try {
     if (!hasContent(draft)) {
+      bumpClearGeneration(userId);
       draftStorage().removeItem(storageKey(userId));
       return;
     }
-    const snapshot: DraftSnapshot = {
-      version: SNAPSHOT_VERSION,
+    const fields: StoredSnapshot["fields"] = {
       to: draft.to,
       cc: draft.cc,
       bcc: draft.bcc,
       subject: draft.subject,
       body: draft.body,
-      attachmentNames: draft.attachments.map((a) => a.name),
-      savedAt: new Date().toISOString()
+      attachmentNames: draft.attachments.map((a) => a.name)
     };
-    draftStorage().setItem(storageKey(userId), JSON.stringify(snapshot));
+    const savedAt = new Date().toISOString();
+    let stored: StoredSnapshot;
+    if (custody === "client") {
+      const sealed = await sealToSelf(JSON.stringify(fields));
+      if ((clearGeneration.get(userId) ?? 0) !== generation) return;
+      stored = { version: SNAPSHOT_VERSION, savedAt, sealed };
+    } else {
+      stored = { version: SNAPSHOT_VERSION, savedAt, fields };
+    }
+    draftStorage().setItem(storageKey(userId), JSON.stringify(stored));
   } catch {
     // Storage full, disabled, or unavailable (private mode). Autosave is a
     // best-effort safety net; losing it must not cost the user their typing.
   }
 }
 
-/** loadDraftSnapshot returns the stored draft, or null if there is none, it is
- *  unreadable, or it was written by a different version. */
-export function loadDraftSnapshot(userId: string): DraftSnapshot | null {
+/**
+ * loadDraftSnapshot returns the stored draft; "locked" when one is sealed and
+ * the vault is not open, so the caller can ask for an unlock and try again;
+ * null if there is none, it is unreadable, or another version wrote it.
+ */
+export async function loadDraftSnapshot(userId: string): Promise<DraftSnapshot | "locked" | null> {
   if (!userId) return null;
   try {
     const raw = draftStorage().getItem(storageKey(userId));
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<DraftSnapshot>;
-    if (parsed?.version !== SNAPSHOT_VERSION) {
+    const stored = JSON.parse(raw) as Partial<StoredSnapshot>;
+    if (stored?.version !== SNAPSHOT_VERSION) {
       draftStorage().removeItem(storageKey(userId));
       return null;
     }
     // Expire on read as well as on the startup sweep: this is the path that
     // must never hand back a stale draft, whatever the sweep did or didn't
     // catch (storage written by another tab since startup, a clock change).
-    if (isExpired(parsed.savedAt, Date.now())) {
+    if (isExpired(stored.savedAt, Date.now())) {
+      draftStorage().removeItem(storageKey(userId));
+      return null;
+    }
+    let fields: Partial<NonNullable<StoredSnapshot["fields"]>> | undefined = stored.fields;
+    if (typeof stored.sealed === "string") {
+      if (needsUnlock()) return "locked";
+      fields = JSON.parse(await openSealedToSelf(stored.sealed)) as typeof fields;
+    }
+    if (!fields || typeof fields !== "object") {
       draftStorage().removeItem(storageKey(userId));
       return null;
     }
     return {
       version: SNAPSHOT_VERSION,
-      to: parsed.to ?? "",
-      cc: parsed.cc ?? "",
-      bcc: parsed.bcc ?? "",
-      subject: parsed.subject ?? "",
-      body: parsed.body ?? "",
-      attachmentNames: Array.isArray(parsed.attachmentNames)
-        ? parsed.attachmentNames.filter((n): n is string => typeof n === "string")
+      to: fields.to ?? "",
+      cc: fields.cc ?? "",
+      bcc: fields.bcc ?? "",
+      subject: fields.subject ?? "",
+      body: fields.body ?? "",
+      attachmentNames: Array.isArray(fields.attachmentNames)
+        ? fields.attachmentNames.filter((n): n is string => typeof n === "string")
         : [],
-      savedAt: parsed.savedAt ?? ""
+      savedAt: stored.savedAt ?? ""
     };
   } catch {
+    // Unreadable, or sealed under a key this vault no longer holds. Either
+    // way it cannot be restored, and it must not linger.
+    try {
+      draftStorage().removeItem(storageKey(userId));
+    } catch {
+      // See saveDraftSnapshot.
+    }
     return null;
   }
 }
@@ -257,8 +317,16 @@ export function loadDraftSnapshot(userId: string): DraftSnapshot | null {
  * (sent, or written to a real IMAP draft) or deliberately abandoned (trashed),
  * and on logout so the next person at this browser cannot read it.
  */
+/** Bumped by every clear so an in-flight save can tell it has been overtaken. */
+const clearGeneration = new Map<string, number>();
+
+function bumpClearGeneration(userId: string): void {
+  clearGeneration.set(userId, (clearGeneration.get(userId) ?? 0) + 1);
+}
+
 export function clearDraftSnapshot(userId: string): void {
   if (!userId) return;
+  bumpClearGeneration(userId);
   try {
     draftStorage().removeItem(storageKey(userId));
   } catch {

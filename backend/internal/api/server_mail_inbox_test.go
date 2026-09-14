@@ -22,6 +22,7 @@ import (
 // a real IMAP connection. Every method call is counted so tests can assert
 // IMAP was (or wasn't) touched.
 type fakeMailClient struct {
+	savedDrafts []imapadapter.DraftMessage
 	unread      []imapadapter.UnreadMessage
 	unreadErr   error
 	unreadCalls int
@@ -140,8 +141,11 @@ func (f *fakeMailClient) RemoveLabel(_ context.Context, messageID string, label 
 func (f *fakeMailClient) ApplyInboxAction(_ context.Context, _ string, _ string, _ string, _ string) error {
 	return nil
 }
-func (f *fakeMailClient) SaveDraft(_ context.Context, _ imapadapter.DraftMessage) error { return nil }
-func (f *fakeMailClient) SaveSent(_ context.Context, _ imapadapter.DraftMessage) error  { return nil }
+func (f *fakeMailClient) SaveDraft(_ context.Context, d imapadapter.DraftMessage) error {
+	f.savedDrafts = append(f.savedDrafts, d)
+	return nil
+}
+func (f *fakeMailClient) SaveSent(_ context.Context, _ imapadapter.DraftMessage) error { return nil }
 func (f *fakeMailClient) FetchHeaderFields(context.Context, []int, ...string) (map[int][]string, error) {
 	return nil, nil
 }

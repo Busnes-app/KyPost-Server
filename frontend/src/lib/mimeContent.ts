@@ -32,12 +32,25 @@ export type MimeAttachment = {
   contentId?: string;
 };
 
+/**
+ * Headers carried inside the encrypted entity (protected-headers v1). Present
+ * only when the entity's own header block names them; an entity built by
+ * another client may protect Subject alone, or nothing.
+ */
+export type ProtectedHeaders = {
+  subject?: string;
+  to?: string;
+  cc?: string;
+  bcc?: string;
+};
+
 export type MimeContent = {
   body: string;
   mode: BodyMode;
   attachments: MimeAttachment[];
   /** Parts dropped by MimeLimits rather than decoded. The reader says so. */
   attachmentsOmitted: number;
+  protectedHeaders: ProtectedHeaders;
 };
 
 /**
@@ -276,7 +289,7 @@ function splitParts(body: string, boundary: string): string[] {
 
 /** Accumulates one walk: the first body wins, every other part is an attachment. */
 type Collector = {
-  body: MimeContent | null;
+  body: { body: string; mode: BodyMode } | null;
   attachments: MimeAttachment[];
   attachmentsOmitted: number;
   attachmentBytes: number;
@@ -322,9 +335,7 @@ function walkMultipart(body: string, boundary: string, depth: number, out: Colle
       if (!out.body) {
         out.body = {
           body: decodePart(partBody, encoding, charsetFromContentType(contentType)),
-          mode: modeFor(contentType),
-          attachments: [],
-          attachmentsOmitted: 0
+          mode: modeFor(contentType)
         };
       }
       continue;
@@ -370,12 +381,13 @@ export function parseMimeContent(raw: string, limits: MimeLimits = DEFAULT_MIME_
     // caller falls back to its own last-resort check for this case alone.
     return null;
   }
+  const protectedHeaders = readProtectedHeaders(headers);
 
   const type = mediaType(contentType);
   if (type.startsWith("multipart/")) {
     const boundary = contentTypeParam(contentType, "boundary");
     if (!boundary) {
-      return { body, mode: "plain", attachments: [], attachmentsOmitted: 0 };
+      return { body, mode: "plain", attachments: [], attachmentsOmitted: 0, protectedHeaders };
     }
     const out: Collector = { body: null, attachments: [], attachmentsOmitted: 0, attachmentBytes: 0, limits };
     walkMultipart(body, boundary, 0, out);
@@ -385,7 +397,8 @@ export function parseMimeContent(raw: string, limits: MimeLimits = DEFAULT_MIME_
       body: out.body?.body ?? "",
       mode: out.body?.mode ?? "plain",
       attachments: out.attachments,
-      attachmentsOmitted: out.attachmentsOmitted
+      attachmentsOmitted: out.attachmentsOmitted,
+      protectedHeaders
     };
   }
 
@@ -397,6 +410,39 @@ export function parseMimeContent(raw: string, limits: MimeLimits = DEFAULT_MIME_
     ),
     mode: modeFor(contentType),
     attachments: [],
-    attachmentsOmitted: 0
+    attachmentsOmitted: 0,
+    protectedHeaders
   };
+}
+
+/**
+ * The protected headers an entity carries, decoded from RFC 2047 where a
+ * sender encoded them. Mirrors pgpmail.ExtractProtectedSubject for Subject
+ * and extends it to the address headers a draft needs back.
+ */
+function readProtectedHeaders(headers: Map<string, string>): ProtectedHeaders {
+  const out: ProtectedHeaders = {};
+  for (const name of ["subject", "to", "cc", "bcc"] as const) {
+    const value = headers.get(name);
+    if (value !== undefined) out[name] = decodeRFC2047(value);
+  }
+  return out;
+}
+
+/**
+ * Decodes RFC 2047 encoded-words. Only B and Q encodings exist; anything
+ * else, or a malformed word, is left as written rather than dropped.
+ */
+export function decodeRFC2047(value: string): string {
+  return value.replace(/=\?([^?]+)\?([bBqQ])\?([^?]*)\?=/g, (word, charset: string, enc: string, text: string) => {
+    try {
+      const bytes =
+        enc.toUpperCase() === "B"
+          ? Uint8Array.from(atob(text), (c) => c.charCodeAt(0))
+          : (decodePartBytes(text.replace(/_/g, " "), "quoted-printable") ?? new Uint8Array());
+      return new TextDecoder(charset.toLowerCase()).decode(bytes);
+    } catch {
+      return word;
+    }
+  });
 }

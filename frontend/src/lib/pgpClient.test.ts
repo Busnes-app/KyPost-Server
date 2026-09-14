@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import * as openpgp from "openpgp";
 
-import { buildEncryptedSentCopy, decryptMessage, encryptedAttachmentBudget, verifySignedMessage } from "./pgpClient";
+import { buildEncryptedDraft, buildEncryptedSentCopy, decryptMessage, encryptedAttachmentBudget, openSealedToSelf, sealToSelf, verifySignedMessage } from "./pgpClient";
 import { unlockWithArmoredKey, lock } from "./keyVault";
 
 // run-4 finding H7: decryptMessage offered every contact public key as a
@@ -439,5 +439,79 @@ describe("encryptedAttachmentBudget", () => {
   it("never reports a negative allowance, however many copies there are", () => {
     expect(encryptedAttachmentBudget(37)).toBeGreaterThanOrEqual(0);
     expect(encryptedAttachmentBudget(500)).toBe(0);
+  });
+});
+
+describe("encrypted drafts and sealed state", () => {
+  it("refuses to build a draft without a sender address", async () => {
+    const me = await generateTestKey("Me", "me@example.com");
+    unlockWithArmoredKey(me.privateKey);
+    try {
+      await expect(
+        buildEncryptedDraft({ from: "  ", to: ["a@example.com"], subject: "Plans" }, "text/plain", "x")
+      ).rejects.toThrow(/sender address/i);
+    } finally {
+      lock();
+    }
+  });
+
+  it("round-trips recipients, subject, body and attachments through a draft", async () => {
+    const me = await generateTestKey("Me", "me@example.com");
+    unlockWithArmoredKey(me.privateKey);
+    try {
+      const draft = await buildEncryptedDraft(
+        { from: "me@example.com", to: ["a@example.com"], cc: ["c@example.com"], bcc: ["hidden@example.com"], subject: "Plans" },
+        "text/html; charset=UTF-8",
+        "<p>draft</p>",
+        [{ name: "n.txt", mimeType: "text/plain", dataBase64: btoa("note") }]
+      );
+      // Bcc never appears outside the ciphertext.
+      const [outerHeaders] = draft.split("\r\n\r\n");
+      expect(outerHeaders).not.toContain("hidden@example.com");
+      expect(outerHeaders).toContain("Subject: [Encrypted] Email Sent by KyPost");
+
+      const result = await decryptMessage(draft, [], "me@example.com");
+      expect(result.protectedHeaders).toEqual({
+        subject: "Plans",
+        to: "a@example.com",
+        cc: "c@example.com",
+        bcc: "hidden@example.com"
+      });
+      expect(result.body.trim()).toBe("<p>draft</p>");
+      expect(result.attachments.map((a) => a.name)).toEqual(["n.txt"]);
+    } finally {
+      lock();
+    }
+  });
+
+  it("a delivery protects the Subject only, as before", async () => {
+    const me = await generateTestKey("Me", "me@example.com");
+    unlockWithArmoredKey(me.privateKey);
+    try {
+      const copy = await buildEncryptedSentCopy(
+        { from: "me@example.com", to: ["a@example.com"], subject: "S" },
+        "text/plain",
+        "b",
+        false
+      );
+      const result = await decryptMessage(copy, [], "me@example.com");
+      expect(result.protectedHeaders).toEqual({ subject: "S" });
+    } finally {
+      lock();
+    }
+  });
+
+  it("seals text to the own key and opens it again", async () => {
+    const me = await generateTestKey("Me", "me@example.com");
+    unlockWithArmoredKey(me.privateKey);
+    try {
+      const sealed = await sealToSelf('{"to":"a@example.com"}');
+      expect(sealed).toContain("-----BEGIN PGP MESSAGE-----");
+      expect(sealed).not.toContain("a@example.com");
+      expect(await openSealedToSelf(sealed)).toBe('{"to":"a@example.com"}');
+    } finally {
+      lock();
+    }
+    await expect(openSealedToSelf("-----BEGIN PGP MESSAGE-----\nx\n-----END PGP MESSAGE-----")).rejects.toThrow();
   });
 });

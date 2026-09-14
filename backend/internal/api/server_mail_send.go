@@ -84,6 +84,9 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		Encrypt             bool `json:"encrypt"`
 		Sign                bool `json:"sign"`
 		AllowPickupFallback bool `json:"allowPickupFallback"`
+		// PGPDraft is a complete PGP/MIME message the browser encrypted to
+		// the sender's own key. Drafts only; see handleMailDraft.
+		PGPDraft string `json:"pgpDraft"`
 	}
 	// Check the declared size before reading, so an oversized send says so.
 	// Without this the LimitReader below just truncates the JSON mid-value and
@@ -159,6 +162,7 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		Encrypt:             raw.Encrypt,
 		Sign:                raw.Sign,
 		AllowPickupFallback: raw.AllowPickupFallback,
+		PGPDraft:            strings.TrimSpace(raw.PGPDraft),
 		From:                raw.From,
 	}, "", nil
 }
@@ -893,10 +897,61 @@ func (s *Server) handleMailDraft(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "imap client is not configured", http.StatusServiceUnavailable)
 		return
 	}
+	s.serveDraftSave(w, r, mailClient)
+}
 
+// serveDraftSave is handleMailDraft after the mail client is resolved, so a
+// test can hand it a fake.
+func (s *Server) serveDraftSave(w http.ResponseWriter, r *http.Request, mailClient imapadapter.Client) {
 	req, errMsg, err := decodeMailRequest(r)
 	if err != nil {
 		http.Error(w, errMsg, http.StatusBadRequest)
+		return
+	}
+
+	// A client-custody draft arrives already encrypted to the sender's own
+	// key, so it is appended verbatim like the Sent copy is. The plaintext
+	// fields of the same request are ignored: the browser sends the
+	// placeholder subject and an empty body, and honouring anything else
+	// would store beside the ciphertext the very text it protects. Cc and
+	// Bcc are not carried at all: To is already visible in the wrapper, the
+	// rest travels only inside the ciphertext.
+	if req.PGPDraft != "" {
+		if err := validatePGPMimeDeliveryShape(req.PGPDraft); err != nil {
+			http.Error(w, "encrypted draft: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := mailClient.SaveDraft(r.Context(), imapadapter.DraftMessage{
+			To:      req.To,
+			Subject: pgpmail.OuterPlaceholderSubject,
+			Raw:     []byte(req.PGPDraft),
+		}); err != nil {
+			http.Error(w, "failed to save draft", http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+
+	// A client-custody account never gets a plaintext draft, whatever the
+	// client asked for: the browser encrypts its own, and a native client
+	// holding the device key must do the same. Same refusal shape as send.
+	// Fail closed: if the account cannot be read, nothing is stored.
+	ac, ok := authFromContext(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	u, err := s.users.Get(ac.UserID)
+	if err != nil {
+		http.Error(w, "user unavailable", http.StatusInternalServerError)
+		return
+	}
+	if u.PGPProtection() == users.PGPProtectionClient {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":            "this account's PGP key is end-to-end protected, so drafts must be encrypted before they are saved",
+			"clientSideNeeded": true,
+		})
 		return
 	}
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { Link, useSearchParams } from "react-router";
-import { escapeHtmlText, processEmailHtml } from "../lib/emailHtml";
+import { escapeHtmlText, processEmailHtml, resolveBodyMode } from "../lib/emailHtml";
 import { EmailBodyFrame } from "./read/EmailBodyFrame";
 import { DecryptedAttachments, inlineImageMap } from "./read/DecryptedAttachments";
 import { EncryptionCell } from "./read/EncryptionCell";
@@ -49,6 +49,15 @@ import {
   buildForwardBody,
   buildReplyAllRecipients
 } from "./read/compose";
+
+/** Base64 of decoded bytes, chunked so a large attachment does not blow the call stack. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
 
 export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -202,7 +211,8 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             bodyFromVerifiedPart: true,
             signerConflict: result.signerConflict,
             attachments: result.attachments,
-            attachmentsOmitted: result.attachmentsOmitted
+            attachmentsOmitted: result.attachmentsOmitted,
+            subject: result.protectedHeaders.subject
           }
         }));
       } catch (e) {
@@ -1041,7 +1051,10 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     void (async () => {
       for (const message of pageRows) {
         if (cancelled) return;
-        if (message.body === undefined) await fetchMessageBody(message).catch(() => undefined);
+        // Encrypted rows have no server-side body; the payload is fetched on open.
+        if (message.body === undefined && !message.pgpEncrypted) {
+          await fetchMessageBody(message).catch(() => undefined);
+        }
       }
     })();
     return () => {
@@ -1102,6 +1115,37 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       // cover it — a draft opened straight into the composer fetches its own.
       // Every caller is a bare `void openEmailDetails(item)`, so a rejection
       // here would surface as an unhandled one and nothing else.
+      if (item.pgpEncrypted && isClientProtected()) {
+        // An encrypted draft is opened the way an encrypted message is read:
+        // decrypted here, never by the server. Its recipients and subject are
+        // the protected headers inside the ciphertext; the outer To/Cc are a
+        // fallback for a draft another client wrote without them.
+        if (needsUnlock()) {
+          setPgpUnlockOpen(true);
+          return;
+        }
+        try {
+          const payload = await getPGPMessagePayload(listedMailbox, item.messageId);
+          const result = await decryptMessage(payload.encryptedPayload, payload.signerKeys ?? [], "");
+          const h = result.protectedHeaders;
+          onOpenDraft({
+            sentTo: h.to ?? item.sentTo,
+            cc: h.cc ?? item.cc,
+            bcc: h.bcc ?? item.bcc,
+            subject: h.subject ?? item.subject,
+            body: resolveBodyMode(result.body, result.bodyMode) === "html" ? processEmailHtml(result.body, false) : escapeHtmlText(result.body),
+            attachments: result.attachments.map((a) => ({
+              name: a.name,
+              mimeType: a.mimeType,
+              dataBase64: bytesToBase64(a.bytes),
+              size: a.bytes.length
+            }))
+          });
+        } catch (e) {
+          setActionError(toErrorMessage(e, "could not decrypt this draft"));
+        }
+        return;
+      }
       let withBody = item;
       if (item.body === undefined) {
         try {
@@ -1722,12 +1766,6 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               </div>
             </div>
 
-            <PgpUnlockDialog
-              open={pgpUnlockOpen}
-              reason="to read this encrypted message"
-              onUnlocked={() => setPgpUnlockOpen(false)}
-              onCancel={() => setPgpUnlockOpen(false)}
-            />
             <div className="email-reader-content">
               {/*
                 Sits above the PGP badge because it is the more urgent thing to
@@ -1828,7 +1866,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                   </p>
                 );
               })()}
-              <p style={{ margin: 0 }}><strong>Subject:</strong> {selected.subject || "(no subject)"}</p>
+              <p style={{ margin: 0 }}><strong>Subject:</strong> {decrypted[decryptedKey(selected.messageId)]?.subject ?? selected.subject ?? "(no subject)"}</p>
               <p style={{ margin: 0 }}><strong>Sender:</strong> {selected.sender || "-"}</p>
               <p style={{ margin: 0 }}><strong>Sent To:</strong> {selected.sentTo || "-"}</p>
               <div className="email-keyword-editor">
@@ -1973,6 +2011,15 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
           </div>
         ) : null}
       </dialog>
+      {/* Outside the detail pane: an encrypted draft asks for an unlock
+          without ever selecting a message, so the prompt must not depend on
+          one being open. */}
+      <PgpUnlockDialog
+        open={pgpUnlockOpen}
+        reason="to read this encrypted message"
+        onUnlocked={() => setPgpUnlockOpen(false)}
+        onCancel={() => setPgpUnlockOpen(false)}
+      />
     </section>
   );
 }

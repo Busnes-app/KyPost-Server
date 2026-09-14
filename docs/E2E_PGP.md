@@ -377,6 +377,29 @@ would not fit every ciphertext copy (`encryptedAttachmentBudget`: about 13 MiB
 with no Bcc, less per Bcc recipient). Recipients on the secure-link fallback
 get no attachments, so a send with both is refused rather than trimmed.
 
+Drafts and the compose safety net, as of 2026-09-14: on a client-custody
+account, Save Draft encrypts the whole compose state to the user's own key
+(`buildEncryptedDraft`) and posts it as `pgpDraft`, which the server appends
+verbatim like the Sent copy after the same PGP/MIME shape check; the plaintext
+fields of that request carry the placeholder subject and nothing else, and the
+server ignores them. To, Cc, Bcc and Subject travel inside the ciphertext as
+protected headers, so reopening a draft from the Drafts folder decrypts it in
+the browser and restores recipients, subject, body and attachments. The
+reader now shows the protected Subject for every decrypted message instead
+of the outer placeholder. The compose autosave snapshot in `sessionStorage`
+is sealed to the same key while the vault is unlocked; with the vault locked
+nothing is written, and after a reload the snapshot waits for an unlock
+before it is restored. Accounts with no PGP identity keep a plaintext
+snapshot, since there is no key to seal to. Until the PGP bootstrap has
+answered, the browser neither saves a draft nor writes a snapshot: an
+unloaded or failed bootstrap must not read as "not client custody". The
+server backstops this: a plaintext draft from a client-custody account is
+refused with the same 409 `clientSideNeeded` shape as a plaintext send, so
+a regressed or native client cannot put cleartext in that account's Drafts.
+Native clients on a client-custody account therefore have to encrypt drafts
+on device, the way they already encrypt sends; accounts in any other state
+keep plaintext drafts, and the native gap is tracked per client.
+
 Because the default *key-custody mode* (`client`) is unchanged, offering this
 choice was safe to ship incrementally: existing installs keep generating
 client-protected keys exactly as before, and no account is silently moved to
@@ -486,12 +509,14 @@ request the browser makes, not a degraded one.
    the one built for this question. Getting this backwards is the exact
    mistake this document is meant to prevent — an earlier draft of the design
    made it.
-7. For a `client`-custody account, the phone cannot sign or encrypt at all
-   (see the opening of this section). The handoff is: `POST /api/mail/draft`
-   to save the composed message as a draft over the same paired-device
-   credentials, then hand `/read?mailbox=Drafts` to the system as a normal
-   https intent so the user finishes the send in webmail, where the browser
-   holds the unwrapped key. Same "not an in-app WebView" reasoning as item 8.
+7. For a `client`-custody account, the hand-off to webmail is: `POST
+   /api/mail/draft` with a `pgpDraft` (the PGP/MIME draft encrypted to the
+   user's own key on the device, To/Cc/Bcc/Subject as protected headers) over
+   the same paired-device credentials, then hand `/read?mailbox=Drafts` to the
+   system as a normal https intent so the user finishes the send in webmail.
+   A plaintext draft for such an account is refused with 409
+   `clientSideNeeded` (as of 2026-09-14). Same "not an in-app WebView"
+   reasoning as item 8.
 8. The webmail deep link for reading a message is
    `/read?mailbox=<mailbox>&message=<messageId>`, the same route a web push
    click uses. Omit `mailbox` for INBOX. Hand it to the system as a normal

@@ -93,6 +93,26 @@ export function isClientProtected(): boolean {
   return state.bootstrap?.protection === "client";
 }
 
+/**
+ * Which side holds the key, or "unknown" until the bootstrap has answered.
+ * Anything that would write plaintext on a non-client account must branch on
+ * this rather than on isClientProtected(): an unloaded or failed bootstrap
+ * reads as "not client" there, and a failed fetch is the one condition the
+ * server can bring about at will.
+ */
+export function pgpCustody(): "client" | "other" | "unknown" {
+  if (!state.loaded || state.error || !state.bootstrap) return "unknown";
+  return state.bootstrap.protection === "client" ? "client" : "other";
+}
+
+/**
+ * The IMAP account address, which the bootstrap lists first among the key's
+ * suggested User IDs. Empty until the bootstrap has loaded.
+ */
+export function accountAddress(): string {
+  return state.bootstrap?.suggestedUserIDs?.[0]?.trim() ?? "";
+}
+
 /** True when a PGP operation would need an unlock the user has not done. */
 export function needsUnlock(): boolean {
   return isClientProtected() && !state.unlocked;
