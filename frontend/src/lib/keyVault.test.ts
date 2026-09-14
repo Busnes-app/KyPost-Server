@@ -90,7 +90,7 @@ describe("keyVault wrapping", () => {
   it(
     "round-trips a recovery backup and rejects a wrong secret",
     async () => {
-      const created = await createRecoveryBackup(SECRET, "ABCD1234", "PUBLIC");
+      const created = await createRecoveryBackup(SECRET, { fingerprint: "ABCD1234", publicKey: "PUBLIC" });
       expect(created.secret).toMatch(/^([A-F0-9]{4}-){7}[A-F0-9]{4}$/);
       const restored = await restoreRecoveryBackup(JSON.stringify(created.backup), created.secret);
       expect(restored.privateKey).toBe(SECRET);
@@ -105,7 +105,7 @@ describe("keyVault wrapping", () => {
   it("refuses to offer a newly created backup whose in-memory restore differs", async () => {
     const decrypt = vi.spyOn(crypto.subtle, "decrypt").mockResolvedValue(new TextEncoder().encode("corrupted key").buffer);
     try {
-      await expect(createRecoveryBackup(SECRET, "ABCD1234", "PUBLIC")).rejects.toThrow(/verification failed/);
+      await expect(createRecoveryBackup(SECRET, { fingerprint: "ABCD1234", publicKey: "PUBLIC" })).rejects.toThrow(/verification failed/);
     } finally {
       decrypt.mockRestore();
     }

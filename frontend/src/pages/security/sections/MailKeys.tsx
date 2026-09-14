@@ -342,8 +342,7 @@ export function MailKeys({
       }
       if (current.keyring != null) {
         const raw = requireUnlockedKeyMaterial();
-        await validateKeyringSnapshot(raw, { ...current, keyring: current.keyring });
-        const { backup, secret } = await createRecoveryBackup(raw, current.fingerprint, current.publicKey);
+        const { backup, secret } = await createRecoveryBackup(raw, current);
         const fresh = await getPGPBootstrap();
         if (requirePGPRevision(fresh) !== snapshot.pgpRevision || fresh.protection !== "client") {
           throw new Error("Your PGP state changed while preparing the backup. Reload and unlock the current key.");
@@ -358,7 +357,7 @@ export function MailKeys({
         throw new Error("Your PGP identity changed. Reload and unlock the current key before making a backup.");
       }
       const { backup, secret } = await createRecoveryBackup(
-        imported.armoredPrivateKey, imported.fingerprint, imported.armoredPublicKey
+        imported.armoredPrivateKey, { fingerprint: imported.fingerprint, publicKey: imported.armoredPublicKey }
       );
       if (!mounted.current) return; // Do not start a download after leaving during creation.
       saveRecoveryBackup(backup, backup.fingerprint, secret, snapshot.pgpRevision);
@@ -422,7 +421,7 @@ export function MailKeys({
       const exported = await exportLegacyPGPKey(legacyBackupPassword);
       const imported = await importIdentity(exported.privateKey, "");
       const { backup, secret } = await createRecoveryBackup(
-        imported.armoredPrivateKey, imported.fingerprint, imported.armoredPublicKey
+        imported.armoredPrivateKey, { fingerprint: imported.fingerprint, publicKey: imported.armoredPublicKey }
       );
       if (!mounted.current) return;
       saveRecoveryBackup(backup, backup.fingerprint, secret, requirePGPRevision(exported));

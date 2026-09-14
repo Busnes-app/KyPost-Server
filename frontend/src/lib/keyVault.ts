@@ -43,7 +43,7 @@
 // survive a tab close and are readable by any script that achieves XSS,
 // which would hand over exactly what this module exists to protect.
 
-import { parseKeyring, parseKeyringMetadata, validateKeyringSnapshot, type KeyringMetadata } from "./pgpKeyring";
+import { parseKeyringMetadata, validateKeyringSnapshot, type KeyringMetadata } from "./pgpKeyring";
 
 const KDF_PBKDF2_SHA256 = "PBKDF2-SHA256";
 const DEFAULT_ITERATIONS = 600_000;
@@ -199,12 +199,12 @@ function recoverySecretBytes(secret: string): Uint8Array {
 /** Creates an offline backup without sending the private key to the server. */
 export async function createRecoveryBackup(
   armoredPrivateKey: string,
-  fingerprint: string,
-  publicKey: string
+  snapshot: { fingerprint: string; publicKey: string; keyring?: unknown }
 ): Promise<{ backup: RecoveryBackup; secret: string }> {
-  const ring = armoredPrivateKey.trimStart().startsWith("{") ? await parseKeyring(armoredPrivateKey) : null;
+  const { fingerprint, publicKey } = snapshot;
+  const ring = armoredPrivateKey.trimStart().startsWith("{") || snapshot.keyring != null
+    ? await validateKeyringSnapshot(armoredPrivateKey, { ...snapshot, keyring: snapshot.keyring }) : null;
   if (!ring) requireSinglePrivateKey(armoredPrivateKey);
-  if (ring?.kind === "keyring") await validateKeyringSnapshot(armoredPrivateKey, { fingerprint, publicKey, keyring: ring.metadata });
   const secretBytes = crypto.getRandomValues(new Uint8Array(RECOVERY_SECRET_BYTES));
   const secret = recoverySecretText(secretBytes);
   const envelope = await wrapPrivateKey(armoredPrivateKey, secret);

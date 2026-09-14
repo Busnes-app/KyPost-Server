@@ -223,7 +223,7 @@ describe("recovery backup with a drifted identity response", () => {
 
     // The secret still reaches the user, from the bootstrap's fingerprint.
     await screen.findByText("SECRET-ABCD-1234");
-    expect(createRecoveryBackup).toHaveBeenCalledWith("ARMORED", "ABCDEF0123456789", "PUB");
+    expect(createRecoveryBackup).toHaveBeenCalledWith("ARMORED", { fingerprint: "ABCDEF0123456789", publicKey: "PUB" });
     expect(screen.queryByText(/Backup failed/)).toBeNull();
   });
 });
@@ -734,7 +734,7 @@ describe("complete keyring recovery UI gates", () => {
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
     await screen.findByText(/Complete keyring recovery file checked/);
-    expect(createRecoveryBackup).toHaveBeenCalledWith("RING", SESSION.bootstrap.fingerprint, SESSION.bootstrap.publicKey);
+    expect(createRecoveryBackup).toHaveBeenCalledWith("RING", SESSION.bootstrap);
     expect(importIdentity).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /store server copy/ })).toBeNull();
     expect(putJSON).not.toHaveBeenCalled();

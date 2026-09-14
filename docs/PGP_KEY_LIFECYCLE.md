@@ -66,7 +66,11 @@ private packet. Legacy armor keeps its prior decryption policy, including GnuPG
 exports with a dummy primary and usable encryption subkey, large UID/certification
 sets, and text surrounding armor. JSON ring plaintext parsing is bounded to
 128 KiB before JSON/OpenPGP work; recovery creation also enforces the serialized
-sealed-envelope limit below, including base64 expansion.
+sealed-envelope limit below, including base64 expansion. Reader capacity is broader
+than storage admission: both password and recovery envelopes must fit 128 KiB,
+so the effective stored plaintext ceiling is below 96 KiB. Wrapping the same bytes
+with either secret produces equal envelope sizes; keep the broader reader bound
+for inspection and salvage.
 
 `revocationCertificate` is optional for imported keys. Keep unpublished
 certificates sealed: possession permits premature revocation. Derive and compare
