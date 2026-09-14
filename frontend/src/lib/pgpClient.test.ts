@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import * as openpgp from "openpgp";
 
-import { buildEncryptedSentCopy, decryptMessage, verifySignedMessage } from "./pgpClient";
+import { buildEncryptedSentCopy, decryptMessage, encryptedAttachmentBudget, verifySignedMessage } from "./pgpClient";
 import { unlockWithArmoredKey, lock } from "./keyVault";
 
 // run-4 finding H7: decryptMessage offered every contact public key as a
@@ -366,4 +366,73 @@ describe("verifySignedMessage", () => {
     expect(result.verified).toBe(false);
     expect(result.body).toBe("trust me\r\n");
   }, 30000);
+});
+
+describe("attachments travel inside the ciphertext", () => {
+  const bytes = Uint8Array.from({ length: 300 }, (_, i) => (i * 7) & 0xff);
+  const dataBase64 = btoa(String.fromCharCode(...bytes));
+
+  it("round-trips names, types and exact bytes through the Sent copy", async () => {
+    const me = await generateTestKey("Me", "me@example.com");
+    unlockWithArmoredKey(me.privateKey);
+    try {
+      const ciphertext = await buildEncryptedSentCopy(
+        { from: "me@example.com", to: ["you@example.com"], subject: "Files" },
+        "text/html; charset=UTF-8",
+        "<p>see attached</p>",
+        false,
+        [
+          { name: "data.bin", mimeType: "application/octet-stream", dataBase64 },
+          { name: "empty.txt", mimeType: "text/plain", dataBase64: "" },
+          { name: "résumé \"final\".pdf", mimeType: "application/pdf", dataBase64: btoa("%PDF") },
+          { name: "odd.type", mimeType: "not a type\r\nX-Injected: 1", dataBase64: btoa("x") }
+        ]
+      );
+      const result = await decryptMessage(ciphertext, [], "me@example.com");
+      expect(result.body.trim()).toBe("<p>see attached</p>");
+      expect(result.bodyMode).toBe("html");
+      expect(result.attachments.map((a) => a.name)).toEqual(["data.bin", "empty.txt", "résumé \"final\".pdf", "odd.type"]);
+      expect(Array.from(result.attachments[0].bytes)).toEqual(Array.from(bytes));
+      expect(result.attachments[1].bytes.length).toBe(0);
+      expect(new TextDecoder().decode(result.attachments[2].bytes)).toBe("%PDF");
+      // An unparseable media type falls back rather than reaching a header.
+      expect(result.attachments[3].mimeType).toBe("application/octet-stream");
+      expect(ciphertext).not.toContain("X-Injected");
+      expect(result.attachmentsOmitted).toBe(0);
+    } finally {
+      lock();
+    }
+  });
+
+  it("refuses a compressed message that inflates past the plaintext cap", async () => {
+    const me = await generateTestKey("Me", "me@example.com");
+    const bomb = "0".repeat(26 * 1024 * 1024);
+    const ciphertext = (await openpgp.encrypt({
+      message: await openpgp.createMessage({ text: bomb }),
+      encryptionKeys: await openpgp.readKey({ armoredKey: me.publicKey }),
+      format: "armored",
+      config: { preferredCompressionAlgorithm: openpgp.enums.compression.zlib }
+    })) as string;
+    // Compressed well under the cap; only decompression reveals the size.
+    expect(ciphertext.length).toBeLessThan(1024 * 1024);
+
+    unlockWithArmoredKey(me.privateKey);
+    try {
+      await expect(decryptMessage(ciphertext, [], "me@example.com")).rejects.toThrow();
+    } finally {
+      lock();
+    }
+  }, 60_000);
+});
+
+describe("encryptedAttachmentBudget", () => {
+  it("is bounded by the inbound cap with one recipient group, and by the request with many", () => {
+    const oneGroup = encryptedAttachmentBudget(2);
+    // (25 MiB * 9/16) - 1 MiB: the inbound message cap governs.
+    expect(oneGroup).toBe(Math.floor((25 * 1024 * 1024 * 9) / 16) - 1024 * 1024);
+    // Ten Bcc recipients plus To plus Sent: the 64 MiB request governs.
+    const twelve = encryptedAttachmentBudget(12);
+    expect(twelve).toBe(Math.floor(((64 * 1024 * 1024) / 12) * 9 / 16) - 1024 * 1024);
+    expect(twelve).toBeLessThan(oneGroup);
+  });
 });

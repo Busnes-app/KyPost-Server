@@ -13,7 +13,7 @@ import { RecipientField } from "./components/RecipientField";
 import { useDialogOpen } from "./hooks/useDialogOpen";
 import { contactToToken, isDuplicateInField, parseRecipientField, pickupFallbackFlag, serializeRecipientField, splitAddressList } from "./lib/recipients";
 import { isClientProtected, needsUnlock, loadPGPSession, clearPGPSession } from "./lib/pgpSession";
-import { buildEncryptedDeliveries, buildEncryptedSentCopy, OUTER_PLACEHOLDER_SUBJECT } from "./lib/pgpClient";
+import { buildEncryptedDeliveries, buildEncryptedSentCopy, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "./lib/pgpClient";
 import { sealPickup } from "./lib/pickupCrypto";
 import { createSealedPickup, resolveRecipientKeys, sendClientEncryptedMail } from "./api/pgp";
 import { PgpUnlockDialog } from "./components/PgpUnlockDialog";
@@ -893,15 +893,35 @@ export function App() {
       ...keyedBcc.map((addr) => ({ recipients: [addr], publicKeys: [keyFor.get(addr.toLowerCase())!] }))
     ].filter((g) => g.recipients.length > 0);
 
+    // A secure link seals the body only. Dropping the files without a word is
+    // what this path used to do for every encrypted send; it must not survive
+    // here for the keyless recipients.
+    if (missing.length > 0 && composeAttachments.length > 0) {
+      throw new Error(
+        `Attachments cannot be sent through a secure link. Add a PGP key for ${missing.join(", ")} in Contacts, or remove the attachments.`
+      );
+    }
+
     let warning = "";
     if (groups.length > 0) {
-      const deliveries = await buildEncryptedDeliveries(envelope, "text/html; charset=UTF-8", body, groups, composeSign);
+      // Every group and the Sent copy carries the attachments in full, so the
+      // budget shrinks with each Bcc recipient. Checked before any encryption
+      // so the refusal names the limit rather than arriving as a 413.
+      const budget = encryptedAttachmentBudget(groups.length + 1);
+      const attached = composeAttachments.reduce((sum, a) => sum + a.size, 0);
+      if (attached > budget) {
+        throw new Error(
+          `Attachments too large for an encrypted message: ${formatBytes(attached)} attached, ${formatBytes(budget)} allowed` +
+            (keyedBcc.length > 0 ? ` with ${keyedBcc.length} Bcc recipient(s).` : ".")
+        );
+      }
+      const deliveries = await buildEncryptedDeliveries(envelope, "text/html; charset=UTF-8", body, groups, composeSign, composeAttachments);
       // The Sent copy is encrypted to our own key before it leaves the browser.
       // It used to be the raw composer HTML, which handed the server the
       // cleartext of a message it had just been given only as ciphertext — and
       // the real subject with it. The server refuses an unencrypted copy now,
       // so this is not optional.
-      const sentCopy = await buildEncryptedSentCopy(envelope, "text/html; charset=UTF-8", body, composeSign);
+      const sentCopy = await buildEncryptedSentCopy(envelope, "text/html; charset=UTF-8", body, composeSign, composeAttachments);
       const result = await sendClientEncryptedMail({
         from: composeFrom || "",
         // The real subject travels inside the ciphertext as a protected

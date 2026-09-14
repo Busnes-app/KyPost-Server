@@ -19,10 +19,15 @@ import (
 	"github.com/Busness-app/kypost-server/backend/internal/sendas"
 )
 
-// maxClientCiphertextBytes bounds one browser-supplied PGP/MIME ciphertext.
-// It matches the inbound message cap so an encrypted send is bounded the
-// same way a received message is, with headroom for armor overhead.
-const maxClientCiphertextBytes = 34 << 20
+// maxClientCiphertextBytes bounds one send-pgp request body.
+//
+// A request carries every delivery group's ciphertext plus the Sent copy, and
+// each copy repeats the attachments in full, so this is larger than the
+// inbound message cap it used to match. The browser derives its attachment
+// budget from both figures (encryptedAttachmentBudget in pgpClient.ts): every
+// copy must still fit mailmsg.MaxInboundMessageBytes or the recipient's server
+// refuses it, and all copies together must fit here. Change one, change both.
+const maxClientCiphertextBytes = 64 << 20
 
 // clientEncryptedSendRequest is a send whose PGP work already happened in
 // the browser. Each delivery is a complete RFC 3156 PGP/MIME message and the
