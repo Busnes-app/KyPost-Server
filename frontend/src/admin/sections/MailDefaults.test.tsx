@@ -30,4 +30,11 @@ describe("MailDefaults", () => {
     );
     expect(await screen.findByText(/defaults saved/i)).toBeTruthy();
   });
+
+  it("surfaces a failed load instead of showing blanks", async () => {
+    getMailDefaults.mockReset();
+    getMailDefaults.mockRejectedValue(new Error("boom"));
+    render(<MailDefaults />);
+    expect(await screen.findByText(/failed to load current defaults/i)).toBeTruthy();
+  });
 });

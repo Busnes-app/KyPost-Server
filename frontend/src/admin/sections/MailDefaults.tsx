@@ -12,7 +12,9 @@ export function MailDefaults() {
   useEffect(() => {
     getMailDefaults()
       .then((d) => setForm({ host: d.host, port: d.port || 993, smtpHost: d.smtpHost, smtpPort: d.smtpPort || 587 }))
-      .catch(() => undefined);
+      .catch((error: unknown) =>
+        setMessage(`Failed to load current defaults: ${toErrorMessage(error, "unknown error")}`)
+      );
   }, []);
 
   async function save() {
