@@ -15,7 +15,7 @@ describe("parseMimeContent", () => {
 
   it("reads the mode off a simple text/html entity", () => {
     const raw = "Content-Type: text/html; charset=utf-8\r\n\r\n<p>Hello</p>";
-    expect(parseMimeContent(raw)).toEqual({ body: "<p>Hello</p>", mode: "html" });
+    expect(parseMimeContent(raw)).toEqual({ body: "<p>Hello</p>", mode: "html", attachments: [], attachmentsOmitted: 0 });
   });
 
   it("reads the mode off a simple text/plain entity", () => {
@@ -24,7 +24,9 @@ describe("parseMimeContent", () => {
     // plain, so the address survives.
     expect(parseMimeContent(raw)).toEqual({
       body: "Contact <admin@example.com> today",
-      mode: "plain"
+      mode: "plain",
+      attachments: [],
+      attachmentsOmitted: 0
     });
   });
 
@@ -156,14 +158,14 @@ describe("parseMimeContent", () => {
   it("survives a multipart whose boundary never appears", () => {
     const raw = 'Content-Type: multipart/mixed; boundary="missing"\r\n\r\nno parts at all';
     expect(() => parseMimeContent(raw)).not.toThrow();
-    expect(parseMimeContent(raw)).toEqual({ body: "", mode: "plain" });
+    expect(parseMimeContent(raw)).toEqual({ body: "", mode: "plain", attachments: [], attachmentsOmitted: 0 });
   });
 
   it("tolerates bare LF line endings", () => {
     // Real mail uses CRLF, but the decrypted payload has been through a library
     // that may have normalized it.
     const raw = "Content-Type: text/html\n\n<p>lf only</p>";
-    expect(parseMimeContent(raw)).toEqual({ body: "<p>lf only</p>", mode: "html" });
+    expect(parseMimeContent(raw)).toEqual({ body: "<p>lf only</p>", mode: "html", attachments: [], attachmentsOmitted: 0 });
   });
 
   it("unfolds a wrapped Content-Type header", () => {
@@ -171,6 +173,104 @@ describe("parseMimeContent", () => {
     const parsed = parseMimeContent(raw);
     expect(parsed?.mode).toBe("html");
     expect(parsed?.body.trim()).toBe("<b>x</b>");
+  });
+});
+
+describe("attachments", () => {
+  const pngBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff]);
+  const pngBase64 = btoa(String.fromCharCode(...pngBytes));
+
+  function mixed(parts: string[]): string {
+    return ['Content-Type: multipart/mixed; boundary="M"', "", ...parts.flatMap((p) => ["--M", p]), "--M--", ""].join("\r\n");
+  }
+
+  it("returns every named part with its exact bytes, after the body", () => {
+    const raw = mixed([
+      "Content-Type: text/html\r\n\r\n<p>hi</p>",
+      `Content-Type: image/png; name="a.png"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename="a.png"\r\n\r\n${pngBase64}`,
+      'Content-Type: text/plain; name="note.txt"\r\n\r\ncaf\u00e9'
+    ]);
+    const parsed = parseMimeContent(raw)!;
+    expect(parsed.body.trim()).toBe("<p>hi</p>");
+    expect(parsed.attachments.map((a) => a.name)).toEqual(["a.png", "note.txt"]);
+    expect(parsed.attachments[0].mimeType).toBe("image/png");
+    expect(Array.from(parsed.attachments[0].bytes)).toEqual(Array.from(pngBytes));
+    // An unencoded text attachment keeps its non-ASCII characters as UTF-8.
+    expect(new TextDecoder().decode(parsed.attachments[1].bytes)).toBe("caf\u00e9");
+    expect(parsed.attachmentsOmitted).toBe(0);
+  });
+
+  it("finds attachments that come after the body, inside a nested multipart", () => {
+    const raw = [
+      'Content-Type: multipart/mixed; boundary="O"',
+      "",
+      "--O",
+      'Content-Type: multipart/alternative; boundary="I"',
+      "",
+      "--I",
+      "Content-Type: text/plain",
+      "",
+      "plain",
+      "--I",
+      "Content-Type: text/html",
+      "",
+      "<p>html</p>",
+      "--I--",
+      "--O",
+      'Content-Type: application/pdf\r\nContent-Disposition: attachment; filename="f.pdf"\r\nContent-Transfer-Encoding: base64',
+      "",
+      btoa("%PDF"),
+      "--O--",
+      ""
+    ].join("\r\n");
+    const parsed = parseMimeContent(raw)!;
+    // First body wins, exactly as before; the alternative html is dropped, not
+    // misfiled as an attachment.
+    expect(parsed.body.trim()).toBe("plain");
+    expect(parsed.attachments.map((a) => a.name)).toEqual(["f.pdf"]);
+    expect(new TextDecoder().decode(parsed.attachments[0].bytes)).toBe("%PDF");
+  });
+
+  it("decodes RFC 2231 filenames and strips Content-ID brackets", () => {
+    const raw = mixed([
+      "Content-Type: text/html\r\n\r\n<img src=\"cid:logo@k\">",
+      `Content-Type: image/png\r\nContent-ID: <logo@k>\r\nContent-Disposition: inline; filename*=utf-8''r%C3%A9sum%C3%A9.png\r\nContent-Transfer-Encoding: base64\r\n\r\n${pngBase64}`
+    ]);
+    const parsed = parseMimeContent(raw)!;
+    expect(parsed.attachments).toHaveLength(1);
+    expect(parsed.attachments[0].name).toBe("r\u00e9sum\u00e9.png");
+    expect(parsed.attachments[0].contentId).toBe("logo@k");
+  });
+
+  it("names an unnamed non-text part 'attachment', like the server", () => {
+    const raw = mixed(["Content-Type: text/plain\r\n\r\nbody", "Content-Type: application/octet-stream\r\n\r\nblob"]);
+    const parsed = parseMimeContent(raw)!;
+    expect(parsed.attachments[0].name).toBe("attachment");
+    expect(parsed.attachments[0].mimeType).toBe("application/octet-stream");
+  });
+
+  it("counts, rather than decodes, parts beyond the byte and count caps", () => {
+    const big = btoa("x".repeat(3000));
+    const part = (n: number) =>
+      `Content-Type: application/octet-stream; name="${n}.bin"\r\nContent-Transfer-Encoding: base64\r\n\r\n${big}`;
+    const raw = mixed(["Content-Type: text/plain\r\n\r\nbody", part(1), part(2), part(3)]);
+
+    const byBytes = parseMimeContent(raw, { maxAttachments: 200, maxAttachmentBytes: 6500 })!;
+    expect(byBytes.attachments.map((a) => a.name)).toEqual(["1.bin", "2.bin"]);
+    expect(byBytes.attachmentsOmitted).toBe(1);
+
+    const byCount = parseMimeContent(raw, { maxAttachments: 1, maxAttachmentBytes: 1 << 30 })!;
+    expect(byCount.attachments.map((a) => a.name)).toEqual(["1.bin"]);
+    expect(byCount.attachmentsOmitted).toBe(2);
+    // The body is never subject to either cap.
+    expect(byCount.body.trim()).toBe("body");
+  });
+
+  it("drops a part whose base64 is malformed instead of throwing", () => {
+    const raw = mixed(["Content-Type: text/plain\r\n\r\nbody", 'Content-Type: application/pdf; name="x.pdf"\r\nContent-Transfer-Encoding: base64\r\n\r\n!!!not-base64!!!']);
+    const parsed = parseMimeContent(raw)!;
+    expect(parsed.attachments).toHaveLength(0);
+    expect(parsed.attachmentsOmitted).toBe(1);
   });
 });
 

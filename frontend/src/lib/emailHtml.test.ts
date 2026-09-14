@@ -216,6 +216,59 @@ describe("dangerous URI schemes in links", () => {
   });
 });
 
+describe("inline images the message carried", () => {
+  const png = "data:image/png;base64,iVBORw0KGgo=";
+  const images = new Map([["logo@example", png]]);
+
+  it("renders a carried cid: image even while remote content is blocked", () => {
+    const out = processEmailHtml('<img src="cid:logo@example"><img src="https://tracker.example/p.gif">', false, images);
+    expect(out).toContain(png);
+    // The remote one is still blocked; carrying one image unblocks nothing else.
+    expect(out).toContain("[Image Blocked]");
+    expect(out).not.toContain("tracker.example");
+  });
+
+  it("blocks a cid: reference the message did not carry", () => {
+    const out = processEmailHtml('<img src="cid:other@example">', false, images);
+    expect(out).toBe("[Image Blocked]");
+  });
+
+  it("accepts angle-bracketed and percent-encoded references", () => {
+    expect(processEmailHtml('<img src="cid:<logo@example>">', false, images)).toContain(png);
+    expect(processEmailHtml('<img src="cid:logo%40example">', false, images)).toContain(png);
+  });
+
+  it("strips srcset from an inlined image so it cannot carry a remote source", () => {
+    const out = processEmailHtml(
+      '<img src="cid:logo@example" srcset="https://tracker.example/p.gif 1x" sizes="1px">',
+      false,
+      images
+    );
+    expect(out).toContain(png);
+    expect(out).not.toContain("tracker.example");
+    expect(out).not.toContain("srcset");
+  });
+
+  it("strips a <picture><source> sibling of an inlined image", () => {
+    const out = processEmailHtml(
+      '<picture><source srcset="https://tracker.example/p.gif"><img src="cid:logo@example"></picture>',
+      false,
+      images
+    );
+    expect(out).toContain(png);
+    expect(out).not.toContain("tracker.example");
+  });
+
+  it("treats a malformed percent-escape as an unmatched reference", () => {
+    expect(processEmailHtml('<img src="cid:%E0%A4%A">', false, images)).toBe("[Image Blocked]");
+  });
+
+  it("does not turn the data: allowance into a data: link", () => {
+    const out = processEmailHtml('<a href="data:text/html,<script>1</script>">x</a>', true, images);
+    expect(out).toContain("Blocked link: data:");
+  });
+});
+
 // Regression: the four quoting/printing call sites in ReadPage.tsx used to call
 // sanitizeEmailHtml(body) with one argument and get the permissive branch, so a
 // message whose images the user had deliberately NOT unblocked fired every

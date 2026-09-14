@@ -318,6 +318,32 @@ describe("signature status on unencrypted signed mail", () => {
     });
   });
 
+  it("lists attachments decoded from the verified part as downloads", async () => {
+    URL.createObjectURL = vi.fn(() => "blob:kypost/att");
+    URL.revokeObjectURL = vi.fn();
+    verifySignedMessage.mockResolvedValue({
+      body: "signed copy",
+      bodyMode: "plain",
+      signed: true,
+      verified: true,
+      signerFingerprint: "ABCDEF0123456789",
+      signerConflict: false,
+      attachments: [{ name: "invoice.pdf", mimeType: "application/pdf", bytes: Uint8Array.from([37, 80]) }],
+      attachmentsOmitted: 1
+    });
+    const user = userEvent.setup();
+    renderReadPage();
+
+    await user.click(await screen.findByText("Signed Notice"));
+
+    const link = await screen.findByRole("link", { name: /invoice\.pdf/ });
+    expect(link.getAttribute("download")).toBe("invoice.pdf");
+    expect(link.getAttribute("href")).toBe("blob:kypost/att");
+    expect(screen.getByText(/1 attachment not shown/)).toBeDefined();
+    // The server's outer list is not consulted once a verified list exists.
+    expect(getJSON.mock.calls.some((call) => String(call[0]).includes("/api/mail/attachment"))).toBe(false);
+  });
+
   it("shows a signature badge, with no encryption badge", async () => {
     verifySignedMessage.mockResolvedValue({
       body: "signed copy",

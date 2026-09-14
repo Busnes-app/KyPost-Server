@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { escapeHtmlText, processEmailHtml } from "../lib/emailHtml";
 import { EmailBodyFrame } from "./read/EmailBodyFrame";
+import { DecryptedAttachments, inlineImageMap } from "./read/DecryptedAttachments";
 import { EncryptionCell } from "./read/EncryptionCell";
 import { SignatureBadge } from "./read/SignatureBadge";
 import { displayBody } from "./read/body";
@@ -149,6 +150,9 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   // badge. Qualify with `mailbox`, not `sourceMailbox`: the latter maps "" and
   // "INBOX" onto one key while they select different folders.
   const decryptedKey = (messageId: string) => `${mailbox}\u0000${messageId}`;
+  const selectedAttachments = selected ? decrypted[decryptedKey(selected.messageId)]?.attachments : undefined;
+  // cid: images a decrypted body references, built once per decrypted message.
+  const inlineImages = useMemo(() => inlineImageMap(selectedAttachments ?? []), [selectedAttachments]);
 
   useEffect(() => subscribePGPSession(setPgpSession), []);
 
@@ -196,7 +200,9 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             error: "",
             // This body came out of the ciphertext this browser opened.
             bodyFromVerifiedPart: true,
-            signerConflict: result.signerConflict
+            signerConflict: result.signerConflict,
+            attachments: result.attachments,
+            attachmentsOmitted: result.attachmentsOmitted
           }
         }));
       } catch (e) {
@@ -283,7 +289,9 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             // it is the body the badge above it describes — even when it is
             // empty, which is what an attachment-only signed part yields.
             bodyFromVerifiedPart: true,
-            signerConflict: result.signerConflict
+            signerConflict: result.signerConflict,
+            attachments: result.attachments,
+            attachmentsOmitted: result.attachmentsOmitted
           }
         }));
       } catch {
@@ -1868,7 +1876,19 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               <p style={{ margin: 0 }}><strong>Status:</strong> {selected.status || "-"}</p>
               <p style={{ margin: 0 }}><strong>Time:</strong> {formatTimestamp(selected.atUtc)}</p>
               {selected.detail ? <p style={{ margin: 0 }}><strong>Detail:</strong> {selected.detail}</p> : null}
-              {selected.hasAttachments ? (
+              {(() => {
+                // Once a verified view exists, its attachment list replaces
+                // the server's: it covers only the parts inside the signature
+                // or ciphertext, where the server's outer list could include an
+                // unsigned part appended in transit. See displayBody for the
+                // same rule applied to the body.
+                const view = decrypted[decryptedKey(selected.messageId)];
+                if (view?.bodyFromVerifiedPart && !view.error) {
+                  return <DecryptedAttachments attachments={view.attachments ?? []} omitted={view.attachmentsOmitted ?? 0} />;
+                }
+                return null;
+              })()}
+              {selected.hasAttachments && !decrypted[decryptedKey(selected.messageId)]?.bodyFromVerifiedPart ? (
                 <div className="email-attachments">
                   <strong>Attachments:</strong>
                   {attachmentsLoading ? <span className="email-attachments-status"> loading…</span> : null}
@@ -1914,7 +1934,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                       <EmailBodyFrame
                         key="html"
                         className="email-reader-body-frame"
-                        html={processEmailHtml(body, showImages)}
+                        html={processEmailHtml(body, showImages, inlineImages)}
                       />
                     );
                   } else {

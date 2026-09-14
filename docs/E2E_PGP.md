@@ -355,9 +355,27 @@ Still open:
   alias verified after key creation is not yet added to the key. Until that
   lands, regenerate the key after verifying a new alias if you need WKD or
   Autocrypt to serve it for that address.
-- **Nothing here has been exercised against a real IMAP server or a real
-  recipient.** The unit and HTTP-level tests pass; an end-to-end manual run
-  is still required before relying on this.
+
+Interoperability, as of 2026-09-13: a live mailbox of encrypted mail was
+exercised against Proton Mail in both directions (KyPost to Proton, Proton
+to KyPost) and worked. Not yet recorded for that run: attachments, sign-only,
+protected Subject, Bcc, reply and forward, revoked or expired keys, and large
+messages. A per-feature matrix is still owed before calling this a full
+interoperability pass.
+
+Attachments in the browser path: compose attachments go inside the encrypted
+entity as base64 parts of the protected-headers `multipart/mixed`, with the
+same headers `mailmsg.Build` writes, and the Sent copy carries them too. On
+read, `lib/mimeContent.ts` returns them decoded in memory; the reader offers
+them as `download` links on `application/octet-stream` blob URLs and inlines
+`cid:` raster images as `data:` URLs, so nothing decrypted is posted back or
+navigated to in this origin. Limits: openpgp.js decrypts under a 25 MiB
+decompressed cap (mirrors `mailmsg.MaxInboundMessageBytes`), the parser keeps
+at most 200 attachments and 25 MiB of decoded attachment bytes and reports the
+rest as a count, and a send refuses before encrypting when the attachments
+would not fit every ciphertext copy (`encryptedAttachmentBudget`: about 13 MiB
+with no Bcc, less per Bcc recipient). Recipients on the secure-link fallback
+get no attachments, so a send with both is refused rather than trimmed.
 
 Because the default *key-custody mode* (`client`) is unchanged, offering this
 choice was safe to ship incrementally: existing installs keep generating

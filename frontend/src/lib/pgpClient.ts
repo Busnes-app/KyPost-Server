@@ -8,7 +8,7 @@
 
 import { type BoundSignerKey } from "../api/pgp";
 import { requireUnlockedKey } from "./keyVault";
-import { parseMimeContent, type BodyMode } from "./mimeContent";
+import { parseMimeContent, type BodyMode, type MimeAttachment } from "./mimeContent";
 
 type OpenPGP = typeof import("openpgp");
 type PublicKey = Awaited<ReturnType<OpenPGP["readKey"]>>;
@@ -115,7 +115,19 @@ export type DecryptedMessage = {
    * from having no key at all — see read/signature.ts.
    */
   signerConflict: boolean;
+  /** Decoded in memory from the entity this browser checked. Never posted anywhere. */
+  attachments: MimeAttachment[];
+  /** Parts refused by the MIME limits rather than decoded. */
+  attachmentsOmitted: number;
 };
+
+/**
+ * Plaintext ceiling for one decrypted message, mirroring
+ * mailmsg.MaxInboundMessageBytes. openpgp.js applies it to the decompressed
+ * stream, so a small compressed packet that inflates past it fails inside
+ * the library instead of after the allocation it was aiming for.
+ */
+export const MAX_DECRYPTED_BYTES = 25 * 1024 * 1024;
 
 /**
  * Reads the bound signer keys and indexes each one's bound addresses by
@@ -190,7 +202,8 @@ export async function decryptMessage(
     message,
     decryptionKeys: privateKey,
     verificationKeys: verificationKeys.length > 0 ? verificationKeys : undefined,
-    expectSigned: false
+    expectSigned: false,
+    config: { maxDecompressedMessageSize: MAX_DECRYPTED_BYTES }
   });
 
   let signed = false;
@@ -242,7 +255,9 @@ export async function decryptMessage(
     signed,
     verified,
     signerFingerprint,
-    signerConflict: hasSignerConflict(signerKeys)
+    signerConflict: hasSignerConflict(signerKeys),
+    attachments: parsed?.attachments ?? [],
+    attachmentsOmitted: parsed?.attachmentsOmitted ?? 0
   };
 }
 
@@ -347,7 +362,9 @@ export async function verifySignedMessage(
     signed: true,
     verified,
     signerFingerprint,
-    signerConflict: hasSignerConflict(signerKeys)
+    signerConflict: hasSignerConflict(signerKeys),
+    attachments: parsed?.attachments ?? [],
+    attachmentsOmitted: parsed?.attachmentsOmitted ?? 0
   };
 }
 
@@ -361,6 +378,35 @@ export async function verifySignedMessage(
  */
 function hasSignerConflict(signerKeys: BoundSignerKey[]): boolean {
   return signerKeys.some((k) => k?.conflict === true);
+}
+
+/** A compose attachment as it goes into the encrypted entity: already base64. */
+export type EncryptedAttachment = {
+  name: string;
+  mimeType: string;
+  dataBase64: string;
+};
+
+/** Mirror of maxClientCiphertextBytes in pgp_send_client.go. */
+const MAX_SEND_PGP_REQUEST_BYTES = 64 * 1024 * 1024;
+
+/**
+ * How many decoded attachment bytes one encrypted send can carry, given how
+ * many ciphertext copies the request holds (one per delivery group plus the
+ * Sent copy).
+ *
+ * Two ceilings, both server-side: every copy must fit the inbound message cap
+ * or the recipient's server refuses it, and all copies together must fit the
+ * send-pgp request. Attachments are base64 inside the entity and the entity is
+ * armored again, so 16/9 of the raw bytes reach the wire; 1 MiB is left for
+ * headers, body and armor overhead. This is checked before encrypting so the
+ * refusal names the limit instead of arriving as a 413 after the work.
+ */
+export function encryptedAttachmentBudget(copies: number): number {
+  const perCopy = Math.min(MAX_DECRYPTED_BYTES, MAX_SEND_PGP_REQUEST_BYTES / Math.max(1, copies));
+  // Never negative: past ~36 copies the headroom exceeds the share, and a
+  // negative allowance would refuse a send that carries no files at all.
+  return Math.max(0, Math.floor((perCopy * 9) / 16) - 1024 * 1024);
 }
 
 /** One encrypted delivery: a full PGP/MIME message plus its recipients. */
@@ -407,11 +453,12 @@ export async function buildEncryptedDeliveries(
   contentType: string,
   body: string,
   groups: { recipients: string[]; publicKeys: string[] }[],
-  sign: boolean
+  sign: boolean,
+  attachments: EncryptedAttachment[] = []
 ): Promise<EncryptedDelivery[]> {
   const pgp = await openpgp();
   const signingKeys = sign ? [await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() })] : undefined;
-  const protectedContent = buildProtectedContent(contentType, body, envelope.subject);
+  const protectedContent = buildProtectedContent(contentType, body, envelope.subject, attachments);
 
   const deliveries: EncryptedDelivery[] = [];
   for (const group of groups) {
@@ -455,13 +502,14 @@ export async function buildEncryptedSentCopy(
   envelope: MessageEnvelope,
   contentType: string,
   body: string,
-  sign: boolean
+  sign: boolean,
+  attachments: EncryptedAttachment[] = []
 ): Promise<string> {
   const pgp = await openpgp();
   const ownKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
   const signingKeys = sign ? [ownKey] : undefined;
   const armored = await pgp.encrypt({
-    message: await pgp.createMessage({ text: buildProtectedContent(contentType, body, envelope.subject) }),
+    message: await pgp.createMessage({ text: buildProtectedContent(contentType, body, envelope.subject, attachments) }),
     encryptionKeys: ownKey.toPublic(),
     signingKeys,
     format: "armored"
@@ -477,8 +525,17 @@ export const OUTER_PLACEHOLDER_SUBJECT = "[Encrypted] Email Sent by KyPost";
  * Wraps the real content in an RFC 5322 protected-headers part carrying the
  * true Subject, mirroring pgpmail.protectContent. The receiving side lifts it
  * back out (pgpmail.ExtractProtectedSubject).
+ *
+ * Attachments follow the body as their own parts of the same multipart/mixed,
+ * base64 in 76-column lines with the headers mailmsg.Build writes, so the
+ * entity a recipient decrypts is the one the server-side path used to make.
  */
-function buildProtectedContent(contentType: string, body: string, subject: string): string {
+function buildProtectedContent(
+  contentType: string,
+  body: string,
+  subject: string,
+  attachments: EncryptedAttachment[] = []
+): string {
   const clean = sanitizeHeaderValue(subject);
   const boundary = `kypost-protected-${randomToken()}`;
   const lines = [`Content-Type: multipart/mixed; boundary="${boundary}"; protected-headers="v1"`, ""];
@@ -493,8 +550,64 @@ function buildProtectedContent(contentType: string, body: string, subject: strin
       ""
     );
   }
-  lines.push(`--${boundary}`, `Content-Type: ${contentType}`, "", body, "", `--${boundary}--`, "");
+  lines.push(`--${boundary}`, `Content-Type: ${contentType}`, "", body, "");
+  for (const attachment of attachments) {
+    const name = attachmentFilenameParams(attachment.name);
+    lines.push(
+      `--${boundary}`,
+      `Content-Type: ${attachmentMediaType(attachment.mimeType)}${name.contentType}`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment${name.disposition}`,
+      "",
+      ...wrapBase64(attachment.dataBase64),
+      ""
+    );
+  }
+  lines.push(`--${boundary}--`, "");
   return lines.join("\r\n");
+}
+
+/** A syntactically valid media type, or the binary fallback the server uses. */
+function attachmentMediaType(mimeType: string): string {
+  const clean = sanitizeHeaderValue(mimeType).split(";")[0].trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(clean) ? clean : "application/octet-stream";
+}
+
+/**
+ * The name= and filename= parameter strings for one attachment.
+ *
+ * An ASCII-safe quoted value always goes out, because that is what every
+ * reader understands; when the name has anything else, the RFC 2231 form
+ * carries the real name alongside it, which is how Go's mime.FormatMediaType
+ * and the clients this is tested against exchange non-ASCII filenames.
+ */
+function attachmentFilenameParams(rawName: string): { contentType: string; disposition: string } {
+  const name = sanitizeHeaderValue(rawName) || "attachment";
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  const needsExtended = ascii !== name;
+  const extended = needsExtended ? `; filename*=utf-8''${encodeRFC2231(name)}` : "";
+  return {
+    contentType: `; name="${ascii}"${needsExtended ? extended.replace("filename*", "name*") : ""}`,
+    disposition: `; filename="${ascii}"${extended}`
+  };
+}
+
+/** RFC 2231 percent-encoding: everything outside the attribute-char set. */
+function encodeRFC2231(value: string): string {
+  return Array.from(new TextEncoder().encode(value), (b) => {
+    const c = String.fromCharCode(b);
+    return /[A-Za-z0-9!#$&+\-.^_`|~]/.test(c) ? c : `%${b.toString(16).toUpperCase().padStart(2, "0")}`;
+  }).join("");
+}
+
+/** RFC 2045 76-column lines, as mailmsg.writeWrappedBase64 emits them. */
+function wrapBase64(encoded: string): string[] {
+  const clean = encoded.replace(/\s+/g, "");
+  const out: string[] = [];
+  for (let i = 0; i < clean.length; i += 76) {
+    out.push(clean.slice(i, i + 76));
+  }
+  return out;
 }
 
 async function readPublicKeys(pgp: OpenPGP, armoredKeys: string[]) {
