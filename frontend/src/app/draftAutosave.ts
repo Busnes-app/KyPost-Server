@@ -210,12 +210,14 @@ export function hasContent(draft: DraftInput): boolean {
  * must not surface as an exception in the middle of typing.
  *
  * On a client-custody account the fields are sealed to the user's key first.
- * With the vault locked there is nothing to seal to, so nothing is written;
- * an earlier sealed snapshot stays put, because the user has been told it is
- * recoverable after unlock and it is their own ciphertext anyway.
+ * With the vault locked, autosave touches nothing: it can neither seal new
+ * text nor tell whether the stored ciphertext is superseded, and the blank
+ * window behind the unlock prompt must not clear the snapshot the prompt is
+ * offering to restore. Explicit clears and the age sweep still run.
  */
 export async function saveDraftSnapshot(userId: string, draft: DraftInput): Promise<void> {
   if (!userId) return;
+  if (isClientProtected() && needsUnlock()) return;
   try {
     if (!hasContent(draft)) {
       draftStorage().removeItem(storageKey(userId));
@@ -232,7 +234,6 @@ export async function saveDraftSnapshot(userId: string, draft: DraftInput): Prom
     const savedAt = new Date().toISOString();
     let stored: StoredSnapshot;
     if (isClientProtected()) {
-      if (needsUnlock()) return;
       stored = { version: SNAPSHOT_VERSION, savedAt, sealed: await sealToSelf(JSON.stringify(fields)) };
     } else {
       stored = { version: SNAPSHOT_VERSION, savedAt, fields };

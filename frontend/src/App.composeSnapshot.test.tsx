@@ -105,6 +105,18 @@ describe("sealed compose snapshot behind a locked vault", () => {
     });
   });
 
+  it("survives the autosave timer firing on the blank window behind the prompt", async () => {
+    plantSnapshot("from the snapshot");
+    const user = await openCompose();
+    // Real time: the 1 s autosave debounce fires while the prompt is still up.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(window.sessionStorage.getItem(KEY)).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Unlock key" }));
+    await waitFor(() => {
+      expect((screen.getByPlaceholderText("Subject") as HTMLInputElement).value).toBe("from the snapshot");
+    });
+  });
+
   it("never overwrites typing after the prompt was dismissed, and keeps the snapshot", async () => {
     plantSnapshot("from the snapshot");
     const user = await openCompose();

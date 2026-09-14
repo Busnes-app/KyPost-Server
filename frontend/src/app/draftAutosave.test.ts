@@ -207,6 +207,15 @@ describe("sealed snapshots on a client-custody account", () => {
     expect((await load(USER))?.subject).toBe("before lock");
   });
 
+  it("does not let a blank window behind the unlock prompt clear the sealed snapshot", async () => {
+    await saveDraftSnapshot(USER, draft({ subject: "before lock" }));
+    vault.locked = true;
+    // The autosave timer fires on the empty compose form while the prompt is up.
+    await saveDraftSnapshot(USER, draft());
+    vault.locked = false;
+    expect((await load(USER))?.subject).toBe("before lock");
+  });
+
   it("reports locked rather than null when the vault closes, and opens it after unlock", async () => {
     await saveDraftSnapshot(USER, draft({ subject: "secret" }));
     vault.locked = true;
