@@ -109,3 +109,22 @@ describe("a TOFU pin conflict is its own state", () => {
     expect(signatureState(email({ pgpSigned: true }), local, false)).toBe("verified");
   });
 });
+
+
+describe("encrypted but unsigned", () => {
+  it("requires a successful local decrypt, even for an empty body", () => {
+    const encrypted = email({ pgpEncrypted: true });
+    expect(signatureState(encrypted, view(), false)).toBe("unsigned");
+    expect(signatureLabel("unsigned")).toBe("encrypted but unsigned");
+    expect(signatureState(encrypted, undefined, false)).toBe("none");
+    expect(signatureState(encrypted, view({ error: "decrypt failed" }), false)).toBe("none");
+    expect(signatureState(encrypted, view(), true)).toBe("none");
+    expect(signatureState(email({ pgpEncrypted: true, pgpDecryptError: "failed" }), view(), false)).toBe("none");
+  });
+
+  it("uses the local signature result instead of the outer envelope", () => {
+    expect(signatureState(email({ pgpEncrypted: true, pgpSigned: true, pgpVerified: true }), view(), false)).toBe("unsigned");
+    expect(signatureState(email({ pgpEncrypted: true }), view({ signed: true }), false)).toBe("unchecked");
+    expect(signatureState(email({ pgpEncrypted: true }), view({ signed: true, verified: true }), false)).toBe("verified");
+  });
+});

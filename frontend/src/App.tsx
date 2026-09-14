@@ -12,7 +12,8 @@ import { ContactPickerModal } from "./components/ContactPickerModal";
 import { RecipientField } from "./components/RecipientField";
 import { useDialogOpen } from "./hooks/useDialogOpen";
 import { contactToToken, isDuplicateInField, parseRecipientField, pickupFallbackFlag, serializeRecipientField, splitAddressList } from "./lib/recipients";
-import { accountAddress, clearPGPSession, isClientProtected, loadPGPSession, needsUnlock, pgpCustody } from "./lib/pgpSession";
+import { accountAddress, clearPGPSession, isClientProtected, loadPGPSession, needsUnlock, pgpCustody, subscribePGPSession } from "./lib/pgpSession";
+import { isUnlocked } from "./lib/keyVault";
 import { buildEncryptedDeliveries, buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "./lib/pgpClient";
 import { sealPickup } from "./lib/pickupCrypto";
 import { createSealedPickup, resolveRecipientKeys, sendClientEncryptedMail } from "./api/pgp";
@@ -131,6 +132,7 @@ export function App() {
   const [composeAttachments, setComposeAttachments] = useState<ComposeAttachment[]>([]);
   const [composeEncrypt, setComposeEncrypt] = useState(false);
   const [composeSign, setComposeSign] = useState(false);
+  const composeSignOverridden = useRef(false);
   const [composeMissingKeyRecipients, setComposeMissingKeyRecipients] = useState<string[]>([]);
   const [composeRecipientTiers, setComposeRecipientTiers] = useState<Record<string, PGPRecipientTier>>({});
   const [pgpDiscoverySettings, setPgpDiscoverySettings] = useState<DiscoverySettings | null>(null);
@@ -212,6 +214,16 @@ export function App() {
       void loadPGPSession();
     }
   }, [auth?.authenticated]);
+
+  useEffect(() => {
+    if (!composeOpen) return;
+    return subscribePGPSession((session) => {
+      if (session.unlocked && session.bootstrap?.protection === "client" && !composeSignOverridden.current) {
+        setComposeSign(true);
+      }
+      // Locking must leave signing requested: sending then asks for unlock.
+    });
+  }, [composeOpen]);
 
   // ponytail: single backend source for the displayed version (serverVersion)
   // — both the About overlay and Admin > Server read the same const via API.
@@ -549,7 +561,8 @@ export function App() {
     setComposeAttachments([]);
     setComposeEncrypt(false);
     setComposeEncryptOverridden(false);
-    setComposeSign(false);
+    composeSignOverridden.current = false;
+    setComposeSign(isClientProtected() && isUnlocked());
     setComposeSendLinkForKeyless(false);
     setComposeMissingKeyRecipients([]);
     setComposeRecipientTiers({});
@@ -691,6 +704,8 @@ export function App() {
   }
 
   function openDraftInCompose(payload: DraftComposePayload) {
+    composeSignOverridden.current = false;
+    setComposeSign(isClientProtected() && isUnlocked());
     setComposeFrom("");
     setComposeTo(parseRecipientField(payload.sentTo ?? ""));
     setComposeCc(parseRecipientField(payload.cc ?? ""));
@@ -1618,9 +1633,13 @@ export function App() {
                   Encrypt
                 </label>
                 <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.85rem" }}>
-                  <input type="checkbox" checked={composeSign} onChange={(e) => setComposeSign(e.target.checked)} />
+                  <input type="checkbox" checked={composeSign} onChange={(e) => {
+                    composeSignOverridden.current = true;
+                    setComposeSign(e.target.checked);
+                  }} />
                   Sign
                 </label>
+                {!composeSign ? <span className="security-badge security-badge-off">Unsigned</span> : null}
                 {composeEncrypt ? (
                   <label
                     style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.85rem" }}

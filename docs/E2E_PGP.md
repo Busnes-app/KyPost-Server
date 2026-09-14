@@ -374,6 +374,15 @@ client-custody Sent copy. The four combinations: neither goes through
 `/api/mail/send`; sign only is this path; encrypt only and both go through
 `buildEncryptedDeliveries`, where signing is inline inside the ciphertext.
 
+Signing defaults on for a new compose, reply, forward, or reopened draft when
+the browser key is unlocked, and turns on if the key unlocks while composing.
+An explicit Sign choice lasts for that message; locking keeps signing requested
+so sending asks for unlock instead of silently sending unsigned. With Sign off,
+compose shows `Unsigned`. After successful local decryption, a message without
+a signature shows `encrypted but unsigned`. Locked, pending, or failed decrypts
+do not establish signature absence. Encryption and sender verification remain
+separate badges; only a successful sender-bound signature gets a verification pass.
+
 Attachments in the browser path: compose attachments go inside the encrypted
 entity as base64 parts of the protected-headers `multipart/mixed`, with the
 same headers `mailmsg.Build` writes, and the Sent copy carries them too. On

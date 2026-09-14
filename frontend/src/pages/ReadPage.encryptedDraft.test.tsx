@@ -145,3 +145,21 @@ describe("opening an encrypted draft", () => {
     expect(getPGPMessagePayload).not.toHaveBeenCalled();
   });
 });
+
+
+describe("encrypted message signature badge", () => {
+  it.each([false, true])("shows the local signature result after decryption (signed=%s)", async (signed) => {
+    decryptMessage.mockResolvedValue({
+      body: "decrypted message", bodyMode: "plain", signed, verified: signed,
+      signerFingerprint: signed ? "ABC" : "", signerConflict: false,
+      attachments: [], attachmentsOmitted: 0, protectedHeaders: {}
+    });
+    const user = userEvent.setup();
+    render(<MemoryRouter><ReadPage /></MemoryRouter>);
+    await user.click(await screen.findByText("[Encrypted] Email Sent by KyPost"));
+    const label = signed ? "signature verified" : "encrypted but unsigned";
+    const badge = await screen.findByText(label);
+    expect(badge.classList.contains(signed ? "security-badge-on" : "security-badge-off")).toBe(true);
+    expect(screen.queryByText(signed ? "encrypted but unsigned" : "signature verified")).toBeNull();
+  });
+});
