@@ -30,8 +30,8 @@ export function AssignMailbox({ user, onClose }: { user: ManagedUser; onClose: (
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
-  async function refresh() {
-    const [i, d] = await Promise.all([getUserIMAPConfig(user.id), getUserCardDAVClient(user.id)]);
+  async function refreshImap() {
+    const i = await getUserIMAPConfig(user.id);
     setImapConfigured(i.configured);
     if (i.configured) {
       setImap({
@@ -39,6 +39,10 @@ export function AssignMailbox({ user, onClose }: { user: ManagedUser; onClose: (
         mailbox: i.mailbox ?? "INBOX", smtpHost: i.smtpHost ?? "", smtpPort: i.smtpPort ?? 587, managed: i.managed === true
       });
     }
+  }
+
+  async function refreshDav() {
+    const d = await getUserCardDAVClient(user.id);
     setDavConfigured(d.configured);
     if (d.configured) {
       setDav({
@@ -49,16 +53,18 @@ export function AssignMailbox({ user, onClose }: { user: ManagedUser; onClose: (
   }
 
   useEffect(() => {
-    void refresh().catch((e: unknown) => setMessage(`Failed to load: ${toErrorMessage(e, "unknown error")}`));
+    void Promise.all([refreshImap(), refreshDav()]).catch((e: unknown) =>
+      setMessage(`Failed to load: ${toErrorMessage(e, "unknown error")}`)
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.id]);
 
-  async function run(label: string, action: () => Promise<unknown>) {
+  async function run(label: string, action: () => Promise<unknown>, after: () => Promise<void>) {
     setBusy(true);
     setMessage("");
     try {
       await action();
-      await refresh();
+      await after();
       setMessage(label);
     } catch (e: unknown) {
       setMessage(`Failed: ${toErrorMessage(e, "unknown error")}`);
@@ -91,11 +97,11 @@ export function AssignMailbox({ user, onClose }: { user: ManagedUser; onClose: (
         </label>
       </div>
       <div className="config-actions">
-        <button type="button" disabled={busy} onClick={() => void run("Mailbox saved.", () => putUserIMAPConfig(user.id, imap))}>Save Mailbox</button>
+        <button type="button" disabled={busy} onClick={() => void run("Mailbox saved.", () => putUserIMAPConfig(user.id, imap), refreshImap)}>Save Mailbox</button>
         {imapConfigured ? (
           <button type="button" disabled={busy} onClick={() => {
             if (window.confirm(`Remove ${user.username}'s stored mailbox credentials?`)) {
-              void run("Mailbox removed.", () => deleteUserIMAPConfig(user.id));
+              void run("Mailbox removed.", () => deleteUserIMAPConfig(user.id), refreshImap);
             }
           }}>Remove Mailbox</button>
         ) : null}
@@ -113,11 +119,11 @@ export function AssignMailbox({ user, onClose }: { user: ManagedUser; onClose: (
         </label>
       </div>
       <div className="config-actions">
-        <button type="button" disabled={busy} onClick={() => void run("Contacts sync saved.", () => putUserCardDAVClient(user.id, dav))}>Save Contacts Sync</button>
+        <button type="button" disabled={busy} onClick={() => void run("Contacts sync saved.", () => putUserCardDAVClient(user.id, dav), refreshDav)}>Save Contacts Sync</button>
         {davConfigured ? (
           <button type="button" disabled={busy} onClick={() => {
             if (window.confirm(`Remove ${user.username}'s stored CardDAV client credentials?`)) {
-              void run("Contacts sync removed.", () => deleteUserCardDAVClient(user.id));
+              void run("Contacts sync removed.", () => deleteUserCardDAVClient(user.id), refreshDav);
             }
           }}>Remove Contacts Sync</button>
         ) : null}

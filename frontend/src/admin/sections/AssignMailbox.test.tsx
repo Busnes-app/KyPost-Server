@@ -48,6 +48,15 @@ describe("AssignMailbox", () => {
     );
   });
 
+  it("does not wipe unsaved CardDAV edits when saving the mailbox form", async () => {
+    render(<AssignMailbox user={user} onClose={() => undefined} />);
+    await waitFor(() => expect(screen.getByDisplayValue("imap.example.test")).toBeTruthy());
+    await userEvent.type(screen.getByLabelText(/carddav server url/i), "https://c.example.test/dav/");
+    await userEvent.click(screen.getByRole("button", { name: /save mailbox/i }));
+    await waitFor(() => expect(api.putUserIMAPConfig).toHaveBeenCalled());
+    expect(screen.getByDisplayValue("https://c.example.test/dav/")).toBeTruthy();
+  });
+
   it("saves a CardDAV client for the user", async () => {
     render(<AssignMailbox user={user} onClose={() => undefined} />);
     await waitFor(() => expect(screen.getByDisplayValue("imap.example.test")).toBeTruthy());
