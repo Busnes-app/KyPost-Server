@@ -332,7 +332,10 @@ Legacy single-key identity, rewrap and slot PUT writers, and ordinary password-o
 changes, return 409 `keyringUpgradeRequired: true` without changing material or
 credentials. Explicit identity/slot deletion remains revision-guarded. Admin reset
 compares its target snapshot revision and preserves opaque material; forced password
-completion may likewise preserve it. Unknown persisted keyring versions fail closed.
+completion must use derived authentication and may likewise preserve it. A
+concurrent material change makes an admin reset return 409 without resetting the
+credential or revoking sessions; it is not retried automatically. Administrators
+should deactivate an actively compromised account to stop concurrent use. Unknown persisted keyring versions fail closed.
 Account conversion is not exposed by an HTTP route.
 
 Snapshots include optional `keyring` (null/absent for legacy accounts):

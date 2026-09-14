@@ -48,6 +48,9 @@ func TestPGPRevisionRejectsStaleWritersAfterSameKeyChange(t *testing.T) {
 		{"password-and-envelope", func() (User, error) {
 			return s.SetDerivedAuthAndRewrapPGP(context.Background(), id, strings.Repeat("a", 64), base64.StdEncoding.EncodeToString([]byte("0123456789abcdef")), 600000, false, `{"v":2}`, &before.PGPRevision)
 		}},
+		{"admin-reset", func() (User, error) {
+			return s.SetPassword(context.Background(), id, "admin-reset-test-value", true, &before.PGPRevision)
+		}},
 		{"password", func() (User, error) {
 			return s.SetPassword(context.Background(), id, "new-password-test-value", false, &before.PGPRevision)
 		}},

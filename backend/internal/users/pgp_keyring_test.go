@@ -197,6 +197,17 @@ func TestPGPKeyringRejectsLegacyWritersAndPreservesReset(t *testing.T) {
 	if _, err := s.CommitPGPKeyring(context.Background(), id, update); !errors.Is(err, ErrPGPRevisionChanged) {
 		t.Fatalf("reset failed to invalidate prepared write: %v", err)
 	}
+	resetBytes, err := os.ReadFile(s.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPassword(context.Background(), id, "another-test-password", false, &reset.PGPRevision); !errors.Is(err, ErrPGPKeyringUpgradeRequired) {
+		t.Fatalf("legacy forced completion stranded keyring: %v", err)
+	}
+	unchanged, err := os.ReadFile(s.path)
+	if err != nil || !bytes.Equal(resetBytes, unchanged) {
+		t.Fatal("rejected forced completion changed material or credential")
+	}
 	forced, err := s.SetDerivedAuthAndRewrapPGP(context.Background(), id, strings.Repeat("d", 64), base64.StdEncoding.EncodeToString([]byte("fedcba9876543210")), 600000, false, "", &reset.PGPRevision)
 	if err != nil {
 		t.Fatal(err)

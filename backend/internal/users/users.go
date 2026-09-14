@@ -1409,7 +1409,7 @@ func (s *Store) SetPassword(ctx context.Context, id, newPassword string, require
 		return User{}, err
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
-		if u.PGPKeyring != nil && !requireChange && !u.MustChangePassword {
+		if u.PGPKeyring != nil && !requireChange {
 			return ErrPGPKeyringUpgradeRequired
 		}
 		u.PasswordHash = hash
