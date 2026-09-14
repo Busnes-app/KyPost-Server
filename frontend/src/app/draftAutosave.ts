@@ -222,8 +222,14 @@ export async function saveDraftSnapshot(userId: string, draft: DraftInput): Prom
   const custody = pgpCustody();
   if (custody === "unknown") return;
   if (custody === "client" && needsUnlock()) return;
+  // Sealing is asynchronous and a clear is not. A clear that lands while
+  // the seal is in flight (Save Draft, Trash, logout, all a second after the
+  // last keystroke) must win, or the write below resurrects what was just
+  // discarded.
+  const generation = clearGeneration.get(userId) ?? 0;
   try {
     if (!hasContent(draft)) {
+      bumpClearGeneration(userId);
       draftStorage().removeItem(storageKey(userId));
       return;
     }
@@ -238,7 +244,9 @@ export async function saveDraftSnapshot(userId: string, draft: DraftInput): Prom
     const savedAt = new Date().toISOString();
     let stored: StoredSnapshot;
     if (custody === "client") {
-      stored = { version: SNAPSHOT_VERSION, savedAt, sealed: await sealToSelf(JSON.stringify(fields)) };
+      const sealed = await sealToSelf(JSON.stringify(fields));
+      if ((clearGeneration.get(userId) ?? 0) !== generation) return;
+      stored = { version: SNAPSHOT_VERSION, savedAt, sealed };
     } else {
       stored = { version: SNAPSHOT_VERSION, savedAt, fields };
     }
@@ -309,8 +317,16 @@ export async function loadDraftSnapshot(userId: string): Promise<DraftSnapshot |
  * (sent, or written to a real IMAP draft) or deliberately abandoned (trashed),
  * and on logout so the next person at this browser cannot read it.
  */
+/** Bumped by every clear so an in-flight save can tell it has been overtaken. */
+const clearGeneration = new Map<string, number>();
+
+function bumpClearGeneration(userId: string): void {
+  clearGeneration.set(userId, (clearGeneration.get(userId) ?? 0) + 1);
+}
+
 export function clearDraftSnapshot(userId: string): void {
   if (!userId) return;
+  bumpClearGeneration(userId);
   try {
     draftStorage().removeItem(storageKey(userId));
   } catch {

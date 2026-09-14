@@ -12,13 +12,22 @@ import {
 
 // The vault state the module consults, switchable per test. The seal is a
 // stand-in for openpgp: reversible, and its output never contains the input.
-const vault = vi.hoisted(() => ({ clientProtected: false, locked: false, unknown: false }));
+const vault = vi.hoisted(() => ({
+  clientProtected: false,
+  locked: false,
+  unknown: false,
+  /** When set, sealToSelf waits on it, so a test can interleave a clear. */
+  sealGate: null as Promise<void> | null
+}));
 vi.mock("../lib/pgpSession", () => ({
   pgpCustody: () => (vault.unknown ? "unknown" : vault.clientProtected ? "client" : "other"),
   needsUnlock: () => vault.locked
 }));
 vi.mock("../lib/pgpClient", () => ({
-  sealToSelf: async (text: string) => `sealed:${btoa(unescape(encodeURIComponent(text)))}`,
+  sealToSelf: async (text: string) => {
+    if (vault.sealGate) await vault.sealGate;
+    return `sealed:${btoa(unescape(encodeURIComponent(text)))}`;
+  },
   openSealedToSelf: async (sealed: string) => {
     if (!sealed.startsWith("sealed:")) throw new Error("not sealed");
     return decodeURIComponent(escape(atob(sealed.slice(7))));
@@ -43,6 +52,7 @@ beforeEach(() => {
   vault.clientProtected = false;
   vault.locked = false;
   vault.unknown = false;
+  vault.sealGate = null;
 });
 
 describe("hasContent", () => {
@@ -206,6 +216,19 @@ describe("sealed snapshots on a client-custody account", () => {
     // promised it is recoverable after unlock. Nothing here may destroy it.
     vault.locked = false;
     expect((await load(USER))?.subject).toBe("before lock");
+  });
+
+  it("does not let an in-flight seal re-write a snapshot cleared meanwhile", async () => {
+    let release = () => {};
+    vault.sealGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const saving = saveDraftSnapshot(USER, draft({ subject: "x" }));
+    // The user hits Save Draft / Trash / Log out while the seal is pending.
+    clearDraftSnapshot(USER);
+    release();
+    await saving;
+    expect(window.sessionStorage.getItem(`kypost-compose-draft:${USER}`)).toBeNull();
   });
 
   it("neither writes nor clears while the PGP state is unknown", async () => {
