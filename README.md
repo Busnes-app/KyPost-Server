@@ -811,6 +811,8 @@ Filter Rules (the caller's own rules):
 
 PGP:
 
+- PGP snapshots expose `pgpRevision`; identity, envelope and password writes accept optional `expectedRevision` and reject stale updates with 409. Clients must use the revision from the snapshot that produced their ciphertext. Existing single-key clients may omit it; multi-key conversion is not enabled. See [the revision contract](docs/E2E_PGP.md#pgp-revision-preconditions).
+
 - `POST /api/pgp/identity/generate` and `POST /api/pgp/identity/import`
 - `GET|DELETE /api/pgp/identity`
 - `POST /api/pgp/identity/client` (store a client-protected identity — the server never sees the private key)

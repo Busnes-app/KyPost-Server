@@ -44,15 +44,17 @@ func (s *Server) handlePGPWrappedKey(w http.ResponseWriter, r *http.Request) {
 		"protection":  u.PGPProtection(),
 		"wrapped":     u.PGPPrivateKeyWrapped,
 		"fingerprint": u.PGPFingerprint,
+		"pgpRevision": u.PGPRevision,
 		"keyId":       u.PGPKeyID,
 		"publicKey":   u.PGPPublicKey,
 	})
 }
 
 type clientIdentityRequest struct {
-	PublicKey string `json:"publicKey"`
-	Wrapped   string `json:"wrapped"`
-	Source    string `json:"source"`
+	ExpectedRevision *uint64 `json:"expectedRevision,omitempty"`
+	PublicKey        string  `json:"publicKey"`
+	Wrapped          string  `json:"wrapped"`
+	Source           string  `json:"source"`
 
 	// Step-up credential, required only when this REPLACES an existing identity
 	// (pgp_stepup.go). Both forms are accepted because a client-protected
@@ -110,7 +112,7 @@ func (s *Server) handlePGPIdentityClient(w http.ResponseWriter, r *http.Request)
 	}
 	u, err := s.users.SetPGPIdentityClientProtected(
 		ac.UserID, info.Fingerprint, info.KeyID, info.ArmoredPublicKey,
-		wrapped, source, time.Now().UTC().Format(time.RFC3339))
+		wrapped, source, time.Now().UTC().Format(time.RFC3339), req.ExpectedRevision)
 	if err != nil {
 		writeUserStoreError(w, err)
 		return
@@ -139,6 +141,7 @@ func (s *Server) handlePGPIdentityClient(w http.ResponseWriter, r *http.Request)
 	// reads it (see handleDownloadRecoveryBackup).
 	writeJSON(w, http.StatusOK, pgpIdentityResponse{
 		Fingerprint: u.PGPFingerprint,
+		PGPRevision: u.PGPRevision,
 		KeyID:       u.PGPKeyID,
 		PublicKey:   u.PGPPublicKey,
 		Source:      source,
@@ -165,8 +168,9 @@ func (s *Server) handlePGPRewrapKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Wrapped             string `json:"wrapped"`
-		ExpectedFingerprint string `json:"expectedFingerprint,omitempty"`
+		Wrapped             string  `json:"wrapped"`
+		ExpectedFingerprint string  `json:"expectedFingerprint,omitempty"`
+		ExpectedRevision    *uint64 `json:"expectedRevision,omitempty"`
 		// Step-up credential. Always required here: rewrapping presupposes an
 		// identity to rewrap, so this endpoint is never first-time setup.
 		Password   string `json:"password,omitempty"`
@@ -186,12 +190,13 @@ func (s *Server) handlePGPRewrapKey(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
 		return
 	}
-	if _, err := s.users.RewrapPGPPrivateKey(ac.UserID, strings.TrimSpace(req.Wrapped), strings.TrimSpace(req.ExpectedFingerprint)); err != nil {
+	u, err := s.users.RewrapPGPPrivateKey(ac.UserID, strings.TrimSpace(req.Wrapped), strings.TrimSpace(req.ExpectedFingerprint), req.ExpectedRevision)
+	if err != nil {
 		writeUserStoreError(w, err)
 		return
 	}
 	s.logger.Info("pgp private key rewrapped", "user_id", ac.UserID)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pgpRevision": u.PGPRevision})
 }
 
 // handlePGPExportLegacyKey hands a legacy server-sealed private key back to
@@ -255,8 +260,9 @@ func (s *Server) handlePGPExportLegacyKey(w http.ResponseWriter, r *http.Request
 	}
 	s.logger.Info("legacy pgp key exported for client-side rewrap", "user_id", ac.UserID)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"privateKey": armored,
-		"publicKey":  identity.ArmoredPublicKey,
+		"privateKey":  armored,
+		"publicKey":   identity.ArmoredPublicKey,
+		"pgpRevision": u.PGPRevision,
 	})
 }
 
@@ -291,8 +297,9 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req struct {
-		Envelope            string `json:"envelope"`
-		ExpectedFingerprint string `json:"expectedFingerprint,omitempty"`
+		Envelope            string  `json:"envelope"`
+		ExpectedFingerprint string  `json:"expectedFingerprint,omitempty"`
+		ExpectedRevision    *uint64 `json:"expectedRevision,omitempty"`
 		// Step-up credential (pgp_stepup.go). Installing a slot mints or
 		// replaces a sealing of the private key: a stolen session must not be
 		// able to plant an envelope the server cannot validate, and the user
@@ -312,15 +319,16 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 	if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
 		return
 	}
-	if _, err := s.users.SetPGPWrappedEnvelope(
+	u, err := s.users.SetPGPWrappedEnvelope(
 		ac.UserID, r.PathValue("slot"), envelope,
-		time.Now().UTC().Format(time.RFC3339), strings.TrimSpace(req.ExpectedFingerprint),
-	); err != nil {
+		time.Now().UTC().Format(time.RFC3339), strings.TrimSpace(req.ExpectedFingerprint), req.ExpectedRevision,
+	)
+	if err != nil {
 		writeUserStoreError(w, err)
 		return
 	}
 	s.logger.Info("pgp envelope slot stored", "user_id", ac.UserID, "slot", r.PathValue("slot"))
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pgpRevision": u.PGPRevision})
 }
 
 func (s *Server) handlePGPGetEnvelopeSlot(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +347,8 @@ func (s *Server) handlePGPGetEnvelopeSlot(w http.ResponseWriter, r *http.Request
 		if e.Slot == slot {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"slot": e.Slot, "envelope": e.Envelope,
-				"fingerprint": u.PGPFingerprint, "publicKey": u.PGPPublicKey,
+				"fingerprint": u.PGPFingerprint,
+				"pgpRevision": u.PGPRevision, "publicKey": u.PGPPublicKey,
 			})
 			return
 		}
@@ -354,6 +363,7 @@ func (s *Server) handlePGPDeleteEnvelopeSlot(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var req struct {
+		ExpectedRevision *uint64 `json:"expectedRevision,omitempty"`
 		// Step-up credential (pgp_stepup.go). Deleting a sealing that cannot
 		// be re-minted without the unwrapped key is not undoable, the same
 		// reasoning as DELETE /api/pgp/identity — so a caller must prove the
@@ -371,10 +381,11 @@ func (s *Server) handlePGPDeleteEnvelopeSlot(w http.ResponseWriter, r *http.Requ
 	if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
 		return
 	}
-	if _, err := s.users.DeletePGPWrappedEnvelope(ac.UserID, r.PathValue("slot")); err != nil {
+	u, err := s.users.DeletePGPWrappedEnvelope(ac.UserID, r.PathValue("slot"), req.ExpectedRevision)
+	if err != nil {
 		writeUserStoreError(w, err)
 		return
 	}
 	s.logger.Info("pgp envelope slot deleted", "user_id", ac.UserID, "slot", r.PathValue("slot"))
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pgpRevision": u.PGPRevision})
 }

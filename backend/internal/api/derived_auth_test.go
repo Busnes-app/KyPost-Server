@@ -219,7 +219,7 @@ func TestPasswordChangeCommitsCredentialAndRewrapTogether(t *testing.T) {
 	if _, err := srv.users.SetPGPIdentityClientProtected(
 		u.ID, "FPR", "KEYID", "-----BEGIN PGP PUBLIC KEY BLOCK-----\npub\n-----END PGP PUBLIC KEY BLOCK-----",
 		`{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"AAAA","iv":"BBBB","ciphertext":"OLD"}`,
-		"generated", "2026-01-01T00:00:00Z",
+		"generated", "2026-01-01T00:00:00Z", nil,
 	); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}

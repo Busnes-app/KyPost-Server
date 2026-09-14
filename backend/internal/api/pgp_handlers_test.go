@@ -42,7 +42,7 @@ func seedClientIdentity(t *testing.T, srv *Server, userID, armoredPublicKey stri
 	}
 	fingerprint := strings.ToUpper(key.GetFingerprint())
 	if _, err := srv.users.SetPGPIdentityClientProtected(userID, fingerprint,
-		key.GetHexKeyID(), armoredPublicKey, `{"v":1}`, "generated", "test"); err != nil {
+		key.GetHexKeyID(), armoredPublicKey, `{"v":1}`, "generated", "test", nil); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
 	return fingerprint

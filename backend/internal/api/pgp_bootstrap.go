@@ -51,6 +51,7 @@ func (s *Server) handlePGPBootstrap(w http.ResponseWriter, r *http.Request) {
 		// recognize are different situations, and conflating them is how a
 		// client ends up offering "unlock" for a key that does not exist.
 		"hasIdentity": u.PGPFingerprint != "",
+		"pgpRevision": u.PGPRevision,
 		"protection":  protection,
 		"fingerprint": u.PGPFingerprint,
 		"keyId":       u.PGPKeyID,

@@ -140,7 +140,7 @@ func (s *Server) handleUsersResetPassword(w http.ResponseWriter, r *http.Request
 		destroysClientKey = before.PGPProtection() == users.PGPProtectionClient
 	}
 
-	u, err := s.users.SetPassword(r.Context(), id, req.Password, true)
+	u, err := s.users.SetPassword(r.Context(), id, req.Password, true, nil)
 	if err != nil {
 		writeUserStoreError(w, err)
 		return
@@ -297,6 +297,14 @@ func writeUserStoreError(w http.ResponseWriter, err error) {
 	// lock (the handler's pre-check remains as a fast path with a friendlier
 	// message, but this is the authoritative refusal).
 	if errors.Is(err, users.ErrLastActiveAdmin) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, users.ErrPGPRevisionChanged) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "pgpStateChanged": true})
+		return
+	}
+	if errors.Is(err, users.ErrInvalidPGPRevision) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

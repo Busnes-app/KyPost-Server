@@ -90,7 +90,7 @@ func TestUpdatePGPKeyMaterialRefusesAfterMigrationToClientCustody(t *testing.T) 
 	seedServerKey(t, store, id, "FPR-1")
 
 	if _, err := store.SetPGPIdentityClientProtected(id, "FPR-1", "KEYID", "PUBLIC-FPR-1",
-		"WRAPPED-ENVELOPE", "generated", "2026-07-27T00:00:00Z"); err != nil {
+		"WRAPPED-ENVELOPE", "generated", "2026-07-27T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
 

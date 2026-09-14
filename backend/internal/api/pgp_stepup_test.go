@@ -26,7 +26,7 @@ import (
 func stepUpPassword(t *testing.T, srv *Server, userID string) string {
 	t.Helper()
 	const password = "correct-horse-battery-staple"
-	if _, err := srv.users.SetPassword(context.Background(), userID, password, false); err != nil {
+	if _, err := srv.users.SetPassword(context.Background(), userID, password, false, nil); err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}
 	return password
@@ -155,7 +155,7 @@ func TestPGPRewrapRequiresTheAccountPassword(t *testing.T) {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
 	if _, err := srv.users.SetPGPIdentityClientProtected(userID, id.Fingerprint, id.KeyID,
-		id.ArmoredPublicKey, `{"v":1,"blob":"original"}`, "generated", "2026-01-01T00:00:00Z"); err != nil {
+		id.ArmoredPublicKey, `{"v":1,"blob":"original"}`, "generated", "2026-01-01T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
 
@@ -187,7 +187,7 @@ func TestPGPPutEnvelopeSlotRequiresTheAccountPassword(t *testing.T) {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
 	if _, err := srv.users.SetPGPIdentityClientProtected(userID, id.Fingerprint, id.KeyID,
-		id.ArmoredPublicKey, `{"v":1,"blob":"original"}`, "generated", "2026-01-01T00:00:00Z"); err != nil {
+		id.ArmoredPublicKey, `{"v":1,"blob":"original"}`, "generated", "2026-01-01T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
 
@@ -246,10 +246,10 @@ func TestPGPDeleteEnvelopeSlotRequiresTheAccountPassword(t *testing.T) {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
 	if _, err := srv.users.SetPGPIdentityClientProtected(userID, id.Fingerprint, id.KeyID,
-		id.ArmoredPublicKey, `{"v":1,"blob":"original"}`, "generated", "2026-01-01T00:00:00Z"); err != nil {
+		id.ArmoredPublicKey, `{"v":1,"blob":"original"}`, "generated", "2026-01-01T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
-	if _, err := srv.users.SetPGPWrappedEnvelope(userID, "recovery", `{"v":1,"blob":"rec"}`, "2026-01-01T00:00:00Z", ""); err != nil {
+	if _, err := srv.users.SetPGPWrappedEnvelope(userID, "recovery", `{"v":1,"blob":"rec"}`, "2026-01-01T00:00:00Z", "", nil); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope (fixture): %v", err)
 	}
 
@@ -372,12 +372,12 @@ func TestFirstLoginExemptionDoesNotCoverTheEnvelope(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	if _, err := srv.users.SetPGPIdentityClientProtected(
-		u.ID, "FPR", "KID", "PUB", `{"v":2,"ciphertext":"VICTIM"}`, "generated", "2026-08-04T00:00:00Z",
+		u.ID, "FPR", "KID", "PUB", `{"v":2,"ciphertext":"VICTIM"}`, "generated", "2026-08-04T00:00:00Z", nil,
 	); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
 	// Exactly the post-admin-reset state: a live session, MustChangePassword set.
-	if _, err := srv.users.SetPassword(context.Background(), u.ID, "temporary-password-xyz", true); err != nil {
+	if _, err := srv.users.SetPassword(context.Background(), u.ID, "temporary-password-xyz", true, nil); err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}
 

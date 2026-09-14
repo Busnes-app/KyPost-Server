@@ -26,7 +26,7 @@ func clientProtectedSlotUser(t *testing.T, srv *Server) string {
 	}
 	if _, err := srv.users.SetPGPIdentityClientProtected(u.ID, "FPR", "KID",
 		"-----BEGIN PGP PUBLIC KEY BLOCK-----\n...\n-----END PGP PUBLIC KEY BLOCK-----",
-		`{"v":2,"pw":true}`, "generated", "2026-08-04T00:00:00Z"); err != nil {
+		`{"v":2,"pw":true}`, "generated", "2026-08-04T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
 	return u.ID
@@ -68,7 +68,7 @@ func TestBootstrapReportsPasswordSlotOnly(t *testing.T) {
 func TestBootstrapReportsRecoverySlot(t *testing.T) {
 	srv := newTestServer(t)
 	id := clientProtectedSlotUser(t, srv)
-	if _, err := srv.users.SetPGPWrappedEnvelope(id, users.EnvelopeSlotRecovery, `{"v":2,"rec":1}`, "", ""); err != nil {
+	if _, err := srv.users.SetPGPWrappedEnvelope(id, users.EnvelopeSlotRecovery, `{"v":2,"rec":1}`, "", "", nil); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope: %v", err)
 	}
 	got := bootstrapSlots(t, srv, id)
@@ -83,7 +83,7 @@ func TestBootstrapReportsRecoverySlot(t *testing.T) {
 func TestBootstrapDoesNotServeNonPasswordEnvelopeBodies(t *testing.T) {
 	srv := newTestServer(t)
 	id := clientProtectedSlotUser(t, srv)
-	if _, err := srv.users.SetPGPWrappedEnvelope(id, users.EnvelopeSlotRecovery, `{"v":2,"SECRETBODY":1}`, "", ""); err != nil {
+	if _, err := srv.users.SetPGPWrappedEnvelope(id, users.EnvelopeSlotRecovery, `{"v":2,"SECRETBODY":1}`, "", "", nil); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/pgp/bootstrap", nil)

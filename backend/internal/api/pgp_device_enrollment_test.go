@@ -118,10 +118,10 @@ func TestPublishEnrollmentKeyRejectsEmptyKey(t *testing.T) {
 func TestDeviceEnvelopeServesOnlyTheCallersOwnSlot(t *testing.T) {
 	srv, userID, deviceID, authDevice := newPairedDeviceForTest(t)
 
-	if _, err := srv.users.SetPGPWrappedEnvelope(userID, users.EnvelopeSlotDevicePrefix+deviceID, `{"v":2,"mine":1}`, "", ""); err != nil {
+	if _, err := srv.users.SetPGPWrappedEnvelope(userID, users.EnvelopeSlotDevicePrefix+deviceID, `{"v":2,"mine":1}`, "", "", nil); err != nil {
 		t.Fatalf("seed own slot: %v", err)
 	}
-	if _, err := srv.users.SetPGPWrappedEnvelope(userID, users.EnvelopeSlotDevicePrefix+"someone-else", `{"v":2,"theirs":1}`, "", ""); err != nil {
+	if _, err := srv.users.SetPGPWrappedEnvelope(userID, users.EnvelopeSlotDevicePrefix+"someone-else", `{"v":2,"theirs":1}`, "", "", nil); err != nil {
 		t.Fatalf("seed other slot: %v", err)
 	}
 
@@ -146,7 +146,7 @@ func TestDeviceEnvelopeServesOnlyTheCallersOwnSlot(t *testing.T) {
 // A slot parameter must not exist. If someone adds one later, this fails.
 func TestDeviceEnvelopeIgnoresASlotParameter(t *testing.T) {
 	srv, userID, _, authDevice := newPairedDeviceForTest(t)
-	if _, err := srv.users.SetPGPWrappedEnvelope(userID, users.EnvelopeSlotRecovery, `{"v":2,"rec":1}`, "", ""); err != nil {
+	if _, err := srv.users.SetPGPWrappedEnvelope(userID, users.EnvelopeSlotRecovery, `{"v":2,"rec":1}`, "", "", nil); err != nil {
 		t.Fatalf("seed recovery: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/pgp/device/envelope?slot=recovery", nil)
@@ -503,7 +503,7 @@ func TestDeviceAuthRefusedWhileAPasswordChangeIsOwed(t *testing.T) {
 		t.Fatal("device credential did not work before the flag was set")
 	}
 
-	if _, err := srv.users.SetPassword(context.Background(), userID, "reset-by-admin-password", true); err != nil {
+	if _, err := srv.users.SetPassword(context.Background(), userID, "reset-by-admin-password", true, nil); err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}
 

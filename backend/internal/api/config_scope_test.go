@@ -105,7 +105,7 @@ func TestAdminResetReportsDestroyingAClientKey(t *testing.T) {
 	}
 
 	if _, err := srv.users.SetPGPIdentityClientProtected(victim.ID, "FPR", "KID", "PUB",
-		`{"v":2,"ciphertext":"VICTIM"}`, "generated", "2026-08-04T00:00:00Z"); err != nil {
+		`{"v":2,"ciphertext":"VICTIM"}`, "generated", "2026-08-04T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
 	if got := reset(victim.ID, "a-temporary-password-2"); got["pgpKeyInaccessible"] != true {

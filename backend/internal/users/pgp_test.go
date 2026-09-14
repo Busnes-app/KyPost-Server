@@ -34,7 +34,7 @@ func TestSetAndClearPGPIdentity(t *testing.T) {
 		t.Fatal("expected PGPFingerprint to round-trip through Public()")
 	}
 
-	if _, err := store.ClearPGPIdentity(u.ID); err != nil {
+	if _, err := store.ClearPGPIdentity(u.ID, nil); err != nil {
 		t.Fatalf("ClearPGPIdentity: %v", err)
 	}
 	got, err = store.Get(u.ID)
@@ -73,16 +73,16 @@ func TestSetPasswordPreservesTheWrappedKeyAndEnvelopes(t *testing.T) {
 
 	const wrapped = `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"U0VDUkVU"}`
 	if _, err := store.SetPGPIdentityClientProtected(u.ID, "FPR-1", "KID-1", "PUBLIC",
-		wrapped, "generated", "2026-07-14T00:00:00Z"); err != nil {
+		wrapped, "generated", "2026-07-14T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
 	// A recovery slot has no expiry, so compactExpiredEnvelopes must leave it
 	// alone across the reset too.
-	if _, err := store.SetPGPWrappedEnvelope(u.ID, EnvelopeSlotRecovery, `{"v":2,"slot":"recovery"}`, "", ""); err != nil {
+	if _, err := store.SetPGPWrappedEnvelope(u.ID, EnvelopeSlotRecovery, `{"v":2,"slot":"recovery"}`, "", "", nil); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope: %v", err)
 	}
 
-	if _, err := store.SetPassword(context.Background(), u.ID, "a-new-temporary-password", true); err != nil {
+	if _, err := store.SetPassword(context.Background(), u.ID, "a-new-temporary-password", true, nil); err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}
 

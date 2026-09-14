@@ -463,7 +463,7 @@ func TestUnlinkRefusesWhenTheLinkIsTheOnlyCredential(t *testing.T) {
 	}
 
 	// With a password of its own, the same click is fine.
-	if _, err := srv.users.SetPassword(context.Background(), u.ID, "a-local-password-123", false); err != nil {
+	if _, err := srv.users.SetPassword(context.Background(), u.ID, "a-local-password-123", false, nil); err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}
 	got = httptest.NewRecorder()

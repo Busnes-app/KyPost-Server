@@ -30,7 +30,7 @@ func clientProtectedUser(t *testing.T, srv *Server) users.User {
 	updated, err := srv.users.SetPGPIdentityClientProtected(
 		u.ID, "FPR123", "KID123", "-----BEGIN PGP PUBLIC KEY BLOCK-----\npub\n-----END PGP PUBLIC KEY BLOCK-----",
 		`{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"Y3Q="}`,
-		"generated", "2026-07-25T00:00:00Z")
+		"generated", "2026-07-25T00:00:00Z", nil)
 	if err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
