@@ -12,6 +12,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Sign without Encrypt now sends a real signed message (RFC 3156 `multipart/signed`) from a browser-encrypted account, to every recipient, without needing their keys. It used to route into the encrypted path and refuse recipients with no key.
 - Drafts saved from a browser-encrypted account are now encrypted to the user's own key before they reach IMAP, and reopen with their recipients, subject, body and attachments. The compose autosave snapshot is sealed to the same key. The reader shows the real Subject of a decrypted message rather than the outer placeholder. The server refuses a plaintext draft from a browser-encrypted account (409 `clientSideNeeded`), and the browser saves nothing until it knows the account's key custody.
 - Browser-encrypted mail now carries attachments: they are encrypted inside the message with the body and the Sent copy, and decrypted attachments are offered as downloads and inline images without leaving the browser. Previously an encrypted send silently dropped them. Browser decryption is capped at 25 MiB decompressed, and `/api/mail/send-pgp` accepts up to 64 MiB per request so the per-recipient copies fit.
 - Admins can publish default mail server settings (Server > Default Mail Server) and assign or lock a specific user's mailbox and contacts-sync credentials (Manage Users > Mailbox). Locked settings stay visible to the user, read-only. New routes: `GET|PUT /api/mail-defaults`, `GET|PUT|DELETE /api/users/{id}/imap-config`, `GET|PUT|DELETE /api/users/{id}/carddav-client`.
