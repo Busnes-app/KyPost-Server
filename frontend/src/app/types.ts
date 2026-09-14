@@ -55,6 +55,8 @@ export type DraftComposePayload = {
   bcc?: string;
   subject?: string;
   body?: string;
+  /** Decoded in the browser from an encrypted draft; never fetched from the server. */
+  attachments?: ComposeAttachment[];
 };
 
 // ComposeAttachment mirrors the backend's attachment wire shape

@@ -1,4 +1,5 @@
 import type { MimeAttachment } from "../../lib/mimeContent";
+import type { DraftComposePayload } from "../../app/types";
 
 // Shared shapes for the read view: the message record the inbox API returns,
 // its decrypted counterpart, and the list's sort/swipe state.
@@ -84,6 +85,8 @@ export type DecryptedView = {
   attachments?: MimeAttachment[];
   /** Parts the MIME limits refused. Shown as a count so nothing is silently missing. */
   attachmentsOmitted?: number;
+  /** The real Subject from inside the ciphertext; the outer one is a placeholder. */
+  subject?: string;
 };
 
 // AttachmentInfo mirrors the /api/mail/attachments wire shape.
@@ -95,7 +98,7 @@ export type AttachmentInfo = {
 };
 
 export type ReadPageProps = {
-  onOpenDraft?: (payload: { sentTo?: string; cc?: string; bcc?: string; subject?: string; body?: string }) => void;
+  onOpenDraft?: (payload: DraftComposePayload) => void;
   /** Empty-state call to action. Absent hides the button. */
   onCompose?: () => void;
 };

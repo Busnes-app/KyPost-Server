@@ -12,6 +12,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Drafts saved from a browser-encrypted account are now encrypted to the user's own key before they reach IMAP, and reopen with their recipients, subject, body and attachments. The compose autosave snapshot is sealed to the same key. The reader shows the real Subject of a decrypted message rather than the outer placeholder.
 - Browser-encrypted mail now carries attachments: they are encrypted inside the message with the body and the Sent copy, and decrypted attachments are offered as downloads and inline images without leaving the browser. Previously an encrypted send silently dropped them. Browser decryption is capped at 25 MiB decompressed, and `/api/mail/send-pgp` accepts up to 64 MiB per request so the per-recipient copies fit.
 - Admins can publish default mail server settings (Server > Default Mail Server) and assign or lock a specific user's mailbox and contacts-sync credentials (Manage Users > Mailbox). Locked settings stay visible to the user, read-only. New routes: `GET|PUT /api/mail-defaults`, `GET|PUT|DELETE /api/users/{id}/imap-config`, `GET|PUT|DELETE /api/users/{id}/carddav-client`.
 - Allow sealed backups when the optional TUNING_FILE override inside a collected root is absent, as in the default container layout; all external overrides and missing required keys remain refused.

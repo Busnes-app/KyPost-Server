@@ -6,8 +6,30 @@ import {
   purgeExpiredDraftSnapshots,
   restoreNotice,
   saveDraftSnapshot,
-  type DraftInput
+  type DraftInput,
+  type DraftSnapshot
 } from "./draftAutosave";
+
+// The vault state the module consults, switchable per test. The seal is a
+// stand-in for openpgp: reversible, and its output never contains the input.
+const vault = vi.hoisted(() => ({ clientProtected: false, locked: false }));
+vi.mock("../lib/pgpSession", () => ({
+  isClientProtected: () => vault.clientProtected,
+  needsUnlock: () => vault.locked
+}));
+vi.mock("../lib/pgpClient", () => ({
+  sealToSelf: async (text: string) => `sealed:${btoa(unescape(encodeURIComponent(text)))}`,
+  openSealedToSelf: async (sealed: string) => {
+    if (!sealed.startsWith("sealed:")) throw new Error("not sealed");
+    return decodeURIComponent(escape(atob(sealed.slice(7))));
+  }
+}));
+
+/** loadDraftSnapshot without the "locked" arm, for the tests that never lock. */
+async function load(userId: string): Promise<DraftSnapshot | null> {
+  const got = await loadDraftSnapshot(userId);
+  return got === "locked" ? null : got;
+}
 
 function draft(over: Partial<DraftInput> = {}): DraftInput {
   return { to: "", cc: "", bcc: "", subject: "", body: "", attachments: [], ...over };
@@ -18,6 +40,8 @@ const USER = "user-1";
 beforeEach(() => {
   window.sessionStorage.clear();
   window.localStorage.clear();
+  vault.clientProtected = false;
+  vault.locked = false;
 });
 
 describe("hasContent", () => {
@@ -41,14 +65,14 @@ describe("hasContent", () => {
 });
 
 describe("save/load round trip", () => {
-  it("restores every text field", () => {
-    saveDraftSnapshot(USER, draft({ to: "a@b.test", cc: "c@d.test", bcc: "e@f.test", subject: "Hi", body: "<p>body</p>" }));
-    const got = loadDraftSnapshot(USER);
+  it("restores every text field", async () => {
+    await saveDraftSnapshot(USER, draft({ to: "a@b.test", cc: "c@d.test", bcc: "e@f.test", subject: "Hi", body: "<p>body</p>" }));
+    const got = await load(USER);
     expect(got).toMatchObject({ to: "a@b.test", cc: "c@d.test", bcc: "e@f.test", subject: "Hi", body: "<p>body</p>" });
   });
 
-  it("stores attachment names but never their bytes", () => {
-    saveDraftSnapshot(
+  it("stores attachment names but never their bytes", async () => {
+    await saveDraftSnapshot(
       USER,
       draft({ subject: "x", attachments: [{ name: "report.pdf", mimeType: "application/pdf", dataBase64: "QUJD", size: 3 }] })
     );
@@ -56,14 +80,14 @@ describe("save/load round trip", () => {
     expect(raw).toContain("report.pdf");
     // The bytes are what blow the ~5MB quota; they must not be there.
     expect(raw).not.toContain("QUJD");
-    expect(loadDraftSnapshot(USER)?.attachmentNames).toEqual(["report.pdf"]);
+    expect((await load(USER))?.attachmentNames).toEqual(["report.pdf"]);
   });
 
-  it("clears the stored snapshot when the draft becomes empty", () => {
-    saveDraftSnapshot(USER, draft({ subject: "typed something" }));
-    expect(loadDraftSnapshot(USER)).not.toBeNull();
-    saveDraftSnapshot(USER, draft());
-    expect(loadDraftSnapshot(USER)).toBeNull();
+  it("clears the stored snapshot when the draft becomes empty", async () => {
+    await saveDraftSnapshot(USER, draft({ subject: "typed something" }));
+    expect(await load(USER)).not.toBeNull();
+    await saveDraftSnapshot(USER, draft());
+    expect(await load(USER)).toBeNull();
   });
 });
 
@@ -71,8 +95,8 @@ describe("plaintext never becomes persistent", () => {
   // The stored buffer is the plaintext of a message the user may be about to
   // PGP-encrypt. localStorage keeps it on disk until something deletes it —
   // on a shared workstation or a profile backup, that is indefinitely.
-  it("writes the draft to sessionStorage and never to localStorage", () => {
-    saveDraftSnapshot(USER, draft({ subject: "secret", body: "<p>plaintext</p>" }));
+  it("writes the draft to sessionStorage and never to localStorage", async () => {
+    await saveDraftSnapshot(USER, draft({ subject: "secret", body: "<p>plaintext</p>" }));
     expect(window.sessionStorage.getItem(`kypost-compose-draft:${USER}`)).toContain("secret");
     expect(window.localStorage.getItem(`kypost-compose-draft:${USER}`)).toBeNull();
     expect(window.localStorage.length).toBe(0);
@@ -100,36 +124,36 @@ describe("plaintext never becomes persistent", () => {
 });
 
 describe("isolation and cleanup", () => {
-  it("does not leak a draft between accounts on a shared browser", () => {
-    saveDraftSnapshot(USER, draft({ subject: "private" }));
-    expect(loadDraftSnapshot("user-2")).toBeNull();
+  it("does not leak a draft between accounts on a shared browser", async () => {
+    await saveDraftSnapshot(USER, draft({ subject: "private" }));
+    expect(await load("user-2")).toBeNull();
   });
 
-  it("clearDraftSnapshot removes it", () => {
-    saveDraftSnapshot(USER, draft({ subject: "x" }));
+  it("clearDraftSnapshot removes it", async () => {
+    await saveDraftSnapshot(USER, draft({ subject: "x" }));
     clearDraftSnapshot(USER);
-    expect(loadDraftSnapshot(USER)).toBeNull();
+    expect(await load(USER)).toBeNull();
   });
 
-  it("ignores a missing user id rather than writing a shared key", () => {
-    saveDraftSnapshot("", draft({ subject: "x" }));
+  it("ignores a missing user id rather than writing a shared key", async () => {
+    await saveDraftSnapshot("", draft({ subject: "x" }));
     expect(window.sessionStorage.length).toBe(0);
-    expect(loadDraftSnapshot("")).toBeNull();
+    expect(await load("")).toBeNull();
   });
 });
 
 describe("robustness", () => {
-  it("returns null for corrupt stored JSON instead of throwing", () => {
+  it("returns null for corrupt stored JSON instead of throwing", async () => {
     window.sessionStorage.setItem(`kypost-compose-draft:${USER}`, "{not json");
-    expect(loadDraftSnapshot(USER)).toBeNull();
+    expect(await load(USER)).toBeNull();
   });
 
-  it("discards a snapshot from a different version rather than guessing its shape", () => {
-    window.sessionStorage.setItem(`kypost-compose-draft:${USER}`, JSON.stringify({ version: 99, subject: "old" }));
-    expect(loadDraftSnapshot(USER)).toBeNull();
+  it("discards a snapshot from a different version rather than guessing its shape", async () => {
+    window.sessionStorage.setItem(`kypost-compose-draft:${USER}`, JSON.stringify({ version: 1, subject: "old", savedAt: new Date().toISOString() }));
+    expect(await load(USER)).toBeNull();
   });
 
-  it("does not throw when storage is full", () => {
+  it("does not throw when storage is full", async () => {
     // Swap the whole storage object rather than spying on a method. Neither
     // spy target works in both environments: jsdom hands out a proxied
     // Storage that an instance-level spy does not intercept, while the Node 26
@@ -148,13 +172,64 @@ describe("robustness", () => {
 
     try {
       // A failed autosave must never surface as an exception mid-typing.
-      expect(() => saveDraftSnapshot(USER, draft({ subject: "x" }))).not.toThrow();
+      await expect(saveDraftSnapshot(USER, draft({ subject: "x" }))).resolves.toBeUndefined();
       expect(setItem).toHaveBeenCalled();
     } finally {
       if (original) {
         Object.defineProperty(window, "sessionStorage", original);
       }
     }
+  });
+});
+
+describe("sealed snapshots on a client-custody account", () => {
+  beforeEach(() => {
+    vault.clientProtected = true;
+  });
+
+  it("stores ciphertext, never the fields, and restores them once opened", async () => {
+    await saveDraftSnapshot(USER, draft({ to: "a@b.test", subject: "secret", body: "<p>plaintext</p>" }));
+    const raw = window.sessionStorage.getItem(`kypost-compose-draft:${USER}`) ?? "";
+    expect(raw).toContain("sealed:");
+    expect(raw).not.toContain("secret");
+    expect(raw).not.toContain("plaintext");
+    expect(raw).not.toContain("a@b.test");
+    expect(await load(USER)).toMatchObject({ to: "a@b.test", subject: "secret", body: "<p>plaintext</p>" });
+  });
+
+  it("writes nothing while the vault is locked, and drops what was there", async () => {
+    await saveDraftSnapshot(USER, draft({ subject: "before lock" }));
+    vault.locked = true;
+    await saveDraftSnapshot(USER, draft({ subject: "typed while locked" }));
+    expect(window.sessionStorage.getItem(`kypost-compose-draft:${USER}`)).toBeNull();
+  });
+
+  it("reports locked rather than null when the vault closes, and opens it after unlock", async () => {
+    await saveDraftSnapshot(USER, draft({ subject: "secret" }));
+    vault.locked = true;
+    expect(await loadDraftSnapshot(USER)).toBe("locked");
+    // Still there for after the unlock.
+    expect(window.sessionStorage.getItem(`kypost-compose-draft:${USER}`)).not.toBeNull();
+    vault.locked = false;
+    expect((await load(USER))?.subject).toBe("secret");
+  });
+
+  it("discards a sealed snapshot the key cannot open", async () => {
+    window.sessionStorage.setItem(
+      `kypost-compose-draft:${USER}`,
+      JSON.stringify({ version: 2, sealed: "not-from-this-key", savedAt: new Date().toISOString() })
+    );
+    expect(await load(USER)).toBeNull();
+    expect(window.sessionStorage.getItem(`kypost-compose-draft:${USER}`)).toBeNull();
+  });
+
+  it("still expires by the outer timestamp without opening the seal", async () => {
+    window.sessionStorage.setItem(
+      `kypost-compose-draft:${USER}`,
+      JSON.stringify({ version: 2, sealed: "sealed:e30=", savedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() })
+    );
+    vault.locked = true;
+    expect(await loadDraftSnapshot(USER)).toBeNull();
   });
 });
 
@@ -166,48 +241,43 @@ describe("expiry", () => {
     window.sessionStorage.setItem(
       `kypost-compose-draft:${USER}`,
       JSON.stringify({
-        version: 1,
-        to: "",
-        cc: "",
-        bcc: "",
-        subject: "secret",
-        body: "<p>plaintext</p>",
-        attachmentNames: [],
+        version: 2,
+        fields: { to: "", cc: "", bcc: "", subject: "secret", body: "<p>plaintext</p>", attachmentNames: [] },
         savedAt: new Date(Date.now() - ageMs).toISOString()
       })
     );
   }
 
-  it("still restores a snapshot from within the window", () => {
+  it("still restores a snapshot from within the window", async () => {
     storeWithAge(23 * 60 * 60 * 1000);
-    expect(loadDraftSnapshot(USER)?.subject).toBe("secret");
+    expect((await load(USER))?.subject).toBe("secret");
   });
 
-  it("discards a snapshot older than the window", () => {
+  it("discards a snapshot older than the window", async () => {
     storeWithAge(25 * 60 * 60 * 1000);
-    expect(loadDraftSnapshot(USER)).toBeNull();
+    expect(await load(USER)).toBeNull();
   });
 
-  it("removes the expired plaintext rather than merely refusing to return it", () => {
+  it("removes the expired plaintext rather than merely refusing to return it", async () => {
     storeWithAge(25 * 60 * 60 * 1000);
-    loadDraftSnapshot(USER);
+    await load(USER);
     expect(window.sessionStorage.getItem(`kypost-compose-draft:${USER}`)).toBeNull();
   });
 
-  it("treats an unparseable savedAt as expired, not as fresh", () => {
+  it("treats an unparseable savedAt as expired, not as fresh", async () => {
     // Snapshots written before the expiry check existed have no usable
     // timestamp; those are the oldest plaintext on disk, not the newest.
     window.sessionStorage.setItem(
       `kypost-compose-draft:${USER}`,
-      JSON.stringify({ version: 1, subject: "ancient", attachmentNames: [], savedAt: "" })
+      JSON.stringify({ version: 2, fields: { subject: "ancient", attachmentNames: [] }, savedAt: "" })
     );
-    expect(loadDraftSnapshot(USER)).toBeNull();
+    expect(await load(USER)).toBeNull();
   });
 });
 
 describe("restoreNotice", () => {
-  it("names attachments that could not be restored", () => {
-    const snap = loadDraftSnapshot(USER) ?? {
+  it("names attachments that could not be restored", async () => {
+    const snap = (await load(USER)) ?? {
       version: 1, to: "", cc: "", bcc: "", subject: "", body: "",
       attachmentNames: ["a.pdf", "b.png"], savedAt: ""
     };
@@ -225,13 +295,8 @@ describe("purgeExpiredDraftSnapshots", () => {
     window.sessionStorage.setItem(
       `kypost-compose-draft:${userId}`,
       JSON.stringify({
-        version: 1,
-        to: "",
-        cc: "",
-        bcc: "",
-        subject,
-        body: "<p>plaintext</p>",
-        attachmentNames: [],
+        version: 2,
+        fields: { to: "", cc: "", bcc: "", subject, body: "<p>plaintext</p>", attachmentNames: [] },
         savedAt: new Date(Date.now() - ageMs).toISOString()
       })
     );
@@ -248,22 +313,22 @@ describe("purgeExpiredDraftSnapshots", () => {
     expect(window.sessionStorage.getItem(`kypost-compose-draft:${USER}`)).toBeNull();
   });
 
-  it("keeps a snapshot inside the window", () => {
+  it("keeps a snapshot inside the window", async () => {
     storeFor(USER, 23 * 60 * 60 * 1000);
     purgeExpiredDraftSnapshots();
-    expect(loadDraftSnapshot(USER)?.subject).toBe("secret");
+    expect((await load(USER))?.subject).toBe("secret");
   });
 
   // A shared browser is the case the per-user key cannot help with: the other
   // account may never log in again to trigger its own clear.
-  it("sweeps every user's snapshot, not just the current one", () => {
+  it("sweeps every user's snapshot, not just the current one", async () => {
     storeFor("user-1", 25 * 60 * 60 * 1000);
     storeFor("user-2", 25 * 60 * 60 * 1000);
     storeFor("user-3", 1000, "fresh");
     purgeExpiredDraftSnapshots();
     expect(window.sessionStorage.getItem("kypost-compose-draft:user-1")).toBeNull();
     expect(window.sessionStorage.getItem("kypost-compose-draft:user-2")).toBeNull();
-    expect(loadDraftSnapshot("user-3")?.subject).toBe("fresh");
+    expect((await load("user-3"))?.subject).toBe("fresh");
   });
 
   it("removes a snapshot whose age cannot be established", () => {

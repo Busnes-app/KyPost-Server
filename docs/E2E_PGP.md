@@ -377,6 +377,24 @@ would not fit every ciphertext copy (`encryptedAttachmentBudget`: about 13 MiB
 with no Bcc, less per Bcc recipient). Recipients on the secure-link fallback
 get no attachments, so a send with both is refused rather than trimmed.
 
+Drafts and the compose safety net, as of 2026-09-14: on a client-custody
+account, Save Draft encrypts the whole compose state to the user's own key
+(`buildEncryptedDraft`) and posts it as `pgpDraft`, which the server appends
+verbatim like the Sent copy after the same PGP/MIME shape check; the plaintext
+fields of that request carry the placeholder subject and nothing else, and the
+server ignores them. To, Cc, Bcc and Subject travel inside the ciphertext as
+protected headers, so reopening a draft from the Drafts folder decrypts it in
+the browser and restores recipients, subject, body and attachments. The
+reader now shows the protected Subject for every decrypted message instead
+of the outer placeholder. The compose autosave snapshot in `sessionStorage`
+is sealed to the same key while the vault is unlocked; with the vault locked
+nothing is written, and after a reload the snapshot waits for an unlock
+before it is restored. Accounts with no PGP identity keep a plaintext
+snapshot, since there is no key to seal to. Native clients still save
+plaintext drafts through `/api/mail/draft`; the server keeps accepting
+those because their hand-off to webmail Drafts depends on it, and the gap is
+tracked per client.
+
 Because the default *key-custody mode* (`client`) is unchanged, offering this
 choice was safe to ship incrementally: existing installs keep generating
 client-protected keys exactly as before, and no account is silently moved to
