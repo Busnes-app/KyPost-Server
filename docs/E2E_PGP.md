@@ -62,25 +62,19 @@ caller cannot bypass it. Correctness is unaffected: an empty `Body` has always
 meant "not warmed, fetch if needed" rather than "empty message", and every read
 path already falls back to a live fetch.
 
-**The cost is larger than one fetch per message, and worth knowing.**
-`Store.Snapshot` reports a window as warmed only when *every* entry has a body
-(`store.go:102-106`). A single encrypted message therefore makes the whole
-mailbox read as cold, so `handleInbox`'s cache-first branch is skipped and the
-non-delta path does a full live `ListUnreadMessages` plus decrypt on every load.
-For an account that receives encrypted mail regularly, the fast path is
-effectively off.
-
-That is the correct trade as it stands — serving the cache-first branch from a
-window with empty PGP bodies would hand clients `pgpEncrypted: true` with no
-body and no `pgpDecryptError`, which is precisely the wire signature of a
-*client*-protected message, and every client would then tell a `server`-mode
-user their own mail is unreadable.
-
-If the fast path is wanted back, the fix is to teach `Snapshot` that a PGP
-entry's empty body is expected rather than cold, and have the cache-first
-branch live-fetch just those UIDs — not to relax what gets stored.
-
-This applies to both modes and is independent of which one an account uses.
+Until 2026-09-14 this had a cost: `Store.Snapshot` counted a window as warm
+only when *every* entry had a body, so one encrypted message made the whole
+mailbox read cold and every load took the live `ListUnreadMessages` path. The
+entry now carries `pgpBodyOmitted`, set only by a classifying (API) write that
+found the message encrypted with no decrypt error, and `Snapshot` counts such
+an entry as warm. Serving it from cache emits `pgpEncrypted: true` with no
+body and no `pgpDecryptError`, which is exactly what the live path emits for
+the same message: the server decrypts nothing under any mode, and a
+server-custody account's migration error is a decrypt error, so it never sets
+the flag and stays on the live path. The flag is cleared with the verdict by
+every invalidation (rules version, contact key generation), so a recompute
+still forces the message back through the live path. A poller write never
+classifies and never sets it; a failed decrypt is transient and never sets it.
 
 ### Session handling
 

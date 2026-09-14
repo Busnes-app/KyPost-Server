@@ -441,6 +441,137 @@ func TestSnapshot_FullyWarmedBoundary(t *testing.T) {
 	}
 }
 
+// One encrypted message must not make the whole window cold: the server
+// holds no plaintext for it by design, and the client fetches the ciphertext
+// on open, so a classified encrypted entry is as warm as it will ever get.
+func TestSnapshot_ClassifiedEncryptedEntryCountsAsWarm(t *testing.T) {
+	s := newTestStore(t)
+	plain := entry(1, "a", "unread", "body-1")
+	encrypted := entry(2, "[Encrypted] Email Sent by KyPost", "unread", "")
+	encrypted.PGPEncrypted = true
+	if err := s.Upsert("INBOX", []Entry{plain, encrypted}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	out, warmed := mustSnapshot(t, s, "INBOX", 2)
+	if !warmed {
+		t.Fatal("a classified encrypted entry without a body must count as warm")
+	}
+	if !out[1].PGPEncrypted || out[1].Body != "" || !out[1].PGPBodyOmitted {
+		t.Fatalf("served entry = %+v, want encrypted, bodyless, body-omitted", out[1])
+	}
+
+	// A failed decrypt is transient and must stay cold so it is retried.
+	failed := entry(3, "c", "unread", "")
+	failed.PGPEncrypted = true
+	failed.PGPDecryptError = "boom"
+	if err := s.Upsert("INBOX", []Entry{failed}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if _, warmed := mustSnapshot(t, s, "INBOX", 3); warmed {
+		t.Fatal("a failed decrypt must not read as warm")
+	}
+
+	// A poller write never classifies, so it must not read as warm either.
+	unclassified := entry(4, "d", "unread", "")
+	unclassified.PGPEncrypted = true
+	unclassified.PGPClassified = false
+	if err := s.Upsert("INBOX", []Entry{unclassified}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if _, warmed := mustSnapshot(t, s, "INBOX", 4); warmed {
+		t.Fatal("an unclassified encrypted entry must not read as warm")
+	}
+}
+
+// The new warmth must be revocable by every invalidation sweep, or a rules
+// or key change would leave already-cached encrypted rows warm until they
+// aged out of the window.
+func TestBodyOmittedWarmthIsRevokedByInvalidation(t *testing.T) {
+	warmEncrypted := func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		e := entry(1, "[Encrypted] Email Sent by KyPost", "unread", "")
+		e.PGPEncrypted = true
+		e.ContactKeyGen = 7
+		if err := s.Upsert("INBOX", []Entry{e}); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+		if _, warmed := mustSnapshot(t, s, "INBOX", 1); !warmed {
+			t.Fatal("precondition: encrypted entry should be warm")
+		}
+		return s
+	}
+
+	t.Run("contact key generation", func(t *testing.T) {
+		s := warmEncrypted(t)
+		if err := s.SyncContactKeyGeneration(7); err != nil {
+			t.Fatalf("SyncContactKeyGeneration: %v", err)
+		}
+		if _, warmed := mustSnapshot(t, s, "INBOX", 1); !warmed {
+			t.Fatal("the same generation must not revoke warmth")
+		}
+		if err := s.SyncContactKeyGeneration(8); err != nil {
+			t.Fatalf("SyncContactKeyGeneration: %v", err)
+		}
+		if _, warmed := mustSnapshot(t, s, "INBOX", 1); warmed {
+			t.Fatal("a moved key generation must revoke warmth")
+		}
+	})
+
+	t.Run("explicit invalidation", func(t *testing.T) {
+		s := warmEncrypted(t)
+		if err := s.InvalidatePGPVerdicts(); err != nil {
+			t.Fatalf("InvalidatePGPVerdicts: %v", err)
+		}
+		if _, warmed := mustSnapshot(t, s, "INBOX", 1); warmed {
+			t.Fatal("InvalidatePGPVerdicts must revoke warmth")
+		}
+	})
+
+	t.Run("rules version", func(t *testing.T) {
+		stale := &mailboxWindow{Entries: []Entry{{UID: 1, PGPEncrypted: true, PGPClassified: true, PGPBodyOmitted: true, PGPVerdictSchemaVersion: PGPVerdictSchema - 1}}}
+		current := &mailboxWindow{Entries: []Entry{{UID: 1, PGPEncrypted: true, PGPClassified: true, PGPBodyOmitted: true, PGPVerdictSchemaVersion: PGPVerdictSchema}}}
+		dropStaleVerdicts(map[string]*mailboxWindow{"stale": stale, "current": current})
+		if stale.Entries[0].PGPBodyOmitted {
+			t.Fatal("a row stamped under old rules kept its warmth")
+		}
+		if !current.Entries[0].PGPBodyOmitted {
+			t.Fatal("a row stamped under current rules lost its warmth")
+		}
+	})
+}
+
+// A poller write for an encrypted row carries hasAttachments=true (the armor
+// parts), which the live path zeroes. A warm encrypted row must show what
+// the live path shows.
+func TestBodyOmittedRowKeepsHasAttachmentsFalse(t *testing.T) {
+	s := newTestStore(t)
+	api := entry(1, "[Encrypted] Email Sent by KyPost", "unread", "")
+	api.PGPEncrypted = true
+	if err := s.Upsert("INBOX", []Entry{api}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	poller := Entry{UID: 1, MessageID: itoaTest(1), Subject: "[Encrypted] Email Sent by KyPost", Sender: "a@example.com",
+		Status: "unread", AtUTC: "2026-01-01T00:00:00Z", HasAttachments: true}
+	if err := s.Upsert("INBOX", []Entry{poller}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	out, warmed := mustSnapshot(t, s, "INBOX", 1)
+	if !warmed || out[0].HasAttachments {
+		t.Fatalf("entry = %+v, want warm with hasAttachments=false", out[0])
+	}
+}
+
+// Invalidating a verdict must also drop the body-omitted warmth, or a rules
+// or key change would never force the message back through the live path.
+func TestClearPGPVerdictDropsBodyOmitted(t *testing.T) {
+	e := Entry{PGPEncrypted: true, PGPSigned: true, PGPBodyOmitted: true, PGPClassified: true}
+	clearPGPVerdict(&e)
+	if e.PGPBodyOmitted {
+		t.Fatal("clearPGPVerdict left PGPBodyOmitted set")
+	}
+}
+
 // A client-protected message is encrypted AND has no body, by design — the
 // server does not decrypt it. The flags must survive an Upsert into an
 // existing entry anyway, or the message is cached as ordinary mail and the
