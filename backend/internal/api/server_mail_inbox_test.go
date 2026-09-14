@@ -265,6 +265,47 @@ func TestServeInbox_ClassicServedFromWarmCache(t *testing.T) {
 	}
 }
 
+// An encrypted row has no body to serve and never will; it must not push the
+// mailbox onto the live path on every load.
+func TestServeInbox_ClassicServedFromWarmCacheWithEncryptedRow(t *testing.T) {
+	srv := newTestServer(t)
+	all, err := srv.users.List()
+	if err != nil || len(all) == 0 {
+		t.Fatalf("no test user available: %v", err)
+	}
+	userID := all[0].ID
+	cache := testInboxCache(t)
+	cfg := config.Default()
+
+	if err := cache.Upsert("INBOX", []mailcache.Entry{
+		{UID: 1, MessageID: "1", Subject: "a", Sender: "a@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", Body: "body-1", PGPClassified: true},
+		{UID: 2, MessageID: "2", Subject: "[Encrypted] Email Sent by KyPost", Sender: "b@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", PGPEncrypted: true, PGPClassified: true},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	fake := &fakeMailClient{}
+	rec := httptest.NewRecorder()
+	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 2, 0, false, true)
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if fake.unreadCalls != 0 || fake.overviewCalls != 0 || fake.bodiesCalls != 0 {
+		t.Fatalf("expected zero IMAP calls, got unread=%d overviews=%d bodies=%d", fake.unreadCalls, fake.overviewCalls, fake.bodiesCalls)
+	}
+	var encrypted *inboxEmail
+	emails := allEmails(decodeInboxResponse(t, rec))
+	for i := range emails {
+		if emails[i].MessageID == "2" {
+			encrypted = &emails[i]
+		}
+	}
+	if encrypted == nil || !encrypted.PGPEncrypted || encrypted.Body != "" || encrypted.PGPDecryptError != "" {
+		t.Fatalf("encrypted row = %+v, want pgpEncrypted with no body and no decrypt error", encrypted)
+	}
+}
+
 func TestServeInbox_ClassicFallsBackAndSelfWarms(t *testing.T) {
 	srv := newTestServer(t)
 	all, err := srv.users.List()
