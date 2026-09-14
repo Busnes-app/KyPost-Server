@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { Fragment, FormEvent, useEffect, useState } from "react";
 import { toErrorMessage } from "../../api/client";
 import {
   clearUserMFA,
@@ -11,6 +11,7 @@ import {
   type ManagedUser
 } from "../../api/users";
 import { useAuth, type Role } from "../../auth";
+import { AssignMailbox } from "./AssignMailbox";
 
 function formatJoined(value: string): string {
   const when = new Date(value);
@@ -26,6 +27,7 @@ export function Users() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
   const [busyId, setBusyId] = useState("");
+  const [assignId, setAssignId] = useState("");
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -247,7 +249,8 @@ export function Users() {
                     const busy = busyId === user.id;
                     const joined = formatJoined(user.createdAt);
                     return (
-                      <tr key={user.id} className={busy ? "users-row users-row-busy" : "users-row"}>
+                      <Fragment key={user.id}>
+                        <tr className={busy ? "users-row users-row-busy" : "users-row"}>
                         <td>
                           <div className="users-identity">
                             <span className="users-avatar" aria-hidden="true">
@@ -296,6 +299,14 @@ export function Users() {
                             >
                               Reset Password
                             </button>
+                            <button
+                              type="button"
+                              className="users-action"
+                              onClick={() => setAssignId(assignId === user.id ? "" : user.id)}
+                              disabled={busy}
+                            >
+                              {assignId === user.id ? "Hide Mailbox" : "Mailbox"}
+                            </button>
                             {user.totpEnabled ? (
                               <button
                                 type="button"
@@ -316,7 +327,15 @@ export function Users() {
                             </button>
                           </div>
                         </td>
-                      </tr>
+                        </tr>
+                        {assignId === user.id ? (
+                          <tr>
+                            <td colSpan={4}>
+                              <AssignMailbox user={user} onClose={() => setAssignId("")} />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>
