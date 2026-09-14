@@ -238,6 +238,27 @@ describe("inline images the message carried", () => {
     expect(processEmailHtml('<img src="cid:logo%40example">', false, images)).toContain(png);
   });
 
+  it("strips srcset from an inlined image so it cannot carry a remote source", () => {
+    const out = processEmailHtml(
+      '<img src="cid:logo@example" srcset="https://tracker.example/p.gif 1x" sizes="1px">',
+      false,
+      images
+    );
+    expect(out).toContain(png);
+    expect(out).not.toContain("tracker.example");
+    expect(out).not.toContain("srcset");
+  });
+
+  it("strips a <picture><source> sibling of an inlined image", () => {
+    const out = processEmailHtml(
+      '<picture><source srcset="https://tracker.example/p.gif"><img src="cid:logo@example"></picture>',
+      false,
+      images
+    );
+    expect(out).toContain(png);
+    expect(out).not.toContain("tracker.example");
+  });
+
   it("treats a malformed percent-escape as an unmatched reference", () => {
     expect(processEmailHtml('<img src="cid:%E0%A4%A">', false, images)).toBe("[Image Blocked]");
   });

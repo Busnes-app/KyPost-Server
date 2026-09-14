@@ -435,4 +435,9 @@ describe("encryptedAttachmentBudget", () => {
     expect(twelve).toBe(Math.floor(((64 * 1024 * 1024) / 12) * 9 / 16) - 1024 * 1024);
     expect(twelve).toBeLessThan(oneGroup);
   });
+
+  it("never reports a negative allowance, however many copies there are", () => {
+    expect(encryptedAttachmentBudget(37)).toBeGreaterThanOrEqual(0);
+    expect(encryptedAttachmentBudget(500)).toBe(0);
+  });
 });

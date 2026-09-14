@@ -100,7 +100,13 @@ export function sanitizeEmailHtml(html: string, blockRemoteContent = true): stri
       ? {
           ADD_ATTR: ["target"],
           ALLOWED_URI_REGEXP: allowedUriSchemes,
-          FORBID_ATTR: [...forbiddenAttrs, "background"],
+          // srcset and sizes are not URI-safe attributes in DOMPurify, so they
+          // fall under allowedUriSchemes, which permits https. An inlined cid:
+          // image now survives to this point, and a srcset candidate wins over
+          // src, so without this an attached image is a remote fetch under
+          // the block. Attribute-level so a <picture><source> sibling is
+          // covered too.
+          FORBID_ATTR: [...forbiddenAttrs, "background", "srcset", "sizes"],
           FORBID_TAGS: [...forbiddenTags, "svg", "video", "audio"]
         }
       : { ADD_ATTR: ["target"], ALLOWED_URI_REGEXP: allowedUriSchemes, FORBID_ATTR: forbiddenAttrs, FORBID_TAGS: forbiddenTags }

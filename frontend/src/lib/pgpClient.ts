@@ -404,7 +404,9 @@ const MAX_SEND_PGP_REQUEST_BYTES = 64 * 1024 * 1024;
  */
 export function encryptedAttachmentBudget(copies: number): number {
   const perCopy = Math.min(MAX_DECRYPTED_BYTES, MAX_SEND_PGP_REQUEST_BYTES / Math.max(1, copies));
-  return Math.floor((perCopy * 9) / 16) - 1024 * 1024;
+  // Never negative: past ~36 copies the headroom exceeds the share, and a
+  // negative allowance would refuse a send that carries no files at all.
+  return Math.max(0, Math.floor((perCopy * 9) / 16) - 1024 * 1024);
 }
 
 /** One encrypted delivery: a full PGP/MIME message plus its recipients. */

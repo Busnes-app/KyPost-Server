@@ -909,7 +909,8 @@ export function App() {
       // so the refusal names the limit rather than arriving as a 413.
       const budget = encryptedAttachmentBudget(groups.length + 1);
       const attached = composeAttachments.reduce((sum, a) => sum + a.size, 0);
-      if (attached > budget) {
+      // Only a send that carries files is measured against the budget.
+      if (composeAttachments.length > 0 && attached > budget) {
         throw new Error(
           `Attachments too large for an encrypted message: ${formatBytes(attached)} attached, ${formatBytes(budget)} allowed` +
             (keyedBcc.length > 0 ? ` with ${keyedBcc.length} Bcc recipient(s).` : ".")
