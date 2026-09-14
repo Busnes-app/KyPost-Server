@@ -24,7 +24,8 @@ import (
 // than stored.
 
 func TestSentCopyDecisionEncryptedIsAppendedVerbatim(t *testing.T) {
-	const ciphertext = "From: me@example.com\r\nSubject: [Encrypted] Email Sent by KyPost\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nx\r\n-----END PGP MESSAGE-----\r\n"
+	// The browser's wrapper: a complete PGP/MIME message, as wellFormedDelivery.
+	ciphertext := wellFormedDelivery
 
 	draft, ok := sentCopyDraft(clientEncryptedSendRequest{
 		Subject:           "Quarterly numbers",
@@ -70,6 +71,22 @@ func TestSentCopyDecisionRefusesPlaintext(t *testing.T) {
 	}
 }
 
+// The flag alone is not enough: a plaintext copy that CLAIMS to be encrypted
+// is refused on its bytes, so a foreign or rolled-back client cannot put
+// plaintext in Sent by asserting otherwise.
+func TestSentCopyDecisionRefusesPlaintextClaimingEncryption(t *testing.T) {
+	_, ok := sentCopyDraft(clientEncryptedSendRequest{
+		Subject:           "Quarterly numbers",
+		To:                []string{"bob@example.com"},
+		SentCopy:          "From: me@example.com\r\nTo: bob@example.com\r\nSubject: s\r\nDate: now\r\nContent-Type: text/html\r\n\r\n<p>the actual message</p>",
+		SentCopyEncrypted: true,
+		Mode:              "html",
+	})
+	if ok {
+		t.Fatal("a plaintext sent copy flagged as encrypted was accepted")
+	}
+}
+
 // A client that omits the copy entirely is not an error — it just has nothing
 // to save.
 func TestSentCopyDecisionSkipsAnEmptyCopy(t *testing.T) {
@@ -90,7 +107,7 @@ func TestSentCopyDecisionKeepsRecipientsAndPlaceholderSubject(t *testing.T) {
 		To:                []string{"bob@example.com"},
 		CC:                []string{"carol@example.com"},
 		BCC:               []string{"dave@example.com"},
-		SentCopy:          "ciphertext",
+		SentCopy:          wellFormedDelivery,
 		SentCopyEncrypted: true,
 	})
 	if !ok {

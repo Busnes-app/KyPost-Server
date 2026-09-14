@@ -357,6 +357,23 @@ protected Subject, Bcc, reply and forward, revoked or expired keys, and large
 messages. A per-feature matrix is still owed before calling this a full
 interoperability pass.
 
+Sign without Encrypt, as of 2026-09-14: the browser builds an RFC 3156
+`multipart/signed` message (`buildSignedDelivery`). The signed part is the
+same protected-headers entity an encrypted send carries, with the body and
+attachments base64 and any non-ASCII header as an RFC 2047 word so the part
+is 7-bit safe; the detached signature is a binary signature over the part's
+exact bytes, which is what `verifySignedMessage` and GnuPG both hash. One
+delivery goes to every recipient (Bcc as envelope recipients only) and needs
+no recipient keys, so nothing is resolved or refused for a missing key. The
+real Subject is on the outside: nothing here is secret, only attributable.
+`/api/mail/send-pgp` accepts `multipart/signed` for delivery only, checked by
+the same two-part extractor the read side trusts (`pgpmail.ExtractSignedParts`);
+drafts and the Sent copy keep the ciphertext-only check, and the Sent copy of a
+signed-only message is encrypted to the sender's own key like every other
+client-custody Sent copy. The four combinations: neither goes through
+`/api/mail/send`; sign only is this path; encrypt only and both go through
+`buildEncryptedDeliveries`, where signing is inline inside the ciphertext.
+
 Attachments in the browser path: compose attachments go inside the encrypted
 entity as base64 parts of the protected-headers `multipart/mixed`, with the
 same headers `mailmsg.Build` writes, and the Sent copy carries them too. On

@@ -432,6 +432,56 @@ func TestValidatePGPMimeDelivery(t *testing.T) {
 	}
 }
 
+// signedDelivery mirrors the browser's multipart/signed wrapper byte for byte:
+// CRLF throughout, the signed part first, the armored signature second.
+const signedDelivery = "From: alice@example.com\r\n" +
+	"To: d@e.f\r\n" +
+	"Subject: Plans\r\n" +
+	"Date: Sat, 25 Jul 2026 12:00:00 GMT\r\n" +
+	"MIME-Version: 1.0\r\n" +
+	"Content-Type: multipart/signed; micalg=\"pgp-sha256\"; protocol=\"application/pgp-signature\"; boundary=\"kypost-pgp-boundary-abc\"\r\n" +
+	"\r\n" +
+	"This is an OpenPGP/MIME signed message (RFC 4880 and 3156).\r\n" +
+	"--kypost-pgp-boundary-abc\r\n" +
+	"Content-Type: text/plain; charset=UTF-8\r\n" +
+	"Content-Transfer-Encoding: base64\r\n" +
+	"\r\n" +
+	"aGVsbG8=\r\n" +
+	"\r\n" +
+	"--kypost-pgp-boundary-abc\r\n" +
+	"Content-Type: application/pgp-signature; name=\"signature.asc\"\r\n" +
+	"\r\n" +
+	"-----BEGIN PGP SIGNATURE-----\r\n" +
+	"x\r\n" +
+	"-----END PGP SIGNATURE-----\r\n" +
+	"\r\n" +
+	"--kypost-pgp-boundary-abc--\r\n"
+
+// A signed-only delivery needs no recipient key and is plaintext to the relay;
+// it is accepted for DELIVERY only, in exactly the two-part shape the read side
+// verifies, and never where the server would store it for the account.
+func TestClientDeliveryShapeAcceptsMultipartSigned(t *testing.T) {
+	if err := validatePGPMimeDelivery(signedDelivery, "alice@example.com"); err != nil {
+		t.Fatalf("well-formed signed delivery rejected: %v", err)
+	}
+
+	threeParts := strings.Replace(signedDelivery, "--kypost-pgp-boundary-abc--\r\n",
+		"--kypost-pgp-boundary-abc\r\nContent-Type: text/plain\r\n\r\nunsigned\r\n\r\n--kypost-pgp-boundary-abc--\r\n", 1)
+	if err := validatePGPMimeDelivery(threeParts, "alice@example.com"); err == nil {
+		t.Fatal("a third, unsigned part was accepted")
+	}
+
+	smime := strings.Replace(signedDelivery, `protocol="application/pgp-signature"`, `protocol="application/pkcs7-signature"`, 1)
+	if err := validatePGPMimeDelivery(smime, "alice@example.com"); err == nil {
+		t.Fatal("an S/MIME protocol was accepted as an OpenPGP signature")
+	}
+
+	// Stored bytes must be ciphertext: the draft and Sent-copy check refuses it.
+	if err := validatePGPMimeDeliveryShape(signedDelivery); err == nil || !strings.Contains(err.Error(), "multipart/encrypted") {
+		t.Fatalf("signed message passed the ciphertext-only check: %v", err)
+	}
+}
+
 // Header matching is case-insensitive per RFC 5322 §1.2.2.
 func TestValidatePGPMimeDeliveryAcceptsLowercaseHeaders(t *testing.T) {
 	lowered := strings.ToLower(wellFormedDelivery[:strings.Index(wellFormedDelivery, "\r\n\r\n")]) +

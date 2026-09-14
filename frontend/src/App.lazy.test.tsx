@@ -57,7 +57,9 @@ function renderAt(path: string) {
 describe("lazy loading", () => {
   it("resolves a route chunk into a rendered page", async () => {
     renderAt("/settings/appearance");
-    expect(await screen.findByRole("heading", { level: 2, name: "Appearance" })).toBeTruthy();
+    // The route chunk loads under whatever load the rest of the suite puts on
+    // the worker; the default 1 s wait was flaky there.
+    expect(await screen.findByRole("heading", { level: 2, name: "Appearance" }, { timeout: 5000 })).toBeTruthy();
   });
 
   it("builds the compose editor once the Quill chunk arrives", async () => {

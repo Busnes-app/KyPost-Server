@@ -112,7 +112,7 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		if len(recipients) == 0 || strings.TrimSpace(delivery.Ciphertext) == "" {
 			continue
 		}
-		if err := validatePGPMimeDeliveryShape(strings.TrimSpace(delivery.Ciphertext)); err != nil {
+		if err := validateClientDeliveryShape(strings.TrimSpace(delivery.Ciphertext)); err != nil {
 			http.Error(w, fmt.Sprintf("delivery %d: %s", i, err), http.StatusBadRequest)
 			return
 		}
@@ -274,17 +274,83 @@ var forbiddenDeliveryHeaders = []string{"Received", "Authentication-Results", "R
 // or a paired device secret. On a shared organizational smarthost, mail spoofed
 // this way is DKIM-aligned.
 func validatePGPMimeDelivery(delivery, authorizedFrom string) error {
-	if err := validatePGPMimeDeliveryShape(delivery); err != nil {
+	if err := validateClientDeliveryShape(delivery); err != nil {
 		return err
 	}
 	return validateDeliveryFrom(delivery, authorizedFrom)
 }
 
-// validatePGPMimeDeliveryShape checks everything about a delivery that does not
-// depend on who the caller is, so it can run before any per-account state is
-// loaded. Split out from the From binding for exactly that reason: a malformed
-// request should cost no IMAP config read and no SMTP connection.
+// validateClientDeliveryShape accepts what the browser may hand this relay
+// for delivery: an RFC 3156 multipart/encrypted message, or a multipart/signed
+// one whose two parts and detached signature parse. A signed-only message is
+// plaintext to this server by nature; it is still refused everywhere the
+// server would STORE the bytes for the account (drafts, the Sent copy), which
+// keep validatePGPMimeDeliveryShape.
+func validateClientDeliveryShape(delivery string) error {
+	hdr, err := deliveryHeaders(delivery)
+	if err != nil {
+		return err
+	}
+	mediaType, params := deliveryMediaType(hdr)
+	if strings.EqualFold(mediaType, "multipart/signed") {
+		if !strings.EqualFold(strings.TrimSpace(params["protocol"]), "application/pgp-signature") {
+			return errors.New(`signed delivery must carry protocol="application/pgp-signature"`)
+		}
+		// The same parser the read side trusts: exactly two parts, a
+		// conforming boundary, armor in plain sight. Anything looser is what
+		// let a third, unsigned part ride under a verified badge elsewhere.
+		if _, _, err := pgpmail.ExtractSignedParts([]byte(delivery)); err != nil {
+			return errors.New("signed delivery is not a well-formed RFC 3156 multipart/signed message")
+		}
+		return nil
+	}
+	return requireEncryptedShape(delivery, mediaType, params)
+}
+
+// validatePGPMimeDeliveryShape checks that a message is ciphertext this server
+// cannot read, independent of who the caller is, so it can run before any
+// per-account state is loaded. Split out from the From binding for exactly
+// that reason: a malformed request should cost no IMAP config read and no
+// SMTP connection.
 func validatePGPMimeDeliveryShape(delivery string) error {
+	hdr, err := deliveryHeaders(delivery)
+	if err != nil {
+		return err
+	}
+	mediaType, params := deliveryMediaType(hdr)
+	return requireEncryptedShape(delivery, mediaType, params)
+}
+
+// deliveryMediaType reads the outer Content-Type; a missing or unparseable one
+// comes back empty and fails whichever shape check follows.
+func deliveryMediaType(hdr textproto.MIMEHeader) (string, map[string]string) {
+	if len(hdr["Content-Type"]) == 0 {
+		return "", nil
+	}
+	mediaType, params, err := mime.ParseMediaType(hdr["Content-Type"][0])
+	if err != nil {
+		return "", nil
+	}
+	return mediaType, params
+}
+
+// requireEncryptedShape is the RFC 3156 multipart/encrypted check, rather than
+// "the armor marker appears somewhere". A cleartext body with the marker
+// buried in it is not ciphertext.
+func requireEncryptedShape(delivery, mediaType string, params map[string]string) error {
+	if !strings.EqualFold(mediaType, "multipart/encrypted") ||
+		!strings.EqualFold(strings.TrimSpace(params["protocol"]), "application/pgp-encrypted") {
+		return errors.New(`delivery must be multipart/encrypted with protocol="application/pgp-encrypted"`)
+	}
+	if !strings.Contains(delivery, "-----BEGIN PGP MESSAGE-----") {
+		return errors.New("delivery carries no OpenPGP message")
+	}
+	return nil
+}
+
+// deliveryHeaders parses and checks the header block every client delivery
+// must carry, whatever its body shape.
+func deliveryHeaders(delivery string) (textproto.MIMEHeader, error) {
 	headerBlock, _, found := strings.Cut(delivery, "\r\n\r\n")
 	if !found {
 		// Tolerate bare-LF folding from a client that did not use CRLF; the
@@ -292,12 +358,12 @@ func validatePGPMimeDeliveryShape(delivery string) error {
 		headerBlock, _, found = strings.Cut(delivery, "\n\n")
 	}
 	if !found {
-		return errors.New("delivery has no header block: expected RFC 5322 headers followed by a blank line")
+		return nil, errors.New("delivery has no header block: expected RFC 5322 headers followed by a blank line")
 	}
 
 	hdr, err := parseDeliveryHeaders(headerBlock)
 	if err != nil {
-		return fmt.Errorf("delivery headers are not parseable: %w", err)
+		return nil, fmt.Errorf("delivery headers are not parseable: %w", err)
 	}
 
 	var missing []string
@@ -308,11 +374,11 @@ func validatePGPMimeDeliveryShape(delivery string) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("delivery is missing required header(s): %s", strings.Join(missing, ", "))
+		return nil, fmt.Errorf("delivery is missing required header(s): %s", strings.Join(missing, ", "))
 	}
 	for _, name := range forbiddenDeliveryHeaders {
 		if len(hdr[textproto.CanonicalMIMEHeaderKey(name)]) > 0 {
-			return fmt.Errorf("delivery must not carry a %s header", name)
+			return nil, fmt.Errorf("delivery must not carry a %s header", name)
 		}
 	}
 
@@ -321,31 +387,12 @@ func validatePGPMimeDeliveryShape(delivery string) error {
 	// signed one is a standard way to make what a verifier checks and what a
 	// reader sees differ.
 	if len(hdr["From"]) != 1 {
-		return errors.New("delivery must carry exactly one From header")
+		return nil, errors.New("delivery must carry exactly one From header")
 	}
 	if _, err := mail.ParseAddress(hdr["From"][0]); err != nil {
-		return errors.New("delivery From header is not a valid address")
+		return nil, errors.New("delivery From header is not a valid address")
 	}
-
-	// RFC 3156 shape, rather than "the armor marker appears somewhere". This
-	// endpoint exists to relay ciphertext the server cannot read; a cleartext
-	// body with the marker buried in it is not that.
-	ctype := ""
-	if len(hdr["Content-Type"]) > 0 {
-		ctype = hdr["Content-Type"][0]
-	}
-	mediaType, params, err := mime.ParseMediaType(ctype)
-	if err != nil {
-		return errors.New("delivery is missing a valid Content-Type header")
-	}
-	if !strings.EqualFold(mediaType, "multipart/encrypted") ||
-		!strings.EqualFold(strings.TrimSpace(params["protocol"]), "application/pgp-encrypted") {
-		return errors.New(`delivery must be multipart/encrypted with protocol="application/pgp-encrypted"`)
-	}
-	if !strings.Contains(delivery, "-----BEGIN PGP MESSAGE-----") {
-		return errors.New("delivery carries no OpenPGP message")
-	}
-	return nil
+	return hdr, nil
 }
 
 // parseDeliveryHeaders reads just the header block, normalizing bare-LF line
@@ -418,6 +465,12 @@ func validateDeliveryFrom(delivery, authorizedFrom string) error {
 func sentCopyDraft(req clientEncryptedSendRequest) (imapadapter.DraftMessage, bool) {
 	copyBytes := strings.TrimSpace(req.SentCopy)
 	if copyBytes == "" || !req.SentCopyEncrypted {
+		return imapadapter.DraftMessage{}, false
+	}
+	// The flag is the client's claim; the bytes are the evidence. A copy that
+	// is not RFC 3156 ciphertext is dropped and the caller warns, so a rolled
+	// back or foreign client cannot put plaintext in Sent by asserting it.
+	if err := validatePGPMimeDeliveryShape(copyBytes); err != nil {
 		return imapadapter.DraftMessage{}, false
 	}
 	return imapadapter.DraftMessage{
