@@ -102,7 +102,7 @@ func dropStaleVerdicts(mailboxes map[string]*mailboxWindow) {
 			if w.Entries[i].PGPVerdictSchemaVersion == PGPVerdictSchema {
 				continue
 			}
-			if !w.Entries[i].PGPSigned && !w.Entries[i].PGPVerified && w.Entries[i].PGPSignerFingerprint == "" {
+			if !w.Entries[i].PGPSigned && !w.Entries[i].PGPVerified && w.Entries[i].PGPSignerFingerprint == "" && !w.Entries[i].PGPBodyOmitted {
 				continue
 			}
 			clearPGPVerdict(&w.Entries[i])
@@ -146,7 +146,7 @@ func (s *Store) InvalidatePGPVerdicts() error {
 		}
 		for i := range w.Entries {
 			e := &w.Entries[i]
-			if !e.PGPSigned && !e.PGPVerified && e.PGPSignerFingerprint == "" {
+			if !e.PGPSigned && !e.PGPVerified && e.PGPSignerFingerprint == "" && !e.PGPBodyOmitted {
 				continue
 			}
 			clearPGPVerdict(e)
@@ -520,7 +520,10 @@ func (s *Store) Upsert(mailboxKey string, entries []Entry) error {
 		// to the binding invalidates it rather than replaying it. Only where
 		// there IS a verdict: an entry carrying none must not be stamped, or
 		// dropStaleVerdicts would have nothing to recognize later.
-		if in.PGPSigned || in.PGPVerified || in.PGPSignerFingerprint != "" {
+		// A body-omitted row is stamped too: its warmth is a cached
+		// classification, and the stamp is what lets dropStaleVerdicts and
+		// the key-generation sweep revoke it like any other verdict.
+		if in.PGPSigned || in.PGPVerified || in.PGPSignerFingerprint != "" || bodyOmitted(in) {
 			in.PGPVerdictSchemaVersion = PGPVerdictSchema
 		}
 		idx, ok := byUID[in.UID]
@@ -601,10 +604,15 @@ func (s *Store) Upsert(mailboxKey string, entries []Entry) error {
 				updated.ContactKeyGen = in.ContactKeyGen
 			}
 		}
-		// Only the warm path (poller) calls Upsert, and it always carries an
-		// authoritative attachment flag from the same GetEmails parse — so
-		// adopt it unconditionally, unlike Body which uses "" as its sentinel.
-		updated.HasAttachments = in.HasAttachments
+		// The poller's attachment flag is authoritative for ordinary mail,
+		// unlike Body which uses "" as its sentinel. Not for an encrypted row:
+		// the poller counts the armor parts, and the live path reports none,
+		// so a warm encrypted row must say none too.
+		if updated.PGPBodyOmitted {
+			updated.HasAttachments = false
+		} else {
+			updated.HasAttachments = in.HasAttachments
+		}
 		if changed {
 			win.Seq++
 			updated.Rev = win.Seq

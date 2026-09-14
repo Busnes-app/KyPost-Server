@@ -28,7 +28,7 @@ func (s *Store) SyncContactKeyGeneration(gen int64) error {
 		}
 		for i := range w.Entries {
 			e := &w.Entries[i]
-			if !e.PGPSigned && !e.PGPVerified && e.PGPSignerFingerprint == "" {
+			if !e.PGPSigned && !e.PGPVerified && e.PGPSignerFingerprint == "" && !e.PGPBodyOmitted {
 				continue
 			}
 			if e.ContactKeyGen == gen {

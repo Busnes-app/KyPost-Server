@@ -163,9 +163,10 @@ type Entry struct {
 	// yet", so Snapshot counts such an entry as warm. Without it one
 	// encrypted message made the whole mailbox read cold on every load.
 	//
-	// Set only from a classified write with no decrypt error, and cleared
-	// with the verdict by clearPGPVerdict, so a rules change or a contact
-	// key change still forces the next read through the live path.
+	// Set only from a classified write with no decrypt error, stamped with
+	// PGPVerdictSchema like a verdict, and reached by every invalidation
+	// sweep (rules version, contact key generation, explicit), so any of
+	// them forces the next read back through the live path.
 	PGPBodyOmitted bool `json:"pgpBodyOmitted,omitempty"`
 
 	// PGPDecryptError is the transient outcome of the caller's decrypt
