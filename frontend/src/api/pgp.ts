@@ -1,6 +1,7 @@
 import { getJSON, postJSON, putJSON, deleteJSON } from "./client";
 import { credentialFields, deriveCredential } from "./auth";
 import type { DeviceEnvelope } from "../lib/deviceEnrollment";
+import { parseEnvelope, type RecoveryBackup, type WrappedKeyEnvelope } from "../lib/keyVault";
 
 export type PGPIdentity = {
   fingerprint: string;
@@ -202,6 +203,8 @@ export type PGPBootstrap = {
   createdAt: string;
   /** The self-describing wrapped envelope; empty unless protection is "client". */
   wrappedPrivateKey: string;
+  /** Absent on older servers; absence is unknown, not proof of no backup. */
+  envelopeSlots?: string[];
   unlockRequired: boolean;
   canDecryptServerSide: boolean;
   migrationAvailable: boolean;
@@ -255,8 +258,24 @@ export async function storeClientPGPIdentity(
  * re-sealed envelope inside /api/auth/password, which verifies the old password
  * already (see LoginPage).
  */
-export async function rewrapPGPPrivateKey(wrapped: string, password: string): Promise<{ ok: boolean }> {
-  return postJSON<{ ok: boolean }>("/api/pgp/identity/rewrap", { wrapped, ...(await stepUp(password)) });
+export async function rewrapPGPPrivateKey(wrapped: string, password: string, expectedFingerprint?: string): Promise<{ ok: boolean }> {
+  return postJSON<{ ok: boolean }>("/api/pgp/identity/rewrap", { wrapped, expectedFingerprint, ...(await stepUp(password)) });
+}
+
+export async function putRecoveryEnvelope(envelope: WrappedKeyEnvelope, password: string, expectedFingerprint: string): Promise<void> {
+  await putJSON("/api/pgp/identity/envelope/recovery", {
+    envelope: JSON.stringify(envelope), expectedFingerprint, ...(await stepUp(password))
+  });
+}
+
+/** Fetches only ciphertext and public metadata, from one server snapshot. */
+export async function getRecoveryBackup(): Promise<RecoveryBackup> {
+  const result = await getJSON<{ envelope: string; fingerprint: string; publicKey: string }>("/api/pgp/identity/envelope/recovery");
+  const envelope = parseEnvelope(result.envelope);
+  if (!envelope || typeof result.fingerprint !== "string" || !result.fingerprint || typeof result.publicKey !== "string") {
+    throw new Error("The server recovery copy cannot be read. Try your downloaded file.");
+  }
+  return { format: "kypost-pgp-recovery-v1", fingerprint: result.fingerprint, publicKey: result.publicKey, envelope };
 }
 
 /**

@@ -78,7 +78,7 @@ func TestSetPasswordPreservesTheWrappedKeyAndEnvelopes(t *testing.T) {
 	}
 	// A recovery slot has no expiry, so compactExpiredEnvelopes must leave it
 	// alone across the reset too.
-	if _, err := store.SetPGPWrappedEnvelope(u.ID, EnvelopeSlotRecovery, `{"v":2,"slot":"recovery"}`, ""); err != nil {
+	if _, err := store.SetPGPWrappedEnvelope(u.ID, EnvelopeSlotRecovery, `{"v":2,"slot":"recovery"}`, "", ""); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope: %v", err)
 	}
 

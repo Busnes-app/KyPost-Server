@@ -249,7 +249,7 @@ func TestPGPDeleteEnvelopeSlotRequiresTheAccountPassword(t *testing.T) {
 		id.ArmoredPublicKey, `{"v":1,"blob":"original"}`, "generated", "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
 	}
-	if _, err := srv.users.SetPGPWrappedEnvelope(userID, "recovery", `{"v":1,"blob":"rec"}`, "2026-01-01T00:00:00Z"); err != nil {
+	if _, err := srv.users.SetPGPWrappedEnvelope(userID, "recovery", `{"v":1,"blob":"rec"}`, "2026-01-01T00:00:00Z", ""); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope (fixture): %v", err)
 	}
 

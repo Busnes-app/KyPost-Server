@@ -20,6 +20,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - PGP mail encryption and signing. Signing defaults on with an unlocked browser key; compose labels unsigned mail, and the reader distinguishes encrypted but unsigned mail from a verified signature. Generate or import a key, search for recipient keys on keys.openpgp.org, and check recipient key status before you send. KyPost has two key-protection modes. Read [Where your PGP private key lives](#where-your-pgp-private-key-lives) before you rely on this.
 - Contacts address book with groups, dedupe, bulk delete, CSV and vCard import and export, and photo support
 - CardDAV server (`/dav`, `/.well-known/carddav`) to sync contacts to phones and desktop apps. An optional CardDAV client syncs against an external address book.
+- PGP recovery copies stored as ciphertext, downloadable backups checked before creation completes, and browser-local recovery drills.
 - Multi-factor authentication: TOTP authenticator apps, one-time recovery codes, and push-approval sign-in
 - Single Sign-On against any standard OpenID Connect provider — KySignOn (one-click preset), Authentik and Keycloak have their admin-group claims mapped. Authorization code + PKCE, ID tokens verified against the issuer's JWKS. Accounts are claimed by the provider's `sub` and never by username or email. Admin-configured under Admin > Server > SSO; **requires `SERVER_BASE_URL`**.
 - Send-as aliases, each verified by a DKIM-signed challenge from the alias's own domain before it can be used
@@ -247,13 +248,16 @@ delivered through a browser.
 
 The costs are real. Know them before you choose this mode:
 
-- **An admin password reset destroys the key.** The wrapping key comes from
-  your password. An admin can reset the password but cannot rewrap a key they
-  cannot open. The key becomes unrecoverable and you must import or generate a
-  new one. Security offers a browser-generated encrypted recovery backup: keep
-  its downloaded file and separately displayed recovery secret offline. The
-  server never receives the plaintext key or secret, and both are required to
-  restore the same identity after the reset.
+- **An admin password reset can strand the password-wrapped key.** Before
+  you need a reset, use Security → Encryption to create a recovery copy and
+  keep its separately displayed secret. The browser tests the encrypted file
+  in memory, requests its download and, after you confirm saving the secret, stores a sealed copy on the server.
+  After signing in with the reset password, **Use server recovery copy** can
+  restore the current identity even if you lost the download. The server never
+  receives the recovery secret or plaintext key. Keep an offline file too:
+  deleting the identity removes the server copy, and a server loss removes it
+  as well. **Run recovery drill** tests your copy and secret without changing
+  the key; its date is recorded only in this browser, for the copy tested.
 - **You unlock the key once for each browser session.** The browser holds the
   unwrapped key in page memory only, never in localStorage or sessionStorage.
   After a reload you must enter your password again.
@@ -810,7 +814,8 @@ PGP:
 - `POST /api/pgp/identity/generate` and `POST /api/pgp/identity/import`
 - `GET|DELETE /api/pgp/identity`
 - `POST /api/pgp/identity/client` (store a client-protected identity — the server never sees the private key)
-- `GET /api/pgp/identity/wrapped` and `POST /api/pgp/identity/rewrap` (fetch and re-wrap the account-password-wrapped envelope, used on password change)
+- `GET /api/pgp/identity/wrapped` and `POST /api/pgp/identity/rewrap` (fetch and repair the account-password-wrapped envelope; optional `expectedFingerprint` refuses a changed identity with 409)
+- `GET|PUT|DELETE /api/pgp/identity/envelope/{slot}` (session-only wrapped recovery/device copies; PUT and DELETE require the current account credential. PUT accepts `expectedFingerprint`; GET includes the identity fingerprint and public key from the same snapshot.)
 - `POST /api/pgp/identity/export-legacy` (one-time export of a server-held key, so it can be migrated or backed up)
 - `GET|PUT|DELETE /api/pgp/identity/envelope/{slot}` (per-slot key envelopes)
 - `GET /api/pgp/bootstrap` (everything the browser needs to unlock a client-protected identity in one call)

@@ -86,14 +86,14 @@ test asserting nothing lands in either store.
 
 ## What this costs, honestly
 
-- **Admin password reset destroys the key.** The wrapping key comes from the
-  password; an admin cannot rewrap a key they cannot open. Users must keep an
-  exported backup. This is inherent to the model, not an implementation gap.
-- **Password change requires the browser.** It unwraps with the old password
-  and rewraps with the new one (`POST /api/pgp/identity/rewrap`). If that
-  second call is lost, the stored envelope is still wrapped under the old
-  password — recoverable by entering the previous password once, which beats
-  the alternative of the server holding the key so it can rewrap unattended.
+- **Admin password reset can strand the password envelope.** Recovery needs
+  a recovery copy and its separate secret; an admin cannot reconstruct either.
+  The untimed `recovery` slot survives a password reset, but identity deletion
+  or replacement removes it. Keep a downloaded copy for server loss too.
+- **Password change requires the browser.** It opens the old password envelope
+  before submitting the new credential and rewrapped key together through
+  `POST /api/auth/password`. Both commit atomically. The separate `/rewrap`
+  route repairs an envelope using an old password or a recovery copy.
 - **The pickup-link fallback is weaker than PGP.** See "Sealed pickup links"
   below for exactly how much weaker.
 - **Subject headers are still cleartext** outside the encrypted part, as with
@@ -249,6 +249,12 @@ Implemented:
   same bytes under this same weaker auth. `GET` 404s only when no envelope
   exists under the requested slot name; `DELETE` of an absent slot succeeds
   (`users.Store.DeletePGPWrappedEnvelope` is deliberately idempotent).
+- Slot `GET` also returns `fingerprint` and `publicKey` from the same user
+  snapshot as `envelope`. Slot `PUT` and `/identity/rewrap` accept optional
+  `expectedFingerprint`: a mismatch at the locked users-store mutation returns
+  409 without changing key material. Omission preserves older clients; new
+  recovery writes always supply the fingerprint derived from the private key.
+
 - `POST /api/pgp/device/enrollment-key` and `GET /api/pgp/device/envelope` are
   the two **device-authenticated** routes of the enrollment ceremony
   (`pgp_device_enrollment.go`). They are neither `withAuth` nor `withMailAuth`:
@@ -288,6 +294,40 @@ Implemented:
   with a full RFC 5322 envelope and protected Subject).
 - Client-protected accounts fetch ciphertext per message from
   `/api/mail/pgp-payload` and decrypt locally.
+
+### Browser recovery
+
+Security → Encryption creates `kypost-pgp-recovery-v1` files with a random
+128-bit secret. Creation restores the serialized file in memory and compares
+its plaintext before offering either copy. Under client custody, the browser
+validates the unlocked key against the current identity, requests the file
+download, then shows the secret. Only **I saved the secret — store server copy**
+can PUT the v2 wrapped envelope to `recovery` with account step-up. Merely
+displaying the secret never starts a remote write: navigation can discard page
+memory, so acknowledgement must precede replacement. No private key or recovery secret enters that request. Creating a
+new copy replaces the server slot and its secret; old downloaded files still
+open with their own secrets. The new file and secret stay in page memory,
+including across Security tab switches, when storage fails or the response is
+lost; **Download file again** remains available until **I saved the file and secret** dismisses it. Download
+completion cannot be observed, so the UI asks the user to check the file.
+
+**Use server recovery copy** fetches the sealed bytes without a file or an
+unlocked vault. Both file and server restore open locally, parse the private
+key and match its fingerprint against the current client-protected identity,
+then rewrap under the current account password with an atomic identity guard.
+This repairs the current identity; it does not restore deleted identities or
+provide account sign-in recovery. Identity deletion always warns that the
+server copy is deleted too. Password change warns when no server copy is
+confirmed; absence of a slot says nothing about an offline file.
+
+**Run recovery drill** opens the selected copy and checks the actual key's
+fingerprint without unlocking the vault or changing any server data. Only
+an ISO date and a SHA-256 hash of that envelope are stored in localStorage,
+scoped to the user and identity. The date is labelled **in this browser** and
+shown only for matching envelope bytes; a replacement cannot inherit a pass.
+Storage failure is reported separately from a successful drill. Server-held
+legacy keys still use export-legacy to create the same tested offline file;
+they cannot have a client recovery slot until migration.
 
 ### Cold start
 

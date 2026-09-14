@@ -257,6 +257,8 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 ## Work Guidance
 
+- Recovery slot PUT and private-key rewrap accept optional `expectedFingerprint` for older-client compatibility. When supplied, compare it inside `users.Store.mutate` before writing; stale identity material gets 409 without mutation. The browser recovery paths always supply it. Slot GET returns public identity metadata and ciphertext from one user snapshot. The browser sends no recovery secret or plaintext key; handlers treat envelopes as opaque and never log their contents.
+
 - Build: `cd backend && go build -buildvcs=false ./...`
 - Test: `cd backend && go test ./...` (CI runs `-race`; several stores are shared across the api and poller goroutines in `all` mode)
 - **A guard belongs at the shared sink, not at the call sites that remembered it.** This is the repo's most repeated defect and every instance looked identical: the guard existed, worked, and covered a strict subset of what needed it — `checkVCardFolding` on 1 of 3 vCard parse paths, verdict invalidation on 3 of 11 contact writers, `maxRecipientsPerSend` on 2 of 4 handlers running the same per-address contacts scan, `accountWriteLimiter` on 1 of 4 auth wrappers. Adding the missing call site fixes the report; moving the guard fixes the class. Where a sink cannot be shared because the code is in a dependency (go-webdav decodes vCard and PROPFIND itself), wrap the boundary instead — pre-scan and replace `r.Body`, or bound the transport — so a later call site inherits it. `pinPGPKeyFingerprint` inside `applyUpsertLocked` and the contact-photo quota inside its storage helper are the pattern done right

@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { deleteDeviceEnvelope, putDeviceEnvelope } from "./pgp";
+import { deleteDeviceEnvelope, putDeviceEnvelope, putRecoveryEnvelope, getRecoveryBackup } from "./pgp";
 import type { DeviceEnvelope } from "../lib/deviceEnrollment";
 
+const getJSON = vi.fn();
 const putJSON = vi.fn();
 const deleteJSON = vi.fn();
 
 vi.mock("./client", () => ({
-  getJSON: vi.fn(),
+  getJSON: (path: string) => getJSON(path),
   postJSON: vi.fn(),
   putJSON: (path: string, body: unknown) => putJSON(path, body),
   deleteJSON: (path: string, body: unknown) => deleteJSON(path, body)
@@ -28,6 +29,7 @@ const ENVELOPE: DeviceEnvelope = {
 };
 
 beforeEach(() => {
+  getJSON.mockReset();
   putJSON.mockReset();
   deleteJSON.mockReset();
   putJSON.mockResolvedValue({ ok: true });
@@ -55,5 +57,28 @@ describe("deleteDeviceEnvelope", () => {
     expect(deleteJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/device:dev%3A1", {
       password: "hunter2"
     });
+  });
+});
+
+
+describe("recovery envelope", () => {
+  const envelope = { v: 2, kdf: "PBKDF2-SHA256", iterations: 600000, salt: "AA==", iv: "AA==", ciphertext: "AA==" } as const;
+  it("includes both account step-up and the expected identity on upload", async () => {
+    await putRecoveryEnvelope(envelope, "hunter2", "FPR");
+    expect(putJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/recovery", {
+      envelope: JSON.stringify(envelope), expectedFingerprint: "FPR", password: "hunter2"
+    });
+  });
+  it("rebuilds a recovery file from one server snapshot", async () => {
+    getJSON.mockResolvedValue({ envelope: JSON.stringify(envelope), fingerprint: "FPR", publicKey: "PUBLIC" });
+    expect(await getRecoveryBackup()).toEqual({ format: "kypost-pgp-recovery-v1", envelope, fingerprint: "FPR", publicKey: "PUBLIC" });
+    expect(getJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/recovery");
+  });
+  it.each([
+    { envelope: "not-json", fingerprint: "FPR", publicKey: "PUBLIC" },
+    { envelope: JSON.stringify(envelope) }
+  ])("refuses an unreadable copy or missing identity snapshot", async (value) => {
+    getJSON.mockResolvedValue(value);
+    await expect(getRecoveryBackup()).rejects.toThrow(/cannot be read/);
   });
 });

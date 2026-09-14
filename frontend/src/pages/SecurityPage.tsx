@@ -8,6 +8,7 @@ import {
   subscribePGPSession,
   type PGPSessionState
 } from "../lib/pgpSession";
+import type { RecoveryBackup } from "../lib/keyVault";
 import { PgpUnlockDialog } from "../components/PgpUnlockDialog";
 import { countApprovers, countMailEnrolled, joinDeviceRows } from "./security/deviceJoin";
 import { SECURITY_TABS, SECURITY_TAB_LABELS, resolveSecurityTab, type SecurityTab } from "./security/tabs";
@@ -80,6 +81,7 @@ export function SecurityPage() {
   // Kept here, not in MailKeys, so switching Security tabs away and back
   // does not silently destroy it — see MailKeysProps for the full reasoning.
   const [recoverySecret, setRecoverySecret] = useState("");
+  const [recoveryBackup, setRecoveryBackup] = useState<RecoveryBackup | null>(null);
 
   // PGP identity state. Kept here, not in MailKeys, for the same reason as
   // nativeDevices above: the page-level summary's key-custody pip, and the
@@ -327,6 +329,8 @@ export function SecurityPage() {
             pgpLoading={pgpLoading}
             pgpSession={pgpSession}
             setUnlockOpen={setUnlockOpen}
+            recoveryBackup={recoveryBackup}
+            setRecoveryBackup={setRecoveryBackup}
             recoverySecret={recoverySecret}
             setRecoverySecret={setRecoverySecret}
           />

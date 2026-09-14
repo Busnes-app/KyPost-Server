@@ -1658,11 +1658,15 @@ func (s *Store) SetPGPIdentityClientProtected(id, fingerprint, keyID, armoredPub
 	})
 }
 
+// ErrPGPIdentityChanged refuses a sealing created for a replaced identity.
+var ErrPGPIdentityChanged = errors.New("PGP identity changed; reload and try again")
+
 // RewrapPGPPrivateKey replaces only the wrapped private key envelope, leaving
 // the identity (fingerprint, public key, provenance) untouched. Used when the
 // user changes their password: the wrapping key is derived from that password,
 // so the browser unwraps with the old one and rewraps with the new one.
-func (s *Store) RewrapPGPPrivateKey(id, wrapped string) (User, error) {
+// A non-empty expectedFingerprint is checked under the mutation lock.
+func (s *Store) RewrapPGPPrivateKey(id, wrapped, expectedFingerprint string) (User, error) {
 	if err := ValidateWrappedEnvelope(wrapped); err != nil {
 		return User{}, err
 	}
@@ -1670,6 +1674,9 @@ func (s *Store) RewrapPGPPrivateKey(id, wrapped string) (User, error) {
 		return User{}, errors.New("wrapped private key is required")
 	}
 	return s.mutate(id, func(u *User) error {
+		if expectedFingerprint != "" && !strings.EqualFold(u.PGPFingerprint, expectedFingerprint) {
+			return ErrPGPIdentityChanged
+		}
 		if u.PGPFingerprint == "" {
 			return errors.New("no pgp identity to rewrap")
 		}
@@ -1692,8 +1699,9 @@ func (s *Store) RewrapPGPPrivateKey(id, wrapped string) (User, error) {
 //
 // Replacing writes in place rather than appending: two entries for one slot
 // would leave the unlock path with no deterministic answer about which sealing
-// a given secret opens.
-func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt string) (User, error) {
+// a given secret opens. expectedFingerprint is optional for older clients;
+// a supplied value must match under the mutation lock.
+func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFingerprint string) (User, error) {
 	if err := ValidateWrappedEnvelope(envelope); err != nil {
 		return User{}, err
 	}
@@ -1708,6 +1716,9 @@ func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt string) (User,
 		expiresAt = time.Now().UTC().Add(DeviceEnvelopeTTL).Format(time.RFC3339)
 	}
 	return s.mutate(id, func(u *User) error {
+		if expectedFingerprint != "" && !strings.EqualFold(u.PGPFingerprint, expectedFingerprint) {
+			return ErrPGPIdentityChanged
+		}
 		if u.PGPFingerprint == "" {
 			return ErrNoPGPIdentity
 		}

@@ -102,6 +102,15 @@ describe("keyVault wrapping", () => {
     TIMEOUT
   );
 
+  it("refuses to offer a newly created backup whose in-memory restore differs", async () => {
+    const decrypt = vi.spyOn(crypto.subtle, "decrypt").mockResolvedValue(new TextEncoder().encode("corrupted key").buffer);
+    try {
+      await expect(createRecoveryBackup(SECRET, "ABCD1234", "PUBLIC")).rejects.toThrow(/verification failed/);
+    } finally {
+      decrypt.mockRestore();
+    }
+  }, TIMEOUT);
+
   it("rejects an oversized recovery backup", async () => {
     const huge = "x".repeat(512 * 1024 + 1);
     await expect(restoreRecoveryBackup(huge, "0000-0000-0000-0000-0000-0000-0000-0000")).rejects.toThrow(/too large/);

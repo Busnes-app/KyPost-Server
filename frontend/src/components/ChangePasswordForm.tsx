@@ -1,8 +1,8 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { postJSON } from "../api/client";
 import { credentialFields, deriveCredential, deriveNewCredential } from "../api/auth";
 import { defaultIterations, newLoginSalt } from "../lib/authSecret";
-import { loadPGPSession, rewrappedEnvelopeFor } from "../lib/pgpSession";
+import { loadPGPSession, rewrappedEnvelopeFor, subscribePGPSession, type PGPSessionState } from "../lib/pgpSession";
 
 // Mirror of users.MinPasswordLen on the server.
 //
@@ -33,6 +33,12 @@ export function ChangePasswordForm({
   const [newPassword, setNewPassword] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pgpSession, setPgpSession] = useState<PGPSessionState | null>(null);
+  useEffect(() => {
+    const unsubscribe = subscribePGPSession(setPgpSession);
+    void loadPGPSession();
+    return unsubscribe;
+  }, []);
 
   async function submitPasswordChange(e: FormEvent) {
     e.preventDefault();
@@ -108,6 +114,12 @@ export function ChangePasswordForm({
           <h1 className="auth-title">Choose a new password</h1>
           <p className="auth-lede">{lede}</p>
         </header>
+
+        {!pgpSession?.loaded || pgpSession.error || !pgpSession.bootstrap ? (
+          <p className="notice">PGP recovery status is unavailable. Check your recovery file and secret before changing this password.</p>
+        ) : pgpSession.bootstrap.protection === "client" && !pgpSession.bootstrap.envelopeSlots?.includes("recovery") ? (
+          <p className="notice">No server recovery copy is confirmed for your PGP key. Keep a recovery file and its secret before changing this password. You can create one in Security → Encryption.</p>
+        ) : null}
 
         <label className="auth-field">
           <span className="auth-label">Username</span>
