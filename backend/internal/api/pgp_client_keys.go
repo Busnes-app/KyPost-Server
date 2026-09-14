@@ -45,6 +45,7 @@ func (s *Server) handlePGPWrappedKey(w http.ResponseWriter, r *http.Request) {
 		"wrapped":     u.PGPPrivateKeyWrapped,
 		"fingerprint": u.PGPFingerprint,
 		"pgpRevision": u.PGPRevision,
+		"keyring":     u.PGPKeyring,
 		"keyId":       u.PGPKeyID,
 		"publicKey":   u.PGPPublicKey,
 	})
@@ -142,6 +143,7 @@ func (s *Server) handlePGPIdentityClient(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, pgpIdentityResponse{
 		Fingerprint: u.PGPFingerprint,
 		PGPRevision: u.PGPRevision,
+		Keyring:     u.PGPKeyring,
 		KeyID:       u.PGPKeyID,
 		PublicKey:   u.PGPPublicKey,
 		Source:      source,
@@ -263,6 +265,7 @@ func (s *Server) handlePGPExportLegacyKey(w http.ResponseWriter, r *http.Request
 		"privateKey":  armored,
 		"publicKey":   identity.ArmoredPublicKey,
 		"pgpRevision": u.PGPRevision,
+		"keyring":     u.PGPKeyring,
 	})
 }
 
@@ -348,7 +351,8 @@ func (s *Server) handlePGPGetEnvelopeSlot(w http.ResponseWriter, r *http.Request
 			writeJSON(w, http.StatusOK, map[string]any{
 				"slot": e.Slot, "envelope": e.Envelope,
 				"fingerprint": u.PGPFingerprint,
-				"pgpRevision": u.PGPRevision, "publicKey": u.PGPPublicKey,
+				"pgpRevision": u.PGPRevision,
+				"keyring":     u.PGPKeyring, "publicKey": u.PGPPublicKey,
 			})
 			return
 		}

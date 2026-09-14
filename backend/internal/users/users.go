@@ -46,16 +46,17 @@ const (
 // User is a single account record. Files/directories owned by a user are
 // always keyed by ID, never Username, so a rename never requires moving data.
 type User struct {
-	PGPRevision        uint64 `json:"pgpRevision,omitempty"`
-	ID                 string `json:"id"`
-	Username           string `json:"username"`
-	PasswordHash       string `json:"passwordHash"`
-	Role               Role   `json:"role"`
-	Active             bool   `json:"active"`
-	MustChangePassword bool   `json:"mustChangePassword"`
-	CreatedAt          string `json:"createdAt"`
-	UpdatedAt          string `json:"updatedAt"`
-	DeactivatedAt      string `json:"deactivatedAt,omitempty"`
+	PGPKeyring         *PGPKeyringState `json:"pgpKeyring,omitempty"`
+	PGPRevision        uint64           `json:"pgpRevision,omitempty"`
+	ID                 string           `json:"id"`
+	Username           string           `json:"username"`
+	PasswordHash       string           `json:"passwordHash"`
+	Role               Role             `json:"role"`
+	Active             bool             `json:"active"`
+	MustChangePassword bool             `json:"mustChangePassword"`
+	CreatedAt          string           `json:"createdAt"`
+	UpdatedAt          string           `json:"updatedAt"`
+	DeactivatedAt      string           `json:"deactivatedAt,omitempty"`
 
 	// TOTPSecretEnc is a cryptutil envelope sealed with the dedicated TOTP key,
 	// set at enrollment; TOTPEnabled flips true on confirmation. Never exposed
@@ -312,6 +313,12 @@ func (u User) HasServerReadableKey() bool {
 // value-typed strings, so a shallow slices.Clone is enough for it — there is
 // nothing under it left to alias.
 func (u User) clone() User {
+	if u.PGPKeyring != nil {
+		ring := *u.PGPKeyring
+		ring.KeyFingerprints = slices.Clone(ring.KeyFingerprints)
+		ring.PrimaryFingerprints = slices.Clone(ring.PrimaryFingerprints)
+		u.PGPKeyring = &ring
+	}
 	if u.RecoveryCodesHash != nil {
 		u.RecoveryCodesHash = slices.Clone(u.RecoveryCodesHash)
 	}
@@ -1402,6 +1409,9 @@ func (s *Store) SetPassword(ctx context.Context, id, newPassword string, require
 		return User{}, err
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
+		if u.PGPKeyring != nil && !requireChange {
+			return ErrPGPKeyringUpgradeRequired
+		}
 		u.PasswordHash = hash
 		u.MustChangePassword = requireChange
 		// Back to legacy derivation. This path stores a hash of a PLAINTEXT password,
@@ -1640,6 +1650,9 @@ func (s *Store) SetPGPIdentityClientProtected(id, fingerprint, keyID, armoredPub
 		return User{}, errors.New("wrapped private key is required for client-protected identities")
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
+		if u.PGPKeyring != nil {
+			return ErrPGPKeyringUpgradeRequired
+		}
 		previousFingerprint := u.PGPFingerprint
 		u.PGPFingerprint = fingerprint
 		u.PGPKeyID = keyID
@@ -1683,6 +1696,9 @@ func (s *Store) RewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, exp
 		return User{}, errors.New("wrapped private key is required")
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
+		if u.PGPKeyring != nil {
+			return ErrPGPKeyringUpgradeRequired
+		}
 		if expectedFingerprint != "" && !strings.EqualFold(u.PGPFingerprint, expectedFingerprint) {
 			return ErrPGPIdentityChanged
 		}
@@ -1725,6 +1741,9 @@ func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFinge
 		expiresAt = time.Now().UTC().Add(DeviceEnvelopeTTL).Format(time.RFC3339)
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
+		if u.PGPKeyring != nil {
+			return ErrPGPKeyringUpgradeRequired
+		}
 		if expectedFingerprint != "" && !strings.EqualFold(u.PGPFingerprint, expectedFingerprint) {
 			return ErrPGPIdentityChanged
 		}
@@ -1797,6 +1816,7 @@ func (s *Store) DeletePGPWrappedEnvelope(id, slot string, expectedRevision *uint
 // ClearPGPIdentity removes a user's PGP identity entirely.
 func (s *Store) ClearPGPIdentity(id string, expectedRevision *uint64) (User, error) {
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
+		u.PGPKeyring = nil
 		u.PGPFingerprint = ""
 		u.PGPKeyID = ""
 		u.PGPPublicKey = ""
@@ -2519,6 +2539,9 @@ func (s *Store) SetDerivedAuthAndRewrapPGP(ctx context.Context, id, authSecret, 
 		return User{}, err
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
+		if u.PGPKeyring != nil && (rewrapped != "" || (!requireChange && !u.MustChangePassword)) {
+			return ErrPGPKeyringUpgradeRequired
+		}
 		if rewrapped != "" {
 			// Only a client-protected identity has an envelope to replace, and
 			// silently ignoring a rewrap for an account that does not is how a

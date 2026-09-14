@@ -7,17 +7,19 @@ import (
 	"net/http"
 
 	"github.com/Busness-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busness-app/kypost-server/backend/internal/users"
 )
 
 type pgpIdentityResponse struct {
-	PGPRevision uint64 `json:"pgpRevision"`
-	Fingerprint string `json:"fingerprint"`
-	KeyID       string `json:"keyId"`
-	PublicKey   string `json:"publicKey"`
-	Source      string `json:"source"`
-	CreatedAt   string `json:"createdAt"`
-	Revoked     bool   `json:"revoked"`
-	Expired     bool   `json:"expired"`
+	Keyring     *users.PGPKeyringState `json:"keyring,omitempty"`
+	PGPRevision uint64                 `json:"pgpRevision"`
+	Fingerprint string                 `json:"fingerprint"`
+	KeyID       string                 `json:"keyId"`
+	PublicKey   string                 `json:"publicKey"`
+	Source      string                 `json:"source"`
+	CreatedAt   string                 `json:"createdAt"`
+	Revoked     bool                   `json:"revoked"`
+	Expired     bool                   `json:"expired"`
 }
 
 // serverCustodyRetiredMessage answers the two endpoints that used to mint a
@@ -71,6 +73,7 @@ func (s *Server) handlePGPIdentity(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, pgpIdentityResponse{
 			Fingerprint: u.PGPFingerprint,
 			PGPRevision: u.PGPRevision,
+			Keyring:     u.PGPKeyring,
 			KeyID:       u.PGPKeyID,
 			PublicKey:   u.PGPPublicKey,
 			Source:      u.PGPKeySource,

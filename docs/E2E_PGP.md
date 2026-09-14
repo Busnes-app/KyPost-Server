@@ -313,7 +313,7 @@ compatibility; zero is a real comparison, not a request to skip it. Existing
 The revision changes when public/private identity material, its password envelope,
 the recovery slot or credential derivation fields change, including admin password
 reset and credential rehash/upgrade. Device-slot changes and unrelated account
-settings do not advance it. This is a concurrency token, not the future key-material
+settings do not advance it. This is a concurrency token, not the key-material
 generation: a password change must not obsolete a complete recovery backup.
 
 Prepare a write from one snapshot and submit that snapshot's revision. On conflict,
@@ -327,10 +327,33 @@ The vault retains the revision of its unlock or confirmed commit, even when
 bootstrap refreshes. Prepared recovery ciphertext retains that revision across
 confirmation, tab switches and failed uploads; it is never retried with a newer
 revision. Conflict messages ask the user to reload and prepare again.
-Mandatory server checks for converted accounts remain lifecycle work.
+Accounts with persisted keyring metadata require a revision for every PGP mutation.
+Legacy single-key identity, rewrap and slot PUT writers, and ordinary password-only
+changes, return 409 `keyringUpgradeRequired: true` without changing material or
+credentials. Explicit identity/slot deletion remains revision-guarded. Admin reset
+compares its target snapshot revision and preserves opaque material; forced password
+completion must use derived authentication and may likewise preserve it. A
+concurrent material change makes an admin reset return 409 without resetting the
+credential or revoking sessions; it is not retried automatically. Administrators
+should deactivate an actively compromised account to stop concurrent use. Unknown persisted keyring versions fail closed.
+Account conversion is not exposed by an HTTP route.
+
+Snapshots include optional `keyring` (null/absent for legacy accounts):
+`{version: 1, materialGeneration, primaryFingerprints, keyFingerprints}`. Inventories
+contain uppercase full fingerprints; the complete list includes subkeys. The
+internal whole-ring transaction stores both sealed envelopes, active public key,
+metadata and an optional derived credential under one revision/file lock. Initial
+conversion keeps the same active identity and starts material generation at 1;
+subsequent inventory growth increments it. Password/recovery rewrap leaves it
+unchanged. Inventories never shrink (16 primary keys, 256 total fingerprints), and
+each envelope is limited to 128 KiB. Conversion or inventory growth clears device
+slots; a new active key must be previously absent and usable for encryption.
+Same-active public packet edits are refused pending preservation rules. This
+metadata cannot prove opaque ciphertext contains the claimed keys: complete client
+validation and native compatibility remain prerequisites for enabling conversion.
 
 `GET /api/auth/password` is an authenticated, `Cache-Control: no-store` preparation
-snapshot: `{pgpRevision, protection, wrappedPrivateKey, mustChangePassword}`.
+snapshot: `{pgpRevision, protection, wrappedPrivateKey, mustChangePassword, keyring}`.
 It remains available during a forced password change on the already-exempt
 password route. A forced-change snapshot withholds `wrappedPrivateKey`; the browser
 changes the credential with the supplied revision and preserves the existing
