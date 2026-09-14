@@ -3,6 +3,7 @@ import { ApplicationRuntime } from "../../admin/sections/ApplicationRuntime";
 import { SSOConfig } from "../../admin/sections/SSOConfig";
 import { WkdDomains } from "../../admin/sections/WkdDomains";
 import { LabelRules } from "../../admin/sections/LabelRules";
+import { MailDefaults } from "../../admin/sections/MailDefaults";
 import { Backup } from "../../admin/sections/Backup";
 import { Users } from "../../admin/sections/Users";
 
@@ -32,6 +33,7 @@ export function ServerPanel() {
           { id: "runtime", label: "Application", body: <ApplicationRuntime /> },
           { id: "backup", label: "Backup", body: <Backup /> },
           { id: "sso", label: "Single Sign-On (SSO)", body: <SSOConfig /> },
+          { id: "mail-defaults", label: "Default Mail Server", body: <MailDefaults /> },
           { id: "label-rules", label: "Default Labels", body: <LabelRules /> },
           { id: "wkd-domains", label: "WKD Domains", body: <WkdDomains /> },
           { id: "users", label: "Manage Users", body: <Users /> }
