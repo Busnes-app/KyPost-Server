@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { AuthContext } from "../auth";
+import type { KeyringMetadata } from "../lib/pgpKeyring";
 import { SecurityPage } from "./SecurityPage";
 
 const getJSON = vi.fn();
@@ -21,6 +22,7 @@ vi.mock("../api/client", () => ({
 const SESSION = {
   bootstrap: {
     pgpRevision: 7,
+    keyring: undefined as KeyringMetadata | undefined,
     protection: "client" as const,
     envelopeSlots: ["password"],
     fingerprint: "ABCDEF0123456789",
@@ -51,6 +53,13 @@ const BACKUP = {
   publicKey: "PUB",
   envelope: { v: 2, kdf: "PBKDF2-SHA256", iterations: 600000, salt: "salt", iv: "iv", ciphertext: "ct" }
 };
+// OpenPGP packet tests run in node (keyringRecovery.test.ts); jsdom has a
+// separate Uint8Array realm. Here test the UI's snapshot/gating side effects.
+const validateKeyringSnapshot = vi.fn();
+vi.mock("../lib/pgpKeyring", async importOriginal => ({
+  ...await importOriginal<typeof import("../lib/pgpKeyring")>(),
+  validateKeyringSnapshot: (...args: unknown[]) => validateKeyringSnapshot(...args)
+}));
 const importIdentity = vi.fn();
 const restoreRecoveryBackup = vi.fn();
 const unlockWithArmoredKey = vi.fn();
@@ -68,6 +77,7 @@ vi.mock("../lib/keyVault", async (importOriginal) => ({
   ...await importOriginal<typeof import("../lib/keyVault")>(),
   createRecoveryBackup: (...a: unknown[]) => createRecoveryBackup(...(a as [])),
   requireUnlockedKey: () => "ARMORED",
+  requireUnlockedKeyMaterial: () => "RING",
   restoreRecoveryBackup: (...args: unknown[]) => restoreRecoveryBackup(...args),
   wrapPrivateKey: async () => ({}),
   unlockWithArmoredKey: (...args: unknown[]) => unlockWithArmoredKey(...args)
@@ -84,6 +94,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   SESSION.unlocked = true;
+  SESSION.bootstrap.keyring = undefined;
+  validateKeyringSnapshot.mockReset();
+  validateKeyringSnapshot.mockResolvedValue({ kind: "keyring" });
   SESSION.bootstrap.pgpRevision = 7;
   SESSION.bootstrap.envelopeSlots = ["password"];
   importIdentity.mockResolvedValue({ fingerprint: BACKUP.fingerprint, armoredPrivateKey: "ARMORED", armoredPublicKey: "PUB" });
@@ -97,7 +110,7 @@ beforeEach(() => {
 
   getJSON.mockImplementation((url: string) => {
     if (url === "/api/pgp/bootstrap") return Promise.resolve(SESSION.bootstrap);
-    if (url === "/api/pgp/identity/envelope/recovery") return Promise.resolve({ envelope: JSON.stringify(BACKUP.envelope), fingerprint: BACKUP.fingerprint, publicKey: BACKUP.publicKey });
+    if (url === "/api/pgp/identity/envelope/recovery") return Promise.resolve({ envelope: JSON.stringify(BACKUP.envelope), fingerprint: BACKUP.fingerprint, publicKey: BACKUP.publicKey, keyring: SESSION.bootstrap.keyring });
     if (url === "/api/mfa/status") {
       return Promise.resolve({
         totpEnabled: true,
@@ -658,4 +671,72 @@ it("retains a prepared recovery revision across refresh, tab switch and rejected
   expect(putJSON).toHaveBeenCalledExactlyOnceWith("/api/pgp/identity/envelope/recovery", expect.objectContaining({ expectedRevision: 7 }));
   expect(screen.getByText("SECRET-ABCD-1234")).toBeTruthy();
   expect(createRecoveryBackup).toHaveBeenCalledTimes(1);
+});
+
+
+describe("complete keyring recovery UI gates", () => {
+  const fingerprint = "A".repeat(40);
+  const keyring: KeyringMetadata = { version: 1, materialGeneration: 1, primaryFingerprints: [fingerprint], keyFingerprints: [fingerprint] };
+  const ringBackup = { ...BACKUP, format: "kypost-pgp-recovery-v2" as const, keyring };
+  async function openRing() {
+    SESSION.bootstrap.keyring = keyring;
+    restoreRecoveryBackup.mockResolvedValue({ ...ringBackup, privateKey: "RING" });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Use server recovery copy" }));
+    await screen.findByRole("heading", { name: "Server recovery copy" });
+    await userEvent.type(screen.getByLabelText("Recovery secret"), "SECRET");
+  }
+  it("drills the entire ring without invoking a single-key parser, writer or vault unlock", async () => {
+    await openRing();
+    await userEvent.click(screen.getByRole("button", { name: "Run recovery drill" }));
+    await screen.findByText(/Every retained key and the current public identity match/);
+    expect(validateKeyringSnapshot).toHaveBeenCalledWith("RING", expect.objectContaining({ keyring }));
+    expect(importIdentity).not.toHaveBeenCalled();
+    expect(postJSON).not.toHaveBeenCalled();
+    expect(putJSON).not.toHaveBeenCalled();
+    expect(unlockWithArmoredKey).not.toHaveBeenCalled();
+  });
+  it("does not install a ring or claim successful restoration before lifecycle uploads exist", async () => {
+    await openRing();
+    await userEvent.type(screen.getByLabelText("Current account password (restore only)"), "account-password");
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await screen.findByText(/Complete keyring restoration requires the lifecycle update/);
+    expect(postJSON).not.toHaveBeenCalled();
+    expect(putJSON).not.toHaveBeenCalled();
+    expect(unlockWithArmoredKey).not.toHaveBeenCalled();
+    expect(localStorage.length).toBe(0);
+  });
+  it("checks the snapshot fetched after decryption, rejecting a changed ring", async () => {
+    await openRing();
+    restoreRecoveryBackup.mockImplementationOnce(async () => {
+      SESSION.bootstrap.keyring = { ...keyring, materialGeneration: 2 };
+      return { ...ringBackup, privateKey: "RING" };
+    });
+    validateKeyringSnapshot.mockRejectedValueOnce(new Error("current complete keyring changed"));
+    await userEvent.click(screen.getByRole("button", { name: "Run recovery drill" }));
+    await screen.findByText(/Drill failed: current complete keyring changed/);
+    expect(validateKeyringSnapshot).toHaveBeenCalledWith("RING", expect.objectContaining({ keyring: { ...keyring, materialGeneration: 2 } }));
+    expect(localStorage.length).toBe(0);
+    expect(unlockWithArmoredKey).not.toHaveBeenCalled();
+  });
+  it("rejects a legacy backup for a converted account before any single-key import", async () => {
+    await openRing();
+    restoreRecoveryBackup.mockResolvedValueOnce({ ...BACKUP, privateKey: "ARMORED" });
+    await userEvent.click(screen.getByRole("button", { name: "Run recovery drill" }));
+    await screen.findByText(/A legacy backup cannot replace retained keys/);
+    expect(importIdentity).not.toHaveBeenCalled();
+    expect(localStorage.length).toBe(0);
+    expect(postJSON).not.toHaveBeenCalled();
+  });
+  it("offers a complete offline download and never the legacy slot upload", async () => {
+    SESSION.bootstrap.keyring = keyring;
+    createRecoveryBackup.mockResolvedValueOnce({ backup: ringBackup, secret: "SECRET-ABCD-1234" });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
+    await screen.findByText(/Complete keyring recovery file checked/);
+    expect(createRecoveryBackup).toHaveBeenCalledWith("RING", SESSION.bootstrap.fingerprint, SESSION.bootstrap.publicKey);
+    expect(importIdentity).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /store server copy/ })).toBeNull();
+    expect(putJSON).not.toHaveBeenCalled();
+  });
 });

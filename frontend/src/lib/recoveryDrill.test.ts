@@ -17,3 +17,14 @@ describe("recovery drill dates", () => {
     expect(await lastRecoveryDrill("alice", { ...backup, envelope: { ...backup.envelope, ciphertext: "BB==" } })).toBe("");
   });
 });
+
+
+it("does not reuse a ring drill date for changed generation or public packets", async () => {
+  const fingerprint = "A".repeat(40);
+  const ringBackup: RecoveryBackup = { ...backup, format: "kypost-pgp-recovery-v2", fingerprint,
+    keyring: { version: 1, materialGeneration: 1, primaryFingerprints: [fingerprint], keyFingerprints: [fingerprint] } };
+  const date = await recordRecoveryDrill("alice", ringBackup);
+  expect(await lastRecoveryDrill("alice", ringBackup)).toBe(date);
+  expect(await lastRecoveryDrill("alice", { ...ringBackup, keyring: { ...ringBackup.keyring, materialGeneration: 2 } })).toBe("");
+  expect(await lastRecoveryDrill("alice", { ...ringBackup, publicKey: "updated" })).toBe("");
+});

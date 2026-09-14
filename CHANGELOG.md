@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add complete-ring recovery-v2 offline export and read-only drills. Preserve original private packets and revocation certificates, enforce sealed size limits, and compare every member/generation plus active public packets against fresh snapshots. Reject legacy backups for converted records; conversion and lifecycle restore/uploads remain gated.
+
 - Prepare atomic whole-keyring storage for password/recovery envelopes, retained fingerprint inventories and credentials. Guard converted records against legacy writers (including plaintext forced password completion) and stale admin resets; expose keyring metadata in authenticated snapshots. No conversion or lifecycle HTTP writer is enabled.
 
 - Bind browser PGP and password writes to the snapshot used for preparation. Preserve prepared recovery revisions across tab switches and upload failures; refuse missing revision support. Add a narrow password-change snapshot so forced resets remain possible while preserving old sealed PGP material for recovery; show that consequence even when the form is reopened. Device enrollment treats fingerprint casing consistently after recovery.

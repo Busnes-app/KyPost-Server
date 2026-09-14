@@ -1,9 +1,11 @@
+import { parseKeyringMetadata, type KeyringMetadata } from "../lib/pgpKeyring";
 import { getJSON, postJSON, putJSON, deleteJSON } from "./client";
 import { credentialFields, deriveCredential } from "./auth";
 import type { DeviceEnvelope } from "../lib/deviceEnrollment";
 import { parseEnvelope, type RecoveryBackup, type WrappedKeyEnvelope } from "../lib/keyVault";
 
 export type PGPIdentity = {
+  keyring?: KeyringMetadata | null;
   pgpRevision?: number;
   fingerprint: string;
   keyId: string;
@@ -203,6 +205,7 @@ export type BoundSignerKey = {
 
 /** The cold-start snapshot — see docs/E2E_PGP.md "Cold start". */
 export type PGPBootstrap = {
+  keyring?: KeyringMetadata | null;
   pgpRevision?: number;
   hasIdentity: boolean;
   /** "client" (end-to-end), "server" (legacy), or "" (no key). */
@@ -296,12 +299,18 @@ export async function putRecoveryEnvelope(envelope: WrappedKeyEnvelope, password
 
 /** Fetches only ciphertext and public metadata, from one server snapshot. */
 export async function getRecoveryBackup(): Promise<RecoveryBackup> {
-  const result = await getJSON<{ envelope: string; fingerprint: string; publicKey: string }>("/api/pgp/identity/envelope/recovery");
-  const envelope = parseEnvelope(result.envelope);
-  if (!envelope || typeof result.fingerprint !== "string" || !result.fingerprint || typeof result.publicKey !== "string") {
+  const result = await getJSON<unknown>("/api/pgp/identity/envelope/recovery");
+  if (!result || typeof result !== "object" || !("envelope" in result) || typeof result.envelope !== "string" ||
+      !("fingerprint" in result) || typeof result.fingerprint !== "string" || !result.fingerprint ||
+      !("publicKey" in result) || typeof result.publicKey !== "string") {
     throw new Error("The server recovery copy cannot be read. Try your downloaded file.");
   }
-  return { format: "kypost-pgp-recovery-v1", fingerprint: result.fingerprint, publicKey: result.publicKey, envelope };
+  const envelope = parseEnvelope(result.envelope);
+  if (!envelope) throw new Error("The server recovery copy cannot be read. Try your downloaded file.");
+  return "keyring" in result && result.keyring != null
+    ? { format: "kypost-pgp-recovery-v2", fingerprint: result.fingerprint, publicKey: result.publicKey,
+        envelope, keyring: parseKeyringMetadata(result.keyring) }
+    : { format: "kypost-pgp-recovery-v1", fingerprint: result.fingerprint, publicKey: result.publicKey, envelope };
 }
 
 /**

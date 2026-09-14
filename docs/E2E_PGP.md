@@ -363,7 +363,33 @@ revision, failed snapshot reads and corrupt ordinary envelopes abort preparation
 
 ### Browser recovery
 
-Security → Encryption creates `kypost-pgp-recovery-v1` files with a random
+Complete-ring records support offline export and read-only drills using
+`kypost-pgp-recovery-v2`. Account conversion and lifecycle restore/upload remain
+unavailable. The file is `{format, fingerprint, publicKey, keyring, envelope}`:
+`keyring` has the same version/generation/inventory shape as the authenticated
+snapshot; `envelope` uses the unchanged v2 PBKDF2/AES-GCM wrapper and seals the
+original complete `kypost-pgp-keyring-v1` plaintext, including unpublished revocation
+certificates. Public identity and fingerprint metadata are outside the encryption;
+private key material and revocation certificates stay sealed.
+
+Creation reopens the serialized file and compares the entire original plaintext
+before offering the download. Limits are 16 primary keys, 256 total primary/subkey
+fingerprints, 128 KiB serialized envelope (including base64 expansion), and 512 KiB
+UTF-8 recovery file. Refuse capacity overflow rather than dropping history.
+
+Opening validates all members, generation/inventories and the complete active
+public packet multiset, including UID certifications and revocations. Packet order
+may differ between Go and JS. The drill then compares against a snapshot fetched
+after decryption; an old generation, omitted subkey, changed public identity or
+legacy v1 backup cannot pass as a current complete ring. An old backup cannot
+recover keys created later; retain it for future merge into an unlocked current
+ring. Drills do not unlock the vault or write key material. A v2 drill date is tied
+to the entire sealed backup and metadata, scoped to this browser/account; a changed
+snapshot does not reuse the old date. Restore and server-upload attempts explicitly
+require the lifecycle update until whole-ring HTTP transactions are implemented.
+
+
+For legacy single-key accounts, Security → Encryption creates `kypost-pgp-recovery-v1` files with a random
 128-bit secret. Creation restores the serialized file in memory and compares
 its plaintext before offering either copy. Under client custody, the browser
 validates the unlocked key against the current identity, requests the file

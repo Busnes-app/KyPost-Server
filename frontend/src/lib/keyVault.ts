@@ -43,6 +43,8 @@
 // survive a tab close and are readable by any script that achieves XSS,
 // which would hand over exactly what this module exists to protect.
 
+import { parseKeyring, parseKeyringMetadata, validateKeyringSnapshot, type KeyringMetadata } from "./pgpKeyring";
+
 const KDF_PBKDF2_SHA256 = "PBKDF2-SHA256";
 const DEFAULT_ITERATIONS = 600_000;
 const SALT_BYTES = 16;
@@ -72,13 +74,17 @@ export type WrappedKeyEnvelope = {
   ciphertext: string;
 };
 
-export type RecoveryBackup = {
-  format: "kypost-pgp-recovery-v1";
+type RecoveryFields = {
   fingerprint: string;
   publicKey: string;
   envelope: WrappedKeyEnvelope;
 };
+export type RecoveryBackup = RecoveryFields & (
+  { format: "kypost-pgp-recovery-v1" } |
+  { format: "kypost-pgp-recovery-v2"; keyring: KeyringMetadata }
+);
 
+const MAX_KEYRING_ENVELOPE_BYTES = 128 << 10;
 const RECOVERY_SECRET_BYTES = 16;
 const MAX_RECOVERY_BACKUP_CHARS = 512 << 10;
 
@@ -196,14 +202,23 @@ export async function createRecoveryBackup(
   fingerprint: string,
   publicKey: string
 ): Promise<{ backup: RecoveryBackup; secret: string }> {
-  requireSinglePrivateKey(armoredPrivateKey);
+  const ring = armoredPrivateKey.trimStart().startsWith("{") ? await parseKeyring(armoredPrivateKey) : null;
+  if (!ring) requireSinglePrivateKey(armoredPrivateKey);
+  if (ring?.kind === "keyring") await validateKeyringSnapshot(armoredPrivateKey, { fingerprint, publicKey, keyring: ring.metadata });
   const secretBytes = crypto.getRandomValues(new Uint8Array(RECOVERY_SECRET_BYTES));
   const secret = recoverySecretText(secretBytes);
   const envelope = await wrapPrivateKey(armoredPrivateKey, secret);
-  const backup: RecoveryBackup = { format: "kypost-pgp-recovery-v1", fingerprint, publicKey, envelope };
+  const backup: RecoveryBackup = ring?.kind === "keyring"
+    ? { format: "kypost-pgp-recovery-v2", fingerprint: fingerprint.toUpperCase(), publicKey, envelope, keyring: ring.metadata }
+    : { format: "kypost-pgp-recovery-v1", fingerprint, publicKey, envelope };
+  if (backup.format === "kypost-pgp-recovery-v2" && new TextEncoder().encode(JSON.stringify(envelope)).length > MAX_KEYRING_ENVELOPE_BYTES) {
+    throw new Error("The complete keyring exceeds the recovery envelope capacity. No keys were removed and no backup was saved.");
+  }
   // Exercise the serialized file and its restore path before offering either copy.
-  const restored = await restoreRecoveryBackup(JSON.stringify(backup), secret);
-  if (restored.privateKey !== armoredPrivateKey) {
+  try {
+    const restored = await restoreRecoveryBackup(JSON.stringify(backup), secret);
+    if (restored.privateKey !== armoredPrivateKey) throw new Error("mismatch");
+  } catch {
     throw new Error("Recovery backup verification failed. No backup was saved.");
   }
   return { backup, secret };
@@ -211,24 +226,29 @@ export async function createRecoveryBackup(
 
 /** Opens an offline backup locally; the returned private key never leaves this module's caller. */
 export async function restoreRecoveryBackup(raw: string, secret: string): Promise<RecoveryBackup & { privateKey: string }> {
-  if (raw.length > MAX_RECOVERY_BACKUP_CHARS) {
+  if (raw.length > MAX_RECOVERY_BACKUP_CHARS || new TextEncoder().encode(raw).length > MAX_RECOVERY_BACKUP_CHARS) {
     throw new Error("The recovery backup is too large.");
   }
-  let backup: RecoveryBackup;
-  try {
-    backup = JSON.parse(raw) as RecoveryBackup;
-  } catch {
-    throw new Error("The recovery backup is not valid.");
-  }
-  if (
-    backup?.format !== "kypost-pgp-recovery-v1" ||
-    typeof backup.fingerprint !== "string" ||
-    typeof backup.publicKey !== "string" ||
-    !backup.envelope
-  ) {
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { throw new Error("The recovery backup is not valid."); }
+  if (!value || typeof value !== "object" || !("format" in value) ||
+      (value.format !== "kypost-pgp-recovery-v1" && value.format !== "kypost-pgp-recovery-v2") ||
+      !("fingerprint" in value) || typeof value.fingerprint !== "string" ||
+      !("publicKey" in value) || typeof value.publicKey !== "string" || !("envelope" in value)) {
     throw new Error("The recovery backup format is not supported.");
   }
-  const privateKey = await unwrapPrivateKey(backup.envelope, recoverySecretText(recoverySecretBytes(secret)));
+  const envelope = parseEnvelope(JSON.stringify(value.envelope));
+  if (!envelope) throw new Error("The recovery backup format is not supported.");
+  const backup: RecoveryBackup = value.format === "kypost-pgp-recovery-v2"
+    ? { format: value.format, fingerprint: value.fingerprint, publicKey: value.publicKey, envelope,
+        keyring: parseKeyringMetadata("keyring" in value ? value.keyring : undefined) }
+    : { format: value.format, fingerprint: value.fingerprint, publicKey: value.publicKey, envelope };
+  if (backup.format === "kypost-pgp-recovery-v2" && new TextEncoder().encode(JSON.stringify(envelope)).length > MAX_KEYRING_ENVELOPE_BYTES) {
+    throw new Error("The complete keyring exceeds the recovery envelope capacity.");
+  }
+  const privateKey = await unwrapPrivateKey(envelope, recoverySecretText(recoverySecretBytes(secret)));
+  if (backup.format === "kypost-pgp-recovery-v2") await validateKeyringSnapshot(privateKey, backup);
+  else requireSinglePrivateKey(privateKey);
   return { ...backup, privateKey };
 }
 

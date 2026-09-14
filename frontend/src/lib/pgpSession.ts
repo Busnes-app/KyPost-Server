@@ -22,6 +22,7 @@ import {
   onVaultChange,
   parseEnvelope,
   requireUnlockedKey,
+  requireUnlockedKeyMaterial,
   requireSinglePrivateKey,
   unlock,
   unlockWithArmoredKey,
@@ -149,7 +150,7 @@ export function acceptCommittedPGPKey(armored: string, identity: Pick<PGPIdentit
 
 /** A refreshed bootstrap must never give an older unlocked key a newer revision. */
 export function unlockedPGPIdentity(): { fingerprint: string; pgpRevision: number } {
-  requireUnlockedKey();
+  requireUnlockedKeyMaterial();
   const pgpRevision = requirePGPRevision(unlockedIdentity);
   if (!unlockedIdentity) throw new Error("Reload and unlock the current PGP key.");
   return { fingerprint: unlockedIdentity.fingerprint, pgpRevision };

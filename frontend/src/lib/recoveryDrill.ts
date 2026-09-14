@@ -8,11 +8,11 @@ function storageKey(userId: string, backup: RecoveryBackup): string {
 }
 
 async function envelopeHash(backup: RecoveryBackup): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(backup.envelope)));
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(backup.format === "kypost-pgp-recovery-v2" ? backup : backup.envelope)));
   return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Call only after opening this copy and matching its parsed key to the identity. */
+/** Call only after opening this copy and matching every parsed key and public packet to a fresh identity snapshot. */
 export async function recordRecoveryDrill(userId: string, backup: RecoveryBackup): Promise<string> {
   const hash = await envelopeHash(backup);
   const date = new Date().toISOString();
