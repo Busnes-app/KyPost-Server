@@ -51,6 +51,8 @@ export type MimeContent = {
   /** Parts dropped by MimeLimits rather than decoded. The reader says so. */
   attachmentsOmitted: number;
   protectedHeaders: ProtectedHeaders;
+  /** A multipart/signed wrapper was encountered; this does not verify it. */
+  hasDetachedSignature?: boolean;
 };
 
 /**
@@ -294,7 +296,13 @@ type Collector = {
   attachmentsOmitted: number;
   attachmentBytes: number;
   limits: MimeLimits;
+  hasDetachedSignature: boolean;
 };
+
+function isDetachedSigned(contentType: string): boolean {
+  return mediaType(contentType) === "multipart/signed" &&
+    contentTypeParam(contentType, "protocol").toLowerCase() === "application/pgp-signature";
+}
 
 /**
  * Walks a multipart body. The first part that qualifies as the display body
@@ -312,6 +320,7 @@ function walkMultipart(body: string, boundary: string, depth: number, out: Colle
     const type = mediaType(contentType);
 
     if (type.startsWith("multipart/")) {
+      out.hasDetachedSignature ||= isDetachedSigned(contentType);
       const nestedBoundary = contentTypeParam(contentType, "boundary");
       if (nestedBoundary) {
         walkMultipart(partBody, nestedBoundary, depth + 1, out);
@@ -385,11 +394,12 @@ export function parseMimeContent(raw: string, limits: MimeLimits = DEFAULT_MIME_
 
   const type = mediaType(contentType);
   if (type.startsWith("multipart/")) {
+    const hasDetachedSignature = isDetachedSigned(contentType);
     const boundary = contentTypeParam(contentType, "boundary");
     if (!boundary) {
-      return { body, mode: "plain", attachments: [], attachmentsOmitted: 0, protectedHeaders };
+      return { body, mode: "plain", attachments: [], attachmentsOmitted: 0, protectedHeaders, hasDetachedSignature };
     }
-    const out: Collector = { body: null, attachments: [], attachmentsOmitted: 0, attachmentBytes: 0, limits };
+    const out: Collector = { body: null, attachments: [], attachmentsOmitted: 0, attachmentBytes: 0, limits, hasDetachedSignature };
     walkMultipart(body, boundary, 0, out);
     // A multipart with no usable display part still renders as something rather
     // than as nothing: better an empty body than the raw boundaries.
@@ -398,7 +408,8 @@ export function parseMimeContent(raw: string, limits: MimeLimits = DEFAULT_MIME_
       mode: out.body?.mode ?? "plain",
       attachments: out.attachments,
       attachmentsOmitted: out.attachmentsOmitted,
-      protectedHeaders
+      protectedHeaders,
+      hasDetachedSignature: out.hasDetachedSignature
     };
   }
 

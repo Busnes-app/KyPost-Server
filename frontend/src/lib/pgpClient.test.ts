@@ -5,6 +5,7 @@ import * as openpgp from "openpgp";
 import { buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, decryptMessage, encryptedAttachmentBudget, openSealedToSelf, sealToSelf, verifySignedMessage } from "./pgpClient";
 import { unlockWithArmoredKey, lock } from "./keyVault";
 import { decodeRFC2047 } from "./mimeContent";
+import { signatureState } from "../pages/read/signature";
 
 // run-4 finding H7: decryptMessage offered every contact public key as a
 // verification key and set verified=true on the first signature that validated
@@ -585,5 +586,38 @@ describe("encrypted drafts and sealed state", () => {
       lock();
     }
     await expect(openSealedToSelf("-----BEGIN PGP MESSAGE-----\nx\n-----END PGP MESSAGE-----")).rejects.toThrow();
+  });
+});
+
+
+describe("detached MIME signatures inside encryption", () => {
+  it.each([false, true])("reports an unchecked signature, not unsigned (mixed wrapper=%s)", async (wrapped) => {
+    const sender = await generateTestKey("Sender", "sender@example.com");
+    const recipient = await generateTestKey("Recipient", "recipient@example.com");
+    unlockWithArmoredKey(sender.privateKey);
+    try {
+      const delivery = await buildSignedDelivery(
+        { from: "sender@example.com", to: ["recipient@example.com"], subject: "signed then encrypted" },
+        "text/plain", "signed body", ["recipient@example.com"]
+      );
+      const entity = wrapped
+        ? 'Content-Type: multipart/mixed; boundary="outer"\r\n\r\n--outer\r\n' + delivery.ciphertext + '\r\n--outer--\r\n'
+        : delivery.ciphertext;
+      const ciphertext = await openpgp.encrypt({
+        message: await openpgp.createMessage({ text: entity }),
+        encryptionKeys: await openpgp.readKey({ armoredKey: recipient.publicKey }),
+        format: "armored"
+      });
+      unlockWithArmoredKey(recipient.privateKey);
+      const result = await decryptMessage(ciphertext, [bound(sender, "sender@example.com")], "sender@example.com");
+      expect(result.body.trim()).toBe("signed body");
+      expect(result.verified).toBe(false);
+      expect(signatureState(
+        { messageId: "1", sender: "sender@example.com", subject: "", status: "unread", atUtc: "", pgpEncrypted: true },
+        { ...result, error: "", bodyFromVerifiedPart: true }, false
+      )).toBe("unchecked");
+    } finally {
+      lock();
+    }
   });
 });

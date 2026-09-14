@@ -3,7 +3,8 @@ import type { DecryptedView, InboxEmail } from "./types";
 /**
  * What the reading pane should say about one message's signature.
  *
- * - `none` — no signature. Almost all mail.
+ * - `none` — ordinary unsigned mail, or ciphertext not yet opened.
+ * - `unsigned` — decrypted successfully, with no signature inside.
  * - `checking` — the browser is fetching the signed bytes and verifying them.
  * - `verified` — a key the address book binds to this sender produced this
  *   signature. The strong claim, and the only one that reads as a pass.
@@ -21,6 +22,7 @@ import type { DecryptedView, InboxEmail } from "./types";
  */
 export type SignatureState =
   | "none"
+  | "unsigned"
   | "checking"
   | "verified"
   | "mismatched"
@@ -44,6 +46,9 @@ export function signatureState(
 ): SignatureState {
   const signed = local ? local.signed : Boolean(email.pgpSigned);
   if (!signed) {
+    if (email.pgpEncrypted && local && !local.error && !email.pgpDecryptError && !checking) {
+      return "unsigned";
+    }
     return "none";
   }
   if (checking) {
@@ -67,6 +72,8 @@ export function signatureState(
 /** The badge text. Each string claims exactly what was established, no more. */
 export function signatureLabel(state: SignatureState): string {
   switch (state) {
+    case "unsigned":
+      return "encrypted but unsigned";
     case "verified":
       return "signature verified";
     case "mismatched":

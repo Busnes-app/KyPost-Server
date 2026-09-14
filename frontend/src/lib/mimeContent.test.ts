@@ -159,7 +159,7 @@ describe("parseMimeContent", () => {
   it("survives a multipart whose boundary never appears", () => {
     const raw = 'Content-Type: multipart/mixed; boundary="missing"\r\n\r\nno parts at all';
     expect(() => parseMimeContent(raw)).not.toThrow();
-    expect(parseMimeContent(raw)).toEqual({ body: "", mode: "plain", attachments: [], attachmentsOmitted: 0, protectedHeaders: {} });
+    expect(parseMimeContent(raw)).toEqual({ body: "", mode: "plain", attachments: [], attachmentsOmitted: 0, protectedHeaders: {}, hasDetachedSignature: false });
   });
 
   it("tolerates bare LF line endings", () => {
@@ -347,4 +347,19 @@ describe("shared MIME corpus", () => {
       expect(parsed?.mode).toBe(tc.expectMode);
     });
   }
+});
+
+
+describe("detached PGP signature detection", () => {
+  it.each([
+    ['multipart/signed;\r\n protocol="application/pgp-signature"', true],
+    ['MULTIPART/SIGNED; protocol=APPLICATION/PGP-SIGNATURE', true],
+    ['multipart/signed; protocol="application/pkcs7-signature"', false],
+    ['multipart/mixed; protocol="application/pgp-signature"', false],
+    ['text/plain', false]
+  ])("detects only PGP signed MIME wrappers: %s", (contentType, expected) => {
+    // No boundary/signature bytes: presence detection must never imply verification.
+    const parsed = parseMimeContent(`Content-Type: ${contentType}\r\n\r\nordinary body`);
+    expect(Boolean(parsed?.hasDetachedSignature)).toBe(expected);
+  });
 });

@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Signing defaults on when an unlocked browser key is available, including after unlocking while composing. Turning Sign off shows `Unsigned` and lasts for that message. Successfully decrypted mail without a signature shows `encrypted but unsigned`; encryption alone never means the sender was verified. Detached MIME signatures inside encryption are detected as signed but unchecked, including nested multipart wrappers.
+
 - Sign without Encrypt now sends a real signed message (RFC 3156 `multipart/signed`) from a browser-encrypted account, to every recipient, without needing their keys. It used to route into the encrypted path and refuse recipients with no key. The Sent copy of any browser-encrypted send is now shape-checked as ciphertext on the server before it is stored, not just flagged by the client.
 - An encrypted message no longer makes the whole mailbox load through the live IMAP path. The mail cache records that the server holds no plaintext for such a row and counts it as warm, so mailboxes with encrypted mail take the cache-first path again. Native clients see the same rows as before.
 - Drafts saved from a browser-encrypted account are now encrypted to the user's own key before they reach IMAP, and reopen with their recipients, subject, body and attachments. The compose autosave snapshot is sealed to the same key. The reader shows the real Subject of a decrypted message rather than the outer placeholder. The server refuses a plaintext draft from a browser-encrypted account (409 `clientSideNeeded`), and the browser saves nothing until it knows the account's key custody.

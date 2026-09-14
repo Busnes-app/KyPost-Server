@@ -17,7 +17,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - Automatic keyword labels for unread mail. KyPost polls each active user's mailbox separately, and each account has its OWN label list — copied from the instance defaults when the account is created, then theirs to change. Labels are a sorting hint a determined sender can influence — see [Classification flow](#architecture).
 - Filter Rules: a GUI condition and action builder plus a raw Sieve script editor. A run-now panel applies the rules on demand.
 - Compose flow with SMTP send and IMAP draft save
-- PGP mail encryption. Generate or import a key, search for recipient keys on keys.openpgp.org, and check recipient key status before you send. KyPost has two key-protection modes. Read [Where your PGP private key lives](#where-your-pgp-private-key-lives) before you rely on this.
+- PGP mail encryption and signing. Signing defaults on with an unlocked browser key; compose labels unsigned mail, and the reader distinguishes encrypted but unsigned mail from a verified signature. Generate or import a key, search for recipient keys on keys.openpgp.org, and check recipient key status before you send. KyPost has two key-protection modes. Read [Where your PGP private key lives](#where-your-pgp-private-key-lives) before you rely on this.
 - Contacts address book with groups, dedupe, bulk delete, CSV and vCard import and export, and photo support
 - CardDAV server (`/dav`, `/.well-known/carddav`) to sync contacts to phones and desktop apps. An optional CardDAV client syncs against an external address book.
 - Multi-factor authentication: TOTP authenticator apps, one-time recovery codes, and push-approval sign-in
