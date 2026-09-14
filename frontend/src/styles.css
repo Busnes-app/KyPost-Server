@@ -5156,3 +5156,10 @@ pre {
 .backup-details summary { cursor: pointer; font-weight: 600; }
 .backup-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .backup-details li, .backup-section .notice { overflow-wrap: anywhere; }
+
+.config-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
