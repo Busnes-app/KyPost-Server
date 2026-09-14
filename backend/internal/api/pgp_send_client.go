@@ -467,6 +467,12 @@ func sentCopyDraft(req clientEncryptedSendRequest) (imapadapter.DraftMessage, bo
 	if copyBytes == "" || !req.SentCopyEncrypted {
 		return imapadapter.DraftMessage{}, false
 	}
+	// The flag is the client's claim; the bytes are the evidence. A copy that
+	// is not RFC 3156 ciphertext is dropped and the caller warns, so a rolled
+	// back or foreign client cannot put plaintext in Sent by asserting it.
+	if err := validatePGPMimeDeliveryShape(copyBytes); err != nil {
+		return imapadapter.DraftMessage{}, false
+	}
 	return imapadapter.DraftMessage{
 		To:      req.To,
 		CC:      req.CC,
