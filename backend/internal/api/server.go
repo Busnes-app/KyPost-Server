@@ -1240,6 +1240,8 @@ type mailRequest struct {
 	Attachments []mailmsg.Attachment
 	Encrypt     bool
 	Sign        bool
+	// PGPDraft is a browser-encrypted PGP/MIME draft, appended verbatim.
+	PGPDraft string
 	// AllowPickupFallback opts in to the one-time pickup link for recipients
 	// with no usable PGP key. Absent means refuse: that fallback stores the
 	// message's plaintext server-side for seven days and mails the link in
