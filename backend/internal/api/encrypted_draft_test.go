@@ -96,6 +96,39 @@ func TestEncryptedDraftPlaintextFieldsAreIgnored(t *testing.T) {
 	}
 }
 
+func testUserWithClientKey(t *testing.T, srv *Server) string {
+	t.Helper()
+	all, err := srv.users.List()
+	if err != nil || len(all) == 0 {
+		t.Fatalf("users.List: %v (%d users)", err, len(all))
+	}
+	id := all[0].ID
+	if _, err := srv.users.SetPGPIdentityClientProtected(id, "FPR", "KEYID", "-----BEGIN PGP PUBLIC KEY BLOCK-----", `{"v":2}`, "generated", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("SetPGPIdentityClientProtected: %v", err)
+	}
+	return id
+}
+
+func TestPlaintextDraftRefusedForClientCustody(t *testing.T) {
+	srv := newTestServer(t)
+	userID := testUserWithClientKey(t, srv)
+	fake := &fakeMailClient{}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/mail/draft", draftRequestBody(t, map[string]any{
+		"to": "a@example.com", "subject": "the real subject", "body": "the real body", "mode": "html",
+	}))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, AuthContext{UserID: userID}))
+	srv.serveDraftSave(rec, req, fake)
+
+	if rec.Code != 409 || len(fake.savedDrafts) != 0 {
+		t.Fatalf("status = %d, saved=%d, want 409 and nothing saved; body=%s", rec.Code, len(fake.savedDrafts), rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"clientSideNeeded":true`) {
+		t.Fatalf("refusal lacks clientSideNeeded: %s", rec.Body.String())
+	}
+}
+
 func TestEncryptedDraftRefusesEmptyFrom(t *testing.T) {
 	srv := newTestServer(t)
 	userID, identity := testUserWithServerKey(t, srv)

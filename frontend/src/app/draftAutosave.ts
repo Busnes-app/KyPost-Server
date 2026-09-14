@@ -38,7 +38,7 @@
 // message itself would be encrypted with.
 
 import type { ComposeAttachment } from "./types";
-import { isClientProtected, needsUnlock } from "../lib/pgpSession";
+import { needsUnlock, pgpCustody } from "../lib/pgpSession";
 import { openSealedToSelf, sealToSelf } from "../lib/pgpClient";
 
 /** Bump when the stored shape changes; a mismatch discards rather than guesses. */
@@ -213,11 +213,15 @@ export function hasContent(draft: DraftInput): boolean {
  * With the vault locked, autosave touches nothing: it can neither seal new
  * text nor tell whether the stored ciphertext is superseded, and the blank
  * window behind the unlock prompt must not clear the snapshot the prompt is
- * offering to restore. Explicit clears and the age sweep still run.
+ * offering to restore. Explicit clears and the age sweep still run. While
+ * the PGP state is still unknown nothing is written either: a plaintext
+ * snapshot for what may be a client-custody account is the wrong default.
  */
 export async function saveDraftSnapshot(userId: string, draft: DraftInput): Promise<void> {
   if (!userId) return;
-  if (isClientProtected() && needsUnlock()) return;
+  const custody = pgpCustody();
+  if (custody === "unknown") return;
+  if (custody === "client" && needsUnlock()) return;
   try {
     if (!hasContent(draft)) {
       draftStorage().removeItem(storageKey(userId));
@@ -233,7 +237,7 @@ export async function saveDraftSnapshot(userId: string, draft: DraftInput): Prom
     };
     const savedAt = new Date().toISOString();
     let stored: StoredSnapshot;
-    if (isClientProtected()) {
+    if (custody === "client") {
       stored = { version: SNAPSHOT_VERSION, savedAt, sealed: await sealToSelf(JSON.stringify(fields)) };
     } else {
       stored = { version: SNAPSHOT_VERSION, savedAt, fields };

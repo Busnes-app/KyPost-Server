@@ -28,6 +28,7 @@ vi.mock("./lib/pgpSession", () => ({
   loadPGPSession: async () => ({ bootstrap: null, unlocked: false }),
   clearPGPSession: () => {},
   isClientProtected: () => false,
+  pgpCustody: () => "other",
   needsUnlock: () => false
 }));
 

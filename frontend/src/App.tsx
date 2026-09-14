@@ -12,7 +12,7 @@ import { ContactPickerModal } from "./components/ContactPickerModal";
 import { RecipientField } from "./components/RecipientField";
 import { useDialogOpen } from "./hooks/useDialogOpen";
 import { contactToToken, isDuplicateInField, parseRecipientField, pickupFallbackFlag, serializeRecipientField, splitAddressList } from "./lib/recipients";
-import { accountAddress, clearPGPSession, isClientProtected, loadPGPSession, needsUnlock } from "./lib/pgpSession";
+import { accountAddress, clearPGPSession, isClientProtected, loadPGPSession, needsUnlock, pgpCustody } from "./lib/pgpSession";
 import { buildEncryptedDeliveries, buildEncryptedDraft, buildEncryptedSentCopy, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "./lib/pgpClient";
 import { sealPickup } from "./lib/pickupCrypto";
 import { createSealedPickup, resolveRecipientKeys, sendClientEncryptedMail } from "./api/pgp";
@@ -1087,7 +1087,13 @@ export function App() {
     try {
       const cc = serializeRecipientField(composeCc);
       const bcc = serializeRecipientField(composeBcc);
-      if (isClientProtected()) {
+      // Tri-state on purpose: an unloaded or failed bootstrap must not read
+      // as "not client custody" and send the draft in the clear.
+      const custody = pgpCustody();
+      if (custody === "unknown") {
+        throw new Error("Your PGP state could not be confirmed, so the draft was not saved. Reload and try again.");
+      }
+      if (custody === "client") {
         // A client-custody draft is encrypted to the user's own key before it
         // leaves the browser: the Drafts folder sits on the same IMAP server
         // as the Sent copy, and a plaintext draft there gave that server the

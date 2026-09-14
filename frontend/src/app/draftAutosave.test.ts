@@ -12,9 +12,9 @@ import {
 
 // The vault state the module consults, switchable per test. The seal is a
 // stand-in for openpgp: reversible, and its output never contains the input.
-const vault = vi.hoisted(() => ({ clientProtected: false, locked: false }));
+const vault = vi.hoisted(() => ({ clientProtected: false, locked: false, unknown: false }));
 vi.mock("../lib/pgpSession", () => ({
-  isClientProtected: () => vault.clientProtected,
+  pgpCustody: () => (vault.unknown ? "unknown" : vault.clientProtected ? "client" : "other"),
   needsUnlock: () => vault.locked
 }));
 vi.mock("../lib/pgpClient", () => ({
@@ -42,6 +42,7 @@ beforeEach(() => {
   window.localStorage.clear();
   vault.clientProtected = false;
   vault.locked = false;
+  vault.unknown = false;
 });
 
 describe("hasContent", () => {
@@ -205,6 +206,17 @@ describe("sealed snapshots on a client-custody account", () => {
     // promised it is recoverable after unlock. Nothing here may destroy it.
     vault.locked = false;
     expect((await load(USER))?.subject).toBe("before lock");
+  });
+
+  it("neither writes nor clears while the PGP state is unknown", async () => {
+    await saveDraftSnapshot(USER, draft({ subject: "known" }));
+    vault.unknown = true;
+    await saveDraftSnapshot(USER, draft({ subject: "typed before bootstrap" }));
+    await saveDraftSnapshot(USER, draft());
+    const raw = window.sessionStorage.getItem(`kypost-compose-draft:${USER}`) ?? "";
+    expect(raw).not.toContain("typed before bootstrap");
+    vault.unknown = false;
+    expect((await load(USER))?.subject).toBe("known");
   });
 
   it("does not let a blank window behind the unlock prompt clear the sealed snapshot", async () => {

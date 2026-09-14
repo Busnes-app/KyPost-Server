@@ -933,6 +933,19 @@ func (s *Server) serveDraftSave(w http.ResponseWriter, r *http.Request, mailClie
 		return
 	}
 
+	// A client-custody account never gets a plaintext draft, whatever the
+	// client asked for: the browser encrypts its own, and a native client
+	// holding the device key must do the same. Same refusal shape as send.
+	if ac, ok := authFromContext(r); ok {
+		if u, uerr := s.users.Get(ac.UserID); uerr == nil && u.PGPProtection() == users.PGPProtectionClient {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":            "this account's PGP key is end-to-end protected, so drafts must be encrypted before they are saved",
+				"clientSideNeeded": true,
+			})
+			return
+		}
+	}
+
 	if err := mailClient.SaveDraft(r.Context(), imapadapter.DraftMessage{
 		To:          req.To,
 		CC:          req.CC,

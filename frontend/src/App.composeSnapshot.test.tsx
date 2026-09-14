@@ -9,9 +9,10 @@ import { MemoryRouter } from "react-router";
 // itself survives the whole time.
 
 const getJSON = vi.fn();
+const postJSON = vi.fn(async (_url: string, _body: unknown) => ({}));
 vi.mock("./api/client", () => ({
   getJSON: (url: string) => getJSON(url),
-  postJSON: async () => ({}),
+  postJSON: (url: string, body: unknown) => postJSON(url, body),
   putJSON: async () => ({}),
   deleteJSON: async () => ({}),
   HttpError: class HttpError extends Error {
@@ -21,12 +22,13 @@ vi.mock("./api/client", () => ({
   toErrorMessage: (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback)
 }));
 
-const vault = vi.hoisted(() => ({ locked: true }));
+const vault = vi.hoisted(() => ({ locked: true, custody: "client" as "client" | "other" | "unknown" }));
 vi.mock("./lib/pgpSession", () => ({
   subscribePGPSession: () => () => {},
   loadPGPSession: async () => ({ bootstrap: null, unlocked: false }),
   clearPGPSession: () => {},
-  isClientProtected: () => true,
+  isClientProtected: () => vault.custody === "client",
+  pgpCustody: () => vault.custody,
   needsUnlock: () => vault.locked,
   accountAddress: () => "me@example.com",
   unlockPGPSession: async () => {}
@@ -75,6 +77,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.clearAllMocks();
   vault.locked = true;
+  vault.custody = "client";
   getJSON.mockImplementation(async (url: string) => {
     if (url === "/api/auth/me") return { authenticated: true, userId: "u1", username: "gwen", role: "user" };
     if (url.startsWith("/api/inbox/folders")) return { folders: [] };
@@ -94,6 +97,28 @@ async function openCompose() {
   await screen.findByText("An unsent draft is waiting. Unlock your PGP key to restore it.");
   return user;
 }
+
+describe("save draft before the PGP bootstrap has answered", () => {
+  it("refuses rather than posting the draft in cleartext", async () => {
+    vault.custody = "unknown";
+    vault.locked = false;
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/read"]}>
+        <App />
+      </MemoryRouter>
+    );
+    await user.click(await screen.findByRole("button", { name: "New Email" }));
+    await user.type(screen.getByLabelText("To recipients"), "a@b.test{Enter}");
+    await user.type(screen.getByPlaceholderText("Subject"), "secret subject");
+    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+
+    await screen.findByText(/could not be confirmed/);
+    const draftPosts = postJSON.mock.calls.filter(([url]) => url === "/api/mail/draft");
+    expect(draftPosts).toEqual([]);
+    expect(JSON.stringify(postJSON.mock.calls)).not.toContain("secret subject");
+  });
+});
 
 describe("sealed compose snapshot behind a locked vault", () => {
   it("restores into a blank window once the key is unlocked", async () => {
