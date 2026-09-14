@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Document the proposed PGP multi-key lifecycle and its native-client upgrade gates, with a runnable crypto feasibility check. No lifecycle behavior ships in this design change.
+
 - PGP recovery now stores a sealed server copy as well as requesting a tested offline download. Restore the current identity without the file using its recovery secret; test a copy with a non-destructive drill and keep its date in this browser. Password changes warn when no server copy is confirmed, and identity deletion warns that it removes server recovery too. Recovery writes refuse a concurrently replaced identity.
 
 - Signing defaults on when an unlocked browser key is available, including after unlocking while composing. Turning Sign off shows `Unsigned` and lasts for that message. Successfully decrypted mail without a signature shows `encrypted but unsigned`; encryption alone never means the sender was verified. Detached MIME signatures inside encryption are detected as signed but unchecked, including nested multipart wrappers.
