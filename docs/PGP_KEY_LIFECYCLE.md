@@ -1,6 +1,7 @@
 # PGP key lifecycle — proposed Tier 5 design
 
-Status: lifecycle conversion and writes are **not shipped**. The first reader
+Status: lifecycle conversion and HTTP writers are **not shipped**. Internal atomic
+whole-ring storage and legacy-writer guards are implemented. The first reader
 implementation accepts legacy armor and bounded versioned rings for historical
 mail, draft and autosave decryption. Single-key writers refuse ring plaintext
 until server/native lifecycle gates are ready. Baseline: server PR #189,
@@ -73,7 +74,8 @@ certifications and revocations. Every other member is historical; timestamps may
 be displayed but do not authorize use. A public revocation record can disable the
 active member without opening or modifying the sealed payload.
 
-Initially cap a keyring at 16 primary keys and each serialized sealed envelope at
+The internal store caps a keyring at 16 primary keys, 256 total primary/subkey
+fingerprints, and each serialized sealed envelope at
 the existing 128 KiB bound, whichever is reached first. Refuse growth with an
 explicit capacity error; never evict history. Large imported keys may hit the byte
 limit earlier. A lifecycle request containing public material and two envelopes
@@ -109,8 +111,10 @@ bootstrap/identity/envelope snapshots and mutation responses, and checks optiona
 `expectedRevision` in existing PGP and password write APIs under the disk lock.
 Browser writers supply snapshot-bound revisions, preserving vault provenance and
 prepared recovery revisions across refreshes and failed uploads. Older clients
-may still omit the guard; the server retains single-key compatibility. Account keyring versioning and mandatory guards for converted
-accounts remain prerequisites for enabling lifecycle writes. Every keyring/public-identity/recovery/credential writer
+may still omit the guard on unconverted accounts. The internal whole-ring transaction
+now stores versioned metadata, complete sealed password/recovery envelopes and an
+optional derived credential atomically. Converted accounts require revision guards
+and refuse legacy single-key writers. There is no HTTP conversion route. Every keyring/public-identity/recovery/credential writer
 on a converted account must supply the expected revision, checked inside the
 users-store mutation. Bump it for password changes, admin resets, recovery changes,
 UID changes, retirement and revocation. Reject stale requests with 409 and preserve
@@ -231,7 +235,8 @@ pass:
 1. Versioned ring parser and all browser decrypt consumers; shared fixtures for
    legacy import, duplicate/invalid members, subkey IDs, hidden recipients, revoked
    history, drafts and autosaves. Preserve active-only signing.
-2. Revision-guarded server mutations, whole-ring password/recovery and retirement;
+2. Revision guards and the internal whole-ring transaction are implemented; browser
+   whole-ring password/recovery, retirement and their HTTP writer remain.
    test races with password reset, same-key edits, recovery and device publication,
    storage failures and uncertain HTTP outcomes. Prove no partial credential/ring
    commit and no history loss from legacy writers or old backups.

@@ -124,23 +124,17 @@ func (s *Server) handleUsersResetPassword(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Read the custody mode BEFORE the reset, so the audit line can record
-	// what the reset destroyed.
-	//
-	// A client-protected key is wrapped under the account password and the
-	// server cannot open it, so an admin reset makes it permanently
-	// unrecoverable — documented behaviour (docs/E2E_PGP.md) that the USER is
-	// warned about at SecurityPage, with two working recovery paths. The
-	// administrator was told nothing: the reset UI was a bare prompt, this
-	// handler never looked at PGPProtection, and the audit line recorded only
-	// user_id. So the admin could not know they were about to destroy data, and
-	// no record existed afterwards that they had.
-	destroysClientKey := false
-	if before, err := s.users.Get(id); err == nil {
-		destroysClientKey = before.PGPProtection() == users.PGPProtectionClient
+	// Snapshot before deriving the new credential. A concurrent keyring update
+	// must invalidate this reset; preserved opaque material needs the previous
+	// password or recovery secret, which the response and audit record explain.
+	before, err := s.users.Get(id)
+	if err != nil {
+		writeUserStoreError(w, err)
+		return
 	}
+	destroysClientKey := before.PGPProtection() == users.PGPProtectionClient
 
-	u, err := s.users.SetPassword(r.Context(), id, req.Password, true, nil)
+	u, err := s.users.SetPassword(r.Context(), id, req.Password, true, &before.PGPRevision)
 	if err != nil {
 		writeUserStoreError(w, err)
 		return
@@ -297,6 +291,14 @@ func writeUserStoreError(w http.ResponseWriter, err error) {
 	// lock (the handler's pre-check remains as a fast path with a friendlier
 	// message, but this is the authoritative refusal).
 	if errors.Is(err, users.ErrLastActiveAdmin) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, users.ErrPGPKeyringUpgradeRequired) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "keyringUpgradeRequired": true})
+		return
+	}
+	if errors.Is(err, users.ErrInvalidPGPKeyring) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

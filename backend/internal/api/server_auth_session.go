@@ -806,6 +806,7 @@ func (s *Server) handlePasswordSnapshot(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pgpRevision":        u.PGPRevision,
+		"keyring":            u.PGPKeyring,
 		"protection":         u.PGPProtection(),
 		"wrappedPrivateKey":  wrapped,
 		"mustChangePassword": u.MustChangePassword,
@@ -945,7 +946,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 			r.Context(), u.ID, req.NewAuthSecret, req.NewLoginSalt, iterations, false, req.RewrappedPGPKey, req.ExpectedRevision,
 		)
 		if err != nil {
-			if errors.Is(err, users.ErrPGPRevisionChanged) || errors.Is(err, users.ErrInvalidPGPRevision) {
+			if errors.Is(err, users.ErrPGPRevisionChanged) || errors.Is(err, users.ErrInvalidPGPRevision) || errors.Is(err, users.ErrPGPKeyringUpgradeRequired) {
 				writeUserStoreError(w, err)
 				return
 			}
@@ -976,7 +977,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		}
 		updated, err = s.users.SetPassword(r.Context(), u.ID, req.NewPassword, false, req.ExpectedRevision)
 		if err != nil {
-			if errors.Is(err, users.ErrPGPRevisionChanged) || errors.Is(err, users.ErrInvalidPGPRevision) {
+			if errors.Is(err, users.ErrPGPRevisionChanged) || errors.Is(err, users.ErrInvalidPGPRevision) || errors.Is(err, users.ErrPGPKeyringUpgradeRequired) {
 				writeUserStoreError(w, err)
 				return
 			}

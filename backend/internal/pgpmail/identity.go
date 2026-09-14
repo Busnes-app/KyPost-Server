@@ -6,9 +6,11 @@
 package pgpmail
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	openpgp "github.com/ProtonMail/go-crypto/openpgp/v2"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
@@ -218,8 +220,10 @@ func OpenPrivateKey(enc, keyPath string) (*Identity, error) {
 // PublicKeyInfo describes an armored public key well enough to store it as
 // a user's identity, without ever seeing the matching private key.
 type PublicKeyInfo struct {
-	Fingerprint string
-	KeyID       string
+	CanEncrypt      bool
+	KeyFingerprints []string
+	Fingerprint     string
+	KeyID           string
 	// ArmoredPublicKey is the re-armored key, not the caller's input: the
 	// stored form is whatever this library produces from the parsed key, so
 	// a client cannot smuggle trailing data past the parser by wrapping it
@@ -251,7 +255,13 @@ func InspectPublicKey(armoredPublicKey string) (PublicKeyInfo, error) {
 	if err != nil {
 		return PublicKeyInfo{}, fmt.Errorf("pgpmail: armor public key: %w", err)
 	}
+	fingerprints := []string{strings.ToUpper(key.GetFingerprint())}
+	for _, subkey := range key.GetEntity().Subkeys {
+		fingerprints = append(fingerprints, strings.ToUpper(hex.EncodeToString(subkey.PublicKey.Fingerprint)))
+	}
 	return PublicKeyInfo{
+		CanEncrypt:       key.CanEncrypt(time.Now().Unix()),
+		KeyFingerprints:  fingerprints,
 		Fingerprint:      key.GetFingerprint(),
 		KeyID:            key.GetHexKeyID(),
 		ArmoredPublicKey: armored,
