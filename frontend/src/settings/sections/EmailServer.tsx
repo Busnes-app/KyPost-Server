@@ -68,9 +68,14 @@ export function EmailServer() {
     setImapBusy(true);
     setImapMessage("");
     try {
+      // A managed user's password field is disabled and always blank, so
+      // posting the full form would trip the server's all-or-nothing rule.
+      // Send only the mailbox and let the server test the stored credentials.
+      const useStoredCredentials = imapStatus?.configured === true && imapForm.password === "";
+      const body = useStoredCredentials ? { mailbox: imapForm.mailbox } : imapForm;
       const result = await postJSON<{ ok: boolean; error?: string; host?: string; port?: number; mailbox?: string }>(
         "/api/imap/test",
-        imapForm
+        body
       );
       if (result.ok) {
         setImapMessage(`IMAP test passed (${result.host}:${result.port} ${result.mailbox}).`);

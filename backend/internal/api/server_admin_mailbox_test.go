@@ -154,14 +154,32 @@ func TestAdminCardDAVClientBlankPasswordKeepsStored(t *testing.T) {
 	doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/carddav-client", map[string]any{
 		"serverUrl": fake.URL + "/dav/", "username": "m", "password": "keep-me", "managed": true,
 	})
+
+	// Seed sync state as if an unattended sync had already run, the way it
+	// would between two admin edits in production.
+	cfgPath := srv.userCardDAVClientConfigPath(member.ID)
+	seeded, _, err := readCardDAVClientConfigPayload(cfgPath, srv.imapConfigKeyPath)
+	if err != nil {
+		t.Fatalf("read seed: %v", err)
+	}
+	seeded.LastSyncedAt = "2026-01-01T00:00:00Z"
+	seeded.LastSyncImported = 3
+	seeded.AddressBookPath = "/carddav/33/contacts/main/"
+	if err := writeCardDAVClientConfigPayload(cfgPath, srv.imapConfigKeyPath, seeded); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
 	rec := doJSONAs(t, srv, admin.ID, http.MethodPut, "/api/users/"+member.ID+"/carddav-client", map[string]any{
 		"serverUrl": fake.URL + "/dav/", "username": "m", "managed": false,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	stored, _, _ := readCardDAVClientConfigPayload(srv.userCardDAVClientConfigPath(member.ID), srv.imapConfigKeyPath)
+	stored, _, _ := readCardDAVClientConfigPayload(cfgPath, srv.imapConfigKeyPath)
 	if stored.Password != "keep-me" || stored.Managed {
 		t.Fatalf("stored=%+v", stored)
+	}
+	if stored.LastSyncedAt != "2026-01-01T00:00:00Z" || stored.LastSyncImported != 3 || stored.AddressBookPath != "/carddav/33/contacts/main/" {
+		t.Fatalf("sync state discarded: stored=%+v", stored)
 	}
 }

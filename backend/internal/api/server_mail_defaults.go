@@ -44,6 +44,8 @@ func (s *Server) handleMailDefaults(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		d, err := s.loadMailDefaults()
 		if err != nil {
+			ac, _ := authFromContext(r)
+			s.logger.Error("failed to read mail defaults", "user_id", ac.UserID, "error", err.Error())
 			http.Error(w, "failed to read mail defaults", http.StatusInternalServerError)
 			return
 		}

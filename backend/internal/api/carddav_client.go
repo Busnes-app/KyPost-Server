@@ -116,6 +116,7 @@ func (s *Server) handleContactsCardDAVClientConfig(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusOK, cardDAVClientStatusResponse(payload))
 	case http.MethodPost:
 		if managed, err := s.cardDAVClientManaged(cfgPath); err != nil {
+			s.logger.Error("failed to read carddav client configuration", "user_id", ac.UserID, "error", err.Error())
 			http.Error(w, "failed to read carddav client configuration", http.StatusInternalServerError)
 			return
 		} else if managed {
@@ -159,6 +160,7 @@ func (s *Server) handleContactsCardDAVClientConfig(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusOK, cardDAVClientStatusResponse(payload))
 	case http.MethodDelete:
 		if managed, err := s.cardDAVClientManaged(cfgPath); err != nil {
+			s.logger.Error("failed to read carddav client configuration", "user_id", ac.UserID, "error", err.Error())
 			http.Error(w, "failed to read carddav client configuration", http.StatusInternalServerError)
 			return
 		} else if managed {

@@ -42,6 +42,7 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, imapConfigStatus(imapConfigPath, s.imapConfigKeyPath, payload))
 	case http.MethodPost:
 		if managed, err := s.imapConfigManaged(imapConfigPath); err != nil {
+			s.logger.Error("failed to read imap configuration", "user_id", ac.UserID, "error", err.Error())
 			http.Error(w, "failed to read imap configuration", http.StatusInternalServerError)
 			return
 		} else if managed {
@@ -86,6 +87,7 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, status)
 	case http.MethodDelete:
 		if managed, err := s.imapConfigManaged(imapConfigPath); err != nil {
+			s.logger.Error("failed to read imap configuration", "user_id", ac.UserID, "error", err.Error())
 			http.Error(w, "failed to read imap configuration", http.StatusInternalServerError)
 			return
 		} else if managed {

@@ -125,6 +125,19 @@ func (s *Server) handleAdminUserCardDAVClient(w http.ResponseWriter, r *http.Req
 		if payload.Password == "" && exists {
 			payload.Password = stored.Password
 		}
+		// Carry forward informational sync state: this route only ever changes
+		// credentials, the server URL, or the managed lock, and must not reset
+		// history an unattended sync already recorded.
+		if exists {
+			payload.LastSyncedAt = stored.LastSyncedAt
+			payload.LastSyncError = stored.LastSyncError
+			payload.LastSyncImported = stored.LastSyncImported
+			payload.LastSyncUpdated = stored.LastSyncUpdated
+			payload.DiscoveredAddressBooks = stored.DiscoveredAddressBooks
+			if payload.AddressBookPath == "" {
+				payload.AddressBookPath = stored.AddressBookPath
+			}
+		}
 		if payload.ServerURL == "" || payload.Username == "" || payload.Password == "" {
 			http.Error(w, "serverUrl, username, and password are required", http.StatusBadRequest)
 			return
