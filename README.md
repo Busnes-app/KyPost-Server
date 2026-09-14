@@ -322,13 +322,22 @@ Accounts live in `/kypost/config/users.json`. The roles are `admin` and `user`.
 - Users connect their own IMAP and SMTP account. They read and label their own
   mail, pair their own devices, set their own notification preferences, and tune
   their own prompt.
+- Admins can also do the connecting. **Server > Default Mail Server** publishes
+  host and port defaults that prefill every new user's Email Settings form; users
+  still supply their own username and password. **Server > Manage Users > Mailbox**
+  writes a specific user's IMAP/SMTP and CardDAV-client credentials directly, with
+  an optional lock. A locked user still sees the host and username on their
+  Settings > Mail tabs, rendered read-only with a "managed by your administrator"
+  notice, and the server refuses their own writes. Send-As addresses, Mailbox
+  Rules, and the built-in CardDAV Access password are never admin-managed. Every
+  admin assignment is logged with `user_id`, `admin_id`, and `managed`.
 - Deactivation is a soft delete. The user can no longer sign in. KyPost keeps
   their data on disk until you remove it manually.
 - KyPost does not let you deactivate or demote the last active admin.
 
 Per-user data layout:
 
-- `/kypost/config/users/<userID>/`: encrypted IMAP credentials, tuning prompt (`tuning.md`), notification preferences (`config.yaml`)
+- `/kypost/config/users/<userID>/`: encrypted IMAP credentials, `carddav-client.json` (encrypted CardDAV-client credentials), tuning prompt (`tuning.md`), notification preferences (`config.yaml`)
 - `/kypost/state/users/<userID>/`: `state.db` — an SQLite database holding the mailbox checkpoint, the processed set, decision history, push subscriptions, and paired devices. SQLite runs in WAL mode, so `state.db-wal` and `state.db-shm` sit alongside it while the database is open and are part of the state, not scratch files.
 
 Upgrade from a single-admin installation: on the first start, KyPost imports the
@@ -569,7 +578,8 @@ Important files:
 
 - `/kypost/config/config.yaml` (global system config)
 - `/kypost/config/users.json` (user accounts and roles)
-- `/kypost/config/users/<userID>/` (per-user IMAP credentials, tuning, notification preferences)
+- `/kypost/config/users/<userID>/` (per-user IMAP credentials, CardDAV-client credentials, tuning, notification preferences)
+- `/kypost/config/mail-defaults.json` (admin-published instance-wide host and port defaults, no credentials)
 - `/kypost/config/TUNING.md` (default tuning for new users)
 - `/kypost/config/notifications-vapid-private.pem` (shared web-push signing key)
 - `/kypost/private/imap-config.key` (master encryption key for stored IMAP credentials)
@@ -746,6 +756,8 @@ User management (admin only):
 - `POST /api/users/{id}/deactivate`
 - `POST /api/users/{id}/reactivate`
 - `POST /api/users/{id}/clear-mfa`
+- `GET|PUT|DELETE /api/users/{id}/imap-config` (assign a user's IMAP/SMTP credentials; `managed: true` locks the user's own route)
+- `GET|PUT|DELETE /api/users/{id}/carddav-client` (same for the outbound CardDAV client)
 
 Runtime:
 
@@ -765,10 +777,11 @@ Config and data:
 - `GET|PUT /api/labels/preferences` (the caller's own label list and auto-apply preference. `PUT` replaces the whole block.)
 - `GET /api/decisions` (the caller's own decisions)
 - `GET|PUT /api/tuning` (the caller's own tuning prompt)
+- `GET /api/mail-defaults` (any user) / `PUT /api/mail-defaults` (admin): instance-wide host and port defaults, no credentials
 
 IMAP and inbox:
 
-- `GET|POST|DELETE /api/imap/config`
+- `GET|POST|DELETE /api/imap/config`, returns 403 while `managed`
 - `POST /api/imap/test`
 - `GET /api/inbox?limit=500&mailbox=<name>`. Add `bodies=0` to get the list without message bodies — 13.3 MiB against 3.1 KiB for a 500-message window, since the rows render no body. The web UI then preloads the current 20-message page one body at a time from `GET /api/mail/body`, so the list renders first and opening a displayed message normally needs no wait. See [docs/INBOX_PAYLOAD_HANDOFF.md](docs/INBOX_PAYLOAD_HANDOFF.md).
 - `POST /api/inbox/actions`
@@ -830,7 +843,7 @@ Contacts:
 - `POST /api/contacts/bulk-delete`
 - `GET /api/contacts/export` and `POST /api/contacts/import`
 - `GET|POST|DELETE /api/contacts/dav-password` (app-specific CardDAV password)
-- `GET|POST|DELETE /api/contacts/carddav-client/config` and `POST /api/contacts/carddav-client/sync` (sync from an external CardDAV server)
+- `GET|POST|DELETE /api/contacts/carddav-client/config` and `POST /api/contacts/carddav-client/sync` (sync from an external CardDAV server), returns 403 while `managed`
 - `POST|GET|DELETE /api/contacts/{id}/photo`
 - `POST /api/contacts/{id}/self`
 - `GET|POST /api/contacts/sync` (mobile two-way sync. A pairing token authenticates the call.)

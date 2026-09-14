@@ -14,6 +14,9 @@ vi.mock("../../api/client", () => ({
   toErrorMessage: (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback)
 }));
 
+const getMailDefaults = vi.fn();
+vi.mock("../../api/mailDefaults", () => ({ getMailDefaults: () => getMailDefaults() }));
+
 afterEach(cleanup);
 
 beforeEach(() => {
@@ -22,6 +25,8 @@ beforeEach(() => {
   deleteJSON.mockReset();
   getJSON.mockResolvedValue({ configured: true, host: "imap.example.com", port: 993, username: "gwen", mailbox: "INBOX" });
   postJSON.mockResolvedValue({ ok: true });
+  getMailDefaults.mockReset();
+  getMailDefaults.mockResolvedValue({ host: "", port: 0, smtpHost: "", smtpPort: 0 });
 });
 
 describe("EmailServer", () => {
@@ -41,6 +46,63 @@ describe("EmailServer", () => {
     await waitFor(() =>
       expect(postJSON).toHaveBeenCalledWith(
         "/api/imap/config",
+        expect.objectContaining({
+          host: "imap.example.com",
+          port: 993,
+          username: "gwen",
+          password: "app-password",
+          mailbox: "INBOX"
+        })
+      )
+    );
+  });
+
+  it("prefills host and ports from instance defaults when nothing is configured", async () => {
+    getJSON.mockResolvedValue({ configured: false });
+    getMailDefaults.mockResolvedValue({ host: "imap.home.test", port: 993, smtpHost: "smtp.home.test", smtpPort: 465 });
+    render(<EmailServer />);
+    await waitFor(() => expect(screen.getByDisplayValue("imap.home.test")).toBeTruthy());
+    expect(screen.getByDisplayValue("smtp.home.test")).toBeTruthy();
+    expect(screen.getByDisplayValue("465")).toBeTruthy();
+    // Username stays blank: defaults never carry an identity.
+    expect((screen.getByLabelText(/^username/i) as HTMLInputElement).value).toBe("");
+  });
+
+  it("does not override a stored config with defaults", async () => {
+    getMailDefaults.mockResolvedValue({ host: "imap.home.test", port: 993, smtpHost: "", smtpPort: 0 });
+    render(<EmailServer />);
+    await waitFor(() => expect(screen.getByDisplayValue("imap.example.com")).toBeTruthy());
+    expect(screen.queryByDisplayValue("imap.home.test")).toBeNull();
+  });
+
+  it("renders read-only with a notice when managed by an admin", async () => {
+    getJSON.mockResolvedValue({ configured: true, managed: true, host: "imap.example.com", port: 993, username: "gwen", mailbox: "INBOX" });
+    render(<EmailServer />);
+    await waitFor(() => expect(screen.getByText(/managed by your administrator/i)).toBeTruthy());
+    expect((screen.getByDisplayValue("imap.example.com") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /save email settings/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /delete stored email settings/i })).toBeNull();
+    // Testing the connection stays available; it only reads stored credentials.
+    const testButton = screen.getByRole("button", { name: /test email settings/i });
+    expect(testButton).toBeTruthy();
+
+    await userEvent.click(testButton);
+    await waitFor(() =>
+      expect(postJSON).toHaveBeenCalledWith("/api/imap/test", { mailbox: "INBOX" })
+    );
+    const [, body] = postJSON.mock.calls[postJSON.mock.calls.length - 1];
+    expect(body).not.toHaveProperty("password");
+  });
+
+  it("tests the full form when the user has typed a new password", async () => {
+    render(<EmailServer />);
+    await waitFor(() => expect(screen.getByDisplayValue("imap.example.com")).toBeTruthy());
+    await userEvent.type(screen.getByLabelText(/password/i), "app-password");
+    await userEvent.click(screen.getByRole("button", { name: /test email settings/i }));
+
+    await waitFor(() =>
+      expect(postJSON).toHaveBeenCalledWith(
+        "/api/imap/test",
         expect.objectContaining({
           host: "imap.example.com",
           port: 993,

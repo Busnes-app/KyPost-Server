@@ -196,6 +196,7 @@ export type CardDAVClientConfig = {
   lastSyncImported?: number;
   lastSyncUpdated?: number;
   discoveredAddressBooks?: DiscoveredAddressBook[];
+  managed?: boolean;
 };
 
 export type CardDAVClientInput = {

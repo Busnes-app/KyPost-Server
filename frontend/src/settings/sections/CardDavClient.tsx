@@ -93,6 +93,8 @@ export function CardDavClient() {
     }
   }
 
+  const managed = clientConfig?.managed === true;
+
   return (
     <div className="config-card">
       <h3>CardDAV Client</h3>
@@ -100,11 +102,17 @@ export function CardDavClient() {
         Pull contacts down from an external CardDAV server (iCloud, Google, Nextcloud, Fastmail, etc.) into your
         KyPost address book. Imported contacts then reach the mobile app the same way locally-added ones do.
       </p>
+      {managed ? (
+        <p className="notice notice-success">
+          These settings are managed by your administrator. Contacts still sync from the configured server.
+        </p>
+      ) : null}
       <div className="config-grid config-grid-two">
         <label>
           <div>Server URL</div>
           <input
             value={clientForm.serverUrl}
+            disabled={managed}
             onChange={(event) => setClientForm((prev) => ({ ...prev, serverUrl: event.target.value }))}
             placeholder="https://contacts.example.com/dav/"
           />
@@ -113,6 +121,7 @@ export function CardDavClient() {
           <div>Username</div>
           <input
             value={clientForm.username}
+            disabled={managed}
             onChange={(event) => setClientForm((prev) => ({ ...prev, username: event.target.value }))}
           />
         </label>
@@ -121,6 +130,7 @@ export function CardDavClient() {
           <input
             type="password"
             value={clientForm.password}
+            disabled={managed}
             onChange={(event) => setClientForm((prev) => ({ ...prev, password: event.target.value }))}
             placeholder="Required when saving changes"
           />
@@ -129,6 +139,7 @@ export function CardDavClient() {
           <div>Address Book Path (optional override)</div>
           <input
             value={clientForm.addressBookPath}
+            disabled={managed}
             onChange={(event) => setClientForm((prev) => ({ ...prev, addressBookPath: event.target.value }))}
             placeholder="Leave blank to auto-discover"
           />
@@ -141,13 +152,15 @@ export function CardDavClient() {
         list below into the override field, save, and sync again.
       </p>
       <div className="config-actions">
-        <button type="button" onClick={() => void saveCardDAVClient()} disabled={clientBusy}>
-          {clientBusy ? "Saving..." : "Save CardDAV Client"}
-        </button>
+        {managed ? null : (
+          <button type="button" onClick={() => void saveCardDAVClient()} disabled={clientBusy}>
+            {clientBusy ? "Saving..." : "Save CardDAV Client"}
+          </button>
+        )}
         <button type="button" onClick={() => void runCardDAVClientSync()} disabled={clientSyncBusy || !clientConfig?.configured}>
           {clientSyncBusy ? "Syncing..." : "Sync Now"}
         </button>
-        {clientConfig?.configured ? (
+        {clientConfig?.configured && !managed ? (
           <button type="button" onClick={() => void deleteCardDAVClient()} disabled={clientBusy}>
             Delete Stored Configuration
           </button>
@@ -180,7 +193,7 @@ export function CardDavClient() {
                       {book.name ? ` (${book.name})` : ""} — {book.contactCount} contact
                       {book.contactCount === 1 ? "" : "s"}
                     </span>
-                    {book.path !== clientForm.addressBookPath ? (
+                    {book.path !== clientForm.addressBookPath && !managed ? (
                       <button type="button" onClick={() => useDiscoveredAddressBook(book.path)}>
                         Use This
                       </button>

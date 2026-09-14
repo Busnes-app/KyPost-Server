@@ -1,4 +1,4 @@
-import { getJSON, postJSON, putJSON } from "./client";
+import { getJSON, postJSON, putJSON, deleteJSON } from "./client";
 import type { Role } from "../auth";
 
 export type ManagedUser = {
@@ -63,4 +63,63 @@ export function reactivateUser(id: string): Promise<ManagedUser> {
 
 export function clearUserMFA(id: string): Promise<ManagedUser> {
   return postJSON<ManagedUser>(`/api/users/${encodeURIComponent(id)}/clear-mfa`, {});
+}
+
+export type UserIMAPStatus = {
+  configured: boolean;
+  host?: string;
+  port?: number;
+  username?: string;
+  mailbox?: string;
+  smtpHost?: string;
+  smtpPort?: number;
+  managed?: boolean;
+};
+
+export type UserIMAPInput = {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  mailbox: string;
+  smtpHost: string;
+  smtpPort: number;
+  managed: boolean;
+};
+
+export type UserCardDAVStatus = {
+  configured: boolean;
+  serverUrl?: string;
+  username?: string;
+  addressBookPath?: string;
+  managed?: boolean;
+};
+
+export type UserCardDAVInput = {
+  serverUrl: string;
+  username: string;
+  password: string;
+  addressBookPath: string;
+  managed: boolean;
+};
+
+const userPath = (id: string, tail: string) => `/api/users/${encodeURIComponent(id)}/${tail}`;
+
+export function getUserIMAPConfig(id: string): Promise<UserIMAPStatus> {
+  return getJSON<UserIMAPStatus>(userPath(id, "imap-config"));
+}
+export function putUserIMAPConfig(id: string, input: UserIMAPInput): Promise<UserIMAPStatus> {
+  return putJSON<UserIMAPStatus>(userPath(id, "imap-config"), input);
+}
+export function deleteUserIMAPConfig(id: string): Promise<{ ok: boolean }> {
+  return deleteJSON<{ ok: boolean }>(userPath(id, "imap-config"));
+}
+export function getUserCardDAVClient(id: string): Promise<UserCardDAVStatus> {
+  return getJSON<UserCardDAVStatus>(userPath(id, "carddav-client"));
+}
+export function putUserCardDAVClient(id: string, input: UserCardDAVInput): Promise<UserCardDAVStatus> {
+  return putJSON<UserCardDAVStatus>(userPath(id, "carddav-client"), input);
+}
+export function deleteUserCardDAVClient(id: string): Promise<{ ok: boolean }> {
+  return deleteJSON<{ ok: boolean }>(userPath(id, "carddav-client"));
 }

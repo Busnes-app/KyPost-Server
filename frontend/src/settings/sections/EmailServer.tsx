@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { deleteJSON, getJSON, postJSON, toErrorMessage } from "../../api/client";
+import { getMailDefaults } from "../../api/mailDefaults";
 import type { IMAPConfigStatus, IMAPForm } from "../../pages/config/settings";
 
 export function EmailServer() {
@@ -29,6 +30,17 @@ export function EmailServer() {
         smtpHost: status.smtpHost ?? prev.smtpHost,
         smtpPort: status.smtpPort ?? prev.smtpPort
       }));
+    } else {
+      const d = await getMailDefaults().catch(() => null);
+      if (d) {
+        setImapForm((prev) => ({
+          ...prev,
+          host: prev.host || d.host,
+          port: d.port || prev.port,
+          smtpHost: prev.smtpHost || d.smtpHost,
+          smtpPort: d.smtpPort || prev.smtpPort
+        }));
+      }
     }
   }
 
@@ -56,9 +68,14 @@ export function EmailServer() {
     setImapBusy(true);
     setImapMessage("");
     try {
+      // A managed user's password field is disabled and always blank, so
+      // posting the full form would trip the server's all-or-nothing rule.
+      // Send only the mailbox and let the server test the stored credentials.
+      const useStoredCredentials = imapStatus?.configured === true && imapForm.password === "";
+      const body = useStoredCredentials ? { mailbox: imapForm.mailbox } : imapForm;
       const result = await postJSON<{ ok: boolean; error?: string; host?: string; port?: number; mailbox?: string }>(
         "/api/imap/test",
-        imapForm
+        body
       );
       if (result.ok) {
         setImapMessage(`IMAP test passed (${result.host}:${result.port} ${result.mailbox}).`);
@@ -89,44 +106,67 @@ export function EmailServer() {
     }
   }
 
+  const managed = imapStatus?.managed === true;
+
   return (
     <div className="config-card">
       <h3>Email Settings</h3>
       <p className="config-muted">Stored mail credentials are encrypted at rest. SMTP host/port are optional overrides.</p>
+      {managed ? (
+        <p className="notice notice-success">
+          These settings are managed by your administrator. You can see where mail is fetched from and sent through, but
+          not change it.
+        </p>
+      ) : null}
       <div className="config-grid config-grid-two">
         <label>
           <div>Host</div>
-          <input value={imapForm.host} onChange={(event) => setImapForm((prev) => ({ ...prev, host: event.target.value }))} />
+          <input
+            value={imapForm.host}
+            disabled={managed}
+            onChange={(event) => setImapForm((prev) => ({ ...prev, host: event.target.value }))}
+          />
         </label>
         <label>
           <div>Port</div>
           <input
             type="number"
             value={imapForm.port}
+            disabled={managed}
             onChange={(event) => setImapForm((prev) => ({ ...prev, port: Number(event.target.value) || 993 }))}
           />
         </label>
         <label>
           <div>Username</div>
-          <input value={imapForm.username} onChange={(event) => setImapForm((prev) => ({ ...prev, username: event.target.value }))} />
+          <input
+            value={imapForm.username}
+            disabled={managed}
+            onChange={(event) => setImapForm((prev) => ({ ...prev, username: event.target.value }))}
+          />
         </label>
         <label>
           <div>Password or App Password</div>
           <input
             type="password"
             value={imapForm.password}
+            disabled={managed}
             onChange={(event) => setImapForm((prev) => ({ ...prev, password: event.target.value }))}
             placeholder="Required when saving changes"
           />
         </label>
         <label>
           <div>Mailbox</div>
-          <input value={imapForm.mailbox} onChange={(event) => setImapForm((prev) => ({ ...prev, mailbox: event.target.value }))} />
+          <input
+            value={imapForm.mailbox}
+            disabled={managed}
+            onChange={(event) => setImapForm((prev) => ({ ...prev, mailbox: event.target.value }))}
+          />
         </label>
         <label>
           <div>SMTP Host (optional)</div>
           <input
             value={imapForm.smtpHost}
+            disabled={managed}
             onChange={(event) => setImapForm((prev) => ({ ...prev, smtpHost: event.target.value }))}
             placeholder="Defaults to IMAP-derived host"
           />
@@ -136,20 +176,25 @@ export function EmailServer() {
           <input
             type="number"
             value={imapForm.smtpPort}
+            disabled={managed}
             onChange={(event) => setImapForm((prev) => ({ ...prev, smtpPort: Number(event.target.value) || 587 }))}
           />
         </label>
       </div>
       <div className="config-actions">
-        <button type="button" onClick={saveIMAPConfig} disabled={imapBusy}>
-          {imapBusy ? "Saving..." : "Save Email Settings"}
-        </button>
+        {managed ? null : (
+          <button type="button" onClick={saveIMAPConfig} disabled={imapBusy}>
+            {imapBusy ? "Saving..." : "Save Email Settings"}
+          </button>
+        )}
         <button type="button" onClick={testIMAPConfig} disabled={imapBusy}>
           {imapBusy ? "Testing..." : "Test Email Settings"}
         </button>
-        <button type="button" onClick={deleteIMAPConfig} disabled={imapBusy}>
-          Delete Stored Email Settings
-        </button>
+        {managed ? null : (
+          <button type="button" onClick={deleteIMAPConfig} disabled={imapBusy}>
+            Delete Stored Email Settings
+          </button>
+        )}
       </div>
 
       {imapStatus ? (
