@@ -382,6 +382,9 @@ compose shows `Unsigned`. After successful local decryption, a message without
 a signature shows `encrypted but unsigned`. Locked, pending, or failed decrypts
 do not establish signature absence. Encryption and sender verification remain
 separate badges; only a successful sender-bound signature gets a verification pass.
+A detached PGP/MIME signature inside encryption (including a nested multipart)
+is detected and reported as unchecked. The browser does not yet verify that
+nested detached signature; it must not label such a message unsigned.
 
 Attachments in the browser path: compose attachments go inside the encrypted
 entity as base64 parts of the protected-headers `multipart/mixed`, with the

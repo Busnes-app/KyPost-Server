@@ -254,7 +254,9 @@ export async function decryptMessage(
   return {
     body: parsed ? parsed.body : raw,
     bodyMode: parsed?.mode,
-    signed,
+    // MIME detached signatures are present but unchecked; only the packet
+    // verification above can establish a sender-bound verification result.
+    signed: signed || Boolean(parsed?.hasDetachedSignature),
     verified,
     signerFingerprint,
     signerConflict: hasSignerConflict(signerKeys),
