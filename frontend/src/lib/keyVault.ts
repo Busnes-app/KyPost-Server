@@ -353,7 +353,7 @@ export function requireUnlockedKeyMaterial(): string {
 
 /** Legacy writers must never send a ring through single-key recovery/enrollment. */
 export function requireSinglePrivateKey(plaintext: string): string {
-  if (!plaintext.trimStart().startsWith("-----BEGIN PGP PRIVATE KEY BLOCK-----")) {
+  if (plaintext.trimStart().startsWith("{") || !/^-----BEGIN PGP PRIVATE KEY BLOCK-----\r?$/m.test(plaintext.trim())) {
     throw new Error("Keyring writes require the lifecycle upgrade. Historical reading remains available.");
   }
   return plaintext;

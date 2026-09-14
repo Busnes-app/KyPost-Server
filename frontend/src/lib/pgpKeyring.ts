@@ -18,7 +18,7 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function readSingleKey(armor: string, requireComplete: boolean): Promise<PrivateKey> {
+async function readSingleKey(armor: string): Promise<PrivateKey> {
   // OpenPGP armor readers may stop at the first block. Reject trailing blocks
   // rather than silently discarding a second historical key.
   const trimmed = armor.trim();
@@ -30,20 +30,22 @@ async function readSingleKey(armor: string, requireComplete: boolean): Promise<P
   const key = keys[0];
   if (keys.length !== 1 || !key) invalid();
   // isDecrypted() on a primary key means SOME packet is decrypted. A ring must
-  // not silently accept a still-passphrase-protected historical subkey. Legacy
-  // armor retains OpenPGP's existing policy, including GNU dummy primary keys.
-  if (requireComplete && !key.getKeys().every(({ keyPacket }) => "isDecrypted" in keyPacket && keyPacket.isDecrypted())) invalid();
+  // not silently accept a still-passphrase-protected historical subkey.
+  if (!key.getKeys().every(({ keyPacket }) => "isDecrypted" in keyPacket && keyPacket.isDecrypted())) invalid();
   return key;
 }
 
 /** Validate the complete payload before exposing any member to a decrypt call. */
 export async function parseKeyring(raw: string): Promise<ParsedKeyring> {
-  if (raw.length > MAX_KEYRING_BYTES || new TextEncoder().encode(raw).length > MAX_KEYRING_BYTES) invalid();
   try {
-    if (raw.trimStart().startsWith("-----BEGIN PGP PRIVATE KEY BLOCK-----")) {
-      const activeKey = await readSingleKey(raw, false);
+    if (!raw.trimStart().startsWith("{")) {
+      // Preserve the existing armor reader: legacy exports may carry preambles,
+      // large certification/UID sets or a GNU dummy primary with live subkeys.
+      const pgp = await import("openpgp");
+      const activeKey = await pgp.readPrivateKey({ armoredKey: raw });
       return { activeKey, keys: [activeKey] };
     }
+    if (raw.length > MAX_KEYRING_BYTES || new TextEncoder().encode(raw).length > MAX_KEYRING_BYTES) invalid();
     const value: unknown = JSON.parse(raw);
     if (!record(value) || value.format !== "kypost-pgp-keyring-v1" ||
         typeof value.activeFingerprint !== "string" ||
@@ -56,17 +58,18 @@ export async function parseKeyring(raw: string): Promise<ParsedKeyring> {
     for (const entry of value.keys) {
       if (!record(entry) || typeof entry.fingerprint !== "string" || typeof entry.privateKey !== "string" ||
           (entry.revocationCertificate !== undefined && typeof entry.revocationCertificate !== "string")) invalid();
-      const key = await readSingleKey(entry.privateKey, true);
+      const key = await readSingleKey(entry.privateKey);
       const fingerprint = key.getFingerprint().toUpperCase();
-      if (entry.fingerprint !== fingerprint || primaryFingerprints.has(fingerprint)) invalid();
+      if (entry.fingerprint.toUpperCase() !== fingerprint || primaryFingerprints.has(fingerprint)) invalid();
       primaryFingerprints.add(fingerprint);
       keys.push(key);
     }
     const inventory = keys.flatMap(key => key.getKeys().map(member => member.getFingerprint().toUpperCase()));
-    const declared = value.keyFingerprints;
+    const declared = value.keyFingerprints.map((fingerprint: string) => fingerprint.toUpperCase());
+    const activeFingerprint = value.activeFingerprint.toUpperCase();
     if (new Set(inventory).size !== inventory.length || new Set(declared).size !== declared.length ||
         inventory.length !== declared.length || !inventory.every(fingerprint => declared.includes(fingerprint))) invalid();
-    const activeKey = keys.find(key => key.getFingerprint().toUpperCase() === value.activeFingerprint);
+    const activeKey = keys.find(key => key.getFingerprint().toUpperCase() === activeFingerprint);
     if (!activeKey) invalid();
     return { activeKey, keys };
   } catch {

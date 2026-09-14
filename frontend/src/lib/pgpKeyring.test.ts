@@ -60,7 +60,8 @@ describe("keyring readers", () => {
     ring.keys[1].privateKey = revoked.armor();
     unlockWithArmoredKey(JSON.stringify(ring));
     expect(await openSealedToSelf(fixture.ciphertext)).toBe(fixture.plaintext);
-    const opened = await decryptMessage(signed, [], envelope.from);
+    const opened = await decryptMessage(signed, [{ publicKey: revoked.toPublic().armor(), addresses: [envelope.from] }], envelope.from);
+    expect(opened.signed).toBe(true);
     expect(opened.verified).toBe(false);
   });
 
@@ -98,6 +99,9 @@ describe("keyring readers", () => {
     if (!("makeDummy" in key.keyPacket)) throw new Error("fixture must have a secret primary packet");
     key.keyPacket.makeDummy();
     const exported = key.armor();
+    const incompleteRing = structuredClone(fixture.ring);
+    incompleteRing.keys[1].privateKey = exported;
+    await expect(parseKeyring(JSON.stringify(incompleteRing))).rejects.toThrow(/invalid/);
     const imported = await pgp.readPrivateKey({ armoredKey: exported });
     expect(imported.isDecrypted()).toBe(true);
     expect((await pgp.decrypt({ message: await pgp.readMessage({ armoredMessage: fixture.ciphertext }), decryptionKeys: imported })).data).toBe(fixture.plaintext);
@@ -105,9 +109,32 @@ describe("keyring readers", () => {
     expect(await openSealedToSelf(fixture.ciphertext)).toBe(fixture.plaintext);
   });
 
+  it("reads and writes large legacy keys and surrounding armor text", async () => {
+    const key = await pgp.readPrivateKey({ armoredKey: active.privateKey });
+    const large = await pgp.reformatKey({ privateKey: key, userIDs: Array.from({ length: 110 }, (_, index) => ({ name: "X".repeat(1000) + index, email: envelope.from })), format: "armored" });
+    expect(large.privateKey.length).toBeGreaterThan(128 << 10);
+    for (const armor of [large.privateKey, "GnuPG export\n" + active.privateKey + "\nEnd of export"]) {
+      unlockWithArmoredKey(armor);
+      expect(requireUnlockedKey()).toBe(armor);
+      expect(await openSealedToSelf(await sealToSelf("legacy roundtrip"))).toBe("legacy roundtrip");
+    }
+  });
+
+  it("accepts lowercase fingerprint declarations without allowing duplicate inventory", async () => {
+    const ring = structuredClone(fixture.ring);
+    ring.activeFingerprint = ring.activeFingerprint.toLowerCase();
+    ring.keyFingerprints = ring.keyFingerprints.map(value => value.toLowerCase());
+    ring.keys = ring.keys.map(value => ({ ...value, fingerprint: value.fingerprint.toLowerCase() }));
+    expect((await parseKeyring(JSON.stringify(ring))).activeKey.getFingerprint().toUpperCase()).toBe(active.fingerprint);
+    ring.keyFingerprints.push(active.fingerprint);
+    await expect(parseKeyring(JSON.stringify(ring))).rejects.toThrow(/invalid/);
+  });
+
   it("rejects oversized, concatenated, public-only and still-encrypted material", async () => {
     await expect(parseKeyring(" ".repeat(128 << 10) + raw)).rejects.toThrow(/invalid/);
-    await expect(parseKeyring(active.privateKey + historical.privateKey)).rejects.toThrow(/invalid/);
+    const concatenated = structuredClone(fixture.ring);
+    concatenated.keys[0].privateKey += historical.privateKey;
+    await expect(parseKeyring(JSON.stringify(concatenated))).rejects.toThrow(/invalid/);
     const key = await pgp.readPrivateKey({ armoredKey: active.privateKey });
     await expect(parseKeyring(key.toPublic().armor())).rejects.toThrow(/invalid/);
     const encrypted = await pgp.encryptKey({ privateKey: key, passphrase: "another secret" });

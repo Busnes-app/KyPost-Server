@@ -53,14 +53,16 @@ Change its plaintext only after explicit account conversion:
 }
 ```
 
-Fingerprints are uppercase hex derived from the parsed packets;
+Writers use uppercase hex fingerprints derived from the parsed packets; the
+reader compares case-insensitively and detects duplicates after normalization.
 `keyFingerprints` is the unique complete primary/subkey inventory (order is
 immaterial). `materialGeneration` is a positive safe integer. The reader rejects
 unknown formats, duplicate/missing members, multiple keys in one armor entry,
 public-only keys and, for JSON rings, any missing or still-passphrase-protected
 private packet. Legacy armor keeps its prior decryption policy, including GnuPG
-exports with a dummy primary and usable encryption subkey. Plaintext
-parsing is bounded to 128 KiB before JSON/OpenPGP work; the future writer must
+exports with a dummy primary and usable encryption subkey, large UID/certification
+sets, and text surrounding armor. JSON ring plaintext parsing is bounded to
+128 KiB before JSON/OpenPGP work; the future writer must
 separately enforce the serialized sealed-envelope limit below.
 
 `revocationCertificate` is optional for imported keys. Keep unpublished
