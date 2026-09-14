@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- PGP recovery now stores a sealed server copy as well as requesting a tested offline download. Restore the current identity without the file using its recovery secret; test a copy with a non-destructive drill and keep its date in this browser. Password changes warn when no server copy is confirmed, and identity deletion warns that it removes server recovery too. Recovery writes refuse a concurrently replaced identity.
+
 - Signing defaults on when an unlocked browser key is available, including after unlocking while composing. Turning Sign off shows `Unsigned` and lasts for that message. Successfully decrypted mail without a signature shows `encrypted but unsigned`; encryption alone never means the sender was verified. Detached MIME signatures inside encryption are detected as signed but unchecked, including nested multipart wrappers.
 
 - Sign without Encrypt now sends a real signed message (RFC 3156 `multipart/signed`) from a browser-encrypted account, to every recipient, without needing their keys. It used to route into the encrypted path and refuse recipients with no key. The Sent copy of any browser-encrypted send is now shape-checked as ciphertext on the server before it is stored, not just flagged by the client.

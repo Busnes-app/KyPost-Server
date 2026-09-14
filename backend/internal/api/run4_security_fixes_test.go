@@ -384,7 +384,7 @@ func TestDeviceCannotReachEnvelopeSlotRoutes(t *testing.T) {
 		t.Errorf("a paired device's PUT to a wrapped-envelope slot got %d, want %d (blocked by auth)", putRec.Code, http.StatusUnauthorized)
 	}
 
-	if _, err := srv.users.SetPGPWrappedEnvelope(userID, "recovery", `{"v":2,"rec":1}`, ""); err != nil {
+	if _, err := srv.users.SetPGPWrappedEnvelope(userID, "recovery", `{"v":2,"rec":1}`, "", ""); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope (fixture): %v", err)
 	}
 	get := httptest.NewRequest(http.MethodGet, "/api/pgp/identity/envelope/recovery", nil)

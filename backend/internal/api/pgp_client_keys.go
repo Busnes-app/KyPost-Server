@@ -165,7 +165,8 @@ func (s *Server) handlePGPRewrapKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Wrapped string `json:"wrapped"`
+		Wrapped             string `json:"wrapped"`
+		ExpectedFingerprint string `json:"expectedFingerprint,omitempty"`
 		// Step-up credential. Always required here: rewrapping presupposes an
 		// identity to rewrap, so this endpoint is never first-time setup.
 		Password   string `json:"password,omitempty"`
@@ -185,7 +186,7 @@ func (s *Server) handlePGPRewrapKey(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
 		return
 	}
-	if _, err := s.users.RewrapPGPPrivateKey(ac.UserID, strings.TrimSpace(req.Wrapped)); err != nil {
+	if _, err := s.users.RewrapPGPPrivateKey(ac.UserID, strings.TrimSpace(req.Wrapped), strings.TrimSpace(req.ExpectedFingerprint)); err != nil {
 		writeUserStoreError(w, err)
 		return
 	}
@@ -290,7 +291,8 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req struct {
-		Envelope string `json:"envelope"`
+		Envelope            string `json:"envelope"`
+		ExpectedFingerprint string `json:"expectedFingerprint,omitempty"`
 		// Step-up credential (pgp_stepup.go). Installing a slot mints or
 		// replaces a sealing of the private key: a stolen session must not be
 		// able to plant an envelope the server cannot validate, and the user
@@ -312,7 +314,7 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 	}
 	if _, err := s.users.SetPGPWrappedEnvelope(
 		ac.UserID, r.PathValue("slot"), envelope,
-		time.Now().UTC().Format(time.RFC3339),
+		time.Now().UTC().Format(time.RFC3339), strings.TrimSpace(req.ExpectedFingerprint),
 	); err != nil {
 		writeUserStoreError(w, err)
 		return
@@ -335,7 +337,10 @@ func (s *Server) handlePGPGetEnvelopeSlot(w http.ResponseWriter, r *http.Request
 	slot := r.PathValue("slot")
 	for _, e := range u.WrappedEnvelopes() {
 		if e.Slot == slot {
-			writeJSON(w, http.StatusOK, map[string]any{"slot": e.Slot, "envelope": e.Envelope})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"slot": e.Slot, "envelope": e.Envelope,
+				"fingerprint": u.PGPFingerprint, "publicKey": u.PGPPublicKey,
+			})
 			return
 		}
 	}

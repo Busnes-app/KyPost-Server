@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -66,7 +68,7 @@ func TestBootstrapReportsPasswordSlotOnly(t *testing.T) {
 func TestBootstrapReportsRecoverySlot(t *testing.T) {
 	srv := newTestServer(t)
 	id := clientProtectedSlotUser(t, srv)
-	if _, err := srv.users.SetPGPWrappedEnvelope(id, users.EnvelopeSlotRecovery, `{"v":2,"rec":1}`, ""); err != nil {
+	if _, err := srv.users.SetPGPWrappedEnvelope(id, users.EnvelopeSlotRecovery, `{"v":2,"rec":1}`, "", ""); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope: %v", err)
 	}
 	got := bootstrapSlots(t, srv, id)
@@ -81,7 +83,7 @@ func TestBootstrapReportsRecoverySlot(t *testing.T) {
 func TestBootstrapDoesNotServeNonPasswordEnvelopeBodies(t *testing.T) {
 	srv := newTestServer(t)
 	id := clientProtectedSlotUser(t, srv)
-	if _, err := srv.users.SetPGPWrappedEnvelope(id, users.EnvelopeSlotRecovery, `{"v":2,"SECRETBODY":1}`, ""); err != nil {
+	if _, err := srv.users.SetPGPWrappedEnvelope(id, users.EnvelopeSlotRecovery, `{"v":2,"SECRETBODY":1}`, "", ""); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/pgp/bootstrap", nil)
@@ -170,13 +172,15 @@ func TestEnvelopeSlotRoundTrip(t *testing.T) {
 		t.Fatalf("GET status = %d; body=%s", rec.Code, rec.Body.String())
 	}
 	var out struct {
-		Slot     string `json:"slot"`
-		Envelope string `json:"envelope"`
+		Slot        string `json:"slot"`
+		Fingerprint string `json:"fingerprint"`
+		PublicKey   string `json:"publicKey"`
+		Envelope    string `json:"envelope"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if out.Slot != "recovery" || out.Envelope != `{"v":2,"rec":1}` {
+	if out.Fingerprint != "FPR" || out.PublicKey == "" || out.Slot != "recovery" || out.Envelope != `{"v":2,"rec":1}` {
 		t.Fatalf("round trip lost data: %+v", out)
 	}
 
@@ -222,5 +226,47 @@ func TestGetEnvelopeSlotMissingIs404(t *testing.T) {
 	srv.withAuth(srv.handlePGPGetEnvelopeSlot)(rec, get)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestRecoveryWriteIdentityPreconditions(t *testing.T) {
+	for _, slot := range []bool{true, false} {
+		t.Run(fmt.Sprintf("slot=%t", slot), func(t *testing.T) {
+			srv := newTestServer(t)
+			id := clientProtectedSlotUser(t, srv)
+			for _, expected := range []string{"STALE", "fpr"} {
+				body := map[string]string{"password": "pw-slotapi-testpassword", "expectedFingerprint": expected, "envelope": "sealed-recovery", "wrapped": "sealed-password"}
+				raw, err := json.Marshal(body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				req := httptest.NewRequest(http.MethodPost, "/api/pgp/identity/rewrap", bytes.NewReader(raw))
+				handler := srv.handlePGPRewrapKey
+				if slot {
+					req.Method = http.MethodPut
+					req.SetPathValue("slot", "recovery")
+					handler = srv.handlePGPPutEnvelopeSlot
+				}
+				authRequestAs(srv, req, id)
+				rec := httptest.NewRecorder()
+				srv.withAuth(handler)(rec, req)
+				want := http.StatusOK
+				if expected == "STALE" {
+					want = http.StatusConflict
+				}
+				if rec.Code != want {
+					t.Fatalf("expected %s: status %d: %s", expected, rec.Code, rec.Body.String())
+				}
+				if expected == "STALE" {
+					u, err := srv.users.Get(id)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if u.PGPPrivateKeyWrapped != `{"v":2,"pw":true}` || len(u.PGPWrappedEnvelopes) != 0 {
+						t.Fatal("conflict mutated key material")
+					}
+				}
+			}
+		})
 	}
 }

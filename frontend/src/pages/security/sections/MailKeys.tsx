@@ -1,8 +1,11 @@
-import { ChangeEvent, FormEvent, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { toErrorMessage } from "../../../api/client";
 import {
   deletePGPIdentity,
+  getPGPBootstrap,
+  getRecoveryBackup,
+  putRecoveryEnvelope,
   storeClientPGPIdentity,
   rewrapPGPPrivateKey,
   exportLegacyPGPKey,
@@ -32,6 +35,9 @@ import {
 import { unlockWithArmoredKey } from "../../../lib/keyVault";
 import { listContacts, type Contact } from "../../../api/contacts";
 
+import { useAuth } from "../../../auth";
+import { lastRecoveryDrill, recordRecoveryDrill } from "../../../lib/recoveryDrill";
+
 const noop = () => {};
 
 export type MailKeysProps = {
@@ -50,6 +56,8 @@ export type MailKeysProps = {
   // by switching to Sign-in or Devices and back. Lifting it, like
   // recoveryCodes on SignIn, means it is simply still there when this
   // remounts.
+  recoveryBackup?: RecoveryBackup | null;
+  setRecoveryBackup?: (backup: RecoveryBackup | null) => void;
   recoverySecret?: string;
   setRecoverySecret?: (secret: string) => void;
 };
@@ -60,9 +68,17 @@ export function MailKeys({
   pgpLoading = false,
   pgpSession = null,
   setUnlockOpen = noop,
+  recoveryBackup = null,
+  setRecoveryBackup = noop,
   recoverySecret = "",
   setRecoverySecret = noop
 }: MailKeysProps = {}) {
+  const { userId } = useAuth();
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const [pgpBusy, setPgpBusy] = useState(false);
   const [pgpStatus, setPgpStatus] = useState("");
   const [pgpImportOpen, setPgpImportOpen] = useState(false);
@@ -83,7 +99,8 @@ export function MailKeys({
   const [recoverOpen, setRecoverOpen] = useState(false);
   const [recoverOldPassword, setRecoverOldPassword] = useState("");
   const [recoverCurrentPassword, setRecoverCurrentPassword] = useState("");
-  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restoreSource, setRestoreSource] = useState<{ kind: "file"; file: File } | { kind: "server" } | null>(null);
+  const [drillDate, setDrillDate] = useState("");
   const [restoreSecret, setRestoreSecret] = useState("");
   const [restorePassword, setRestorePassword] = useState("");
   const [selfContact, setSelfContact] = useState<Contact | null>(null);
@@ -204,7 +221,7 @@ export function MailKeys({
       unlockWithArmoredKey(generated.armoredPrivateKey);
       setPgpIdentity(id);
       await loadPGPSession();
-      setPgpStatus("New PGP identity generated. Back up your key: an admin password reset makes it unrecoverable.");
+      setPgpStatus("New PGP identity generated. Create a recovery copy and keep its secret before you need a password reset.");
     } catch (e) {
       setPgpStatus(`Failed to generate identity: ${toErrorMessage(e, "unknown error")}`);
     } finally {
@@ -236,7 +253,7 @@ export function MailKeys({
       setMigratePassword("");
       await loadPGPSession();
       setPgpStatus(
-        "Migrated. This server can no longer read your encrypted mail. Back up your key — an admin password reset now makes it unrecoverable."
+        "Migrated. This server can no longer read your encrypted mail. Create a recovery copy and keep its secret before you need a password reset."
       );
     } catch (err) {
       setPgpStatus(`Migration failed: ${toErrorMessage(err, "unknown error")}`);
@@ -291,6 +308,9 @@ export function MailKeys({
    * that follows must not differ between them.
    */
   function saveRecoveryBackup(backup: RecoveryBackup, fingerprint: string, secret: string) {
+    // Reveal before any fallible download/upload, including a lost PUT response.
+    setRecoveryBackup(backup);
+    setRecoverySecret(secret);
     const url = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: "application/json" }));
     const link = document.createElement("a");
     link.href = url;
@@ -299,33 +319,46 @@ export function MailKeys({
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    setRecoverySecret(secret);
   }
 
   async function handleDownloadRecoveryBackup() {
     setPgpBusy(true);
     setPgpStatus("");
     try {
-      const bootstrap = pgpSession?.bootstrap;
-      // The fingerprint is checked, not assumed. It is the one field here that
-      // comes from a different response than the public key beside it, and a
-      // missing one used to surface as a TypeError inside the download rather
-      // than as an error about the identity — after the backup had already been
-      // built, so the user was told the backup failed while its one-time secret
-      // was silently discarded. Falling back to the bootstrap keeps a browser
-      // talking to an older server working rather than dead.
-      const fingerprint = pgpIdentity?.fingerprint || bootstrap?.fingerprint || "";
-      if (!bootstrap || bootstrap.protection !== "client" || !fingerprint) {
-        throw new Error("A client-protected identity is required.");
+      const bootstrap = await getPGPBootstrap();
+      const imported = await importIdentity(requireUnlockedKey(), "");
+      if (bootstrap.protection !== "client" || !bootstrap.fingerprint ||
+          imported.fingerprint.toUpperCase() !== bootstrap.fingerprint.toUpperCase()) {
+        throw new Error("Your PGP identity changed. Reload and unlock the current key before making a backup.");
       }
       const { backup, secret } = await createRecoveryBackup(
-        requireUnlockedKey(),
-        fingerprint,
-        bootstrap.publicKey
+        imported.armoredPrivateKey, imported.fingerprint, imported.armoredPublicKey
       );
-      saveRecoveryBackup(backup, fingerprint, secret);
-    } catch (e) {
-      setPgpStatus(`Backup failed: ${toErrorMessage(e, "unlock your key first")}`);
+      if (!mounted.current) return; // Do not start a download after leaving during creation.
+      saveRecoveryBackup(backup, backup.fingerprint, secret);
+      setPgpStatus("Recovery file checked in memory. Download requested; check that the file arrived and store the secret separately before saving a server copy.");
+    } catch (err) {
+      setPgpStatus(`Backup failed: ${toErrorMessage(err, "unlock your key first")}`);
+    } finally {
+      setPgpBusy(false);
+    }
+  }
+
+  async function handleStoreRecoveryBackup() {
+    if (!recoveryBackup || !recoverySecret) return;
+    const password = window.prompt(
+      "Enter your account password to store the recovery copy.\n\n" +
+      "You have confirmed that you saved its secret. This replaces any previous server recovery copy and its secret. Older downloaded files still work with their own secrets."
+    );
+    if (!password) return;
+    setPgpBusy(true);
+    setPgpStatus("");
+    try {
+      await putRecoveryEnvelope(recoveryBackup.envelope, password, recoveryBackup.fingerprint);
+      await loadPGPSession();
+      setPgpStatus("Recovery copy saved on the server. Keep the file and secret for server loss or identity deletion.");
+    } catch (err) {
+      setPgpStatus(`Server recovery storage could not be confirmed: ${toErrorMessage(err, "try again")}. Keep this file and secret; the server may already hold the new copy.`);
     } finally {
       setPgpBusy(false);
     }
@@ -357,12 +390,12 @@ export function MailKeys({
     setPgpStatus("");
     try {
       const exported = await exportLegacyPGPKey(legacyBackupPassword);
+      const imported = await importIdentity(exported.privateKey, "");
       const { backup, secret } = await createRecoveryBackup(
-        exported.privateKey,
-        pgpIdentity.fingerprint,
-        exported.publicKey
+        imported.armoredPrivateKey, imported.fingerprint, imported.armoredPublicKey
       );
-      saveRecoveryBackup(backup, pgpIdentity.fingerprint, secret);
+      if (!mounted.current) return;
+      saveRecoveryBackup(backup, backup.fingerprint, secret);
       setLegacyBackupOpen(false);
       setLegacyBackupPassword("");
     } catch (err) {
@@ -376,42 +409,77 @@ export function MailKeys({
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    setRestoreFile(file);
+    setRestoreSource({ kind: "file", file });
+    setDrillDate("");
     setRestoreSecret("");
     setRestorePassword("");
     setPgpStatus("");
   }
 
   function cancelRestore() {
-    setRestoreFile(null);
+    setRestoreSource(null);
+    setDrillDate("");
     setRestoreSecret("");
     setRestorePassword("");
   }
 
-  async function handleRestoreSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!restoreFile) return;
+  async function openServerRecovery() {
     setPgpBusy(true);
     setPgpStatus("");
+    cancelRestore();
     try {
-      const restored = await restoreRecoveryBackup(await restoreFile.text(), restoreSecret);
+      const backup = await getRecoveryBackup();
+      setRestoreSource({ kind: "server" });
+      try {
+        setDrillDate(await lastRecoveryDrill(userId ?? "", backup));
+      } catch {
+        setPgpStatus("Recovery copy loaded. This browser could not read its drill date.");
+      }
+    } catch (err) {
+      setPgpStatus(`Recovery copy unavailable: ${toErrorMessage(err, "try your downloaded file")}`);
+    } finally {
+      setPgpBusy(false);
+    }
+  }
+
+  async function handleRestoreSubmit(e: FormEvent, drill = false) {
+    e.preventDefault();
+    if (!restoreSource) return;
+    setPgpBusy(true);
+    setPgpStatus("");
+    setDrillDate("");
+    try {
+      // Read server bytes again: a drill must test the copy currently offered.
+      const raw = restoreSource.kind === "file" ? await restoreSource.file.text() : JSON.stringify(await getRecoveryBackup());
+      const restored = await restoreRecoveryBackup(raw, restoreSecret);
       const imported = await importIdentity(restored.privateKey, "");
-      // Optional-chained through the fingerprint too, not just the identity:
-      // the check below already treats a missing one as "cannot match", which
-      // is the safe answer, and this is the same crash the recovery backup hit.
-      const expected = pgpIdentity?.fingerprint?.toUpperCase();
-      if (!expected || imported.fingerprint !== expected || restored.fingerprint.toUpperCase() !== expected) {
-        throw new Error("This backup belongs to a different PGP identity.");
+      const current = await getPGPBootstrap();
+      const expected = current.fingerprint.toUpperCase();
+      if (current.protection !== "client" || !expected || imported.fingerprint.toUpperCase() !== expected ||
+          restored.fingerprint.toUpperCase() !== expected) {
+        throw new Error("This backup belongs to a different PGP identity. Reload to see the current identity.");
+      }
+      if (drill) {
+        // Only the sealed backup reaches the date helper; never its private key or secret.
+        const backup: RecoveryBackup = { format: restored.format, fingerprint: restored.fingerprint, publicKey: restored.publicKey, envelope: restored.envelope };
+        setRestoreSecret("");
+        setRestorePassword("");
+        try {
+          setDrillDate(await recordRecoveryDrill(userId ?? "", backup));
+          setPgpStatus("Recovery drill passed. The key opened and matches your identity; the date was saved in this browser.");
+        } catch {
+          setPgpStatus("Recovery drill passed, but this browser could not save the date.");
+        }
+        return;
       }
       const wrapped = await wrapPrivateKey(imported.armoredPrivateKey, restorePassword);
-      await rewrapPGPPrivateKey(JSON.stringify(wrapped), restorePassword);
-      unlockWithArmoredKey(imported.armoredPrivateKey);
-      setRecoverySecret("");
+      await rewrapPGPPrivateKey(JSON.stringify(wrapped), restorePassword, expected);
+      if (mounted.current) unlockWithArmoredKey(imported.armoredPrivateKey);
       cancelRestore();
       await loadPGPSession();
       setPgpStatus("PGP key restored and re-encrypted with your current account password.");
     } catch (err) {
-      setPgpStatus(`Restore failed: ${toErrorMessage(err, "check the file and recovery secret")}`);
+      setPgpStatus(`${drill ? "Drill" : "Restore"} failed: ${toErrorMessage(err, "check the copy and recovery secret")}`);
     } finally {
       setPgpBusy(false);
     }
@@ -454,7 +522,10 @@ export function MailKeys({
   }
 
   async function handleDeletePGPIdentity() {
-    if (!window.confirm("Delete your PGP identity? Mail encrypted to you will no longer be readable.")) {
+    if (!window.confirm(
+      "Delete your PGP identity? This also deletes the server recovery copy. Keep a downloaded recovery file and its secret before continuing, or mail encrypted to this key may be permanently unreadable." +
+      (pgpSession?.bootstrap?.envelopeSlots?.includes("recovery") ? "" : "\n\nNo server recovery copy is confirmed for this identity.")
+    )) {
       return;
     }
     // The account password, not just the confirmation. This is the one action
@@ -472,7 +543,9 @@ export function MailKeys({
     setPgpStatus("");
     try {
       await deletePGPIdentity(password);
+      lockPGPSession();
       setPgpIdentity(null);
+      await loadPGPSession();
       setPgpStatus("PGP identity deleted.");
     } catch (e) {
       setPgpStatus(`Failed to delete identity: ${toErrorMessage(e, "unknown error")}`);
@@ -526,7 +599,7 @@ export function MailKeys({
                 </p>
                 <p className="sec-muted">
                   <strong>Keep a backup of your key.</strong> Because the server cannot open it, an admin password
-                  reset makes it permanently unrecoverable along with every message encrypted to it.
+                  reset can leave it unreadable unless you have a recovery copy and its secret.
                 </p>
                 <div className="sec-actions">
                   {pgpSession.unlocked ? (
@@ -596,7 +669,7 @@ export function MailKeys({
                   <button
                     type="button"
                     className="sec-action-primary"
-                    disabled={pgpBusy || !pgpSession.unlocked}
+                    disabled={pgpBusy || !pgpSession.unlocked || !!recoverySecret}
                     onClick={() => void handleDownloadRecoveryBackup()}
                   >
                     Download recovery backup
@@ -612,9 +685,19 @@ export function MailKeys({
                     />
                   </label>
                 </div>
-                {restoreFile ? (
+                <p className="sec-muted">
+                  {pgpSession.bootstrap.envelopeSlots?.includes("recovery")
+                    ? "A server recovery copy is stored. You still need its secret; keep a downloaded file for server loss or identity deletion."
+                    : "No server recovery copy is confirmed. Keep an offline file and secret before changing your password or deleting this identity."}
+                </p>
+                <button type="button" disabled={pgpBusy} onClick={() => void openServerRecovery()}>
+                  Use server recovery copy
+                </button>
+                {restoreSource ? (
                   <form className="sec-inline-form" onSubmit={(e) => void handleRestoreSubmit(e)}>
-                    <h4>Restore from {restoreFile.name}</h4>
+                    <h4>{restoreSource.kind === "file" ? `Recovery file: ${restoreSource.file.name}` : "Server recovery copy"}</h4>
+                    <p className="sec-muted">Test the secret with a drill, or restore the key under your current account password.</p>
+                    {drillDate ? <p>Last successful drill of this copy in this browser: {new Date(drillDate).toLocaleString()}</p> : null}
                     <label className="sec-label">
                       Recovery secret
                       <input
@@ -627,18 +710,18 @@ export function MailKeys({
                       />
                     </label>
                     <label className="sec-label">
-                      Current account password
+                      Current account password (restore only)
                       <input
                         type="password"
                         className="sec-input"
                         value={restorePassword}
                         onChange={(e) => setRestorePassword(e.target.value)}
                         autoComplete="current-password"
-                        required
                       />
                     </label>
                     <div className="sec-actions">
-                      <button type="submit" disabled={pgpBusy}>Restore</button>
+                      <button type="submit" disabled={pgpBusy || !restoreSecret || !restorePassword}>Restore</button>
+                      <button type="button" disabled={pgpBusy || !restoreSecret} onClick={(e) => void handleRestoreSubmit(e, true)}>Run recovery drill</button>
                       <button type="button" className="sec-action-quiet" disabled={pgpBusy} onClick={cancelRestore}>
                         Cancel
                       </button>
@@ -760,8 +843,7 @@ export function MailKeys({
               <div className="sec-inline-form">
                 <h4>Store this recovery secret</h4>
                 <p className="sec-muted">
-                  The downloaded file is useless without this secret. KyPost does not store it. Anyone with both
-                  can decrypt your historical mail.
+                  The recovery copy is useless without this secret. KyPost does not store the secret. Keep it separately from the file. Anyone with both can decrypt your historical mail.
                 </p>
                 <p className="sec-fingerprint"><code>{recoverySecret}</code></p>
                 <div className="sec-actions">
@@ -779,7 +861,16 @@ export function MailKeys({
                   >
                     Copy secret
                   </button>
-                  <button type="button" onClick={() => setRecoverySecret("")}>Done</button>
+                  {recoveryBackup && pgpSession?.bootstrap?.protection === "client" ? (
+                    <button type="button" disabled={pgpBusy} onClick={() => void handleStoreRecoveryBackup()}>
+                      I saved the secret — store server copy
+                    </button>
+                  ) : null}
+                  {recoveryBackup ? <button type="button" onClick={() => {
+                    try { saveRecoveryBackup(recoveryBackup, recoveryBackup.fingerprint, recoverySecret); }
+                    catch (err) { setPgpStatus(`Download failed: ${toErrorMessage(err, "try again")}`); }
+                  }}>Download file again</button> : null}
+                  <button type="button" disabled={pgpBusy} onClick={() => { setRecoverySecret(""); setRecoveryBackup(null); }}>I saved the file and secret</button>
                 </div>
               </div>
             ) : null}

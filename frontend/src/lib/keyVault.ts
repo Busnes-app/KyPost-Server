@@ -199,7 +199,13 @@ export async function createRecoveryBackup(
   const secretBytes = crypto.getRandomValues(new Uint8Array(RECOVERY_SECRET_BYTES));
   const secret = recoverySecretText(secretBytes);
   const envelope = await wrapPrivateKey(armoredPrivateKey, secret);
-  return { backup: { format: "kypost-pgp-recovery-v1", fingerprint, publicKey, envelope }, secret };
+  const backup: RecoveryBackup = { format: "kypost-pgp-recovery-v1", fingerprint, publicKey, envelope };
+  // Exercise the serialized file and its restore path before offering either copy.
+  const restored = await restoreRecoveryBackup(JSON.stringify(backup), secret);
+  if (restored.privateKey !== armoredPrivateKey) {
+    throw new Error("Recovery backup verification failed. No backup was saved.");
+  }
+  return { backup, secret };
 }
 
 /** Opens an offline backup locally; the returned private key never leaves this module's caller. */

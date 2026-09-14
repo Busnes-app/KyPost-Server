@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 
 const postJSON = vi.fn();
+let recoverySlots: string[] | undefined;
+let protection = "client";
 const onSuccess = vi.fn();
 const TEST_LEDE = "This account needs a new password before you can go any further.";
 
@@ -23,6 +25,10 @@ vi.mock("../lib/authSecret", () => ({
 }));
 
 vi.mock("../lib/pgpSession", () => ({
+  subscribePGPSession: (fn: (s: unknown) => void) => {
+    fn({ loaded: true, error: "", bootstrap: { protection, envelopeSlots: recoverySlots } });
+    return () => {};
+  },
   rewrappedEnvelopeFor: async () => undefined,
   loadPGPSession: async () => undefined
 }));
@@ -30,6 +36,8 @@ vi.mock("../lib/pgpSession", () => ({
 afterEach(cleanup);
 
 beforeEach(() => {
+  recoverySlots = [];
+  protection = "client";
   postJSON.mockReset();
   onSuccess.mockReset();
   postJSON.mockResolvedValue({ ok: true });
@@ -70,5 +78,24 @@ describe("ChangePasswordForm", () => {
     render(<ChangePasswordForm username="gwen" lede={TEST_LEDE} onSuccess={onSuccess} />);
 
     expect(screen.getByText(TEST_LEDE)).toBeTruthy();
+  });
+});
+
+
+describe("PGP recovery warning", () => {
+  it.each([[], undefined])("warns when no server copy is confirmed: %s", (slots) => {
+    recoverySlots = slots;
+    render(<ChangePasswordForm username="gwen" lede={TEST_LEDE} onSuccess={onSuccess} />);
+    expect(screen.getByText(/No server recovery copy is confirmed/)).toBeTruthy();
+  });
+  it("does not claim a missing copy when a recovery slot exists", () => {
+    recoverySlots = ["password", "recovery"];
+    render(<ChangePasswordForm username="gwen" lede={TEST_LEDE} onSuccess={onSuccess} />);
+    expect(screen.queryByText(/No server recovery copy is confirmed/)).toBeNull();
+  });
+  it("does not warn about a PGP backup for a keyless account", () => {
+    protection = "";
+    render(<ChangePasswordForm username="gwen" lede={TEST_LEDE} onSuccess={onSuccess} />);
+    expect(screen.queryByText(/No server recovery copy is confirmed/)).toBeNull();
   });
 });

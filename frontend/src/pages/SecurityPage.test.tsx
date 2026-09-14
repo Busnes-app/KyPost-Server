@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
+import { AuthContext } from "../auth";
 import { SecurityPage } from "./SecurityPage";
 
 const getJSON = vi.fn();
@@ -20,6 +21,7 @@ vi.mock("../api/client", () => ({
 const SESSION = {
   bootstrap: {
     protection: "client" as const,
+    envelopeSlots: ["password"],
     fingerprint: "ABCDEF0123456789",
     publicKey: "PUB",
     suggestedUserIDs: ["gwen@example.com"],
@@ -40,33 +42,58 @@ vi.mock("../lib/pgpSession", () => ({
   rewrapUnlockedKeyUnder: async () => {}
 }));
 
+const BACKUP = {
+  format: "kypost-pgp-recovery-v1",
+  fingerprint: "ABCDEF0123456789",
+  publicKey: "PUB",
+  envelope: { v: 2, kdf: "PBKDF2-SHA256", iterations: 600000, salt: "salt", iv: "iv", ciphertext: "ct" }
+};
+const importIdentity = vi.fn();
+const restoreRecoveryBackup = vi.fn();
+const unlockWithArmoredKey = vi.fn();
+vi.mock("../api/auth", () => ({
+  deriveCredential: async () => ({ authSecret: "derived-account-credential" }),
+  credentialFields: () => ({ authSecret: "derived-account-credential" })
+}));
+
 const createRecoveryBackup = vi.fn(async () => ({
-  backup: { v: 1 },
+  backup: BACKUP,
   secret: "SECRET-ABCD-1234"
 }));
 
-vi.mock("../lib/keyVault", () => ({
+vi.mock("../lib/keyVault", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/keyVault")>(),
   createRecoveryBackup: (...a: unknown[]) => createRecoveryBackup(...(a as [])),
   requireUnlockedKey: () => "ARMORED",
-  restoreRecoveryBackup: async () => ({}),
+  restoreRecoveryBackup: (...args: unknown[]) => restoreRecoveryBackup(...args),
   wrapPrivateKey: async () => ({}),
-  unlockWithArmoredKey: () => {}
+  unlockWithArmoredKey: (...args: unknown[]) => unlockWithArmoredKey(...args)
 }));
 
 vi.mock("../lib/pgpClient", () => ({
   generateIdentity: async () => ({}),
-  importIdentity: async () => ({})
+  importIdentity: (...args: unknown[]) => importIdentity(...args)
 }));
 
 afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
+  SESSION.unlocked = true;
+  SESSION.bootstrap.envelopeSlots = ["password"];
+  importIdentity.mockResolvedValue({ fingerprint: BACKUP.fingerprint, armoredPrivateKey: "ARMORED", armoredPublicKey: "PUB" });
+  restoreRecoveryBackup.mockResolvedValue({ ...BACKUP, privateKey: "ARMORED" });
+  putJSON.mockResolvedValue({ ok: true });
+  postJSON.mockResolvedValue({ ok: true });
+  vi.spyOn(window, "prompt").mockReturnValue("account-password");
   // jsdom has no object URL implementation; saveRecoveryBackup needs one.
   (URL as unknown as { createObjectURL: unknown }).createObjectURL = () => "blob:x";
   (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = () => {};
 
   getJSON.mockImplementation((url: string) => {
+    if (url === "/api/pgp/bootstrap") return Promise.resolve(SESSION.bootstrap);
+    if (url === "/api/pgp/identity/envelope/recovery") return Promise.resolve({ envelope: JSON.stringify(BACKUP.envelope), fingerprint: BACKUP.fingerprint, publicKey: BACKUP.publicKey });
     if (url === "/api/mfa/status") {
       return Promise.resolve({
         totpEnabled: true,
@@ -108,7 +135,7 @@ beforeEach(() => {
 function renderPage(tab = "mail") {
   return render(
     <MemoryRouter initialEntries={[`/security?tab=${tab}`]}>
-      <SecurityPage />
+      <AuthContext.Provider value={{ authenticated: true, userId: "user-1" }}><SecurityPage /></AuthContext.Provider>
     </MemoryRouter>
   );
 }
@@ -147,6 +174,8 @@ describe("recovery backup with a drifted identity response", () => {
   it("does not crash when the stored identity carries no fingerprint", async () => {
     const user = userEvent.setup();
     getJSON.mockImplementation((url: string) => {
+    if (url === "/api/pgp/bootstrap") return Promise.resolve(SESSION.bootstrap);
+    if (url === "/api/pgp/identity/envelope/recovery") return Promise.resolve({ envelope: JSON.stringify(BACKUP.envelope), fingerprint: BACKUP.fingerprint, publicKey: BACKUP.publicKey });
       if (url === "/api/mfa/status") {
         return Promise.resolve({
           totpEnabled: true,
@@ -205,6 +234,8 @@ describe("the device list and the identity change", () => {
 
   it("reads them once when there is no identity to change", async () => {
     getJSON.mockImplementation((url: string) => {
+    if (url === "/api/pgp/bootstrap") return Promise.resolve(SESSION.bootstrap);
+    if (url === "/api/pgp/identity/envelope/recovery") return Promise.resolve({ envelope: JSON.stringify(BACKUP.envelope), fingerprint: BACKUP.fingerprint, publicKey: BACKUP.publicKey });
       if (url === "/api/mfa/status") {
         return Promise.resolve({
           totpEnabled: true,
@@ -240,6 +271,8 @@ describe("a failed device refetch", () => {
     // fails. The device must not survive it — that is the whole point.
     let deviceReads = 0;
     getJSON.mockImplementation((url: string) => {
+    if (url === "/api/pgp/bootstrap") return Promise.resolve(SESSION.bootstrap);
+    if (url === "/api/pgp/identity/envelope/recovery") return Promise.resolve({ envelope: JSON.stringify(BACKUP.envelope), fingerprint: BACKUP.fingerprint, publicKey: BACKUP.publicKey });
       if (url === "/api/mfa/status") {
         return Promise.resolve({
           totpEnabled: true,
@@ -303,6 +336,8 @@ describe("a failed device refetch", () => {
 describe("the encryption summary", () => {
   function withDevices(devices: unknown[]) {
     getJSON.mockImplementation((url: string) => {
+    if (url === "/api/pgp/bootstrap") return Promise.resolve(SESSION.bootstrap);
+    if (url === "/api/pgp/identity/envelope/recovery") return Promise.resolve({ envelope: JSON.stringify(BACKUP.envelope), fingerprint: BACKUP.fingerprint, publicKey: BACKUP.publicKey });
       if (url === "/api/mfa/status") {
         return Promise.resolve({
           totpEnabled: true,
@@ -368,6 +403,8 @@ describe("SIBLING: recovery codes survive a tab switch", () => {
   it("keeps just-issued recovery codes across Sign-in -> Devices -> Sign-in", async () => {
     const user = userEvent.setup();
     getJSON.mockImplementation((url: string) => {
+    if (url === "/api/pgp/bootstrap") return Promise.resolve(SESSION.bootstrap);
+    if (url === "/api/pgp/identity/envelope/recovery") return Promise.resolve({ envelope: JSON.stringify(BACKUP.envelope), fingerprint: BACKUP.fingerprint, publicKey: BACKUP.publicKey });
       if (url === "/api/mfa/status") {
         return Promise.resolve({
           totpEnabled: true,
@@ -407,6 +444,8 @@ describe("SIBLING: TOTP enrollment secret across a tab switch", () => {
   it("keeps the scanned setup secret across Sign-in -> Devices -> Sign-in", async () => {
     const user = userEvent.setup();
     getJSON.mockImplementation((url: string) => {
+    if (url === "/api/pgp/bootstrap") return Promise.resolve(SESSION.bootstrap);
+    if (url === "/api/pgp/identity/envelope/recovery") return Promise.resolve({ envelope: JSON.stringify(BACKUP.envelope), fingerprint: BACKUP.fingerprint, publicKey: BACKUP.publicKey });
       if (url === "/api/mfa/status") {
         return Promise.resolve({
           totpEnabled: false,
@@ -485,4 +524,115 @@ describe("CardDAV password blocks tab switches", () => {
     expect(screen.getByRole("tab", { name: "CardDAV" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("generated-app-password")).toBeTruthy();
   });
+});
+
+describe("server recovery", () => {
+  it("uploads only the envelope with derived step-up and the validated identity", async () => {
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
+    expect(putJSON).not.toHaveBeenCalled();
+    await userEvent.click(await screen.findByRole("button", { name: "I saved the secret — store server copy" }));
+    await waitFor(() => expect(putJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/recovery", {
+      envelope: JSON.stringify(BACKUP.envelope), expectedFingerprint: BACKUP.fingerprint, authSecret: "derived-account-credential"
+    }));
+    expect(JSON.stringify(putJSON.mock.calls)).not.toMatch(/SECRET-ABCD|ARMORED|account-password/);
+  });
+
+  it("retains the file and secret after an uncertain upload and a tab switch", async () => {
+    putJSON.mockRejectedValue(new Error("connection lost"));
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
+    await userEvent.click(await screen.findByRole("button", { name: "I saved the secret — store server copy" }));
+    await screen.findByText(/Server recovery storage could not be confirmed/);
+    await userEvent.click(screen.getByRole("tab", { name: "Devices" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Encryption" }));
+    expect(await screen.findByText("SECRET-ABCD-1234")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Download file again" })).toBeTruthy();
+    expect(createRecoveryBackup).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to back up a stale unlocked key", async () => {
+    importIdentity.mockResolvedValue({ fingerprint: "OTHER", armoredPrivateKey: "OTHER-PRIVATE" });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
+    await screen.findByText(/Your PGP identity changed/);
+    expect(createRecoveryBackup).not.toHaveBeenCalled();
+    expect(putJSON).not.toHaveBeenCalled();
+  });
+
+  async function openCopy() {
+    SESSION.unlocked = false;
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Use server recovery copy" }));
+    await screen.findByRole("heading", { name: "Server recovery copy" });
+    await userEvent.type(screen.getByLabelText("Recovery secret"), "SECRET-ABCD-1234");
+  }
+
+  it("restores from the server with a locked vault and no downloaded file", async () => {
+    await openCopy();
+    await userEvent.type(screen.getByLabelText("Current account password (restore only)"), "account-password");
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await screen.findByText(/PGP key restored and re-encrypted/);
+    expect(postJSON).toHaveBeenCalledWith("/api/pgp/identity/rewrap", {
+      wrapped: "{}", expectedFingerprint: BACKUP.fingerprint, authSecret: "derived-account-credential"
+    });
+    expect(unlockWithArmoredKey).toHaveBeenCalledWith("ARMORED");
+  });
+
+  it("drills without unlocking or rewrapping and records only a date and ciphertext hash", async () => {
+    await openCopy();
+    await userEvent.click(screen.getByRole("button", { name: "Run recovery drill" }));
+    await screen.findByText(/Recovery drill passed. The key opened/);
+    expect(postJSON).not.toHaveBeenCalled();
+    expect(putJSON).not.toHaveBeenCalled();
+    expect(unlockWithArmoredKey).not.toHaveBeenCalled();
+    const raw = localStorage.getItem(`kypost-pgp-drill:user-1:${BACKUP.fingerprint}`);
+    expect(raw).toBeTruthy();
+    expect(raw).not.toMatch(/ARMORED|SECRET|PUB|salt|ciphertext/);
+    expect(Object.keys(JSON.parse(raw!)).sort()).toEqual(["date", "hash"]);
+    expect((screen.getByLabelText("Recovery secret") as HTMLInputElement).value).toBe("");
+  });
+
+  it.each(["wrong secret", "different identity"])("does not record a failed drill: %s", async (reason) => {
+    if (reason === "wrong secret") restoreRecoveryBackup.mockRejectedValueOnce(new Error("wrong secret"));
+    else importIdentity.mockResolvedValueOnce({ fingerprint: "OTHER" });
+    await openCopy();
+    await userEvent.click(screen.getByRole("button", { name: "Run recovery drill" }));
+    await screen.findByText(/Drill failed:/);
+    expect(localStorage.length).toBe(0);
+    expect(postJSON).not.toHaveBeenCalled();
+    expect(unlockWithArmoredKey).not.toHaveBeenCalled();
+  });
+
+  it("always explains that identity deletion removes server recovery too", async () => {
+    SESSION.bootstrap.envelopeSlots = ["password", "recovery"];
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Delete identity" }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("also deletes the server recovery copy"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("downloaded recovery file and its secret"));
+    expect(deleteJSON).not.toHaveBeenCalled();
+  });
+});
+
+
+it("cannot replace server recovery when the user leaves before saving the secret", async () => {
+  const page = renderPage();
+  await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
+  await screen.findByText("SECRET-ABCD-1234");
+  page.unmount();
+  expect(putJSON).not.toHaveBeenCalled();
+});
+
+it("starts a delayed recovery PUT only after secret-save acknowledgement", async () => {
+  let finish: () => void = () => {};
+  putJSON.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+  const page = renderPage();
+  await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
+  await screen.findByText("SECRET-ABCD-1234");
+  expect(putJSON).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "I saved the secret — store server copy" }));
+  await waitFor(() => expect(putJSON).toHaveBeenCalledTimes(1));
+  page.unmount();
+  finish();
 });
