@@ -8,7 +8,7 @@
 
 import { type BoundSignerKey } from "../api/pgp";
 import { requireUnlockedKey } from "./keyVault";
-import { parseMimeContent, type BodyMode, type MimeAttachment } from "./mimeContent";
+import { parseMimeContent, type BodyMode, type MimeAttachment, type ProtectedHeaders } from "./mimeContent";
 
 type OpenPGP = typeof import("openpgp");
 type PublicKey = Awaited<ReturnType<OpenPGP["readKey"]>>;
@@ -119,6 +119,8 @@ export type DecryptedMessage = {
   attachments: MimeAttachment[];
   /** Parts refused by the MIME limits rather than decoded. */
   attachmentsOmitted: number;
+  /** Headers carried inside the ciphertext: the real Subject, and for a draft its recipients. */
+  protectedHeaders: ProtectedHeaders;
 };
 
 /**
@@ -257,7 +259,8 @@ export async function decryptMessage(
     signerFingerprint,
     signerConflict: hasSignerConflict(signerKeys),
     attachments: parsed?.attachments ?? [],
-    attachmentsOmitted: parsed?.attachmentsOmitted ?? 0
+    attachmentsOmitted: parsed?.attachmentsOmitted ?? 0,
+    protectedHeaders: parsed?.protectedHeaders ?? {}
   };
 }
 
@@ -364,7 +367,8 @@ export async function verifySignedMessage(
     signerFingerprint,
     signerConflict: hasSignerConflict(signerKeys),
     attachments: parsed?.attachments ?? [],
-    attachmentsOmitted: parsed?.attachmentsOmitted ?? 0
+    attachmentsOmitted: parsed?.attachmentsOmitted ?? 0,
+    protectedHeaders: parsed?.protectedHeaders ?? {}
   };
 }
 
@@ -458,7 +462,7 @@ export async function buildEncryptedDeliveries(
 ): Promise<EncryptedDelivery[]> {
   const pgp = await openpgp();
   const signingKeys = sign ? [await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() })] : undefined;
-  const protectedContent = buildProtectedContent(contentType, body, envelope.subject, attachments);
+  const protectedContent = buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments);
 
   const deliveries: EncryptedDelivery[] = [];
   for (const group of groups) {
@@ -509,12 +513,67 @@ export async function buildEncryptedSentCopy(
   const ownKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
   const signingKeys = sign ? [ownKey] : undefined;
   const armored = await pgp.encrypt({
-    message: await pgp.createMessage({ text: buildProtectedContent(contentType, body, envelope.subject, attachments) }),
+    message: await pgp.createMessage({ text: buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments) }),
     encryptionKeys: ownKey.toPublic(),
     signingKeys,
     format: "armored"
   });
   return wrapAsPGPMime(envelope, String(armored));
+}
+
+/**
+ * Builds a draft: the whole compose state, encrypted to the sender's own key
+ * and wrapped as PGP/MIME, for a verbatim IMAP APPEND.
+ *
+ * To, Cc and Bcc travel inside the ciphertext as protected headers next to
+ * the Subject, because they are what the composer needs back and Bcc must not
+ * appear on the outside at all. The outer envelope carries To and Cc as the
+ * Sent copy does, so a mail client lists the draft sensibly.
+ */
+export async function buildEncryptedDraft(
+  envelope: MessageEnvelope & { bcc?: string[] },
+  contentType: string,
+  body: string,
+  attachments: EncryptedAttachment[] = []
+): Promise<string> {
+  const pgp = await openpgp();
+  const ownKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
+  const content = buildProtectedContent(
+    contentType,
+    body,
+    { subject: envelope.subject, to: envelope.to.join(", "), cc: (envelope.cc ?? []).join(", "), bcc: (envelope.bcc ?? []).join(", ") },
+    attachments
+  );
+  const armored = await pgp.encrypt({
+    message: await pgp.createMessage({ text: content }),
+    encryptionKeys: ownKey.toPublic(),
+    format: "armored"
+  });
+  return wrapAsPGPMime(envelope, String(armored));
+}
+
+/**
+ * Seals text to the sender's own key, for state that must survive a reload
+ * without sitting in web storage as plaintext. Opened by openSealedToSelf
+ * once the vault is unlocked again.
+ */
+export async function sealToSelf(text: string): Promise<string> {
+  const pgp = await openpgp();
+  const ownKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
+  return String(
+    await pgp.encrypt({ message: await pgp.createMessage({ text }), encryptionKeys: ownKey.toPublic(), format: "armored" })
+  );
+}
+
+export async function openSealedToSelf(armored: string): Promise<string> {
+  const pgp = await openpgp();
+  const privateKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
+  const result = await pgp.decrypt({
+    message: await pgp.readMessage({ armoredMessage: armored }),
+    decryptionKeys: privateKey,
+    config: { maxDecompressedMessageSize: MAX_DECRYPTED_BYTES }
+  });
+  return typeof result.data === "string" ? result.data : String(result.data);
 }
 
 // Matches pgpmail.OuterPlaceholderSubject so both send paths look identical
@@ -533,12 +592,19 @@ export const OUTER_PLACEHOLDER_SUBJECT = "[Encrypted] Email Sent by KyPost";
 function buildProtectedContent(
   contentType: string,
   body: string,
-  subject: string,
+  protectedHeaders: ProtectedHeaders,
   attachments: EncryptedAttachment[] = []
 ): string {
-  const clean = sanitizeHeaderValue(subject);
+  const clean = sanitizeHeaderValue(protectedHeaders.subject ?? "");
   const boundary = `kypost-protected-${randomToken()}`;
   const lines = [`Content-Type: multipart/mixed; boundary="${boundary}"; protected-headers="v1"`, ""];
+  // Address headers are protected only when a caller asks (drafts). They sit
+  // in the entity's own header block, where readProtectedHeaders finds them;
+  // the legacy-display part below stays Subject-only for other clients.
+  for (const name of ["Bcc", "Cc", "To"] as const) {
+    const value = sanitizeHeaderValue(protectedHeaders[name.toLowerCase() as "to" | "cc" | "bcc"] ?? "");
+    if (value) lines.unshift(`${name}: ${value}`);
+  }
   if (clean) {
     lines.unshift(`Subject: ${clean}`);
     lines.push(
