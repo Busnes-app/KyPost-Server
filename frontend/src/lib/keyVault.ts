@@ -196,6 +196,7 @@ export async function createRecoveryBackup(
   fingerprint: string,
   publicKey: string
 ): Promise<{ backup: RecoveryBackup; secret: string }> {
+  requireSinglePrivateKey(armoredPrivateKey);
   const secretBytes = crypto.getRandomValues(new Uint8Array(RECOVERY_SECRET_BYTES));
   const secret = recoverySecretText(secretBytes);
   const envelope = await wrapPrivateKey(armoredPrivateKey, secret);
@@ -343,11 +344,23 @@ export function unlockWithArmoredKey(armoredPrivateKey: string): void {
  * Callers must not cache the result: holding it in component state would
  * outlive lock() and defeat the point of being able to lock at all.
  */
-export function requireUnlockedKey(): string {
+export function requireUnlockedKeyMaterial(): string {
   if (unlockedArmoredKey === null) {
     throw new VaultLockedError();
   }
   return unlockedArmoredKey;
+}
+
+/** Legacy writers must never send a ring through single-key recovery/enrollment. */
+export function requireSinglePrivateKey(plaintext: string): string {
+  if (plaintext.trimStart().startsWith("{") || !/^-----BEGIN PGP PRIVATE KEY BLOCK-----\r?$/m.test(plaintext.trim())) {
+    throw new Error("Keyring writes require the lifecycle upgrade. Historical reading remains available.");
+  }
+  return plaintext;
+}
+
+export function requireUnlockedKey(): string {
+  return requireSinglePrivateKey(requireUnlockedKeyMaterial());
 }
 
 /** Drops the in-memory key. Called on logout and on explicit lock. */

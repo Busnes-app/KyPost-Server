@@ -106,6 +106,8 @@ reading its handler first.
 
 ## Work Guidance
 
+- `pgpKeyring.ts` validates complete bounded vault plaintext for all historical decrypt paths, including drafts and autosaves. `requireUnlockedKeyMaterial` is reader-only; existing signing, enrollment and recovery writers use `requireUnlockedKey` and refuse rings until the server/native lifecycle gates in `docs/PGP_KEY_LIFECYCLE.md` pass. Preserve every key on future writes; never extract only the active member for a legacy upload. Shared synthetic vectors live in `testdata/pgp-keyring-v1.json`.
+
 - PGP recovery creates and restores locally; the server receives only the wrapped envelope plus account step-up and `expectedFingerprint`. Compare the actual private key to fresh identity metadata, and preserve both the new encrypted file and secret across failed/uncertain uploads and Security tab switches. Creation round-trips the serialized file before offering it. Remote upload requires explicit acknowledgement that the secret was saved; displaying a secret is not proof the user retained it, and navigation can discard page memory. Drill uses no vault unlock or key write; `recoveryDrill.ts` stores only date/envelope hash per user/fingerprint, labelled browser-local and shown only for the tested envelope. Absence of a server slot does not prove absence of offline backups; deletion always warns that it removes the server copy.
 
 - Build: `cd frontend && npm run build`

@@ -1,6 +1,9 @@
 # PGP key lifecycle — proposed Tier 5 design
 
-Status: design for implementation, **not shipped**. Baseline: server PR #189,
+Status: lifecycle conversion and writes are **not shipped**. The first reader
+implementation accepts legacy armor and bounded versioned rings for historical
+mail, draft and autosave decryption. Single-key writers refuse ring plaintext
+until server/native lifecycle gates are ready. Baseline: server PR #189,
 merged at `abb5e9fdeb773f86b66b996023a5b8034a72bd99`. The current wire contract
 remains [E2E_PGP.md](E2E_PGP.md). Retirement requires re-enrolling every device
 (user decision, 2026-09-13). Address reassignment remains deferred until an
@@ -8,8 +11,10 @@ admin user-delete route exists.
 
 ## Evidence and compatibility boundary
 
-The browser currently holds one armored private key (`keyVault.ts`);
-`pgpClient.ts` uses it for mail, saved drafts, local sealed autosaves and signing.
+The browser vault holds opaque plaintext in memory (`keyVault.ts`).
+`pgpKeyring.ts` validates legacy armor or the complete ring for mail, saved drafts
+and local sealed autosave decryption. Existing signing/enrollment/recovery writers
+still require single-key armor; no account conversion is exposed.
 The users store holds one current public identity and opaque password/recovery/
 device envelopes. Replacing its fingerprint clears device slots; a same-key
 update does not. Fingerprint guards cannot detect concurrent same-key edits.
@@ -35,16 +40,30 @@ Change its plaintext only after explicit account conversion:
 ```json
 {
   "format": "kypost-pgp-keyring-v1",
-  "activeFingerprint": "full-primary-fingerprint",
+  "activeFingerprint": "FULL-PRIMARY-FINGERPRINT",
+  "materialGeneration": 1,
+  "keyFingerprints": ["FULL-PRIMARY-FINGERPRINT", "FULL-SUBKEY-FINGERPRINT"],
   "keys": [
     {
-      "fingerprint": "full-primary-fingerprint",
+      "fingerprint": "FULL-PRIMARY-FINGERPRINT",
       "privateKey": "ASCII-armored private key",
       "revocationCertificate": "ASCII-armored revocation certificate"
     }
   ]
 }
 ```
+
+Writers use uppercase hex fingerprints derived from the parsed packets; the
+reader compares case-insensitively and detects duplicates after normalization.
+`keyFingerprints` is the unique complete primary/subkey inventory (order is
+immaterial). `materialGeneration` is a positive safe integer. The reader rejects
+unknown formats, duplicate/missing members, multiple keys in one armor entry,
+public-only keys and, for JSON rings, any missing or still-passphrase-protected
+private packet. Legacy armor keeps its prior decryption policy, including GnuPG
+exports with a dummy primary and usable encryption subkey, large UID/certification
+sets, and text surrounding armor. JSON ring plaintext parsing is bounded to
+128 KiB before JSON/OpenPGP work; the future writer must
+separately enforce the serialized sealed-envelope limit below.
 
 `revocationCertificate` is optional for imported keys. Keep unpublished
 certificates sealed: possession permits premature revocation. Derive and compare
@@ -226,3 +245,10 @@ decryption with refusal of new encryption, an old-key certification of the new
 identity, and UID addition without changing primary/subkey IDs. It does **not**
 prove wire compatibility, persistence, revocation distribution, UID revocation or
 preservation of arbitrary certifications. Those remain implementation gates.
+
+Shared synthetic reader vectors: [testdata/pgp-keyring-v1.json](../testdata/pgp-keyring-v1.json).
+`frontend/src/lib/pgpKeyring.test.ts` exercises them through the real mail and
+autosave readers, plus draft/Sent attachments, revoked history, malformed rings
+and refusal of legacy writes. The fixture private keys are public test data.
+Server generation/inventory comparison remains an implementation gate; this
+reader alone cannot establish backup freshness or authorize conversion.

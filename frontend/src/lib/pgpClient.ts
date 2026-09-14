@@ -7,7 +7,8 @@
 // until the user actually touches PGP.
 
 import { type BoundSignerKey } from "../api/pgp";
-import { requireUnlockedKey } from "./keyVault";
+import { requireUnlockedKey, requireUnlockedKeyMaterial } from "./keyVault";
+import { decryptionKeysFor, parseKeyring } from "./pgpKeyring";
 import { parseMimeContent, type BodyMode, type MimeAttachment, type ProtectedHeaders } from "./mimeContent";
 
 type OpenPGP = typeof import("openpgp");
@@ -191,7 +192,7 @@ export async function decryptMessage(
   senderAddress: string
 ): Promise<DecryptedMessage> {
   const pgp = await openpgp();
-  const privateKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
+  const keyring = await parseKeyring(requireUnlockedKeyMaterial());
 
   const armored = extractArmoredMessage(payload);
   const message = await pgp.readMessage({ armoredMessage: armored });
@@ -202,7 +203,7 @@ export async function decryptMessage(
   );
   const result = await pgp.decrypt({
     message,
-    decryptionKeys: privateKey,
+    decryptionKeys: decryptionKeysFor(keyring, message),
     verificationKeys: verificationKeys.length > 0 ? verificationKeys : undefined,
     expectSigned: false,
     config: { maxDecompressedMessageSize: MAX_DECRYPTED_BYTES }
@@ -614,10 +615,11 @@ export async function sealToSelf(text: string): Promise<string> {
 
 export async function openSealedToSelf(armored: string): Promise<string> {
   const pgp = await openpgp();
-  const privateKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
+  const keyring = await parseKeyring(requireUnlockedKeyMaterial());
+  const message = await pgp.readMessage({ armoredMessage: armored });
   const result = await pgp.decrypt({
-    message: await pgp.readMessage({ armoredMessage: armored }),
-    decryptionKeys: privateKey,
+    message,
+    decryptionKeys: decryptionKeysFor(keyring, message),
     config: { maxDecompressedMessageSize: MAX_DECRYPTED_BYTES }
   });
   return typeof result.data === "string" ? result.data : String(result.data);

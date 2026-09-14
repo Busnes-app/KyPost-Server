@@ -19,6 +19,7 @@ import {
   onVaultChange,
   parseEnvelope,
   requireUnlockedKey,
+  requireSinglePrivateKey,
   unlock,
   unwrapPrivateKey,
   wrapPrivateKey
@@ -176,7 +177,7 @@ export async function rewrappedEnvelopeFor(
     return null;
   }
   // Unwrapped eagerly, while the old password is known to be correct.
-  const armored = await unwrapPrivateKey(envelope, oldPassword);
+  const armored = requireSinglePrivateKey(await unwrapPrivateKey(envelope, oldPassword));
   return JSON.stringify(await wrapPrivateKey(armored, newPassword));
 }
 
