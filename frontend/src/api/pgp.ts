@@ -306,6 +306,20 @@ export async function putRecoveryEnvelope(envelope: WrappedKeyEnvelope, password
   });
 }
 
+/** A single versioned write followed by an exact-slot confirmation read. */
+export async function putPGPKeyringRecovery(input: { envelope: string; password: string; expectedFingerprint: string; expectedRevision: number; isCurrent: () => boolean }): Promise<unknown> {
+  const credential = await stepUp(input.password);
+  if (!input.isCurrent()) throw new Error("The recovery session changed. Reload before storing this copy.");
+  try {
+    await putJSON("/api/pgp/identity/envelope/recovery", { envelope: input.envelope, expectedFingerprint: input.expectedFingerprint,
+      expectedRevision: requirePGPRevision({ pgpRevision: input.expectedRevision }), keyringVersion: 1, ...credential });
+  } catch {
+    // A lost response may follow a commit; confirm by read, never retry the write.
+  }
+  if (!input.isCurrent()) throw new Error("The recovery session changed.");
+  return getJSON<unknown>("/api/pgp/identity/envelope/recovery");
+}
+
 /** Fetches only ciphertext and public metadata, from one server snapshot. */
 export async function getRecoveryBackup(): Promise<RecoveryBackup> {
   const result = await getJSON<unknown>("/api/pgp/identity/envelope/recovery");

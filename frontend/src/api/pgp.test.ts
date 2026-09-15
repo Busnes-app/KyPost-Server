@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { deleteDeviceEnvelope, putDeviceEnvelope, putRecoveryEnvelope, getRecoveryBackup, getPasswordSnapshot, rewrapPGPKeyring } from "./pgp";
+import { deleteDeviceEnvelope, putDeviceEnvelope, putRecoveryEnvelope, getRecoveryBackup, getPasswordSnapshot, rewrapPGPKeyring, putPGPKeyringRecovery } from "./pgp";
 import type { DeviceEnvelope } from "../lib/deviceEnrollment";
 
 const getJSON = vi.fn();
@@ -134,4 +134,19 @@ it("does not POST if the restore session changes during credential derivation", 
   await expect(rewrapPGPKeyring({ wrapped: "SEALED", password: "password", expectedFingerprint: "FPR",
     expectedRevision: 7, isCurrent: () => current })).rejects.toThrow(/session changed/);
   expect(postJSON).not.toHaveBeenCalled();
+});
+
+it("confirms the slot after a lost PUT response without retrying",async () => {
+  putJSON.mockReset();getJSON.mockReset();
+  putJSON.mockRejectedValueOnce(new Error("lost response"));
+  getJSON.mockResolvedValueOnce({envelope:"SEALED",pgpRevision:8});
+  await expect(putPGPKeyringRecovery({envelope:"SEALED",password:"password",expectedFingerprint:"FPR",expectedRevision:7,isCurrent:()=>true})).resolves.toEqual({envelope:"SEALED",pgpRevision:8});
+  expect(putJSON).toHaveBeenCalledTimes(1);
+  expect(putJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/recovery",{envelope:"SEALED",password:"hunter2",expectedFingerprint:"FPR",expectedRevision:7,keyringVersion:1});
+});
+it("does not PUT after session change during step-up",async () => {
+  putJSON.mockClear();let current=true;
+  deriveCredential.mockImplementationOnce(async()=>{current=false;return {kind:"test"};});
+  await expect(putPGPKeyringRecovery({envelope:"SEALED",password:"password",expectedFingerprint:"FPR",expectedRevision:7,isCurrent:()=>current})).rejects.toThrow(/session changed/);
+  expect(putJSON).not.toHaveBeenCalled();
 });

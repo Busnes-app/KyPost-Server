@@ -508,3 +508,52 @@ func TestRewrapPGPKeyringPreservesCurrentState(t *testing.T) {
 		t.Fatalf("forced reset: %v", err)
 	}
 }
+
+func TestSetPGPKeyringRecoveryPreservesOtherState(t *testing.T) {
+	s, id, update := keyringCandidate(t)
+	if _, err := s.SetPGPKeyringRecovery(id, `{"v":2}`, "now", update.PrimaryFingerprints[0], &update.ExpectedRevision); !errors.Is(err, ErrPGPKeyringUpgradeRequired) {
+		t.Fatalf("legacy: %v", err)
+	}
+	u, err := s.CommitPGPKeyring(context.Background(), id, update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, revision := range []*uint64{nil, &update.ExpectedRevision} {
+		if _, err := s.SetPGPKeyringRecovery(id, `{"v":2}`, "now", u.PGPFingerprint, revision); err == nil {
+			t.Fatal("unguarded/stale write")
+		}
+	}
+	if _, err := s.SetPGPKeyringRecovery(id, `{"v":2}`, "now", "", &u.PGPRevision); err == nil {
+		t.Fatal("missing fingerprint")
+	}
+	changed, err := s.SetPGPKeyringRecovery(id, `{"v":2,"fresh":true}`, "new-time", u.PGPFingerprint, &u.PGPRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.PGPRevision != u.PGPRevision+1 || len(changed.PGPWrappedEnvelopes) != 1 || changed.PGPWrappedEnvelopes[0].Envelope != `{"v":2,"fresh":true}` || changed.PGPWrappedEnvelopes[0].AddedAt != "new-time" {
+		t.Fatal("recovery not committed")
+	}
+	normalized := changed
+	normalized.PGPWrappedEnvelopes, normalized.PGPRevision, normalized.UpdatedAt = u.PGPWrappedEnvelopes, u.PGPRevision, u.UpdatedAt
+	if !reflect.DeepEqual(normalized, u) {
+		t.Fatal("recovery write altered credential/password/public/keyring data")
+	}
+	deleted, err := s.DeletePGPWrappedEnvelope(id, EnvelopeSlotRecovery, &changed.PGPRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	added, err := s.SetPGPKeyringRecovery(id, `{"v":2,"fresh":true}`, "new-time", deleted.PGPFingerprint, &deleted.PGPRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(added.PGPWrappedEnvelopes) != 1 {
+		t.Fatal("did not add absent slot")
+	}
+	reset, err := s.SetPassword(context.Background(), id, "temporary-ring-password", true, &added.PGPRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPGPKeyringRecovery(id, `{"v":2}`, "now", reset.PGPFingerprint, &reset.PGPRevision); !errors.Is(err, ErrPGPKeyringUpgradeRequired) {
+		t.Fatalf("forced: %v", err)
+	}
+}

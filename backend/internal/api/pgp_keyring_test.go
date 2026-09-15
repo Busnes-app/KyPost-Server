@@ -135,6 +135,47 @@ func TestPGPKeyringHTTPCompatibilityAndReset(t *testing.T) {
 		t.Fatal("restore altered retained material")
 	}
 	u = restored
+
+	recoveryBody := map[string]any{"authSecret": authSecret, "envelope": string(nearCapacity), "expectedFingerprint": u.PGPFingerprint, "expectedRevision": u.PGPRevision, "keyringVersion": 1}
+	putRecovery := func(slot string) *httptest.ResponseRecorder {
+		encoded, _ := json.Marshal(recoveryBody)
+		req := httptest.NewRequest(http.MethodPut, "/api/pgp/identity/envelope/"+slot, bytes.NewReader(encoded))
+		authRequestAs(srv, req, u.ID)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := putRecovery("device:test"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("device opt-in: %d", rec.Code)
+	}
+	recoveryBody["keyringVersion"] = 2
+	if rec := putRecovery("recovery"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown version: %d", rec.Code)
+	}
+	recoveryBody["keyringVersion"] = 1
+	recoveryBody["expectedRevision"] = u.PGPRevision + 1
+	if rec := putRecovery("recovery"); rec.Code != http.StatusConflict {
+		t.Fatalf("future revision: %d", rec.Code)
+	}
+	recoveryBody["expectedRevision"] = u.PGPRevision
+	unchanged, err := srv.users.Get(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(unchanged, u) {
+		t.Fatal("rejected slot write changed data")
+	}
+	if rec := putRecovery("recovery"); rec.Code != http.StatusOK {
+		t.Fatalf("ring recovery: %d %s", rec.Code, rec.Body.String())
+	}
+	saved, err := srv.users.Get(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.PGPRevision != u.PGPRevision+1 || saved.PasswordHash != u.PasswordHash || saved.PGPPrivateKeyWrapped != u.PGPPrivateKeyWrapped || !reflect.DeepEqual(saved.PGPKeyring, u.PGPKeyring) || saved.PGPWrappedEnvelopes[0].Envelope != string(nearCapacity) {
+		t.Fatal("recovery altered current ring")
+	}
+	u = saved
 	// Version opt-in is explicit, and the revision belongs to the verified credential snapshot.
 	body := map[string]any{"oldAuthSecret": authSecret, "newAuthSecret": authSecret, "newLoginSalt": salt,
 		"newIterations": 600000, "rewrappedPgpKey": `{"v":2,"password":"rewrapped-ring"}`, "keyringVersion": 1}

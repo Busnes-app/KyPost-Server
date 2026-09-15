@@ -18,7 +18,7 @@ The browser vault holds opaque plaintext in memory (`keyVault.ts`).
 and local sealed autosave decryption. Existing signing/enrollment/legacy upload writers
 still require single-key armor; no account conversion is exposed. Complete-ring
 offline export, read-only drills and matching-ring restoration are implemented.
-Recovery-slot uploads and older-backup merging remain gated.
+Verified recovery-slot uploads are implemented; older-backup merging remains gated.
 The users store holds one current public identity and opaque password/recovery/
 device envelopes. Replacing its fingerprint clears device slots; a same-key
 update does not. Fingerprint guards cannot detect concurrent same-key edits.
@@ -156,7 +156,7 @@ this general revision: changing a password should not break a device's key copy.
 The file carries public identity/metadata and seals the original complete plaintext;
 creation roundtrips every byte. File opening checks encrypted generation/inventories
 against file metadata; drills check a fresh post-decrypt server snapshot too, including
-the complete active public packet multiset. Matching v2 restore preserves current metadata and confirms exact stored ciphertext before installation; uploads and older-backup merges remain gated. Keep v1 readers for
+the complete active public packet multiset. Matching v2 restore preserves current metadata and confirms exact stored ciphertext before installation; verified uploads require saved-secret acknowledgement and exact slot confirmation; older-backup merges remain gated. Keep v1 readers for
 legacy accounts. A v1 or older backup must never replace a converted account's
 ring and erase newer members. A v2 backup matching the current material generation
 and complete primary/subkey inventory can restore a locked vault. An older
@@ -246,9 +246,9 @@ pass:
 1. Versioned ring parser and all browser decrypt consumers; shared fixtures for
    legacy import, duplicate/invalid members, subkey IDs, hidden recipients, revoked
    history, drafts and autosaves. Preserve active-only signing.
-2. Revision guards and the internal whole-ring transaction are implemented; browser
-   complete-ring recovery export/drills are implemented. Whole-ring password changes,
-   recovery restore/merge, retirement and their HTTP writer remain.
+2. Revision guards, internal whole-ring storage, password changes, complete-ring
+   recovery export/drills, matching restore and verified recovery-slot uploads are
+   implemented. Older-backup merging, retirement and their transaction HTTP writer remain.
    Test races with password reset, same-key edits, recovery and device publication,
    storage failures and uncertain HTTP outcomes. Prove no partial credential/ring
    commit and no history loss from legacy writers or old backups.
@@ -273,7 +273,7 @@ Shared synthetic reader vectors: [testdata/pgp-keyring-v1.json](../testdata/pgp-
 autosave readers, plus draft/Sent attachments, revoked history, malformed rings
 and refusal of legacy writes. The fixture private keys are public test data.
 Recovery drills now compare server generation/inventories and current public packets;
-this does not authorize conversion. Lifecycle HTTP transactions, restore/merge and
+this does not authorize conversion. Retirement/merge transaction HTTP writers and
 native compatibility remain implementation gates.
 
 ## Implemented password writer

@@ -316,6 +316,7 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 		Envelope            string  `json:"envelope"`
 		ExpectedFingerprint string  `json:"expectedFingerprint,omitempty"`
 		ExpectedRevision    *uint64 `json:"expectedRevision,omitempty"`
+		KeyringVersion      *int    `json:"keyringVersion,omitempty"`
 		// Step-up credential (pgp_stepup.go). Installing a slot mints or
 		// replaces a sealing of the private key: a stolen session must not be
 		// able to plant an envelope the server cannot validate, and the user
@@ -323,7 +324,7 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 		Password   string `json:"password,omitempty"`
 		AuthSecret string `json:"authSecret,omitempty"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxWrappedKeyBytes)).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 3*maxWrappedKeyBytes)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
@@ -332,13 +333,28 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 		http.Error(w, "envelope is required", http.StatusBadRequest)
 		return
 	}
+	snapshot, err := s.users.Get(ac.UserID)
+	if err != nil {
+		writeUserStoreError(w, err)
+		return
+	}
 	if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
 		return
 	}
-	u, err := s.users.SetPGPWrappedEnvelope(
-		ac.UserID, r.PathValue("slot"), envelope,
-		time.Now().UTC().Format(time.RFC3339), strings.TrimSpace(req.ExpectedFingerprint), req.ExpectedRevision,
-	)
+	var u users.User
+	if req.KeyringVersion != nil {
+		if *req.KeyringVersion != 1 || r.PathValue("slot") != users.EnvelopeSlotRecovery || req.ExpectedRevision == nil || strings.TrimSpace(req.ExpectedFingerprint) == "" {
+			http.Error(w, "keyringVersion 1 requires the recovery slot, revision and fingerprint", http.StatusBadRequest)
+			return
+		}
+		if *req.ExpectedRevision != snapshot.PGPRevision {
+			writeUserStoreError(w, users.ErrPGPRevisionChanged)
+			return
+		}
+		u, err = s.users.SetPGPKeyringRecovery(ac.UserID, envelope, time.Now().UTC().Format(time.RFC3339), strings.TrimSpace(req.ExpectedFingerprint), req.ExpectedRevision)
+	} else {
+		u, err = s.users.SetPGPWrappedEnvelope(ac.UserID, r.PathValue("slot"), envelope, time.Now().UTC().Format(time.RFC3339), strings.TrimSpace(req.ExpectedFingerprint), req.ExpectedRevision)
+	}
 	if err != nil {
 		writeUserStoreError(w, err)
 		return

@@ -2,20 +2,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "../../../testdata/pgp-keyring-v1.json";
 import { parseKeyring } from "./pgpKeyring";
-import { unwrapPrivateKey, wrapPrivateKey } from "./keyVault";
+import { createRecoveryBackup, unwrapPrivateKey, wrapPrivateKey } from "./keyVault";
 
 // The API module is mocked so these tests exercise the session logic — the
 // state machine a cold-starting client depends on — without a server.
 const getPGPBootstrap = vi.fn();
 const rewrapPGPPrivateKey = vi.fn();
 const rewrapPGPKeyring = vi.fn();
+const putPGPKeyringRecovery = vi.fn();
 
 vi.mock("../api/pgp", async (importOriginal) => ({
   ...await importOriginal<typeof import("../api/pgp")>(),
   getPasswordSnapshot: (...args: unknown[]) => getPGPBootstrap(...args),
   getPGPBootstrap: (...args: unknown[]) => getPGPBootstrap(...args),
   rewrapPGPPrivateKey: (...args: unknown[]) => rewrapPGPPrivateKey(...args),
-  rewrapPGPKeyring: (...args: unknown[]) => rewrapPGPKeyring(...args)
+  rewrapPGPKeyring: (...args: unknown[]) => rewrapPGPKeyring(...args),
+  putPGPKeyringRecovery: (...args: unknown[]) => putPGPKeyringRecovery(...args)
 }));
 
 const SECRET = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nkey\n-----END PGP PRIVATE KEY BLOCK-----";
@@ -52,6 +54,7 @@ beforeEach(async () => {
   getPGPBootstrap.mockReset();
   rewrapPGPPrivateKey.mockReset();
   rewrapPGPKeyring.mockReset();
+  putPGPKeyringRecovery.mockReset();
   session = await import("./pgpSession");
 });
 
@@ -312,6 +315,32 @@ describe("complete-ring restore confirmation", () => {
       else await expect(restoring).rejects.toThrow(/could not be confirmed/);
       expect(rewrapPGPKeyring).toHaveBeenCalledTimes(1);
       expect(session.pgpSessionState().unlocked).toBe(outcome === "success" || outcome === "lost response");
+    },TIMEOUT);
+  }
+});
+
+describe("complete-ring recovery slot confirmation", () => {
+  for (const outcome of ["success", "different ciphertext", "newer revision", "wrong metadata", "stale preparation", "session changed"]) {
+    it(outcome,async () => {
+      const raw = JSON.stringify(fixture.ring);
+      const ring = await parseKeyring(raw);
+      if (ring.kind !== "keyring") throw new Error("expected ring");
+      const snapshot = bootstrapFixture({ fingerprint:ring.activeKey.getFingerprint(),publicKey:ring.activeKey.toPublic().armor(),keyring:ring.metadata });
+      const created = await createRecoveryBackup(raw,{ fingerprint:snapshot.fingerprint,publicKey:snapshot.publicKey,keyring:ring.metadata });
+      getPGPBootstrap.mockResolvedValue({...snapshot,pgpRevision:outcome === "stale preparation" ? 8 : 7});
+      putPGPKeyringRecovery.mockImplementation(async (input:{envelope:string;expectedRevision:number;isCurrent:()=>boolean}) => {
+        expect(input.expectedRevision).toBe(7);
+        expect(input.envelope).toBe(JSON.stringify(created.backup.envelope));
+        if (outcome === "session changed") session.clearPGPSession();
+        return {...snapshot,envelope:outcome === "different ciphertext" ? "other" : input.envelope,
+          pgpRevision:outcome === "newer revision" ? 9 : 8,
+          keyring:outcome === "wrong metadata" ? {...ring.metadata,materialGeneration:99} : ring.metadata};
+      });
+      const storing = session.storePGPKeyringRecovery(created.backup,created.secret,NEW_PASSWORD,7,()=>true);
+      if (outcome === "success") await expect(storing).resolves.toBeUndefined();
+      else await expect(storing).rejects.toThrow(outcome === "stale preparation" ? /state changed/ : /could not be confirmed/);
+      expect(putPGPKeyringRecovery).toHaveBeenCalledTimes(outcome === "stale preparation" ? 0 : 1);
+      expect(session.pgpSessionState().unlocked).toBe(false);
     },TIMEOUT);
   }
 });

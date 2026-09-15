@@ -1740,6 +1740,15 @@ func (s *Store) rewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, exp
 // a given secret opens. expectedFingerprint is optional for older clients;
 // a supplied value must match under the mutation lock.
 func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFingerprint string, expectedRevision *uint64) (User, error) {
+	return s.setPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFingerprint, expectedRevision, false)
+}
+
+// SetPGPKeyringRecovery changes only the recovery sealing of existing material.
+func (s *Store) SetPGPKeyringRecovery(id, envelope, addedAt, expectedFingerprint string, expectedRevision *uint64) (User, error) {
+	return s.setPGPWrappedEnvelope(id, EnvelopeSlotRecovery, envelope, addedAt, expectedFingerprint, expectedRevision, true)
+}
+
+func (s *Store) setPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFingerprint string, expectedRevision *uint64, keyring bool) (User, error) {
 	if err := ValidateWrappedEnvelope(envelope); err != nil {
 		return User{}, err
 	}
@@ -1754,7 +1763,11 @@ func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFinge
 		expiresAt = time.Now().UTC().Add(DeviceEnvelopeTTL).Format(time.RFC3339)
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
-		if u.PGPKeyring != nil {
+		if keyring {
+			if u.PGPKeyring == nil || u.PGPKeyring.Version != 1 || u.MustChangePassword || !u.UsesDerivedAuth() || expectedFingerprint == "" || slot != EnvelopeSlotRecovery {
+				return ErrPGPKeyringUpgradeRequired
+			}
+		} else if u.PGPKeyring != nil {
 			return ErrPGPKeyringUpgradeRequired
 		}
 		if expectedFingerprint != "" && !strings.EqualFold(u.PGPFingerprint, expectedFingerprint) {
