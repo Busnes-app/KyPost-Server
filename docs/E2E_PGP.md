@@ -373,8 +373,8 @@ revision, failed snapshot reads and corrupt ordinary envelopes abort preparation
 ### Browser recovery
 
 Complete-ring records support offline export and read-only drills using
-`kypost-pgp-recovery-v2`. Matching-ring restore is supported; account conversion and recovery-slot upload remain
-unavailable. The file is `{format, fingerprint, publicKey, keyring, envelope}`:
+`kypost-pgp-recovery-v2`. Matching-ring restore and verified recovery-slot upload are supported; account
+conversion and older-backup merging remain unavailable. The file is `{format, fingerprint, publicKey, keyring, envelope}`:
 `keyring` has the same version/generation/inventory shape as the authenticated
 snapshot; `envelope` uses the unchanged v2 PBKDF2/AES-GCM wrapper and seals the
 original complete `kypost-pgp-keyring-v1` plaintext, including unpublished revocation
@@ -408,8 +408,20 @@ legacy v1 backup cannot pass as a current complete ring. An old backup cannot
 recover keys created later; retain it for future merge into an unlocked current
 ring. Drills do not unlock the vault or write key material. A v2 drill date is tied
 to the entire sealed backup and metadata, scoped to this browser/account; a changed
-snapshot does not reuse the old date. Restore and server-upload attempts explicitly
-require the lifecycle update until whole-ring HTTP transactions are implemented.
+snapshot does not reuse the old date.
+
+After saved-secret acknowledgement, a prepared v2 backup is reopened locally and
+validated against current bootstrap at its original preparation revision. The
+browser sends `keyringVersion: 1`, `envelope`, `expectedFingerprint` and
+`expectedRevision` with account step-up to `PUT /api/pgp/identity/envelope/recovery`.
+No other slot accepts this opt-in. Existing v1 client rings with derived auth and
+no forced password change are required. Only recovery ciphertext/timestamps change;
+password ciphertext, credentials, public identity and material generation survive.
+The request allows 384 KiB of JSON/credential overhead; the envelope remains 128 KiB.
+Confirmation compares exact ciphertext, original revision + 1 and complete public
+metadata from one slot GET response. Lost responses never trigger automatic retries.
+Session/page liveness is checked immediately before PUT and accepting confirmation.
+Uncertainty retains the same file and secret; no recovered plaintext enters the vault.
 
 
 For legacy single-key accounts, Security → Encryption creates `kypost-pgp-recovery-v1` files with a random

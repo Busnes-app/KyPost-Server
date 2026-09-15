@@ -14,6 +14,7 @@ import {
   type PGPIdentity,
   rewrapPGPPrivateKey,
   rewrapPGPKeyring,
+  putPGPKeyringRecovery,
   type BoundSignerKey,
   type PGPBootstrap
 } from "../api/pgp";
@@ -28,7 +29,9 @@ import {
   unlock,
   unlockWithArmoredKey,
   unwrapPrivateKey,
-  wrapPrivateKey
+  wrapPrivateKey,
+  restoreRecoveryBackup,
+  type RecoveryBackup
 } from "./keyVault";
 
 import { validateKeyringSnapshot } from "./pgpKeyring";
@@ -270,5 +273,29 @@ export async function restorePGPKeyring(raw: string, password: string, snapshot:
     return pgpRevision;
   } catch {
     throw new Error("Restoration could not be confirmed. Keep your recovery file and secret, reload, and try unlocking with your current password before restoring again. No recovered keys were installed in this browser.");
+  }
+}
+
+/** Store only a reopened complete backup bound to its original preparation revision. */
+export async function storePGPKeyringRecovery(backup: RecoveryBackup, secret: string, password: string, expectedRevision: number, isActive: () => boolean): Promise<void> {
+  const generation = sessionGeneration;
+  const isCurrent = () => generation === sessionGeneration && isActive();
+  if (backup.format !== "kypost-pgp-recovery-v2") throw new Error("A complete keyring backup is required.");
+  const opened = await restoreRecoveryBackup(JSON.stringify(backup),secret);
+  const current = await getPGPBootstrap();
+  if (requirePGPRevision(current) !== expectedRevision || current.protection !== "client") throw new Error("Your PGP state changed. Prepare a new recovery copy.");
+  await validateKeyringSnapshot(opened.privateKey,{ ...current,keyring:current.keyring });
+  const envelope = JSON.stringify(backup.envelope);
+  try {
+    if (!isCurrent()) throw new Error("session changed");
+    const stored = await putPGPKeyringRecovery({ envelope,password,expectedFingerprint:current.fingerprint,expectedRevision,isCurrent });
+    if (!stored || typeof stored !== "object" || !("envelope" in stored) || stored.envelope !== envelope ||
+        !("pgpRevision" in stored) || stored.pgpRevision !== expectedRevision+1 ||
+        !("fingerprint" in stored) || typeof stored.fingerprint !== "string" ||
+        !("publicKey" in stored) || typeof stored.publicKey !== "string" || !("keyring" in stored)) throw new Error("unconfirmed");
+    await validateKeyringSnapshot(opened.privateKey,{ fingerprint:stored.fingerprint,publicKey:stored.publicKey,keyring:stored.keyring });
+    if (!isCurrent()) throw new Error("session changed");
+  } catch {
+    throw new Error("The recovery copy could not be confirmed. Keep this file and secret; the server may already hold this copy. Reload before trying again.");
   }
 }

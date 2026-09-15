@@ -265,6 +265,8 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 - `RewrapPGPKeyring` and `/identity/rewrap` with `keyringVersion: 1` repair only password ciphertext on existing v1 client rings. Require derived auth, no forced change, explicit fingerprint and revision. Bind the pre-step-up snapshot to that revision, then compare under the store lock. Preserve all credentials/public/recovery metadata; legacy rewrap still rejects rings.
 
+- `SetPGPKeyringRecovery` permits only the recovery slot on existing v1 client rings with derived auth, no forced change, fingerprint and revision. Versioned slot PUT binds the pre-step-up snapshot revision and checks it under the disk lock; never use it for device enrollment. Preserve password ciphertext, credentials, public identity, inventory and material generation. Body bound 384 KiB; stored envelope bound 128 KiB.
+
 - Recovery slot PUT and private-key rewrap accept optional `expectedFingerprint` for older-client compatibility. When supplied, compare it inside `users.Store.mutate` before writing; stale identity material gets 409 without mutation. The browser recovery paths always supply it. Slot GET returns public identity metadata and ciphertext from one user snapshot. The browser sends no recovery secret or plaintext key; handlers treat envelopes as opaque and never log their contents.
 
 - Build: `cd backend && go build -buildvcs=false ./...`

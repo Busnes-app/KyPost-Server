@@ -35,8 +35,10 @@ const SESSION = {
 };
 
 const restorePGPKeyring = vi.fn();
+const storePGPKeyringRecovery = vi.fn();
 vi.mock("../lib/pgpSession", () => ({
   restorePGPKeyring: (...args: unknown[]) => restorePGPKeyring(...args),
+  storePGPKeyringRecovery: (...args: unknown[]) => storePGPKeyringRecovery(...args),
   subscribePGPSession: (fn: (s: unknown) => void) => {
     fn(SESSION);
     return () => {};
@@ -95,6 +97,8 @@ afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
   restorePGPKeyring.mockReset();
+  storePGPKeyringRecovery.mockReset();
+  storePGPKeyringRecovery.mockResolvedValue(undefined);
   restorePGPKeyring.mockResolvedValue(8);
   localStorage.clear();
   SESSION.unlocked = true;
@@ -754,7 +758,7 @@ describe("complete keyring recovery UI gates", () => {
     expect(localStorage.length).toBe(0);
     expect(postJSON).not.toHaveBeenCalled();
   });
-  it("offers a complete offline download and never the legacy slot upload", async () => {
+  it("stores a complete recovery copy only after saved-secret acknowledgement", async () => {
     SESSION.bootstrap.keyring = keyring;
     createRecoveryBackup.mockResolvedValueOnce({ backup: ringBackup, secret: "SECRET-ABCD-1234" });
     renderPage();
@@ -762,7 +766,10 @@ describe("complete keyring recovery UI gates", () => {
     await screen.findByText(/Complete keyring recovery file checked/);
     expect(createRecoveryBackup).toHaveBeenCalledWith("RING", SESSION.bootstrap);
     expect(importIdentity).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: /store server copy/ })).toBeNull();
+    expect(storePGPKeyringRecovery).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: /I saved the secret — store server copy/ }));
+    await screen.findByText(/Recovery copy saved on the server/);
+    expect(storePGPKeyringRecovery).toHaveBeenCalledWith(ringBackup,"SECRET-ABCD-1234","account-password",7,expect.any(Function));
     expect(putJSON).not.toHaveBeenCalled();
   });
 });

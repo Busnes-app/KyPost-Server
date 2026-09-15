@@ -32,6 +32,7 @@ import {
   lockPGPSession,
   acceptCommittedPGPKey,
   restorePGPKeyring,
+  storePGPKeyringRecovery,
   unlockedPGPIdentity,
   loadPGPSession,
   rewrapUnlockedKeyUnder,
@@ -372,10 +373,6 @@ export function MailKeys({
 
   async function handleStoreRecoveryBackup() {
     if (!recoveryBackup || !recoverySecret || !preparedRecovery) return;
-    if (recoveryBackup.format === "kypost-pgp-recovery-v2") {
-      setPgpStatus("Complete keyring uploads require the lifecycle update. Keep the downloaded file and secret.");
-      return;
-    }
     const password = window.prompt(
       "Enter your account password to store the recovery copy.\n\n" +
       "You have confirmed that you saved its secret. This replaces any previous server recovery copy and its secret. Older downloaded files still work with their own secrets."
@@ -384,7 +381,12 @@ export function MailKeys({
     setPgpBusy(true);
     setPgpStatus("");
     try {
-      await putRecoveryEnvelope(recoveryBackup.envelope, password, recoveryBackup.fingerprint, preparedRecovery.expectedRevision);
+      if (recoveryBackup.format === "kypost-pgp-recovery-v2") {
+        await storePGPKeyringRecovery(recoveryBackup,recoverySecret,password,preparedRecovery.expectedRevision,() => mounted.current);
+        if (!mounted.current) return;
+      } else {
+        await putRecoveryEnvelope(recoveryBackup.envelope, password, recoveryBackup.fingerprint, preparedRecovery.expectedRevision);
+      }
       await loadPGPSession();
       setPgpStatus("Recovery copy saved on the server. Keep the file and secret for server loss or identity deletion.");
     } catch (err) {
@@ -922,7 +924,7 @@ export function MailKeys({
                   >
                     Copy secret
                   </button>
-                  {recoveryBackup?.format === "kypost-pgp-recovery-v1" && pgpSession?.bootstrap?.protection === "client" ? (
+                  {recoveryBackup && pgpSession?.bootstrap?.protection === "client" ? (
                     <button type="button" disabled={pgpBusy} onClick={() => void handleStoreRecoveryBackup()}>
                       I saved the secret — store server copy
                     </button>

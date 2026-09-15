@@ -12,6 +12,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Save verified complete-keyring recovery copies after saved-secret acknowledgement, with version/revision guards and exact slot confirmation. Preserve password/public material and retain the file/secret on uncertain responses.
 - Restore matching complete-keyring backups with explicit version/revision guards and exact stored-ciphertext confirmation, including lost responses. Preserve all history, public metadata and recovery slots; older-backup merging and conversion remain gated.
 - Support complete-keyring password changes for already-converted records with explicit version/revision guards. Preserve recovery copies (including absent slots), public identity and material generation; conversion remains gated.
 - Add complete-ring recovery-v2 offline export and read-only drills. Preserve original private packets and revocation certificates, enforce sealed size limits, and compare every member/generation plus active public packets against fresh snapshots. Reject legacy backups for converted records; conversion and lifecycle restore/uploads remain gated.
