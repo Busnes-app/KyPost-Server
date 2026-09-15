@@ -467,3 +467,44 @@ func TestChangeKeyringPasswordRefusesWrongState(t *testing.T) {
 		t.Fatal("refused change wrote data")
 	}
 }
+
+func TestRewrapPGPKeyringPreservesCurrentState(t *testing.T) {
+	s, id, update := keyringCandidate(t)
+	if _, err := s.RewrapPGPKeyring(id, `{"v":2}`, update.PrimaryFingerprints[0], &update.ExpectedRevision); !errors.Is(err, ErrPGPKeyringUpgradeRequired) {
+		t.Fatalf("legacy opt-in: %v", err)
+	}
+	u, err := s.CommitPGPKeyring(context.Background(), id, update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, revision := range []*uint64{nil, &update.ExpectedRevision} {
+		if _, err := s.RewrapPGPKeyring(id, `{"v":2}`, u.PGPFingerprint, revision); err == nil {
+			t.Fatal("unguarded/stale restoration")
+		}
+	}
+	if _, err := s.RewrapPGPKeyring(id, `{"v":2}`, "", &u.PGPRevision); err == nil {
+		t.Fatal("missing fingerprint")
+	}
+	if _, err := s.RewrapPGPKeyring(id, `{"v":2}`, strings.Repeat("F", 40), &u.PGPRevision); !errors.Is(err, ErrPGPIdentityChanged) {
+		t.Fatalf("wrong fingerprint: %v", err)
+	}
+	changed, err := s.RewrapPGPKeyring(id, `{"v":2,"restored":true}`, u.PGPFingerprint, &u.PGPRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.PGPRevision != u.PGPRevision+1 || changed.PGPPrivateKeyWrapped != `{"v":2,"restored":true}` {
+		t.Fatal("missing atomic rewrap")
+	}
+	normalized := changed
+	normalized.PGPPrivateKeyWrapped, normalized.PGPRevision, normalized.UpdatedAt = u.PGPPrivateKeyWrapped, u.PGPRevision, u.UpdatedAt
+	if !reflect.DeepEqual(normalized, u) {
+		t.Fatal("restoration changed credential or retained material")
+	}
+	reset, err := s.SetPassword(context.Background(), id, "temporary-ring-password", true, &changed.PGPRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RewrapPGPKeyring(id, `{"v":2}`, reset.PGPFingerprint, &reset.PGPRevision); !errors.Is(err, ErrPGPKeyringUpgradeRequired) {
+		t.Fatalf("forced reset: %v", err)
+	}
+}

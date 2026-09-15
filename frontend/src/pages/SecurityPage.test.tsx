@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { AuthContext } from "../auth";
@@ -34,7 +34,9 @@ const SESSION = {
   unlocked: true
 };
 
+const restorePGPKeyring = vi.fn();
 vi.mock("../lib/pgpSession", () => ({
+  restorePGPKeyring: (...args: unknown[]) => restorePGPKeyring(...args),
   subscribePGPSession: (fn: (s: unknown) => void) => {
     fn(SESSION);
     return () => {};
@@ -92,6 +94,8 @@ afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  restorePGPKeyring.mockReset();
+  restorePGPKeyring.mockResolvedValue(8);
   localStorage.clear();
   SESSION.unlocked = true;
   SESSION.bootstrap.keyring = undefined;
@@ -681,10 +685,11 @@ describe("complete keyring recovery UI gates", () => {
   async function openRing() {
     SESSION.bootstrap.keyring = keyring;
     restoreRecoveryBackup.mockResolvedValue({ ...ringBackup, privateKey: "RING" });
-    renderPage();
+    const page = renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Use server recovery copy" }));
     await screen.findByRole("heading", { name: "Server recovery copy" });
     await userEvent.type(screen.getByLabelText("Recovery secret"), "SECRET");
+    return page;
   }
   it("drills the entire ring without invoking a single-key parser, writer or vault unlock", async () => {
     await openRing();
@@ -696,15 +701,36 @@ describe("complete keyring recovery UI gates", () => {
     expect(putJSON).not.toHaveBeenCalled();
     expect(unlockWithArmoredKey).not.toHaveBeenCalled();
   });
-  it("does not install a ring or claim successful restoration before lifecycle uploads exist", async () => {
+  it("installs the complete ring only after confirmed restoration", async () => {
     await openRing();
     await userEvent.type(screen.getByLabelText("Current account password (restore only)"), "account-password");
     await userEvent.click(screen.getByRole("button", { name: "Restore" }));
-    await screen.findByText(/Complete keyring restoration requires the lifecycle update/);
-    expect(postJSON).not.toHaveBeenCalled();
-    expect(putJSON).not.toHaveBeenCalled();
+    await screen.findByText(/Complete keyring restored and confirmed/);
+    expect(restorePGPKeyring).toHaveBeenCalledWith("RING","account-password",expect.objectContaining({keyring}),expect.any(Function));
+    expect(importIdentity).not.toHaveBeenCalled();
+  });
+  it("keeps the source and secret without installing an unconfirmed restore", async () => {
+    await openRing();
+    restorePGPKeyring.mockRejectedValueOnce(new Error("Restoration could not be confirmed"));
+    await userEvent.type(screen.getByLabelText("Current account password (restore only)"), "account-password");
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await screen.findByText(/Restore failed: Restoration could not be confirmed/);
+    expect(screen.getByDisplayValue("SECRET")).toBeTruthy();
     expect(unlockWithArmoredKey).not.toHaveBeenCalled();
     expect(localStorage.length).toBe(0);
+  });
+  it("does not begin a restore if the page unmounts during decryption", async () => {
+    const page = await openRing();
+    let finish = () => {};
+    restoreRecoveryBackup.mockImplementationOnce(() => new Promise(resolve => {
+      finish = () => resolve({ ...ringBackup, privateKey: "RING" });
+    }));
+    await userEvent.type(screen.getByLabelText("Current account password (restore only)"), "account-password");
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    page.unmount();
+    await act(async () => finish());
+    expect(restorePGPKeyring).not.toHaveBeenCalled();
+    expect(unlockWithArmoredKey).not.toHaveBeenCalled();
   });
   it("checks the snapshot fetched after decryption, rejecting a changed ring", async () => {
     await openRing();

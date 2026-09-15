@@ -95,6 +95,46 @@ func TestPGPKeyringHTTPCompatibilityAndReset(t *testing.T) {
 		t.Fatal("rejected legacy requests changed data")
 	}
 
+	// Matching-ring restore opts in explicitly; it changes no credential/recovery data.
+	nearCapacity, err := json.Marshal(map[string]any{"v": 2, "data": strings.Repeat("x", users.MaxWrappedEnvelopeBytes-32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreBody := map[string]any{"authSecret": authSecret, "wrapped": string(nearCapacity), "expectedFingerprint": u.PGPFingerprint, "expectedRevision": u.PGPRevision, "keyringVersion": 2}
+	restore := func() *httptest.ResponseRecorder {
+		encoded, _ := json.Marshal(restoreBody)
+		req := httptest.NewRequest(http.MethodPost, "/api/pgp/identity/rewrap", bytes.NewReader(encoded))
+		authRequestAs(srv, req, u.ID)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := restore(); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown restore version: %d", rec.Code)
+	}
+	restoreBody["keyringVersion"] = 1
+	restoreBody["authSecret"] = strings.Repeat("c", 64)
+	if rec := restore(); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("restore step-up: %d", rec.Code)
+	}
+	restoreBody["authSecret"] = authSecret
+	restoreBody["expectedRevision"] = u.PGPRevision + 1
+	if rec := restore(); rec.Code != http.StatusConflict {
+		t.Fatalf("future restore revision: %d", rec.Code)
+	}
+	restoreBody["expectedRevision"] = u.PGPRevision
+	if rec := restore(); rec.Code != http.StatusOK {
+		t.Fatalf("ring restore: %d %s", rec.Code, rec.Body.String())
+	}
+	restored, err := srv.users.Get(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.PGPPrivateKeyWrapped != restoreBody["wrapped"] || restored.PasswordHash != u.PasswordHash || restored.PGPRevision != u.PGPRevision+1 ||
+		!reflect.DeepEqual(restored.PGPKeyring, u.PGPKeyring) || !reflect.DeepEqual(restored.PGPWrappedEnvelopes, u.PGPWrappedEnvelopes) {
+		t.Fatal("restore altered retained material")
+	}
+	u = restored
 	// Version opt-in is explicit, and the revision belongs to the verified credential snapshot.
 	body := map[string]any{"oldAuthSecret": authSecret, "newAuthSecret": authSecret, "newLoginSalt": salt,
 		"newIterations": 600000, "rewrappedPgpKey": `{"v":2,"password":"rewrapped-ring"}`, "keyringVersion": 1}

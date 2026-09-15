@@ -153,16 +153,8 @@ func (s *Server) handlePGPIdentityClient(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// handlePGPRewrapKey replaces the wrapped envelope without touching the
-// identity, for when the user changes their password: the wrapping key is
-// derived from that password, so the browser unwraps with the old one and
-// rewraps with the new one and posts the result here.
-//
-// If this call is lost (a crash between the password write and this one),
-// the stored envelope is still the one wrapped under the OLD password. That
-// is recoverable — the user re-enters their previous password once to
-// unlock — and is strictly better than the alternative of letting the server
-// hold the key so it can rewrap unattended.
+// handlePGPRewrapKey repairs password sealing using locally recovered material.
+// Password changes commit credentials and their envelope through /auth/password.
 func (s *Server) handlePGPRewrapKey(w http.ResponseWriter, r *http.Request) {
 	ac, ok := authFromContext(r)
 	if !ok {
@@ -173,17 +165,25 @@ func (s *Server) handlePGPRewrapKey(w http.ResponseWriter, r *http.Request) {
 		Wrapped             string  `json:"wrapped"`
 		ExpectedFingerprint string  `json:"expectedFingerprint,omitempty"`
 		ExpectedRevision    *uint64 `json:"expectedRevision,omitempty"`
+		KeyringVersion      *int    `json:"keyringVersion,omitempty"`
 		// Step-up credential. Always required here: rewrapping presupposes an
 		// identity to rewrap, so this endpoint is never first-time setup.
 		Password   string `json:"password,omitempty"`
 		AuthSecret string `json:"authSecret,omitempty"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxWrappedKeyBytes)).Decode(&req); err != nil {
+	// JSON quoting and step-up fields add overhead; the store caps the envelope itself.
+	if err := json.NewDecoder(io.LimitReader(r.Body, 3*maxWrappedKeyBytes)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.Wrapped) == "" {
 		http.Error(w, "wrapped private key is required", http.StatusBadRequest)
+		return
+	}
+	// Bind the revision before step-up, which independently reloads the credential.
+	snapshot, err := s.users.Get(ac.UserID)
+	if err != nil {
+		writeUserStoreError(w, err)
 		return
 	}
 	// A stolen session could otherwise overwrite the envelope with a blob whose
@@ -192,7 +192,20 @@ func (s *Server) handlePGPRewrapKey(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
 		return
 	}
-	u, err := s.users.RewrapPGPPrivateKey(ac.UserID, strings.TrimSpace(req.Wrapped), strings.TrimSpace(req.ExpectedFingerprint), req.ExpectedRevision)
+	var u users.User
+	if req.KeyringVersion != nil {
+		if *req.KeyringVersion != 1 || req.ExpectedRevision == nil || strings.TrimSpace(req.ExpectedFingerprint) == "" {
+			http.Error(w, "keyringVersion 1 requires an expected revision and fingerprint", http.StatusBadRequest)
+			return
+		}
+		if *req.ExpectedRevision != snapshot.PGPRevision {
+			writeUserStoreError(w, users.ErrPGPRevisionChanged)
+			return
+		}
+		u, err = s.users.RewrapPGPKeyring(ac.UserID, strings.TrimSpace(req.Wrapped), strings.TrimSpace(req.ExpectedFingerprint), req.ExpectedRevision)
+	} else {
+		u, err = s.users.RewrapPGPPrivateKey(ac.UserID, strings.TrimSpace(req.Wrapped), strings.TrimSpace(req.ExpectedFingerprint), req.ExpectedRevision)
+	}
 	if err != nil {
 		writeUserStoreError(w, err)
 		return

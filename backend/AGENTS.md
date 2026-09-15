@@ -263,6 +263,8 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 - PGP identity, wrapped-key, bootstrap and slot responses include `pgpRevision` from their own user snapshot; mutation responses return the committed revision. Client identity/rewrap, slot PUT/DELETE, identity DELETE and password change accept `expectedRevision`; mismatch returns 409 with `pgpStateChanged: true`, without committing credentials or envelopes. Browser writers supply snapshot-bound revisions; converted accounts require guards and reject legacy single-key writers. `GET /api/auth/password` returns only the caller’s revision/protection/wrapped envelope/forced-change flag with no-store. Forced-change snapshots withhold the envelope; completing the forced change preserves it for later recovery. Do not exempt full PGP bootstrap for temporary credentials.
 
+- `RewrapPGPKeyring` and `/identity/rewrap` with `keyringVersion: 1` repair only password ciphertext on existing v1 client rings. Require derived auth, no forced change, explicit fingerprint and revision. Bind the pre-step-up snapshot to that revision, then compare under the store lock. Preserve all credentials/public/recovery metadata; legacy rewrap still rejects rings.
+
 - Recovery slot PUT and private-key rewrap accept optional `expectedFingerprint` for older-client compatibility. When supplied, compare it inside `users.Store.mutate` before writing; stale identity material gets 409 without mutation. The browser recovery paths always supply it. Slot GET returns public identity metadata and ciphertext from one user snapshot. The browser sends no recovery secret or plaintext key; handlers treat envelopes as opaque and never log their contents.
 
 - Build: `cd backend && go build -buildvcs=false ./...`

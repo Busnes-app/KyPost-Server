@@ -13,6 +13,7 @@ import {
   requirePGPRevision,
   type PGPIdentity,
   rewrapPGPPrivateKey,
+  rewrapPGPKeyring,
   type BoundSignerKey,
   type PGPBootstrap
 } from "../api/pgp";
@@ -42,6 +43,7 @@ export type PGPSessionState = {
 };
 
 let state: PGPSessionState = { loaded: false, bootstrap: null, unlocked: false, error: "" };
+let sessionGeneration = 0;
 let unlockedIdentity: Pick<PGPIdentity, "fingerprint" | "pgpRevision"> | null = null;
 const listeners = new Set<(s: PGPSessionState) => void>();
 
@@ -93,6 +95,7 @@ export async function loadPGPSession(): Promise<PGPSessionState> {
 }
 
 export function clearPGPSession(): void {
+  sessionGeneration++;
   lock();
   state = { loaded: false, bootstrap: null, unlocked: false, error: "" };
   emit();
@@ -237,4 +240,35 @@ export async function rewrapUnlockedKeyUnder(password: string): Promise<void> {
   await rewrapPGPPrivateKey(JSON.stringify(await wrapPrivateKey(armored, password)), password, snapshot.fingerprint, snapshot.pgpRevision);
   lockPGPSession();
   await loadPGPSession();
+}
+
+/** Confirm the exact prepared write and operation liveness before installing plaintext. */
+export async function restorePGPKeyring(raw: string, password: string, snapshot: PGPBootstrap, isActive: () => boolean): Promise<number> {
+  const generation = sessionGeneration;
+  const isCurrent = () => generation === sessionGeneration && isActive();
+  const expectedRevision = requirePGPRevision(snapshot);
+  if (snapshot.protection !== "client") throw new Error("This account does not use a complete client keyring.");
+  await validateKeyringSnapshot(raw, { ...snapshot, keyring: snapshot.keyring });
+  const wrapped = JSON.stringify(await wrapPrivateKey(raw, password));
+  if (new TextEncoder().encode(wrapped).length > (128 << 10)) throw new Error("The complete keyring exceeds storage capacity.");
+  if (!isCurrent()) throw new Error("The signed-in session changed. Reload before restoring.");
+  try {
+    await rewrapPGPKeyring({ wrapped, password, expectedFingerprint: snapshot.fingerprint, expectedRevision, isCurrent });
+  } catch {
+    // The request may have committed. Never retry or attach a newer revision.
+  }
+  try {
+    if (!isCurrent()) throw new Error("session changed");
+    const current = await getPGPBootstrap();
+    if (requirePGPRevision(current) !== expectedRevision + 1 || current.protection !== "client" || current.wrappedPrivateKey !== wrapped) {
+      throw new Error("unconfirmed");
+    }
+    await validateKeyringSnapshot(raw, { ...current, keyring: current.keyring });
+    if (!isCurrent()) throw new Error("session changed");
+    const pgpRevision = requirePGPRevision(current);
+    acceptCommittedPGPKey(raw, { fingerprint: current.fingerprint, pgpRevision });
+    return pgpRevision;
+  } catch {
+    throw new Error("Restoration could not be confirmed. Keep your recovery file and secret, reload, and try unlocking with your current password before restoring again. No recovered keys were installed in this browser.");
+  }
 }

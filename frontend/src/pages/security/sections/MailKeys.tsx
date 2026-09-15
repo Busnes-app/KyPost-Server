@@ -31,6 +31,7 @@ import {
 import {
   lockPGPSession,
   acceptCommittedPGPKey,
+  restorePGPKeyring,
   unlockedPGPIdentity,
   loadPGPSession,
   rewrapUnlockedKeyUnder,
@@ -491,7 +492,15 @@ export function MailKeys({
           throw new Error("This backup is not the current complete keyring. A legacy backup cannot replace retained keys.");
         }
         await validateKeyringSnapshot(restored.privateKey, { ...current, keyring: current.keyring });
-        if (!drill) throw new Error("Complete keyring restoration requires the lifecycle update. Use Test recovery to check this copy; no keys were changed.");
+        if (!drill) {
+          if (!mounted.current) return;
+          await restorePGPKeyring(restored.privateKey, restorePassword, current, () => mounted.current);
+          if (!mounted.current) return;
+          cancelRestore();
+          await loadPGPSession();
+          setPgpStatus("Complete keyring restored and confirmed under your current account password. Every retained key was preserved.");
+          return;
+        }
         const backup: RecoveryBackup = { format: restored.format, fingerprint: restored.fingerprint,
           publicKey: restored.publicKey, envelope: restored.envelope, keyring: restored.keyring };
         setRestoreSecret("");
