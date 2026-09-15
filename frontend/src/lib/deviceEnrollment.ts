@@ -23,6 +23,8 @@
 // docs/superpowers/specs/2026-08-04-device-enrollment-design.md. Changing any of
 // it is a wire-format break and must move the version tag with it.
 
+import { validateKeyringSnapshot } from "./pgpKeyring";
+
 /** Seconds per code bucket. Matches GET /api/pgp/qr/token's TTL deliberately. */
 export const CODE_BUCKET_SECONDS = 120;
 
@@ -55,7 +57,7 @@ const CODE_BITS = CODE_LENGTH * 5; // 70
 
 // v1 -> v2 (2026-08-05): the AAD stopped being pipe-delimited concatenation and
 // became length-prefixed. See buildEnvelopeAad.
-const ENVELOPE_VERSION = "kypost-device-envelope/v2";
+const envelopeDomain = (version: 2 | 3) => `kypost-device-envelope/v${version}`;
 const RAW_KEY_BYTES = 65; // 0x04 || X(32) || Y(32)
 
 export type DeviceEnvelope = {
@@ -65,6 +67,8 @@ export type DeviceEnvelope = {
   iv: string;
   ct: string;
 };
+
+export type KeyringDeviceEnvelope = Omit<DeviceEnvelope, "v"> & { v: 3 };
 
 // The ArrayBuffer type argument is load-bearing, not decoration: TypeScript 7
 // defaults a bare Uint8Array to ArrayBufferLike, which WebCrypto's BufferSource
@@ -300,8 +304,12 @@ export async function importDevicePublicKey(publicKeyB64: string): Promise<Crypt
  * cannot authenticate surfaces to the user as a substituted-key alarm.
  */
 export function buildEnvelopeAad(deviceId: string, pgpFingerprint: string): Uint8Array<ArrayBuffer> {
+  return envelopeAad(deviceId, pgpFingerprint, 2);
+}
+
+function envelopeAad(deviceId: string, pgpFingerprint: string, version: 2 | 3): Uint8Array<ArrayBuffer> {
   const enc = new TextEncoder();
-  const info = enc.encode(ENVELOPE_VERSION);
+  const info = enc.encode(envelopeDomain(version));
   const id = enc.encode(deviceId);
   const fp = enc.encode(pgpFingerprint.toUpperCase().replace(/\s/g, ""));
   if (id.length > 0xffff || fp.length > 0xffff) {
@@ -339,6 +347,38 @@ export async function sealEnvelopeForDevice(
   pgpFingerprint: string,
   armoredPrivateKey: string,
 ): Promise<DeviceEnvelope> {
+  return { v: 2, ...await sealDevicePayload(publicKeyB64, deviceId, pgpFingerprint, armoredPrivateKey, 2) };
+}
+
+/** V3 preparation only: no upload or capability negotiation. Never deliver this through v2. */
+export async function sealKeyringForDevice({ publicKeyB64, deviceId, typedCode, raw, snapshot }: {
+  publicKeyB64: string;
+  deviceId: string;
+  typedCode: string;
+  raw: string;
+  snapshot: Parameters<typeof validateKeyringSnapshot>[1];
+}): Promise<KeyringDeviceEnvelope> {
+  const ring = await validateKeyringSnapshot(raw, snapshot);
+  const fingerprint = ring.activeKey.getFingerprint().toUpperCase();
+  if (!deviceId || new TextEncoder().encode(deviceId).length > 0xffff) {
+    throw new Error("Invalid enrollment device ID. Pair the device again.");
+  }
+  // Compare after parsing, immediately before sealing to the same key and ID.
+  if (!await verifyEnrollmentCode(publicKeyB64, deviceId, typedCode)) {
+    throw new Error("Device verification code does not match. Check the code on the device.");
+  }
+  const envelope: KeyringDeviceEnvelope = {
+    v: 3, ...await sealDevicePayload(publicKeyB64, deviceId, fingerprint, raw, 3),
+  };
+  if (new TextEncoder().encode(JSON.stringify(envelope)).length > 128 << 10) {
+    throw new Error("The complete device envelope exceeds 128 KiB. No key was delivered.");
+  }
+  return envelope;
+}
+
+async function sealDevicePayload(
+  publicKeyB64: string, deviceId: string, pgpFingerprint: string, plaintext: string, version: 2 | 3,
+): Promise<Omit<DeviceEnvelope, "v">> {
   const devicePub = await importDevicePublicKey(publicKeyB64);
   const ephemeral = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, [
     "deriveBits",
@@ -354,7 +394,7 @@ export async function sealEnvelopeForDevice(
       name: "HKDF",
       hash: "SHA-256",
       salt: decodeRawKey(publicKeyB64),
-      info: new TextEncoder().encode(ENVELOPE_VERSION),
+      info: new TextEncoder().encode(envelopeDomain(version)),
     },
     hkdfKey,
     { name: "AES-GCM", length: 256 },
@@ -363,18 +403,17 @@ export async function sealEnvelopeForDevice(
   );
 
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const aad = buildEnvelopeAad(deviceId, pgpFingerprint);
+  const aad = envelopeAad(deviceId, pgpFingerprint, version);
   const ct = new Uint8Array(
     await crypto.subtle.encrypt(
       { name: "AES-GCM", iv, additionalData: aad },
       aesKey,
-      new TextEncoder().encode(armoredPrivateKey),
+      new TextEncoder().encode(plaintext),
     ),
   );
 
   const epk = new Uint8Array(await crypto.subtle.exportKey("raw", ephemeral.publicKey));
   return {
-    v: 2,
     alg: "ECDH-P256+HKDF-SHA256+A256GCM",
     epk: bytesToBase64(epk),
     iv: bytesToBase64(iv),

@@ -184,8 +184,63 @@ converted account to active-key-only delivery.
 V3 uses the existing installed ECDH/HKDF/AEAD primitives, with a distinct
 `kypost-device-envelope/v3` HKDF/AAD domain and authenticated device ID and active
 fingerprint, carrying the complete versioned ring. Retain the existing SAS check
-before sealing; a capability advertisement is not proof of key ownership. Finalize
-exact framing with shared cross-language vectors before implementing consumers.
+before sealing; a capability advertisement is not proof of key ownership.
+The preparation helper and shared vectors below pin the framing; native consumers,
+capability negotiation, upload/acknowledgement and conversion remain gated.
+
+### V3 framing and interoperability vectors
+
+The JSON envelope is `{v:3, alg:"ECDH-P256+HKDF-SHA256+A256GCM", epk, iv, ct}`.
+Binary fields use standard padded base64. `epk` is the ephemeral P-256 public
+point in 65-byte uncompressed SEC1 form; `iv` is 12 random bytes; `ct` is
+AES-GCM ciphertext followed by its 16-byte tag. Generate a fresh ephemeral key
+and IV for every sealing. Importers must reject unsupported versions/algorithms,
+invalid curve points, wrong lengths and authentication failures before parsing
+plaintext. Never try v2 as a fallback for a v3 envelope.
+
+Derive 32 shared bytes with P-256 ECDH. HKDF-SHA256 uses those bytes as IKM,
+the device's raw 65-byte public point as salt, the UTF-8 bytes of
+`kypost-device-envelope/v3` as info, and produces the 32-byte AES key.
+AAD is the concatenation:
+
+```
+UTF8("kypost-device-envelope/v3") ||
+uint16BE(byteLength(UTF8(deviceId))) || UTF8(deviceId) ||
+uint16BE(byteLength(UTF8(activeFingerprint))) || UTF8(activeFingerprint)
+```
+
+The device ID is nonempty and unchanged (no trimming, normalization or case
+folding), at most 65,535 UTF-8 bytes. The active fingerprint is uppercase hex
+without whitespace, computed from the validated active key (40 or 64 bytes).
+Lengths count UTF-8 bytes, not characters. Plaintext is the original UTF-8
+`kypost-pgp-keyring-v1` JSON, including every historical private key and optional
+revocation certificate. Do not re-export a parsed key to construct it. Apply the
+ring bounds above and a 128 KiB UTF-8 limit on the serialized sealed envelope;
+base64 expansion can reject a ring that fits the reader's 128 KiB plaintext cap.
+
+The browser's `sealKeyringForDevice` requires caller-supplied current snapshot
+metadata/public material, validates the entire ring, and verifies the existing
+SAS against the same device key/ID immediately before sealing. It only returns
+ciphertext. It does not upload, persist, install keys or establish that a native
+client supports this format. A future delivery caller must bind preparation to
+its original revision and recheck session liveness before writing.
+
+[testdata/device-envelope-v3.json](../testdata/device-envelope-v3.json) contains
+public test-only scalars, exact plaintext, ECDH/HKDF/AAD intermediate bytes and
+v2/v3 ciphertext. The v3 ID includes multibyte UTF-8 and a pipe to catch character
+counts and delimiter framing. V2 pins legacy byte compatibility. Fixed scalars
+and IVs belong only in tests. WebCrypto sealing is checked by
+`frontend/src/lib/deviceEnvelopeV3.test.ts`; an independent Go stdlib verifier
+checks both directions and every intermediate:
+
+```sh
+cd testdata
+GOTOOLCHAIN=go1.26.6 go test -v device_envelope_v3_test.go
+```
+
+Passing these vectors proves crypto framing compatibility, not native durable
+keyring import or released-client readiness. Each native port must also pass the
+persistence and stale-device scenarios below before conversion can ship.
 
 Native clients validate every member in temporary state, persist the entire ring
 before acknowledging enrollment, then switch the active pointer. Failures preserve

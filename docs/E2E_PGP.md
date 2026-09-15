@@ -25,6 +25,14 @@ Two protection modes, recorded per user in `users.json` as
 `users.User.PGPProtection()` is the single source of truth; every server-side
 PGP path calls `HasServerReadableKey()` and refuses rather than assuming.
 
+### Device keyring preparation (gated)
+
+The browser has a validated complete-ring device-envelope v3 preparation helper
+and shared WebCrypto/Go vectors. The [v3 contract](PGP_KEY_LIFECYCLE.md#v3-framing-and-interoperability-vectors)
+specifies its separate HKDF/AAD domain and exact framing. Production enrollment
+still uses v2 single-key delivery; native v3 persistence, capability negotiation,
+server delivery and account conversion are not enabled by this helper.
+
 ### Key wrapping
 
 `frontend/src/lib/keyVault.ts`:
