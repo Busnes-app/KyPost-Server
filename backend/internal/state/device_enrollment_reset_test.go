@@ -19,7 +19,7 @@ func TestClearDeviceEnrollmentsResetsEveryDevice(t *testing.T) {
 	seedDevice(t, store, "dev-2")
 
 	for _, id := range []string{"dev-1", "dev-2"} {
-		if _, err := store.SetNativeDeviceEnrollmentKey(id, "PUBKEY-"+id, "2026-08-05T00:00:00Z"); err != nil {
+		if _, err := store.SetNativeDeviceEnrollmentKey(id, "PUBKEY-"+id, "2026-08-05T00:00:00Z", nil); err != nil {
 			t.Fatalf("SetNativeDeviceEnrollmentKey(%s): %v", id, err)
 		}
 		if err := store.SetNativeDeviceEncryptionEnrolled(id, true); err != nil {
@@ -58,7 +58,7 @@ func TestClearDeviceEnrollmentsResetsEveryDevice(t *testing.T) {
 func TestClearDeviceEnrollmentsKeepsThePairing(t *testing.T) {
 	store := enrollmentTestStore(t)
 	seedDevice(t, store, "dev-1")
-	if _, err := store.SetNativeDeviceEnrollmentKey("dev-1", "PUBKEY", "2026-08-05T00:00:00Z"); err != nil {
+	if _, err := store.SetNativeDeviceEnrollmentKey("dev-1", "PUBKEY", "2026-08-05T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetNativeDeviceEnrollmentKey: %v", err)
 	}
 	if _, err := store.SetNativeDeviceMFAApprover("dev-1", true); err != nil {

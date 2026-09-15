@@ -27,7 +27,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - Send-as aliases, each verified by a DKIM-signed challenge from the alias's own domain before it can be used
 - Web Key Directory publishing: serve your users' public keys at `/.well-known/openpgpkey/` for verified domains, so correspondents discover them without a keyserver
 - CAPTCHA on login, **self-hosted proof-of-work by default** (also Turnstile or Friendly Captcha; `CAPTCHA_PROVIDER=none` turns it off). It works alongside a 3-strikes/15-minute account lockout, a looser per-IP lockout, and an instance-wide login rate limit. Note that proof-of-work needs a secure context in the browser — read the CAPTCHA notes in `.env.example` if you serve over plain HTTP on a LAN.
-- Browser push notifications for each user, for all mail or for keyword matches only. KyPost also supports native push pairing for mobile apps.
+- Browser push notifications for each user, for all mail or for keyword matches only. KyPost also supports native push pairing for mobile apps. Encrypted-mail setup checks the device’s supported envelope formats before sealing.
 - Settings grouped into panels: Appearance, Mail (IMAP/SMTP, send-as, contact sync, filters), Security, Notifications and Status — plus Email Labels for each user's own prompt tuning and classification decisions — and an Admin group for server runtime and diagnostics
 - A dozen theme presets
 
@@ -522,7 +522,7 @@ all, so pairing refuses rather than guessing one from the request.
 Native registration behavior:
 
 - `POST /api/notifications/native/register` validates the pairing token. It stores the native device metadata and token in the backend state.
-- `GET /api/notifications/native/devices` lists the paired native devices.
+- `GET /api/notifications/native/devices` lists the paired native devices and their reported enrollment envelope versions. Older devices default to v2; webmail refuses setup for devices that require a newer format. V3 delivery and conversion remain gated.
 - `DELETE /api/notifications/native/devices` removes one paired native device by `deviceId`.
 - `POST /api/notifications/native/unpair` revokes all paired native devices for the signed-in user.
 
@@ -834,7 +834,7 @@ PGP key discovery and device enrollment:
 - `GET|PUT /api/pgp/discovery/settings`
 - `GET /api/pgp/discovery/suppressions` and `DELETE /api/pgp/discovery/suppressions/{email}`
 - `POST /api/pgp/discovery/suppress-contact`
-- `GET /api/pgp/device/envelope` (a paired device fetches the envelope sealed to its own secure-element key), `POST /api/pgp/device/enrollment-key` (a device publishes its public sealing key under its pairing credential), `POST /api/pgp/device/enrollment-state` (a device reports whether it can actually read the identity)
+- `GET /api/pgp/device/envelope` (a paired device fetches the envelope sealed to its own secure-element key), `POST /api/pgp/device/enrollment-key` (a device publishes its public sealing key and optional `envelopeVersions` under its pairing credential), `POST /api/pgp/device/enrollment-state` (a device reports whether it can actually read the identity)
 
 Web Key Directory (admin only, plus the public serving path):
 

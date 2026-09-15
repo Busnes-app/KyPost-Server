@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS native_devices (
 	-- from additiveColumns below, which is the path that actually matters.
 	enrollment_public_key TEXT NOT NULL DEFAULT '',
 	enrollment_key_at     TEXT NOT NULL DEFAULT '',
+	enrollment_envelope_versions TEXT NOT NULL DEFAULT '[2]',
 	encryption_enrolled   INTEGER NOT NULL DEFAULT 0,
 	-- WebPush (RFC 8291) subscription keys, UnifiedPush only. Same story as the
 	-- enrollment columns above: additiveColumns is the path that matters.
@@ -209,6 +210,7 @@ func openDB(path string) (*sql.DB, error) {
 var additiveColumns = []struct{ table, column, ddl string }{
 	{"native_devices", "enrollment_public_key", "TEXT NOT NULL DEFAULT ''"},
 	{"native_devices", "enrollment_key_at", "TEXT NOT NULL DEFAULT ''"},
+	{"native_devices", "enrollment_envelope_versions", "TEXT NOT NULL DEFAULT '[2]'"},
 	{"native_devices", "encryption_enrolled", "INTEGER NOT NULL DEFAULT 0"},
 	// A UnifiedPush device paired before the WebPush key exchange existed
 	// decodes as "" — which is the truth: it sent no keys, so it keeps

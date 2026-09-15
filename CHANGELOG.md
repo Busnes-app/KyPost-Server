@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Devices can publish supported enrollment envelope versions with their sealing key. Preserve claims across token refreshes, default legacy publications to v2, and expose them in device listings. Browser setup refuses incompatible versions; v3 delivery and conversion remain gated.
+
 - Prepare device-envelope v3 with complete-ring validation, device-code verification and a separate authenticated crypto domain. Pin v2/v3 bytes with shared WebCrypto/Go vectors; native delivery and conversion remain gated.
 
 - Save verified complete-keyring recovery copies after saved-secret acknowledgement, with version/revision guards and exact slot confirmation. Preserve password/public material and retain the file/secret on uncertain responses.

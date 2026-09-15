@@ -176,8 +176,10 @@ explicitly account for newer keys before any destructive replacement.
 
 ## Device-envelope v3
 
-Extend device-authenticated enrollment-key publication with supported envelope
-versions; expose them to the browser. Converted accounts require v3 support and
+Device-authenticated enrollment-key publication now accepts `envelopeVersions`
+and exposes `enrollmentEnvelopeVersions` to the browser; see the exact request,
+legacy defaults and bounds in `E2E_PGP.md`. Current delivery remains v2 and the
+browser refuses devices that exclude v2. Converted accounts require v3 support and
 otherwise show update-required. Legacy accounts may continue v2. Never downgrade a
 converted account to active-key-only delivery.
 
@@ -186,7 +188,7 @@ V3 uses the existing installed ECDH/HKDF/AEAD primitives, with a distinct
 fingerprint, carrying the complete versioned ring. Retain the existing SAS check
 before sealing; a capability advertisement is not proof of key ownership.
 The preparation helper and shared vectors below pin the framing; native consumers,
-capability negotiation, upload/acknowledgement and conversion remain gated.
+v3 upload/acknowledgement and conversion remain gated.
 
 ### V3 framing and interoperability vectors
 

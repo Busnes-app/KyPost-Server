@@ -38,6 +38,8 @@ export type NativeDevice = {
    */
   enrollmentPublicKey?: string;
   enrollmentKeyAt?: string;
+  /** Published with the enrollment key. Missing/null on older servers means v2 only. */
+  enrollmentEnvelopeVersions?: number[];
   /**
    * DEVICE-REPORTED: whether it can still open its local envelope. Not the
    * server's opinion — reinstalling the app destroys the key that answers this,
@@ -57,13 +59,26 @@ export type NativeDeliveryMode = "push" | "pull";
  * 90-second pairing token as a side effect, so reading a setting from it would
  * hand out a credential every time the tab opened. Absent on older servers.
  */
-export function listNativeDevices(): Promise<{
+export async function listNativeDevices(): Promise<{
   devices: NativeDevice[];
   deliveryMode?: NativeDeliveryMode;
 }> {
-  return getJSON<{ devices: NativeDevice[]; deliveryMode?: NativeDeliveryMode }>(
-    "/api/notifications/native/devices"
-  );
+  const result = await getJSON<{ devices: (Omit<NativeDevice, "enrollmentEnvelopeVersions"> & {
+    enrollmentEnvelopeVersions?: unknown;
+  })[]; deliveryMode?: NativeDeliveryMode }>("/api/notifications/native/devices");
+  return { ...result, devices: result.devices.map(device => ({
+    ...device, enrollmentEnvelopeVersions: enrollmentVersions(device.enrollmentEnvelopeVersions),
+  })) };
+}
+
+function enrollmentVersions(value: unknown): number[] {
+  if (value === undefined || value === null) return [2];
+  if (!Array.isArray(value) || value.length < 1 || value.length > 16 ||
+      !value.every((v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 2 && v <= 65535) ||
+      new Set(value).size !== value.length) {
+    throw new Error("Invalid device enrollment versions. Refresh the device list.");
+  }
+  return value.slice().sort((a, b) => a - b);
 }
 
 /**

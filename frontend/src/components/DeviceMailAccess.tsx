@@ -132,6 +132,12 @@ export function DeviceMailPanel({
   awaitEnrollment?: (deviceId: string) => Promise<boolean>;
 }) {
   if (panel === "enroll") {
+    if (!(device.enrollmentEnvelopeVersions ?? [2]).includes(2)) {
+      return <div className="sec-inline-form">
+        <p>This device requires an encrypted-mail setup format this server does not yet deliver. Update the server when support is available, then try again.</p>
+        <button type="button" onClick={onClose}>Close</button>
+      </div>;
+    }
     return (
       // Keyed on the device so pointing the panel at a different one remounts
       // the ceremony, and so re-takes the key snapshot below.

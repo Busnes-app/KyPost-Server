@@ -605,3 +605,13 @@ it("enrolls after a recovery commit with different fingerprint casing", async ()
   await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledExactlyOnceWith("d1", expect.anything(), "hunter2", 7));
   expect(screen.queryByText(/PGP identity changed/)).toBeNull();
 });
+
+it("refuses v2 enrollment when the device only advertises newer versions", async () => {
+  render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [3, 4] })} />);
+  await startCeremony();
+  expect(screen.getByText(/format this server does not yet deliver/)).toBeTruthy();
+  expect(screen.queryByLabelText("Account password")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Verify and enroll" })).toBeNull();
+  expect(sealSpy).not.toHaveBeenCalled();
+  expect(putDeviceEnvelope).not.toHaveBeenCalled();
+});

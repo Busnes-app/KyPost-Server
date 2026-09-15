@@ -2,12 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Busness-app/kypost-server/backend/internal/state"
 	"github.com/Busness-app/kypost-server/backend/internal/users"
 )
 
@@ -47,9 +49,15 @@ func (s *Server) handlePGPPublishEnrollmentKey(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var req struct {
-		PublicKey string `json:"publicKey"`
+		PublicKey        string `json:"publicKey"`
+		EnvelopeVersions []int  `json:"envelopeVersions"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxEnrollmentPublicKeyBytes)).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEnrollmentPublicKeyBytes))
+	if err := decoder.Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
@@ -65,7 +73,11 @@ func (s *Server) handlePGPPublishEnrollmentKey(w http.ResponseWriter, r *http.Re
 	}
 	// device.DeviceID comes from the verified credential, never from the body.
 	if _, err := store.SetNativeDeviceEnrollmentKey(device.DeviceID, publicKey,
-		time.Now().UTC().Format(time.RFC3339)); err != nil {
+		time.Now().UTC().Format(time.RFC3339), req.EnvelopeVersions); err != nil {
+		if errors.Is(err, state.ErrInvalidEnrollmentVersions) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, "could not store the enrollment key", http.StatusInternalServerError)
 		return
 	}

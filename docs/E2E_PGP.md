@@ -30,8 +30,10 @@ PGP path calls `HasServerReadableKey()` and refuses rather than assuming.
 The browser has a validated complete-ring device-envelope v3 preparation helper
 and shared WebCrypto/Go vectors. The [v3 contract](PGP_KEY_LIFECYCLE.md#v3-framing-and-interoperability-vectors)
 specifies its separate HKDF/AAD domain and exact framing. Production enrollment
-still uses v2 single-key delivery; native v3 persistence, capability negotiation,
-server delivery and account conversion are not enabled by this helper.
+still uses v2 single-key delivery; native v3 persistence,
+server delivery and account conversion are not enabled by this helper. Devices
+can publish envelope-version support as described below; a claim does not prove
+that a client durably imported a ring.
 
 ### Key wrapping
 
@@ -277,6 +279,32 @@ Implemented:
     name another device's id could overwrite the key a browser is about to seal
     to, which is precisely the substitution the verification code exists to
     catch.
+    The optional `envelopeVersions` field publishes codec support with that key:
+    `{"publicKey":"<base64 SEC1 point>","envelopeVersions":[2,3]}`. Omitted or
+    `null` means `[2]`, including on re-publication of the same key; this resets
+    a stale v3 claim when an older client republishes. Explicit lists contain
+    1–16 distinct integers from 2 through 65535 and are stored sorted. Empty,
+    duplicate, fractional or out-of-range lists return 400 without changing the
+    key or capabilities. Future version numbers are retained, not interpreted
+    as support by this server. The entire JSON request is bounded to 4 KiB;
+    trailing JSON or oversized padding is refused.
+
+    Key and versions are written together. Push registration cannot set them
+    and preserves both existing-device matching paths; identity enrollment reset
+    clears the key and returns versions to `[2]`. Existing SQLite rows and legacy
+    JSON migration default to `[2]`. Browser-session publication is refused;
+    publication requires the device's own verified pairing credential.
+
+    `GET /api/notifications/native/devices` exposes the sorted list as
+    `enrollmentEnvelopeVersions` on each redacted device in the signed-in user's
+    inventory. Browsers treat an absent/null field from older servers as `[2]`
+    and reject malformed lists. Current webmail delivers only v2 and refuses
+    setup before requesting a code/password when the device's list excludes 2.
+    It does not select v3 yet. Claims are compatibility metadata, not proof of
+    key possession, durable import or freshness at a later upload; retain SAS,
+    and bind future v3 delivery/acknowledgement to the original key/revision and
+    material generation. Only advertise v3 after native complete-ring persistence
+    checks pass.
   - `GET .../envelope` serves the one envelope sealed for the calling device and
     takes **no slot parameter** — the slot name is built from the verified
     device record, so there is no input to abuse. This is safe where the general
