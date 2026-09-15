@@ -1,22 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { deleteDeviceEnvelope, putDeviceEnvelope, putRecoveryEnvelope, getRecoveryBackup, getPasswordSnapshot } from "./pgp";
+import { deleteDeviceEnvelope, putDeviceEnvelope, putRecoveryEnvelope, getRecoveryBackup, getPasswordSnapshot, rewrapPGPKeyring } from "./pgp";
 import type { DeviceEnvelope } from "../lib/deviceEnrollment";
 
 const getJSON = vi.fn();
 const putJSON = vi.fn();
+const postJSON = vi.fn();
 const deleteJSON = vi.fn();
 
 vi.mock("./client", () => ({
   getJSON: (path: string) => getJSON(path),
-  postJSON: vi.fn(),
+  postJSON: (path: string, body: unknown) => postJSON(path,body),
   putJSON: (path: string, body: unknown) => putJSON(path, body),
   deleteJSON: (path: string, body: unknown) => deleteJSON(path, body)
 }));
 
 // stepUp derives a credential the server can verify; the shape is auth.ts's
 // business, so this pins only that the step-up IS attached.
+const deriveCredential = vi.fn(async () => ({ kind: "test" }));
 vi.mock("./auth", () => ({
-  deriveCredential: async () => ({ kind: "test" }),
+  deriveCredential: () => deriveCredential(),
   credentialFields: () => ({ password: "hunter2" })
 }));
 
@@ -116,4 +118,20 @@ describe("versioned server recovery snapshots", () => {
     getJSON.mockResolvedValue({ fingerprint, publicKey: "PUBLIC", keyring: { ...keyring, version: 2 }, envelope: JSON.stringify(envelope) });
     await expect(getRecoveryBackup()).rejects.toThrow();
   });
+});
+
+it("opts into complete-ring rewrap with step-up and the original revision", async () => {
+  await rewrapPGPKeyring({ wrapped: "SEALED", password: "password", expectedFingerprint: "FPR", expectedRevision: 7, isCurrent: () => true });
+  expect(postJSON).toHaveBeenCalledWith("/api/pgp/identity/rewrap", {
+    wrapped: "SEALED", password: "hunter2", expectedFingerprint: "FPR", expectedRevision: 7, keyringVersion: 1
+  });
+});
+
+it("does not POST if the restore session changes during credential derivation", async () => {
+  postJSON.mockClear();
+  let current = true;
+  deriveCredential.mockImplementationOnce(async () => { current = false; return { kind: "test" }; });
+  await expect(rewrapPGPKeyring({ wrapped: "SEALED", password: "password", expectedFingerprint: "FPR",
+    expectedRevision: 7, isCurrent: () => current })).rejects.toThrow(/session changed/);
+  expect(postJSON).not.toHaveBeenCalled();
 });

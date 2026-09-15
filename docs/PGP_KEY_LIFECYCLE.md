@@ -1,7 +1,7 @@
 # PGP key lifecycle — proposed Tier 5 design
 
-Status: lifecycle conversion and retirement/recovery HTTP writers are **not shipped**.
-Ordinary whole-ring password changes are implemented for already-converted records. Internal atomic
+Status: lifecycle conversion, retirement and older-backup merging are **not shipped**.
+Ordinary whole-ring password changes and matching recovery restore are implemented for already-converted records. Internal atomic
 whole-ring storage and legacy-writer guards are implemented. The first reader
 implementation accepts legacy armor and bounded versioned rings for historical
 mail, draft and autosave decryption. Single-key writers refuse ring plaintext
@@ -17,8 +17,8 @@ The browser vault holds opaque plaintext in memory (`keyVault.ts`).
 `pgpKeyring.ts` validates legacy armor or the complete ring for mail, saved drafts
 and local sealed autosave decryption. Existing signing/enrollment/legacy upload writers
 still require single-key armor; no account conversion is exposed. Complete-ring
-offline export and read-only recovery drills are implemented; v2 restore/upload
-remains refused until the lifecycle transaction HTTP writer ships.
+offline export, read-only drills and matching-ring restoration are implemented.
+Recovery-slot uploads and older-backup merging remain gated.
 The users store holds one current public identity and opaque password/recovery/
 device envelopes. Replacing its fingerprint clears device slots; a same-key
 update does not. Fingerprint guards cannot detect concurrent same-key edits.
@@ -156,7 +156,7 @@ this general revision: changing a password should not break a device's key copy.
 The file carries public identity/metadata and seals the original complete plaintext;
 creation roundtrips every byte. File opening checks encrypted generation/inventories
 against file metadata; drills check a fresh post-decrypt server snapshot too, including
-the complete active public packet multiset. V2 restore and upload remain gated. Keep v1 readers for
+the complete active public packet multiset. Matching v2 restore preserves current metadata and confirms exact stored ciphertext before installation; uploads and older-backup merges remain gated. Keep v1 readers for
 legacy accounts. A v1 or older backup must never replace a converted account's
 ring and erase newer members. A v2 backup matching the current material generation
 and complete primary/subkey inventory can restore a locked vault. An older
@@ -285,4 +285,4 @@ snapshots. The store mutation changes only credential and password ciphertext;
 recovery presence/bytes/timestamps, public identity and inventories are preserved.
 The revision increments, material generation does not. Forced changes retain the
 existing opaque-preservation flow. All existing credential revocation applies.
-No conversion, recovery restore or retirement is exposed by this opt-in.
+No conversion or retirement is exposed by the password opt-in. Matching recovery restore uses the separate versioned rewrap opt-in described in E2E_PGP.md.

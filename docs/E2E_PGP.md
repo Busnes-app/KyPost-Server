@@ -373,7 +373,7 @@ revision, failed snapshot reads and corrupt ordinary envelopes abort preparation
 ### Browser recovery
 
 Complete-ring records support offline export and read-only drills using
-`kypost-pgp-recovery-v2`. Account conversion and lifecycle restore/upload remain
+`kypost-pgp-recovery-v2`. Matching-ring restore is supported; account conversion and recovery-slot upload remain
 unavailable. The file is `{format, fingerprint, publicKey, keyring, envelope}`:
 `keyring` has the same version/generation/inventory shape as the authenticated
 snapshot; `envelope` uses the unchanged v2 PBKDF2/AES-GCM wrapper and seals the
@@ -385,6 +385,20 @@ Creation reopens the serialized file and compares the entire original plaintext
 before offering the download. Limits are 16 primary keys, 256 total primary/subkey
 fingerprints, 128 KiB serialized envelope (including base64 expansion), and 512 KiB
 UTF-8 recovery file. Refuse capacity overflow rather than dropping history.
+
+Matching-ring restoration posts `keyringVersion: 1`, `wrapped`, `expectedFingerprint`
+and `expectedRevision` to `/api/pgp/identity/rewrap` with the existing account step-up.
+The rewrap request is bounded to 384 KiB to allow JSON quoting and credential
+fields; the embedded envelope retains its 128 KiB store limit.
+Only existing client-protected v1 rings with derived authentication and no forced
+password change can opt in. The server binds the request revision before step-up
+and checks it under the mutation lock. Only password ciphertext changes; recovery
+slots, credentials, public identity, inventories and material generation survive.
+The browser wraps exact recovered bytes and confirms a fresh bootstrap has exactly
+`expectedRevision + 1`, the exact prepared ciphertext and matching complete metadata
+before installing keys. A lost POST response is reconciled by that same read, never
+by retrying with a newer revision. An unconfirmed write retains the file/secret in
+the form and installs nothing. Logout or unmount prevents installation.
 
 Opening validates all members, generation/inventories and the complete active
 public packet multiset, including UID certifications and revocations. Packet order

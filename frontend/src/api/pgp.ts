@@ -292,6 +292,14 @@ export async function rewrapPGPPrivateKey(wrapped: string, password: string, exp
   return postJSON<{ ok: boolean; pgpRevision: number }>("/api/pgp/identity/rewrap", { wrapped, expectedFingerprint, expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password)) });
 }
 
+/** Explicit complete-ring writer; older servers reject it through their legacy guard. */
+export async function rewrapPGPKeyring(input: { wrapped: string; password: string; expectedFingerprint: string; expectedRevision: number; isCurrent: () => boolean }): Promise<void> {
+  const credential = await stepUp(input.password);
+  if (!input.isCurrent()) throw new Error("The restore session changed. Reload before restoring.");
+  await postJSON<unknown>("/api/pgp/identity/rewrap", { wrapped: input.wrapped, expectedFingerprint: input.expectedFingerprint,
+    expectedRevision: requirePGPRevision({ pgpRevision: input.expectedRevision }), keyringVersion: 1, ...credential });
+}
+
 export async function putRecoveryEnvelope(envelope: WrappedKeyEnvelope, password: string, expectedFingerprint: string, expectedRevision: number): Promise<void> {
   await putJSON("/api/pgp/identity/envelope/recovery", {
     envelope: JSON.stringify(envelope), expectedFingerprint, expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password))

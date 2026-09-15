@@ -1689,6 +1689,15 @@ var ErrPGPIdentityChanged = errors.New("PGP identity changed; reload and try aga
 // so the browser unwraps with the old one and rewraps with the new one.
 // A non-empty expectedFingerprint is checked under the mutation lock.
 func (s *Store) RewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, expectedRevision *uint64) (User, error) {
+	return s.rewrapPGPPrivateKey(id, wrapped, expectedFingerprint, expectedRevision, false)
+}
+
+// RewrapPGPKeyring restores only the password sealing of existing complete material.
+func (s *Store) RewrapPGPKeyring(id, wrapped, expectedFingerprint string, expectedRevision *uint64) (User, error) {
+	return s.rewrapPGPPrivateKey(id, wrapped, expectedFingerprint, expectedRevision, true)
+}
+
+func (s *Store) rewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, expectedRevision *uint64, keyring bool) (User, error) {
 	if err := ValidateWrappedEnvelope(wrapped); err != nil {
 		return User{}, err
 	}
@@ -1696,7 +1705,11 @@ func (s *Store) RewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, exp
 		return User{}, errors.New("wrapped private key is required")
 	}
 	return s.mutatePGP(id, expectedRevision, func(u *User) error {
-		if u.PGPKeyring != nil {
+		if keyring {
+			if u.PGPKeyring == nil || u.PGPKeyring.Version != 1 || u.MustChangePassword || !u.UsesDerivedAuth() || expectedFingerprint == "" {
+				return ErrPGPKeyringUpgradeRequired
+			}
+		} else if u.PGPKeyring != nil {
 			return ErrPGPKeyringUpgradeRequired
 		}
 		if expectedFingerprint != "" && !strings.EqualFold(u.PGPFingerprint, expectedFingerprint) {
