@@ -283,6 +283,8 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 ## Verification
 
+- `internal/cryptutil/device_envelope_v3_test.go` independently checks the shared public `testdata/device-envelope-v3.json` crypto vectors under backend CI. This is a reference test, not a server-side device-key decryption path.
+
 This list is the CI gate, in the order `ci-backend-api` and `ci-backend-other` run it. Both jobs run all four static steps before any test, so a lint failure fails both jobs in about a minute and no test result is produced at all.
 
 - `gofmt -l .` must print nothing

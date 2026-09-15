@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Prepare device-envelope v3 with complete-ring validation, device-code verification and a separate authenticated crypto domain. Pin v2/v3 bytes with shared WebCrypto/Go vectors; native delivery and conversion remain gated.
+
 - Save verified complete-keyring recovery copies after saved-secret acknowledgement, with version/revision guards and exact slot confirmation. Preserve password/public material and retain the file/secret on uncertain responses.
 - Restore matching complete-keyring backups with explicit version/revision guards and exact stored-ciphertext confirmation, including lost responses. Preserve all history, public metadata and recovery slots; older-backup merging and conversion remain gated.
 - Support complete-keyring password changes for already-converted records with explicit version/revision guards. Preserve recovery copies (including absent slots), public identity and material generation; conversion remains gated.
