@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -91,6 +92,8 @@ type NativeDevice struct {
 	// decode as empty, meaning "not enrolled and cannot be" until they publish.
 	EnrollmentPublicKey string `json:"enrollmentPublicKey,omitempty"`
 	EnrollmentKeyAt     string `json:"enrollmentKeyAt,omitempty"`
+	// Codec support reported with this enrollment key, not proof of possession or persistence.
+	EnrollmentEnvelopeVersions []int `json:"enrollmentEnvelopeVersions"`
 	// EncryptionEnrolled is DEVICE-REPORTED: whether the device can still open
 	// its local envelope. It is not a record of what the browser did, because
 	// those diverge — reinstalling the app destroys the keystore key, as does a
@@ -907,23 +910,32 @@ func (s *Store) RemoveNotificationSubscription(endpoint string) (bool, error) {
 
 const deviceColumns = `device_id, platform, push_token, device_name, app_version,
 	user_agent, registered_at, updated_at, user_id, mfa_approver, transport, secret_hash,
-	enrollment_public_key, enrollment_key_at, encryption_enrolled, p256dh, auth`
+	enrollment_public_key, enrollment_key_at, encryption_enrolled, p256dh, auth, enrollment_envelope_versions`
 
 func scanDevice(rows *sql.Rows) (NativeDevice, error) {
 	var d NativeDevice
 	var approver, enrolled int
+	var versions string
 	err := rows.Scan(&d.DeviceID, &d.Platform, &d.PushToken, &d.DeviceName, &d.AppVersion,
 		&d.UserAgent, &d.RegisteredAt, &d.UpdatedAt, &d.UserID, &approver, &d.Transport, &d.SecretHash,
-		&d.EnrollmentPublicKey, &d.EnrollmentKeyAt, &enrolled, &d.P256DH, &d.Auth)
+		&d.EnrollmentPublicKey, &d.EnrollmentKeyAt, &enrolled, &d.P256DH, &d.Auth, &versions)
+	if err != nil {
+		return d, err
+	}
+	d.EnrollmentEnvelopeVersions, err = decodeEnrollmentVersions(versions)
 	d.MFAApprover = approver == 1
 	d.EncryptionEnrolled = enrolled == 1
 	return d, err
 }
 
 func insertDevice(e execer, d NativeDevice, seq int) error {
-	_, err := e.Exec(
+	versions, err := encodeEnrollmentVersions(d.EnrollmentEnvelopeVersions)
+	if err != nil {
+		return err
+	}
+	_, err = e.Exec(
 		`INSERT INTO native_devices(`+deviceColumns+`, seq)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(device_id) DO UPDATE SET
 		   platform = excluded.platform, push_token = excluded.push_token,
 		   device_name = excluded.device_name, app_version = excluded.app_version,
@@ -933,12 +945,13 @@ func insertDevice(e execer, d NativeDevice, seq int) error {
 		   secret_hash = excluded.secret_hash,
 		   enrollment_public_key = excluded.enrollment_public_key,
 		   enrollment_key_at = excluded.enrollment_key_at,
+		   enrollment_envelope_versions = excluded.enrollment_envelope_versions,
 		   encryption_enrolled = excluded.encryption_enrolled,
 		   p256dh = excluded.p256dh, auth = excluded.auth`,
 		d.DeviceID, d.Platform, d.PushToken, d.DeviceName, d.AppVersion, d.UserAgent,
 		d.RegisteredAt, d.UpdatedAt, d.UserID, boolToInt(d.MFAApprover), d.Transport, d.SecretHash,
 		d.EnrollmentPublicKey, d.EnrollmentKeyAt, boolToInt(d.EncryptionEnrolled),
-		d.P256DH, d.Auth, seq)
+		d.P256DH, d.Auth, versions, seq)
 	return err
 }
 
@@ -1028,6 +1041,7 @@ func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
 	// merely observed, which is what the comment on enrollmentState claims.
 	device.EnrollmentPublicKey = ""
 	device.EnrollmentKeyAt = ""
+	device.EnrollmentEnvelopeVersions = nil
 	device.EncryptionEnrolled = false
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -1042,16 +1056,18 @@ func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
 	var existing enrollmentState
 	err := tx.QueryRow(
 		`SELECT seq, registered_at, mfa_approver,
-		        enrollment_public_key, enrollment_key_at, encryption_enrolled
+		        enrollment_public_key, enrollment_key_at, encryption_enrolled, enrollment_envelope_versions
 		 FROM native_devices WHERE device_id = ?`,
 		device.DeviceID).Scan(&existingSeq, &existingRegistered, &existingApprover,
-		&existing.publicKey, &existing.keyAt, &existing.enrolled)
+		&existing.publicKey, &existing.keyAt, &existing.enrolled, &existing.versions)
 	if err == nil {
 		if existingRegistered != "" {
 			device.RegisteredAt = existingRegistered
 		}
 		device.MFAApprover = existingApprover == 1
-		existing.applyTo(&device)
+		if err := existing.applyTo(&device); err != nil {
+			return err
+		}
 		return insertDevice(tx, device, int(existingSeq.Int64))
 	}
 	if err != sql.ErrNoRows {
@@ -1065,11 +1081,11 @@ func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
 		var match enrollmentState
 		err := tx.QueryRow(
 			`SELECT device_id, registered_at, seq, mfa_approver, user_id,
-			        enrollment_public_key, enrollment_key_at, encryption_enrolled
+			        enrollment_public_key, enrollment_key_at, encryption_enrolled, enrollment_envelope_versions
 			 FROM native_devices
 			 WHERE push_token = ? AND platform = ? ORDER BY seq LIMIT 1`,
 			device.PushToken, device.Platform).Scan(&matchID, &matchRegistered, &matchSeq, &matchApprover, &matchUserID,
-			&match.publicKey, &match.keyAt, &match.enrolled)
+			&match.publicKey, &match.keyAt, &match.enrolled, &match.versions)
 		if err == nil {
 			if _, err := tx.Exec(`DELETE FROM native_devices WHERE device_id = ?`, matchID); err != nil {
 				return err
@@ -1085,7 +1101,9 @@ func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
 			if strings.TrimSpace(device.UserID) == "" {
 				device.UserID = matchUserID
 			}
-			match.applyTo(&device)
+			if err := match.applyTo(&device); err != nil {
+				return err
+			}
 			return insertDevice(tx, device, int(matchSeq.Int64))
 		}
 		if err != sql.ErrNoRows {
@@ -1137,12 +1155,53 @@ type enrollmentState struct {
 	publicKey string
 	keyAt     string
 	enrolled  int
+	versions  string
 }
 
-func (e enrollmentState) applyTo(d *NativeDevice) {
+func (e enrollmentState) applyTo(d *NativeDevice) error {
 	d.EnrollmentPublicKey = e.publicKey
 	d.EnrollmentKeyAt = e.keyAt
 	d.EncryptionEnrolled = e.enrolled == 1
+	var err error
+	d.EnrollmentEnvelopeVersions, err = decodeEnrollmentVersions(e.versions)
+	return err
+}
+
+// ErrInvalidEnrollmentVersions rejects malformed claims before any key write.
+var ErrInvalidEnrollmentVersions = errors.New("envelopeVersions must contain 1 to 16 distinct integers from 2 to 65535")
+
+func normalizeEnrollmentVersions(versions []int) ([]int, error) {
+	if versions == nil {
+		return []int{2}, nil
+	}
+	if len(versions) < 1 || len(versions) > 16 {
+		return nil, ErrInvalidEnrollmentVersions
+	}
+	out := slices.Clone(versions)
+	slices.Sort(out)
+	for i, v := range out {
+		if v < 2 || v > 65535 || (i > 0 && out[i-1] == v) {
+			return nil, ErrInvalidEnrollmentVersions
+		}
+	}
+	return out, nil
+}
+
+func encodeEnrollmentVersions(versions []int) (string, error) {
+	normalized, err := normalizeEnrollmentVersions(versions)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(normalized)
+	return string(data), err
+}
+
+func decodeEnrollmentVersions(encoded string) ([]int, error) {
+	var versions []int
+	if err := json.Unmarshal([]byte(encoded), &versions); err != nil {
+		return nil, err
+	}
+	return normalizeEnrollmentVersions(versions)
 }
 
 // SetNativeDeviceEnrollmentKey records a device's enrollment public key and
@@ -1156,16 +1215,20 @@ func (e enrollmentState) applyTo(d *NativeDevice) {
 // its absence means the credential outlived the record it names, and silently
 // doing nothing there would report a successful publish for a key the server
 // did not keep.
-func (s *Store) SetNativeDeviceEnrollmentKey(deviceID, publicKey, at string) (NativeDevice, error) {
+func (s *Store) SetNativeDeviceEnrollmentKey(deviceID, publicKey, at string, versions []int) (NativeDevice, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
 		return NativeDevice{}, fmt.Errorf("enrollment key: empty device id")
 	}
+	encodedVersions, err := encodeEnrollmentVersions(versions)
+	if err != nil {
+		return NativeDevice{}, err
+	}
 	res, err := s.db.Exec(
 		`UPDATE native_devices
-		 SET enrollment_public_key = ?, enrollment_key_at = ?, updated_at = ?
+		 SET enrollment_public_key = ?, enrollment_key_at = ?, enrollment_envelope_versions = ?, updated_at = ?
 		 WHERE device_id = ?`,
-		publicKey, at, time.Now().UTC().Format(time.RFC3339), deviceID)
+		publicKey, at, encodedVersions, time.Now().UTC().Format(time.RFC3339), deviceID)
 	if err != nil {
 		return NativeDevice{}, err
 	}
@@ -1233,10 +1296,10 @@ func (s *Store) SetNativeDeviceEncryptionEnrolled(deviceID string, enrolled bool
 func (s *Store) ClearDeviceEnrollments() (int, error) {
 	res, err := s.db.Exec(
 		`UPDATE native_devices
-		 SET enrollment_public_key = '', enrollment_key_at = '',
+		 SET enrollment_public_key = '', enrollment_key_at = '', enrollment_envelope_versions = '[2]',
 		     encryption_enrolled = 0, updated_at = ?
 		 WHERE enrollment_public_key != '' OR enrollment_key_at != ''
-		    OR encryption_enrolled != 0`,
+		    OR encryption_enrolled != 0 OR enrollment_envelope_versions != '[2]'`,
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, err

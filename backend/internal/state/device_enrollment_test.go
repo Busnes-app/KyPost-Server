@@ -3,6 +3,7 @@ package state
 import (
 	"database/sql"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -50,7 +51,7 @@ func TestSetNativeDeviceEnrollmentKeyRoundTrips(t *testing.T) {
 	store := enrollmentTestStore(t)
 	seedDevice(t, store, "dev-1")
 
-	got, err := store.SetNativeDeviceEnrollmentKey("dev-1", "BASE64PUBKEY", "2026-08-04T00:00:00Z")
+	got, err := store.SetNativeDeviceEnrollmentKey("dev-1", "BASE64PUBKEY", "2026-08-04T00:00:00Z", nil)
 	if err != nil {
 		t.Fatalf("SetNativeDeviceEnrollmentKey: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestSetNativeDeviceEnrollmentKeyRoundTrips(t *testing.T) {
 
 func TestSetNativeDeviceEnrollmentKeyUnknownDevice(t *testing.T) {
 	store := enrollmentTestStore(t)
-	if _, err := store.SetNativeDeviceEnrollmentKey("nope", "K", "2026-08-04T00:00:00Z"); err == nil {
+	if _, err := store.SetNativeDeviceEnrollmentKey("nope", "K", "2026-08-04T00:00:00Z", nil); err == nil {
 		t.Fatal("publishing a key for an unknown device silently succeeded")
 	}
 }
@@ -120,7 +121,7 @@ func TestEncryptionEnrolledMarkerClearsAgain(t *testing.T) {
 func TestReRegistrationPreservesTheEnrollmentKey(t *testing.T) {
 	store := enrollmentTestStore(t)
 	seedDevice(t, store, "dev-1")
-	if _, err := store.SetNativeDeviceEnrollmentKey("dev-1", "PUBKEY", "2026-08-04T00:00:00Z"); err != nil {
+	if _, err := store.SetNativeDeviceEnrollmentKey("dev-1", "PUBKEY", "2026-08-04T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetNativeDeviceEnrollmentKey: %v", err)
 	}
 	if err := store.SetNativeDeviceEncryptionEnrolled("dev-1", true); err != nil {
@@ -156,7 +157,7 @@ func TestReRegistrationPreservesTheEnrollmentKey(t *testing.T) {
 func TestReRegistrationByPushTokenPreservesTheEnrollmentKey(t *testing.T) {
 	store := enrollmentTestStore(t)
 	seedDevice(t, store, "dev-1")
-	if _, err := store.SetNativeDeviceEnrollmentKey("dev-1", "PUBKEY", "2026-08-04T00:00:00Z"); err != nil {
+	if _, err := store.SetNativeDeviceEnrollmentKey("dev-1", "PUBKEY", "2026-08-04T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetNativeDeviceEnrollmentKey: %v", err)
 	}
 
@@ -223,11 +224,14 @@ func TestEnrollmentColumnsAreAddedToAnExistingDatabase(t *testing.T) {
 	if len(devices) != 1 || devices[0].DeviceID != "legacy-dev" {
 		t.Fatalf("the pre-existing device did not survive the upgrade: %+v", devices)
 	}
+	if !slices.Equal(devices[0].EnrollmentEnvelopeVersions, []int{2}) {
+		t.Fatal("migration did not default capabilities to v2")
+	}
 	// Absent, not enrolled — and able to become enrolled.
 	if devices[0].EnrollmentPublicKey != "" || devices[0].EncryptionEnrolled {
 		t.Fatalf("a legacy row decoded as enrolled: %+v", devices[0])
 	}
-	if _, err := store.SetNativeDeviceEnrollmentKey("legacy-dev", "K", "2026-08-05T00:00:00Z"); err != nil {
+	if _, err := store.SetNativeDeviceEnrollmentKey("legacy-dev", "K", "2026-08-05T00:00:00Z", nil); err != nil {
 		t.Fatalf("could not publish a key on an upgraded row: %v", err)
 	}
 }

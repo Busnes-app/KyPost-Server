@@ -21,6 +21,7 @@ describe("listNativeDevices", () => {
           pushToken: "tok",
           enrollmentPublicKey: "BASE64KEY",
           enrollmentKeyAt: "2026-08-05T10:00:00Z",
+          enrollmentEnvelopeVersions: [3, 2, 4],
           encryptionEnrolled: true
         }
       ]
@@ -30,6 +31,7 @@ describe("listNativeDevices", () => {
 
     expect(getJSON).toHaveBeenCalledWith("/api/notifications/native/devices");
     expect(devices[0].enrollmentPublicKey).toBe("BASE64KEY");
+    expect(devices[0].enrollmentEnvelopeVersions).toEqual([2, 3, 4]);
     expect(devices[0].encryptionEnrolled).toBe(true);
   });
 
@@ -41,6 +43,12 @@ describe("listNativeDevices", () => {
     const { devices } = await listNativeDevices();
 
     expect(devices[0].enrollmentPublicKey).toBeUndefined();
+    expect(devices[0].enrollmentEnvelopeVersions).toEqual([2]);
     expect(devices[0].encryptionEnrolled).toBe(false);
   });
+});
+
+it.each([[], [2, 2], [1], [65536], [2.5], ["3"], false, Array.from({ length: 17 }, (_, i) => i + 2)])("rejects malformed enrollment versions %j", async value => {
+  getJSON.mockResolvedValue({ devices: [{ deviceId: "d", enrollmentEnvelopeVersions: value }] });
+  await expect(listNativeDevices()).rejects.toThrow(/Invalid device enrollment versions/);
 });

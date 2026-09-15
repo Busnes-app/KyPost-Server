@@ -39,7 +39,7 @@ func enrollDeviceFor(t *testing.T, srv *Server, userID, deviceID string) {
 	if err != nil {
 		t.Fatalf("userStore: %v", err)
 	}
-	if _, err := store.SetNativeDeviceEnrollmentKey(deviceID, "PUBKEY", "2026-08-05T00:00:00Z"); err != nil {
+	if _, err := store.SetNativeDeviceEnrollmentKey(deviceID, "PUBKEY", "2026-08-05T00:00:00Z", nil); err != nil {
 		t.Fatalf("SetNativeDeviceEnrollmentKey: %v", err)
 	}
 	if err := store.SetNativeDeviceEncryptionEnrolled(deviceID, true); err != nil {
