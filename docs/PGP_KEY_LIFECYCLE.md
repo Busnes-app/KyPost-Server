@@ -231,11 +231,11 @@ v2/v3 ciphertext. The v3 ID includes multibyte UTF-8 and a pipe to catch charact
 counts and delimiter framing. V2 pins legacy byte compatibility. Fixed scalars
 and IVs belong only in tests. WebCrypto sealing is checked by
 `frontend/src/lib/deviceEnvelopeV3.test.ts`; an independent Go stdlib verifier
-checks both directions and every intermediate:
+checks both directions and every intermediate in backend CI:
 
 ```sh
-cd testdata
-GOTOOLCHAIN=go1.26.6 go test -v device_envelope_v3_test.go
+cd backend
+GOTOOLCHAIN=go1.26.6 go test -v -run DeviceEnvelope ./internal/cryptutil
 ```
 
 Passing these vectors proves crypto framing compatibility, not native durable

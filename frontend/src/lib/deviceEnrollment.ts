@@ -347,7 +347,7 @@ export async function sealEnvelopeForDevice(
   pgpFingerprint: string,
   armoredPrivateKey: string,
 ): Promise<DeviceEnvelope> {
-  return { v: 2, ...await sealDevicePayload(publicKeyB64, deviceId, pgpFingerprint, armoredPrivateKey, 2) };
+  return sealDevicePayload(publicKeyB64, deviceId, pgpFingerprint, armoredPrivateKey, 2);
 }
 
 /** V3 preparation only: no upload or capability negotiation. Never deliver this through v2. */
@@ -367,18 +367,16 @@ export async function sealKeyringForDevice({ publicKeyB64, deviceId, typedCode, 
   if (!await verifyEnrollmentCode(publicKeyB64, deviceId, typedCode)) {
     throw new Error("Device verification code does not match. Check the code on the device.");
   }
-  const envelope: KeyringDeviceEnvelope = {
-    v: 3, ...await sealDevicePayload(publicKeyB64, deviceId, fingerprint, raw, 3),
-  };
+  const envelope = await sealDevicePayload(publicKeyB64, deviceId, fingerprint, raw, 3);
   if (new TextEncoder().encode(JSON.stringify(envelope)).length > 128 << 10) {
     throw new Error("The complete device envelope exceeds 128 KiB. No key was delivered.");
   }
   return envelope;
 }
 
-async function sealDevicePayload(
-  publicKeyB64: string, deviceId: string, pgpFingerprint: string, plaintext: string, version: 2 | 3,
-): Promise<Omit<DeviceEnvelope, "v">> {
+async function sealDevicePayload<V extends 2 | 3>(
+  publicKeyB64: string, deviceId: string, pgpFingerprint: string, plaintext: string, version: V,
+): Promise<Omit<DeviceEnvelope, "v"> & { v: V }> {
   const devicePub = await importDevicePublicKey(publicKeyB64);
   const ephemeral = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, [
     "deriveBits",
@@ -414,6 +412,7 @@ async function sealDevicePayload(
 
   const epk = new Uint8Array(await crypto.subtle.exportKey("raw", ephemeral.publicKey));
   return {
+    v: version,
     alg: "ECDH-P256+HKDF-SHA256+A256GCM",
     epk: bytesToBase64(epk),
     iv: bytesToBase64(iv),

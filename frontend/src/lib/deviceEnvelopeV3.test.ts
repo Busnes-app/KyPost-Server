@@ -9,29 +9,36 @@ import { parseKeyring } from "./pgpKeyring";
 const vector = fixture.vectors[1];
 const raw = vector.plaintext;
 const b = (s: string) => Buffer.from(s, "base64");
-async function snapshotFor(material = raw) {
-  const ring = await parseKeyring(material);
+async function snapshotFor() {
+  const ring = await parseKeyring(raw);
   if (ring.kind !== "keyring") throw new Error("test needs a keyring");
   return { fingerprint: ring.activeKey.getFingerprint().toUpperCase(), publicKey: ring.activeKey.toPublic().armor(), keyring: ring.metadata };
 }
-async function inputFor(material = raw) {
-  return { raw: material, snapshot: await snapshotFor(), deviceId: vector.deviceId,
+async function inputFor() {
+  return { raw, snapshot: await snapshotFor(), deviceId: vector.deviceId,
     publicKeyB64: fixture.devicePublicKey,
     typedCode: await deriveEnrollmentCode(fixture.devicePublicKey, vector.deviceId, bucketFor(Math.floor(Date.now() / 1000))) };
 }
 // Independent Node crypto opener: no production AAD/KDF helper is reused.
-function open(envelope: { v: number; epk: string; iv: string; ct: string }, deviceId = vector.deviceId, fingerprint = vector.fingerprint, domainVersion = envelope.v) {
+function open(envelope: { v: number; epk: string; iv: string; ct: string }, deviceId = vector.deviceId, fingerprint = vector.fingerprint, domainVersion = envelope.v, expected?: typeof vector) {
   const device = createECDH("prime256v1");
   device.setPrivateKey(b(fixture.devicePrivateKey));
   const domain = `kypost-device-envelope/v${domainVersion}`;
-  const key = hkdfSync("sha256", device.computeSecret(b(envelope.epk)), device.getPublicKey(), domain, 32);
+  const shared = device.computeSecret(b(envelope.epk));
+  const key = hkdfSync("sha256", shared, device.getPublicKey(), domain, 32);
   const parts = [Buffer.from(domain)];
   for (const value of [deviceId, fingerprint]) {
     const field = Buffer.from(value); const size = Buffer.alloc(2); size.writeUInt16BE(field.length);
     parts.push(size, field);
   }
   const decipher = createDecipheriv("aes-256-gcm", key, b(envelope.iv));
-  decipher.setAAD(Buffer.concat(parts));
+  const aad = Buffer.concat(parts);
+  if (expected) {
+    expect(shared.toString("base64")).toBe(expected.sharedSecret);
+    expect(Buffer.from(key).toString("base64")).toBe(expected.aesKey);
+    expect(aad.toString("base64")).toBe(expected.aad);
+  }
+  decipher.setAAD(aad);
   const ct = b(envelope.ct); decipher.setAuthTag(ct.subarray(-16));
   return Buffer.concat([decipher.update(ct.subarray(0, -16)), decipher.final()]).toString("utf8");
 }
@@ -52,6 +59,9 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("device-envelope v3 preparation", () => {
   it("matches fixed cross-language bytes and leaves v2 byte-compatible", async () => {
+    for (const entry of fixture.vectors) {
+      expect(open(entry.envelope, entry.deviceId, entry.fingerprint, entry.envelope.v, entry)).toBe(entry.plaintext);
+    }
     const input = await inputFor();
     await fixedRandomness();
     expect(await sealKeyringForDevice(input)).toEqual(vector.envelope);
@@ -94,7 +104,7 @@ describe("device-envelope v3 preparation", () => {
     const input = await inputFor();
     const ring = await parseKeyring(raw);
     for (const material of [fixture.vectors[0].plaintext, raw.replace(ring.keys[1].getFingerprint().toUpperCase(), "0".repeat(40)), raw + " ".repeat(128 << 10)]) {
-      await expect(sealKeyringForDevice({ ...input, raw: material })).rejects.toThrow();
+      await expect(sealKeyringForDevice({ ...input, raw: material })).rejects.toThrow(/keyring is invalid or unsupported/);
     }
     await expect(sealKeyringForDevice({ ...input, snapshot: { ...input.snapshot, keyring: { ...input.snapshot.keyring, materialGeneration: 3 } } })).rejects.toThrow(/complete keyring/);
     // The parser accepts up to 128 KiB; base64 expansion makes storage admission tighter.

@@ -1,4 +1,4 @@
-package testdata
+package cryptutil_test
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 // Independent stdlib implementation for native consumers to check their ports.
 // All private scalars in the fixture are public test data.
 func TestDeviceEnvelopeVectors(t *testing.T) {
-	data, err := os.ReadFile("device-envelope-v3.json")
+	data, err := os.ReadFile("../../../testdata/device-envelope-v3.json")
 	if err != nil {
 		t.Fatal(err)
 	}
