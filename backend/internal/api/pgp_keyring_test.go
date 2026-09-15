@@ -162,6 +162,8 @@ func TestPGPKeyringHTTPCompatibilityAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// authRequestAs clears the onboarding flag and stamps UpdatedAt before each request.
+	unchanged.UpdatedAt = u.UpdatedAt
 	if !reflect.DeepEqual(unchanged, u) {
 		t.Fatal("rejected slot write changed data")
 	}
