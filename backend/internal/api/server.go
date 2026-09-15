@@ -183,6 +183,7 @@ type Server struct {
 	globalStore  *state.Store
 	backup       *backup.Service
 	ssoStore     *sso.Store
+	ssoLifecycle *sso.LifecycleStore
 	ollamaMu     sync.Mutex
 	ollamaStatus ollamaVersionStatus
 	serverMu     sync.Mutex
@@ -382,6 +383,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		globalStore:              globalStore,
 		wkdStore:                 wkdStore,
 		ssoStore:                 sso.NewStore(configDir),
+		ssoLifecycle:             sso.NewLifecycleStore(configDir),
 	}
 	if globalStore != nil {
 		bc, err := config.LoadBackupConfig()
@@ -467,6 +469,7 @@ func (s *Server) routesAuth(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/sso/login", withPublicRoute(s.handleSSOLogin))
 	mux.HandleFunc("GET /api/auth/oidc/callback", withPublicRoute(s.handleSSOCallback))
 	mux.HandleFunc("GET /auth/sso/callback", withPublicRoute(s.handleSSOCallback))
+	mux.HandleFunc("POST /api/auth/oidc/backchannel-logout", withPublicRoute(s.handleSSOBackchannelLogout))
 	mux.HandleFunc("POST /api/settings/sso/link", s.withAuth(s.handleSSOLinkStart))
 	mux.HandleFunc("POST /api/settings/sso/unlink", s.withAuth(s.handleSSOUnlink))
 	// Pre-login, unauthenticated: tells the browser how to derive its auth

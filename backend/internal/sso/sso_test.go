@@ -13,6 +13,16 @@ import (
 
 const testClientID = "kypost-test"
 
+// newIdP starts a TLS test provider and points this package's transport at
+// its certificate for the duration of the test.
+func newIdP(t *testing.T) *ssotest.IdP {
+	t.Helper()
+	idp := ssotest.New(t, testClientID)
+	previous := SetTransport(idp.Transport())
+	t.Cleanup(func() { SetTransport(previous) })
+	return idp
+}
+
 func testSettings(issuer string) SSOSettings {
 	return SSOSettings{
 		Enabled:       true,
@@ -94,7 +104,7 @@ func TestClaimsIsAdmin(t *testing.T) {
 
 // A correctly signed token is accepted and its claims survive intact.
 func TestExchangeAcceptsSignedToken(t *testing.T) {
-	idp := ssotest.New(t, testClientID)
+	idp := newIdP(t)
 
 	claims, err := exchange(t, idp)
 	if err != nil {
@@ -163,7 +173,7 @@ func TestExchangeRefusesUnverifiableTokens(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			idp := ssotest.New(t, testClientID)
+			idp := newIdP(t)
 			tc.spoil(idp)
 
 			claims, err := exchange(t, idp)
@@ -256,7 +266,7 @@ func TestNewProviderRefusesRedirects(t *testing.T) {
 
 // An endpoint that streams forever must not be able to exhaust this process.
 func TestNewProviderBoundsResponseBodies(t *testing.T) {
-	idp := ssotest.New(t, testClientID)
+	idp := newIdP(t)
 	idp.PadDiscovery = maxOIDCResponseBytes + 4096
 
 	if _, err := NewProvider(context.Background(), testSettings(idp.URL()), "https://mail.example.com/cb"); err == nil {
@@ -321,7 +331,7 @@ func writeJSONDoc(w http.ResponseWriter, doc map[string]any) error {
 // token did say and without accepting a profile for a different subject.
 func TestExchangeMergesUserInfo(t *testing.T) {
 	t.Run("fills only the blanks", func(t *testing.T) {
-		idp := ssotest.New(t, testClientID)
+		idp := newIdP(t)
 		// Signed token carries sub and email but no username.
 		idp.SetClaims(map[string]any{"sub": "sub-thin", "email": "signed@urlxl.com"})
 		// Userinfo supplies the username and disagrees about the email.
@@ -343,7 +353,7 @@ func TestExchangeMergesUserInfo(t *testing.T) {
 	})
 
 	t.Run("ignores a profile for a different subject", func(t *testing.T) {
-		idp := ssotest.New(t, testClientID)
+		idp := newIdP(t)
 		idp.SetClaims(map[string]any{"sub": "sub-thin"})
 		idp.UserInfo = map[string]any{"preferred_username": "somebody_else", "email": "other@urlxl.com"}
 		idp.UserInfoSub = "a-different-subject"

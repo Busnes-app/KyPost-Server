@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- OpenID Connect back-channel logout: `POST /api/auth/oidc/backchannel-logout` ends the SSO session the provider names, with durable replay refusal and a fence against a login still in flight. SSO sessions now remember the provider's `sid`. Requires an `https` issuer; verification is `ky-primitives/oidcverify` v0.7.0.
+
 - Devices can publish supported enrollment envelope versions with their sealing key. Preserve claims across token refreshes, default legacy publications to v2, and expose them in device listings. Browser setup refuses incompatible versions; v3 delivery and conversion remain gated.
 
 - Prepare device-envelope v3 with complete-ring validation, device-code verification and a separate authenticated crypto domain. Pin v2/v3 bytes with shared WebCrypto/Go vectors; native delivery and conversion remain gated.

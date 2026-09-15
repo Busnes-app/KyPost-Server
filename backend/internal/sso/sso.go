@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Busness-app/ky-primitives/oidcverify"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
@@ -122,6 +123,24 @@ var allowedSigningAlgs = []string{
 	oidc.PS256, oidc.PS384, oidc.PS512,
 }
 
+// baseTransport is what every provider request rides on. Tests replace it so
+// a TLS test provider with httptest's private certificate is trusted; nothing
+// in production calls SetTransport.
+var (
+	transportMu   sync.RWMutex
+	baseTransport http.RoundTripper = http.DefaultTransport
+)
+
+// SetTransport replaces the transport used for every provider request and
+// returns the previous one. Test-only: it exists because oidcverify refuses
+// a cleartext issuer, so the test provider must serve TLS.
+func SetTransport(rt http.RoundTripper) (previous http.RoundTripper) {
+	transportMu.Lock()
+	defer transportMu.Unlock()
+	previous, baseTransport = baseTransport, rt
+	return previous
+}
+
 // boundedTransport caps every response body at maxOIDCResponseBytes.
 type boundedTransport struct{ base http.RoundTripper }
 
@@ -145,9 +164,12 @@ func (t *boundedTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 // a misconfiguration or an attempt to move the client secret somewhere the
 // scheme policy below never got to inspect.
 func httpClient() *http.Client {
+	transportMu.RLock()
+	base := baseTransport
+	transportMu.RUnlock()
 	return &http.Client{
 		Timeout:   15 * time.Second,
-		Transport: &boundedTransport{base: http.DefaultTransport},
+		Transport: &boundedTransport{base: base},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return fmt.Errorf("refusing redirect to %s: OIDC endpoints must answer directly", req.URL.Redacted())
 		},
@@ -239,6 +261,18 @@ type SSOTokenClaims struct {
 	RealmAccess       struct {
 		Roles []string `json:"roles"`
 	} `json:"realm_access"`
+
+	// Session identity, as KySignOn issues it. SessionID is the provider's
+	// `sid`: a back-channel logout token names the login it ends by it, so the
+	// session minted from this token must remember it. IssuedAt lets a logout
+	// token issued after this login end it without touching a later one.
+	SessionID string `json:"sid"`
+	IssuedAt  int64  `json:"iat"`
+	// Authentication evidence. AuthTime is when the primary credential was
+	// verified, never when the token was issued; ACR and AMR say how.
+	AuthTime int64    `json:"auth_time"`
+	ACR      string   `json:"acr"`
+	AMR      []string `json:"amr"`
 }
 
 // IsAdmin returns true if claims identify an administrator across KySignOn, Authentik, or Keycloak.
@@ -307,6 +341,21 @@ type Provider struct {
 	provider *oidc.Provider
 	client   *http.Client
 	issuer   string
+	// logout verifies back-channel logout tokens. It is a separate verifier
+	// because go-oidc has no notion of token purpose: it would accept an ID
+	// token as a logout and, worse, a logout token as an ID token.
+	// oidcverify.VerifyLogout refuses anything but a `logout+jwt`.
+	logout *oidcverify.Verifier
+}
+
+// VerifyLogout verifies a back-channel logout token against the provider's
+// JWKS and returns the session it names. It proves the token, nothing more:
+// replay admission and session revocation are the caller's.
+func (p *Provider) VerifyLogout(ctx context.Context, token string) (oidcverify.LogoutClaims, error) {
+	if p.logout == nil {
+		return oidcverify.LogoutClaims{}, errors.New("back-channel logout needs an https issuer and JWKS")
+	}
+	return p.logout.VerifyLogout(ctx, token)
 }
 
 // Discovery is cached, keyed on the settings that produced it.
@@ -449,7 +498,21 @@ func discoverProvider(ctx context.Context, cfg SSOSettings, redirectURI string) 
 		}
 	}
 
+	// Only an https issuer gets a logout verifier: oidcverify refuses
+	// cleartext key discovery, and a LAN issuer allowed via AllowInsecureIssuer
+	// simply has no back-channel logout. VerifyLogout says so when asked.
+	var logout *oidcverify.Verifier
+	if strings.HasPrefix(issuer, "https://") && strings.HasPrefix(extra.JWKSURI, "https://") {
+		logout = &oidcverify.Verifier{
+			Issuer:     issuer,
+			Audience:   cfg.ClientID,
+			JWKSURL:    extra.JWKSURI,
+			HTTPClient: client,
+		}
+	}
+
 	return &Provider{
+		logout: logout,
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,

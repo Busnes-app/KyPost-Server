@@ -30,6 +30,8 @@ func setupSSOTestServer(t *testing.T) (*Server, *ssotest.IdP) {
 	// provider sends an authorization code.
 	srv.serverBaseURL = "http://" + ssoTestHost
 	idp := ssotest.New(t, "kypost-test")
+	previous := sso.SetTransport(idp.Transport())
+	t.Cleanup(func() { sso.SetTransport(previous) })
 
 	if err := srv.ssoStore.Save(sso.SSOSettings{
 		Enabled:       true,

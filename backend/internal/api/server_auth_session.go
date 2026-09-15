@@ -21,6 +21,7 @@ import (
 	"github.com/Busness-app/ky-primitives/totp"
 	"github.com/Busness-app/kypost-server/backend/internal/captcha"
 	"github.com/Busness-app/kypost-server/backend/internal/mfa"
+	"github.com/Busness-app/kypost-server/backend/internal/sso"
 	"github.com/Busness-app/kypost-server/backend/internal/users"
 )
 
@@ -66,6 +67,9 @@ type Session struct {
 	// minted into the victim's cookie and never shown to anyone else, so
 	// requiring it back is what ties the grant to the flow it paid for.
 	SSOLinkState string
+	// SSO names the provider login this session was minted from, so a
+	// back-channel logout token can find it. Zero for a password login.
+	SSO sso.SessionIdentity
 }
 
 const (
@@ -524,6 +528,12 @@ func (s *Server) handleCSRFToken(w http.ResponseWriter, r *http.Request) {
 // kypost_session cookie with exactly the flags the legacy password-only login
 // used. Shared by handleLogin and the second-factor endpoints.
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID string) error {
+	return s.mintSession(w, r, Session{UserID: userID})
+}
+
+// mintSession is startSession for a caller that has more to record than the
+// user id: the SSO callback stores the provider login the session came from.
+func (s *Server) mintSession(w http.ResponseWriter, r *http.Request, sess Session) error {
 	token, err := randomToken(24)
 	if err != nil {
 		return err
@@ -533,13 +543,9 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID str
 		return err
 	}
 	now := time.Now()
+	sess.IssuedAt, sess.ExpiresAt, sess.CSRFToken = now, now.Add(sessionIdleTimeout), csrfToken
 	s.sessMu.Lock()
-	s.sessions[token] = Session{
-		UserID:    userID,
-		IssuedAt:  now,
-		ExpiresAt: now.Add(sessionIdleTimeout),
-		CSRFToken: csrfToken,
-	}
+	s.sessions[token] = sess
 	s.sessMu.Unlock()
 	secure := isRequestSecure(r)
 	http.SetCookie(w, &http.Cookie{Name: "kypost_session", Value: token, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})

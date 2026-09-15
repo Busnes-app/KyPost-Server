@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -78,14 +79,54 @@ func New(t *testing.T, clientID string) *IdP {
 			"role":               "admin",
 		},
 	}
-	idp.Server = httptest.NewServer(http.HandlerFunc(idp.route))
+	// TLS, because the logout verifier refuses cleartext key discovery. The
+	// certificate is httptest's own, so Transport must be installed with
+	// sso.SetTransport for the server under test to trust it.
+	idp.Server = httptest.NewTLSServer(http.HandlerFunc(idp.route))
 	t.Cleanup(idp.Server.Close)
 	return idp
 }
 
-// URL is the issuer URL, an http loopback address that the transport policy
-// permits without an insecure-issuer opt-in.
+// URL is the issuer URL, an https loopback address.
 func (i *IdP) URL() string { return i.Server.URL }
+
+// Transport trusts this provider's certificate and nothing else.
+func (i *IdP) Transport() http.RoundTripper { return i.Server.Client().Transport }
+
+// LogoutToken mints a back-channel logout token for one login, as KySignOn
+// does: RS256, typ logout+jwt, a fresh jti, the backchannel-logout event and
+// no nonce. mutate, when set, edits the claims before signing so a test can
+// ask for exactly one thing to be wrong.
+func (i *IdP) LogoutToken(t *testing.T, sub, sid string, mutate func(claims map[string]any)) string {
+	t.Helper()
+	jti := make([]byte, 16)
+	if _, err := rand.Read(jti); err != nil {
+		t.Fatalf("generate jti: %v", err)
+	}
+	now := time.Now()
+	claims := map[string]any{
+		"iss":    i.Server.URL,
+		"aud":    i.ClientID,
+		"iat":    now.Unix(),
+		"exp":    now.Add(2 * time.Minute).Unix(),
+		"jti":    hex.EncodeToString(jti),
+		"events": map[string]any{"http://schemas.openid.net/event/backchannel-logout": map[string]any{}},
+	}
+	if sub != "" {
+		claims["sub"] = sub
+	}
+	if sid != "" {
+		claims["sid"] = sid
+	}
+	if mutate != nil {
+		mutate(claims)
+	}
+	body, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal logout claims: %v", err)
+	}
+	return i.sign(body, "logout+jwt")
+}
 
 // SetClaims replaces the claim set the next ID token carries.
 func (i *IdP) SetClaims(c map[string]any) {
@@ -216,13 +257,19 @@ func (i *IdP) idToken() string {
 		return header + "." + b64 + "."
 	}
 
+	return i.sign(body, "JWT")
+}
+
+// sign produces a compact RS256 JWS over body with the given typ header,
+// under the foreign key when that knob is set.
+func (i *IdP) sign(body []byte, typ string) string {
 	key := i.signKey
 	if i.ForeignKey {
 		key = i.foreignKey
 	}
 	signer, err := jose.NewSigner(
 		jose.SigningKey{Algorithm: jose.RS256, Key: key},
-		(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "test-key"),
+		(&jose.SignerOptions{}).WithType(jose.ContentType(typ)).WithHeader("kid", "test-key"),
 	)
 	if err != nil {
 		return ""
