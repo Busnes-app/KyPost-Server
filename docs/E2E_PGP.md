@@ -351,15 +351,18 @@ Implemented:
   On a converted account they are required — a bare `true` is `409
   {"generationRequired": true, "materialGeneration": <current>, "fingerprint":
   <current>}` and records nothing, because the legacy boolean is never proof
-  of v3 enrollment — and must equal the account's current active fingerprint
-  and generation, with `envelopeVersion` the one the account's material
-  implies (3 for a converted account, 2 for a legacy one) and one the device
-  advertised; while the delivered `device:` slot still exists the three must
-  also equal what that slot recorded and the device must still publish the
-  key it was sealed to; any mismatch is `409 {"pgpStateChanged": true,
-  ...current values...}` and records nothing. A legacy account keeps the boolean semantics (metadata, if
+  of v3 enrollment. An acknowledgement **confirms a delivery; it never
+  creates one**: the device-slot `PUT` writes the delivered version,
+  generation and fingerprint onto the device record, unconfirmed and out of
+  the device's reach, and the three acknowledged values must equal exactly
+  that record, still be the account's current material, and, while the
+  transport copy exists, the device must still publish the key it was sealed
+  to; any mismatch, including an acknowledgement with no delivery behind it,
+  is `409 {"pgpStateChanged": true, ...current values...}` and records
+  nothing. A legacy account keeps the boolean semantics (metadata, if
   sent, is checked with generation 0). `false` clears the marker and the
-  recorded generation, version and fingerprint. The device record exposes
+  delivery record, so a fresh delivery is needed before the device can be
+  enrolled again. The device record exposes
   `enrolledVersion`, `enrolledGeneration` and `enrolledFingerprint` in the
   owner's `GET /api/notifications/native/devices` listing; a device whose
   `enrolledGeneration` is not the keyring's current one holds retired material

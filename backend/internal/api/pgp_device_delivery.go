@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busness-app/kypost-server/backend/internal/state"
 	"github.com/Busness-app/kypost-server/backend/internal/users"
 )
 
@@ -70,6 +71,17 @@ func (s *Server) putDeviceEnvelope(w http.ResponseWriter, r *http.Request, userI
 	}
 	if err != nil {
 		writeUserStoreError(w, err)
+		return
+	}
+	// The device row now says what was delivered, unconfirmed. This is the
+	// only thing an acknowledgement can later confirm; the device itself can
+	// never write it.
+	var delivered uint64
+	if u.PGPKeyring != nil {
+		delivered = u.PGPKeyring.MaterialGeneration
+	}
+	if err := store.RecordNativeDeviceDelivery(deviceID, state.DeviceEnrollment{Version: version, Generation: delivered, Fingerprint: u.PGPFingerprint}); err != nil {
+		http.Error(w, "the sealing was stored but the delivery could not be recorded; retry", http.StatusInternalServerError)
 		return
 	}
 	s.logger.Info("pgp device envelope delivered", "user_id", userID, "device_id", deviceID, "version", strconv.Itoa(version))

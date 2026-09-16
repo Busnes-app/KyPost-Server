@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -232,35 +231,35 @@ func (s *Server) handlePGPDeviceEnrollmentState(w http.ResponseWriter, r *http.R
 		http.Error(w, "envelopeVersion, materialGeneration and fingerprint go together", http.StatusBadRequest)
 		return
 	}
-	// The version is the one the account's material implies, never merely one
-	// the device advertised: a converted account only ever delivers v3.
-	wantVersion := 2
-	if u.PGPKeyring != nil {
-		wantVersion = 3
-	}
-	current := req.EnvelopeVersion == wantVersion && slices.Contains(device.EnrollmentEnvelopeVersions, req.EnvelopeVersion) &&
-		*req.MaterialGeneration == generation && strings.EqualFold(fingerprint, u.PGPFingerprint)
-	// While the transport copy still exists, the acknowledgement must also be
-	// of exactly that delivery, sealed to the key the device still publishes.
-	// After the TTL the account check above is all there is, so a device that
-	// imported in time can still restate what it holds.
+	// An acknowledgement confirms a delivery; it never creates one. The
+	// device row holds what the server delivered, written at delivery time
+	// and out of the device's reach, and the marker is set only when the
+	// acknowledgement is exactly that, still the account's current material,
+	// and, while the transport copy lives, sealed to the key the device still
+	// publishes. Everything the device could learn on its own credential is
+	// therefore not enough: it has to have been sent something.
+	current := *req.MaterialGeneration == generation && strings.EqualFold(fingerprint, u.PGPFingerprint)
 	for _, e := range u.WrappedEnvelopes() {
 		if e.Slot == users.EnvelopeSlotDevicePrefix+device.DeviceID {
-			current = current && e.Version == req.EnvelopeVersion && e.MaterialGeneration == *req.MaterialGeneration &&
-				strings.EqualFold(e.Fingerprint, fingerprint) && e.EnrollmentKey == device.EnrollmentPublicKey
+			current = current && e.Version == req.EnvelopeVersion && e.MaterialGeneration == *req.MaterialGeneration && e.EnrollmentKey == device.EnrollmentPublicKey
 		}
 	}
-	if !current {
+	confirmed := false
+	if current {
+		var err error
+		confirmed, err = store.ConfirmNativeDeviceEnrollment(device.DeviceID, state.DeviceEnrollment{Version: req.EnvelopeVersion, Generation: *req.MaterialGeneration, Fingerprint: u.PGPFingerprint})
+		if err != nil {
+			http.Error(w, "could not store the enrollment state", http.StatusInternalServerError)
+			return
+		}
+	}
+	if !confirmed {
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error":              "the acknowledged key material is not what this account delivered to this device; fetch the current envelope and enroll again",
 			"pgpStateChanged":    true,
 			"materialGeneration": generation,
 			"fingerprint":        u.PGPFingerprint,
 		})
-		return
-	}
-	if err := store.SetNativeDeviceEnrollment(device.DeviceID, state.DeviceEnrollment{Version: req.EnvelopeVersion, Generation: generation, Fingerprint: u.PGPFingerprint}); err != nil {
-		http.Error(w, "could not store the enrollment state", http.StatusInternalServerError)
 		return
 	}
 	s.logger.Info("pgp enrollment acknowledged", "user_id", userID, "device_id", device.DeviceID,

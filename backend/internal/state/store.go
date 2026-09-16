@@ -101,10 +101,13 @@ type NativeDevice struct {
 	// turned on would tell the user a device is protected when it can read
 	// nothing, so the device restates it on every registration call.
 	EncryptionEnrolled bool `json:"encryptionEnrolled"`
-	// EnrolledVersion, EnrolledGeneration and EnrolledFingerprint are what
-	// the device last acknowledged holding, checked against the account when
-	// it said so. A send from a device whose recorded generation is no longer
-	// the account's current one is refused until it enrolls again.
+	// EnrolledVersion, EnrolledGeneration and EnrolledFingerprint are what the
+	// server delivered to this device, written at delivery and only ever
+	// confirmed by the device's acknowledgement (EncryptionEnrolled). The
+	// device cannot write them, so no acknowledgement can create an enrollment
+	// the account did not deliver. A send from a device whose recorded
+	// generation is no longer the account's current one is refused until it
+	// enrolls again.
 	EnrolledVersion     int    `json:"enrolledVersion,omitempty"`
 	EnrolledGeneration  uint64 `json:"enrolledGeneration,omitempty"`
 	EnrolledFingerprint string `json:"enrolledFingerprint,omitempty"`
@@ -1267,26 +1270,25 @@ func (s *Store) SetNativeDeviceEnrollmentKey(deviceID, publicKey, at string, ver
 	return d, nil
 }
 
-// DeviceEnrollment is what a device acknowledges holding after it imported a
-// delivered envelope: the envelope version and the material generation and
-// active fingerprint the account had when it said so.
+// DeviceEnrollment names one delivery: the envelope version and the material
+// generation and active fingerprint the account had when it was sealed.
 type DeviceEnrollment struct {
 	Version     int
 	Generation  uint64
 	Fingerprint string
 }
 
-// SetNativeDeviceEnrollment records a generation-aware acknowledgement and
-// sets the enrolled marker with it. The caller has checked the values against
-// the account; this only stores them.
-func (s *Store) SetNativeDeviceEnrollment(deviceID string, e DeviceEnrollment) error {
+// RecordNativeDeviceDelivery writes what the server just delivered to the
+// device, unconfirmed: the enrolled marker is cleared until the device
+// acknowledges exactly this. A newer delivery supersedes an older one.
+func (s *Store) RecordNativeDeviceDelivery(deviceID string, e DeviceEnrollment) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
-		return fmt.Errorf("enrollment: empty device id")
+		return fmt.Errorf("delivery: empty device id")
 	}
 	res, err := s.db.Exec(
 		`UPDATE native_devices
-		 SET encryption_enrolled = 1, enrolled_version = ?, enrolled_generation = ?, enrolled_fingerprint = ?, updated_at = ?
+		 SET encryption_enrolled = 0, enrolled_version = ?, enrolled_generation = ?, enrolled_fingerprint = ?, updated_at = ?
 		 WHERE device_id = ?`,
 		e.Version, e.Generation, e.Fingerprint, time.Now().UTC().Format(time.RFC3339), deviceID)
 	if err != nil {
@@ -1297,16 +1299,37 @@ func (s *Store) SetNativeDeviceEnrollment(deviceID string, e DeviceEnrollment) e
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("enrollment: no such device %q", deviceID)
+		return fmt.Errorf("delivery: no such device %q", deviceID)
 	}
 	return nil
+}
+
+// ConfirmNativeDeviceEnrollment sets the enrolled marker only when e is
+// exactly what RecordNativeDeviceDelivery wrote for this device. It reports
+// false, and changes nothing, for any other acknowledgement: a device can
+// confirm a delivery, never invent one.
+func (s *Store) ConfirmNativeDeviceEnrollment(deviceID string, e DeviceEnrollment) (bool, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" || e.Version == 0 || e.Fingerprint == "" {
+		return false, nil
+	}
+	res, err := s.db.Exec(
+		`UPDATE native_devices SET encryption_enrolled = 1, updated_at = ?
+		 WHERE device_id = ? AND enrolled_version = ? AND enrolled_generation = ? AND enrolled_fingerprint = ?`,
+		time.Now().UTC().Format(time.RFC3339), deviceID, e.Version, e.Generation, e.Fingerprint)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // SetNativeDeviceEncryptionEnrolled records the device's own answer to "can I
 // still decrypt". Both directions must work — see EncryptionEnrolled. An absent
 // device is an error, for the same reason as SetNativeDeviceEnrollmentKey.
-// Saying no also forgets what the device had acknowledged holding; saying yes
-// on its own leaves that record as it was.
+// Saying no also forgets the delivery record, so the device needs a fresh
+// delivery before it can be enrolled again; saying yes on its own leaves the
+// record as it was.
 func (s *Store) SetNativeDeviceEncryptionEnrolled(deviceID string, enrolled bool) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {

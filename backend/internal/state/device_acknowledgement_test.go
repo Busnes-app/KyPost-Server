@@ -11,11 +11,31 @@ func TestDeviceAcknowledgementPersistsAndClears(t *testing.T) {
 	if _, err := store.SetNativeDeviceEnrollmentKey("dev-1", "PUBKEY", "2026-09-16T00:00:00Z", []int{2, 3}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetNativeDeviceEnrollment("dev-1", DeviceEnrollment{Version: 3, Generation: 7, Fingerprint: "AAAA1111"}); err != nil {
+	// Delivery writes the record unconfirmed; only the exact record confirms.
+	if err := store.RecordNativeDeviceDelivery("dev-1", DeviceEnrollment{Version: 3, Generation: 7, Fingerprint: "AAAA1111"}); err != nil {
 		t.Fatal(err)
 	}
 	d, ok := store.GetNativeDevice("dev-1")
-	if !ok || !d.EncryptionEnrolled || d.EnrolledVersion != 3 || d.EnrolledGeneration != 7 || d.EnrolledFingerprint != "AAAA1111" {
+	if !ok || d.EncryptionEnrolled || d.EnrolledVersion != 3 || d.EnrolledGeneration != 7 || d.EnrolledFingerprint != "AAAA1111" {
+		t.Fatalf("after delivery: %+v", d)
+	}
+	for name, wrong := range map[string]DeviceEnrollment{
+		"generation":  {Version: 3, Generation: 8, Fingerprint: "AAAA1111"},
+		"version":     {Version: 2, Generation: 7, Fingerprint: "AAAA1111"},
+		"fingerprint": {Version: 3, Generation: 7, Fingerprint: "BBBB2222"},
+		"empty":       {},
+	} {
+		if ok, err := store.ConfirmNativeDeviceEnrollment("dev-1", wrong); ok || err != nil {
+			t.Fatalf("%s: confirmed a delivery that never happened: %v %v", name, ok, err)
+		}
+	}
+	if d, _ = store.GetNativeDevice("dev-1"); d.EncryptionEnrolled {
+		t.Fatal("a refused confirmation set the marker")
+	}
+	if ok, err := store.ConfirmNativeDeviceEnrollment("dev-1", DeviceEnrollment{Version: 3, Generation: 7, Fingerprint: "AAAA1111"}); !ok || err != nil {
+		t.Fatalf("confirm: %v %v", ok, err)
+	}
+	if d, _ = store.GetNativeDevice("dev-1"); !d.EncryptionEnrolled || d.EnrolledGeneration != 7 {
 		t.Fatalf("after acknowledgement: %+v", d)
 	}
 
@@ -42,7 +62,7 @@ func TestDeviceAcknowledgementPersistsAndClears(t *testing.T) {
 		t.Fatalf("un-enrolling kept the acknowledgement: %+v", d)
 	}
 
-	if err := store.SetNativeDeviceEnrollment("dev-1", DeviceEnrollment{Version: 3, Generation: 8, Fingerprint: "AAAA1111"}); err != nil {
+	if err := store.RecordNativeDeviceDelivery("dev-1", DeviceEnrollment{Version: 3, Generation: 8, Fingerprint: "AAAA1111"}); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := store.ClearDeviceEnrollments(); err != nil || n != 1 {
@@ -51,8 +71,8 @@ func TestDeviceAcknowledgementPersistsAndClears(t *testing.T) {
 	if d, _ = store.GetNativeDevice("dev-1"); d.EnrolledGeneration != 0 || d.EnrolledVersion != 0 || d.EnrolledFingerprint != "" {
 		t.Fatalf("rotation kept the acknowledgement: %+v", d)
 	}
-	if err := store.SetNativeDeviceEnrollment("nobody", DeviceEnrollment{Version: 3, Generation: 1}); err == nil {
-		t.Fatal("acknowledgement for an unknown device succeeded")
+	if err := store.RecordNativeDeviceDelivery("nobody", DeviceEnrollment{Version: 3, Generation: 1, Fingerprint: "AAAA1111"}); err == nil {
+		t.Fatal("delivery to an unknown device succeeded")
 	}
 
 	// Registration can never assert an acknowledgement, on a new row either.

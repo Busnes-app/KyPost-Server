@@ -207,6 +207,22 @@ func TestDeviceAcknowledgementIsGenerationAware(t *testing.T) {
 	if device().EncryptionEnrolled {
 		t.Fatal("a refused acknowledgement marked the device enrolled")
 	}
+	// Nor is knowing the account's current material: nothing was delivered
+	// to this device yet, so there is nothing to confirm.
+	rec = deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": u.PGPFingerprint})
+	if rec.Code != http.StatusConflict || device().EncryptionEnrolled {
+		t.Fatalf("acknowledgement without a delivery: %d %s", rec.Code, rec.Body.String())
+	}
+	deliver := func() {
+		t.Helper()
+		if rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:phone", map[string]any{"envelope": sealedEnvelope(3), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
+			t.Fatalf("delivery: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	deliver()
+	if d := device(); d.EncryptionEnrolled || d.EnrolledVersion != 3 || d.EnrolledGeneration != 1 || d.EnrolledFingerprint != u.PGPFingerprint {
+		t.Fatalf("delivery did not record an unconfirmed enrollment: %+v", d)
+	}
 	stale := []struct {
 		name string
 		body map[string]any
@@ -237,9 +253,6 @@ func TestDeviceAcknowledgementIsGenerationAware(t *testing.T) {
 	}
 	// While the delivery is live, the acknowledgement must be of that delivery
 	// to the key the device still publishes.
-	if rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:phone", map[string]any{"envelope": sealedEnvelope(3), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
-		t.Fatalf("delivery: %d %s", rec.Code, rec.Body.String())
-	}
 	store, _ := srv.userStore(u.ID)
 	if _, err := store.SetNativeDeviceEnrollmentKey("phone", "BReplaced", "2026-09-16T01:00:00Z", []int{2, 3}); err != nil {
 		t.Fatal(err)
@@ -268,12 +281,16 @@ func TestDeviceAcknowledgementIsGenerationAware(t *testing.T) {
 		t.Fatalf("device listing: %d %s", list.Code, list.Body.String())
 	}
 
-	// Saying no forgets it.
+	// Saying no forgets it, and the device cannot say yes again without a
+	// fresh delivery.
 	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": false}); rec.Code != http.StatusOK {
 		t.Fatalf("un-enroll: %d", rec.Code)
 	}
 	if d := device(); d.EncryptionEnrolled || d.EnrolledGeneration != 0 {
 		t.Fatalf("after un-enroll: %+v", d)
+	}
+	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}); rec.Code != http.StatusConflict || device().EncryptionEnrolled {
+		t.Fatalf("re-acknowledged after saying no, with no new delivery: %d", rec.Code)
 	}
 
 	// A legacy account keeps the boolean semantics.
@@ -316,11 +333,16 @@ func TestClientSealedSendRefusesStaleMaterial(t *testing.T) {
 		t.Fatalf("current generation from a session refused: %s", rec.Body.String())
 	}
 
-	// A device at the current generation must also be enrolled there.
+	// A device at the current generation must also be enrolled there, which
+	// takes a delivery and an acknowledgement of it.
 	if rec := send(deviceAuth, map[string]any{"materialGeneration": 1}); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"reenrollmentRequired":true`) {
 		t.Fatalf("unenrolled device: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, "/api/pgp/device/enrollment-state", map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}); rec.Code != http.StatusOK {
+	acknowledge := map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}
+	if rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:phone", map[string]any{"envelope": sealedEnvelope(3), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
+		t.Fatalf("delivery: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, "/api/pgp/device/enrollment-state", acknowledge); rec.Code != http.StatusOK {
 		t.Fatalf("acknowledge: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := send(deviceAuth, map[string]any{"materialGeneration": 1}); rec.Code == http.StatusConflict {
@@ -328,10 +350,8 @@ func TestClientSealedSendRefusesStaleMaterial(t *testing.T) {
 	}
 
 	// The owner removes the device's sealing: the device cannot send until it
-	// enrolls again, whatever it restates on registration.
-	if rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:phone", map[string]any{"envelope": sealedEnvelope(3), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
-		t.Fatalf("delivery: %d %s", rec.Code, rec.Body.String())
-	}
+	// enrolls again, whatever it restates on registration, and it cannot
+	// re-acknowledge what it already knows to get there.
 	if rec := sessionJSON(t, srv, u.ID, http.MethodDelete, "/api/pgp/identity/envelope/device:phone", map[string]any{"expectedRevision": u.PGPRevision, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
 		t.Fatalf("delete slot: %d %s", rec.Code, rec.Body.String())
 	}
@@ -347,6 +367,12 @@ func TestClientSealedSendRefusesStaleMaterial(t *testing.T) {
 	}
 	if rec := send(deviceAuth, map[string]any{"materialGeneration": 1}); rec.Code != http.StatusConflict {
 		t.Fatalf("a bare restatement re-opened the send gate: %d", rec.Code)
+	}
+	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, "/api/pgp/device/enrollment-state", acknowledge); rec.Code != http.StatusConflict || deviceByID(t, srv, u.ID, "phone").EnrolledGeneration != 0 {
+		t.Fatalf("the revoked device re-acknowledged itself: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := send(deviceAuth, map[string]any{"materialGeneration": 1}); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"reenrollmentRequired":true`) {
+		t.Fatalf("the revoked device sends again: %d %s", rec.Code, rec.Body.String())
 	}
 
 	// A legacy account is not gated; older clients send nothing.
