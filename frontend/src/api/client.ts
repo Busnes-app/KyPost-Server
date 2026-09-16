@@ -126,18 +126,20 @@ export async function getJSON<T>(path: string): Promise<T> {
   return requestJSON<T>(path);
 }
 
-export async function putJSON<T>(path: string, body: unknown): Promise<T> {
+// The optional headers carry a KySignOn step-up grant (see api/stepup.ts);
+// nothing else should need them.
+export async function putJSON<T>(path: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
   return requestJSON<T>(path, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body)
   });
 }
 
-export async function postJSON<T>(path: string, body: unknown): Promise<T> {
+export async function postJSON<T>(path: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
   return requestJSON<T>(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body)
   });
 }
@@ -157,15 +159,20 @@ export async function postFormData<T>(path: string, formData: FormData): Promise
   return requestJSON<T>(path, { method: "POST", body: formData });
 }
 
-export async function deleteJSON<T>(path: string, body?: unknown): Promise<T> {
+export async function deleteJSON<T>(path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
   return requestJSON<T>(path, {
     method: "DELETE",
-    ...(body !== undefined ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {})
+    headers,
+    ...(body !== undefined ? { headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) } : {})
   });
 }
 
 // Capsule downloads share authentication, CSRF and error handling with JSON calls.
-export async function postBlob(path: string, body: unknown): Promise<Blob> {
- const response = await requestResponse(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
- return response.blob();
+export async function postBlob(path: string, body: unknown, headers: Record<string, string> = {}): Promise<Blob> {
+  const response = await requestResponse(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body)
+  });
+  return response.blob();
 }

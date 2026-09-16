@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Busness-app/kypost-server/backend/internal/sso/ssotest"
 )
@@ -49,7 +50,7 @@ func exchange(t *testing.T, idp *ssotest.IdP) (*SSOTokenClaims, error) {
 	if err != nil {
 		t.Fatalf("RandomToken() error = %v", err)
 	}
-	code, _ := idp.Authorize(t, p.AuthCodeURL("state-abc", nonce, challenge))
+	code, _ := idp.Authorize(t, p.AuthCodeURL("state-abc", nonce, challenge, false))
 	return p.Exchange(context.Background(), code, verifier, nonce)
 }
 
@@ -389,4 +390,43 @@ func TestExchangeMergesUserInfo(t *testing.T) {
 			t.Errorf("userinfo for a different sub was merged in: %+v", claims)
 		}
 	})
+}
+
+func TestClaimsFreshProof(t *testing.T) {
+	start := time.Unix(1000, 0)
+	now := time.Unix(1100, 0)
+	base := func() SSOTokenClaims {
+		return SSOTokenClaims{AuthTime: 1050, IssuedAt: 1060, ACR: "urn:kysignon:acr:password", AMR: []string{"pwd"}}
+	}
+	cases := []struct {
+		name   string
+		mutate func(c *SSOTokenClaims)
+		want   bool
+	}{
+		{"password", func(c *SSOTokenClaims) {}, true},
+		{"auth_time at the challenge second", func(c *SSOTokenClaims) { c.AuthTime = 1000 }, true},
+		{"mfa with otp", func(c *SSOTokenClaims) { c.ACR, c.AMR = "urn:kysignon:acr:mfa", []string{"pwd", "mfa", "otp"} }, true},
+		{"mfa with webauthn", func(c *SSOTokenClaims) {
+			c.ACR, c.AMR = "urn:kysignon:acr:mfa", []string{"pwd", "mfa", "urn:kysignon:amr:webauthn"}
+		}, true},
+		{"before the challenge", func(c *SSOTokenClaims) { c.AuthTime = 999 }, false},
+		{"in the future", func(c *SSOTokenClaims) { c.AuthTime, c.IssuedAt = 1101, 1101 }, false},
+		{"after issuance", func(c *SSOTokenClaims) { c.AuthTime = 1070 }, false},
+		{"missing auth_time", func(c *SSOTokenClaims) { c.AuthTime = 0 }, false},
+		{"recovery", func(c *SSOTokenClaims) { c.AMR = []string{"pwd", "urn:kysignon:amr:recovery"} }, false},
+		{"no password method", func(c *SSOTokenClaims) { c.AMR = []string{"otp"} }, false},
+		{"mfa without factor", func(c *SSOTokenClaims) { c.ACR, c.AMR = "urn:kysignon:acr:mfa", []string{"pwd", "mfa"} }, false},
+		{"recovery assurance", func(c *SSOTokenClaims) { c.ACR = "urn:kysignon:acr:recovery" }, false},
+	}
+	for _, tc := range cases {
+		c := base()
+		tc.mutate(&c)
+		if got := c.FreshProof(start, now); got != tc.want {
+			t.Errorf("%s: FreshProof = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	var nilClaims *SSOTokenClaims
+	if nilClaims.FreshProof(start, now) {
+		t.Error("nil claims proved something")
+	}
 }
