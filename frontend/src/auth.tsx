@@ -8,6 +8,9 @@ export type AuthState = {
   username?: string;
   role?: Role;
   mustChangePassword?: boolean;
+  // True for a session signed in through KySignOn. It has no password to
+  // re-enter, so sensitive actions are confirmed with KySignOn instead.
+  ssoSession?: boolean;
   ssoSub?: string;
   ssoUsername?: string;
   ssoEmail?: string;

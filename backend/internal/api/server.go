@@ -43,7 +43,7 @@ import (
 // Server holds the HTTP surface and its process-wide state.
 //
 // LOCK ORDER: cfgMu before sessMu before pairingMu before userMu before ollamaMu before serverMu before
-// pinProbeMu before linuxClientMu before backupDrainMu. Never the reverse.
+// pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu. Never the reverse.
 // Enforced by TestLockOrderIsRespected, which reads this package's
 // source and fails on a function that takes one while holding a higher-ranked
 // one — directly, or through any call chain inside this package. Adding a mutex
@@ -102,6 +102,11 @@ type Server struct {
 	baseURLFallbackWarn sync.Once
 	pairingBaseURLWarn  sync.Once
 	pairingSecretWarn   sync.Once
+	// stepUps are the live action-bound KySignOn re-authentication
+	// challenges, keyed by id. In memory like the sessions they belong to;
+	// innermost, taken alone, never while another Server mutex is held.
+	stepUpMu sync.Mutex
+	stepUps  map[string]ssoStepUp
 	// singleUse makes each one-shot token — PGP QR key exchange, native device
 	// pairing nonces — redeemable exactly once. See singleUseTokens.
 	singleUse            *singleUseTokens
@@ -339,6 +344,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		sessions:                 map[string]Session{},
 		mfaChallenges:            mfa.NewStore(),
 		pairingSecret:            pairingSecret,
+		stepUps:                  map[string]ssoStepUp{},
 		singleUse:                newSingleUseTokens(),
 		serverBaseURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("SERVER_BASE_URL")), "/"),
 		nativePushDispatcher:     processor.NewNativePushDispatcher(logger, cfg.Notifications.PublicKey, cfg.Notifications.PrivateKeyPath),
@@ -466,6 +472,9 @@ func (s *Server) routesAuth(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/oidc/callback", withPublicRoute(s.handleSSOCallback))
 	mux.HandleFunc("GET /auth/sso/callback", withPublicRoute(s.handleSSOCallback))
 	mux.HandleFunc("POST /api/auth/oidc/backchannel-logout", withPublicRoute(s.handleSSOBackchannelLogout))
+	mux.HandleFunc("POST /api/auth/oidc/step-up", s.withAuth(s.handleSSOStepUpStart))
+	mux.HandleFunc("GET /api/auth/oidc/step-up/{id}", s.withAuth(s.handleSSOStepUpStatus))
+	mux.HandleFunc("DELETE /api/auth/oidc/step-up/{id}", s.withAuth(s.handleSSOStepUpCancel))
 	mux.HandleFunc("POST /api/settings/sso/link", s.withAuth(s.handleSSOLinkStart))
 	mux.HandleFunc("POST /api/settings/sso/unlink", s.withAuth(s.handleSSOUnlink))
 	// Pre-login, unauthenticated: tells the browser how to derive its auth
@@ -491,7 +500,7 @@ func (s *Server) routesAuth(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/password", s.withAuth(s.handleChangePassword))
 	// Full re-authentication (credential + second factor) for an existing
 	// session. Authorises nothing on its own — see auth_stepup.go.
-	mux.HandleFunc("POST /api/auth/step-up", s.withAuth(s.handleAuthStepUp))
+	mux.HandleFunc("POST /api/auth/step-up", s.withAuth(withActionDigest(s.handleAuthStepUp)))
 }
 
 // routesAdmin registers instance administration and observability:
@@ -499,13 +508,13 @@ func (s *Server) routesAuth(mux *http.ServeMux) {
 // the pre-login setup hint.
 func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/backup/status", s.withAdmin(s.handleBackupStatus))
-	mux.HandleFunc("POST /api/admin/backup/run", s.withAdmin(s.handleBackupRun))
-	mux.HandleFunc("POST /api/admin/backup/drill", s.withAdmin(s.handleBackupDrill))
-	mux.HandleFunc("POST /api/admin/backup/export-capsule", s.withAdmin(s.handleBackupExport))
-	mux.HandleFunc("POST /api/admin/backup/pair-remote", s.withAdmin(s.handleBackupPair))
-	mux.HandleFunc("DELETE /api/admin/backup/pairing", s.withAdmin(s.handleBackupUnpair))
-	mux.HandleFunc("POST /api/admin/backup/pin-key", s.withAdmin(s.handleBackupPinKey))
-	mux.HandleFunc("PUT /api/admin/backup/schedule", s.withAdmin(s.handleBackupSchedule))
+	mux.HandleFunc("POST /api/admin/backup/run", s.withAdmin(withActionDigest(s.handleBackupRun)))
+	mux.HandleFunc("POST /api/admin/backup/drill", s.withAdmin(withActionDigest(s.handleBackupDrill)))
+	mux.HandleFunc("POST /api/admin/backup/export-capsule", s.withAdmin(withActionDigest(s.handleBackupExport)))
+	mux.HandleFunc("POST /api/admin/backup/pair-remote", s.withAdmin(withActionDigest(s.handleBackupPair)))
+	mux.HandleFunc("DELETE /api/admin/backup/pairing", s.withAdmin(withActionDigest(s.handleBackupUnpair)))
+	mux.HandleFunc("POST /api/admin/backup/pin-key", s.withAdmin(withActionDigest(s.handleBackupPinKey)))
+	mux.HandleFunc("PUT /api/admin/backup/schedule", s.withAdmin(withActionDigest(s.handleBackupSchedule)))
 	mux.HandleFunc("/api/health", withPublicRoute(s.handleHealth))
 	mux.HandleFunc("POST /api/health/repair", s.withAdmin(s.handleRepair))
 	mux.HandleFunc("POST /api/admin/mail/poll-now", s.withAdmin(s.handlePollNow))
