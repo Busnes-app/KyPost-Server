@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/state"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // putDeviceEnvelope is the device-slot arm of PUT /api/pgp/identity/envelope/{slot}.
