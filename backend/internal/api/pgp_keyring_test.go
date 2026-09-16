@@ -69,7 +69,6 @@ func TestPGPKeyringHTTPCompatibilityAndReset(t *testing.T) {
 		{http.MethodPost, "/api/pgp/identity/client", map[string]any{"publicKey": info.ArmoredPublicKey, "wrapped": `{"v":2}`, "source": "imported"}},
 		{http.MethodPost, "/api/pgp/identity/rewrap", map[string]any{"wrapped": `{"v":2}`}},
 		{http.MethodPut, "/api/pgp/identity/envelope/recovery", map[string]any{"envelope": `{"v":2}`}},
-		{http.MethodPut, "/api/pgp/identity/envelope/device:test", map[string]any{"envelope": `{"v":2}`}},
 		{http.MethodPost, "/api/auth/password", map[string]any{"oldAuthSecret": authSecret, "newAuthSecret": strings.Repeat("b", 64), "newLoginSalt": salt, "newIterations": 600000, "rewrappedPgpKey": `{"v":2}`}},
 	}
 	for _, test := range tests {

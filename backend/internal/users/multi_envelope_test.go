@@ -231,10 +231,14 @@ func TestSetPGPWrappedEnvelopeEnforcesCapOnAddNotReplace(t *testing.T) {
 	if _, err := store.SetPGPWrappedEnvelope(id, EnvelopeSlotRecovery, `{"v":2,"rec":1}`, "", "", nil); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope recovery: %v", err)
 	}
+	owner, _ := store.Get(id)
+	deliver := func(deviceID string) error {
+		_, _, err := store.SetPGPDeviceEnvelope(id, DeviceDelivery{DeviceID: deviceID, Envelope: deviceEnvelope(2), EnrollmentKey: "K", ExpectedFingerprint: owner.PGPFingerprint})
+		return err
+	}
 	for i := 0; i < maxWrappedEnvelopeSlots-1; i++ {
-		slot := fmt.Sprintf("device:d%d", i)
-		if _, err := store.SetPGPWrappedEnvelope(id, slot, `{"v":2}`, "", "", nil); err != nil {
-			t.Fatalf("SetPGPWrappedEnvelope(%s): %v", slot, err)
+		if err := deliver(fmt.Sprintf("d%d", i)); err != nil {
+			t.Fatalf("deliver(d%d): %v", i, err)
 		}
 	}
 	got, err := store.Get(id)
@@ -246,7 +250,7 @@ func TestSetPGPWrappedEnvelopeEnforcesCapOnAddNotReplace(t *testing.T) {
 	}
 
 	// One more NEW slot must be refused.
-	if _, err := store.SetPGPWrappedEnvelope(id, "device:one-too-many", `{"v":2}`, "", "", nil); !errors.Is(err, ErrTooManyEnvelopeSlots) {
+	if err := deliver("one-too-many"); !errors.Is(err, ErrTooManyEnvelopeSlots) {
 		t.Fatalf("err = %v, want ErrTooManyEnvelopeSlots", err)
 	}
 	got, _ = store.Get(id)
@@ -303,8 +307,9 @@ func TestDeletePGPWrappedEnvelopeLeavesOtherSlotsIntact(t *testing.T) {
 	if _, err := store.SetPGPWrappedEnvelope(id, EnvelopeSlotRecovery, `{"v":2,"rec":1}`, "2026-08-04T00:00:00Z", "", nil); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope recovery: %v", err)
 	}
-	if _, err := store.SetPGPWrappedEnvelope(id, "device:abc123", `{"v":2,"dev":1}`, "2026-08-04T00:00:00Z", "", nil); err != nil {
-		t.Fatalf("SetPGPWrappedEnvelope device: %v", err)
+	owner, _ := store.Get(id)
+	if _, _, err := store.SetPGPDeviceEnvelope(id, DeviceDelivery{DeviceID: "abc123", Envelope: deviceEnvelope(2), AddedAt: "2026-08-04T00:00:00Z", EnrollmentKey: "K", ExpectedFingerprint: owner.PGPFingerprint}); err != nil {
+		t.Fatalf("SetPGPDeviceEnvelope: %v", err)
 	}
 
 	if _, err := store.DeletePGPWrappedEnvelope(id, EnvelopeSlotRecovery, nil); err != nil {
@@ -318,7 +323,7 @@ func TestDeletePGPWrappedEnvelopeLeavesOtherSlotsIntact(t *testing.T) {
 	if len(got.PGPWrappedEnvelopes) != 1 {
 		t.Fatalf("len = %d, want 1: %+v", len(got.PGPWrappedEnvelopes), got.PGPWrappedEnvelopes)
 	}
-	if got.PGPWrappedEnvelopes[0].Slot != "device:abc123" || got.PGPWrappedEnvelopes[0].Envelope != `{"v":2,"dev":1}` {
+	if got.PGPWrappedEnvelopes[0].Slot != "device:abc123" || got.PGPWrappedEnvelopes[0].Envelope != deviceEnvelope(2) {
 		t.Fatalf("surviving slot corrupted or wrong: %+v", got.PGPWrappedEnvelopes[0])
 	}
 	// The password envelope is untouched by a slot delete.
@@ -530,7 +535,7 @@ func TestDeviceSlotExpires(t *testing.T) {
 	store, id := newClientProtectedUser(t)
 	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 
-	if _, err := store.SetPGPWrappedEnvelope(id, "device:abc", `{"v":2,"dev":1}`, "", "", nil); err != nil {
+	if _, err := seedDeviceSlot(store, id, "abc"); err != nil {
 		t.Fatalf("SetPGPWrappedEnvelope: %v", err)
 	}
 	got, _ := store.Get(id)
@@ -544,7 +549,7 @@ func TestDeviceSlotExpires(t *testing.T) {
 
 	// Force it into the past and it must disappear from the synthesised view.
 	got.PGPWrappedEnvelopes[0].ExpiresAt = past
-	if _, err := store.SetPGPWrappedEnvelope(id, "device:abc", `{"v":2,"dev":1}`, "", "", nil); err != nil {
+	if _, err := seedDeviceSlot(store, id, "abc"); err != nil {
 		t.Fatalf("re-set: %v", err)
 	}
 	expired := User{
@@ -580,11 +585,11 @@ func TestExpiredSlotsDoNotCountTowardTheCap(t *testing.T) {
 	// still bites — this pins that the cap is not simply gone.
 	for i := 0; i < maxWrappedEnvelopeSlots; i++ {
 		slot := fmt.Sprintf("device:%02d", i)
-		if _, err := store.SetPGPWrappedEnvelope(id, slot, "x", "", "", nil); err != nil {
+		if _, err := seedDeviceSlot(store, id, slot[len(EnvelopeSlotDevicePrefix):]); err != nil {
 			t.Fatalf("fill slot %d: %v", i, err)
 		}
 	}
-	if _, err := store.SetPGPWrappedEnvelope(id, "device:overflow", "x", "", "", nil); !errors.Is(err, ErrTooManyEnvelopeSlots) {
+	if _, err := seedDeviceSlot(store, id, "overflow"); !errors.Is(err, ErrTooManyEnvelopeSlots) {
 		t.Fatalf("cap did not bite on a full table: %v", err)
 	}
 
@@ -606,7 +611,7 @@ func TestExpiredSlotsDoNotCountTowardTheCap(t *testing.T) {
 
 	// The table is still nominally full, but every slot is expired: this is
 	// the headroom actually freeing.
-	if _, err := store.SetPGPWrappedEnvelope(id, "device:overflow", "x", "", "", nil); err != nil {
+	if _, err := seedDeviceSlot(store, id, "overflow"); err != nil {
 		t.Fatalf("add after expiry should have succeeded, freeing headroom: %v", err)
 	}
 }
@@ -624,7 +629,7 @@ func TestExpiredSlotsAreCompactedOnTheNextWrite(t *testing.T) {
 	store, id := newClientProtectedUser(t)
 
 	for i := 0; i < 4; i++ {
-		if _, err := store.SetPGPWrappedEnvelope(id, fmt.Sprintf("device:%02d", i), "x", "", "", nil); err != nil {
+		if _, err := seedDeviceSlot(store, id, fmt.Sprintf("%02d", i)); err != nil {
 			t.Fatalf("add slot %d: %v", i, err)
 		}
 	}
@@ -722,7 +727,7 @@ func TestSweepExpiredEnvelopesReclaimsIdleAccounts(t *testing.T) {
 	store, id := newClientProtectedUser(t)
 
 	for i := 0; i < 3; i++ {
-		if _, err := store.SetPGPWrappedEnvelope(id, fmt.Sprintf("device:%02d", i), "x", "", "", nil); err != nil {
+		if _, err := seedDeviceSlot(store, id, fmt.Sprintf("%02d", i)); err != nil {
 			t.Fatalf("add device slot %d: %v", i, err)
 		}
 	}
@@ -791,7 +796,7 @@ func TestSweepExpiredEnvelopesReclaimsIdleAccounts(t *testing.T) {
 // cross-process lock that every authenticated request reads through.
 func TestSweepWithNothingExpiredDoesNotWrite(t *testing.T) {
 	store, id := newClientProtectedUser(t)
-	if _, err := store.SetPGPWrappedEnvelope(id, "device:live", "x", "", "", nil); err != nil {
+	if _, err := seedDeviceSlot(store, id, "live"); err != nil {
 		t.Fatalf("add slot: %v", err)
 	}
 	path := store.path

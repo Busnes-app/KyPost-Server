@@ -105,6 +105,9 @@ type AuthContext struct {
 	Username           string
 	Role               users.Role
 	MustChangePassword bool
+	// DeviceID names the paired device when the request authenticated with a
+	// device credential (withMailAuth's device arm); empty for a session.
+	DeviceID string
 	// SSOSession is true for a session minted by a KySignOn login, one whose
 	// token spoke the KySignOn contract. Such a session re-authenticates to
 	// KySignOn rather than with a password; a session from any other

@@ -830,14 +830,14 @@ PGP:
 - `POST /api/pgp/recipients/resolve` (resolves the key actually used for each recipient)
 - `GET /api/pgp/qr/token` and `GET /api/pgp/qr/key` (public key exchange through a QR code)
 - `POST /api/pgp/pickup` (creates a sealed pickup for a recipient with no usable key, so a client-protected sender can still use the secure-link fallback)
-- `GET /api/mail/pgp-payload` and `POST /api/mail/send-pgp` (fetch a ciphertext for local decryption; submit a locally encrypted message)
+- `GET /api/mail/pgp-payload` and `POST /api/mail/send-pgp` (fetch a ciphertext for local decryption; submit a locally encrypted message. On a converted account the send carries `materialGeneration` and is refused with 409 when it is stale, and a paired device must be enrolled at that generation)
 
 PGP key discovery and device enrollment:
 
 - `GET|PUT /api/pgp/discovery/settings`
 - `GET /api/pgp/discovery/suppressions` and `DELETE /api/pgp/discovery/suppressions/{email}`
 - `POST /api/pgp/discovery/suppress-contact`
-- `GET /api/pgp/device/envelope` (a paired device fetches the envelope sealed to its own secure-element key), `POST /api/pgp/device/enrollment-key` (a device publishes its public sealing key and optional `envelopeVersions` under its pairing credential), `POST /api/pgp/device/enrollment-state` (a device reports whether it can actually read the identity)
+- `GET /api/pgp/device/envelope` (a paired device fetches the envelope sealed to its own secure-element key), `POST /api/pgp/device/enrollment-key` (a device publishes its public sealing key and optional `envelopeVersions` under its pairing credential), `POST /api/pgp/device/enrollment-state` (a device reports whether it can actually read the identity and, on a converted account, which envelope version, material generation and fingerprint it holds; a stale or bare report is refused with 409). A browser delivers a sealing with `PUT /api/pgp/identity/envelope/device:<id>`, bound to the device's published key, the snapshot revision and the material generation; v3 for a converted account, v2 for a legacy one
 
 Web Key Directory (admin only, plus the public serving path):
 

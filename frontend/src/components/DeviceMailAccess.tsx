@@ -244,7 +244,8 @@ function EnrollPanel({
       }
 
       const envelope = await sealEnvelopeForDevice(publicKey, device.deviceId, fingerprint, armored);
-      await putDeviceEnvelope(device.deviceId, envelope, password, snapshot.pgpRevision);
+      await putDeviceEnvelope(device.deviceId, envelope, password, snapshot.pgpRevision, publicKey,
+        pgpSessionState().bootstrap?.keyring?.materialGeneration);
 
       // PAST THE POINT OF FAILURE. The sealing is stored; nothing below may
       // word itself as an error. All that is left is whether the device has

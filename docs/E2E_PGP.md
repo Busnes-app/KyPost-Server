@@ -264,6 +264,23 @@ Implemented:
   `expectedFingerprint`: a mismatch at the locked users-store mutation returns
   409 without changing key material. Omission preserves older clients; new
   recovery writes always supply the fingerprint derived from the private key.
+- A `device:` slot `PUT` is a **delivery**, and takes more than a recovery
+  slot: `enrollmentPublicKey` (required) is the device key the browser sealed
+  to and must equal the key the device currently publishes, else
+  `409 {"enrollmentChanged": true}`; `expectedFingerprint` is required; and
+  on a converted account `materialGeneration` is required and must equal the
+  keyring's current generation, else `409 {"pgpStateChanged": true,
+  "materialGeneration": <current>}`. The envelope's own `v` selects the
+  version: the server parses the `{v, alg, epk, iv, ct}` framing (no other
+  keys, a 65-byte P-256 point, a 12-byte IV, at least a tag of ciphertext)
+  without decrypting, refuses anything else with 400, accepts only `v: 3` on
+  a converted account and only `v: 2` on a legacy one (`409
+  {"deviceEnvelopeVersion": true}` otherwise), and refuses a version the
+  device did not advertise (`409 {"enrollmentChanged": true,
+  "envelopeVersions": [...]}`). The stored slot records `version`,
+  `materialGeneration` (0 for a legacy account), `fingerprint` and
+  `enrollmentKey`; the response carries `version`. `keyringVersion` is refused
+  on a device slot. The 7-day transport TTL is unchanged.
 
 - `POST /api/pgp/device/enrollment-key` and `GET /api/pgp/device/envelope` are
   the two **device-authenticated** routes of the enrollment ceremony
@@ -301,10 +318,11 @@ Implemented:
     and reject malformed lists. Current webmail delivers only v2 and refuses
     setup before requesting a code/password when the device's list excludes 2.
     It does not select v3 yet. Claims are compatibility metadata, not proof of
-    key possession, durable import or freshness at a later upload; retain SAS,
-    and bind future v3 delivery/acknowledgement to the original key/revision and
-    material generation. Only advertise v3 after native complete-ring persistence
-    checks pass.
+    key possession, durable import or freshness at a later upload; retain SAS.
+    The server binds each delivery to the published key, the snapshot revision
+    and the material generation, and each acknowledgement to the same (the
+    `device:` slot `PUT` and `POST .../enrollment-state` entries here). Only
+    advertise v3 after native complete-ring persistence checks pass.
   - `GET .../envelope` serves the one envelope sealed for the calling device and
     takes **no slot parameter** — the slot name is built from the verified
     device record, so there is no input to abuse. This is safe where the general
@@ -312,7 +330,11 @@ Implemented:
     key whose private half is non-extractable from that device's secure element.
     An expired transport copy reads as 404, since the handler iterates
     `WrappedEnvelopes()`, which filters on the `device:` slot TTL
-    (`users.DeviceEnvelopeTTL`, 7 days).
+    (`users.DeviceEnvelopeTTL`, 7 days). Beside `envelope` it returns
+    `version`, `fingerprint` and `materialGeneration` as recorded at delivery,
+    and `pgpRevision`, `keyring` and `publicKey` from the account snapshot,
+    so the device validates the ring it decrypts against the same metadata
+    the browser sealed from and acknowledges exactly that.
   - Minting and destroying a sealing stay session-only. A device may publish a
     key and read what was sealed for it; only a session may seal.
 - `POST /api/notifications/native/register` carries an optional
@@ -322,6 +344,29 @@ Implemented:
   marker cleared, while `false` reports that the keystore key is gone. The
   marker is device-reported rather than a record of what the browser did,
   because those diverge: reinstalling the app destroys the keystore key.
+- `POST /api/pgp/device/enrollment-state` is the device's own report on its
+  own route, with `encryptionEnrolled` required, and it is where a device says
+  **what** it holds: `{"encryptionEnrolled": true, "envelopeVersion": 3,
+  "materialGeneration": 4, "fingerprint": "<hex>"}`. The three go together.
+  On a converted account they are required — a bare `true` is `409
+  {"generationRequired": true, "materialGeneration": <current>, "fingerprint":
+  <current>}` and records nothing, because the legacy boolean is never proof
+  of v3 enrollment. An acknowledgement **confirms a delivery; it never
+  creates one**: the device-slot `PUT` writes the delivered version,
+  generation and fingerprint onto the device record, unconfirmed and out of
+  the device's reach, and the three acknowledged values must equal exactly
+  that record, still be the account's current material, and, while the
+  transport copy exists, the device must still publish the key it was sealed
+  to; any mismatch, including an acknowledgement with no delivery behind it,
+  is `409 {"pgpStateChanged": true, ...current values...}` and records
+  nothing. A legacy account keeps the boolean semantics (metadata, if
+  sent, is checked with generation 0). `false` clears the marker and the
+  delivery record, so a fresh delivery is needed before the device can be
+  enrolled again. The device record exposes
+  `enrolledVersion`, `enrolledGeneration` and `enrolledFingerprint` in the
+  owner's `GET /api/notifications/native/devices` listing; a device whose
+  `enrolledGeneration` is not the keyring's current one holds retired material
+  and must re-enroll before it can send.
 - The server derives fingerprint and key ID from the uploaded public key
   rather than trusting the client's claim — otherwise a client could get its
   own key published under someone else's identity through WKD or Autocrypt.
@@ -576,6 +621,19 @@ signed-only message is encrypted to the sender's own key like every other
 client-custody Sent copy. The four combinations: neither goes through
 `/api/mail/send`; sign only is this path; encrypt only and both go through
 `buildEncryptedDeliveries`, where signing is inline inside the ciphertext.
+
+On a converted account every `/api/mail/send-pgp` request must carry
+`materialGeneration`, the keyring generation the message was encrypted and
+signed with, equal to the current one: a missing or stale value is `409
+{"pgpStateChanged": true, "materialGeneration": <current>}`, before any SMTP
+work. When the caller is a paired device, its recorded `enrolledGeneration`
+and `enrolledFingerprint` must also match, else `409 {"reenrollmentRequired":
+true, "materialGeneration": <current>}`: a device holding a retired ring
+cannot send until it enrolls again. `DELETE /api/pgp/identity/envelope/device:<id>`
+also clears that device's enrollment record, so removing a device's sealing
+stops its sends until it enrolls again; it cannot reach the copy the device
+already imported, and revoking that still means rotating the identity. Legacy
+accounts are not gated, so older clients keep working on them.
 
 Signing defaults on for a new compose, reply, forward, or reopened draft when
 the browser key is unlocked, and turns on if the key unlocks while composing.

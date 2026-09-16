@@ -66,6 +66,9 @@ type clientEncryptedSendRequest struct {
 	// sentCopyDraft.
 	SentCopyEncrypted bool   `json:"sentCopyEncrypted"`
 	Mode              string `json:"mode"`
+	// MaterialGeneration is the keyring generation the client encrypted and
+	// signed with. Required on a converted account; see requireCurrentGeneration.
+	MaterialGeneration *uint64 `json:"materialGeneration,omitempty"`
 }
 
 type clientEncryptedDelivery struct {
@@ -122,6 +125,10 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		prepared[i] = normalized
+	}
+
+	if !s.requireCurrentGeneration(w, ac, req.MaterialGeneration) {
+		return
 	}
 
 	payload, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(ac.UserID), s.imapConfigKeyPath)

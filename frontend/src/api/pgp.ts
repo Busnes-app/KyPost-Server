@@ -407,6 +407,8 @@ export function sendClientEncryptedMail(payload: {
   /** Asserts sentCopy is ciphertext. The server refuses to store it otherwise. */
   sentCopyEncrypted: boolean;
   mode: string;
+  /** The keyring generation the message was encrypted and signed with. The server refuses a stale one on a converted account. */
+  materialGeneration?: number;
 }): Promise<{ ok: boolean; sentSaved?: boolean; warning?: string }> {
   return postJSON("/api/mail/send-pgp", payload);
 }
@@ -444,11 +446,17 @@ export async function putDeviceEnvelope(
   deviceId: string,
   envelope: DeviceEnvelope,
   password: string,
-  expectedRevision: number
-): Promise<{ ok: boolean }> {
-  return putJSON<{ ok: boolean }>(`/api/pgp/identity/envelope/device:${encodeURIComponent(deviceId)}`, {
+  expectedRevision: number,
+  /** The device key the envelope was sealed to; the server refuses a delivery for a key the device has since replaced. */
+  enrollmentPublicKey: string,
+  /** The keyring generation the sealing was prepared from; required on a converted account. */
+  materialGeneration?: number
+): Promise<{ ok: boolean; version?: number }> {
+  return putJSON<{ ok: boolean; version?: number }>(`/api/pgp/identity/envelope/device:${encodeURIComponent(deviceId)}`, {
     envelope: JSON.stringify(envelope),
     expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }),
+    enrollmentPublicKey,
+    ...(materialGeneration !== undefined ? { materialGeneration } : {}),
     ...(await stepUp(password))
   });
 }
