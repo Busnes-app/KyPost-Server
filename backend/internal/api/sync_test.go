@@ -203,6 +203,31 @@ func TestDirectoryDisableRevokesSessionsAndFencesLogin(t *testing.T) {
 	ssoSignIn(t, srv, idp, "alice", "sid-a3")
 }
 
+// A subject the directory disabled cannot be linked to an account either;
+// the link path is fenced exactly like sign-in.
+func TestDirectoryDisabledSubjectCannotBeLinked(t *testing.T) {
+	srv, idp := setupSSOTestServer(t)
+	srv.pairingSecret = testSyncKey
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.updated", "ev-1", 1, scimUser("sso-sub-12345", "", false)))
+
+	u, err := srv.users.Create(context.Background(), "linker", linkTestPassword, users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clearMustChangePassword(t, srv, u.ID)
+	rec := httptest.NewRecorder()
+	if err := srv.startSession(rec, httptest.NewRequest(http.MethodPost, "/api/auth/login", nil), u.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec = runSSOFlow(t, srv, idp, sessionCookieFrom(rec), true)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("link for a disabled subject: status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if after, _ := srv.users.Get(u.ID); after.SSOSub != "" {
+		t.Fatal("a disabled subject was linked")
+	}
+}
+
 func TestDirectoryRoleChangeEndsSessionsAndStaleTokens(t *testing.T) {
 	srv, idp := setupSSOTestServer(t)
 	srv.pairingSecret = testSyncKey
