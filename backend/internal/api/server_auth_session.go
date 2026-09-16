@@ -48,6 +48,12 @@ type Session struct {
 	IssuedAt  time.Time
 	ExpiresAt time.Time
 	CSRFToken string
+	// SSOAppAdmin is the verified role ceiling of an SSO session: whether the
+	// ID token that minted it carried the admin app role (or, for a generic
+	// provider, an admin group). An SSO session never acts as admin without
+	// it, whatever users.json says, so the provider's word bounds the local
+	// role rather than replacing it. Password sessions have no ceiling.
+	SSOAppAdmin bool
 	// SSOLinkGrantedAt is when this session last proved its credential and
 	// second factor at handleSSOLinkStart. It authorizes exactly one SSO link
 	// and is cleared when that link is written, so it cannot be replayed.
@@ -780,7 +786,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"authenticated":      true,
 		"userId":             u.ID,
 		"username":           u.Username,
-		"role":               u.Role,
+		"role":               ac.Role,
 		"mustChangePassword": u.MustChangePassword,
 		"subscriberId":       subscriberID,
 		"ssoSub":             u.SSOSub,
@@ -1233,10 +1239,14 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
 		s.sessMu.Unlock()
 		return AuthContext{}, false
 	}
+	role := u.Role
+	if sess.SSO.Subject != "" && !sess.SSOAppAdmin && role == users.RoleAdmin {
+		role = users.RoleUser
+	}
 	return AuthContext{
 		UserID:             u.ID,
 		Username:           u.Username,
-		Role:               u.Role,
+		Role:               role,
 		MustChangePassword: u.MustChangePassword,
 		// This request authenticated by cookie, so it carries an ambient
 		// credential and csrfCheckOK must enforce the double submit.

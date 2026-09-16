@@ -253,18 +253,20 @@ func ValidateIssuerURL(raw string, allowInsecure bool) error {
 // Every field is populated only from an ID token whose signature, issuer,
 // audience, expiry and nonce have already been checked.
 type SSOTokenClaims struct {
-	Issuer            string   `json:"iss"`
-	Sub               string   `json:"sub"`
-	Email             string   `json:"email"`
-	EmailVerified     bool     `json:"email_verified"`
-	PreferredUsername string   `json:"preferred_username"`
-	Username          string   `json:"username"`
-	Name              string   `json:"name"`
-	Role              string   `json:"role"`
-	Admin             bool     `json:"admin"`
-	Groups            []string `json:"groups"`
-	AKGroups          []string `json:"ak_groups"`
-	RealmAccess       struct {
+	Issuer            string `json:"iss"`
+	Sub               string `json:"sub"`
+	Email             string `json:"email"`
+	EmailVerified     bool   `json:"email_verified"`
+	PreferredUsername string `json:"preferred_username"`
+	Username          string `json:"username"`
+	Name              string `json:"name"`
+	// Roles is KySignOn's app-role claim: always present for a KySignOn
+	// token, scoped to this client, and the only thing that makes the
+	// subject an administrator here. See AppAdmin.
+	Roles       json.RawMessage `json:"roles"`
+	Groups      []string        `json:"groups"`
+	AKGroups    []string        `json:"ak_groups"`
+	RealmAccess struct {
 		Roles []string `json:"roles"`
 	} `json:"realm_access"`
 
@@ -281,13 +283,20 @@ type SSOTokenClaims struct {
 	AMR      []string `json:"amr"`
 }
 
-// IsAdmin returns true if claims identify an administrator across KySignOn, Authentik, or Keycloak.
-func (c *SSOTokenClaims) IsAdmin() bool {
+// AppAdmin reports whether the token makes its subject a KyPost administrator.
+//
+// A token carrying `roles` is the KySignOn contract: admin iff the array
+// names AdminAppRole, and nothing else in the token counts. KySignOn's
+// legacy `role` claim is the central global admin, which is deliberately
+// never a product admin, so it has no field here at all. A token without
+// `roles` comes from a generic provider, and the admin group names Authentik
+// and Keycloak publish are mapped instead.
+func (c *SSOTokenClaims) AppAdmin() bool {
 	if c == nil {
 		return false
 	}
-	if strings.EqualFold(c.Role, "admin") || c.Admin {
-		return true
+	if c.Roles != nil {
+		return HasAdminRole(c.Roles)
 	}
 
 	adminNames := map[string]bool{
@@ -654,12 +663,6 @@ func fillEmptyClaims(dst, src *SSOTokenClaims) {
 	}
 	if dst.Name == "" {
 		dst.Name = src.Name
-	}
-	if dst.Role == "" {
-		dst.Role = src.Role
-	}
-	if !dst.Admin {
-		dst.Admin = src.Admin
 	}
 	if len(dst.Groups) == 0 {
 		dst.Groups = src.Groups

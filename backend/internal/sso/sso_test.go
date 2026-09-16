@@ -82,23 +82,46 @@ func TestSSOSettingsStore(t *testing.T) {
 	}
 }
 
-func TestClaimsIsAdmin(t *testing.T) {
-	c1 := &SSOTokenClaims{Role: "admin"}
-	if !c1.IsAdmin() {
-		t.Errorf("expected role=admin to be admin")
+func TestClaimsAppAdmin(t *testing.T) {
+	keycloak := func(roles ...string) *SSOTokenClaims {
+		c := &SSOTokenClaims{}
+		c.RealmAccess.Roles = roles
+		return c
 	}
-	c2 := &SSOTokenClaims{Groups: []string{"authentik default admins"}}
-	if !c2.IsAdmin() {
-		t.Errorf("expected authentik group to be admin")
+	cases := []struct {
+		name   string
+		claims *SSOTokenClaims
+		want   bool
+	}{
+		{"kysignon app role", &SSOTokenClaims{Roles: json.RawMessage(`["kypost.admin"]`)}, true},
+		{"kysignon object form", &SSOTokenClaims{Roles: json.RawMessage(`[{"value":"kypost.admin"}]`)}, true},
+		{"kysignon without the role", &SSOTokenClaims{Roles: json.RawMessage(`["notes.admin","admin"]`)}, false},
+		{"kysignon roles outrank generic groups", &SSOTokenClaims{Roles: json.RawMessage(`[]`), Groups: []string{"admins"}}, false},
+		{"kysignon roles null", &SSOTokenClaims{Roles: json.RawMessage(`null`), Groups: []string{"admins"}}, false},
+		{"authentik group", &SSOTokenClaims{Groups: []string{"authentik default admins"}}, true},
+		{"authentik ak_groups", &SSOTokenClaims{AKGroups: []string{"Admins"}}, true},
+		{"keycloak realm role", keycloak("admin"), true},
+		{"plain user", &SSOTokenClaims{Groups: []string{"users"}}, false},
+		{"nil", nil, false},
 	}
-	c3 := &SSOTokenClaims{}
-	c3.RealmAccess.Roles = []string{"admin"}
-	if !c3.IsAdmin() {
-		t.Errorf("expected keycloak realm role to be admin")
+	for _, tc := range cases {
+		if got := tc.claims.AppAdmin(); got != tc.want {
+			t.Errorf("%s: AppAdmin = %v, want %v", tc.name, got, tc.want)
+		}
 	}
-	c4 := &SSOTokenClaims{Role: "user", Groups: []string{"users"}}
-	if c4.IsAdmin() {
-		t.Errorf("expected regular user not to be admin")
+}
+
+// KySignOn's legacy `role` claim names the central global admin; it must
+// never become a KyPost admin, with or without an app role beside it.
+func TestClaimsLegacyRoleIsNotAdmin(t *testing.T) {
+	for _, raw := range []string{`{"role":"admin","admin":true}`, `{"role":"admin","roles":[]}`, `{"role":"admin","roles":["notes.admin"]}`} {
+		var c SSOTokenClaims
+		if err := json.Unmarshal([]byte(raw), &c); err != nil {
+			t.Fatal(err)
+		}
+		if c.AppAdmin() {
+			t.Errorf("%s: legacy global admin mapped to product admin", raw)
+		}
 	}
 }
 
@@ -113,8 +136,8 @@ func TestExchangeAcceptsSignedToken(t *testing.T) {
 	if claims.Sub != "sso-sub-12345" || claims.PreferredUsername != "admin_sso" || claims.Email != "admin_sso@urlxl.com" {
 		t.Errorf("unexpected claims: %+v", claims)
 	}
-	if !claims.IsAdmin() {
-		t.Errorf("expected role=admin to survive verification")
+	if !claims.AppAdmin() {
+		t.Errorf("expected the kypost.admin role to survive verification")
 	}
 	if claims.Issuer != idp.URL() {
 		t.Errorf("Issuer = %q, want %q", claims.Issuer, idp.URL())
