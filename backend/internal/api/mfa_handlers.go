@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/totp"
 	"github.com/Busnes-app/kypost-server/backend/internal/mfa"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
-	"github.com/Busness-app/ky-primitives/totp"
 )
 
 // mfaTOTPIssuer is the issuer label shown by authenticator apps.

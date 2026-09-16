@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	kylog "github.com/Busness-app/ky-primitives/logging"
+	kylog "github.com/Busnes-app/ky-primitives/logging"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/capsule"
-	"github.com/Busness-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/ky-primitives/capsule"
+	"github.com/Busnes-app/ky-primitives/recoveryclient"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"

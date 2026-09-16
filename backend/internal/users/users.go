@@ -30,8 +30,8 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 
-	"github.com/Busness-app/ky-primitives/password"
-	"github.com/Busness-app/ky-primitives/recoverycode"
+	"github.com/Busnes-app/ky-primitives/password"
+	"github.com/Busnes-app/ky-primitives/recoverycode"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/scrypt"
 )

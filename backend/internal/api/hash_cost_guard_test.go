@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/ky-primitives/password"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
-	"github.com/Busness-app/ky-primitives/password"
 )
 
 // TestNoTestInThisPackageCallsParallel enforces the invariant main_test.go's

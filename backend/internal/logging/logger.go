@@ -1,7 +1,7 @@
 package logging
 
 import (
-	kylog "github.com/Busness-app/ky-primitives/logging"
+	kylog "github.com/Busnes-app/ky-primitives/logging"
 	"io"
 	"log/slog"
 	"strings"

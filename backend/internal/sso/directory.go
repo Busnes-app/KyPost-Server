@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/Busness-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/ky-primitives/syncauth"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )

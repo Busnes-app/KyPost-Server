@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/ky-primitives/syncauth"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"

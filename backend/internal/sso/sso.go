@@ -31,7 +31,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/oidcverify"
+	"github.com/Busnes-app/ky-primitives/oidcverify"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
