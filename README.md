@@ -717,7 +717,7 @@ Only once that passes should you upgrade to a newer version, as a separate step.
 
 ## API Highlights
 
-- Admin backup routes: `GET /api/admin/backup/status`; `POST` to `run`, `export-capsule`, `drill`, `pair-remote`, `pin-key`; `DELETE pairing`; `PUT schedule` under `/api/admin/backup/`. Mutations require the current account credential and CSRF protection.
+- Admin backup routes: `GET /api/admin/backup/status`; `POST` to `run`, `export-capsule`, `drill`, `pair-remote`, `pin-key`; `DELETE pairing`; `PUT schedule` under `/api/admin/backup/`. Mutations require the current account credential and CSRF protection, or, for a session signed in through KySignOn, a fresh KySignOn confirmation of that exact action.
 
 Auth:
 
@@ -731,7 +731,7 @@ Auth:
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
 - `GET|POST /api/auth/password` (read a private password-change snapshot, then atomically commit credential and optional PGP rewrap; forced resets preserve the previous sealed key for recovery)
-- `POST /api/auth/step-up` (re-confirms the password, and a second factor when one is enrolled, before the Security page renders)
+- `POST /api/auth/step-up` (re-confirms the password, and a second factor when one is enrolled, before the Security page renders; a session signed in through KySignOn confirms with KySignOn instead, see below)
 
 Single Sign-On (OpenID Connect):
 
@@ -739,6 +739,7 @@ Single Sign-On (OpenID Connect):
 - `GET /api/auth/oidc/login` (alias `/auth/sso/login`) — starts the authorization-code flow for signing in.
 - `POST /api/settings/sso/link` — links the provider identity to the *caller's own* account. Requires the account password (and the two-factor code, when one is enrolled) re-entered now, because a linked identity is a way to sign in.
 - `GET /api/auth/oidc/callback` (alias `/auth/sso/callback`) — verifies the ID token, then signs in, auto-provisions, or links by `sub`. The session remembers the provider's `sid`, so the provider can end it.
+- `POST /api/auth/oidc/step-up`, `GET|DELETE /api/auth/oidc/step-up/{id}` — action-bound re-authentication for a session signed in through KySignOn. A sensitive request (the Security page gate, backup actions) answers `403 {"error":"sso_step_up_required","challenge":…}`; the browser opens a KySignOn sign-in popup for that one action (`prompt=login`), and repeats the request with `X-Kypost-Step-Up: <challenge>` once it is verified. The grant is spent once, for that request only.
 - `POST /api/auth/oidc/backchannel-logout` — OpenID Connect back-channel logout receiver. Register it at the provider (KySignOn: the client's *back-channel logout URI*). The `logout_token` is verified against the issuer's JWKS, admitted once durably, and ends the session it names, or every session of the subject when it names none. Needs an `https` issuer.
 - `POST /api/settings/sso/unlink`
 - `GET|PUT /api/admin/sso` (admin only. The provider configuration.)

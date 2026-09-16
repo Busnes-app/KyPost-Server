@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { getJSON, toErrorMessage } from "../api/client";
-import { reauthenticate } from "../api/auth";
+import { reauthenticate, reauthenticateWithSSO } from "../api/auth";
 import { useAuth } from "../auth";
 
 /**
@@ -50,7 +50,9 @@ type Props = {
 };
 
 export function ReauthGate({ what, children }: Props) {
-  const username = useAuth().username ?? "";
+  const auth = useAuth();
+  const username = auth.username ?? "";
+  const ssoSession = auth.ssoSession === true;
   const [confirmed, setConfirmed] = useState(() => isConfirmed(username));
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -63,7 +65,7 @@ export function ReauthGate({ what, children }: Props) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (confirmed) return;
+    if (confirmed || ssoSession) return;
     let cancelled = false;
     getJSON<{ totpEnabled: boolean }>("/api/mfa/status")
       .then((s) => {
@@ -75,7 +77,7 @@ export function ReauthGate({ what, children }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [confirmed]);
+  }, [confirmed, ssoSession]);
 
   useEffect(() => {
     if (!confirmed) return;
@@ -106,7 +108,50 @@ export function ReauthGate({ what, children }: Props) {
     }
   }
 
+  async function confirmWithSSO() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await reauthenticateWithSSO();
+      confirmedFor = username;
+      confirmedAt = Date.now();
+      setConfirmed(true);
+    } catch (e) {
+      setError(toErrorMessage(e, "could not confirm it is you"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (confirmed) return <>{children}</>;
+
+  if (ssoSession) {
+    return (
+      <section className="panel sec-page">
+        <header className="sec-header">
+          <h2>Confirm it is you</h2>
+          <p>Unlock {what}.</p>
+        </header>
+        <div className="sec-card">
+          <p className="sec-muted">
+            This page shows your key fingerprints and paired devices, and can hand out a backup of your private key.
+            Being signed in is not enough to see it — sign in again with KySignOn to continue.
+          </p>
+          {error ? (
+            <p className="sec-verdict sec-verdict-risk" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="sec-actions">
+            <button type="button" disabled={busy} onClick={() => void confirmWithSSO()}>
+              {busy ? "Confirming…" : "Confirm with KySignOn"}
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     // The page's own shell, so the gate reads as that page asking a question

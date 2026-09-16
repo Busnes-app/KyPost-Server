@@ -167,7 +167,7 @@ func (s *Server) handleSSOLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authorizeURL, _, ok := s.startSSOFlow(w, r, settings, "")
+	authorizeURL, _, ok := s.startSSOFlow(w, r, settings, "", false)
 	if !ok {
 		return // startSSOFlow wrote the response
 	}
@@ -241,7 +241,7 @@ func (s *Server) handleSSOLinkStart(w http.ResponseWriter, r *http.Request) {
 	// The flow is built BEFORE the grant, so a failure here — discovery, PKCE,
 	// the token generator — leaves no live grant behind for the next link-mode
 	// callback to spend.
-	authorizeURL, state, ok := s.startSSOFlow(w, r, settings, ssoModeLink+":"+ssoSessionTag(r))
+	authorizeURL, state, ok := s.startSSOFlow(w, r, settings, ssoModeLink+":"+ssoSessionTag(r), false)
 	if !ok {
 		return // startSSOFlow wrote the response
 	}
@@ -258,7 +258,7 @@ func (s *Server) handleSSOLinkStart(w http.ResponseWriter, r *http.Request) {
 // error response; the caller decides between a redirect and a JSON body, and
 // handleSSOLinkStart needs the state to bind its grant to this flow and nothing
 // else.
-func (s *Server) startSSOFlow(w http.ResponseWriter, r *http.Request, settings sso.SSOSettings, mode string) (authorizeURL, flowState string, ok bool) {
+func (s *Server) startSSOFlow(w http.ResponseWriter, r *http.Request, settings sso.SSOSettings, mode string, freshLogin bool) (authorizeURL, flowState string, ok bool) {
 	verifier, challenge, err := sso.GeneratePKCE()
 	if err != nil {
 		http.Error(w, "failed to generate PKCE challenge", http.StatusInternalServerError)
@@ -300,7 +300,7 @@ func (s *Server) startSSOFlow(w http.ResponseWriter, r *http.Request, settings s
 		MaxAge:   300, // 5 minutes
 	})
 
-	return provider.AuthCodeURL(state, nonce, challenge), state, true
+	return provider.AuthCodeURL(state, nonce, challenge, freshLogin), state, true
 }
 
 // handleSSOCallback processes the authorization code callback from the OIDC IdP.
@@ -411,6 +411,13 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if known && claims.IssuedAt < directory.RevokedBefore {
 		http.Error(w, "Access denied: your directory access changed. Sign in again.", http.StatusForbidden)
+		return
+	}
+
+	// A step-up round trip proves one action for the session that started
+	// it, and signs nobody in.
+	if id, isStepUp := strings.CutPrefix(mode, ssoModeStepUp+":"); isStepUp {
+		s.completeSSOStepUp(w, r, id, claims)
 		return
 	}
 
