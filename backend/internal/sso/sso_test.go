@@ -61,7 +61,7 @@ func TestSSOSettingsStore(t *testing.T) {
 	if !def.AutoProvision || def.Enabled {
 		t.Errorf("unexpected default settings: %+v", def)
 	}
-	if def.AllowInsecureIssuer || def.RequireFreshEvents {
+	if def.AllowInsecureIssuer {
 		t.Errorf("insecure options must default off, got: %+v", def)
 	}
 

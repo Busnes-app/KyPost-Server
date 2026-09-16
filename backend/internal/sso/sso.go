@@ -50,12 +50,6 @@ type SSOSettings struct {
 	// travel over that link, so this is off unless an operator turns it on
 	// deliberately for a LAN identity provider that has no TLS.
 	AllowInsecureIssuer bool `json:"allowInsecureIssuer"`
-
-	// RequireFreshEvents rejects directory replication events that carry no
-	// event id and timestamp. It defaults off so an existing KySignOn that
-	// does not send them yet keeps working; once it does, an operator turns
-	// this on and replayed events stop being accepted at all.
-	RequireFreshEvents bool `json:"requireFreshEvents"`
 }
 
 // Store handles persisting SSOSettings to disk.

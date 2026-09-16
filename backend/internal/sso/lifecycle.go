@@ -50,8 +50,8 @@ func (e LogoutEvent) Covers(id SessionIdentity) bool {
 
 // LifecycleStore persists the KySignOn access-lifecycle facts that must
 // outlive a restart: sessions themselves are in memory and die with the
-// process, but a replayed logout token or a login racing a logout must still
-// be refused afterwards.
+// process, but a replayed logout token, a login racing a logout, and a
+// stale directory event must still be refused afterwards.
 //
 // ponytail: one JSON file under a file lock, like sso.json. It holds a few
 // dozen entries pruned on every write; a database is not warranted.
@@ -60,7 +60,9 @@ type LifecycleStore struct {
 }
 
 type lifecycleFile struct {
-	Logouts map[string]LogoutEvent `json:"logouts"`
+	Logouts   map[string]LogoutEvent    `json:"logouts"`
+	Directory map[string]DirectoryState `json:"directory"`
+	Events    map[string]directoryEvent `json:"events"`
 }
 
 // NewLifecycleStore returns the store backed by <configDir>/sso-lifecycle.json.
@@ -73,6 +75,12 @@ func (s *LifecycleStore) load() (lifecycleFile, error) {
 	err := fsutil.LoadJSONFile(s.path, func(v lifecycleFile) { f = v }, nil)
 	if f.Logouts == nil {
 		f.Logouts = map[string]LogoutEvent{}
+	}
+	if f.Directory == nil {
+		f.Directory = map[string]DirectoryState{}
+	}
+	if f.Events == nil {
+		f.Events = map[string]directoryEvent{}
 	}
 	return f, err
 }

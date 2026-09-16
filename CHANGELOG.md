@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- **Directory sync is now KySignOn's versioned desired state.** `POST /api/sync/webhook` accepts a SCIM User signed with `syncauth` and carrying a `W/"n"` revision; stale, reordered and replayed deliveries are refused (422) by a fence kept in `sso-lifecycle.json`, so it survives restarts. Disabling or deleting a user revokes access and keeps their data; a rehire restores the same account. Admin comes only from the `kypost.admin` app role. A sign-in is refused for a subject the directory disabled, or with a token issued before its access last changed. The old `{jti,iat,event,user}` envelope, `X-Sync-Signature`, the bearer-secret form and the `requireFreshEvents` setting are removed.
+
 - OpenID Connect back-channel logout: `POST /api/auth/oidc/backchannel-logout` ends the SSO session the provider names, with durable replay refusal and a fence against a login still in flight. SSO sessions now remember the provider's `sid`. Requires an `https` issuer; verification is `ky-primitives/oidcverify` v0.7.0.
 
 - Devices can publish supported enrollment envelope versions with their sealing key. Preserve claims across token refreshes, default legacy publications to v2, and expose them in device listings. Browser setup refuses incompatible versions; v3 delivery and conversion remain gated.

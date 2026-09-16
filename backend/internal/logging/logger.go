@@ -34,6 +34,8 @@ func (l *Logger) Close() error          { return nil }
 var (
 	_ = kylog.DeclareString("error")
 	_ = kylog.DeclareString("reason")
+	_ = kylog.DeclareString("revision")
+	_ = kylog.DeclareString("event_id")
 	_ = kylog.DeclareString("file")
 	_ = kylog.DeclareString("path")
 	_ = kylog.DeclareString("model")

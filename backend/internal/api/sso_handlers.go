@@ -401,6 +401,23 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The directory's last word on this subject outranks the token: a
+	// subject it disabled cannot sign in, nor be provisioned again, until it
+	// says otherwise, and a token issued before its access changed is stale.
+	directory, known, err := s.ssoLifecycle.Directory(settings.IssuerURL, claims.Sub)
+	if err != nil {
+		s.ssoFailure(w, "lifecycle", err)
+		return
+	}
+	if known && !directory.Active {
+		http.Error(w, "Access denied: your account was disabled by the directory.", http.StatusForbidden)
+		return
+	}
+	if known && claims.IssuedAt < directory.RevokedBefore {
+		http.Error(w, "Access denied: your directory access changed. Sign in again.", http.StatusForbidden)
+		return
+	}
+
 	user, err := s.resolveSSOUser(w, settings, claims)
 	if err != nil {
 		return // resolveSSOUser wrote the response

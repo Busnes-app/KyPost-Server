@@ -8,7 +8,6 @@ type SSOSettings = {
   clientSecret?: string;
   autoProvision: boolean;
   allowInsecureIssuer: boolean;
-  requireFreshEvents: boolean;
 };
 
 // The server refuses a cleartext issuer unless allowInsecureIssuer is set,
@@ -33,7 +32,6 @@ export function SSOConfig() {
     clientSecret: "",
     autoProvision: true,
     allowInsecureIssuer: false,
-    requireFreshEvents: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -183,23 +181,6 @@ export function SSOConfig() {
           </label>
         </div>
       ) : null}
-
-      <div className="field-group">
-        <label className="checkbox-label" style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={settings.requireFreshEvents}
-            onChange={(e) => setSettings({ ...settings, requireFreshEvents: e.target.checked })}
-          />
-          <span>
-            Require directory sync events to carry <code>jti</code> and <code>iat</code>
-            <span className="muted" style={{ fontSize: "0.75rem", display: "block" }}>
-              A signature proves who sent an event, not when. Without these fields a captured “promote to admin” event
-              stays valid forever and can be replayed. Turn this on once your provider sends them.
-            </span>
-          </span>
-        </label>
-      </div>
 
       {message ? <p className="status-success" style={{ color: "#4deeea" }}>{message}</p> : null}
       {error ? <p className="status-error" style={{ color: "#ef4444" }}>{error}</p> : null}
