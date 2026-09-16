@@ -182,6 +182,13 @@ type WrappedEnvelope struct {
 	// journey is over. Empty means "never", which is right for password and
 	// recovery slots.
 	ExpiresAt string `json:"expiresAt,omitempty"`
+	// Device slots also record what was delivered: the envelope version, the
+	// material generation and active fingerprint the sealing was prepared
+	// from, and the device key it was sealed to. See SetPGPDeviceEnvelope.
+	Version            int    `json:"version,omitempty"`
+	MaterialGeneration uint64 `json:"materialGeneration,omitempty"`
+	Fingerprint        string `json:"fingerprint,omitempty"`
+	EnrollmentKey      string `json:"enrollmentKey,omitempty"`
 }
 
 // Envelope slot names. "password" is not writable through the slot API: it
@@ -1740,6 +1747,11 @@ func (s *Store) rewrapPGPPrivateKey(id, wrapped, expectedFingerprint string, exp
 // a given secret opens. expectedFingerprint is optional for older clients;
 // a supplied value must match under the mutation lock.
 func (s *Store) SetPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFingerprint string, expectedRevision *uint64) (User, error) {
+	// Device slots have one writer, SetPGPDeviceEnvelope, which binds the
+	// delivery to the device key, version and material generation.
+	if strings.HasPrefix(slot, EnvelopeSlotDevicePrefix) {
+		return User{}, ErrInvalidEnvelopeSlot
+	}
 	return s.setPGPWrappedEnvelope(id, slot, envelope, addedAt, expectedFingerprint, expectedRevision, false)
 }
 

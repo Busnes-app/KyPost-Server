@@ -317,6 +317,10 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 		ExpectedFingerprint string  `json:"expectedFingerprint,omitempty"`
 		ExpectedRevision    *uint64 `json:"expectedRevision,omitempty"`
 		KeyringVersion      *int    `json:"keyringVersion,omitempty"`
+		// Device slots only: the device key the envelope was sealed to, and
+		// the material generation it was prepared from. See putDeviceEnvelope.
+		EnrollmentPublicKey string  `json:"enrollmentPublicKey,omitempty"`
+		MaterialGeneration  *uint64 `json:"materialGeneration,omitempty"`
 		// Step-up credential (pgp_stepup.go). Installing a slot mints or
 		// replaces a sealing of the private key: a stolen session must not be
 		// able to plant an envelope the server cannot validate, and the user
@@ -339,6 +343,21 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
+		return
+	}
+	if deviceID, isDevice := strings.CutPrefix(r.PathValue("slot"), users.EnvelopeSlotDevicePrefix); isDevice {
+		if req.KeyringVersion != nil {
+			http.Error(w, "keyringVersion 1 requires the recovery slot, revision and fingerprint", http.StatusBadRequest)
+			return
+		}
+		// A stale snapshot is refused before the device is even looked up;
+		// the store checks again under its lock.
+		if req.ExpectedRevision != nil && *req.ExpectedRevision != snapshot.PGPRevision {
+			writeUserStoreError(w, users.ErrPGPRevisionChanged)
+			return
+		}
+		s.putDeviceEnvelope(w, r, ac.UserID, deviceID, envelope, req.EnrollmentPublicKey,
+			strings.TrimSpace(req.ExpectedFingerprint), req.MaterialGeneration, req.ExpectedRevision)
 		return
 	}
 	var u users.User

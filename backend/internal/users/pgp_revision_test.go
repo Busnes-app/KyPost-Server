@@ -41,7 +41,8 @@ func TestPGPRevisionRejectsStaleWritersAfterSameKeyChange(t *testing.T) {
 			return s.SetPGPWrappedEnvelope(id, EnvelopeSlotRecovery, `{"v":2}`, "now", "FPR", &before.PGPRevision)
 		}},
 		{"device", func() (User, error) {
-			return s.SetPGPWrappedEnvelope(id, "device:test", `{"v":2}`, "now", "FPR", &before.PGPRevision)
+			out, _, err := s.SetPGPDeviceEnvelope(id, DeviceDelivery{DeviceID: "test", Envelope: deviceEnvelope(2), AddedAt: "now", EnrollmentKey: "K", ExpectedFingerprint: "FPR", ExpectedRevision: &before.PGPRevision})
+			return out, err
 		}},
 		{"slot-delete", func() (User, error) { return s.DeletePGPWrappedEnvelope(id, EnvelopeSlotRecovery, &before.PGPRevision) }},
 		{"identity-delete", func() (User, error) { return s.ClearPGPIdentity(id, &before.PGPRevision) }},
@@ -78,8 +79,8 @@ func TestPGPRevisionTracksRecoveryAndCredentialButNotDevices(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial := u.PGPRevision
-	for _, slot := range []string{"device:one", "device:two"} {
-		u, err = s.SetPGPWrappedEnvelope(id, slot, `{"v":2}`, "now", "FPR", &initial)
+	for _, device := range []string{"one", "two"} {
+		u, _, err = s.SetPGPDeviceEnvelope(id, DeviceDelivery{DeviceID: device, Envelope: deviceEnvelope(2), AddedAt: "now", EnrollmentKey: "K", ExpectedFingerprint: "FPR", ExpectedRevision: &initial})
 		if err != nil || u.PGPRevision != initial {
 			t.Fatalf("independent device write: %v, revision %d", err, u.PGPRevision)
 		}

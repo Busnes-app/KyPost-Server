@@ -178,8 +178,12 @@ explicitly account for newer keys before any destructive replacement.
 
 Device-authenticated enrollment-key publication now accepts `envelopeVersions`
 and exposes `enrollmentEnvelopeVersions` to the browser; see the exact request,
-legacy defaults and bounds in `E2E_PGP.md`. Current delivery remains v2 and the
-browser refuses devices that exclude v2. Converted accounts require v3 support and
+legacy defaults and bounds in `E2E_PGP.md`. The server now delivers v3 to a
+converted account and v2 to a legacy one, bound to the device's published key,
+the snapshot revision and the material generation, and takes a generation-aware
+acknowledgement from the device; the exact contract is in `E2E_PGP.md`. The
+browser still seals v2 only, so a converted account's device enrollment waits
+for the browser's v3 ceremony. Converted accounts require v3 support and
 otherwise show update-required. Legacy accounts may continue v2. Never downgrade a
 converted account to active-key-only delivery.
 
@@ -187,8 +191,9 @@ V3 uses the existing installed ECDH/HKDF/AEAD primitives, with a distinct
 `kypost-device-envelope/v3` HKDF/AAD domain and authenticated device ID and active
 fingerprint, carrying the complete versioned ring. Retain the existing SAS check
 before sealing; a capability advertisement is not proof of key ownership.
-The preparation helper and shared vectors below pin the framing; native consumers,
-v3 upload/acknowledgement and conversion remain gated.
+The preparation helper and shared vectors below pin the framing. The server-side
+upload, delivery and acknowledgement contract exists; the browser's v3 ceremony,
+native consumers and conversion remain gated.
 
 ### V3 framing and interoperability vectors
 
@@ -253,9 +258,10 @@ key material according to that client's existing teardown contract.
 Clearing a device slot cannot erase a previously delivered key. Before new signing
 or self-encryption, clients compare their active fingerprint/material generation
 and revocation state with current bootstrap. Send requests from converted accounts
-assert that generation; the server refuses stale or missing assertions. Record the
-confirmed enrollment generation and require it for device sends after retirement,
-so clearing a slot also leaves the device unable to send until re-enrolled. Browser
+assert that generation; the server refuses stale or missing assertions
+(`materialGeneration` on `/api/mail/send-pgp`). The server records the generation
+a device acknowledged and requires it for device sends, so clearing a slot also
+leaves the device unable to send until re-enrolled. Browser
 sends use the current unlocked ring. This prevents cooperative stale clients from
 silently using an old key; it cannot revoke an exported key or prove what a
 malicious client encrypted inside opaque mail.

@@ -298,6 +298,18 @@ func writeUserStoreError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "keyringUpgradeRequired": true})
 		return
 	}
+	if errors.Is(err, users.ErrPGPGenerationChanged) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "pgpStateChanged": true})
+		return
+	}
+	if errors.Is(err, users.ErrDeviceEnvelopeVersion) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "deviceEnvelopeVersion": true})
+		return
+	}
+	if errors.Is(err, users.ErrInvalidDeviceEnvelope) || errors.Is(err, users.ErrDeviceDeliveryIncomplete) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if errors.Is(err, users.ErrInvalidPGPKeyring) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
