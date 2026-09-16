@@ -18,8 +18,11 @@ vi.mock("../api/client", () => ({
   toErrorMessage: (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback)
 }));
 
+const reauthenticateWithSSO = vi.fn();
+
 vi.mock("../api/auth", () => ({
-  reauthenticate: (password: string, code: string) => reauthenticate(password, code)
+  reauthenticate: (password: string, code: string) => reauthenticate(password, code),
+  reauthenticateWithSSO: () => reauthenticateWithSSO()
 }));
 
 afterEach(cleanup);
@@ -29,6 +32,8 @@ beforeEach(() => {
   reauthenticate.mockReset();
   getJSON.mockResolvedValue({ totpEnabled: true });
   reauthenticate.mockResolvedValue(undefined);
+  reauthenticateWithSSO.mockReset();
+  reauthenticateWithSSO.mockResolvedValue(undefined);
   clearReauth();
 });
 
@@ -96,6 +101,38 @@ describe("ReauthGate", () => {
     renderGate();
 
     expect(await screen.findByLabelText("Two-factor code")).toBeTruthy();
+  });
+
+  it("sends a KySignOn session back to KySignOn instead of asking for a password", async () => {
+    render(
+      <AuthContext.Provider value={{ authenticated: true, userId: "u1", username: "sam", ssoSession: true }}>
+        <ReauthGate what="your security settings">
+          <p>secret settings</p>
+        </ReauthGate>
+      </AuthContext.Provider>
+    );
+    expect(screen.queryByLabelText("Account password")).toBeNull();
+    expect(screen.queryByText("secret settings")).toBeNull();
+    expect(getJSON).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Confirm with KySignOn" }));
+    await waitFor(() => expect(screen.getByText("secret settings")).toBeTruthy());
+    expect(reauthenticateWithSSO).toHaveBeenCalledOnce();
+    expect(reauthenticate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the page hidden when the KySignOn confirmation fails", async () => {
+    reauthenticateWithSSO.mockRejectedValue(new Error("confirmation cancelled"));
+    render(
+      <AuthContext.Provider value={{ authenticated: true, userId: "u1", username: "sam", ssoSession: true }}>
+        <ReauthGate what="your security settings">
+          <p>secret settings</p>
+        </ReauthGate>
+      </AuthContext.Provider>
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Confirm with KySignOn" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("confirmation cancelled"));
+    expect(screen.queryByText("secret settings")).toBeNull();
   });
 
   it("does not let one user's confirmation answer for another", async () => {

@@ -7,8 +7,10 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { Backup } from "./Backup";
+import { AuthContext } from "../../auth";
 import { getJSON, postJSON } from "../../api/client";
 vi.mock("../../api/client", () => ({
+  HttpError: class HttpError extends Error {},
   getJSON: vi.fn(),
   postJSON: vi.fn(),
   putJSON: vi.fn(),
@@ -188,4 +190,30 @@ it("does not claim exclusions when status is unavailable", async () => {
   render(<Backup />);
   await screen.findByRole("alert");
   expect(screen.queryByText(/IMAP mail is excluded/)).toBeNull();
+});
+
+it("asks a KySignOn session for no password and sends no credential", async () => {
+  vi.mocked(getJSON).mockResolvedValue({
+    keyId: "test-key",
+    paired: false,
+    localDir: "/backups",
+    localCopies: [],
+    intervalSec: 0,
+    recent: [],
+    excluded: "IMAP mail excluded",
+  });
+  vi.mocked(postJSON).mockResolvedValue({});
+  render(
+    <AuthContext.Provider value={{ authenticated: true, userId: "u1", username: "root", role: "admin", ssoSession: true }}>
+      <Backup />
+    </AuthContext.Provider>,
+  );
+  await screen.findByText("Recovery key: test-key");
+  expect(screen.queryByLabelText("Account password")).toBeNull();
+  const run = screen.getByRole("button", { name: "Back up now" });
+  expect(run.hasAttribute("disabled")).toBe(false);
+  fireEvent.click(run);
+  await waitFor(() => expect(postJSON).toHaveBeenCalled());
+  expect(vi.mocked(postJSON).mock.calls[0]?.[0]).toBe("/api/admin/backup/run");
+  expect(JSON.stringify(vi.mocked(postJSON).mock.calls[0]?.[1])).not.toContain("derived-test-only");
 });

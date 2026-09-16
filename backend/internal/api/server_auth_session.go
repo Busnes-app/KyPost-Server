@@ -100,6 +100,9 @@ type AuthContext struct {
 	Username           string
 	Role               users.Role
 	MustChangePassword bool
+	// SSOSession is true for a session minted by a KySignOn login. Such a
+	// session re-authenticates to KySignOn rather than with a password.
+	SSOSession bool
 
 	// SessionCSRFToken is the CSRF token of the session this request authenticated
 	// with, and is EMPTY for every other authentication path (paired-device
@@ -788,6 +791,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"username":           u.Username,
 		"role":               ac.Role,
 		"mustChangePassword": u.MustChangePassword,
+		"ssoSession":         ac.SSOSession,
 		"subscriberId":       subscriberID,
 		"ssoSub":             u.SSOSub,
 		"ssoUsername":        u.SSOUsername,
@@ -1248,6 +1252,7 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
 		Username:           u.Username,
 		Role:               role,
 		MustChangePassword: u.MustChangePassword,
+		SSOSession:         sess.SSO.Subject != "",
 		// This request authenticated by cookie, so it carries an ambient
 		// credential and csrfCheckOK must enforce the double submit.
 		SessionCSRFToken: sess.CSRFToken,

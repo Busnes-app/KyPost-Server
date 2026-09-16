@@ -7,6 +7,7 @@
 // be transmitted.
 
 import { getJSON, postJSON } from "./client";
+import { withSSOStepUp } from "./stepup";
 import { deriveAuthSecret, type LoginParams } from "../lib/authSecret";
 
 /**
@@ -132,4 +133,9 @@ export async function deriveNewCredential(
 export async function reauthenticate(password: string, code: string): Promise<void> {
   const credential = await deriveCredential("", password);
   await postJSON("/api/auth/step-up", { ...credentialFields(credential), code });
+}
+
+/** The same gate for a KySignOn session: a fresh sign-in there, bound to this request. */
+export async function reauthenticateWithSSO(): Promise<void> {
+  await withSSOStepUp((headers) => postJSON("/api/auth/step-up", {}, headers));
 }
