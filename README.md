@@ -994,11 +994,11 @@ docker compose up -d   # recreate the container against it
 Confirm it took — this is the exact property `update-host.sh` tests:
 
 ```bash
-docker image inspect ghcr.io/busness-app/kypost-server:stable \
+docker image inspect ghcr.io/busnes-app/kypost-server:stable \
   --format '{{range .RepoDigests}}{{println .}}{{end}}'
 ```
 
-One `ghcr.io/busness-app/kypost-server@sha256:...` line means the migration
+One `ghcr.io/busnes-app/kypost-server@sha256:...` line means the migration
 worked and `./scripts/update-host.sh` will run from now on. No output means the
 image is still locally built.
 
@@ -1088,4 +1088,4 @@ inside the container. On systems without systemd, schedule
 
 KyPost is released under the [MIT License](LICENSE.txt).
 
-[![OctoCounts](https://api.octocounts.com/badge/Busness-app/KyPost-Server/branch/main)](https://octocounts.com/github/Busness-app/KyPost-Server/tree/main)
+[![OctoCounts](https://api.octocounts.com/badge/Busnes-app/KyPost-Server/branch/main)](https://octocounts.com/github/Busnes-app/KyPost-Server/tree/main)

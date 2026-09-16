@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/pgpautocrypt"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpautocrypt"
 )
 
 func TestBuildSinglePart(t *testing.T) {

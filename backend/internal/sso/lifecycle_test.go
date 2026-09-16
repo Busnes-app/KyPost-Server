@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/oidcverify"
+	"github.com/Busnes-app/ky-primitives/oidcverify"
 )
 
 func TestLifecycleStoreRefusesReplayAcrossRestart(t *testing.T) {

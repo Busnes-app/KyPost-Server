@@ -14,13 +14,13 @@ import (
 	"strconv"
 	"strings"
 
-	imapadapter "github.com/Busness-app/kypost-server/backend/internal/adapters/imap"
-	"github.com/Busness-app/kypost-server/backend/internal/contacts"
-	"github.com/Busness-app/kypost-server/backend/internal/mailmsg"
-	"github.com/Busness-app/kypost-server/backend/internal/pgpdiscovery"
-	"github.com/Busness-app/kypost-server/backend/internal/pgpmail"
-	"github.com/Busness-app/kypost-server/backend/internal/sendas"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // maxRecipientsPerSend bounds one outbound message's recipient count, well

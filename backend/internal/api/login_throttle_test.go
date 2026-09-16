@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/captcha"
-	"github.com/Busness-app/kypost-server/backend/internal/config"
-	"github.com/Busness-app/kypost-server/backend/internal/health"
-	"github.com/Busness-app/kypost-server/backend/internal/logging"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
-	"github.com/Busness-app/kypost-server/backend/internal/wkdpublish"
+	"github.com/Busnes-app/kypost-server/backend/internal/captcha"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/health"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
 )
 
 // TestCaptchaDefaultsToSelfHostedProofOfWork pins the new default.

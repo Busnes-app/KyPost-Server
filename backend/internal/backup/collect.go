@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Busness-app/ky-primitives/recoveryclient"
-	"github.com/Busness-app/kypost-server/backend/internal/config"
-	"github.com/Busness-app/kypost-server/backend/internal/cryptutil"
-	"github.com/Busness-app/kypost-server/backend/internal/pgpmail"
-	"github.com/Busness-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"gopkg.in/yaml.v3"
 )
 

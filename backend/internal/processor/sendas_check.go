@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	imapadapter "github.com/Busness-app/kypost-server/backend/internal/adapters/imap"
-	"github.com/Busness-app/kypost-server/backend/internal/sendas"
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
 )
 
 // verifyDKIMForDomain indirects imapadapter.VerifyDKIMForDomain so tests in

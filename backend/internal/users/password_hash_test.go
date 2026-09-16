@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busness-app/ky-primitives/password"
+	"github.com/Busnes-app/ky-primitives/password"
 )
 
 func fastParams() password.Params { return password.Params{Memory: 8 * 1024, Time: 1, Threads: 1} }

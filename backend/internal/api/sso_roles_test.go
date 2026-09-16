@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/sso/ssotest"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // signInWith completes a provider login carrying exactly these claims.

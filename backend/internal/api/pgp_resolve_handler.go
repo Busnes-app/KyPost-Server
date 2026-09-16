@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Busness-app/kypost-server/backend/internal/pgpdiscovery"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // handlePGPRecipientsResolve returns the armored public key for each

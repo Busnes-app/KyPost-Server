@@ -10,13 +10,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/ky-primitives/recoveryclient"
 
-	"github.com/Busness-app/kypost-server/backend/internal/api"
-	"github.com/Busness-app/kypost-server/backend/internal/backup"
-	"github.com/Busness-app/kypost-server/backend/internal/config"
-	"github.com/Busness-app/kypost-server/backend/internal/logging"
-	"github.com/Busness-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/api"
+	"github.com/Busnes-app/kypost-server/backend/internal/backup"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 var backupSubcommands = map[string]bool{"backup-drill": true, "export-capsule": true, "deposit": true, "restore": true}

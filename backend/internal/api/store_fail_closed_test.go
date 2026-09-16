@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/config"
-	"github.com/Busness-app/kypost-server/backend/internal/contacts"
-	"github.com/Busness-app/kypost-server/backend/internal/mailcache"
-	"github.com/Busness-app/kypost-server/backend/internal/pgpdiscovery"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
 
 	"github.com/emersion/go-webdav/carddav"
 )

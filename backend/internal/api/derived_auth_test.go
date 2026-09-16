@@ -14,7 +14,7 @@ import (
 
 	"golang.org/x/crypto/pbkdf2"
 
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 func loginParams(t *testing.T, srv *Server, username string) (string, int) {

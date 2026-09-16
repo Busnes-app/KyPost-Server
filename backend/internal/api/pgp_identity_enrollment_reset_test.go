@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 )
 
 // configureMailFor satisfies the generate handler's precondition that the

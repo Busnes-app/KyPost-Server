@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busness-app/ky-primitives/password"
+	"github.com/Busnes-app/ky-primitives/password"
 	"golang.org/x/crypto/scrypt"
 )
 

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // plantLegacyPasswordHash writes a scrypt hash straight into users.json, the

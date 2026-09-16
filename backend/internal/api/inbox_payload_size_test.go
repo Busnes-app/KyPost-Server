@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	imapadapter "github.com/Busness-app/kypost-server/backend/internal/adapters/imap"
-	"github.com/Busness-app/kypost-server/backend/internal/config"
-	"github.com/Busness-app/kypost-server/backend/internal/mailcache"
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 )
 
 // TestInboxPayloadSize measures the wire bytes one inbox-screen load costs on

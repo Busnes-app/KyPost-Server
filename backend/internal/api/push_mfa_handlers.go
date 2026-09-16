@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 
-	"github.com/Busness-app/kypost-server/backend/internal/mfa"
-	"github.com/Busness-app/kypost-server/backend/internal/processor"
-	"github.com/Busness-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/mfa"
+	"github.com/Busnes-app/kypost-server/backend/internal/processor"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 // approverDevices returns the devices eligible to approve a push-2FA challenge

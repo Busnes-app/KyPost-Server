@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/backup"
-	"github.com/Busness-app/kypost-server/backend/internal/config"
-	"github.com/Busness-app/kypost-server/backend/internal/sso/ssotest"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/backup"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 func csrfFor(srv *Server, c *http.Cookie) string {
