@@ -89,8 +89,9 @@ func ParseDeviceEnvelopeVersion(envelope string) (int, error) {
 // fingerprint, revision and material generation must all be the account's
 // current ones, so a sealing prepared from a stale snapshot is refused rather
 // than delivered. The record keeps the version, generation, fingerprint and
-// enrollment key so the device's later acknowledgement can be checked
-// against what it was actually sent.
+// enrollment key; while it lives, the device's acknowledgement is checked
+// against exactly that delivery, including that the device still publishes
+// the key it was sealed to (handlePGPDeviceEnrollmentState).
 func (s *Store) SetPGPDeviceEnvelope(id string, d DeviceDelivery) (User, int, error) {
 	version, err := ParseDeviceEnvelopeVersion(d.Envelope)
 	if err != nil {

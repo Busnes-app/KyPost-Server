@@ -1055,6 +1055,7 @@ func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
 	device.EnrollmentKeyAt = ""
 	device.EnrollmentEnvelopeVersions = nil
 	device.EncryptionEnrolled = false
+	device.EnrolledVersion, device.EnrolledGeneration, device.EnrolledFingerprint = 0, 0, ""
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	if strings.TrimSpace(device.RegisteredAt) == "" {

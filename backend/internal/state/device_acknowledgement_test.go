@@ -54,4 +54,12 @@ func TestDeviceAcknowledgementPersistsAndClears(t *testing.T) {
 	if err := store.SetNativeDeviceEnrollment("nobody", DeviceEnrollment{Version: 3, Generation: 1}); err == nil {
 		t.Fatal("acknowledgement for an unknown device succeeded")
 	}
+
+	// Registration can never assert an acknowledgement, on a new row either.
+	if err := store.UpsertNativeDevice(NativeDevice{DeviceID: "dev-new", Platform: "android", PushToken: "tok-new", EncryptionEnrolled: true, EnrolledVersion: 3, EnrolledGeneration: 9, EnrolledFingerprint: "AAAA1111"}); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ = store.GetNativeDevice("dev-new"); d.EncryptionEnrolled || d.EnrolledVersion != 0 || d.EnrolledGeneration != 0 || d.EnrolledFingerprint != "" {
+		t.Fatalf("registration asserted an acknowledgement: %+v", d)
+	}
 }

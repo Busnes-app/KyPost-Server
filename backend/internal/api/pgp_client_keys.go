@@ -438,6 +438,16 @@ func (s *Server) handlePGPDeleteEnvelopeSlot(w http.ResponseWriter, r *http.Requ
 		writeUserStoreError(w, err)
 		return
 	}
+	// Removing a device's sealing is the owner saying that device is done:
+	// its enrollment record goes too, so the send gate refuses it until it
+	// enrolls again. The server's copy of the sealing is all this can reach;
+	// the device keeps what it already imported, and revoking that means
+	// rotating the identity.
+	if deviceID, isDevice := strings.CutPrefix(r.PathValue("slot"), users.EnvelopeSlotDevicePrefix); isDevice {
+		if !s.clearDeviceEnrollment(w, ac.UserID, deviceID) {
+			return
+		}
+	}
 	s.logger.Info("pgp envelope slot deleted", "user_id", ac.UserID, "slot", r.PathValue("slot"))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pgpRevision": u.PGPRevision})
 }

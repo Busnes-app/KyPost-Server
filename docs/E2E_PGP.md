@@ -352,9 +352,12 @@ Implemented:
   {"generationRequired": true, "materialGeneration": <current>, "fingerprint":
   <current>}` and records nothing, because the legacy boolean is never proof
   of v3 enrollment — and must equal the account's current active fingerprint
-  and generation, with `envelopeVersion` one the device advertised; any
-  mismatch is `409 {"pgpStateChanged": true, ...current values...}` and
-  records nothing. A legacy account keeps the boolean semantics (metadata, if
+  and generation, with `envelopeVersion` the one the account's material
+  implies (3 for a converted account, 2 for a legacy one) and one the device
+  advertised; while the delivered `device:` slot still exists the three must
+  also equal what that slot recorded and the device must still publish the
+  key it was sealed to; any mismatch is `409 {"pgpStateChanged": true,
+  ...current values...}` and records nothing. A legacy account keeps the boolean semantics (metadata, if
   sent, is checked with generation 0). `false` clears the marker and the
   recorded generation, version and fingerprint. The device record exposes
   `enrolledVersion`, `enrolledGeneration` and `enrolledFingerprint` in the
@@ -623,9 +626,11 @@ signed with, equal to the current one: a missing or stale value is `409
 work. When the caller is a paired device, its recorded `enrolledGeneration`
 and `enrolledFingerprint` must also match, else `409 {"reenrollmentRequired":
 true, "materialGeneration": <current>}`: a device holding a retired ring
-cannot send until it enrolls again, which is what makes clearing a device
-slot mean something. Legacy accounts are not gated, so older clients keep
-working on them.
+cannot send until it enrolls again. `DELETE /api/pgp/identity/envelope/device:<id>`
+also clears that device's enrollment record, so removing a device's sealing
+stops its sends until it enrolls again; it cannot reach the copy the device
+already imported, and revoking that still means rotating the identity. Legacy
+accounts are not gated, so older clients keep working on them.
 
 Signing defaults on for a new compose, reply, forward, or reopened draft when
 the browser key is unlocked, and turns on if the key unlocks while composing.

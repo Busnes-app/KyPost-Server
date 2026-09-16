@@ -232,9 +232,27 @@ func (s *Server) handlePGPDeviceEnrollmentState(w http.ResponseWriter, r *http.R
 		http.Error(w, "envelopeVersion, materialGeneration and fingerprint go together", http.StatusBadRequest)
 		return
 	}
-	if !slices.Contains(device.EnrollmentEnvelopeVersions, req.EnvelopeVersion) || *req.MaterialGeneration != generation || !strings.EqualFold(fingerprint, u.PGPFingerprint) {
+	// The version is the one the account's material implies, never merely one
+	// the device advertised: a converted account only ever delivers v3.
+	wantVersion := 2
+	if u.PGPKeyring != nil {
+		wantVersion = 3
+	}
+	current := req.EnvelopeVersion == wantVersion && slices.Contains(device.EnrollmentEnvelopeVersions, req.EnvelopeVersion) &&
+		*req.MaterialGeneration == generation && strings.EqualFold(fingerprint, u.PGPFingerprint)
+	// While the transport copy still exists, the acknowledgement must also be
+	// of exactly that delivery, sealed to the key the device still publishes.
+	// After the TTL the account check above is all there is, so a device that
+	// imported in time can still restate what it holds.
+	for _, e := range u.WrappedEnvelopes() {
+		if e.Slot == users.EnvelopeSlotDevicePrefix+device.DeviceID {
+			current = current && e.Version == req.EnvelopeVersion && e.MaterialGeneration == *req.MaterialGeneration &&
+				strings.EqualFold(e.Fingerprint, fingerprint) && e.EnrollmentKey == device.EnrollmentPublicKey
+		}
+	}
+	if !current {
 		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":              "the acknowledged key material is not the account's current material; fetch the current envelope and enroll again",
+			"error":              "the acknowledged key material is not what this account delivered to this device; fetch the current envelope and enroll again",
 			"pgpStateChanged":    true,
 			"materialGeneration": generation,
 			"fingerprint":        u.PGPFingerprint,

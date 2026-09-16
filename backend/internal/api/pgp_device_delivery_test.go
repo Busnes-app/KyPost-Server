@@ -227,6 +227,29 @@ func TestDeviceAcknowledgementIsGenerationAware(t *testing.T) {
 	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("partial metadata: %d", rec.Code)
 	}
+	// A converted account only ever delivers v3; an advertised v2 is not an
+	// enrollment this account could have produced.
+	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 2, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}); rec.Code != http.StatusConflict {
+		t.Fatalf("v2 acknowledgement on a converted account: %d %s", rec.Code, rec.Body.String())
+	}
+	if device().EncryptionEnrolled {
+		t.Fatal("an impossible version marked the device enrolled")
+	}
+	// While the delivery is live, the acknowledgement must be of that delivery
+	// to the key the device still publishes.
+	if rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:phone", map[string]any{"envelope": sealedEnvelope(3), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
+		t.Fatalf("delivery: %d %s", rec.Code, rec.Body.String())
+	}
+	store, _ := srv.userStore(u.ID)
+	if _, err := store.SetNativeDeviceEnrollmentKey("phone", "BReplaced", "2026-09-16T01:00:00Z", []int{2, 3}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}); rec.Code != http.StatusConflict {
+		t.Fatalf("acknowledgement after republishing the key: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.SetNativeDeviceEnrollmentKey("phone", deliveryDeviceKey, "2026-09-16T02:00:00Z", []int{2, 3}); err != nil {
+		t.Fatal(err)
+	}
 
 	rec = deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": strings.ToLower(u.PGPFingerprint)})
 	if rec.Code != http.StatusOK {
@@ -302,6 +325,28 @@ func TestClientSealedSendRefusesStaleMaterial(t *testing.T) {
 	}
 	if rec := send(deviceAuth, map[string]any{"materialGeneration": 1}); rec.Code == http.StatusConflict {
 		t.Fatalf("enrolled device at the current generation refused: %s", rec.Body.String())
+	}
+
+	// The owner removes the device's sealing: the device cannot send until it
+	// enrolls again, whatever it restates on registration.
+	if rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:phone", map[string]any{"envelope": sealedEnvelope(3), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
+		t.Fatalf("delivery: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := sessionJSON(t, srv, u.ID, http.MethodDelete, "/api/pgp/identity/envelope/device:phone", map[string]any{"expectedRevision": u.PGPRevision, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
+		t.Fatalf("delete slot: %d %s", rec.Code, rec.Body.String())
+	}
+	if d := deviceByID(t, srv, u.ID, "phone"); d.EncryptionEnrolled || d.EnrolledGeneration != 0 {
+		t.Fatalf("deleting the slot left the enrollment record: %+v", d)
+	}
+	if rec := send(deviceAuth, map[string]any{"materialGeneration": 1}); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"reenrollmentRequired":true`) {
+		t.Fatalf("device sends after its slot was removed: %d %s", rec.Code, rec.Body.String())
+	}
+	store, _ := srv.userStore(u.ID)
+	if err := store.SetNativeDeviceEncryptionEnrolled("phone", true); err != nil {
+		t.Fatal(err)
+	}
+	if rec := send(deviceAuth, map[string]any{"materialGeneration": 1}); rec.Code != http.StatusConflict {
+		t.Fatalf("a bare restatement re-opened the send gate: %d", rec.Code)
 	}
 
 	// A legacy account is not gated; older clients send nothing.

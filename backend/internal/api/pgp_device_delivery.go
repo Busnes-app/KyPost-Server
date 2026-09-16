@@ -76,6 +76,27 @@ func (s *Server) putDeviceEnvelope(w http.ResponseWriter, r *http.Request, userI
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pgpRevision": u.PGPRevision, "version": version})
 }
 
+// clearDeviceEnrollment forgets one device's enrollment record after its
+// sealing was removed. A device that is not paired has nothing to forget; a
+// failure to forget one that is answers 500 so the caller retries, because
+// the slot is already gone and the send gate must not keep passing.
+func (s *Server) clearDeviceEnrollment(w http.ResponseWriter, userID, deviceID string) bool {
+	store, err := s.userStore(userID)
+	if err != nil {
+		http.Error(w, "state unavailable", http.StatusInternalServerError)
+		return false
+	}
+	if _, ok := store.GetNativeDevice(deviceID); !ok {
+		return true
+	}
+	if err := store.SetNativeDeviceEncryptionEnrolled(deviceID, false); err != nil {
+		http.Error(w, "the sealing was removed but the device's enrollment could not be cleared; retry", http.StatusInternalServerError)
+		return false
+	}
+	s.logger.Info("pgp device enrollment cleared with its slot", "user_id", userID, "device_id", deviceID)
+	return true
+}
+
 // writeGenerationChanged answers a request prepared against key material the
 // account has moved past, naming the current generation so the client can
 // reload rather than retry blindly.
