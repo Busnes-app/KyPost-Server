@@ -742,7 +742,7 @@ Single Sign-On (OpenID Connect):
 - `POST /api/auth/oidc/backchannel-logout` — OpenID Connect back-channel logout receiver. Register it at the provider (KySignOn: the client's *back-channel logout URI*). The `logout_token` is verified against the issuer's JWKS, admitted once durably, and ends the session it names, or every session of the subject when it names none. Needs an `https` issuer.
 - `POST /api/settings/sso/unlink`
 - `GET|PUT /api/admin/sso` (admin only. The provider configuration.)
-- `POST /api/sync/webhook` — KySignOn directory push. Pair KyPost in KySignOn as a webhook system with this URL and either the SSO client secret or the pairing secret as the sync secret. Each event is a signed, versioned SCIM User; stale or reordered deliveries are refused, a disabled or deleted user keeps their mailbox and loses access, and a rehire brings the same account back.
+- `POST /api/sync/webhook` — KySignOn directory push. Pair KyPost in KySignOn as a webhook system with this URL and either the pairing secret or the SSO client secret as the sync secret. Each event is a signed, versioned SCIM User; stale or reordered deliveries are refused, a disabled or deleted user keeps their mailbox and loses access, and a rehire brings the same account back.
 
 Multi-factor authentication:
 

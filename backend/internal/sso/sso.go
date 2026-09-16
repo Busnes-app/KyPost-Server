@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,9 +55,14 @@ type SSOSettings struct {
 
 // Store handles persisting SSOSettings to disk.
 type Store struct {
-	path string
-	mu   sync.RWMutex
+	path  string
+	mu    sync.RWMutex
+	loads atomic.Int64
 }
+
+// Loads counts calls to Load, each of which reads the file. It exists so a
+// test can prove a public route authenticates before it reads settings.
+func (s *Store) Loads() int64 { return s.loads.Load() }
 
 // NewStore constructs an SSO settings store.
 func NewStore(configDir string) *Store {
@@ -67,6 +73,7 @@ func NewStore(configDir string) *Store {
 
 // Load reads SSO settings from disk, returning default values if not configured.
 func (s *Store) Load() SSOSettings {
+	s.loads.Add(1)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

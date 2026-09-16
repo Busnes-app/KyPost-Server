@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -310,12 +311,96 @@ func TestDirectoryRefusesUnsignedMalformedAndLastAdminRemoval(t *testing.T) {
 	if u, _ := srv.users.Get(admin.ID); !u.Active {
 		t.Fatal("the last admin was deactivated despite the refusal")
 	}
-	if got := directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.updated", "ev-demote", 2, scimUser("only-admin", "admin", true))); got != "applied" {
-		t.Fatalf("demoting the last admin: status %q", got)
+	// A demotion of the last admin is refused too, and the fence stays where
+	// it was: once the directory has promoted somebody else, the very same
+	// event applies.
+	demote := scimUser("only-admin", "admin", true)
+	if rec := postDirectory(t, srv, testSyncKey, "user.updated", "ev-demote", 2, demote); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("demoting the last admin: status = %d, want 422: %s", rec.Code, rec.Body.String())
 	}
 	if u, _ := srv.users.Get(admin.ID); u.Role != users.RoleAdmin {
 		t.Fatal("the last admin lost the role")
 	}
+	if _, err := srv.users.Create(context.Background(), "second-admin", "second-admin-password-123", users.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if got := directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.updated", "ev-demote", 2, demote)); got != "applied" {
+		t.Fatalf("re-delivered demotion with a second admin present: status %q, want applied", got)
+	}
+	if u, _ := srv.users.Get(admin.ID); u.Role != users.RoleUser {
+		t.Fatalf("role after the re-delivered demotion = %q, want user", u.Role)
+	}
+}
+
+// Deactivation revokes the SSO link of an account that has a credential of
+// its own, and must not erase the subject while doing it: every later event
+// is addressed by that subject, and a subject that no longer resolves gets a
+// second, empty account provisioned on the next one.
+func TestDirectoryDisableKeepsTheSubjectItRevokes(t *testing.T) {
+	srv, idp := setupSSOTestServer(t)
+	srv.pairingSecret = testSyncKey
+	const sub = "dir-local"
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "ev-1", 1, scimUser(sub, "dir_local", true)))
+	created, err := srv.users.GetBySSOSub(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.users.SetPassword(context.Background(), created.ID, "a-local-password-123", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	clearMustChangePassword(t, srv, created.ID)
+	before, _ := srv.users.List()
+
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.updated", "ev-2", 2, scimUser(sub, "dir_local", false)))
+	disabled, err := srv.users.GetBySSOSub(sub)
+	if err != nil {
+		t.Fatalf("revocation lost the subject the directory addresses: %v", err)
+	}
+	if disabled.Active || !disabled.SSOLinkRevoked() {
+		t.Fatalf("after disable: active=%v linkRevoked=%v, want inactive with the link revoked", disabled.Active, disabled.SSOLinkRevoked())
+	}
+
+	// The rehire brings the same account back. The link stays revoked: the
+	// account has its own credential, so the user signs in locally and
+	// re-authorizes the link, as after any other credential revocation.
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.updated", "ev-3", 3, scimUser(sub, "dir_local", true)))
+	back, err := srv.users.Get(created.ID)
+	if err != nil || !back.Active {
+		t.Fatalf("after rehire: %+v, %v; want the same account, active", back, err)
+	}
+	if after, _ := srv.users.List(); len(after) != len(before) {
+		t.Fatalf("account count %d -> %d across disable and rehire; a second account was provisioned", len(before), len(after))
+	}
+	idp.SetClaims(map[string]any{"sub": sub, "preferred_username": "dir_local", "sid": "sid-1"})
+	rec := runSSOFlow(t, srv, idp, nil, false)
+	if rec.Code != http.StatusForbidden || sessionCookieFrom(rec) != nil {
+		t.Fatalf("SSO sign-in on a revoked link: status = %d, want 403 and no cookie", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "link it again") {
+		t.Fatalf("refusal does not tell the user to re-link: %s", rec.Body.String())
+	}
+}
+
+// The route is public. The pairing secret is in memory, so an unsigned flood
+// costs one HMAC and never a read of sso.json.
+func TestDirectoryAuthenticatesBeforeReadingSettings(t *testing.T) {
+	srv := newDirectoryTestServer(t)
+	base := srv.ssoStore.Loads()
+	if rec := postDirectory(t, srv, "", "user.created", "ev-1", 1, scimUser("s1", "s1", true)); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unsigned: status = %d, want 401", rec.Code)
+	}
+	if n := srv.ssoStore.Loads() - base; n != 0 {
+		t.Fatalf("an unsigned request read the settings file %d times, want 0", n)
+	}
+	// A signature under some other key earns the one read the client-secret
+	// fallback needs, and no more.
+	if rec := postDirectory(t, srv, "wrong-secret-also-32-bytes-long!", "user.created", "ev-1", 1, scimUser("s1", "s1", true)); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong key: status = %d, want 401", rec.Code)
+	}
+	if n := srv.ssoStore.Loads() - base; n != 1 {
+		t.Fatalf("a wrongly signed request read the settings file %d times, want 1", n)
+	}
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "ev-2", 1, scimUser("s1", "s1", true)))
 }
 
 func TestDirectoryProvisionsUnderADistinctNameOnCollision(t *testing.T) {

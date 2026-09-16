@@ -33,8 +33,7 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
-	settings := s.ssoStore.Load()
-	event, ok := s.verifySyncEvent(r, body, settings)
+	event, settings, ok := s.verifySyncEvent(r, body)
 	if !ok {
 		http.Error(w, "unauthorized sync request", http.StatusUnauthorized)
 		return
@@ -74,28 +73,35 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": status, "eventId": event.ID, "version": u.Meta.Version})
 }
 
-// verifySyncEvent checks the syncauth signature against the SSO client
-// secret, then the pairing secret, so KySignOn can be paired with either. A
-// key shorter than syncauth allows is skipped, never tried. The reason for
-// a refusal goes to the log, where the operator pairing the two can read it.
-func (s *Server) verifySyncEvent(r *http.Request, body []byte, settings sso.SSOSettings) (syncauth.Event, bool) {
+// verifySyncEvent checks the syncauth signature against the pairing secret,
+// then the SSO client secret, so KySignOn can be paired with either, and
+// returns the settings the event is applied under. The pairing secret is in
+// memory and tried first, on its own, so an unauthenticated flood costs one
+// HMAC and never a settings-file read. A key shorter than syncauth allows is
+// skipped, never tried. The reason for a refusal goes to the log, where the
+// operator pairing the two can read it.
+func (s *Server) verifySyncEvent(r *http.Request, body []byte) (syncauth.Event, sso.SSOSettings, bool) {
 	h := syncauth.FromRequest(r)
-	var last error
-	for _, key := range []string{settings.ClientSecret, s.pairingSecret} {
+	verify := func(key string) (syncauth.Event, error) {
 		if len(key) < syncauth.MinKeyBytes {
-			continue
+			return syncauth.Event{}, errors.New("no sync secret of usable length is configured")
 		}
-		ev, err := syncauth.Verify([]byte(key), h, body, syncauth.Options{})
-		if err == nil {
-			return ev, true
+		return syncauth.Verify([]byte(key), h, body, syncauth.Options{})
+	}
+	ev, err := verify(s.pairingSecret)
+	if err == nil {
+		return ev, s.ssoStore.Load(), true
+	}
+	// Only a well-formed signature under some other key is worth a second
+	// try; a request with no signature is refused without any disk read.
+	if errors.Is(err, syncauth.ErrBadSignature) || len(s.pairingSecret) < syncauth.MinKeyBytes {
+		settings := s.ssoStore.Load()
+		if ev, err = verify(settings.ClientSecret); err == nil {
+			return ev, settings, true
 		}
-		last = err
 	}
-	if last == nil {
-		last = errors.New("no sync secret of usable length is configured")
-	}
-	s.logger.Info("directory event refused", "reason", last.Error())
-	return syncauth.Event{}, false
+	s.logger.Info("directory event refused", "reason", err.Error())
+	return syncauth.Event{}, sso.SSOSettings{}, false
 }
 
 // syncRefusal is an apply error with the status the sender should see.
@@ -137,16 +143,14 @@ func (s *Server) applyDirectoryUser(u sso.DirectoryUser) (bool, error) {
 
 	fence := false
 	if existing.Role != role {
-		fence = true
-		switch _, err := s.users.SetRole(existing.ID, role); {
-		case errors.Is(err, users.ErrLastActiveAdmin):
-			// The directory demoted the only administrator. Keep the role
-			// rather than lock the instance, and say so where an operator
-			// will read it.
-			s.logger.Error("kept the last active admin despite a directory demotion", "user_id", existing.ID)
-		case err != nil:
-			return false, errors.New("failed to set role")
+		// A demotion of the last active admin is refused, not swallowed: the
+		// fence stays at the prior revision, so the same event applies once
+		// the directory has promoted somebody else.
+		if _, err := s.users.SetRole(existing.ID, role); err != nil {
+			status, err := syncErrStatus(err, "failed to set role")
+			return false, &syncRefusal{status, err}
 		}
+		fence = true
 		s.revokeUserSessions(existing.ID, "")
 	}
 	if !existing.Active {
