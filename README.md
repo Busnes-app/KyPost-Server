@@ -1092,4 +1092,4 @@ KyPost is released under the [MIT License](LICENSE.txt).
 
 ## Upgrading from ghcr.io/busness-app
 
-The image namespace moved from `ghcr.io/busness-app` to `ghcr.io/busnes-app` on 2026-09-16 when the GitHub organisation was renamed. `:latest` under the old namespace is no longer published and GHCR does not redirect it. Re-pin any `KYPOST_IMAGE` that names the old namespace, using the digest procedure in `docs/RESTORE.md`, then `docker compose pull`.
+The GitHub organisation was renamed on 2026-09-16 and the image now lives at `ghcr.io/busnes-app/kypost-server`. The project no longer controls `ghcr.io/busness-app`; GHCR does not redirect it, and anything served under that name must be treated as untrusted. If `KYPOST_IMAGE` in `.env` still names the old namespace, re-pinning is required, not optional: run the digest procedure in `docs/RESTORE.md`, which resolves the commit you choose to a digest, verifies its attestation and writes the pin, then `docker compose pull`.
