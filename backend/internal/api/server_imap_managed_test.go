@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
 func seedManagedIMAP(t *testing.T, srv *Server, userID string, managed bool) {

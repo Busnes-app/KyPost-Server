@@ -8,7 +8,7 @@ type ClientPlatform = {
   channels: ReadonlyArray<{ label: string; href?: string }>;
 };
 
-const GITHUB = "https://github.com/Busness-app";
+const GITHUB = "https://github.com/Busnes-app";
 
 export const CLIENT_PLATFORMS: ReadonlyArray<ClientPlatform> = [
   {

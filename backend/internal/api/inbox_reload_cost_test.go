@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	imapadapter "github.com/Busness-app/kypost-server/backend/internal/adapters/imap"
-	"github.com/Busness-app/kypost-server/backend/internal/config"
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 )
 
 // What made deleting a message feel slow: the web client reloads the inbox

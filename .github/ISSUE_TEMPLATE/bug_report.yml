@@ -6,7 +6,7 @@ body:
     attributes:
       value: >-
         **Not for security vulnerabilities.** Report those privately through
-        [Security Advisories](https://github.com/Busness-app/KyPost-Server/security/advisories/new).
+        [Security Advisories](https://github.com/Busnes-app/KyPost-Server/security/advisories/new).
 
   - type: textarea
     id: what-happened

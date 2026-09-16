@@ -10,7 +10,7 @@ import (
 
 	goimap "github.com/BrianLeishman/go-imap"
 
-	"github.com/Busness-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
 // TestFetchAttachmentsOversizedSearchCriteria pins the exact SEARCH

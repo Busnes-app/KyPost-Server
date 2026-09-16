@@ -31,11 +31,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/oidcverify"
+	"github.com/Busnes-app/ky-primitives/oidcverify"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"github.com/Busness-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // SSOSettings holds the OpenID Connect SSO configuration.

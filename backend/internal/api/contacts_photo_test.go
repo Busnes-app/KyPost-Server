@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 )
 
 // TestContactPhotoGetAcceptsDeviceCredentials drives the endpoint through the

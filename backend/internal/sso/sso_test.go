@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/sso/ssotest"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 )
 
 const testClientID = "kypost-test"

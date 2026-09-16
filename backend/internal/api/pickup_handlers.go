@@ -14,10 +14,10 @@ import (
 
 	"github.com/inbucket/html2text"
 
-	"github.com/Busness-app/kypost-server/backend/internal/cryptutil"
-	"github.com/Busness-app/kypost-server/backend/internal/logging"
-	"github.com/Busness-app/kypost-server/backend/internal/mailmsg"
-	"github.com/Busness-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 )
 
 // pickupLinkTTL is how long a pickup link stays valid if never viewed —

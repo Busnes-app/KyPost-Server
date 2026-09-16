@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // pendingExpiry is how long a newly created alias stays "pending" before its

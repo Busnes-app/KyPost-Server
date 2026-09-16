@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/mfa"
+	"github.com/Busnes-app/kypost-server/backend/internal/mfa"
 )
 
 // testRecoveryDigest is the keyed digest the api server holds in production

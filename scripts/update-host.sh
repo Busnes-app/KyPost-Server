@@ -3,7 +3,7 @@
 # daemon access belongs to the operator, not to a web-facing mail application.
 set -euo pipefail
 
-readonly official_image="ghcr.io/busness-app/kypost-server"
+readonly official_image="ghcr.io/busnes-app/kypost-server"
 
 mode="manual"
 if [[ "${1:-}" == "--auto" ]]; then
@@ -85,8 +85,8 @@ if [[ "${KYPOST_UPDATE_ALLOW_UNVERIFIED_IMAGE:-}" != "true" ]]; then
   # published no release to verify. --repo is also the stricter of the two, and
   # --signer-workflow pins the workflow that is allowed to have produced it.
   gh attestation verify "oci://${candidate_image}" \
-    --repo Busness-app/KyPost-Server \
-    --signer-workflow Busness-app/KyPost-Server/.github/workflows/release-image.yml
+    --repo Busnes-app/KyPost-Server \
+    --signer-workflow Busnes-app/KyPost-Server/.github/workflows/release-image.yml
 else
   log verify warning bypassed
 fi

@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/adapters/classifier"
-	"github.com/Busness-app/kypost-server/backend/internal/config"
-	"github.com/Busness-app/kypost-server/backend/internal/processor"
-	"github.com/Busness-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/processor"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 func TestHandlePollNowRejectsNonAdmin(t *testing.T) {

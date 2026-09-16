@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/recoverycode"
-	"github.com/Busness-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/ky-primitives/recoverycode"
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 )
 
 // MaxTOTPAttempts is the number of failed second-factor attempts tolerated on

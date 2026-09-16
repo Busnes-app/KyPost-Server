@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 )
 
 // Regression test for a bug where the default patterns were defined with

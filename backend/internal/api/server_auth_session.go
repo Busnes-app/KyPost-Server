@@ -18,11 +18,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/totp"
-	"github.com/Busness-app/kypost-server/backend/internal/captcha"
-	"github.com/Busness-app/kypost-server/backend/internal/mfa"
-	"github.com/Busness-app/kypost-server/backend/internal/sso"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/ky-primitives/totp"
+	"github.com/Busnes-app/kypost-server/backend/internal/captcha"
+	"github.com/Busnes-app/kypost-server/backend/internal/mfa"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // Session tracks who a live session token belongs to.

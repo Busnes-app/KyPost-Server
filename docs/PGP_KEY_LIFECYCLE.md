@@ -27,9 +27,9 @@ Native source inspection on 2026-09-14 contradicts the original punch list:
 
 | Client checkout | Current behavior | Required before activation |
 | --- | --- | --- |
-| [Android `4e53200`](https://github.com/Busness-app/KyPost-for-Android/tree/4e53200967fbf5225620add61f14cc037587bce3) | `EnrollmentVault.store` overwrites one encrypted blob; `EnrollmentSession` replaces one key. | Durable complete keyring, historical decrypt, explicit active signing key. |
-| [Mac `ff423f7`](https://github.com/Busness-app/KyPost-for-Mac/tree/ff423f7b62ae99b80d7539ebc5a0115fb1d1e252) | `EnrollmentVault` uses fixed Keychain envelope/fingerprint entries; `GopenPGPCrypto` parses one key. | Durable complete keyring, historical decrypt, explicit active signing key. |
-| [Linux `34776ca`](https://github.com/Busness-app/KyPost-for-Linux/tree/34776ca4a2068170020c01cc107f86cc9a0667d4) | GnuPG retains imported keys, but `OpenPgpKeyImporter` rejects imports containing multiple primary fingerprints. | Validated bundle import and explicit active key. |
+| [Android `4e53200`](https://github.com/Busnes-app/KyPost-for-Android/tree/4e53200967fbf5225620add61f14cc037587bce3) | `EnrollmentVault.store` overwrites one encrypted blob; `EnrollmentSession` replaces one key. | Durable complete keyring, historical decrypt, explicit active signing key. |
+| [Mac `ff423f7`](https://github.com/Busnes-app/KyPost-for-Mac/tree/ff423f7b62ae99b80d7539ebc5a0115fb1d1e252) | `EnrollmentVault` uses fixed Keychain envelope/fingerprint entries; `GopenPGPCrypto` parses one key. | Durable complete keyring, historical decrypt, explicit active signing key. |
+| [Linux `34776ca`](https://github.com/Busnes-app/KyPost-for-Linux/tree/34776ca4a2068170020c01cc107f86cc9a0667d4) | GnuPG retains imported keys, but `OpenPgpKeyImporter` rejects imports containing multiple primary fingerprints. | Validated bundle import and explicit active key. |
 
 All three advertise only an enrollment public key and consume device-envelope
 v2 with a single-key plaintext. These checkouts do not prove released binaries.

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busness-app/ky-primitives/recoveryclient"
-	"github.com/Busness-app/ky-primitives/recoverykey"
-	"github.com/Busness-app/kypost-server/backend/internal/backup"
+	"github.com/Busnes-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/ky-primitives/recoverykey"
+	"github.com/Busnes-app/kypost-server/backend/internal/backup"
 )
 
 func TestRestoreCLIUsesCustodianSharesAndRefusesOverwrite(t *testing.T) {

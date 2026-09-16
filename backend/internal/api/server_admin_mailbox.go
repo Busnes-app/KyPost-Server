@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	imapadapter "github.com/Busness-app/kypost-server/backend/internal/adapters/imap"
-	"github.com/Busness-app/kypost-server/backend/internal/mailmsg"
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
 // Admin assignment of another user's mailbox. Writes the same encrypted file

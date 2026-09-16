@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 )
 
 // handlePGPQRToken mints a short-TTL token (session auth) that a scanning

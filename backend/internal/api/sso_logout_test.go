@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/sso"
-	"github.com/Busness-app/kypost-server/backend/internal/sso/ssotest"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // ssoSignIn completes a provider login for sub under session id sid and
