@@ -76,7 +76,7 @@ func New(t *testing.T, clientID string) *IdP {
 			"sub":                "sso-sub-12345",
 			"email":              "admin_sso@urlxl.com",
 			"preferred_username": "admin_sso",
-			"role":               "admin",
+			"roles":              []string{"kypost.admin"},
 		},
 	}
 	// TLS, because the logout verifier refuses cleartext key discovery. The

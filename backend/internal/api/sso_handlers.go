@@ -448,7 +448,7 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.mintSession(w, r, Session{UserID: user.ID, SSO: identity}); err != nil {
+	if err := s.mintSession(w, r, Session{UserID: user.ID, SSO: identity, SSOAppAdmin: claims.AppAdmin()}); err != nil {
 		http.Error(w, "failed to initialize session", http.StatusInternalServerError)
 		return
 	}
@@ -518,7 +518,7 @@ func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings,
 	}
 
 	role := users.RoleUser
-	if claims.IsAdmin() {
+	if claims.AppAdmin() {
 		role = users.RoleAdmin
 	}
 
