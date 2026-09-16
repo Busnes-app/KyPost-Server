@@ -19,7 +19,7 @@ import (
 // returns the session cookie it minted.
 func ssoSignIn(t *testing.T, srv *Server, idp *ssotest.IdP, sub, sid string) *http.Cookie {
 	t.Helper()
-	idp.SetClaims(map[string]any{"sub": sub, "preferred_username": "u_" + sub, "sid": sid})
+	idp.SetClaims(map[string]any{"sub": sub, "preferred_username": "u_" + sub, "sid": sid, "roles": []string{}})
 	rec := runSSOFlow(t, srv, idp, nil, false)
 	if rec.Code != http.StatusFound {
 		t.Fatalf("sign-in for %s/%s: status = %d (%s)", sub, sid, rec.Code, strings.TrimSpace(rec.Body.String()))

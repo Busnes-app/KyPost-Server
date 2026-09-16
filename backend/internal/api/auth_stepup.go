@@ -51,7 +51,7 @@ func (s *Server) handleAuthStepUp(w http.ResponseWriter, r *http.Request) {
 	}
 	// An SSO session has no password to re-enter; it proves presence to
 	// KySignOn instead, and KySignOn applies its own second factor.
-	if sess, token, ok := s.sessionOf(r); ok && sess.SSO.Subject != "" {
+	if sess, token, ok := s.sessionOf(r); ok && sess.SSOKySignOn {
 		if s.confirmSSOStepUp(w, r, token) {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		}

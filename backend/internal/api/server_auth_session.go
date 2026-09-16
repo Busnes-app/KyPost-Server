@@ -54,6 +54,11 @@ type Session struct {
 	// it, whatever users.json says, so the provider's word bounds the local
 	// role rather than replacing it. Password sessions have no ceiling.
 	SSOAppAdmin bool
+	// SSOKySignOn is true when the token that minted this SSO session spoke
+	// the KySignOn contract. Only such a session can re-prove an action to
+	// KySignOn; one from a generic provider keeps the password step-up, which
+	// fails closed on its own for an account with no credential.
+	SSOKySignOn bool
 	// SSOLinkGrantedAt is when this session last proved its credential and
 	// second factor at handleSSOLinkStart. It authorizes exactly one SSO link
 	// and is cleared when that link is written, so it cannot be replayed.
@@ -100,8 +105,10 @@ type AuthContext struct {
 	Username           string
 	Role               users.Role
 	MustChangePassword bool
-	// SSOSession is true for a session minted by a KySignOn login. Such a
-	// session re-authenticates to KySignOn rather than with a password.
+	// SSOSession is true for a session minted by a KySignOn login, one whose
+	// token spoke the KySignOn contract. Such a session re-authenticates to
+	// KySignOn rather than with a password; a session from any other
+	// provider is not marked and keeps the password gate.
 	SSOSession bool
 
 	// SessionCSRFToken is the CSRF token of the session this request authenticated
@@ -1252,7 +1259,7 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
 		Username:           u.Username,
 		Role:               role,
 		MustChangePassword: u.MustChangePassword,
-		SSOSession:         sess.SSO.Subject != "",
+		SSOSession:         sess.SSOKySignOn,
 		// This request authenticated by cookie, so it carries an ambient
 		// credential and csrfCheckOK must enforce the double submit.
 		SessionCSRFToken: sess.CSRFToken,

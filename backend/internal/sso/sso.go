@@ -283,6 +283,12 @@ type SSOTokenClaims struct {
 	AMR      []string `json:"amr"`
 }
 
+// KySignOn reports whether the token speaks the KySignOn contract: it
+// carries the app-role claim, which KySignOn always sends and generic
+// providers never do. Only such a token's session can prove an action to
+// KySignOn again later; FreshProof's assurance vocabulary is KySignOn's.
+func (c *SSOTokenClaims) KySignOn() bool { return c != nil && c.Roles != nil }
+
 // AppAdmin reports whether the token makes its subject a KyPost administrator.
 //
 // A token carrying `roles` is the KySignOn contract: admin iff the array

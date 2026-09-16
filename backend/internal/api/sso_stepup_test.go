@@ -231,6 +231,47 @@ func TestSSOStepUpRefusesStaleOrWeakProof(t *testing.T) {
 	}
 }
 
+// A session from Authentik or Keycloak cannot prove anything to KySignOn:
+// FreshProof speaks KySignOn's vocabulary only. Such a session keeps the
+// password step-up, which fails closed by itself for an account without
+// a credential, rather than being refused forever.
+func TestStepUpKeepsThePasswordForGenericProviderSessions(t *testing.T) {
+	srv, idp := setupSSOTestServer(t)
+	// No roles claim: a generic provider. Groups make the account an admin.
+	cookie := signInWith(t, srv, idp, map[string]any{"sub": "kc", "preferred_username": "kc", "groups": []string{"admins"}})
+	kc, err := srv.users.GetBySSOSub("kc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.users.SetPassword(context.Background(), kc.ID, "kc-local-password-123", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	clearMustChangePassword(t, srv, kc.ID)
+
+	// The UI is told this is not a KySignOn session, so it asks for the password.
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.AddCookie(cookie)
+	if ac, ok := srv.currentUser(req); !ok || ac.SSOSession {
+		t.Fatalf("generic-provider session reported as a KySignOn session: %+v %v", ac, ok)
+	}
+
+	// The password gate answers, in both directions.
+	if rec := gatedCall(t, srv, cookie, http.MethodPost, "/api/auth/step-up", `{"password":"wrong"}`, ""); rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "sso_step_up_required") {
+		t.Fatalf("wrong password: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := gatedCall(t, srv, cookie, http.MethodPost, "/api/auth/step-up", `{"password":"kc-local-password-123"}`, ""); rec.Code != http.StatusOK {
+		t.Fatalf("right password: status %d: %s", rec.Code, rec.Body.String())
+	}
+	srv.backup, _ = backup.New(backup.Dirs{Config: srv.configDir, State: srv.stateDir, Secret: srv.configDir}, config.BackupConfig{Keep: 1}, srv.globalStore, "test")
+	if rec := gatedCall(t, srv, cookie, http.MethodPut, "/api/admin/backup/schedule", `{"intervalSec":3600,"password":"kc-local-password-123"}`, ""); rec.Code != http.StatusOK {
+		t.Fatalf("backup with the password: status %d: %s", rec.Code, rec.Body.String())
+	}
+	// And KySignOn cannot be asked on its behalf.
+	if rec := gatedCall(t, srv, cookie, http.MethodPost, "/api/auth/oidc/step-up", `{"challenge":"rea_x"}`, ""); rec.Code != http.StatusBadRequest {
+		t.Fatalf("step-up start for a generic session: status %d, want 400", rec.Code)
+	}
+}
+
 func TestSSOStepUpGatesBackupRoutesForSSOAdmins(t *testing.T) {
 	srv, idp := setupSSOTestServer(t)
 	srv.backup, _ = backup.New(backup.Dirs{Config: srv.configDir, State: srv.stateDir, Secret: srv.configDir}, config.BackupConfig{Keep: 1}, srv.globalStore, "test")

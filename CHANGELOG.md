@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Only a session signed in through KySignOn itself takes the KySignOn step-up; a session from Authentik or Keycloak keeps the password gate for the Security page and backup actions instead of being refused forever.
+
 - **Action-bound KySignOn re-authentication.** A session signed in through KySignOn now confirms the Security page and backup actions with a fresh KySignOn sign-in in a popup instead of a password it does not have: `403 sso_step_up_required` carries a challenge bound to the exact request, `POST /api/auth/oidc/step-up` starts the round trip, and the request is repeated with `X-Kypost-Step-Up`. The grant is spent once, by that session, for that request. PGP identity operations keep the password.
 
 - **KySignOn app roles.** A KySignOn ID token's `roles` claim is now the only source of admin for its subject: `kypost.admin` grants it, the legacy `role` claim and generic admin groups are ignored when `roles` is present, and the session records the result as a ceiling, so an SSO session acts as admin only when both the account and the token say so. Authentik and Keycloak admin-group mapping is unchanged for tokens without `roles`.
