@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { credentialFields, deriveCredential } from "../../api/auth";
+import { withSSOStepUp } from "../../api/stepup";
+import { useAuth } from "../../auth";
 import {
   deleteJSON,
   getJSON,
@@ -49,6 +51,9 @@ function activityError(raw: string | undefined): string | null {
 }
 
 export function Backup() {
+  // A KySignOn session confirms each action there instead of with a
+  // password it does not have; see api/stepup.ts.
+  const ssoSession = useAuth().ssoSession === true;
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -60,6 +65,7 @@ export function Backup() {
   const [threshold, setThreshold] = useState(2);
   const [total, setTotal] = useState(3);
   const [minutes, setMinutes] = useState(1440);
+  const unlocked = ssoSession || password.length > 0;
   async function refresh() {
     const value = await getJSON<Status>(base + "status");
     setStatus(value);
@@ -85,7 +91,7 @@ export function Backup() {
     setError("");
     setNotice("");
     try {
-      const credential = credentialFields(await deriveCredential("", password));
+      const credential = ssoSession ? {} : credentialFields(await deriveCredential("", password));
       setPassword("");
       const body =
         action === "pair-remote"
@@ -96,7 +102,7 @@ export function Backup() {
               ? { ...credential, intervalSec: minutes * 60 }
               : credential;
       if (action === "export-capsule") {
-        const blob = await postBlob(base + action, credential);
+        const blob = await withSSOStepUp((h) => postBlob(base + action, credential, h));
         const href = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = href;
@@ -105,10 +111,12 @@ export function Backup() {
         setTimeout(() => URL.revokeObjectURL(href), 1000);
         setNotice("Sealed capsule downloaded.");
       } else if (action === "drill") {
-        const result = await postJSON<{
-          passed: boolean;
-          checks: { name: string; passed: boolean }[];
-        }>(base + action, credential);
+        const result = await withSSOStepUp((h) =>
+          postJSON<{
+            passed: boolean;
+            checks: { name: string; passed: boolean }[];
+          }>(base + action, credential, h),
+        );
         setNotice(
           result.passed
             ? "Restore drill passed."
@@ -119,19 +127,20 @@ export function Backup() {
                   .join(", "),
         );
       } else if (action === "pairing") {
-        const result = await deleteJSON<{ message: string }>(
-          base + action,
-          credential,
+        const result = await withSSOStepUp((h) =>
+          deleteJSON<{ message: string }>(base + action, credential, h),
         );
         setNotice(result.message);
       } else if (action === "schedule") {
-        await putJSON(base + action, body);
+        await withSSOStepUp((h) => putJSON(base + action, body, h));
         setNotice("Backup schedule saved.");
       } else {
-        const result = await postJSON<{
-          warning?: string;
-          result?: { local_error?: string; local_path?: string };
-        }>(base + action, body);
+        const result = await withSSOStepUp((h) =>
+          postJSON<{
+            warning?: string;
+            result?: { local_error?: string; local_path?: string };
+          }>(base + action, body, h),
+        );
         setNotice(
           result.warning ||
             result.result?.local_error ||
@@ -205,24 +214,33 @@ export function Backup() {
       )}
       <fieldset className="config-card config-grid" disabled={busy}>
         <legend>Confirm each action</legend>
-        <label>
-          Account password{" "}
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
-        <p>
-          Enter your account password to enable actions. It is cleared after
-          each action. Never enter recovery shares here.
-        </p>
+        {ssoSession ? (
+          <p>
+            Each action asks you to sign in again with KySignOn before it
+            runs. Never enter recovery shares here.
+          </p>
+        ) : (
+          <>
+            <label>
+              Account password{" "}
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </label>
+            <p>
+              Enter your account password to enable actions. It is cleared after
+              each action. Never enter recovery shares here.
+            </p>
+          </>
+        )}
         <div className="config-actions">
           <button
             className="button secondary"
             disabled={
-              !password ||
+              !unlocked ||
               !status?.keyId ||
               (!status.paired && !status.localDir)
             }
@@ -232,7 +250,7 @@ export function Backup() {
           </button>
           <button
             className="button secondary"
-            disabled={!password || !status?.keyId}
+            disabled={!unlocked || !status?.keyId}
             onClick={() => void act("export-capsule")}
           >
             Download capsule
@@ -251,7 +269,7 @@ export function Backup() {
             </p>
             <button
               className="button secondary"
-              disabled={!password}
+              disabled={!unlocked}
               onClick={() => void act("drill")}
             >
               Run restore drill
@@ -279,7 +297,7 @@ export function Backup() {
             <button
               className="button secondary"
               disabled={
-                !password ||
+                !unlocked ||
                 !Number.isInteger(minutes) ||
                 (minutes !== 0 && minutes < 15) ||
                 minutes > 527040
@@ -339,14 +357,14 @@ export function Backup() {
             </label>
             <button
               className="button secondary"
-              disabled={!password || !url || !/^\d{6}$/.test(code)}
+              disabled={!unlocked || !url || !/^\d{6}$/.test(code)}
               onClick={() => void act("pair-remote")}
             >
               Pair
             </button>
             <button
               className="button secondary"
-              disabled={!password}
+              disabled={!unlocked}
               onClick={() => void act("pairing")}
             >
               Unpair
@@ -387,7 +405,7 @@ export function Backup() {
                 </label>
                 <button
                   className="button secondary"
-                  disabled={!password || !key}
+                  disabled={!unlocked || !key}
                   onClick={() => void act("pin-key")}
                 >
                   Pin key

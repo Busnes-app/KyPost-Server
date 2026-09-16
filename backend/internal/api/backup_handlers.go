@@ -25,9 +25,10 @@ type backupCredential struct {
 }
 
 // backupGate is the product's step-up for the routes that change backup
-// state: admin session (withAdmin) plus the account credential in the body.
-// Returns the acting admin's user ID on success; the response is already
-// written on failure.
+// state: admin session (withAdmin) plus the account credential in the body,
+// or, for an SSO session, a fresh action-bound KySignOn authorization (see
+// confirmActor). Returns the acting admin's user ID on success; the response
+// is already written on failure.
 func (s *Server) backupGate(w http.ResponseWriter, r *http.Request, into any) (actor string, ok bool) {
 	ac, found := authFromContext(r)
 	if !found {
@@ -56,7 +57,7 @@ func (s *Server) backupGate(w http.ResponseWriter, r *http.Request, into any) (a
 			}
 		}
 	}
-	if !s.confirmAccountCredential(w, r, ac.UserID, cred.Password, cred.AuthSecret) {
+	if !s.confirmActor(w, r, ac.UserID, cred.Password, cred.AuthSecret) {
 		return "", false
 	}
 	if !s.backupAudit(w, "admin.backup_intent", ac.UserID, r.URL.Path, "started", nil) {

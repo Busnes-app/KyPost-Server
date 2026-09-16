@@ -547,12 +547,52 @@ func discoverProvider(ctx context.Context, cfg SSOSettings, redirectURI string) 
 
 // AuthCodeURL builds the authorization request, binding it to this browser
 // with state, to this token with nonce, and to this exchange with PKCE.
-func (p *Provider) AuthCodeURL(state, nonce, challenge string) string {
-	return p.oauth.AuthCodeURL(state,
+// freshLogin asks the provider to authenticate again right now rather than
+// reuse its session, which is what an action-bound step-up needs; FreshProof
+// checks it was honoured.
+func (p *Provider) AuthCodeURL(state, nonce, challenge string, freshLogin bool) string {
+	opts := []oauth2.AuthCodeOption{
 		oidc.Nonce(nonce),
 		oauth2.SetAuthURLParam("code_challenge", challenge),
 		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
-	)
+	}
+	if freshLogin {
+		opts = append(opts,
+			oauth2.SetAuthURLParam("prompt", "login"),
+			oauth2.SetAuthURLParam("max_age", "0"),
+			oauth2.SetAuthURLParam("acr_values", "urn:kysignon:acr:password"),
+		)
+	}
+	return p.oauth.AuthCodeURL(state, opts...)
+}
+
+// FreshProof reports whether the token proves an ordinary authentication
+// performed between start and now: auth_time inside that window and no later
+// than issuance, a password among the methods, and an assurance of password
+// or of MFA backed by a second factor. Token issuance is never a substitute
+// for authentication, and a recovery-code sign-in never counts.
+func (c *SSOTokenClaims) FreshProof(start, now time.Time) bool {
+	if c == nil || c.AuthTime == 0 {
+		return false
+	}
+	at := time.Unix(c.AuthTime, 0)
+	if at.Before(start.Truncate(time.Second)) || at.After(now) || at.After(time.Unix(c.IssuedAt, 0)) {
+		return false
+	}
+	pwd, mfa, factor := false, false, false
+	for _, m := range c.AMR {
+		switch m {
+		case "pwd":
+			pwd = true
+		case "mfa":
+			mfa = true
+		case "otp", "urn:kysignon:amr:push", "urn:kysignon:amr:webauthn":
+			factor = true
+		case "urn:kysignon:amr:recovery":
+			return false
+		}
+	}
+	return pwd && (c.ACR == "urn:kysignon:acr:password" || (c.ACR == "urn:kysignon:acr:mfa" && mfa && factor))
 }
 
 // Exchange redeems the authorization code and returns claims only from an ID
