@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/Busness-app/kypost-server/backend/internal/netguard"
+	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
 )
 
 // This file is the transport policy for the classifier endpoint: which base

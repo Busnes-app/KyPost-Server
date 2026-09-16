@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // authRequestAs simulates an authenticated request the way a real browser

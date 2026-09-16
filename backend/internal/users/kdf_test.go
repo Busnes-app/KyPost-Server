@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/password"
+	"github.com/Busnes-app/ky-primitives/password"
 )
 
 // TestMaxConcurrentKDFFitsWithinLibraryMemoryBudget pins the relationship

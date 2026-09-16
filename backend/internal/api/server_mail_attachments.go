@@ -6,12 +6,12 @@ import (
 	"mime"
 	"net/http"
 
-	"github.com/Busness-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 
 	"strconv"
 	"strings"
 
-	imapadapter "github.com/Busness-app/kypost-server/backend/internal/adapters/imap"
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 )
 
 // attachmentRequestParams reads the shared mailbox/messageId query params of

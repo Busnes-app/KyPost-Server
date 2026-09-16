@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/Busness-app/kypost-server/backend/internal/app"
-	"github.com/Busness-app/kypost-server/backend/internal/logging"
+	"github.com/Busnes-app/kypost-server/backend/internal/app"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"log/slog"
 	"os"
 )

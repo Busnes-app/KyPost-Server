@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/password"
-	"github.com/Busness-app/kypost-server/backend/internal/logging"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/ky-primitives/password"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // loginMaxFailures/loginLockoutFor implement a three-strikes, 15-minute cooldown

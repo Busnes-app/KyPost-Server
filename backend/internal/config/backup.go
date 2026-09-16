@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/ky-primitives/recoveryclient"
 )
 
 // DefaultBackupKeep is how many sealed capsules a local backup directory keeps.

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
 
 // ssoLoginLifetime is the longest a login can take between leaving for the

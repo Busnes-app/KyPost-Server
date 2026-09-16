@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/logging"
-	"github.com/Busness-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
 // adminAndMember comes from server_mail_defaults_test.go (Task 3).

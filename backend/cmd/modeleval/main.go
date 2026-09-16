@@ -48,7 +48,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/adapters/classifier"
+	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
 )
 
 const maxOllamaResponseBytes = 1 << 20

@@ -13,10 +13,10 @@ import (
 
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 
-	imapadapter "github.com/Busness-app/kypost-server/backend/internal/adapters/imap"
-	"github.com/Busness-app/kypost-server/backend/internal/contacts"
-	"github.com/Busness-app/kypost-server/backend/internal/mailmsg"
-	"github.com/Busness-app/kypost-server/backend/internal/pgpmail"
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 )
 
 // extractArmoredPGPPayload is a test-only helper that pulls the armored

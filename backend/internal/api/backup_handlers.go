@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Busness-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/ky-primitives/recoveryclient"
 
-	"github.com/Busness-app/kypost-server/backend/internal/backup"
+	"github.com/Busnes-app/kypost-server/backend/internal/backup"
 )
 
 // depositBudget bounds one run: the library's upload budget is 15 minutes,

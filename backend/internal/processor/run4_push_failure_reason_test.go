@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/health"
-	"github.com/Busness-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/health"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 // run-4 M8: health.Status.NativePushLastError is serialized by the

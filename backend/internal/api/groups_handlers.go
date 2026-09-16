@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Busness-app/kypost-server/backend/internal/groups"
+	"github.com/Busnes-app/kypost-server/backend/internal/groups"
 )
 
 type groupPayload struct {

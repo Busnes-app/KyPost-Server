@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	imapadapter "github.com/Busness-app/kypost-server/backend/internal/adapters/imap"
-	"github.com/Busness-app/kypost-server/backend/internal/logging"
-	"github.com/Busness-app/kypost-server/backend/internal/pgpmail"
-	"github.com/Busness-app/kypost-server/backend/internal/sendas"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 var errFakeRawFetch = errors.New("fake raw message fetch failure")

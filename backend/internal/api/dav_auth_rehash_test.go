@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/fsutil"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // TestDAVAppPasswordRehashesOnSuccessfulVerify plants a legacy scrypt hash in

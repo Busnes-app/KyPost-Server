@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
 
 // Action-bound re-authentication for SSO sessions.

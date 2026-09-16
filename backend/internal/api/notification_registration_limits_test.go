@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 // Registration was unbounded. Delivery walks every registered destination

@@ -21,9 +21,9 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/Busness-app/kypost-server/backend/internal/retry"
+	"github.com/Busnes-app/kypost-server/backend/internal/retry"
 
-	"github.com/Busness-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 )
 
 // DefaultModel is the fallback when OLLAMA_MODEL is unset. It must agree with
