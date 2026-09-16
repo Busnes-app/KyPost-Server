@@ -79,13 +79,17 @@ func (s *Server) sessionOf(r *http.Request) (Session, string, bool) {
 	return sess, c.Value, ok
 }
 
-// confirmActor is the step-up a sensitive action takes: the account credential
-// for a password session, a fresh action-bound KySignOn authorization for an
-// SSO session, which has no password to give. It writes the response and
+// confirmActor is the step-up a sensitive action takes: a fresh action-bound
+// KySignOn authorization for a session KySignOn signed in, the account
+// credential for every other session. A session from a generic provider is
+// deliberately on the credential side: FreshProof speaks KySignOn's
+// assurance vocabulary and nothing else, so sending such a session to its
+// provider would refuse it forever, while the credential check fails closed
+// on its own for an account that has none. It writes the response and
 // returns false when the caller may not proceed.
 func (s *Server) confirmActor(w http.ResponseWriter, r *http.Request, userID, password, authSecret string) bool {
 	sess, token, ok := s.sessionOf(r)
-	if !ok || sess.SSO.Subject == "" {
+	if !ok || !sess.SSOKySignOn {
 		return s.confirmAccountCredential(w, r, userID, password, authSecret)
 	}
 	return s.confirmSSOStepUp(w, r, token)
@@ -144,7 +148,7 @@ func (s *Server) confirmSSOStepUp(w http.ResponseWriter, r *http.Request, sessio
 func (s *Server) handleSSOStepUpStart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	sess, token, ok := s.sessionOf(r)
-	if !ok || sess.SSO.Subject == "" {
+	if !ok || !sess.SSOKySignOn {
 		http.Error(w, "only a session signed in through KySignOn can confirm with it", http.StatusBadRequest)
 		return
 	}
