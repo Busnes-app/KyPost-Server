@@ -68,11 +68,10 @@ calls. `settings/sections/` is per-user, `admin/sections/` is admin-only.
 | `ServerPanel` (`/admin/server`, admin only) | `ApplicationRuntime`, `Backup`, `LabelRules`, `Users`, `SSOConfig`, `WkdDomains` | `GET/PUT /api/config` (instance-wide, including the HOUSE label list that seeds new accounts), `GET /api/server/version` (update card), `GET /api/labels`; `GET/POST /api/users`, `PUT /api/users/{id}`, `POST /api/users/{id}/{reset-password,deactivate,reactivate}` (via `api/users.ts`); `GET/PUT /api/admin/sso`; `GET/POST/DELETE /api/pgp/wkd/domains`, `POST /api/pgp/wkd/domains/{domain}/verify` (via `api/pgp.ts`) |
 | `DiagnosticsPanel` (`/admin/diagnostics`, admin only) | `Logs`, `SystemHealth` (`full={true}`) | `GET /api/logs?file=<name>.log&lines=<n>`, `GET /api/logs/list`; the same health endpoints as `StatusPanel` |
 
-`SSOConfig` carries two of its five fields as inline security warnings, and that
-inline copy is the only place an operator reads them: `allowInsecureIssuer`
-(surfaced only once the issuer is actually cleartext non-loopback) and
-`requireFreshEvents`. The server refuses the same configurations independently —
-this UI is the explanation, not the check.
+`SSOConfig` carries `allowInsecureIssuer` as an inline security warning
+(surfaced only once the issuer is actually cleartext non-loopback), and that
+inline copy is the only place an operator reads it. The server refuses the same
+configuration independently — this UI is the explanation, not the check.
 
 `POST /api/health/repair` is a real admin route with no caller in this SPA;
 it is exercised by operators directly. Do not add a button for it without
