@@ -50,7 +50,7 @@ FROM debian:stable-slim@sha256:328d16499860ae6cb9b345e2e4cebca08c2a36e4f7278482c
 # build arg, the documented build (`docker compose up --build`) passes none, and
 # a label that says the wrong version is worse than one that says nothing. The
 # version lives in the binary; see backend/internal/api/server_version.go.
-LABEL org.opencontainers.image.source="https://github.com/Busness-app/KyPost-Server" \
+LABEL org.opencontainers.image.source="https://github.com/Busnes-app/KyPost-Server" \
       org.opencontainers.image.title="KyPost" \
       org.opencontainers.image.description="Self-hosted IMAP web client that labels mail with a local Ollama model" \
       org.opencontainers.image.licenses="MIT"

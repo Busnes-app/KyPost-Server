@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/mailmsg"
-	"github.com/Busness-app/kypost-server/backend/internal/pgpdiscovery"
-	"github.com/Busness-app/kypost-server/backend/internal/sendas"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
+	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
 )
 
 // selfProbeRetryInterval is how long to wait before re-probing the account's

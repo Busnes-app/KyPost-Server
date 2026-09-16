@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/contacts"
-	"github.com/Busness-app/kypost-server/backend/internal/groups"
-	"github.com/Busness-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/groups"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 	"github.com/emersion/go-vcard"

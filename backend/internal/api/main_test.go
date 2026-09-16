@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busness-app/ky-primitives/password"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
 )
 
 // This package's tests are dominated by scrypt. At the production cost

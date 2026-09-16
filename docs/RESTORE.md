@@ -80,7 +80,7 @@ owner's password/recovery material; a capsule does not bypass that protection.
    Never put shares in argv, chat or shared notes. Docker has no ENTRYPOINT; name
    the executable explicitly, use `-i` for stdin and mount a writable staging root.
    Set `KYPOST_RESTORE_IMAGE` to the recorded compatible image digest reference
-   (`ghcr.io/busness-app/kypost-server@sha256:…`), then run:
+   (`ghcr.io/busnes-app/kypost-server@sha256:…`), then run:
 
    ```sh
    docker run --rm -i --user "$(id -u):$(id -g)" \

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Busness-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // EncryptedPayload is the on-disk envelope format for an AES-GCM sealed

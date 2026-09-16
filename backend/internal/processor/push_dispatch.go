@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/config"
-	"github.com/Busness-app/kypost-server/backend/internal/health"
-	"github.com/Busness-app/kypost-server/backend/internal/retry"
-	"github.com/Busness-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/health"
+	"github.com/Busnes-app/kypost-server/backend/internal/retry"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 
 	"github.com/SherClockHolmes/webpush-go"
 )

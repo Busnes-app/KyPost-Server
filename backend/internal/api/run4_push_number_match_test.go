@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/mfa"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/mfa"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // pushMFAUser creates a user with TOTP, a paired approver device, and push 2FA

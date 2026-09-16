@@ -15,12 +15,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Busness-app/kypost-server/backend/internal/adapters/classifier"
-	imapadapter "github.com/Busness-app/kypost-server/backend/internal/adapters/imap"
-	"github.com/Busness-app/kypost-server/backend/internal/config"
-	"github.com/Busness-app/kypost-server/backend/internal/fsutil"
-	"github.com/Busness-app/kypost-server/backend/internal/redaction"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/redaction"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

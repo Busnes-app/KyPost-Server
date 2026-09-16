@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/ghrelease"
+	"github.com/Busnes-app/kypost-server/backend/internal/ghrelease"
 )
 
 // linuxClientReleasesURL is the LIST endpoint for the Linux client's own
@@ -15,7 +15,7 @@ import (
 // This URL is compiled into every client that asks for it and is permanent
 // for the life of those installs. It was read from the Linux repository's
 // git remote rather than assumed.
-var linuxClientReleasesURL = "https://api.github.com/repos/Busness-app/KyPost-for-Linux/releases"
+var linuxClientReleasesURL = "https://api.github.com/repos/Busnes-app/KyPost-for-Linux/releases"
 
 // linuxClientReleaseMinAge is six hours where serverReleaseMinAge is zero.
 //

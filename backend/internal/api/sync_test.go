@@ -13,8 +13,8 @@ import (
 
 	"github.com/Busness-app/ky-primitives/syncauth"
 
-	"github.com/Busness-app/kypost-server/backend/internal/sso"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 const testSyncKey = "directory-sync-secret-32-bytes!!"

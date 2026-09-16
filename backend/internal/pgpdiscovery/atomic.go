@@ -3,7 +3,7 @@ package pgpdiscovery
 import (
 	"sync"
 
-	"github.com/Busness-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // Every file in this package is mutated read-modify-write: load the current

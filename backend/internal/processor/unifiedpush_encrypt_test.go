@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Busness-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 // --- receiver side of RFC 8291 / RFC 8188 ---------------------------------

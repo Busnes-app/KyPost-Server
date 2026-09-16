@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/adapters/classifier"
-	"github.com/Busness-app/kypost-server/backend/internal/mailmsg"
-	"github.com/Busness-app/kypost-server/backend/internal/ollamaupdate"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
+	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/ollamaupdate"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // versionPollInterval controls how often the installed Ollama and

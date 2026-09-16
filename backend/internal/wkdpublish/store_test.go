@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/wkdpublish"
+	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
 )
 
 func TestCreateAndList(t *testing.T) {

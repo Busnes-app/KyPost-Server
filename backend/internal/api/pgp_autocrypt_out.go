@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"strings"
 
-	"github.com/Busness-app/kypost-server/backend/internal/pgpdiscovery"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 

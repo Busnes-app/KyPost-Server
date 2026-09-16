@@ -3,7 +3,7 @@ package processor
 import (
 	"time"
 
-	"github.com/Busness-app/kypost-server/backend/internal/wkdpublish"
+	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
 )
 
 // recheckWKDInterval is how stale a verified claim may get before the ticker

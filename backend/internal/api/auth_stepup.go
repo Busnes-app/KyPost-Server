@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/mfa"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busness-app/ky-primitives/totp"
-	"github.com/Busness-app/kypost-server/backend/internal/mfa"
-	"github.com/Busness-app/kypost-server/backend/internal/users"
 )
 
 // Re-authentication for a whole surface rather than for one operation.
