@@ -40,11 +40,22 @@ beforeEach(() => {
 
 describe("putDeviceEnvelope", () => {
   it("writes the device slot with the id escaped and the prefix literal", async () => {
-    await putDeviceEnvelope("dev:1", ENVELOPE, "hunter2", 0);
+    await putDeviceEnvelope("dev:1", ENVELOPE, "hunter2", 0, "DEVKEY");
 
     expect(putJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/device:dev%3A1", {
       envelope: JSON.stringify(ENVELOPE),
+      enrollmentPublicKey: "DEVKEY",
       password: "hunter2", expectedRevision: 0
+    });
+  });
+
+  it("names the material generation it sealed on a converted account", async () => {
+    await putDeviceEnvelope("dev:1", ENVELOPE, "hunter2", 4, "DEVKEY", 2);
+
+    expect(putJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/device:dev%3A1", {
+      envelope: JSON.stringify(ENVELOPE),
+      enrollmentPublicKey: "DEVKEY", materialGeneration: 2,
+      password: "hunter2", expectedRevision: 4
     });
   });
 });

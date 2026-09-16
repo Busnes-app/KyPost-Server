@@ -462,7 +462,7 @@ func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
 	if ac, ok := s.currentUser(r); ok {
 		return ac, nil
 	}
-	userID, _, ok, retryAfter := s.deviceAuthFromRequest(r)
+	userID, device, ok, retryAfter := s.deviceAuthFromRequest(r)
 	if !ok {
 		if retryAfter == retryAfterKDFBusy {
 			// A shed secret check is "come back later" too — nothing was
@@ -476,7 +476,7 @@ func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
 		}
 		return AuthContext{}, errMailUnauthorized
 	}
-	return AuthContext{UserID: userID}, nil
+	return AuthContext{UserID: userID, DeviceID: device.DeviceID}, nil
 }
 
 func (s *Server) invalidateUserMail(userID string) {

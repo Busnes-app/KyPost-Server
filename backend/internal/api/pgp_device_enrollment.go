@@ -116,21 +116,30 @@ func (s *Server) handlePGPDeviceEnvelope(w http.ResponseWriter, r *http.Request)
 	slot := users.EnvelopeSlotDevicePrefix + device.DeviceID
 	// WrappedEnvelopes() already omits expired entries, so a transport copy
 	// whose TTL has passed correctly reads as absent rather than being served.
+	// Beside the envelope, the snapshot it was prepared from, so the device
+	// validates the ring it decrypts against the same metadata the browser
+	// sealed and can acknowledge exactly that.
 	for _, e := range u.WrappedEnvelopes() {
 		if e.Slot == slot {
-			writeJSON(w, http.StatusOK, map[string]any{"slot": e.Slot, "envelope": e.Envelope})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"slot": e.Slot, "envelope": e.Envelope, "version": e.Version,
+				"fingerprint": e.Fingerprint, "materialGeneration": e.MaterialGeneration,
+				"pgpRevision": u.PGPRevision, "keyring": u.PGPKeyring, "publicKey": u.PGPPublicKey,
+			})
 			return
 		}
 	}
 	writeJSON(w, http.StatusNotFound, map[string]any{"error": "no envelope sealed for this device"})
 }
 
-// maxEnrollmentStateBytes bounds the state report. The body is one boolean; this
-// is generous headroom and keeps an unbounded read off a device credential.
+// maxEnrollmentStateBytes bounds the state report. The body is a boolean and
+// at most three short fields; this is generous headroom and keeps an unbounded
+// read off a device credential.
 const maxEnrollmentStateBytes = 1 << 10
 
 // handlePGPDeviceEnrollmentState records the calling device's own answer to
-// "can I still open my local envelope".
+// "can I still open my local envelope", and, for a device that just imported
+// a delivery, exactly what it holds.
 //
 // This exists as its own route rather than as a field on registration because the
 // marker must not depend on any push transport. Registration cannot run without a
@@ -140,11 +149,17 @@ const maxEnrollmentStateBytes = 1 << 10
 // registration call is driven by a third-party distributor's cycle, which must not
 // decide when a security-relevant marker is refreshed.
 //
-// The field is REQUIRED here, unlike the tri-state pointer on registration. Absent
-// there means "no opinion", so an older client is never silently marked
+// The boolean is REQUIRED here, unlike the tri-state pointer on registration.
+// Absent there means "no opinion", so an older client is never silently marked
 // un-enrolled. Here, stating an opinion is the entire purpose, so an absent field
 // is a malformed request rather than a false report -- accepting it as false would
 // let a truncated body mark a working device unreadable.
+//
+// A converted account needs more than the boolean. Its ring has a material
+// generation, and a device that says "enrolled" must say which generation,
+// fingerprint and envelope version it holds; the answer is checked against the
+// account's current material and refused with the current values when it is
+// not that. The legacy boolean alone is never proof of v3 enrollment.
 func (s *Server) handlePGPDeviceEnrollmentState(w http.ResponseWriter, r *http.Request) {
 	userID, device, ok, retryAfter := s.deviceAuthFromRequest(r)
 	if !ok {
@@ -156,7 +171,10 @@ func (s *Server) handlePGPDeviceEnrollmentState(w http.ResponseWriter, r *http.R
 		return
 	}
 	var req struct {
-		EncryptionEnrolled *bool `json:"encryptionEnrolled"`
+		EncryptionEnrolled *bool   `json:"encryptionEnrolled"`
+		EnvelopeVersion    int     `json:"envelopeVersion"`
+		MaterialGeneration *uint64 `json:"materialGeneration"`
+		Fingerprint        string  `json:"fingerprint"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxEnrollmentStateBytes)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -172,11 +190,79 @@ func (s *Server) handlePGPDeviceEnrollmentState(w http.ResponseWriter, r *http.R
 		return
 	}
 	// device.DeviceID comes from the verified credential, never from the body.
-	if err := store.SetNativeDeviceEncryptionEnrolled(device.DeviceID, *req.EncryptionEnrolled); err != nil {
-		http.Error(w, "could not store the enrollment state", http.StatusInternalServerError)
+	if !*req.EncryptionEnrolled {
+		if err := store.SetNativeDeviceEncryptionEnrolled(device.DeviceID, false); err != nil {
+			http.Error(w, "could not store the enrollment state", http.StatusInternalServerError)
+			return
+		}
+		s.logger.Info("pgp enrollment state reported", "user_id", userID, "device_id", device.DeviceID, "enrolled", "false")
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
-	s.logger.Info("pgp enrollment state reported", "user_id", userID,
-		"device_id", device.DeviceID, "enrolled", strconv.FormatBool(*req.EncryptionEnrolled))
+	u, err := s.users.Get(userID)
+	if err != nil {
+		http.Error(w, "user unavailable", http.StatusInternalServerError)
+		return
+	}
+	var generation uint64
+	if u.PGPKeyring != nil {
+		generation = u.PGPKeyring.MaterialGeneration
+	}
+	fingerprint := strings.ToUpper(strings.TrimSpace(req.Fingerprint))
+	if req.EnvelopeVersion == 0 && req.MaterialGeneration == nil && fingerprint == "" {
+		if u.PGPKeyring != nil {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":              "this account's keyring needs a generation-aware acknowledgement: state envelopeVersion, materialGeneration and fingerprint",
+				"generationRequired": true,
+				"materialGeneration": generation,
+				"fingerprint":        u.PGPFingerprint,
+			})
+			return
+		}
+		if err := store.SetNativeDeviceEncryptionEnrolled(device.DeviceID, true); err != nil {
+			http.Error(w, "could not store the enrollment state", http.StatusInternalServerError)
+			return
+		}
+		s.logger.Info("pgp enrollment state reported", "user_id", userID, "device_id", device.DeviceID, "enrolled", "true")
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	if req.EnvelopeVersion == 0 || req.MaterialGeneration == nil || fingerprint == "" {
+		http.Error(w, "envelopeVersion, materialGeneration and fingerprint go together", http.StatusBadRequest)
+		return
+	}
+	// An acknowledgement confirms a delivery; it never creates one. The
+	// device row holds what the server delivered, written at delivery time
+	// and out of the device's reach, and the marker is set only when the
+	// acknowledgement is exactly that, still the account's current material,
+	// and, while the transport copy lives, sealed to the key the device still
+	// publishes. Everything the device could learn on its own credential is
+	// therefore not enough: it has to have been sent something.
+	current := *req.MaterialGeneration == generation && strings.EqualFold(fingerprint, u.PGPFingerprint)
+	for _, e := range u.WrappedEnvelopes() {
+		if e.Slot == users.EnvelopeSlotDevicePrefix+device.DeviceID {
+			current = current && e.Version == req.EnvelopeVersion && e.MaterialGeneration == *req.MaterialGeneration && e.EnrollmentKey == device.EnrollmentPublicKey
+		}
+	}
+	confirmed := false
+	if current {
+		var err error
+		confirmed, err = store.ConfirmNativeDeviceEnrollment(device.DeviceID, state.DeviceEnrollment{Version: req.EnvelopeVersion, Generation: *req.MaterialGeneration, Fingerprint: u.PGPFingerprint})
+		if err != nil {
+			http.Error(w, "could not store the enrollment state", http.StatusInternalServerError)
+			return
+		}
+	}
+	if !confirmed {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":              "the acknowledged key material is not what this account delivered to this device; fetch the current envelope and enroll again",
+			"pgpStateChanged":    true,
+			"materialGeneration": generation,
+			"fingerprint":        u.PGPFingerprint,
+		})
+		return
+	}
+	s.logger.Info("pgp enrollment acknowledged", "user_id", userID, "device_id", device.DeviceID,
+		"version", strconv.Itoa(req.EnvelopeVersion), "generation", strconv.FormatUint(generation, 10))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

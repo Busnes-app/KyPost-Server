@@ -118,10 +118,11 @@ func TestPublishEnrollmentKeyRejectsEmptyKey(t *testing.T) {
 func TestDeviceEnvelopeServesOnlyTheCallersOwnSlot(t *testing.T) {
 	srv, userID, deviceID, authDevice := newPairedDeviceForTest(t)
 
-	if _, err := srv.users.SetPGPWrappedEnvelope(userID, users.EnvelopeSlotDevicePrefix+deviceID, `{"v":2,"mine":1}`, "", "", nil); err != nil {
+	mine, theirs := sealedEnvelopeFilled(2, 1), sealedEnvelopeFilled(2, 2)
+	if _, _, err := srv.users.SetPGPDeviceEnvelope(userID, users.DeviceDelivery{DeviceID: deviceID, Envelope: mine, EnrollmentKey: "K", ExpectedFingerprint: "FPR123"}); err != nil {
 		t.Fatalf("seed own slot: %v", err)
 	}
-	if _, err := srv.users.SetPGPWrappedEnvelope(userID, users.EnvelopeSlotDevicePrefix+"someone-else", `{"v":2,"theirs":1}`, "", "", nil); err != nil {
+	if _, _, err := srv.users.SetPGPDeviceEnvelope(userID, users.DeviceDelivery{DeviceID: "someone-else", Envelope: theirs, EnrollmentKey: "K", ExpectedFingerprint: "FPR123"}); err != nil {
 		t.Fatalf("seed other slot: %v", err)
 	}
 
@@ -132,14 +133,19 @@ func TestDeviceEnvelopeServesOnlyTheCallersOwnSlot(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `mine`) {
-		t.Fatalf("did not serve the caller's own envelope: %s", body)
+	var body struct {
+		Envelope string `json:"envelope"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Envelope != mine {
+		t.Fatalf("did not serve the caller's own envelope: %s", rec.Body.String())
 	}
 	// The decisive assertion: another device's sealing must not appear, whatever
 	// the caller asks for. There is no slot parameter precisely so this cannot vary.
-	if strings.Contains(body, `theirs`) {
-		t.Fatalf("served another device's envelope: %s", body)
+	if strings.Contains(rec.Body.String(), theirs) {
+		t.Fatalf("served another device's envelope: %s", rec.Body.String())
 	}
 }
 

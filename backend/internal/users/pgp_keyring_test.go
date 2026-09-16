@@ -45,7 +45,8 @@ func keyringCandidate(t *testing.T) (*Store, string, PGPKeyringUpdate) {
 
 func TestPGPKeyringAtomicConversionRetirementAndPassword(t *testing.T) {
 	s, id, update := keyringCandidate(t)
-	if _, err := s.SetPGPWrappedEnvelope(id, "device:old", `{"v":2}`, "now", "", &update.ExpectedRevision); err != nil {
+	owner, _ := s.Get(id)
+	if _, _, err := s.SetPGPDeviceEnvelope(id, DeviceDelivery{DeviceID: "old", Envelope: deviceEnvelope(2), AddedAt: "now", EnrollmentKey: "K", ExpectedFingerprint: owner.PGPFingerprint, ExpectedRevision: &update.ExpectedRevision}); err != nil {
 		t.Fatal(err)
 	}
 	converted, err := s.CommitPGPKeyring(context.Background(), id, update)
@@ -157,7 +158,9 @@ func TestPGPKeyringRejectsLegacyWritersAndPreservesReset(t *testing.T) {
 			return s.SetPGPWrappedEnvelope(id, EnvelopeSlotRecovery, `{"v":2}`, "now", u.PGPFingerprint, &rev)
 		}},
 		{"device-v2", func() (User, error) {
-			return s.SetPGPWrappedEnvelope(id, "device:old", `{"v":2}`, "now", u.PGPFingerprint, &rev)
+			// A device delivery without the snapshot revision is a legacy writer too.
+			out, _, err := s.SetPGPDeviceEnvelope(id, DeviceDelivery{DeviceID: "old", Envelope: deviceEnvelope(3), AddedAt: "now", EnrollmentKey: "K", ExpectedFingerprint: u.PGPFingerprint, ExpectedGeneration: 1})
+			return out, err
 		}},
 		{"no-revision-delete", func() (User, error) { return s.ClearPGPIdentity(id, nil) }},
 		{"no-revision-reset", func() (User, error) { return s.SetPassword(context.Background(), id, "reset-test-password", true, nil) }},

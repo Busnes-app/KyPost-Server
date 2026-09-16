@@ -71,6 +71,7 @@ var (
 	_ = kylog.DeclareString("fetched_through")
 	_ = kylog.DeclareString("field")
 	_ = kylog.DeclareString("fingerprint")
+	_ = kylog.DeclareString("generation")
 	_ = kylog.DeclareString("hard_cap")
 	_ = kylog.DeclareString("header")
 	_ = kylog.DeclareString("header_reports")

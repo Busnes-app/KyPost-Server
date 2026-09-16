@@ -101,6 +101,16 @@ type NativeDevice struct {
 	// turned on would tell the user a device is protected when it can read
 	// nothing, so the device restates it on every registration call.
 	EncryptionEnrolled bool `json:"encryptionEnrolled"`
+	// EnrolledVersion, EnrolledGeneration and EnrolledFingerprint are what the
+	// server delivered to this device, written at delivery and only ever
+	// confirmed by the device's acknowledgement (EncryptionEnrolled). The
+	// device cannot write them, so no acknowledgement can create an enrollment
+	// the account did not deliver. A send from a device whose recorded
+	// generation is no longer the account's current one is refused until it
+	// enrolls again.
+	EnrolledVersion     int    `json:"enrolledVersion,omitempty"`
+	EnrolledGeneration  uint64 `json:"enrolledGeneration,omitempty"`
+	EnrolledFingerprint string `json:"enrolledFingerprint,omitempty"`
 	// SecretHash is the hash of this device's own pairing secret, minted once
 	// at registration — users.HashDeviceSecret format, or the legacy scrypt
 	// format users.HashPassword used to write, for devices paired before
@@ -910,7 +920,8 @@ func (s *Store) RemoveNotificationSubscription(endpoint string) (bool, error) {
 
 const deviceColumns = `device_id, platform, push_token, device_name, app_version,
 	user_agent, registered_at, updated_at, user_id, mfa_approver, transport, secret_hash,
-	enrollment_public_key, enrollment_key_at, encryption_enrolled, p256dh, auth, enrollment_envelope_versions`
+	enrollment_public_key, enrollment_key_at, encryption_enrolled, p256dh, auth, enrollment_envelope_versions,
+	enrolled_version, enrolled_generation, enrolled_fingerprint`
 
 func scanDevice(rows *sql.Rows) (NativeDevice, error) {
 	var d NativeDevice
@@ -918,7 +929,8 @@ func scanDevice(rows *sql.Rows) (NativeDevice, error) {
 	var versions string
 	err := rows.Scan(&d.DeviceID, &d.Platform, &d.PushToken, &d.DeviceName, &d.AppVersion,
 		&d.UserAgent, &d.RegisteredAt, &d.UpdatedAt, &d.UserID, &approver, &d.Transport, &d.SecretHash,
-		&d.EnrollmentPublicKey, &d.EnrollmentKeyAt, &enrolled, &d.P256DH, &d.Auth, &versions)
+		&d.EnrollmentPublicKey, &d.EnrollmentKeyAt, &enrolled, &d.P256DH, &d.Auth, &versions,
+		&d.EnrolledVersion, &d.EnrolledGeneration, &d.EnrolledFingerprint)
 	if err != nil {
 		return d, err
 	}
@@ -935,7 +947,7 @@ func insertDevice(e execer, d NativeDevice, seq int) error {
 	}
 	_, err = e.Exec(
 		`INSERT INTO native_devices(`+deviceColumns+`, seq)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(device_id) DO UPDATE SET
 		   platform = excluded.platform, push_token = excluded.push_token,
 		   device_name = excluded.device_name, app_version = excluded.app_version,
@@ -947,11 +959,14 @@ func insertDevice(e execer, d NativeDevice, seq int) error {
 		   enrollment_key_at = excluded.enrollment_key_at,
 		   enrollment_envelope_versions = excluded.enrollment_envelope_versions,
 		   encryption_enrolled = excluded.encryption_enrolled,
-		   p256dh = excluded.p256dh, auth = excluded.auth`,
+		   p256dh = excluded.p256dh, auth = excluded.auth,
+		   enrolled_version = excluded.enrolled_version,
+		   enrolled_generation = excluded.enrolled_generation,
+		   enrolled_fingerprint = excluded.enrolled_fingerprint`,
 		d.DeviceID, d.Platform, d.PushToken, d.DeviceName, d.AppVersion, d.UserAgent,
 		d.RegisteredAt, d.UpdatedAt, d.UserID, boolToInt(d.MFAApprover), d.Transport, d.SecretHash,
 		d.EnrollmentPublicKey, d.EnrollmentKeyAt, boolToInt(d.EncryptionEnrolled),
-		d.P256DH, d.Auth, versions, seq)
+		d.P256DH, d.Auth, versions, d.EnrolledVersion, d.EnrolledGeneration, d.EnrolledFingerprint, seq)
 	return err
 }
 
@@ -1043,6 +1058,7 @@ func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
 	device.EnrollmentKeyAt = ""
 	device.EnrollmentEnvelopeVersions = nil
 	device.EncryptionEnrolled = false
+	device.EnrolledVersion, device.EnrolledGeneration, device.EnrolledFingerprint = 0, 0, ""
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	if strings.TrimSpace(device.RegisteredAt) == "" {
@@ -1056,10 +1072,12 @@ func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
 	var existing enrollmentState
 	err := tx.QueryRow(
 		`SELECT seq, registered_at, mfa_approver,
-		        enrollment_public_key, enrollment_key_at, encryption_enrolled, enrollment_envelope_versions
+		        enrollment_public_key, enrollment_key_at, encryption_enrolled, enrollment_envelope_versions,
+		        enrolled_version, enrolled_generation, enrolled_fingerprint
 		 FROM native_devices WHERE device_id = ?`,
 		device.DeviceID).Scan(&existingSeq, &existingRegistered, &existingApprover,
-		&existing.publicKey, &existing.keyAt, &existing.enrolled, &existing.versions)
+		&existing.publicKey, &existing.keyAt, &existing.enrolled, &existing.versions,
+		&existing.version, &existing.generation, &existing.fingerprint)
 	if err == nil {
 		if existingRegistered != "" {
 			device.RegisteredAt = existingRegistered
@@ -1081,11 +1099,13 @@ func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
 		var match enrollmentState
 		err := tx.QueryRow(
 			`SELECT device_id, registered_at, seq, mfa_approver, user_id,
-			        enrollment_public_key, enrollment_key_at, encryption_enrolled, enrollment_envelope_versions
+			        enrollment_public_key, enrollment_key_at, encryption_enrolled, enrollment_envelope_versions,
+			        enrolled_version, enrolled_generation, enrolled_fingerprint
 			 FROM native_devices
 			 WHERE push_token = ? AND platform = ? ORDER BY seq LIMIT 1`,
 			device.PushToken, device.Platform).Scan(&matchID, &matchRegistered, &matchSeq, &matchApprover, &matchUserID,
-			&match.publicKey, &match.keyAt, &match.enrolled, &match.versions)
+			&match.publicKey, &match.keyAt, &match.enrolled, &match.versions,
+			&match.version, &match.generation, &match.fingerprint)
 		if err == nil {
 			if _, err := tx.Exec(`DELETE FROM native_devices WHERE device_id = ?`, matchID); err != nil {
 				return err
@@ -1152,16 +1172,20 @@ func (s *Store) RemoveNativeDevice(deviceID string) (bool, error) {
 // refresh would silently erase the key mid-ceremony, and the browser would then
 // seal to a key that no longer exists.
 type enrollmentState struct {
-	publicKey string
-	keyAt     string
-	enrolled  int
-	versions  string
+	publicKey   string
+	keyAt       string
+	enrolled    int
+	versions    string
+	version     int
+	generation  uint64
+	fingerprint string
 }
 
 func (e enrollmentState) applyTo(d *NativeDevice) error {
 	d.EnrollmentPublicKey = e.publicKey
 	d.EnrollmentKeyAt = e.keyAt
 	d.EncryptionEnrolled = e.enrolled == 1
+	d.EnrolledVersion, d.EnrolledGeneration, d.EnrolledFingerprint = e.version, e.generation, e.fingerprint
 	var err error
 	d.EnrollmentEnvelopeVersions, err = decodeEnrollmentVersions(e.versions)
 	return err
@@ -1246,17 +1270,78 @@ func (s *Store) SetNativeDeviceEnrollmentKey(deviceID, publicKey, at string, ver
 	return d, nil
 }
 
+// DeviceEnrollment names one delivery: the envelope version and the material
+// generation and active fingerprint the account had when it was sealed.
+type DeviceEnrollment struct {
+	Version     int
+	Generation  uint64
+	Fingerprint string
+}
+
+// RecordNativeDeviceDelivery writes what the server just delivered to the
+// device, unconfirmed: the enrolled marker is cleared until the device
+// acknowledges exactly this. A newer delivery supersedes an older one.
+func (s *Store) RecordNativeDeviceDelivery(deviceID string, e DeviceEnrollment) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return fmt.Errorf("delivery: empty device id")
+	}
+	res, err := s.db.Exec(
+		`UPDATE native_devices
+		 SET encryption_enrolled = 0, enrolled_version = ?, enrolled_generation = ?, enrolled_fingerprint = ?, updated_at = ?
+		 WHERE device_id = ?`,
+		e.Version, e.Generation, e.Fingerprint, time.Now().UTC().Format(time.RFC3339), deviceID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("delivery: no such device %q", deviceID)
+	}
+	return nil
+}
+
+// ConfirmNativeDeviceEnrollment sets the enrolled marker only when e is
+// exactly what RecordNativeDeviceDelivery wrote for this device. It reports
+// false, and changes nothing, for any other acknowledgement: a device can
+// confirm a delivery, never invent one.
+func (s *Store) ConfirmNativeDeviceEnrollment(deviceID string, e DeviceEnrollment) (bool, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" || e.Version == 0 || e.Fingerprint == "" {
+		return false, nil
+	}
+	res, err := s.db.Exec(
+		`UPDATE native_devices SET encryption_enrolled = 1, updated_at = ?
+		 WHERE device_id = ? AND enrolled_version = ? AND enrolled_generation = ? AND enrolled_fingerprint = ?`,
+		time.Now().UTC().Format(time.RFC3339), deviceID, e.Version, e.Generation, e.Fingerprint)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // SetNativeDeviceEncryptionEnrolled records the device's own answer to "can I
 // still decrypt". Both directions must work — see EncryptionEnrolled. An absent
 // device is an error, for the same reason as SetNativeDeviceEnrollmentKey.
+// Saying no also forgets the delivery record, so the device needs a fresh
+// delivery before it can be enrolled again; saying yes on its own leaves the
+// record as it was.
 func (s *Store) SetNativeDeviceEncryptionEnrolled(deviceID string, enrolled bool) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
 		return fmt.Errorf("encryption enrolled: empty device id")
 	}
-	res, err := s.db.Exec(
-		`UPDATE native_devices SET encryption_enrolled = ?, updated_at = ? WHERE device_id = ?`,
-		boolToInt(enrolled), time.Now().UTC().Format(time.RFC3339), deviceID)
+	query := `UPDATE native_devices SET encryption_enrolled = 1, updated_at = ? WHERE device_id = ?`
+	if !enrolled {
+		query = `UPDATE native_devices
+		 SET encryption_enrolled = 0, enrolled_version = 0, enrolled_generation = 0, enrolled_fingerprint = '', updated_at = ?
+		 WHERE device_id = ?`
+	}
+	res, err := s.db.Exec(query, time.Now().UTC().Format(time.RFC3339), deviceID)
 	if err != nil {
 		return err
 	}
@@ -1297,9 +1382,11 @@ func (s *Store) ClearDeviceEnrollments() (int, error) {
 	res, err := s.db.Exec(
 		`UPDATE native_devices
 		 SET enrollment_public_key = '', enrollment_key_at = '', enrollment_envelope_versions = '[2]',
-		     encryption_enrolled = 0, updated_at = ?
+		     encryption_enrolled = 0, enrolled_version = 0, enrolled_generation = 0, enrolled_fingerprint = '',
+		     updated_at = ?
 		 WHERE enrollment_public_key != '' OR enrollment_key_at != ''
-		    OR encryption_enrolled != 0 OR enrollment_envelope_versions != '[2]'`,
+		    OR encryption_enrolled != 0 OR enrollment_envelope_versions != '[2]'
+		    OR enrolled_version != 0 OR enrolled_generation != 0 OR enrolled_fingerprint != ''`,
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, err

@@ -12,7 +12,7 @@ import { ContactPickerModal } from "./components/ContactPickerModal";
 import { RecipientField } from "./components/RecipientField";
 import { useDialogOpen } from "./hooks/useDialogOpen";
 import { contactToToken, isDuplicateInField, parseRecipientField, pickupFallbackFlag, serializeRecipientField, splitAddressList } from "./lib/recipients";
-import { accountAddress, clearPGPSession, isClientProtected, loadPGPSession, needsUnlock, pgpCustody, subscribePGPSession } from "./lib/pgpSession";
+import { accountAddress, clearPGPSession, isClientProtected, loadPGPSession, needsUnlock, pgpCustody, pgpSessionState, subscribePGPSession } from "./lib/pgpSession";
 import { isUnlocked } from "./lib/keyVault";
 import { buildEncryptedDeliveries, buildEncryptedDraft, buildEncryptedSentCopy, buildSignedDelivery, encryptedAttachmentBudget, OUTER_PLACEHOLDER_SUBJECT } from "./lib/pgpClient";
 import { sealPickup } from "./lib/pickupCrypto";
@@ -924,7 +924,8 @@ export function App() {
       bcc: bccList,
       sentCopy,
       sentCopyEncrypted: true,
-      mode: "html"
+      mode: "html",
+      materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration
     });
     return result.warning ?? "";
   }
@@ -1036,7 +1037,8 @@ export function App() {
         bcc: keyedBcc,
         sentCopy,
         sentCopyEncrypted: true,
-        mode: "html"
+        mode: "html",
+        materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration
       });
       warning = result.warning ?? "";
     }
