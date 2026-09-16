@@ -30,11 +30,19 @@ export type ApproverDevice = {
  * knows about sealings, so a row built from the MFA status alone has no answer
  * and must not invent the reassuring one.
  */
-export type MailAccess = "enrolled" | "available" | "unsupported" | "unknown";
+export type MailAccess = "enrolled" | "stale" | "available" | "unsupported" | "unknown";
 
-function mailAccessFor(device: NativeDevice): MailAccess {
+/**
+ * `currentGeneration` is the account's keyring material generation, absent
+ * for a legacy account. A device that confirmed a different generation holds
+ * retired material: the server refuses its sends until it enrolls again, so
+ * the row must not call it enrolled.
+ */
+function mailAccessFor(device: NativeDevice, currentGeneration?: number): MailAccess {
   if (!device.enrollmentPublicKey) return "unsupported";
-  return device.encryptionEnrolled ? "enrolled" : "available";
+  if (!device.encryptionEnrolled) return "available";
+  if (currentGeneration !== undefined && device.enrolledGeneration !== currentGeneration) return "stale";
+  return "enrolled";
 }
 
 export type DeviceRow = {
@@ -83,7 +91,8 @@ function approverLabel(device: ApproverDevice): string {
  */
 export function joinDeviceRows(
   devices: NativeDevice[],
-  approvers: ApproverDevice[]
+  approvers: ApproverDevice[],
+  currentGeneration?: number
 ): DeviceRow[] {
   const byId = new Map<string, ApproverDevice>();
   for (const approver of approvers) {
@@ -113,7 +122,7 @@ export function joinDeviceRows(
       cannotApproveReason: approver?.cannotApproveReason,
       missingFromInventory: false,
       approvalUnavailable: !approver,
-      mailAccess: mailAccessFor(device)
+      mailAccess: mailAccessFor(device, currentGeneration)
     };
   });
 

@@ -12,6 +12,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- **Browser v3 device enrollment.** On a converted account the Security page seals the complete keyring as v3 for a paired device, refuses a device whose app has not claimed v3 before asking for a code, and names the enrollment key and generation on the upload. A device confirmed at an older generation shows as holding retired material with an "Enroll again" action, since the server refuses its sends.
 - **Device-envelope v3 delivery contract.** A `device:` slot delivery is bound to the device's published enrollment key, the snapshot revision and the keyring's material generation; the server parses the envelope framing, delivers v3 to a converted account and v2 to a legacy one, and refuses a version the device did not advertise. `GET /api/pgp/device/envelope` returns the version, fingerprint and generation beside the envelope. `POST /api/pgp/device/enrollment-state` takes a generation-aware acknowledgement, refuses a bare or stale one on a converted account, and the owner's device listing shows what each device holds. `POST /api/mail/send-pgp` refuses a stale `materialGeneration` on a converted account and a paired device not enrolled at the current generation. The browser now names the enrollment key and generation when it delivers, and the generation when it sends.
 
 - Only a session signed in through KySignOn itself takes the KySignOn step-up; a session from Authentik or Keycloak keeps the password gate for the Security page and backup actions instead of being refused forever.

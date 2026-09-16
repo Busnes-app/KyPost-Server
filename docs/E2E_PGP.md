@@ -315,10 +315,12 @@ Implemented:
     `GET /api/notifications/native/devices` exposes the sorted list as
     `enrollmentEnvelopeVersions` on each redacted device in the signed-in user's
     inventory. Browsers treat an absent/null field from older servers as `[2]`
-    and reject malformed lists. Current webmail delivers only v2 and refuses
-    setup before requesting a code/password when the device's list excludes 2.
-    It does not select v3 yet. Claims are compatibility metadata, not proof of
-    key possession, durable import or freshness at a later upload; retain SAS.
+    and reject malformed lists. Webmail delivers the complete ring as v3 to a
+    device on a converted account (`sealKeyringForDevice`) and v2 on a legacy
+    one, and refuses setup before requesting a code or password when the
+    device's list excludes the version the account needs. Claims are
+    compatibility metadata, not proof of key possession, durable import or
+    freshness at a later upload; retain SAS.
     The server binds each delivery to the published key, the snapshot revision
     and the material generation, and each acknowledgement to the same (the
     `device:` slot `PUT` and `POST .../enrollment-state` entries here). Only
