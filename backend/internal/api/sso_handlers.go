@@ -411,7 +411,26 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.startSession(w, r, user.ID); err != nil {
+	// The provider may have ended this login while the browser was on its way
+	// back; a logout token that already arrived fences the session it names.
+	identity := sso.SessionIdentity{
+		Issuer:    claims.Issuer,
+		ClientID:  settings.ClientID,
+		Subject:   claims.Sub,
+		SessionID: claims.SessionID,
+		IssuedAt:  time.Unix(claims.IssuedAt, 0),
+	}
+	loggedOut, err := s.ssoLifecycle.LoggedOut(identity)
+	if err != nil {
+		s.ssoFailure(w, "lifecycle", err)
+		return
+	}
+	if loggedOut {
+		http.Error(w, "Access denied: this sign-in was ended by the identity provider. Sign in again.", http.StatusForbidden)
+		return
+	}
+
+	if err := s.mintSession(w, r, Session{UserID: user.ID, SSO: identity}); err != nil {
 		http.Error(w, "failed to initialize session", http.StatusInternalServerError)
 		return
 	}

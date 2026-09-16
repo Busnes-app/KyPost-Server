@@ -585,6 +585,7 @@ Important files:
 - `/kypost/config/users.json` (user accounts and roles)
 - `/kypost/config/users/<userID>/` (per-user IMAP credentials, CardDAV-client credentials, tuning, notification preferences)
 - `/kypost/config/mail-defaults.json` (admin-published instance-wide host and port defaults, no credentials)
+- `/kypost/config/sso-lifecycle.json` (accepted SSO logout tokens and their fences; small, pruned on write)
 - `/kypost/config/TUNING.md` (default tuning for new users)
 - `/kypost/config/notifications-vapid-private.pem` (shared web-push signing key)
 - `/kypost/private/imap-config.key` (master encryption key for stored IMAP credentials)
@@ -737,7 +738,8 @@ Single Sign-On (OpenID Connect):
 - `GET /api/auth/sso-config` — public `{enabled, issuerUrl}` that gates the sign-in button. Never returns the client secret.
 - `GET /api/auth/oidc/login` (alias `/auth/sso/login`) — starts the authorization-code flow for signing in.
 - `POST /api/settings/sso/link` — links the provider identity to the *caller's own* account. Requires the account password (and the two-factor code, when one is enrolled) re-entered now, because a linked identity is a way to sign in.
-- `GET /api/auth/oidc/callback` (alias `/auth/sso/callback`) — verifies the ID token, then signs in, auto-provisions, or links by `sub`.
+- `GET /api/auth/oidc/callback` (alias `/auth/sso/callback`) — verifies the ID token, then signs in, auto-provisions, or links by `sub`. The session remembers the provider's `sid`, so the provider can end it.
+- `POST /api/auth/oidc/backchannel-logout` — OpenID Connect back-channel logout receiver. Register it at the provider (KySignOn: the client's *back-channel logout URI*). The `logout_token` is verified against the issuer's JWKS, admitted once durably, and ends the session it names, or every session of the subject when it names none. Needs an `https` issuer.
 - `POST /api/settings/sso/unlink`
 - `GET|PUT /api/admin/sso` (admin only. The provider configuration.)
 - `POST /api/sync/webhook` (directory replication push from KySignOn, authenticated by an HMAC over the event body)

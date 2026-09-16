@@ -140,6 +140,7 @@ var publicRoutes = map[string]string{
 	"GET /api/auth/captcha-config":           "tells an anonymous browser which CAPTCHA widget to render",
 	"GET /api/auth/sso-config":               "tells an anonymous browser whether SSO login is enabled",
 	"GET /api/auth/oidc/login":               "initiates OIDC authorization flow before user is authenticated",
+	"POST /api/auth/oidc/backchannel-logout": "receives a signed logout token from the identity provider; the token is the credential",
 	"GET /auth/sso/login":                    "alias for OIDC authorization flow initialization",
 	"GET /api/auth/oidc/callback":            "redeems OIDC authorization code for a session",
 	"GET /auth/sso/callback":                 "alias for OIDC authorization code callback",
