@@ -30,6 +30,10 @@ const maxLogoutTokenBytes = 64 << 10
 //
 // An acknowledgement means the token was accepted, not that a session
 // existed: a logout for a session this server never saw is a success.
+//
+// The per-IP limiter is charged before discovery, which is an outbound fetch
+// to the operator's provider, and refunded once the delivery is accepted: a
+// burst of real logouts is never throttled, junk pays for itself.
 func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 
@@ -38,10 +42,13 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Single Sign-On is not configured or disabled", http.StatusServiceUnavailable)
 		return
 	}
+	if s.ssoRateLimited(w, r) {
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxLogoutTokenBytes)
 	if err := r.ParseForm(); err != nil || len(r.PostForm["logout_token"]) != 1 {
-		s.rejectLogout(w, r, "expected exactly one logout_token form field")
+		http.Error(w, "expected exactly one logout_token form field", http.StatusBadRequest)
 		return
 	}
 	token := r.PostForm["logout_token"][0]
@@ -54,7 +61,7 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 
 	claims, err := provider.VerifyLogout(r.Context(), token)
 	if err != nil {
-		s.rejectLogout(w, r, "invalid logout token")
+		http.Error(w, "invalid logout token", http.StatusBadRequest)
 		return
 	}
 
@@ -69,24 +76,16 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !fresh {
-		s.rejectLogout(w, r, "logout token was already used")
+		http.Error(w, "logout token was already used", http.StatusBadRequest)
 		return
 	}
 
 	revoked := s.revokeSessionsCoveredBy(event)
+	if s.loginParamsLimiter != nil {
+		s.loginParamsLimiter.settleCost(lockoutKeyForIP(clientIP(r)), -1)
+	}
 	s.logger.Info("SSO back-channel logout applied", "jti", claims.JWTID, "sessions", strconv.Itoa(revoked))
 	writeJSON(w, http.StatusOK, map[string]any{"status": "logged_out"})
-}
-
-// rejectLogout answers an unverifiable delivery, spending the per-IP limiter
-// only on this path: a verified token cost the caller a signature, so a burst
-// of real logouts from the provider must never be throttled by junk arriving
-// alongside them.
-func (s *Server) rejectLogout(w http.ResponseWriter, r *http.Request, msg string) {
-	if s.ssoRateLimited(w, r) {
-		return
-	}
-	http.Error(w, msg, http.StatusBadRequest)
 }
 
 // revokeSessionsCoveredBy deletes every session the logout addresses and

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,27 @@ func TestBackchannelLogoutFencesTheLoginInFlight(t *testing.T) {
 
 	// A fresh session id for the same subject is a different login.
 	ssoSignIn(t, srv, idp, "carol", "sid-c2")
+}
+
+func TestBackchannelLogoutMetersDiscoveryFailures(t *testing.T) {
+	srv, idp := setupSSOTestServer(t)
+	idp.Server.Close() // discovery now fails on every request
+	for range loginParamsBurst + 5 {
+		if postLogout(srv, logoutForm("a.b.c")).Code == http.StatusTooManyRequests {
+			return
+		}
+	}
+	t.Fatal("route performs an unmetered outbound discovery per request")
+}
+
+func TestBackchannelLogoutNeverThrottlesAcceptedDeliveries(t *testing.T) {
+	srv, idp := setupSSOTestServer(t)
+	for i := range loginParamsBurst + 5 {
+		rec := postLogout(srv, logoutForm(idp.LogoutToken(t, "alice", "sid-"+strconv.Itoa(i), nil)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("delivery %d: status = %d, want 200: %s", i, rec.Code, rec.Body.String())
+		}
+	}
 }
 
 func TestBackchannelLogoutRefusesUnverifiableTokens(t *testing.T) {

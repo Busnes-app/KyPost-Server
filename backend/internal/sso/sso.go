@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/Busness-app/ky-primitives/oidcverify"
@@ -132,9 +133,13 @@ var (
 )
 
 // SetTransport replaces the transport used for every provider request and
-// returns the previous one. Test-only: it exists because oidcverify refuses
-// a cleartext issuer, so the test provider must serve TLS.
+// returns the previous one. It exists because oidcverify refuses a cleartext
+// issuer, so the test provider must serve TLS; outside a test binary it
+// panics, so nothing shipped can install a transport that skips verification.
 func SetTransport(rt http.RoundTripper) (previous http.RoundTripper) {
+	if !testing.Testing() {
+		panic("sso.SetTransport is test-only")
+	}
 	transportMu.Lock()
 	defer transportMu.Unlock()
 	previous, baseTransport = baseTransport, rt
