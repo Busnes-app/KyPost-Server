@@ -1090,6 +1090,6 @@ KyPost is released under the [MIT License](LICENSE.txt).
 
 [![OctoCounts](https://api.octocounts.com/badge/Busnes-app/KyPost-Server/branch/main)](https://octocounts.com/github/Busnes-app/KyPost-Server/tree/main)
 
-## Upgrading from ghcr.io/busness-app
+## Upgrading after the Busnes-app owner move
 
-The GitHub organisation was renamed on 2026-09-16 and the image now lives at `ghcr.io/busnes-app/kypost-server`. The project no longer controls `ghcr.io/busness-app`; GHCR does not redirect it, and anything served under that name must be treated as untrusted. If `KYPOST_IMAGE` in `.env` still names the old namespace, re-pinning is required, not optional: run the digest procedure in `docs/RESTORE.md`, which resolves the commit you choose to a digest, verifies its attestation and writes the pin, then `docker compose pull`.
+The GitHub organisation was renamed on 2026-09-16 and the image now lives at `ghcr.io/busnes-app/kypost-server`. The project no longer controls `ghcr.io/busness-app`; GHCR does not redirect it, and anything served under that name must be treated as untrusted. If `KYPOST_IMAGE` in `.env` still names the old namespace, re-pinning is required, not optional: first inspect `git remote -v` and replace a retired-owner remote with `https://github.com/Busnes-app/KyPost-Server.git` (prefer a fresh clone plus a known commit). Then remove or correct `KYPOST_IMAGE`, and run [`scripts/update-host.sh`](scripts/update-host.sh), which resolves `stable` to a digest and verifies its GitHub build attestation before updating the service. See [Updating KyPost](#updating-kypost) for the procedure.
