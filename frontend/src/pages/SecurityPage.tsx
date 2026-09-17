@@ -168,7 +168,7 @@ export function SecurityPage() {
   const pushOn = Boolean(status?.pushMfaEnabled);
   // One list from two sources — see pages/security/deviceJoin.ts for what
   // happens when they disagree.
-  const deviceRows = joinDeviceRows(nativeDevices, status?.approverDevices ?? []);
+  const deviceRows = joinDeviceRows(nativeDevices, status?.approverDevices ?? [], pgpSession?.bootstrap?.keyring?.materialGeneration);
   const approverCount = countApprovers(deviceRows);
   const mailEnrolledCount = countMailEnrolled(deviceRows);
   const approvalsOn = pushOn && approverCount > 0;

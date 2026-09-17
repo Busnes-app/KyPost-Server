@@ -182,8 +182,9 @@ legacy defaults and bounds in `E2E_PGP.md`. The server now delivers v3 to a
 converted account and v2 to a legacy one, bound to the device's published key,
 the snapshot revision and the material generation, and takes a generation-aware
 acknowledgement from the device; the exact contract is in `E2E_PGP.md`. The
-browser still seals v2 only, so a converted account's device enrollment waits
-for the browser's v3 ceremony. Converted accounts require v3 support and
+browser seals the complete ring as v3 for a converted account and the single
+key as v2 for a legacy one, and shows a device whose confirmed generation is
+not the current one as holding retired material. Converted accounts require v3 support and
 otherwise show update-required. Legacy accounts may continue v2. Never downgrade a
 converted account to active-key-only delivery.
 
@@ -192,8 +193,8 @@ V3 uses the existing installed ECDH/HKDF/AEAD primitives, with a distinct
 fingerprint, carrying the complete versioned ring. Retain the existing SAS check
 before sealing; a capability advertisement is not proof of key ownership.
 The preparation helper and shared vectors below pin the framing. The server-side
-upload, delivery and acknowledgement contract exists; the browser's v3 ceremony,
-native consumers and conversion remain gated.
+upload, delivery and acknowledgement contract and the browser's v3 ceremony
+exist; native consumers and conversion remain gated.
 
 ### V3 framing and interoperability vectors
 

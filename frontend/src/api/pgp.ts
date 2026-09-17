@@ -1,7 +1,7 @@
 import { parseKeyringMetadata, type KeyringMetadata } from "../lib/pgpKeyring";
 import { getJSON, postJSON, putJSON, deleteJSON } from "./client";
 import { credentialFields, deriveCredential } from "./auth";
-import type { DeviceEnvelope } from "../lib/deviceEnrollment";
+import type { DeviceEnvelope, KeyringDeviceEnvelope } from "../lib/deviceEnrollment";
 import { parseEnvelope, type RecoveryBackup, type WrappedKeyEnvelope } from "../lib/keyVault";
 
 export type PGPIdentity = {
@@ -444,7 +444,7 @@ export function createSealedPickup(
  */
 export async function putDeviceEnvelope(
   deviceId: string,
-  envelope: DeviceEnvelope,
+  envelope: DeviceEnvelope | KeyringDeviceEnvelope,
   password: string,
   expectedRevision: number,
   /** The device key the envelope was sealed to; the server refuses a delivery for a key the device has since replaced. */

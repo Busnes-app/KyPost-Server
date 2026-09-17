@@ -3,11 +3,12 @@ import { toErrorMessage } from "../api/client";
 import { waitForDeviceEnrollment, type NativeDevice } from "../api/devices";
 import { deleteDeviceEnvelope, putDeviceEnvelope, requirePGPRevision } from "../api/pgp";
 import { pgpSessionState, unlockedPGPIdentity } from "../lib/pgpSession";
-import { requireUnlockedKey } from "../lib/keyVault";
+import { requireUnlockedKey, requireUnlockedKeyMaterial } from "../lib/keyVault";
 import type { MailAccess } from "../pages/security/deviceJoin";
 import {
   explainEnrollmentFailure,
   sealEnvelopeForDevice,
+  sealKeyringForDevice,
   verifyEnrollmentCode,
   type EnrollmentFailure
 } from "../lib/deviceEnrollment";
@@ -94,6 +95,23 @@ export function DeviceMailAccessStatus({
       </>
     );
   }
+  if (mailAccess === "stale") {
+    // The server refuses this device's sends until it holds the current
+    // ring, so "enrolled" would be a lie about the one thing the user asks.
+    return (
+      <>
+        <p className="sec-muted">
+          This device holds an older copy of your keys. It can still read mail sealed to those
+          keys, but cannot send until it is enrolled again. To revoke its copy, replace your key
+          on the Encryption tab.
+        </p>
+        <div className="sec-actions">
+          <button type="button" onClick={() => onOpenPanel("enroll")}>Enroll again</button>
+          <button type="button" onClick={() => onOpenPanel("remove")}>Remove sealing</button>
+        </div>
+      </>
+    );
+  }
   return (
     <>
       <p className="sec-muted">Not enrolled. It cannot read your encrypted mail.</p>
@@ -132,9 +150,16 @@ export function DeviceMailPanel({
   awaitEnrollment?: (deviceId: string) => Promise<boolean>;
 }) {
   if (panel === "enroll") {
-    if (!(device.enrollmentEnvelopeVersions ?? [2]).includes(2)) {
+    // A converted account delivers the complete ring (v3) and nothing less;
+    // a legacy account delivers v2. The device must have claimed the one this
+    // account needs, or the server would refuse the upload after the code and
+    // password were typed.
+    const converted = pgpSessionState().bootstrap?.keyring != null;
+    if (!(device.enrollmentEnvelopeVersions ?? [2]).includes(converted ? 3 : 2)) {
       return <div className="sec-inline-form">
-        <p>This device requires an encrypted-mail setup format this server does not yet deliver. Update the server when support is available, then try again.</p>
+        <p>{converted
+          ? "This device's app must be updated before it can hold your complete keyring. Update the app, start encryption setup on it again, then check here."
+          : "This device requires an encrypted-mail setup format this server does not yet deliver. Update the server when support is available, then try again."}</p>
         <button type="button" onClick={onClose}>Close</button>
       </div>;
     }
@@ -208,10 +233,14 @@ function EnrollPanel({
     setCeremonyError("");
     try {
       // FIRST, before anything derives: a locked vault is an ordinary state and
-      // must not surface as the substituted-key alarm.
-      let armored: string;
+      // must not surface as the substituted-key alarm. A converted account's
+      // vault holds the complete ring, which the single-key accessor refuses
+      // by design; that ring is what gets sealed, whole.
+      const bootstrap = pgpSessionState().bootstrap;
+      const keyring = bootstrap?.keyring ?? null;
+      let material: string;
       try {
-        armored = requireUnlockedKey();
+        material = keyring ? requireUnlockedKeyMaterial() : requireUnlockedKey();
       } catch {
         setFailure("locked");
         return;
@@ -243,9 +272,16 @@ function EnrollPanel({
         return;
       }
 
-      const envelope = await sealEnvelopeForDevice(publicKey, device.deviceId, fingerprint, armored);
-      await putDeviceEnvelope(device.deviceId, envelope, password, snapshot.pgpRevision, publicKey,
-        pgpSessionState().bootstrap?.keyring?.materialGeneration);
+      // v3 carries the complete ring, validated against the same snapshot
+      // the server will bind the delivery to; sealKeyringForDevice re-checks
+      // the code against the same key immediately before sealing.
+      const envelope = keyring && bootstrap
+        ? await sealKeyringForDevice({
+            publicKeyB64: publicKey, deviceId: device.deviceId, typedCode: code, raw: material,
+            snapshot: { fingerprint: bootstrap.fingerprint, publicKey: bootstrap.publicKey, keyring }
+          })
+        : await sealEnvelopeForDevice(publicKey, device.deviceId, fingerprint, material);
+      await putDeviceEnvelope(device.deviceId, envelope, password, snapshot.pgpRevision, publicKey, keyring?.materialGeneration);
 
       // PAST THE POINT OF FAILURE. The sealing is stored; nothing below may
       // word itself as an error. All that is left is whether the device has
