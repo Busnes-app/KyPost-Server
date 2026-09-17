@@ -101,11 +101,14 @@ export function DeviceMailAccessStatus({
     return (
       <>
         <p className="sec-muted">
-          This device holds an older copy of your keys and cannot send until it is enrolled again.
+          This device holds an older copy of your keys. It can still read mail sealed to those
+          keys, but cannot send until it is enrolled again. To revoke its copy, replace your key
+          on the Encryption tab.
         </p>
-        <button type="button" onClick={() => onOpenPanel("enroll")}>
-          Enroll again
-        </button>
+        <div className="sec-actions">
+          <button type="button" onClick={() => onOpenPanel("enroll")}>Enroll again</button>
+          <button type="button" onClick={() => onOpenPanel("remove")}>Remove sealing</button>
+        </div>
       </>
     );
   }

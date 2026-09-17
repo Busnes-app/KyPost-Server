@@ -670,7 +670,8 @@ describe("a converted account", () => {
 
   it("offers to enroll again a device that holds retired material", async () => {
     render(<Harness mailAccess="stale" dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [2, 3], encryptionEnrolled: true, enrolledGeneration: 3 })} />);
-    expect(screen.getByText(/holds an older copy of your keys and cannot send/)).toBeTruthy();
+    expect(screen.getByText(/holds an older copy of your keys/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove sealing" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Enroll again" }));
     expect(await screen.findByLabelText("Code from your device")).toBeTruthy();
   });

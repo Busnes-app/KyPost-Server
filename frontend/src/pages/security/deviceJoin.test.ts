@@ -146,7 +146,7 @@ describe("mailAccess", () => {
       4
     );
     expect(rows.map((row) => row.mailAccess)).toEqual(["stale", "enrolled", "stale"]);
-    expect(countMailEnrolled(rows)).toBe(1);
+    expect(countMailEnrolled(rows)).toBe(3);
   });
 
   // A legacy account has no generation, so the boolean is the whole answer.

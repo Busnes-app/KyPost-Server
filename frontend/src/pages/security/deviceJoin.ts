@@ -156,5 +156,5 @@ export function countApprovers(rows: DeviceRow[]): number {
 
 /** How many devices hold a sealing that can open encrypted mail. */
 export function countMailEnrolled(rows: DeviceRow[]): number {
-  return rows.filter((row) => row.mailAccess === "enrolled").length;
+  return rows.filter((row) => row.mailAccess === "enrolled" || row.mailAccess === "stale").length;
 }
