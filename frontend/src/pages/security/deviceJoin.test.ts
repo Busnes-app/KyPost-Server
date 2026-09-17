@@ -135,6 +135,26 @@ describe("mailAccess", () => {
     expect(rows[0].mailAccess).toBe("enrolled");
   });
 
+  it("reports a device confirmed at an older generation as stale, and at the current one as enrolled", () => {
+    const rows = joinDeviceRows(
+      [
+        device({ deviceId: "old", enrollmentPublicKey: "K", encryptionEnrolled: true, enrolledGeneration: 3 }),
+        device({ deviceId: "now", enrollmentPublicKey: "K", encryptionEnrolled: true, enrolledGeneration: 4 }),
+        device({ deviceId: "never", enrollmentPublicKey: "K", encryptionEnrolled: true })
+      ],
+      [],
+      4
+    );
+    expect(rows.map((row) => row.mailAccess)).toEqual(["stale", "enrolled", "stale"]);
+    expect(countMailEnrolled(rows)).toBe(3);
+  });
+
+  // A legacy account has no generation, so the boolean is the whole answer.
+  it("does not call a device stale when the account has no generation", () => {
+    const rows = joinDeviceRows([device({ enrollmentPublicKey: "K", encryptionEnrolled: true })], []);
+    expect(rows[0].mailAccess).toBe("enrolled");
+  });
+
   it("reports a device that published a key but has not enrolled as available", () => {
     const rows = joinDeviceRows([device({ enrollmentPublicKey: "K" })], []);
     expect(rows[0].mailAccess).toBe("available");

@@ -15,22 +15,26 @@ vi.mock("../api/client", () => ({
 const putDeviceEnvelope = vi.fn();
 const deleteDeviceEnvelope = vi.fn();
 const requireUnlockedKey = vi.fn();
+const requireUnlockedKeyMaterial = vi.fn();
+const sealKeyringSpy = vi.fn();
+// What the PGP session reports; a converted account swaps in a keyring.
+const sessionState = vi.fn((): { bootstrap: Record<string, unknown> } => ({ bootstrap: { pgpRevision: 7 } }));
 
 vi.mock("../api/pgp", async (importOriginal) => ({
   ...await importOriginal<typeof import("../api/pgp")>(),
-  putDeviceEnvelope: (id: string, envelope: unknown, password: string, revision: number) =>
-    putDeviceEnvelope(id, envelope, password, revision),
+  putDeviceEnvelope: (...args: unknown[]) => putDeviceEnvelope(...args),
   deleteDeviceEnvelope: (id: string, password: string, revision: number) => deleteDeviceEnvelope(id, password, revision)
 }));
 
 vi.mock("../lib/pgpSession", async (importOriginal) => ({
   ...await importOriginal<typeof import("../lib/pgpSession")>(),
-  pgpSessionState: () => ({ bootstrap: { pgpRevision: 7 } })
+  pgpSessionState: () => sessionState()
 }));
 
 vi.mock("../lib/keyVault", async (importOriginal) => ({
   ...await importOriginal<typeof import("../lib/keyVault")>(),
-  requireUnlockedKey: () => requireUnlockedKey()
+  requireUnlockedKey: () => requireUnlockedKey(),
+  requireUnlockedKeyMaterial: () => requireUnlockedKeyMaterial()
 }));
 
 // deviceEnrollment is NOT mocked away — a test with a mocked derivation tests
@@ -45,6 +49,12 @@ vi.mock("../lib/deviceEnrollment", async (importOriginal) => {
     sealEnvelopeForDevice: (...args: Parameters<typeof actual.sealEnvelopeForDevice>) => {
       sealSpy(...args);
       return actual.sealEnvelopeForDevice(...args);
+    },
+    // The v3 sealer validates a real complete ring against a real snapshot;
+    // what this component owes it is the right inputs, which the spy records.
+    sealKeyringForDevice: (args: Parameters<typeof actual.sealKeyringForDevice>[0]) => {
+      sealKeyringSpy(args);
+      return Promise.resolve({ v: 3, alg: "ECDH-P256+HKDF-SHA256+A256GCM", epk: "E", iv: "I", ct: "C" });
     }
   };
 });
@@ -147,6 +157,10 @@ const enrolledDevice = () =>
 afterEach(cleanup);
 
 beforeEach(() => {
+  sessionState.mockReset();
+  sessionState.mockImplementation(() => ({ bootstrap: { pgpRevision: 7 } }));
+  sealKeyringSpy.mockReset();
+  requireUnlockedKeyMaterial.mockReset();
   putDeviceEnvelope.mockReset();
   deleteDeviceEnvelope.mockReset();
   requireUnlockedKey.mockReset();
@@ -602,7 +616,7 @@ it("enrolls after a recovery commit with different fingerprint casing", async ()
   render(<Harness fingerprint="aaaa1111bbbb2222" />);
   await startCeremony();
   await submitCeremony(await codeFor(HONEST_KEY));
-  await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledExactlyOnceWith("d1", expect.anything(), "hunter2", 7));
+  await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledExactlyOnceWith("d1", expect.objectContaining({ v: 2 }), "hunter2", 7, HONEST_KEY, undefined));
   expect(screen.queryByText(/PGP identity changed/)).toBeNull();
 });
 
@@ -614,4 +628,51 @@ it("refuses v2 enrollment when the device only advertises newer versions", async
   expect(screen.queryByRole("button", { name: "Verify and enroll" })).toBeNull();
   expect(sealSpy).not.toHaveBeenCalled();
   expect(putDeviceEnvelope).not.toHaveBeenCalled();
+});
+
+describe("a converted account", () => {
+  const keyring = { version: 1, materialGeneration: 4, primaryFingerprints: ["AAAA1111BBBB2222"], keyFingerprints: ["AAAA1111BBBB2222"] };
+  const ring = '{"format":"kypost-pgp-keyring-v1"}';
+
+  beforeEach(() => {
+    sessionState.mockImplementation(() => ({
+      bootstrap: { pgpRevision: 7, fingerprint: "AAAA1111BBBB2222", publicKey: "-----BEGIN PGP PUBLIC KEY BLOCK-----", keyring }
+    }));
+    requireUnlockedKeyMaterial.mockReturnValue(ring);
+    requireUnlockedKey.mockImplementation(() => {
+      throw new Error("Keyring writes require the lifecycle upgrade.");
+    });
+    putDeviceEnvelope.mockResolvedValue({ ok: true, version: 3 });
+  });
+
+  it("seals the complete ring as v3 and names the key and generation it sealed for", async () => {
+    render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [2, 3] })} />);
+    await startCeremony();
+    const code = await codeFor(HONEST_KEY);
+    await submitCeremony(code);
+
+    await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledTimes(1));
+    expect(sealSpy).not.toHaveBeenCalled();
+    expect(sealKeyringSpy).toHaveBeenCalledWith({
+      publicKeyB64: HONEST_KEY, deviceId: "d1", typedCode: code, raw: ring,
+      snapshot: { fingerprint: "AAAA1111BBBB2222", publicKey: "-----BEGIN PGP PUBLIC KEY BLOCK-----", keyring }
+    });
+    expect(putDeviceEnvelope).toHaveBeenCalledWith("d1", expect.objectContaining({ v: 3 }), "hunter2", 7, HONEST_KEY, 4);
+  });
+
+  it("refuses a device that has not claimed v3 before asking for anything", async () => {
+    render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [2] })} />);
+    await startCeremony();
+    expect(await screen.findByText(/must be updated before it can hold your complete keyring/)).toBeTruthy();
+    expect(screen.queryByLabelText("Code from your device")).toBeNull();
+    expect(putDeviceEnvelope).not.toHaveBeenCalled();
+  });
+
+  it("offers to enroll again a device that holds retired material", async () => {
+    render(<Harness mailAccess="stale" dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [2, 3], encryptionEnrolled: true, enrolledGeneration: 3 })} />);
+    expect(screen.getByText(/holds an older copy of your keys/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove sealing" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Enroll again" }));
+    expect(await screen.findByLabelText("Code from your device")).toBeTruthy();
+  });
 });

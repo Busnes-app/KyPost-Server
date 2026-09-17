@@ -46,6 +46,16 @@ export type NativeDevice = {
    * so the device re-reports it on every registration.
    */
   encryptionEnrolled: boolean;
+  /**
+   * What the server delivered to this device and the device confirmed: the
+   * envelope version, material generation and active fingerprint. Absent on
+   * older servers and for a device never delivered to. A confirmed generation
+   * that is not the account's current one is a device holding retired
+   * material; it cannot send until it enrolls again.
+   */
+  enrolledVersion?: number;
+  enrolledGeneration?: number;
+  enrolledFingerprint?: string;
 };
 
 /** How pushes reach paired native devices. Account-wide, not per-device. */
