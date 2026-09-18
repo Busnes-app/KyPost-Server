@@ -616,7 +616,7 @@ it("enrolls after a recovery commit with different fingerprint casing", async ()
   render(<Harness fingerprint="aaaa1111bbbb2222" />);
   await startCeremony();
   await submitCeremony(await codeFor(HONEST_KEY));
-  await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledExactlyOnceWith("d1", expect.objectContaining({ v: 2 }), "hunter2", 7, HONEST_KEY, undefined));
+  await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledExactlyOnceWith("d1", expect.objectContaining({ v: 2 }), "hunter2", 7, HONEST_KEY, "AAAA1111BBBB2222", undefined));
   expect(screen.queryByText(/PGP identity changed/)).toBeNull();
 });
 
@@ -657,7 +657,7 @@ describe("a converted account", () => {
       publicKeyB64: HONEST_KEY, deviceId: "d1", typedCode: code, raw: ring,
       snapshot: { fingerprint: "AAAA1111BBBB2222", publicKey: "-----BEGIN PGP PUBLIC KEY BLOCK-----", keyring }
     });
-    expect(putDeviceEnvelope).toHaveBeenCalledWith("d1", expect.objectContaining({ v: 3 }), "hunter2", 7, HONEST_KEY, 4);
+    expect(putDeviceEnvelope).toHaveBeenCalledWith("d1", expect.objectContaining({ v: 3 }), "hunter2", 7, HONEST_KEY, "AAAA1111BBBB2222", 4);
   });
 
   it("refuses a device that has not claimed v3 before asking for anything", async () => {
