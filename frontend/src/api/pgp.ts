@@ -449,6 +449,8 @@ export async function putDeviceEnvelope(
   expectedRevision: number,
   /** The device key the envelope was sealed to; the server refuses a delivery for a key the device has since replaced. */
   enrollmentPublicKey: string,
+  /** The identity snapshot used to seal the envelope. */
+  expectedFingerprint: string,
   /** The keyring generation the sealing was prepared from; required on a converted account. */
   materialGeneration?: number
 ): Promise<{ ok: boolean; version?: number }> {
@@ -456,6 +458,7 @@ export async function putDeviceEnvelope(
     envelope: JSON.stringify(envelope),
     expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }),
     enrollmentPublicKey,
+    expectedFingerprint,
     ...(materialGeneration !== undefined ? { materialGeneration } : {}),
     ...(await stepUp(password))
   });
