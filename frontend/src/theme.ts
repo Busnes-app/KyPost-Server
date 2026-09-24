@@ -1,6 +1,8 @@
 export const THEME_STORAGE_KEY = "kypost-theme";
 
 export const THEME_OPTIONS = [
+  "Busnes Light",
+  "Busnes Dark",
   "Dark Matter",
   "Light Matter",
   "Tropics",
@@ -40,6 +42,8 @@ type ThemeVars = {
 };
 
 export const themes: Record<ThemeName, ThemeVars> = {
+  "Busnes Light": {"bg": "#f8f6f0", "panel": "#ffffff", "ink": "#566461", "inkStrong": "#182326", "accent": "#bf3f18", "accentSoft": "#fbf0ec", "line": "rgba(24, 35, 38, 0.22)", "glow": "transparent", "sidebarStart": "#f2efe7", "sidebarEnd": "#f2efe7", "buttonText": "#ffffff", "newEmailBorder": "#bf3f18", "newEmailStart": "#bf3f18", "newEmailEnd": "#bf3f18", "newEmailText": "#ffffff", "linkBorder": "rgba(24, 35, 38, 0.22)"},
+  "Busnes Dark": {"bg": "#182326", "panel": "#1f2b2e", "ink": "#b3bcb8", "inkStrong": "#f2efe8", "accent": "#f5865f", "accentSoft": "#2b2622", "line": "rgba(242, 239, 232, 0.24)", "glow": "transparent", "sidebarStart": "#1f2b2e", "sidebarEnd": "#1f2b2e", "buttonText": "#182326", "newEmailBorder": "#f5865f", "newEmailStart": "#f5865f", "newEmailEnd": "#f5865f", "newEmailText": "#182326", "linkBorder": "rgba(242, 239, 232, 0.24)"},
   "Dark Matter": {
     bg: "#1a1a1e",
     panel: "#252530",
@@ -277,7 +281,7 @@ export const themes: Record<ThemeName, ThemeVars> = {
   "Patina Ky": {
     bg: "#0d0f14",
     panel: "#161a22",
-    // slate-400, not slate-500. This is the DEFAULT theme (see getStoredTheme),
+    // slate-400, not slate-500. This is a retained legacy theme,
     // and #64748b scored 4.03:1 on this background and 3.66:1 on the panel —
     // under the 4.5:1 floor for body text, and the only theme of the fifteen
     // below it; every other `ink` sits between 6.7:1 and 14:1. `ink` is the
@@ -325,8 +329,11 @@ function isThemeName(value: string): value is ThemeName {
   return THEME_OPTIONS.includes(value as ThemeName);
 }
 
+function defaultTheme(): ThemeName { return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "Busnes Dark" : "Busnes Light"; }
+
 function applyThemeVars(theme: ThemeVars) {
   const root = document.documentElement;
+  root.style.colorScheme = ["#f8f6f0", "#f5efe5", "#f4f1eb", "#f7f9fb", "#dff1ff", "#fff3dc", "#eef2f6"].includes(theme.bg) ? "light" : "dark";
   for (const [key, value] of Object.entries(theme) as [string, string][]) {
     root.style.setProperty("--" + key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase()), value);
   }
@@ -343,7 +350,7 @@ export function applyTheme(themeName: ThemeName) {
 
 export function getStoredTheme(): ThemeName {
   try {
-    const saved = window.localStorage.getItem(THEME_STORAGE_KEY) ?? "Patina Ky";
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY) ?? defaultTheme();
     if (isThemeName(saved)) {
       return saved;
     }
@@ -359,9 +366,9 @@ export function getStoredTheme(): ThemeName {
     if (saved === "Cliffs") {
       return "White Cliffs";
     }
-    return "Patina Ky";
+    return defaultTheme();
   } catch {
-    return "Patina Ky";
+    return defaultTheme();
   }
 }
 
@@ -369,3 +376,8 @@ export function applyStoredTheme() {
   const theme = getStoredTheme();
   applyThemeVars(themes[theme]);
 }
+
+if (typeof window !== "undefined") window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  try { if (localStorage.getItem(THEME_STORAGE_KEY)) return; } catch { /* Storage is optional. */ }
+  applyStoredTheme();
+});
