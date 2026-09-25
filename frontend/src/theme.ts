@@ -333,6 +333,18 @@ function defaultTheme(): ThemeName { return window.matchMedia?.("(prefers-color-
 
 function applyThemeVars(theme: ThemeVars) {
   const root = document.documentElement;
+  const sharedName = theme === themes["Busnes Light"] ? "busnes-light" : theme === themes["Busnes Dark"] ? "busnes-dark" : undefined;
+  for (const key of Object.keys(themes["Busnes Light"])) root.style.removeProperty("--" + key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase()));
+  if (sharedName) {
+    root.dataset.theme = sharedName;
+    root.style.colorScheme = sharedName === "busnes-dark" ? "dark" : "light";
+    for (const [key, value] of Object.entries(theme)) {
+      const cssKey = "--" + key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+      root.style.setProperty(cssKey, value);
+    }
+    return;
+  }
+  delete root.dataset.theme;
   root.style.colorScheme = ["#f8f6f0", "#f5efe5", "#f4f1eb", "#f7f9fb", "#dff1ff", "#fff3dc", "#eef2f6"].includes(theme.bg) ? "light" : "dark";
   for (const [key, value] of Object.entries(theme) as [string, string][]) {
     root.style.setProperty("--" + key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase()), value);
