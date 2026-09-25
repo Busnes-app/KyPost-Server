@@ -1,0 +1,29 @@
+// Generated from ky-ui tokens.css; refresh with sync-consumers.mjs.
+export const busnesPalettes = {
+  "Busnes Light": {
+    "bg": "#f8f6f0",
+    "panel": "#ffffff",
+    "ink": "#566461",
+    "inkStrong": "#182326",
+    "accent": "#bf3f18",
+    "accentSoft": "#fbf0ec",
+    "line": "rgba(24, 35, 38, 0.22)",
+    "sidebarStart": "#f2efe7",
+    "sidebarEnd": "#f2efe7",
+    "buttonText": "#ffffff",
+    "glow": "transparent"
+  },
+  "Busnes Dark": {
+    "bg": "#182326",
+    "panel": "#1f2b2e",
+    "ink": "#b3bcb8",
+    "inkStrong": "#f2efe8",
+    "accent": "#f5865f",
+    "accentSoft": "#2b2622",
+    "line": "rgba(242, 239, 232, 0.24)",
+    "sidebarStart": "#1f2b2e",
+    "sidebarEnd": "#1f2b2e",
+    "buttonText": "#182326",
+    "glow": "transparent"
+  }
+};

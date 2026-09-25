@@ -1299,11 +1299,11 @@ export function App() {
           ) : null}
           <p className="sidebar-section-label">Mailboxes</p>
           <div className="mobile-quick-nav" aria-label="Mobile mailboxes">
-            <Link className={onReadPage && currentMailbox === "" ? "sidebar-link-active" : ""} to="/read">Inbox</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "drafts" ? "sidebar-link-active" : ""} to="/read?mailbox=Drafts">Drafts</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "junk" ? "sidebar-link-active" : ""} to="/read?mailbox=Junk">Junk</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "sent" ? "sidebar-link-active" : ""} to="/read?mailbox=Sent">Sent</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "trash" ? "sidebar-link-active" : ""} to="/read?mailbox=Trash">Trash</Link>
+            <Link className={onReadPage && currentMailbox === "" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read">Inbox</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "drafts" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Drafts">Drafts</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "junk" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Junk">Junk</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "sent" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Sent">Sent</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "trash" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Trash">Trash</Link>
             <button
               type="button"
               className="mobile-settings-toggle"
@@ -1317,7 +1317,7 @@ export function App() {
           <div className="inbox-nav-row">
             <Link
               to="/read"
-              className={[dragOverFolder === "INBOX" ? "drop-target-active" : "", onReadPage && currentMailbox === "" ? "sidebar-link-active" : ""].filter(Boolean).join(" ")}
+              className={[dragOverFolder === "INBOX" ? "drop-target-active" : "", onReadPage && currentMailbox === "" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"].filter(Boolean).join(" ")}
               onDragOver={(event) => {
                 event.preventDefault();
                 setDragOverFolder("INBOX");
@@ -1372,7 +1372,7 @@ export function App() {
                       to={`/read?mailbox=${encodeURIComponent(folder.path)}`}
                       className={[
                         dragOverFolder === folder.path ? "drop-target-active" : "",
-                        onReadPage && currentMailbox.toLowerCase() === folder.path.toLowerCase() ? "sidebar-link-active" : ""
+                        onReadPage && currentMailbox.toLowerCase() === folder.path.toLowerCase() ? "ky-nav-item sidebar-link-active" : "ky-nav-item"
                       ].filter(Boolean).join(" ")}
                       onDragOver={(event) => {
                         event.preventDefault();
@@ -1441,7 +1441,7 @@ export function App() {
                       to={`/read?mailbox=${encodeURIComponent(folder.path)}`}
                       className={[
                         dragOverFolder === folder.path ? "drop-target-active" : "",
-                        onReadPage && currentMailbox.toLowerCase() === folder.path.toLowerCase() ? "sidebar-link-active" : ""
+                        onReadPage && currentMailbox.toLowerCase() === folder.path.toLowerCase() ? "ky-nav-item sidebar-link-active" : "ky-nav-item"
                       ].filter(Boolean).join(" ")}
                       onDragOver={(event) => {
                         event.preventDefault();
@@ -1461,7 +1461,7 @@ export function App() {
 
           <Link
             to="/contacts"
-            className={["nav-heading", location.pathname === "/contacts" ? "sidebar-link-active" : ""].filter(Boolean).join(" ")}
+            className={["nav-heading", location.pathname === "/contacts" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"].filter(Boolean).join(" ")}
           >
             Contacts
           </Link>
@@ -1481,7 +1481,7 @@ export function App() {
                 <div key={group.heading ?? "settings"} className="nav-subgroup">
                   {group.heading ? <p className="nav-subheading">{group.heading}</p> : null}
                   {group.items.map(({ to, label }) => (
-                    <Link key={to} className={to === location.pathname ? "sidebar-link-active" : ""} to={to}>
+                    <Link key={to} className={to === location.pathname ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={to}>
                       {label}
                     </Link>
                   ))}
@@ -1490,7 +1490,7 @@ export function App() {
               {/* Its own group, below a rule: it is not a settings panel and
                   must not read as one, nor as an Admin item for an admin. */}
               <div className="nav-subgroup nav-subgroup-detached">
-                <Link to="/apps" className={location.pathname === "/apps" ? "sidebar-link-active" : ""}>
+                <Link to="/apps" className={location.pathname === "/apps" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}>
                   Get the apps
                 </Link>
               </div>

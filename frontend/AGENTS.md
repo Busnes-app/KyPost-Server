@@ -150,6 +150,12 @@ reading its handler first.
 - `npm test` (vitest) must pass. `pages/read/readability.test.tsx` covers the reading surface across every theme × both body modes and is the check a new theme preset or a sanitizer allowlist change has to clear
 - Playwright E2E tests live in `scripts/tests/`; run via `scripts/`
 
+## Shared browser UI
+
+- `src/ky-ui/` is generated from Busnes-app/ky-ui, pinned by `VERSION` file hashes. Change shared colors, navigation states and storage helpers upstream, then run its consumer sync with an explicit worktree map; do not hand-edit vendored files.
+- Products own layout, routes, saved choice keys and named palettes. Busnes aliases consume shared tokens; mark primary navigation with `ky-nav-item` while preserving current-page semantics.
+- Verify vendored files with `node src/ky-ui/check-vendor.mjs` from this document's directory. Builds/CI run that check. Rendered evidence and capture limitations are recorded in the repository-root `UI-VERIFICATION.md`.
+
 ## Child DOX Index
 
 No child AGENTS.md files. All frontend code is flat under `src/`.

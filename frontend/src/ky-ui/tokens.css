@@ -9,13 +9,14 @@
   --ky-panel-hover: #f2efe7;
   --ky-ink: #566461;
   --ky-ink-strong: #182326;
-  --ky-ink-muted: #66736f;
+  --ky-ink-muted: #566461;
   --ky-accent: #bf3f18;
   --ky-accent-soft: #fbf0ec;
   --ky-line: rgba(24, 35, 38, 0.22);
   --ky-line-strong: rgba(24, 35, 38, 0.38);
-  --ky-danger: #b84943;
-  --ky-success: #397d5d;
+  --ky-danger: #b42318;
+  --ky-success: #267442;
+  --ky-warning: #875b12;
   --ky-sidebar-start: #f2efe7;
   --ky-sidebar-end: #f2efe7;
   --ky-button-text: #ffffff;
@@ -32,13 +33,14 @@
   --ky-panel-hover: #2b383a;
   --ky-ink: #b3bcb8;
   --ky-ink-strong: #f2efe8;
-  --ky-ink-muted: #8e9894;
+  --ky-ink-muted: #b3bcb8;
   --ky-accent: #f5865f;
   --ky-accent-soft: #2b2622;
   --ky-line: rgba(242, 239, 232, 0.24);
   --ky-line-strong: rgba(242, 239, 232, 0.42);
   --ky-danger: #ff8176;
   --ky-success: #7bc49c;
+  --ky-warning: #d8a657;
   --ky-sidebar-start: #1f2b2e;
   --ky-sidebar-end: #1f2b2e;
   --ky-button-text: #182326;
@@ -52,13 +54,14 @@
     --ky-panel-hover: #2b383a;
     --ky-ink: #b3bcb8;
     --ky-ink-strong: #f2efe8;
-    --ky-ink-muted: #8e9894;
+    --ky-ink-muted: #b3bcb8;
     --ky-accent: #f5865f;
     --ky-accent-soft: #2b2622;
     --ky-line: rgba(242, 239, 232, 0.24);
     --ky-line-strong: rgba(242, 239, 232, 0.42);
     --ky-danger: #ff8176;
     --ky-success: #7bc49c;
+    --ky-warning: #d8a657;
     --ky-sidebar-start: #1f2b2e;
     --ky-sidebar-end: #1f2b2e;
     --ky-button-text: #182326;
@@ -66,7 +69,11 @@
 }
 
 /* Compatibility aliases keep product layouts local while their shared values migrate. */
-:root {
+:root:not([data-theme]):not([data-ky-theme]),
+:root[data-theme="busnes-light"],
+:root[data-theme="busnes-dark"],
+:root[data-ky-theme="busnes-light"],
+:root[data-ky-theme="busnes-dark"] {
   --bg: var(--ky-bg);
   --panel: var(--ky-panel);
   --panel-hover: var(--ky-panel-hover);
@@ -79,10 +86,9 @@
   --line-strong: var(--ky-line-strong);
   --danger: var(--ky-danger);
   --success: var(--ky-success);
+  --warning: var(--ky-warning);
+  --glow: transparent;
   --sidebar-start: var(--ky-sidebar-start);
   --sidebar-end: var(--ky-sidebar-end);
   --button-text: var(--ky-button-text);
-  --font-sans: var(--ky-font-sans);
-  --font-mono: var(--ky-font-mono);
-  --radius: var(--ky-radius);
 }

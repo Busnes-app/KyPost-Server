@@ -1,1 +1,13 @@
-0.1.0
+{
+  "version": "0.2.0",
+  "source": "https://github.com/Busnes-app/ky-ui",
+  "files": {
+    "tokens.css": "61ce6af854fc85c87af35eef46f362a2bfca1da114b61dcec6704237b6b4d533",
+    "navigation.css": "1a552f03f0497cd0edc31dfdcaa76dd9a287a5f0d30073f6074c14e93ef6db91",
+    "theme.js": "9f0e57c86783924a19fa9923be42d7f14b24cec46c95383f251e18ab69b0176a",
+    "theme.d.ts": "f83e4fb841e98b7b443bc78aa699f9044d395ff622258cf8bee85b5e0608fd4a",
+    "check-vendor.mjs": "1fdca377e486e52d9e660893ebfc2f1a90ddb6578eca24d8f844bb5485f3e053",
+    "palettes.ts": "334a6881a5c6cc051a9eae024dbbb75756493c483c98c72eddbeb84a5392b447",
+    "palettes-browser.js": "1d0eefa32f87773162bcc21dd7419d077c99ac133d01afe637a4e3acc738c532"
+  }
+}
