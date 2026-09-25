@@ -29,7 +29,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - CAPTCHA on login, **self-hosted proof-of-work by default** (also Turnstile or Friendly Captcha; `CAPTCHA_PROVIDER=none` turns it off). It works alongside a 3-strikes/15-minute account lockout, a looser per-IP lockout, and an instance-wide login rate limit. Note that proof-of-work needs a secure context in the browser — read the CAPTCHA notes in `.env.example` if you serve over plain HTTP on a LAN.
 - Browser push notifications for each user, for all mail or for keyword matches only. KyPost also supports native push pairing for mobile apps. Encrypted-mail setup checks the device’s supported envelope formats before sealing.
 - Settings grouped into panels: Appearance, Mail (IMAP/SMTP, send-as, contact sync, filters), Security, Notifications and Status — plus Email Labels for each user's own prompt tuning and classification decisions — and an Admin group for server runtime and diagnostics
-- A dozen theme presets
+- Busnes light/dark defaults follow the OS, with seventeen theme presets and a saved browser-local choice
 
 ## Architecture
 

@@ -181,9 +181,10 @@ body {
 }
 
 .sidebar-link-active {
-  border-color: var(--accent) !important;
-  background: color-mix(in srgb, var(--accent-soft) 52%, transparent) !important;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink-strong) 20%, transparent);
+  border-color: transparent !important;
+  border-left: 3px solid var(--accent) !important;
+  background: var(--accent-soft) !important;
+  box-shadow: none;
 }
 
 .inbox-nav-row {
@@ -4724,36 +4725,20 @@ pre {
 
 /* --- The postmark ------------------------------------------------------- */
 
+/* Keep the shared square stamp intact at the card edge. */
 .auth-seal {
   width: var(--seal-size);
   height: var(--seal-size);
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
   position: relative;
   z-index: 1;
-  /* Sits ON the card's top edge. */
   margin-bottom: calc(var(--seal-size) / -2);
-  overflow: hidden;
-  background: var(--panel);
-  /* Double ring: hairline accent, a breath of field, then the card's own line. */
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 58%, transparent),
-    0 0 0 5px var(--bg),
-    0 0 0 6px var(--line),
-    0 8px 20px rgba(0, 0, 0, 0.32);
 }
 
 .auth-seal-mark {
   width: 100%;
   height: 100%;
   display: block;
-  object-fit: cover;
-  border-radius: 50%;
-  /* The mark is a detailed square illustration on its own dark field. Shrinking
-     it inside the plate turned it to mush and, on the light themes, left a dark
-     tile floating in the ring. Filling the disc instead makes that field the
-     seal's own, which is both legible and identical on all sixteen themes. */
+  object-fit: contain;
 }
 
 /* --- The card ----------------------------------------------------------- */
@@ -5161,4 +5146,36 @@ pre {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+/* Busnes.app fallback before the stored palette is applied. */
+:root {
+  --bg: #f8f6f0;
+  --panel: #ffffff;
+  --ink: #566461;
+  --ink-strong: #182326;
+  --accent: #bf3f18;
+  --accent-soft: #fbf0ec;
+  --line: rgba(24, 35, 38, 0.22);
+  --glow: transparent;
+  --sidebar-start: #f2efe7;
+  --sidebar-end: #f2efe7;
+  --button-text: #ffffff;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+:root {
+  --bg: #182326;
+  --panel: #1f2b2e;
+  --ink: #b3bcb8;
+  --ink-strong: #f2efe8;
+  --accent: #f5865f;
+  --accent-soft: #2b2622;
+  --line: rgba(242, 239, 232, 0.24);
+  --glow: transparent;
+  --sidebar-start: #1f2b2e;
+  --sidebar-end: #1f2b2e;
+  --button-text: #182326;
+  color-scheme: dark;
+}
 }
