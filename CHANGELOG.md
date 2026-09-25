@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Web appearance now defaults to Busnes light/dark according to the OS; existing theme choices remain available.
+
 - Fix device PGP enrollment after the envelope v3 rollout: browser uploads now include the required identity fingerprint for both v2 and v3, preventing rejection before Android and other paired devices can retrieve their sealed keys.
 
 - **Browser v3 device enrollment.** On a converted account the Security page seals the complete keyring as v3 for a paired device, refuses a device whose app has not claimed v3 before asking for a code, and names the enrollment key and generation on the upload. A device confirmed at an older generation shows as holding retired material with an "Enroll again" action, since the server refuses its sends.
