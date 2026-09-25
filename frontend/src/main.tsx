@@ -4,6 +4,8 @@ import { BrowserRouter } from "react-router";
 import { App } from "./App";
 import { applyStoredTheme } from "./theme";
 import "./styles.css";
+import "./ky-ui/tokens.css";
+import "./ky-ui/navigation.css";
 
 applyStoredTheme();
 

@@ -1,0 +1,88 @@
+/* Busnes Light/Dark tokens. Product layouts should consume these, not redefine them. */
+:root,
+:root:not([data-theme]):not([data-ky-theme]),
+:root[data-theme="busnes-light"],
+:root[data-ky-theme="busnes-light"] {
+  color-scheme: light;
+  --ky-bg: #f8f6f0;
+  --ky-panel: #ffffff;
+  --ky-panel-hover: #f2efe7;
+  --ky-ink: #566461;
+  --ky-ink-strong: #182326;
+  --ky-ink-muted: #66736f;
+  --ky-accent: #bf3f18;
+  --ky-accent-soft: #fbf0ec;
+  --ky-line: rgba(24, 35, 38, 0.22);
+  --ky-line-strong: rgba(24, 35, 38, 0.38);
+  --ky-danger: #b84943;
+  --ky-success: #397d5d;
+  --ky-sidebar-start: #f2efe7;
+  --ky-sidebar-end: #f2efe7;
+  --ky-button-text: #ffffff;
+  --ky-radius: 10px;
+  --ky-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ky-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+:root[data-theme="busnes-dark"],
+:root[data-ky-theme="busnes-dark"] {
+  color-scheme: dark;
+  --ky-bg: #182326;
+  --ky-panel: #1f2b2e;
+  --ky-panel-hover: #2b383a;
+  --ky-ink: #b3bcb8;
+  --ky-ink-strong: #f2efe8;
+  --ky-ink-muted: #8e9894;
+  --ky-accent: #f5865f;
+  --ky-accent-soft: #2b2622;
+  --ky-line: rgba(242, 239, 232, 0.24);
+  --ky-line-strong: rgba(242, 239, 232, 0.42);
+  --ky-danger: #ff8176;
+  --ky-success: #7bc49c;
+  --ky-sidebar-start: #1f2b2e;
+  --ky-sidebar-end: #1f2b2e;
+  --ky-button-text: #182326;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]):not([data-ky-theme]) {
+    color-scheme: dark;
+    --ky-bg: #182326;
+    --ky-panel: #1f2b2e;
+    --ky-panel-hover: #2b383a;
+    --ky-ink: #b3bcb8;
+    --ky-ink-strong: #f2efe8;
+    --ky-ink-muted: #8e9894;
+    --ky-accent: #f5865f;
+    --ky-accent-soft: #2b2622;
+    --ky-line: rgba(242, 239, 232, 0.24);
+    --ky-line-strong: rgba(242, 239, 232, 0.42);
+    --ky-danger: #ff8176;
+    --ky-success: #7bc49c;
+    --ky-sidebar-start: #1f2b2e;
+    --ky-sidebar-end: #1f2b2e;
+    --ky-button-text: #182326;
+  }
+}
+
+/* Compatibility aliases keep product layouts local while their shared values migrate. */
+:root {
+  --bg: var(--ky-bg);
+  --panel: var(--ky-panel);
+  --panel-hover: var(--ky-panel-hover);
+  --ink: var(--ky-ink);
+  --ink-strong: var(--ky-ink-strong);
+  --ink-muted: var(--ky-ink-muted);
+  --accent: var(--ky-accent);
+  --accent-soft: var(--ky-accent-soft);
+  --line: var(--ky-line);
+  --line-strong: var(--ky-line-strong);
+  --danger: var(--ky-danger);
+  --success: var(--ky-success);
+  --sidebar-start: var(--ky-sidebar-start);
+  --sidebar-end: var(--ky-sidebar-end);
+  --button-text: var(--ky-button-text);
+  --font-sans: var(--ky-font-sans);
+  --font-mono: var(--ky-font-mono);
+  --radius: var(--ky-radius);
+}
