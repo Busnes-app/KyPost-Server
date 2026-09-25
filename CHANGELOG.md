@@ -1,5 +1,7 @@
 # Changelog
 
+- Web appearance now defaults to Busnes light/dark according to the OS; existing theme choices remain available.
+
 Versions are dotted-numeric (`MAJOR.MINOR.PATCH`) and published as GitHub
 releases tagged `v<version>`. The tag, `serverVersion` in
 `backend/internal/api/server_version.go`, and `frontend/package.json` must all
@@ -13,6 +15,7 @@ non-prerelease version.
 ## Unreleased
 
 - Web appearance now defaults to Busnes light/dark according to the OS; existing theme choices remain available.
+- Refresh the paired-device key before opening enrollment, preventing a new Android enrollment code from being compared against the browser's previously loaded key.
 
 - Fix device PGP enrollment after the envelope v3 rollout: browser uploads now include the required identity fingerprint for both v2 and v3, preventing rejection before Android and other paired devices can retrieve their sealed keys.
 

@@ -181,9 +181,10 @@ body {
 }
 
 .sidebar-link-active {
-  border-color: var(--accent) !important;
-  background: color-mix(in srgb, var(--accent-soft) 52%, transparent) !important;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink-strong) 20%, transparent);
+  border-color: transparent !important;
+  border-left: 3px solid var(--accent) !important;
+  background: var(--accent-soft) !important;
+  box-shadow: none;
 }
 
 .inbox-nav-row {
