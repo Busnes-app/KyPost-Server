@@ -10,6 +10,8 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 
 ## Local Contracts
 
+- Web themes default to the Busnes.app cream/light and charcoal/dark palettes with orange accents, following the OS until a browser-local choice is saved. Preserve existing named themes and saved choices.
+
 - Backup stays compact: keep credentials and routine capsule actions visible; collapse scheduling, recovery setup, manual key entry and history. Open initial pairing setup only when no key is pinned. Preserve per-action credential checks. Render stored audit failure reasons as text in history.
 
 - React 19.2, React Router 8.3, TypeScript 7, Vite 8, Quill (WYSIWYG compose editor), qrcode (mobile pairing QR)
