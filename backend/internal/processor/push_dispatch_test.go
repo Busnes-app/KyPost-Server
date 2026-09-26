@@ -61,4 +61,13 @@ func TestSendNativePushToDevicesFiltersToGivenList(t *testing.T) {
 	if len(receivedTokens) != 1 || receivedTokens[0] != "token-a" {
 		t.Fatalf("relay received tokens %v, want exactly [token-a]", receivedTokens)
 	}
+	// Push mode still writes the pull queue, so a device that stops hearing
+	// from the relay can poll and catch up without anyone changing the mode.
+	queued, _, err := store.PullNotificationsAfterStrict(0)
+	if err != nil {
+		t.Fatalf("PullNotificationsAfterStrict: %v", err)
+	}
+	if len(queued) != 1 || queued[0].Title != "t" {
+		t.Fatalf("pull queue = %+v, want the one pushed message", queued)
+	}
 }

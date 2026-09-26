@@ -197,7 +197,7 @@ Minted secrets are a fixed 192-bit random value.
 
 ## 4. Push delivery modes
 
-Two modes, account-wide (`backend/internal/state/store.go:39-42`):
+Two modes, account-wide (`backend/internal/state/store.go`, `DeliveryModePush` / `DeliveryModePull`):
 
 | Mode | Path |
 | --- | --- |
@@ -214,8 +214,14 @@ UnifiedPush rather than for `pull` alone.
 
 Server-side notes a client should know:
 
+- **Every notification is written to the pull queue in both modes**
+  (`processor/push_dispatch.go`, `SendNativePushToDevices`). A client in
+  `push` mode SHOULD poll `GET /api/notifications/native/pull` with its saved
+  cursor when it has received no push for a while, so a relay outage degrades
+  to delayed delivery instead of silence, with no server-side mode change.
 - The pull queue is bounded at 100 entries per user; the oldest are dropped
-  (`state/store.go:44-46`). A device offline long enough loses the tail.
+  (`state/store.go`, `maxPullNotifications`). A device offline long enough
+  loses the tail.
 - Notification content defaults to a bare "You have a new email." with no
   sender, subject or keyword. Previews are opt-in per account.
 - `deliveryMode` is delivered at registration (§1) and also on the pairing and
