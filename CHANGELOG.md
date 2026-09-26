@@ -14,6 +14,9 @@ non-prerelease version.
 
 ## Unreleased
 
+- **Send-as verification works again.** The probe went out from the account address while the checker demanded a DKIM-signed From equal to the alias, so no alias could ever verify and the UI said no action was needed. The probe is now sent as the alias to the alias through the user's own outgoing server, so an upstream that refuses that From refuses the alias too. The user types the mailed code back in Settings → Mail (`POST /api/mail/send-as/{id}/confirm`, five wrong codes fail the record, 30-minute window); the DKIM loop-back path still verifies on its own when it applies. The alias list no longer returns the verification code.
+- **Notifications are always queued for app pull**, not only in pull mode, so a device that stops hearing from the relay can poll `GET /api/notifications/native/pull` and catch up without an admin changing the delivery mode. The queue keeps its 100-entry cap.
+
 - Match the Single Sign On login button to the theme's primary button colors and label it "login with Single Sign On".
 - Web appearance now defaults to Busnes light/dark according to the OS; existing theme choices remain available.
 - Refresh the paired-device key before opening enrollment, preventing a new Android enrollment code from being compared against the browser's previously loaded key.
