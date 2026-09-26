@@ -344,6 +344,10 @@ func (s *Server) publishableAddressesAt(u users.User, domain string) []string {
 			return nil
 		}
 		for _, alias := range verified {
+			// A code-confirmed alias may send; only the DKIM proof publishes.
+			if !alias.DomainProven() {
+				continue
+			}
 			addr := strings.ToLower(strings.TrimSpace(alias.Email))
 			if domainOfEmail(addr) == domain {
 				out = append(out, addr)

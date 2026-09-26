@@ -71,7 +71,7 @@ func TestMigrationImportsEveryFieldFromJSON(t *testing.T) {
 		d.AppVersion != "1.2" || d.UserID != "u1" || !d.MFAApprover || d.Transport != "fcm" || d.SecretHash != "sha256:abc" {
 		t.Errorf("device lost fields in migration: %+v", d)
 	}
-	notes, cursor := s.PullNotificationsAfter(0)
+	notes, cursor := s.PullNotificationsAfter("", 0)
 	if len(notes) != 1 || notes[0].Title != "T" || notes[0].Data["k"] != "v" {
 		t.Errorf("pull notifications = %+v", notes)
 	}

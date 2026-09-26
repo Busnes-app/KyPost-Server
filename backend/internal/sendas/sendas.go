@@ -26,6 +26,11 @@ type Alias struct {
 	ExpiresAt       string `json:"expiresAt"` // CreatedAt + pendingExpiry; hard cutoff for "pending"
 	VerifiedAt      string `json:"verifiedAt,omitempty"`
 	FailedAt        string `json:"failedAt,omitempty"`
+	// VerifiedBy names the proof: VerifiedByDKIM when the daemon saw the probe
+	// come back signed by the alias domain, VerifiedByCode when the user typed
+	// the mailed code. Empty on records verified before the code path existed,
+	// which were all DKIM. See DomainProven for what each proof authorizes.
+	VerifiedBy string `json:"verifiedBy,omitempty"`
 
 	// Auto marks a record the server created for the user rather than one the
 	// user asked for: currently only the account's own address, probed
@@ -36,4 +41,19 @@ type Alias struct {
 	// thing telling the user their address could not be proven, and the prober
 	// reads FailedAt off it to back off rather than re-probing on a loop.
 	Auto bool `json:"auto,omitempty"`
+}
+
+const (
+	VerifiedByDKIM = "dkim"
+	VerifiedByCode = "code"
+)
+
+// DomainProven reports whether the alias may stand for its address beyond
+// this account's own sending: WKD publication and key User IDs. Only the DKIM
+// proof binds the address to its domain. The typed code travelled through an
+// SMTP server the user chose (POST /api/imap/config stores any host), so
+// knowing it proves nothing about the alias mailbox; it authorizes the From
+// header only, which the same SMTP server is free to refuse.
+func (a Alias) DomainProven() bool {
+	return a.Status == "verified" && a.VerifiedBy != VerifiedByCode
 }

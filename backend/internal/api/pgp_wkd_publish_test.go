@@ -621,3 +621,50 @@ func TestWKDServingFailsClosedOnUnreadableClaims(t *testing.T) {
 		t.Fatalf("admin list served stale claims instead of surfacing the read failure: status %d", listRec.Code)
 	}
 }
+
+// A code-confirmed alias may send but is not published: the code travelled
+// through an SMTP server the user chose, so it is not proof of the address.
+// Only the daemon's DKIM match (MarkVerified) publishes.
+func TestWKDServingSkipsCodeConfirmedAlias(t *testing.T) {
+	srv := newTestServer(t)
+	userID := srv.mustBootstrapUserID(t)
+	writeUnreachableSMTPIMAPConfig(t, srv, userID, "alice@example.com")
+	seedUserPGPKey(t, srv, userID, "alice@example.com")
+
+	sendAsStore, err := srv.userSendAsStore(userID)
+	if err != nil {
+		t.Fatalf("userSendAsStore: %v", err)
+	}
+	alias, err := sendAsStore.Create(userID, "alice@example.com", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := sendAsStore.Confirm(alias.ID, alias.VerificationCode); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	wkdStore, err := srv.wkdPublishStore()
+	if err != nil {
+		t.Fatalf("wkdPublishStore: %v", err)
+	}
+	if _, err := wkdStore.Create("example.com"); err != nil {
+		t.Fatalf("Create claim: %v", err)
+	}
+	if err := wkdStore.SetVerified("example.com", true, time.Now()); err != nil {
+		t.Fatalf("SetVerified: %v", err)
+	}
+	hu := wkdHashLocalPart("alice")
+	path := "/.well-known/openpgpkey/example.com/hu/" + hu
+
+	if r := doRaw(t, srv, http.MethodGet, path, "", nil); r.Code != http.StatusNotFound {
+		t.Fatalf("code-confirmed alias: status %d, want 404", r.Code)
+	}
+	if got := srv.suggestedKeyUserIDs(userID); len(got) != 1 {
+		t.Fatalf("suggestedKeyUserIDs = %v, want only the account address", got)
+	}
+	if err := sendAsStore.MarkVerified(alias.ID); err != nil {
+		t.Fatalf("MarkVerified: %v", err)
+	}
+	if r := doRaw(t, srv, http.MethodGet, path, "", nil); r.Code != http.StatusOK {
+		t.Fatalf("after DKIM proof: status %d, want 200", r.Code)
+	}
+}

@@ -219,6 +219,10 @@ Server-side notes a client should know:
   `push` mode SHOULD poll `GET /api/notifications/native/pull` with its saved
   cursor when it has received no push for a while, so a relay outage degrades
   to delayed delivery instead of silence, with no server-side mode change.
+- Each queued entry records the devices it was addressed to and the pull
+  endpoint serves a device only its own entries (push-MFA challenges go to
+  approver devices only). The cursor is the account-wide sequence, so a device
+  advances past entries meant for others.
 - The pull queue is bounded at 100 entries per user; the oldest are dropped
   (`state/store.go`, `maxPullNotifications`). A device offline long enough
   loses the tail.

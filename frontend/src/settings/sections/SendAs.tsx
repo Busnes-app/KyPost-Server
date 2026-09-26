@@ -64,7 +64,7 @@ export function SendAs() {
     try {
       await confirmSendAsAlias(alias.id, code);
       setCodes((prev) => ({ ...prev, [alias.id]: "" }));
-      setSendAsMessage(`${alias.email} is verified.`);
+      setSendAsMessage(`${alias.email} is verified for sending.`);
       await refreshSendAsAliases();
     } catch (error: unknown) {
       setSendAsMessage(`Could not confirm: ${toErrorMessage(error, "unknown error")}`);
@@ -95,9 +95,9 @@ export function SendAs() {
       <h3>Send-As Addresses</h3>
       <p className="config-muted">
         Add a secondary email address you also control. KyPost sends a one-time code to that address, as that
-        address, through your outgoing mail server. Enter the code here to verify it. If the message also lands
-        in this inbox with a valid signature from the address&apos;s domain, it verifies on its own. Once verified,
-        you can choose it as the From address when composing mail.
+        address, through your outgoing mail server. Enter the code here to use it as a From address. If the
+        message also lands in this inbox signed by the address&apos;s domain, the address is proven to the
+        domain as well and your key can be published for it over WKD.
       </p>
       <div className="config-grid config-grid-two">
         <label>
@@ -132,7 +132,9 @@ export function SendAs() {
                 {alias.displayName ? `${alias.displayName} <${alias.email}>` : alias.email}
                 {" — "}
                 {alias.status === "verified" && alias.verifiedAt
-                  ? `verified ${formatWhen(alias.verifiedAt)}`
+                  ? alias.verifiedBy === "code"
+                    ? `verified for sending ${formatWhen(alias.verifiedAt)}. Not published over WKD: that needs the signed copy to reach this inbox.`
+                    : `verified ${formatWhen(alias.verifiedAt)}`
                   : alias.status === "failed"
                     ? `verification failed${alias.failedAt ? ` ${formatWhen(alias.failedAt)}` : ""}`
                     : `awaiting code, expires ${formatWhen(alias.expiresAt)}`}

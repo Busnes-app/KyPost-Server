@@ -82,12 +82,18 @@ func (p *Poller) checkPendingSendAsAliases(ctx context.Context, userID string, m
 		return
 	}
 	for _, alias := range aliases {
-		if alias.Status != "pending" {
+		// A code-confirmed alias is checked too, until its window closes: the
+		// DKIM proof upgrades it to domain-proven (sendas.Alias.DomainProven).
+		codeOnly := alias.Status == "verified" && alias.VerifiedBy == sendas.VerifiedByCode
+		if alias.Status != "pending" && !codeOnly {
 			continue
 		}
 
 		expiresAt, perr := time.Parse(time.RFC3339, alias.ExpiresAt)
 		if perr != nil || !expiresAt.After(time.Now()) {
+			if codeOnly {
+				continue
+			}
 			if err := store.MarkFailed(alias.ID); err != nil {
 				p.log.Error("failed to mark expired send-as alias failed",
 					"user_id", userID, "alias_id", alias.ID, "error", err.Error())

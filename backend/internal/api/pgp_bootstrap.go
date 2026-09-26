@@ -161,7 +161,7 @@ func (s *Server) suggestedKeyUserIDs(userID string) []string {
 	}
 	for _, alias := range verified {
 		addr := strings.TrimSpace(alias.Email)
-		if addr == "" || seen[strings.ToLower(addr)] {
+		if !alias.DomainProven() || addr == "" || seen[strings.ToLower(addr)] {
 			continue
 		}
 		seen[strings.ToLower(addr)] = true

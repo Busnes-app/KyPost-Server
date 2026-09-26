@@ -449,3 +449,33 @@ func TestFindVerifiedByEmailFailsClosedOnAnUnreadableFile(t *testing.T) {
 		t.Fatal("FindVerifiedByEmail reported a match alongside an error")
 	}
 }
+
+// The typed code proves the From header only; the daemon's DKIM match may
+// later upgrade the same record to domain-proven, and only that publishes.
+func TestConfirmThenMarkVerifiedUpgradesProof(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	a, err := s.Create("u1", "alias@example.com", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := s.Confirm(a.ID, a.VerificationCode); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	got, _, _ := s.Get(a.ID)
+	if got.Status != "verified" || got.VerifiedBy != VerifiedByCode || got.DomainProven() {
+		t.Fatalf("after Confirm: %+v, want verified by code and not domain-proven", got)
+	}
+	if _, ok, _ := s.FindVerifiedByEmail("alias@example.com"); !ok {
+		t.Fatal("code-confirmed alias must still authorize sending")
+	}
+	if err := s.MarkVerified(a.ID); err != nil {
+		t.Fatalf("MarkVerified: %v", err)
+	}
+	got, _, _ = s.Get(a.ID)
+	if got.VerifiedBy != VerifiedByDKIM || !got.DomainProven() {
+		t.Fatalf("after MarkVerified: %+v, want upgraded to dkim", got)
+	}
+}

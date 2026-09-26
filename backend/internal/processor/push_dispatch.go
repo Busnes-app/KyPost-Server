@@ -273,7 +273,13 @@ func SendNativePushToDevices(ctx context.Context, dispatcher *NativePushDispatch
 	// by age; a device polling only as a fallback reads whatever the cap kept.
 	// In push mode the queue is the fallback, so its error does not stop the
 	// relay send below; in pull mode it is the delivery and is returned.
-	queueErr := store.EnqueuePullNotification(state.PullNotification{Title: message.Title, Body: message.Body, Data: message.Data})
+	deviceIDs := make([]string, 0, len(devices))
+	for _, d := range devices {
+		if id := strings.TrimSpace(d.DeviceID); id != "" {
+			deviceIDs = append(deviceIDs, id)
+		}
+	}
+	queueErr := store.EnqueuePullNotification(state.PullNotification{Title: message.Title, Body: message.Body, Data: message.Data, DeviceIDs: deviceIDs})
 	if store.NativeDeliveryMode() == state.DeliveryModePull {
 		if queueErr != nil {
 			return NativePushOutcome{Devices: len(devices), Queued: true}, queueErr

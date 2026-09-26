@@ -62,12 +62,17 @@ func TestSendNativePushToDevicesFiltersToGivenList(t *testing.T) {
 		t.Fatalf("relay received tokens %v, want exactly [token-a]", receivedTokens)
 	}
 	// Push mode still writes the pull queue, so a device that stops hearing
-	// from the relay can poll and catch up without anyone changing the mode.
-	queued, _, err := store.PullNotificationsAfterStrict(0)
+	// from the relay can poll and catch up without anyone changing the mode —
+	// but only the devices the message was addressed to. B was filtered out
+	// (as push-MFA filters non-approvers) and must not read it from the queue.
+	queued, _, err := store.PullNotificationsAfterStrict("dev-a", 0)
 	if err != nil {
 		t.Fatalf("PullNotificationsAfterStrict: %v", err)
 	}
 	if len(queued) != 1 || queued[0].Title != "t" {
-		t.Fatalf("pull queue = %+v, want the one pushed message", queued)
+		t.Fatalf("pull queue for dev-a = %+v, want the one pushed message", queued)
+	}
+	if other, _, _ := store.PullNotificationsAfterStrict("dev-b", 0); len(other) != 0 {
+		t.Fatalf("pull queue for dev-b = %+v, want nothing (not addressed)", other)
 	}
 }

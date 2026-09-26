@@ -263,21 +263,22 @@ func (s *Store) create(userID, email, displayName string, auto bool) (Alias, err
 	return created, nil
 }
 
-// MarkVerified sets Status to "verified" and stamps VerifiedAt. Calling it
-// again on an already-verified record is a no-op success, not an error (a
-// verification poller running on a ticker could plausibly race a duplicate
-// match in the same tick window in future extensions — idempotency here
-// costs nothing). Returns an error if no record with that ID exists.
+// MarkVerified records the DKIM proof: Status "verified", VerifiedBy DKIM,
+// VerifiedAt stamped. On a record already domain-proven it is a no-op
+// success (the daemon may match twice). On a record the user confirmed by
+// code it upgrades the proof, which is why the daemon keeps checking those
+// until they expire. Returns an error if no record with that ID exists.
 func (s *Store) MarkVerified(id string) error {
 	return s.update(func() error {
 		for i, a := range s.aliases {
 			if a.ID != id {
 				continue
 			}
-			if a.Status == "verified" {
+			if a.DomainProven() {
 				return nil
 			}
 			s.aliases[i].Status = "verified"
+			s.aliases[i].VerifiedBy = VerifiedByDKIM
 			s.aliases[i].VerifiedAt = time.Now().UTC().Format(time.RFC3339)
 			return s.persistLocked()
 		}
@@ -315,6 +316,7 @@ func (s *Store) Confirm(id, code string) error {
 				return ErrCodeMismatch
 			}
 			s.aliases[i].Status = "verified"
+			s.aliases[i].VerifiedBy = VerifiedByCode
 			s.aliases[i].VerifiedAt = time.Now().UTC().Format(time.RFC3339)
 			return s.persistLocked()
 		}

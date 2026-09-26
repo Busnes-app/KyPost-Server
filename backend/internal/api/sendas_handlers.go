@@ -183,6 +183,8 @@ func (s *Server) handleSendAsCreate(w http.ResponseWriter, r *http.Request) {
 // handleSendAsConfirm verifies one of the caller's pending aliases with the
 // code read from the probe email. Wrong codes are counted by the store and
 // the record fails at its attempt cap, so the 32-bit code cannot be searched.
+// The result authorizes the From header only (sendas.Alias.DomainProven): the
+// code went through the user's own SMTP server, so it is not domain proof.
 func (s *Server) handleSendAsConfirm(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Code string `json:"code"`
@@ -198,7 +200,7 @@ func (s *Server) handleSendAsConfirm(w http.ResponseWriter, r *http.Request) {
 	err := store.Confirm(record.ID, req.Code)
 	switch {
 	case err == nil:
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "verified"})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "verified", "verifiedBy": sendas.VerifiedByCode})
 	case errors.Is(err, sendas.ErrCodeMismatch):
 		http.Error(w, "that code did not match", http.StatusBadRequest)
 	case errors.Is(err, sendas.ErrTooManyAttempts):
