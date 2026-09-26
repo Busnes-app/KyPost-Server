@@ -1353,6 +1353,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
           <input
             type="text"
             placeholder="Search..."
+            aria-label="Search mail"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -1362,6 +1363,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             }}
             style={{
               flex: 1,
+              minWidth: 0,
               padding: "6px 8px",
               borderRadius: "4px",
               border: "1px solid var(--line)",

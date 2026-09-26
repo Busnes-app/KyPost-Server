@@ -1,3 +1,5 @@
+import { readChoice, saveChoice, watchChoice } from './ky-ui/theme';
+import { busnesPalettes } from './ky-ui/palettes';
 export const THEME_STORAGE_KEY = "kypost-theme";
 
 export const THEME_OPTIONS = [
@@ -42,8 +44,8 @@ type ThemeVars = {
 };
 
 export const themes: Record<ThemeName, ThemeVars> = {
-  "Busnes Light": {"bg": "#f8f6f0", "panel": "#ffffff", "ink": "#566461", "inkStrong": "#182326", "accent": "#bf3f18", "accentSoft": "#fbf0ec", "line": "rgba(24, 35, 38, 0.22)", "glow": "transparent", "sidebarStart": "#f2efe7", "sidebarEnd": "#f2efe7", "buttonText": "#ffffff", "newEmailBorder": "#bf3f18", "newEmailStart": "#bf3f18", "newEmailEnd": "#bf3f18", "newEmailText": "#ffffff", "linkBorder": "rgba(24, 35, 38, 0.22)"},
-  "Busnes Dark": {"bg": "#182326", "panel": "#1f2b2e", "ink": "#b3bcb8", "inkStrong": "#f2efe8", "accent": "#f5865f", "accentSoft": "#2b2622", "line": "rgba(242, 239, 232, 0.24)", "glow": "transparent", "sidebarStart": "#1f2b2e", "sidebarEnd": "#1f2b2e", "buttonText": "#182326", "newEmailBorder": "#f5865f", "newEmailStart": "#f5865f", "newEmailEnd": "#f5865f", "newEmailText": "#182326", "linkBorder": "rgba(242, 239, 232, 0.24)"},
+  "Busnes Light": { ...busnesPalettes["Busnes Light"], newEmailBorder: busnesPalettes["Busnes Light"].accent, newEmailStart: busnesPalettes["Busnes Light"].accent, newEmailEnd: busnesPalettes["Busnes Light"].accent, newEmailText: busnesPalettes["Busnes Light"].buttonText, linkBorder: busnesPalettes["Busnes Light"].line },
+  "Busnes Dark": { ...busnesPalettes["Busnes Dark"], newEmailBorder: busnesPalettes["Busnes Dark"].accent, newEmailStart: busnesPalettes["Busnes Dark"].accent, newEmailEnd: busnesPalettes["Busnes Dark"].accent, newEmailText: busnesPalettes["Busnes Dark"].buttonText, linkBorder: busnesPalettes["Busnes Dark"].line },
   "Dark Matter": {
     bg: "#1a1a1e",
     panel: "#252530",
@@ -333,6 +335,18 @@ function defaultTheme(): ThemeName { return window.matchMedia?.("(prefers-color-
 
 function applyThemeVars(theme: ThemeVars) {
   const root = document.documentElement;
+  const sharedName = theme === themes["Busnes Light"] ? "busnes-light" : theme === themes["Busnes Dark"] ? "busnes-dark" : undefined;
+  for (const key of Object.keys(themes["Busnes Light"])) root.style.removeProperty("--" + key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase()));
+  if (sharedName) {
+    root.dataset.theme = sharedName;
+    root.style.colorScheme = sharedName === "busnes-dark" ? "dark" : "light";
+    for (const [key, value] of Object.entries(theme)) {
+      const cssKey = "--" + key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+      root.style.setProperty(cssKey, value);
+    }
+    return;
+  }
+  delete root.dataset.theme;
   root.style.colorScheme = ["#f8f6f0", "#f5efe5", "#f4f1eb", "#f7f9fb", "#dff1ff", "#fff3dc", "#eef2f6"].includes(theme.bg) ? "light" : "dark";
   for (const [key, value] of Object.entries(theme) as [string, string][]) {
     root.style.setProperty("--" + key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase()), value);
@@ -342,7 +356,7 @@ function applyThemeVars(theme: ThemeVars) {
 export function applyTheme(themeName: ThemeName) {
   applyThemeVars(themes[themeName]);
   try {
-    window.localStorage.setItem(THEME_STORAGE_KEY, themeName);
+    saveChoice(THEME_STORAGE_KEY, themeName);
   } catch {
     // Ignore unavailable storage.
   }
@@ -350,7 +364,7 @@ export function applyTheme(themeName: ThemeName) {
 
 export function getStoredTheme(): ThemeName {
   try {
-    const saved = window.localStorage.getItem(THEME_STORAGE_KEY) ?? defaultTheme();
+    const saved = readChoice(THEME_STORAGE_KEY) ?? defaultTheme();
     if (isThemeName(saved)) {
       return saved;
     }
@@ -377,7 +391,4 @@ export function applyStoredTheme() {
   applyThemeVars(themes[theme]);
 }
 
-if (typeof window !== "undefined") window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener("change", () => {
-  try { if (localStorage.getItem(THEME_STORAGE_KEY)) return; } catch { /* Storage is optional. */ }
-  applyStoredTheme();
-});
+if (typeof window !== 'undefined') watchChoice(THEME_STORAGE_KEY, applyStoredTheme, () => Boolean(readChoice(THEME_STORAGE_KEY)));

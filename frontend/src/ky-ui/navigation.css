@@ -1,0 +1,30 @@
+/* State only: products own spacing, orientation and typography. Local aliases
+   keep named product palettes usable as well as Busnes Light/Dark. */
+.ky-nav-item:not(:disabled):not([aria-disabled="true"]):hover {
+  background: var(--panel-hover, var(--ky-panel-hover));
+  color: var(--ink-strong, var(--ky-ink-strong));
+}
+.ky-nav-item:focus-visible {
+  outline: 2px solid var(--accent, var(--ky-accent));
+  outline-offset: 2px;
+}
+[class].ky-nav-item.active,
+[class].ky-nav-item.sidebar-link-active,
+[class].ky-nav-item.selected,
+[class].ky-nav-item[aria-current="page"],
+[class].ky-nav-item[data-selected="true"] {
+  background: var(--accent-soft, var(--ky-accent-soft));
+  box-shadow: inset 3px 0 var(--accent, var(--ky-accent));
+  color: var(--ink-strong, var(--ky-ink-strong));
+}
+.ky-nav-item:disabled,
+.ky-nav-item[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
+@media (max-width: 720px) {
+  [class].ky-nav-item.active,
+  [class].ky-nav-item.sidebar-link-active,
+  [class].ky-nav-item.selected,
+  [class].ky-nav-item[aria-current="page"],
+  [class].ky-nav-item[data-selected="true"] {
+    box-shadow: inset 0 -3px var(--accent, var(--ky-accent));
+  }
+}
