@@ -140,7 +140,7 @@ func (p *Poller) ensureOwnAddressProven(userID string) {
 	if err := sendSendAsProbe(smtpHost, smtpPort, addr, payload.Username, payload.Password, from, []string{ownAddress}, msg); err != nil {
 		// Nothing left, so nothing to wait for. Drop the record rather than
 		// leaving a pending one claiming a probe is in flight — that would
-		// block the next tick from retrying for the full 5-minute window over
+		// block the next tick from retrying for the full pending window over
 		// a message that never left the building.
 		if derr := store.Delete(alias.ID); derr != nil {
 			p.log.Error("failed to roll back own-address probe record",

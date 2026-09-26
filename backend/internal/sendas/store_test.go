@@ -50,8 +50,8 @@ func TestCreateGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExpiresAt not RFC3339: %v", err)
 	}
-	if diff := expiresAt.Sub(createdAt); diff != 5*time.Minute {
-		t.Errorf("ExpiresAt - CreatedAt = %v, want 5m", diff)
+	if diff := expiresAt.Sub(createdAt); diff != pendingExpiry {
+		t.Errorf("ExpiresAt - CreatedAt = %v, want %v", diff, pendingExpiry)
 	}
 
 	got, ok := mustGet(t, s, created.ID)

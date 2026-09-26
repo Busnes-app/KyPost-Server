@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toErrorMessage } from "../../api/client";
-import { createSendAsAlias, deleteSendAsAlias, listSendAsAliases, type SendAsAlias } from "../../api/sendas";
+import { confirmSendAsAlias, createSendAsAlias, deleteSendAsAlias, listSendAsAliases, type SendAsAlias } from "../../api/sendas";
 import { formatWhen, sendAsStatusClass, sendAsStatusLabel } from "../../pages/config/settings";
 
 export function SendAs() {
@@ -9,6 +9,7 @@ export function SendAs() {
   const [sendAsDisplayName, setSendAsDisplayName] = useState("");
   const [sendAsMessage, setSendAsMessage] = useState("");
   const [sendAsBusy, setSendAsBusy] = useState(false);
+  const [codes, setCodes] = useState<Record<string, string>>({});
 
   async function refreshSendAsAliases() {
     setSendAsAliases(await listSendAsAliases());
@@ -19,10 +20,8 @@ export function SendAs() {
   }, []);
 
   // While any alias is still verifying, poll for status changes so the list
-  // updates on its own once the background verification check (server-side,
-  // typically completing within a couple of minutes) resolves it — the user
-  // never has to do anything or refresh manually. Stops as soon as nothing
-  // is pending, so this never polls indefinitely for an idle account.
+  // updates on its own if the daemon's DKIM loop-back check verifies it before
+  // the user types the code. Stops as soon as nothing is pending.
   useEffect(() => {
     if (!sendAsAliases.some((alias) => alias.status === "pending")) {
       return;
@@ -45,10 +44,31 @@ export function SendAs() {
       await createSendAsAlias(email, sendAsDisplayName.trim());
       setSendAsEmail("");
       setSendAsDisplayName("");
-      setSendAsMessage("Verification email sent. This address will show as verified automatically once the check completes — no action needed.");
+      setSendAsMessage("Verification email sent to that address. Open its mailbox, copy the code from the message, and enter it below within 30 minutes.");
       await refreshSendAsAliases();
     } catch (error: unknown) {
       setSendAsMessage(`Failed to start verification: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setSendAsBusy(false);
+    }
+  }
+
+  async function confirmAlias(alias: SendAsAlias) {
+    const code = (codes[alias.id] ?? "").trim();
+    if (!code) {
+      setSendAsMessage("Enter the code from the verification email first.");
+      return;
+    }
+    setSendAsBusy(true);
+    setSendAsMessage("");
+    try {
+      await confirmSendAsAlias(alias.id, code);
+      setCodes((prev) => ({ ...prev, [alias.id]: "" }));
+      setSendAsMessage(`${alias.email} is verified.`);
+      await refreshSendAsAliases();
+    } catch (error: unknown) {
+      setSendAsMessage(`Could not confirm: ${toErrorMessage(error, "unknown error")}`);
+      await refreshSendAsAliases().catch(() => undefined);
     } finally {
       setSendAsBusy(false);
     }
@@ -74,9 +94,10 @@ export function SendAs() {
     <div className="config-card">
       <h3>Send-As Addresses</h3>
       <p className="config-muted">
-        Add a secondary email address you also control. KyPost verifies it automatically — it emails the address
-        a one-time code and watches for that same message to come back to this inbox, with no reply or link click
-        needed on your part. Once verified, you can choose it as the From address when composing mail.
+        Add a secondary email address you also control. KyPost sends a one-time code to that address, as that
+        address, through your outgoing mail server. Enter the code here to verify it. If the message also lands
+        in this inbox with a valid signature from the address&apos;s domain, it verifies on its own. Once verified,
+        you can choose it as the From address when composing mail.
       </p>
       <div className="config-grid config-grid-two">
         <label>
@@ -114,7 +135,7 @@ export function SendAs() {
                   ? `verified ${formatWhen(alias.verifiedAt)}`
                   : alias.status === "failed"
                     ? `verification failed${alias.failedAt ? ` ${formatWhen(alias.failedAt)}` : ""}`
-                    : `verifying, expires ${formatWhen(alias.expiresAt)}`}
+                    : `awaiting code, expires ${formatWhen(alias.expiresAt)}`}
                 {alias.auto ? (
                   <span className="config-muted">
                     {alias.status === "failed"
@@ -126,6 +147,21 @@ export function SendAs() {
                 ) : null}
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {alias.status === "pending" ? (
+                  <>
+                    <input
+                      aria-label={`Verification code for ${alias.email}`}
+                      value={codes[alias.id] ?? ""}
+                      onChange={(event) => setCodes((prev) => ({ ...prev, [alias.id]: event.target.value }))}
+                      placeholder="kp-xxxxxxxx"
+                      autoComplete="one-time-code"
+                      style={{ width: 130 }}
+                    />
+                    <button type="button" onClick={() => void confirmAlias(alias)} disabled={sendAsBusy}>
+                      Confirm
+                    </button>
+                  </>
+                ) : null}
                 <span className={`contacts-badge ${sendAsStatusClass(alias.status)}`}>
                   <span className="contacts-dot" aria-hidden="true" />
                   {sendAsStatusLabel(alias.status)}

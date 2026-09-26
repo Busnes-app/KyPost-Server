@@ -8,7 +8,6 @@ export type SendAsAlias = {
   userId: string;
   email: string;
   displayName?: string;
-  verificationCode: string;
   status: SendAsAliasStatus;
   createdAt: string;
   expiresAt: string;
@@ -38,6 +37,10 @@ export async function listSendAsAliases(): Promise<SendAsAlias[]> {
 
 export async function createSendAsAlias(email: string, displayName: string): Promise<CreateSendAsAliasResult> {
   return postJSON<CreateSendAsAliasResult>("/api/mail/send-as", { email, displayName });
+}
+
+export async function confirmSendAsAlias(id: string, code: string): Promise<{ ok: boolean; status: SendAsAliasStatus }> {
+  return postJSON(`/api/mail/send-as/${encodeURIComponent(id)}/confirm`, { code });
 }
 
 export async function deleteSendAsAlias(id: string): Promise<{ ok: boolean }> {

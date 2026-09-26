@@ -50,7 +50,7 @@ func (p *Poller) userSendAsStore(userID string) (*sendas.Store, error) {
 //
 // A pending record whose ExpiresAt has already passed is marked failed and
 // is never checked again — no indefinite retry, matching the feature's
-// fixed 5-minute verification window.
+// fixed verification window (sendas.pendingExpiry).
 //
 // Every other pending record is checked by searching the user's own INBOX
 // for a message whose subject contains the record's VerificationCode. A

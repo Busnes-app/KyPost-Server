@@ -11,11 +11,13 @@ package api
 // still created correctly.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -291,5 +293,95 @@ func TestHandleSendAsDeleteNotFound(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func confirmSendAs(srv *Server, userID, id, code string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]string{"code": code})
+	req := httptest.NewRequest(http.MethodPost, "/api/mail/send-as/"+id+"/confirm", bytes.NewReader(body))
+	req.SetPathValue("id", id)
+	authRequestAs(srv, req, userID)
+	rec := httptest.NewRecorder()
+	srv.withAuth(srv.handleSendAsConfirm)(rec, req)
+	return rec
+}
+
+// The list must not hand the browser the very code Confirm checks; with it,
+// any session could verify any address without reading its mailbox.
+func TestHandleSendAsListHidesVerificationCode(t *testing.T) {
+	srv := newTestServer(t)
+	userID := srv.mustBootstrapUserID(t)
+	store := must1(srv.userSendAsStore(userID))
+	alias := must1(store.Create(userID, "bob@example.com", ""))
+
+	rec := doJSONAuth(srv, srv.withAuth(srv.handleSendAs), http.MethodGet, "/api/mail/send-as", nil, userID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte(alias.VerificationCode)) || bytes.Contains(rec.Body.Bytes(), []byte("verificationCode")) {
+		t.Fatalf("list leaks the verification code: %s", rec.Body.String())
+	}
+}
+
+func TestHandleSendAsConfirm(t *testing.T) {
+	srv := newTestServer(t)
+	userID := srv.mustBootstrapUserID(t)
+	store := must1(srv.userSendAsStore(userID))
+	alias := must1(store.Create(userID, "bob@example.com", ""))
+
+	if rec := confirmSendAs(srv, userID, alias.ID, "kp-00000000"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("wrong code: status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if got, _ := must2(store.Get(alias.ID)); got.Status != "pending" || got.ConfirmAttempts != 1 {
+		t.Fatalf("after one wrong code: status=%q attempts=%d", got.Status, got.ConfirmAttempts)
+	}
+	if rec := confirmSendAs(srv, userID, alias.ID, " "+alias.VerificationCode+" "); rec.Code != http.StatusOK {
+		t.Fatalf("right code: status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got, _ := must2(store.Get(alias.ID)); got.Status != "verified" || got.VerifiedAt == "" {
+		t.Fatalf("after right code: status=%q verifiedAt=%q", got.Status, got.VerifiedAt)
+	}
+	// Verified is no longer pending: a second confirm is refused.
+	if rec := confirmSendAs(srv, userID, alias.ID, alias.VerificationCode); rec.Code != http.StatusConflict {
+		t.Fatalf("re-confirm: status = %d, want 409", rec.Code)
+	}
+}
+
+func TestHandleSendAsConfirmFailsAfterAttemptCap(t *testing.T) {
+	srv := newTestServer(t)
+	userID := srv.mustBootstrapUserID(t)
+	store := must1(srv.userSendAsStore(userID))
+	alias := must1(store.Create(userID, "bob@example.com", ""))
+
+	for i := 0; i < 4; i++ {
+		if rec := confirmSendAs(srv, userID, alias.ID, "kp-deadbeef"); rec.Code != http.StatusBadRequest {
+			t.Fatalf("attempt %d: status = %d, want 400", i+1, rec.Code)
+		}
+	}
+	rec := confirmSendAs(srv, userID, alias.ID, "kp-deadbeef")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "too many") {
+		t.Fatalf("fifth attempt: status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, _ := must2(store.Get(alias.ID)); got.Status != "failed" {
+		t.Fatalf("status after cap = %q, want failed", got.Status)
+	}
+	// The real code no longer works once the record has failed.
+	if rec := confirmSendAs(srv, userID, alias.ID, alias.VerificationCode); rec.Code != http.StatusConflict {
+		t.Fatalf("after failure: status = %d, want 409", rec.Code)
+	}
+}
+
+func TestHandleSendAsConfirmRejectsOtherUsersAlias(t *testing.T) {
+	srv := newTestServer(t)
+	owner := srv.mustBootstrapUserID(t)
+	other := must1(srv.users.Create(context.Background(), "other-sendas-confirm", "pw-other-testpassword", users.RoleUser)).ID
+	store := must1(srv.userSendAsStore(owner))
+	alias := must1(store.Create(owner, "bob@example.com", ""))
+
+	if rec := confirmSendAs(srv, other, alias.ID, alias.VerificationCode); rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if got, _ := must2(store.Get(alias.ID)); got.Status != "pending" {
+		t.Fatalf("status = %q, want pending", got.Status)
 	}
 }

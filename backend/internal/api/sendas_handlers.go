@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,11 @@ func (s *Server) handleSendAs(w http.ResponseWriter, r *http.Request) {
 		}
 		if list == nil {
 			list = []sendas.Alias{}
+		}
+		// The code is the proof handleSendAsConfirm checks; serving it here
+		// would let any session verify any address without reading its mailbox.
+		for i := range list {
+			list[i].VerificationCode = ""
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"aliases": list})
 	case http.MethodPost:
@@ -126,9 +132,8 @@ func (s *Server) handleSendAsCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// 7. Create the pending record before attempting to send the probe
 	// email. Do not roll this back if sending fails (step 9) — a send
-	// failure just means the record sits pending until the (later,
-	// not-yet-implemented) verification poller's expiry logic naturally
-	// marks it failed.
+	// failure just means the record sits pending until the daemon's expiry
+	// logic marks it failed.
 	alias, err := store.Create(ac.UserID, normalizedEmail, strings.TrimSpace(req.DisplayName))
 	if err != nil {
 		http.Error(w, "failed to create alias", http.StatusInternalServerError)
@@ -142,17 +147,26 @@ func (s *Server) handleSendAsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 9. Send the probe email. The pending record created in step 7 remains
-	// in place regardless of the outcome.
+	// 9. Send the probe email, From the alias itself, to the alias — the same
+	// header and envelope sender a real send-as message would use, so an
+	// upstream that refuses to relay as that address refuses here, before the
+	// alias can be verified. The pending record from step 7 stays regardless.
+	// Two ways to finish: the daemon's DKIM loop-back check
+	// (processor/sendas_check.go) when the alias domain signs and delivers
+	// into this inbox, or the user typing the code into handleSendAsConfirm.
+	from := mailmsg.SanitizeHeaderValue(normalizedEmail)
 	msg := mailmsg.Message{
-		From:    mailmsg.SanitizeHeaderValue(imapCfg.Username),
+		From:    from,
 		To:      []string{normalizedEmail},
 		Subject: "Verify send-as: " + alias.VerificationCode,
-		Body:    "This is an automated verification message from KyPost. No action is needed — this check completes automatically. If you don't recognize this, you can ignore it.",
-		Mode:    "plain",
+		Body: "KyPost is verifying that you can send mail as this address.\r\n\r\n" +
+			"Your verification code is: " + alias.VerificationCode + "\r\n\r\n" +
+			"Enter it in KyPost under Settings → Mail → Send-As Addresses within 30 minutes. " +
+			"If you did not request this, you can ignore it.",
+		Mode: "plain",
 	}.Build()
 
-	if err := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, imapCfg.Username, imapCfg.Password, mailmsg.SanitizeHeaderValue(imapCfg.Username), []string{normalizedEmail}, msg); err != nil {
+	if err := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, imapCfg.Username, imapCfg.Password, from, []string{normalizedEmail}, msg); err != nil {
 		http.Error(w, fmt.Sprintf("failed to send verification email: %s", err), http.StatusBadGateway)
 		return
 	}
@@ -166,46 +180,80 @@ func (s *Server) handleSendAsCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSendAsByID deletes one of the caller's own send-as alias records.
-func (s *Server) handleSendAsByID(w http.ResponseWriter, r *http.Request) {
+// handleSendAsConfirm verifies one of the caller's pending aliases with the
+// code read from the probe email. Wrong codes are counted by the store and
+// the record fails at its attempt cap, so the 32-bit code cannot be searched.
+func (s *Server) handleSendAsConfirm(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil || strings.TrimSpace(req.Code) == "" {
+		http.Error(w, "code is required", http.StatusBadRequest)
+		return
+	}
+	store, record, ok := s.ownSendAsRecord(w, r)
+	if !ok {
+		return
+	}
+	err := store.Confirm(record.ID, req.Code)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "verified"})
+	case errors.Is(err, sendas.ErrCodeMismatch):
+		http.Error(w, "that code did not match", http.StatusBadRequest)
+	case errors.Is(err, sendas.ErrTooManyAttempts):
+		http.Error(w, "too many wrong codes; remove the address and verify it again", http.StatusBadRequest)
+	case errors.Is(err, sendas.ErrNotPending):
+		http.Error(w, "this address is not awaiting a code", http.StatusConflict)
+	default:
+		http.Error(w, "failed to confirm alias", http.StatusInternalServerError)
+	}
+}
+
+// ownSendAsRecord resolves {id} to a record owned by the caller, writing the
+// error response itself. A record under another account is 404, not 403, so
+// the ID space is not enumerable.
+func (s *Server) ownSendAsRecord(w http.ResponseWriter, r *http.Request) (*sendas.Store, sendas.Alias, bool) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
 		http.Error(w, "id is required", http.StatusBadRequest)
+		return nil, sendas.Alias{}, false
+	}
+	store, err := s.sendAsFor(r)
+	if err != nil {
+		http.Error(w, "failed to open send-as store", http.StatusInternalServerError)
+		return nil, sendas.Alias{}, false
+	}
+	record, ok, err := store.Get(id)
+	if err != nil {
+		http.Error(w, "failed to read send-as aliases", http.StatusInternalServerError)
+		return nil, sendas.Alias{}, false
+	}
+	ac, authed := authFromContext(r)
+	if !authed {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return nil, sendas.Alias{}, false
+	}
+	if !ok || record.UserID != ac.UserID {
+		http.Error(w, "alias not found", http.StatusNotFound)
+		return nil, sendas.Alias{}, false
+	}
+	return store, record, true
+}
+
+// handleSendAsByID deletes one of the caller's own send-as alias records.
+func (s *Server) handleSendAsByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	switch r.Method {
-	case http.MethodDelete:
-		store, err := s.sendAsFor(r)
-		if err != nil {
-			http.Error(w, "failed to open send-as store", http.StatusInternalServerError)
-			return
-		}
-		record, ok, err := store.Get(id)
-		if err != nil {
-			http.Error(w, "failed to read send-as aliases", http.StatusInternalServerError)
-			return
-		}
-		if !ok {
-			http.Error(w, "alias not found", http.StatusNotFound)
-			return
-		}
-		ac, ok := authFromContext(r)
-		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
-			return
-		}
-		if record.UserID != ac.UserID {
-			// Not 403 — don't reveal to a caller that a given ID exists
-			// under a different account.
-			http.Error(w, "alias not found", http.StatusNotFound)
-			return
-		}
-		if err := store.Delete(id); err != nil {
-			http.Error(w, "failed to delete alias", http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	store, record, ok := s.ownSendAsRecord(w, r)
+	if !ok {
+		return
 	}
+	if err := store.Delete(record.ID); err != nil {
+		http.Error(w, "failed to delete alias", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
