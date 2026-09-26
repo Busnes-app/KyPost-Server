@@ -844,7 +844,7 @@ func TestPullNotificationsAfterStrictRejectsCorruptPayload(t *testing.T) {
 	}
 
 	// Sanity: the well-formed row reads back before we damage it.
-	notes, _, err := store.PullNotificationsAfterStrict(0)
+	notes, _, err := store.PullNotificationsAfterStrict("", 0)
 	if err != nil || len(notes) != 1 {
 		t.Fatalf("PullNotificationsAfterStrict on a healthy row = %d notes, %v; want 1, nil", len(notes), err)
 	}
@@ -853,12 +853,41 @@ func TestPullNotificationsAfterStrictRejectsCorruptPayload(t *testing.T) {
 		t.Fatalf("corrupt the payload: %v", err)
 	}
 
-	got, _, err := store.PullNotificationsAfterStrict(0)
+	got, _, err := store.PullNotificationsAfterStrict("", 0)
 	if err == nil {
 		t.Fatalf("PullNotificationsAfterStrict returned no error for an undecodable payload; "+
 			"the client would advance its cursor past a notification it never received (got %d notifications)", len(got))
 	}
 	if got != nil {
 		t.Errorf("PullNotificationsAfterStrict returned %d notifications alongside an error, want nil", len(got))
+	}
+}
+
+// A notification addressed to specific devices (push-MFA's approver set) is
+// served only to those devices; one with no recipients goes to every device.
+func TestPullNotificationsAddressedToDevices(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("state.New: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.EnqueuePullNotification(PullNotification{Title: "everyone"}); err != nil {
+		t.Fatalf("EnqueuePullNotification: %v", err)
+	}
+	if err := store.EnqueuePullNotification(PullNotification{Title: "approver only", DeviceIDs: []string{"approver"}}); err != nil {
+		t.Fatalf("EnqueuePullNotification: %v", err)
+	}
+
+	approver, cursor, err := store.PullNotificationsAfterStrict("approver", 0)
+	if err != nil || len(approver) != 2 {
+		t.Fatalf("approver sees %d (%v), want 2", len(approver), err)
+	}
+	bystander, _, err := store.PullNotificationsAfterStrict("bystander", 0)
+	if err != nil || len(bystander) != 1 || bystander[0].Title != "everyone" {
+		t.Fatalf("bystander sees %+v (%v), want only the broadcast", bystander, err)
+	}
+	if cursor != 2 {
+		t.Fatalf("cursor = %d, want the global sequence 2", cursor)
 	}
 }

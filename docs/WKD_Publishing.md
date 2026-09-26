@@ -46,7 +46,8 @@ at once:
    WKD client's lookup ever arrives here in the first place.
 3. **The user has publishing turned on**, and `user@example.com` is an
    address that user actually sends from (their connected mail account, or
-   a verified send-as alias) — this is the anti-impersonation check: a
+   a send-as alias verified by the DKIM loop-back; an alias confirmed only by
+   typed code may send but is not published) — this is the anti-impersonation check: a
    verified domain alone never lets one user's key be served under an
    address that belongs to someone else, or to nobody.
 

@@ -253,12 +253,15 @@ func SendNativePush(ctx context.Context, dispatcher *NativePushDispatcher, healt
 
 // SendNativePushToDevices dispatches message to exactly the devices given (a
 // caller-filtered subset, e.g. push-2FA's approver-eligible devices — or, via
-// SendNativePush, every device in store). If the store's delivery mode is
-// pull, devices are enqueued server-side instead of being sent through the
-// relay/Firebase (Sent is set to 1 to indicate the queue write succeeded).
-// Otherwise every device is dispatched through dispatcher, each with its own
-// timeout derived from ctx, stale devices (ErrNativeDeviceStale) are removed
-// from store, and relay health is recorded on healthSvc per platform.
+// SendNativePush, every device in store). Every message is first written to
+// the store's pull queue, whatever the delivery mode: a device that has heard
+// nothing from the relay for a while polls the queue and recovers on its own,
+// with no admin flipping a switch and no server-side mode flapping. In pull
+// mode that write is the delivery (Sent is set to 1 to indicate the queue
+// write succeeded). Otherwise every device is also dispatched through
+// dispatcher, each with its own timeout derived from ctx, stale devices
+// (ErrNativeDeviceStale) are removed from store, and relay health is recorded
+// on healthSvc per platform.
 // onDeviceError, if non-nil, is called for every non-stale dispatch failure so
 // callers can log with their own context.
 func SendNativePushToDevices(ctx context.Context, dispatcher *NativePushDispatcher, healthSvc *health.Service, store *state.Store, devices []state.NativeDevice, message NativePushMessage, onDeviceError func(device state.NativeDevice, platform string, err error)) (NativePushOutcome, error) {
@@ -266,9 +269,20 @@ func SendNativePushToDevices(ctx context.Context, dispatcher *NativePushDispatch
 		return NativePushOutcome{}, nil
 	}
 
+	// ponytail: the queue is capped at maxPullNotifications and never expires
+	// by age; a device polling only as a fallback reads whatever the cap kept.
+	// In push mode the queue is the fallback, so its error does not stop the
+	// relay send below; in pull mode it is the delivery and is returned.
+	deviceIDs := make([]string, 0, len(devices))
+	for _, d := range devices {
+		if id := strings.TrimSpace(d.DeviceID); id != "" {
+			deviceIDs = append(deviceIDs, id)
+		}
+	}
+	queueErr := store.EnqueuePullNotification(state.PullNotification{Title: message.Title, Body: message.Body, Data: message.Data, DeviceIDs: deviceIDs})
 	if store.NativeDeliveryMode() == state.DeliveryModePull {
-		if err := store.EnqueuePullNotification(state.PullNotification{Title: message.Title, Body: message.Body, Data: message.Data}); err != nil {
-			return NativePushOutcome{Devices: len(devices), Queued: true}, err
+		if queueErr != nil {
+			return NativePushOutcome{Devices: len(devices), Queued: true}, queueErr
 		}
 		return NativePushOutcome{Devices: len(devices), Sent: 1, Queued: true}, nil
 	}

@@ -50,7 +50,7 @@ func (p *Poller) userSendAsStore(userID string) (*sendas.Store, error) {
 //
 // A pending record whose ExpiresAt has already passed is marked failed and
 // is never checked again — no indefinite retry, matching the feature's
-// fixed 5-minute verification window.
+// fixed verification window (sendas.pendingExpiry).
 //
 // Every other pending record is checked by searching the user's own INBOX
 // for a message whose subject contains the record's VerificationCode. A
@@ -82,12 +82,18 @@ func (p *Poller) checkPendingSendAsAliases(ctx context.Context, userID string, m
 		return
 	}
 	for _, alias := range aliases {
-		if alias.Status != "pending" {
+		// A code-confirmed alias is checked too, until its window closes: the
+		// DKIM proof upgrades it to domain-proven (sendas.Alias.DomainProven).
+		codeOnly := alias.Status == "verified" && alias.VerifiedBy == sendas.VerifiedByCode
+		if alias.Status != "pending" && !codeOnly {
 			continue
 		}
 
 		expiresAt, perr := time.Parse(time.RFC3339, alias.ExpiresAt)
 		if perr != nil || !expiresAt.After(time.Now()) {
+			if codeOnly {
+				continue
+			}
 			if err := store.MarkFailed(alias.ID); err != nil {
 				p.log.Error("failed to mark expired send-as alias failed",
 					"user_id", userID, "alias_id", alias.ID, "error", err.Error())

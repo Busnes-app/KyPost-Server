@@ -558,3 +558,33 @@ func TestRawIsAutoReplyRejectsMailingListRedistribution(t *testing.T) {
 		t.Fatal("an ordinary reply was rejected as automated")
 	}
 }
+
+// A code-confirmed alias is still examined until its window closes, so the
+// DKIM loop-back can upgrade it to domain-proven (the only proof WKD accepts).
+func TestCheckPendingSendAsAliasesUpgradesCodeConfirmedAlias(t *testing.T) {
+	stubVerifiedDKIM(t)
+	p := newTestPollerForSendAs(t)
+	userID := "user-1"
+	store, err := p.userSendAsStore(userID)
+	if err != nil {
+		t.Fatalf("userSendAsStore: %v", err)
+	}
+	alias, err := store.Create(userID, "alias@example.com", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.Confirm(alias.ID, alias.VerificationCode); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	mail := &stubSendAsMailClient{
+		searchResults: map[string][]imapadapter.Overview{alias.VerificationCode: {{UID: 1}}},
+		rawResults: map[int][]byte{1: []byte(
+			"From: alias@example.com\r\nSubject: Verify send-as: " + alias.VerificationCode + "\r\n\r\nbody\r\n")},
+	}
+	p.checkPendingSendAsAliases(context.Background(), userID, mail)
+
+	got, _ := must2(store.Get(alias.ID))
+	if got.VerifiedBy != sendas.VerifiedByDKIM || !got.DomainProven() {
+		t.Fatalf("after DKIM match: %+v, want upgraded to dkim", got)
+	}
+}

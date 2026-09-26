@@ -152,7 +152,10 @@ CREATE TABLE IF NOT EXISTS pull_notifications (
 	title      TEXT NOT NULL DEFAULT '',
 	body       TEXT NOT NULL DEFAULT '',
 	data       TEXT NOT NULL DEFAULT '',
-	created_at TEXT NOT NULL DEFAULT ''
+	created_at TEXT NOT NULL DEFAULT '',
+	-- JSON list of addressed device IDs, '' for every device. Added after the
+	-- table shipped: additiveColumns is the path that matters.
+	device_ids TEXT NOT NULL DEFAULT ''
 );
 
 -- Messages the poller deliberately left unprocessed so a later tick can retry
@@ -225,6 +228,9 @@ var additiveColumns = []struct{ table, column, ddl string }{
 	// receiving the unencrypted payload its client build can read.
 	{"native_devices", "p256dh", "TEXT NOT NULL DEFAULT ''"},
 	{"native_devices", "auth", "TEXT NOT NULL DEFAULT ''"},
+	// A notification queued before recipients were recorded decodes as "",
+	// addressed to every device, which is what the queue meant at the time.
+	{"pull_notifications", "device_ids", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func applyAdditiveColumns(db *sql.DB) error {

@@ -2,7 +2,9 @@ package sendas
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,8 +18,19 @@ import (
 // pendingExpiry is how long a newly created alias stays "pending" before its
 // ExpiresAt cutoff passes and PendingNotExpired stops returning it (the
 // background poller task is responsible for then transitioning it to
-// "failed" via MarkFailed).
-const pendingExpiry = 5 * time.Minute
+// "failed" via MarkFailed). Long enough to open the alias mailbox and type the
+// code back; short enough that an abandoned challenge does not linger.
+const pendingExpiry = 30 * time.Minute
+
+// maxConfirmAttempts bounds wrong codes per record. The code is 32 bits, so
+// five guesses against a 30-minute window is not a search.
+const maxConfirmAttempts = 5
+
+var (
+	ErrNotPending      = errors.New("sendas: alias is not pending")
+	ErrCodeMismatch    = errors.New("sendas: verification code does not match")
+	ErrTooManyAttempts = errors.New("sendas: too many wrong codes, alias failed")
+)
 
 // Store is one user's set of send-as alias records, persisted as
 // send_as_aliases.json in the user's state directory. The API and daemon
@@ -194,10 +207,8 @@ func (s *Store) PendingNotExpired() ([]Alias, error) {
 }
 
 // newVerificationCode returns a random "kp-XXXXXXXX" code (8 hex chars) via
-// crypto/rand. This is a uniqueness/collision-resistance property, not a
-// secrecy one — the code travels in plaintext in the probe email — but
-// crypto/rand is used for consistency with the rest of this codebase's token
-// generation.
+// crypto/rand. Confirm treats it as the proof of mailbox access, so it must be
+// unguessable within maxConfirmAttempts and must never be served by the API.
 func newVerificationCode() (string, error) {
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {
@@ -208,7 +219,7 @@ func newVerificationCode() (string, error) {
 
 // Create records a new pending alias for userID claiming email (normalized
 // to lowercase before storing) with the given displayName, generating a
-// random VerificationCode and setting ExpiresAt to 5 minutes from now.
+// random VerificationCode and setting ExpiresAt to pendingExpiry from now.
 func (s *Store) Create(userID, email, displayName string) (Alias, error) {
 	return s.create(userID, email, displayName, false)
 }
@@ -252,21 +263,60 @@ func (s *Store) create(userID, email, displayName string, auto bool) (Alias, err
 	return created, nil
 }
 
-// MarkVerified sets Status to "verified" and stamps VerifiedAt. Calling it
-// again on an already-verified record is a no-op success, not an error (a
-// verification poller running on a ticker could plausibly race a duplicate
-// match in the same tick window in future extensions — idempotency here
-// costs nothing). Returns an error if no record with that ID exists.
+// MarkVerified records the DKIM proof: Status "verified", VerifiedBy DKIM,
+// VerifiedAt stamped. On a record already domain-proven it is a no-op
+// success (the daemon may match twice). On a record the user confirmed by
+// code it upgrades the proof, which is why the daemon keeps checking those
+// until they expire. Returns an error if no record with that ID exists.
 func (s *Store) MarkVerified(id string) error {
 	return s.update(func() error {
 		for i, a := range s.aliases {
 			if a.ID != id {
 				continue
 			}
-			if a.Status == "verified" {
+			if a.DomainProven() {
 				return nil
 			}
 			s.aliases[i].Status = "verified"
+			s.aliases[i].VerifiedBy = VerifiedByDKIM
+			s.aliases[i].VerifiedAt = time.Now().UTC().Format(time.RFC3339)
+			return s.persistLocked()
+		}
+		return fmt.Errorf("sendas: no alias with id %q", id)
+	})
+}
+
+// Confirm verifies a pending record with the code the user read from the
+// probe email. A wrong code counts an attempt; the record fails at
+// maxConfirmAttempts. An expired record is ErrNotPending even if the daemon
+// has not swept it yet.
+func (s *Store) Confirm(id, code string) error {
+	return s.update(func() error {
+		for i, a := range s.aliases {
+			if a.ID != id {
+				continue
+			}
+			expiresAt, err := time.Parse(time.RFC3339, a.ExpiresAt)
+			if a.Status != "pending" || err != nil || !expiresAt.After(time.Now()) {
+				return ErrNotPending
+			}
+			if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(code)), []byte(a.VerificationCode)) != 1 {
+				s.aliases[i].ConfirmAttempts++
+				if s.aliases[i].ConfirmAttempts >= maxConfirmAttempts {
+					s.aliases[i].Status = "failed"
+					s.aliases[i].FailedAt = time.Now().UTC().Format(time.RFC3339)
+					if perr := s.persistLocked(); perr != nil {
+						return perr
+					}
+					return ErrTooManyAttempts
+				}
+				if perr := s.persistLocked(); perr != nil {
+					return perr
+				}
+				return ErrCodeMismatch
+			}
+			s.aliases[i].Status = "verified"
+			s.aliases[i].VerifiedBy = VerifiedByCode
 			s.aliases[i].VerifiedAt = time.Now().UTC().Format(time.RFC3339)
 			return s.persistLocked()
 		}

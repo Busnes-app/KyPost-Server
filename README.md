@@ -24,7 +24,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - PGP recovery copies stored as ciphertext, downloadable backups checked before creation completes, and browser-local recovery drills. Complete-ring export, drills and matching-backup restore preserve historical keys; restoration confirms the stored result before unlocking. Verified complete-ring server copies require saved-secret acknowledgement and confirm the stored result. Conversion and older-backup merging remain gated.
 - Multi-factor authentication: TOTP authenticator apps, one-time recovery codes, and push-approval sign-in
 - Single Sign-On against any standard OpenID Connect provider — KySignOn (one-click preset; the `kypost.admin` app role is the only thing that makes an administrator, and an SSO session never holds admin without it), Authentik and Keycloak have their admin-group claims mapped. Authorization code + PKCE, ID tokens verified against the issuer's JWKS. Accounts are claimed by the provider's `sub` and never by username or email. Admin-configured under Admin > Server > SSO; **requires `SERVER_BASE_URL`**.
-- Send-as aliases, each verified by a DKIM-signed challenge from the alias's own domain before it can be used
+- Send-as aliases, each verified before use: a code is mailed as the alias to the alias through your own outgoing server. Typing it back unlocks the From address; the same message looping back DKIM-signed by the alias's domain is the proof that also publishes your key for it over WKD
 - Web Key Directory publishing: serve your users' public keys at `/.well-known/openpgpkey/` for verified domains, so correspondents discover them without a keyserver
 - CAPTCHA on login, **self-hosted proof-of-work by default** (also Turnstile or Friendly Captcha; `CAPTCHA_PROVIDER=none` turns it off). It works alongside a 3-strikes/15-minute account lockout, a looser per-IP lockout, and an instance-wide login rate limit. Note that proof-of-work needs a secure context in the browser — read the CAPTCHA notes in `.env.example` if you serve over plain HTTP on a LAN.
 - Browser push notifications for each user, for all mail or for keyword matches only. KyPost also supports native push pairing for mobile apps. Encrypted-mail setup checks the device’s supported envelope formats before sealing.
@@ -803,7 +803,7 @@ Mail:
 - `GET /api/mail/body?mailbox=&messageId=` (one message's body and its `bodyMode`, for clients that list with `bodies=0`)
 - `GET /api/mail/attachments?mailbox=&messageId=` (lists the attachment metadata of a message)
 - `GET /api/mail/attachment?mailbox=&messageId=&index=` (downloads one attachment)
-- `GET|POST /api/mail/send-as` and `DELETE /api/mail/send-as/{id}` (alias addresses. A new alias is unusable until a DKIM-signed challenge from its own domain verifies it.)
+- `GET|POST /api/mail/send-as`, `POST /api/mail/send-as/{id}/confirm` and `DELETE /api/mail/send-as/{id}` (alias addresses. A new alias is unusable until the user confirms the mailed code or a DKIM-signed copy from its own domain reaches the inbox; only the DKIM proof makes it publishable. The list never returns the code.)
 
 Filter Rules (the caller's own rules):
 
@@ -880,7 +880,7 @@ Notifications (all scoped to the signed-in user):
 - `GET|DELETE /api/notifications/native/devices`
 - `PUT /api/notifications/native/mode` (relay push vs. app pull)
 - `PUT /api/notifications/native/devices/{deviceId}/mfa` (allow a device to approve sign-ins)
-- `GET /api/notifications/native/pull` (app-pull delivery mode)
+- `GET /api/notifications/native/pull` (every notification is queued here in both modes, addressed to the devices it was sent to, so a device that stops hearing from the relay can poll and catch up)
 - `POST /api/notifications/native/unpair`
 
 Logs (admin only):

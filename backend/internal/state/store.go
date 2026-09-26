@@ -141,6 +141,11 @@ type PullNotification struct {
 	Body      string            `json:"body"`
 	Data      map[string]string `json:"data,omitempty"`
 	CreatedAt string            `json:"createdAt"`
+	// DeviceIDs are the devices this notification was addressed to; nil means
+	// every device. A push-MFA challenge goes to approver devices only, and
+	// the pull queue must not widen that to every paired device. Not part of
+	// the wire shape: the client sees only what was addressed to it.
+	DeviceIDs []string `json:"-"`
 }
 
 type stateFile struct {
@@ -749,9 +754,17 @@ func (s *Store) EnqueuePullNotification(n PullNotification) error {
 		if err != nil {
 			return err
 		}
+		deviceIDs := ""
+		if len(n.DeviceIDs) > 0 {
+			raw, err := json.Marshal(n.DeviceIDs)
+			if err != nil {
+				return err
+			}
+			deviceIDs = string(raw)
+		}
 		if _, err := tx.Exec(
-			`INSERT INTO pull_notifications(seq, title, body, data, created_at) VALUES(?, ?, ?, ?, ?)`,
-			seq, n.Title, n.Body, string(data), n.CreatedAt); err != nil {
+			`INSERT INTO pull_notifications(seq, title, body, data, created_at, device_ids) VALUES(?, ?, ?, ?, ?, ?)`,
+			seq, n.Title, n.Body, string(data), n.CreatedAt, deviceIDs); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(
@@ -764,8 +777,8 @@ func (s *Store) EnqueuePullNotification(n PullNotification) error {
 	})
 }
 
-func (s *Store) PullNotificationsAfter(after int64) ([]PullNotification, int64) {
-	notifications, cursor, err := s.PullNotificationsAfterStrict(after)
+func (s *Store) PullNotificationsAfter(deviceID string, after int64) ([]PullNotification, int64) {
+	notifications, cursor, err := s.PullNotificationsAfterStrict(deviceID, after)
 	if err != nil {
 		slog.Error("state read failed", "field", "pullNotifications", "dir", s.baseDir, "error", err.Error())
 		return []PullNotification{}, cursor
@@ -773,14 +786,18 @@ func (s *Store) PullNotificationsAfter(after int64) ([]PullNotification, int64) 
 	return notifications, cursor
 }
 
-func (s *Store) PullNotificationsAfterStrict(after int64) ([]PullNotification, int64, error) {
+// PullNotificationsAfterStrict returns the notifications after cursor that
+// were addressed to deviceID, or to every device. The cursor is the global
+// sequence, so a device skipping rows meant for others still advances past
+// them.
+func (s *Store) PullNotificationsAfterStrict(deviceID string, after int64) ([]PullNotification, int64, error) {
 	var cursor int64
 	if raw, err := metaString(s.db, metaPullSeq); err == nil {
 		// Same as EnqueuePullNotification: unparseable means no cursor yet.
 		_, _ = fmt.Sscan(raw, &cursor)
 	}
 	rows, err := s.db.Query(
-		`SELECT seq, title, body, data, created_at FROM pull_notifications WHERE seq > ? ORDER BY seq`, after)
+		`SELECT seq, title, body, data, created_at, device_ids FROM pull_notifications WHERE seq > ? ORDER BY seq`, after)
 	if err != nil {
 		slog.Error("state read failed", "field", "pullNotifications", "dir", s.baseDir, "error", err.Error())
 		return nil, cursor, err
@@ -789,9 +806,17 @@ func (s *Store) PullNotificationsAfterStrict(after int64) ([]PullNotification, i
 	out := []PullNotification{}
 	for rows.Next() {
 		var n PullNotification
-		var data string
-		if err := rows.Scan(&n.Seq, &n.Title, &n.Body, &data, &n.CreatedAt); err != nil {
+		var data, deviceIDs string
+		if err := rows.Scan(&n.Seq, &n.Title, &n.Body, &data, &n.CreatedAt, &deviceIDs); err != nil {
 			return nil, cursor, err
+		}
+		if deviceIDs != "" {
+			if err := json.Unmarshal([]byte(deviceIDs), &n.DeviceIDs); err != nil {
+				return nil, cursor, fmt.Errorf("decode pull notification %d recipients: %w", n.Seq, err)
+			}
+			if !slices.Contains(n.DeviceIDs, deviceID) {
+				continue
+			}
 		}
 		if data != "" && data != "null" {
 			// A notification whose payload will not decode has lost the

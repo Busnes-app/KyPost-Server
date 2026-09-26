@@ -900,7 +900,7 @@ func (s *Server) handleNotificationNativeMode(w http.ResponseWriter, r *http.Req
 // client passes ?after=<cursor> to fetch only notifications newer than its
 // last poll.
 func (s *Server) handleNotificationNativePull(w http.ResponseWriter, r *http.Request) {
-	userID, _, ok, retryAfter := s.deviceAuthFromRequest(r)
+	userID, device, ok, retryAfter := s.deviceAuthFromRequest(r)
 	if !ok {
 		writeDeviceAuthFailure(w, retryAfter)
 		return
@@ -917,7 +917,7 @@ func (s *Server) handleNotificationNativePull(w http.ResponseWriter, r *http.Req
 			after = parsed
 		}
 	}
-	notifications, cursor, err := store.PullNotificationsAfterStrict(after)
+	notifications, cursor, err := store.PullNotificationsAfterStrict(device.DeviceID, after)
 	if err != nil {
 		http.Error(w, "failed to read notifications", http.StatusServiceUnavailable)
 		return
