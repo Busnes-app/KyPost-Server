@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { AuthContext } from "../auth";
 import type { KeyringMetadata } from "../lib/pgpKeyring";
 import { SecurityPage } from "./SecurityPage";
+import { bucketFor, deriveEnrollmentCode } from "../lib/deviceEnrollment";
 
 const getJSON = vi.fn();
 const postJSON = vi.fn();
@@ -37,6 +38,7 @@ const SESSION = {
 const restorePGPKeyring = vi.fn();
 const storePGPKeyringRecovery = vi.fn();
 vi.mock("../lib/pgpSession", () => ({
+  pgpSessionState: () => SESSION,
   restorePGPKeyring: (...args: unknown[]) => restorePGPKeyring(...args),
   storePGPKeyringRecovery: (...args: unknown[]) => storePGPKeyringRecovery(...args),
   subscribePGPSession: (fn: (s: unknown) => void) => {
@@ -165,6 +167,40 @@ function renderPage(tab = "mail") {
     </MemoryRouter>
   );
 }
+
+it("refreshes the device key before starting a new enrollment ceremony", async () => {
+  async function publicKey() {
+    const pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+    return btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey))));
+  }
+  let publishedKey = await publicKey();
+  const freshKey = await publicKey();
+  const originalGet = getJSON.getMockImplementation();
+  getJSON.mockImplementation((url: string) => url === "/api/notifications/native/devices"
+    ? Promise.resolve({ devices: [{ deviceId: "phone", deviceName: "Pixel", platform: "android",
+        pushToken: "tok", enrollmentPublicKey: publishedKey, encryptionEnrolled: false }] })
+    : originalGet?.(url));
+  // Stop after the upload so this test does not wait for device acknowledgement.
+  putJSON.mockRejectedValueOnce(new Error("upload reached"));
+  renderPage("devices");
+  await screen.findByRole("button", { name: "Enroll" });
+  // Initial mount and the arriving PGP identity each load the inventory.
+  await waitFor(() => expect(getJSON.mock.calls.filter(([url]) => url === "/api/notifications/native/devices")).toHaveLength(2));
+  // Android publishes a new key after the browser has already loaded the list.
+  publishedKey = freshKey;
+  await userEvent.click(screen.getByRole("button", { name: "Enroll" }));
+  const code = await deriveEnrollmentCode(freshKey, "phone", bucketFor(Math.floor(Date.now() / 1000)));
+  const codeInput = await screen.findByLabelText("Code from your device");
+  const panel = codeInput.closest<HTMLElement>(".sec-inline-form");
+  if (!panel) throw new Error("enrollment panel missing");
+  await userEvent.type(codeInput, code);
+  await userEvent.type(within(panel).getByLabelText("Account password"), "password");
+  await userEvent.click(screen.getByRole("button", { name: "Verify and enroll" }));
+  await waitFor(() => expect(putJSON).toHaveBeenCalledWith(
+    "/api/pgp/identity/envelope/device:phone",
+    expect.objectContaining({ enrollmentPublicKey: freshKey, expectedFingerprint: BACKUP.fingerprint })
+  ));
+});
 
 describe("recoverySecret survives a tab switch", () => {
   it("still shows the one-time secret after leaving and returning to Encryption", async () => {

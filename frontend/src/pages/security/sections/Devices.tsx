@@ -248,7 +248,16 @@ export function Devices({
                   mailAccess={row.mailAccess}
                   clientProtected={pgpClientProtected}
                   fingerprint={pgpFingerprint}
-                  onOpenPanel={(panel) => setOpenPanel({ deviceId: row.deviceId, panel })}
+                  onOpenPanel={(panel) => {
+                    if (panel !== "enroll") {
+                      setOpenPanel({ deviceId: row.deviceId, panel });
+                      return;
+                    }
+                    // Android rotates its key for each attempt. Refresh before
+                    // mounting the ceremony, which freezes the key for SAS/sealing.
+                    setOpenPanel({ deviceId: "", panel: "none" });
+                    void refreshDevices().then(() => setOpenPanel({ deviceId: row.deviceId, panel }));
+                  }}
                   onRefresh={() => void refreshDevices()}
                 />
               )}

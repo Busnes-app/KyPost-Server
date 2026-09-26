@@ -14,6 +14,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Match the Single Sign On login button to the theme's primary button colors and label it "login with Single Sign On".
 - Web appearance now defaults to Busnes light/dark according to the OS; existing theme choices remain available.
 - Refresh the paired-device key before opening enrollment, preventing a new Android enrollment code from being compared against the browser's previously loaded key.
 
