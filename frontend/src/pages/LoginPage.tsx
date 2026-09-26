@@ -414,13 +414,13 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
               alignItems: "center",
               justifyContent: "center",
               textDecoration: "none",
-              background: "#4deeea",
-              color: "#0d0f14",
+              background: "var(--accent)",
+              color: "var(--button-text)",
               fontWeight: "bold",
               marginBottom: "1rem",
             }}
           >
-            Sign in with KySignOn
+            login with Single Sign On
           </a>
           <div
             style={{
