@@ -8,7 +8,10 @@ import (
 )
 
 // Logger adapts existing flat string fields to the suite's filtering handler.
-type Logger struct{ logger *slog.Logger }
+type Logger struct {
+	logger *slog.Logger
+	suite  *kylog.Logger
+}
 
 // New retains its directory argument for existing callers; the process writes
 // only JSON to stderr. The supervisor owns capture and rotation.
@@ -24,9 +27,10 @@ func NewWithOutput(out io.Writer) (*Logger, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Logger{logger: slog.New(logger.Handler())}, nil
+	return &Logger{logger: slog.New(logger.Handler()), suite: logger}, nil
 }
 func (l *Logger) Handler() slog.Handler { return l.logger.Handler() }
+func (l *Logger) Suite() *kylog.Logger  { return l.suite }
 func (l *Logger) Close() error          { return nil }
 
 // Explicit product vocabulary. Unknown keys are dropped and counted by the
