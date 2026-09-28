@@ -516,6 +516,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/backup/pin-key", s.withAdmin(withActionDigest(s.handleBackupPinKey)))
 	mux.HandleFunc("PUT /api/admin/backup/schedule", s.withAdmin(withActionDigest(s.handleBackupSchedule)))
 	mux.HandleFunc("/api/health", withPublicRoute(s.handleHealth))
+	mux.HandleFunc("GET /healthz", withPublicRoute(s.suiteHealthHandler().ServeHTTP))
 	mux.HandleFunc("POST /api/health/repair", s.withAdmin(s.handleRepair))
 	mux.HandleFunc("POST /api/admin/mail/poll-now", s.withAdmin(s.handlePollNow))
 	mux.HandleFunc("/api/status", s.withAuth(s.handleStatus))
@@ -1098,6 +1099,15 @@ func (s *Server) StartMfaPushLimiterSweeper(ctx context.Context) {
 // poller had been dead for a week answered this endpoint with "healthy" and
 // rendered "Working" on the health page. See health.MergeDaemonReport.
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	st := s.mergedHealthStatus()
+	status := http.StatusOK
+	if !st.Healthy {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, st)
+}
+
+func (s *Server) mergedHealthStatus() health.Status {
 	st := s.health.GetStatus()
 	// Merged unconditionally, including when there is no store to read from.
 	//
@@ -1117,11 +1127,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		raw = s.globalStore.DaemonHealth()
 	}
 	st = health.MergeDaemonReport(st, raw, time.Now())
-	status := http.StatusOK
-	if !st.Healthy {
-		status = http.StatusServiceUnavailable
-	}
-	writeJSON(w, status, st)
+	return st
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {

@@ -173,6 +173,7 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 | `POST /api/users/{id}/reactivate` | admin | — |
 | `GET /api/setup` | no | Returns admin credential bootstrap status |
 | `GET /api/health` | no | 503 when unhealthy |
+| `GET /healthz` | no | Public `ky.health/1` status for KyPulse: 200 `ok` or 503 `down`, with one `service` check of the merged API and daemon health. Cached for five seconds; no mailbox, version, or failure details. `/api/health` retains its detailed response and existing behavior |
 | `POST /api/health/repair` | admin | Clears sticky failure state (container restart) |
 | `GET /api/status` | yes | Scan interval, rate limits, caller's checkpoint and emails processed in the last hour, server time, and the poll-health fields: last tick, `checkpointHeldSinceUtc`, `deferredMessages`/`oldestDeferredUtc` (how much mail is behind the hold and how long the oldest has waited), `failedLast24h`, classifier queue depth |
 | `GET\|PUT /api/config` | yes | Global config, incl. the HOUSE label list that seeds new accounts; GET is `withAuth` and strips `redaction.patterns` for non-admins; PUT is `withAdmin` and broadcasts to running poller |
