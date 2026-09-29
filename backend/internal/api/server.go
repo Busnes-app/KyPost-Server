@@ -720,6 +720,7 @@ func (s *Server) routesNotifications(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/notifications/test", s.withAuth(s.handleNotificationTest))
 	mux.HandleFunc("GET /api/notifications/pairing", s.withAuth(s.handleNotificationPairing))
 	mux.HandleFunc("POST /api/notifications/review-pairing", withPublicRoute(s.handleReviewPairing))
+	mux.HandleFunc("POST /api/auth/native/signon", withTokenAuth(s.handleNativeSignOn))
 	// withTokenAuth, not withDeviceAuth: registration creates the device, so
 	// there is no device secret to authenticate with yet. The credential is the
 	// single-use signed pairing token from the scanned QR, verified by

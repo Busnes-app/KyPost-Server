@@ -1,0 +1,113 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+)
+
+const nativeSignOnMaxAge = 5 * time.Minute
+
+// handleNativeSignOn turns a KyIdentity device-grant ID token into the same
+// single-use pairing deep link the password path mints. The token is the whole
+// credential, so the route is withTokenAuth; verifyNativeSignOnToken is the
+// primitive the route-marker test looks for.
+func (s *Server) handleNativeSignOn(w http.ResponseWriter, r *http.Request) {
+	claims, settings, ok := s.verifyNativeSignOnToken(w, r)
+	if !ok {
+		return
+	}
+
+	// Same directory and logout fences as the browser callback.
+	directory, known, err := s.ssoLifecycle.Directory(settings.IssuerURL, claims.Sub)
+	if err != nil {
+		s.ssoFailure(w, "lifecycle", err)
+		return
+	}
+	if known && !directory.Active {
+		http.Error(w, "Access denied: your account was disabled by the directory.", http.StatusForbidden)
+		return
+	}
+	if known && claims.IssuedAt < directory.RevokedBefore {
+		http.Error(w, "Access denied: your directory access changed. Sign in again.", http.StatusForbidden)
+		return
+	}
+	user, err := s.resolveSSOUser(w, settings, claims)
+	if err != nil {
+		return // resolveSSOUser wrote the response
+	}
+	if !user.Active {
+		http.Error(w, "Access denied: your KyPost account is deactivated.", http.StatusForbidden)
+		return
+	}
+	identity := sso.SessionIdentity{
+		Issuer:    claims.Issuer,
+		ClientID:  settings.ClientID,
+		Subject:   claims.Sub,
+		SessionID: claims.SessionID,
+		IssuedAt:  time.Unix(claims.IssuedAt, 0),
+	}
+	loggedOut, err := s.ssoLifecycle.LoggedOut(identity)
+	if err != nil {
+		s.ssoFailure(w, "lifecycle", err)
+		return
+	}
+	if loggedOut {
+		http.Error(w, "Access denied: this sign-in was ended by the identity provider. Sign in again.", http.StatusForbidden)
+		return
+	}
+	s.writeNotificationPairing(w, user.ID)
+}
+
+// verifyNativeSignOnToken authenticates the request and returns ok=false after
+// writing the response. Order: rate limit, SSO and pairing configured, body
+// shape, signature and claims, device binding, freshness, single use. The
+// token is spent last so a refusal that is not the caller's fault burns nothing.
+func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request) (*sso.SSOTokenClaims, sso.SSOSettings, bool) {
+	settings := s.ssoStore.Load()
+	if s.ssoRateLimited(w, r) {
+		return nil, settings, false
+	}
+	if !settings.Enabled || settings.IssuerURL == "" || settings.ClientID == "" {
+		http.Error(w, "Single Sign-On is not configured or disabled", http.StatusServiceUnavailable)
+		return nil, settings, false
+	}
+	if s.pairingSecret == "" || s.pairingBaseURL() == "" {
+		http.Error(w, "pairing is not configured on the server", http.StatusServiceUnavailable)
+		return nil, settings, false
+	}
+	var req struct {
+		IDToken string `json:"idToken"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&req); err != nil || strings.TrimSpace(req.IDToken) == "" {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return nil, settings, false
+	}
+	provider, _, err := s.ssoProvider(r, settings)
+	if err != nil {
+		s.ssoFailure(w, "discovery", err)
+		return nil, settings, false
+	}
+	claims, err := provider.VerifyIDToken(r.Context(), req.IDToken)
+	if err != nil {
+		http.Error(w, "Access denied: the identity token could not be verified.", http.StatusForbidden)
+		return nil, settings, false
+	}
+	if claims.SignOnMethod != "device" || claims.JTI == "" {
+		http.Error(w, "Access denied: this token was not issued for device sign-in.", http.StatusForbidden)
+		return nil, settings, false
+	}
+	age := time.Since(time.Unix(claims.IssuedAt, 0))
+	if claims.IssuedAt == 0 || age > nativeSignOnMaxAge || age < -30*time.Second {
+		http.Error(w, "Access denied: the identity token is too old. Sign in again.", http.StatusForbidden)
+		return nil, settings, false
+	}
+	if !s.singleUse.consume("native-signon:"+claims.JTI, nativeSignOnMaxAge+time.Minute) {
+		http.Error(w, "Access denied: this token was already used.", http.StatusForbidden)
+		return nil, settings, false
+	}
+	return claims, settings, true
+}
