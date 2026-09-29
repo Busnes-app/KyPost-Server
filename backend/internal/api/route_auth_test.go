@@ -117,7 +117,8 @@ var markerRequiresCall = map[string][]string{
 	// Resolves the acting user from a paired device's credentials.
 	"withDeviceAuth": {"deviceAuthFromRequest"},
 	// The whole credential is a signed token presented in the request — in the
-	// URL for pickup/QR, in the body for native device registration.
+	// URL for pickup/QR, in the body for native device registration (mints the
+	// device) and native sign-on (mints a pairing token, precedes any session).
 	"withTokenAuth": {"validatePairingToken", "consumeQRToken", "decodeAndVerifyPairingToken", "verifyNativeSignOnToken"},
 	// Inspects the session itself and answers differently when anonymous.
 	"withSelfAuth": {"currentUser"},

@@ -63,14 +63,12 @@ func (s *Server) handleNativeSignOn(w http.ResponseWriter, r *http.Request) {
 }
 
 // verifyNativeSignOnToken authenticates the request and returns ok=false after
-// writing the response. Order: rate limit, SSO and pairing configured, body
-// shape, signature and claims, device binding, freshness, single use. The
-// token is spent last so a refusal that is not the caller's fault burns nothing.
+// writing the response. Order: SSO and pairing configured, body shape, rate
+// limit, signature and claims, device binding, freshness, single use. The jti
+// is spent only once the token is proven valid; later failures in the handler
+// (directory, lookup, 5xx) still spend it.
 func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request) (*sso.SSOTokenClaims, sso.SSOSettings, bool) {
 	settings := s.ssoStore.Load()
-	if s.ssoRateLimited(w, r) {
-		return nil, settings, false
-	}
 	if !settings.Enabled || settings.IssuerURL == "" || settings.ClientID == "" {
 		http.Error(w, "Single Sign-On is not configured or disabled", http.StatusServiceUnavailable)
 		return nil, settings, false
@@ -84,6 +82,11 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&req); err != nil || strings.TrimSpace(req.IDToken) == "" {
 		http.Error(w, "invalid request", http.StatusBadRequest)
+		return nil, settings, false
+	}
+	// Charged after the cheap refusals so junk bodies cannot drain the shared
+	// login bucket, and before any outbound discovery or JWKS fetch.
+	if s.ssoRateLimited(w, r) {
 		return nil, settings, false
 	}
 	provider, _, err := s.ssoProvider(r, settings)
@@ -101,8 +104,12 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 		return nil, settings, false
 	}
 	age := time.Since(time.Unix(claims.IssuedAt, 0))
-	if claims.IssuedAt == 0 || age > nativeSignOnMaxAge || age < -30*time.Second {
+	if claims.IssuedAt == 0 || age > nativeSignOnMaxAge {
 		http.Error(w, "Access denied: the identity token is too old. Sign in again.", http.StatusForbidden)
+		return nil, settings, false
+	}
+	if age < -30*time.Second {
+		http.Error(w, "Access denied: the identity token is not valid yet.", http.StatusForbidden)
 		return nil, settings, false
 	}
 	if !s.singleUse.consume("native-signon:"+claims.JTI, nativeSignOnMaxAge+time.Minute) {

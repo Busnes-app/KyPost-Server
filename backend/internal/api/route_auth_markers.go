@@ -27,8 +27,9 @@ func withPublicRoute(next http.HandlerFunc) http.HandlerFunc { return next }
 // supplied in the request — in the URL for the pickup and QR routes
 // (validatePairingToken, consumeQRToken), in the body for native device
 // registration (decodeAndVerifyPairingToken) and native sign-on
-// (verifyNativeSignOnToken), which mints the device and so
-// cannot yet have a device secret to present.
+// (verifyNativeSignOnToken). Registration mints the device, so it cannot yet
+// have a device secret to present; sign-on mints a pairing token and precedes
+// any session.
 //
 // None of them takes a session or a cookie, so there is nothing for CSRF to
 // abuse: an attacker holding the token does not need a victim's browser.
