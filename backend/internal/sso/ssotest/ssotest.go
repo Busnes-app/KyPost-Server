@@ -240,6 +240,10 @@ func (i *IdP) payload() map[string]any {
 	return p
 }
 
+// IDToken mints a token straight from the IdP, for endpoints that accept one
+// outside the browser code flow (native sign-on). Honours every tamper knob.
+func (i *IdP) IDToken() string { return i.idToken() }
+
 // idToken serialises the payload the way this IdP has been told to.
 func (i *IdP) idToken() string {
 	body, err := json.Marshal(i.payload())
