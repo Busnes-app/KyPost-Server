@@ -41,6 +41,40 @@ func TestEvaluate_HeaderConditionUnevaluableWhenNotFetched(t *testing.T) {
 	}
 }
 
+// Unknown must survive an enclosing "not": not allof(<unevaluable>) is still
+// unknown, never true.
+func TestEvaluate_UnknownSurvivesNestedNegation(t *testing.T) {
+	nested := Rule{Name: "r", Enabled: true, Match: MatchGroup{Op: "allof", Conditions: []Condition{{
+		Negate: true,
+		Group: &MatchGroup{Op: "allof", Conditions: []Condition{
+			{Field: "header", Header: "X-Spam-Flag", Comparator: "exists"},
+		}},
+	}}}}
+	if got := Evaluate(context.Background(), EvalInput{}, []Rule{nested}); len(got.Matched) != 0 {
+		t.Fatalf("not(group of unfetched header) matched: %+v", got)
+	}
+	if got := Evaluate(context.Background(), EvalInput{Headers: map[string][]string{}}, []Rule{nested}); len(got.Matched) != 1 {
+		t.Fatalf("with headers fetched and absent, not(exists) should match: %+v", got)
+	}
+	// anyof with a definite true still matches despite an unknown sibling.
+	anyof := Rule{Name: "a", Enabled: true, Match: MatchGroup{Op: "anyof", Conditions: []Condition{
+		{Field: "header", Header: "X-Spam-Flag", Comparator: "exists"},
+		{Field: "subject", Comparator: "contains", Value: "hi"},
+	}}}
+	if got := Evaluate(context.Background(), EvalInput{Subject: "hi"}, []Rule{anyof}); len(got.Matched) != 1 {
+		t.Fatalf("anyof with a true branch did not match: %+v", got)
+	}
+}
+
+func TestMatchGroup_CancelledContextIsUnknownUnderNegation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	g := MatchGroup{Op: "allof", Conditions: []Condition{{Negate: true, Group: &MatchGroup{Op: "allof", Conditions: []Condition{{Field: "subject", Comparator: "contains", Value: "x"}}}}}}
+	if m, known := matchGroup(ctx, g, EvalInput{Subject: "x"}); m || known {
+		t.Fatalf("matchGroup on cancelled ctx = (%v, %v), want (false, false)", m, known)
+	}
+}
+
 func TestHeaderNamesCanonicalAndEnabledOnly(t *testing.T) {
 	disabled := headerRule(Condition{Field: "header", Header: "X-Ignored", Comparator: "exists"})
 	disabled.Enabled = false

@@ -377,7 +377,7 @@ func TestUncompilableRegexUnderNegateDoesNotMatchEverything(t *testing.T) {
 	}
 	in := EvalInput{Subject: "an entirely ordinary message"}
 
-	if matchGroup(context.Background(), group, in) {
+	if m, _ := matchGroup(context.Background(), group, in); m {
 		t.Fatal("an uncompilable regex under negate matched a message it has no basis to match")
 	}
 }
@@ -391,7 +391,7 @@ func TestUncompilableRegexWithoutNegateDoesNotMatch(t *testing.T) {
 			{Field: "subject", Comparator: "regex", Value: "("},
 		},
 	}
-	if matchGroup(context.Background(), group, EvalInput{Subject: "anything"}) {
+	if m, _ := matchGroup(context.Background(), group, EvalInput{Subject: "anything"}); m {
 		t.Fatal("an uncompilable regex matched")
 	}
 }

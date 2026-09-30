@@ -748,6 +748,47 @@ func TestRulesRun_UnfetchedHeadersAreUnknownNotAbsent(t *testing.T) {
 	}
 }
 
+// The same, with the header condition inside a negated group: not allof(...)
+// must stay unknown for the unfetched UID, not become true.
+func TestRulesRun_UnfetchedHeadersUnknownThroughNegatedGroup(t *testing.T) {
+	srv, fake, userID := setupRulesRunTest(t,
+		[]imapadapter.Overview{
+			{MessageID: "1", UID: 1, Sender: "a@example.com", Subject: "s1"},
+			{MessageID: "2", UID: 2, Sender: "b@example.com", Subject: "s2"},
+		},
+		nil,
+	)
+	fake.headerLines = map[int][]string{1: {}} // UID 2 not fetched
+	store, err := srv.userRulesStore(userID)
+	if err != nil {
+		t.Fatalf("userRulesStore: %v", err)
+	}
+	if _, err := store.Upsert(rules.Rule{
+		Name:    "not flagged",
+		Enabled: true,
+		Match: rules.MatchGroup{Op: "allof", Conditions: []rules.Condition{{
+			Negate: true,
+			Group: &rules.MatchGroup{Op: "allof", Conditions: []rules.Condition{
+				{Field: "header", Header: "X-Spam-Flag", Comparator: "exists"},
+			}},
+		}}},
+		Actions: []rules.Action{{Type: "delete"}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/rules/run", bytes.NewReader([]byte(`{"mailbox":"INBOX"}`)))
+	authRequest(srv, req)
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	var result rulesRunResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v (status %d)", err, rec.Code)
+	}
+	if result.Matched != 1 {
+		t.Fatalf("result = %+v, want only the fetched UID 1 to match", result)
+	}
+}
+
 // TestRulesRun_DisabledRuleExcludedFromActionsAndBodyFetch seeds one disabled
 // rule with a body-field condition alongside one enabled from-field rule. It
 // guards two things at once: (1) the handler's own Enabled pre-filter (around
