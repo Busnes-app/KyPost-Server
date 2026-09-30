@@ -430,3 +430,42 @@ func TestClaimsFreshProof(t *testing.T) {
 		t.Error("nil claims proved something")
 	}
 }
+
+func TestVerifyIDTokenRunsTheExchangeChecks(t *testing.T) {
+	provider := func(idp *ssotest.IdP) *Provider {
+		t.Helper()
+		p, err := NewProvider(context.Background(), testSettings(idp.URL()), "https://mail.example.com/cb")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	idp := newIdP(t)
+	idp.SetClaims(map[string]any{"sub": "sso-sub-12345", "preferred_username": "alice", "signon_method": "device", "jti": "j1"})
+	claims, err := provider(idp).VerifyIDToken(context.Background(), idp.IDToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.Sub != "sso-sub-12345" || claims.Issuer != idp.URL() || claims.PreferredUsername != "alice" ||
+		claims.SignOnMethod != "device" || claims.JTI != "j1" {
+		t.Fatalf("claims %+v", claims)
+	}
+
+	for name, spoil := range map[string]func(*ssotest.IdP){
+		"unsigned":       func(i *ssotest.IdP) { i.Unsigned = true },
+		"foreign key":    func(i *ssotest.IdP) { i.ForeignKey = true },
+		"alg none":       func(i *ssotest.IdP) { i.AlgNone = true },
+		"expired":        func(i *ssotest.IdP) { i.Expired = true },
+		"wrong audience": func(i *ssotest.IdP) { i.WrongAudience = "someone-else" },
+		"wrong issuer":   func(i *ssotest.IdP) { i.WrongIssuer = "https://evil.example" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := newIdP(t)
+			spoil(bad)
+			if _, err := provider(bad).VerifyIDToken(context.Background(), bad.IDToken()); err == nil {
+				t.Error("accepted")
+			}
+		})
+	}
+}

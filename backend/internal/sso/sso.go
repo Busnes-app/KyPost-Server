@@ -281,6 +281,14 @@ type SSOTokenClaims struct {
 	AuthTime int64    `json:"auth_time"`
 	ACR      string   `json:"acr"`
 	AMR      []string `json:"amr"`
+
+	// SignOnMethod is "device" on tokens KyIdentity minted from a paired phone's
+	// assertion; absent on browser logins. JTI is the token id those carry.
+	SignOnMethod string `json:"signon_method"`
+	JTI          string `json:"jti"`
+	// Origin is the relay origin the phone user typed, which KyIdentity checked
+	// against the client's registered redirect-URI origins.
+	Origin string `json:"origin"`
 }
 
 // KySignOn reports whether the token speaks the KySignOn contract: it
@@ -616,28 +624,15 @@ func (p *Provider) Exchange(ctx context.Context, code, codeVerifier, nonce strin
 		return nil, errors.New("token response contained no id_token")
 	}
 
-	// Signature against the provider's JWKS, `iss` equal to the discovered
-	// issuer, `aud` containing our client ID, and `exp`/`iat` within skew.
-	idToken, err := p.verifier.Verify(ctx, rawIDToken)
+	idToken, claims, err := p.verifyRawIDToken(ctx, rawIDToken)
 	if err != nil {
-		return nil, fmt.Errorf("id_token verification failed: %w", err)
+		return nil, err
 	}
 
 	// Bind the token to the login that started in this browser. Without it a
 	// valid token captured from any other session of the same client replays.
 	if idToken.Nonce != nonce {
 		return nil, errors.New("id_token nonce does not match this login")
-	}
-
-	// go-oidc checks exp and iat but not nbf; a provider that issues one is
-	// telling us the token is not valid yet.
-	var timing struct {
-		NotBefore int64 `json:"nbf"`
-	}
-	if err := idToken.Claims(&timing); err == nil && timing.NotBefore > 0 {
-		if time.Now().Add(30 * time.Second).Before(time.Unix(timing.NotBefore, 0)) {
-			return nil, errors.New("id_token is not valid yet (nbf is in the future)")
-		}
 	}
 
 	// When the provider published at_hash, hold the access token to it, so a
@@ -648,22 +643,64 @@ func (p *Provider) Exchange(ctx context.Context, code, codeVerifier, nonce strin
 		}
 	}
 
+	p.fillFromUserInfo(ctx, tok, claims)
+	normalizeUsername(claims)
+	return claims, nil
+}
+
+// VerifyIDToken checks a raw ID token the way Exchange does, for the one caller
+// that receives a token without a browser round trip: native sign-on, where
+// KyAuth obtained the token from KyIdentity's device grant. There is no nonce
+// to hold it to (nothing in this server started the flow), no access token for
+// at_hash and no userinfo call; the handler binds the token with signon_method,
+// iat age and a single-use jti instead.
+func (p *Provider) VerifyIDToken(ctx context.Context, raw string) (*SSOTokenClaims, error) {
+	_, claims, err := p.verifyRawIDToken(ctx, raw)
+	if err != nil {
+		return nil, err
+	}
+	normalizeUsername(claims)
+	return claims, nil
+}
+
+// verifyRawIDToken is the signature, nbf, sub and claims steps Exchange and
+// VerifyIDToken share.
+func (p *Provider) verifyRawIDToken(ctx context.Context, raw string) (*oidc.IDToken, *SSOTokenClaims, error) {
+	ctx = oidc.ClientContext(ctx, p.client)
+
+	// Signature against the provider's JWKS, `iss` equal to the discovered
+	// issuer, `aud` containing our client ID, and an unexpired `exp` (go-oidc
+	// v3 also checks `nbf` but never `iat`; callers bound iat themselves).
+	idToken, err := p.verifier.Verify(ctx, raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("id_token verification failed: %w", err)
+	}
+
+	// go-oidc v3.21 checks exp and nbf, not iat. This local nbf check is
+	// redundant with it but harmless, and keeps the rule independent of the
+	// library version.
+	var timing struct {
+		NotBefore int64 `json:"nbf"`
+	}
+	if err := idToken.Claims(&timing); err == nil && timing.NotBefore > 0 {
+		if time.Now().Add(30 * time.Second).Before(time.Unix(timing.NotBefore, 0)) {
+			return nil, nil, errors.New("id_token is not valid yet (nbf is in the future)")
+		}
+	}
+
 	if strings.TrimSpace(idToken.Subject) == "" {
-		return nil, errors.New("id_token carries no sub claim")
+		return nil, nil, errors.New("id_token carries no sub claim")
 	}
 
 	claims := &SSOTokenClaims{}
 	if err := idToken.Claims(claims); err != nil {
-		return nil, fmt.Errorf("unreadable id_token claims: %w", err)
+		return nil, nil, fmt.Errorf("unreadable id_token claims: %w", err)
 	}
 	// Take identity from the verified token object, never from the decoded
 	// JSON, so a duplicate key in the payload cannot disagree with it.
 	claims.Sub = idToken.Subject
 	claims.Issuer = idToken.Issuer
-
-	p.fillFromUserInfo(ctx, tok, claims)
-	normalizeUsername(claims)
-	return claims, nil
+	return idToken, claims, nil
 }
 
 // fillFromUserInfo tops up a thin ID token from the userinfo endpoint.
