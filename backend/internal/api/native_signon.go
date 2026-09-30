@@ -60,7 +60,25 @@ func (s *Server) handleNativeSignOn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Access denied: this sign-in was ended by the identity provider. Sign in again.", http.StatusForbidden)
 		return
 	}
-	s.writeNotificationPairing(w, user.ID)
+	if s.nativeSignOnBeforeIssue != nil {
+		s.nativeSignOnBeforeIssue()
+	}
+	// The checks above are fail-fast. Revocation (password change, admin reset,
+	// deactivation) flags the link and rotates the subscriber id under
+	// pairingMu, so recheck and read the id under it: a revocation that lands
+	// after the unlock rotates the id this token is minted for.
+	s.pairingMu.Lock()
+	current, err := s.users.Get(user.ID)
+	if err != nil || !current.Active || current.SSOSub != claims.Sub || current.SSOLinkRevoked() {
+		s.pairingMu.Unlock()
+		http.Error(w, "Access denied: your account's sign-in changed. Sign in again.", http.StatusForbidden)
+		return
+	}
+	store, subscriberID, ok := s.pairingSubscriber(w, user.ID)
+	s.pairingMu.Unlock()
+	if ok {
+		s.writePairingResponse(w, store, subscriberID)
+	}
 }
 
 // verifyNativeSignOnToken authenticates the request and returns ok=false after
@@ -104,7 +122,7 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Access denied: this token was not issued for device sign-in.", http.StatusForbidden)
 		return nil, settings, false
 	}
-	if claims.Origin == "" || canonicalOrigin(claims.Origin) != canonicalOrigin(s.pairingBaseURL()) {
+	if want := canonicalOrigin(s.pairingBaseURL()); want == "" || canonicalOrigin(claims.Origin) != want {
 		http.Error(w, "Access denied: this token was issued for a different server.", http.StatusForbidden)
 		return nil, settings, false
 	}
@@ -130,8 +148,8 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 }
 
 // canonicalOrigin reduces a URL to scheme://host[:port]: host lowercased, an
-// explicit :443 dropped for https, path ignored. Unparseable input yields "",
-// which callers compare only against a non-empty origin.
+// explicit :443 dropped for https, path ignored. Unparseable input yields "";
+// the caller refuses when this server's own origin is "".
 func canonicalOrigin(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Hostname() == "" {

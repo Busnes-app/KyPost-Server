@@ -24,8 +24,37 @@ func signOnRequest(idToken string) *http.Request {
 	return req
 }
 
+// nativeSignOnServer serves https, as KyIdentity only issues https origins.
+// The SPKI probe's failure cache is primed so no test dials the base URL.
+func nativeSignOnServer(t *testing.T) (*Server, *ssotest.IdP) {
+	t.Helper()
+	srv, idp := setupSSOTestServer(t)
+	srv.pairingSecret = "pairing-secret"
+	srv.serverBaseURL = "https://" + ssoTestHost
+	srv.pinProbeHost, srv.pinProbeFailedAt = srv.serverBaseURL, time.Now()
+	return srv, idp
+}
+
+// registerWithPairingToken redeems a deep link's token at native/register.
+func registerWithPairingToken(t *testing.T, srv *Server, deepLink string) *httptest.ResponseRecorder {
+	t.Helper()
+	link, err := url.Parse(deepLink)
+	if err != nil {
+		t.Fatalf("deep link %q: %v", deepLink, err)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"subscriberId": link.Query().Get("sub"),
+		"pairingToken": link.Query().Get("pt"),
+		"deviceToken":  "native-device-token",
+		"deviceId":     "device-signon",
+	})
+	rec := httptest.NewRecorder()
+	srv.handleNotificationNativeRegister(rec, httptest.NewRequest(http.MethodPost, "/api/notifications/native/register", jsonBody(body)))
+	return rec
+}
+
 func deviceClaims(extra map[string]any) map[string]any {
-	c := map[string]any{"sub": "sso-sub-12345", "preferred_username": "alice", "signon_method": "device", "origin": "http://" + ssoTestHost, "jti": "jti-1", "iat": time.Now().Unix()}
+	c := map[string]any{"sub": "sso-sub-12345", "preferred_username": "alice", "signon_method": "device", "origin": "https://" + ssoTestHost, "jti": "jti-1", "iat": time.Now().Unix()}
 	for k, v := range extra {
 		c[k] = v
 	}
@@ -33,8 +62,7 @@ func deviceClaims(extra map[string]any) map[string]any {
 }
 
 func TestNativeSignOnReturnsPairingDeepLink(t *testing.T) {
-	srv, idp := setupSSOTestServer(t)
-	srv.pairingSecret = "pairing-secret"
+	srv, idp := nativeSignOnServer(t)
 	idp.SetClaims(deviceClaims(nil))
 
 	rec := httptest.NewRecorder()
@@ -67,6 +95,10 @@ func TestNativeSignOnReturnsPairingDeepLink(t *testing.T) {
 		t.Fatalf("deep link sub %q, want %q (%v)", link.Query().Get("sub"), wantSub, err)
 	}
 
+	if reg := registerWithPairingToken(t, srv, body.DeepLink); reg.Code != http.StatusOK {
+		t.Fatalf("register with a fresh sign-on token: %d %s", reg.Code, reg.Body.String())
+	}
+
 	// replay: same token, same jti
 	rec = httptest.NewRecorder()
 	srv.handleNativeSignOn(rec, signOnRequest(idp.IDToken()))
@@ -77,9 +109,8 @@ func TestNativeSignOnReturnsPairingDeepLink(t *testing.T) {
 
 // The canonical origin ignores a path, so a claim carrying one is accepted.
 func TestNativeSignOnOriginWithPathAccepted(t *testing.T) {
-	srv, idp := setupSSOTestServer(t)
-	srv.pairingSecret = "pairing-secret"
-	idp.SetClaims(deviceClaims(map[string]any{"origin": "http://" + ssoTestHost + "/mail/"}))
+	srv, idp := nativeSignOnServer(t)
+	idp.SetClaims(deviceClaims(map[string]any{"origin": "https://" + ssoTestHost + "/mail/"}))
 	rec := httptest.NewRecorder()
 	srv.handleNativeSignOn(rec, signOnRequest(idp.IDToken()))
 	if rec.Code != http.StatusOK {
@@ -131,9 +162,9 @@ func TestNativeSignOnRefusals(t *testing.T) {
 		"webTokenRefused":   {claims: deviceClaims(map[string]any{"signon_method": nil}), want: http.StatusForbidden, wantBody: notDevice},
 		"missingJti":        {claims: deviceClaims(map[string]any{"jti": nil}), want: http.StatusForbidden, wantBody: notDevice},
 		"originMissing":     {claims: deviceClaims(map[string]any{"origin": nil, "jti": "jti-om"}), want: http.StatusForbidden, wantBody: differentServer},
-		"originOtherHost":   {claims: deviceClaims(map[string]any{"origin": "http://evil.example", "jti": "jti-oh"}), want: http.StatusForbidden, wantBody: differentServer},
-		"originOtherPort":   {claims: deviceClaims(map[string]any{"origin": "http://" + ssoTestHost + ":8443", "jti": "jti-op"}), want: http.StatusForbidden, wantBody: differentServer},
-		"originOtherScheme": {claims: deviceClaims(map[string]any{"origin": "https://" + ssoTestHost, "jti": "jti-os"}), want: http.StatusForbidden, wantBody: differentServer},
+		"originOtherHost":   {claims: deviceClaims(map[string]any{"origin": "https://evil.example", "jti": "jti-oh"}), want: http.StatusForbidden, wantBody: differentServer},
+		"originOtherPort":   {claims: deviceClaims(map[string]any{"origin": "https://" + ssoTestHost + ":8443", "jti": "jti-op"}), want: http.StatusForbidden, wantBody: differentServer},
+		"originOtherScheme": {claims: deviceClaims(map[string]any{"origin": "http://" + ssoTestHost, "jti": "jti-os"}), want: http.StatusForbidden, wantBody: differentServer},
 		"staleIat":          {claims: deviceClaims(map[string]any{"iat": time.Now().Add(-10 * time.Minute).Unix(), "jti": "jti-stale"}), want: http.StatusForbidden, wantBody: "too old"},
 		"futureIat":         {claims: deviceClaims(map[string]any{"iat": time.Now().Add(2 * time.Minute).Unix(), "jti": "jti-future"}), want: http.StatusForbidden, wantBody: "not valid yet"},
 		"wrongAudience": {claims: deviceClaims(nil), setup: func(_ *Server, idp *ssotest.IdP) { idp.WrongAudience = "someone-else" },
@@ -183,8 +214,7 @@ func TestNativeSignOnRefusals(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			srv, idp := setupSSOTestServer(t)
-			srv.pairingSecret = "pairing-secret"
+			srv, idp := nativeSignOnServer(t)
 			if tc.setup != nil {
 				tc.setup(srv, idp)
 			}
@@ -211,7 +241,7 @@ func TestNativeSignOnRefusals(t *testing.T) {
 // AutoProvision is on, and a disable event for an unknown subject records the
 // fence without touching any account.
 func TestNativeSignOnDirectoryDisabled(t *testing.T) {
-	srv, idp := setupSSOTestServer(t)
+	srv, idp := nativeSignOnServer(t)
 	srv.pairingSecret = testSyncKey
 	const sub = "sso-sub-12345"
 	if got := directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.updated", "ev-1", 1, scimUser(sub, "alice", false))); got != "applied" {
@@ -246,5 +276,87 @@ func TestNativeSignOnJTISurvivesRestart(t *testing.T) {
 	_, _ = st.RecordSignOnJTI("iss", "cid", "j2", exp)
 	if fresh, _ := st.RecordSignOnJTI("iss", "cid", "old", exp); !fresh {
 		t.Fatal("expired jti was not pruned")
+	}
+}
+
+// An origin refusal comes before the jti is recorded, so a token for another
+// server cannot burn a jti this server would accept.
+func TestNativeSignOnOriginMismatchLeavesJTIUnspent(t *testing.T) {
+	srv, idp := nativeSignOnServer(t)
+	idp.SetClaims(deviceClaims(map[string]any{"origin": "https://evil.example", "jti": "jti-shared"}))
+	rec := httptest.NewRecorder()
+	srv.handleNativeSignOn(rec, signOnRequest(idp.IDToken()))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("mismatch status %d body %s", rec.Code, rec.Body.String())
+	}
+	idp.SetClaims(deviceClaims(map[string]any{"jti": "jti-shared"}))
+	rec = httptest.NewRecorder()
+	srv.handleNativeSignOn(rec, signOnRequest(idp.IDToken()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("matching origin, same jti: status %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// linkedPasswordAccount is a password-backed account linked to the test IdP's
+// subject: the shape whose link a password change revokes.
+func linkedPasswordAccount(t *testing.T, srv *Server) users.User {
+	t.Helper()
+	u := localAccount(t, srv, "alice")
+	if err := srv.users.LinkSSO(u.ID, "sso-sub-12345", "alice", ""); err != nil {
+		t.Fatalf("LinkSSO: %v", err)
+	}
+	u, err := srv.users.Get(u.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	return u
+}
+
+// Revocation completing after the fail-fast checks but before issuance must
+// refuse: without the recheck under pairingMu, issuance read the rotated
+// subscriber id and minted a live token.
+func TestNativeSignOnRevokedBeforeIssueRefused(t *testing.T) {
+	srv, idp := nativeSignOnServer(t)
+	u := linkedPasswordAccount(t, srv)
+	srv.nativeSignOnBeforeIssue = func() {
+		if err := srv.revokeAllUserCredentials(u); err != nil {
+			t.Errorf("revoke: %v", err)
+		}
+	}
+	idp.SetClaims(deviceClaims(nil))
+	rec := httptest.NewRecorder()
+	srv.handleNativeSignOn(rec, signOnRequest(idp.IDToken()))
+	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "pairingToken") {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Revocation racing issuance lands either before the locked recheck (403) or
+// after the subscriber read, where its rotation kills the minted token.
+func TestNativeSignOnRevokedDuringIssueTokenDead(t *testing.T) {
+	srv, idp := nativeSignOnServer(t)
+	u := linkedPasswordAccount(t, srv)
+	done := make(chan error, 1)
+	srv.nativeSignOnBeforeIssue = func() {
+		go func() { done <- srv.revokeAllUserCredentials(u) }()
+	}
+	idp.SetClaims(deviceClaims(nil))
+	rec := httptest.NewRecorder()
+	srv.handleNativeSignOn(rec, signOnRequest(idp.IDToken()))
+	if err := <-done; err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	switch rec.Code {
+	case http.StatusForbidden:
+	case http.StatusOK:
+		var body struct {
+			DeepLink string `json:"deepLink"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if reg := registerWithPairingToken(t, srv, body.DeepLink); reg.Code != http.StatusUnauthorized {
+			t.Fatalf("token minted before revocation registered: %d %s", reg.Code, reg.Body.String())
+		}
+	default:
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}
 }

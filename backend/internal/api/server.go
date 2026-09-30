@@ -78,7 +78,12 @@ type Server struct {
 	// pairingMu serializes native registration with credential revocation. A
 	// pairing token resolves its owner before it writes a device; revocation must
 	// not delete devices and rotate the subscriber between those two operations.
+	// Native sign-on holds it from its account recheck through the subscriber
+	// read, so revocation lands wholly before (refused) or after (id rotated).
 	pairingMu sync.Mutex
+	// nativeSignOnBeforeIssue is a test seam, nil in production: it runs just
+	// before handleNativeSignOn takes pairingMu.
+	nativeSignOnBeforeIssue func()
 
 	logger            *logging.Logger
 	health            *health.Service
