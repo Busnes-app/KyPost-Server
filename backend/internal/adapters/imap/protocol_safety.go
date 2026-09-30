@@ -88,6 +88,28 @@ func ValidateMailboxName(name string) error {
 	return nil
 }
 
+// ErrUnsafeHeaderField is returned by ValidateHeaderFieldName.
+var ErrUnsafeHeaderField = errors.New("invalid header field name")
+
+// maxHeaderFieldNameLen bounds a header name; RFC 5322 recommends lines of at
+// most 78 characters, so no real field name comes close.
+const maxHeaderFieldNameLen = 76
+
+// ValidateHeaderFieldName reports whether name is an RFC 5322 field-name that
+// is also an IMAP atom, so it can be interpolated into a HEADER.FIELDS list.
+// fetchHeaderFieldsLocked writes names raw; user filter rules supply them.
+func ValidateHeaderFieldName(name string) error {
+	if name == "" || len(name) > maxHeaderFieldNameLen {
+		return fmt.Errorf("%w: %q must be 1-%d characters", ErrUnsafeHeaderField, name, maxHeaderFieldNameLen)
+	}
+	for _, r := range name {
+		if r < 0x21 || r > 0x7E || r == ':' || strings.ContainsRune(atomSpecials, r) {
+			return fmt.Errorf("%w: %q must be printable ASCII without spaces, colons or any of %s", ErrUnsafeHeaderField, name, atomSpecials)
+		}
+	}
+	return nil
+}
+
 // validateOptionalMailboxName applies ValidateMailboxName only when name is
 // non-empty. Several call sites treat "" as "not specified" (an empty parent
 // means top level, an empty mailbox means the current selection), and those

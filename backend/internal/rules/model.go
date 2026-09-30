@@ -42,9 +42,11 @@ type MatchGroup struct {
 type Condition struct {
 	Negate bool        `json:"negate,omitempty"`
 	Group  *MatchGroup `json:"group,omitempty"`
-	// Field is one of "from"|"to"|"cc"|"bcc"|"subject"|"body"|"keyword".
+	// Field is one of "from"|"to"|"cc"|"bcc"|"subject"|"body"|"keyword"|"header".
 	// Ignored when Group is set.
 	Field string `json:"field,omitempty"`
+	// Header names the header a "header" Field tests, e.g. "X-Spam-Flag".
+	Header string `json:"header,omitempty"`
 	// Comparator is one of "contains"|"is"|"matches"|"regex", or the
 	// engine/sieve-internal "exists" value (field non-empty, only valid for
 	// the 5 header fields — see sieve.go's exists-test mapping). Ignored

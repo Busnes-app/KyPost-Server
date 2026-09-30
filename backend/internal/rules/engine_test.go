@@ -251,7 +251,7 @@ func (f *fakeClient) GetAttachment(context.Context, string, int, int) (imapadapt
 }
 func (f *fakeClient) SaveDraft(context.Context, imapadapter.DraftMessage) error { return nil }
 func (f *fakeClient) SaveSent(context.Context, imapadapter.DraftMessage) error  { return nil }
-func (f *fakeClient) FetchHeaderFields(context.Context, []int, ...string) (map[int][]string, error) {
+func (f *fakeClient) FetchHeaderFields(context.Context, string, []int, ...string) (map[int][]string, error) {
 	return nil, nil
 }
 func (f *fakeClient) FetchRawMessage(context.Context, string, int) ([]byte, error) { return nil, nil }

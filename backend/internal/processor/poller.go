@@ -131,6 +131,11 @@ type userCtx struct {
 	// tick; rules.Evaluate skips disabled rules and rules out of Scope for
 	// the evaluated folder itself, so no pre-filtering happens here.
 	rules []rules.Rule
+	// headers holds, per UID fetched this tick, the pre-sort headers plus
+	// every header a rule tests. knownSenders is nil when contacts could not
+	// be read, which turns the known-sender pre-sort off rather than guessing.
+	headers      map[int]map[string][]string
+	knownSenders map[string]bool
 }
 
 func New(cfg config.Config, log *logging.Logger, globalStore *state.Store, usersStore *users.Store, stateDir, configDir string, healthSvc *health.Service, classifierClient *classifier.HTTPClient, wkdStore *wkdpublish.Store) (*Poller, error) {
@@ -799,6 +804,40 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		}
 	}
 
+	// One header-only FETCH for the batch feeds both pre-sort and header rules.
+	// TooLarge messages are left out: their size is the reason nothing of them
+	// is downloaded. If the fetch fails and a rule tests a header, messages are
+	// held below (after the phishing scan) rather than letting the rule run
+	// blind; pre-sort alone just goes without its bulk check.
+	var headersErr error
+	headersNeeded := len(rules.HeaderNames(activeRules)) > 0
+	if len(messages) > 0 {
+		uids := make([]int, 0, len(messages))
+		for _, m := range messages {
+			if uid, err := strconv.Atoi(strings.TrimSpace(m.ID)); err == nil && !m.TooLarge {
+				uids = append(uids, uid)
+			}
+		}
+		ruleHeaders := rules.HeaderNames(activeRules)
+		headerNames := append(slices.Clone(ruleHeaders), presortHeaderNames...)
+		slices.Sort(headerNames)
+		headerLines, err := uc.mail.FetchHeaderFields(ctx, "", uids, slices.Compact(headerNames)...)
+		switch {
+		case err == nil:
+			uc.headers = headersByUID(headerLines)
+		case headersNeeded:
+			p.log.Error("fetch message headers failed; holding messages for header rules", "user_id", u.ID, "error", err.Error())
+			headersErr = fmt.Errorf("fetch message headers: %w", err)
+		default:
+			p.log.Error("fetch message headers failed; pre-sort bulk check off this tick", "user_id", u.ID, "error", err.Error())
+		}
+		if cs, err := p.userContactsStore(u.ID); err != nil {
+			p.log.Error("failed to open contacts store; known-sender pre-sort off this tick", "user_id", u.ID, "error", err.Error())
+		} else if uc.knownSenders, err = knownSenders(cs); err != nil {
+			p.log.Error("failed to read contacts; known-sender pre-sort off this tick", "user_id", u.ID, "error", err.Error())
+		}
+	}
+
 	harvestEnabled, harvestSuppressed := p.autocryptHarvestConfig(u.ID)
 
 	// Resolved once per tick rather than per message: it reads and decrypts the
@@ -853,7 +892,22 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		if harvestEnabled {
 			p.harvestAutocrypt(ctx, uc, msg, harvestSuppressed)
 		}
-		if !p.allowByRate(u.ID) {
+		if headersErr != nil {
+			deferredIDs = append(deferredIDs, msg.ID)
+			if ledgerErr == nil {
+				ledgerErr = headersErr
+			}
+			continue
+		}
+		uid, _ := strconv.Atoi(strings.TrimSpace(msg.ID))
+		// Past the header byte budget: a later, smaller batch fetches it.
+		if headersNeeded && !msg.TooLarge && uc.headers[uid] == nil {
+			deferredIDs = append(deferredIDs, msg.ID)
+			continue
+		}
+		// The rate limit rations classifier calls; mail pre-sort labels without
+		// one does not spend it.
+		if label, _, _ := presort(uc, msg, uid); label == "" && !p.allowByRate(u.ID) {
 			p.log.Info("rate limit reached, deferring remaining emails", "user_id", u.ID)
 			rateLimitedCount = len(messages) - processedCount - skippedSeenCount - failedCount
 			// "Deferring" is the whole point of the break: this message and
@@ -1316,6 +1370,7 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 		Body:      msg.Body,
 		Keywords:  msg.Keywords,
 		Folder:    "INBOX",
+		Headers:   uc.headers[uid],
 	}
 	outcome := rules.Evaluate(ctx, ruleInput, uc.rules)
 	if len(outcome.Matched) > 0 {
@@ -1425,6 +1480,11 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 		return p.tagWithFallbackLabel(ctx, uc, cfg, msg, "message is encrypted; no readable content to classify")
 	}
 
+	presorted, allowlist, presortNote := presort(uc, msg, uid)
+	if presorted != "" {
+		return p.tagWithLabel(ctx, uc, msg, presorted, "sender is a contact")
+	}
+
 	// One redaction engine, applied to everything that reaches the model.
 	//
 	// It used to run on the body alone, so the shipped default pattern set —
@@ -1450,7 +1510,7 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 	sender := truncateRunes(red.Apply(strings.TrimSpace(msg.Sender)), maxClassifySenderRunes)
 	subject := truncateRunes(red.Apply(strings.TrimSpace(msg.Subject)), maxClassifySubjectRunes)
 
-	label, err := classifyWithRetry(ctx, p.classifier, uc.allowlist, sender, subject, redacted, uc.tuning)
+	label, err := classifyWithRetry(ctx, p.classifier, allowlist, sender, subject, redacted, uc.tuning)
 	// The model answering with something that isn't an allowed label is a
 	// normal outcome, not a classifier failure: fall through to the
 	// "no known label returned" skip path below (which retires the message
@@ -1483,9 +1543,9 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 	// subject are recorded in the state.Decision row below, which lives in the
 	// user's own state.db; the message id joins the two when debugging.
 	p.log.Info("classification result", "user_id", uc.id, "message_id", msg.ID, "raw_label", clipForLog(label))
-	selected := classifier.SelectLabelFromText(uc.allowlist, label)
+	selected := classifier.SelectLabelFromText(allowlist, label)
 	if selected == "" {
-		p.log.Info("classification skipped", "user_id", uc.id, "message_id", msg.ID, "reason", "no known label returned", "raw_label", clipForLog(label), "allowlist_count", strconv.Itoa(len(uc.allowlist)))
+		p.log.Info("classification skipped", "user_id", uc.id, "message_id", msg.ID, "reason", "no known label returned", "raw_label", clipForLog(label), "allowlist_count", strconv.Itoa(len(allowlist)))
 		if err := uc.store.RecordProcessedDecision(state.Decision{
 			MessageID: msg.ID,
 			Sender:    msg.Sender,
@@ -1525,7 +1585,7 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 		Subject:   msg.Subject,
 		Label:     selected,
 		Status:    "applied",
-		Detail:    "label applied successfully",
+		Detail:    "label applied successfully" + presortNote,
 	}); err != nil {
 		return &retryableErr{err: err}
 	}
@@ -1963,17 +2023,21 @@ func applySingleKeywordWithRetry(ctx context.Context, c imapadapter.Client, mess
 	return err
 }
 
-// tagWithFallbackLabel retires a message the classifier is not going to be
-// asked about: it applies the account's fallback label, records the decision
-// with reason as its Detail, and notifies. Shared by the two paths that skip
-// classification for reasons that are not failures — auto-labeling turned off,
-// and an encrypted message with no readable body — so the two cannot drift
-// apart in what they write to the mailbox or to the decision log.
+// tagWithFallbackLabel retires a message with the account's fallback label,
+// for the two non-failure skips: auto-labeling off, and an encrypted message
+// with no readable body.
 func (p *Poller) tagWithFallbackLabel(ctx context.Context, uc userCtx, cfg config.Config, msg imapadapter.Message, reason string) error {
-	defaultLabel := disabledLabelingFallback(uc.allowlist)
+	return p.tagWithLabel(ctx, uc, msg, disabledLabelingFallback(uc.allowlist), reason)
+}
+
+// tagWithLabel retires a message the classifier is not going to be asked
+// about: it applies defaultLabel, records the decision with reason as its
+// Detail, and notifies. Every classifier-free path goes through it, so they
+// cannot drift apart in what they write to the mailbox or the decision log.
+func (p *Poller) tagWithLabel(ctx context.Context, uc userCtx, msg imapadapter.Message, defaultLabel, reason string) error {
 	keywords := keywordsForSelectedLabel(defaultLabel, uc.keywordMappings)
 	p.log.Info(
-		"classification skipped; tagging default label",
+		"classification skipped; tagging label",
 		"user_id", uc.id,
 		"message_id", msg.ID,
 		"reason", reason,

@@ -18,8 +18,10 @@ import {
 import { RulesHelpModal } from "../../components/RulesHelpModal";
 import { ACTION_TYPES, ruleActionsError } from "../../lib/ruleActions";
 
-const FIELD_OPTIONS = ["from", "to", "cc", "bcc", "subject", "body", "keyword"] as const;
+const FIELD_OPTIONS = ["from", "to", "cc", "bcc", "subject", "body", "keyword", "header"] as const;
 const COMPARATOR_OPTIONS = ["contains", "is", "matches", "regex"] as const;
+// "exists" compiles to a Sieve exists test, which only headers have.
+const EXISTS_FIELDS: readonly string[] = ["from", "to", "cc", "bcc", "subject", "header"];
 const ACTION_TYPE_OPTIONS = ACTION_TYPES;
 
 function actionNeedsValue(type: string): boolean {
@@ -36,7 +38,8 @@ function summarizeCondition(c: Condition): string {
     return "(" + c.group.conditions.map(summarizeCondition).join(joiner) + ")";
   }
   const neg = c.negate ? "NOT " : "";
-  return `${neg}${c.field} ${c.comparator}${c.value ? ` "${c.value}"` : ""}`;
+  const field = c.field === "header" ? `header ${c.header ?? ""}` : c.field;
+  return `${neg}${field} ${c.comparator}${c.value ? ` "${c.value}"` : ""}`;
 }
 
 function summarizeAction(a: Action): string {
@@ -404,13 +407,32 @@ export function Filters() {
                             />
                             NOT
                           </label>
-                          <select value={c.field} onChange={(e) => updateDraftCondition(i, { field: e.target.value })}>
+                          <select
+                            value={c.field}
+                            onChange={(e) =>
+                              updateDraftCondition(i, {
+                                field: e.target.value,
+                                ...(c.comparator === "exists" && !EXISTS_FIELDS.includes(e.target.value)
+                                  ? { comparator: "contains" }
+                                  : {})
+                              })
+                            }
+                          >
                             {FIELD_OPTIONS.map((f) => (
                               <option key={f} value={f}>
                                 {f}
                               </option>
                             ))}
                           </select>
+                          {c.field === "header" && (
+                            <input
+                              type="text"
+                              aria-label="Header name"
+                              value={c.header ?? ""}
+                              onChange={(e) => updateDraftCondition(i, { header: e.target.value })}
+                              placeholder="X-Spam-Flag"
+                            />
+                          )}
                           <select
                             value={c.comparator}
                             onChange={(e) => updateDraftCondition(i, { comparator: e.target.value })}
@@ -420,13 +442,18 @@ export function Filters() {
                                 {c2}
                               </option>
                             ))}
+                            {EXISTS_FIELDS.includes(c.field ?? "") && (
+                              <option value="exists">exists</option>
+                            )}
                           </select>
-                          <input
-                            type="text"
-                            value={c.value ?? ""}
-                            onChange={(e) => updateDraftCondition(i, { value: e.target.value })}
-                            placeholder="value"
-                          />
+                          {c.comparator !== "exists" && (
+                            <input
+                              type="text"
+                              value={c.value ?? ""}
+                              onChange={(e) => updateDraftCondition(i, { value: e.target.value })}
+                              placeholder="value"
+                            />
+                          )}
                           <button type="button" onClick={() => removeDraftCondition(i)}>
                             Remove
                           </button>

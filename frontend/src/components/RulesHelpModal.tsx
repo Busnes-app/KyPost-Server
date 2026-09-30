@@ -57,6 +57,7 @@ export function RulesHelpModal({ isOpen, onClose }: RulesHelpModalProps) {
               <tr><td><code>subject</code></td><td>Subject header</td></tr>
               <tr><td><code>body</code></td><td>Message body (only fetched when a rule actually needs it)</td></tr>
               <tr><td><code>keyword</code></td><td>Matches if any of the message's existing keywords/labels match</td></tr>
+              <tr><td><code>header</code></td><td>Any header you name, e.g. <code>X-Spam-Flag</code> added by your mail provider's spam filter. Matches if any copy of that header matches</td></tr>
             </tbody>
           </table>
 
@@ -124,7 +125,9 @@ if header :contains "from" "billing@example.com" {
     stop;
 }`}</pre>
           <p>
-            Supported tests: <code>header</code>/<code>address</code> (by field name), <code>exists</code>,{" "}
+            Supported tests: <code>header</code> (any header name, e.g.{" "}
+            <code>header :is ["X-Spam-Flag"] "YES"</code>), <code>address</code> (from/to/cc/bcc),{" "}
+            <code>exists</code>,{" "}
             <code>body</code>, <code>hasflag</code>, combined with <code>allof(...)</code>, <code>anyof(...)</code>,
             and <code>not</code>. Comparators are given as a tag, e.g. <code>:contains</code>, <code>:is</code>,{" "}
             <code>:matches</code>, <code>:regex</code>. Comments use <code>#</code> for a line or{" "}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -655,6 +656,95 @@ func TestRulesRun_FetchesBodyWhenRuleNeedsIt(t *testing.T) {
 	// this would either match 0 or match both.
 	if result.Scanned != 2 || result.Matched != 1 || result.Applied != 1 || result.Failed != 0 {
 		t.Fatalf("result = %+v, want scanned=2 matched=1 applied=1 failed=0", result)
+	}
+}
+
+// A header rule fetches exactly the headers it names and matches on any copy.
+func TestRulesRun_FetchesHeadersWhenRuleNeedsThem(t *testing.T) {
+	srv, fake, userID := setupRulesRunTest(t,
+		[]imapadapter.Overview{
+			{MessageID: "1", UID: 1, Sender: "a@example.com", Subject: "s1"},
+			{MessageID: "2", UID: 2, Sender: "b@example.com", Subject: "s2"},
+		},
+		nil,
+	)
+	fake.headerLines = map[int][]string{1: {"X-Spam-Flag: NO", "X-Spam-Flag: YES"}}
+	store, err := srv.userRulesStore(userID)
+	if err != nil {
+		t.Fatalf("userRulesStore: %v", err)
+	}
+	if _, err := store.Upsert(rules.Rule{
+		Name:    "provider says spam",
+		Enabled: true,
+		Match: rules.MatchGroup{
+			Op:         "allof",
+			Conditions: []rules.Condition{{Field: "header", Header: "x-spam-flag", Comparator: "is", Value: "YES"}},
+		},
+		Actions: []rules.Action{{Type: "spam"}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/rules/run", bytes.NewReader([]byte(`{"mailbox":"Lists"}`)))
+	authRequest(srv, req)
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if want := []string{"X-Spam-Flag"}; !reflect.DeepEqual(fake.headerFields, want) {
+		t.Fatalf("header fields fetched = %v, want %v", fake.headerFields, want)
+	}
+	// Headers must come from the mailbox being run, not the account's default
+	// folder, or actions land on messages judged by another folder's headers.
+	if fake.headerMailbox != "Lists" {
+		t.Fatalf("headers fetched from mailbox %q, want %q", fake.headerMailbox, "Lists")
+	}
+	var result rulesRunResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if result.Scanned != 2 || result.Matched != 1 || result.Applied != 1 {
+		t.Fatalf("result = %+v, want scanned=2 matched=1 applied=1", result)
+	}
+}
+
+// A UID the adapter did not fetch (oversized, past the budget) has unknown
+// headers, so a negated header rule must not delete it.
+func TestRulesRun_UnfetchedHeadersAreUnknownNotAbsent(t *testing.T) {
+	srv, fake, userID := setupRulesRunTest(t,
+		[]imapadapter.Overview{
+			{MessageID: "1", UID: 1, Sender: "a@example.com", Subject: "s1"},
+			{MessageID: "2", UID: 2, Sender: "b@example.com", Subject: "s2"},
+		},
+		nil,
+	)
+	fake.headerLines = map[int][]string{1: {}} // UID 2 not fetched
+	store, err := srv.userRulesStore(userID)
+	if err != nil {
+		t.Fatalf("userRulesStore: %v", err)
+	}
+	if _, err := store.Upsert(rules.Rule{
+		Name:    "no spam header",
+		Enabled: true,
+		Match: rules.MatchGroup{
+			Op:         "allof",
+			Conditions: []rules.Condition{{Field: "header", Header: "X-Spam-Flag", Comparator: "exists", Negate: true}},
+		},
+		Actions: []rules.Action{{Type: "delete"}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/rules/run", bytes.NewReader([]byte(`{"mailbox":"INBOX"}`)))
+	authRequest(srv, req)
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	var result rulesRunResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v (status %d)", err, rec.Code)
+	}
+	if result.Matched != 1 {
+		t.Fatalf("result = %+v, want only the fetched UID 1 to match", result)
 	}
 }
 

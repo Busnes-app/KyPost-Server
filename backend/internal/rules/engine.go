@@ -3,6 +3,7 @@ package rules
 import (
 	"context"
 	"fmt"
+	"net/textproto"
 	"regexp"
 	"sort"
 	"strings"
@@ -26,6 +27,10 @@ type EvalInput struct {
 	Body      string
 	Keywords  []string
 	Folder    string
+	// Headers holds the values of every header named by a "header"
+	// condition, keyed by canonical MIME name. Nil means not fetched, which
+	// makes header conditions unevaluable rather than non-matching.
+	Headers map[string][]string
 }
 
 // Outcome is the result of evaluating a set of rules against one message.
@@ -230,12 +235,21 @@ func conditionMatches(ctx context.Context, c Condition, input EvalInput) bool {
 	// Negate inverted it to true. An unevaluable condition must not match in
 	// either direction.
 	evaluable := true
+	field := strings.ToLower(strings.TrimSpace(c.Field))
 	if c.Group != nil {
 		result = matchGroup(ctx, *c.Group, input)
-	} else if strings.EqualFold(strings.TrimSpace(c.Field), "keyword") {
+	} else if field == "keyword" || field == "header" {
+		// Both are multi-valued: the condition matches if any value does.
+		values := input.Keywords
+		if field == "header" {
+			if input.Headers == nil {
+				return false
+			}
+			values = input.Headers[textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(c.Header))]
+		}
 		result = false
-		for _, kw := range input.Keywords {
-			matched, ok := matchesValue(c.Comparator, kw, c.Value)
+		for _, v := range values {
+			matched, ok := matchesValue(c.Comparator, v, c.Value)
 			if !ok {
 				evaluable = false
 				break
@@ -336,3 +350,30 @@ func wildcardToRegexp(pattern string) string {
 //
 // A var, not a const, so tests can lower it; production never reassigns it.
 var maxEvaluationBudget = 5 * time.Second
+
+// HeaderNames returns the canonical names of the headers the enabled rules
+// test, so a caller can fetch exactly those before Evaluate.
+func HeaderNames(rs []Rule) []string {
+	seen := map[string]bool{}
+	var walk func(MatchGroup)
+	walk = func(g MatchGroup) {
+		for _, c := range g.Conditions {
+			if c.Group != nil {
+				walk(*c.Group)
+			} else if strings.EqualFold(strings.TrimSpace(c.Field), "header") {
+				seen[textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(c.Header))] = true
+			}
+		}
+	}
+	for _, r := range rs {
+		if r.Enabled {
+			walk(r.Match)
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}

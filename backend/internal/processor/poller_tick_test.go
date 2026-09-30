@@ -13,6 +13,7 @@ import (
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
@@ -123,19 +124,20 @@ func newTickTestPoller(t *testing.T, mail imapadapter.Client) (*Poller, users.Us
 	}
 
 	p := &Poller{
-		cfg:           cfg,
-		log:           logger,
-		users:         usersStore,
-		health:        health.NewService(),
-		stateDir:      t.TempDir(),
-		configDir:     configDir,
-		stores:        map[string]*state.Store{},
-		mailClients:   map[string]*mailClientEntry{},
-		mailCaches:    map[string]*mailcache.Store{},
-		rulesStores:   map[string]*rules.Store{},
-		sendAsStores:  map[string]*sendas.Store{},
-		rate:          map[string][]time.Time{},
-		newMailClient: func(string, string) imapadapter.Client { return mail },
+		cfg:            cfg,
+		log:            logger,
+		users:          usersStore,
+		health:         health.NewService(),
+		stateDir:       t.TempDir(),
+		configDir:      configDir,
+		stores:         map[string]*state.Store{},
+		mailClients:    map[string]*mailClientEntry{},
+		mailCaches:     map[string]*mailcache.Store{},
+		rulesStores:    map[string]*rules.Store{},
+		sendAsStores:   map[string]*sendas.Store{},
+		contactsStores: map[string]*contacts.Store{},
+		rate:           map[string][]time.Time{},
+		newMailClient:  func(string, string) imapadapter.Client { return mail },
 	}
 
 	u := users.User{ID: "user-tick", Username: "tick"}
