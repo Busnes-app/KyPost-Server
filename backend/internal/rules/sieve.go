@@ -2,8 +2,11 @@ package rules
 
 import (
 	"fmt"
+	"net/textproto"
 	"strconv"
 	"strings"
+
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 )
 
 // allowedCapabilities is the fixed set of "require" capability strings
@@ -171,6 +174,12 @@ func compileLeafCondition(c Condition) (string, error) {
 			return fmt.Sprintf("exists [%s]", strconv.Quote(field)), nil
 		}
 		return fmt.Sprintf("header :%s [%s] %s", comparatorTag(c.Comparator), strconv.Quote(field), strconv.Quote(c.Value)), nil
+	case "header":
+		name := strconv.Quote(textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(c.Header)))
+		if strings.EqualFold(c.Comparator, "exists") {
+			return fmt.Sprintf("exists [%s]", name), nil
+		}
+		return fmt.Sprintf("header :%s [%s] %s", comparatorTag(c.Comparator), name, strconv.Quote(c.Value)), nil
 	case "body":
 		return fmt.Sprintf("body :%s %s", comparatorTag(c.Comparator), strconv.Quote(c.Value)), nil
 	case "keyword":
@@ -379,6 +388,11 @@ func validateMatchGroupShape(m MatchGroup, depth int, count *int) error {
 			}
 			continue
 		}
+		if strings.EqualFold(strings.TrimSpace(c.Field), "header") {
+			if !validCustomHeader(c.Header) {
+				return fmt.Errorf("invalid header name %q: use printable ASCII without spaces or colons, and not body, keyword or a field with its own option (from, to, cc, bcc, subject)", c.Header)
+			}
+		}
 		if len(c.Value) > maxConditionValueBytes {
 			return fmt.Errorf("match condition value exceeds maximum length of %d bytes", maxConditionValueBytes)
 		}
@@ -482,15 +496,19 @@ func normalizeField(f string) string {
 	return strings.ToLower(strings.TrimSpace(f))
 }
 
-// validHeaderAddressFields is the exact set of field names compileLeafCondition
-// treats as header/address fields (its "from", "to", "cc", "bcc", "subject"
-// case). "body" and "keyword" are deliberately excluded: compileLeafCondition
-// special-cases those two into a completely different Sieve test (body /
-// hasflag), so a header/address or exists test naming them would silently
-// compile to the wrong test with no error. See sieve.go:166-181
-// (compileLeafCondition). Used by both the header/address branch and the
-// exists branch of parseTest, since both go through fieldsToCondition and
-// are subject to the identical compileLeafCondition re-dispatch hazard.
+// validHeaderAddressFields is the set of field names compileLeafCondition
+// treats as dedicated header/address fields (its "from", "to", "cc", "bcc",
+// "subject" case); the only fields an address test accepts. Any other name
+// accepted by validCustomHeader becomes a Field "header" condition.
+// validCustomHeader reports whether f may be tested as a Field "header"
+// condition. "body" and "keyword" name other Sieve tests, and the dedicated
+// fields would re-parse as Field "from" etc. — an address match, not a raw
+// header match — so a round trip through the Sieve editor would change the rule.
+func validCustomHeader(f string) bool {
+	n := normalizeField(f)
+	return n != "body" && n != "keyword" && !validHeaderAddressFields[n] && imapadapter.ValidateHeaderFieldName(strings.TrimSpace(f)) == nil
+}
+
 var validHeaderAddressFields = map[string]bool{
 	"from":    true,
 	"to":      true,
@@ -567,6 +585,7 @@ func (p *sieveParser) parseTest() (Condition, error) {
 		return Condition{Group: &group}, nil
 
 	case strings.EqualFold(t.text, "header") || strings.EqualFold(t.text, "address"):
+		isHeader := strings.EqualFold(t.text, "header")
 		p.next()
 		comparator, err := p.parseComparatorTag("is")
 		if err != nil {
@@ -584,7 +603,7 @@ func (p *sieveParser) parseTest() (Condition, error) {
 			return Condition{}, fmt.Errorf("line %d: header/address test requires at least one field", t.line)
 		}
 		for _, f := range fields {
-			if !validHeaderAddressFields[normalizeField(f)] {
+			if !validHeaderAddressFields[normalizeField(f)] && (!isHeader || !validCustomHeader(f)) {
 				return Condition{}, fmt.Errorf("line %d: unsupported header/address field %q", t.line, f)
 			}
 		}
@@ -600,7 +619,7 @@ func (p *sieveParser) parseTest() (Condition, error) {
 			return Condition{}, fmt.Errorf("line %d: exists test requires at least one field", t.line)
 		}
 		for _, f := range fields {
-			if !validHeaderAddressFields[normalizeField(f)] {
+			if !validHeaderAddressFields[normalizeField(f)] && !validCustomHeader(f) {
 				return Condition{}, fmt.Errorf("line %d: unsupported exists field %q", t.line, f)
 			}
 		}
@@ -640,12 +659,18 @@ func (p *sieveParser) parseTest() (Condition, error) {
 // multi-item list — matching Sieve's "true if any listed header matches"
 // semantics for header/address/exists tests with more than one field.
 func fieldsToCondition(fields []string, comparator, value string) Condition {
+	leaf := func(f string) Condition {
+		if validHeaderAddressFields[normalizeField(f)] {
+			return Condition{Field: normalizeField(f), Comparator: comparator, Value: value}
+		}
+		return Condition{Field: "header", Header: textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(f)), Comparator: comparator, Value: value}
+	}
 	if len(fields) == 1 {
-		return Condition{Field: normalizeField(fields[0]), Comparator: comparator, Value: value}
+		return leaf(fields[0])
 	}
 	conds := make([]Condition, 0, len(fields))
 	for _, f := range fields {
-		conds = append(conds, Condition{Field: normalizeField(f), Comparator: comparator, Value: value})
+		conds = append(conds, leaf(f))
 	}
 	group := MatchGroup{Op: "anyof", Conditions: conds}
 	return Condition{Group: &group}

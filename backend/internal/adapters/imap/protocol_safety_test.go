@@ -145,3 +145,18 @@ func TestValidateKeywordRejectsNonASCII(t *testing.T) {
 		t.Fatal("atomSpecials no longer lists '(' — the RFC 3501 atom-specials set was edited")
 	}
 }
+
+// Header names from user filter rules are written raw into
+// `BODY.PEEK[HEADER.FIELDS (...)]`, so the same injection applies.
+func TestValidateHeaderFieldName(t *testing.T) {
+	for _, name := range []string{"", "X-Spam\r\nA1 LOGOUT", "X-Spam)", "Two Words", "Colon:", "X-\"q\"", strings.Repeat("X", 77), "Ünicode"} {
+		if err := ValidateHeaderFieldName(name); !errors.Is(err, ErrUnsafeHeaderField) {
+			t.Errorf("ValidateHeaderFieldName(%q) = %v, want ErrUnsafeHeaderField", name, err)
+		}
+	}
+	for _, name := range []string{"X-Spam-Flag", "List-Unsubscribe", "Authentication-Results", "X-Rspamd-Score", "x_custom.1"} {
+		if err := ValidateHeaderFieldName(name); err != nil {
+			t.Errorf("ValidateHeaderFieldName(%q) = %v, want nil", name, err)
+		}
+	}
+}

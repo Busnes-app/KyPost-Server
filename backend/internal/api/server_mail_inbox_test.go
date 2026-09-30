@@ -35,7 +35,12 @@ type fakeMailClient struct {
 	searchErr     error
 	searchCalls   int
 
-	bodies             map[int]string
+	bodies map[int]string
+	// headerLines is what FetchHeaderFields returns; headerFields records
+	// the names it was asked for.
+	headerLines        map[int][]string
+	headerFields       []string
+	headerMailbox      string
 	bodyHasAttachments map[int]bool
 	bodyPGPEncrypted   map[int]bool
 	// bodySender/bodyPGPEncryptedPayload/bodyPGPSignaturePayload feed
@@ -146,8 +151,10 @@ func (f *fakeMailClient) SaveDraft(_ context.Context, d imapadapter.DraftMessage
 	return nil
 }
 func (f *fakeMailClient) SaveSent(_ context.Context, _ imapadapter.DraftMessage) error { return nil }
-func (f *fakeMailClient) FetchHeaderFields(context.Context, []int, ...string) (map[int][]string, error) {
-	return nil, nil
+func (f *fakeMailClient) FetchHeaderFields(_ context.Context, mailbox string, _ []int, fields ...string) (map[int][]string, error) {
+	f.headerMailbox = mailbox
+	f.headerFields = append(f.headerFields, fields...)
+	return f.headerLines, nil
 }
 func (f *fakeMailClient) FetchRawMessage(_ context.Context, _ string, uid int) ([]byte, error) {
 	if raw, ok := f.rawMessages[uid]; ok {

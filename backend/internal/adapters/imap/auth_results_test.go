@@ -121,6 +121,19 @@ func TestParseHeaderFieldsRecords(t *testing.T) {
 		}
 	})
 
+	t.Run("unsolicited flag update is skipped, not an error", func(t *testing.T) {
+		content := "Authentication-Results: mx.example.net; dkim=pass header.d=example.com\r\n\r\n"
+		raw := "* 3 FETCH (FLAGS (\\Seen))\r\n" +
+			fmt.Sprintf("* 1 FETCH (UID 500 %s {%d}\r\n%s)\r\n", arItem, len(content), content)
+		got, err := parseHeaderFieldsRecords(parseRecords(t, raw), []string{"Authentication-Results"})
+		if err != nil {
+			t.Fatalf("parseHeaderFieldsRecords: %v", err)
+		}
+		if len(got[500]) != 1 {
+			t.Fatalf("got %#v, want UID 500's header", got)
+		}
+	})
+
 	t.Run("record with no UID token is a descriptive error", func(t *testing.T) {
 		content := "Authentication-Results: mx.example.net; dkim=pass header.d=example.com\r\n\r\n"
 		raw := fmt.Sprintf("* 1 FETCH (%s {%d}\r\n%s)\r\n", arItem, len(content), content)

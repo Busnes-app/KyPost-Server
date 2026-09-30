@@ -3,22 +3,26 @@ package imap
 import (
 	"context"
 	"fmt"
+	"net/textproto"
 	"strconv"
 	"strings"
 
 	goimap "github.com/BrianLeishman/go-imap"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
-// FetchHeaderFields issues a raw UID FETCH for BODY.PEEK[HEADER.FIELDS (...)]
-// against uids in the currently selected mailbox — a header-only fetch, not
-// a full body fetch, since callers of this method only need to inspect
-// specific headers (e.g. Authentication-Results) cheaply. Returns, per UID,
-// every unfolded header line whose field name matches one of fields
-// (case-insensitive), each still carrying its "Field-Name: value" prefix so
-// a caller requesting multiple fields can tell them apart. A UID with none
-// of the requested fields present is simply absent from the result — not an
-// error.
-func (c *APIClient) FetchHeaderFields(ctx context.Context, uids []int, fields ...string) (map[int][]string, error) {
+// FetchHeaderFields issues a header-only UID FETCH for fields against uids in
+// mailbox ("" means the account's configured folder). Returns, per UID, every
+// unfolded header line whose field name matches one of fields
+// (case-insensitive), each still carrying its "Field-Name: value" prefix.
+//
+// Every UID actually fetched has an entry, empty when none of the fields are
+// present. A UID absent from the result was NOT fetched — larger than
+// mailmsg.MaxInboundMessageBytes, or past the running byte budget — so callers
+// must treat its headers as unknown, not absent. The bounds are the body
+// fetch's: header size is sender-controlled and HEADER.FIELDS has no cap.
+func (c *APIClient) FetchHeaderFields(ctx context.Context, mailbox string, uids []int, fields ...string) (map[int][]string, error) {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
 
@@ -36,7 +40,52 @@ func (c *APIClient) FetchHeaderFields(ctx context.Context, uids []int, fields ..
 	if err != nil {
 		return nil, err
 	}
-	return fetchHeaderFieldsLocked(d, uids, fields...)
+	if err := c.selectMailboxLocked(d, mailbox); err != nil {
+		return nil, err
+	}
+	oversized, err := d.SearchUIDs(goimap.Search().UID(uidSetCriteria(uids)).Larger(int(mailmsg.MaxInboundMessageBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("imap search oversized: %w", err)
+	}
+	toFetch, _ := partitionUIDsBySize(uids, oversized)
+	out := make(map[int][]string, len(toFetch))
+	_, _, err = fetchEmailsBoundedWith(toFetch, func(page []int) (map[int]int64, error) {
+		got, err := fetchHeaderFieldsLocked(d, page, fields...)
+		if err != nil {
+			return nil, err
+		}
+		sizes := make(map[int]int64, len(page))
+		for _, uid := range page {
+			lines := got[uid]
+			if lines == nil {
+				lines = []string{}
+			}
+			out[uid] = lines
+			for _, l := range lines {
+				sizes[uid] += int64(len(l))
+			}
+		}
+		return sizes, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// HeaderMap folds one UID's FetchHeaderFields lines into values keyed by
+// canonical header name, keeping every copy of a repeated header. Never nil,
+// so callers can tell "fetched, none present" from "not fetched".
+func HeaderMap(lines []string) map[string][]string {
+	h := map[string][]string{}
+	for _, line := range lines {
+		name, value, ok := strings.Cut(line, ":")
+		if name = strings.TrimSpace(name); ok && name != "" {
+			key := textproto.CanonicalMIMEHeaderKey(name)
+			h[key] = append(h[key], strings.TrimSpace(value))
+		}
+	}
+	return h
 }
 
 // fetchHeaderFieldsLocked is FetchHeaderFields without the lock or the
@@ -46,6 +95,11 @@ func (c *APIClient) FetchHeaderFields(ctx context.Context, uids []int, fields ..
 func fetchHeaderFieldsLocked(d *goimap.Dialer, uids []int, fields ...string) (map[int][]string, error) {
 	if len(uids) == 0 {
 		return map[int][]string{}, nil
+	}
+	for _, f := range fields {
+		if err := ValidateHeaderFieldName(f); err != nil {
+			return nil, err
+		}
 	}
 
 	var uidsStr strings.Builder
@@ -160,6 +214,11 @@ func parseHeaderFieldsRecords(records [][]*goimap.Token, fields []string) (map[i
 			}
 		}
 
+		// An unsolicited "* N FETCH (FLAGS ...)" — another session changed a
+		// flag — carries neither, and is not an answer to this command.
+		if !uidFound && !valueFound {
+			continue
+		}
 		if !uidFound {
 			return nil, fmt.Errorf("parse header fields: record has no UID token")
 		}
