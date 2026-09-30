@@ -356,6 +356,11 @@ func (s *Store) applyUpsertLocked(c Contact) (Contact, error) {
 			// callers echo it back — means no write path can drop a photo by
 			// omitting the field, and none can point it somewhere else.
 			c.PhotoRef = existing.PhotoRef
+			// DiscoveryCreated records how the contact came to exist, which an
+			// edit does not change. Most writers (CardDAV PUT, mobile sync, vCard)
+			// never send it, and dropping it would promote a stranger harvested
+			// from Autocrypt to a known sender (processor/presort.go).
+			c.DiscoveryCreated = c.DiscoveryCreated || existing.DiscoveryCreated
 			carryPGPProvenance(&c, existing)
 			s.contacts[i] = c
 			return c, nil

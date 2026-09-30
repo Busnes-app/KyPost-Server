@@ -3,6 +3,7 @@ package rules
 import (
 	"context"
 	"fmt"
+	"net/textproto"
 	"regexp"
 	"sort"
 	"strings"
@@ -26,6 +27,10 @@ type EvalInput struct {
 	Body      string
 	Keywords  []string
 	Folder    string
+	// Headers holds the values of every header named by a "header"
+	// condition, keyed by canonical MIME name. Nil means not fetched, which
+	// makes header conditions unevaluable rather than non-matching.
+	Headers map[string][]string
 }
 
 // Outcome is the result of evaluating a set of rules against one message.
@@ -98,7 +103,7 @@ func Evaluate(ctx context.Context, input EvalInput, activeRules []Rule) Outcome 
 		if !folderInScope(r.Scope, input.Folder) {
 			continue
 		}
-		if !matchGroup(ctx, r.Match, input) {
+		if matched, known := matchGroup(ctx, r.Match, input); !matched || !known {
 			continue
 		}
 		outcome.Matched = append(outcome.Matched, r.Name)
@@ -191,37 +196,35 @@ func folderInScope(scope RuleScope, folder string) bool {
 	return false
 }
 
-// matchGroup evaluates one group. A cancelled ctx makes it report NO match,
-// whatever the op: a group that has not finished being evaluated has not
-// matched, and returning true there would apply a rule's actions on the
-// strength of a timeout.
-func matchGroup(ctx context.Context, g MatchGroup, input EvalInput) bool {
-	op := strings.ToLower(strings.TrimSpace(g.Op))
-	if op == "anyof" {
-		for _, c := range g.Conditions {
-			if ctx.Err() != nil {
-				return false
-			}
-			if conditionMatches(ctx, c, input) {
-				return true
-			}
-		}
-		return false
-	}
+// matchGroup evaluates one group in three-valued logic. known=false means
+// unknown: a condition could not be evaluated (bad regex, headers never
+// fetched) or ctx ended mid-walk. Unknown survives negation, so a rule fires
+// only on a definite match; a plain false under "not" would become true and
+// apply a rule's actions to mail nobody examined.
+func matchGroup(ctx context.Context, g MatchGroup, input EvalInput) (matched, known bool) {
 	// "allof" (and any unrecognized/empty Op) is AND semantics; vacuously
 	// true over zero conditions, matching boolean-algebra convention.
+	anyof := strings.ToLower(strings.TrimSpace(g.Op)) == "anyof"
+	known = true
 	for _, c := range g.Conditions {
 		if ctx.Err() != nil {
-			return false
+			return false, false
 		}
-		if !conditionMatches(ctx, c, input) {
-			return false
+		m, ok := conditionMatches(ctx, c, input)
+		switch {
+		case !ok:
+			known = false
+		case m == anyof: // anyof found a true, or allof found a false
+			return m, true
 		}
 	}
-	return true
+	if !known {
+		return false, false
+	}
+	return !anyof, true
 }
 
-func conditionMatches(ctx context.Context, c Condition, input EvalInput) bool {
+func conditionMatches(ctx context.Context, c Condition, input EvalInput) (matched, known bool) {
 	var result bool
 	// evaluable distinguishes "this condition was evaluated and did not match"
 	// from "this condition could not be evaluated at all". Collapsing the two
@@ -230,12 +233,21 @@ func conditionMatches(ctx context.Context, c Condition, input EvalInput) bool {
 	// Negate inverted it to true. An unevaluable condition must not match in
 	// either direction.
 	evaluable := true
+	field := strings.ToLower(strings.TrimSpace(c.Field))
 	if c.Group != nil {
-		result = matchGroup(ctx, *c.Group, input)
-	} else if strings.EqualFold(strings.TrimSpace(c.Field), "keyword") {
+		result, evaluable = matchGroup(ctx, *c.Group, input)
+	} else if field == "keyword" || field == "header" {
+		// Both are multi-valued: the condition matches if any value does.
+		values := input.Keywords
+		if field == "header" {
+			if input.Headers == nil {
+				return false, false
+			}
+			values = input.Headers[textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(c.Header))]
+		}
 		result = false
-		for _, kw := range input.Keywords {
-			matched, ok := matchesValue(c.Comparator, kw, c.Value)
+		for _, v := range values {
+			matched, ok := matchesValue(c.Comparator, v, c.Value)
 			if !ok {
 				evaluable = false
 				break
@@ -249,12 +261,9 @@ func conditionMatches(ctx context.Context, c Condition, input EvalInput) bool {
 		result, evaluable = matchesValue(c.Comparator, fieldValue(input, c.Field), c.Value)
 	}
 	if !evaluable {
-		return false
+		return false, false
 	}
-	if c.Negate {
-		return !result
-	}
-	return result
+	return result != c.Negate, true
 }
 
 func fieldValue(input EvalInput, field string) string {
@@ -336,3 +345,30 @@ func wildcardToRegexp(pattern string) string {
 //
 // A var, not a const, so tests can lower it; production never reassigns it.
 var maxEvaluationBudget = 5 * time.Second
+
+// HeaderNames returns the canonical names of the headers the enabled rules
+// test, so a caller can fetch exactly those before Evaluate.
+func HeaderNames(rs []Rule) []string {
+	seen := map[string]bool{}
+	var walk func(MatchGroup)
+	walk = func(g MatchGroup) {
+		for _, c := range g.Conditions {
+			if c.Group != nil {
+				walk(*c.Group)
+			} else if strings.EqualFold(strings.TrimSpace(c.Field), "header") {
+				seen[textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(c.Header))] = true
+			}
+		}
+	}
+	for _, r := range rs {
+		if r.Enabled {
+			walk(r.Match)
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}

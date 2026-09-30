@@ -15,7 +15,8 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - Multi-user with two roles. Admins manage users and system settings. Each user connects their own IMAP mailbox.
 - IMAP inbox reader with background body preloading, folder management, and drag-and-drop move actions
 - Automatic keyword labels for unread mail. KyPost polls each active user's mailbox separately, and each account has its OWN label list — copied from the instance defaults when the account is created, then theirs to change. Labels are a sorting hint a determined sender can influence — see [Classification flow](#architecture).
-- Filter Rules: a GUI condition and action builder plus a raw Sieve script editor. A run-now panel applies the rules on demand.
+- Pre-sort before the model: mail from a contact you added is labelled `Primary` without an LLM call, and mail with mailing-list or automated headers (`List-Id`, `List-Unsubscribe`, `Precedence: bulk/list/junk`, `Auto-Submitted`) can never be labelled `Primary`. Same input, same answer; edit your contacts or add a rule to change it.
+- Filter Rules: a GUI condition and action builder plus a raw Sieve script editor. A run-now panel applies the rules on demand. Rules can test any header, so a provider's spam verdict (for example `X-Spam-Flag: YES`) can move mail to Junk.
 - Compose flow with SMTP send and IMAP draft save
 - PGP mail encryption and signing. Signing defaults on with an unlocked browser key; compose labels unsigned mail, and the reader distinguishes encrypted but unsigned mail from a verified signature. Generate or import a key, search for recipient keys on keys.openpgp.org, and check recipient key status before you send. KyPost has two key-protection modes. Read [Where your PGP private key lives](#where-your-pgp-private-key-lives) before you rely on this.
 - Contacts address book with groups, dedupe, bulk delete, CSV and vCard import and export, and photo support
@@ -42,13 +43,15 @@ The container runs these processes:
 
 Classification flow:
 
-1. Fetch unread messages from IMAP (`INBOX` by default).
-2. Redact sensitive patterns.
-3. Build the prompt from sender, subject, body, and tuning context.
-4. Call Ollama `/api/generate`.
-5. Match the output against the allowed labels.
-6. Apply the IMAP keywords.
-7. Save the checkpoint and the decision history.
+1. Fetch unread messages from IMAP (`INBOX` by default), plus their list/automation headers and any header a filter rule tests.
+2. Run filter rules.
+3. Pre-sort: a contact's mail gets `Primary` and skips steps 4-7 (and the rate limit); list or automated mail has `Primary` removed from the labels the model may choose. Only accounts whose label set includes `Primary` are affected.
+4. Redact sensitive patterns.
+5. Build the prompt from sender, subject, body, and tuning context.
+6. Call Ollama `/api/generate`.
+7. Match the output against the allowed labels.
+8. Apply the IMAP keywords.
+9. Save the checkpoint and the decision history.
 
 > **Labels are a hint, not a security boundary.** The classifier reads
 > attacker-supplied text, so a sender can write instructions into their message
@@ -60,7 +63,7 @@ Classification flow:
 >
 > What that buys an attacker is small and bounded: they can steer the label on
 > **their own message** — typically into `Primary` instead of `Promotions`. The
-> keyword allowlist is enforced in Go after the model answers (step 5), so
+> keyword allowlist is enforced in Go after the model answers (step 7), so
 > output that is not an allowed label is discarded; a message cannot be labelled
 > as something you never configured, cannot be moved, deleted, or marked read,
 > and cannot affect any other message. The worst case is a promotional email

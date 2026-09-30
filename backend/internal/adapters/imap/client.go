@@ -493,7 +493,7 @@ type Client interface {
 	SaveSent(ctx context.Context, draft DraftMessage) error
 	// FetchHeaderFields issues a raw UID FETCH for BODY.PEEK[HEADER.FIELDS (...)]
 	// — see auth_results.go for the full contract.
-	FetchHeaderFields(ctx context.Context, uids []int, fields ...string) (map[int][]string, error)
+	FetchHeaderFields(ctx context.Context, mailbox string, uids []int, fields ...string) (map[int][]string, error)
 	// FetchRawMessage fetches the complete raw RFC 5322 message (headers +
 	// body, exactly as stored) for one UID in mailbox — see raw_message.go for
 	// the full contract.

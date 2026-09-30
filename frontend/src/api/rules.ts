@@ -13,6 +13,8 @@ export type Condition = {
   negate?: boolean;
   group?: MatchGroup;
   field?: string;
+  /** Header name tested when field is "header", e.g. "X-Spam-Flag". */
+  header?: string;
   comparator?: string;
   value?: string;
 };

@@ -188,7 +188,7 @@ type harvestStubClient struct {
 	rawMailboxes []string
 }
 
-func (c *harvestStubClient) FetchHeaderFields(_ context.Context, uids []int, _ ...string) (map[int][]string, error) {
+func (c *harvestStubClient) FetchHeaderFields(_ context.Context, _ string, uids []int, _ ...string) (map[int][]string, error) {
 	out := map[int][]string{}
 	for _, u := range uids {
 		if v, ok := c.headerFields[u]; ok {

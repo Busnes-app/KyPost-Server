@@ -26,8 +26,11 @@ quality and truncated to `limit`, backing the compose-autocomplete
 
 All code under `backend/internal/contacts/`. Consumed by `api/` (web CRUD
 handlers, the CardDAV backend, the mobile sync endpoints) **and by `processor/`**
-(`poller.go`, and `autocrypt_harvest.go`, which writes contact key material from
-inbound mail). Both processes therefore mutate this store, which is why anything
+(`poller.go`; `autocrypt_harvest.go`, which writes contact key material from
+inbound mail; and `presort.go`, which treats non-`DiscoveryCreated` contacts as
+known senders, so that flag is load-bearing for mail sorting and
+`applyUpsertLocked` carries it forward like `PhotoRef`: most writers never send
+it, and only a tombstone clears it). Both processes therefore mutate this store, which is why anything
 derived from it must be invalidated by a mechanism the daemon can reach — see
 `PGPKeyGeneration` below.
 
