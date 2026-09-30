@@ -112,7 +112,12 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Access denied: the identity token is not valid yet.", http.StatusForbidden)
 		return nil, settings, false
 	}
-	if !s.singleUse.consume("native-signon:"+claims.JTI, nativeSignOnMaxAge+time.Minute) {
+	fresh, err := s.ssoLifecycle.RecordSignOnJTI(claims.Issuer, settings.ClientID, claims.JTI, time.Now().Add(nativeSignOnMaxAge+time.Minute))
+	if err != nil {
+		s.ssoFailure(w, "lifecycle", err)
+		return nil, settings, false
+	}
+	if !fresh {
 		http.Error(w, "Access denied: this token was already used.", http.StatusForbidden)
 		return nil, settings, false
 	}

@@ -18,6 +18,9 @@ const singleUseSweepThreshold = 10_000
 // singleUseTokens remembers which one-time tokens have been redeemed, so each
 // works exactly once.
 //
+// Not used for native sign-on jtis: those replay for minutes, mint a long-lived
+// credential, and are recorded durably by sso.LifecycleStore.RecordSignOnJTI.
+//
 // One type for what were two: qrTokenGuard (PGP QR key exchange) and
 // consumedNativePairingNonces (native device pairing). Same job, same
 // map[string]time.Time, same check-and-mark-under-one-lock requirement — and

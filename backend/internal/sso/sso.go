@@ -666,14 +666,16 @@ func (p *Provider) verifyRawIDToken(ctx context.Context, raw string) (*oidc.IDTo
 	ctx = oidc.ClientContext(ctx, p.client)
 
 	// Signature against the provider's JWKS, `iss` equal to the discovered
-	// issuer, `aud` containing our client ID, and `exp`/`iat` within skew.
+	// issuer, `aud` containing our client ID, and an unexpired `exp` (go-oidc
+	// v3 also checks `nbf` but never `iat`; callers bound iat themselves).
 	idToken, err := p.verifier.Verify(ctx, raw)
 	if err != nil {
 		return nil, nil, fmt.Errorf("id_token verification failed: %w", err)
 	}
 
-	// go-oidc checks exp and iat but not nbf; a provider that issues one is
-	// telling us the token is not valid yet.
+	// go-oidc v3.21 checks exp and nbf, not iat. This local nbf check is
+	// redundant with it but harmless, and keeps the rule independent of the
+	// library version.
 	var timing struct {
 		NotBefore int64 `json:"nbf"`
 	}
