@@ -2,8 +2,8 @@ github.com/BrianLeishman/go-imap v0.1.28 h1:+IGG0hSdiwoUlJKIP6rF/OfnEUt0YZzHsBVB
 github.com/BrianLeishman/go-imap v0.1.28/go.mod h1:gmLtGYOsDv+wnfRAgvw/zg46gNMuLQf+VaoZd4Ig/Tk=
 github.com/Busnes-app/ky-primitives v0.9.0 h1:bbZ9s12qKQJXj2zFUXdDMhe7x0ma97xTUdqCbm7vvf4=
 github.com/Busnes-app/ky-primitives v0.9.0/go.mod h1:SOeb+4v8vakifKC9mPJZn+n83Zj8ktX5qqfKgpSWLPc=
-github.com/ProtonMail/go-crypto v1.4.1 h1:9RfcZHqEQUvP8RzecWEUafnZVtEvrBVL9BiF67IQOfM=
-github.com/ProtonMail/go-crypto v1.4.1/go.mod h1:e1OaTyu5SYVrO9gKOEhTc+5UcXtTUa+P3uLudwcgPqo=
+github.com/ProtonMail/go-crypto v1.5.2 h1:cucYnvqcY7UOXVD//mSyjeaPY0SSN3v5cDkYPxumINk=
+github.com/ProtonMail/go-crypto v1.5.2/go.mod h1:/RaSu30DaKO4RY+XdV/ACcCcZkGr7AhUIduq5sjzzCo=
 github.com/ProtonMail/gopenpgp/v3 v3.4.1 h1:K7uUhSHSJxORZ+RuHpilTT6S4MA2whCRlXNwLqd0+ys=
 github.com/ProtonMail/gopenpgp/v3 v3.4.1/go.mod h1:bGdV9f6edhmd581wzXsQCTKdH8bXBbyhkgDKPjwPc6U=
 github.com/SherClockHolmes/webpush-go v1.4.0 h1:ocnzNKWN23T9nvHi6IfyrQjkIc0oJWv1B1pULsf9i3s=
