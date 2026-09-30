@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	github.com/BrianLeishman/go-imap v0.1.28
 	github.com/Busnes-app/ky-primitives v0.9.0
-	github.com/ProtonMail/go-crypto v1.4.1
+	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/ProtonMail/gopenpgp/v3 v3.4.1
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/coreos/go-oidc/v3 v3.21.0
