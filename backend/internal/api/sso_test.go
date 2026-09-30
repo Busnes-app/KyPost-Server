@@ -623,3 +623,23 @@ func runSSOFlowWithMode(t *testing.T, srv *Server, idp *ssotest.IdP, sessionCook
 	srv.handleSSOCallback(rec, req)
 	return rec
 }
+
+func TestSSOConfigExposesClientID(t *testing.T) {
+	srv, idp := setupSSOTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.handleSSOConfig(rec, httptest.NewRequest(http.MethodGet, "/api/auth/sso-config", nil))
+	var body struct {
+		Enabled   bool   `json:"enabled"`
+		IssuerURL string `json:"issuerUrl"`
+		ClientID  string `json:"clientId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Enabled || body.IssuerURL != idp.URL() || body.ClientID != idp.ClientID {
+		t.Fatalf("body %+v", body)
+	}
+	if strings.Contains(rec.Body.String(), "test-secret") {
+		t.Fatal("client secret leaked")
+	}
+}

@@ -48,12 +48,13 @@ func ssoSessionTag(r *http.Request) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// handleSSOConfig returns public SSO configuration (enabled, issuerUrl) for frontend UI login buttons.
+// handleSSOConfig returns public SSO configuration (enabled, issuerUrl, clientId) for frontend UI login buttons.
 func (s *Server) handleSSOConfig(w http.ResponseWriter, r *http.Request) {
 	settings := s.ssoStore.Load()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled":   settings.Enabled,
 		"issuerUrl": settings.IssuerURL,
+		"clientId":  settings.ClientID,
 	})
 }
 

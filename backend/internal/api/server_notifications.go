@@ -343,21 +343,35 @@ func (s *Server) handleNotificationPairing(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) writeNotificationPairing(w http.ResponseWriter, userID string) {
+	store, subscriberID, ok := s.pairingSubscriber(w, userID)
+	if !ok {
+		return
+	}
+	s.writePairingResponse(w, store, subscriberID)
+}
+
+// pairingSubscriber returns the subscriber id a pairing token is minted for.
+// A token is only as live as this id: revocation rotates it under pairingMu.
+func (s *Server) pairingSubscriber(w http.ResponseWriter, userID string) (*state.Store, string, bool) {
 	store, err := s.userStore(userID)
 	if err != nil {
 		http.Error(w, "failed to open user state", http.StatusInternalServerError)
-		return
+		return nil, "", false
 	}
 	subscriberID, err := store.GetOrCreateSubscriberID()
 	if err != nil {
 		http.Error(w, "failed to load subscriber id", http.StatusInternalServerError)
-		return
+		return nil, "", false
 	}
 	// Keep the unauthenticated register endpoint's subscriber -> user index
 	// warm so a device pairing right after this call resolves immediately.
 	s.userMu.Lock()
 	s.subIndex[subscriberID] = userID
 	s.userMu.Unlock()
+	return store, subscriberID, true
+}
+
+func (s *Server) writePairingResponse(w http.ResponseWriter, store *state.Store, subscriberID string) {
 	// Both halves are required, and an unconfigured server mints no token:
 	// PAIRING_SECRET is what signs it, SERVER_BASE_URL is where the device
 	// sends it. See pairingBaseURL for why the request cannot supply the

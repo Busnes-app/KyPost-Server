@@ -63,6 +63,8 @@ type lifecycleFile struct {
 	Logouts   map[string]LogoutEvent    `json:"logouts"`
 	Directory map[string]DirectoryState `json:"directory"`
 	Events    map[string]directoryEvent `json:"events"`
+	// SignOns maps a spent native sign-on jti to its expiry (unix seconds).
+	SignOns map[string]int64 `json:"signOns"`
 }
 
 // NewLifecycleStore returns the store backed by <configDir>/sso-lifecycle.json.
@@ -81,6 +83,9 @@ func (s *LifecycleStore) load() (lifecycleFile, error) {
 	}
 	if f.Events == nil {
 		f.Events = map[string]directoryEvent{}
+	}
+	if f.SignOns == nil {
+		f.SignOns = map[string]int64{}
 	}
 	return f, err
 }
@@ -127,6 +132,33 @@ func (s *LifecycleStore) RecordLogout(clientID string, c oidcverify.LogoutClaims
 		return fsutil.PersistJSONFile(s.path, f)
 	})
 	return ev, fresh, err
+}
+
+// RecordSignOnJTI spends a native sign-on token's jti. It returns false when
+// the jti is already spent and unexpired. Durable, so a restart inside the
+// token's window cannot replay it; expired entries are pruned on every write.
+func (s *LifecycleStore) RecordSignOnJTI(issuer, clientID, jti string, expiresAt time.Time) (bool, error) {
+	fresh := false
+	err := fsutil.WithFileLock(s.path, func() error {
+		f, err := s.load()
+		if err != nil {
+			return err
+		}
+		now := time.Now().Unix()
+		for k, exp := range f.SignOns {
+			if exp < now {
+				delete(f.SignOns, k)
+			}
+		}
+		key := logoutKey(issuer, clientID, jti)
+		if _, seen := f.SignOns[key]; seen {
+			return nil
+		}
+		f.SignOns[key] = expiresAt.Unix()
+		fresh = true
+		return fsutil.PersistJSONFile(s.path, f)
+	})
+	return fresh, err
 }
 
 // LoggedOut reports whether an accepted logout already covers a login with

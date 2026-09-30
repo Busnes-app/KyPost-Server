@@ -78,7 +78,12 @@ type Server struct {
 	// pairingMu serializes native registration with credential revocation. A
 	// pairing token resolves its owner before it writes a device; revocation must
 	// not delete devices and rotate the subscriber between those two operations.
+	// Native sign-on holds it from its account recheck through the subscriber
+	// read, so revocation lands wholly before (refused) or after (id rotated).
 	pairingMu sync.Mutex
+	// nativeSignOnBeforeIssue is a test seam, nil in production: it runs just
+	// before handleNativeSignOn takes pairingMu.
+	nativeSignOnBeforeIssue func()
 
 	logger            *logging.Logger
 	health            *health.Service
@@ -720,6 +725,7 @@ func (s *Server) routesNotifications(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/notifications/test", s.withAuth(s.handleNotificationTest))
 	mux.HandleFunc("GET /api/notifications/pairing", s.withAuth(s.handleNotificationPairing))
 	mux.HandleFunc("POST /api/notifications/review-pairing", withPublicRoute(s.handleReviewPairing))
+	mux.HandleFunc("POST /api/auth/native/signon", withTokenAuth(s.handleNativeSignOn))
 	// withTokenAuth, not withDeviceAuth: registration creates the device, so
 	// there is no device secret to authenticate with yet. The credential is the
 	// single-use signed pairing token from the scanned QR, verified by
