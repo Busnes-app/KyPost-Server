@@ -44,6 +44,7 @@ import (
 //
 // LOCK ORDER: cfgMu before sessMu before pairingMu before userMu before ollamaMu before serverMu before
 // pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu. Never the reverse.
+// The sso-lifecycle file lock (sso.LifecycleStore) is taken before all of them.
 // Enforced by TestLockOrderIsRespected, which reads this package's
 // source and fails on a function that takes one while holding a higher-ranked
 // one — directly, or through any call chain inside this package. Adding a mutex
@@ -81,8 +82,10 @@ type Server struct {
 	// Native sign-on holds it from its account recheck through the subscriber
 	// read, so revocation lands wholly before (refused) or after (id rotated).
 	pairingMu sync.Mutex
-	// nativeSignOnBeforeIssue is a test seam, nil in production: it runs just
-	// before handleNativeSignOn takes pairingMu.
+	// Test seams, nil in production: nativeSignOnBeforeAdmit runs just before
+	// handleNativeSignOn takes the directory lock, nativeSignOnBeforeIssue just
+	// before it takes pairingMu.
+	nativeSignOnBeforeAdmit func()
 	nativeSignOnBeforeIssue func()
 
 	logger            *logging.Logger

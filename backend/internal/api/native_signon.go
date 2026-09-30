@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 const nativeSignOnMaxAge = 5 * time.Minute
@@ -22,27 +23,51 @@ func (s *Server) handleNativeSignOn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Same directory and logout fences as the browser callback.
-	directory, known, err := s.ssoLifecycle.Directory(settings.IssuerURL, claims.Sub)
+	if s.nativeSignOnBeforeAdmit != nil {
+		s.nativeSignOnBeforeAdmit()
+	}
+	// Admission, provisioning and subscriber selection hold the lock
+	// ApplyDirectory applies under, so an offboarding lands wholly before (the
+	// fence refuses, nothing is provisioned) or after (it finds the account and
+	// rotates the subscriber this link is minted for). An unknown subject's
+	// disable writes only the fence, so a recheck alone would miss one recorded
+	// after it.
+	release, err := s.ssoLifecycle.LockDirectory()
 	if err != nil {
 		s.ssoFailure(w, "lifecycle", err)
 		return
 	}
+	store, subscriberID, ok := s.admitNativeSignOn(w, claims, settings)
+	release() // before the response: its SPKI probe may dial out
+	if ok {
+		s.writePairingResponse(w, store, subscriberID)
+	}
+}
+
+// admitNativeSignOn runs under the directory lock and returns ok=false after
+// writing the response.
+func (s *Server) admitNativeSignOn(w http.ResponseWriter, claims *sso.SSOTokenClaims, settings sso.SSOSettings) (*state.Store, string, bool) {
+	// Same directory and logout fences as the browser callback.
+	directory, known, err := s.ssoLifecycle.Directory(settings.IssuerURL, claims.Sub)
+	if err != nil {
+		s.ssoFailure(w, "lifecycle", err)
+		return nil, "", false
+	}
 	if known && !directory.Active {
 		http.Error(w, "Access denied: your account was disabled by the directory.", http.StatusForbidden)
-		return
+		return nil, "", false
 	}
 	if known && claims.IssuedAt < directory.RevokedBefore {
 		http.Error(w, "Access denied: your directory access changed. Sign in again.", http.StatusForbidden)
-		return
+		return nil, "", false
 	}
 	user, err := s.resolveSSOUser(w, settings, claims)
 	if err != nil {
-		return // resolveSSOUser wrote the response
+		return nil, "", false // resolveSSOUser wrote the response
 	}
 	if !user.Active {
 		http.Error(w, "Access denied: your KyPost account is deactivated.", http.StatusForbidden)
-		return
+		return nil, "", false
 	}
 	identity := sso.SessionIdentity{
 		Issuer:    claims.Issuer,
@@ -54,17 +79,17 @@ func (s *Server) handleNativeSignOn(w http.ResponseWriter, r *http.Request) {
 	loggedOut, err := s.ssoLifecycle.LoggedOut(identity)
 	if err != nil {
 		s.ssoFailure(w, "lifecycle", err)
-		return
+		return nil, "", false
 	}
 	if loggedOut {
 		http.Error(w, "Access denied: this sign-in was ended by the identity provider. Sign in again.", http.StatusForbidden)
-		return
+		return nil, "", false
 	}
 	if s.nativeSignOnBeforeIssue != nil {
 		s.nativeSignOnBeforeIssue()
 	}
-	// The checks above are fail-fast. Revocation (password change, admin reset,
-	// deactivation) flags the link and rotates the subscriber id under
+	// Directory offboarding cannot land now; other revocation (password change,
+	// admin reset, deactivation) flags the link and rotates the subscriber id under
 	// pairingMu, so recheck and read the id under it: a revocation that lands
 	// after the unlock rotates the id this token is minted for.
 	s.pairingMu.Lock()
@@ -72,13 +97,10 @@ func (s *Server) handleNativeSignOn(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !current.Active || current.SSOSub != claims.Sub || current.SSOLinkRevoked() {
 		s.pairingMu.Unlock()
 		http.Error(w, "Access denied: your account's sign-in changed. Sign in again.", http.StatusForbidden)
-		return
+		return nil, "", false
 	}
-	store, subscriberID, ok := s.pairingSubscriber(w, user.ID)
-	s.pairingMu.Unlock()
-	if ok {
-		s.writePairingResponse(w, store, subscriberID)
-	}
+	defer s.pairingMu.Unlock()
+	return s.pairingSubscriber(w, user.ID)
 }
 
 // verifyNativeSignOnToken authenticates the request and returns ok=false after

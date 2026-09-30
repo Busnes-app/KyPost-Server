@@ -202,6 +202,14 @@ func (s *LifecycleStore) ApplyDirectory(issuer string, ev syncauth.Event, subjec
 	return status, err
 }
 
+// LockDirectory holds the lock ApplyDirectory applies under, so a caller can
+// read Directory and act on the answer before any directory event lands. The
+// caller must defer release and must not call a recording method meanwhile:
+// the lock is not reentrant.
+func (s *LifecycleStore) LockDirectory() (release func(), err error) {
+	return fsutil.LockFile(s.path)
+}
+
 // Directory returns the last applied state for a subject, and whether the
 // directory has ever spoken about it.
 func (s *LifecycleStore) Directory(issuer, subject string) (DirectoryState, bool, error) {

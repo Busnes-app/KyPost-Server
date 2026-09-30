@@ -258,6 +258,62 @@ func TestNativeSignOnDirectoryDisabled(t *testing.T) {
 	}
 }
 
+// An offboarding for a never-provisioned subject that completes after the
+// token is verified must refuse the sign-on and provision nothing: it records
+// only a fence, which admission reads under the same lock.
+func TestNativeSignOnOffboardedBeforeAdmitRefused(t *testing.T) {
+	srv, idp := nativeSignOnServer(t)
+	srv.pairingSecret = testSyncKey
+	const sub = "sso-sub-12345"
+	srv.nativeSignOnBeforeAdmit = func() {
+		if rec := postDirectory(t, srv, testSyncKey, "user.updated", "ev-1", 1, scimUser(sub, "alice", false)); rec.Code != http.StatusOK {
+			t.Errorf("offboard: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	idp.SetClaims(deviceClaims(nil))
+	rec := httptest.NewRecorder()
+	srv.handleNativeSignOn(rec, signOnRequest(idp.IDToken()))
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "disabled by the directory") {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if _, err := srv.users.GetBySSOSub(sub); err == nil {
+		t.Fatal("an account was provisioned for an offboarded subject")
+	}
+}
+
+// An offboarding racing admission waits for the directory lock, then finds the
+// provisioned account and rotates the subscriber the link was minted for.
+func TestNativeSignOnOffboardedDuringIssueLinkDead(t *testing.T) {
+	srv, idp := nativeSignOnServer(t)
+	srv.pairingSecret = testSyncKey
+	const sub = "sso-sub-12345"
+	done := make(chan *httptest.ResponseRecorder, 1)
+	srv.nativeSignOnBeforeIssue = func() {
+		go func() {
+			done <- postDirectory(t, srv, testSyncKey, "user.updated", "ev-1", 1, scimUser(sub, "alice", false))
+		}()
+	}
+	idp.SetClaims(deviceClaims(nil))
+	rec := httptest.NewRecorder()
+	srv.handleNativeSignOn(rec, signOnRequest(idp.IDToken()))
+	if got := directoryStatus(t, <-done); got != "applied" {
+		t.Fatalf("offboard: %q", got)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		DeepLink string `json:"deepLink"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if reg := registerWithPairingToken(t, srv, body.DeepLink); reg.Code != http.StatusUnauthorized {
+		t.Fatalf("link minted before offboarding registered: %d %s", reg.Code, reg.Body.String())
+	}
+	if u, err := srv.users.GetBySSOSub(sub); err != nil || u.Active {
+		t.Fatalf("offboarded account active=%v err=%v", u.Active, err)
+	}
+}
+
 // A spent jti must survive a restart: a second store over the same directory
 // is what the next process sees.
 func TestNativeSignOnJTISurvivesRestart(t *testing.T) {
