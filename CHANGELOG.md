@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Shorten the default classification prompt for limited models, preserving the four labels, purpose-based tie-breaks and untrusted-email handling.
+
 - **Pre-sort before the classifier.** Mail from a contact you added is labelled `Primary` without an LLM call and without spending the classification rate limit; mail carrying `List-Id`, `List-Unsubscribe`, `Precedence: bulk/list/junk` or `Auto-Submitted` can no longer be labelled `Primary`. Decisions record the reason. Accounts with a custom label set that has no `Primary` are unchanged. Contacts added automatically (Autocrypt, key discovery) never count as known senders, and now keep their "added automatically" mark when a phone or CardDAV client re-saves them.
 - **Filter rules can test any header** (`header :is ["X-Spam-Flag"] "YES"` in Sieve, a "header" field in the builder), so an upstream spam filter's verdict can drive a rule. Every copy of a repeated header is checked.
 
