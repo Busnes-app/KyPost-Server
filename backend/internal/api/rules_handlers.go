@@ -391,6 +391,21 @@ func (s *Server) handleRulesRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var headerLines map[int][]string
+	headersFetched := false
+	if names := rules.HeaderNames(activeRules); len(names) > 0 && len(overviews) > 0 {
+		uids := make([]int, 0, len(overviews))
+		for _, ov := range overviews {
+			uids = append(uids, ov.UID)
+		}
+		headerLines, err = mailClient.FetchHeaderFields(r.Context(), mailbox, uids, names...)
+		if err != nil {
+			http.Error(w, "failed to fetch message headers", http.StatusBadGateway)
+			return
+		}
+		headersFetched = true
+	}
+
 	result := rulesRunResult{Scanned: len(overviews)}
 	for _, ov := range overviews {
 		// Stop when the caller is gone. Rule evaluation is unbounded CPU the
@@ -419,6 +434,12 @@ func (s *Server) handleRulesRun(w http.ResponseWriter, r *http.Request) {
 			Body:      body,
 			Keywords:  ov.Keywords,
 			Folder:    mailbox,
+		}
+		// A UID missing from the result was not fetched (oversized, or past
+		// the byte budget): nil Headers keeps its header conditions unevaluable
+		// instead of letting "NOT exists" match mail nobody read.
+		if lines, ok := headerLines[ov.UID]; headersFetched && ok {
+			input.Headers = imapadapter.HeaderMap(lines)
 		}
 		outcome := rules.Evaluate(r.Context(), input, activeRules)
 		if len(outcome.Matched) == 0 {

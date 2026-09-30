@@ -256,7 +256,7 @@ func (p *Poller) harvestAutocrypt(ctx context.Context, uc userCtx, msg imapadapt
 	if err != nil {
 		return
 	}
-	fields, err := uc.mail.FetchHeaderFields(ctx, []int{uid}, "Autocrypt", "From")
+	fields, err := uc.mail.FetchHeaderFields(ctx, "", []int{uid}, "Autocrypt", "From")
 	if err != nil {
 		p.log.Info("autocrypt harvest: header fetch failed", "user_id", uc.id, "message_id", msg.ID, "error", err.Error())
 		return

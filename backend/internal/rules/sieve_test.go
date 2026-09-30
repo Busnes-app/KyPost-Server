@@ -371,6 +371,13 @@ func TestRoundTrip(t *testing.T) {
 		{
 			Match: MatchGroup{Op: "allof", Conditions: []Condition{{Field: "to", Comparator: "regex", Value: "^a.*z$"}}},
 		},
+		{
+			Match: MatchGroup{Op: "anyof", Conditions: []Condition{
+				{Field: "header", Header: "X-Spam-Flag", Comparator: "is", Value: "YES"},
+				{Field: "header", Header: "List-Id", Comparator: "exists"},
+			}},
+			Actions: []Action{{Type: "spam"}, {Type: "stop"}},
+		},
 	}
 
 	for i, rule := range fixtures {
