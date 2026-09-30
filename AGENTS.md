@@ -133,6 +133,7 @@ Default section order:
 
 ## User Preferences
 
+- Keep `TUNING.md` compact for limited models while preserving classification rules and untrusted-input handling. Retain the `## Allowed Labels` bullet list and `[Insert Email Content Here]` placeholder required by the loader.
 - Use the shared JSON logger from ky-primitives. No audit-chain service is part of this integration; supervisord owns stderr capture/rotation (see `LOGGING.md`).
 
 ## Child DOX Index
