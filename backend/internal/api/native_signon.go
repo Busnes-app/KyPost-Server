@@ -159,7 +159,7 @@ func canonicalOrigin(raw string) string {
 	if strings.Contains(host, ":") {
 		host = "[" + host + "]"
 	}
-	if port := u.Port(); port != "" && !(u.Scheme == "https" && port == "443") {
+	if port := u.Port(); port != "" && (u.Scheme != "https" || port != "443") {
 		host += ":" + port
 	}
 	return strings.ToLower(u.Scheme) + "://" + host
