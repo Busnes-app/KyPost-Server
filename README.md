@@ -739,7 +739,7 @@ Auth:
 Single Sign-On (OpenID Connect):
 
 - `GET /api/auth/sso-config` — public `{enabled, issuerUrl, clientId}` that gates the sign-in button and native sign-on. Never returns the client secret.
-- `POST /api/auth/native/signon` — body `{idToken}`: a KyIdentity device-grant ID token. Requires SSO plus `PAIRING_SECRET` and `SERVER_BASE_URL`, otherwise 503. Answers the same single-use 90-second pairing deep link as review-pairing.
+- `POST /api/auth/native/signon` — body `{idToken}`: a KyIdentity device-grant ID token, refused unless its `origin` claim matches `SERVER_BASE_URL`. Requires SSO plus `PAIRING_SECRET` and `SERVER_BASE_URL`, otherwise 503. Answers the same single-use 90-second pairing deep link as review-pairing.
 - `GET /api/auth/oidc/login` (alias `/auth/sso/login`) — starts the authorization-code flow for signing in.
 - `POST /api/settings/sso/link` — links the provider identity to the *caller's own* account. Requires the account password (and the two-factor code, when one is enrolled) re-entered now, because a linked identity is a way to sign in.
 - `GET /api/auth/oidc/callback` (alias `/auth/sso/callback`) — verifies the ID token, then signs in, auto-provisions, or links by `sub`. The session remembers the provider's `sid`, so the provider can end it.

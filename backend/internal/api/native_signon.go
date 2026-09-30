@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -103,6 +104,10 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Access denied: this token was not issued for device sign-in.", http.StatusForbidden)
 		return nil, settings, false
 	}
+	if claims.Origin == "" || canonicalOrigin(claims.Origin) != canonicalOrigin(s.pairingBaseURL()) {
+		http.Error(w, "Access denied: this token was issued for a different server.", http.StatusForbidden)
+		return nil, settings, false
+	}
 	age := time.Since(time.Unix(claims.IssuedAt, 0))
 	if claims.IssuedAt == 0 || age > nativeSignOnMaxAge {
 		http.Error(w, "Access denied: the identity token is too old. Sign in again.", http.StatusForbidden)
@@ -122,4 +127,22 @@ func (s *Server) verifyNativeSignOnToken(w http.ResponseWriter, r *http.Request)
 		return nil, settings, false
 	}
 	return claims, settings, true
+}
+
+// canonicalOrigin reduces a URL to scheme://host[:port]: host lowercased, an
+// explicit :443 dropped for https, path ignored. Unparseable input yields "",
+// which callers compare only against a non-empty origin.
+func canonicalOrigin(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Hostname() == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port := u.Port(); port != "" && !(u.Scheme == "https" && port == "443") {
+		host += ":" + port
+	}
+	return strings.ToLower(u.Scheme) + "://" + host
 }

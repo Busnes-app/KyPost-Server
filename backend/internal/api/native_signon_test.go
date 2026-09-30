@@ -25,7 +25,7 @@ func signOnRequest(idToken string) *http.Request {
 }
 
 func deviceClaims(extra map[string]any) map[string]any {
-	c := map[string]any{"sub": "sso-sub-12345", "preferred_username": "alice", "signon_method": "device", "jti": "jti-1", "iat": time.Now().Unix()}
+	c := map[string]any{"sub": "sso-sub-12345", "preferred_username": "alice", "signon_method": "device", "origin": "http://" + ssoTestHost, "jti": "jti-1", "iat": time.Now().Unix()}
 	for k, v := range extra {
 		c[k] = v
 	}
@@ -75,8 +75,52 @@ func TestNativeSignOnReturnsPairingDeepLink(t *testing.T) {
 	}
 }
 
+// The canonical origin ignores a path, so a claim carrying one is accepted.
+func TestNativeSignOnOriginWithPathAccepted(t *testing.T) {
+	srv, idp := setupSSOTestServer(t)
+	srv.pairingSecret = "pairing-secret"
+	idp.SetClaims(deviceClaims(map[string]any{"origin": "http://" + ssoTestHost + "/mail/"}))
+	rec := httptest.NewRecorder()
+	srv.handleNativeSignOn(rec, signOnRequest(idp.IDToken()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCanonicalOrigin(t *testing.T) {
+	same := [][2]string{
+		{"https://Mail.Example.com/", "https://mail.example.com"},
+		{"https://mail.example.com/a/b?q=1", "https://mail.example.com"},
+		{"https://mail.example.com:443", "https://mail.example.com"},
+		{"https://mail.example.com:8443/x", "https://mail.example.com:8443"},
+		{"http://mail.example.com:443", "http://mail.example.com:443"},
+	}
+	for _, c := range same {
+		if got := canonicalOrigin(c[0]); got != c[1] {
+			t.Errorf("canonicalOrigin(%q) = %q, want %q", c[0], got, c[1])
+		}
+	}
+	differ := [][2]string{
+		{"https://mail.example.com", "http://mail.example.com"},
+		{"https://mail.example.com:8443", "https://mail.example.com"},
+		{"http://mail.example.com:443", "http://mail.example.com"},
+		{"https://mail.example.com", "https://mail.example.org"},
+	}
+	for _, c := range differ {
+		if canonicalOrigin(c[0]) == canonicalOrigin(c[1]) {
+			t.Errorf("%q and %q must differ", c[0], c[1])
+		}
+	}
+	for _, bad := range []string{"", "mail.example.com", "://x", "https://"} {
+		if got := canonicalOrigin(bad); got != "" {
+			t.Errorf("canonicalOrigin(%q) = %q, want empty", bad, got)
+		}
+	}
+}
+
 func TestNativeSignOnRefusals(t *testing.T) {
 	const notDevice = "not issued for device sign-in"
+	const differentServer = "issued for a different server"
 	cases := map[string]struct {
 		claims   map[string]any
 		setup    func(*Server, *ssotest.IdP)
@@ -84,10 +128,14 @@ func TestNativeSignOnRefusals(t *testing.T) {
 		want     int
 		wantBody string
 	}{
-		"webTokenRefused": {claims: deviceClaims(map[string]any{"signon_method": nil}), want: http.StatusForbidden, wantBody: notDevice},
-		"missingJti":      {claims: deviceClaims(map[string]any{"jti": nil}), want: http.StatusForbidden, wantBody: notDevice},
-		"staleIat":        {claims: deviceClaims(map[string]any{"iat": time.Now().Add(-10 * time.Minute).Unix(), "jti": "jti-stale"}), want: http.StatusForbidden, wantBody: "too old"},
-		"futureIat":       {claims: deviceClaims(map[string]any{"iat": time.Now().Add(2 * time.Minute).Unix(), "jti": "jti-future"}), want: http.StatusForbidden, wantBody: "not valid yet"},
+		"webTokenRefused":   {claims: deviceClaims(map[string]any{"signon_method": nil}), want: http.StatusForbidden, wantBody: notDevice},
+		"missingJti":        {claims: deviceClaims(map[string]any{"jti": nil}), want: http.StatusForbidden, wantBody: notDevice},
+		"originMissing":     {claims: deviceClaims(map[string]any{"origin": nil, "jti": "jti-om"}), want: http.StatusForbidden, wantBody: differentServer},
+		"originOtherHost":   {claims: deviceClaims(map[string]any{"origin": "http://evil.example", "jti": "jti-oh"}), want: http.StatusForbidden, wantBody: differentServer},
+		"originOtherPort":   {claims: deviceClaims(map[string]any{"origin": "http://" + ssoTestHost + ":8443", "jti": "jti-op"}), want: http.StatusForbidden, wantBody: differentServer},
+		"originOtherScheme": {claims: deviceClaims(map[string]any{"origin": "https://" + ssoTestHost, "jti": "jti-os"}), want: http.StatusForbidden, wantBody: differentServer},
+		"staleIat":          {claims: deviceClaims(map[string]any{"iat": time.Now().Add(-10 * time.Minute).Unix(), "jti": "jti-stale"}), want: http.StatusForbidden, wantBody: "too old"},
+		"futureIat":         {claims: deviceClaims(map[string]any{"iat": time.Now().Add(2 * time.Minute).Unix(), "jti": "jti-future"}), want: http.StatusForbidden, wantBody: "not valid yet"},
 		"wrongAudience": {claims: deviceClaims(nil), setup: func(_ *Server, idp *ssotest.IdP) { idp.WrongAudience = "someone-else" },
 			want: http.StatusForbidden, wantBody: "could not be verified"},
 		"ssoOff": {claims: deviceClaims(nil), setup: func(s *Server, _ *ssotest.IdP) { st := s.ssoStore.Load(); st.Enabled = false; _ = s.ssoStore.Save(st) },

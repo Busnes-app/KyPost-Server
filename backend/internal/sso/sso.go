@@ -286,6 +286,9 @@ type SSOTokenClaims struct {
 	// assertion; absent on browser logins. JTI is the token id those carry.
 	SignOnMethod string `json:"signon_method"`
 	JTI          string `json:"jti"`
+	// Origin is the relay origin the phone user typed, which KyIdentity checked
+	// against the client's registered redirect-URI origins.
+	Origin string `json:"origin"`
 }
 
 // KySignOn reports whether the token speaks the KySignOn contract: it
