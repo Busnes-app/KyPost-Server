@@ -205,6 +205,23 @@ func TestSSOLoginAndCallback(t *testing.T) {
 	}
 }
 
+// The callback provisions and mints its session under the directory lock, so
+// an offboarding cannot land between the fence read and the account.
+func TestSSOCallbackProvisionsUnderDirectoryLock(t *testing.T) {
+	srv, idp := setupSSOTestServer(t)
+	probed := false
+	srv.ssoCallbackAfterResolve = func() {
+		probed = true
+		assertDirectoryLockHeld(t, srv)
+	}
+	if rec := runSSOFlow(t, srv, idp, nil, false); rec.Code != http.StatusFound {
+		t.Fatalf("callback status %d: %s", rec.Code, rec.Body.String())
+	}
+	if !probed {
+		t.Fatal("the callback never reached provisioning")
+	}
+}
+
 // The account-seizure path. A directory identity that has never been linked
 // here must not inherit a local account merely by carrying its name — not even
 // when the provider genuinely signed that name.

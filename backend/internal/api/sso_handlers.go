@@ -400,7 +400,15 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 	// The directory's last word on this subject outranks the token: a
 	// subject it disabled cannot sign in, be linked, nor be provisioned
 	// again until it says otherwise, and a token issued before its access
-	// changed is stale.
+	// changed is stale. Held under the lock ApplyDirectory applies under, so
+	// an offboarding lands wholly before (refused, nothing provisioned or
+	// linked) or after (it finds the account and revokes the session).
+	release, err := s.ssoLifecycle.LockDirectory()
+	if err != nil {
+		s.ssoFailure(w, "lifecycle", err)
+		return
+	}
+	defer release()
 	directory, known, err := s.ssoLifecycle.Directory(settings.IssuerURL, claims.Sub)
 	if err != nil {
 		s.ssoFailure(w, "lifecycle", err)
@@ -430,6 +438,9 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 	user, err := s.resolveSSOUser(w, settings, claims)
 	if err != nil {
 		return // resolveSSOUser wrote the response
+	}
+	if s.ssoCallbackAfterResolve != nil {
+		s.ssoCallbackAfterResolve()
 	}
 
 	if !user.Active {

@@ -205,7 +205,8 @@ func (s *LifecycleStore) ApplyDirectory(issuer string, ev syncauth.Event, subjec
 // LockDirectory holds the lock ApplyDirectory applies under, so a caller can
 // read Directory and act on the answer before any directory event lands. The
 // caller must defer release and must not call a recording method meanwhile:
-// the lock is not reentrant.
+// the lock is not reentrant. It is a flock shared by every lifecycle write in
+// every process, so hold it briefly: local disk work only, never network I/O.
 func (s *LifecycleStore) LockDirectory() (release func(), err error) {
 	return fsutil.LockFile(s.path)
 }

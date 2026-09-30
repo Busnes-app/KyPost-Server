@@ -3,10 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -281,14 +285,35 @@ func TestNativeSignOnOffboardedBeforeAdmitRefused(t *testing.T) {
 	}
 }
 
-// An offboarding racing admission waits for the directory lock, then finds the
-// provisioned account and rotates the subscriber the link was minted for.
+// assertDirectoryLockHeld fails unless another open file description is
+// refused the lifecycle flock: the caller is running under LockDirectory.
+func assertDirectoryLockHeld(t *testing.T, srv *Server) {
+	t.Helper()
+	f, err := os.OpenFile(filepath.Join(srv.configDir, "sso-lifecycle.json.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Errorf("open lifecycle lock: %v", err)
+		return
+	}
+	defer f.Close()
+	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err == nil {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		t.Error("directory lock is not held")
+	} else if !errors.Is(err, syscall.EWOULDBLOCK) {
+		t.Errorf("flock probe: %v", err)
+	}
+}
+
+// Provisioning and issuance run under the directory lock, so an offboarding
+// started there waits for it, then finds the account and rotates the
+// subscriber the link was minted for.
 func TestNativeSignOnOffboardedDuringIssueLinkDead(t *testing.T) {
 	srv, idp := nativeSignOnServer(t)
 	srv.pairingSecret = testSyncKey
 	const sub = "sso-sub-12345"
 	done := make(chan *httptest.ResponseRecorder, 1)
 	srv.nativeSignOnBeforeIssue = func() {
+		assertDirectoryLockHeld(t, srv)
 		go func() {
 			done <- postDirectory(t, srv, testSyncKey, "user.updated", "ev-1", 1, scimUser(sub, "alice", false))
 		}()
@@ -311,6 +336,40 @@ func TestNativeSignOnOffboardedDuringIssueLinkDead(t *testing.T) {
 	}
 	if u, err := srv.users.GetBySSOSub(sub); err != nil || u.Active {
 		t.Fatalf("offboarded account active=%v err=%v", u.Active, err)
+	}
+}
+
+// An unknown subject's offboarding racing provisioning ends refused with no
+// account, or with the account inactive and the link dead; never active.
+func TestNativeSignOnOffboardedDuringProvisioning(t *testing.T) {
+	srv, idp := nativeSignOnServer(t)
+	srv.pairingSecret = testSyncKey
+	const sub = "sso-sub-12345"
+	done := make(chan *httptest.ResponseRecorder, 1)
+	srv.nativeSignOnAfterAdmit = func() {
+		go func() {
+			done <- postDirectory(t, srv, testSyncKey, "user.updated", "ev-1", 1, scimUser(sub, "alice", false))
+		}()
+	}
+	idp.SetClaims(deviceClaims(nil))
+	rec := httptest.NewRecorder()
+	srv.handleNativeSignOn(rec, signOnRequest(idp.IDToken()))
+	if got := directoryStatus(t, <-done); got != "applied" {
+		t.Fatalf("offboard: %q", got)
+	}
+	u, err := srv.users.GetBySSOSub(sub)
+	switch {
+	case rec.Code == http.StatusForbidden && err != nil:
+	case rec.Code == http.StatusOK && err == nil && !u.Active:
+		var body struct {
+			DeepLink string `json:"deepLink"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if reg := registerWithPairingToken(t, srv, body.DeepLink); reg.Code != http.StatusUnauthorized {
+			t.Fatalf("link minted before offboarding registered: %d %s", reg.Code, reg.Body.String())
+		}
+	default:
+		t.Fatalf("status %d body %s; account active=%v err=%v", rec.Code, rec.Body.String(), u.Active, err)
 	}
 }
 

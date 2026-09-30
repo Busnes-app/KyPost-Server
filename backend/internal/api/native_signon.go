@@ -61,6 +61,9 @@ func (s *Server) admitNativeSignOn(w http.ResponseWriter, claims *sso.SSOTokenCl
 		http.Error(w, "Access denied: your directory access changed. Sign in again.", http.StatusForbidden)
 		return nil, "", false
 	}
+	if s.nativeSignOnAfterAdmit != nil {
+		s.nativeSignOnAfterAdmit()
+	}
 	user, err := s.resolveSSOUser(w, settings, claims)
 	if err != nil {
 		return nil, "", false // resolveSSOUser wrote the response
