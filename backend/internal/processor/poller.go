@@ -1425,30 +1425,8 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 		return p.tagWithFallbackLabel(ctx, uc, cfg, msg, "message is encrypted; no readable content to classify")
 	}
 
-	// One redaction engine, applied to everything that reaches the model.
-	//
-	// It used to run on the body alone, so the shipped default pattern set —
-	// which leads with an email pattern — masked every address INSIDE the body
-	// while the From line above it carried the real one, and an SSN or card
-	// number in a Subject went through untouched. AGENTS.md and README.md both
-	// describe masking "sender, subject, and body"; this is the third of it that
-	// was missing, and it matters most where the classifier endpoint is remote,
-	// since ValidateBaseURL accepts any https host and the request carries a
-	// bearer key.
-	//
-	// Redact BEFORE truncating: cutting first leaves a pattern that straddles
-	// the boundary unmatched, so its surviving prefix is sent in the clear.
-	// Rune-wise for the body too, so a multi-byte character is never split.
-	red := p.currentRedaction()
-	redacted := truncateRunes(red.Apply(strings.TrimSpace(msg.Body)), maxClassifyBodyRunes)
-
-	// Clamp the headers too. The prompt builder puts the instruction block, the
-	// nonced fence and the tuning document BEFORE the email text and Ollama
-	// truncates from the front, so an unbounded Subject pushes the fence out of
-	// num_ctx and the model sees attacker text with no instructions. Rune-wise so a
-	// multi-byte character is never split.
-	sender := truncateRunes(red.Apply(strings.TrimSpace(msg.Sender)), maxClassifySenderRunes)
-	subject := truncateRunes(red.Apply(strings.TrimSpace(msg.Subject)), maxClassifySubjectRunes)
+	// Production and evaluation share redaction-before-truncation and rune limits.
+	sender, subject, redacted := p.currentRedaction().ClassifierInput(msg.Sender, msg.Subject, msg.Body)
 
 	label, err := classifyWithRetry(ctx, p.classifier, uc.allowlist, sender, subject, redacted, uc.tuning)
 	// The model answering with something that isn't an allowed label is a
@@ -1905,32 +1883,6 @@ func applyKeywordsWithRetry(ctx context.Context, c imapadapter.Client, messageID
 		}
 	}
 	return nil
-}
-
-// maxClassifySenderRunes/maxClassifySubjectRunes bound the two header values
-// that reach the classification prompt. Generous for real headers, and small
-// enough that neither can push the instruction block out of the model's
-// context window.
-//
-// maxClassifyBodyRunes is the same bound for the body, previously a raw
-// byte slice. Runes so a multi-byte character is never split, and applied
-// after redaction so a pattern straddling the cut is still matched.
-const (
-	maxClassifySenderRunes  = 256
-	maxClassifySubjectRunes = 512
-	maxClassifyBodyRunes    = 2000
-)
-
-// truncateRunes clips s to at most n runes, never splitting a character.
-func truncateRunes(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n])
 }
 
 // keywordRetryDelay is the wait between keyword-write attempts. A var rather

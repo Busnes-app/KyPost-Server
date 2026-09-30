@@ -42,13 +42,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 const maxOllamaResponseBytes = 1 << 20
@@ -188,6 +188,12 @@ type result struct {
 }
 
 func main() {
+	var candidate providerEvalOptions
+	flag.StringVar(&candidate.Provider, "provider", "historical", "historical prompt matrix, production ollama, or laya")
+	flag.StringVar(&candidate.Model, "model", "", "single checkpoint for provider evaluation (default: shipping Ollama or english)")
+	flag.StringVar(&candidate.Revision, "revision", "", "required pinned Laya model revision for live evaluation")
+	flag.StringVar(&candidate.RubricPath, "rubric", "cmd/modeleval/laya-rubric.json", "Laya rubric and token budgets")
+	flag.StringVar(&candidate.EnvironmentPath, "environment", "", "JSON run metadata: runtime/dependency pins, host and limits")
 	var (
 		base     = flag.String("base", "http://127.0.0.1:11434", "Ollama base URL")
 		modelsF  = flag.String("models", "all", `comma-separated models, or "all"`)
@@ -207,6 +213,14 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if candidate.Provider != "historical" {
+		candidate.Base, candidate.CorpusPath, candidate.TuningPath = *base, *corpusF, *tuningV1
+		candidate.Output, candidate.Timeout, candidate.DryRun = *outF, *timeout, *dryRun
+		if err := runProviderEvaluation(ctx, candidate); err != nil {
+			fatal("provider evaluation: %v", err)
+		}
+		return
+	}
 
 	corpus, err := loadCorpus(*corpusF)
 	if err != nil {
@@ -985,14 +999,8 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	// A run can take an hour; losing all of it because the results directory
-	// does not exist yet would be a poor way to find that out.
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-	return os.WriteFile(path, b, 0o644)
+	// A failed write must leave the last complete checkpoint intact.
+	return fsutil.AtomicWriteFile(path, b, 0o600)
 }
 
 func fatal(format string, args ...any) {

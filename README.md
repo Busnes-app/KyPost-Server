@@ -431,6 +431,13 @@ Notes:
 
 ### Choosing a classifier model
 
+For a current production-versus-Laya comparison, use the explicit provider
+evaluation commands in [modeleval](backend/cmd/modeleval/README.md). They apply
+the same redaction and rune limits as the poller and record model revisions,
+failures and per-message predictions. Laya is an evaluation candidate; Ollama
+remains the production provider. The figures below are historical prompt-matrix
+results and predate the adjudicated job-alert label and shared preprocessing.
+
 The default is picked to run on modest hardware. Measured on a 60-email
 benchmark (`backend/cmd/modeleval`), five repeats each with zero run-to-run
 variance:
@@ -450,9 +457,8 @@ Classification speed is not tabulated because it depends far more on your CPU
 and on what else the host is doing than on the model: the same request measured
 between 13 and 19 seconds on one machine purely as background load varied. The
 two models were within about 20% of each other under identical conditions, with
-`gemma4:e4b` slightly ahead. The poller paces itself at one message every three
-seconds regardless, so throughput is bounded by that unless the host is very
-slow.
+`gemma4:e4b` slightly ahead. Current admission defaults to one in-flight request
+and no extra delay (`CLASSIFY_CONCURRENCY=1`, `CLASSIFY_PACE_MS=0`).
 
 Either way the damage from a successful injection is bounded: the label
 allowlist means a hostile email can at most choose which of the four folders it

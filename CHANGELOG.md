@@ -14,6 +14,14 @@ non-prerelease version.
 
 ## Unreleased
 
+- Shorten the default classification prompt for limited models, preserving the four labels, purpose-based tie-breaks and untrusted-email handling.
+
+- Document the proposed Rspamd + Redis sidecar integration, shadow evaluation, safety constraints, and implementation checks in `docs/RSPAMD_SIDECAR_HANDOFF.md`; no filtering behavior changes yet.
+
+- Add an isolated six-label classification experiment with Spam and Unsure, preserving the original benchmark and production taxonomy.
+
+- Add reproducible Ollama/Laya evaluation with shared production redaction, typed choice validation, pinned model metadata, per-case results and explicit failed-run accounting. Adjudicate the recruiter, job-alert and trial-expiry benchmark cases. Production continues to use Ollama while the Laya quality gate is evaluated.
+
 - **Send-as verification works again.** The probe went out from the account address while the checker demanded a DKIM-signed From equal to the alias, so no alias could ever verify and the UI said no action was needed. The probe is now sent as the alias to the alias through the user's own outgoing server, so an upstream that refuses that From refuses the alias too. The user types the mailed code back in Settings → Mail (`POST /api/mail/send-as/{id}/confirm`, five wrong codes fail the record, 30-minute window). Because the code travels through the user's own SMTP server, it authorizes the From address only; WKD publication and key User IDs still require the DKIM loop-back proof, which the daemon keeps checking for and records as `verifiedBy: dkim`. The alias list no longer returns the verification code.
 - **Notifications are always queued for app pull**, not only in pull mode, so a device that stops hearing from the relay can poll `GET /api/notifications/native/pull` and catch up without an admin changing the delivery mode. Each queued notification records the devices it was addressed to and is served only to them, so a push-MFA challenge aimed at approver devices never reaches a device excluded from approval. The queue keeps its 100-entry cap.
 
