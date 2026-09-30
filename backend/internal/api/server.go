@@ -44,6 +44,9 @@ import (
 //
 // LOCK ORDER: cfgMu before sessMu before pairingMu before userMu before ollamaMu before serverMu before
 // pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu. Never the reverse.
+// The sso-lifecycle file lock (sso.LifecycleStore) ranks before all of them and
+// is not modelled by lockRank or TestLockOrderIsRespected: hold no Server mutex
+// when calling LockDirectory, ApplyDirectory, RecordLogout or RecordSignOnJTI.
 // Enforced by TestLockOrderIsRespected, which reads this package's
 // source and fails on a function that takes one while holding a higher-ranked
 // one — directly, or through any call chain inside this package. Adding a mutex
@@ -81,9 +84,13 @@ type Server struct {
 	// Native sign-on holds it from its account recheck through the subscriber
 	// read, so revocation lands wholly before (refused) or after (id rotated).
 	pairingMu sync.Mutex
-	// nativeSignOnBeforeIssue is a test seam, nil in production: it runs just
-	// before handleNativeSignOn takes pairingMu.
+	// Test seams, nil in production. handleNativeSignOn: BeforeAdmit before it
+	// takes the directory lock, AfterAdmit after the fence read, BeforeIssue
+	// before pairingMu. ssoCallbackAfterResolve: after resolveSSOUser.
+	nativeSignOnBeforeAdmit func()
+	nativeSignOnAfterAdmit  func()
 	nativeSignOnBeforeIssue func()
+	ssoCallbackAfterResolve func()
 
 	logger            *logging.Logger
 	health            *health.Service
