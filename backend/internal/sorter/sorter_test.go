@@ -8,6 +8,9 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"testing"
 )
 
@@ -179,6 +182,23 @@ func TestTrainIsBounded(t *testing.T) {
 	}
 	if _, err := Train(t.Context(), ex(MaxLabels, MaxExamples), nil); err != nil {
 		t.Fatalf("at the limits: %v", err)
+	}
+}
+
+// The label form warns past the limit (frontend SORTER_MAX_LABELS). If the two
+// disagree the user is told the sorter is on when it is off, or the reverse.
+func TestMaxLabelsMatchesFrontend(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "frontend", "src", "settings", "sections", "labelPrefs.ts")
+	source, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	match := regexp.MustCompile(`const SORTER_MAX_LABELS = ([0-9]+);`).FindSubmatch(source)
+	if match == nil {
+		t.Fatal("SORTER_MAX_LABELS not found in labelPrefs.ts; if it was renamed, update this test and keep the two in agreement")
+	}
+	if got, _ := strconv.Atoi(string(match[1])); got != MaxLabels {
+		t.Fatalf("labelPrefs.ts SORTER_MAX_LABELS = %d, sorter.MaxLabels = %d", got, MaxLabels)
 	}
 }
 

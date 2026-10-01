@@ -8,7 +8,14 @@ import {
   textToMapping,
   type LabelsResponse
 } from "../../pages/config/settings";
-import { descriptionsToText, loadLabelPrefs, saveLabelPrefsPatch, textToDescriptions } from "./labelPrefs";
+import {
+  descriptionsToText,
+  loadLabelPrefs,
+  saveLabelPrefsPatch,
+  SORTER_MAX_LABELS,
+  sorterLabelLimitNote,
+  textToDescriptions
+} from "./labelPrefs";
 
 /**
  * This account's own label set.
@@ -31,6 +38,8 @@ export function MyLabels() {
   const statusTone = status.toLowerCase().includes("failed") ? "notice notice-error" : "notice notice-success";
 
   const effectiveAllowlist = useMemo(() => uniqueLabels([...textToLabels(allowlistText)]), [allowlistText]);
+  // Live, so the trade-off is visible while typing the eleventh label, not after saving it.
+  const labelLimitNote = sorterLabelLimitNote(effectiveAllowlist.length);
 
   async function refreshLabels() {
     const labelsData = await getJSON<LabelsResponse>("/api/labels");
@@ -121,8 +130,14 @@ export function MyLabels() {
       </div>
       <p className="config-muted">
         A description lets the on-device sorter recognise a new label straight away. It also learns from you: change a
-        message&apos;s label and similar mail follows. Descriptions stay on this server and are never sent to the AI model.
+        message&apos;s label and similar mail follows. It learns up to {SORTER_MAX_LABELS} labels. Descriptions stay on this
+        server and are never sent to the AI model.
       </p>
+      {labelLimitNote ? (
+        <p className="notice notice-warning" role="status">
+          {labelLimitNote}
+        </p>
+      ) : null}
       <div className="config-actions">
         <button type="button" onClick={applyImapLabelsToAllowlist}>Merge IMAP Labels</button>
         <button type="button" onClick={() => void save()} disabled={!loaded}>Save Labels</button>
