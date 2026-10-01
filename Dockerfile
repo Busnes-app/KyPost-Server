@@ -115,6 +115,28 @@ RUN set -eu; \
 	rm /tmp/ollama.tar.zst; \
 	ollama --version
 
+# The embedding sorter's model (potion-base-8M, MIT, ~30 MB), pinned to a
+# Hugging Face commit and verified against SHA-256 exactly like the Ollama
+# tarball above, for the same reasons. Architecture-independent data, read by
+# backend/internal/sorter. Root-owned and read-only under /opt/kypost (see root
+# AGENTS.md); there is no runtime download. Above the COPYs for the same
+# layer-cache reason as the Ollama block. Bump the revision and both digests
+# together, and regenerate backend/internal/sorter/testdata/parity.json and
+# sorter.ModelID with them.
+ARG EMBED_MODEL_REVISION=bf8b056651a2c21b8d2565580b8569da283cab23
+ARG EMBED_MODEL_SHA256=f65d0f325faadc1e121c319e2faa41170d3fa07d8c89abd48ca5358d9a223de2
+ARG EMBED_TOKENIZER_SHA256=e67e803f624fb4d67dea1c730d06e1067e1b14d830e2c2202569e3ef0f70bb50
+RUN set -eu; \
+	dir=/opt/kypost/models/potion-base-8M; \
+	base="https://huggingface.co/minishlab/potion-base-8M/resolve/${EMBED_MODEL_REVISION}"; \
+	mkdir -p "$dir"; \
+	curl -fsSL -o "$dir/model.safetensors" "$base/model.safetensors"; \
+	curl -fsSL -o "$dir/tokenizer.json" "$base/tokenizer.json"; \
+	printf '%s  %s\n%s  %s\n' \
+		"${EMBED_MODEL_SHA256}" "$dir/model.safetensors" \
+		"${EMBED_TOKENIZER_SHA256}" "$dir/tokenizer.json" | sha256sum -c -; \
+	chmod 0444 "$dir"/*
+
 WORKDIR /opt/kypost
 COPY --from=backend-builder /app/bin/kypost-server /usr/local/bin/kypost-server
 COPY --from=frontend-builder /frontend/dist /opt/kypost/frontend

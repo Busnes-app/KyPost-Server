@@ -109,6 +109,24 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
+      # The sorter's parity test and the poller's hybrid-engine tests skip
+      # without the real model, so CI fetches it. The pins are read from the
+      # Dockerfile's ARG lines rather than copied here, so the image and the
+      # tests can never verify different files.
+      - name: fetch the pinned embedding model
+        run: |
+          set -eu
+          pin() { sed -n "s/^ARG $1=//p" ../Dockerfile | tr -d '\r'; }
+          dir="$RUNNER_TEMP/potion-base-8M"
+          base="https://huggingface.co/minishlab/potion-base-8M/resolve/$(pin EMBED_MODEL_REVISION)"
+          mkdir -p "$dir"
+          curl -fsSL -o "$dir/model.safetensors" "$base/model.safetensors"
+          curl -fsSL -o "$dir/tokenizer.json" "$base/tokenizer.json"
+          printf '%s  %s\n%s  %s\n' \
+            "$(pin EMBED_MODEL_SHA256)" "$dir/model.safetensors" \
+            "$(pin EMBED_TOKENIZER_SHA256)" "$dir/tokenizer.json" | sha256sum -c -
+          echo "EMBED_MODEL_DIR=$dir" >> "$GITHUB_ENV"
+
       # Run all non-api backend tests in parallel. This includes processor,
       # users, pgpmail, contacts, state, rules, mailmsg, adapters, and
       # utility packages. These can safely run together and complete in ~4-5 minutes.

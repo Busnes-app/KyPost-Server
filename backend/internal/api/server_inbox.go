@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -537,6 +538,10 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		http.Error(w, "failed to sync mail cache", http.StatusInternalServerError)
 		return
 	}
+	// A keyword change made in another IMAP client surfaces here and nowhere
+	// else; New as well as Updated, since a message relabelled on a phone before
+	// this caller first saw it arrives as New.
+	s.learnFromSyncedKeywords(userID, cacheKey, append(slices.Clone(result.New), result.Updated...))
 
 	needBodies := make([]int, 0, len(result.New))
 	for _, e := range result.New {
@@ -929,6 +934,7 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 	}
 	failures := make([]inboxActionFailure, 0)
 	processed := 0
+	var labelled []string
 	for _, messageID := range uniqueIDs {
 		// A cancelled request must stop taking the client's operation lock.
 		// The adapter's own ctx check only fails the one call, which this
@@ -956,6 +962,13 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		processed++
+		if action == "label" {
+			labelled = append(labelled, messageID)
+		}
+	}
+	// Labelling a message is how a user tells the sorter it was wrong.
+	if ac, ok := authFromContext(r); ok && len(labelled) > 0 {
+		s.learnFromLabelAction(ac.UserID, keyword, labelled)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

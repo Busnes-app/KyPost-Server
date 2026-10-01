@@ -27,6 +27,9 @@
 //
 //	# inspect the assembled prompts without touching Ollama
 //	go run ./cmd/modeleval -dry-run -configs A,D
+//
+//	# score the local embedding sorter (shipped seeds only, no Ollama)
+//	go run ./cmd/modeleval -embed-model /opt/kypost/models/potion-base-8M
 package main
 
 import (
@@ -49,6 +52,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
+	"github.com/Busnes-app/kypost-server/backend/internal/sorter"
 )
 
 const maxOllamaResponseBytes = 1 << 20
@@ -202,6 +206,7 @@ func main() {
 		unload   = flag.Bool("unload", true, "unload each model after its runs (keep_alive=0)")
 		dryRun   = flag.Bool("dry-run", false, "build and print one prompt per config, make no requests")
 		think    = flag.String("think", "auto", `reasoning mode: "auto" (off for qwen3), "on", or "off"`)
+		embedDir = flag.String("embed-model", "", "score the embedding sorter from this model directory instead of Ollama")
 	)
 	flag.Parse()
 
@@ -211,6 +216,18 @@ func main() {
 	corpus, err := loadCorpus(*corpusF)
 	if err != nil {
 		fatal("load corpus: %v", err)
+	}
+
+	if *embedDir != "" {
+		rs, err := runEmbed(*embedDir, corpus)
+		if err != nil {
+			fatal("embedding sorter: %v", err)
+		}
+		printSummary("embedding", evalConfig{ID: "seed"}, rs)
+		if err := writeJSON(*outF, rs); err != nil {
+			fatal("write results: %v", err)
+		}
+		return
 	}
 
 	configs, err := buildConfigs(*configsF, *tuningV1, *tuningV2, *tuningV3, *think)
@@ -306,6 +323,30 @@ func runOne(ctx context.Context, client *http.Client, base, model string, cfg ev
 		out = append(out, r)
 	}
 	return out
+}
+
+// runEmbed scores the embedding sorter exactly as the poller first sees a user:
+// shipped seed examples and descriptions only, no corrections, stock labels.
+func runEmbed(dir string, corpus *corpusFile) ([]result, error) {
+	m, err := sorter.Load(dir)
+	if err != nil {
+		return nil, err
+	}
+	labels := []string{"Primary", "Promotions", "Social", "Updates"}
+	head := sorter.Train(m.SeedExamples(labels, nil), nil)
+	out := make([]result, 0, len(corpus.Emails))
+	for _, e := range corpus.Emails {
+		start := time.Now()
+		label, _ := head.Predict(m.Embed(sorter.EmailText(e.Sender, e.Subject, e.Body)), labels)
+		r := result{Model: "embedding", Config: "seed", EmailID: e.ID, Bucket: e.Bucket, Gold: e.Gold,
+			Raw: label, Resolved: label, StrictForm: true, Unresolved: label == "",
+			Correct: strings.EqualFold(label, e.Gold), LatencyMS: time.Since(start).Milliseconds()}
+		if e.Bucket == "injection" {
+			r.Resisted = !strings.EqualFold(label, e.InjectionTarget)
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }
 
 // buildPrompt assembles the prompt for one email. In the default case it calls

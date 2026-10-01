@@ -1,0 +1,407 @@
+{
+ "_about": "Fictional, hand-written example emails (all .example domains) and one-line label descriptions. Ships in the binary; contains no data from any real mailbox.",
+ "descriptions": {
+  "Primary": "A personal email a person wrote directly to me about a specific personal or work matter, expecting a reply.",
+  "Updates": "An automated account, security or transaction notice: password reset, verification code, sign-in alert, receipt, order confirmation, shipping update, invoice, statement, service status or policy change.",
+  "Promotions": "Marketing email: a sale, discount, special offer, retail newsletter, upgrade pitch or fundraising appeal.",
+  "Social": "A social network or community platform notification: new follower, comment, reply, friend request, tag, profile view, group post or event invitation."
+ },
+ "examples": [
+  {
+   "label": "Primary",
+   "sender": "maria.lopez@fastmail.example",
+   "subject": "Are we still on for Saturday?",
+   "body": "Hey! Just checking we're still meeting at the park at 10. I can bring the kids' bikes if you want. Let me know."
+  },
+  {
+   "label": "Primary",
+   "sender": "tom.baker@lindqvist-law.example",
+   "subject": "Lease draft - two questions",
+   "body": "Hi, I went through the lease draft. Clause 7 on early termination seems one-sided and the deposit amount doesn't match what we agreed. Can you confirm before I send it back?"
+  },
+  {
+   "label": "Primary",
+   "sender": "grandma.jo@homemail.example",
+   "subject": "Thanksgiving plans",
+   "body": "Sweetheart, are you coming home for Thanksgiving this year? Your uncle wants to know how many chairs to borrow. Call me when you can. Love, Grandma"
+  },
+  {
+   "label": "Primary",
+   "sender": "dev.patel@corvid-systems.example",
+   "subject": "Re: API rate limits",
+   "body": "Thanks for the logs. I think the retry loop is the culprit. Could you try setting the backoff to 2s and tell me if the errors stop? I'm around until 5."
+  },
+  {
+   "label": "Primary",
+   "sender": "nina.k@studio-arc.example",
+   "subject": "Quote for the kitchen renovation",
+   "body": "Following our call yesterday, here is my rough estimate for the kitchen work. I can start in March. Do you want me to include the backsplash? Happy to adjust."
+  },
+  {
+   "label": "Primary",
+   "sender": "coach.ramirez@westside-youth.example",
+   "subject": "Can you drive on Thursday?",
+   "body": "Hi, we're short one driver for the away game Thursday. Could you take three players? Let me know by tomorrow so I can sort out the carpool."
+  },
+  {
+   "label": "Primary",
+   "sender": "jess@hollis.example",
+   "subject": "photos from the wedding!!",
+   "body": "Finally got the photos back. There's a great one of you and Sam on the dance floor. Want me to send the full album or just the good ones? haha"
+  },
+  {
+   "label": "Primary",
+   "sender": "r.okafor@meridian-health.example",
+   "subject": "Following up on your referral",
+   "body": "Dear Ms. Grant, Dr. Hale asked me to follow up about scheduling your consultation. Would next Tuesday or Wednesday morning work for you? Please reply with your preference."
+  },
+  {
+   "label": "Primary",
+   "sender": "ben.wu@gmail.example",
+   "subject": "Book club - your pick next",
+   "body": "It's your turn to choose the book for next month. No pressure but people want to order it this week. Anything you've been meaning to read?"
+  },
+  {
+   "label": "Primary",
+   "sender": "helen.frost@brightline-consulting.example",
+   "subject": "Interview next week",
+   "body": "Hi Chris, I enjoyed our chat about the analyst role. I'd like to invite you to meet the team next Wednesday. Does 2pm work? I'll send details once you confirm."
+  },
+  {
+   "label": "Primary",
+   "sender": "landlord.mike@outlook.example",
+   "subject": "Plumber coming Friday",
+   "body": "Hi, the plumber can come Friday between 9 and 12 to look at the leak under the sink. Will someone be home, or should I use my key?"
+  },
+  {
+   "label": "Primary",
+   "sender": "anika.s@univ-north.example",
+   "subject": "Thesis chapter feedback",
+   "body": "I've left comments on chapter 3. The methods section is much clearer now, but the discussion needs to address the sample size. Can we meet Monday to go over it?"
+  },
+  {
+   "label": "Primary",
+   "sender": "carlos@familia-ruiz.example",
+   "subject": "Dad's birthday gift",
+   "body": "Should we all chip in for the new grill Dad keeps talking about? I think it's around $400. Let me know if you're in and I'll order it."
+  },
+  {
+   "label": "Primary",
+   "sender": "sophie.m@hartwell.example",
+   "subject": "Quick favor",
+   "body": "Would you mind watering my plants while I'm away next week? I'll leave the key under the mat. Thank you so much, I owe you one!"
+  },
+  {
+   "label": "Primary",
+   "sender": "project-team@acme-internal.example",
+   "subject": "Re: Launch checklist - who owns QA?",
+   "body": "Priya: I can take QA sign-off if Leo handles the release notes. Leo, does that work for you? We need owners before Friday's standup."
+  },
+  {
+   "label": "Primary",
+   "sender": "d.nakamura@kestrel-partners.example",
+   "subject": "Coffee next week?",
+   "body": "I'm in town Tuesday through Thursday. Would you have time for a coffee to talk about the partnership idea we discussed at the conference?"
+  },
+  {
+   "label": "Updates",
+   "sender": "no-reply@accounts.cloudvault.example",
+   "subject": "Your verification code is 482913",
+   "body": "Use this code to finish signing in. It expires in 10 minutes. If you didn't request this, you can ignore this email."
+  },
+  {
+   "label": "Updates",
+   "sender": "orders@homegoods-direct.example",
+   "subject": "Your order #A7731 has shipped",
+   "body": "Good news! Your order is on its way. Estimated delivery: Thursday. Track your package with the link below."
+  },
+  {
+   "label": "Updates",
+   "sender": "receipts@rideshare.example",
+   "subject": "Your Friday evening trip receipt",
+   "body": "Thanks for riding. Total: $18.40 charged to your Visa ending 4421. Trip from Market St to Oak Ave, 22 minutes."
+  },
+  {
+   "label": "Updates",
+   "sender": "security@photoshare.example",
+   "subject": "New login to your account",
+   "body": "We noticed a new login from Chrome on Windows in Denver, CO. If this was you, no action is needed. If not, secure your account now."
+  },
+  {
+   "label": "Updates",
+   "sender": "billing@streambox.example",
+   "subject": "Your payment was received",
+   "body": "We received your payment of $15.99 for your monthly plan. Your next billing date is March 3. View your invoice in account settings."
+  },
+  {
+   "label": "Updates",
+   "sender": "statements@firstharbor-bank.example",
+   "subject": "Statement available: February",
+   "body": "Your account statement for February is now available. Log in to online banking to view or download it."
+  },
+  {
+   "label": "Updates",
+   "sender": "status@devhost.example",
+   "subject": "Scheduled maintenance on March 12",
+   "body": "We will perform database maintenance on March 12 from 02:00 to 04:00 UTC. Some services may be briefly unavailable."
+  },
+  {
+   "label": "Updates",
+   "sender": "noreply@codeforge.example",
+   "subject": "[codeforge] Build #1824 failed on main",
+   "body": "The build for commit 3f2a1c on main failed at the test step. 2 tests failed. View the logs for details."
+  },
+  {
+   "label": "Updates",
+   "sender": "legal@notesapp.example",
+   "subject": "Changes to our Terms, effective April 1",
+   "body": "We're updating our Terms of Service and Privacy Policy, effective April 1. No action is required. Read a summary of the changes."
+  },
+  {
+   "label": "Updates",
+   "sender": "renewals@domainhouse.example",
+   "subject": "Your domain expires in 14 days",
+   "body": "Your domain registration will expire on June 2. Renew now to avoid losing your domain. Auto-renew is currently off."
+  },
+  {
+   "label": "Updates",
+   "sender": "reservations@stayhotels.example",
+   "subject": "Booking confirmation - 2 nights",
+   "body": "Your reservation is confirmed. Check-in Friday after 3pm, check-out Sunday by 11am. Confirmation number HX29AB."
+  },
+  {
+   "label": "Updates",
+   "sender": "orders@coffeeclub.example",
+   "subject": "Order confirmed - plus 20% off your next bag",
+   "body": "Thanks for your order of 2 bags of house blend, total $31.00, shipping Tuesday. As a thank you, use code NEXT20 for 20% off your next order."
+  },
+  {
+   "label": "Updates",
+   "sender": "security@friendzone.example",
+   "subject": "Your password was changed",
+   "body": "The password for your FriendZone account was just changed. If you did this, you're all set. If not, reset your password immediately."
+  },
+  {
+   "label": "Updates",
+   "sender": "no-reply@pharmacy-plus.example",
+   "subject": "Your prescription is ready for pickup",
+   "body": "Your prescription is ready at the Elm Street location. Please pick it up within 7 days."
+  },
+  {
+   "label": "Updates",
+   "sender": "alerts@firstharbor-bank.example",
+   "subject": "Low balance alert",
+   "body": "Your checking account balance is below $100. Current balance: $84.12. Log in to transfer funds."
+  },
+  {
+   "label": "Updates",
+   "sender": "noreply@airline-sky.example",
+   "subject": "Check in now for your flight to Boston",
+   "body": "Online check-in is open for flight SK 482 departing tomorrow at 7:15am. Gate information will be sent 3 hours before departure."
+  },
+  {
+   "label": "Updates",
+   "sender": "support@taskflow.example",
+   "subject": "Your support ticket #55120 has been resolved",
+   "body": "Our team marked your ticket as resolved. If the issue continues, reply to reopen it."
+  },
+  {
+   "label": "Updates",
+   "sender": "noreply@cloudvault.example",
+   "subject": "Your free trial ends in 3 days",
+   "body": "Your CloudVault trial ends on May 8. After that your account will switch to the free plan and files over 5GB will become read-only."
+  },
+  {
+   "label": "Updates",
+   "sender": "delivery@parcelnow.example",
+   "subject": "Delivered: your package was left at the front door",
+   "body": "Your package was delivered at 2:14pm and left at the front door. See the delivery photo in the app."
+  },
+  {
+   "label": "Updates",
+   "sender": "no-reply@citywater.example",
+   "subject": "Your utility bill is available",
+   "body": "Your water bill for the period Jan 1 - Jan 31 is $46.20, due February 20. View and pay online."
+  },
+  {
+   "label": "Promotions",
+   "sender": "deals@urbanthreads.example",
+   "subject": "48 hours only: 40% off sitewide",
+   "body": "Our biggest sale of the season starts now. Take 40% off everything, including new arrivals. Shop now before it's gone."
+  },
+  {
+   "label": "Promotions",
+   "sender": "hello@greenbowl.example",
+   "subject": "New menu drop + free delivery this weekend",
+   "body": "Try our new spring bowls! Order this weekend and get free delivery on orders over $20."
+  },
+  {
+   "label": "Promotions",
+   "sender": "offers@firstharbor-bank.example",
+   "subject": "You're pre-approved for our Platinum card",
+   "body": "As a valued customer, you're pre-approved for the Platinum Rewards card with 0% intro APR and 50,000 bonus points. Apply in minutes."
+  },
+  {
+   "label": "Promotions",
+   "sender": "newsletter@gearlab.example",
+   "subject": "This week's picks: the best hiking boots of the year",
+   "body": "Our editors tested 20 pairs of hiking boots. See the winners, plus exclusive discounts for subscribers."
+  },
+  {
+   "label": "Promotions",
+   "sender": "team@streambox.example",
+   "subject": "Upgrade to Premium and get 3 months free",
+   "body": "Enjoy ad-free streaming in 4K. Upgrade to Premium today and your first three months are on us."
+  },
+  {
+   "label": "Promotions",
+   "sender": "donate@saveoceans.example",
+   "subject": "Double your impact before midnight",
+   "body": "A generous donor will match every gift made before midnight. Your $25 becomes $50 to protect coral reefs. Give now."
+  },
+  {
+   "label": "Promotions",
+   "sender": "rewards@shopmart.example",
+   "subject": "You have 500 points expiring soon - treat yourself",
+   "body": "Don't let your points go to waste! Redeem them on thousands of items. Plus, members get an extra 10% off this week."
+  },
+  {
+   "label": "Promotions",
+   "sender": "marketing@saasly.example",
+   "subject": "Webinar: 5 ways to grow your pipeline",
+   "body": "Join our free webinar next Thursday and learn how top teams double their pipeline. Save your seat today."
+  },
+  {
+   "label": "Promotions",
+   "sender": "travel-deals@flyaway.example",
+   "subject": "Flights to Lisbon from $299",
+   "body": "Spring getaway deals are here. Book by Sunday to lock in fares from $299 round trip."
+  },
+  {
+   "label": "Promotions",
+   "sender": "info@wineclub.example",
+   "subject": "Your exclusive invitation to join",
+   "body": "Discover handpicked wines delivered monthly. Join today and get your first box for just $29, a 50% saving."
+  },
+  {
+   "label": "Promotions",
+   "sender": "news@techgadgets.example",
+   "subject": "Black Friday starts early for subscribers",
+   "body": "Get early access to doorbusters on headphones, laptops and smart home gear. Limited quantities."
+  },
+  {
+   "label": "Promotions",
+   "sender": "hello@yogaspace.example",
+   "subject": "We miss you! Come back for $10",
+   "body": "It's been a while. Book any class this month for just $10 and rediscover your practice."
+  },
+  {
+   "label": "Promotions",
+   "sender": "offers@mobileco.example",
+   "subject": "Switch to unlimited and save",
+   "body": "Customers like you are saving $20 a month with our new unlimited plan. Switch today, no fees."
+  },
+  {
+   "label": "Promotions",
+   "sender": "campaign@vote-reyes.example",
+   "subject": "Chip in $5 before the deadline",
+   "body": "We're just $12,000 short of our end-of-month goal. Can you chip in $5 to keep our campaign strong?"
+  },
+  {
+   "label": "Promotions",
+   "sender": "store@bookworm.example",
+   "subject": "Books we think you'll love",
+   "body": "Based on your recent purchases, here are new releases picked for you. Free shipping on orders over $25."
+  },
+  {
+   "label": "Promotions",
+   "sender": "deals@homegoods-direct.example",
+   "subject": "Spring cleaning sale: up to 60% off",
+   "body": "Refresh your home with deals on storage, bedding and more. Sale ends Monday."
+  },
+  {
+   "label": "Social",
+   "sender": "notify@connectpro.example",
+   "subject": "Dana Whitfield wants to connect",
+   "body": "Dana Whitfield, Product Manager at Lumen, would like to join your professional network. Accept or ignore the invitation."
+  },
+  {
+   "label": "Social",
+   "sender": "noreply@threadit.example",
+   "subject": "u/pixel_fox replied to your comment",
+   "body": "pixel_fox replied to your comment in r/homelab: 'Great setup, what switch are you using?' View the reply."
+  },
+  {
+   "label": "Social",
+   "sender": "notifications@photoshare.example",
+   "subject": "amy.travels and 12 others liked your photo",
+   "body": "Your photo is getting attention! amy.travels, jkim and 11 others liked it. See who liked your post."
+  },
+  {
+   "label": "Social",
+   "sender": "notification@friendzone.example",
+   "subject": "You have 3 new friend requests",
+   "body": "Leo Martin, Priya Shah and 1 other sent you friend requests. Respond to your requests."
+  },
+  {
+   "label": "Social",
+   "sender": "events@meetup-hub.example",
+   "subject": "Reminder: Board Game Night is tomorrow",
+   "body": "You're going to Board Game Night at The Rook Cafe tomorrow at 7pm. 18 members attending. See event details."
+  },
+  {
+   "label": "Social",
+   "sender": "notify@connectpro.example",
+   "subject": "5 people viewed your profile this week",
+   "body": "Your profile was viewed by recruiters and people in software engineering. See who's looking."
+  },
+  {
+   "label": "Social",
+   "sender": "noreply@chirper.example",
+   "subject": "@mkelly mentioned you",
+   "body": "@mkelly mentioned you in a post: 'Thanks @you for the tip about the trail, it was amazing!' Reply or like the post."
+  },
+  {
+   "label": "Social",
+   "sender": "groups@friendzone.example",
+   "subject": "New post in Neighborhood Watch - Elm District",
+   "body": "Carla posted in Neighborhood Watch: 'Has anyone seen a grey cat near 5th street?' 4 comments."
+  },
+  {
+   "label": "Social",
+   "sender": "notifications@videotube.example",
+   "subject": "New comment on your video",
+   "body": "jordan_b commented on your video 'Fixing a leaky faucet': 'This saved me a plumber visit, thank you!'"
+  },
+  {
+   "label": "Social",
+   "sender": "noreply@forum.makers.example",
+   "subject": "New reply in thread: Best filament for outdoor prints?",
+   "body": "ProtoPete replied to a thread you're watching in the Makers Community forum. Read the reply."
+  },
+  {
+   "label": "Social",
+   "sender": "invites@eventlink.example",
+   "subject": "Sarah invited you to 'Rooftop BBQ'",
+   "body": "Sarah Lee invited you to Rooftop BBQ on Saturday, June 14 at 4pm. Going, maybe or can't go?"
+  },
+  {
+   "label": "Social",
+   "sender": "notify@photoshare.example",
+   "subject": "jkim started following you",
+   "body": "jkim started following you. Follow back to see their posts in your feed."
+  },
+  {
+   "label": "Social",
+   "sender": "digest@neighborly.example",
+   "subject": "Trending in your neighborhood",
+   "body": "Popular this week: lost dog found on Maple, recommendations for a good electrician, and a free couch."
+  },
+  {
+   "label": "Social",
+   "sender": "notify@chatspace.example",
+   "subject": "You were tagged in a photo",
+   "body": "Emma tagged you in a photo from Saturday night. Review tags before they appear on your profile."
+  }
+ ]
+}

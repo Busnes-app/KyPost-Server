@@ -15,6 +15,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - Multi-user with two roles. Admins manage users and system settings. Each user connects their own IMAP mailbox.
 - IMAP inbox reader with background body preloading, folder management, and drag-and-drop move actions
 - Automatic keyword labels for unread mail. KyPost polls each active user's mailbox separately, and each account has its OWN label list — copied from the instance defaults when the account is created, then theirs to change. Labels are a sorting hint a determined sender can influence — see [Classification flow](#architecture).
+- On-device embedding sorter in front of the LLM: a ~30 MB embedding model baked into the image labels mail in well under a millisecond and sends only what it is unsure of to Ollama. It learns per account from you — change a message's label in the reader (or in another IMAP client; noticed when the KyPost inbox syncs) and similar mail follows; give a new label an optional description and it is recognised straight away. It stores vectors, never message text, and never trains on the LLM's own answers. `CLASSIFIER_ENGINE=llm` turns it off.
 - Pre-sort before the model: mail from a contact you added is labelled `Primary` without an LLM call, and mail with mailing-list or automated headers (`List-Id`, `List-Unsubscribe`, `Precedence: bulk/list/junk`, `Auto-Submitted`) can never be labelled `Primary`. Same input, same answer; edit your contacts or add a rule to change it.
 - Filter Rules: a GUI condition and action builder plus a raw Sieve script editor. A run-now panel applies the rules on demand. Rules can test any header, so a provider's spam verdict (for example `X-Spam-Flag: YES`) can move mail to Junk.
 - Compose flow with SMTP send and IMAP draft save
@@ -45,12 +46,12 @@ Classification flow:
 
 1. Fetch unread messages from IMAP (`INBOX` by default), plus their list/automation headers and any header a filter rule tests.
 2. Run filter rules.
-3. Pre-sort: a contact's mail gets `Primary` and skips steps 4-7 (and the rate limit); list or automated mail has `Primary` removed from the labels the model may choose. Only accounts whose label set includes `Primary` are affected.
-4. Redact sensitive patterns.
+3. Pre-sort: a contact's mail gets `Primary` and skips steps 5-8 (and the rate limit); list or automated mail has `Primary` removed from the labels the model may choose. Only accounts whose label set includes `Primary` are affected.
+4. Redact sensitive patterns, then embed the redacted sender, subject and body with the on-device sorter. If it is at least `EMBED_MIN_CONFIDENCE` sure, apply its label and skip steps 5-7 (and the rate limit).
 5. Build the prompt from sender, subject, body, and tuning context.
 6. Call Ollama `/api/generate`.
 7. Match the output against the allowed labels.
-8. Apply the IMAP keywords.
+8. Apply the IMAP keywords, and remember what was applied (as a vector and a hash) so a later relabel by the user can be learned.
 9. Save the checkpoint and the decision history.
 
 > **Labels are a hint, not a security boundary.** The classifier reads
@@ -60,6 +61,12 @@ Classification flow:
 > corpus puts the shipped default at roughly 50–87% resistance depending on
 > prompt config, and every model measured let some through. Treat it as a known
 > property of the feature rather than a bug with a fix pending.
+>
+> The embedding sorter follows no instructions, so "file this under Primary"
+> is just more words to it (it resisted all 8 of the corpus's injection probes),
+> but a sender still chooses the words it reads and can make a message look
+> like whatever label they prefer. Its training data is only your own relabels,
+> never the LLM's answers or anything a sender controls on its own.
 >
 > What that buys an attacker is small and bounded: they can steer the label on
 > **their own message** — typically into `Primary` instead of `Promotions`. The
@@ -376,6 +383,9 @@ Common variables:
 - `SECRET_DIR` (default `/kypost/private`. Every `*_KEY_FILE` / `*_SECRET_FILE` default below is derived from this, so moving it moves all of them together.)
 - `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
 - `OLLAMA_MODEL` (default `nemotron-3-nano:4b`; see the model note below)
+- `CLASSIFIER_ENGINE` (default `hybrid`: the embedding sorter answers when sure, the LLM otherwise; `llm` sends everything to the LLM. Any other value refuses to start.)
+- `EMBED_MIN_CONFIDENCE` (default `0.6`; how sure the embedding sorter must be, 0–1, to label without the LLM)
+- `EMBED_MODEL_DIR` (default `/opt/kypost/models/potion-base-8M`, installed by the Dockerfile. A missing or unreadable model is logged as an error and the daemon runs LLM-only.)
 - `TUNING_FILE` (default `/kypost/config/TUNING.md`)
 - `OLLAMA_MODELS_HOST_DIR` (default `./share/ollama/models`)
 - `IMAP_CONFIG_FILE` (default `$SECRET_DIR/imap-config.json`)
@@ -787,7 +797,7 @@ Config and data:
 
 - `GET|PUT /api/config` (GET omits `redaction.patterns` for non-admins; PUT is admin only)
 - `GET /api/labels`
-- `GET|PUT /api/labels/preferences` (the caller's own label list and auto-apply preference. `PUT` replaces the whole block.)
+- `GET|PUT /api/labels/preferences` (the caller's own label list, auto-apply preference and optional label descriptions for the embedding sorter. `PUT` replaces the whole block.)
 - `GET /api/decisions` (the caller's own decisions)
 - `GET|PUT /api/tuning` (the caller's own tuning prompt)
 - `GET /api/mail-defaults` (any user) / `PUT /api/mail-defaults` (admin): instance-wide host and port defaults, no credentials
@@ -1076,7 +1086,7 @@ inside the container. On systems without systemd, schedule
 - `backend/internal/backup/`: KyRecovery adapter, collection and drill checks.
 - `docs/RESTORE.md`: operator backup and offline restore procedure.
 
-- `backend/`: Go API, poller, adapters, config, state, health
+- `backend/`: Go API, poller, adapters, config, state, health, and the on-device embedding sorter (`internal/sorter`)
 - `frontend/`: React and Vite UI
 - `scripts/`: container entrypoint, supervisord orchestration, Ollama model management, host-side update helpers
 - `push-relay-shared/`: shared Cloudflare Worker logic for the push relays — API-key issuance, rate limiting, device-token ownership, and the `RelayCoordinator` Durable Object
@@ -1084,7 +1094,7 @@ inside the container. On systems without systemd, schedule
 - `docs/`: the contracts the client repos implement against — [PLATFORM_BASELINE.md](docs/PLATFORM_BASELINE.md) (what a client must implement to call itself a KyPost client), [E2E_PGP.md](docs/E2E_PGP.md), [WKD_Publishing.md](docs/WKD_Publishing.md), [WEBMAIL_HANDOFF.md](docs/WEBMAIL_HANDOFF.md), [INBOX_PAYLOAD_HANDOFF.md](docs/INBOX_PAYLOAD_HANDOFF.md) — plus the operator guide [Reverse_Proxy_Networking.md](docs/Reverse_Proxy_Networking.md)
 - `share/`: host-side Ollama model blob cache, bind-mounted into the container. Never committed
 - `testdata/`, `fonts/`: test fixtures and the bundled webfonts
-- `Dockerfile`: single image build (backend, frontend, Ollama runtime)
+- `Dockerfile`: single image build (backend, frontend, Ollama runtime, pinned embedding model)
 - `docker-compose.yml`: local orchestration
 - `supervisord.conf`: in-container process supervision
 - `AGENTS.md`: the contribution contract for automated agents. Every subtree with its own rules carries one

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { loadLabelPrefs, saveLabelPrefsPatch } from "./labelPrefs";
+import { descriptionsToText, loadLabelPrefs, saveLabelPrefsPatch, textToDescriptions } from "./labelPrefs";
 
 const getJSON = vi.fn();
 const putJSON = vi.fn();
@@ -68,6 +68,21 @@ describe("loadLabelPrefs", () => {
 
     expect(prefs.allowlist).toEqual([]);
     expect(prefs.keywordMappings).toEqual({});
+    expect(prefs.descriptions).toEqual({});
     expect(prefs.autoApplyEnabled).toBe(false);
+  });
+});
+
+describe("label descriptions text", () => {
+  it("round-trips, splitting only on the first colon", () => {
+    const descriptions = { Receipts: "orders: confirmations, invoices", Primary: "people writing to me" };
+    expect(textToDescriptions(descriptionsToText(descriptions), ["Primary", "Receipts"])).toEqual(descriptions);
+  });
+
+  it("drops blank lines, empty descriptions and labels not in the list", () => {
+    // The server refuses a description for a label that is not in the list, so
+    // a label removed from the allowlist must not take the whole save down.
+    const text = "\nReceipts:   \nGone: an old label\nNo colon here\n  Updates : account notices  ";
+    expect(textToDescriptions(text, ["Receipts", "Updates"])).toEqual({ Updates: "account notices" });
   });
 });

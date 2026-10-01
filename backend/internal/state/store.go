@@ -476,6 +476,11 @@ func (s *Store) Cleanup(keepDays int) error {
 		if _, err := tx.Exec(`DELETE FROM deferrals WHERE first_at < ?`, cutoff.Unix()); err != nil {
 			return err
 		}
+		// A prediction older than the decision log can no longer be corrected
+		// from the reader in any way the user would connect to it.
+		if _, err := tx.Exec(`DELETE FROM sorter_predictions WHERE at_unix < ?`, cutoff.Unix()); err != nil {
+			return err
+		}
 		// Recorded in the same transaction as the deletes it describes, so the
 		// timestamp can never claim a cleanup that rolled back.
 		return setMeta(tx, metaLastCleanup, time.Now().UTC().Format(time.RFC3339))

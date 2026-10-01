@@ -172,7 +172,16 @@ type UserLabelSettings struct {
 
 	// KeywordMappings expands one chosen label into several IMAP keywords.
 	KeywordMappings map[string][]string `yaml:"keywordMappings" json:"keywordMappings"`
+
+	// Descriptions is an optional one-line description per label. The
+	// embedding sorter uses it as that label's first example, so a label the
+	// user adds is predictable before they have corrected any mail into it.
+	// It is never sent to the LLM.
+	Descriptions map[string]string `yaml:"descriptions,omitempty" json:"descriptions"`
 }
+
+// MaxLabelDescriptionRunes bounds one label description.
+const MaxLabelDescriptionRunes = 200
 
 func DefaultUserSettings() UserSettings {
 	var s UserSettings
@@ -181,6 +190,7 @@ func DefaultUserSettings() UserSettings {
 	s.Labels.AutoApplyEnabled = true
 	s.Labels.Allowlist = []string{}
 	s.Labels.KeywordMappings = map[string][]string{}
+	s.Labels.Descriptions = map[string]string{}
 	return s
 }
 
@@ -259,6 +269,9 @@ func LoadUserSettings(path string) (UserSettings, error) {
 	}
 	if s.Labels.KeywordMappings == nil {
 		s.Labels.KeywordMappings = map[string][]string{}
+	}
+	if s.Labels.Descriptions == nil {
+		s.Labels.Descriptions = map[string]string{}
 	}
 	return s, nil
 }
