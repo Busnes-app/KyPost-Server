@@ -44,7 +44,7 @@ func sorterFixture(t *testing.T) (*Server, users.User, *state.Store, mailcache.E
 
 func corrections(t *testing.T, store *state.Store) []state.SorterExample {
 	t.Helper()
-	ex, err := store.SorterCorrectionsStrict("m")
+	ex, err := store.SorterCorrectionsStrict("m", state.MaxSorterCorrections)
 	if err != nil {
 		t.Fatal(err)
 	}

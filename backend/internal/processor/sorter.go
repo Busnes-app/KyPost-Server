@@ -1,9 +1,12 @@
 package processor
 
 import (
+	"context"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -39,11 +42,20 @@ func (p *Poller) SetSorter(m *sorter.Model, minConfidence float64) {
 	p.embed, p.embedMin, p.heads = m, minConfidence, map[string]*cachedHead{}
 }
 
+// sorterTrainBudget bounds one training run in wall-clock time. Training runs
+// on the tick goroutine of a daemon every account shares, so this — together
+// with sorter.MaxLabels/MaxExamples, which bound the work itself — is what one
+// account can cost the others. Measured worst case at the limits is ~1 s.
+const sorterTrainBudget = 3 * time.Second
+
 // userHead returns this user's trained head, retraining only when their
-// corrections, label list or label descriptions changed. nil (LLM only) when
-// the sorter is off or the corrections cannot be read: training on a partial
-// read would silently forget what the user taught, and the LLM still sorts.
-func (p *Poller) userHead(userID string, store *state.Store, labels config.UserLabelSettings) *sorter.Head {
+// corrections, label list or label descriptions changed. nil means LLM only:
+// the sorter is off, the account is over the training budget (more than
+// sorter.MaxLabels labels, or a run that outlasts sorterTrainBudget), or the
+// corrections cannot be read — training on a partial read would silently forget
+// what the user taught, and the LLM still sorts. A budget refusal is cached
+// under the same key as a head, so it is not retried until the inputs change.
+func (p *Poller) userHead(ctx context.Context, userID string, store *state.Store, labels config.UserLabelSettings) *sorter.Head {
 	p.userMu.Lock()
 	m, cached := p.embed, p.heads[userID]
 	p.userMu.Unlock()
@@ -64,12 +76,25 @@ func (p *Poller) userHead(userID string, store *state.Store, labels config.UserL
 	if cached != nil && cached.key == key.String() {
 		return cached.head
 	}
-	corrections, err := store.SorterCorrectionsStrict(sorter.ModelID)
+	remember := func(head *sorter.Head) *sorter.Head {
+		p.userMu.Lock()
+		p.heads[userID] = &cachedHead{key: key.String(), head: head}
+		p.userMu.Unlock()
+		return head
+	}
+	// Checked before any embedding work: a label list is user-controlled and
+	// unbounded, and every label is a class the head must fit.
+	if len(labels.Allowlist) > sorter.MaxLabels {
+		p.log.Info("embedding sorter skipped: too many labels; LLM only", "user_id", userID,
+			"allowlist_count", strconv.Itoa(len(labels.Allowlist)), "limit", strconv.Itoa(sorter.MaxLabels))
+		return remember(nil)
+	}
+	examples := m.SeedExamples(labels.Allowlist, labels.Descriptions)
+	corrections, err := store.SorterCorrectionsStrict(sorter.ModelID, max(sorter.MaxExamples-len(examples), 0))
 	if err != nil {
 		p.log.Error("cannot read sorter corrections; LLM only this tick", "user_id", userID, "error", err.Error())
 		return nil
 	}
-	examples := m.SeedExamples(labels.Allowlist, labels.Descriptions)
 	for _, c := range corrections {
 		if slices.Contains(labels.Allowlist, c.Label) && len(c.Vec) == m.Dim() {
 			examples = append(examples, sorter.Example{Label: c.Label, Weight: 1, Vec: c.Vec})
@@ -79,11 +104,17 @@ func (p *Poller) userHead(userID string, store *state.Store, labels config.UserL
 	if cached != nil {
 		prev = cached.head
 	}
-	head := sorter.Train(examples, prev)
-	p.userMu.Lock()
-	p.heads[userID] = &cachedHead{key: key.String(), head: head}
-	p.userMu.Unlock()
-	return head
+	trainCtx, cancel := context.WithTimeout(ctx, sorterTrainBudget)
+	defer cancel()
+	head, err := sorter.Train(trainCtx, examples, prev)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil // shutdown or tick timeout, not a verdict on this account's inputs
+		}
+		p.log.Error("embedding sorter training over budget; LLM only", "user_id", userID, "error", err.Error())
+		return remember(nil)
+	}
+	return remember(head)
 }
 
 // guess embeds the message exactly as the LLM would see it — redacted and

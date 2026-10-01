@@ -1,7 +1,10 @@
 package sorter
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"os"
@@ -87,7 +90,10 @@ func clip(s string) string {
 func TestSeedsSortObviousMail(t *testing.T) {
 	m := loadTestModel(t)
 	labels := []string{"Primary", "Promotions", "Social", "Updates"}
-	h := Train(m.SeedExamples(labels, nil), nil)
+	h, err := Train(t.Context(), m.SeedExamples(labels, nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for want, text := range map[string]string{
 		"Updates":    EmailText("orders@shop.example", "Your order has shipped", "Your package is on its way. Track it."),
 		"Promotions": EmailText("deals@store.example", "40% off everything this weekend", "Shop the sale now."),
@@ -116,14 +122,14 @@ func TestHeadLearnsAndMasks(t *testing.T) {
 	for range 10 {
 		ex = append(ex, Example{"A", 1, sample("A")}, Example{"B", 1, sample("B")})
 	}
-	h := Train(ex, nil)
+	h := mustTrain(t, ex, nil)
 	if got, _ := h.Predict(sample("A"), nil); got != "A" {
 		t.Fatalf("predicted %s for an A sample", got)
 	}
 	for range 3 {
 		ex = append(ex, Example{"Receipts", 1, sample("Receipts")})
 	}
-	h2 := Train(ex, h)
+	h2 := mustTrain(t, ex, h)
 	if got, _ := h2.Predict(sample("Receipts"), nil); got != "Receipts" {
 		t.Fatalf("new label not learned from 3 corrections: got %s", got)
 	}
@@ -133,11 +139,46 @@ func TestHeadLearnsAndMasks(t *testing.T) {
 	if got, p := h2.Predict(sample("A"), []string{"A"}); got != "A" || math.Abs(p-1) > 1e-9 {
 		t.Fatalf("single allowed label: got %s %.3f", got, p)
 	}
-	if got, _ := Train(ex, nil).Predict(sample("B"), nil); got != "B" {
+	if got, _ := mustTrain(t, ex, nil).Predict(sample("B"), nil); got != "B" {
 		t.Fatalf("cold start disagrees: %s", got)
 	}
 	if got, _ := (&Head{}).Predict(sample("A"), nil); got != "" {
 		t.Fatal("untrained head must not predict")
+	}
+}
+
+func mustTrain(t *testing.T, ex []Example, prev *Head) *Head {
+	t.Helper()
+	h, err := Train(t.Context(), ex, prev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// Training is a cost one account imposes on the shared daemon: over budget it
+// refuses, and it stops when its context ends rather than running to completion.
+func TestTrainIsBounded(t *testing.T) {
+	ex := func(labels, n int) []Example {
+		out := make([]Example, n)
+		for i := range out {
+			out[i] = Example{Label: fmt.Sprint(i % labels), Weight: 1, Vec: []float32{float32(i % labels), 1}}
+		}
+		return out
+	}
+	if _, err := Train(t.Context(), ex(MaxLabels+1, MaxLabels+1), nil); !errors.Is(err, ErrOverBudget) {
+		t.Fatalf("too many labels: err = %v, want ErrOverBudget", err)
+	}
+	if _, err := Train(t.Context(), ex(2, MaxExamples+1), nil); !errors.Is(err, ErrOverBudget) {
+		t.Fatalf("too many examples: err = %v, want ErrOverBudget", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := Train(ctx, ex(2, 10), nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled context: err = %v, want context.Canceled", err)
+	}
+	if _, err := Train(t.Context(), ex(MaxLabels, MaxExamples), nil); err != nil {
+		t.Fatalf("at the limits: %v", err)
 	}
 }
 

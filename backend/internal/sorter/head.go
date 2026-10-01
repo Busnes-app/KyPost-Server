@@ -1,6 +1,9 @@
 package sorter
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"math"
 	"slices"
 )
@@ -22,15 +25,33 @@ type Head struct {
 
 const (
 	headC     = 10.0 // same objective scale as scikit-learn's C
-	headIters = 400
+	headIters = 200
 	headLR    = 0.05
 )
 
+// Training runs in the shared daemon, so its cost — examples x labels x
+// dimensions x iterations — is a budget one account spends on behalf of every
+// other account's polling. These bound it; the poller falls back to the LLM
+// for an account over either one (see processor.userHead).
+const (
+	// MaxLabels is the most labels the sorter will learn. An account with more
+	// is sorted by the LLM alone.
+	MaxLabels = 10
+	// MaxExamples bounds one training run: seeds, descriptions and the newest
+	// corrections.
+	MaxExamples = 1000
+)
+
+// ErrOverBudget reports a training request larger than MaxLabels/MaxExamples.
+var ErrOverBudget = errors.New("sorter training over budget")
+
 // Train fits a head. prev (may be nil) warm-starts it when the label set and
 // dimension are unchanged, which makes retraining after one correction cheap.
-// ponytail: full-batch Adam over every example on each retrain; fine for the
-// ~4k vectors the per-label correction cap allows, revisit if that cap grows.
-func Train(examples []Example, prev *Head) *Head {
+// It refuses work over MaxLabels/MaxExamples and stops when ctx is done, so a
+// caller can bound it in wall-clock time as well.
+// ponytail: full-batch Adam over every example on each retrain; the budget
+// above is what keeps that affordable, revisit both together.
+func Train(ctx context.Context, examples []Example, prev *Head) (*Head, error) {
 	labels := []string{}
 	for _, e := range examples {
 		if !slices.Contains(labels, e.Label) {
@@ -38,8 +59,12 @@ func Train(examples []Example, prev *Head) *Head {
 		}
 	}
 	slices.Sort(labels)
+	if len(labels) > MaxLabels || len(examples) > MaxExamples {
+		return nil, fmt.Errorf("%w: %d labels, %d examples (limits %d, %d)",
+			ErrOverBudget, len(labels), len(examples), MaxLabels, MaxExamples)
+	}
 	if len(labels) < 2 || len(examples) == 0 {
-		return &Head{Labels: labels}
+		return &Head{Labels: labels}, nil
 	}
 	n, d, k := len(examples), len(examples[0].Vec), len(labels)
 	idx := make([]int, n)
@@ -76,6 +101,9 @@ func Train(examples []Example, prev *Head) *Head {
 	gW, gB := zeros(d, k), make([]float64, k)
 	z := make([]float64, k)
 	for t := 1; t <= iters; t++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for j := range gW {
 			for c := range gW[j] {
 				gW[j][c] = l2 * W[j][c]
@@ -107,7 +135,7 @@ func Train(examples []Example, prev *Head) *Head {
 			adam(&B[c], &mB[c], &vB[c], gB[c], c1, c2)
 		}
 	}
-	return &Head{Labels: labels, w: W, b: B}
+	return &Head{Labels: labels, w: W, b: B}, nil
 }
 
 func adam(p, m, v *float64, g, c1, c2 float64) {

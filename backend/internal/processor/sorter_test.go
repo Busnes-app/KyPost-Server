@@ -116,6 +116,67 @@ func TestHybrid_UnsureMailGoesToTheLLMAndRespectsTheBudget(t *testing.T) {
 	}
 }
 
+// An account's label list is user-controlled and unbounded, and every label is a
+// class the head must fit on the daemon every account shares. Over the label
+// limit the account is sorted by the LLM alone — no training at all — and the
+// next account's poll is unaffected.
+func TestHybrid_TooManyLabelsSkipsTrainingAndSparesOtherAccounts(t *testing.T) {
+	big := &scriptedMailbox{msgs: []imapadapter.Message{
+		{ID: "1", Sender: "orders@shop.example", Subject: "Your order has shipped", Body: "Your package is on its way."},
+	}}
+	p, heavy, calls := newHybridPoller(t, big, stockLabels, 0)
+	settings := config.DefaultUserSettings()
+	settings.Labels.AutoApplyEnabled, settings.Labels.Seeded = true, true
+	settings.Labels.Allowlist = []string{"Primary"}
+	settings.Labels.Descriptions = map[string]string{}
+	for i := range sorter.MaxLabels * 5 {
+		label := fmt.Sprintf("Label%d", i)
+		settings.Labels.Allowlist = append(settings.Labels.Allowlist, label)
+		settings.Labels.Descriptions[label] = strings.Repeat("a long description of what goes here ", 5)
+	}
+	if err := config.SaveUserSettings(p.userSettingsPath(heavy.ID), settings); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	if err := p.tickUser(heavy, time.Time{}); err != nil {
+		t.Fatalf("tickUser (heavy account): %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("over-limit account's tick took %v; training should have been skipped", elapsed)
+	}
+	p.userMu.Lock()
+	cached := p.heads[heavy.ID]
+	p.userMu.Unlock()
+	if cached == nil || cached.head != nil {
+		t.Fatalf("over-limit account: cached=%+v, want a cached LLM-only (nil) head", cached)
+	}
+	if want := []string{"1:Primary"}; !reflect.DeepEqual(big.labelled, want) || len(calls()) != 1 {
+		t.Fatalf("over-limit account must still be sorted by the LLM: labelled=%v, LLM calls=%d", big.labelled, len(calls()))
+	}
+
+	// A second account, polled next, still gets the sorter.
+	normal := users.User{ID: "user-normal", Username: "normal"}
+	small := &scriptedMailbox{msgs: []imapadapter.Message{
+		{ID: "1", Sender: "deals@store.example", Subject: "40% off everything this weekend", Body: "Shop the sale now, limited time."},
+	}}
+	p.newMailClient = func(string, string) imapadapter.Client { return small }
+	if err := os.MkdirAll(p.userConfigDir(normal.ID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ns := config.DefaultUserSettings()
+	ns.Labels.AutoApplyEnabled, ns.Labels.Seeded, ns.Labels.Allowlist = true, true, stockLabels
+	if err := config.SaveUserSettings(p.userSettingsPath(normal.ID), ns); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.tickUser(normal, time.Time{}); err != nil {
+		t.Fatalf("tickUser (normal account): %v", err)
+	}
+	if want := []string{"1:Promotions"}; !reflect.DeepEqual(small.labelled, want) || len(calls()) != 1 {
+		t.Fatalf("normal account: labelled=%v, LLM calls=%d; want the sorter to label it", small.labelled, len(calls()))
+	}
+}
+
 // A label the shipped model has never heard of is learned from the user's
 // corrections, and the next tick uses it without a restart.
 func TestHybrid_CorrectionsTeachANewLabel(t *testing.T) {

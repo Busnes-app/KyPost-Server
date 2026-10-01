@@ -199,8 +199,8 @@ CREATE INDEX IF NOT EXISTS sorter_predictions_at ON sorter_predictions(at_unix);
 
 -- One row per message the user re-labelled away from the sorter's answer: the
 -- training data that makes the sorter theirs. Not aged out with the decisions
--- (it is the point of keeping it); bounded per label instead, see
--- MaxSorterCorrectionsPerLabel. model names the embedding that produced vec so
+-- (it is the point of keeping it); bounded per account instead, see
+-- MaxSorterCorrections. model names the embedding that produced vec so
 -- a model upgrade ignores incompatible rows instead of mixing vector spaces.
 CREATE TABLE IF NOT EXISTS sorter_corrections (
 	message_id TEXT PRIMARY KEY,

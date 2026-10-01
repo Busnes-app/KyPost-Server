@@ -333,7 +333,10 @@ func runEmbed(dir string, corpus *corpusFile) ([]result, error) {
 		return nil, err
 	}
 	labels := []string{"Primary", "Promotions", "Social", "Updates"}
-	head := sorter.Train(m.SeedExamples(labels, nil), nil)
+	head, err := sorter.Train(context.Background(), m.SeedExamples(labels, nil), nil)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]result, 0, len(corpus.Emails))
 	for _, e := range corpus.Emails {
 		start := time.Now()

@@ -769,7 +769,6 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		allowlist:        settings.Labels.Allowlist,
 		keywordMappings:  settings.Labels.KeywordMappings,
 		rules:            activeRules,
-		head:             p.userHead(u.ID, store, settings.Labels),
 		guesses:          map[string]sortGuess{},
 	}
 
@@ -782,6 +781,9 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 	// routine restarts reached SIGKILL mid-write.
 	ctx, cancel := context.WithTimeout(p.lifetimeCtx(), tickTimeout)
 	defer cancel()
+	// Inside the tick's deadline, not before it: training is bounded work, but
+	// it is work one account does on the goroutine every account's poll shares.
+	uc.head = p.userHead(ctx, u.ID, store, settings.Labels)
 
 	checkpoint, err := store.Checkpoint()
 	if err != nil {

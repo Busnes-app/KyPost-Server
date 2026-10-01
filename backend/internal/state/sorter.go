@@ -12,10 +12,11 @@ import (
 	"time"
 )
 
-// MaxSorterCorrectionsPerLabel bounds the sorter's training data per label; the
-// oldest correction for that label is dropped first. It also bounds retraining
-// cost, which is full-batch (see sorter.Train).
-const MaxSorterCorrectionsPerLabel = 1000
+// MaxSorterCorrections bounds the sorter's stored training data for one
+// account, across all labels, oldest dropped first. A per-label cap would let
+// the total grow with every label name ever used; the training budget is
+// enforced again at read time (SorterCorrectionsStrict's limit, sorter.Train).
+const MaxSorterCorrections = 1000
 
 // SorterExample is one stored correction: the message's vector and the label
 // the user gave it.
@@ -89,9 +90,9 @@ func (s *Store) RecordSorterCorrection(messageID, check, label string) (bool, er
 		if n, _ := res.RowsAffected(); n == 0 {
 			return nil
 		}
-		if _, err := tx.Exec(`DELETE FROM sorter_corrections WHERE label = ? AND message_id NOT IN (
-			SELECT message_id FROM sorter_corrections WHERE label = ? ORDER BY at_unix DESC, rowid DESC LIMIT ?)`,
-			label, label, MaxSorterCorrectionsPerLabel); err != nil {
+		if _, err := tx.Exec(`DELETE FROM sorter_corrections WHERE message_id NOT IN (
+			SELECT message_id FROM sorter_corrections ORDER BY at_unix DESC, rowid DESC LIMIT ?)`,
+			MaxSorterCorrections); err != nil {
 			return err
 		}
 		changed = true
@@ -114,11 +115,12 @@ func (s *Store) SorterGeneration() (string, error) {
 	return metaString(s.db, metaSorterGeneration)
 }
 
-// SorterCorrectionsStrict returns the corrections embedded by model. A read
-// failure is returned, never an empty result: training on nothing would
-// silently forget everything the user taught.
-func (s *Store) SorterCorrectionsStrict(model string) ([]SorterExample, error) {
-	rows, err := s.db.Query(`SELECT label, vec FROM sorter_corrections WHERE model = ? ORDER BY at_unix, rowid`, model)
+// SorterCorrectionsStrict returns at most limit of the newest corrections
+// embedded by model, newest first. A read failure is returned, never an empty
+// result: training on nothing would silently forget everything the user taught.
+func (s *Store) SorterCorrectionsStrict(model string, limit int) ([]SorterExample, error) {
+	rows, err := s.db.Query(`SELECT label, vec FROM sorter_corrections WHERE model = ?
+		ORDER BY at_unix DESC, rowid DESC LIMIT ?`, model, limit)
 	if err != nil {
 		return nil, err
 	}
