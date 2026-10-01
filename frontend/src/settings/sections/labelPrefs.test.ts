@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { descriptionsToText, loadLabelPrefs, saveLabelPrefsPatch, textToDescriptions } from "./labelPrefs";
+import {
+  descriptionsToText,
+  loadLabelPrefs,
+  saveLabelPrefsPatch,
+  SORTER_MAX_LABELS,
+  sorterLabelLimitNote,
+  textToDescriptions
+} from "./labelPrefs";
 
 const getJSON = vi.fn();
 const putJSON = vi.fn();
@@ -84,5 +91,17 @@ describe("label descriptions text", () => {
     // a label removed from the allowlist must not take the whole save down.
     const text = "\nReceipts:   \nGone: an old label\nNo colon here\n  Updates : account notices  ";
     expect(textToDescriptions(text, ["Receipts", "Updates"])).toEqual({ Updates: "account notices" });
+  });
+});
+
+describe("sorterLabelLimitNote", () => {
+  it("is silent up to the limit and warns past it", () => {
+    // Past the limit the account silently loses the on-device sorter; the
+    // label form is where the user must find that out.
+    expect(sorterLabelLimitNote(0)).toBeNull();
+    expect(sorterLabelLimitNote(SORTER_MAX_LABELS)).toBeNull();
+    const note = sorterLabelLimitNote(SORTER_MAX_LABELS + 1);
+    expect(note).toContain(`${SORTER_MAX_LABELS + 1} labels`);
+    expect(note).toContain(`up to ${SORTER_MAX_LABELS}`);
   });
 });

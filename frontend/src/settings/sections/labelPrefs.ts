@@ -29,6 +29,23 @@ function normalize(raw: Partial<LabelPrefs> | null | undefined): LabelPrefs {
   };
 }
 
+/**
+ * The most labels the on-device embedding sorter learns (backend
+ * `sorter.MaxLabels`, kept equal by `TestMaxLabelsMatchesFrontend`). An account
+ * with more is sorted by the AI model alone.
+ */
+export const SORTER_MAX_LABELS = 10;
+
+/** The warning to show when a label list is too long for the on-device sorter, or null. */
+export function sorterLabelLimitNote(labelCount: number): string | null {
+  if (labelCount <= SORTER_MAX_LABELS) return null;
+  return (
+    `You have ${labelCount} labels. The on-device sorter learns up to ${SORTER_MAX_LABELS}, ` +
+    "so with more than that every message is sorted by the AI model instead: slower, and it does not learn from " +
+    "your label changes. Remove labels to turn the sorter back on."
+  );
+}
+
 /** "Label: description" per line. Split on the FIRST colon: descriptions may contain colons and commas. */
 export function descriptionsToText(descriptions: Record<string, string>): string {
   return Object.entries(descriptions)
