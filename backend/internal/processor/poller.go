@@ -28,6 +28,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/retry"
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
 	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
+	"github.com/Busnes-app/kypost-server/backend/internal/sorter"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
@@ -102,6 +103,13 @@ type Poller struct {
 	sendAsStores   map[string]*sendas.Store
 	contactsStores map[string]*contacts.Store
 	rate           map[string][]time.Time
+
+	// The embedding sorter (hybrid engine). embed is nil when it is off, and
+	// then every message goes to the LLM exactly as before. heads caches each
+	// user's trained head; all three are guarded by userMu. See sorter.go.
+	embed    *sorter.Model
+	embedMin float64
+	heads    map[string]*cachedHead
 }
 
 type mailClientEntry struct {
@@ -136,6 +144,11 @@ type userCtx struct {
 	// be read, which turns the known-sender pre-sort off rather than guessing.
 	headers      map[int]map[string][]string
 	knownSenders map[string]bool
+	// head is this user's embedding sorter for the tick (nil: LLM only), and
+	// guesses memoises its answer per message so the rate-limit pre-check and
+	// handleMessage embed each message once.
+	head    *sorter.Head
+	guesses map[string]sortGuess
 }
 
 func New(cfg config.Config, log *logging.Logger, globalStore *state.Store, usersStore *users.Store, stateDir, configDir string, healthSvc *health.Service, classifierClient *classifier.HTTPClient, wkdStore *wkdpublish.Store) (*Poller, error) {
@@ -756,6 +769,8 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		allowlist:        settings.Labels.Allowlist,
 		keywordMappings:  settings.Labels.KeywordMappings,
 		rules:            activeRules,
+		head:             p.userHead(u.ID, store, settings.Labels),
+		guesses:          map[string]sortGuess{},
 	}
 
 	// Derived from lifetimeCtx, not context.Background(): Stop() cancels the
@@ -905,9 +920,13 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 			deferredIDs = append(deferredIDs, msg.ID)
 			continue
 		}
-		// The rate limit rations classifier calls; mail pre-sort labels without
-		// one does not spend it.
-		if label, _, _ := presort(uc, msg, uid); label == "" && !p.allowByRate(u.ID) {
+		// The rate limit rations LLM calls; mail pre-sort labels, or that the
+		// embedding sorter is confident about, does not spend it. Decided here,
+		// before handleMessage, because handleMessage runs the user's filter
+		// rules first and a deferral after them would re-run their actions on
+		// the retry.
+		if label, allow, _ := presort(uc, msg, uid); label == "" &&
+			!p.guess(uc, msg, allow).confident(p.embedMin) && !p.allowByRate(u.ID) {
 			p.log.Info("rate limit reached, deferring remaining emails", "user_id", u.ID)
 			rateLimitedCount = len(messages) - processedCount - skippedSeenCount - failedCount
 			// "Deferring" is the whole point of the break: this message and
@@ -1481,84 +1500,102 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 	}
 
 	presorted, allowlist, presortNote := presort(uc, msg, uid)
+	guess := p.guess(uc, msg, allowlist)
 	if presorted != "" {
-		return p.tagWithLabel(ctx, uc, msg, presorted, "sender is a contact")
-	}
-
-	// One redaction engine, applied to everything that reaches the model.
-	//
-	// It used to run on the body alone, so the shipped default pattern set —
-	// which leads with an email pattern — masked every address INSIDE the body
-	// while the From line above it carried the real one, and an SSN or card
-	// number in a Subject went through untouched. AGENTS.md and README.md both
-	// describe masking "sender, subject, and body"; this is the third of it that
-	// was missing, and it matters most where the classifier endpoint is remote,
-	// since ValidateBaseURL accepts any https host and the request carries a
-	// bearer key.
-	//
-	// Redact BEFORE truncating: cutting first leaves a pattern that straddles
-	// the boundary unmatched, so its surviving prefix is sent in the clear.
-	// Rune-wise for the body too, so a multi-byte character is never split.
-	red := p.currentRedaction()
-	redacted := truncateRunes(red.Apply(strings.TrimSpace(msg.Body)), maxClassifyBodyRunes)
-
-	// Clamp the headers too. The prompt builder puts the instruction block, the
-	// nonced fence and the tuning document BEFORE the email text and Ollama
-	// truncates from the front, so an unbounded Subject pushes the fence out of
-	// num_ctx and the model sees attacker text with no instructions. Rune-wise so a
-	// multi-byte character is never split.
-	sender := truncateRunes(red.Apply(strings.TrimSpace(msg.Sender)), maxClassifySenderRunes)
-	subject := truncateRunes(red.Apply(strings.TrimSpace(msg.Subject)), maxClassifySubjectRunes)
-
-	label, err := classifyWithRetry(ctx, p.classifier, allowlist, sender, subject, redacted, uc.tuning)
-	// The model answering with something that isn't an allowed label is a
-	// normal outcome, not a classifier failure: fall through to the
-	// "no known label returned" skip path below (which retires the message
-	// and still notifies) rather than treating it as an error worth
-	// retrying or worth blocking MarkProcessed on.
-	var noLabel *classifier.NoAllowedLabelError
-	if errors.As(err, &noLabel) {
-		label, err = noLabel.Output, nil
-	}
-	if err != nil {
-		if isAICreditsExhaustedError(err) {
-			p.flagAICreditsExhausted()
+		if err := p.tagWithLabel(ctx, uc, msg, presorted, "sender is a contact"); err != nil {
+			return err
 		}
-		// Surfaced in /api/health without touching Healthy: a model that never
-		// installed (the container's pull can fail while everything else comes
-		// up fine) otherwise showed up nowhere an operator looks.
-		p.health.RecordClassifierFailure()
-		// Wrapped so the caller (tickUser, via shouldMarkProcessedOnError)
-		// can tell a classifier failure apart from rule/IMAP errors and gate
-		// MarkProcessed on isPermanentClassifierError instead of always
-		// retiring the message — see recordMessageFailure.
-		return &classifierErr{err: err}
-	}
-	// A successful classification means the classifier has credits again; clear any flag.
-	p.clearAICreditsExhausted()
-	p.health.RecordClassifierSuccess()
-	// No sender and no subject. This logger writes to the instance-wide app.log that
-	// GET /api/logs serves to ANY admin, so anything here leaves one user's
-	// correspondence metadata readable by an account that is not theirs. Sender and
-	// subject are recorded in the state.Decision row below, which lives in the
-	// user's own state.db; the message id joins the two when debugging.
-	p.log.Info("classification result", "user_id", uc.id, "message_id", msg.ID, "raw_label", clipForLog(label))
-	selected := classifier.SelectLabelFromText(allowlist, label)
-	if selected == "" {
-		p.log.Info("classification skipped", "user_id", uc.id, "message_id", msg.ID, "reason", "no known label returned", "raw_label", clipForLog(label), "allowlist_count", strconv.Itoa(len(allowlist)))
-		if err := uc.store.RecordProcessedDecision(state.Decision{
-			MessageID: msg.ID,
-			Sender:    msg.Sender,
-			SentTo:    msg.SentTo,
-			Subject:   msg.Subject,
-			Status:    "skipped",
-			Detail:    "no known label returned",
-		}); err != nil {
-			return &retryableErr{err: err}
-		}
-		p.maybeSendPushNotification(uc, msg, "", nil)
-		p.maybeSendNativePushNotification(uc, msg, "", nil)
+		p.rememberPrediction(uc, msg, guess, presorted)
 		return nil
+	}
+
+	detail := "label applied successfully" + presortNote
+	var selected string
+	if guess.confident(p.embedMin) {
+		// The embedding sorter is sure enough: no LLM call, no rate budget
+		// spent (tickUser's pre-check made the same decision). It saw the same
+		// redacted, clamped text the LLM would have.
+		selected = guess.label
+		detail = fmt.Sprintf("label applied by the embedding sorter (confidence %.2f)", guess.conf) + presortNote
+		p.log.Info("classification result", "user_id", uc.id, "message_id", msg.ID, "engine", "embedding",
+			"confidence", strconv.FormatFloat(guess.conf, 'f', 2, 64), "selected_label", selected)
+	} else {
+
+		// One redaction engine, applied to everything that reaches the model.
+		//
+		// It used to run on the body alone, so the shipped default pattern set —
+		// which leads with an email pattern — masked every address INSIDE the body
+		// while the From line above it carried the real one, and an SSN or card
+		// number in a Subject went through untouched. AGENTS.md and README.md both
+		// describe masking "sender, subject, and body"; this is the third of it that
+		// was missing, and it matters most where the classifier endpoint is remote,
+		// since ValidateBaseURL accepts any https host and the request carries a
+		// bearer key.
+		//
+		// Redact BEFORE truncating: cutting first leaves a pattern that straddles
+		// the boundary unmatched, so its surviving prefix is sent in the clear.
+		// Rune-wise for the body too, so a multi-byte character is never split.
+		red := p.currentRedaction()
+		redacted := truncateRunes(red.Apply(strings.TrimSpace(msg.Body)), maxClassifyBodyRunes)
+
+		// Clamp the headers too. The prompt builder puts the instruction block, the
+		// nonced fence and the tuning document BEFORE the email text and Ollama
+		// truncates from the front, so an unbounded Subject pushes the fence out of
+		// num_ctx and the model sees attacker text with no instructions. Rune-wise so a
+		// multi-byte character is never split.
+		sender := truncateRunes(red.Apply(strings.TrimSpace(msg.Sender)), maxClassifySenderRunes)
+		subject := truncateRunes(red.Apply(strings.TrimSpace(msg.Subject)), maxClassifySubjectRunes)
+
+		label, err := classifyWithRetry(ctx, p.classifier, allowlist, sender, subject, redacted, uc.tuning)
+		// The model answering with something that isn't an allowed label is a
+		// normal outcome, not a classifier failure: fall through to the
+		// "no known label returned" skip path below (which retires the message
+		// and still notifies) rather than treating it as an error worth
+		// retrying or worth blocking MarkProcessed on.
+		var noLabel *classifier.NoAllowedLabelError
+		if errors.As(err, &noLabel) {
+			label, err = noLabel.Output, nil
+		}
+		if err != nil {
+			if isAICreditsExhaustedError(err) {
+				p.flagAICreditsExhausted()
+			}
+			// Surfaced in /api/health without touching Healthy: a model that never
+			// installed (the container's pull can fail while everything else comes
+			// up fine) otherwise showed up nowhere an operator looks.
+			p.health.RecordClassifierFailure()
+			// Wrapped so the caller (tickUser, via shouldMarkProcessedOnError)
+			// can tell a classifier failure apart from rule/IMAP errors and gate
+			// MarkProcessed on isPermanentClassifierError instead of always
+			// retiring the message — see recordMessageFailure.
+			return &classifierErr{err: err}
+		}
+		// A successful classification means the classifier has credits again; clear any flag.
+		p.clearAICreditsExhausted()
+		p.health.RecordClassifierSuccess()
+		// No sender and no subject. This logger writes to the instance-wide app.log that
+		// GET /api/logs serves to ANY admin, so anything here leaves one user's
+		// correspondence metadata readable by an account that is not theirs. Sender and
+		// subject are recorded in the state.Decision row below, which lives in the
+		// user's own state.db; the message id joins the two when debugging.
+		p.log.Info("classification result", "user_id", uc.id, "message_id", msg.ID, "engine", "llm", "raw_label", clipForLog(label))
+		selected = classifier.SelectLabelFromText(allowlist, label)
+		if selected == "" {
+			p.log.Info("classification skipped", "user_id", uc.id, "message_id", msg.ID, "reason", "no known label returned", "raw_label", clipForLog(label), "allowlist_count", strconv.Itoa(len(allowlist)))
+			if err := uc.store.RecordProcessedDecision(state.Decision{
+				MessageID: msg.ID,
+				Sender:    msg.Sender,
+				SentTo:    msg.SentTo,
+				Subject:   msg.Subject,
+				Status:    "skipped",
+				Detail:    "no known label returned",
+			}); err != nil {
+				return &retryableErr{err: err}
+			}
+			p.maybeSendPushNotification(uc, msg, "", nil)
+			p.maybeSendNativePushNotification(uc, msg, "", nil)
+			return nil
+		}
 	}
 	keywords := keywordsForSelectedLabel(selected, uc.keywordMappings)
 	p.log.Info(
@@ -1585,10 +1622,11 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 		Subject:   msg.Subject,
 		Label:     selected,
 		Status:    "applied",
-		Detail:    "label applied successfully" + presortNote,
+		Detail:    detail,
 	}); err != nil {
 		return &retryableErr{err: err}
 	}
+	p.rememberPrediction(uc, msg, guess, selected)
 	p.maybeSendPushNotification(uc, msg, selected, keywords)
 	p.maybeSendNativePushNotification(uc, msg, selected, keywords)
 	return nil

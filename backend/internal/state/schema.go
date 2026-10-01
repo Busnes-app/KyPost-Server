@@ -177,6 +177,39 @@ CREATE TABLE IF NOT EXISTS deferrals (
 	last_at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS deferrals_first_at ON deferrals(first_at);
+
+-- The embedding sorter's memory (see internal/sorter). Vectors only: no
+-- sender, subject or body text is stored here.
+--
+-- sorter_predictions is what the sorter said about a recently classified
+-- message, so that a later keyword change can be recognised as a correction.
+-- check_hash is sha256(sender NUL subject) of the message as the IMAP adapter
+-- formats it; a correction must present the same hash, which keeps a reused UID
+-- (UIDVALIDITY is not tracked) from teaching the sorter about the wrong mail.
+-- Pruned by Cleanup with the decisions.
+CREATE TABLE IF NOT EXISTS sorter_predictions (
+	message_id TEXT PRIMARY KEY,
+	check_hash TEXT NOT NULL,
+	model      TEXT NOT NULL,
+	vec        BLOB NOT NULL,
+	predicted  TEXT NOT NULL,
+	at_unix    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sorter_predictions_at ON sorter_predictions(at_unix);
+
+-- One row per message the user re-labelled away from the sorter's answer: the
+-- training data that makes the sorter theirs. Not aged out with the decisions
+-- (it is the point of keeping it); bounded per label instead, see
+-- MaxSorterCorrectionsPerLabel. model names the embedding that produced vec so
+-- a model upgrade ignores incompatible rows instead of mixing vector spaces.
+CREATE TABLE IF NOT EXISTS sorter_corrections (
+	message_id TEXT PRIMARY KEY,
+	label      TEXT NOT NULL,
+	model      TEXT NOT NULL,
+	vec        BLOB NOT NULL,
+	at_unix    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sorter_corrections_label ON sorter_corrections(label, at_unix);
 `
 
 func openDB(path string) (*sql.DB, error) {
@@ -323,4 +356,8 @@ const (
 	// cannot see the daemon process's in-memory health.Service. See
 	// health/daemon.go.
 	metaDaemonHealth = "daemon_health"
+	// Bumped in the same transaction as every change to sorter_corrections, so
+	// the daemon retrains a user's sorter only when the API process (or it) has
+	// actually recorded something new.
+	metaSorterGeneration = "sorter_generation"
 )

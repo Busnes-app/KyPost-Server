@@ -8,7 +8,7 @@ import {
   textToMapping,
   type LabelsResponse
 } from "../../pages/config/settings";
-import { loadLabelPrefs, saveLabelPrefsPatch } from "./labelPrefs";
+import { descriptionsToText, loadLabelPrefs, saveLabelPrefsPatch, textToDescriptions } from "./labelPrefs";
 
 /**
  * This account's own label set.
@@ -20,6 +20,7 @@ import { loadLabelPrefs, saveLabelPrefsPatch } from "./labelPrefs";
 export function MyLabels() {
   const [allowlistText, setAllowlistText] = useState("");
   const [keywordMappingText, setKeywordMappingText] = useState("");
+  const [descriptionText, setDescriptionText] = useState("");
   const [labelsFromImap, setLabelsFromImap] = useState<string[]>([]);
   const [status, setStatus] = useState("");
   // Guards Save. Saving before the initial read has seeded the textareas would
@@ -47,6 +48,7 @@ export function MyLabels() {
         }
         setAllowlistText(labelsToText(prefs.allowlist));
         setKeywordMappingText(mappingToText(prefs.keywordMappings));
+        setDescriptionText(descriptionsToText(prefs.descriptions));
         setLoaded(true);
       } catch {
         if (!cancelled) {
@@ -75,7 +77,8 @@ export function MyLabels() {
     try {
       await saveLabelPrefsPatch({
         allowlist: effectiveAllowlist,
-        keywordMappings: textToMapping(keywordMappingText)
+        keywordMappings: textToMapping(keywordMappingText),
+        descriptions: textToDescriptions(descriptionText, effectiveAllowlist)
       });
       setStatus("Your labels were saved.");
     } catch {
@@ -105,7 +108,21 @@ export function MyLabels() {
             className="config-textarea"
           />
         </label>
+        <label>
+          <div>Label Descriptions (Label: what belongs here), optional</div>
+          <textarea
+            rows={6}
+            value={descriptionText}
+            onChange={(event) => setDescriptionText(event.target.value)}
+            className="config-textarea"
+            placeholder="Receipts: order confirmations, invoices and payment receipts"
+          />
+        </label>
       </div>
+      <p className="config-muted">
+        A description lets the on-device sorter recognise a new label straight away. It also learns from you: change a
+        message&apos;s label and similar mail follows. Descriptions stay on this server and are never sent to the AI model.
+      </p>
       <div className="config-actions">
         <button type="button" onClick={applyImapLabelsToAllowlist}>Merge IMAP Labels</button>
         <button type="button" onClick={() => void save()} disabled={!loaded}>Save Labels</button>

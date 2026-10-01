@@ -6,13 +6,16 @@ export type LabelPrefs = {
   seeded: boolean;
   allowlist: string[];
   keywordMappings: Record<string, string[]>;
+  /** Optional one-line description per label; the local embedding sorter uses it as that label's first example. */
+  descriptions: Record<string, string>;
 };
 
 const EMPTY: LabelPrefs = {
   autoApplyEnabled: true,
   seeded: false,
   allowlist: [],
-  keywordMappings: {}
+  keywordMappings: {},
+  descriptions: {}
 };
 
 /** Fills in anything an older server omits, so callers never see undefined. */
@@ -21,8 +24,29 @@ function normalize(raw: Partial<LabelPrefs> | null | undefined): LabelPrefs {
     autoApplyEnabled: raw?.autoApplyEnabled ?? EMPTY.autoApplyEnabled,
     seeded: raw?.seeded ?? EMPTY.seeded,
     allowlist: raw?.allowlist ?? [],
-    keywordMappings: raw?.keywordMappings ?? {}
+    keywordMappings: raw?.keywordMappings ?? {},
+    descriptions: raw?.descriptions ?? {}
   };
+}
+
+/** "Label: description" per line. Split on the FIRST colon: descriptions may contain colons and commas. */
+export function descriptionsToText(descriptions: Record<string, string>): string {
+  return Object.entries(descriptions)
+    .map(([label, text]) => `${label}: ${text}`)
+    .join("\n");
+}
+
+/** Inverse of descriptionsToText, keeping only labels in allowlist (the server refuses the rest). */
+export function textToDescriptions(text: string, allowlist: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const at = line.indexOf(":");
+    if (at < 0) continue;
+    const label = line.slice(0, at).trim();
+    const description = line.slice(at + 1).trim();
+    if (label && description && allowlist.includes(label)) out[label] = description;
+  }
+  return out;
 }
 
 export async function loadLabelPrefs(): Promise<LabelPrefs> {

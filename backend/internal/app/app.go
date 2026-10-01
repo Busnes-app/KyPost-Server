@@ -23,6 +23,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/processor"
+	"github.com/Busnes-app/kypost-server/backend/internal/sorter"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
@@ -152,6 +153,50 @@ type runDeps struct {
 	wkdStore   *wkdpublish.Store
 }
 
+// defaultEmbedModelDir is where the Dockerfile installs potion-base-8M,
+// root-owned and read-only.
+const defaultEmbedModelDir = "/opt/kypost/models/potion-base-8M"
+
+// configureSorter turns on the hybrid engine (embedding sorter first, LLM for
+// whatever it is unsure of) unless CLASSIFIER_ENGINE=llm.
+//
+// A value the operator mistyped refuses to start: silently running the other
+// engine is the permissive default CONTRIBUTING rules out. A missing or corrupt
+// model directory does NOT refuse to start — the LLM still sorts everything,
+// and a mail server should not go down over an optional engine — but it is
+// logged as an error, never silently.
+func configureSorter(log *logging.Logger, poller *processor.Poller) error {
+	switch engine := strings.ToLower(strings.TrimSpace(os.Getenv("CLASSIFIER_ENGINE"))); engine {
+	case "", "hybrid":
+	case "llm":
+		log.Info("embedding sorter disabled by CLASSIFIER_ENGINE", "engine", "llm")
+		return nil
+	default:
+		return fmt.Errorf("CLASSIFIER_ENGINE=%q is not valid: use hybrid (the default) or llm", engine)
+	}
+	minConf := processor.DefaultEmbedMinConfidence
+	if v := strings.TrimSpace(os.Getenv("EMBED_MIN_CONFIDENCE")); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 || f > 1 {
+			return fmt.Errorf("EMBED_MIN_CONFIDENCE=%q is not valid: use a number from 0 to 1", v)
+		}
+		minConf = f
+	}
+	dir := strings.TrimSpace(os.Getenv("EMBED_MODEL_DIR"))
+	if dir == "" {
+		dir = defaultEmbedModelDir
+	}
+	m, err := sorter.Load(dir)
+	if err != nil {
+		log.Error("embedding sorter unavailable; every message goes to the LLM", "path", dir, "error", err.Error())
+		return nil
+	}
+	poller.SetSorter(m, minConf)
+	log.Info("embedding sorter enabled", "engine", "hybrid", "model", sorter.ModelID,
+		"confidence", strconv.FormatFloat(minConf, 'f', 2, 64))
+	return nil
+}
+
 func runDaemon(ctx context.Context, d runDeps) error {
 	classifierClient := newClassifierClient(d.cfg)
 	poller, err := processor.New(d.cfg, d.logger, d.store, d.users, d.stateDir, d.configDir, d.health, classifierClient, d.wkdStore)
@@ -159,6 +204,9 @@ func runDaemon(ctx context.Context, d runDeps) error {
 		return err
 	}
 	poller.SetConfigPath(d.configPath)
+	if err := configureSorter(d.logger, poller); err != nil {
+		return err
+	}
 	warmupDone := warmupClassifierOnStartup(ctx, d.logger, classifierClient, poller)
 	backupDone, err := startBackupLoop(ctx, d)
 	if err != nil {

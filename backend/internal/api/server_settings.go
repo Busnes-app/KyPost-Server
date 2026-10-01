@@ -8,12 +8,16 @@ import (
 
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
@@ -176,6 +180,30 @@ func (s *Server) handleLabelPreferences(w http.ResponseWriter, r *http.Request) 
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "mapped keyword cannot be used as an IMAP keyword: " + err.Error()})
 					return
 				}
+			}
+		}
+		// Descriptions only ever reach the local embedding model, but they are
+		// stored per account and shown back in the form, so they are bounded and
+		// must name a label that exists.
+		if prefs.Descriptions == nil {
+			prefs.Descriptions = map[string]string{}
+		}
+		for label, desc := range prefs.Descriptions {
+			desc = strings.TrimSpace(desc)
+			switch {
+			case !slices.Contains(prefs.Allowlist, label):
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "description given for a label that is not in the list"})
+				return
+			case utf8.RuneCountInString(desc) > config.MaxLabelDescriptionRunes:
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("label description longer than %d characters", config.MaxLabelDescriptionRunes)})
+				return
+			case strings.ContainsFunc(desc, unicode.IsControl):
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "label description contains control characters"})
+				return
+			case desc == "":
+				delete(prefs.Descriptions, label)
+			default:
+				prefs.Descriptions[label] = desc
 			}
 		}
 		// A caller that saved a list has one, whatever it contains — including

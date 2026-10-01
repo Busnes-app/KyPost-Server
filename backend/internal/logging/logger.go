@@ -112,6 +112,8 @@ var (
 	_ = kylog.DeclareString("rules_matched")
 	_ = kylog.DeclareString("scheme")
 	_ = kylog.DeclareString("selected_label")
+	_ = kylog.DeclareString("engine")
+	_ = kylog.DeclareString("confidence")
 	_ = kylog.DeclareString("sent")
 	_ = kylog.DeclareString("sent_saved")
 	_ = kylog.DeclareString("sent_via")
