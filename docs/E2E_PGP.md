@@ -215,7 +215,12 @@ unexpired, unrevoked client-protected public key with a stored wrapped private
 key and an explicit saved-private-key-backup acknowledgment. Neither an admin
 setting nor the presence of a key enables it automatically.
 
-The daemon evaluates header/filter rules and uses the existing contact pre-sort,
+The daemon checks rules, mailbox capabilities and exact ciphertext size before
+classification or a replacement job. Rule values are normalized and validated
+before admission, and LLM quota is charged only after feasibility succeeds.
+Recovery of an older job with unsafe saved rule/label values keeps the encrypted
+copy, skips those actions and records an explicit failure while releasing the
+pending key reservation. It then uses the existing contact pre-sort,
 embedding sorter and LLM classification before replacing plaintext. Corrections
 to encrypted replacements do not train the embedding sorter from their original
 plaintext: its vector/prediction is not retained for these messages.
@@ -238,7 +243,12 @@ content hash and exact appended ciphertext before targeted UID EXPUNGE of the
 original. It preserves INTERNALDATE and current flags. Sensitive commands never
 silently reconnect or retry. A single durable ciphertext-only job per account
 reconciles lost acknowledgments, applies labels/rules and atomically records
-both UIDs as processed; failures pause that account without retiring the mail.
+both UIDs as processed; pending-job failures pause that account without retiring
+the mail. Before a job exists, permanent per-message size/rule failures use the
+existing 120-attempt deferral limit and record an explicit failure: the original
+stays plaintext in IMAP, but no longer holds the polling checkpoint. Recoverable
+key/mailbox failures remain retryable without that cap. Failure audits use a
+placeholder subject and report that encryption was abandoned.
 A pending job resumes before normal polling, even after the setting is disabled.
 Moving rules reconcile an uncertain MOVE against the exact destination copy.
 

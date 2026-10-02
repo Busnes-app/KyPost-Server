@@ -18,6 +18,7 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/redaction"
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
@@ -28,27 +29,36 @@ import (
 type encryptingMailbox struct {
 	noopMailClient
 	source     imapadapter.IncomingSource
+	sources    map[int]imapadapter.IncomingSource
 	replaceErr error
+	prepareErr error
+	msgs       []imapadapter.Message
 	calls      int
 	prepared   int
 	actions    []string
 	cipher     []byte
 }
 
-func (m *encryptingMailbox) PrepareIncoming(_ context.Context, _ int, _ bool) (imapadapter.IncomingSource, error) {
+func (m *encryptingMailbox) PrepareIncoming(_ context.Context, uid int, _ bool) (imapadapter.IncomingSource, error) {
 	m.prepared++
-	return m.source, nil
+	if source, ok := m.sources[uid]; ok {
+		return source, m.prepareErr
+	}
+	return m.source, m.prepareErr
 }
-func (m *encryptingMailbox) ReplaceIncoming(_ context.Context, _ imapadapter.IncomingSource, _ string, encrypted []byte) (int, error) {
+func (m *encryptingMailbox) ListUnreadInbox(ctx context.Context, checkpoint string) ([]imapadapter.Message, string, error) {
+	return (&scriptedMailbox{msgs: m.msgs}).ListUnreadInbox(ctx, checkpoint)
+}
+func (m *encryptingMailbox) ReplaceIncoming(_ context.Context, source imapadapter.IncomingSource, _ string, encrypted []byte) (int, error) {
 	m.calls++
 	m.cipher = bytes.Clone(encrypted)
 	if m.replaceErr != nil {
 		return 0, m.replaceErr
 	}
-	return 8, nil
+	return source.UID + 1, nil
 }
-func (m *encryptingMailbox) ApplyIncomingAction(_ context.Context, _ imapadapter.IncomingSource, uid int, _ string, _ []byte, action, value string) error {
-	if uid != 8 {
+func (m *encryptingMailbox) ApplyIncomingAction(_ context.Context, source imapadapter.IncomingSource, uid int, _ string, _ []byte, action, value string) error {
+	if uid != source.UID+1 {
 		return errors.New("action used original UID")
 	}
 	m.actions = append(m.actions, action+":"+value)
@@ -224,5 +234,206 @@ func TestIncomingEncryptionPreservesHeaderStopRule(t *testing.T) {
 	}
 	if len(mail.actions) != 2 || mail.actions[0] != "keyword:Spam" || mail.actions[1] != "stop:" {
 		t.Fatalf("header rule lost: %v", mail.actions)
+	}
+}
+
+func TestIncomingPermanentSizeFailureIsBoundedWithoutClassification(t *testing.T) {
+	p, uc, mail := incomingPollerForTest(t)
+	var classified atomic.Int32
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Format json.RawMessage `json:"format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		if len(payload.Format) != 0 {
+			classified.Add(1)
+		}
+		_, _ = w.Write([]byte(`{"response":"Primary"}`))
+	}))
+	t.Cleanup(llm.Close)
+	p.classifier = classifier.NewHTTPClient(llm.URL, "", "", "", time.Second)
+	p.cfg.RateLimits.PerMinute, p.cfg.RateLimits.PerHour = 1, 1
+	sibling := mail.source
+	sibling.UID = 9
+	sibling.Raw = bytes.Clone(sibling.Raw)
+	mail.sources = map[int]imapadapter.IncomingSource{9: sibling}
+	previous := mailmsg.MaxInboundMessageBytes
+	mailmsg.MaxInboundMessageBytes = 4096
+	t.Cleanup(func() { mailmsg.MaxInboundMessageBytes = previous })
+	mail.source.Raw = append(mail.source.Raw, bytes.Repeat([]byte("uncompressible enough original plaintext 0123456789"), 65)...)
+	if int64(len(mail.source.Raw)) >= mailmsg.MaxInboundMessageBytes {
+		t.Fatal("original is already oversized")
+	}
+	mail.msgs = []imapadapter.Message{{ID: "7", Sender: "bob@example.com", Subject: "secret subject", Body: "secret body"}, {ID: "9", Body: "valid sibling", Subject: "valid"}}
+	settings := config.DefaultUserSettings()
+	settings.EncryptIncoming = true
+	if err := config.SaveUserSettings(p.userSettingsPath(uc.id), settings); err != nil {
+		t.Fatal(err)
+	}
+	u, err := p.users.Get(uc.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range maxDeferralAttempts - 2 {
+		if _, err := uc.store.RecordDeferral("7"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Feasibility must reject before any model request.
+	if err := p.tickUser(u, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if seen, _ := uc.store.Seen("7"); seen {
+		t.Fatal("retired before bounded attempt limit")
+	}
+	if checkpointOf(t, uc.store) != "6" {
+		t.Fatal("did not hold checkpoint below retry")
+	}
+	if err := p.tickUser(u, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if seen, _ := uc.store.Seen("7"); !seen {
+		t.Fatal("permanent failure never retired")
+	}
+	if seen, _ := uc.store.Seen("9"); !seen {
+		t.Fatal("later mail blocked")
+	}
+	if checkpointOf(t, uc.store) != "9" {
+		t.Fatal("checkpoint never advanced after permanent rejection")
+	}
+	if mail.calls != 1 || mail.prepared != 3 {
+		t.Fatalf("unsafe or repeated replacement: %d/%d", mail.calls, mail.prepared)
+	}
+	if classified.Load() != 1 {
+		t.Fatal("poison used quota or valid sibling was not classified exactly once")
+	}
+	found := false
+	for _, d := range uc.store.Decisions(10) {
+		if d.MessageID == "7" {
+			if d.Subject != pgpmail.OuterPlaceholderSubject {
+				t.Fatal("failure audit leaked subject")
+			}
+			if strings.Contains(d.Detail, "gave up after") && strings.Contains(d.Detail, "original remains plaintext") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no explicit final plaintext-retention failure")
+	}
+	if _, err := os.Stat(p.incomingJobPath(uc.id)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("permanent preflight failure created a job")
+	}
+}
+
+func TestIncomingTemporaryPreflightFailureKeepsRetryingWithoutClassification(t *testing.T) {
+	p, uc, mail := incomingPollerForTest(t)
+	mail.prepareErr = errors.New("connection temporarily unavailable")
+	mail.msgs = []imapadapter.Message{{ID: "7", Body: "secret body"}}
+	settings := config.DefaultUserSettings()
+	settings.EncryptIncoming = true
+	if err := config.SaveUserSettings(p.userSettingsPath(uc.id), settings); err != nil {
+		t.Fatal(err)
+	}
+	for range maxDeferralAttempts {
+		if _, err := uc.store.RecordDeferral("7"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u, err := p.users.Get(uc.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.tickUser(u, time.Now()); err == nil {
+		t.Fatal("connection failure not surfaced")
+	}
+	if seen, _ := uc.store.Seen("7"); seen {
+		t.Fatal("temporary failure retired at cap")
+	}
+	if mail.calls != 0 || mail.prepared != 1 {
+		t.Fatal("unexpected classification/replacement")
+	}
+}
+
+func TestIncomingRejectsUnsafeRuleValuesBeforeJournalAndRecoversAfterCorrection(t *testing.T) {
+	for _, action := range []rules.Action{{Type: "keyword", Value: "Follow Up"}, {Type: "unkeyword", Value: "bad\r\nflag"}, {Type: "move", Value: `bad"folder`}} {
+		t.Run(action.Type, func(t *testing.T) {
+			p, uc, mail := incomingPollerForTest(t)
+			uc.rules = []rules.Rule{{ID: "rule", Enabled: true, Match: rules.MatchGroup{Op: "allof", Conditions: []rules.Condition{{Field: "from", Comparator: "contains", Value: "bob"}}}, Actions: []rules.Action{action, {Type: "stop"}}}}
+			msg := imapadapter.Message{ID: "7", Sender: "bob@example.com", Body: "secret body"}
+			if err := p.handleMessage(context.Background(), uc, msg); !errors.Is(err, errIncomingPermanent) {
+				t.Fatalf("not a permanent rejection: %v", err)
+			}
+			if mail.calls != 0 || mail.prepared != 0 {
+				t.Fatal("unsafe values reached IMAP")
+			}
+			u, err := p.users.Get(uc.id)
+			if err != nil || u.IncomingEncryptionPending {
+				t.Fatal("unsafe values reserved key")
+			}
+			if _, err := os.Stat(p.incomingJobPath(uc.id)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("unsafe journal persisted")
+			}
+			uc.rules[0].Actions = []rules.Action{{Type: "keyword", Value: "Safe"}, {Type: "stop"}}
+			if err := p.handleMessage(context.Background(), uc, msg); err != nil {
+				t.Fatal(err)
+			}
+			if mail.calls != 1 {
+				t.Fatal("corrected rule did not recover")
+			}
+		})
+	}
+}
+
+func TestIncomingLegacyUnsafeJobFinishesWithoutExecutingUnsafeActions(t *testing.T) {
+	p, uc, mail := incomingPollerForTest(t)
+	uc.autoLabelEnabled = false
+	mail.replaceErr = errors.New("lost append acknowledgment")
+	if err := p.handleMessage(context.Background(), uc, imapadapter.Message{ID: "7", Body: "secret body"}); err == nil {
+		t.Fatal("expected pending job")
+	}
+	data, err := os.ReadFile(p.incomingJobPath(uc.id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var job incomingJob
+	if err := json.Unmarshal(data, &job); err != nil {
+		t.Fatal(err)
+	}
+	job.Actions = []rules.Action{{Type: "keyword", Value: "bad flag"}}
+	if err := saveIncomingJob(p.incomingJobPath(uc.id), job); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.resumeIncomingEncryption(context.Background(), uc); err == nil {
+		t.Fatal("expected another uncertain replacement")
+	}
+	data, err = os.ReadFile(p.incomingJobPath(uc.id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &job); err != nil {
+		t.Fatal(err)
+	}
+	if job.Decision.Status != "failed" || len(job.Actions) != 0 || !strings.Contains(job.Decision.Detail, "invalid saved rule") {
+		t.Fatal("repair audit lost across interrupted recovery")
+	}
+	mail.replaceErr = nil
+	if err := p.resumeIncomingEncryption(context.Background(), uc); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range mail.actions {
+		if strings.Contains(action, "bad flag") {
+			t.Fatal("unsafe action executed")
+		}
+	}
+	u, err := p.users.Get(uc.id)
+	if err != nil || u.IncomingEncryptionPending {
+		t.Fatal("unsafe old job kept key locked")
+	}
+	decisions := uc.store.Decisions(10)
+	if len(decisions) != 1 || decisions[0].Status != "failed" || !strings.Contains(decisions[0].Detail, "invalid saved rule") {
+		t.Fatalf("recovery not reported: %v", decisions)
 	}
 }

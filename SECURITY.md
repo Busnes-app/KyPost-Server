@@ -10,7 +10,8 @@ replacing unread, unprocessed inbox mail; the provider and KyPost see plaintext
 before replacement. Provider backups and other clients may retain copies. Routing
 metadata and classification keywords stay visible. Cache bodies stay disabled
 after opt-in, and pending jobs lock key replacement until verified recovery
-completes. See the [full contract](docs/E2E_PGP.md#incoming-mail-encryption-opt-in).
+completes. Permanent size/rule failures are reported after bounded retries and
+leave the original plaintext in IMAP; recoverable failures remain pending. See the [full contract](docs/E2E_PGP.md#incoming-mail-encryption-opt-in).
 
 ## Reporting Security Vulnerabilities
 

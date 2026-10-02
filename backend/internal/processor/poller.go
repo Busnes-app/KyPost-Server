@@ -24,6 +24,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/redaction"
 	"github.com/Busnes-app/kypost-server/backend/internal/retry"
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
@@ -932,8 +933,9 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		// embedding sorter is confident about, does not spend it. Decided here,
 		// before handleMessage, because handleMessage runs the user's filter
 		// rules first and a deferral after them would re-run their actions on
-		// the retry.
-		if label, allow, _ := presort(uc, msg, uid); label == "" &&
+		// the retry. Incoming encryption defers all mutations, so it admits quota
+		// after feasibility checks, immediately before the LLM call instead.
+		if label, allow, _ := presort(uc, msg, uid); !uc.encryptIncoming && label == "" &&
 			!p.guess(uc, msg, allow).confident(p.embedMin) && !p.allowByRate(u.ID) {
 			p.log.Info("rate limit reached, deferring remaining emails", "user_id", u.ID)
 			rateLimitedCount = len(messages) - processedCount - skippedSeenCount - failedCount
@@ -964,6 +966,11 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		messageCtx, messageCancel := context.WithTimeout(ctx, perMessageTimeout)
 		err = p.handleMessage(messageCtx, uc, msg)
 		messageCancel()
+		if errors.Is(err, errIncomingRateLimited) {
+			rateLimitedCount++
+			deferredIDs = append(deferredIDs, msg.ID)
+			continue
+		}
 		if err != nil {
 			failedCount++
 			// Decided ONCE, here, and handed to recordMessageFailure rather than
@@ -971,15 +978,21 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 			// past it are the same decision, and two copies of the predicate are
 			// how they drift apart.
 			var encryptionErr *incomingEncryptionErr
-			if errors.As(err, &encryptionErr) {
-				// Encryption is an explicit promise: no attempt cap may silently retire
-				// a plaintext message, and failure audits must not retain its subject.
+			if errors.As(err, &encryptionErr) && !errors.Is(err, errIncomingPermanent) {
+				// Recoverable key/mailbox failures and durable jobs must remain retryable.
 				deferredIDs = append(deferredIDs, msg.ID)
 				ledgerErr = err
 				p.log.Error("incoming encryption deferred; restore the key or IMAP connection to retry", "user_id", u.ID, "message_id", msg.ID, "error", err.Error())
 				continue
 			}
 			retire := shouldMarkProcessedOnError(err)
+			if encryptionErr != nil {
+				// Permanent per-message rejection uses the existing bounded ledger.
+				// Preserve plaintext in IMAP, but never retain it in failure previews.
+				retire = false
+				msg.Subject = pgpmail.OuterPlaceholderSubject
+				msg.PGPEncrypted = true
+			}
 			if !retire {
 				// A deferral holds the checkpoint below this message, so every
 				// later message is re-fetched next tick too. That is affordable

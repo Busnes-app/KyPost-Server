@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,6 +22,10 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
+
+var errIncomingRateLimited = errors.New("incoming classification rate limit reached")
+
+var errIncomingPermanent = errors.New("incoming message cannot be encrypted; original remains plaintext")
 
 type incomingEncryptionErr struct{ err error }
 
@@ -73,6 +78,9 @@ func saveIncomingJob(path string, job incomingJob) error {
 }
 
 func (p *Poller) encryptIncomingMessage(ctx context.Context, uc userCtx, msg imapadapter.Message) error {
+	if _, err := os.Stat(p.incomingJobPath(uc.id)); !errors.Is(err, os.ErrNotExist) {
+		return errors.New("an incoming encryption job is pending; retry it before admitting more mail")
+	}
 	mail, ok := uc.mail.(incomingEncryptor)
 	if !ok {
 		return errors.New("IMAP adapter does not support incoming encryption")
@@ -93,43 +101,15 @@ func (p *Poller) encryptIncomingMessage(ctx context.Context, uc userCtx, msg ima
 	}
 	uid, err := strconv.Atoi(msg.ID)
 	if err != nil || uid <= 0 {
-		return errors.New("invalid incoming message UID")
+		return fmt.Errorf("%w: invalid incoming UID", errIncomingPermanent)
 	}
 	input := rules.EvalInput{UID: uid, MessageID: msg.ID, From: msg.Sender, To: msg.SentTo, CC: msg.CC, BCC: msg.BCC, Subject: msg.Subject, Body: msg.Body, Keywords: msg.Keywords, Folder: "INBOX", Headers: uc.headers[uid]}
 	outcome := rules.Evaluate(ctx, input, uc.rules)
 	if err := validateIncomingActions(outcome.Applied); err != nil {
-		return err
+		return fmt.Errorf("%w: %s", errIncomingPermanent, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	selected, detail := "", "incoming mail encrypted after rule evaluation"
-	if !outcome.Stopped {
-		if !uc.autoLabelEnabled {
-			selected, detail = disabledLabelingFallback(uc.allowlist), "automatic keyword labeling disabled; incoming mail encrypted"
-		} else {
-			presorted, allowlist, note := presort(uc, msg, uid)
-			guess := p.guess(uc, msg, allowlist)
-			switch {
-			case presorted != "":
-				selected = presorted
-				detail = "sender is a contact; incoming mail encrypted"
-			case guess.confident(p.embedMin):
-				selected = guess.label
-				detail = "classified by embedding sorter and encrypted incoming mail" + note
-			default:
-				label, err := p.classifyMessage(ctx, uc, msg, allowlist)
-				if err != nil {
-					return err
-				}
-				selected = classifier.SelectLabelFromText(allowlist, label)
-				detail = "classified and encrypted incoming mail" + note
-				if selected == "" {
-					detail = "no known label returned; incoming mail encrypted" + note
-				}
-			}
-
-		}
 	}
 	requiresMove := false
 	for _, action := range outcome.Applied {
@@ -153,17 +133,51 @@ func (p *Poller) encryptIncomingMessage(ctx context.Context, uc userCtx, msg ima
 	marker := hex.EncodeToString(markerBytes)
 	encrypted = append([]byte("X-KyPost-Incoming: "+marker+"\r\n"), encrypted...)
 	if int64(len(encrypted)) > mailmsg.MaxInboundMessageBytes {
-		return errors.New("encrypted replacement exceeds the message size limit; original mail preserved")
+		return fmt.Errorf("%w: encrypted replacement exceeds the message size limit", errIncomingPermanent)
 	}
 	source.Raw = nil
+	selected, detail := "", "incoming mail encrypted after rule evaluation"
+	if !outcome.Stopped {
+		if !uc.autoLabelEnabled {
+			selected, detail = disabledLabelingFallback(uc.allowlist), "automatic keyword labeling disabled; incoming mail encrypted"
+		} else {
+			presorted, allowlist, note := presort(uc, msg, uid)
+			guess := p.guess(uc, msg, allowlist)
+			switch {
+			case presorted != "":
+				selected = presorted
+				detail = "sender is a contact; incoming mail encrypted"
+			case guess.confident(p.embedMin):
+				selected = guess.label
+				detail = "classified by embedding sorter and encrypted incoming mail" + note
+			default:
+				if !p.allowByRate(uc.id) {
+					return errIncomingRateLimited
+				}
+				label, err := p.classifyMessage(ctx, uc, msg, allowlist)
+				if err != nil {
+					return err
+				}
+				selected = classifier.SelectLabelFromText(allowlist, label)
+				detail = "classified and encrypted incoming mail" + note
+				if selected == "" {
+					detail = "no known label returned; incoming mail encrypted" + note
+				}
+			}
+
+		}
+	}
+	keywords := keywordsForSelectedLabel(selected, uc.keywordMappings)
+	for _, keyword := range keywords {
+		if err := imapadapter.ValidateKeyword(keyword); err != nil {
+			return fmt.Errorf("%w: invalid configured classification keyword; update labels", errIncomingPermanent)
+		}
+	}
 	job := incomingJob{Version: 1, Fingerprint: u.PGPFingerprint, Source: source, Marker: marker, Ciphertext: encrypted,
 		Decision: state.Decision{MessageID: msg.ID, Sender: msg.Sender, SentTo: msg.SentTo, Subject: pgpmail.OuterPlaceholderSubject, Label: selected, Status: "applied", Detail: detail},
-		Actions:  outcome.Applied, Keywords: keywordsForSelectedLabel(selected, uc.keywordMappings)}
+		Actions:  outcome.Applied, Keywords: keywords}
 	// ponytail: one durable job per account serializes replacements. A blocked job
 	// pauses that account; use a bounded queue only if throughput requires it.
-	if _, err := os.Stat(p.incomingJobPath(uc.id)); !errors.Is(err, os.ErrNotExist) {
-		return errors.New("an incoming encryption job is pending; retry it before admitting more mail")
-	}
 	if _, err := p.users.ReserveIncomingEncryption(uc.id, u.PGPFingerprint, u.PGPRevision); err != nil {
 		return err
 	}
@@ -216,8 +230,26 @@ func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error
 		return errors.New("recover the original client-protected PGP identity before resuming incoming encryption")
 	}
 
+	// Older jobs may contain values rejected only after replacement. Drop unsafe
+	// saved actions, retain the ciphertext and finish with an explicit failure.
+	repaired := false
 	if err := validateIncomingActions(job.Actions); err != nil {
-		return err
+		job.Actions, job.NextAction = nil, 0
+		repaired = true
+	}
+	for _, keyword := range job.Keywords {
+		if err := imapadapter.ValidateKeyword(keyword); err != nil {
+			job.Keywords = nil
+			repaired = true
+			break
+		}
+	}
+	if repaired {
+		job.Decision.Status = "failed"
+		job.Decision.Detail = "encrypted copy retained; invalid saved rule or label values skipped; update filters and labels"
+		if err := saveIncomingJob(path, job); err != nil {
+			return err
+		}
 	}
 	if _, err := p.users.ReserveIncomingEncryption(uc.id, job.Fingerprint, u.PGPRevision); err != nil {
 		return err
@@ -310,7 +342,10 @@ func (p *Poller) finishIncomingJournal(userID, path string) error {
 // replacement rather than claim later actions ran against a nonexistent UID.
 func validateIncomingActions(actions []rules.Action) error {
 	moved := false
-	for _, action := range actions {
+	for i := range actions {
+		action := &actions[i]
+		action.Type = strings.ToLower(strings.TrimSpace(action.Type))
+		action.Value = strings.TrimSpace(action.Value)
 		if action.Type == "stop" {
 			continue
 		}
@@ -318,8 +353,20 @@ func validateIncomingActions(actions []rules.Action) error {
 			return errors.New("incoming encryption requires a move/archive/spam/delete to be the last rule action; update your matching filters")
 		}
 		switch action.Type {
-		case "move", "archive", "spam", "delete":
+		case "keyword", "unkeyword":
+			if err := imapadapter.ValidateKeyword(action.Value); err != nil {
+				return errors.New("invalid incoming keyword; update matching filters")
+			}
+		case "move":
+			if err := imapadapter.ValidateMailboxName(action.Value); err != nil {
+				return errors.New("invalid incoming destination; update matching filters")
+			}
 			moved = true
+		case "archive", "spam", "delete":
+			moved = true
+		case "read":
+		default:
+			return errors.New("unsupported incoming action; update matching filters")
 		}
 	}
 	return nil
