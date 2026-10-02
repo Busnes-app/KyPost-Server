@@ -319,3 +319,29 @@ func TestIncomingEncryptionRejectsNonInboxPollingMailbox(t *testing.T) {
 		}
 	}
 }
+
+func TestIncomingSearchChecksUIDIntegerBounds(t *testing.T) {
+	client, fixture, server := newIncomingFixture(t)
+	d, err := client.ensureConnectedLocked()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"0", "-1", "4294967296", "18446744073709551615", "4294967295"} {
+		server.mu.Lock()
+		server.commandHook = func(tag, command string) (string, bool) {
+			if strings.HasPrefix(command, "UID SEARCH") {
+				return "* SEARCH " + value + "\r\n" + tag + " OK done\r\n", true
+			}
+			return fixture.respond(tag, command)
+		}
+		server.mu.Unlock()
+		uids, err := incomingSearch(d, "ALL")
+		if value == "4294967295" && strconv.IntSize == 64 {
+			if err != nil || len(uids) != 1 || uint64(uids[0]) != uint64(4294967295) {
+				t.Fatalf("valid 32-bit UID rejected: %v %v", uids, err)
+			}
+		} else if err == nil {
+			t.Fatalf("unsafe UID %s accepted: %v", value, uids)
+		}
+	}
+}

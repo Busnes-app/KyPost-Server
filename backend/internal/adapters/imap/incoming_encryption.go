@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -271,7 +272,7 @@ func incomingSearch(d *goimap.Dialer, criteria string) ([]int, error) {
 		out := make([]int, 0, len(fields)-2)
 		for _, value := range fields[2:] {
 			uid, err := strconv.ParseUint(value, 10, 32)
-			if err != nil || uid == 0 {
+			if err != nil || uid == 0 || uid > math.MaxInt {
 				return nil, errors.New("invalid IMAP search result")
 			}
 			out = append(out, int(uid))
