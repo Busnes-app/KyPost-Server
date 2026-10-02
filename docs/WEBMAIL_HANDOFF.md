@@ -2,6 +2,12 @@
 
 ## Why this exists
 
+Per-user incoming encryption can also produce unsigned OpenPGP/MIME replacements
+with a new UID and a protected subject. Use the existing encrypted-mail read or
+webmail handoff path and refresh mailbox rows after replacement; classification
+has already occurred before encryption. The opt-in API and recovery contract are
+in [E2E_PGP.md](E2E_PGP.md#incoming-mail-encryption-opt-in).
+
 Every client that is not the browser has the same hole: a `client`-custody
 account's private key lives only in webmail, so an encrypted message cannot be
 read in the native app. All of them degrade the same way — mark the row, and

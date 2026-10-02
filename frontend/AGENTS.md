@@ -10,6 +10,8 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 
 ## Local Contracts
 
+- Security → Encryption includes `IncomingEncryption.tsx`, backed by `GET|PUT /api/pgp/incoming`. Default off; enablement needs a client-protected key and saved-key-backup acknowledgment. Local accounts enter their account credential; SSO accounts use `withSSOStepUp` with an identical prepared request. Explain plaintext exposure before processing, replacement UIDs, key-loss risk, visible labels, durable cache suppression and pending recovery after opt-out.
+
 - Web themes default to the Busnes.app cream/light and charcoal/dark palettes with orange accents, following the OS until a browser-local choice is saved. Preserve existing named themes and saved choices.
 - The primary sidebar uses a quiet selected surface with a slim accent rail; the layout remains a workspace on desktop and scrollable navigation on small screens.
 

@@ -1565,3 +1565,21 @@ func (s *Store) setUpdateNotified(key, latestVersion string) (notify bool, err e
 	})
 	return newlySeen, err
 }
+
+// RecordReplacementDecision commits both UID markers with the decision so a
+// restarted poller cannot classify its own encrypted replacement a second time.
+func (s *Store) RecordReplacementDecision(originalID string, d Decision) error {
+	return s.tx(func(tx *sql.Tx) error {
+		if err := insertDecision(tx, d); err != nil {
+			return err
+		}
+		if err := markProcessed(tx, originalID); err != nil {
+			return err
+		}
+		if err := markProcessed(tx, d.MessageID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`DELETE FROM deferrals WHERE message_id IN (?, ?)`, originalID, d.MessageID)
+		return err
+	})
+}

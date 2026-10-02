@@ -198,6 +198,76 @@ specifically rather than reporting a generic decryption failure.
   before escaping it, rather than escaping the markup and showing the
   recipient the tags.
 
+## Incoming mail encryption (opt-in)
+
+Incoming encryption defaults off for every user, including users with a PGP key.
+Security → Encryption offers a per-user preference. Only unread INBOX mail not already
+processed by KyPost is eligible; this does not sweep historical or read mail.
+The configured polling mailbox must be INBOX; another folder is refused before
+replacement, even if it has the same numeric UID. Already encrypted and
+oversized messages retain their existing handling.
+
+`GET /api/pgp/incoming` returns `{enabled, pending}` for the signed-in caller.
+`PUT /api/pgp/incoming` accepts `enabled`, `acknowledgeReplacement` and (when
+enabling) the current `expectedRevision`, plus the existing fresh account
+credential or action-bound KySignOn step-up. Enabling requires an active,
+unexpired, unrevoked client-protected public key with a stored wrapped private
+key and an explicit saved-private-key-backup acknowledgment. Neither an admin
+setting nor the presence of a key enables it automatically.
+
+The daemon checks rules, mailbox capabilities and exact ciphertext size before
+classification or a replacement job. Rule values are normalized and validated
+before admission, and LLM quota is charged only after feasibility succeeds.
+Recovery of an older job with unsafe saved rule/label values keeps the encrypted
+copy, skips those actions and records an explicit failure while releasing the
+pending key reservation. It then uses the existing contact pre-sort,
+embedding sorter and LLM classification before replacing plaintext. Corrections
+to encrypted replacements do not train the embedding sorter from their original
+plaintext: its vector/prediction is not retained for these messages.
+Existing stop rules still skip classification, and disabled auto-labeling still
+uses the account fallback. Rules may have at most one move/archive/spam/delete,
+last apart from stop. The server must support UIDPLUS or IMAP4rev2; moving rules
+also require MOVE or IMAP4rev2 before replacement starts.
+
+The stored replacement is standard unsigned OpenPGP/MIME encrypted solely to
+the user's public key. The complete original RFC5322 message (attachments,
+subject, original signatures and trace headers) is inside ciphertext. KyPost
+does not sign on the original sender's behalf. The outer subject is a
+placeholder; routing, threading metadata and classification keywords remain
+visible. Clients read it using their existing OpenPGP/MIME path and refresh
+mailbox rows because replacement changes the UID. New decision/push references
+use the replacement UID; the old cache row receives a removal tombstone.
+
+Replacement verifies the authenticated endpoint/account, UIDVALIDITY, original
+content hash and exact appended ciphertext before targeted UID EXPUNGE of the
+original. It preserves INTERNALDATE and current flags. Sensitive commands never
+silently reconnect or retry. A single durable ciphertext-only job per account
+reconciles lost acknowledgments, applies labels/rules and atomically records
+both UIDs as processed; pending-job failures pause that account without retiring
+the mail. Before a job exists, permanent per-message size/rule failures use the
+existing 120-attempt deferral limit and record an explicit failure: the original
+stays plaintext in IMAP, but no longer holds the polling checkpoint. Recoverable
+key/mailbox failures remain retryable without that cap. Failure audits use a
+placeholder subject and report that encryption was abandoned.
+A pending job resumes before normal polling, even after the setting is disabled.
+Moving rules reconcile an uncertain MOVE against the exact destination copy.
+
+Pending jobs prevent deleting/replacing the encryption key; same-key rewrapping
+remains available. Previously encrypted jobs can finish cleanup after key expiry
+or revocation. Account or UID namespace changes pause recovery rather than
+reusing an unrelated UID. Restore the original mailbox endpoint/account and
+inspect health if a job remains pending; do not remove its journal or key to
+bypass recovery.
+
+This protects stored mail after processing, not delivery: the provider and
+KyPost see plaintext first, and provider backups, Trash copies and other clients
+may retain it. Classification labels reveal category. Enabling durably clears
+cached bodies/protected subjects and keeps body caching disabled, including
+after opt-out; routing metadata remains cached. New classification and phishing
+audit rows use a placeholder subject, but historical audit rows/backups are not
+rewritten. Losing the private key makes these messages unreadable. Disabling
+stops future replacements and does not decrypt existing messages.
+
 ## Status
 
 ### Corrections to an earlier version of this document

@@ -57,11 +57,13 @@ type fakeIMAPServer struct {
 	// connection closed underneath us.
 	refuseSelectionOption bool
 
-	mu       sync.Mutex
-	folders  []fakeFolder
-	commands []string
-	logins   int
-	closed   bool
+	commandHook func(tag, command string) (string, bool)
+	appendHook  func(command string, raw []byte) error
+	mu          sync.Mutex
+	folders     []fakeFolder
+	commands    []string
+	logins      int
+	closed      bool
 }
 
 // newFakeIMAPServer starts a TLS listener on localhost and serves until the
@@ -139,7 +141,20 @@ func (s *fakeIMAPServer) handle(conn net.Conn) {
 			continue
 		}
 
-		if _, err := conn.Write([]byte(s.respond(tag, command))); err != nil {
+		s.mu.Lock()
+		hook := s.commandHook
+		s.mu.Unlock()
+		response, handled := "", false
+		if hook != nil {
+			response, handled = hook(tag, command)
+		}
+		if !handled {
+			response = s.respond(tag, command)
+		}
+		if response == "CLOSE" {
+			return
+		}
+		if _, err := conn.Write([]byte(response)); err != nil {
 			return
 		}
 		if strings.EqualFold(firstWord(command), "LOGOUT") {
@@ -167,7 +182,8 @@ func (s *fakeIMAPServer) readAppendLiteral(conn net.Conn, r *bufio.Reader, tag, 
 	if _, err := conn.Write([]byte("+ ready for literal data\r\n")); err != nil {
 		return err
 	}
-	if _, err := io.ReadFull(r, make([]byte, size)); err != nil {
+	raw := make([]byte, size)
+	if _, err := io.ReadFull(r, raw); err != nil {
 		return err
 	}
 	// The CRLF that terminates the APPEND command after the literal.
@@ -175,6 +191,14 @@ func (s *fakeIMAPServer) readAppendLiteral(conn net.Conn, r *bufio.Reader, tag, 
 		return err
 	}
 
+	s.mu.Lock()
+	hook := s.appendHook
+	s.mu.Unlock()
+	if hook != nil {
+		if err := hook(command, raw); err != nil {
+			return err
+		}
+	}
 	if !s.hasFolder(mailbox) {
 		_, err := conn.Write([]byte(tag + " NO [TRYCREATE] Mailbox doesn't exist\r\n"))
 		return err
@@ -308,7 +332,7 @@ func (s *fakeIMAPServer) commandsMatching(verb string) []string {
 	defer s.mu.Unlock()
 	var out []string
 	for _, c := range s.commands {
-		if strings.EqualFold(firstWord(c), verb) {
+		if verb == "" || strings.EqualFold(firstWord(c), verb) {
 			out = append(out, c)
 		}
 	}

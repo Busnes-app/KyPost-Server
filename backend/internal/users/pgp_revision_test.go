@@ -212,3 +212,38 @@ func TestPGPRevisionFailedWritePreservesCredentialAndEnvelope(t *testing.T) {
 		t.Fatal("failed write committed part of the credential/envelope pair")
 	}
 }
+
+func TestIncomingEncryptionReservationProtectsIdentityAcrossProcesses(t *testing.T) {
+	store, id := newClientProtectedUser(t)
+	original, err := store.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserved, err := store.ReserveIncomingEncryption(id, original.PGPFingerprint, original.PGPRevision)
+	if err != nil || !reserved.IncomingEncryptionPending || reserved.PGPRevision != original.PGPRevision {
+		t.Fatalf("reserve: %#v %v", reserved, err)
+	}
+	// A separately loaded process must observe the reservation at the shared sink.
+	other := &Store{path: store.path}
+	if _, err := other.ClearPGPIdentity(id, &original.PGPRevision); !errors.Is(err, ErrIncomingEncryptionPending) {
+		t.Fatalf("delete escaped reservation: %v", err)
+	}
+	if _, err := other.SetPGPIdentityClientProtected(id, "DIFFERENT", "KID", "PUBLIC", `{"v":2}`, "imported", "now", &original.PGPRevision); !errors.Is(err, ErrIncomingEncryptionPending) {
+		t.Fatalf("replacement escaped reservation: %v", err)
+	}
+	// Password/recovery repairs retain the same key and remain available.
+	rewrapped, err := other.RewrapPGPPrivateKey(id, `{"v":2}`, original.PGPFingerprint, &original.PGPRevision)
+	if err != nil || !rewrapped.IncomingEncryptionPending {
+		t.Fatalf("same-key recovery: %v", err)
+	}
+	if err := store.ReleaseIncomingEncryption(id); err != nil {
+		t.Fatal(err)
+	}
+	current, err := other.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.ClearPGPIdentity(id, &current.PGPRevision); err != nil {
+		t.Fatalf("released reservation still blocks: %v", err)
+	}
+}

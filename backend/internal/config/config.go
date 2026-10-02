@@ -118,8 +118,9 @@ type NotificationKeys struct {
 // UserSettings is the small per-user preferences document stored at
 // CONFIG_DIR/users/<userID>/config.yaml.
 type UserSettings struct {
-	Notifications UserNotificationSettings `yaml:"notifications" json:"notifications"`
-	Labels        UserLabelSettings        `yaml:"labels" json:"labels"`
+	EncryptIncoming bool                     `yaml:"encryptIncoming" json:"encryptIncoming"`
+	Notifications   UserNotificationSettings `yaml:"notifications" json:"notifications"`
+	Labels          UserLabelSettings        `yaml:"labels" json:"labels"`
 }
 
 type UserNotificationSettings struct {

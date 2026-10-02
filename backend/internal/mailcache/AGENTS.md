@@ -17,6 +17,8 @@ All code under `backend/internal/mailcache/`. Consumed by both `api/`
 
 ## Local Contracts
 
+- Incoming-encryption opt-in calls `OmitBodies`: durably clear `Body` and `PGPProtectedSubject` across mailboxes and suppress both at the shared persistence sink, including writers in another process. This policy stays enabled after opt-out. `Remove` tombstones replaced plaintext UIDs so clients see removal through delta sync.
+
 - `Store` is instantiated per user directory (`mailcache.New(userStateDir)`),
   mirroring `state.Store`/`contacts.Store` — one file, `mailcache.json`,
   sibling to `state.db`/`contacts.json` in

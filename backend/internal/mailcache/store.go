@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -47,13 +48,15 @@ type mailboxWindow struct {
 // and mutation re-reads the file from disk first, mirroring
 // contacts.Store's convention.
 type Store struct {
-	mu        sync.Mutex
-	baseDir   string
-	mailboxes map[string]*mailboxWindow
+	mu         sync.Mutex
+	baseDir    string
+	mailboxes  map[string]*mailboxWindow
+	omitBodies bool
 }
 
 type mailCacheFile struct {
-	Mailboxes map[string]*mailboxWindow `json:"mailboxes"`
+	OmitBodies bool                      `json:"omitBodies,omitempty"`
+	Mailboxes  map[string]*mailboxWindow `json:"mailboxes"`
 }
 
 func New(baseDir string) (*Store, error) {
@@ -81,6 +84,7 @@ func (s *Store) applyFile(cf mailCacheFile) {
 	}
 	dropStaleVerdicts(cf.Mailboxes)
 	s.mailboxes = cf.Mailboxes
+	s.omitBodies = cf.OmitBodies
 }
 
 // dropStaleVerdicts clears every cached signature verdict that was computed
@@ -168,7 +172,15 @@ func (s *Store) refreshFromDiskLocked() error {
 }
 
 func (s *Store) persistLocked() error {
-	return fsutil.PersistJSONFile(s.path(), mailCacheFile{Mailboxes: s.mailboxes})
+	if s.omitBodies {
+		for _, win := range s.mailboxes {
+			for i := range win.Entries {
+				win.Entries[i].Body = ""
+				win.Entries[i].PGPProtectedSubject = ""
+			}
+		}
+	}
+	return fsutil.PersistJSONFile(s.path(), mailCacheFile{Mailboxes: s.mailboxes, OmitBodies: s.omitBodies})
 }
 
 // Snapshot returns up to limit cached entries for mailboxKey (the limit
@@ -626,4 +638,52 @@ func (s *Store) Upsert(mailboxKey string, entries []Entry) error {
 	}
 
 	return s.persistLocked()
+}
+
+// OmitBodies disables plaintext body persistence at the shared sink, including
+// writes from another process. It remains enabled after incoming encryption is
+// turned off: switching off future encryption must not restore plaintext copies.
+func (s *Store) OmitBodies() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	release, err := fsutil.LockFile(s.path())
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := s.refreshFromDiskLocked(); err != nil {
+		return err
+	}
+	s.omitBodies = true
+	return s.persistLocked()
+}
+
+// Remove drops a replaced UID and retains its removal for delta clients.
+func (s *Store) Remove(mailbox string, uid int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	release, err := fsutil.LockFile(s.path())
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := s.refreshFromDiskLocked(); err != nil {
+		return err
+	}
+	win := s.mailboxes[mailbox]
+	if win == nil {
+		return nil
+	}
+	for i, e := range win.Entries {
+		if e.UID == uid {
+			win.Seq++
+			win.Removals = append(win.Removals, Removal{UID: uid, MessageID: strconv.Itoa(uid), Rev: win.Seq})
+			if len(win.Removals) > maxRemovals {
+				win.Removals = win.Removals[len(win.Removals)-maxRemovals:]
+			}
+			win.Entries = append(win.Entries[:i], win.Entries[i+1:]...)
+			return s.persistLocked()
+		}
+	}
+	return nil
 }

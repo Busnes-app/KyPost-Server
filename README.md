@@ -8,6 +8,8 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 
 ## Features
 
+- Per-user opt-in incoming encryption under Security → Encryption: classify unread, unprocessed inbox mail, then replace it with a verified public-key-encrypted copy. Requires a client-protected key, saved-key-backup acknowledgment and fresh account confirmation. The provider sees plaintext before processing; losing the private key makes replaced mail unreadable. Unreplaceable messages remain plaintext with explicit failure decisions; [read the replacement and recovery contract](docs/E2E_PGP.md#incoming-mail-encryption-opt-in).
+
 - Sealed configuration/state backups to KyRecovery or a local directory, with admin scheduling and restore drills. Custodian shares are used only by the offline restore command; see [sealed backup and restore](docs/RESTORE.md).
 - Shared JSON application logs on stderr, controlled by `KY_LOG_LEVEL`; see [logging](LOGGING.md).
 
@@ -849,6 +851,7 @@ PGP:
 
 PGP key discovery and device enrollment:
 
+- `GET|PUT /api/pgp/incoming` — caller-only incoming-encryption preference; PUT requires fresh account confirmation and enabling requires backup acknowledgment and current `expectedRevision`.
 - `GET|PUT /api/pgp/discovery/settings`
 - `GET /api/pgp/discovery/suppressions` and `DELETE /api/pgp/discovery/suppressions/{email}`
 - `POST /api/pgp/discovery/suppress-contact`

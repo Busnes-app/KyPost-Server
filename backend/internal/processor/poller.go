@@ -24,6 +24,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/redaction"
 	"github.com/Busnes-app/kypost-server/backend/internal/retry"
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
@@ -130,6 +131,8 @@ type userCtx struct {
 	// classification entirely and tags every message with the account's
 	// default label instead (disabledLabelingFallback).
 	autoLabelEnabled bool
+	encryptIncoming  bool
+	incomingPending  bool
 	// allowlist and keywordMappings are this account's own label set, seeded
 	// from the house list the first time the account is seen. Per-user, not
 	// per-instance: two accounts on one server sort their mail differently.
@@ -722,11 +725,8 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 
 	settings, err := config.LoadUserLabelSettings(p.userSettingsPath(u.ID), p.currentConfig())
 	if err != nil {
-		// LoadUserLabelSettings still answers with a seeded copy when only the
-		// persist failed, so keep what it gave us rather than falling back to
-		// defaults — defaults mean an empty allowlist and a tick that labels
-		// nothing.
-		p.log.Error("failed to persist seeded label settings; using the in-memory seed", "user_id", u.ID, "error", err.Error())
+		p.log.Error("cannot read or seed user settings; skipping tick", "user_id", u.ID, "error", err.Error())
+		return err
 	}
 
 	tuning := ""
@@ -766,6 +766,8 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		tuning:           tuning,
 		settings:         settings.Notifications,
 		autoLabelEnabled: settings.Labels.AutoApplyEnabled,
+		encryptIncoming:  settings.EncryptIncoming,
+		incomingPending:  u.IncomingEncryptionPending,
 		allowlist:        settings.Labels.Allowlist,
 		keywordMappings:  settings.Labels.KeywordMappings,
 		rules:            activeRules,
@@ -782,6 +784,13 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 	// routine restarts reached SIGKILL mid-write.
 	ctx, cancel := context.WithTimeout(p.lifetimeCtx(), tickTimeout)
 	defer cancel()
+
+	// Resume a durable replacement even when the user disabled future encryption,
+	// or another mail client has marked the original read.
+	if err := p.resumeIncomingEncryption(ctx, uc); err != nil {
+		p.log.Error("incoming encryption paused; original or verified encrypted copy retained", "user_id", u.ID, "error", err.Error())
+		return err
+	}
 
 	checkpoint, err := store.Checkpoint()
 	if err != nil {
@@ -924,8 +933,9 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		// embedding sorter is confident about, does not spend it. Decided here,
 		// before handleMessage, because handleMessage runs the user's filter
 		// rules first and a deferral after them would re-run their actions on
-		// the retry.
-		if label, allow, _ := presort(uc, msg, uid); label == "" &&
+		// the retry. Incoming encryption defers all mutations, so it admits quota
+		// after feasibility checks, immediately before the LLM call instead.
+		if label, allow, _ := presort(uc, msg, uid); !uc.encryptIncoming && label == "" &&
 			!p.guess(uc, msg, allow).confident(p.embedMin) && !p.allowByRate(u.ID) {
 			p.log.Info("rate limit reached, deferring remaining emails", "user_id", u.ID)
 			rateLimitedCount = len(messages) - processedCount - skippedSeenCount - failedCount
@@ -956,13 +966,33 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		messageCtx, messageCancel := context.WithTimeout(ctx, perMessageTimeout)
 		err = p.handleMessage(messageCtx, uc, msg)
 		messageCancel()
+		if errors.Is(err, errIncomingRateLimited) {
+			rateLimitedCount++
+			deferredIDs = append(deferredIDs, msg.ID)
+			continue
+		}
 		if err != nil {
 			failedCount++
 			// Decided ONCE, here, and handed to recordMessageFailure rather than
 			// re-derived there: retiring the message and advancing the checkpoint
 			// past it are the same decision, and two copies of the predicate are
 			// how they drift apart.
+			var encryptionErr *incomingEncryptionErr
+			if errors.As(err, &encryptionErr) && !errors.Is(err, errIncomingPermanent) {
+				// Recoverable key/mailbox failures and durable jobs must remain retryable.
+				deferredIDs = append(deferredIDs, msg.ID)
+				ledgerErr = err
+				p.log.Error("incoming encryption deferred; restore the key or IMAP connection to retry", "user_id", u.ID, "message_id", msg.ID, "error", err.Error())
+				continue
+			}
 			retire := shouldMarkProcessedOnError(err)
+			if encryptionErr != nil {
+				// Permanent per-message rejection uses the existing bounded ledger.
+				// Preserve plaintext in IMAP, but never retain it in failure previews.
+				retire = false
+				msg.Subject = pgpmail.OuterPlaceholderSubject
+				msg.PGPEncrypted = true
+			}
 			if !retire {
 				// A deferral holds the checkpoint below this message, so every
 				// later message is re-fetched next tick too. That is affordable
@@ -1361,6 +1391,12 @@ func (p *Poller) reloadConfigIfNeeded() {
 }
 
 func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.Message) error {
+	if uc.encryptIncoming && !msg.PGPEncrypted && !msg.TooLarge {
+		if err := p.encryptIncomingMessage(ctx, uc, msg); err != nil {
+			return &incomingEncryptionErr{err}
+		}
+		return nil
+	}
 	// A message ListUnreadInbox flagged as too large to safely fetch (see
 	// imapadapter.Message.TooLarge and mailmsg.MaxInboundMessageBytes) skips
 	// every ordinary step below — rule matching, classification, labeling —
@@ -1521,58 +1557,10 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 			"confidence", strconv.FormatFloat(guess.conf, 'f', 2, 64), "selected_label", selected)
 	} else {
 
-		// One redaction engine, applied to everything that reaches the model.
-		//
-		// It used to run on the body alone, so the shipped default pattern set —
-		// which leads with an email pattern — masked every address INSIDE the body
-		// while the From line above it carried the real one, and an SSN or card
-		// number in a Subject went through untouched. AGENTS.md and README.md both
-		// describe masking "sender, subject, and body"; this is the third of it that
-		// was missing, and it matters most where the classifier endpoint is remote,
-		// since ValidateBaseURL accepts any https host and the request carries a
-		// bearer key.
-		//
-		// Redact BEFORE truncating: cutting first leaves a pattern that straddles
-		// the boundary unmatched, so its surviving prefix is sent in the clear.
-		// Rune-wise for the body too, so a multi-byte character is never split.
-		red := p.currentRedaction()
-		redacted := truncateRunes(red.Apply(strings.TrimSpace(msg.Body)), maxClassifyBodyRunes)
-
-		// Clamp the headers too. The prompt builder puts the instruction block, the
-		// nonced fence and the tuning document BEFORE the email text and Ollama
-		// truncates from the front, so an unbounded Subject pushes the fence out of
-		// num_ctx and the model sees attacker text with no instructions. Rune-wise so a
-		// multi-byte character is never split.
-		sender := truncateRunes(red.Apply(strings.TrimSpace(msg.Sender)), maxClassifySenderRunes)
-		subject := truncateRunes(red.Apply(strings.TrimSpace(msg.Subject)), maxClassifySubjectRunes)
-
-		label, err := classifyWithRetry(ctx, p.classifier, allowlist, sender, subject, redacted, uc.tuning)
-		// The model answering with something that isn't an allowed label is a
-		// normal outcome, not a classifier failure: fall through to the
-		// "no known label returned" skip path below (which retires the message
-		// and still notifies) rather than treating it as an error worth
-		// retrying or worth blocking MarkProcessed on.
-		var noLabel *classifier.NoAllowedLabelError
-		if errors.As(err, &noLabel) {
-			label, err = noLabel.Output, nil
-		}
+		label, err := p.classifyMessage(ctx, uc, msg, allowlist)
 		if err != nil {
-			if isAICreditsExhaustedError(err) {
-				p.flagAICreditsExhausted()
-			}
-			// Surfaced in /api/health without touching Healthy: a model that never
-			// installed (the container's pull can fail while everything else comes
-			// up fine) otherwise showed up nowhere an operator looks.
-			p.health.RecordClassifierFailure()
-			// Wrapped so the caller (tickUser, via shouldMarkProcessedOnError)
-			// can tell a classifier failure apart from rule/IMAP errors and gate
-			// MarkProcessed on isPermanentClassifierError instead of always
-			// retiring the message — see recordMessageFailure.
-			return &classifierErr{err: err}
+			return err
 		}
-		// A successful classification means the classifier has credits again; clear any flag.
-		p.clearAICreditsExhausted()
-		p.health.RecordClassifierSuccess()
 		// No sender and no subject. This logger writes to the instance-wide app.log that
 		// GET /api/logs serves to ANY admin, so anything here leaves one user's
 		// correspondence metadata readable by an account that is not theirs. Sender and
@@ -2180,4 +2168,60 @@ func (p *Poller) allowByRate(userID string) bool {
 	}
 	p.rate[userID] = append(trimmed, now)
 	return true
+}
+
+func (p *Poller) classifyMessage(ctx context.Context, uc userCtx, msg imapadapter.Message, allowlist []string) (string, error) {
+	// One redaction engine, applied to everything that reaches the model.
+	//
+	// It used to run on the body alone, so the shipped default pattern set —
+	// which leads with an email pattern — masked every address INSIDE the body
+	// while the From line above it carried the real one, and an SSN or card
+	// number in a Subject went through untouched. AGENTS.md and README.md both
+	// describe masking "sender, subject, and body"; this is the third of it that
+	// was missing, and it matters most where the classifier endpoint is remote,
+	// since ValidateBaseURL accepts any https host and the request carries a
+	// bearer key.
+	//
+	// Redact BEFORE truncating: cutting first leaves a pattern that straddles
+	// the boundary unmatched, so its surviving prefix is sent in the clear.
+	// Rune-wise for the body too, so a multi-byte character is never split.
+	red := p.currentRedaction()
+	redacted := truncateRunes(red.Apply(strings.TrimSpace(msg.Body)), maxClassifyBodyRunes)
+
+	// Clamp the headers too. The prompt builder puts the instruction block, the
+	// nonced fence and the tuning document BEFORE the email text and Ollama
+	// truncates from the front, so an unbounded Subject pushes the fence out of
+	// num_ctx and the model sees attacker text with no instructions. Rune-wise so a
+	// multi-byte character is never split.
+	sender := truncateRunes(red.Apply(strings.TrimSpace(msg.Sender)), maxClassifySenderRunes)
+	subject := truncateRunes(red.Apply(strings.TrimSpace(msg.Subject)), maxClassifySubjectRunes)
+
+	label, err := classifyWithRetry(ctx, p.classifier, allowlist, sender, subject, redacted, uc.tuning)
+	// The model answering with something that isn't an allowed label is a
+	// normal outcome, not a classifier failure: fall through to the
+	// "no known label returned" skip path below (which retires the message
+	// and still notifies) rather than treating it as an error worth
+	// retrying or worth blocking MarkProcessed on.
+	var noLabel *classifier.NoAllowedLabelError
+	if errors.As(err, &noLabel) {
+		label, err = noLabel.Output, nil
+	}
+	if err != nil {
+		if isAICreditsExhaustedError(err) {
+			p.flagAICreditsExhausted()
+		}
+		// Surfaced in /api/health without touching Healthy: a model that never
+		// installed (the container's pull can fail while everything else comes
+		// up fine) otherwise showed up nowhere an operator looks.
+		p.health.RecordClassifierFailure()
+		// Wrapped so the caller (tickUser, via shouldMarkProcessedOnError)
+		// can tell a classifier failure apart from rule/IMAP errors and gate
+		// MarkProcessed on isPermanentClassifierError instead of always
+		// retiring the message — see recordMessageFailure.
+		return "", &classifierErr{err: err}
+	}
+	// A successful classification means the classifier has credits again; clear any flag.
+	p.clearAICreditsExhausted()
+	p.health.RecordClassifierSuccess()
+	return label, nil
 }
