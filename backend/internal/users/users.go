@@ -139,10 +139,11 @@ type User struct {
 	// this way is what lets existing users.json files load unchanged: the legacy
 	// field is still the password envelope, and WrappedEnvelopes() presents both
 	// as one set. Each entry is opaque here, exactly like PGPPrivateKeyWrapped.
-	PGPWrappedEnvelopes []WrappedEnvelope `json:"pgpWrappedEnvelopes,omitempty"`
-	PGPKeyProtection    string            `json:"pgpKeyProtection,omitempty"`
-	PGPKeySource        string            `json:"pgpKeySource,omitempty"`
-	PGPKeyCreatedAt     string            `json:"pgpKeyCreatedAt,omitempty"`
+	PGPWrappedEnvelopes       []WrappedEnvelope `json:"pgpWrappedEnvelopes,omitempty"`
+	IncomingEncryptionPending bool              `json:"incomingEncryptionPending,omitempty"`
+	PGPKeyProtection          string            `json:"pgpKeyProtection,omitempty"`
+	PGPKeySource              string            `json:"pgpKeySource,omitempty"`
+	PGPKeyCreatedAt           string            `json:"pgpKeyCreatedAt,omitempty"`
 }
 
 // PGP key protection modes. See User's PGP block.
@@ -1351,6 +1352,7 @@ func (s *Store) mutateGuarded(id string, guard func(all []User, target User) err
 			// no operator surface that could even see it. This is the one place
 			// every write passes.
 			beforePGP := pgpState(f.Users[i])
+			incomingPending := f.Users[i].IncomingEncryptionPending
 			compacted := compactExpiredEnvelopes(&f.Users[i])
 			if err := fn(&f.Users[i]); err != nil {
 				// A mutation that changes nothing must not cost a write. Every
@@ -1370,6 +1372,9 @@ func (s *Store) mutateGuarded(id string, guard func(all []User, target User) err
 				if !errors.Is(err, errNoChangeNeeded) {
 					return err
 				}
+			}
+			if incomingPending && !strings.EqualFold(f.Users[i].PGPFingerprint, beforePGP.fingerprint) {
+				return ErrIncomingEncryptionPending
 			}
 			if pgpState(f.Users[i]) != beforePGP {
 				if f.Users[i].PGPRevision >= MaxPGPRevision {
@@ -2733,6 +2738,34 @@ func (s *Store) UpgradeToDerivedAuth(ctx context.Context, id, verifiedPassword, 
 		u.AuthDerivation = AuthDerivationPBKDF2
 		u.LoginSalt = loginSalt
 		u.LoginIterations = iterations
+		return nil
+	})
+	return err
+}
+
+// ErrIncomingEncryptionPending prevents deleting/replacing a key while a
+// recoverable IMAP replacement still depends on its private material.
+var ErrIncomingEncryptionPending = errors.New("incoming mail encryption is pending; finish or reconcile it before deleting or replacing the PGP identity")
+
+func (s *Store) ReserveIncomingEncryption(id, fingerprint string, expectedRevision uint64) (User, error) {
+	return s.mutate(id, func(u *User) error {
+		if u.PGPRevision != expectedRevision || !strings.EqualFold(u.PGPFingerprint, fingerprint) {
+			return ErrPGPRevisionChanged
+		}
+		if u.IncomingEncryptionPending {
+			return errNoChangeNeeded
+		}
+		u.IncomingEncryptionPending = true
+		return nil
+	})
+}
+
+func (s *Store) ReleaseIncomingEncryption(id string) error {
+	_, err := s.mutate(id, func(u *User) error {
+		if !u.IncomingEncryptionPending {
+			return errNoChangeNeeded
+		}
+		u.IncomingEncryptionPending = false
 		return nil
 	})
 	return err

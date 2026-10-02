@@ -11,6 +11,7 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
@@ -298,11 +299,15 @@ func (p *Poller) flagAppImpersonation(ctx context.Context, uc userCtx, msg imapa
 		p.log.Error("app-impersonation scan: keyword apply failed", "user_id", uc.id, "message_id", msg.ID, "error", err.Error())
 		detail += "; keyword could not be applied: " + err.Error()
 	}
+	subject := msg.Subject
+	if uc.encryptIncoming {
+		subject = pgpmail.OuterPlaceholderSubject
+	}
 	if err := uc.store.AddDecision(state.Decision{
 		MessageID: msg.ID,
 		Sender:    msg.Sender,
 		SentTo:    msg.SentTo,
-		Subject:   msg.Subject,
+		Subject:   subject,
 		Status:    decisionStatusFlaggedPhishing,
 		Detail:    detail,
 	}); err != nil {
