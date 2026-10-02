@@ -27,7 +27,7 @@ import (
 // encrypted/signed part. Autocrypt is here rather than folded into the encrypted
 // content because it exists to let a receiving client opportunistically pick up
 // the sender's public key without decrypting anything.
-var envelopeHeaderOrder = []string{"From", "To", "Cc", "Bcc", "Subject", "Autocrypt"}
+var envelopeHeaderOrder = []string{"From", "To", "Cc", "Bcc", "Subject", "Autocrypt", "Date", "Message-Id", "Reply-To", "In-Reply-To", "References"}
 
 // splitMessage separates a raw RFC 5322 message (as produced by
 // mailmsg.Message.Build()) into its preserved envelope headers and its inner
@@ -170,12 +170,26 @@ func ExtractProtectedSubject(content []byte) (subject string, ok bool) {
 // non-nil signer signs the content before encryption, verified in one step by
 // DecryptMIME on the way back.
 func EncryptMIME(plaintext []byte, recipientArmoredPubKeys []string, signer *Identity) ([]byte, error) {
+	return encryptMIME(plaintext, recipientArmoredPubKeys, signer, false)
+}
+
+// EncryptStoredMIME preserves the complete original RFC 5322 bytes inside the
+// encrypted MIME entity, including trace headers and sender signatures. It
+// does not sign on behalf of the original sender.
+func EncryptStoredMIME(plaintext []byte, publicKey string) ([]byte, error) {
+	return encryptMIME(plaintext, []string{publicKey}, nil, true)
+}
+
+func encryptMIME(plaintext []byte, recipientArmoredPubKeys []string, signer *Identity, preserveOriginal bool) ([]byte, error) {
 	if len(recipientArmoredPubKeys) == 0 {
 		return nil, errors.New("pgpmail: at least one recipient key required")
 	}
 	envelope, content, err := splitMessage(plaintext)
 	if err != nil {
 		return nil, err
+	}
+	if preserveOriginal {
+		content = plaintext
 	}
 	if realSubject := envelope.Get("Subject"); realSubject != "" {
 		envelope.Set("Subject", OuterPlaceholderSubject)

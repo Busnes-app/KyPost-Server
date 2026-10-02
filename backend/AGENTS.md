@@ -122,6 +122,8 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 ### Classification Loop (daemon mode)
 
+- **Incoming encryption is per-user opt-in (`UserSettings.EncryptIncoming`, default false).** `processor/incoming_encryption.go` evaluates header rules and contact/embedding/LLM classification before unsigned public-key MIME replacement; it does not persist original-message sorter predictions for learning from encrypted replacements; the durable ciphertext-only job resumes before inbox scans, even after opt-out. Encryption failures never retire mail. Pending jobs reserve the fingerprint against destructive key writes; same-key rewrap and expired-key cleanup remain possible. `GET|PUT /api/pgp/incoming` is caller-only; writes need fresh account confirmation, and enablement needs a client-protected usable key, backup acknowledgment and current revision. The full wire/recovery contract lives in [../docs/E2E_PGP.md](../docs/E2E_PGP.md#incoming-mail-encryption-opt-in).
+
 1. Poller fires on timer; lists active users from `users.json` and fans out over those with a stored IMAP config (bounded concurrency 4, per-user panic recovery)
 2. Per user: fetch unread emails from their IMAP mailbox since their checkpoint
 3. Scan each newly-seen message for KyPost self-impersonation and flag it with the `$Phishing` keyword if it does not authenticate to the account's own domain (`flagAppImpersonation`). Runs before every step below on purpose: a security verdict must not be rationed by the classifier rate limit, nor suppressed by a filter rule's `stop` action or a classifier outage

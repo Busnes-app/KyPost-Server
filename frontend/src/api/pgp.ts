@@ -1,3 +1,4 @@
+import { withSSOStepUp } from "./stepup";
 import { parseKeyringMetadata, type KeyringMetadata } from "../lib/pgpKeyring";
 import { getJSON, postJSON, putJSON, deleteJSON } from "./client";
 import { credentialFields, deriveCredential } from "./auth";
@@ -477,4 +478,24 @@ export async function deleteDeviceEnvelope(deviceId: string, password: string, e
     `/api/pgp/identity/envelope/device:${encodeURIComponent(deviceId)}`,
     { expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password)) }
   );
+}
+
+export type IncomingEncryptionPreference = { enabled: boolean; pending: boolean };
+
+export async function getIncomingEncryption(): Promise<IncomingEncryptionPreference> {
+  const value = await getJSON<unknown>("/api/pgp/incoming");
+  if (typeof value !== "object" || value === null || !("enabled" in value) || !("pending" in value) || typeof value.enabled !== "boolean" || typeof value.pending !== "boolean") {
+    throw new Error("Invalid incoming encryption preference response");
+  }
+  return { enabled: value.enabled, pending: value.pending };
+}
+
+export async function setIncomingEncryption(enabled: boolean, password: string, identity: PGPIdentity | null, acknowledgeReplacement: boolean): Promise<void> {
+  const body = {
+    enabled,
+    acknowledgeReplacement,
+    ...(enabled ? { expectedRevision: requirePGPRevision(identity) } : {}),
+    ...(await stepUp(password))
+  };
+  await withSSOStepUp((headers) => putJSON("/api/pgp/incoming", body, headers));
 }

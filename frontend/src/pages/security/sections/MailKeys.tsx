@@ -1,5 +1,6 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
+import { IncomingEncryption } from "./IncomingEncryption";
 import { toErrorMessage } from "../../../api/client";
 import {
   deletePGPIdentity,
@@ -631,6 +632,7 @@ export function MailKeys({
 
   return (
     <>
+      <IncomingEncryption identity={pgpIdentity} clientProtected={pgpSession?.bootstrap?.protection === "client"} />
       <div
         className={`sec-card ${
           keyCustody === "client" ? "sec-card-on" : keyCustody === "server" ? "sec-card-risk" : ""

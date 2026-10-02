@@ -785,3 +785,37 @@ func TestSync_RetainedRemovalCarriesNoBody(t *testing.T) {
 		t.Fatalf("a removed message's body must not be retained on disk:\n%s", raw)
 	}
 }
+
+func TestIncomingEncryptionBodyPolicyAppliesAcrossProcesses(t *testing.T) {
+	dir := t.TempDir()
+	first, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Upsert("INBOX", []Entry{entry(7, "subject", "unread", "secret body")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.OmitBodies(); err != nil {
+		t.Fatal(err)
+	}
+	// The other process held its Store before opt-in. It still cannot reinsert
+	// plaintext through an ordinary API cache warm or poller write.
+	if err := second.Upsert("INBOX", []Entry{entry(7, "subject", "unread", "secret body")}); err != nil {
+		t.Fatal(err)
+	}
+	entries, warmed, err := second.Snapshot("INBOX", 1)
+	if err != nil || len(entries) != 1 || entries[0].Body != "" || warmed {
+		t.Fatalf("entries=%v warm=%v err=%v", entries, warmed, err)
+	}
+	if err := first.Remove("INBOX", 7); err != nil {
+		t.Fatal(err)
+	}
+	entries, _, err = second.Snapshot("INBOX", 1)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("removed plaintext retained: %v %v", entries, err)
+	}
+}

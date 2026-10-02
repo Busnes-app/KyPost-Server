@@ -899,3 +899,41 @@ func TestSignMIMEFoldsLongAutocryptHeader(t *testing.T) {
 		t.Fatalf("keydata round-trip mismatch on signed envelope")
 	}
 }
+
+func TestEncryptStoredMIMEPreservesOriginalAndReadableAttachments(t *testing.T) {
+	identity, err := GenerateIdentity("Alice", "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := mailmsg.Message{From: "bob@example.com", To: []string{"alice@example.com"}, Subject: "secret subject", Body: "secret body", Attachments: []mailmsg.Attachment{{Name: "report.txt", MimeType: "text/plain", Content: []byte("attachment contents")}}}.Build()
+	original = append([]byte("Date: Fri, 02 Oct 2026 12:00:00 +0000\r\nMessage-ID: <original@example.com>\r\nDKIM-Signature: preserved-evidence\r\nReceived: original trace\r\n"), original...)
+	encrypted, err := EncryptStoredMIME(original, identity.ArmoredPublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encrypted, []byte("secret subject")) || bytes.Contains(encrypted, []byte("secret body")) || bytes.Contains(encrypted, []byte("attachment contents")) {
+		t.Fatal("plaintext escaped encryption")
+	}
+	if !bytes.Contains(encrypted, []byte("Message-Id: <original@example.com>")) || !bytes.Contains(encrypted, []byte("Date: Fri, 02 Oct 2026")) {
+		t.Fatal("threading/date headers missing")
+	}
+	payload, ok := extractOctetStreamPart(t, encrypted)
+	if !ok {
+		t.Fatal("no OpenPGP payload")
+	}
+	result, err := DecryptMIME(payload, identity, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(result.Content, original) {
+		t.Fatal("complete original RFC 5322 bytes were not preserved")
+	}
+	subject, ok := ExtractProtectedSubject(result.Content)
+	if !ok || subject != "secret subject" {
+		t.Fatalf("subject=%q present=%v", subject, ok)
+	}
+	body, _, attachments, err := ParseContent(result.Content)
+	if err != nil || body != "secret body" || len(attachments) != 1 || string(attachments[0].Content) != "attachment contents" {
+		t.Fatalf("body=%q attachments=%v err=%v", body, attachments, err)
+	}
+}

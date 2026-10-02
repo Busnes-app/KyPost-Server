@@ -2,6 +2,16 @@
 
 KyPost is a self-hosted IMAP web client with end-to-end encryption support. This document describes security practices, known limitations, responsible disclosure, and deployment security considerations.
 
+## Incoming encryption
+
+Incoming encryption is per-user opt-in and requires a saved-key-backup acknowledgment
+and fresh account confirmation. It classifies plaintext before encrypting and
+replacing unread, unprocessed inbox mail; the provider and KyPost see plaintext
+before replacement. Provider backups and other clients may retain copies. Routing
+metadata and classification keywords stay visible. Cache bodies stay disabled
+after opt-in, and pending jobs lock key replacement until verified recovery
+completes. See the [full contract](docs/E2E_PGP.md#incoming-mail-encryption-opt-in).
+
 ## Reporting Security Vulnerabilities
 
 If you discover a security vulnerability in KyPost, please report it responsibly via GitHub Security Advisories rather than opening a public issue.

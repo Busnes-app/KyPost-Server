@@ -12,6 +12,8 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 
 ### `imap/` — IMAP Client
 
+- `incoming_encryption.go` owns safe incoming replacements and subsequent rule actions. Reject non-INBOX polling configurations before capturing a source UID. Bind UIDs to the authenticated endpoint/account, UIDVALIDITY and exact content; APPEND must be byte-verified before targeted UID EXPUNGE. Require UIDPLUS/rev2 and preflight MOVE for terminal rules. Perform any folder discovery/create before the final identity guards, then use commands with automatic retries disabled. Reconcile uncertain APPEND/MOVE by marker plus exact ciphertext, never marker alone or global EXPUNGE.
+
 - Split by concern: `client.go` (connection lifecycle, credentials, message fetch/search), `client_folders.go` (mailbox list/create/delete/rename, keyword apply/remove), `client_attachments.go` (attachment enumeration and fetch), `client_append.go` (draft and Sent APPEND), `protocol_safety.go` (the keyword/mailbox validators below)
 - Wraps `go-imap` to fetch unread emails by UID range from a configured mailbox
 - Reads IMAP credentials from an encrypted file at rest (decrypted at connection time via `SECRET_DIR`)

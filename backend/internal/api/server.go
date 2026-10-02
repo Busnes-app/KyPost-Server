@@ -640,6 +640,8 @@ func (s *Server) routesPGP(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/pgp/identity/generate", s.withAuth(s.handlePGPIdentityGenerate))
 	mux.HandleFunc("POST /api/pgp/identity/import", s.withAuth(s.handlePGPIdentityImport))
 	mux.HandleFunc("GET /api/pgp/identity", s.withAuth(s.handlePGPIdentity))
+	mux.HandleFunc("GET /api/pgp/incoming", s.withAuth(s.handlePGPIncoming))
+	mux.HandleFunc("PUT /api/pgp/incoming", s.withAuth(s.handlePGPIncoming))
 	// End-to-end key handling: the browser wraps and unwraps the private half, the
 	// server only stores an opaque envelope. See pgp_client_keys.go.
 	//
