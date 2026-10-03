@@ -11,6 +11,7 @@ All files in this package. Internal storage and complete `imap.Client` implement
 ## Local Contracts
 
 - Internal `PrepareAccount` publishes an empty mailbox, prebound account state and `native-mailbox.json` together at `$STATE_DIR/users/<localID>/` (`mailbox/mailbox.db` plus `state.db`). Caller proves verified new-account issuer/subject ownership, domain authority and unique primary address. This is storage preparation, never receiver readiness or a migration. No production scheduler/selector calls it.
+- `ValidatePreparedAccount` is read-only preparation validation for acknowledged provisioning sources; unlike `PrepareAccount`, it must never recreate a missing account directory.
 - Preparation serializes cooperating writers and uses Linux `RENAME_NOREPLACE` to refuse even an empty or concurrently created destination. Other platforms refuse explicitly. Retry reads existing regular databases without creating schemas, checks required tables/owner/source/namespace/address/limits, and refuses incomplete, legacy or recreated state. Preserve published data; crash-abandoned staging directories contain only empty preparation and need bounded cleanup before activation.
 
 - Open only an owner-only directory selected from verified provisioning. The durable issuer/subject/mailbox tuple is immutable; opening the database for another owner fails. Validate user path components with fsutil before constructing paths.

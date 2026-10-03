@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add internal revision-fenced native mailbox reconciliation with durable account/address reservations and pending/applied/failed preparation status. Retain ownership through offboarding and failed retries; fail closed on a missing ledger or acknowledged storage. Runtime provisioning and reception remain disabled.
+
 - Retain verified directory resource fields with the access/revision fence for future provisioning repair. Add internal atomic native account preparation with source-bound state, no-replace publication, read-only retry validation and killed-process checks. Existing accounts are never adopted or recreated; production provisioning, source selection and receiver readiness remain disabled. Reuse pinned x/sys v0.48.0 without adding a dependency.
 
 - Document the turnkey domain mail stack implementation plan: durable reception, KyPost-owned mailboxes, KyIdentity provisioning and operator-owned outgoing relay. No runtime behavior changes.

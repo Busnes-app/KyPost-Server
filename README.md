@@ -14,7 +14,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - Shared JSON application logs on stderr, controlled by `KY_LOG_LEVEL`; see [logging](LOGGING.md).
 
 - Single-container Docker runtime. supervisord manages the processes.
-- Multi-user with two roles. Admins manage users and system settings. Each user connects their own IMAP mailbox. Signed KySignOn directory events retain desired account data for reconciliation; domain mailbox provisioning is still in development.
+- Multi-user with two roles. Admins manage users and system settings. Each user connects their own IMAP mailbox. Signed KySignOn directory events retain desired account data; internal reconciliation now reserves primary addresses and tracks mailbox preparation. Production domain provisioning remains disabled; see [the provisioning contract](docs/NATIVE_PROVISIONING.md).
 - IMAP inbox reader with background body preloading, folder management, and drag-and-drop move actions
 - Automatic keyword labels for unread mail. KyPost polls each active user's mailbox separately, and each account has its OWN label list — copied from the instance defaults when the account is created, then theirs to change. Labels are a sorting hint a determined sender can influence — see [Classification flow](#architecture).
 - On-device embedding sorter in front of the LLM: a ~30 MB embedding model baked into the image labels mail in well under a millisecond and sends only what it is unsure of to Ollama. It learns per account from you — change a message's label in the reader (or in another IMAP client; noticed when the KyPost inbox syncs) and similar mail follows; give a new label an optional description and it is recognised straight away. It stores vectors, never message text, and never trains on the LLM's own answers. `CLASSIFIER_ENGINE=llm` turns it off.
@@ -600,7 +600,8 @@ Important files:
 - `/kypost/config/users.json` (user accounts and roles)
 - `/kypost/config/users/<userID>/` (per-user IMAP credentials, CardDAV-client credentials, tuning, notification preferences)
 - `/kypost/config/mail-defaults.json` (admin-published instance-wide host and port defaults, no credentials)
-- `/kypost/config/sso-lifecycle.json` (accepted SSO logout tokens, the directory's revision/access fences and supported verified SCIM resource fields per subject; desired resources persist, while temporary replay records expire)
+- `/kypost/config/sso-lifecycle.json` (accepted SSO logout tokens, directory revision/access fences, verified SCIM desired resources and the native-provisioning initialization fence; temporary replay records expire)
+- `/kypost/config/native-provisioning.json` (internal primary-address/account reservations and preparation status; keep with lifecycle and mailbox/state data during recovery; production provisioning remains disabled)
 - `/kypost/config/TUNING.md` (default tuning for new users)
 - `/kypost/config/notifications-vapid-private.pem` (shared web-push signing key)
 - `/kypost/private/imap-config.key` (master encryption key for stored IMAP credentials)
@@ -809,6 +810,7 @@ IMAP and inbox:
 - `GET|POST|DELETE /api/imap/config`, returns 403 while `managed`
 - `POST /api/imap/test`
 - `GET /api/inbox?limit=500&mailbox=<name>`. Add `bodies=0` to get the list without message bodies — 13.3 MiB against 3.1 KiB for a 500-message window, since the rows render no body. The web UI then preloads the current 20-message page one body at a time from `GET /api/mail/body`, so the list renders first and opening a displayed message normally needs no wait. See [docs/INBOX_PAYLOAD_HANDOFF.md](docs/INBOX_PAYLOAD_HANDOFF.md).
+- Internal native provisioning records durable reservations and pending/applied/failed preparation status from verified directory state. It is not exposed as a production setup flow; domain proof, account allocation and runtime activation remain gated. See [provisioning contract](docs/NATIVE_PROVISIONING.md).
 - Mail state/configuration failures return an explicit error instead of an empty inbox. Internal native-mailbox qualification rejects source mismatches with 409; switching remains disabled, and native inbox responses are full snapshots (`delta:false`, `cursor:0`). Production still uses external IMAP.
 - `POST /api/inbox/actions`
 - `GET|POST|PUT|DELETE /api/inbox/folders`
@@ -1088,7 +1090,7 @@ inside the container. On systems without systemd, schedule
 ## Project Structure
 
 - `backend/internal/ingress/`: internal durable receiving-buffer core and isolated gateway checks; production reception is not enabled. See [receiving qualification](docs/RECEIVING_GATEWAY_ASSESSMENT.md).
-- `backend/internal/mailbox/`: internal permanent per-owner SQLite mail, metadata, receipt and change storage, with a complete internal mail Client and transactional incoming-encryption recovery. The internal importer commits these receipts before releasing receiving-buffer payloads. Source guards refuse switching or reusing references against another native database. Native API qualification uses fresh full snapshots; efficient scoped deltas and runtime local-mailbox selection remain disabled. Internal new-account preparation atomically publishes an empty mailbox plus prebound state and refuses legacy/incomplete directories; matching preparations are validated on retry. See [implementation evidence](docs/TURNKEY_MAIL_PHASE1.md#durable-directory-desired-state-and-native-account-preparation).
+- `backend/internal/mailbox/`: internal permanent per-owner SQLite mail, metadata, receipt and change storage, with a complete internal mail Client and transactional incoming-encryption recovery. The internal importer commits these receipts before releasing receiving-buffer payloads. Source guards refuse switching or reusing references against another native database. Native API qualification uses fresh full snapshots; efficient scoped deltas and runtime local-mailbox selection remain disabled. The internal directory reconciler retains primary-address/account reservations and preparation status; production provisioning remains disabled. Internal new-account preparation atomically publishes an empty mailbox plus prebound state and refuses legacy/incomplete directories; matching preparations are validated on retry. See [implementation evidence](docs/TURNKEY_MAIL_PHASE1.md#durable-directory-desired-state-and-native-account-preparation).
 
 - `backend/internal/backup/`: KyRecovery adapter, collection and drill checks.
 - `docs/RESTORE.md`: operator backup and offline restore procedure.

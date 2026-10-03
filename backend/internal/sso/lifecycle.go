@@ -61,9 +61,10 @@ type LifecycleStore struct {
 }
 
 type lifecycleFile struct {
-	Logouts   map[string]LogoutEvent    `json:"logouts"`
-	Directory map[string]DirectoryState `json:"directory"`
-	Events    map[string]directoryEvent `json:"events"`
+	NativeProvisioningInitialized bool                      `json:"nativeProvisioningInitialized,omitempty"`
+	Logouts                       map[string]LogoutEvent    `json:"logouts"`
+	Directory                     map[string]DirectoryState `json:"directory"`
+	Events                        map[string]directoryEvent `json:"events"`
 	// SignOns maps a spent native sign-on jti to its expiry (unix seconds).
 	SignOns map[string]int64 `json:"signOns"`
 }
