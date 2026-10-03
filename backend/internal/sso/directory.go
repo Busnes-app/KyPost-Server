@@ -123,10 +123,13 @@ func EventDigest(eventType string, body []byte) string {
 // fence that refuses a stale event, and what a login checks before trusting
 // a token for that subject.
 type DirectoryState struct {
-	Revision int64  `json:"revision"`
-	Digest   string `json:"digest"`
-	Active   bool   `json:"active"`
-	EventID  string `json:"eventId"`
+	// Resource retains the supported verified SCIM fields for later repair.
+	// Nil on legacy records: never infer missing desired state from a login.
+	Resource *DirectoryUser `json:"resource,omitempty"`
+	Revision int64          `json:"revision"`
+	Digest   string         `json:"digest"`
+	Active   bool           `json:"active"`
+	EventID  string         `json:"eventId"`
 	// RevokedBefore fences ID tokens: one issued before it was minted under
 	// access the directory has since changed, and is refused at sign-in.
 	RevokedBefore int64 `json:"revokedBefore,omitempty"`
@@ -161,6 +164,21 @@ func directoryKey(issuer, subject string) string { return issuer + "\x00" + subj
 // happened. apply reports whether the change invalidates ID tokens issued
 // before it, such as a role change or a deactivation.
 func (s *LifecycleStore) ApplyDirectory(issuer string, ev syncauth.Event, subject string, revision int64, digest string, active bool, apply func() (fence bool, err error)) (string, error) {
+	return s.applyDirectory(issuer, ev, subject, revision, digest, active, nil, apply)
+}
+
+// ApplyDirectoryUser is called only after transport signature verification.
+// Desired resource and the access/replay fence publish in the same write.
+// Unknown SCIM extensions are not captured; emails are not inferred aliases.
+func (s *LifecycleStore) ApplyDirectoryUser(issuer string, ev syncauth.Event, resource DirectoryUser, digest string, apply func() (bool, error)) (string, error) {
+	revision, err := resource.Revision(ev.Type)
+	if err != nil {
+		return "", err
+	}
+	return s.applyDirectory(issuer, ev, resource.ID, revision, digest, *resource.Active, &resource, apply)
+}
+
+func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subject string, revision int64, digest string, active bool, resource *DirectoryUser, apply func() (bool, error)) (string, error) {
 	status := DirectoryAlreadyApplied
 	err := fsutil.WithFileLock(s.path, func() error {
 		f, err := s.load()
@@ -189,7 +207,7 @@ func (s *LifecycleStore) ApplyDirectory(issuer string, ev syncauth.Event, subjec
 			if err != nil {
 				return err
 			}
-			state := DirectoryState{Revision: revision, Digest: digest, Active: active, EventID: ev.ID, RevokedBefore: prior.RevokedBefore}
+			state := DirectoryState{Resource: resource, Revision: revision, Digest: digest, Active: active, EventID: ev.ID, RevokedBefore: prior.RevokedBefore}
 			if fence {
 				state.RevokedBefore = max(prior.RevokedBefore, now)
 			}

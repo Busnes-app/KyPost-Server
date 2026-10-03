@@ -10,7 +10,11 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 
 ## Local Contracts
 
+- `imap.MailSourceIdentity` identifies external IMAP mode or native immutable owner/database namespace. Account state/cache admission precedes API/daemon mail operations; it does not detect changes between external IMAP endpoints or UIDVALIDITY.
+
 ### `imap/` — IMAP Client
+
+- `raw_content.go` exposes pure MIME/overview helpers reused by the native mailbox Client, including existing PGP detection and single-sender binding. Parsing failures use sanitized `ErrMalformedMIME`; `Message`/`MessageContent.ParseError` mark one unreadable message without aborting a batch. Existing IMAP reads leave that flag false.
 
 - `incoming_encryption.go` owns safe incoming replacements and subsequent rule actions. Reject non-INBOX polling configurations before capturing a source UID. Bind UIDs to the authenticated endpoint/account, UIDVALIDITY and exact content; APPEND must be byte-verified before targeted UID EXPUNGE. Require UIDPLUS/rev2 and preflight MOVE for terminal rules. Perform any folder discovery/create before the final identity guards, then use commands with automatic retries disabled. Reconcile uncertain APPEND/MOVE by marker plus exact ciphertext, never marker alone or global EXPUNGE.
 

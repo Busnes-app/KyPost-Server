@@ -32,7 +32,7 @@ type incomingEncryptionErr struct{ err error }
 func (e *incomingEncryptionErr) Error() string { return e.err.Error() }
 func (e *incomingEncryptionErr) Unwrap() error { return e.err }
 
-// Only the production adapter and encryption-specific tests implement this.
+// IMAP and native mailbox adapters implement this narrow recovery boundary.
 // Existing Client implementations do not gain unrelated methods.
 type incomingEncryptor interface {
 	PrepareIncoming(context.Context, int, bool) (imapadapter.IncomingSource, error)
@@ -83,7 +83,7 @@ func (p *Poller) encryptIncomingMessage(ctx context.Context, uc userCtx, msg ima
 	}
 	mail, ok := uc.mail.(incomingEncryptor)
 	if !ok {
-		return errors.New("IMAP adapter does not support incoming encryption")
+		return errors.New("mail adapter does not support incoming encryption")
 	}
 	u, err := p.users.Get(uc.id)
 	if err != nil {
@@ -197,7 +197,7 @@ func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		// A crash between reserving the key and writing the job has not touched
-		// IMAP. Only the single daemon owns creating jobs for this account.
+		// mail storage. Only the single daemon owns creating jobs for this account.
 		if uc.incomingPending {
 			return p.users.ReleaseIncomingEncryption(uc.id)
 		}
@@ -259,7 +259,7 @@ func (p *Poller) resumeIncomingEncryption(ctx context.Context, uc userCtx) error
 	}
 	mail, ok := uc.mail.(incomingEncryptor)
 	if !ok {
-		return errors.New("IMAP adapter does not support incoming encryption")
+		return errors.New("mail adapter does not support incoming encryption")
 	}
 	cache, err := p.userMailCacheStore(uc.id)
 	if err != nil {

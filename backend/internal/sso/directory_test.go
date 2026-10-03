@@ -2,7 +2,11 @@ package sso
 
 import (
 	"encoding/json"
+	"errors"
+	"github.com/Busnes-app/ky-primitives/syncauth"
+	"os"
 	"testing"
+	"time"
 )
 
 func TestHasAdminRole(t *testing.T) {
@@ -62,5 +66,77 @@ func TestDirectoryUserRevision(t *testing.T) {
 	}
 	if _, err := valid().Revision("group.created"); err == nil {
 		t.Error("an unsupported event type was accepted")
+	}
+}
+
+func TestDirectoryDesiredResourceSurvivesRetryAndFailure(t *testing.T) {
+	dir := t.TempDir()
+	store := NewLifecycleStore(dir)
+	active := true
+	resource := DirectoryUser{Schemas: []string{scimUserSchema}, ID: "subject", ExternalID: "subject", UserName: "name", Active: &active}
+	resource.Meta.Version = `W/"1"`
+	resource.Emails = append(resource.Emails, struct {
+		Value   string `json:"value"`
+		Primary bool   `json:"primary"`
+	}{"primary@example.test", true})
+	ev := syncauth.Event{ID: "one", Type: "user.created", At: time.Now()}
+	applied := 0
+	apply := func() (bool, error) { applied++; return false, nil }
+	if _, err := store.ApplyDirectoryUser("https://idp.example", ev, resource, "digest-one", apply); err != nil {
+		t.Fatal(err)
+	}
+	store = NewLifecycleStore(dir)
+	verify := func(revision int64, address string) {
+		t.Helper()
+		st, ok, err := store.Directory("https://idp.example", resource.ID)
+		if err != nil || !ok || st.Revision != revision || st.Resource == nil || st.Resource.Email() != address {
+			t.Fatalf("desired resource: %+v %v", st, err)
+		}
+	}
+	verify(1, "primary@example.test")
+	if _, err := store.ApplyDirectoryUser("https://idp.example", ev, resource, "digest-one", apply); err != nil || applied != 1 {
+		t.Fatal("retry reapplied resource", err)
+	}
+	resource.Meta.Version = `W/"2"`
+	resource.Emails[0].Value = "new@example.test"
+	ev.ID = "two"
+	ev.Type = "user.updated"
+	if _, err := store.ApplyDirectoryUser("https://idp.example", ev, resource, "digest-two", func() (bool, error) { return false, errors.New("failed account change") }); err == nil {
+		t.Fatal("failed callback acknowledged")
+	}
+	verify(1, "primary@example.test")
+	backup := store.path + ".saved"
+	if _, err := store.ApplyDirectoryUser("https://idp.example", ev, resource, "digest-two", func() (bool, error) {
+		if err := os.Rename(store.path, backup); err != nil {
+			return false, err
+		}
+		return false, os.Mkdir(store.path, 0700) // JSON publication now cannot rename over a directory.
+	}); err == nil {
+		t.Fatal("failed persistence acknowledged")
+	}
+	if err := os.Remove(store.path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(backup, store.path); err != nil {
+		t.Fatal(err)
+	}
+	verify(1, "primary@example.test")
+	if _, err := store.ApplyDirectoryUser("https://idp.example", ev, resource, "digest-two", apply); err != nil {
+		t.Fatal(err)
+	}
+	verify(2, "new@example.test")
+	ev.ID = "stale"
+	resource.Meta.Version = `W/"1"`
+	if _, err := store.ApplyDirectoryUser("https://idp.example", ev, resource, "digest-one", apply); !errors.Is(err, ErrDirectoryConflict) {
+		t.Fatal("stale resource admitted", err)
+	}
+	verify(2, "new@example.test")
+	ev.ID = "three"
+	if _, err := store.ApplyDirectory("https://idp.example", ev, resource.ID, 3, "digest-three", false, apply); err != nil {
+		t.Fatal(err)
+	}
+	st, _, err := store.Directory("https://idp.example", resource.ID)
+	if err != nil || st.Resource != nil || st.Active {
+		t.Fatal("compatibility event retained stale resource", err)
 	}
 }

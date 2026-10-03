@@ -133,12 +133,15 @@ Default section order:
 
 ## User Preferences
 
+- Turnkey domain mail stack: extend mature KyPost from a frontend for external mail services into the integrated user-facing product, with mailbox storage/reception and automatic KyIdentity account provisioning behind it. Preserve established server/client contracts; Android leads Linux and iOS, so appliance delivery must avoid requiring simultaneous client rewrites. Evaluate mail engines against provisioning, lifecycle reconciliation and existing labels/PGP contracts; Mailflare is a candidate, not a selection.
+- Each operator owns their outgoing relay account, credentials, billing and provider relationship; Busnes supplies software, not a relay service. Default external sending uses that provider. One guided deployment/domain setup covers KyIdentity pairing, DNS/TLS, relay readiness, backups and delivery diagnostics; users need no per-account mail-server setup.
+- Mail stack implementation: read [docs/TURNKEY_MAIL_STACK_PLAN.md](docs/TURNKEY_MAIL_STACK_PLAN.md) before reception, native mailbox storage, provisioning or domain-relay work. It separates durable receiving, KyPost-owned storage and outgoing delivery; it is approved implementation direction, not shipped capability. [Phase 1 evidence](docs/TURNKEY_MAIL_PHASE1.md) and [receiver qualification](docs/RECEIVING_GATEWAY_ASSESSMENT.md) state the runnable checks and unresolved adoption gates.
 - Keep `TUNING.md` compact for limited models while preserving classification rules and untrusted-input handling. Retain the `## Allowed Labels` bullet list and `[Insert Email Content Here]` placeholder required by the loader.
 - Use the shared JSON logger from ky-primitives. No audit-chain service is part of this integration; supervisord owns stderr capture/rotation (see `LOGGING.md`).
 
 ## Child DOX Index
 
-- `backend/` — Go 1.26.6 classification engine, HTTP API, IMAP adapter, Ollama adapter, poller, config, state, health, logging, redaction, sealed backups; produces the `kypost-server` binary. See [backend/AGENTS.md](backend/AGENTS.md). Contains nested children: `backend/internal/backup/`, `backend/internal/adapters/`, `backend/internal/contacts/`, `backend/internal/groups/`, `backend/internal/mailcache/`.
+- `backend/` — Go 1.26.6 classification engine, HTTP API, IMAP adapter, Ollama adapter, poller, config, state, health, logging, redaction, sealed backups, internal receiving buffer and permanent mailbox core; produces the `kypost-server` binary. See [backend/AGENTS.md](backend/AGENTS.md). Contains nested children: `backend/internal/backup/`, `backend/internal/adapters/`, `backend/internal/contacts/`, `backend/internal/groups/`, `backend/internal/mailcache/`, `backend/internal/ingress/`, `backend/internal/mailbox/`.
 - `frontend/` — React 19 / TypeScript SPA for config, monitoring, decision audit, and log streaming. See [frontend/AGENTS.md](frontend/AGENTS.md).
 - `scripts/` — Container initialization, process orchestration (supervisord), Ollama model management, and host-side image updates. See [scripts/AGENTS.md](scripts/AGENTS.md).
 - `share/` — Persistent Ollama model blob cache bind-mounted from the host; never committed to git. See [share/AGENTS.md](share/AGENTS.md).

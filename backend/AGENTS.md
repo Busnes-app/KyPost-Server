@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Go module owning the email classification engine, HTTP API server, IMAP integration, Ollama integration, polling loop, configuration, state persistence, health tracking, logging, and PII redaction.
+Go module owning the email classification engine, HTTP API server, IMAP integration, Ollama integration, polling loop, configuration, state persistence, health tracking, logging, PII redaction, and the internal receiving/permanent-mailbox foundation.
 
 ## Ownership
 
@@ -10,7 +10,12 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 ## Local Contracts
 
+- Verified directory webhooks use `sso.ApplyDirectoryUser`: retain supported SCIM resource fields with revision/digest/access fence in the same write. Legacy resource-less records require a newer verified event; never infer desired state from token email/name or treat generic `emails` as aliases. Newer compatibility events without a resource clear prior desired data. This does not provision native storage or declare receiving readiness. See [preparation evidence](../docs/TURNKEY_MAIL_PHASE1.md#durable-directory-desired-state-and-native-account-preparation).
+
+- Account `meta.mail_source` is immutable. `state.New` initializes unbound/legacy/recreated state to IMAP. Internal `state.NewNative` requires an absent state directory for a verified new account and initializes its native owner/database namespace; never use it to migrate or repair an existing account. Both API and daemon reject source/cache mismatches before mail references, checkpoints or encryption recovery. API answers 409 with remediation. Native inbox requests use fresh full snapshots (`delta:false`, `cursor:0`), retaining numeric IDs and default bodies; scoped deltas and runtime activation remain pending.
+
 - Go 1.26.6 (must match the `golang:` builder tag in `Dockerfile`); direct dependencies: `go-imap`, `yaml.v3`, `webpush-go`, `golang.org/x/crypto`, `emersion/go-webdav` (CardDAV protocol handling, `carddav` subpackage; transitively pulls `emersion/go-vcard`)
+- `golang.org/x/sys` v0.48.0 is an existing pinned dependency, now direct for Linux no-replace native account publication; no version or dependency addition.
 - Module path: `github.com/Busnes-app/kypost-server/backend`
 - Entry point: `cmd/main.go` → `app.Run(os.Args)`
 - All business logic lives under `internal/`; `cmd/` contains only the entry point
@@ -142,6 +147,7 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 - A `classifierErr` retires only when `isPermanentClassifierError` (bad input, credits exhausted). A transient outage defers.
 - A `retryableErr` always defers. `handleMessage` wraps the failures a later tick can still complete: `applyKeywordsWithRetry` after its own retries, a failed rule action, and the `state.Store` writes that can hit `SQLITE_BUSY` past the busy timeout. **Wrapping is opt-in at the call site that knows the failure is an outage rather than a mistake.**
+- `ParseError` retires one malformed MIME message with a failed decision, preserving raw mail and allowing later messages to proceed; it consumes no classifier slot and is not treated as oversized mail.
 - Everything else retires. An unclassified error is one nothing has judged, and guessing "transient" means holding the checkpoint forever.
 - **A failed rule action is not an applied rule.** `handleMessage` returns before writing any decision when `rules.ApplyOutcome` reports a failure. It previously appended the failure to the detail of an `applied` decision and — for a `stop` rule — retired the message in the same breath, so an IMAP reset during "archive and stop" left the mail in the inbox and an audit row claiming otherwise.
 - **A deferral is only a retry if the retry query can still find the message.** The next tick looks for UNSEEN messages in INBOX above the held checkpoint, so `read`/`move`/`archive`/`spam`/`delete` take a message permanently out of reach. Two rules keep every deferral honest, and neither works alone: `rules.ApplyOutcome` stops at the first failed action (and at a cancelled context), and `rules.ValidateRule` allows at most one visibility-changing action per rule and requires it last (a trailing `stop` aside). Without both, "keyword fails, archive succeeds" archived the mail, dropped the keyword, recorded a failure, and left nothing that could ever come back for it.
@@ -306,6 +312,12 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 ## Verification
 
+- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/processor -run '^TestNativeIncomingPollerJournalRecovery$' -count=1` checks the native adapter through the existing ciphertext journal, pending-key reservation, cache purge and real replacement/action commits; no runtime selector enables it.
+
+- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/api -run '^TestNativeMailboxClientAPI$' -count=1` exercises the real internal native Client through existing routes. Production selection remains disabled pending verified provisioning, runtime selectors and durable scoped deltas.
+
+- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/api -run '^TestNativeMailboxProof$' -count=1 -v` exercises the test-only SQLite/MIME read spike through existing authenticated HTTP routes. It is not a production mailbox adapter or full parity check; limits and remaining measurements live in `../docs/TURNKEY_MAIL_PHASE1.md`.
+
 - `internal/cryptutil/device_envelope_v3_test.go` independently checks the shared public `testdata/device-envelope-v3.json` crypto vectors under backend CI. This is a reference test, not a server-side device-key decryption path.
 
 This list is the CI gate, in the order `ci-backend-api` and `ci-backend-other` run it. Both jobs run all four static steps before any test, so a lint failure fails both jobs in about a minute and no test result is produced at all.
@@ -318,6 +330,10 @@ This list is the CI gate, in the order `ci-backend-api` and `ci-backend-other` r
 - `go test -race -count=1 -timeout=20m ./...` must pass. The sorter parity test and the poller's hybrid tests skip unless `EMBED_MODEL_DIR` points at the pinned model; `ci-backend-other` downloads it using the Dockerfile's `EMBED_*` ARG pins, so set it locally too or those tests prove nothing. The `-timeout` is not optional: `internal/api` alone exceeds Go's default 600s under `-race`, which is why CI splits it into its own job and passes `-timeout=20m`. Running plain `go test -race ./...` locally reports a timeout that CI would not see
 
 ## Child DOX Index
+
+- `internal/mailbox/` — permanent per-owner SQLite storage, delivery receipts, durable changes, atomic account preparation and the internal full mail Client; no runtime source selects it. See [internal/mailbox/AGENTS.md](internal/mailbox/AGENTS.md).
+
+- `internal/ingress/` — internal durable receiving buffer, envelope ownership, receipts and claims; not wired to production runtime. See [internal/ingress/AGENTS.md](internal/ingress/AGENTS.md).
 
 - `internal/backup/` — KyRecovery adapter and verification recipe; see [internal/backup/AGENTS.md](internal/backup/AGENTS.md)
 

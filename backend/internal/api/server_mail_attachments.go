@@ -31,6 +31,9 @@ func attachmentRequestParams(r *http.Request) (mailbox string, uid int, err erro
 func (s *Server) handleMailAttachmentList(w http.ResponseWriter, r *http.Request) {
 	mailClient, err := s.mailFor(r)
 	if err != nil {
+		if writeMailSourceConflict(w, err) {
+			return
+		}
 		if errors.Is(err, errIMAPNotConfigured) {
 			http.Error(w, "imap configuration is required", http.StatusBadRequest)
 			return
@@ -65,6 +68,9 @@ func (s *Server) serveAttachmentList(w http.ResponseWriter, r *http.Request, mai
 func (s *Server) handleMailAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 	mailClient, err := s.mailFor(r)
 	if err != nil {
+		if writeMailSourceConflict(w, err) {
+			return
+		}
 		if errors.Is(err, errIMAPNotConfigured) {
 			http.Error(w, "imap configuration is required", http.StatusBadRequest)
 			return

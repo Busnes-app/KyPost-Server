@@ -24,15 +24,18 @@ import (
 )
 
 type Message struct {
-	ID       string
-	Subject  string
-	Sender   string
-	SentTo   string
-	CC       string
-	BCC      string
-	Keywords []string
-	AtUTC    string
-	Body     string
+	// ParseError marks retained raw mail whose MIME cannot be interpreted.
+	// Process it as an explicit permanent failure, without classifier/encryption.
+	ParseError bool
+	ID         string
+	Subject    string
+	Sender     string
+	SentTo     string
+	CC         string
+	BCC        string
+	Keywords   []string
+	AtUTC      string
+	Body       string
 	// BodyHTML is the message's text/html part when it has one, empty otherwise.
 	// Body above is NOT what the clients render: ListUnreadInbox prefers the
 	// text/plain part while every client-facing path (ListUnreadMessages,
@@ -122,7 +125,9 @@ type UnreadMessage struct {
 // the sender, plus whether the message carries attachments, all from one
 // GetEmails parse.
 type MessageContent struct {
-	Body string
+	// ParseError permits one malformed UID without failing a whole body batch.
+	ParseError bool
+	Body       string
 	// BodyMode is BodyModeHTML or BodyModePlain — see clientBody.
 	BodyMode       string
 	HasAttachments bool

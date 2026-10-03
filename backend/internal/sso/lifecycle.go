@@ -53,8 +53,9 @@ func (e LogoutEvent) Covers(id SessionIdentity) bool {
 // process, but a replayed logout token, a login racing a logout, and a
 // stale directory event must still be refused afterwards.
 //
-// ponytail: one JSON file under a file lock, like sso.json. It holds a few
-// dozen entries pruned on every write; a database is not warranted.
+// ponytail: one JSON file under a file lock. Directory resources persist per
+// subject and whole-file rewrites scale with account count; migrate to SQLite
+// if this becomes a measured provisioning bottleneck.
 type LifecycleStore struct {
 	path string
 }

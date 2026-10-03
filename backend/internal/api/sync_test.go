@@ -13,7 +13,9 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -440,5 +442,55 @@ func TestDirectoryProvisionsUnderADistinctNameOnCollision(t *testing.T) {
 	}
 	if local, _ := srv.users.GetByUsername("taken"); local.SSOSub != "" {
 		t.Fatal("the directory event was linked to the local account of the same name")
+	}
+}
+
+func TestDirectoryRetainsVerifiedMailboxDesiredState(t *testing.T) {
+	srv := newDirectoryTestServer(t)
+	resource := scimUser("mail-subject", "directory_mail", true)
+	resource["emails"] = []map[string]any{{"value": "primary@example.test", "primary": true}, {"value": "extra@example.test", "primary": false}}
+	if rec := postDirectory(t, srv, "", "user.created", "unsigned", 1, resource); rec.Code != 401 {
+		t.Fatal("unsigned resource admitted")
+	}
+	if _, found, err := srv.ssoLifecycle.Directory("https://idp.example", "mail-subject"); err != nil || found {
+		t.Fatal("unsigned desired state retained", err)
+	}
+	if got := directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "mail-one", 1, resource)); got != "applied" {
+		t.Fatal(got)
+	}
+	lifecycle := sso.NewLifecycleStore(srv.configDir)
+	desired, found, err := lifecycle.Directory("https://idp.example", "mail-subject")
+	if err != nil || !found || desired.Resource == nil || desired.Resource.Email() != "primary@example.test" || len(desired.Resource.Emails) != 2 {
+		t.Fatal("verified desired state missing on reopen", err)
+	}
+	u, err := srv.users.GetBySSOSub(desired.Resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := mailbox.Owner{Issuer: "https://idp.example", Subject: desired.Resource.ID, Mailbox: u.ID}
+	limits := mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100}
+	// Explicit internal storage qualification; domain ownership/routing is not
+	// asserted, and no production webhook or selector calls this constructor.
+	source, err := mailbox.PrepareAccount(srv.stateDir, owner, desired.Resource.Email(), limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := state.New(srv.userStateDir(u.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err = st.BindMailSource(source); err != nil {
+		t.Fatal("prepared state/source mismatch", err)
+	}
+	inactive := scimUser("mail-subject", "directory_mail", false)
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.updated", "mail-two", 2, inactive))
+	desired, _, err = lifecycle.Directory(owner.Issuer, owner.Subject)
+	if err != nil || desired.Resource == nil || desired.Active || *desired.Resource.Active {
+		t.Fatal("disabled desired resource not retained", err)
+	}
+	// Offboarding changes access, never storage ownership or the source namespace.
+	if next, err := mailbox.PrepareAccount(srv.stateDir, owner, "primary@example.test", limits); err != nil || next != source {
+		t.Fatal("offboarding destroyed prepared mailbox", err)
 	}
 }

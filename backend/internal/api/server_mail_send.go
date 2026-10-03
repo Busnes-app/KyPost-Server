@@ -890,6 +890,9 @@ func (s *Server) finishMailSend(w http.ResponseWriter, r *http.Request, userID, 
 func (s *Server) handleMailDraft(w http.ResponseWriter, r *http.Request) {
 	mailClient, err := s.mailFor(r)
 	if err != nil {
+		if writeMailSourceConflict(w, err) {
+			return
+		}
 		if errors.Is(err, errIMAPNotConfigured) {
 			http.Error(w, "imap configuration is required before saving drafts", http.StatusBadRequest)
 			return

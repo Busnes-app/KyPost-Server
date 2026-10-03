@@ -1,0 +1,88 @@
+# Receiving gateway qualification
+
+2026-10-03. Phase 1 evidence for [the turnkey plan](TURNKEY_MAIL_STACK_PLAN.md). Test-only: no production receiver, DNS, public listener, account configuration or dependency changed.
+
+**Maddy 0.9.5 passes both the original queue proof and a synchronous holding-store integration.** The latter uses its supported command checks to bind recipients and commit mail before SMTP acknowledgment, avoiding the stock queue's expiry. It is the selected receiver candidate for implementation, not an enabled production receiver. The internal permanent mailbox/import bridge now passes commit/recovery checks. Verified directory/runtime integration and deployment gates remain open. Postfix remains the fallback; it has not been executed in this assessment.
+
+## Candidate comparison
+
+| Candidate | Useful existing functionality | Costs and gaps |
+| --- | --- | --- |
+| Maddy | Standalone release binary; configurable recipient routing; filesystem queue; forwarding over SMTP or LMTP. Tested below without installing a service. | Default queue retries terminate; stock forwarding lacks a first-class pickup receipt/ownership API. GPL licensing requires a packaging review. |
+| Postfix | Established queue manager and SMTP/LMTP delivery with per-recipient completion/retry tracking. | More service/package configuration; also needs an ingestion boundary and ownership binding. A finite queue lifetime remains something to configure and test. No runnable qualification yet. |
+
+Maddy's [release](https://github.com/foxcpp/maddy/releases/tag/v0.9.5) was published 2026-05-23. Its [routing](https://maddy.email/reference/smtp-pipeline/), [queue](https://maddy.email/reference/targets/queue/) and [forwarding](https://maddy.email/reference/targets/smtp/) are documented upstream. Postfix's [architecture](https://www.postfix.org/OVERVIEW.html) and [delivery client](https://www.postfix.org/lmtp.8.html) describe its handoff boundary; its [announcements](https://www.postfix.org/announcements.html) list stable 3.11.7 on 2026-09-07. These are maintenance signals, not security audits or support guarantees.
+
+Maddy includes [GPLv3 license text](https://github.com/foxcpp/maddy/blob/v0.9.5/COPYING), with GPLv3-or-later notices in [queue source](https://github.com/foxcpp/maddy/blob/v0.9.5/internal/target/queue/queue.go). Postfix has [dual IPL/EPL licensing](https://www.postfix.org/announcements/postfix-3.3.0.html). This proof runs a separate upstream executable; no upstream source is copied into KyPost. Distribution obligations must be checked before shipping either component.
+
+## Pinned executable and runnable check
+
+Source tag `v0.9.5` resolves to commit `58e8a11423e140ad37063ce8dfc446de4c1591ed` ([upstream commit](https://github.com/foxcpp/maddy/commit/58e8a11423e140ad37063ce8dfc446de4c1591ed)). The qualification uses the upstream **x86_64 Linux musl** artifact:
+
+- Archive SHA-256: `665cb3ffc43dcad0b904bb2792f31cd1025e484b0bacaf4ece06e2bd0091d5e2`.
+- Extracted binary SHA-256: `6ea4b951f15b91fd81d98957e4d4bad7a0cec6d6e1d66b011c765cc9a14e05db`.
+- Hashes were measured from the downloaded release. The check refuses other binary bytes. The upstream asset signature was not independently verified here; production packaging needs provenance verification as well as a content pin.
+
+Run from the repository root on x86_64 Linux with Python 3 and `tar`/`zstd`:
+
+```bash
+gateway_check_dir=$(mktemp -d)
+curl -fL https://github.com/foxcpp/maddy/releases/download/v0.9.5/maddy-0.9.5-x86_64-linux-musl.tar.zst -o "$gateway_check_dir/maddy.tar.zst"
+echo '665cb3ffc43dcad0b904bb2792f31cd1025e484b0bacaf4ece06e2bd0091d5e2  '"$gateway_check_dir/maddy.tar.zst" | sha256sum -c -
+tar --zstd -xf "$gateway_check_dir/maddy.tar.zst" -C "$gateway_check_dir"
+python3 scripts/check-receiving-gateway.py "$gateway_check_dir/maddy-0.9.5-x86_64-linux-musl/maddy"
+rm -rf "$gateway_check_dir"
+```
+
+The [check](../scripts/check-receiving-gateway.py) uses only Python's standard library, ephemeral loopback high ports and a temporary spool. It cleans its processes and spool even on failed assertions. Docker was available but unnecessary. No root privilege, global installation, public port or provider account is needed.
+
+## Observed result
+
+The executable check passed on 2026-10-03 with two pickup attempts:
+
+1. Unknown local recipients and recipients outside the configured addresses were rejected before mail acceptance. An oversized message was refused with a configured 1 MiB maximum.
+2. SMTP returned acceptance while the delivery sink withheld its final acknowledgment. The actual queue had header/body/metadata files, the original envelope sender, both visible and hidden recipients, and a generated spool ID.
+3. `SIGKILL` terminated the receiver before pickup acknowledgment. The accepted queue item survived and replayed after restart with its original spool ID.
+4. Both attempts delivered the original RFC5322 message as an exact byte suffix, including a dot-stuffed body line and a base64 binary attachment. Maddy prepended a `Received` trace header; full delivered bytes therefore differ from submitted bytes. No Bcc header or hidden recipient appeared in recipient-visible MIME.
+5. After the sink returned final `250`, Maddy removed queue metadata and body. The test sink is intentionally ephemeral: this verifies the gateway acknowledgment boundary, **not a KyPost mailbox commit**. The production importer must commit mail and receipts before acknowledging.
+
+This proves process-restart recovery and at-least-once delivery for the tested boundary. It does not prove machine power-loss durability, disk-full recovery, every crash point, long outages, concurrent consumers, signed-MIME verification, or production abuse protection.
+
+## Gates before production selection
+
+- **Hold-until-import policy:** stock queue gives up on permanent delivery errors or exhausted attempts and removes the item; DSNs are absent without a bounce pipeline. Never ship the proof configuration. Define durable quarantine/expiry policy and test importer downtime beyond the retry budget. Source `dispatch`, `emitDSN`, and `removeFromDisk` in the [pinned queue implementation](https://github.com/foxcpp/maddy/blob/58e8a11423e140ad37063ce8dfc446de4c1591ed/internal/target/queue/queue.go) own this behavior. A large retry count alone is not a retention contract.
+- **Authenticated delivery identity:** spool IDs are observable in private metadata, but stock SMTP forwarding does not expose a first-class pickup API with authenticated delivery ID, payload digest, exclusive claim and acknowledgment. Do not use sender-written Message-ID as an idempotency key. Prove a scoped bridge or a trusted trace-token contract before release; do not let an importer directly edit a live gateway queue.
+- **Recipient ownership:** the spool records addresses, not KyIdentity issuer/subject or routing generation. Resolving a queued alias against today's directory can deliver yesterday's mail to a new owner. Binding at acceptance, signed/revisioned routing snapshots, staleness refusal and reassignment tests remain mandatory. Static test recipient rules demonstrate refusal only.
+- **Durability and capacity:** source syncs payload and metadata files and renames metadata; this process-kill proof does not establish parent-directory durability after power failure. Exercise persistence on the intended filesystem, interrupted updates, quota exhaustion and recoverable errors. Add capacity refusal and alerts; message-size limits alone cannot bound total spool growth.
+- **Secure handoff and abuse:** the proof uses unauthenticated plaintext loopback delivery and two static recipients. Production needs an authenticated/scoped local channel, recipient reconciliation, TLS setup, rate/concurrency limits, spam policy and trusted provenance for authentication verdicts. The [endpoint reference](https://maddy.email/reference/endpoints/smtp/) describes available limits; configuration and end-to-end tests still need building.
+
+These stock-queue gaps prompted the synchronous boundary below. Neither receiver eliminates the need for inbound SMTP reachability; operators without reachable port 25 need a separately qualified hosted-reception profile.
+
+## Synchronous receiving boundary
+
+The reusable [ingress store](../backend/internal/ingress/store.go) now implements a separate SQLite holding buffer. The actual [Maddy integration test](../backend/internal/ingress/maddy_test.go) invokes a private, test-only subprocess through Maddy's [supported command checks](https://maddy.email/reference/checks/command/): `run_on rcpt` freezes the route; `run_on body` commits bounded raw MIME before the helper succeeds. The test uses a dummy final target **only after the successful commit check**. No runtime mode or compose file installs this configuration; copying a dummy-target configuration without its mandatory durable check would discard mail.
+
+The local OS account and owner-only directory are the trust boundary. Gateway identity is fixed by trusted helper configuration, and delivery identity comes from Maddy's `{msg_id}` argument, not message headers. There is no new network pickup endpoint or bearer-token scheme. The ingress package's route setter accepts already-verified issuer/subject/mailbox decisions; it does not verify directory provenance itself.
+
+Important pinned-source detail: `check.command` accumulates attempted recipients, including refused ones, in `{rcpts}`. This configuration makes the durable RCPT binding check the sole recipient authority; only successful binding rows define delivery. The test helper enforces its fixed served domain before binding, including when an otherwise valid route exists outside that domain. Unknown recipients and external relay attempts create no extra bindings. Production must use the verified configured domain and ensure no later recipient check can reject an address after its binding succeeded.
+
+Run after obtaining the pinned executable above:
+
+```bash
+cd backend
+MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy GOTOOLCHAIN=go1.26.6 go test -race ./internal/ingress -count=1 -v
+```
+
+With the executable unset, the gateway test explicitly skips; store unit/concurrency checks still run. The gateway check validates the binary hash before executing it. Its temporary listener and processes are isolated from live mail.
+
+Verified on 2026-10-03:
+
+- Two envelope recipients, including Bcc, retain their frozen issuer/subject/mailbox/generation. Reassignment between RCPT and DATA retains the old binding; pickup quarantines it without transferring the payload. New transactions bind the new owner with a different receiver ID.
+- Forged Message-ID and ownership headers do not supply receipt identity or owner. Original MIME, including folded headers and dot-stuffed content, remains an exact suffix after receiver trace headers.
+- Accepted mail survives receiver SIGKILL. A second experiment closes the parent database, kills the holding-writer subprocess with its database open after commit but before helper success, and reopens SQLite afresh. The committed receipt/payload survives; exact receipt replay does not duplicate it.
+- The real SMTP boundary returns temporary `451` when the logical payload quota fills and retains earlier pending/quarantined mail. Unit checks reject oversized MIME and stale/disabled routes. Accepted and staged records have no automatic age expiry.
+- Competing independent connections admit only one claim. Concurrent subprocesses at the record ceiling admit only one receiver. Expired or replaced claim tokens cannot acknowledge; successful acknowledgment drops the live payload but preserves the digest and envelope receipt, allowing lost local acknowledgment replay.
+
+Remaining production gates: verified and refreshed directory routing; coordinated revocation/import commits; production wiring/qualification of the internal all-recipient mailbox receipt bridge; safe explicit fenced cleanup of abandoned reservations and archived receipt fences; filesystem free-space reserve and physical database/WAL quotas; power-loss/backup/restore drills; bounded helper execution and process supervision; TLS, spam/rate/concurrency policy and packaging provenance/licensing. Logical quotas do not bound SQLite/WAL physical bytes, and removing a live BLOB does not erase old pages/backups. An upstream retry after a lost SMTP acknowledgment normally receives a **new** transaction ID and may create a second receipt; inbound SMTP is not exactly-once across those transactions.
+
+Permanent mailbox receipts and the internal all-recipient-before-ack bridge now have [storage/recovery checks](TURNKEY_MAIL_PHASE1.md#permanent-storage-and-import-follow-up). Verified directory routing, revocation coordination, runtime wiring and deployment suitability remain open; this does not enable the test receiving configuration.

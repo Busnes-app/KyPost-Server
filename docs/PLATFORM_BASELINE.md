@@ -305,6 +305,15 @@ See [`docs/E2E_PGP.md`](E2E_PGP.md) for the full model, and
 
 ## 7. Inbox listing and message bodies
 
+Internal native-mailbox qualification retains numeric IDs and returns live full
+snapshots (`delta:false`, `cursor:0`) for every inbox request, including positive
+`since` and classic requests. Clients replace that requested window and must not
+interpret it as an empty delta. Source/database mismatches answer 409 with an
+`error` explaining that switching is disabled; do not retry against another
+source or erase local state to bypass it. Production still selects external
+IMAP; its existing cursor behavior is unchanged. Durable scoped native deltas
+and live client acceptance remain activation gates.
+
 `GET /api/inbox` returns message bodies by default and will keep doing so — the
 Android and Qt clients read `body` off the list rows today, and removing it
 would break them silently.
@@ -312,7 +321,10 @@ would break them silently.
 A client that renders bodies only in an opened message should send **`bodies=0`**
 and fetch each body on demand from **`GET /api/mail/body?messageId=<uid>&mailbox=<path>`**,
 which answers `{"body": "...", "bodyMode": "html"|"plain"}`
-(`backend/internal/api/mail_body.go`).
+(`backend/internal/api/mail_body.go`). Missing messages return 404, oversized
+messages return 413, and an adapter-reported MIME parsing failure returns 422
+with `error`; original mail is retained. Treat 422 as an unreadable body,
+not a successful empty message. Metadata listing can still show that message.
 
 The reason is size. Measured against a 500-message window of ordinary HTML mail
 (`backend/internal/api/inbox_payload_size_test.go`, run with `-v`):

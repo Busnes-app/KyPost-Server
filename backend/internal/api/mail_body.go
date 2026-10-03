@@ -36,6 +36,9 @@ func (s *Server) handleMailBody(w http.ResponseWriter, r *http.Request) {
 
 	mailClient, err := s.mailFor(r)
 	if err != nil {
+		if writeMailSourceConflict(w, err) {
+			return
+		}
 		if errors.Is(err, errIMAPNotConfigured) {
 			http.Error(w, "imap configuration is required", http.StatusBadRequest)
 			return
@@ -57,6 +60,10 @@ func (s *Server) handleMailBody(w http.ResponseWriter, r *http.Request) {
 	content, found := contents[uid]
 	if !found {
 		http.Error(w, "message not found", http.StatusNotFound)
+		return
+	}
+	if content.ParseError {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "message MIME cannot be parsed; original mail retained"})
 		return
 	}
 	if content.TooLarge {
