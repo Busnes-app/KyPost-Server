@@ -53,7 +53,7 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, err := s.ssoLifecycle.ApplyDirectory(settings.IssuerURL, event, u.ID, revision, sso.EventDigest(event.Type, body), *u.Active, func() (bool, error) {
+	status, err := s.ssoLifecycle.ApplyDirectoryUser(settings.IssuerURL, event, u, sso.EventDigest(event.Type, body), func() (bool, error) {
 		return s.applyDirectoryUser(u)
 	})
 	var refusal *syncRefusal

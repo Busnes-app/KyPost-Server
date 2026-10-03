@@ -538,3 +538,52 @@ func TestTickUser_UnwritableDeferralLedgerHoldsTheCheckpoint(t *testing.T) {
 		t.Fatal("message 9 must still be awaiting a successful attempt")
 	}
 }
+
+func TestTickUserMalformedMIMEFailsOneMessageAndContinues(t *testing.T) {
+	mail := &scriptedMailbox{msgs: []imapadapter.Message{{ID: "10", ParseError: true}, {ID: "11", Subject: "valid", Sender: "sender@example.test", Body: "valid body"}}}
+	p, u := newTickTestPoller(t, mail)
+	store := tickStore(t, p, u)
+	if err := p.tickUser(u, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if checkpointOf(t, store) != "11" || !seenForTest(t, store, "10") || !seenForTest(t, store, "11") {
+		t.Fatal("malformed MIME held later mail or lost failure ledger")
+	}
+	failed := false
+	for _, d := range store.Decisions(10) {
+		if d.MessageID == "10" {
+			failed = d.Status == "failed"
+		}
+	}
+	if !failed {
+		t.Fatal("malformed MIME failure was not recorded")
+	}
+	if len(mail.labelled) != 1 || !strings.HasPrefix(mail.labelled[0], "11:") {
+		t.Fatalf("malformed MIME entered label pipeline: %+v", mail.labelled)
+	}
+}
+
+// A source rejection must precede even the first FETCH or checkpoint read/write.
+func TestTickUserMailSourceMismatch(t *testing.T) {
+	mail := &scriptedMailbox{msgs: []imapadapter.Message{{ID: "1", Subject: "wrong source"}}}
+	p, u := newTickTestPoller(t, mail)
+	native, err := state.NewNative(filepath.Join(t.TempDir(), "fresh-state"), "native:"+strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer native.Close()
+	p.stores[u.ID] = native
+	if err = p.tickUser(u, time.Time{}); !errors.Is(err, state.ErrMailSource) {
+		t.Fatal("wrong source tick admitted", err)
+	}
+	if mail.fetches != 0 || checkpointOf(t, native) != "" {
+		t.Fatal("source rejection fetched or advanced checkpoint")
+	}
+	cache, err := p.userMailCacheStore(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cache.BindMailSource("native:" + strings.Repeat("a", 64)); err != nil {
+		t.Fatal("rejected tick poisoned empty cache", err)
+	}
+}

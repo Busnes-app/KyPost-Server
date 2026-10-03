@@ -404,10 +404,10 @@ type serverMailEntry struct {
 	updatedAt string
 }
 
-// userMailClient returns a cached IMAP client for the user, rebuilt whenever
+// configuredMailClient returns a cached IMAP client for the user, rebuilt whenever
 // their stored credential payload changes (keyed by the payload UpdatedAt).
 // Returns errIMAPNotConfigured when the user has no stored credentials.
-func (s *Server) userMailClient(userID string) (imapadapter.Client, error) {
+func (s *Server) configuredMailClient(userID string) (imapadapter.Client, error) {
 	payload, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(userID), s.imapConfigKeyPath)
 	if err != nil {
 		return nil, err
@@ -425,6 +425,34 @@ func (s *Server) userMailClient(userID string) (imapadapter.Client, error) {
 	}
 	client := imapadapter.NewAPIClientFromStoredConfig(s.userIMAPConfigPath(userID), s.imapConfigKeyPath)
 	s.userMail[userID] = &serverMailEntry{client: client, updatedAt: payload.UpdatedAt}
+	return client, nil
+}
+
+// Bind before handing a client to any route. State and cache independently
+// fail closed; interrupted first binding can resume only with the same source.
+func (s *Server) userMailClient(userID string) (imapadapter.Client, error) {
+	client, err := s.configuredMailClient(userID)
+	if err != nil {
+		return nil, err
+	}
+	cache, err := s.userMailCacheStore(userID)
+	if err != nil {
+		return nil, err
+	}
+	source := imapadapter.MailSourceIdentity(client)
+	if err = cache.CheckMailSource(source); err != nil {
+		return nil, err
+	}
+	st, err := s.userStore(userID)
+	if err != nil {
+		return nil, err
+	}
+	if err = st.BindMailSource(source); err != nil {
+		return nil, err
+	}
+	if err = cache.BindMailSource(source); err != nil {
+		return nil, err
+	}
 	return client, nil
 }
 
@@ -949,4 +977,13 @@ func (s *Server) rescanDeviceIndex() {
 		s.deviceIndex[id] = owner
 	}
 	s.userMu.Unlock()
+}
+
+// All mail operations reject an account source mismatch before touching IDs.
+func writeMailSourceConflict(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, state.ErrMailSource) && !errors.Is(err, mailcache.ErrMailSource) {
+		return false
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+	return true
 }

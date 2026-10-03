@@ -327,6 +327,13 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 
 	mailClient, err := s.mailFor(r)
 	if err != nil {
+		if writeMailSourceConflict(w, err) {
+			return
+		}
+		if !errors.Is(err, errIMAPNotConfigured) {
+			http.Error(w, "failed to open mail source; check account state and configuration before retrying", http.StatusServiceUnavailable)
+			return
+		}
 		// No mailbox configured yet — show the empty tab scaffold rather
 		// than an error so the page still renders.
 		tabs, byTab := buildInboxTabScaffold(collectAllowedKeywords(s.userLabels(ac.UserID)))
@@ -349,6 +356,12 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 // param/auth/store resolution) so it can be exercised directly in tests
 // against a fake imapadapter.Client, without a real IMAP connection.
 func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID string, mailClient imapadapter.Client, cache *mailcache.Store, cfg config.Config, mailbox string, limit int, since int64, cursorSync, withBodies bool) {
+	native := imapadapter.MailSourceIdentity(mailClient) != "imap"
+	// ponytail: fresh full snapshots avoid unscoped numeric cursor collisions.
+	// Durable scoped deltas must be qualified before enabling native runtime.
+	if native {
+		since, cursorSync = 0, true
+	}
 	allowedKeywords := collectAllowedKeywords(s.userLabels(userID))
 	tabs, byTab := buildInboxTabScaffold(allowedKeywords)
 
@@ -687,6 +700,10 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		removed = append(removed, e.MessageID)
 	}
 
+	cursor := result.Cursor
+	if native {
+		cursor = 0
+	}
 	tabs = append(tabs, inboxUncategorizedTab)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tabs":  tabs,
@@ -698,7 +715,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		// snapshot can express — which messages are NOT there any more. Pruning
 		// against it is how a client recovers a removal it never received.
 		"delta":   since > 0,
-		"cursor":  result.Cursor,
+		"cursor":  cursor,
 		"removed": removed,
 	})
 }
@@ -719,6 +736,9 @@ func writeMailboxError(w http.ResponseWriter, err error) {
 func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 	mailClient, err := s.mailFor(r)
 	if err != nil {
+		if writeMailSourceConflict(w, err) {
+			return
+		}
 		if errors.Is(err, errIMAPNotConfigured) {
 			http.Error(w, "imap configuration is required", http.StatusBadRequest)
 			return
@@ -844,6 +864,9 @@ const maxInboxActionIDs = 500
 func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 	mailClient, err := s.mailFor(r)
 	if err != nil {
+		if writeMailSourceConflict(w, err) {
+			return
+		}
 		if errors.Is(err, errIMAPNotConfigured) {
 			http.Error(w, "imap configuration is required", http.StatusBadRequest)
 			return
@@ -983,6 +1006,9 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMailSearch(w http.ResponseWriter, r *http.Request) {
 	mailClient, err := s.mailFor(r)
 	if err != nil {
+		if writeMailSourceConflict(w, err) {
+			return
+		}
 		if errors.Is(err, errIMAPNotConfigured) {
 			http.Error(w, "imap configuration is required", http.StatusBadRequest)
 			return

@@ -17,6 +17,8 @@ All code under `backend/internal/mailcache/`. Consumed by both `api/`
 
 ## Local Contracts
 
+- `sourceIdentity` survives every cache write. API/daemon preflight and bind before consuming mail IDs; a different native namespace or mode is refused. Legacy windows cannot adopt native sources. This cache is not migration authority: state admission must also succeed. Native HTTP ignores unscoped cursors and returns fresh full snapshots until durable scoped deltas are qualified.
+
 - Incoming-encryption opt-in calls `OmitBodies`: durably clear `Body` and `PGPProtectedSubject` across mailboxes and suppress both at the shared persistence sink, including writers in another process. This policy stays enabled after opt-out. `Remove` tombstones replaced plaintext UIDs so clients see removal through delta sync.
 
 - `Store` is instantiated per user directory (`mailcache.New(userStateDir)`),

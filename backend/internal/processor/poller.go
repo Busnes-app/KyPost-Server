@@ -771,9 +771,24 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		allowlist:        settings.Labels.Allowlist,
 		keywordMappings:  settings.Labels.KeywordMappings,
 		rules:            activeRules,
-		head:             p.userHead(u.ID, store, settings.Labels),
 		guesses:          map[string]sortGuess{},
 	}
+
+	boundCache, err := p.userMailCacheStore(u.ID)
+	if err != nil {
+		return err
+	}
+	source := imapadapter.MailSourceIdentity(uc.mail)
+	if err = boundCache.CheckMailSource(source); err != nil {
+		return err
+	}
+	if err = store.BindMailSource(source); err != nil {
+		return err
+	}
+	if err = boundCache.BindMailSource(source); err != nil {
+		return err
+	}
+	uc.head = p.userHead(u.ID, store, settings.Labels)
 
 	// Derived from lifetimeCtx, not context.Background(): Stop() cancels the
 	// poller's context, and a tick rooted at Background did not observe it. The
@@ -925,7 +940,7 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		}
 		uid, _ := strconv.Atoi(strings.TrimSpace(msg.ID))
 		// Past the header byte budget: a later, smaller batch fetches it.
-		if headersNeeded && !msg.TooLarge && uc.headers[uid] == nil {
+		if headersNeeded && !msg.TooLarge && !msg.ParseError && uc.headers[uid] == nil {
 			deferredIDs = append(deferredIDs, msg.ID)
 			continue
 		}
@@ -935,7 +950,7 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		// rules first and a deferral after them would re-run their actions on
 		// the retry. Incoming encryption defers all mutations, so it admits quota
 		// after feasibility checks, immediately before the LLM call instead.
-		if label, allow, _ := presort(uc, msg, uid); !uc.encryptIncoming && label == "" &&
+		if label, allow, _ := presort(uc, msg, uid); !msg.ParseError && !uc.encryptIncoming && label == "" &&
 			!p.guess(uc, msg, allow).confident(p.embedMin) && !p.allowByRate(u.ID) {
 			p.log.Info("rate limit reached, deferring remaining emails", "user_id", u.ID)
 			rateLimitedCount = len(messages) - processedCount - skippedSeenCount - failedCount
@@ -1391,6 +1406,9 @@ func (p *Poller) reloadConfigIfNeeded() {
 }
 
 func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.Message) error {
+	if msg.ParseError {
+		return imapadapter.ErrMalformedMIME
+	}
 	if uc.encryptIncoming && !msg.PGPEncrypted && !msg.TooLarge {
 		if err := p.encryptIncomingMessage(ctx, uc, msg); err != nil {
 			return &incomingEncryptionErr{err}

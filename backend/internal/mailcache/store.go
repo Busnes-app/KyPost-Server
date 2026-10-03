@@ -1,6 +1,8 @@
 package mailcache
 
 import (
+	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -48,15 +50,17 @@ type mailboxWindow struct {
 // and mutation re-reads the file from disk first, mirroring
 // contacts.Store's convention.
 type Store struct {
-	mu         sync.Mutex
-	baseDir    string
-	mailboxes  map[string]*mailboxWindow
-	omitBodies bool
+	mu             sync.Mutex
+	baseDir        string
+	mailboxes      map[string]*mailboxWindow
+	omitBodies     bool
+	sourceIdentity string
 }
 
 type mailCacheFile struct {
-	OmitBodies bool                      `json:"omitBodies,omitempty"`
-	Mailboxes  map[string]*mailboxWindow `json:"mailboxes"`
+	SourceIdentity string                    `json:"sourceIdentity,omitempty"`
+	OmitBodies     bool                      `json:"omitBodies,omitempty"`
+	Mailboxes      map[string]*mailboxWindow `json:"mailboxes"`
 }
 
 func New(baseDir string) (*Store, error) {
@@ -85,6 +89,7 @@ func (s *Store) applyFile(cf mailCacheFile) {
 	dropStaleVerdicts(cf.Mailboxes)
 	s.mailboxes = cf.Mailboxes
 	s.omitBodies = cf.OmitBodies
+	s.sourceIdentity = cf.SourceIdentity
 }
 
 // dropStaleVerdicts clears every cached signature verdict that was computed
@@ -180,7 +185,7 @@ func (s *Store) persistLocked() error {
 			}
 		}
 	}
-	return fsutil.PersistJSONFile(s.path(), mailCacheFile{Mailboxes: s.mailboxes, OmitBodies: s.omitBodies})
+	return fsutil.PersistJSONFile(s.path(), mailCacheFile{SourceIdentity: s.sourceIdentity, Mailboxes: s.mailboxes, OmitBodies: s.omitBodies})
 }
 
 // Snapshot returns up to limit cached entries for mailboxKey (the limit
@@ -686,4 +691,55 @@ func (s *Store) Remove(mailbox string, uid int) error {
 		}
 	}
 	return nil
+}
+
+// ErrMailSource refuses cache reuse across mail source identities. The binding
+// is immutable until a migration defines cache/checkpoint/client resets.
+var ErrMailSource = errors.New("mail cache belongs to another source; restore the original source or use a reviewed migration; source switching is disabled")
+
+func (s *Store) CheckMailSource(source string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refreshFromDiskLocked(); err != nil {
+		return err
+	}
+	return s.checkMailSource(source)
+}
+func (s *Store) checkMailSource(source string) error {
+	if source != "imap" {
+		hash, err := hex.DecodeString(strings.TrimPrefix(source, "native:"))
+		if !strings.HasPrefix(source, "native:") || err != nil || len(hash) != 32 {
+			return errors.New("invalid mail source identity")
+		}
+	}
+	if s.sourceIdentity != "" {
+		if s.sourceIdentity != source {
+			return ErrMailSource
+		}
+		return nil
+	}
+	if source != "imap" && len(s.mailboxes) != 0 {
+		return ErrMailSource
+	}
+	return nil
+}
+func (s *Store) BindMailSource(source string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	release, err := fsutil.LockFile(s.path())
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err = s.refreshFromDiskLocked(); err != nil {
+		return err
+	}
+	if err = s.checkMailSource(source); err != nil {
+		return err
+	}
+	if s.sourceIdentity == source {
+		return nil
+	}
+	s.sourceIdentity = source
+	return s.persistLocked()
 }

@@ -46,6 +46,7 @@ All files under `scripts/`.
 
 ## Verification
 
+- `python3 scripts/check-receiving-gateway.py /path/to/maddy` qualifies the pinned Maddy 0.9.5 x86_64 Linux binary using a disposable loopback receiver/spool: refusal, MIME/envelope fidelity, process-crash replay and acknowledgment cleanup. See `docs/RECEIVING_GATEWAY_ASSESSMENT.md` for the pin and remaining adoption gates; this is test-only, not runtime setup.
 - `go test ./internal/app/ -run BootstrapAdmin` covers the seeding contract: a usable admin account, `600` on both secret files, idempotency across restarts, and the `users.json`-already-exists upgrade path
 - `sh -n scripts/crash-exit.sh` parses; `docker compose config -q` fails without `KYPOST_BIND` and succeeds with it
 - `bash -n scripts/update-host.sh scripts/install-auto-update.sh` parses and `bash scripts/update-host.test.sh` covers no-op and health-failure rollback without Docker; do not run the installer in CI because it enables user lingering via `loginctl` and installs live units under `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user`

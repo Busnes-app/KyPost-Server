@@ -313,6 +313,9 @@ func (s *Server) handleRulesRun(w http.ResponseWriter, r *http.Request) {
 	}
 	mailClient, err := s.mailFor(r)
 	if err != nil {
+		if writeMailSourceConflict(w, err) {
+			return
+		}
 		if errors.Is(err, errIMAPNotConfigured) {
 			http.Error(w, "imap configuration is required", http.StatusBadRequest)
 			return

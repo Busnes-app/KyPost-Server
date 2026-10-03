@@ -268,6 +268,26 @@ audit rows use a placeholder subject, but historical audit rows/backups are not
 rewritten. Losing the private key makes these messages unreadable. Disabling
 stops future replacements and does not decrypt existing messages.
 
+### Internal native mailbox implementation
+
+The native mailbox adapter implements the same incoming-encryption journal and
+pending-key guards, but production source selection remains disabled. It binds
+a saved source to its immutable owner and a durable random database namespace;
+recreating a database for the same owner does not authorize an older job.
+One SQLite transaction commits the exact ciphertext under a new ID, preserves
+current flags/date, tombstones the original live bytes/header metadata, and
+records replacement/removal events plus a recovery receipt. The existing SMTP
+import receipt retains the original ID, so retry cannot resurrect plaintext.
+
+Recovery verifies the receipt and exact ciphertext before applying an action in
+the same transaction. Lost move acknowledgments reconcile only against that
+copy in the expected destination; a verified stop remains valid after a move.
+A changed/deleted copy or a mismatched namespace pauses recovery. Restores still
+need explicit reconciliation before activation; this is not a backup or rollback
+procedure. SQLite WAL/pages, receiving buffers and earlier backups may retain
+plaintext after replacement. Existing client payloads and opt-in behavior are
+unchanged. See [implementation checks](TURNKEY_MAIL_PHASE1.md#native-incoming-encryption-recovery).
+
 ## Status
 
 ### Corrections to an earlier version of this document

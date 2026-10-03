@@ -1,5 +1,7 @@
 # Handoff: Bundled Mail Server Appliance via Maddy
 
+Status: historical, unimplemented candidate proposal. Follow the [turnkey mail stack plan](TURNKEY_MAIL_STACK_PLAN.md) for current architecture: receiving gateway, KyPost-owned mailboxes and operator-owned outgoing relay. The engine selection below is provisional. Image pins, provisioning commands, storage claims and estimates here are not verified deployment instructions.
+
 ## 1. Executive Summary & Architectural Decision
 
 ### Decision: Use Maddy Mail Server as an Orchestrated Sidecar

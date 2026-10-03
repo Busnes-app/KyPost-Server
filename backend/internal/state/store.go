@@ -165,6 +165,10 @@ type stateFile struct {
 // New opens (creating if needed) the account's state database, applies the
 // schema, and imports any pre-SQLite JSON files exactly once.
 func New(baseDir string) (*Store, error) {
+	return newWithMailSource(baseDir, "imap")
+}
+
+func newWithMailSource(baseDir, source string) (*Store, error) {
 	if err := os.MkdirAll(baseDir, 0o700); err != nil {
 		return nil, err
 	}
@@ -176,6 +180,18 @@ func New(baseDir string) (*Store, error) {
 	if err := migrateJSONIfPresent(db, s.path(), s.decisionsPath()); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	// Initialize once: normal opens preserve native bindings, while legacy or
+	// recreated state is IMAP and cannot adopt unrelated numeric native IDs.
+	if _, err := db.Exec("INSERT OR IGNORE INTO meta(key,value) VALUES('mail_source',?)", source); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if source != "imap" {
+		if err := s.BindMailSource(source); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 	}
 	// Close the handle when the last reference to this Store goes away.
 	//
