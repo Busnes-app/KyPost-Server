@@ -115,6 +115,16 @@ func prepareAccount(stateRoot string, owner Owner, address string, limits Limits
 	return source, nil
 }
 
+// ValidatePreparedAccount checks published preparation without recreating any
+// missing state. A provisioner with an acknowledged source must use this on
+// repair; PrepareAccount would legitimately create a new directory if absent.
+func ValidatePreparedAccount(stateRoot string, owner Owner, address string, limits Limits) (string, error) {
+	if !fsutil.SafePathComponent(owner.Mailbox) {
+		return "", ErrPreparation
+	}
+	return preparedSource(filepath.Join(stateRoot, "users", owner.Mailbox), owner, address, limits)
+}
+
 // Check before any constructor: constructors create missing schemas/identities.
 // Read-only opens reject incomplete state without silently initializing it.
 func preparedSource(dir string, owner Owner, address string, limits Limits) (string, error) {

@@ -471,7 +471,7 @@ func TestDirectoryRetainsVerifiedMailboxDesiredState(t *testing.T) {
 	limits := mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100}
 	// Explicit internal storage qualification; domain ownership/routing is not
 	// asserted, and no production webhook or selector calls this constructor.
-	source, err := mailbox.PrepareAccount(srv.stateDir, owner, desired.Resource.Email(), limits)
+	assignment, err := lifecycle.ReconcileNativeMailbox(srv.stateDir, owner.Issuer, owner.Subject, owner.Mailbox, "example.test", limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +480,7 @@ func TestDirectoryRetainsVerifiedMailboxDesiredState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err = st.BindMailSource(source); err != nil {
+	if err = st.BindMailSource(assignment.Source); err != nil {
 		t.Fatal("prepared state/source mismatch", err)
 	}
 	inactive := scimUser("mail-subject", "directory_mail", false)
@@ -490,7 +490,7 @@ func TestDirectoryRetainsVerifiedMailboxDesiredState(t *testing.T) {
 		t.Fatal("disabled desired resource not retained", err)
 	}
 	// Offboarding changes access, never storage ownership or the source namespace.
-	if next, err := mailbox.PrepareAccount(srv.stateDir, owner, "primary@example.test", limits); err != nil || next != source {
+	if next, err := lifecycle.ReconcileNativeMailbox(srv.stateDir, owner.Issuer, owner.Subject, owner.Mailbox, "example.test", limits); err != nil || next.Source != assignment.Source || next.DesiredActive || next.Status != "applied" {
 		t.Fatal("offboarding destroyed prepared mailbox", err)
 	}
 }
