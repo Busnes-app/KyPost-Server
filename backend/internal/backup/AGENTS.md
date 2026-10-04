@@ -49,6 +49,7 @@ This package owns payload selection and verification. API/CLI callers own creden
 - `go test ./internal/api -run TestBackup` covers admin/CSRF/credential gates and audit outages.
 - `TestNothingInTheServerDecrypts` scans backend source with guardtest, allowing only app.runRestore.
 - `TestNativeDatabasesSurviveSealedRestore` proves WAL-only bytes/receipts survive sealing and restore, and drills reject corrupt native databases.
+- `TestNativeBackupRefusesOversizedWALSnapshot` creates committed synthetic SQLite probe rows over the per-file cap while the main database stays below it. Actual backup Run refuses with file/cap diagnostics, publishes no local capsule, cleans scratch and preserves source rows. This measures snapshot refusal, not accepted-mail throughput or domain-sized backup support.
 
 ## Child DOX Index
 
