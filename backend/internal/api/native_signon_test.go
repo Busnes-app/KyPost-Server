@@ -170,7 +170,7 @@ func TestNativeSignOnRefusals(t *testing.T) {
 		"originOtherPort":   {claims: deviceClaims(map[string]any{"origin": "https://" + ssoTestHost + ":8443", "jti": "jti-op"}), want: http.StatusForbidden, wantBody: differentServer},
 		"originOtherScheme": {claims: deviceClaims(map[string]any{"origin": "http://" + ssoTestHost, "jti": "jti-os"}), want: http.StatusForbidden, wantBody: differentServer},
 		"staleIat":          {claims: deviceClaims(map[string]any{"iat": time.Now().Add(-10 * time.Minute).Unix(), "jti": "jti-stale"}), want: http.StatusForbidden, wantBody: "too old"},
-		"futureIat":         {claims: deviceClaims(map[string]any{"iat": time.Now().Add(2 * time.Minute).Unix(), "jti": "jti-future"}), want: http.StatusForbidden, wantBody: "not valid yet"},
+		"futureIat":         {claims: deviceClaims(map[string]any{"iat": time.Now().Add(2 * time.Minute).Unix(), "jti": "jti-future"}), want: http.StatusForbidden, wantBody: "could not be verified"},
 		"wrongAudience": {claims: deviceClaims(nil), setup: func(_ *Server, idp *ssotest.IdP) { idp.WrongAudience = "someone-else" },
 			want: http.StatusForbidden, wantBody: "could not be verified"},
 		"ssoOff": {claims: deviceClaims(nil), setup: func(s *Server, _ *ssotest.IdP) { st := s.ssoStore.Load(); st.Enabled = false; _ = s.ssoStore.Save(st) },

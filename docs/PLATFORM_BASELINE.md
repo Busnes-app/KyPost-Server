@@ -22,6 +22,8 @@ compatibility break that must move a version tag with it.
 
 ## 1. Pairing
 
+Native sign-on through `POST /api/auth/native/signon` accepts a provider-issued ID token with positive `iat`, at most 30 seconds ahead of the server and at most five minutes old, in addition to signature/issuer/audience/origin checks. Keep provider/server clocks synchronized; refusal is HTTP 403 without a pairing grant. Clients obtain the signed token from the provider rather than constructing timestamps.
+
 A device joins an account by scanning a QR code, or by following the same
 string as a deep link. The payload is one URI:
 
