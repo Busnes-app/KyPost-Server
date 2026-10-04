@@ -129,7 +129,9 @@ trailer per tool that materially contributed.
 **3. Say what you verified yourself.** For anything above *None*, the PR must
 say what you personally ran and read — "ran the backend suite locally, read
 every line of the diff, hand-tested the draft-expiry path in the UI" — not "the
-agent says tests pass."
+agent says tests pass." "None yet" is a valid factual statement. Record agent
+checks separately; they cannot stand in for human verification or the human
+trust-boundary explanation required for security-sensitive changes.
 
 **4. Own it.** The human opening the PR is the author of that code for every
 purpose: licensing, review, correctness, and the bug it causes six months from
@@ -348,7 +350,9 @@ working in. Do not work from memory of it.
 
 ## PR Checklist
 
-Paste this into your PR description and fill it in.
+Paste this into your PR description. The human fills the human statements and
+attestation; an agent may record its checks separately. CI and adversarial
+review remain mandatory merge gates above, not boxes a contributor can certify.
 
 ```markdown
 ### What and why
@@ -357,24 +361,26 @@ Paste this into your PR description and fill it in.
 ### AI involvement
 - Level: None / Assisted / Generated / Agentic
 - Tools:
-- What I verified myself:
 
-### Gates
-- [ ] Ran the gates locally (go test -race, tsc, vitest, build)
-- [ ] New logic has tests; security-sensitive changes have attack-path tests
-- [ ] Ran adversarial review; findings addressed or argued below
-- [ ] DOX pass done — nearest AGENTS.md and any parent/child index updated
+### Human statements
+- Trust boundary in my own words (required for security-sensitive Generated/Agentic changes; otherwise explain why not applicable):
+- What I verified myself:
+- [ ] I accept responsibility for this contribution and its documented trade-offs.
+
+### Validation
+- Contributor/agent checks, with who ran them and their results:
+- New-logic and attack-path coverage:
+- CI and independent review evidence for the current head:
+- DOX pass — updated docs/indexes, or why unchanged:
 
 ### Adversarial review findings
 <!-- Skills run, and every finding not fixed, with your reasoning. -->
 
 ### Security
-- [ ] No change to defaults that weakens a protection
-- [ ] Fails closed on missing or partial configuration
+- Defaults and refusal on missing or partial configuration:
 - Trade-off introduced (if any), in one sentence:
 - Documented in: README.md / SECURITY.md / UI / .env.example / n-a
-- [ ] Does not archive, delete, or move mail without an explicit user action
-- [ ] No trust decision derived from a classifier label
+- Mail actions require explicit user intent; classifier labels grant no trust — explain any affected path:
 - New dependencies / network calls / stored secrets, and why:
 ```
 
