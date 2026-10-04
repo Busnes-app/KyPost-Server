@@ -16,6 +16,10 @@ non-prerelease version.
 
 - Align the contribution template with human-only attestations: record personal verification and trust-boundary explanations separately from agent checks and CI/review evidence.
 
+- Give each offline native restore/quarantine attempt a fresh hold epoch, including retries and failed validation. Preserve holds on entropy/write failure; no restore activation or hold release is introduced.
+
+- Qualify refusal of signed recovery evidence by ordinary directory sync without account, revision or hold mutation; document the available KyIdentity exporter and pending challenge/repair boundary.
+
 - Revoke restored native CardDAV app-password hashes and deny held native accounts on both cached and fresh CardDAV authentication; preserve legacy/original credentials and contact data.
 
 - Fence native HTTP reads/actions and new notification references with the persisted mailbox reference generation. Reject stale/foreign/bare numeric IDs before mail access, retain internal numeric/encryption identities and legacy IMAP behavior, and qualify actual snapshot ID reuse plus browser body-cache separation. Native restore remains held.

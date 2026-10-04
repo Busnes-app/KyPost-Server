@@ -118,6 +118,12 @@ owner's password/recovery material; a capsule does not bypass that protection.
    persistence of `state/native-restore-hold.json`, and quarantine of restored
    queued/retryable outgoing deliveries. Their encrypted contents and claim history
    remain retained; accepted/Sent and submitting/uncertain evidence is unchanged.
+   Each quarantine attempt writes a fresh random UUID-v4 `epoch` in the version-1
+   hold, including retries and failed validation. It distinguishes this restore
+   from historical copies; it grants no recovery authority. An empty-epoch hold
+   is persisted before random generation, so a fatal failure or returned error
+   keeps staging held and unpublished. Future recovery
+   evidence must bind a valid current epoch; retries invalidate earlier evidence.
    For every native account, restore also atomically removes native device and
    browser push registrations and rotates the subscriber ID. Old device secrets,
    push-MFA approvers, enrollment acknowledgements and outstanding pairing tokens

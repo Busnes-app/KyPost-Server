@@ -362,6 +362,8 @@ This list is the CI gate, in the order `ci-backend-api` and `ci-backend-other` r
 - `go build -buildvcs=false ./...` must succeed with zero errors
 - `go test -race -count=1 -timeout=20m ./...` must pass. The sorter parity test and the poller's hybrid tests skip unless `EMBED_MODEL_DIR` points at the pinned model; `ci-backend-other` downloads it using the Dockerfile's `EMBED_*` ARG pins, so set it locally too or those tests prove nothing. The `-timeout` is not optional: `internal/api` alone exceeds Go's default 600s under `-race`, which is why CI splits it into its own job and passes `-timeout=20m`. Running plain `go test -race ./...` locally reports a timeout that CI would not see
 
+- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/api -run '^TestNativeRecoveryEvidenceCannotApplyDirectoryState$' -count=1` checks signed recovery-purpose refusal, exact account/lifecycle/hold preservation and ordinary sync continuity. It does not qualify evidence consumption or restore release.
+
 ## Child DOX Index
 
 - `internal/mailbox/` — permanent per-owner SQLite storage, delivery receipts, durable changes, encrypted outbox claims/Sent obligations, atomic account preparation and the internal full mail Client; selected for admitted native accounts only with `KYPOST_NATIVE_MAIL=true`. See [internal/mailbox/AGENTS.md](internal/mailbox/AGENTS.md).
