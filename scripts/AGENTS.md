@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Container initialization, process orchestration, Ollama model management, and host-side image updates.
+Container initialization, process orchestration, Ollama model management, host-side image updates, and controlled operator mail setup.
 
 ## Ownership
 
@@ -39,6 +39,8 @@ All files under `scripts/`.
 
 ## Work Guidance
 
+- `setup-mail.sh` is host-only and interactive on Linux x86_64. Keep its wizard-template library unchanged. Validate public dotenv values and owned regular private env files before writes; never source dotenv or collect account/provider credentials. Confirm base rebuild (which pauses reception), new-spool initialization and profile launch. Reuse existing UI and production receiving admission; leave external TLS/DNS/delivery observations explicit.
+
 - `bootstrap.sh` must keep running before the `chown -R kypost:kypost /kypost` step in `entrypoint.sh` — it writes as root, and that chown is what hands the resulting files (`admin.env` and `first-run-password.txt` included) to `kypost`
 - No runtime script may depend on `node`. The runtime image is `debian:stable-slim` and has no JavaScript interpreter; the frontend is static files built in an earlier stage
 - Never echo a generated credential to stdout from these scripts — that is the container log stream
@@ -47,6 +49,8 @@ All files under `scripts/`.
 - Do not raise `startretries` to "fix" a crash loop, and do not remove `crashexit`. Each alone reintroduces one of the two failure modes it exists to close: an invisible hot loop, or an invisible death. A program that genuinely cannot start should take the container down where an operator and an orchestrator can both see it
 
 ## Verification
+
+- `bash scripts/setup-mail.test.sh` loads definitions only and checks public-input rejection, private dotenv creation/upserts, unsafe-file refusal and actual base/overlay Compose resolution against conflicting inherited settings. It never opens a browser or starts a container. Verify interactive stages statically; do not run them in CI.
 
 - `python3 scripts/check-receiver-launch.py` verifies incomplete flags and wrong-hash, symlinked or writable engines refuse before configuration creation. The optional actual-image supervised Maddy check in `backend/internal/app/receiving_maddy_test.go` proves automatic crash restart, idle shutdown and incomplete-DATA shutdown; see receiver setup.
 
