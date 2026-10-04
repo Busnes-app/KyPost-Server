@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Qualify mailbox/receiving backup refusal when committed WAL data exceeds the per-file cap although the main database fits. Check explicit failure, no local capsule or leftover scratch, and retained original rows; backup limits remain unchanged.
+
 - Deny held native password/derived, MFA, SSO/step-up, session/admin and QR key-exchange authority independently of native feature flags. Preserve recovery material/nonces and legacy recovery administration; no hold release is introduced.
 
 - Add protected, challenge-bound KyIdentity recovery-evidence storage and durable revision barriers for unpublished reservations in held native restores. Preserve ordinary published-account offboarding/demotion and permit ownership-validated held device/subscriber revocation without mail access. Preserve account state and the hold; fence local admin authority cycles and support bounded large exact-action uploads. Account repair and hold release remain pending.

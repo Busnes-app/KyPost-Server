@@ -63,7 +63,7 @@ collected/restored roots, never the original absolute ledger path. It does not
 prove current external authority or freshness; consistent old backups can pass.
 Native validation needs additional scratch space for the collected metadata and
 databases. The 64 MiB per-file and 256 MiB total limits remain activation gates
-for a domain-sized mail store; oversized backups fail rather than omit mail.
+for a domain-sized mail store; oversized backups fail rather than omit mail. The limit applies to the consistent snapshot, including committed WAL rows, not just the main database file size. A small main file is therefore insufficient to predict whether a backup will fit. Automated mailbox/receiving capacity checks verify refusal without a local capsule or scratch leftovers and preservation of original committed probe data; they do not qualify domain-sized mail throughput.
 
 The version-1 recipe remains compatible. Use this version of KyPost or newer to
 check all three database names and the additive relay credential/authority recipe; older drills do not attest the new relay checks. A new integrity
