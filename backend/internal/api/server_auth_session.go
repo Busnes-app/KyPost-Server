@@ -280,7 +280,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// GetByUsername's own cost differs between a hit and a miss.
 	credentialStart := time.Now()
 	u, err := s.users.GetByUsername(req.Username)
-	if err != nil || !u.Active {
+	if err != nil || !u.Active || s.requireAccountRestoreReleased(u) != nil {
 		// Do the same derivation work a real check would, so slot contention
 		// does not reveal whether the username exists (or is inactive); the
 		// floor below covers the clock. Equalize against whichever credential
@@ -556,6 +556,16 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID str
 // mintSession is startSession for a caller that has more to record than the
 // user id: the SSO callback stores the provider login the session came from.
 func (s *Server) mintSession(w http.ResponseWriter, r *http.Request, sess Session) error {
+	u, err := s.users.Get(sess.UserID)
+	if err != nil {
+		return err
+	}
+	if !u.Active {
+		return errors.New("account is inactive")
+	}
+	if err := s.requireAccountRestoreReleased(u); err != nil {
+		return err
+	}
 	token, err := randomToken(24)
 	if err != nil {
 		return err
@@ -606,7 +616,7 @@ func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u, err := s.users.Get(ch.UserID)
-	if err != nil || !u.Active || !u.TOTPEnabled || u.TOTPSecretEnc == "" {
+	if err != nil || !u.Active || s.requireAccountRestoreReleased(u) != nil || !u.TOTPEnabled || u.TOTPSecretEnc == "" {
 		// The account changed underneath the challenge; no code was offered,
 		// so the strike tryAttempt reserved goes back.
 		s.mfaLockout.cancelAttempt(ch.UserID)
@@ -690,7 +700,7 @@ func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := s.users.Get(ch.UserID)
-	if err != nil || !u.Active || !u.TOTPEnabled {
+	if err != nil || !u.Active || s.requireAccountRestoreReleased(u) != nil || !u.TOTPEnabled {
 		s.mfaLockout.cancelAttempt(ch.UserID)
 		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
 		return
@@ -1250,7 +1260,7 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
 	}
 
 	u, err := s.users.Get(sess.UserID)
-	if err != nil || !u.Active {
+	if err != nil || !u.Active || s.requireAccountRestoreReleased(u) != nil {
 		s.sessMu.Lock()
 		delete(s.sessions, cookie.Value)
 		s.sessMu.Unlock()
@@ -1280,4 +1290,13 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
 var mustChangePasswordExemptPaths = map[string]bool{
 	"/api/auth/password": true,
 	"/api/auth/logout":   true,
+}
+
+// Native account flags restored from a snapshot confer no authentication authority.
+// Either private marker triggers the hold, independently of runtime feature flags.
+func (s *Server) requireAccountRestoreReleased(u users.User) error {
+	if u.NativeMailboxIssuer != "" || u.NativeMailboxSource != "" {
+		return sso.RequireNativeRestoreReleased(s.stateDir)
+	}
+	return nil
 }

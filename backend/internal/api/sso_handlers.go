@@ -514,6 +514,10 @@ func (s *Server) linkSSOIdentity(w http.ResponseWriter, r *http.Request, userID 
 func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings, claims *sso.SSOTokenClaims) (users.User, error) {
 	user, err := s.users.GetBySSOSubIssuer(claims.Issuer, claims.Sub)
 	if err == nil {
+		if err := s.requireAccountRestoreReleased(user); err != nil {
+			http.Error(w, "Native account recovery is held; contact your administrator. Preserve the restore hold and storage.", http.StatusForbidden)
+			return users.User{}, err
+		}
 		// The account still knows this subject — that is how directory sync
 		// addresses it — but a revocation said it is no longer a credential.
 		// Refuse here rather than falling through to auto-provision, which
