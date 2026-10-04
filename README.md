@@ -10,7 +10,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 
 - Per-user opt-in incoming encryption under Security → Encryption: classify unread, unprocessed inbox mail, then replace it with a verified public-key-encrypted copy. Requires a client-protected key, saved-key-backup acknowledgment and fresh account confirmation. The provider sees plaintext before processing; losing the private key makes replaced mail unreadable. Unreplaceable messages remain plaintext with explicit failure decisions; [read the replacement and recovery contract](docs/E2E_PGP.md#incoming-mail-encryption-opt-in).
 
-- Sealed configuration/state backups to KyRecovery or a local directory, with admin scheduling and restore drills. Custodian shares are used only by the offline restore command; see [sealed backup and restore](docs/RESTORE.md).
+- Sealed configuration/state backups to KyRecovery or a local directory, with admin scheduling and restore drills. Internal native mailbox/receiving databases use SQLite snapshots including committed WAL rows; whole-stack restore qualification remains pending. Custodian shares are used only by the offline restore command; see [sealed backup and restore](docs/RESTORE.md).
 - Shared JSON application logs on stderr, controlled by `KY_LOG_LEVEL`; see [logging](LOGGING.md).
 
 - Single-container Docker runtime. supervisord manages the processes.
@@ -1097,7 +1097,7 @@ inside the container. On systems without systemd, schedule
 - `backend/internal/ingress/`: internal durable receiving-buffer core and isolated gateway checks; production reception is not enabled. See [receiving qualification](docs/RECEIVING_GATEWAY_ASSESSMENT.md).
 - `backend/internal/mailbox/`: internal permanent per-owner SQLite mail, metadata, receipt and change storage, with a complete internal mail Client and transactional incoming-encryption recovery. The internal importer commits these receipts before releasing receiving-buffer payloads. Source guards refuse switching or reusing references against another native database. Native API qualification uses fresh full snapshots; efficient scoped deltas and runtime local-mailbox selection remain disabled. The internal directory reconciler retains primary-address/account reservations and preparation status; production provisioning remains disabled. Internal new-account preparation atomically publishes an empty mailbox plus prebound state and refuses legacy/incomplete directories; matching preparations are validated on retry. See [implementation evidence](docs/TURNKEY_MAIL_PHASE1.md#durable-directory-desired-state-and-native-account-preparation).
 
-- `backend/internal/backup/`: KyRecovery adapter, collection and drill checks.
+- `backend/internal/backup/`: KyRecovery adapter, collection and drill checks for state, native mailbox and receiving SQLite snapshots.
 - `docs/RESTORE.md`: operator backup and offline restore procedure.
 
 - `backend/`: Go API, poller, adapters, config, state, health, and the on-device embedding sorter (`internal/sorter`)

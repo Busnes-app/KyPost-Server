@@ -40,11 +40,25 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
 - Install-wide and per-user state.db snapshots including committed WAL rows,
   address books and other persistent state. Native-device secrets are in the
   per-user databases. Pending encrypted pickup messages are included.
+- Internal mailbox.db and ingress.db snapshots inside the collected roots,
+  including committed WAL rows and exact stored MIME/receipt data. Native
+  reception and runtime provisioning remain disabled.
 
 IMAP mail, rebuildable mailcache.json, Ollama model blobs, logs and runtime files
 are excluded. Each database has a consistent snapshot; separate databases and JSON
 files are collected sequentially, not as a transaction across the whole deployment.
 For a quiescent recovery point, stop services and use the CLI export.
+
+Native-mail qualification is incomplete: SQLite integrity does not prove that
+restored users, directory revisions, reservations, mailbox namespaces and receiving
+routes agree, or that restored delivery evidence is current. Keep native workers
+disabled until these are reconciled against authoritative identity/receiver state.
+The 64 MiB per-file and 256 MiB total limits also remain activation gates for a
+domain-sized mail store; oversized backups fail rather than omit mail.
+
+The version-1 recipe remains compatible. Use this version of KyPost or newer to
+check all three database names; older drills check only state.db. A new integrity
+check cannot recover WAL rows omitted from an older raw-copy native backup.
 
 The collector refuses missing keys needed by stored encrypted data, symlinks,
 unsupported special files, files over 64 MiB or a total payload over 256 MiB.

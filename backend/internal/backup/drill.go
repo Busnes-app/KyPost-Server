@@ -59,7 +59,7 @@ func drillChecks(dir string, opened capsule.Manifest) []recoveryclient.Check {
 			check("file path", false)
 			continue
 		}
-		if filepath.Base(file.Path) == "state.db" {
+		if snapshotDatabase(filepath.Base(file.Path)) {
 			check("sqlite:"+file.Path, integrityOK(filepath.Join(dir, file.Path)))
 		}
 	}

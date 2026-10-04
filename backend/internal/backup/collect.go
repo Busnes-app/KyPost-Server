@@ -19,10 +19,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const ErrMailExcluded = "IMAP mail and the rebuildable mail cache are excluded; encrypted pickup messages awaiting collection are included"
+const ErrMailExcluded = "IMAP mail and the rebuildable mail cache are excluded; local mailbox/receiving databases and encrypted pickup messages awaiting collection are included"
 const scratchDirName = "backup-scratch"
 
 var required = []string{"config/config.yaml", "config/users.json", "private/totp-secret.key", "state/state.db"}
+
+func snapshotDatabase(name string) bool {
+	return name == "state.db" || name == "mailbox.db" || name == "ingress.db"
+}
 
 func skip(name string) bool {
 	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || strings.HasSuffix(name, ".lock") ||
@@ -111,7 +115,7 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 					return fmt.Errorf("%s exceeds the 64 MiB per-file backup cap", name)
 				}
 				var raw []byte
-				if d.Name() == "state.db" {
+				if snapshotDatabase(d.Name()) {
 					raw, err = state.SnapshotDB(ctx, full, scratch)
 				} else {
 					f, e := root.Open(rel)
