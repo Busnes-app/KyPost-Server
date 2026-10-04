@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -140,6 +141,15 @@ func (s *Server) handlePGPBootstrap(w http.ResponseWriter, r *http.Request) {
 // the caller surfaces that rather than minting a key with no usable User ID.
 func (s *Server) suggestedKeyUserIDs(userID string) []string {
 	out := []string{}
+	if s.users != nil {
+		a, native, err := s.nativeMailAssignment(context.Background(), userID)
+		if native || err != nil {
+			if err == nil {
+				return []string{a.Address}
+			}
+			return out
+		}
+	}
 	payload, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(userID), s.imapConfigKeyPath)
 	if err != nil || !exists || strings.TrimSpace(payload.Username) == "" {
 		return out

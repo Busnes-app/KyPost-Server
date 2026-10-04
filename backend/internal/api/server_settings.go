@@ -222,6 +222,12 @@ func (s *Server) handleLabelPreferences(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
+	if ac, ok := authFromContext(r); ok && s.users != nil {
+		if _, _, err := s.nativeMailAssignment(r.Context(), ac.UserID); err != nil {
+			http.Error(w, "mailbox authority is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+	}
 	store, err := s.storeFor(r)
 	if err != nil {
 		http.Error(w, "failed to open user state", http.StatusInternalServerError)

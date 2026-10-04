@@ -197,6 +197,7 @@ type Server struct {
 	backup        *backup.Service
 	ssoStore      *sso.Store
 	nativeDomains *sso.NativeDomainStore
+	nativeMail    bool
 	ssoLifecycle  *sso.LifecycleStore
 	ollamaMu      sync.Mutex
 	ollamaStatus  ollamaVersionStatus

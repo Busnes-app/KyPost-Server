@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 type Client struct {
 	store *Store
 	from  string
+	admit func(context.Context) error
 }
 
 var _ imapadapter.Client = (*Client)(nil)
@@ -36,6 +38,37 @@ func NewClient(store *Store, from string) (*Client, error) {
 		return nil, errors.New("native mailbox requires a store and verified account address")
 	}
 	return &Client{store: store, from: from}, nil
+}
+
+// OpenClient owns an existing runtime database. Cached clients retain storage
+// identity only: every operation calls admit again, including PGP replacement.
+// Eviction drops the client; cleanup waits until its operations are unreachable.
+func OpenClient(dir string, owner Owner, limits Limits, from, source string, admit func(context.Context) error) (*Client, error) {
+	if admit == nil {
+		return nil, ErrOwner
+	}
+	store, err := OpenExisting(dir, owner, limits, source)
+	if err != nil {
+		return nil, err
+	}
+	c, err := NewClient(store, from)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	c.admit = admit
+	runtime.AddCleanup(c, func(s *Store) { _ = s.Close() }, store)
+	return c, nil
+}
+
+func (c *Client) checkAccess(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.admit != nil {
+		return c.admit(ctx)
+	}
+	return nil
 }
 
 func normalizeFolder(folder string) (string, error) {
@@ -68,6 +101,10 @@ func nativeOverview(m Message) imapadapter.Overview {
 	return o
 }
 func (c *Client) ListOverviews(ctx context.Context, folder string, limit int) ([]imapadapter.Overview, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 500
 	}
@@ -86,6 +123,10 @@ func (c *Client) ListOverviews(ctx context.Context, folder string, limit int) ([
 	return out, nil
 }
 func (c *Client) FetchRawMessage(ctx context.Context, folder string, uid int) ([]byte, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return nil, err
+	}
 	folder, err := normalizeFolder(folder)
 	if err != nil {
 		return nil, err
@@ -115,6 +156,10 @@ func (c *Client) parsed(ctx context.Context, folder string, uid int) (imapadapte
 	return parsed, cost, err
 }
 func (c *Client) GetMessageBodies(ctx context.Context, folder string, uids []int) (map[int]imapadapter.MessageContent, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return nil, err
+	}
 	if len(uids) > batchCount {
 		return nil, errors.New("mailbox body batch exceeds message limit")
 	}
@@ -152,6 +197,10 @@ func (c *Client) GetMessageBodies(ctx context.Context, folder string, uids []int
 	return out, nil
 }
 func (c *Client) ListUnreadMessages(ctx context.Context, folder string, limit int) ([]imapadapter.UnreadMessage, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return nil, err
+	}
 	// Despite its historical name, IMAP lists read and unread messages here.
 	overviews, err := c.ListOverviews(ctx, folder, limit)
 	if err != nil {
@@ -176,6 +225,10 @@ func (c *Client) ListUnreadMessages(ctx context.Context, folder string, limit in
 	return out, nil
 }
 func (c *Client) ListUnreadInbox(ctx context.Context, checkpoint string) ([]imapadapter.Message, string, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return nil, checkpoint, err
+	}
 	after := int64(0)
 	if checkpoint != "" {
 		var err error
@@ -212,6 +265,10 @@ func (c *Client) ListUnreadInbox(ctx context.Context, checkpoint string) ([]imap
 	return out, strconv.FormatInt(next, 10), nil
 }
 func (c *Client) ListAttachments(ctx context.Context, folder string, uid int) ([]imapadapter.AttachmentInfo, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return nil, err
+	}
 	p, _, err := c.parsed(ctx, folder, uid)
 	if err != nil {
 		return nil, err
@@ -223,6 +280,10 @@ func (c *Client) ListAttachments(ctx context.Context, folder string, uid int) ([
 	return out, nil
 }
 func (c *Client) GetAttachment(ctx context.Context, folder string, uid, index int) (imapadapter.AttachmentInfo, []byte, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return imapadapter.AttachmentInfo{}, nil, err
+	}
 	p, _, err := c.parsed(ctx, folder, uid)
 	if err != nil {
 		return imapadapter.AttachmentInfo{}, nil, err
@@ -234,6 +295,10 @@ func (c *Client) GetAttachment(ctx context.Context, folder string, uid, index in
 	return imapadapter.AttachmentInfo{Index: index, Name: a.Name, MimeType: a.MimeType, Size: len(a.Content)}, a.Content, nil
 }
 func (c *Client) FetchHeaderFields(ctx context.Context, folder string, uids []int, fields ...string) (map[int][]string, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return nil, err
+	}
 	if len(uids) > batchCount || len(fields) > 100 {
 		return nil, errors.New("mailbox header batch exceeds limit")
 	}
@@ -284,6 +349,10 @@ func (c *Client) FetchHeaderFields(ctx context.Context, folder string, uids []in
 	return out, nil
 }
 func (c *Client) SearchMessages(ctx context.Context, folder, field, query string, limit int) ([]imapadapter.Overview, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 50
 	}
@@ -399,19 +468,41 @@ func (c *Client) save(ctx context.Context, draft imapadapter.DraftMessage, folde
 	return err
 }
 func (c *Client) SaveDraft(ctx context.Context, draft imapadapter.DraftMessage) error {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return err
+	}
 	return c.save(ctx, draft, "Drafts")
 }
 func (c *Client) SaveSent(ctx context.Context, draft imapadapter.DraftMessage) error {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return err
+	}
 	return c.save(ctx, draft, "Sent")
 }
 func (c *Client) EnsureLabel(ctx context.Context, label string) error {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return err
+	}
 	if err := imapadapter.ValidateKeyword(label); err != nil {
 		return err
 	}
 	return c.store.ensureLabel(ctx, strings.TrimSpace(label))
 }
-func (c *Client) ListLabels(ctx context.Context) ([]string, error) { return c.store.labels(ctx) }
+func (c *Client) ListLabels(ctx context.Context) ([]string, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return nil, err
+	}
+	return c.store.labels(ctx)
+}
 func (c *Client) ApplyLabel(ctx context.Context, id, label string) error {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return err
+	}
 	if err := imapadapter.ValidateKeyword(label); err != nil {
 		return err
 	}
@@ -422,6 +513,10 @@ func (c *Client) ApplyLabel(ctx context.Context, id, label string) error {
 	return c.store.editFlags(ctx, "", uid, nil, strings.TrimSpace(label), true)
 }
 func (c *Client) RemoveLabel(ctx context.Context, id, label string) error {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return err
+	}
 	if err := imapadapter.ValidateKeyword(label); err != nil {
 		return err
 	}
@@ -432,6 +527,10 @@ func (c *Client) RemoveLabel(ctx context.Context, id, label string) error {
 	return c.store.editFlags(ctx, "", uid, nil, strings.TrimSpace(label), false)
 }
 func (c *Client) ApplyInboxAction(ctx context.Context, id, action, folder, target string) error {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return err
+	}
 	folder, err := normalizeFolder(folder)
 	if err != nil {
 		return err
@@ -478,6 +577,10 @@ func (c *Client) ApplyInboxAction(ctx context.Context, id, action, folder, targe
 	return c.store.Move(ctx, folder, uid, target)
 }
 func (c *Client) ListSubfolders(ctx context.Context, parent string) ([]string, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return nil, err
+	}
 	if parent != "" {
 		var err error
 		parent, err = normalizeFolder(parent)
@@ -527,6 +630,10 @@ func leaf(name string) error {
 	return nil
 }
 func (c *Client) CreateFolder(ctx context.Context, parent, name string) (string, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return "", err
+	}
 	parent = strings.TrimSpace(parent)
 	name = strings.TrimSpace(name)
 	if err := leaf(name); err != nil {
@@ -547,6 +654,10 @@ func (c *Client) CreateFolder(ctx context.Context, parent, name string) (string,
 	return target, nil
 }
 func (c *Client) RenameFolder(ctx context.Context, folder, name string) (string, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return "", err
+	}
 	folder, err := normalizeFolder(folder)
 	if err != nil {
 		return "", err
@@ -566,6 +677,10 @@ func (c *Client) RenameFolder(ctx context.Context, folder, name string) (string,
 	return target, c.store.RenameFolder(ctx, folder, target)
 }
 func (c *Client) DeleteFolder(ctx context.Context, folder string) error {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return err
+	}
 	folder, err := normalizeFolder(folder)
 	if err != nil {
 		return err

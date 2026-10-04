@@ -203,6 +203,10 @@ specifically rather than reporting a generic decryption failure.
 Incoming encryption defaults off for every user, including users with a PGP key.
 Security → Encryption offers a per-user preference. Only unread INBOX mail not already
 processed by KyPost is eligible; this does not sweep historical or read mail.
+For opt-in native mailboxes, the polling mailbox is INBOX and leftover IMAP
+configuration is ignored; primary key User IDs come from admitted domain
+provisioning. Key custody and WKD publication proofs are unchanged. Native
+sending remains unavailable until domain relay integration.
 The configured polling mailbox must be INBOX; another folder is refused before
 replacement, even if it has the same numeric UID. Already encrypted and
 oversized messages retain their existing handling.

@@ -72,14 +72,21 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "set up a usable client-protected PGP key before enabling incoming encryption", http.StatusBadRequest)
 				return
 			}
-			mailbox, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(ac.UserID), s.imapConfigKeyPath)
+			_, native, err := s.nativeMailAssignment(r.Context(), ac.UserID)
 			if err != nil {
-				http.Error(w, "cannot verify polling mailbox; repair IMAP configuration before enabling", http.StatusInternalServerError)
+				http.Error(w, "cannot verify native mailbox authority; repair domain provisioning before enabling", http.StatusServiceUnavailable)
 				return
 			}
-			if exists && !strings.EqualFold(strings.TrimSpace(mailmsg.NormalizeIMAPPayload(mailbox).Mailbox), "INBOX") {
-				http.Error(w, "incoming encryption requires the configured polling mailbox to be INBOX", http.StatusBadRequest)
-				return
+			if !native {
+				mailbox, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(ac.UserID), s.imapConfigKeyPath)
+				if err != nil {
+					http.Error(w, "cannot verify polling mailbox; repair IMAP configuration before enabling", http.StatusInternalServerError)
+					return
+				}
+				if exists && !strings.EqualFold(strings.TrimSpace(mailmsg.NormalizeIMAPPayload(mailbox).Mailbox), "INBOX") {
+					http.Error(w, "incoming encryption requires the configured polling mailbox to be INBOX", http.StatusBadRequest)
+					return
+				}
 			}
 			cache, err := s.userMailCacheStore(ac.UserID)
 			if err != nil {

@@ -11,7 +11,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-// AllocateNativeAccount is an internal, disabled new-account publication flow.
+// AllocateNativeAccount prepares new accounts for the opt-in native runtime.
 // DNS happens before locks. Lock order: domain -> directory -> users -> account.
 // The prepared mailbox and acknowledged assignment exist before users.json can
 // expose this ID to lazy state creators. Existing IMAP accounts are never adopted.

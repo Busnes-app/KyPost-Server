@@ -2,8 +2,9 @@
 
 Production directory webhooks retain verified desired state and enforce account
 access. Admin mail-domain setup is available through the API. Native allocation
-and reconciliation remain internal: no background worker, native source
-selector or receiver is enabled. Existing deployments still use external IMAP.
+and reconciliation are enabled only with `KYPOST_NATIVE_MAIL=true`. The default
+remains external IMAP. This opt-in selects prepared native mailboxes in both API
+and daemon; it does not enable incoming SMTP or outgoing delivery.
 
 ## Operator domain setup
 
@@ -42,7 +43,7 @@ exact TXT record/DNS availability or rotate an expired challenge and retry.
 The owner-only `$CONFIG_DIR/native-domain.json` holds a public challenge, not a
 secret. Do not publish production MX or assume outgoing delivery readiness.
 
-## Disabled allocation flow
+## Account allocation
 
 `LifecycleStore.AllocateNativeAccount` is an internal new-account publication
 flow. It proves the domain before acquiring locks, then holds locks in order:
@@ -124,15 +125,53 @@ This checks immutable storage ownership, not current activity/roles or live mail
 permission. Inactive state remains available for administrative revocation when
 not held. Native classification assumes intact private user markers; arbitrary
 mixed-root/older-writer recovery is unsupported, and qualified restore rejects
-missing markers. Live admission needs coherent directory/users fencing, cached
-client checks and all sending/pickup paths before native selection is enabled.
-The provisioning worker and native mail selectors remain disabled.
+missing markers. Live mail admission is separate from this storage-only check, as described below.
+
+## Opt-in native runtime
+
+Set `KYPOST_NATIVE_MAIL=true` for both API and daemon, after configuring the
+issuer and mail-domain proof. Empty or `false` preserves external IMAP mode;
+other values refuse startup. Existing linked IMAP accounts stay external.
+New native accounts require retained signed directory resources; token-only
+JIT creation is refused while provisioning is pending. Webhooks retain desired
+state before attempting allocation outside the directory lock. A failed attempt
+returns the normal accepted-directory status with `mailboxStatus:pending`;
+the API worker retries retained subjects at startup and every minute. Signed newer
+revisions apply activity/roles before retention; storage retries leave local
+deactivation intact. Initial limits are 5 MiB per message, 32 MiB live payload,
+and 10,000 retained records per mailbox; existing reservations keep their limits.
+
+Every mailbox operation and mail-authenticated cache read checks the configured
+active issuer, current user and retained directory activity/role, primary
+address, reservation revision and immutable storage source under the directory
+fence. Restore holds deny admission. Cached clients confer no continuing
+permission. An operation already admitted may finish after revocation; network
+and database work do not hold the directory lock. Missing databases are opened
+existing-only before initialization. Runtime clients retain their store during
+active operations; dropping a cache reference does not close a borrowed handle.
+
+`GET /api/imap/config` reports native accounts as configured, managed and native,
+with their primary username, INBOX and `smtpConfigured:false`. User IMAP changes,
+IMAP connection tests and admin IMAP assignment refuse native accounts. Drafts,
+folders, labels, reads and incoming encryption use the existing client contract;
+native inbox refresh uses full snapshots. PGP bootstrap suggests the verified
+primary address; incoming encryption uses native INBOX rather than a leftover
+IMAP file. Existing key custody and WKD publication proofs are unchanged.
+
+Native sends, pickup creation, alias probes and daemon own-address SMTP probes
+are refused or skipped until domain relay/outbox integration. A leftover IMAP
+credential file cannot enable them. Receiver routing/import and operator-owned
+outgoing delivery remain the next transport work. Do not publish MX for this
+runtime alone. Roll back by disabling the flag in both processes and keeping all
+native storage/ownership files intact; native mail becomes unavailable without
+being converted to IMAP. Use a compatible binary, not an older metadata writer.
 
 ## Verification and next gates
 
 ```sh
 cd backend
 GOTOOLCHAIN=go1.26.6 go test -race ./internal/fsutil ./internal/users ./internal/sso ./internal/mailbox ./internal/api -run '^TestNativeAllocation|^TestNativeDomain|^TestNativeMailDomain|^TestNativeAccountIssuer|^TestNativePublication|^TestLockFileContext|^TestPrepareAccount|^TestDirectory' -count=1 -timeout=20m
+GOTOOLCHAIN=go1.26.6 go test -race ./internal/api ./internal/processor ./internal/mailbox ./internal/config -run '^TestNativeRuntime|^TestRuntimeClient|^TestExistingMailbox|^TestNativeMailRequiresExplicitBoolean' -count=1 -timeout=5m
 GOTOOLCHAIN=go1.26.6 go test -race ./internal/state ./internal/sso ./internal/api ./internal/processor -run '^TestOpenNative|^TestNativeState|^TestNativeUserStorage|^TestNativePollerState' -count=1 -timeout=5m
 ```
 
@@ -145,8 +184,7 @@ hardware power-loss evidence. A real allocator kill between acknowledgement and
 user publication remains a runtime activation gate.
 
 Next qualify whole-stack backup/restore and allocator publication crashes, then
-integrate explicitly enabled provisioning/periodic repair and diagnostics ahead
-of every ordinary state opener. Qualify storage waits, orphan cleanup, scale,
+qualify the opt-in runtime and its periodic repair at representative scale. Qualify storage waits, orphan cleanup, scale,
 receiver revocation/import ordering and runtime selectors before transport
 activation. Durable scoped client deltas, aliases and relay readiness remain
 separate work. This change adds system DNS TXT lookups, no dependency or secret,

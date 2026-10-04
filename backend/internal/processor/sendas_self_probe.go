@@ -64,7 +64,7 @@ func (p *Poller) ensureOwnAddressProven(userID string) {
 	// Only users who actually publish get an unsolicited message. No key means
 	// nothing to serve; PublishWKD off means nothing would be served either.
 	u, err := p.users.Get(userID)
-	if err != nil || u.PGPPublicKey == "" {
+	if err != nil || u.PGPPublicKey == "" || u.NativeMailboxIssuer != "" || u.NativeMailboxSource != "" {
 		return
 	}
 	settings, err := pgpdiscovery.Load(p.userStateDir(userID))

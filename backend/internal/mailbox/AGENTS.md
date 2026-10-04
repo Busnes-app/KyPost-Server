@@ -6,13 +6,13 @@ Per-owner permanent raw mail, indexed metadata, folders, flags, labels, delivery
 
 ## Ownership
 
-All files in this package. Internal storage and complete `imap.Client` implementation; runtime source selection remains disabled. `NewClient` borrows the store; its caller owns the store lifetime and verifies the supplied sender address.
+All files in this package. Internal storage and complete `imap.Client` implementation; runtime selection requires explicit native mode and current admission. `NewClient` borrows the store; its caller owns the store lifetime and verifies the supplied sender address. Runtime `OpenClient` opens existing-only storage, requires per-operation admission and owns cleanup; KeepAlive protects active borrowers from garbage collection.
 
 ## Local Contracts
 
 - `PrepareAccountContext` cancels account-lock contention and checks cancellation before no-replace publication. The legacy wrapper keeps blocking flock semantics; filesystem open/fsync and read-only SQLite validation remain a healthy-volume activation gate.
 
-- Internal `PrepareAccount` publishes an empty mailbox, prebound account state and `native-mailbox.json` together at `$STATE_DIR/users/<localID>/` (`mailbox/mailbox.db` plus `state.db`). Caller proves verified new-account issuer/subject ownership, domain authority and unique primary address. This is storage preparation, never receiver readiness or a migration. No production scheduler/selector calls it.
+- Internal `PrepareAccount` publishes an empty mailbox, prebound account state and `native-mailbox.json` together at `$STATE_DIR/users/<localID>/` (`mailbox/mailbox.db` plus `state.db`). Caller proves verified new-account issuer/subject ownership, domain authority and unique primary address. This is storage preparation, never receiver readiness or a migration. The opt-in native allocator calls it before account publication.
 - `ValidatePreparedAccount` is read-only preparation validation for acknowledged provisioning sources; unlike `PrepareAccount`, it must never recreate a missing account directory.
 - Preparation serializes cooperating writers and uses Linux `RENAME_NOREPLACE` to refuse even an empty or concurrently created destination. Other platforms refuse explicitly. Retry reads existing regular databases without creating schemas, checks required tables/owner/source/namespace/address/limits, and refuses incomplete, legacy or recreated state. Preserve published data; crash-abandoned staging directories contain only empty preparation and need bounded cleanup before activation.
 
@@ -33,7 +33,7 @@ All files in this package. Internal storage and complete `imap.Client` implement
 ## Work Guidance
 
 - `Client.MailSourceIdentity` binds immutable owner plus database namespace. API/daemon require the account state and cache to match before using numeric references. Only newly provisioned account state can be native; switching is refused.
-- Keep external IMAP selected until verified provisioning, both runtime selectors, durable scoped deltas and restore reconciliation are qualified.
+- Existing linked IMAP accounts remain external. Opt-in native accounts use admitted existing-only stores and full HTTP snapshots; scoped deltas and held-restore release remain pending.
 - Treat database paths as local process trust, not network authorization. Store correspondence in the database, never application logs.
 
 ## Verification

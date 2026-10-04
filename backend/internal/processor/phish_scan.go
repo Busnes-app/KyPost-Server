@@ -380,6 +380,15 @@ func sameAddress(sender, ownAddress string) bool {
 // config, which no unit test in this package can construct, so keeping the read
 // here is what makes the decision logic testable.
 func (p *Poller) accountAddress(userID string) string {
+	if p.users != nil {
+		a, native, err := p.nativeMailAssignment(p.lifetimeCtx(), userID)
+		if native || err != nil {
+			if err == nil {
+				return a.Address
+			}
+			return ""
+		}
+	}
 	payload, exists, err := mailmsg.ReadIMAPConfigPayload(p.userIMAPConfigPath(userID), p.imapKeyPath)
 	if err != nil || !exists {
 		return ""

@@ -39,6 +39,9 @@ func migrateLegacySingleUserData(logger *logging.Logger, usersStore *users.Store
 		}
 		return err
 	}
+	if admin.NativeMailboxIssuer != "" || admin.NativeMailboxSource != "" {
+		return nil
+	}
 
 	userStateDir := filepath.Join(stateDir, "users", admin.ID)
 	userConfigDir := filepath.Join(configDir, "users", admin.ID)

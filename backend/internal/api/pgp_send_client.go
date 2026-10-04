@@ -131,9 +131,9 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(ac.UserID), s.imapConfigKeyPath)
+	payload, exists, err := s.outboundMailConfig(ac.UserID)
 	if err != nil {
-		http.Error(w, "failed to read mail configuration: "+err.Error(), http.StatusInternalServerError)
+		outboundConfigError(w, err)
 		return
 	}
 	if !exists {

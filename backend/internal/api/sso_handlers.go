@@ -519,8 +519,11 @@ func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings,
 		// Refuse here rather than falling through to auto-provision, which
 		// would hand the same subject a second, empty account.
 		if user.SSOLinkRevoked() {
-			http.Error(w, "Access denied: this SSO link was revoked. "+
-				"Sign in locally and link it again from Settings.", http.StatusForbidden)
+			remediation := "Sign in locally and link it again from Settings."
+			if user.NativeMailboxIssuer != "" || user.NativeMailboxSource != "" {
+				remediation = "Contact your administrator; native account reauthorization is not available yet."
+			}
+			http.Error(w, "Access denied: this SSO link was revoked. "+remediation, http.StatusForbidden)
 			return users.User{}, errors.New("sso link revoked")
 		}
 		return user, nil
@@ -530,6 +533,10 @@ func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings,
 		return users.User{}, err
 	}
 
+	if s.nativeMail {
+		http.Error(w, "Mailbox provisioning is pending; KyIdentity must assign a verified domain address before sign-in.", http.StatusForbidden)
+		return users.User{}, sso.ErrNativeProvisioning
+	}
 	if !settings.AutoProvision {
 		http.Error(w, "Access denied: your SSO identity is not linked to an existing KyPost account. "+
 			"Sign in locally and link it from Settings.", http.StatusForbidden)

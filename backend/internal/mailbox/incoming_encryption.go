@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,10 @@ func (c *Client) checkIncomingReplacement(source imapadapter.IncomingSource, mar
 // PrepareIncoming takes a single snapshot of raw bytes and metadata. The native
 // namespace persists across restart but differs even for a recreated same-owner DB.
 func (c *Client) PrepareIncoming(ctx context.Context, uid int, _ bool) (imapadapter.IncomingSource, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return imapadapter.IncomingSource{}, err
+	}
 	if uid <= 0 {
 		return imapadapter.IncomingSource{}, errors.New("invalid incoming UID")
 	}
@@ -95,6 +100,10 @@ func (c *Client) PrepareIncoming(ctx context.Context, uid int, _ bool) (imapadap
 // A lost commit acknowledgement is recovered by the receipt plus exact bytes,
 // never a sender-controlled header. Original transport receipts retain their ID.
 func (c *Client) ReplaceIncoming(ctx context.Context, source imapadapter.IncomingSource, marker string, encrypted []byte) (int, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return 0, err
+	}
 	if err := c.checkIncomingReplacement(source, marker, encrypted); err != nil {
 		return 0, err
 	}
@@ -197,6 +206,10 @@ func (c *Client) verifyIncomingTx(ctx context.Context, tx *sql.Tx, source imapad
 // ApplyIncomingAction verifies and mutates in one writer transaction. Moves
 // preserve IDs, so an uncertain action can check the exact destination on retry.
 func (c *Client) ApplyIncomingAction(ctx context.Context, source imapadapter.IncomingSource, uid int, marker string, encrypted []byte, action, value string) error {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return err
+	}
 	if err := c.checkIncomingReplacement(source, marker, encrypted); err != nil {
 		return err
 	}
