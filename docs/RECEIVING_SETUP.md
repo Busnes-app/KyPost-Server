@@ -245,6 +245,19 @@ accepted mail must survive. Confirm disabled recipients and DNS/storage failure
 refuse new reception. Record the domain, relay, recipient and observed results
 without credentials.
 
+Before the live test, run this from `backend/`:
+
+```sh
+GOTOOLCHAIN=go1.26.6 go test -race ./internal/api \
+  -run '^TestNativeOutboundAPIActualTLSAndPGP$' -count=1 -timeout=2m
+```
+
+It also checks one allocated native owner's real pairing/register, private durable
+holding import, device body/attachment/keyword reads and ordinary/client-PGP
+sends over an actual loopback TLS relay without IMAP. This joined core/API proof
+uses test DNS and simulated device HTTP, with app/Maddy admission qualified
+separately. It does not replace the external observations above.
+
 Rollback: stop new reception first, restore prior test-domain DNS, retain a
 compatible KyPost binary and all native state, and drain or reconcile pending
 and quarantined deliveries. DNS rollback changes future routing only. Disabling

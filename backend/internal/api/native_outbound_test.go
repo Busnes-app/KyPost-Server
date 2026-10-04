@@ -36,6 +36,10 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 		return
 	}
 	mode := os.Getenv("KYPOST_NATIVE_SEND_TEST_MODE")
+	deviceMode := strings.HasPrefix(mode, "device-")
+	if deviceMode {
+		t.Setenv("SERVER_BASE_URL", "http://127.0.0.1:5866")
+	}
 	port, err := strconv.Atoi(os.Getenv("KYPOST_NATIVE_SEND_TEST_PORT"))
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +62,7 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 	path := "/api/mail/send"
 	body := []byte(`{"to":"visible@outside.test","bcc":"hidden@outside.test","subject":"ordinary","body":"native compose"}`)
 	var sender, recipient *pgpmail.Identity
-	if mode == "pgp" {
+	if mode == "pgp" || mode == "device-pgp" {
 		sender, err = pgpmail.GenerateIdentity("Sender", "one@example.test")
 		if err != nil {
 			t.Fatal(err)
@@ -92,13 +96,21 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 		}
 		path = "/api/mail/send-pgp"
 	}
+	var deviceID, deviceSecret string
 	request := func(method, path string, body []byte) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, bytes.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
-		authRequestAs(s, r, u.ID)
+		if deviceID == "" {
+			authRequestAs(s, r, u.ID)
+		} else {
+			setDeviceHeaders(r, deviceID, deviceSecret)
+		}
 		w := httptest.NewRecorder()
 		s.routes().ServeHTTP(w, r)
 		return w
+	}
+	if deviceMode {
+		deviceID, deviceSecret = qualifyNativeDeviceReceiving(t, s, u.ID, request)
 	}
 	anonymous := httptest.NewRequest("GET", "/api/mail/outbox/00000000-0000-0000-0000-000000000000", nil)
 	unauthorized := httptest.NewRecorder()
@@ -184,7 +196,7 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode == "pgp" {
+	if mode == "pgp" || mode == "device-pgp" {
 		wire, err := os.ReadFile(filepath.Join(root, "received.eml"))
 		if err != nil {
 			t.Fatal(err)
@@ -216,13 +228,21 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 	if err != nil || len(messages) != 1 {
 		t.Fatal("recovery duplicated Sent", messages, err)
 	}
+	if deviceMode {
+		directoryStatus(t, postDirectory(t, s, testSyncKey, "user.updated", "roundtrip-disable", 2, runtimeDirectoryUser(false)))
+		for _, path := range []string{"/api/inbox?mailbox=INBOX", "/api/mail/outbox/" + reply.ID} {
+			if revoked := request("GET", path, nil); revoked.Code != 401 {
+				t.Fatal("offboarded device retained mailbox access", revoked.Code)
+			}
+		}
+	}
 }
 
 func TestNativeOutboundAPIActualTLSAndPGP(t *testing.T) {
 	certServer := httptest.NewTLSServer(nil)
 	certificate := certServer.TLS.Certificates[0]
 	certServer.Close()
-	for _, mode := range []string{"plain", "pgp", "lost-ack", "recovery"} {
+	for _, mode := range []string{"plain", "pgp", "device-plain", "device-pgp", "lost-ack", "recovery"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			ca := filepath.Join(root, "ca.pem")
@@ -301,7 +321,7 @@ func TestNativeOutboundAPIActualTLSAndPGP(t *testing.T) {
 							break
 						}
 						wantRecipients := 2
-						if mode == "pgp" || mode == "recovery" {
+						if mode == "pgp" || mode == "device-pgp" || mode == "recovery" {
 							wantRecipients = 1
 						}
 						if rcpts != wantRecipients || bytes.Contains(raw.Bytes(), []byte("hidden@outside.test")) {

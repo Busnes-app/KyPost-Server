@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Join native signed-directory allocation, real device pairing/registration, durable receiving-store import, device mailbox/attachment/keyword reads and actual TLS ordinary/PGP sending in one regression fixture without IMAP. Physical clients, app/Maddy admission and live provider delivery remain separate checks.
+
 - Add a repeatable host-side controlled-domain setup wizard using the existing protected domain/relay UI and supervised receiver profile. Confirm public configuration/rebuild/init/start changes, protect dotenv writes and retain explicit external delivery/backup checks; no provider secrets or DNS automation.
 
 - Qualify supervised receiving shutdown during incomplete SMTP DATA: retain staged recipient reservations without publishing partial payload, preserve previously accepted mail and import it after restart. The check uses the actual image and pinned engine; stalled storage/helpers and final-ack races remain separate qualification work.
