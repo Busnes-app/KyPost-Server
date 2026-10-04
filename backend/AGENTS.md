@@ -329,6 +329,8 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 ## Verification
 
+- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/api -run '^TestNativeOutboundAPIActualTLSAndPGP$' -count=1 -timeout=2m` includes joined native device cases: signed-directory allocation, real pairing/register, durable holding close/reopen/import, device inbox/body/attachment/keyword access and actual TLS ordinary/client-PGP sending with Sent and offboarding. No IMAP config or injected mail client. Core trusted-local import, test DNS and simulated device calls do not prove app/Maddy admission, physical clients or live provider delivery.
+
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/api ./internal/sso ./internal/mailbox ./internal/app -run '^TestNativeOutbound|TestNativeOutboxDiscovery' -count=1 -timeout=5m` checks native admission/epochs/device witnesses/settings lock order, actual TLS/PGP HTTP sends, ambiguity retention, independent Sent/follow-on recovery and cancellation. See `docs/NATIVE_OUTBOX.md` for runtime bounds and remaining gates.
 
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailmsg ./internal/api ./internal/backup -run 'TestDomainRelay|TestNativeMailRelay' -count=1 -timeout=20m` checks protected relay settings, actual loopback TLS SMTP, secret redaction, authority races and sealed relay recovery.

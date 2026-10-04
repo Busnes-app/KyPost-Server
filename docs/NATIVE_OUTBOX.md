@@ -149,6 +149,17 @@ settings/device contention, Sent-only failure with follow-on delivery, and actua
 next job. They use synthetic accounts/messages and a process-specific CA,
 without weakening production TLS or contacting a provider.
 
+The `device-plain` and `device-pgp` cases additionally join signed-directory
+native allocation to the real pairing/register handlers, close/reopen a private
+holding store, import exact MIME into that same owner's mailbox, and read body,
+binary attachment and keyword changes through device credentials before sending.
+No IMAP configuration or mail-client injection is used. They reject wrong secrets
+and offboarded device reads. Ordinary Bcc isolation, client-prepared PGP recipient
+and independent Sent verification reuse the actual TLS relay fixture. The incoming
+bridge uses trusted-local ingress APIs; app/Maddy authority and SMTP admission
+have separate checks. Test DNS, simulated device HTTP and loopback relay evidence
+do not establish physical Android/Linux/iOS behavior or live provider delivery.
+
 The storage checks cover encrypted signed-only-shaped wire intent, owner/namespace/key
 isolation, exact replay conflicts, competing SQLite claims, a real killed
 submitter, lost acknowledgments, bounded definite-refusal retry, independent Sent
