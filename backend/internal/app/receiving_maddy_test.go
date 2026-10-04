@@ -67,6 +67,15 @@ func TestNativeReceivingCommandHelper(t *testing.T) {
 }
 
 func TestNativeReceivingMaddyRuntime(t *testing.T) {
+	for _, mode := range []string{"direct", "launcher", "supervised"} {
+		t.Run(mode, func(t *testing.T) { testNativeReceivingMaddyRuntime(t, mode) })
+	}
+}
+
+func testNativeReceivingMaddyRuntime(t *testing.T, mode string) {
+	if mode == "supervised" && os.Getenv("RECEIVING_PROOF_IMAGE") == "" {
+		t.Skip("set RECEIVING_PROOF_IMAGE to the locally built image for Supervisor qualification")
+	}
 	binary := os.Getenv("MADDY_PROOF_BINARY")
 	if binary == "" {
 		t.Skip("set MADDY_PROOF_BINARY to pinned Maddy 0.9.5")
@@ -161,12 +170,104 @@ func TestNativeReceivingMaddyRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = log.Close() })
-	cmd := exec.Command(binary, "--config", configPath, "run")
+	newReceiver := func() *exec.Cmd {
+		return exec.Command(binary, "--config", configPath, "run")
+	}
+	if mode != "direct" {
+		// The wrapper only adds the test binary dispatch prefix; all generated
+		// authority/storage/TLS checks and subsequent helpers remain production.
+		wrapper := filepath.Join(root, "kypost-server")
+		program := fmt.Sprintf(`#!/usr/bin/python3
+import os, subprocess, sys
+prefix = [%s, "-test.run=^TestNativeReceivingCommandHelper$", "--"]
+if sys.argv[1:3] == ["receiving", "config"]:
+    result = subprocess.run(prefix + sys.argv[1:], stdout=subprocess.PIPE)
+    sys.stdout.buffer.write(result.stdout.replace(%s.encode(), %s.encode()))
+    sys.exit(result.returncode)
+os.execv(prefix[0], prefix + sys.argv[1:])
+`, strconv.Quote(os.Args[0]), strconv.Quote(strconv.Quote(os.Args[0])+" receiving"), strconv.Quote(strconv.Quote(wrapper)+" receiving"))
+		if err := os.WriteFile(wrapper, []byte(program), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		engine := filepath.Join(root, "maddy")
+		if err := os.WriteFile(engine, data, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		launcher, err := filepath.Abs("../../../scripts/start-receiving.sh")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", root+":"+os.Getenv("PATH"))
+		t.Setenv("KYPOST_NATIVE_RECEIVER", "true")
+		t.Setenv("KYPOST_RECEIVER_BINARY", engine)
+		t.Setenv("KYPOST_RECEIVING_LISTEN", address)
+		t.Setenv("KYPOST_RECEIVING_HOSTNAME", leaf.DNSNames[0])
+		t.Setenv("KYPOST_RECEIVING_CERT", certPath)
+		t.Setenv("KYPOST_RECEIVING_KEY", keyPath)
+		newReceiver = func() *exec.Cmd { return exec.Command("/bin/sh", launcher) }
+		// Preflight failure must preserve prior complete config and clear temps.
+		prior := filepath.Join(r.configDir, "receiving.conf")
+		if err := os.WriteFile(prior, []byte("previous complete configuration"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		dnsProof.Store(false)
+		failed, err := newReceiver().CombinedOutput()
+		if err == nil {
+			t.Fatal("launcher started without live DNS proof", string(failed))
+		}
+		dnsProof.Store(true)
+		retained, err := os.ReadFile(prior)
+		temps, globErr := filepath.Glob(filepath.Join(r.configDir, "receiving-config.*"))
+		if err != nil || string(retained) != "previous complete configuration" || globErr != nil || len(temps) != 0 {
+			t.Fatal("launcher failed to preserve config or clear temporary output", err, globErr, temps)
+		}
+	}
+	container := ""
+	if mode == "supervised" {
+		digest := sha256.Sum256([]byte(root))
+		container = "kypost-receiver-proof-" + hex.EncodeToString(digest[:8])
+		proofConfig := filepath.Join(root, "supervisor.conf")
+		productionConfig, err := filepath.Abs("../../../supervisord.conf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Keep the image's exact receiver/control/crash-exit configuration;
+		// unrelated API/classifier programs are absent from this disposable proof.
+		filter := exec.Command("python3", "-c", `import configparser, sys
+c = configparser.ConfigParser(interpolation=None)
+c.read(sys.argv[1])
+for section in c.sections():
+    if section.startswith("program:") and section != "program:receiver":
+        c.remove_section(section)
+with open(sys.argv[2], "w") as out:
+    c.write(out)
+`, productionConfig, proofConfig)
+		if output, err := filter.CombinedOutput(); err != nil {
+			t.Fatal(err, string(output))
+		}
+		args := []string{"run", "--rm", "--name", container, "--network", "host", "--user", "kypost"}
+		for _, path := range []string{r.configDir, r.stateDir} {
+			args = append(args, "--mount", "type=bind,source="+path+",target="+path)
+		}
+		for _, path := range []string{root, os.Args[0]} {
+			args = append(args, "--mount", "type=bind,source="+path+",target="+path+",readonly")
+		}
+		args = append(args, "--mount", "type=bind,source="+proofConfig+",target=/etc/supervisord.conf,readonly")
+		for _, key := range []string{"PATH", "CONFIG_DIR", "STATE_DIR", "KYPOST_TEST_DNS", "GORACE", "KYPOST_NATIVE_MAIL", "KYPOST_NATIVE_RECEIVING", "KYPOST_NATIVE_RECEIVER", "KYPOST_RECEIVER_BINARY", "KYPOST_RECEIVING_LISTEN", "KYPOST_RECEIVING_HOSTNAME", "KYPOST_RECEIVING_CERT", "KYPOST_RECEIVING_KEY"} {
+			args = append(args, "-e", key+"="+os.Getenv(key))
+		}
+		args = append(args, "--entrypoint", "supervisord", os.Getenv("RECEIVING_PROOF_IMAGE"), "-c", "/etc/supervisord.conf")
+		newReceiver = func() *exec.Cmd { return exec.Command("docker", args...) }
+	}
+	cmd := newReceiver()
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		if container != "" {
+			_ = exec.Command("docker", "rm", "-f", "-v", container).Run()
+		}
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
@@ -269,17 +370,40 @@ func TestNativeReceivingMaddyRuntime(t *testing.T) {
 	// The configured receiver can die after SMTP acceptance without owning the
 	// only copy. Restart it before importing the same durable obligation.
 	_ = client.Close()
-	if err := cmd.Process.Kill(); err != nil {
-		t.Fatal(err)
-	}
-	var killed *exec.ExitError
-	if err := cmd.Wait(); !errors.As(err, &killed) || killed.ProcessState.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
-		t.Fatalf("receiver did not terminate by SIGKILL: %v", err)
-	}
-	cmd = exec.Command(binary, "--config", configPath, "run")
-	cmd.Stdout, cmd.Stderr = log, log
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+	if container != "" {
+		until := time.Now().Add(10 * time.Second)
+		for {
+			status, err := exec.Command("docker", "exec", container, "supervisorctl", "-c", "/etc/supervisord.conf", "status", "receiver").CombinedOutput()
+			if err == nil && strings.Contains(string(status), "RUNNING") {
+				break
+			}
+			if time.Now().After(until) {
+				t.Fatal("supervised receiver never reached RUNNING", err, string(status))
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		pid, err := exec.Command("docker", "exec", container, "supervisorctl", "-c", "/etc/supervisord.conf", "pid", "receiver").Output()
+		n, parseErr := strconv.Atoi(strings.TrimSpace(string(pid)))
+		if err != nil || parseErr != nil || n <= 1 {
+			t.Fatal("invalid receiver PID", err, parseErr)
+		}
+		// Kill only the recorded receiver inside its disposable PID namespace.
+		if output, err := exec.Command("docker", "exec", container, "/bin/sh", "-c", `kill -KILL "$1"`, "sh", strconv.Itoa(n)).CombinedOutput(); err != nil {
+			t.Fatal(err, string(output))
+		}
+	} else {
+		if err := cmd.Process.Kill(); err != nil {
+			t.Fatal(err)
+		}
+		var killed *exec.ExitError
+		if err := cmd.Wait(); !errors.As(err, &killed) || killed.ProcessState.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
+			t.Fatalf("receiver did not terminate by SIGKILL: %v", err)
+		}
+		cmd = newReceiver()
+		cmd.Stdout, cmd.Stderr = log, log
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	until = time.Now().Add(10 * time.Second)
 	for {
@@ -391,6 +515,17 @@ func TestNativeReceivingMaddyRuntime(t *testing.T) {
 	}
 	if !rateRefused {
 		t.Fatal("configured per-IP burst limit never refused")
+	}
+	if container != "" {
+		// Close the test sockets, then prove the actual image process groups stop.
+		_ = rateClient.Close()
+		_ = client.Close()
+		if output, err := exec.Command("docker", "stop", "--time", "50", container).CombinedOutput(); err != nil {
+			t.Fatal("supervised receiver did not stop", err, string(output))
+		}
+		if err := cmd.Wait(); err != nil {
+			t.Fatal("Supervisor exited unsuccessfully", err)
+		}
 	}
 }
 

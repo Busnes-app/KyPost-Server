@@ -168,8 +168,8 @@ if a job is genuinely flaky, that is a bug to fix in the job.
 | `ci-backend-other` | Same lint gates, `go test -race` on every other backend package |
 | `ci-frontend` | `npm audit --omit=dev --audit-level=low` (blocking), `tsc --noEmit`, `vitest`, `vite build` |
 | `ci-relay` | Typecheck both relay Workers, `node --test` on the relay behaviour suites |
-| `ci-scripts` | Shell syntax, the `update-host` and model-installer self-checks, `compose config`, the cumulative Supervisor shutdown budget, and the workflow shape assertions that keep the release and `:main` publish gates from being quietly deleted |
-| `ci-docker` | `docker build`, private-root real-entrypoint regression, real Supervisor serial-drain regression, container reaches `healthy`, and the entrypoint still refuses a non-loopback cleartext bind |
+| `ci-scripts` | Shell syntax, receiver launcher refusal checks, the `update-host` and model-installer self-checks, `compose config`, the cumulative Supervisor shutdown budget, and the workflow shape assertions that keep the release and `:main` publish gates from being quietly deleted |
+| `ci-docker` | `docker build`, private-root real-entrypoint regression, real Supervisor serial-drain regression, container reaches `healthy` with the optional receiver stopped by default, and the entrypoint still refuses a non-loopback cleartext bind |
 
 Notes that trip people up:
 

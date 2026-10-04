@@ -19,4 +19,9 @@ but receive no new output. Ollama and supervisord retain their own diagnostic lo
 Operators can collect captured streams with their existing logging agent. Direct
 binary deployments collect stderr with their service manager.
 
+The optional receiver has separate rotated `receiver.log` and `receiver.err.log`
+streams (10 MiB each, three backups). Maddy emits envelope/IP/command metadata
+rather than the Go JSON format and discards helper stderr; protect these logs.
+Debug/wire logging remains disabled.
+
 The viewer is a transitional compatibility feature, not a new log platform.

@@ -330,6 +330,19 @@ jobs:
           KYPOST_BIND: 127.0.0.1
         run: docker compose config --quiet
 
+      - name: controlled receiving compose config
+        env:
+          KYPOST_BIND: 127.0.0.1
+          KYPOST_MADDY_BINARY: /tmp/qualified-maddy
+          KYPOST_RECEIVING_TLS_DIR: /tmp/receiver-tls
+          KYPOST_RECEIVING_HOSTNAME: mail.example.com
+          KYPOST_SMTP_BIND: 127.0.0.1
+          KYPOST_SMTP_PORT: 2525
+        run: docker compose -f docker-compose.yml -f docker-compose.receiving.yml config --quiet
+
+      - name: receiver launch refusal
+        run: python3 scripts/check-receiver-launch.py
+
       - name: cumulative supervisor shutdown budget
         run: python3 scripts/check-supervisor-shutdown.py --contract-only
 
@@ -382,6 +395,10 @@ jobs:
             status="$(docker inspect -f '{{.State.Health.Status}}' kypost-ci 2>/dev/null || echo starting)"
             if [ "$status" = "healthy" ]; then
               echo "container reported healthy after ${i}s"
+              receiver_result=0
+              receiver_status=$(docker exec kypost-ci supervisorctl -c /etc/supervisord.conf status receiver) || receiver_result=$?
+              [ "$receiver_result" -eq 3 ]
+              printf '%s\n' "$receiver_status" | grep -qE '^receiver[[:space:]]+STOPPED[[:space:]]+Not started$'
               exit 0
             fi
             if [ "$(docker inspect -f '{{.State.Running}}' kypost-ci)" != "true" ]; then
