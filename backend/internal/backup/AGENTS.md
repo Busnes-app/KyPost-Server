@@ -10,6 +10,8 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 ## Local Contracts
 
+- Each offline native quarantine invocation first persists an empty-epoch version-1 hold, then generates and persists a fresh UUID-v4 `epoch` before validation. Retries and failed validation rotate it; fatal random generation or a returned error leaves staging held and unpublished. Existence-only runtime refusal remains unchanged. Future reconciliation must reject absent/invalid epochs and bind evidence under its durable fence; an epoch grants no authority or hold release.
+
 - Nonempty native outboxes require relay config/master key and `outbox:encrypted-jobs-claims-and-sent` recipe evidence. Decrypt actual frozen job bytes; check namespace/owner/domain, foreign keys, Sent receipts and quota. Databases with neither queue table remain compatible; a partial schema or orphan claims is corruption. Historical generations/claims are preserved. After whole-snapshot validation and durable hold, offline restore atomically quarantines queued/retryable deliveries per mailbox before publication; accepted/Sent and submitting/uncertain evidence remain intact. Partial failure preserves held staging; retry is idempotent.
 
 - After historical validation, offline native restore rotates each exact-source mailbox reference generation in a FULL immediate transaction before credential revocation. Retain namespace, ciphertext and numeric IDs; malformed metadata fails with staging held. Older absent tables gain a generation. The shared native wire boundary rejects stale references; rotation does not authorize restored accounts or permit hold release.
@@ -34,6 +36,8 @@ This package owns payload selection and verification. API/CLI callers own creden
 - Record an intent before mutations and a completion afterward. If completion auditing fails, state that the action may have happened.
 
 ## Verification
+
+- Native ownership/failed-validation and sealed device/mail preservation tests check valid fresh restore epochs, historical-marker replacement and retry rotation. `TestNativeRestoreFatalEntropyKeepsHold` exercises actual Go random failure in isolated subprocesses and checks fresh/historical holds remain unusable. Hold-write failure preserves staged bytes; ordinary legacy CLI restores remain unheld.
 
 - `TestNativeRestoreRevokesDevicesAndPairingPreservesMailAndLegacy` checks sealed recovery, exact mail/receipt/checkpoint/account preservation, native device/CardDAV credential revocation and original/legacy isolation. `TestNativeRestoreDeviceRevocationSourceFenceAndAtomicFailure` checks source refusal, transaction rollback on failed subscriber rotation, relative paths and missing-state refusal.
 

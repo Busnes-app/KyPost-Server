@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -116,11 +117,30 @@ func TestNativeRestoreRevokesDevicesAndPairingPreservesMailAndLegacy(t *testing.
 	}
 	liveGeneration := mail.MessageReferenceGeneration()
 	priorGeneration := liveGeneration
+	priorEpoch := "11111111-1111-4111-8111-111111111111"
+	holdPath := filepath.Join(restored, "state", sso.NativeRestoreHoldFile)
+	if err := os.WriteFile(holdPath, []byte(`{"version":1,"epoch":"`+priorEpoch+`","reason":"historical hold"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	// Two passes prove interruption/retry convergence; neither restores trust.
 	for range 2 {
 		if native, err := QuarantineNativeRestore(restored); !native || err != nil {
 			t.Fatal(native, err)
 		}
+		data, err := os.ReadFile(holdPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var hold struct {
+			Epoch string `json:"epoch"`
+		}
+		if err := json.Unmarshal(data, &hold); err != nil {
+			t.Fatal(err)
+		}
+		if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(hold.Epoch) || hold.Epoch == priorEpoch {
+			t.Fatal("restore reused or omitted its epoch")
+		}
+		priorEpoch = hold.Epoch
 		rotated, err := mailbox.OpenExisting(filepath.Join(restored, "state/users", u.ID, "mailbox"), assignment.Owner, assignment.Limits, assignment.Source)
 		if err != nil {
 			t.Fatal(err)

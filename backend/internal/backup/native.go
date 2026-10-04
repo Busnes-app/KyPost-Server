@@ -148,9 +148,20 @@ func QuarantineNativeRestore(dir string) (bool, error) {
 	_, priorErr := os.Lstat(path)
 	// A hold persists even when ownership validation fails. Fresh external
 	// reconciliation, not old backup evidence, must authorize its future release.
-	holdErr := fsutil.PersistJSONFile(path, map[string]any{"version": 1, "reason": "restore_requires_identity_domain_receiver_reconciliation"})
+	// Persist an unusable epoch first: crypto/rand may terminate the process.
+	// No outstanding reconciliation survives a failed generation attempt.
+	hold := map[string]any{"version": 1, "epoch": "", "reason": "restore_requires_identity_domain_receiver_reconciliation"}
+	holdErr := fsutil.PersistJSONFile(path, hold)
 	if holdErr != nil {
 		return true, fmt.Errorf("cannot persist native restore hold; keep workers stopped: %w", holdErr)
+	}
+	epoch, epochErr := fsutil.NewUUIDv4()
+	if epochErr != nil {
+		return true, fmt.Errorf("cannot create native restore epoch; preserve held staging and keep workers stopped: %w", epochErr)
+	}
+	hold["epoch"] = epoch
+	if err := fsutil.PersistJSONFile(path, hold); err != nil {
+		return true, fmt.Errorf("cannot persist native restore epoch; preserve held staging and keep workers stopped: %w", err)
 	}
 	native, checkErr := nativeSnapshot(dir)
 	if !native && checkErr == nil && errors.Is(priorErr, os.ErrNotExist) {

@@ -41,6 +41,9 @@ func TestRestoreCLIUsesCustodianSharesAndRefusesOverwrite(t *testing.T) {
 	if err != nil || string(got) != `{"synthetic":true}` {
 		t.Fatalf("restored payload: %s %v", got, err)
 	}
+	if err := sso.RequireNativeRestoreReleased(filepath.Join(target, "state")); err != nil {
+		t.Fatal("ordinary legacy restore retained a native hold", err)
+	}
 	if !strings.Contains(out.String(), manifest.CapsuleID) || strings.Contains(out.String(), shares[0].String()) {
 		t.Fatal("restore output missing identity or leaked shares")
 	}
