@@ -299,12 +299,11 @@ and arm64 builds passed. Full CI, live
 KyIdentity/client/domain tests, receiver readiness, storage/backup/restore and
 release acceptance remain open.
 
-Next: persist native provisioning assignment/address reservations and reconcile
-verified desired state to prepared storage, with explicit pending/applied/failed
-status. Coordinate new-account allocation before any ordinary state opener
-creates an IMAP directory. Add shared API/daemon source selection only after
-that lifecycle is qualified; preserve default external IMAP. Receiver routing,
-revocation, domain proof and alias contracts remain necessary. Do not use this
+Subsequent reservation/reconciliation, admin mail-domain proof and disabled
+prepare-before-publication allocation are described in [the provisioning
+contract](NATIVE_PROVISIONING.md). Runtime worker integration, whole-stack
+restore, source selection, receiver routing/revocation and aliases remain gates;
+preserve default external IMAP. Do not use this
 primitive to convert existing accounts, bypass missing/corrupt state, erase
 mail, or activate reception from a preparation manifest.
 

@@ -10,6 +10,8 @@ All files in this package. Internal storage and complete `imap.Client` implement
 
 ## Local Contracts
 
+- `PrepareAccountContext` cancels account-lock contention and checks cancellation before no-replace publication. The legacy wrapper keeps blocking flock semantics; filesystem open/fsync and read-only SQLite validation remain a healthy-volume activation gate.
+
 - Internal `PrepareAccount` publishes an empty mailbox, prebound account state and `native-mailbox.json` together at `$STATE_DIR/users/<localID>/` (`mailbox/mailbox.db` plus `state.db`). Caller proves verified new-account issuer/subject ownership, domain authority and unique primary address. This is storage preparation, never receiver readiness or a migration. No production scheduler/selector calls it.
 - `ValidatePreparedAccount` is read-only preparation validation for acknowledged provisioning sources; unlike `PrepareAccount`, it must never recreate a missing account directory.
 - Preparation serializes cooperating writers and uses Linux `RENAME_NOREPLACE` to refuse even an empty or concurrently created destination. Other platforms refuse explicitly. Retry reads existing regular databases without creating schemas, checks required tables/owner/source/namespace/address/limits, and refuses incomplete, legacy or recreated state. Preserve published data; crash-abandoned staging directories contain only empty preparation and need bounded cleanup before activation.

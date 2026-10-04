@@ -1,6 +1,7 @@
 package mailbox
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -31,11 +32,24 @@ type preparedAccount struct {
 // Publication atomically includes an empty mailbox and prebound account state;
 // retry validates existing files without adopting legacy/recreated databases.
 func PrepareAccount(stateRoot string, owner Owner, address string, limits Limits) (string, error) {
-	return prepareAccount(stateRoot, owner, address, limits, publishPreparedAccount)
+	return PrepareAccountContext(context.Background(), stateRoot, owner, address, limits)
+}
+
+// PrepareAccountContext cancels lock contention and checks cancellation before
+// publication. Blocking disk calls remain a separate deployment qualification.
+func PrepareAccountContext(ctx context.Context, stateRoot string, owner Owner, address string, limits Limits) (string, error) {
+	return prepareAccountContext(ctx, stateRoot, owner, address, limits, publishPreparedAccount)
 }
 
 // publish is the syscall boundary exercised by killed-process checks.
 func prepareAccount(stateRoot string, owner Owner, address string, limits Limits, publish func(string, string) error) (string, error) {
+	return prepareAccountContext(context.Background(), stateRoot, owner, address, limits, publish)
+}
+
+func prepareAccountContext(ctx context.Context, stateRoot string, owner Owner, address string, limits Limits, publish func(string, string) error) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	a, err := mail.ParseAddress(address)
 	if !fsutil.SafePathComponent(owner.Mailbox) || err != nil || a.Address != address {
 		return "", ErrPreparation
@@ -45,7 +59,7 @@ func prepareAccount(stateRoot string, owner Owner, address string, limits Limits
 		return "", err
 	}
 	target := filepath.Join(root, owner.Mailbox)
-	release, err := fsutil.LockFile(target)
+	release, err := fsutil.LockFileContext(ctx, target)
 	if err != nil {
 		return "", err
 	}
@@ -104,6 +118,9 @@ func prepareAccount(stateRoot string, owner Owner, address string, limits Limits
 		return "", err
 	}
 	if err = fsutil.SyncDir(account); err != nil {
+		return "", err
+	}
+	if err = ctx.Err(); err != nil {
 		return "", err
 	}
 	if err = publish(account, target); err != nil {

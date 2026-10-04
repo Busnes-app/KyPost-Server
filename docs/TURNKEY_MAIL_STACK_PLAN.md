@@ -2,6 +2,8 @@
 
 Status: approved implementation plan, 2026-10-03. Phase 1 feasibility checks, caller audit and internal receiving-buffer implementation are in [the evidence record](TURNKEY_MAIL_PHASE1.md). Maddy's synchronous command boundary is the selected implementation candidate; verified directory/runtime integration and representative storage/deployment gates remain open. No production reception capability has shipped. New dependencies and production cutover remain separate approvals.
 
+Qualification progress: admin mail-domain DNS proof and disabled prepare-before-publication allocation are implemented in [the provisioning contract](NATIVE_PROVISIONING.md). Next qualify consistent whole-stack backup/restore, then wire an explicitly enabled provisioning worker before runtime selectors and receiver cutover. Do not change production MX for these foundations.
+
 ## Outcome and scope
 
 Deploy one stack, connect a domain and KyIdentity, supply the operator's outgoing relay credentials, and complete DNS verification. Assign a person to KyPost in KyIdentity and give them a working mailbox without individual IMAP/SMTP setup. Disable their account to revoke access without deleting mail; reactivation restores the same mailbox.
@@ -115,7 +117,7 @@ Ship a pinned stack and one admin setup flow: public hostname/domain; KyIdentity
 
 Use existing Go unit/integration checks and real SQLite/filesystem state for new logic. Fault-injection checks cover actual persistent boundaries rather than only mocked success paths. Live provider and client checks use a dedicated test domain/accounts; production receives no synthetic test data. Each phase must pass relevant package checks; release must pass the complete CI contract in backend/AGENTS.md and applicable frontend/container checks.
 
-The receiving/storage/API foundations and internal provisioning reconciler are implemented. Next qualify domain authority and account allocation before ordinary state creation, bounded worker lock waits and restore reconciliation; then wire explicit native source selection into both API and daemon. Reception remains disabled until these contracts and receiver routing/revocation are qualified.
+The receiving/storage/API foundations and internal provisioning reconciler are implemented. Mail-domain proof and disabled allocation before ordinary state creation now have runnable checks, including cancellable lock waits. Next qualify whole-stack restore and publication crashes, then explicitly enabled worker integration, stalled-volume behavior and native source selection in both API and daemon. Reception remains disabled until these contracts and receiver routing/revocation are qualified.
 
 ## Evidence and outstanding decisions
 
