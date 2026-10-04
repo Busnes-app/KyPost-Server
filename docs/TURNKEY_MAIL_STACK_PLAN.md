@@ -2,7 +2,7 @@
 
 Status: approved implementation plan, 2026-10-03. Phase 1 feasibility checks, caller audit and internal receiving-buffer implementation are in [the evidence record](TURNKEY_MAIL_PHASE1.md). Maddy's synchronous command boundary is the selected implementation candidate; controlled directory/runtime receiving integration has runnable checks; representative storage and public deployment gates remain open. No production reception capability has shipped. New dependencies and production cutover remain separate approvals.
 
-Qualification progress: admin mail-domain DNS proof and opt-in prepare-before-publication allocation/runtime are implemented in [the provisioning contract](NATIVE_PROVISIONING.md). Sealed backups now snapshot the internal mailbox and receiving databases, including committed WAL rows, and drills check SQLite integrity; see [restore limits](RESTORE.md). Historical ownership validation and held private restore publication are implemented; current-authority repair, stale-ID fencing and power-loss qualification remain open. Native provisioning and API/daemon selection require KYPOST_NATIVE_MAIL=true; KYPOST_NATIVE_RECEIVING=true additionally selects trusted-local receiving commands and daemon import for controlled qualification. Bundled public reception and outgoing relay integration remain unavailable. Qualify hold release, mail-sized backup capacity and receiver cutover before production reception. Do not change production MX for these foundations.
+Qualification progress: admin mail-domain DNS proof and opt-in prepare-before-publication allocation/runtime are implemented in [the provisioning contract](NATIVE_PROVISIONING.md). Sealed backups now snapshot the internal mailbox and receiving databases, including committed WAL rows, and drills check SQLite integrity; see [restore limits](RESTORE.md). Historical ownership validation and held private restore publication are implemented; current-authority repair, stale-ID fencing and power-loss qualification remain open. Native provisioning and API/daemon selection require KYPOST_NATIVE_MAIL=true; KYPOST_NATIVE_RECEIVING=true additionally selects trusted-local receiving commands and daemon import for controlled qualification. Native primary-address sending uses the operator-owned relay and durable outbox; Server → Mail domain guides domain/relay configuration. Bundled public reception, provider readiness probing and full deployment setup remain pending. Qualify hold release, mail-sized backup capacity and receiver cutover before production reception. Do not change production MX for these foundations.
 
 ## Outcome and scope
 
@@ -139,7 +139,7 @@ Busnes does not supply accounts, pay provider bills or guarantee inbox placement
 
 | Provider | Connection | Operator prerequisites |
 | --- | --- | --- |
-| AWS SES | Region-specific `email-smtp.<region>.amazonaws.com`, implicit TLS 465 or required STARTTLS | Region-specific SES SMTP credentials, verified sender identity; sandbox recipients must be verified or use the SES simulator. |
+| AWS SES | Region-specific `email-smtp.<region>.amazonaws.com`, implicit TLS 465 for the native profile | Region-specific SES SMTP credentials, verified sender identity; sandbox recipients must be verified or use the SES simulator. |
 | Cloudflare Email Service | `smtp.mx.cloudflare.net:465`, implicit TLS; username `api_token` | Email Sending enabled/onboarded domain and token with Email Sending: Edit. Availability is provider-controlled. |
 
 Use [SES SMTP requirements](https://docs.aws.amazon.com/ses/latest/dg/send-email-smtp.html)
