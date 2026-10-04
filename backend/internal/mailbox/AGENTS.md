@@ -2,13 +2,15 @@
 
 ## Purpose
 
-Per-owner permanent raw mail, indexed metadata, folders, flags, labels, delivery receipts and durable change history.
+Per-owner permanent raw mail, indexed metadata, folders, flags, labels, delivery receipts, durable change history and encrypted native outbox intent/claims/Sent obligations.
 
 ## Ownership
 
 All files in this package. Internal storage and complete `imap.Client` implementation; runtime selection requires explicit native mode and current admission. `NewClient` borrows the store; its caller owns the store lifetime and verifies the supplied sender address. Runtime `OpenClient` opens existing-only storage, requires per-operation admission and owns cleanup; KeepAlive protects active borrowers from garbage collection.
 
 ## Local Contracts
+
+- Internal native outbox encrypts complete immutable intent with a relay-master HKDF key bound to owner/namespace/job ID; reserve delivery/Sent quota atomically. Claims are durable and never reclaimed after a crash; ambiguous acceptance remains excluded from automatic work. Only definite 4xx retries, at most six attempts. Sent filing has its own atomic receipt and cannot authorize resubmission. Snapshot validation is read-only historical evidence, with key/domain, shape, foreign-key and quota checks. The shared native coordinator fences current authority through claims; native primary compose/client-PGP routes and recovery workers are enabled only in explicit native mode. Follow-on discovery requires accepted primary evidence; uncertainty/crashed claims are never replayed. See [outbox contract](../../../docs/NATIVE_OUTBOX.md).
 
 - `PrepareAccountContext` cancels account-lock contention and checks cancellation before no-replace publication. The legacy wrapper keeps blocking flock semantics; filesystem open/fsync and read-only SQLite validation remain a healthy-volume activation gate.
 
@@ -19,7 +21,8 @@ All files in this package. Internal storage and complete `imap.Client` implement
 - Open only an owner-only directory selected from verified provisioning. The durable issuer/subject/mailbox tuple is immutable; opening the database for another owner fails. Validate user path components with fsutil before constructing paths.
 - SQLite immediate writer transactions, FULL synchronization and raw BLOBs keep bytes, metadata, receipt and change atomic. Reuse installed dependencies.
 - Import identity is gateway/delivery within this owner, with a canonical frozen envelope and SHA-256 digest. Exact replay returns the original numeric ID even after move/deletion; conflicts retain the holding copy. Aliases of the same owner produce one receipt/copy.
-- IDs never reuse. Moves preserve IDs and emit removal/arrival together. Folder-scoped lookups reject stale references. Permanent deletion clears live raw/metadata while retaining receipts, IDs and tombstones; earlier WAL/pages/backups may still contain plaintext.
+- Numeric IDs never reuse within an uninterrupted database history; older snapshots can rewind allocation. A separate strict UUID-v4 `reference_generation` singleton persists across reopen and rotates only in stopped, whole-snapshot-qualified restore staging. Missing tables in older databases migrate; present malformed/empty metadata fails rather than resetting. Preserve namespace/source and outbox/incoming-encryption bindings. Native HTTP/notification IDs are opaque `n1:<reference-generation>:<id>` references. Shared adapter resolution rejects stale/foreign/bare IDs before reads/actions; internal cache/journal/receipt/encryption IDs remain numeric. The generation is not authorization or hold release.
+- IDs never reuse within that history. Moves preserve IDs and emit removal/arrival together. Folder-scoped lookups reject stale references. Permanent deletion clears live raw/metadata while retaining receipts, IDs and tombstones; earlier WAL/pages/backups may still contain plaintext.
 - List uses descending-ID keyset pages. Changes retains all events and returns a bounded page plus snapshot high-water mark; advance through every event before high-water. Future cursors require full resync. Native HTTP currently forces fresh full snapshots (delta:false, cursor:0). Durable scoped HTTP deltas remain an activation gate.
 - Persisted limits must match across writers. Payload quota counts live raw bytes; record quota includes tombstones. SQLite triggers maintain live-byte/record counters atomically, with serialized backfill at open. Physical storage, change-history/receipt growth, quota adjustment, checkpoint/backup and restore suitability remain operating gates. No automatic eviction.
 - `Update` replaces complete flags/labels atomically. Client read/label edits update only their fields in a writer transaction, preserving concurrent edits. Labels are case-insensitive, capped at 100 per message and 1,000 catalog entries at the shared write boundary.
@@ -37,6 +40,10 @@ All files in this package. Internal storage and complete `imap.Client` implement
 - Treat database paths as local process trust, not network authorization. Store correspondence in the database, never application logs.
 
 ## Verification
+
+- `TestNativeReferenceGenerationRollbackAndFailure` reproduces actual SQLite snapshot ID reuse and proves generation/source/mail/receipt preservation, source refusal and failed-write rollback. `TestNativeReferenceGenerationOlderSchemaAndCorruption` checks historical migration and malformed/empty/view refusal. `TestPrepareAccountReferenceGenerationReadOnly` proves actual preparation validation leaves older schemas untouched, runtime migration succeeds and corrupt present metadata is refused without repair.
+
+- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailbox ./internal/backup ./internal/cryptutil -run 'TestNativeOutbox|TestOpenRefusesMalformedNonce' -count=1 -timeout=5m` checks encrypted intent, real killed submitters, competing claims, actual loopback TLS/lost ACK, Sent recovery, quota and sealed snapshots/corruption.
 
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailbox -run '^TestPrepareAccount' -count=1` checks publication, retained mail on retry, competing ordinary state creation, concurrent preparation, missing/corrupt files and subprocess SIGKILL before/after actual publication. Process crashes are not power-loss evidence.
 

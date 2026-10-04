@@ -213,6 +213,9 @@ func preparedSource(dir string, owner Owner, address string, limits Limits) (str
 	if err = db.QueryRow("SELECT token FROM namespace WHERE id=1").Scan(&namespace); err != nil || namespace == "" {
 		return "", ErrPreparation
 	}
+	if _, err = messageReferenceGeneration(db); err != nil {
+		return "", ErrPreparation
+	}
 	client := &Client{store: &Store{owner: storedOwner, namespace: namespace}}
 	if client.MailSourceIdentity() != source {
 		return "", ErrPreparation

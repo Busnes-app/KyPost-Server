@@ -10,6 +10,12 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 ## Local Contracts
 
+- Nonempty native outboxes require relay config/master key and `outbox:encrypted-jobs-claims-and-sent` recipe evidence. Decrypt actual frozen job bytes; check namespace/owner/domain, foreign keys, Sent receipts and quota. Databases with neither queue table remain compatible; a partial schema or orphan claims is corruption. Historical generations/claims are preserved. After whole-snapshot validation and durable hold, offline restore atomically quarantines queued/retryable deliveries per mailbox before publication; accepted/Sent and submitting/uncertain evidence remain intact. Partial failure preserves held staging; retry is idempotent.
+
+- After historical validation, offline native restore rotates each exact-source mailbox reference generation in a FULL immediate transaction before credential revocation. Retain namespace, ciphertext and numeric IDs; malformed metadata fails with staging held. Older absent tables gain a generation. The shared native wire boundary rejects stale references; rotation does not authorize restored accounts or permit hold release.
+
+- Offline native restore also removes device/browser push registrations and rotates subscriber IDs in one FULL SQLite transaction per exact-source native account. Historical devices, MFA approval/enrollment and outstanding pairing tokens confer no restored authority. Legacy IMAP accounts, mail, pull history and users/key documents stay intact. Retries rotate again while held; any failure keeps staging unpublished. After each qualified native account/device fence, remove its config/users/<id>/carddav-auth.json app-password hash. This separate file mutation is retry-safe; failure keeps the whole staging held/unpublished. Preserve original and legacy credentials. Fresh pairing/enrollment and CardDAV app-password setup require qualified recovery; do not clear MFA requirements as a fallback.
+
 - Collect `config/native-relay.json` with `private/native-relay.key`; validate decryption of the actual collected bytes and historical native-domain issuer/domain binding. Version-1 recipes add `relay:domain-credentials-and-authority`; drills require it when relay ciphertext exists. Relay-only restores persist the native hold without qualifying unowned mailbox databases. Fresh authority/provider evidence remains separate.
 
 - Service name is `KyPost`. The token sealer uses the existing TOTP master key with HKDF label `kypost:setting:kyrecovery_token`; load it at operation time, never generate a replacement.
@@ -28,6 +34,10 @@ This package owns payload selection and verification. API/CLI callers own creden
 - Record an intent before mutations and a completion afterward. If completion auditing fails, state that the action may have happened.
 
 ## Verification
+
+- `TestNativeRestoreRevokesDevicesAndPairingPreservesMailAndLegacy` checks sealed recovery, exact mail/receipt/checkpoint/account preservation, native device/CardDAV credential revocation and original/legacy isolation. `TestNativeRestoreDeviceRevocationSourceFenceAndAtomicFailure` checks source refusal, transaction rollback on failed subscriber rotation, relative paths and missing-state refusal.
+
+- `TestNativeOutboxSealedClaimsSentAndDependencies` checks sealed committed claims/Sent, restore queue quarantine with no resubmission, retained holds, required recipe/key/config and wrong-key rejection.
 
 - `TestDomainRelay` checks sealed credential/key/generation preservation, missing dependencies, corrupt restored keys and relay-only quarantine.
 

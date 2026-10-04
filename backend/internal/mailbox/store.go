@@ -1,5 +1,5 @@
 // Package mailbox owns permanent raw mail and transactional delivery receipts.
-// It is an internal storage layer; no runtime source setting selects it yet.
+// Runtime native access requires explicit mode and current ownership admission.
 package mailbox
 
 import (
@@ -61,10 +61,11 @@ type Change struct {
 	Removed      bool
 }
 type Store struct {
-	db        *sql.DB
-	owner     Owner
-	limits    Limits
-	namespace string
+	db                  *sql.DB
+	owner               Owner
+	limits              Limits
+	namespace           string
+	referenceGeneration string
 }
 
 const schema = `
@@ -78,6 +79,12 @@ CREATE INDEX IF NOT EXISTS message_folder_ids ON messages(folder,id) WHERE raw I
 CREATE TABLE IF NOT EXISTS receipts (gateway TEXT NOT NULL, delivery TEXT NOT NULL, envelope TEXT NOT NULL, digest TEXT NOT NULL, message_id INTEGER NOT NULL REFERENCES messages(id), PRIMARY KEY(gateway,delivery));
 CREATE TABLE IF NOT EXISTS changes (revision INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL, folder TEXT NOT NULL, removed INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS usage (id INTEGER PRIMARY KEY CHECK(id=1), records INTEGER NOT NULL, payload_bytes INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, ciphertext BLOB NOT NULL, sent_bytes INTEGER NOT NULL, sent_reserved INTEGER NOT NULL, sent_id INTEGER REFERENCES messages(id), created_at INTEGER NOT NULL DEFAULT (unixepoch()));
+CREATE TABLE IF NOT EXISTS outbox_deliveries (job TEXT NOT NULL REFERENCES outbox(id), sequence INTEGER NOT NULL, state TEXT NOT NULL CHECK(state IN ('queued','submitting','accepted','retryable','failed','uncertain','quarantined')), claim TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(job,sequence));
+CREATE TRIGGER IF NOT EXISTS outbox_insert AFTER INSERT ON outbox BEGIN UPDATE usage SET records=records+1+NEW.sent_reserved,payload_bytes=payload_bytes+length(NEW.ciphertext)+NEW.sent_bytes WHERE id=1; END;
+CREATE TRIGGER IF NOT EXISTS outbox_update AFTER UPDATE ON outbox BEGIN UPDATE usage SET records=records+NEW.sent_reserved-OLD.sent_reserved,payload_bytes=payload_bytes+length(NEW.ciphertext)-length(OLD.ciphertext)+NEW.sent_bytes-OLD.sent_bytes WHERE id=1; END;
+CREATE TRIGGER IF NOT EXISTS outbox_delivery_insert AFTER INSERT ON outbox_deliveries BEGIN UPDATE usage SET records=records+1 WHERE id=1; END;
+
 CREATE TRIGGER IF NOT EXISTS mailbox_insert AFTER INSERT ON messages BEGIN UPDATE usage SET records=records+1,payload_bytes=payload_bytes+coalesce(length(NEW.raw),0) WHERE id=1; END;
 CREATE TRIGGER IF NOT EXISTS mailbox_raw_update AFTER UPDATE OF raw ON messages BEGIN UPDATE usage SET payload_bytes=payload_bytes-coalesce(length(OLD.raw),0)+coalesce(length(NEW.raw),0) WHERE id=1; END;
 CREATE TRIGGER IF NOT EXISTS mailbox_delete AFTER DELETE ON messages BEGIN UPDATE usage SET records=records-1,payload_bytes=payload_bytes-coalesce(length(OLD.raw),0) WHERE id=1; END;
@@ -173,7 +180,9 @@ func (s *Store) initialize() error {
 		return err
 	}
 	if initialized == 0 {
-		if _, err = tx.Exec("INSERT INTO usage SELECT 1,count(*),coalesce(sum(length(raw)),0) FROM messages"); err != nil {
+		if _, err = tx.Exec(`INSERT INTO usage SELECT 1,
+ (SELECT count(*) FROM messages)+(SELECT count(*)+coalesce(sum(sent_reserved),0) FROM outbox)+(SELECT count(*) FROM outbox_deliveries),
+ (SELECT coalesce(sum(length(raw)),0) FROM messages)+(SELECT coalesce(sum(length(ciphertext)+sent_bytes),0) FROM outbox)`); err != nil {
 			return err
 		}
 	}
@@ -203,6 +212,21 @@ func (s *Store) initialize() error {
 	}
 	if err = tx.QueryRow("SELECT token FROM namespace WHERE id=1").Scan(&s.namespace); err != nil {
 		return err
+	}
+	if s.referenceGeneration, err = messageReferenceGeneration(tx); err != nil {
+		return err
+	}
+	if s.referenceGeneration == "" {
+		s.referenceGeneration, err = fsutil.NewUUIDv4()
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(referenceGenerationSchema); err != nil {
+			return err
+		}
+		if _, err = tx.Exec("INSERT INTO reference_generation VALUES(1,?)", s.referenceGeneration); err != nil {
+			return err
+		}
 	}
 	for _, folder := range []string{"INBOX", "Drafts", "Sent", "Trash", "Junk", "Archive"} {
 		if _, err = tx.Exec("INSERT OR IGNORE INTO folders VALUES(?)", folder); err != nil {

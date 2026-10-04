@@ -14,6 +14,38 @@ non-prerelease version.
 
 ## Unreleased
 
+- Revoke restored native CardDAV app-password hashes and deny held native accounts on both cached and fresh CardDAV authentication; preserve legacy/original credentials and contact data.
+
+- Fence native HTTP reads/actions and new notification references with the persisted mailbox reference generation. Reject stale/foreign/bare numeric IDs before mail access, retain internal numeric/encryption identities and legacy IMAP behavior, and qualify actual snapshot ID reuse plus browser body-cache separation. Native restore remains held.
+
+- Revoke restored native device/browser push registrations and outstanding pairing-token authority before publication, atomically per exact-source account. Preserve mail, receiving receipts and wrapped key material; legacy IMAP registrations remain unchanged. Native recovery stays held and will require fresh device pairing/enrollment without disabling MFA.
+
+- Quarantine restored queued/retryable native outgoing deliveries before offline restore publication, preserving encrypted intent, claims and accepted/Sent evidence. Retain the whole-stack restore hold and refuse publication on quarantine failure; no automatic resubmission or hold release.
+
+- Join native signed-directory allocation, real device pairing/registration, durable receiving-store import, device mailbox/attachment/keyword reads and actual TLS ordinary/PGP sending in one regression fixture without IMAP. Physical clients, app/Maddy admission and live provider delivery remain separate checks.
+
+- Add a repeatable host-side controlled-domain setup wizard using the existing protected domain/relay UI and supervised receiver profile. Confirm public configuration/rebuild/init/start changes, protect dotenv writes and retain explicit external delivery/backup checks; no provider secrets or DNS automation.
+
+- Qualify supervised receiving shutdown during incomplete SMTP DATA: retain staged recipient reservations without publishing partial payload, preserve previously accepted mail and import it after restart. The check uses the actual image and pinned engine; stalled storage/helpers and final-ack races remain separate qualification work.
+
+- Add an optional supervised Linux x86_64 direct-receiving Compose profile with explicit SMTP publication, operator-supplied read-only pinned engine/TLS mounts and fresh startup admission. Qualify real-image automatic receiver restart, durable import and idle shutdown; public MX and full turnkey deployment remain gated.
+
+- Protect container config, private-key and state roots with owner-only permissions at build and before bootstrap on every start, including mounted volumes. Preserve existing mail bytes and descendant modes; qualify the real entrypoint in isolated Docker.
+
+- Allow 36 minutes for container shutdown so Supervisor can finish separate API and daemon backup drains sequentially. Add cumulative-budget and real-Supervisor regression checks; individual backup deadlines remain bounded to 16 minutes.
+
+- Generate a controlled TLS-only Maddy receiving profile from verified domain and existing storage, with certificate/path validation and bounded message/transaction policy. Receiver installation and public MX remain explicit qualification steps; the optional supervised profile is described above.
+
+- Refuse new local receiving growth at physical database/WAL and filesystem free-space reserves, with transaction-scoped checks and headroom-gated near-budget checkpoint recovery. Preserve exact receipt retries and accepted-mail import through restricted unchanged-route refresh. These admission estimates do not replace operator volume quotas or enable public reception.
+
+- Add an admin-confirmed saved-relay TLS/AUTH check without submitting mail. Bind it to the displayed generation and fresh domain/issuer/restore authority before and after connection; bound cancellation, suppress provider replies and expose a transient result in Server → Mail domain. Delivery and receiving remain separate qualification steps.
+
+- Add Server → Mail domain setup for issuer-bound TXT proof and operator-owned implicit-TLS relay settings. Reuse account confirmation, derived credentials, CSRF and identical KySignOn step-up replay; clear secrets and stop submissions after account changes/unmount. Require confirmation before challenge rotation and distinguish saved capability from tested delivery or public receiving readiness.
+
+- Add opt-in native primary-address compose/client-PGP relay sending, current identity/domain/device admission, local revocation epochs, durable intent before SMTP, owner-scoped outbox status and joined recovery workers. Preserve confirmed-send and PGP custody/enrollment contracts. Qualify actual local TLS, signed encrypted recipient/Sent verification, uncertainty and independent Sent/follow-on recovery. Native pickup/alias/system sending and live provider readiness remain pending.
+
+- Add encrypted native outbox intent in mailbox.db, owner/namespace/job-bound keys, transactional delivery claims, bounded definite-4xx retries, uncertain/crashed-claim retention and independent quota-reserved Sent receipts. Sealed snapshot checks preserve claims/Sent and refuse missing keys, orphan/partial schemas and quota corruption. Qualify with actual local TLS SMTP and killed submitters; native primary runtime integration is described above; pickup/alias/system paths remain gated. Shared encrypted reads now reject malformed nonce lengths without panicking.
+
 - Add admin-only encrypted operator-owned domain relay settings with fresh issuer-bound DNS proof, account confirmation, redacted reads and generation rotation. Qualify strict TLS/AUTH transport with safe provider errors; sealed backups validate relay ciphertext, its dedicated key and historical domain binding, including relay-only restore quarantine. This does not enable native sending or prove provider readiness.
 
 - Distinguish lost or invalid final SMTP DATA acknowledgments from definite rejection. Preserve encrypted pickup messages when their notification may already have reached the relay; report uncertainty without echoing untrusted relay response text and require provider evidence before retrying. Partial blind-copy and pickup-link warnings describe unconfirmed delivery and warn against duplicate retries, including alongside Sent-copy warnings. Native domain relay/outbox sending remains unavailable.

@@ -101,6 +101,9 @@ const (
 
 // AuthContext identifies the caller of an authenticated request.
 type AuthContext struct {
+	// Private witnesses for durable native sends, never client-supplied.
+	NativeSendEpoch    uint64
+	DeviceWitness      string
 	UserID             string
 	Username           string
 	Role               users.Role
@@ -1258,6 +1261,7 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
 		role = users.RoleUser
 	}
 	return AuthContext{
+		NativeSendEpoch:    u.NativeSendEpoch,
 		UserID:             u.ID,
 		Username:           u.Username,
 		Role:               role,

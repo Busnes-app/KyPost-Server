@@ -150,6 +150,8 @@ ENV CONFIG_DIR=/kypost/config
 ENV SECRET_DIR=/kypost/private
 ENV LOG_DIR=/kypost/logs
 ENV STATE_DIR=/kypost/state
+# No engine is bundled; only the explicit receiving overlay enables startup.
+ENV KYPOST_NATIVE_RECEIVER=false
 ENV WEB_PORT=5866
 ENV TZ=America/New_York
 ENV OLLAMA_BASE_URL=http://127.0.0.1:11434
@@ -164,6 +166,7 @@ ENV OLLAMA_MODELS=/kypost/ollama-models
 
 RUN mkdir -p /kypost/config /kypost/private /kypost/logs /kypost/state \
 	&& mkdir -p /kypost/ollama-models \
+	&& chmod 0700 /kypost/config /kypost/private /kypost/state \
 	# Only the DATA directories. /opt/kypost holds entrypoint.sh — which Docker
 	# re-executes AS ROOT on every restart, from the container's writable layer —
 	# and the frontend assets the API serves with a one-year immutable cache.

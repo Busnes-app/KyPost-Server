@@ -71,7 +71,7 @@ func TestNativeRuntimeSignedDirectoryToMailbox(t *testing.T) {
 		s.routes().ServeHTTP(w, r)
 		return w
 	}
-	path := "/api/mail/body?mailbox=INBOX&messageId=" + strconv.FormatInt(id, 10)
+	path := "/api/mail/body?mailbox=INBOX&messageId=n1:" + store.MessageReferenceGeneration() + ":" + strconv.FormatInt(id, 10)
 	if w := request("GET", path, ""); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("native runtime body")) {
 		t.Fatalf("native body: %d %s", w.Code, w.Body.String())
 	}

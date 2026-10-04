@@ -17,8 +17,12 @@ Inspect the result and receipt; a remote failure can leave a successful local co
 and a local failure does not cancel the remote attempt. Uploads are bounded to 16
 minutes. Browser disconnects do not cancel uploads; deployment shutdown allows them
 to drain separately after the normal 20-second HTTP grace; unrelated requests do
-not get the extended backup deadline. Reverse proxies may need a matching response timeout. The process lock
-rejects competing operations rather than queueing them behind an upload.
+not get the extended backup deadline. Supervisor stops API and daemon groups
+sequentially, with 1,000 seconds allowed for each; Compose therefore allows up to
+36 minutes overall. Idle services exit promptly. External orchestrators must
+provide the same shutdown budget; a shorter forced stop can interrupt deposits.
+Reverse proxies may need a matching response timeout. The process lock rejects
+competing operations rather than queueing them behind an upload.
 
 For a LAN destination, explicitly set `KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY=true`.
 HTTPS remains mandatory; redirects, loopback and link-local destinations are refused.
@@ -41,9 +45,9 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
   KyRecovery token under a distinct derivation label. Never replace this key.
 - Install-wide and per-user state.db snapshots including committed WAL rows,
   address books and other persistent state. Native-device secrets are in the
-  per-user databases. Pending encrypted pickup messages are included.
+  per-user databases. Capsules retain historical device/subscription evidence, but native restore revokes those registrations before publication. Pending encrypted pickup messages are included.
 - Internal mailbox.db and ingress.db snapshots inside the collected roots,
-  including committed WAL rows and exact stored MIME/receipt data. Native
+  including committed WAL rows and exact stored MIME/receipt data. Mailbox snapshots also preserve encrypted outbox intent, claims and Sent receipts; nonempty queues require the matching relay profile/key and additive verification recipe. Native
   reception and provisioning are opt-in qualification paths; public reception remains unavailable.
 
 IMAP mail, rebuildable mailcache.json, Ollama model blobs, logs and runtime files
@@ -54,7 +58,7 @@ For a quiescent recovery point, stop services and use the CLI export.
 Native exports and drills now check historical ownership: users, issuer/subject
 reservations, directory revisions, mailbox namespace/state, domain claim and
 receiving routes/frozen bindings must agree. Missing acknowledged storage,
-orphan databases and foreign ownership fail closed. Validation uses only the
+orphan databases and foreign ownership fail closed. Outbox checks decrypt frozen bytes, verify quota/claim/Sent consistency and refuse orphan claims or partial queue schemas; historical evidence grants no replay authority. Validation uses only the
 collected/restored roots, never the original absolute ledger path. It does not
 prove current external authority or freshness; consistent old backups can pass.
 Native validation needs additional scratch space for the collected metadata and
@@ -110,11 +114,24 @@ owner's password/recovery material; a capsule does not bypass that protection.
    foreign-service, wrong-key or corrupted capsules. Extraction occurs in an
    owner-only sibling `.kypost-restore-*` directory. Failed extraction/validation
    retains it for inspection and prints no success summary. A native target must
-   be absent; Linux publishes it atomically without replacement after validation
-   and persistence of `state/native-restore-hold.json`. Legacy restores also
+   be absent; Linux publishes it atomically without replacement after validation,
+   persistence of `state/native-restore-hold.json`, and quarantine of restored
+   queued/retryable outgoing deliveries. Their encrypted contents and claim history
+   remain retained; accepted/Sent and submitting/uncertain evidence is unchanged.
+   For every native account, restore also atomically removes native device and
+   browser push registrations and rotates the subscriber ID. Old device secrets,
+   push-MFA approvers, enrollment acknowledgements and outstanding pairing tokens
+   do not regain authority. Mail, pull-notification history and opaque wrapped
+   keys remain retained. After the account/device fence, remove each native CardDAV app-password hash; failure leaves staging held and unpublished. Legacy IMAP registrations and CardDAV credentials are unchanged.
+   Restore also rotates a separate mailbox reference generation, preserving the
+   immutable encryption namespace. Native HTTP/notification references include
+   this generation; old-generation or bare numeric references are refused.
+   Corrupt generation metadata refuses publication; older snapshots without the
+   table gain a fresh generation. See [reference qualification](NATIVE_RESTORE_REFERENCES.md).
+   A failure leaves staging held and unpublished. Legacy restores also
    accept an existing empty target. Occupied targets/files are never overwritten.
 4. Native restores remain quarantined with **no supported release path yet**.
-   Preserve the hold file when copying volumes. Allocation, native runtime, local receiving and relay updates refuse a present
+   Preserve the hold file when copying volumes. Allocation, native runtime, native CardDAV (including cached Basic auth), local receiving and relay updates refuse a present
    or unreadable hold. Relay-only restores also persist this hold. Keep native workers stopped; manually deleting the hold
    does not qualify recovery. With services still stopped, copy `recovered/config/`, `recovered/private/` and
    `recovered/state/` into the corresponding retained/mounted volumes. Preserve
@@ -122,17 +139,25 @@ owner's password/recovery material; a capsule does not bypass that protection.
    and external dependencies. Recreate the container without deleting volumes.
 5. Confirm readiness, the same recovery-key fingerprint and a new successful
    backup. Run `backup-drill` and inspect its SQLite, account and credential checks.
-   Sessions are memory-only, so users sign in again. Test mailbox access and native
-   devices; their persisted registrations were restored.
+   Sessions are memory-only, so users sign in again. Test external mailbox access.
+   Native mailbox/device access remains blocked by the restore hold. After future
+   recovery qualification, each native device must pair and enroll again, and
+   browsers must subscribe again. Native CardDAV clients also need a newly generated app password after qualified recovery. Repeating quarantine rotates subscriber IDs
+   again while held; no device authority is reintroduced. Device-held private
+   keys are not remotely erased. Push-only MFA may require the existing account
+   recovery procedure before fresh pairing; restore does not disable MFA.
+
+Read the [pinned identity authority findings](NATIVE_RESTORE_AUTHORITY.md) before designing hold release: ordinary KyIdentity resync does not establish complete offboarding evidence.
 
 Before native recovery can resume writes, implementation must reconcile fresh
 KyIdentity activity, roles and revocation, domain proof, receiver generations
 and provider credential/relay evidence.
 Replaying an already-applied directory revision is insufficient to repair
 restored user access. An older database also rewinds message IDs while retaining
-its namespace: a restore generation fence or proven ID high-watermark must
-prevent stale client references from resolving to new mail. Future outbox
-recovery must quarantine uncertain SMTP acceptance rather than resend blindly.
+its namespace: the separate wire-reference generation rejects stale client
+references without changing cryptographic bindings. Outbox recovery preserves interrupted/uncertain claims and quarantines restored
+queued/retryable deliveries; native hold release and current admission
+remain unavailable. See [outbox qualification](NATIVE_OUTBOX.md).
 
 Private staging establishes the process-crash publication boundary, not whole-tree
 power-loss durability: extraction does not fsync every restored file/directory.
@@ -141,8 +166,8 @@ stages for inspection; deleting directories by prefix can erase mailbox data.
 Rollback keeps services stopped and retains the original volumes and failed
 staging; use a compatible binary, not an older writer that discards ownership.
 
-If compromise prompted the restore, revoke affected native devices and re-pair them
-through Security, revoke old KyRecovery tokens at KyRecovery and pair again to the
+Native restore always revokes its historical device pairings. If compromise prompted
+recovery, also revoke affected legacy-account devices through Security, revoke old KyRecovery tokens at KyRecovery and pair again to the
 same key. For a file-backed pairing secret, stop services and remove
 `/kypost/private/pairing.key` to generate a replacement on the next start; an explicit
 PAIRING_SECRET must instead be rotated in `.env`. Rotate externally issued relay

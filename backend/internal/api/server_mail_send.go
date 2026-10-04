@@ -16,6 +16,7 @@ import (
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
@@ -490,35 +491,60 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
-	payload, exists, err := s.outboundMailConfig(ac.UserID)
-	if err != nil {
-		outboundConfigError(w, err)
+	a, native, admissionErr := s.nativeMailAssignment(r.Context(), ac.UserID)
+	if admissionErr != nil {
+		http.Error(w, "native mailbox unavailable; preserve mail and repair account authority", http.StatusServiceUnavailable)
 		return
 	}
-	if !exists {
-		http.Error(w, "imap configuration is required before sending", http.StatusBadRequest)
-		return
-	}
+	var nativeUser users.User
+	var payload mailmsg.IMAPConfigPayload
+	var smtpHost, addr, headerFrom, envelopeFrom string
+	var smtpPort int
+	if native {
+		if !nativeFromAllowed(a.Address, req.From) {
+			http.Error(w, "native aliases require explicit directory ownership and routing; use the primary address", http.StatusForbidden)
+			return
+		}
+		nativeUser, err = s.users.Get(ac.UserID)
+		if err != nil {
+			http.Error(w, "account unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		headerFrom, envelopeFrom = a.Address, a.Address
+	} else {
+		var exists bool
+		payload, exists, err = s.outboundMailConfig(ac.UserID)
+		if err != nil {
+			outboundConfigError(w, err)
+			return
+		}
+		if !exists {
+			http.Error(w, "imap configuration is required before sending", http.StatusBadRequest)
+			return
+		}
 
-	smtpHost, smtpPort, addr, err := mailmsg.ResolveSMTPTarget(payload)
-	if err != nil {
-		http.Error(w, "smtp host is not configured", http.StatusBadRequest)
-		return
-	}
+		smtpHost, smtpPort, addr, err = mailmsg.ResolveSMTPTarget(payload)
+		if err != nil {
+			http.Error(w, "smtp host is not configured", http.StatusBadRequest)
+			return
+		}
 
-	accountAddr := sanitizeHeaderValue(payload.Username)
-	if accountAddr == "" {
-		http.Error(w, "imap username is required for sender", http.StatusBadRequest)
-		return
-	}
-	headerFrom, envelopeFrom, fromStatus, fromMsg := resolveMailFrom(accountAddr, req.From, func() (*sendas.Store, error) {
-		return s.sendAsFor(r)
-	})
-	if fromStatus != 0 {
-		http.Error(w, fromMsg, fromStatus)
-		return
-	}
+		accountAddr := sanitizeHeaderValue(payload.Username)
+		if accountAddr == "" {
+			http.Error(w, "imap username is required for sender", http.StatusBadRequest)
+			return
+		}
+		var fromStatus int
+		var fromMsg string
+		headerFrom, envelopeFrom, fromStatus, fromMsg = resolveMailFrom(accountAddr, req.From, func() (*sendas.Store, error) {
+			return s.sendAsFor(r)
+		})
+		if fromStatus != 0 {
+			http.Error(w, fromMsg, fromStatus)
+			return
+		}
 
+	}
 	autocryptHeader := s.outboundAutocryptHeader(ac.UserID, envelopeFrom)
 
 	msg := mailmsg.Message{
@@ -572,7 +598,11 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	// their public keys — an account with no key of its own can still send
 	// encrypted mail, and always could.
 	if req.Sign || req.Encrypt {
-		u, uerr := s.users.Get(ac.UserID)
+		u := nativeUser
+		var uerr error
+		if !native {
+			u, uerr = s.users.Get(ac.UserID)
+		}
 		if uerr == nil && u.PGPProtection() == users.PGPProtectionClient {
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"error":            "this account's PGP key is end-to-end protected, so the server cannot sign or encrypt on your behalf",
@@ -600,6 +630,10 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	}
 	if !req.Encrypt {
 		recipients := append(append(append([]string{}, toList...), ccList...), bccList...)
+		if native {
+			s.finishNativeSend(w, r, ac, nativeUser, envelopeFrom, []mailbox.OutboundDelivery{{Recipients: recipients, Raw: msg}}, sentCopySource, false, nil, 0, "")
+			return
+		}
 		// Nothing was encrypted, so the Sent copy stays readable.
 		s.finishMailSend(w, r, ac.UserID, smtpHost, smtpPort, addr, payload.Username, payload.Password, envelopeFrom, toList, ccList, bccList, recipients, msg, req, nil, "", nil)
 		return
@@ -654,6 +688,10 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			"keyChangedRecipients":    plan.keyChangedEmails,
 			"pickupFallbackAvailable": false,
 		})
+		return
+	}
+	if native && len(plan.withoutKeyEmails) > 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "native pickup notifications require durable pickup reconciliation; add recipient PGP keys before sending", "pickupFallbackAvailable": false})
 		return
 	}
 	if len(plan.withoutKeyEmails) > 0 && !req.AllowPickupFallback {
@@ -717,6 +755,20 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	// a BCC-only send picking an empty "main" delivery, which previously let
 	// finishMailSend report ok:true via its empty-recipient-list guard before
 	// any of the actual best-effort BCC sends had even been attempted.
+	if native {
+		groups := make([]mailbox.OutboundDelivery, 0, len(deliveries))
+		for _, delivery := range deliveries {
+			groups = append(groups, mailbox.OutboundDelivery{Recipients: delivery.Recipients, Raw: delivery.Ciphertext})
+		}
+		sent, copyErr := encryptedSentCopy(sentCopySource, nativeUser.PGPPublicKey, nil)
+		warning := ""
+		if copyErr != nil || len(sent) == 0 {
+			warning = "No encrypted Sent copy could be prepared; no plaintext copy will be saved."
+			sent = nil
+		}
+		s.finishNativeSend(w, r, ac, nativeUser, envelopeFrom, groups, sent, false, nil, 0, warning)
+		return
+	}
 	mainRecipients, mainCiphertext := deliveries[0].Recipients, deliveries[0].Ciphertext
 	bccDeliveries := deliveries[1:]
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -145,7 +146,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 			// map lookup and a KDF-free field read; the password KDF verification
 			// the cache exists to skip is still skipped.
 			u, err := s.users.Get(ac.UserID)
-			if err != nil || !u.Active {
+			if err != nil || !s.davAccountActive(u) {
 				s.davCredentials.invalidateUser(ac.Username)
 				s.requireDAVAuth(w)
 				return
@@ -177,7 +178,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		credentialStart := time.Now()
 
 		u, err := s.users.GetByUsername(username)
-		if err != nil || !u.Active {
+		if err != nil || !s.davAccountActive(u) {
 			// Do the same derivation work a real password check would, so slot
 			// contention doesn't reveal whether the username exists — mirrors
 			// equalizeLoginTiming's use on the login endpoint. Under the shared
@@ -248,6 +249,12 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authContextKey{}, ac)))
 	})
+}
+
+// Restored account flags cannot authorize CardDAV while native recovery is held.
+// Check even cache hits; offline restore also removes historical app passwords.
+func (s *Server) davAccountActive(u users.User) bool {
+	return u.Active && (u.NativeMailboxSource == "" && u.NativeMailboxIssuer == "" || sso.RequireNativeRestoreReleased(s.stateDir) == nil)
 }
 
 // rehashDAVAppPassword re-derives an app password's hash at the current cost
