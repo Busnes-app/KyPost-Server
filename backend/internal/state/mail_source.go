@@ -31,7 +31,17 @@ func NewNative(baseDir, source string) (*Store, error) {
 	if err := os.Mkdir(baseDir, 0700); err != nil {
 		return nil, err
 	}
-	return newWithMailSource(baseDir, source)
+	return newWithMailSource(baseDir, source, false)
+}
+
+// OpenNative opens only an existing source-bound native state database.
+// SQLite mode=rw refuses loss at the open boundary; validate the source before
+// schema migration and never initialize or import legacy state here.
+func OpenNative(baseDir, source string) (*Store, error) {
+	if source == "imap" || !validMailSource(source) {
+		return nil, ErrMailSource
+	}
+	return newWithMailSource(baseDir, source, true)
 }
 
 // BindMailSource admits only the source initialized at account creation/open.

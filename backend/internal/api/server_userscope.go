@@ -22,6 +22,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
 	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -77,7 +78,14 @@ func acquireUserStore[T any](mu *sync.Mutex, cache map[string]T, lastSeen map[st
 // it opens the store without claiming the user was active. See
 // acquireUserStore.
 func (s *Server) userStoreForMaintenance(userID string) (*state.Store, error) {
+	source, err := s.validateUserStorage(userID)
+	if err != nil {
+		return nil, err
+	}
 	return acquireUserStore(&s.userMu, s.userStores, s.userLastSeen, userID, func() (*state.Store, error) {
+		if source != "" {
+			return state.OpenNative(s.userStateDir(userID), source)
+		}
 		return state.New(s.userStateDir(userID))
 	}, false)
 }
@@ -255,8 +263,26 @@ func (s *Server) userCardDAVClientConfigPath(userID string) string {
 	return filepath.Join(s.userConfigDir(userID), "carddav-client.json")
 }
 
+func (s *Server) validateUserStorage(userID string) (string, error) {
+	if s.users == nil {
+		return "", nil
+	}
+	u, err := s.users.Get(userID)
+	if err != nil {
+		return "", err
+	}
+	return u.NativeMailboxSource, sso.NewLifecycleStore(s.configDir).ValidateNativeUserStorage(s.stateDir, u)
+}
+
 func (s *Server) userStore(userID string) (*state.Store, error) {
+	source, err := s.validateUserStorage(userID)
+	if err != nil {
+		return nil, err
+	}
 	return getOrCreateUserStore(&s.userMu, s.userStores, s.userLastSeen, userID, func() (*state.Store, error) {
+		if source != "" {
+			return state.OpenNative(s.userStateDir(userID), source)
+		}
 		return state.New(s.userStateDir(userID))
 	})
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
 	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
 	"github.com/Busnes-app/kypost-server/backend/internal/sorter"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
@@ -240,12 +241,29 @@ func (p *Poller) userSettingsPath(userID string) string {
 }
 
 func (p *Poller) userStore(userID string) (*state.Store, error) {
+	source := ""
+	if p.users != nil {
+		u, err := p.users.Get(userID)
+		if err != nil {
+			return nil, err
+		}
+		if err := sso.NewLifecycleStore(p.configDir).ValidateNativeUserStorage(p.stateDir, u); err != nil {
+			return nil, err
+		}
+		source = u.NativeMailboxSource
+	}
 	p.userMu.Lock()
 	defer p.userMu.Unlock()
 	if st, ok := p.stores[userID]; ok {
 		return st, nil
 	}
-	st, err := state.New(p.userStateDir(userID))
+	var st *state.Store
+	var err error
+	if source != "" {
+		st, err = state.OpenNative(p.userStateDir(userID), source)
+	} else {
+		st, err = state.New(p.userStateDir(userID))
+	}
 	if err != nil {
 		return nil, err
 	}

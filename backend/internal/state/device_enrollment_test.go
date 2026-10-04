@@ -196,7 +196,11 @@ func TestEnrollmentColumnsAreAddedToAnExistingDatabase(t *testing.T) {
 	path := filepath.Join(dir, "state.db")
 
 	// The native_devices table exactly as it was before this change.
-	db, err := sql.Open("sqlite", dsn(path))
+	uri, err := dsn(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
