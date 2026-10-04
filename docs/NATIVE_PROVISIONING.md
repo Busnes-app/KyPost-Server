@@ -218,9 +218,32 @@ invalidated. New signed revisions conservatively fence older bindings even
 when their owner is unchanged. Quarantine requires operator reconciliation;
 there is no reassignment or automatic release.
 
+New route writes, RCPT bindings and MIME acceptance also check physical storage
+inside the immediate SQLite writer transaction. The admission budget is derived
+from the durable limits: `max(32 MiB, 4 × payload bytes + 32 KiB × records)`
+(about 568.5 MiB for this profile), counting `ingress.db`, WAL and shared-memory
+file lengths. Reserve 32 actual SQLite pages plus twice the incoming payload
+for the next write, and keep at least 16 MiB plus that allowance available to
+the process on the filesystem. Failure to measure storage refuses new growth;
+no mail is evicted. Exact binding/payload retries remain idempotent. Near the
+budget, attempt a bounded WAL truncation checkpoint before the writer
+transaction, then recheck actual bytes under the transaction. A pinned backup
+reader can prevent reclamation; admission retries after it releases the snapshot.
+
+These are conservative admission estimates, not hard SQLite or filesystem quotas.
+Other writers can consume shared free space; repeated recovery writes and pinned
+WAL can exceed the admission budget. The reserve does not guarantee space for
+all recipient mailbox commits. Import retains the source after any failure.
+The importer may renew only an existing unchanged route (owner, signed generation
+and activation), then claim/import/acknowledge accepted mail even when new
+admission is closed. It cannot use that path to create or reactivate a route.
+Free space, finish blocking readers/imports and retry; preserve receipts if
+reconciliation or an operator volume quota is needed. Never remove WAL or
+shared-memory files from an open database to make space.
+
 This profile is for controlled qualification. Before public MX, qualify bounded
 receiver concurrency/rates, safe abandoned-RCPT and archived-receipt cleanup,
-physical database/WAL/free-space reserves, TLS/spam policy, receiver provenance
+hard database/WAL/volume quotas and representative free-space reserves, TLS/spam policy, receiver provenance
 and licensing, and power-loss/restore behavior on the intended volumes. Logical
 payload limits do not bound physical disk growth. Successful RCPT followed by
 disconnect consumes retained records; those records do not expire automatically.

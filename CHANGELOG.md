@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Refuse new local receiving growth at physical database/WAL and filesystem free-space reserves, with transaction-scoped checks and near-budget checkpoint recovery. Preserve exact receipt retries and accepted-mail import through restricted unchanged-route refresh. These admission estimates do not replace operator volume quotas or enable public reception.
+
 - Add an admin-confirmed saved-relay TLS/AUTH check without submitting mail. Bind it to the displayed generation and fresh domain/issuer/restore authority before and after connection; bound cancellation, suppress provider replies and expose a transient result in Server → Mail domain. Delivery and receiving remain separate qualification steps.
 
 - Add Server → Mail domain setup for issuer-bound TXT proof and operator-owned implicit-TLS relay settings. Reuse account confirmation, derived credentials, CSRF and identical KySignOn step-up replay; clear secrets and stop submissions after account changes/unmount. Require confirmation before challenge rotation and distinguish saved capability from tested delivery or public receiving readiness.
