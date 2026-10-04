@@ -353,7 +353,7 @@ export async function exportLegacyPGPKey(
 }
 
 export type PGPMessagePayload = {
-  messageId: number;
+  messageId: string | number;
   mailbox: string;
   encryptedPayload: string;
   signaturePayload: string;

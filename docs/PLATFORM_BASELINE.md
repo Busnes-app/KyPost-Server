@@ -305,13 +305,25 @@ See [`docs/E2E_PGP.md`](E2E_PGP.md) for the full model, and
 
 ## 7. Inbox listing and message bodies
 
-Internal native-mailbox qualification retains numeric IDs and returns live full
+Opt-in native mailboxes use opaque string `messageId` references of the form
+`n1:<mailbox-reference-generation>:<internal-id>`. Copy the exact string into
+body/attachment/PGP reads, inbox actions and webmail links; never convert it to
+a number or construct it from an internal UID. This format is identity, not
+authorization: existing account/device/folder admission still applies. Offline
+restore rotates the generation independently of encryption namespaces; prior or
+foreign generations and bare decimal native references return 400 before reads.
+Actions retain the batch response and report each rejected ID in `failed`, with
+no mutation. Refresh that mailbox on stale-reference errors, never retry using
+a stripped numeric suffix. Persisted notification history keeps its original
+references, so tapping an old notification may require a fresh sync.
+
+Existing external IMAP message IDs and cursors remain unchanged. Native
+mailboxes retain numeric internal IDs and return live full
 snapshots (`delta:false`, `cursor:0`) for every inbox request, including positive
 `since` and classic requests. Clients replace that requested window and must not
 interpret it as an empty delta. Source/database mismatches answer 409 with an
 `error` explaining that switching is disabled; do not retry against another
-source or erase local state to bypass it. Production still selects external
-IMAP; its existing cursor behavior is unchanged. Durable scoped native deltas
+source or erase local state to bypass it. Native source selection is explicit; existing linked IMAP accounts stay external. Durable scoped native deltas
 and live client acceptance remain activation gates.
 
 `GET /api/inbox` returns message bodies by default and will keep doing so — the
@@ -319,7 +331,7 @@ Android and Qt clients read `body` off the list rows today, and removing it
 would break them silently.
 
 A client that renders bodies only in an opened message should send **`bodies=0`**
-and fetch each body on demand from **`GET /api/mail/body?messageId=<uid>&mailbox=<path>`**,
+and fetch each body on demand from **`GET /api/mail/body?messageId=<opaque-reference>&mailbox=<path>`**,
 which answers `{"body": "...", "bodyMode": "html"|"plain"}`
 (`backend/internal/api/mail_body.go`). Missing messages return 404, oversized
 messages return 413, and an adapter-reported MIME parsing failure returns 422

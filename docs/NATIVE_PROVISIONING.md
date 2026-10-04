@@ -116,7 +116,11 @@ ledger or switch sources to make failed preparation succeed.
 API ordinary/maintenance state access and daemon state access check native
 issuer/subject/local ID/source against the acknowledged reservation and prepared
 mailbox/state before every cache lookup. A present or unreadable restore hold
-refuses state access. Missing acknowledged storage is not recreated.
+refuses state access. Native HTTP/notification references carry a separate mailbox
+reference generation; stale/foreign/bare IDs fail before reads/actions. API and
+daemon bind the rebuildable cache to that prefix before use, dropping old windows
+while retaining body-omission policy. Internal owner/source/journal IDs stay intact.
+Missing acknowledged storage is not recreated.
 `state.OpenNative` opens an existing database with SQLite mode=rw and checks its
 source before schema migration; it does not initialize a new database or import
 legacy JSON. SQLite file URIs escape the configured path, including `#`, `?`

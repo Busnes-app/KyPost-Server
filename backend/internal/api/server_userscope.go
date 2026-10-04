@@ -485,6 +485,11 @@ func (s *Server) userMailClient(userID string) (imapadapter.Client, error) {
 	if err = cache.BindMailSource(source); err != nil {
 		return nil, err
 	}
+	if source != "imap" {
+		if err = cache.BindMessageReferencePrefix(imapadapter.MessageReference(client, "")); err != nil {
+			return nil, err
+		}
+	}
 	return client, nil
 }
 

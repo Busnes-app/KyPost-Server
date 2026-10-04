@@ -120,6 +120,35 @@ describe("the inbox list no longer carries message bodies", () => {
     await waitFor(() => expect(bodyRequests()).toEqual(["/api/mail/body?messageId=41"]));
   });
 
+  it("fetches a new body when restore reuses an ID in a new native generation", async () => {
+    const oldID = "n1:11111111-1111-4111-8111-111111111111:41";
+    const newID = "n1:22222222-2222-4222-8222-222222222222:41";
+    let restored = false;
+    getJSON.mockImplementation((url: string) => {
+      if (url.startsWith("/api/inbox")) {
+        return Promise.resolve({
+          tabs: ["Primary"], delta: false, cursor: 0,
+          byTab: { Primary: [{ ...listed, messageId: restored ? newID : oldID, subject: restored ? "After restore" : "Before restore" }] }
+        });
+      }
+      if (url.startsWith("/api/mail/body")) {
+        const id = new URL(url, "https://example.test").searchParams.get("messageId");
+        return Promise.resolve({ body: id === newID ? "new message body" : "old cached body", bodyMode: "plain" });
+      }
+      return Promise.resolve({ ok: true, attachments: [] });
+    });
+    const user = userEvent.setup();
+    renderReadPage();
+    await screen.findByText("Before restore");
+    await waitFor(() => expect(bodyRequests()).toContain(`/api/mail/body?messageId=${encodeURIComponent(oldID)}`));
+    restored = true;
+    window.dispatchEvent(new Event("mailbox-move-complete"));
+    await user.click(await screen.findByText("After restore"));
+    await waitFor(() => expect(readerBodyHtml()).toContain("new message body"));
+    expect(readerBodyHtml()).not.toContain("old cached body");
+    expect(bodyRequests()).toContain(`/api/mail/body?messageId=${encodeURIComponent(newID)}`);
+  });
+
   it("fetches the opened message's body and renders it", async () => {
     const user = userEvent.setup();
     renderReadPage();

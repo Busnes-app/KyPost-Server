@@ -124,8 +124,8 @@ owner's password/recovery material; a capsule does not bypass that protection.
    do not regain authority. Mail, pull-notification history and opaque wrapped
    keys remain retained. Legacy IMAP account registrations are unchanged.
    Restore also rotates a separate mailbox reference generation, preserving the
-   immutable encryption namespace. This is storage groundwork: HTTP references
-   still use numeric IDs, so stale-reference rejection is not yet enforced.
+   immutable encryption namespace. Native HTTP/notification references include
+   this generation; old-generation or bare numeric references are refused.
    Corrupt generation metadata refuses publication; older snapshots without the
    table gain a fresh generation. See [reference qualification](NATIVE_RESTORE_REFERENCES.md).
    A failure leaves staging held and unpublished. Legacy restores also
@@ -154,8 +154,8 @@ KyIdentity activity, roles and revocation, domain proof, receiver generations
 and provider credential/relay evidence.
 Replaying an already-applied directory revision is insufficient to repair
 restored user access. An older database also rewinds message IDs while retaining
-its namespace: a restore generation fence or proven ID high-watermark must
-prevent stale client references from resolving to new mail. Outbox recovery preserves interrupted/uncertain claims and quarantines restored
+its namespace: the separate wire-reference generation rejects stale client
+references without changing cryptographic bindings. Outbox recovery preserves interrupted/uncertain claims and quarantines restored
 queued/retryable deliveries; native hold release and current admission
 remain unavailable. See [outbox qualification](NATIVE_OUTBOX.md).
 

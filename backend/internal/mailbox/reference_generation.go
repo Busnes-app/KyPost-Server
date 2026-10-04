@@ -45,7 +45,7 @@ func messageReferenceGeneration(q interface{ QueryRow(string, ...any) *sql.Row }
 }
 
 // MessageReferenceGeneration is stable for a store lifetime and ordinary reopen.
-// It is storage groundwork; HTTP still uses numeric IDs until the wire fence ships.
+// Native HTTP and notification references use this generation; internal IDs stay numeric.
 func (s *Store) MessageReferenceGeneration() string { return s.referenceGeneration }
 
 // RotateRestoredMessageReferences requires stopped, private restore staging that
