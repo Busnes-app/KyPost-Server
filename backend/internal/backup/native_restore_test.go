@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -67,6 +68,105 @@ func writeNativeUsers(t *testing.T, s *Service, u users.User) {
 	}
 	if err := os.WriteFile(filepath.Join(s.dirs.Config, "users.json"), raw, 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNativeRestoreRaisesTokenCutoffPreservesDirectory(t *testing.T) {
+	for _, higher := range []bool{false, true} {
+		t.Run(map[bool]string{false: "new-cutoff", true: "higher-cutoff"}[higher], func(t *testing.T) {
+			s, u := nativeService(t)
+			life := sso.NewLifecycleStore(s.dirs.Config)
+			if _, err := life.ApplyDirectory("https://legacy.example", syncauth.Event{ID: "legacy", Type: "user.updated", At: time.Now()}, "legacy", 1, "retained", true, func() (bool, error) { return false, nil }); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(s.dirs.Config, "sso-lifecycle.json")
+			read := func() map[string]json.RawMessage {
+				t.Helper()
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var d map[string]json.RawMessage
+				if err := json.Unmarshal(raw, &d); err != nil {
+					t.Fatal(err)
+				}
+				return d
+			}
+			before := read()
+			var directory map[string]sso.DirectoryState
+			if err := json.Unmarshal(before["directory"], &directory); err != nil {
+				t.Fatal(err)
+			}
+			key := u.NativeMailboxIssuer + "\x00" + u.SSOSub
+			if higher {
+				d := directory[key]
+				d.RevokedBefore = time.Now().Unix() + 3600
+				directory[key] = d
+				before["directory"], _ = json.Marshal(directory)
+				raw, _ := json.Marshal(before)
+				if err := os.WriteFile(path, raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sealKey := pinTestKey(t, s)
+			result, err := s.Run(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(result.LocalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Join(t.TempDir(), "restored")
+			if _, _, err := capsule.Open(raw, sealKey, root); err != nil {
+				t.Fatal(err)
+			}
+			path = filepath.Join(root, "config/sso-lifecycle.json")
+			before = read()
+			for attempt := 0; attempt < 2; attempt++ {
+				start := time.Now().Unix()
+				if native, err := QuarantineNativeRestore(root); !native || err != nil {
+					t.Fatalf("native=%v err=%v", native, err)
+				}
+				after := read()
+				var current map[string]sso.DirectoryState
+				if err := json.Unmarshal(after["directory"], &current); err != nil {
+					t.Fatal(err)
+				}
+				d := current[key]
+				if d.RevokedBefore < max(directory[key].RevokedBefore, start+31) || d.RevokedBefore > max(directory[key].RevokedBefore, time.Now().Unix()+31) {
+					t.Fatal("restore did not fence every previously admissible issuance timestamp")
+				}
+				floor := d.RevokedBefore
+				d.RevokedBefore = directory[key].RevokedBefore
+				current[key] = d
+				if !reflect.DeepEqual(directory, current) {
+					t.Fatal("restore altered directory authority or legacy entries")
+				}
+				delete(before, "directory")
+				delete(after, "directory")
+				canonical := func(d map[string]json.RawMessage) map[string]any {
+					t.Helper()
+					raw, err := json.Marshal(d)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var v map[string]any
+					if err = json.Unmarshal(raw, &v); err != nil {
+						t.Fatal(err)
+					}
+					return v
+				}
+				if !reflect.DeepEqual(canonical(before), canonical(after)) {
+					t.Fatal("restore altered unrelated lifecycle evidence")
+				}
+				d.RevokedBefore = floor
+				directory[key] = d
+				if !errors.Is(sso.RequireNativeRestoreReleased(filepath.Join(root, "state")), sso.ErrNativeRestoreHold) {
+					t.Fatal("cutoff released hold")
+				}
+			}
+		})
 	}
 }
 

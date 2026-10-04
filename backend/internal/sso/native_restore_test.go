@@ -3,6 +3,7 @@
 package sso
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -194,5 +195,90 @@ func TestNativeRestoreHoldRefusesAllocation(t *testing.T) {
 	}
 	if _, err := os.Stat(s.nativePath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("held allocation wrote a ledger", err)
+	}
+}
+
+func TestNativeRestoreTokenCutoffRefusesUnsafeInputsAndWriteFailure(t *testing.T) {
+	for _, damage := range []string{"missing-epoch", "bad-epoch", "public-epoch", "missing-directory", "foreign-owner", "blocked-write"} {
+		t.Run(damage, func(t *testing.T) {
+			life, root, _, _, accounts, u := publishedRecoveryFixture(t, true)
+			all, err := accounts.List()
+			if err != nil {
+				t.Fatal(err)
+			}
+			hold := filepath.Join(root, NativeRestoreHoldFile)
+			switch damage {
+			case "missing-epoch":
+				if err = os.Remove(hold); err != nil {
+					t.Fatal(err)
+				}
+			case "bad-epoch":
+				if err = os.WriteFile(hold, []byte(`{"version":1,"epoch":"invalid"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "public-epoch":
+				if err = os.Chmod(hold, 0644); err != nil {
+					t.Fatal(err)
+				}
+			case "missing-directory":
+				f, e := life.load()
+				if e != nil {
+					t.Fatal(e)
+				}
+				delete(f.Directory, directoryKey(u.NativeMailboxIssuer, u.SSOSub))
+				if err = fsutil.PersistJSONFile(life.path, f); err != nil {
+					t.Fatal(err)
+				}
+			case "foreign-owner":
+				for i := range all {
+					if all[i].ID == u.ID {
+						all[i].NativeMailboxIssuer = "https://foreign.example"
+					}
+				}
+			case "blocked-write":
+				dir := filepath.Dir(life.path)
+				if err = os.Chmod(dir, 0500); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+			}
+			before, err := os.ReadFile(life.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = life.FenceRestoredNativeTokens(root, all); err == nil {
+				t.Fatal("unsafe cutoff mutation accepted")
+			}
+			after, err := os.ReadFile(life.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("failed cutoff mutation changed lifecycle")
+			}
+		})
+	}
+}
+
+func TestNativeRestoreTokenCutoffSurvivesDirectoryUpdate(t *testing.T) {
+	life, root, _, _, accounts, _ := publishedRecoveryFixture(t, true)
+	all, err := accounts.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = life.FenceRestoredNativeTokens(root, all); err != nil {
+		t.Fatal(err)
+	}
+	before, known, err := life.Directory(nativeIssuer, "one")
+	if err != nil || !known {
+		t.Fatal(err)
+	}
+	nativeDesired(t, life, "one", "one@example.test", 2, false)
+	after, known, err := life.Directory(nativeIssuer, "one")
+	if err != nil || !known {
+		t.Fatal(err)
+	}
+	if after.Revision != 2 || after.Active || after.RevokedBefore != before.RevokedBefore {
+		t.Fatal("newer authority lowered restored cutoff")
 	}
 }

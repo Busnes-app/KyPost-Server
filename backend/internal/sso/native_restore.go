@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -27,6 +28,46 @@ func RequireNativeRestoreReleased(stateRoot string) error {
 		return nil
 	}
 	return ErrNativeRestoreHold
+}
+
+// FenceRestoredNativeTokens is only for exclusive, stopped restore staging.
+// Qualification proves historical ownership, not current access or hold release.
+func (s *LifecycleStore) FenceRestoredNativeTokens(stateRoot string, accounts []users.User) error {
+	return fsutil.WithFileLock(s.path, func() error {
+		if _, err := nativeRecoveryEpoch(stateRoot); err != nil {
+			return err
+		}
+		if _, err := s.ValidateNativeSnapshot(stateRoot, accounts); err != nil {
+			return err
+		}
+		f, err := s.load()
+		if err != nil {
+			return err
+		}
+		// Include every timestamp the verifier could have admitted before this
+		// fence, including its 30-second future skew and the current second.
+		cutoff := time.Now().Unix() + 31
+		changed := false
+		for _, u := range accounts {
+			if u.NativeMailboxSource == "" {
+				continue
+			}
+			key := directoryKey(u.NativeMailboxIssuer, u.SSOSub)
+			d, ok := f.Directory[key]
+			if !ok {
+				return ErrNativeProvisioning
+			}
+			if d.RevokedBefore < cutoff {
+				d.RevokedBefore = cutoff
+				f.Directory[key] = d
+				changed = true
+			}
+		}
+		if !changed {
+			return nil
+		}
+		return fsutil.PersistJSONFile(s.path, f)
+	})
 }
 
 // ValidateNativeSnapshot checks historical local consistency, never live access.

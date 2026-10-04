@@ -129,6 +129,7 @@ owner's password/recovery material; a capsule does not bypass that protection.
    push-MFA approvers, enrollment acknowledgements and outstanding pairing tokens
    do not regain authority. Mail, pull-notification history and opaque wrapped
    keys remain retained. After the account/device fence, remove each native CardDAV app-password hash; failure leaves staging held and unpublished. Legacy IMAP registrations and CardDAV credentials are unchanged.
+   After historical ownership and credential cleanup, restore atomically raises each published native subject’s existing directory ID-token cutoff to at least the current server time plus 31 seconds. This includes the accepted 30-second future clock skew; higher cutoffs and legacy directory entries remain unchanged. Earlier browser/device tokens are refused before grants. Wait for the cutoff interval to pass and obtain a new provider token after future recovery qualification. This does not prove fresh primary authentication or revoke local passwords/MFA recovery material. Missing authority or persistence failure keeps staging held and unpublished.
    Restore also rotates a separate mailbox reference generation, preserving the
    immutable encryption namespace. Native HTTP/notification references include
    this generation; old-generation or bare numeric references are refused.
