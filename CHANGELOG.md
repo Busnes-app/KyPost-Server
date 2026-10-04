@@ -14,7 +14,9 @@ non-prerelease version.
 
 ## Unreleased
 
-- Add encrypted native outbox intent in mailbox.db, owner/namespace/job-bound keys, transactional delivery claims, bounded definite-4xx retries, uncertain/crashed-claim retention and independent quota-reserved Sent receipts. Sealed snapshot checks preserve claims/Sent and refuse missing keys, orphan/partial schemas and quota corruption. Qualify with actual local TLS SMTP and killed submitters; production native sending remains disabled pending runtime admission/worker integration. Shared encrypted reads now reject malformed nonce lengths without panicking.
+- Add opt-in native primary-address compose/client-PGP relay sending, current identity/domain/device admission, local revocation epochs, durable intent before SMTP, owner-scoped outbox status and joined recovery workers. Preserve confirmed-send and PGP custody/enrollment contracts. Qualify actual local TLS, signed encrypted recipient/Sent verification, uncertainty and independent Sent/follow-on recovery. Native pickup/alias/system sending and live provider readiness remain pending.
+
+- Add encrypted native outbox intent in mailbox.db, owner/namespace/job-bound keys, transactional delivery claims, bounded definite-4xx retries, uncertain/crashed-claim retention and independent quota-reserved Sent receipts. Sealed snapshot checks preserve claims/Sent and refuse missing keys, orphan/partial schemas and quota corruption. Qualify with actual local TLS SMTP and killed submitters; native primary runtime integration is described above; pickup/alias/system paths remain gated. Shared encrypted reads now reject malformed nonce lengths without panicking.
 
 - Add admin-only encrypted operator-owned domain relay settings with fresh issuer-bound DNS proof, account confirmation, redacted reads and generation rotation. Qualify strict TLS/AUTH transport with safe provider errors; sealed backups validate relay ciphertext, its dedicated key and historical domain binding, including relay-only restore quarantine. This does not enable native sending or prove provider readiness.
 

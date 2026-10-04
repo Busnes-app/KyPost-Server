@@ -1,9 +1,11 @@
 # Operator-owned domain relay configuration
 
-This is configuration and transport qualification. Native sends still return an
-explicit unavailable response; the internal outbox is qualified, but its runtime
-integration, provider readiness probe and setup UI remain pending. Saving credentials reports `sendingEnabled:false` and
-makes no provider connection. Busnes supplies no relay account or delivery service.
+Native primary-address sending uses the configured operator-owned relay in
+explicit native mode. Saving credentials makes no provider connection;
+`sendingEnabled` reports configured native runtime capability, not DNS/provider
+readiness or recipient delivery. Busnes supplies no relay account or service.
+Provider readiness probing and guided setup remain pending. See the
+[outbox runtime contract](NATIVE_OUTBOX.md) for supported sends and remaining gates.
 
 ## Configure through the admin API
 
@@ -51,7 +53,7 @@ explicit error rather than an unconfigured fallback.
 path overrides or environment credentials. The dedicated key lets KyPost protect
 one domain-wide provider credential without borrowing per-user IMAP keys. The
 admin routes are needed to configure that credential without per-account setup;
-they make only the existing domain-verification DNS request. Future sending
+they make only the existing domain-verification DNS request. Native sending
 reaches the explicitly configured SMTP endpoint. A host or backup compromise
 that exposes both ciphertext and key exposes the domain-wide relay credential;
 this is server-held encryption, not end-to-end secret custody. Preserve the matching key: updates
@@ -69,8 +71,9 @@ remains required, with no supported hold release yet.
 
 The [internal outbox](NATIVE_OUTBOX.md) now stores encrypted intent with keys
 derived from the retained relay master key, freezes generations and separates
-Sent receipts from delivery attempts. Before activation, integrate current
-account/header/envelope admission, runtime workers and uncertainty reconciliation. Restored jobs must never
+Sent receipts from delivery attempts. Current account/header/envelope admission and recovery workers are integrated
+for primary-address compose and client PGP; pickup/alias/system routes and
+uncertainty reconciliation tooling remain pending. Restored jobs must never
 replay automatically. The internal transport preserves acceptance error types
 while rendering safe errors; callers must not log unwrapped provider responses.
 Provider acceptance does not establish recipient delivery or inbox placement.

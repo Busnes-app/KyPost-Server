@@ -130,9 +130,9 @@ missing markers. Live mail admission is separate from this storage-only check, a
 
 ## Opt-in native runtime
 
-The [internal outbox](NATIVE_OUTBOX.md) now preserves encrypted intent/claims/Sent through qualified storage and sealed snapshots. These methods are not current send authorization or a production worker; existing native outgoing refusals remain in force.
+The [internal outbox](NATIVE_OUTBOX.md) now preserves encrypted intent/claims/Sent through qualified storage and sealed snapshots. Native primary sending now uses fresh domain/settings/directory/users/device admission and a joined recovery worker; historical storage evidence alone grants no sending authority.
 
-Protected admin domain-relay settings are available separately; [the relay contract](DOMAIN_RELAY.md) describes credential confirmation, fresh DNS/issuer fencing, encrypted storage and backup dependencies. Configuration leaves native sending unavailable pending outbox runtime integration and current sender authorization.
+Protected admin domain-relay settings are available separately; [the relay contract](DOMAIN_RELAY.md) describes credential confirmation, fresh DNS/issuer fencing, encrypted storage and backup dependencies. Explicit native mode enables primary-address compose and client PGP through current admission and the durable outbox; saving credentials alone proves no provider readiness.
 
 Set `KYPOST_NATIVE_MAIL=true` for both API and daemon, after configuring the
 issuer and mail-domain proof. Empty or `false` preserves external IMAP mode;
@@ -163,10 +163,10 @@ native inbox refresh uses full snapshots. PGP bootstrap suggests the verified
 primary address; incoming encryption uses native INBOX rather than a leftover
 IMAP file. Existing key custody and WKD publication proofs are unchanged.
 
-Native sends, pickup creation, alias probes and daemon own-address SMTP probes
-are refused or skipped until domain relay/outbox integration. A leftover IMAP
-credential file cannot enable them. Operator-owned outgoing delivery remains
-the next transport work. Do not publish MX for this runtime alone. Roll back by
+Native primary compose/client-PGP sends use the configured relay and durable
+outbox. Native pickup creation, aliases and system/own-address SMTP probes remain
+refused or skipped pending their authority/dependency integration. A leftover IMAP
+credential file cannot enable any native legacy SMTP path. Do not publish MX for this runtime alone. Roll back by
 disabling both native flags in both processes and keeping all
 native storage/ownership files intact; native mail becomes unavailable without
 being converted to IMAP. Use a compatible binary, not an older metadata writer.

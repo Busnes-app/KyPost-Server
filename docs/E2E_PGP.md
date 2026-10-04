@@ -206,7 +206,11 @@ processed by KyPost is eligible; this does not sweep historical or read mail.
 For opt-in native mailboxes, the polling mailbox is INBOX and leftover IMAP
 configuration is ignored; primary key User IDs come from admitted domain
 provisioning. Key custody and WKD publication proofs are unchanged. Native
-sending remains unavailable until domain relay integration.
+primary sending uses the operator relay and durable outbox. Client-prepared
+PGP keeps current material-generation/device enrollment gates; independently
+encrypted Sent bytes are retained before SMTP, with no plaintext fallback.
+Replies add `outboxId`; confirmed primary acceptance still controls `ok:true`.
+Native pickup/alias/system sending remains pending; see [NATIVE_OUTBOX.md](NATIVE_OUTBOX.md).
 The configured polling mailbox must be INBOX; another folder is refused before
 replacement, even if it has the same numeric UID. Already encrypted and
 oversized messages retain their existing handling.

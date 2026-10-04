@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
@@ -127,10 +128,48 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		prepared[i] = normalized
 	}
 
-	if !s.requireCurrentGeneration(w, ac, req.MaterialGeneration) {
+	u, userErr := s.users.Get(ac.UserID)
+	if userErr != nil {
+		http.Error(w, "user unavailable", http.StatusInternalServerError)
+		return
+	}
+	if !s.requireCurrentGeneration(w, ac, req.MaterialGeneration, u) {
 		return
 	}
 
+	a, native, admissionErr := s.nativeMailAssignment(r.Context(), ac.UserID)
+	if admissionErr != nil {
+		http.Error(w, "native mailbox unavailable; preserve mail and repair account authority", http.StatusServiceUnavailable)
+		return
+	}
+	if native {
+		if !nativeFromAllowed(a.Address, req.From) {
+			http.Error(w, "native aliases require explicit directory ownership and routing; use the primary address", http.StatusForbidden)
+			return
+		}
+		deliveries := []mailbox.OutboundDelivery{}
+		for i, delivery := range req.Deliveries {
+			recipients, _ := parseDeliveryRecipients(delivery.Recipients)
+			raw := strings.TrimSpace(delivery.Ciphertext)
+			if len(recipients) == 0 || raw == "" {
+				continue
+			}
+			if err := validateDeliveryFrom(raw, a.Address); err != nil {
+				http.Error(w, fmt.Sprintf("delivery %d: %s", i, err), http.StatusForbidden)
+				return
+			}
+			deliveries = append(deliveries, mailbox.OutboundDelivery{Recipients: recipients, Raw: []byte(raw)})
+		}
+		var sent []byte
+		warning := ""
+		if draft, want := sentCopyDraft(req); want {
+			sent = draft.Raw
+		} else if strings.TrimSpace(req.SentCopy) != "" {
+			warning = "Sent copy was refused because it was not encrypted; reload this client before sending again"
+		}
+		s.finishNativeSend(w, r, ac, u, a.Address, deliveries, sent, true, req.MaterialGeneration, 0, warning)
+		return
+	}
 	payload, exists, err := s.outboundMailConfig(ac.UserID)
 	if err != nil {
 		outboundConfigError(w, err)

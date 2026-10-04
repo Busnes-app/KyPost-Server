@@ -1,16 +1,60 @@
 # Native outbox storage and qualification
 
-The native outbox is implemented internally in each owner's `mailbox.db`.
-Production sending routes remain refused: there is no current sender-admission
-coordinator, background sending worker, diagnostics API or supported restore-hold
-release yet. The local qualification exercises durable storage through actual
-loopback TLS SMTP; it does not activate native sending or qualify AWS/Cloudflare.
+Native primary-address sending is available with `KYPOST_NATIVE_MAIL=true` and
+an admin-configured operator-owned relay. Ordinary compose, public-key encrypted
+compose and client-prepared PGP use the same durable admission/claim boundary.
+API and daemon processes recover due definite-refusal attempts and accepted Sent
+obligations; SQLite claims arbitrate competing processes. External IMAP behavior
+is unchanged. Native pickup notifications, alias proofs/sending, applicable
+system/probe mail, provider readiness UI and restore-hold release remain pending.
+The local TLS/PGP checks below are qualification, not live AWS/Cloudflare delivery.
+
+## Current admission and client responses
+
+Before queueing or claiming, perform fresh issuer-bound domain DNS verification,
+then hold domain, settings, directory and users fences in that order. Admit the
+current signed subject, activity, role, primary address, nonrevoked link and
+acknowledged existing-only mailbox/source. A forced password change refuses sends.
+Relay credentials authenticate the operator; the mailbox primary supplies From.
+Legacy IMAP credentials and verified send-as rows grant no native authority.
+
+Freeze directory revision, relay generation, local send-authority epoch, PGP
+revision/fingerprint and applicable material generation/device-credential witness
+into encrypted intent. Local deactivation/reactivation, credential/MFA/role/link
+changes advance the epoch even within one second. Re-pairing the same device ID
+cannot inherit jobs made with its former secret. Converted client-PGP sends also
+require current confirmed device enrollment. Expiry bounds device/mailbox lock
+waits and is checked before commit. Device SQLite precedes mailbox SQLite;
+release every authority lock before contacting SMTP. A committed claim may finish
+after later revocation; its real outcome and historical Sent obligation remain
+owed to its frozen owner, even when that user becomes inactive.
+
+Successful HTTP send responses keep `ok:true` meaning confirmed primary SMTP
+acceptance, with existing `sentSaved`/`warning` and additive `outboxId`. Merely
+queued, refused or uncertain primary attempts return 503 with `ok:false` and an
+outbox ID; the ID may be absent from storage if initial admission failed. Inspect
+before resubmitting: a new request is a new intent, not a deduplicated retry.
+`GET /api/mail/outbox/{id}` uses existing session/device mail authentication and
+returns only the acting owner's delivery sequence/state/attempt/next-attempt and
+Sent filing status. It exposes no MIME, recipients, credentials or device witness;
+unknown/unreadable jobs return an explicit 503. There is no retry/reconcile route.
+
+Recovery discovers at most 50 due jobs per owner per pass, with four concurrent
+owners and a 30-second cadence. Follow-ons wait for accepted primary evidence;
+blocked/uncertain primary groups cannot starve unrelated work discovery. Definite
+authority changes quarantine unclaimed work; transient DNS/storage failures retain
+it. Sent failure cannot suppress an eligible delivery or authorize SMTP again.
+Cancellation stops fresh work; shutdown joins connection/TLS (45 seconds),
+SMTP after connection (another 45 seconds), and local finalization (30 seconds), in addition to ordinary HTTP/backup draining.
+These bounds assume healthy local filesystems. Foreground HTTP sends may exceed
+the ordinary 20-second drain; process exit preserves their durable claims for
+reconciliation rather than authorizing automatic resend. No new dependency or setting exists.
 
 ## Persistent contract
 
 An immutable job contains its envelope From, frozen relay generation, independent
 delivery groups with exact normalized wire MIME and recipients, a separately
-prepared Sent copy, and applicable device/material-generation metadata. The
+prepared Sent copy, and frozen sender-authority/device/material-generation metadata. The
 caller must complete MIME/PGP/sender validation before admission. The storage
 boundary rejects sender/header mismatches, recipient duplication, Bcc/resent
 leaks and noncanonical SMTP bytes; it never rewrites a stored signature body.
@@ -92,16 +136,28 @@ From `backend/`:
 GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailbox ./internal/backup ./internal/cryptutil -run 'TestNativeOutbox|TestOpenRefusesMalformedNonce' -count=1 -timeout=5m
 ```
 
-These checks cover encrypted signed-only-shaped wire intent, owner/namespace/key
+Add the runtime check:
+
+```sh
+GOTOOLCHAIN=go1.26.6 go test -race ./internal/api ./internal/sso ./internal/mailbox ./internal/app -run '^TestNativeOutbound|TestNativeOutboxDiscovery' -count=1 -timeout=5m
+```
+
+Runtime checks exercise authenticated native HTTP over actual trusted loopback
+TLS, AUTH/From separation, hidden BCC, signed encrypted recipient and independent
+Sent decryption/signature verification, lost ACK retention, authority revocations,
+settings/device contention, Sent-only failure with follow-on delivery, and actual active-worker SMTP cancellation/finalization without claiming the
+next job. They use synthetic accounts/messages and a process-specific CA,
+without weakening production TLS or contacting a provider.
+
+The storage checks cover encrypted signed-only-shaped wire intent, owner/namespace/key
 isolation, exact replay conflicts, competing SQLite claims, a real killed
 submitter, lost acknowledgments, bounded definite-refusal retry, independent Sent
 recovery, shared quota, malformed/corrupt snapshots and sealed restore. Actual
 loopback TLS tests preserve exact bytes and hidden envelope recipients; these
 fixtures do not prove live PGP signature verification or provider delivery.
 
-Next integration must route ordinary compose, client-prepared PGP, pickup
-notifications, alias proofs and applicable system mail through current native
-admission and this durable boundary. Preserve existing external IMAP behavior,
+Next integration must route pickup notifications, explicit native aliases and
+applicable system/probe mail through current admission and this durable boundary. Preserve existing external IMAP behavior,
 all PGP/device gates and the send-success meaning. Live tests need an operator
 account, authorized sender and controlled recipient; use the
 [provider matrix](TURNKEY_MAIL_STACK_PLAN.md#operator-owned-relay-test-matrix).

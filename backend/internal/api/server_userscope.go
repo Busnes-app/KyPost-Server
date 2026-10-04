@@ -525,7 +525,7 @@ func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
 		}
 		return ac, nil
 	}
-	userID, device, ok, retryAfter := s.deviceAuthFromRequest(r)
+	userID, device, epoch, ok, retryAfter := s.deviceAuthSnapshot(r)
 	if !ok {
 		if retryAfter == retryAfterKDFBusy {
 			// A shed secret check is "come back later" too — nothing was
@@ -542,7 +542,7 @@ func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
 	if _, _, err := s.nativeMailAssignment(r.Context(), userID); err != nil {
 		return AuthContext{}, errMailUnauthorized
 	}
-	return AuthContext{UserID: userID, DeviceID: device.DeviceID}, nil
+	return AuthContext{UserID: userID, DeviceID: device.DeviceID, NativeSendEpoch: epoch, DeviceWitness: state.NativeDeviceWitness(device)}, nil
 }
 
 func (s *Server) invalidateUserMail(userID string) {
