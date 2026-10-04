@@ -187,7 +187,12 @@ bindings, external-recipient refusal, per-IP concurrent and burst refusal, durab
 two-owner delivery and import after receiver SIGKILL/restart under closed storage admission. This is not a storage-process restart or power-loss proof. The launcher variant also proves failed preflight preserves old configuration.
 With `RECEIVING_PROOF_IMAGE=<locally-built-image>` alongside `MADDY_PROOF_BINARY`,
 the optional supervised variant uses the actual image Supervisor to restart a
-killed receiver before import and verifies idle container shutdown. This fixture
+killed receiver before import and verifies idle container shutdown. Its
+`supervised_partial` case stops the container during a flushed, incomplete DATA
+transfer: the receiver exits cleanly within its stop budget, no SMTP success or
+partial payload is published, and the retained RCPT reservation remains staged.
+Previously accepted mail survives another receiver start and imports normally.
+This does not cover a stalled storage/helper process or every final-ack race. This fixture
 uses host networking only for its loopback test DNS/SMTP and mounts only synthetic
 state; it does not start the other image services. It uses test-only
 loopback DNS and a private CA; it is not live-provider evidence.

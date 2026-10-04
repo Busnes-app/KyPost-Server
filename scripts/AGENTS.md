@@ -48,7 +48,7 @@ All files under `scripts/`.
 
 ## Verification
 
-- `python3 scripts/check-receiver-launch.py` verifies incomplete flags and wrong-hash, symlinked or writable engines refuse before configuration creation. The optional actual-image supervised Maddy check in `backend/internal/app/receiving_maddy_test.go` proves automatic crash restart and idle shutdown; see receiver setup.
+- `python3 scripts/check-receiver-launch.py` verifies incomplete flags and wrong-hash, symlinked or writable engines refuse before configuration creation. The optional actual-image supervised Maddy check in `backend/internal/app/receiving_maddy_test.go` proves automatic crash restart, idle shutdown and incomplete-DATA shutdown; see receiver setup.
 
 - `python3 scripts/check-private-roots.py <built-image>` checks image root permissions and boots the real entrypoint over disposable permissive Docker data volumes. It verifies unprivileged ownership, private bootstrap metadata, protected executable assets and preservation of existing bytes/descendant modes, with networking disabled.
 
