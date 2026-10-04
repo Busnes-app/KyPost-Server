@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Qualify internal held-native repair planning and an atomic native-only access batch with intent-before-write ordering. Reverify current receipt/storage authority, preserve legacy credentials and PGP data, and retain the hold. The administrator repair endpoint, revision-barrier provenance and cleanup/completion path remain pending.
+
 - Deny held native password/derived, MFA, SSO/step-up, session/admin and QR key-exchange authority independently of native feature flags. Preserve recovery material/nonces and legacy recovery administration; no hold release is introduced.
 
 - Add protected, challenge-bound KyIdentity recovery-evidence storage and durable revision barriers for unpublished reservations in held native restores. Preserve ordinary published-account offboarding/demotion and permit ownership-validated held device/subscriber revocation without mail access. Preserve account state and the hold; fence local admin authority cycles and support bounded large exact-action uploads. Account repair and hold release remain pending.

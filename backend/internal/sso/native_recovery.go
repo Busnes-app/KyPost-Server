@@ -266,32 +266,11 @@ func (s *LifecycleStore) AcceptNativeRecoveryHeld(ctx context.Context, root stri
 		return err
 	}
 	c := f.RecoveryChallenge
-	now := time.Now().UTC()
-	if c == nil || !now.Before(c.ExpiresAt) || c.Epoch != current.Epoch || c.Issuer != current.Issuer || c.KeyFingerprint != current.KeyFingerprint || c.AuthorityDigest != current.AuthorityDigest || !slices.Equal(c.Subjects, current.Subjects) || headers.EventType != "recovery.evidence" || headers.EventID != c.Nonce {
-		return ErrNativeRecovery
-	}
-	event, err := syncauth.Verify(key, headers, body, syncauth.Options{Now: func() time.Time { return now }})
+	evidence, err := validateNativeRecoveryEvidence(current, minRevisions, c, key, body, headers, time.Now().UTC())
 	if err != nil {
-		return ErrNativeRecovery
+		return err
 	}
-	var evidence nativeRecoveryEvidence
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.DisallowUnknownFields()
-	if dec.Decode(&evidence) != nil || dec.Decode(new(any)) != io.EOF || evidence.Version != 1 || evidence.Issuer != c.Issuer || evidence.SystemID != c.SystemID || evidence.Nonce != c.Nonce || evidence.IssuedAt.Before(c.CreatedAt.Add(-time.Second)) || evidence.IssuedAt.After(now.Add(time.Second)) || !event.At.Equal(evidence.IssuedAt.Truncate(time.Second)) || !evidence.ExpiresAt.After(evidence.IssuedAt) || evidence.ExpiresAt.Sub(evidence.IssuedAt) > 5*time.Minute || !now.Before(evidence.ExpiresAt) || len(evidence.Subjects) != len(c.Subjects) {
-		return ErrNativeRecovery
-	}
-	seen := map[string]bool{}
 	for _, sub := range evidence.Subjects {
-		minimum, ok := minRevisions[sub.ID]
-		if !ok || seen[sub.ID] || sub.Revision == nil || *sub.Revision <= 0 || *sub.Revision < minimum {
-			return ErrNativeRecovery
-		}
-		seen[sub.ID] = true
-		var profile DirectoryUser
-		var roles []json.RawMessage
-		if json.Unmarshal(sub.Profile, &profile) != nil || profile.ID != sub.ID || profile.ExternalID != sub.ID || profile.Active == nil || json.Unmarshal(profile.Roles, &roles) != nil || roles == nil || *profile.Active && !directoryIdentifier(profile.UserName) {
-			return ErrNativeRecovery
-		}
 		if eligible[sub.ID] {
 			if f.RecoveryFloors == nil {
 				f.RecoveryFloors = map[string]int64{}
@@ -310,4 +289,39 @@ func (s *LifecycleStore) AcceptNativeRecoveryHeld(ctx context.Context, root stri
 	f.RecoveryReceipt = &nativeRecoveryReceipt{Challenge: *c, Body: bytes.Clone(body), Headers: headers, ExpiresAt: evidence.ExpiresAt}
 	f.RecoveryChallenge = nil
 	return fsutil.PersistJSONFile(s.path, f)
+}
+
+// The same strict verifier checks imports and stored bytes immediately before
+// planning repair. A receipt is historical data until all current inputs match.
+func validateNativeRecoveryEvidence(current NativeRecoveryChallenge, minRevisions map[string]int64, c *NativeRecoveryChallenge, key, body []byte, headers syncauth.Headers, now time.Time) (nativeRecoveryEvidence, error) {
+	if len(body) == 0 || len(body) > MaxNativeRecoveryEvidenceBytes {
+		return nativeRecoveryEvidence{}, ErrNativeRecovery
+	}
+	if c == nil || !now.Before(c.ExpiresAt) || c.Epoch != current.Epoch || c.Issuer != current.Issuer || c.KeyFingerprint != current.KeyFingerprint || c.AuthorityDigest != current.AuthorityDigest || !slices.Equal(c.Subjects, current.Subjects) || headers.EventType != "recovery.evidence" || headers.EventID != c.Nonce {
+		return nativeRecoveryEvidence{}, ErrNativeRecovery
+	}
+	event, err := syncauth.Verify(key, headers, body, syncauth.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		return nativeRecoveryEvidence{}, ErrNativeRecovery
+	}
+	var evidence nativeRecoveryEvidence
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&evidence) != nil || dec.Decode(new(any)) != io.EOF || evidence.Version != 1 || evidence.Issuer != c.Issuer || evidence.SystemID != c.SystemID || evidence.Nonce != c.Nonce || evidence.IssuedAt.Before(c.CreatedAt.Add(-time.Second)) || evidence.IssuedAt.After(now.Add(time.Second)) || !event.At.Equal(evidence.IssuedAt.Truncate(time.Second)) || !evidence.ExpiresAt.After(evidence.IssuedAt) || evidence.ExpiresAt.Sub(evidence.IssuedAt) > 5*time.Minute || !now.Before(evidence.ExpiresAt) || len(evidence.Subjects) != len(c.Subjects) {
+		return nativeRecoveryEvidence{}, ErrNativeRecovery
+	}
+	seen := map[string]bool{}
+	for _, sub := range evidence.Subjects {
+		minimum, ok := minRevisions[sub.ID]
+		if !ok || seen[sub.ID] || sub.Revision == nil || *sub.Revision <= 0 || *sub.Revision < minimum {
+			return nativeRecoveryEvidence{}, ErrNativeRecovery
+		}
+		seen[sub.ID] = true
+		var profile DirectoryUser
+		var roles []json.RawMessage
+		if json.Unmarshal(sub.Profile, &profile) != nil || profile.ID != sub.ID || profile.ExternalID != sub.ID || profile.Active == nil || json.Unmarshal(profile.Roles, &roles) != nil || roles == nil || *profile.Active && !directoryIdentifier(profile.UserName) {
+			return nativeRecoveryEvidence{}, ErrNativeRecovery
+		}
+	}
+	return evidence, nil
 }
