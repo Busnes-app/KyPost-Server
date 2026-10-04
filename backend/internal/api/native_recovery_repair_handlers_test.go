@@ -41,7 +41,7 @@ type nativeRepairFixture struct {
 	raw                  []byte
 }
 
-func nativeRepairHTTPFixture(t *testing.T, active bool, revoked bool) nativeRepairFixture {
+func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) nativeRepairFixture {
 	t.Helper()
 	t.Setenv("STATE_DIR", t.TempDir())
 	s := newNativeRuntimeServer(t)
@@ -134,6 +134,14 @@ func nativeRepairHTTPFixture(t *testing.T, active bool, revoked bool) nativeRepa
 	if err = s.users.LinkSSO(actor.ID, "operator", "operator", ""); err != nil {
 		t.Fatal(err)
 	}
+	if scenario == "reactivated-admin" {
+		if _, err = s.users.SetRole(u.ID, users.RoleUser); err != nil {
+			t.Fatal(err)
+		}
+		if u, err = s.users.Deactivate(u.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err = fsutil.PersistJSONFile(filepath.Join(s.stateDir, sso.NativeRestoreHoldFile), map[string]any{"version": 1, "epoch": "12345678-1234-4123-8123-123456789abc"}); err != nil {
 		t.Fatal(err)
 	}
@@ -156,9 +164,12 @@ func nativeRepairHTTPFixture(t *testing.T, active bool, revoked bool) nativeRepa
 	var subjects []any
 	for _, subject := range c.Subjects {
 		profile := map[string]any{"id": subject, "externalId": subject, "active": false, "roles": []string{}}
-		if subject == u.SSOSub && active {
+		if subject == u.SSOSub && (scenario == "demoted" || scenario == "active-admin" || scenario == "reactivated-admin") {
 			profile["active"] = true
 			profile["userName"] = u.SSOUsername
+			if scenario == "active-admin" || scenario == "reactivated-admin" {
+				profile["roles"] = []string{"kypost.admin"}
+			}
 		}
 		subjects = append(subjects, map[string]any{"id": subject, "revision": 1, "profile": profile})
 	}
@@ -192,9 +203,9 @@ func repairLifecycle(t *testing.T, s *Server) (bool, bool) {
 }
 
 func TestNativeRecoveryRepairHTTPReconcilesAndRevokesWhileHeld(t *testing.T) {
-	for _, scenario := range []string{"inactive", "demoted", "already-revoked"} {
+	for _, scenario := range []string{"inactive", "demoted", "already-revoked", "active-admin", "reactivated-admin"} {
 		t.Run(scenario, func(t *testing.T) {
-			f := nativeRepairHTTPFixture(t, scenario == "demoted", scenario == "already-revoked")
+			f := nativeRepairHTTPFixture(t, scenario, scenario == "already-revoked")
 			before, err := f.s.users.List()
 			if err != nil {
 				t.Fatal(err)
@@ -217,7 +228,14 @@ func TestNativeRecoveryRepairHTTPReconcilesAndRevokesWhileHeld(t *testing.T) {
 					t.Fatal(err)
 				}
 				if old.ID == f.native.ID {
-					if after.Active != (scenario == "demoted") || after.Role != users.RoleUser || after.NativeSendEpoch != old.NativeSendEpoch+1 {
+					expectedRole, expectedEpoch := users.RoleUser, old.NativeSendEpoch+1
+					if scenario == "reactivated-admin" {
+						expectedRole = users.RoleAdmin
+					}
+					if scenario == "active-admin" {
+						expectedRole, expectedEpoch = users.RoleAdmin, old.NativeSendEpoch
+					}
+					if after.Active != (scenario == "demoted" || scenario == "active-admin" || scenario == "reactivated-admin") || after.Role != expectedRole || after.NativeSendEpoch != expectedEpoch || (after.Active && after.DeactivatedAt != "") {
 						t.Fatal("wrong access/epoch")
 					}
 					old.Active, old.Role, old.NativeSendEpoch, old.UpdatedAt, old.DeactivatedAt = after.Active, after.Role, after.NativeSendEpoch, after.UpdatedAt, after.DeactivatedAt
@@ -275,7 +293,7 @@ func TestNativeRecoveryRepairHTTPReconcilesAndRevokesWhileHeld(t *testing.T) {
 func TestNativeRecoveryRepairHTTPFailsClosed(t *testing.T) {
 	for _, scenario := range []string{"bad-password", "csrf", "missing-storage", "cleanup-failure", "changed-key"} {
 		t.Run(scenario, func(t *testing.T) {
-			f := nativeRepairHTTPFixture(t, false, false)
+			f := nativeRepairHTTPFixture(t, "inactive", false)
 			before, err := f.s.users.Get(f.native.ID)
 			if err != nil {
 				t.Fatal(err)
@@ -349,7 +367,7 @@ func nativeRepairSSOSession(f nativeRepairFixture) {
 }
 
 func TestNativeRecoveryRepairHTTPConsumesStepUpOnlyOnce(t *testing.T) {
-	f := nativeRepairHTTPFixture(t, false, false)
+	f := nativeRepairHTTPFixture(t, "inactive", false)
 	nativeRepairSSOSession(f)
 	grant := challengeFrom(t, gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody, ""))
 	// Exercise action-bound single-use confirmation; provider proof is synthetic.
@@ -367,7 +385,7 @@ func TestNativeRecoveryRepairHTTPConsumesStepUpOnlyOnce(t *testing.T) {
 func TestNativeRecoveryRepairHTTPRechecksConfirmedActor(t *testing.T) {
 	for _, change := range []string{"account-cycle", "session-revocation"} {
 		t.Run(change, func(t *testing.T) {
-			f := nativeRepairHTTPFixture(t, false, false)
+			f := nativeRepairHTTPFixture(t, "inactive", false)
 			nativeRepairSSOSession(f)
 			grant := challengeFrom(t, gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody, ""))
 			f.s.stepUpMu.Lock()
