@@ -236,6 +236,9 @@ func fenceRestoredNativeAccounts(dir string) error {
 		if err := revokeRestoredDeviceCredentials(filepath.Join(dir, "state/users", u.ID, "state.db"), u.NativeMailboxSource); err != nil {
 			return err
 		}
+		if err := os.Remove(filepath.Join(dir, "config/users", u.ID, "carddav-auth.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	return nil
 }

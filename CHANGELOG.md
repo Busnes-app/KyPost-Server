@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Revoke restored native CardDAV app-password hashes and deny held native accounts on both cached and fresh CardDAV authentication; preserve legacy/original credentials and contact data.
+
 - Fence native HTTP reads/actions and new notification references with the persisted mailbox reference generation. Reject stale/foreign/bare numeric IDs before mail access, retain internal numeric/encryption identities and legacy IMAP behavior, and qualify actual snapshot ID reuse plus browser body-cache separation. Native restore remains held.
 
 - Revoke restored native device/browser push registrations and outstanding pairing-token authority before publication, atomically per exact-source account. Preserve mail, receiving receipts and wrapped key material; legacy IMAP registrations remain unchanged. Native recovery stays held and will require fresh device pairing/enrollment without disabling MFA.

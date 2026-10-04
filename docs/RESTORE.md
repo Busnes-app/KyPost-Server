@@ -122,7 +122,7 @@ owner's password/recovery material; a capsule does not bypass that protection.
    browser push registrations and rotates the subscriber ID. Old device secrets,
    push-MFA approvers, enrollment acknowledgements and outstanding pairing tokens
    do not regain authority. Mail, pull-notification history and opaque wrapped
-   keys remain retained. Legacy IMAP account registrations are unchanged.
+   keys remain retained. After the account/device fence, remove each native CardDAV app-password hash; failure leaves staging held and unpublished. Legacy IMAP registrations and CardDAV credentials are unchanged.
    Restore also rotates a separate mailbox reference generation, preserving the
    immutable encryption namespace. Native HTTP/notification references include
    this generation; old-generation or bare numeric references are refused.
@@ -131,7 +131,7 @@ owner's password/recovery material; a capsule does not bypass that protection.
    A failure leaves staging held and unpublished. Legacy restores also
    accept an existing empty target. Occupied targets/files are never overwritten.
 4. Native restores remain quarantined with **no supported release path yet**.
-   Preserve the hold file when copying volumes. Allocation, native runtime, local receiving and relay updates refuse a present
+   Preserve the hold file when copying volumes. Allocation, native runtime, native CardDAV (including cached Basic auth), local receiving and relay updates refuse a present
    or unreadable hold. Relay-only restores also persist this hold. Keep native workers stopped; manually deleting the hold
    does not qualify recovery. With services still stopped, copy `recovered/config/`, `recovered/private/` and
    `recovered/state/` into the corresponding retained/mounted volumes. Preserve
@@ -142,7 +142,7 @@ owner's password/recovery material; a capsule does not bypass that protection.
    Sessions are memory-only, so users sign in again. Test external mailbox access.
    Native mailbox/device access remains blocked by the restore hold. After future
    recovery qualification, each native device must pair and enroll again, and
-   browsers must subscribe again. Repeating quarantine rotates subscriber IDs
+   browsers must subscribe again. Native CardDAV clients also need a newly generated app password after qualified recovery. Repeating quarantine rotates subscriber IDs
    again while held; no device authority is reintroduced. Device-held private
    keys are not remotely erased. Push-only MFA may require the existing account
    recovery procedure before fresh pairing; restore does not disable MFA.

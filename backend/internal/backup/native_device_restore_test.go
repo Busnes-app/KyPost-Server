@@ -52,7 +52,28 @@ func TestNativeRestoreRevokesDevicesAndPairingPreservesMailAndLegacy(t *testing.
 	}
 	defer st.Close()
 	oldSubscriber := seedRestoreDevice(t, st, u.ID)
+	contactBytes := []byte(`{"contacts":[{"uid":"retained-contact","fn":"Retained contact","rev":1,"createdAt":"2026-10-03T00:00:00Z","updatedAt":"2026-10-03T00:00:00Z"}],"seq":1}`)
+	if err := os.WriteFile(filepath.Join(account, "contacts.json"), contactBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
 	legacy := users.User{ID: "legacy", Username: "legacy", Role: users.RoleUser, Active: true}
+	hash, err := users.HashPassword(ctx, "historical-carddav-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	davBytes, err := json.Marshal(map[string]string{"hash": hash, "createdAt": "2026-10-03T00:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{u.ID, legacy.ID} {
+		dir := filepath.Join(s.dirs.Config, "users", id)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "carddav-auth.json"), davBytes, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	legacyStore, err := state.New(filepath.Join(s.dirs.State, "users", legacy.ID))
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +111,9 @@ func TestNativeRestoreRevokesDevicesAndPairingPreservesMailAndLegacy(t *testing.
 	if _, _, err := capsule.Open(sealed, key, restored); err != nil {
 		t.Fatal(err)
 	}
+	if b, err := os.ReadFile(filepath.Join(restored, "config/users", u.ID, "carddav-auth.json")); err != nil || !bytes.Equal(b, davBytes) {
+		t.Fatal("sealed fixture lacks historical CardDAV credential", err)
+	}
 	liveGeneration := mail.MessageReferenceGeneration()
 	priorGeneration := liveGeneration
 	// Two passes prove interruption/retry convergence; neither restores trust.
@@ -113,7 +137,21 @@ func TestNativeRestoreRevokesDevicesAndPairingPreservesMailAndLegacy(t *testing.
 	if !errors.Is(sso.RequireNativeRestoreReleased(filepath.Join(restored, "state")), sso.ErrNativeRestoreHold) {
 		t.Fatal("credential revocation released native hold")
 	}
+	if _, err := os.Lstat(filepath.Join(restored, "config/users", u.ID, "carddav-auth.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("native restored CardDAV credential retained", err)
+	}
+	for _, path := range []string{
+		filepath.Join(restored, "config/users", legacy.ID, "carddav-auth.json"),
+		filepath.Join(s.dirs.Config, "users", u.ID, "carddav-auth.json"),
+	} {
+		if b, err := os.ReadFile(path); err != nil || !bytes.Equal(b, davBytes) {
+			t.Fatal("legacy or original CardDAV credential changed", path, err)
+		}
+	}
 	restoredAccount := filepath.Join(restored, "state/users", u.ID)
+	if b, err := os.ReadFile(filepath.Join(restoredAccount, "contacts.json")); err != nil || !bytes.Equal(b, contactBytes) {
+		t.Fatal("credential revocation changed contacts", err)
+	}
 	restoredState, err := state.OpenNative(restoredAccount, u.NativeMailboxSource)
 	if err != nil {
 		t.Fatal(err)
