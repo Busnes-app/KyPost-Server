@@ -59,6 +59,11 @@ func (s *Server) handlePGPQRKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := claims.Sub
+	u, err := s.users.Get(userID)
+	if err == nil && s.requireAccountRestoreReleased(u) != nil {
+		http.Error(w, "Native account recovery is held; contact your administrator. Preserve the restore hold and storage.", http.StatusForbidden)
+		return
+	}
 	// Single use. A two-minute window is not a substitute for it: the token
 	// travels in a URL and in a QR code on a screen, so anyone who photographs
 	// or shoulder-surfs it inside that window could otherwise replay it. Marked
@@ -73,7 +78,6 @@ func (s *Server) handlePGPQRKey(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this qr code has already been used; generate a new one", http.StatusForbidden)
 		return
 	}
-	u, err := s.users.Get(userID)
 	if err != nil || u.PGPFingerprint == "" {
 		http.Error(w, "no pgp identity configured", http.StatusNotFound)
 		return

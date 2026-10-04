@@ -10,6 +10,8 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 ## Local Contracts
 
+- Held native accounts cannot authenticate with local/derived passwords, outstanding MFA challenges, SSO callbacks/step-up, existing cookies or QR key-exchange tokens. Shared session grant/current-user admission and early credential checks use either private native marker, independently of feature flags; preserve durable TOTP/recovery material and QR nonces on refusal. Keep an independently provisioned legacy recovery admin available. Offline hold staging requires stopped services; already admitted operations are not canceled. No hold release is supported.
+
 - Native CardDAV Basic auth checks the restore hold on both credential-cache hits and misses, independently of native feature flags. Historical account activity cannot grant contact access while held; legacy IMAP CardDAV remains available. Offline native recovery removes CardDAV app-password hashes after qualified source/device fencing; removal failure keeps staging held. Fresh app-password setup follows qualified recovery.
 
 - Native mailbox outbox storage is internally qualified, with encrypted owner/namespace/job-bound intent, durable claims, bounded definite-refusal retry and independent Sent receipts. Native primary compose/client-PGP routes use current domain/settings/directory/users/device admission, frozen epochs/revisions/credential witnesses and joined recovery workers. Status is owner-scoped; pickup/alias/system paths remain gated. Shared `cryptutil.Open` rejects wrong nonce sizes instead of panicking. See [outbox contract](../docs/NATIVE_OUTBOX.md).
@@ -330,6 +332,8 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 - **Cutting a release**: bump `serverVersion` in `internal/api/server_version.go` AND `frontend/package.json` (plus its lockfile) to the same value, in the same commit as the tag, add the release notes to `CHANGELOG.md`, and publish the GitHub release with a dotted-numeric tag (`v0.2.0`, not `v0.2-alpha`). `release-image.yml` now enforces the agreement rather than trusting it: it refuses to publish a tag that disagrees with either version source, and refuses a commit CI never passed. It then publishes the immutable `0.2.0` image, attests it, verifies the attestation, and only then promotes that exact digest to `stable` — never backward, and one release at a time. The host updater resolves stable to a digest and verifies the GitHub attestation before deployment. Every install polls this repo's releases hourly, emails its admin once per newly-seen release, and shows the cached result in Settings; a tag that is not dotted-numeric fails the comparison closed and no one is told, and a `serverVersion` left behind mails everyone about a release they are already running
 
 ## Verification
+
+- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/api -run "^TestNativeAuthRestore|^TestNativeCardDAV|^TestSSOStepUp" -count=1 -timeout=5m` checks held cookie/admin/password/derived/SSO/step-up/MFA/QR authority, partial markers, disabled flags, preserved recovery material/nonces and legacy recovery administration.
 
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/api ./internal/backup -run "TestNativeCardDAV|TestDAV|TestNativeRestore|TestNativeBackupRestoreOwnership" -count=1 -timeout=5m` checks native CardDAV cold/cache hold refusal, legacy access, sealed historical hash removal, original/contact retention and failed-removal holds.
 

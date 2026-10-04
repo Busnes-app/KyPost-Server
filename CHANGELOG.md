@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Deny held native password/derived, MFA, SSO/step-up, session/admin and QR key-exchange authority independently of native feature flags. Preserve recovery material/nonces and legacy recovery administration; no hold release is introduced.
+
 - Give each offline native restore/quarantine attempt a fresh hold epoch, including retries and failed validation. Preserve holds on entropy/write failure; no restore activation or hold release is introduced.
 
 - Qualify refusal of signed recovery evidence by ordinary directory sync without account, revision or hold mutation; document the available KyIdentity exporter and pending challenge/repair boundary.

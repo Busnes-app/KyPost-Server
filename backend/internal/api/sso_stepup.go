@@ -226,6 +226,10 @@ func (s *Server) handleSSOStepUpCancel(w http.ResponseWriter, r *http.Request) {
 // challenge, so the action has to be restarted rather than retried.
 func (s *Server) completeSSOStepUp(w http.ResponseWriter, r *http.Request, id string, claims *sso.SSOTokenClaims) {
 	w.Header().Set("Cache-Control", "no-store")
+	if _, ok := s.currentUser(r); !ok {
+		http.Error(w, "sign in before confirming an action", http.StatusUnauthorized)
+		return
+	}
 	sess, token, ok := s.sessionOf(r)
 	if !ok {
 		http.Error(w, "sign in before confirming an action", http.StatusUnauthorized)

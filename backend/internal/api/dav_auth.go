@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
-	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -254,7 +253,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 // Restored account flags cannot authorize CardDAV while native recovery is held.
 // Check even cache hits; offline restore also removes historical app passwords.
 func (s *Server) davAccountActive(u users.User) bool {
-	return u.Active && (u.NativeMailboxSource == "" && u.NativeMailboxIssuer == "" || sso.RequireNativeRestoreReleased(s.stateDir) == nil)
+	return u.Active && s.requireAccountRestoreReleased(u) == nil
 }
 
 // rehashDAVAppPassword re-derives an app password's hash at the current cost
