@@ -61,10 +61,11 @@ type Change struct {
 	Removed      bool
 }
 type Store struct {
-	db        *sql.DB
-	owner     Owner
-	limits    Limits
-	namespace string
+	db                  *sql.DB
+	owner               Owner
+	limits              Limits
+	namespace           string
+	referenceGeneration string
 }
 
 const schema = `
@@ -211,6 +212,21 @@ func (s *Store) initialize() error {
 	}
 	if err = tx.QueryRow("SELECT token FROM namespace WHERE id=1").Scan(&s.namespace); err != nil {
 		return err
+	}
+	if s.referenceGeneration, err = messageReferenceGeneration(tx); err != nil {
+		return err
+	}
+	if s.referenceGeneration == "" {
+		s.referenceGeneration, err = fsutil.NewUUIDv4()
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(referenceGenerationSchema); err != nil {
+			return err
+		}
+		if _, err = tx.Exec("INSERT INTO reference_generation VALUES(1,?)", s.referenceGeneration); err != nil {
+			return err
+		}
 	}
 	for _, folder := range []string{"INBOX", "Drafts", "Sent", "Trash", "Junk", "Archive"} {
 		if _, err = tx.Exec("INSERT OR IGNORE INTO folders VALUES(?)", folder); err != nil {

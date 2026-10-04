@@ -123,6 +123,11 @@ owner's password/recovery material; a capsule does not bypass that protection.
    push-MFA approvers, enrollment acknowledgements and outstanding pairing tokens
    do not regain authority. Mail, pull-notification history and opaque wrapped
    keys remain retained. Legacy IMAP account registrations are unchanged.
+   Restore also rotates a separate mailbox reference generation, preserving the
+   immutable encryption namespace. This is storage groundwork: HTTP references
+   still use numeric IDs, so stale-reference rejection is not yet enforced.
+   Corrupt generation metadata refuses publication; older snapshots without the
+   table gain a fresh generation. See [reference qualification](NATIVE_RESTORE_REFERENCES.md).
    A failure leaves staging held and unpublished. Legacy restores also
    accept an existing empty target. Occupied targets/files are never overwritten.
 4. Native restores remain quarantined with **no supported release path yet**.

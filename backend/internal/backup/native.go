@@ -175,8 +175,8 @@ func QuarantineNativeRestore(dir string) (bool, error) {
 	}); err != nil {
 		return true, fmt.Errorf("cannot quarantine restored outgoing work; keep workers stopped and preserve staging: %w", err)
 	}
-	if err := revokeRestoredNativeDevices(dir); err != nil {
-		return true, fmt.Errorf("cannot revoke restored native device credentials; keep workers stopped and preserve staging: %w", err)
+	if err := fenceRestoredNativeAccounts(dir); err != nil {
+		return true, fmt.Errorf("cannot fence restored native references/credentials; keep workers stopped and preserve staging: %w", err)
 	}
 	return true, nil
 }
@@ -207,9 +207,9 @@ func quarantineRestoredOutbox(path string) (err error) {
 	return err
 }
 
-// revokeRestoredNativeDevices selects only historically qualified native users.
+// fenceRestoredNativeAccounts selects only historically qualified native users.
 // The whole restore stays held and unpublished if any account mutation fails.
-func revokeRestoredNativeDevices(dir string) error {
+func fenceRestoredNativeAccounts(dir string) error {
 	raw, err := os.ReadFile(filepath.Join(dir, "config/users.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil // Whole-snapshot validation already refused missing native users.
@@ -229,6 +229,9 @@ func revokeRestoredNativeDevices(dir string) error {
 		}
 		if !fsutil.SafePathComponent(u.ID) {
 			return sso.ErrNativeProvisioning
+		}
+		if err := mailbox.RotateRestoredMessageReferences(filepath.Join(dir, "state/users", u.ID, "mailbox/mailbox.db"), u.NativeMailboxSource); err != nil {
+			return err
 		}
 		if err := revokeRestoredDeviceCredentials(filepath.Join(dir, "state/users", u.ID, "state.db"), u.NativeMailboxSource); err != nil {
 			return err
