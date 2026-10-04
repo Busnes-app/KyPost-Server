@@ -70,7 +70,7 @@ assert receiving['environment']['SERVER_BASE_URL'] == 'https://post.example.com'
 assert receiving['environment']['KYPOST_NATIVE_RECEIVING'] == 'true'
 assert receiving['environment']['KYPOST_NATIVE_RECEIVER'] == 'true'
 assert any(p['host_ip'] == '::1' and p['target'] == 2525 for p in receiving['ports'])
-assert all(v['read_only'] and not v['bind']['create_host_path'] for v in receiving['volumes'] if v['type'] == 'bind' and v['target'].startswith('/opt/kypost/receiving/'))
+assert all(v['read_only'] and not v.get('bind', {}).get('create_host_path', False) for v in receiving['volumes'] if v['type'] == 'bind' and v['target'].startswith('/opt/kypost/receiving/'))
 CHECK
 chmod 644 "$ENV_FILE"
 if prepare_env "$setup_test_dir/example" >/dev/null; then exit 1; fi
