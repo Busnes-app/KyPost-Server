@@ -21,6 +21,43 @@ func preparationOwner() Owner {
 }
 func preparationLimits() Limits { return Limits{1 << 20, 4 << 20, 100} }
 
+func TestPrepareAccountReferenceGenerationReadOnly(t *testing.T) {
+	root := t.TempDir()
+	owner, limits := preparationOwner(), preparationLimits()
+	source, err := PrepareAccount(root, owner, "one@example.test", limits)
+	must(t, err)
+	dir := filepath.Join(root, "users", owner.Mailbox, "mailbox")
+	s, err := OpenExisting(dir, owner, limits, source)
+	must(t, err)
+	defer s.Close()
+	_, err = s.db.Exec("DROP TABLE reference_generation")
+	must(t, err)
+	_, err = ValidatePreparedAccount(root, owner, "one@example.test", limits)
+	must(t, err)
+	var tables int
+	must(t, s.db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE name='reference_generation'").Scan(&tables))
+	if tables != 0 {
+		t.Fatal("historical validation mutated older schema")
+	}
+	must(t, s.Close())
+	s, err = OpenExisting(dir, owner, limits, source)
+	must(t, err)
+	defer s.Close()
+	if s.MessageReferenceGeneration() == "" {
+		t.Fatal("runtime older-schema migration failed")
+	}
+	_, err = s.db.Exec("DELETE FROM reference_generation")
+	must(t, err)
+	if _, err = ValidatePreparedAccount(root, owner, "one@example.test", limits); !errors.Is(err, ErrPreparation) {
+		t.Fatal("prepared corruption accepted", err)
+	}
+	var rows int
+	must(t, s.db.QueryRow("SELECT count(*) FROM reference_generation").Scan(&rows))
+	if rows != 0 {
+		t.Fatal("validation repaired corruption")
+	}
+}
+
 func TestPrepareAccountRetriesPreserveMail(t *testing.T) {
 	root := t.TempDir()
 	owner := preparationOwner()

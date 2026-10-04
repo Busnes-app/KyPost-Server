@@ -90,11 +90,25 @@ func TestNativeRestoreRevokesDevicesAndPairingPreservesMailAndLegacy(t *testing.
 	if _, _, err := capsule.Open(sealed, key, restored); err != nil {
 		t.Fatal(err)
 	}
+	liveGeneration := mail.MessageReferenceGeneration()
+	priorGeneration := liveGeneration
 	// Two passes prove interruption/retry convergence; neither restores trust.
 	for range 2 {
 		if native, err := QuarantineNativeRestore(restored); !native || err != nil {
 			t.Fatal(native, err)
 		}
+		rotated, err := mailbox.OpenExisting(filepath.Join(restored, "state/users", u.ID, "mailbox"), assignment.Owner, assignment.Limits, assignment.Source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotGeneration := rotated.MessageReferenceGeneration()
+		if err := rotated.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if gotGeneration == "" || gotGeneration == priorGeneration {
+			t.Fatal("restore did not rotate native reference generation")
+		}
+		priorGeneration = gotGeneration
 	}
 	if !errors.Is(sso.RequireNativeRestoreReleased(filepath.Join(restored, "state")), sso.ErrNativeRestoreHold) {
 		t.Fatal("credential revocation released native hold")
@@ -139,6 +153,14 @@ func TestNativeRestoreRevokesDevicesAndPairingPreservesMailAndLegacy(t *testing.
 	gotUsers, err := os.ReadFile(filepath.Join(restored, "config/users.json"))
 	if err != nil || !bytes.Equal(gotUsers, userBytes) {
 		t.Fatal("account/key material document changed", err)
+	}
+	liveAgain, err := mailbox.OpenExisting(filepath.Join(account, "mailbox"), assignment.Owner, assignment.Limits, assignment.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer liveAgain.Close()
+	if liveAgain.MessageReferenceGeneration() != liveGeneration {
+		t.Fatal("restore mutated live reference generation")
 	}
 	if _, ok := st.GetNativeDevice("old-device"); !ok || st.SubscriberID() != oldSubscriber {
 		t.Fatal("backup collection revoked live credentials")

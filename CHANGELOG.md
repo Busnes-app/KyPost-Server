@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Persist a separate native mailbox reference generation and rotate it during held offline restore without changing mail IDs or encryption namespaces. Refuse corrupt metadata and support older snapshots. HTTP references remain numeric until the separate wire fence is implemented; no restore hold release.
+
 - Revoke restored native device/browser push registrations and outstanding pairing-token authority before publication, atomically per exact-source account. Preserve mail, receiving receipts and wrapped key material; legacy IMAP registrations remain unchanged. Native recovery stays held and will require fresh device pairing/enrollment without disabling MFA.
 
 - Quarantine restored queued/retryable native outgoing deliveries before offline restore publication, preserving encrypted intent, claims and accepted/Sent evidence. Retain the whole-stack restore hold and refuse publication on quarantine failure; no automatic resubmission or hold release.
