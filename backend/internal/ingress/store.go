@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"math"
 	"net/mail"
 	"net/url"
 	"os"
@@ -71,8 +72,10 @@ type Summary struct {
 }
 
 type Store struct {
-	db     *sql.DB
-	limits Limits
+	db            *sql.DB
+	limits        Limits
+	path          string
+	physicalLimit int64
 }
 
 const schema = `
@@ -93,7 +96,7 @@ func OpenExisting(dir string, limits Limits) (*Store, error) {
 }
 
 func open(dir string, limits Limits, existing bool) (*Store, error) {
-	if limits.MessageBytes <= 0 || limits.MessageBytes > 64<<20 || limits.PayloadBytes < limits.MessageBytes || limits.Records <= 0 {
+	if limits.MessageBytes <= 0 || limits.MessageBytes > 64<<20 || limits.PayloadBytes < limits.MessageBytes || limits.Records <= 0 || limits.PayloadBytes > math.MaxInt64/4 || int64(limits.Records) > (math.MaxInt64-4*limits.PayloadBytes)/(32<<10) {
 		return nil, errors.New("invalid ingress limits")
 	}
 	if !existing {
@@ -127,7 +130,7 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, limits: limits}
+	s := &Store{db: db, limits: limits, path: path, physicalLimit: max(32<<20, 4*limits.PayloadBytes+int64(limits.Records)*(32<<10))}
 	if existing {
 		var persisted Limits
 		err := db.QueryRow("SELECT message_bytes,payload_bytes,records FROM limits WHERE id=1").Scan(&persisted.MessageBytes, &persisted.PayloadBytes, &persisted.Records)
@@ -198,10 +201,26 @@ func identifier(v string) bool {
 // SetRoute accepts only an already verified directory decision from a trusted
 // writer. It does not verify a JWT or establish domain ownership.
 func (s *Store) SetRoute(ctx context.Context, r Route) error {
+	return s.setRoute(ctx, r, false)
+}
+
+// RefreshRoute renews an existing unchanged route for accepted-mail recovery.
+// It cannot create a route, change its generation/owner, or reactivate it.
+func (s *Store) RefreshRoute(ctx context.Context, r Route) error {
+	return s.setRoute(ctx, r, true)
+}
+
+func (s *Store) setRoute(ctx context.Context, r Route, recovery bool) error {
 	if !address(r.Address, false) || !identifier(r.Issuer) || !identifier(r.Subject) || !identifier(r.Mailbox) || r.Generation <= 0 || r.ValidUntil.IsZero() {
 		return ErrRoute
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	var tx *sql.Tx
+	var err error
+	if recovery {
+		tx, err = s.db.BeginTx(ctx, nil)
+	} else {
+		tx, err = s.admissionTx(ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -213,6 +232,14 @@ func (s *Store) SetRoute(ctx context.Context, r Route) error {
 	}
 	if err == nil && (r.Generation < old.Generation || (r.Generation == old.Generation && (r.Issuer != old.Issuer || r.Subject != old.Subject || r.Mailbox != old.Mailbox || r.Active != old.Active))) {
 		return ErrConflict
+	}
+	if recovery && (err != nil || r.Issuer != old.Issuer || r.Subject != old.Subject || r.Mailbox != old.Mailbox || r.Generation != old.Generation || r.Active != old.Active) {
+		return ErrConflict
+	}
+	if !recovery {
+		if err := s.checkAdmission(ctx, tx, 0); err != nil {
+			return err
+		}
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		var count int
@@ -236,7 +263,7 @@ func (s *Store) Bind(ctx context.Context, gateway, deliveryID, sender, recipient
 	if !identifier(gateway) || !identifier(deliveryID) || !address(sender, true) || !address(recipient, false) {
 		return ErrConflict
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.admissionTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -263,6 +290,9 @@ func (s *Store) Bind(ctx context.Context, gateway, deliveryID, sender, recipient
 		if state != "staged" {
 			return ErrConflict
 		}
+	}
+	if err := s.checkAdmission(ctx, tx, 0); err != nil {
+		return err
 	}
 	var route Route
 	var validUntil int64
@@ -320,7 +350,7 @@ func (s *Store) Accept(ctx context.Context, gateway, id, sender string, raw io.R
 	}
 	hash := sha256.Sum256(data)
 	digest := hex.EncodeToString(hash[:])
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.admissionTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -341,6 +371,9 @@ func (s *Store) Accept(ctx context.Context, gateway, id, sender string, raw io.R
 			return ErrConflict
 		}
 		return tx.Commit()
+	}
+	if err := s.checkAdmission(ctx, tx, int64(len(data))); err != nil {
+		return err
 	}
 	var used int64
 	// ponytail: scan at most limits.Records rows; add transactional byte counters

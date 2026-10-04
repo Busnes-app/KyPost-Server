@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"net/http/httptest"
@@ -29,13 +30,16 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 	ctx := context.Background()
 	srv, owner := mailBodyServer(t, &fakeMailClient{})
 	limits := mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100}
+	storePaths := make(map[*mailbox.Store]string)
 	open := func(userID string) *mailbox.Store {
 		t.Helper()
-		store, err := mailbox.Open(filepath.Join(t.TempDir(), "mailbox"), mailbox.Owner{Issuer: "https://identity.example.test", Subject: userID, Mailbox: userID}, limits)
+		dir := filepath.Join(t.TempDir(), "mailbox")
+		store, err := mailbox.Open(dir, mailbox.Owner{Issuer: "https://identity.example.test", Subject: userID, Mailbox: userID}, limits)
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = store.Close() })
+		storePaths[store] = filepath.Join(dir, "mailbox.db")
 		return store
 	}
 	inject := func(userID string, store *mailbox.Store) {
@@ -76,7 +80,23 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 		}
 		return uid
 	}
+	ref := func(store *mailbox.Store, uid int64) string {
+		return "n1:" + store.MessageReferenceGeneration() + ":" + strconv.FormatInt(uid, 10)
+	}
 	uid := importRaw(store, "one", raw)
+	snapshotDir := filepath.Join(t.TempDir(), "mailbox")
+	if err := os.Mkdir(snapshotDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	snapshotPath := filepath.Join(snapshotDir, "mailbox.db")
+	db, err := sql.Open("sqlite", storePaths[store])
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("VACUUM INTO ?", snapshotPath)
+	if closeErr := db.Close(); err != nil || closeErr != nil {
+		t.Fatal(err, closeErr)
+	}
 	otherUID := importRaw(otherStore, "one", mailmsg.Message{From: "private@outside.test", To: []string{"tester@example.com"}, Subject: "other owner's secret", Body: "other owner body"}.Build())
 	if uid != otherUID {
 		t.Fatal("test must exercise identical IDs in different owners' stores")
@@ -115,7 +135,7 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 			t.Fatalf("API status %d: %s", rec.Code, rec.Body.String())
 		}
 	}
-	id := strconv.FormatInt(uid, 10)
+	id := ref(store, uid)
 	query := "?mailbox=INBOX&messageId=" + id
 	for _, native := range []bool{false, true} {
 		body := request("GET", "/api/mail/body"+query, nil, native, owner)
@@ -129,13 +149,13 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 			t.Fatal("attachment wire contract")
 		}
 		requireOK(request("GET", "/api/mail/attachments"+query, nil, native, owner))
-		if rec := request("GET", "/api/mail/body?mailbox=INBOX&messageId="+strconv.FormatInt(privateUID, 10), nil, native, owner); rec.Code != 404 {
+		if rec := request("GET", "/api/mail/body?mailbox=INBOX&messageId="+ref(store, privateUID), nil, native, owner); rec.Code != 404 {
 			t.Fatal("wrong folder body served")
 		}
 		first := request("GET", "/api/inbox?mailbox=INBOX&since=0&bodies=0", nil, native, owner)
 		requireOK(first)
 		snapshot := decodeInboxResponse(t, first)
-		if len(allEmails(snapshot)) != 1 || allEmails(snapshot)[0].Body != "" {
+		if len(allEmails(snapshot)) != 1 || allEmails(snapshot)[0].Body != "" || allEmails(snapshot)[0].MessageID != id {
 			t.Fatal("lazy inbox shape")
 		}
 		unchanged := request("GET", "/api/inbox?mailbox=INBOX&since="+"999999&bodies=0", nil, native, owner)
@@ -145,7 +165,7 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 		}
 		search := request("GET", "/api/mail/search?mailbox=INBOX&field=from&q=sender", nil, native, owner)
 		requireOK(search)
-		if !bytes.Contains(search.Body.Bytes(), []byte("real native mail")) {
+		if !bytes.Contains(search.Body.Bytes(), []byte("real native mail")) || !bytes.Contains(search.Body.Bytes(), []byte(id)) {
 			t.Fatal("from search alias missing")
 		}
 		requireOK(request("GET", "/api/inbox/folders?parent=INBOX", nil, native, owner))
@@ -156,7 +176,10 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 	if got := decodeInboxResponse(t, classic); len(allEmails(got)) != 1 || got.Cursor != 0 || got.Delta {
 		t.Fatal("classic native snapshot")
 	}
-	otherBody := request("GET", "/api/mail/body"+query, nil, false, other.ID)
+	if rec := request("GET", "/api/mail/body"+query, nil, false, other.ID); rec.Code != 400 {
+		t.Fatal("foreign generation accepted", rec.Code)
+	}
+	otherBody := request("GET", "/api/mail/body?mailbox=INBOX&messageId="+ref(otherStore, otherUID), nil, false, other.ID)
 	requireOK(otherBody)
 	if !bytes.Contains(otherBody.Body.Bytes(), []byte("other owner body")) || bytes.Contains(otherBody.Body.Bytes(), []byte("owner body <")) {
 		t.Fatal("identical IDs leaked across owners")
@@ -197,7 +220,7 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 		t.Fatalf("API draft not committed: %+v %v", drafts, err)
 	}
 	bad := importRaw(store, "malformed", []byte("From: sender@outside.test\r\nContent-Type: multipart/mixed\r\n\r\ninvalid MIME"))
-	malformed := request("GET", "/api/mail/body?mailbox=INBOX&messageId="+strconv.FormatInt(bad, 10), nil, true, owner)
+	malformed := request("GET", "/api/mail/body?mailbox=INBOX&messageId="+ref(store, bad), nil, true, owner)
 	if malformed.Code != 422 || !bytes.Contains(malformed.Body.Bytes(), []byte("original mail retained")) {
 		t.Fatalf("malformed body: %d %s", malformed.Code, malformed.Body.String())
 	}
@@ -212,7 +235,7 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	signedUID := importRaw(store, "signed", signed)
-	signedResponse := request("GET", "/api/mail/pgp-payload?mailbox=INBOX&messageId="+strconv.FormatInt(signedUID, 10), nil, true, owner)
+	signedResponse := request("GET", "/api/mail/pgp-payload?mailbox=INBOX&messageId="+ref(store, signedUID), nil, true, owner)
 	requireOK(signedResponse)
 	var payload struct {
 		SignedPartBase64, SignaturePayload, EncryptedPayload, Body string
@@ -256,7 +279,7 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	encryptedUID := importRaw(store, "encrypted", encrypted)
-	encryptedPath := "/api/mail/pgp-payload?mailbox=INBOX&messageId=" + strconv.FormatInt(encryptedUID, 10)
+	encryptedPath := "/api/mail/pgp-payload?mailbox=INBOX&messageId=" + ref(store, encryptedUID)
 	if rec := request("GET", encryptedPath, nil, true, owner); rec.Code != 409 {
 		t.Fatal("legacy server-custody ciphertext gate changed")
 	}
@@ -285,7 +308,7 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 	if err != nil || decryptedBody != "owner body <user@example.test>" {
 		t.Fatalf("endpoint decrypted body mismatch: %v", err)
 	}
-	encryptedBody := request("GET", "/api/mail/body?mailbox=INBOX&messageId="+strconv.FormatInt(encryptedUID, 10), nil, true, owner)
+	encryptedBody := request("GET", "/api/mail/body?mailbox=INBOX&messageId="+ref(store, encryptedUID), nil, true, owner)
 	requireOK(encryptedBody)
 	if bytes.Contains(encryptedBody.Body.Bytes(), []byte("owner body")) {
 		t.Fatal("encrypted lazy body exposed plaintext")
@@ -299,6 +322,76 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 	if err != nil || !bytes.Equal(exact, []byte(strings.TrimSpace(string(encrypted)))) {
 		t.Fatal("client encrypted draft reconstructed")
 	}
+	// Snapshot retained UID1 before the signed INBOX message existed; restore
+	// rewinds allocation until that same folder/UID points at a new ordinary mail.
+	// Inject only client selection, preserving authentication/state/cache to prove
+	// this rejects references by generation, not by a different source or logout.
+	// This is not runtime hold release or complete restored-authority qualification.
+	requireOK(request("GET", "/api/inbox?since=0", nil, false, owner)) // Warm signed content before rollback.
+	originalClient, err := mailbox.NewClient(store, "tester@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mailbox.RotateRestoredMessageReferences(snapshotPath, originalClient.MailSourceIdentity()); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := mailbox.OpenExisting(snapshotDir, store.Owner(), limits, originalClient.MailSourceIdentity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	var reused int64
+	for reused < signedUID {
+		reused = importRaw(restored, "after-rollback-"+strconv.FormatInt(reused, 10), raw)
+	}
+	if reused != signedUID {
+		t.Fatal("rollback fixture did not reuse signed INBOX ID", reused, signedUID)
+	}
+	restoredClient, err := mailbox.NewClient(restored, "tester@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.userMu.Lock()
+	srv.userMail[owner] = &serverMailEntry{client: restoredClient, updatedAt: "test"}
+	srv.userMu.Unlock()
+	for _, native := range []bool{false, true} {
+		for _, stale := range []string{ref(store, signedUID), strconv.FormatInt(signedUID, 10), ref(otherStore, signedUID), "n1:" + restored.MessageReferenceGeneration() + ":0", "n1:" + restored.MessageReferenceGeneration() + ":02"} {
+			for _, path := range []string{"/api/mail/body", "/api/mail/attachments", "/api/mail/attachment", "/api/mail/pgp-payload"} {
+				rec := request("GET", path+"?mailbox=INBOX&messageId="+stale+"&index=0", nil, native, owner)
+				if rec.Code != 400 || bytes.Contains(rec.Body.Bytes(), []byte("owner body")) {
+					t.Fatal("stale read served", path, rec.Code, rec.Body.String())
+				}
+			}
+			for _, action := range []string{"read", "label", "unlabel", "move", "delete"} {
+				rec := request("POST", "/api/inbox/actions", map[string]any{"action": action, "keyword": "Travel", "mailbox": "INBOX", "targetMailbox": "Sent", "messageIds": []string{stale}}, native, owner)
+				requireOK(rec)
+				if !bytes.Contains(rec.Body.Bytes(), []byte(`"processed":0`)) || !bytes.Contains(rec.Body.Bytes(), []byte(stale)) {
+					t.Fatal("stale mutation accepted", action, rec.Body.String())
+				}
+			}
+		}
+		fullRestored := request("GET", "/api/inbox?since=0", nil, native, owner)
+		requireOK(fullRestored)
+		for _, email := range allEmails(decodeInboxResponse(t, fullRestored)) {
+			if email.MessageID == ref(restored, reused) && (email.PGPSigned || email.PGPEncrypted || email.Body != "owner body <user@example.test>") {
+				t.Fatal("fresh ID laundered cached body/PGP verdict", email)
+			}
+		}
+		fresh := ref(restored, reused)
+		requireOK(request("GET", "/api/mail/body?mailbox=INBOX&messageId="+fresh, nil, native, owner))
+		freshInbox := request("GET", "/api/inbox?since=999999&bodies=0", nil, native, owner)
+		requireOK(freshInbox)
+		if !bytes.Contains(freshInbox.Body.Bytes(), []byte(fresh)) || bytes.Contains(freshInbox.Body.Bytes(), []byte(ref(store, reused))) {
+			t.Fatal("snapshot emitted stale IDs")
+		}
+	}
+	retained, err := restored.List(ctx, "INBOX", 0, 10)
+	if err != nil || len(retained) != int(signedUID) || retained[0].Seen || len(retained[0].Labels) != 0 {
+		t.Fatal("stale actions changed new mail", retained, err)
+	}
+	srv.userMu.Lock()
+	srv.userMail[owner] = &serverMailEntry{client: originalClient, updatedAt: "test"}
+	srv.userMu.Unlock()
 	// Liveness remains enforced by the existing router before selecting a store.
 	if _, err = srv.users.Deactivate(other.ID); err != nil {
 		t.Fatal(err)

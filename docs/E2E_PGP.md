@@ -206,7 +206,11 @@ processed by KyPost is eligible; this does not sweep historical or read mail.
 For opt-in native mailboxes, the polling mailbox is INBOX and leftover IMAP
 configuration is ignored; primary key User IDs come from admitted domain
 provisioning. Key custody and WKD publication proofs are unchanged. Native
-sending remains unavailable until domain relay integration.
+primary sending uses the operator relay and durable outbox. Client-prepared
+PGP keeps current material-generation/device enrollment gates; independently
+encrypted Sent bytes are retained before SMTP, with no plaintext fallback.
+Replies add `outboxId`; confirmed primary acceptance still controls `ok:true`.
+Native pickup/alias/system sending remains pending; see [NATIVE_OUTBOX.md](NATIVE_OUTBOX.md).
 The configured polling mailbox must be INBOX; another folder is refused before
 replacement, even if it has the same numeric UID. Already encrypted and
 oversized messages retain their existing handling.
@@ -275,7 +279,7 @@ stops future replacements and does not decrypt existing messages.
 ### Internal native mailbox implementation
 
 The native mailbox adapter implements the same incoming-encryption journal and
-pending-key guards, but production source selection remains disabled. It binds
+pending-key guards in explicit native mode. It binds
 a saved source to its immutable owner and a durable random database namespace;
 recreating a database for the same owner does not authorize an older job.
 One SQLite transaction commits the exact ciphertext under a new ID, preserves
@@ -290,7 +294,14 @@ A changed/deleted copy or a mismatched namespace pauses recovery. Restores still
 need explicit reconciliation before activation; this is not a backup or rollback
 procedure. SQLite WAL/pages, receiving buffers and earlier backups may retain
 plaintext after replacement. Existing client payloads and opt-in behavior are
-unchanged. See [implementation checks](TURNKEY_MAIL_PHASE1.md#native-incoming-encryption-recovery).
+unchanged. Native HTTP/notification message IDs use a separate generation-bound
+opaque reference; internal replacement IDs, journal proofs and encryption
+namespaces remain numeric/immutable. Copy the inbox reference verbatim to
+`/api/mail/pgp-payload`, body and attachment requests. Native payload responses
+return that string as `messageId`; external IMAP responses retain a numeric UID.
+Stale/foreign/bare native IDs return 400 before MIME lookup; refresh the mailbox.
+See [wire contract](PLATFORM_BASELINE.md#7-inbox-listing-and-message-bodies) and
+[implementation checks](TURNKEY_MAIL_PHASE1.md#native-incoming-encryption-recovery).
 
 ## Status
 
@@ -955,7 +966,7 @@ nothing on the server to decrypt with.
    The envelope is self-describing; do not hardcode 600,000.
 3. Messages arrive with `pgpEncrypted: true` and an empty `pgpDecryptError`.
    The ciphertext is **not** inlined in the inbox row — fetch it per message
-   from `GET /api/mail/pgp-payload?mailbox=&messageId=<uid>`, which also
+   from `GET /api/mail/pgp-payload?mailbox=&messageId=<opaque-reference>`, which also
    returns `signerKeys` for verification. An earlier version of this
    document said the payload arrived inline; it never did.
 

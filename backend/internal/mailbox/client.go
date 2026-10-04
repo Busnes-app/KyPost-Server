@@ -28,6 +28,9 @@ type Client struct {
 
 var _ imapadapter.Client = (*Client)(nil)
 
+// MessageReferenceGeneration is wire identity, never the internal UID namespace.
+func (c *Client) MessageReferenceGeneration() string { return c.store.MessageReferenceGeneration() }
+
 const batchBytes = int64(192 << 20)
 const batchCount = 1000
 

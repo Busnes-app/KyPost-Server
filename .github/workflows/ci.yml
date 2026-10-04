@@ -330,6 +330,25 @@ jobs:
           KYPOST_BIND: 127.0.0.1
         run: docker compose config --quiet
 
+      - name: controlled receiving compose config
+        env:
+          KYPOST_BIND: 127.0.0.1
+          KYPOST_MADDY_BINARY: /tmp/qualified-maddy
+          KYPOST_RECEIVING_TLS_DIR: /tmp/receiver-tls
+          KYPOST_RECEIVING_HOSTNAME: mail.example.com
+          KYPOST_SMTP_BIND: 127.0.0.1
+          KYPOST_SMTP_PORT: 2525
+        run: docker compose -f docker-compose.yml -f docker-compose.receiving.yml config --quiet
+
+      - name: setup wizard self-check
+        run: bash scripts/setup-mail.test.sh
+
+      - name: receiver launch refusal
+        run: python3 scripts/check-receiver-launch.py
+
+      - name: cumulative supervisor shutdown budget
+        run: python3 scripts/check-supervisor-shutdown.py --contract-only
+
   docker:
     name: ci-docker
     runs-on: ubuntu-latest
@@ -355,6 +374,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: private data roots and real entrypoint
+        run: python3 scripts/check-private-roots.py kypost-server:ci
+
+      - name: supervisor drains separate groups serially
+        run: docker run --rm --network none --user kypost --entrypoint python3 kypost-server:ci /opt/kypost/scripts/check-supervisor-shutdown.py --runtime-only
+
       # A built image that cannot start is not a passing build. This catches
       # the class of failure the build step structurally cannot: a bad
       # supervisord config, an entrypoint whose chown fails, a missing runtime
@@ -373,6 +398,10 @@ jobs:
             status="$(docker inspect -f '{{.State.Health.Status}}' kypost-ci 2>/dev/null || echo starting)"
             if [ "$status" = "healthy" ]; then
               echo "container reported healthy after ${i}s"
+              receiver_result=0
+              receiver_status=$(docker exec kypost-ci supervisorctl -c /etc/supervisord.conf status receiver) || receiver_result=$?
+              [ "$receiver_result" -eq 3 ]
+              printf '%s\n' "$receiver_status" | grep -qE '^receiver[[:space:]]+STOPPED[[:space:]]+Not started$'
               exit 0
             fi
             if [ "$(docker inspect -f '{{.State.Running}}' kypost-ci)" != "true" ]; then

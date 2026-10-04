@@ -1,0 +1,24 @@
+# Controlled qualification only: prepare domain/accounts/spool using base Compose
+# first. Operator supplies the pinned Linux x86_64 engine and protected TLS files.
+services:
+  kypost-server:
+    environment:
+      KYPOST_NATIVE_MAIL: "true"
+      KYPOST_NATIVE_RECEIVING: "true"
+      KYPOST_NATIVE_RECEIVER: "true"
+      KYPOST_RECEIVING_HOSTNAME: ${KYPOST_RECEIVING_HOSTNAME:?set the certificate hostname}
+    ports:
+      - "${KYPOST_SMTP_BIND:?set the receiving publish address}:${KYPOST_SMTP_PORT:?set the receiving publish port}:2525"
+    volumes:
+      - type: bind
+        source: ${KYPOST_MADDY_BINARY:?set the qualified executable absolute path}
+        target: /opt/kypost/receiving/maddy
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${KYPOST_RECEIVING_TLS_DIR:?set the protected TLS directory absolute path}
+        target: /opt/kypost/receiving/tls
+        read_only: true
+        bind:
+          create_host_path: false

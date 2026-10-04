@@ -76,7 +76,7 @@ func TestNativeBackupRestoreOwnershipAndHold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, damage := range []string{"none", "missing-mailbox", "corrupt-state", "foreign-user"} {
+	for _, damage := range []string{"none", "missing-mailbox", "corrupt-state", "foreign-user", "blocked-carddav-delete"} {
 		t.Run(damage, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "restored")
 			manifest, _, err := capsule.Open(raw, key, dir)
@@ -84,6 +84,14 @@ func TestNativeBackupRestoreOwnershipAndHold(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch damage {
+			case "blocked-carddav-delete":
+				path := filepath.Join(dir, "config/users", u.ID, "carddav-auth.json")
+				if err := os.MkdirAll(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(path, "blocker"), []byte("cannot remove nonempty directory"), 0600); err != nil {
+					t.Fatal(err)
+				}
 			case "missing-mailbox":
 				if err := os.Remove(filepath.Join(dir, "state/users", u.ID, "mailbox/mailbox.db")); err != nil {
 					t.Fatal(err)

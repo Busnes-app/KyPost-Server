@@ -56,7 +56,6 @@ type SSOSettings struct {
 // Store handles persisting SSOSettings to disk.
 type Store struct {
 	path  string
-	mu    sync.RWMutex
 	loads atomic.Int64
 }
 
@@ -74,9 +73,10 @@ func NewStore(configDir string) *Store {
 // Load reads SSO settings from disk, returning default values if not configured.
 func (s *Store) Load() SSOSettings {
 	s.loads.Add(1)
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	return s.loadUnlocked()
+}
 
+func (s *Store) loadUnlocked() SSOSettings {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		return SSOSettings{
@@ -95,8 +95,11 @@ func (s *Store) Load() SSOSettings {
 
 // Save persists SSO settings atomically to disk.
 func (s *Store) Save(cfg SSOSettings) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	release, err := fsutil.LockFile(s.path)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

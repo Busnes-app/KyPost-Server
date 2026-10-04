@@ -975,7 +975,7 @@ const deviceColumns = `device_id, platform, push_token, device_name, app_version
 	enrollment_public_key, enrollment_key_at, encryption_enrolled, p256dh, auth, enrollment_envelope_versions,
 	enrolled_version, enrolled_generation, enrolled_fingerprint`
 
-func scanDevice(rows *sql.Rows) (NativeDevice, error) {
+func scanDevice(rows interface{ Scan(...any) error }) (NativeDevice, error) {
 	var d NativeDevice
 	var approver, enrolled int
 	var versions string

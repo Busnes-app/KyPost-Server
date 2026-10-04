@@ -8,6 +8,12 @@ webmail handoff path and refresh mailbox rows after replacement; classification
 has already occurred before encryption. The opt-in API and recovery contract are
 in [E2E_PGP.md](E2E_PGP.md#incoming-mail-encryption-opt-in).
 
+Treat `messageId` as an opaque string and URL-encode it unchanged in webmail
+links. Native IDs include a restore generation; never strip their prefix or
+convert them to a numeric UID. Old-generation links require a fresh mailbox
+sync after recovery. This does not release a restored server's hold. See the
+[message-reference contract](PLATFORM_BASELINE.md#7-inbox-listing-and-message-bodies).
+
 Every client that is not the browser has the same hole: a `client`-custody
 account's private key lives only in webmail, so an encrypted message cannot be
 read in the native app. All of them degrade the same way — mark the row, and
@@ -187,3 +193,12 @@ Each client, with a **client-custody** account:
    the UI reports a failure rather than doing nothing.
 4. Open a message containing an ordinary link. Confirm it goes out through the
    sender-link path, not the webmail path.
+
+## Native outbox response handling
+
+Native primary compose/client-PGP replies add `outboxId`; existing `ok`,
+`sentSaved` and `warning` semantics remain. Do not turn a 503 or durable queue
+entry into "sent". Inspect `GET /api/mail/outbox/{id}` for the acting owner's
+state before resubmitting; `submitting`/`uncertain` need delivery evidence, and
+pending Sent filing does not justify sending again. Native pickup/alias/system
+routes remain gated. See [NATIVE_OUTBOX.md](NATIVE_OUTBOX.md).

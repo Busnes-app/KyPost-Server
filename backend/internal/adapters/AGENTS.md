@@ -10,6 +10,8 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 
 ## Local Contracts
 
+- `imap.MessageReference` / `ResolveMessageReference` translate only at wire boundaries through the native generation capability. Keep canonical numeric internal IDs; reject stale/foreign/bare native references before lookup/mutation. Missing native capability fails closed; legacy IMAP behavior stays unchanged.
+
 - `imap.MailSourceIdentity` identifies external IMAP mode or native immutable owner/database namespace. Account state/cache admission precedes API/daemon mail operations; it does not detect changes between external IMAP endpoints or UIDVALIDITY.
 
 ### `imap/` — IMAP Client

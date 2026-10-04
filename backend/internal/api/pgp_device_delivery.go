@@ -126,12 +126,8 @@ func (s *Server) writeGenerationChanged(w http.ResponseWriter, userID, msg strin
 // enrolled at that generation: a device holding a retired ring cannot send
 // until it re-enrolls, which is what makes clearing a slot mean something.
 // Legacy accounts have no generation and are not gated.
-func (s *Server) requireCurrentGeneration(w http.ResponseWriter, ac AuthContext, asserted *uint64) bool {
-	u, err := s.users.Get(ac.UserID)
-	if err != nil {
-		http.Error(w, "user unavailable", http.StatusInternalServerError)
-		return false
-	}
+// The same preflight snapshot must also stamp durable native intent.
+func (s *Server) requireCurrentGeneration(w http.ResponseWriter, ac AuthContext, asserted *uint64, u users.User) bool {
 	if u.PGPKeyring == nil {
 		return true
 	}

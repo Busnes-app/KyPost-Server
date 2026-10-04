@@ -168,14 +168,19 @@ func TestNativeMailRelayKySignOnRequiresBoundStepUp(t *testing.T) {
 	session.SSO = sso.SessionIdentity{Issuer: srv.ssoStore.Load().IssuerURL, Subject: "relay-admin-sub"}
 	srv.sessions[token] = session
 	srv.sessMu.Unlock()
-	req := httptest.NewRequest("PUT", "/api/admin/mail-relay", strings.NewReader(`{"host":"smtp.example.test","smtpUsername":"login","smtpPassword":"secret"}`))
-	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-CSRF-Token", csrf)
-	w := httptest.NewRecorder()
-	srv.routes().ServeHTTP(w, req)
-	challengeFrom(t, w)
-	if _, err := os.Stat(filepath.Join(srv.configDir, "native-relay.json")); !os.IsNotExist(err) {
-		t.Fatal("step-up refusal wrote relay", err)
+	for _, endpoint := range []struct{ method, path, body string }{
+		{"PUT", "/api/admin/mail-relay", `{"host":"smtp.example.test","smtpUsername":"login","smtpPassword":"secret"}`},
+		{"POST", "/api/admin/mail-relay/test", `{"expectedGeneration":"12345678-1234-4234-8234-123456789abc"}`},
+	} {
+		req := httptest.NewRequest(endpoint.method, endpoint.path, strings.NewReader(endpoint.body))
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", csrf)
+		w := httptest.NewRecorder()
+		srv.routes().ServeHTTP(w, req)
+		challengeFrom(t, w)
+		if _, err := os.Stat(filepath.Join(srv.configDir, "native-relay.json")); !os.IsNotExist(err) {
+			t.Fatal("step-up refusal wrote relay", err)
+		}
 	}
 }

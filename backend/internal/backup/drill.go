@@ -12,6 +12,8 @@ import (
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
 func (s *Service) Drill(ctx context.Context) (*recoveryclient.DrillResult, error) {
@@ -61,6 +63,15 @@ func drillChecks(dir string, opened capsule.Manifest) []recoveryclient.Check {
 		}
 		if snapshotDatabase(filepath.Base(file.Path)) {
 			check("sqlite:"+file.Path, integrityOK(filepath.Join(dir, file.Path)))
+		}
+		if filepath.Base(file.Path) == "mailbox.db" {
+			relay, _, _ := mailmsg.ReadDomainRelay(filepath.Join(dir, "config/native-relay.json"), filepath.Join(dir, "private/native-relay.key"))
+			key, _ := cryptutil.LoadKey(filepath.Join(dir, "private/native-relay.key"))
+			has, err := mailbox.ValidateOutboundSnapshot(context.Background(), filepath.Join(dir, file.Path), key, relay)
+			check("outbox:"+file.Path, err == nil)
+			if has {
+				check("recipe:outbox", recipe["outbox"] == "encrypted-jobs-claims-and-sent")
+			}
 		}
 		if file.Path == "config/native-relay.json" {
 			check("recipe:relay", recipe["relay"] == "domain-credentials-and-authority")
