@@ -358,6 +358,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: private data roots and real entrypoint
+        run: python3 scripts/check-private-roots.py kypost-server:ci
+
       - name: supervisor drains separate groups serially
         run: docker run --rm --network none --user kypost --entrypoint python3 kypost-server:ci /opt/kypost/scripts/check-supervisor-shutdown.py --runtime-only
 

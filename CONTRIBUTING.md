@@ -169,7 +169,7 @@ if a job is genuinely flaky, that is a bug to fix in the job.
 | `ci-frontend` | `npm audit --omit=dev --audit-level=low` (blocking), `tsc --noEmit`, `vitest`, `vite build` |
 | `ci-relay` | Typecheck both relay Workers, `node --test` on the relay behaviour suites |
 | `ci-scripts` | Shell syntax, the `update-host` and model-installer self-checks, `compose config`, the cumulative Supervisor shutdown budget, and the workflow shape assertions that keep the release and `:main` publish gates from being quietly deleted |
-| `ci-docker` | `docker build`, real Supervisor serial-drain regression, container reaches `healthy`, and the entrypoint still refuses a non-loopback cleartext bind |
+| `ci-docker` | `docker build`, private-root real-entrypoint regression, real Supervisor serial-drain regression, container reaches `healthy`, and the entrypoint still refuses a non-loopback cleartext bind |
 
 Notes that trip people up:
 
@@ -186,7 +186,7 @@ Notes that trip people up:
   job to `ci.yml` without adding its name to the `required` list in
   `publish-main.yml` and `release-image.yml` leaves it outside both gates.
 
-- **`ci-docker` checks startup, shutdown and the bind guard.** The scaled
+- **`ci-docker` checks startup, private roots, shutdown and the bind guard.** The scaled
   Supervisor check proves both service drains finish; the smoke tests prove the
   container starts and refuses `0.0.0.0` without TLS.
   A red build is never fixed by loosening the entrypoint.

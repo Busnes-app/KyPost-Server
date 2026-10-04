@@ -376,6 +376,8 @@ directories.
 - `5866`: web UI and backend API
 - `11434`: Ollama API (not exposed by default in `docker-compose.yml`)
 
+Container startup sets config, private-key and state volume roots to owner-only `0700` before bootstrap and services; host inspection or backups require the volume owner or appropriate operator privileges. Existing descendant permissions are retained.
+
 Mail-domain setup adds no environment variables. Its public challenge and issuer are stored owner-only in `$CONFIG_DIR/native-domain.json`; preserve it with `users.json`, `sso-lifecycle.json`, `native-provisioning.json` and mailbox/state data during backup or rollback. Native issuer/source fields remain private in `users.json`.
 
 ## Environment Variables

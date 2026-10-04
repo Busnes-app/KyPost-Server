@@ -14,7 +14,7 @@ All files under `scripts/`.
 
 `entrypoint.sh` (runs `bootstrap.sh` synchronously, then chowns, then execs) → `supervisord` → `api`, `daemon`, `ollama`, `ollama-model` (parallel, priority 10)
 
-- `entrypoint.sh`: creates required directories, runs `bootstrap.sh` inline (as root, before the privilege-dropping `chown`), chowns `/kypost` to `kypost`, then execs `supervisord`. Running `bootstrap.sh` as a blocking step here — rather than as its own supervisord program — makes "credentials exist before any service starts" a hard guarantee instead of one relying on supervisord's priority-based ordering.
+- `entrypoint.sh`: creates required directories, sets config/private/state roots to `0700`, runs `bootstrap.sh` inline (as root, before the privilege-dropping `chown`), chowns `/kypost` to `kypost`, then execs `supervisord`. Running `bootstrap.sh` as a blocking step here — rather than as its own supervisord program — makes "credentials exist before any service starts" a hard guarantee instead of one relying on supervisord's priority-based ordering.
 - `bootstrap.sh`: execs `kypost-server --mode bootstrap-admin` (implemented in `backend/internal/app/bootstrap.go`). On a fresh install — neither `users.json` nor `admin.env` present — it writes Argon2id-hashed admin credentials to `admin.env`, which the backend imports into `users.json` on first start; a no-op when either file exists, so it is safe across restarts. A generated password is written to `first-run-password.txt` (mode `600`) in `CONFIG_DIR`, never to stdout; a password supplied via `BOOTSTRAP_ADMIN_PASS` writes no file. The hashing lives in the Go binary rather than inline `node -e`, which is what let the runtime image drop from `node:slim` to `debian:stable-slim` — no runtime script here may reintroduce a `node` dependency.
 - `crash-exit.sh`: supervisord event listener on `PROCESS_STATE_FATAL`. Sends `SIGTERM` to PID 1 so the container exits and `restart: unless-stopped` restarts it. It is the second half of the bounded-`startretries` design and is not optional: supervisord's default behaviour on FATAL is to keep running in front of a dead service, which leaves PID 1 healthy and the container "running" while nothing is served, and Docker restart policies react only to a container exiting. It speaks the supervisor event protocol on stdin/stdout, so it must print nothing to stdout but `READY` and `RESULT`.
 - `start-ollama.sh`: launches Ollama daemon on port 11434
@@ -45,6 +45,8 @@ All files under `scripts/`.
 - Do not raise `startretries` to "fix" a crash loop, and do not remove `crashexit`. Each alone reintroduces one of the two failure modes it exists to close: an invisible hot loop, or an invisible death. A program that genuinely cannot start should take the container down where an operator and an orchestrator can both see it
 
 ## Verification
+
+- `python3 scripts/check-private-roots.py <built-image>` checks image root permissions and boots the real entrypoint over disposable permissive Docker data volumes. It verifies unprivileged ownership, private bootstrap metadata, protected executable assets and preservation of existing bytes/descendant modes, with networking disabled.
 
 - `python3 scripts/check-supervisor-shutdown.py --contract-only` verifies the Compose grace covers cumulative Supervisor stop waits plus teardown. `--runtime-only` runs two disposable draining workers against the image's installed Supervisor and proves separate same-priority groups stop serially; CI runs it unprivileged with networking disabled.
 

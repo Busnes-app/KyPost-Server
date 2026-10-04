@@ -21,7 +21,9 @@ by [receiver qualification](RECEIVING_GATEWAY_ASSESSMENT.md).
    configuration.
 3. Run all commands below as the same unprivileged OS user and in the same
    filesystem/environment as KyPost, with absolute `CONFIG_DIR` and `STATE_DIR`.
-   Both roots must already exist with owner-only permissions. Initially leave
+   Both roots must already exist with owner-only permissions. The container image
+   and entrypoint enforce `0700` on config/private/state roots, including mounted
+   volumes; a host installation must arrange the same permissions itself. Initially leave
    the daemon receiving flag false. Run
    `KYPOST_NATIVE_RECEIVING=true kypost-server receiving init` explicitly once
    after domain setup, then configure `KYPOST_NATIVE_RECEIVING=true` for the
