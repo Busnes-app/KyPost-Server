@@ -6,19 +6,26 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/http/httptest"
 	"net/smtp"
 	"net/textproto"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -82,6 +89,8 @@ func TestNativeReceivingMaddyRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = dns.Close() })
+	var dnsProof atomic.Bool
+	dnsProof.Store(true)
 	go func() {
 		buffer := make([]byte, 4096)
 		for {
@@ -95,7 +104,7 @@ func TestNativeReceivingMaddyRuntime(t *testing.T) {
 			}
 			response := dnsmessage.Message{Header: dnsmessage.Header{ID: query.ID, Response: true, Authoritative: true, RecursionDesired: query.RecursionDesired, RecursionAvailable: true}, Questions: query.Questions}
 			for _, question := range query.Questions {
-				if question.Type == dnsmessage.TypeTXT && question.Name.String() == domain.RecordName()+"." {
+				if dnsProof.Load() && question.Type == dnsmessage.TypeTXT && question.Name.String() == domain.RecordName()+"." {
 					response.Answers = append(response.Answers, dnsmessage.Resource{Header: dnsmessage.ResourceHeader{Name: question.Name, Type: dnsmessage.TypeTXT, Class: dnsmessage.ClassINET, TTL: 1}, Body: &dnsmessage.TXTResource{TXT: []string{domain.RecordValue()}}})
 				}
 			}
@@ -124,29 +133,24 @@ func TestNativeReceivingMaddyRuntime(t *testing.T) {
 	address := listener.Addr().String()
 	_ = listener.Close()
 	root := t.TempDir()
-	config := fmt.Sprintf(`hostname receiver.example.test
-state_dir %s/state
-runtime_dir %s/run
-tls off
-log stderr
-smtp tcp://%s {
-    max_message_size 4M
-    check {
-        command %s -test.run=^TestNativeReceivingCommandHelper$ -- receiving bind "{msg_id}" "{sender}" "{address}" {
-            run_on rcpt
-            code 1 reject 451 4.3.0 "Receiving storage unavailable"
-            code 3 reject 550 5.1.1 "Recipient unavailable"
-        }
-        command %s -test.run=^TestNativeReceivingCommandHelper$ -- receiving accept "{msg_id}" "{sender}" {
-            run_on body
-            code 1 reject 451 4.3.0 "Receiving storage unavailable"
-            code 3 reject 451 4.3.0 "Routing unavailable"
-        }
-    }
-    destination example.test { deliver_to dummy }
-    default_destination { reject }
-}
-`, root, root, address, strconv.Quote(os.Args[0]), strconv.Quote(os.Args[0]))
+	certPath, keyPath, leaf := receivingTestCertificate(t, root)
+	generator := exec.Command(os.Args[0], "-test.run=^TestNativeReceivingCommandHelper$", "--", "receiving", "config", address, leaf.DNSNames[0], certPath, keyPath)
+	var diagnostics bytes.Buffer
+	generator.Stderr = &diagnostics
+	generated, err := generator.Output()
+	if err != nil {
+		t.Fatalf("configuration generation: %v %s", err, diagnostics.Bytes())
+	}
+	dnsProof.Store(false)
+	refusedGenerator := exec.Command(os.Args[0], "-test.run=^TestNativeReceivingCommandHelper$", "--", "receiving", "config", address, leaf.DNSNames[0], certPath, keyPath)
+	refused, err := refusedGenerator.Output()
+	if err == nil || len(refused) != 0 {
+		t.Fatal("missing live DNS proof produced configuration", err, string(refused))
+	}
+	dnsProof.Store(true)
+	// Only the test binary's dispatch prefix changes; the production profile is
+	// generated through Run with fresh DNS and existing-only storage preflight.
+	config := strings.ReplaceAll(string(generated), strconv.Quote(os.Args[0])+" receiving", strconv.Quote(os.Args[0])+" -test.run=^TestNativeReceivingCommandHelper$ -- receiving")
 	configPath := filepath.Join(root, "maddy.conf")
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -162,7 +166,12 @@ smtp tcp://%s {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
 	until := time.Now().Add(10 * time.Second)
 	var client *smtp.Client
 	for time.Now().Before(until) {
@@ -177,12 +186,58 @@ smtp tcp://%s {
 		t.Fatalf("receiver startup: %v %s", err, output)
 	}
 	defer client.Close()
+	if err := client.Mail(""); err == nil {
+		if err := client.Rcpt("one@example.test"); err == nil {
+			t.Fatal("plaintext recipient was admitted")
+		}
+	}
+	rowsBeforeTLS, err := r.holding.List(context.Background(), receivingGateway, 0, 100)
+	if err != nil || len(rowsBeforeTLS) != 0 {
+		t.Fatal("plaintext attempted delivery created bindings", rowsBeforeTLS, err)
+	}
+	if err := client.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
+	if err := client.StartTLS(&tls.Config{RootCAs: roots, ServerName: leaf.DNSNames[0], MinVersion: tls.VersionTLS12}); err != nil {
+		t.Fatal(err)
+	}
 	if err := client.Mail(""); err != nil {
 		t.Fatal(err)
 	}
 	var rejection *textproto.Error
+	// Limits apply to active MAIL transactions, including transactions that
+	// have not bound a recipient. A third transaction from this IP must refuse.
+	newTLSClient := func() *smtp.Client {
+		t.Helper()
+		c, err := smtp.Dial(address)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = c.Close() })
+		if err := c.StartTLS(&tls.Config{RootCAs: roots, ServerName: leaf.DNSNames[0], MinVersion: tls.VersionTLS12}); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	second, third := newTLSClient(), newTLSClient()
+	if err := second.Mail(""); err != nil {
+		t.Fatal(err)
+	}
+	if err := third.Mail(""); !errors.As(err, &rejection) || rejection.Code < 400 || rejection.Code >= 500 {
+		t.Fatalf("third concurrent IP transaction must be temporarily refused: %v", err)
+	}
+	if err := second.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	_ = second.Close()
+	_ = third.Close()
 	if err := client.Rcpt("unknown@example.test"); !errors.As(err, &rejection) || rejection.Code != 550 {
 		t.Fatalf("unknown recipient must be permanently refused: %v", err)
+	}
+	if err := client.Rcpt("relay@outside.test"); !errors.As(err, &rejection) || rejection.Code != 550 {
+		t.Fatalf("external relay recipient must be refused: %v", err)
 	}
 	for _, recipient := range []string{"one@example.test", "two@example.test"} {
 		if err := client.Rcpt(recipient); err != nil {
@@ -210,6 +265,36 @@ smtp tcp://%s {
 	delivery, err := r.holding.Get(ctx, receivingGateway, rows[0].ID)
 	if err != nil || len(delivery.Bindings) != 2 || !bytes.HasSuffix(delivery.Raw, wire) {
 		t.Fatalf("envelope/raw mismatch after actual helper: bindings=%d error=%v", len(delivery.Bindings), err)
+	}
+	// The configured receiver can die after SMTP acceptance without owning the
+	// only copy. Restart it before importing the same durable obligation.
+	_ = client.Close()
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	var killed *exec.ExitError
+	if err := cmd.Wait(); !errors.As(err, &killed) || killed.ProcessState.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
+		t.Fatalf("receiver did not terminate by SIGKILL: %v", err)
+	}
+	cmd = exec.Command(binary, "--config", configPath, "run")
+	cmd.Stdout, cmd.Stderr = log, log
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	until = time.Now().Add(10 * time.Second)
+	for {
+		client, err = smtp.Dial(address)
+		if err == nil {
+			break
+		}
+		if time.Now().After(until) {
+			t.Fatal("receiver did not restart", err)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	defer client.Close()
+	if err := client.StartTLS(&tls.Config{RootCAs: roots, ServerName: leaf.DNSNames[0], MinVersion: tls.VersionTLS12}); err != nil {
+		t.Fatal(err)
 	}
 	// Test-only physical pressure: extend the already-open shared-memory file
 	// sparsely, preserving SQLite's live index and every accepted payload. This
@@ -288,4 +373,46 @@ smtp tcp://%s {
 			t.Fatalf("native owner did not receive exact accepted MIME: %v", err)
 		}
 	}
+	_ = client.Close()
+	rateClient := newTLSClient()
+	rateRefused := false
+	for range 11 {
+		err := rateClient.Mail("")
+		if err != nil {
+			if !errors.As(err, &rejection) || rejection.Code < 400 || rejection.Code >= 500 {
+				t.Fatalf("burst exhaustion must be temporary refusal: %v", err)
+			}
+			rateRefused = true
+			break
+		}
+		if err := rateClient.Reset(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !rateRefused {
+		t.Fatal("configured per-IP burst limit never refused")
+	}
+}
+
+func receivingTestCertificate(t *testing.T, root string) (string, string, *x509.Certificate) {
+	t.Helper()
+	server := httptest.NewTLSServer(nil)
+	pair := server.TLS.Certificates[0]
+	server.Close()
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil || len(leaf.DNSNames) == 0 {
+		t.Fatal("test certificate lacks hostname", err)
+	}
+	key, err := x509.MarshalPKCS8PrivateKey(pair.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath, keyPath := filepath.Join(root, "cert.pem"), filepath.Join(root, "key.pem")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: pair.Certificate[0]}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return certPath, keyPath, leaf
 }

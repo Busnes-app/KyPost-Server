@@ -32,6 +32,9 @@ import (
 // Run dispatches the process mode and blocks until shutdown for long-running modes.
 func Run(args []string) error {
 	if len(args) > 0 && args[0] == "receiving" {
+		if len(args) > 1 && args[1] == "config" {
+			return runReceivingConfig(args[2:], os.Stdout)
+		}
 		return runReceivingCommand(args[1:], os.Stdin)
 	}
 	if name, rest, ok := backupSubcommand(args); ok {
