@@ -28,7 +28,9 @@ authority without a fresh exact DNS match. A match gives at most five minutes
 of evidence; the first match is also capped by initial challenge expiry. Every allocation performs a fresh lookup; stored positive status alone
 never authorizes it. Lookup timeout is five seconds; contention has a 30-second
 context. DNS failure, expiry and in-flight challenge rotation fail closed.
-System DNS does not prove DNSSEC authenticity or instantaneous revocation;
+Queries use an absolute DNS name; resolver search suffixes cannot stand in for
+the configured domain. Domains whose challenge name exceeds DNS name limits
+are refused at configuration. System DNS does not prove DNSSEC authenticity or instantaneous revocation;
 resolver caching remains a trust dependency. WKD challenges have a separate
 purpose and never authorize mail-domain ownership.
 

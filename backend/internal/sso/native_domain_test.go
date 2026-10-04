@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,7 +18,7 @@ func provenNativeDomain(t *testing.T, config string) *NativeDomainStore {
 	}
 	s.SetLookupForTest(func(_ context.Context, name string) ([]string, error) {
 		d, e := s.Read()
-		if name != d.RecordName() {
+		if name != d.RecordName()+"." {
 			t.Errorf("wrong purpose %q", name)
 		}
 		return []string{d.RecordValue()}, e
@@ -114,5 +115,25 @@ func TestNativeDomainEstablishedProfileRechecksWithoutDailyDNSChanges(t *testing
 	rotated, err := s.Configure(context.Background(), d.Domain, d.Issuer)
 	if err != nil || rotated.Established || rotated.Token == token {
 		t.Fatal("rotation kept authority", rotated, err)
+	}
+}
+
+func TestNativeDomainRefusesOversizedChallengeName(t *testing.T) {
+	prefix := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "."
+	s := NewNativeDomainStore(t.TempDir())
+	oversized := prefix + strings.Repeat("d", 50)
+	if _, err := s.Configure(context.Background(), oversized, nativeIssuer); !errors.Is(err, ErrNativeDomain) {
+		t.Fatal("oversized first claim accepted", err)
+	}
+	d, err := s.Configure(context.Background(), prefix+strings.Repeat("d", 48), nativeIssuer)
+	if err != nil || len(d.RecordName()) != 253 {
+		t.Fatal("valid boundary refused", d, err)
+	}
+	d.Domain = oversized
+	if err = fsutil.PersistJSONFile(s.path, d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Read(); !errors.Is(err, ErrNativeDomain) {
+		t.Fatal("oversized restored profile accepted", err)
 	}
 }

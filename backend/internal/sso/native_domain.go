@@ -61,7 +61,7 @@ func (s *NativeDomainStore) Read() (NativeDomain, error) {
 	present := false
 	err := fsutil.LoadJSONFile(s.path, func(v NativeDomain) { d = v; present = true }, nil)
 	token, tokenErr := hex.DecodeString(d.Token)
-	if err == nil && present && (tokenErr != nil || len(token) != 32 || d.VerifiedUntil < 0 || !d.Established && d.VerifiedUntil > 0 || !nativeDomain(d.Domain) || !directoryIdentifier(d.Issuer) || len(d.Token) != 64 || d.ExpiresAt <= 0) {
+	if err == nil && present && (tokenErr != nil || len(token) != 32 || d.VerifiedUntil < 0 || !d.Established && d.VerifiedUntil > 0 || !nativeDomain(d.Domain) || len(d.RecordName()) > 253 || !directoryIdentifier(d.Issuer) || len(d.Token) != 64 || d.ExpiresAt <= 0) {
 		err = ErrNativeDomain
 	}
 	return d, err
@@ -69,7 +69,7 @@ func (s *NativeDomainStore) Read() (NativeDomain, error) {
 func (s *NativeDomainStore) Configure(ctx context.Context, domain, issuer string) (NativeDomain, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if !nativeDomain(domain) || !directoryIdentifier(issuer) || strings.HasSuffix(issuer, "/") {
+	if !nativeDomain(domain) || len("_kypost-mail."+domain) > 253 || !directoryIdentifier(issuer) || strings.HasSuffix(issuer, "/") {
 		return NativeDomain{}, ErrNativeDomain
 	}
 	release, err := fsutil.LockFileContext(ctx, s.path)
@@ -107,7 +107,7 @@ func (s *NativeDomainStore) Verify(ctx context.Context) (NativeDomain, error) {
 	}
 	dnsCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	values, lookupErr := s.lookup(dnsCtx, d.RecordName())
+	values, lookupErr := s.lookup(dnsCtx, d.RecordName()+".")
 	match := false
 	if lookupErr == nil {
 		for _, v := range values {

@@ -57,7 +57,7 @@ func TestNativeMailDomainAdminProofRoutes(t *testing.T) {
 	}
 	srv.nativeDomains.SetLookupForTest(func(_ context.Context, name string) ([]string, error) {
 		d, err := srv.nativeDomains.Read()
-		if name != d.RecordName() {
+		if name != d.RecordName()+"." {
 			t.Fatal(name)
 		}
 		return []string{d.RecordValue()}, err
