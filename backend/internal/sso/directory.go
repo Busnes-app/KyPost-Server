@@ -186,6 +186,10 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 		if err != nil {
 			return err
 		}
+		key := directoryKey(issuer, subject)
+		if floor, held := f.RecoveryFloors[key]; held && revision <= floor {
+			return ErrDirectoryConflict
+		}
 		now := time.Now().Unix()
 		for id, e := range f.Events {
 			if e.ExpiresAt < now {
@@ -198,7 +202,6 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 			}
 			return nil
 		}
-		key := directoryKey(issuer, subject)
 		prior := f.Directory[key]
 		if revision < prior.Revision || (revision == prior.Revision && digest != prior.Digest) {
 			return ErrDirectoryConflict
@@ -213,6 +216,12 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 				state.RevokedBefore = max(prior.RevokedBefore, now)
 			}
 			f.Directory[key] = state
+			if f.RecoveryReceipt != nil && f.RecoveryReceipt.Challenge.Issuer == issuer {
+				f.RecoveryReceipt = nil
+			}
+			if f.RecoveryChallenge != nil && f.RecoveryChallenge.Issuer == issuer {
+				f.RecoveryChallenge = nil
+			}
 			status = DirectoryApplied
 		}
 		f.Events[ev.ID] = directoryEvent{Issuer: issuer, Digest: digest, ExpiresAt: ev.At.Add(syncauth.DefaultWindow).Unix()}

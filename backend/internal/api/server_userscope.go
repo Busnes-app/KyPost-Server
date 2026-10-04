@@ -287,6 +287,31 @@ func (s *Server) userStore(userID string) (*state.Store, error) {
 	})
 }
 
+// Only credential deletion/rotation may open held native state. Do not cache it
+// or use this opener for authentication, enrollment or correspondence access.
+func (s *Server) withUserStoreForRevocation(userID string, action func(*state.Store) error) error {
+	u, err := s.users.Get(userID)
+	if err != nil {
+		return err
+	}
+	if u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" {
+		store, err := s.userStore(userID)
+		if err != nil {
+			return err
+		}
+		return action(store)
+	}
+	if err := s.ssoLifecycle.ValidateNativeUserOwnership(s.stateDir, u); err != nil {
+		return err
+	}
+	store, err := state.OpenNative(s.userStateDir(userID), u.NativeMailboxSource)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return action(store)
+}
+
 // storeFor resolves the calling user's state store from the request's
 // AuthContext (requires the handler to be wrapped in withAuth).
 func (s *Server) storeFor(r *http.Request) (*state.Store, error) {
@@ -940,15 +965,20 @@ func (s *Server) revokeAllUserCredentialsExcept(u users.User, keepSessionToken s
 	// their Sub stops resolving to any account. The stale index entry has to go
 	// with it — subIndex is a lazily-rebuilt cache, so leaving the old ID mapped
 	// would keep answering for exactly the tokens this is meant to invalidate.
-	if store, err := s.userStore(u.ID); err != nil {
-		errs = append(errs, fmt.Errorf("open state store to rotate subscriber id: %w", err))
-	} else if previous, err := store.RotateSubscriberID(); err != nil {
-		s.logger.Error("failed to rotate subscriber id", "user_id", u.ID, "error", err.Error())
-		errs = append(errs, fmt.Errorf("rotate subscriber id: %w", err))
-	} else if previous != "" {
-		s.userMu.Lock()
-		delete(s.subIndex, previous)
-		s.userMu.Unlock()
+	if err := s.withUserStoreForRevocation(u.ID, func(store *state.Store) error {
+		previous, err := store.RotateSubscriberID()
+		if err != nil {
+			s.logger.Error("failed to rotate subscriber id", "user_id", u.ID, "error", err.Error())
+			return fmt.Errorf("rotate subscriber id: %w", err)
+		}
+		if previous != "" {
+			s.userMu.Lock()
+			delete(s.subIndex, previous)
+			s.userMu.Unlock()
+		}
+		return nil
+	}); err != nil {
+		errs = append(errs, fmt.Errorf("revoke subscriber id: %w", err))
 	}
 
 	s.davCredentials.invalidateUser(u.Username)
@@ -962,23 +992,21 @@ func (s *Server) revokeAllUserCredentialsExcept(u users.User, keepSessionToken s
 // errors are logged, not fatal, so revocation of the primary credential still
 // succeeds.
 func (s *Server) revokeUserDevices(userID string) error {
-	store, err := s.userStore(userID)
-	if err != nil {
-		return fmt.Errorf("open device store: %w", err)
-	}
-	devices, err := store.ListNativeDevicesStrict()
-	if err != nil {
-		return err
-	}
-	for _, dev := range devices {
-		if _, err := store.RemoveNativeDevice(dev.DeviceID); err != nil {
-			return fmt.Errorf("remove native device %q: %w", dev.DeviceID, err)
+	return s.withUserStoreForRevocation(userID, func(store *state.Store) error {
+		devices, err := store.ListNativeDevicesStrict()
+		if err != nil {
+			return err
 		}
-		s.userMu.Lock()
-		delete(s.deviceIndex, dev.DeviceID)
-		s.userMu.Unlock()
-	}
-	return nil
+		for _, dev := range devices {
+			if _, err := store.RemoveNativeDevice(dev.DeviceID); err != nil {
+				return fmt.Errorf("remove native device %q: %w", dev.DeviceID, err)
+			}
+			s.userMu.Lock()
+			delete(s.deviceIndex, dev.DeviceID)
+			s.userMu.Unlock()
+		}
+		return nil
+	})
 }
 
 // rescanDeviceIndex rebuilds deviceID -> userID across every per-user store.

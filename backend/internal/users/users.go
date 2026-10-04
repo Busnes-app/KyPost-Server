@@ -46,7 +46,8 @@ const (
 // User is a single account record. Files/directories owned by a user are
 // always keyed by ID, never Username, so a rename never requires moving data.
 type User struct {
-	// NativeSendEpoch fences durable sends across local access/credential changes.
+	// NativeSendEpoch fences local access/credential changes for all accounts.
+	// Used by native sends and administrative recovery; retained persisted field name.
 	// Private authority metadata; never included in Public().
 	NativeSendEpoch    uint64           `json:"nativeSendEpoch,omitempty"`
 	PGPKeyring         *PGPKeyringState `json:"pgpKeyring,omitempty"`
