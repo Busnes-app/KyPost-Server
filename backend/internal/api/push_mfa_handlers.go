@@ -363,7 +363,7 @@ func (s *Server) handlePushFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := s.users.Get(userID)
-	if err != nil || !u.Active {
+	if err != nil || !u.Active || s.requireAccountRestoreReleased(u) != nil {
 		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
 		return
 	}
