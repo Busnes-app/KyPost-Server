@@ -168,8 +168,8 @@ if a job is genuinely flaky, that is a bug to fix in the job.
 | `ci-backend-other` | Same lint gates, `go test -race` on every other backend package |
 | `ci-frontend` | `npm audit --omit=dev --audit-level=low` (blocking), `tsc --noEmit`, `vitest`, `vite build` |
 | `ci-relay` | Typecheck both relay Workers, `node --test` on the relay behaviour suites |
-| `ci-scripts` | Shell syntax, the `update-host` and model-installer self-checks, `compose config`, and the workflow shape assertions that keep the release and `:main` publish gates from being quietly deleted |
-| `ci-docker` | `docker build`, container reaches `healthy`, and the entrypoint still refuses a non-loopback cleartext bind |
+| `ci-scripts` | Shell syntax, the `update-host` and model-installer self-checks, `compose config`, the cumulative Supervisor shutdown budget, and the workflow shape assertions that keep the release and `:main` publish gates from being quietly deleted |
+| `ci-docker` | `docker build`, real Supervisor serial-drain regression, container reaches `healthy`, and the entrypoint still refuses a non-loopback cleartext bind |
 
 Notes that trip people up:
 
@@ -186,8 +186,9 @@ Notes that trip people up:
   job to `ci.yml` without adding its name to the `required` list in
   `publish-main.yml` and `release-image.yml` leaves it outside both gates.
 
-- **`ci-docker` has two halves and both are gates.** One proves the container
-  starts; the other proves the bind guard still refuses `0.0.0.0` without TLS.
+- **`ci-docker` checks startup, shutdown and the bind guard.** The scaled
+  Supervisor check proves both service drains finish; the smoke tests prove the
+  container starts and refuses `0.0.0.0` without TLS.
   A red build is never fixed by loosening the entrypoint.
 - **New logic ships with tests.** Unit plus integration for new behaviour, a
   regression test for anything high-impact. Security-sensitive changes need

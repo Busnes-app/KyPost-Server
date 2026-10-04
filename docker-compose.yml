@@ -132,9 +132,11 @@ services:
       - ${OLLAMA_MODELS_HOST_DIR:-./share/ollama/models}:/kypost/ollama-models
     restart: unless-stopped
 
-    # Active backups drain for up to 16 minutes. This exceeds supervisor's
-    # 1000s stopwaitsecs plus teardown. Idle services still stop promptly.
-    stop_grace_period: 17m
+    # Supervisor stops separate program groups sequentially, even at equal
+    # priority: API and daemon can EACH need their 1000s backup drain. Cover
+    # their cumulative waits plus the other programs and teardown. Idle
+    # services still stop promptly; this is a ceiling, not a mandatory wait.
+    stop_grace_period: 36m
 
     # This container runs an LLM in-process with the mail server. Without a
     # cap, the kernel's OOM killer arbitrates between Ollama and the API under
