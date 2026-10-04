@@ -25,6 +25,9 @@ esac
 # volume or bind mount can be mounted over any of them, and `set -e` means a
 # chown against a missing path below would abort the boot.
 mkdir -p /kypost/config /kypost/private /kypost/logs /kypost/state /kypost/ollama-models
+# Bind mounts replace image permissions; protect authority, keys and mail
+# before bootstrap writes credentials or unprivileged services start.
+chmod 0700 /kypost/config /kypost/private /kypost/state
 
 # Runs synchronously (as root, before the chown below) so admin.env exists
 # before any service starts — a hard guarantee that supervisord's

@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Protect container config, private-key and state roots with owner-only permissions at build and before bootstrap on every start, including mounted volumes. Preserve existing mail bytes and descendant modes; qualify the real entrypoint in isolated Docker.
+
 - Allow 36 minutes for container shutdown so Supervisor can finish separate API and daemon backup drains sequentially. Add cumulative-budget and real-Supervisor regression checks; individual backup deadlines remain bounded to 16 minutes.
 
 - Generate a controlled TLS-only Maddy receiving profile from verified domain and existing storage, with certificate/path validation and bounded message/transaction policy. Receiver installation, supervision and public MX remain explicit qualification steps.

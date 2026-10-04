@@ -177,6 +177,7 @@ If `clientIp` is a loopback or bridge address (e.g., `172.17.0.1`), every user s
 
 ### Secret Handling
 
+- **Data roots:** The container sets config, private-key and state roots to `0700` before bootstrap and service startup, including mounted volumes. Existing descendant modes are retained. Host access requires the volume owner or operator privileges; root and Docker administrators remain trusted.
 - **Bootstrap password:** On first start, KyPost writes the generated admin password to `first-run-password.txt` (mode `600`) in the config volume. Read it and delete it immediately. Logs are unrotated by default and readable by anything with Docker socket access—the password is never logged. This holds for both bootstrap paths: the container's `--mode bootstrap-admin` step and a server started directly against an empty config directory. If the file cannot be written, startup fails rather than falling back to printing the password.
 - **IMAP credentials:** Stored encrypted at `/kypost/private/imap-config.key` (master key) and per-user encrypted payloads. The key does not rotate; compromise of the key compromises all encrypted credentials.
 - **TOTP secrets:** Master key at `/kypost/private/totp-secret.key`. Same rotation caveat.
