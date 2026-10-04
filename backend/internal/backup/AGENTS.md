@@ -30,12 +30,16 @@ This package owns payload selection and verification. API/CLI callers own creden
 - Drills serialize with all backup operations, use an opened authenticated manifest, validate its recipe and required files, verify SQLite integrity and decrypt stored IMAP credentials. Client-wrapped PGP stays opaque.
 - Restore is CLI-only, shares on stdin. No running service holds the suite recovery private key. Extract privately; preserve failed staging. Native publication requires an absent Linux target, validated ownership and a persisted state/native-restore-hold.json. Allocation enforces the hold; no release path exists. Future native workers must enforce it.
 
+- After qualified native account/reference/device/CardDAV cleanup, call the lifecycle token fence once before quarantine success. It requires a usable epoch, revalidates exact historical native ownership, atomically raises existing published native directory cutoffs beyond 30-second issuance skew and preserves higher floors and all other authority. Any refusal keeps staging held/unpublished; no hold release or fresh-primary-authentication claim.
+
 ## Work Guidance
 
 - Use library helpers for transport and capsule behavior; adapt product storage rather than copying library implementations.
 - Record an intent before mutations and a completion afterward. If completion auditing fails, state that the action may have happened.
 
 ## Verification
+
+- `TestNativeRestoreRaisesTokenCutoffPreservesDirectory` uses sealed native restore and actual quarantine to check skew-inclusive cutoffs, higher-floor preservation, retry monotonicity, unchanged directory/lifecycle authority and retained holds. API `TestNativeRestoreTokenCutoffBothSignedSignInPaths` isolates the quarantined lifecycle cutoff in real signed browser/device flows while keeping restored data held; post-cutoff controls wait for the real clock. SSO `TestNativeRestoreTokenCutoffRefusesUnsafeInputsAndWriteFailure` checks malformed/public/missing epoch, missing authority, foreign owner and atomic-write refusal; `TestNativeRestoreTokenCutoffSurvivesDirectoryUpdate` checks subsequent authority updates preserve the higher cutoff.
 
 - Native ownership/failed-validation and sealed device/mail preservation tests check valid fresh restore epochs, historical-marker replacement and retry rotation. `TestNativeRestoreFatalEntropyKeepsHold` exercises actual Go random failure in isolated subprocesses and checks fresh/historical holds remain unusable. Hold-write failure preserves staged bytes; ordinary legacy CLI restores remain unheld.
 

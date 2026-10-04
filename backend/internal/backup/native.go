@@ -251,7 +251,7 @@ func fenceRestoredNativeAccounts(dir string) error {
 			return err
 		}
 	}
-	return nil
+	return sso.NewLifecycleStore(filepath.Join(dir, "config")).FenceRestoredNativeTokens(filepath.Join(dir, "state"), doc.Users)
 }
 
 // Revoke notification targets and outstanding stateless pairing tokens together.
