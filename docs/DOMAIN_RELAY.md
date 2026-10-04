@@ -5,7 +5,7 @@ explicit native mode. Saving credentials makes no provider connection;
 `sendingEnabled` reports configured native runtime capability, not DNS/provider
 readiness or recipient delivery. Busnes supplies no relay account or service.
 Server → Mail domain guides domain proof and relay configuration; provider
-readiness probing and full deployment setup remain pending. See the
+delivery qualification and full deployment setup remain pending. A protected saved-profile check verifies TLS and SMTP authentication without sending mail. See the
 [outbox runtime contract](NATIVE_OUTBOX.md) for supported sends and remaining gates.
 
 ## Configure through the admin API
@@ -26,6 +26,32 @@ queued under the old profile; the screen warns and asks for confirmation.
 Inspect owner-scoped outbox status and provider evidence before resubmission.
 There is no supported uncertainty reconciliation/retry button yet.
 
+### Check the saved relay without sending mail
+
+After saving, choose **Check saved relay** and confirm the action. The check
+contacts the displayed saved endpoint using its stored credential; unsaved form
+edits are ignored. The provider can record this login attempt. No MAIL, RCPT or
+DATA commands are sent, and no outbox or Sent record is created.
+
+`POST /api/admin/mail-relay/test` accepts `{expectedGeneration,password}` (or
+`authSecret`; KySignOn uses exact-request step-up). Use the generation returned
+by the relay GET. Success returns `{generation,host,port,tls:true,
+authenticated:true,deliveryTested:false}` with `Cache-Control:no-store`.
+Missing/invalid generation returns 400; changed/missing profile, failed DNS,
+changed issuer/challenge or restore hold returns 409. TLS/AUTH/QUIT failure
+returns 503 without provider response text. Checks are limited to one per
+API process per 30 seconds (the cooldown resets on restart) (429 with Retry-After). Each network check has one
+15-second deadline; the authority/check phase after account confirmation is bounded to 30 seconds.
+
+Fresh issuer-bound DNS and current saved-profile/restore checks run before the
+connection and again after success. Configuration locks are released during
+network I/O. A rotation during the check refuses a positive result. Authority may change after a successful response. Results
+are transient evidence for that generation, not persisted readiness. Success
+does not prove authorized From addresses, provider production access, rate
+limits, recipient acceptance, DKIM/SPF/DMARC, inbox placement or receiving.
+The check is available before native mode activation so configuration can be
+qualified first. It grants no account or sending authority.
+
 ### Controlled domain test
 
 1. Use a dedicated test domain and operator-owned relay account. Preserve prior
@@ -35,7 +61,7 @@ There is no supported uncertainty reconciliation/retry button yet.
    new active identity with an explicit primary address in the proved domain.
    Existing IMAP accounts cannot be adopted; confirm new native mailbox access.
 3. Configure the provider's sender/domain verification and DNS records, then
-   save its relay profile. For AWS SES use the region's SMTP host and **465**
+   save its relay profile and run Check saved relay. For AWS SES use the region's SMTP host and **465**
    with SES SMTP credentials, not AWS access keys. For Cloudflare use
    `smtp.mx.cloudflare.net:465`, username `api_token` and an Email Sending: Edit
    token for an onboarded sending domain. Confirm access and restrictions in
@@ -58,7 +84,7 @@ There is no supported uncertainty reconciliation/retry button yet.
    capacity, abuse protection or accepted-mail recovery. Those remain separate
    activation gates before a public domain cutover.
 
-Rollback the setup UI by reverting its commit; it adds no schema or endpoint.
+Rollback the relay check by reverting its commit; it changes no persistent schema. The saved relay and existing delivery path remain available.
 Do not delete domain/relay files or switch a native account to IMAP to roll back
 mail storage. Preserve accepted mail, queued jobs and matching relay keys.
 

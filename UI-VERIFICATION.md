@@ -42,3 +42,24 @@ No real issuer, DNS proof, relay, recipient or mail delivery was configured.
 Configured/SSO/rotation states are covered by Vitest, not these browser captures;
 no complete accessibility audit is implied. Final frontend qualification:
 926 tests, typecheck, production build and runtime dependency audit passed.
+
+## Saved-relay check — 2026-10-04
+
+Inspected the production build through the T3 collaborative browser on an
+isolated real KyPost server, after actual login and password rotation. The
+saved domain/relay were explicitly synthetic scratch fixtures under .invalid;
+no live KyIdentity, provider credentials or mail was used. Native mode remained
+disabled. The fixture's displayed established flag is not actual DNS evidence.
+
+At 1280×800 the screen displayed the saved endpoint, ignored-unsaved-edits
+notice and credential-gated Check saved relay action. Submitting with the
+current derived credential/CSRF correctly refused absent fresh DNS proof with
+409 before provider connection, cleared credentials and disabled actions until
+reload. Inspected that refusal at 390×844. Document width was within both
+viewports (1265/375 CSS pixels). Browser coverage is configured display and DNS
+refusal; actual TLS/AUTH success, cancellation and authority rotation are
+covered by real local TLS Go tests and UI result tests, not live delivery.
+
+Screenshots remain local artifacts:
+- Desktop: `/home/yoshi/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mutkyoxu-27447601.png`.
+- Mobile refusal: `/home/yoshi/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mutkzjjf-7f837189.png`.

@@ -168,3 +168,45 @@ it("warns before replacing a configured relay and leaves cancelled credentials l
   expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1);
   confirm.mockRestore();
 });
+
+it("checks only the saved generation using derived confirmation and CSRF", async () => {
+  relayResponse = configuredRelay;
+  const result = { generation: configuredRelay.generation, host: configuredRelay.host, port: configuredRelay.port, tls: true, authenticated: true, deliveryTested: false };
+  fetchMock.mockImplementation(async (url, init) => new Response(JSON.stringify(init?.method === "POST" ? result : url === "/api/admin/mail-domain" ? domainResponse : relayResponse)));
+  render(view()); await screen.findByLabelText("TXT name");
+  fill("Account password", "account-secret"); fill("Relay host", "unsaved.example.com");
+  fill("Relay username", "unsaved-login"); fill("Relay password", "unsaved-secret");
+  fireEvent.click(screen.getByRole("button", { name: "Check saved relay" }));
+  await screen.findByText("TLS and SMTP authentication passed for the saved relay. No email was sent; delivery remains untested.");
+  const write = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+  expect(write?.[0]).toBe("/api/admin/mail-relay/test");
+  expect(JSON.parse(String(write?.[1]?.body))).toEqual({ expectedGeneration: configuredRelay.generation, authSecret: "derived-test-secret" });
+  expect(new Headers(write?.[1]?.headers).get("X-CSRF-Token")).toBe("test-csrf");
+  expect(screen.getByLabelText("Relay password").getAttribute("value")).toBe("");
+  expect(screen.getByText(/Provider delivery remains untested/)).toBeDefined();
+});
+
+it("freezes the saved relay check through SSO confirmation and rejects changed status", async () => {
+  relayResponse = configuredRelay;
+  const result = { generation: configuredRelay.generation, host: configuredRelay.host, port: configuredRelay.port, tls: true, authenticated: true, deliveryTested: false };
+  fetchMock.mockImplementation(async (url, init) => new Response(JSON.stringify(init?.method === "POST" ? result : url === "/api/admin/mail-domain" ? domainResponse : relayResponse)));
+  vi.mocked(withSSOStepUp).mockImplementation(async run => { await run({}); relayResponse = { ...configuredRelay, generation: "rotated-profile" }; return run({ "X-Kypost-Step-Up": "test-grant" }); });
+  render(view({ ...admin, ssoSession: true })); await screen.findByLabelText("TXT name");
+  fireEvent.click(screen.getByRole("button", { name: "Check saved relay" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("did not match the saved profile");
+  const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+  expect(writes).toHaveLength(2); expect(writes[0]?.[1]?.body).toBe(writes[1]?.[1]?.body);
+  expect(JSON.parse(String(writes[0]?.[1]?.body))).toEqual({ expectedGeneration: configuredRelay.generation });
+  expect(screen.queryByText(/TLS and SMTP authentication passed/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Save outgoing relay" }).closest("fieldset")?.disabled).toBe(true);
+});
+
+it("refuses a relay check response claiming mail delivery or omitting authentication", async () => {
+  const { readMailRelayCheck } = await import("../../api/nativeMail");
+  const relay = readMailRelay(configuredRelay);
+  const good = { generation: configuredRelay.generation, host: configuredRelay.host, port: configuredRelay.port, tls: true, authenticated: true, deliveryTested: false };
+  expect(() => readMailRelayCheck(good, relay)).not.toThrow();
+  for (const result of [null, {}, { ...good, generation: "other" }, { ...good, host: "other.example" }, { ...good, port: 587 }, { ...good, tls: false }, { ...good, authenticated: false }, { ...good, deliveryTested: true }]) {
+    expect(() => readMailRelayCheck(result, relay)).toThrow();
+  }
+});

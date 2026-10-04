@@ -2,6 +2,7 @@ package mailmsg
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -342,34 +343,41 @@ func smtpSendWithImplicitTLS(host string, port int, username, password, from str
 	if err := validateSMTPEnvelope(from, recipients); err != nil {
 		return err
 	}
-	addr := fmt.Sprintf("%s:%d", host, port)
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+	return withImplicitTLSSMTP(context.Background(), host, port, username, password, timeout, requireAuth, func(client *smtp.Client) error {
+		return writeSMTPMessage(client, from, recipients, msg)
+	})
+}
+
+// Both delivery and the no-mail check use the same certificate and AUTH policy.
+func withImplicitTLSSMTP(ctx context.Context, host string, port int, username, password string, timeout time.Duration, requireAuth bool, action func(*smtp.Client) error) error {
+	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: timeout}, Config: &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, fmt.Sprint(port)))
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-
-	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	deadline := time.Now().Add(timeout)
+	if until, ok := ctx.Deadline(); ok && until.Before(deadline) {
+		deadline = until
+	}
+	if err := conn.SetDeadline(deadline); err != nil {
 		return err
 	}
-
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-
 	if ok, _ := client.Extension("AUTH"); ok {
-		auth := smtp.PlainAuth("", username, password, host)
-		if err := client.Auth(auth); err != nil {
+		if err := client.Auth(smtp.PlainAuth("", username, password, host)); err != nil {
 			return err
 		}
 	} else if requireAuth {
 		return errSMTPRelayAuthUnavailable
 	}
-
-	return writeSMTPMessage(client, from, recipients, msg)
+	return action(client)
 }
 
 // SMTPDeliver sends msg over SMTP to recipients, choosing implicit TLS (port

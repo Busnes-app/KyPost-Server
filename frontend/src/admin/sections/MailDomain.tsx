@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { useAuth } from "../../auth";
 import { credentialFields, deriveCredential } from "../../api/auth";
 import { postJSON, putJSON, toErrorMessage } from "../../api/client";
-import { loadNativeMail } from "../../api/nativeMail";
+import { loadNativeMail, readMailRelayCheck } from "../../api/nativeMail";
 import { withSSOStepUp } from "../../api/stepup";
 
 export function MailDomain() {
@@ -39,6 +39,7 @@ function MailDomainForm() {
       setHost(next.relay.host);
       setPort(String(next.relay.port));
     }
+    return next;
   }
   useEffect(() => {
     live.current = true;
@@ -48,8 +49,8 @@ function MailDomainForm() {
     });
     return () => { live.current = false; refreshGeneration.current++; };
   }, []);
-  async function act(action: "claim" | "rotate" | "verify" | "relay") {
-    if (!setup || inFlight.current) return;
+  async function act(action: "claim" | "rotate" | "verify" | "relay" | "check") {
+    if (!setup || inFlight.current || action === "check" && setup.relay.kind !== "configured") return;
     if (action === "rotate" && !window.confirm("Replace the TXT challenge? This clears domain verification and pauses native account allocation and sending until the new record is verified.")) return;
     if (action === "relay" && setup.relay.kind === "configured" && !window.confirm("Replace the relay profile? This rotates its generation and stops unclaimed deliveries queued under the old profile. Check outbox and provider evidence before resubmitting to avoid duplicates.")) return;
     inFlight.current = true;
@@ -57,6 +58,7 @@ function MailDomainForm() {
     // Freeze the request before credential derivation or KySignOn confirmation.
     const fields = action === "relay"
       ? { host, port: Number(port), smtpUsername: username, smtpPassword: secret }
+      : action === "check" && setup.relay.kind === "configured" ? { expectedGeneration: setup.relay.generation }
       : action === "verify" ? {} : { domain: setup.domain.kind === "configured" ? setup.domain.domain : domain };
     const accountPassword = password;
     setPassword(""); setSecret(""); setUsername("");
@@ -64,17 +66,22 @@ function MailDomainForm() {
       const credential = ssoSession ? {} : credentialFields(await deriveCredential("", accountPassword));
       requireLive();
       const body = { ...fields, ...credential };
-      await withSSOStepUp((headers) => {
+      const result = await withSSOStepUp((headers) => {
         requireLive();
-        return action === "verify"
+        return action === "check"
+          ? postJSON<unknown>("/api/admin/mail-relay/test", body, headers)
+          : action === "verify"
           ? postJSON<unknown>("/api/admin/mail-domain/verify", body, headers)
           : putJSON<unknown>(action === "relay" ? "/api/admin/mail-relay" : "/api/admin/mail-domain", body, headers);
       });
       requireLive();
+      if (action === "check") readMailRelayCheck(result, setup.relay);
       // A successful mutation followed by an unreadable GET must not leave stale controls enabled.
       setSetup(null);
-      await refresh();
-      setNotice(action === "relay" ? "Relay saved. No provider connection or test email was made." : action === "verify" ? "TXT record matched. KyPost rechecks DNS before native operations." : "Challenge created. Publish the exact TXT record below, then verify it.");
+      const refreshed = await refresh();
+      requireLive();
+      if (action === "check" && refreshed) readMailRelayCheck(result, refreshed.relay);
+      setNotice(action === "check" ? "TLS and SMTP authentication passed for the saved relay. No email was sent; delivery remains untested." : action === "relay" ? "Relay saved. No provider connection or test email was made." : action === "verify" ? "TXT record matched. KyPost rechecks DNS before native operations." : "Challenge created. Publish the exact TXT record below, then verify it.");
     } catch (e: unknown) {
       if (live.current) {
         setSetup(null);
@@ -97,8 +104,8 @@ function MailDomainForm() {
     {notice && <p className="notice" role="status">{notice}</p>}
     {!setup && <p>{error ? "Setup status unavailable. Reload this page before making changes." : "Loading mail setup…"}</p>}
     <fieldset className="config-card config-grid" disabled={busy || !setup}>
-      <legend>Confirm each change</legend>
-      {ssoSession ? <p>Confirm each change with KySignOn.</p> : <label>Account password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label>}
+      <legend>Confirm each action</legend>
+      {ssoSession ? <p>Confirm each action with KySignOn.</p> : <label>Account password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label>}
       <h4>1. Prove domain ownership</h4>
       {claim?.kind === "configured" ? <>
         <p>Domain: <strong>{claim.domain}</strong><br />Identity issuer: <code>{claim.issuer}</code></p>
@@ -126,6 +133,10 @@ function MailDomainForm() {
       <p>Every save replaces the complete relay profile. Credentials are never shown again and are cleared after each action.</p>
       {relay?.kind === "configured" && <p>Replacing this profile invalidates unclaimed queued deliveries. Check outbox and provider evidence before resubmitting; uncertain mail must never be blindly retried.</p>}
       <button className="button secondary" disabled={!unlocked || claim?.kind !== "configured" || !claim.established || !host || !username || !secret || !validPort} onClick={() => void act("relay")}>Save outgoing relay</button>
+      {relay?.kind === "configured" && <>
+        <p>Check saved relay contacts {relay.host}:{relay.port} using its stored credential. Unsaved edits above are not tested. The provider can record this login attempt; no email is sent.</p>
+        <button className="button secondary" disabled={!unlocked || claim?.kind !== "configured" || !claim.established} onClick={() => void act("check")}>Check saved relay</button>
+      </>}
     </fieldset>
     {busy && <p role="status">Working…</p>}
     <h4>3. Back up and test</h4>

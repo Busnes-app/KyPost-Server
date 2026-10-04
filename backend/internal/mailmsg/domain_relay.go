@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/smtp"
 	"net/textproto"
 	"os"
 	"strings"
@@ -53,6 +54,27 @@ func (c DomainRelay) Deliver(from string, recipients []string, msg []byte) error
 		return domainRelaySubmissionError{cause: err}
 	}
 	return nil
+}
+
+// Check authenticates the saved relay without sending an envelope or message.
+// Success proves this connection only, not From authority or delivery readiness.
+func (c DomainRelay) Check(ctx context.Context) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err := withImplicitTLSSMTP(ctx, c.Host, c.Port, c.Username, c.Password, 15*time.Second, true, func(client *smtp.Client) error { return client.Quit() }); err != nil {
+		return domainRelayCheckError{cause: err}
+	}
+	return ctx.Err()
+}
+
+type domainRelayCheckError struct{ cause error }
+
+func (e domainRelayCheckError) Unwrap() error { return e.cause }
+func (e domainRelayCheckError) Error() string {
+	return "relay connection/authentication check failed; verify host, port, trusted certificate and provider credentials. No email was sent."
 }
 
 // Native queue/API callers must not render provider responses that can echo
