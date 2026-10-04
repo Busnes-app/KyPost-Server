@@ -81,18 +81,18 @@ func nativeRecoveryEpoch(root string) (string, error) {
 
 // Caller holds settings -> directory -> users fences, including fresh accounts.
 // Offline restore staging must be stopped/exclusive; it does not share these locks.
-func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings, key []byte, accounts []users.User) (NativeRecoveryChallenge, map[string]int64, error) {
+func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings, key []byte, accounts []users.User) (NativeRecoveryChallenge, map[string]int64, map[string]bool, error) {
 	epoch, err := nativeRecoveryEpoch(root)
 	if err != nil || !settings.Enabled || settings.IssuerURL == "" || settings.ClientID == "" || len(key) < syncauth.MinKeyBytes {
-		return NativeRecoveryChallenge{}, nil, ErrNativeRecovery
+		return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
 	}
 	f, err := s.load()
 	if err != nil {
-		return NativeRecoveryChallenge{}, nil, err
+		return NativeRecoveryChallenge{}, nil, nil, err
 	}
 	ledger, err := s.loadNative()
 	if err != nil {
-		return NativeRecoveryChallenge{}, nil, err
+		return NativeRecoveryChallenge{}, nil, nil, err
 	}
 	revisions := map[string]int64{}
 	directory := map[string]DirectoryState{}
@@ -108,35 +108,24 @@ func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings,
 	for k, d := range f.Directory {
 		issuer, subject, ok := strings.Cut(k, "\x00")
 		if !ok {
-			return NativeRecoveryChallenge{}, nil, ErrNativeRecovery
+			return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
 		}
 		if issuer == settings.IssuerURL {
 			if err = add(subject, d.Revision); err != nil {
-				return NativeRecoveryChallenge{}, nil, err
+				return NativeRecoveryChallenge{}, nil, nil, err
 			}
 			directory[k] = d
 		}
 	}
 	for k, a := range ledger.Accounts {
 		if a.Owner.Issuer != settings.IssuerURL || k != directoryKey(a.Owner.Issuer, a.Owner.Subject) || !fsutil.SafePathComponent(a.Owner.Mailbox) || reservedIDs[a.Owner.Mailbox] || a.Revision <= 0 || a.Digest == "" {
-			return NativeRecoveryChallenge{}, nil, ErrNativeRecovery
+			return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
 		}
 		if err = add(a.Owner.Subject, a.Revision); err != nil {
-			return NativeRecoveryChallenge{}, nil, err
+			return NativeRecoveryChallenge{}, nil, nil, err
 		}
 		reservations[k] = a
 		reservedIDs[a.Owner.Mailbox] = true
-	}
-	for k, rev := range f.RecoveryFloors {
-		issuer, subject, ok := strings.Cut(k, "\x00")
-		if !ok || rev <= 0 {
-			return NativeRecoveryChallenge{}, nil, ErrNativeRecovery
-		}
-		if issuer == settings.IssuerURL {
-			if err = add(subject, rev); err != nil {
-				return NativeRecoveryChallenge{}, nil, err
-			}
-		}
 	}
 	// Stable credential/access witnesses omit correspondence and login timestamps.
 	type accountAuthority struct {
@@ -149,27 +138,60 @@ func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings,
 	}
 	authority := []accountAuthority{}
 	seen := map[string]bool{}
+	accountIDs := map[string]bool{}
 	for _, u := range accounts {
+		accountIDs[u.ID] = true
 		if (u.NativeMailboxIssuer != "" || u.NativeMailboxSource != "") && (u.NativeMailboxIssuer != settings.IssuerURL || u.NativeMailboxSource == "" || !nativeRecoveryIdentifier(u.SSOSub)) {
-			return NativeRecoveryChallenge{}, nil, ErrNativeRecovery
+			return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
 		}
 		if u.SSOSub == "" {
+			if reservedIDs[u.ID] {
+				authority = append(authority, accountAuthority{u.ID, u.SSOSub, u.NativeMailboxIssuer, u.NativeMailboxSource, u.PasswordHash, u.AuthDerivation, u.LoginSalt, u.LoginIterations, u.Role, u.Active, u.MustChangePassword, u.SSOLinkRevokedAt, u.NativeSendEpoch, u.PGPRevision})
+			}
 			continue
 		}
 		if seen[u.SSOSub] || !fsutil.SafePathComponent(u.ID) {
-			return NativeRecoveryChallenge{}, nil, ErrNativeRecovery
+			return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
 		}
 		seen[u.SSOSub] = true
 		if err = add(u.SSOSub, 0); err != nil {
-			return NativeRecoveryChallenge{}, nil, err
+			return NativeRecoveryChallenge{}, nil, nil, err
 		}
 		if u.NativeMailboxIssuer != "" || u.NativeMailboxSource != "" {
 			a, ok := ledger.Accounts[directoryKey(settings.IssuerURL, u.SSOSub)]
 			if !ok || a.Owner.Mailbox != u.ID || a.Source != u.NativeMailboxSource || u.NativeMailboxIssuer != settings.IssuerURL {
-				return NativeRecoveryChallenge{}, nil, ErrNativeRecovery
+				return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
 			}
 		}
 		authority = append(authority, accountAuthority{u.ID, u.SSOSub, u.NativeMailboxIssuer, u.NativeMailboxSource, u.PasswordHash, u.AuthDerivation, u.LoginSalt, u.LoginIterations, u.Role, u.Active, u.MustChangePassword, u.SSOLinkRevokedAt, u.NativeSendEpoch, u.PGPRevision})
+	}
+	// Only unpublished reservations have no account authority to revoke.
+	// Published accounts must continue consuming ordinary offboarding/demotion.
+	eligible := map[string]bool{}
+	published := map[string]bool{}
+	for sub := range seen {
+		published[directoryKey(settings.IssuerURL, sub)] = true
+	}
+	for k, a := range reservations {
+		if accountIDs[a.Owner.Mailbox] {
+			published[k] = true
+		}
+		eligible[a.Owner.Subject] = !published[k]
+	}
+	for k, rev := range f.RecoveryFloors {
+		issuer, subject, ok := strings.Cut(k, "\x00")
+		if !ok || rev <= 0 {
+			return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
+		}
+		if issuer == settings.IssuerURL {
+			// Never discard an unsafe preview barrier or a partial-publication fence.
+			if published[k] && rev >= directory[k].Revision {
+				return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
+			}
+			if err = add(subject, rev); err != nil {
+				return NativeRecoveryChallenge{}, nil, nil, err
+			}
+		}
 	}
 	subjects := make([]string, 0, len(revisions))
 	for sub := range revisions {
@@ -177,7 +199,7 @@ func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings,
 	}
 	slices.Sort(subjects)
 	if len(subjects) == 0 || len(subjects) > 256 {
-		return NativeRecoveryChallenge{}, nil, ErrNativeRecovery
+		return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
 	}
 	slices.SortFunc(authority, func(a, b accountAuthority) int { return strings.Compare(a.ID, b.ID) })
 	fingerprint := sha256.Sum256(key)
@@ -188,16 +210,16 @@ func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings,
 		Accounts     []accountAuthority
 	}{settings, directory, reservations, authority})
 	if err != nil {
-		return NativeRecoveryChallenge{}, nil, err
+		return NativeRecoveryChallenge{}, nil, nil, err
 	}
 	digest := sha256.Sum256(payload)
-	return NativeRecoveryChallenge{Epoch: epoch, Issuer: settings.IssuerURL, KeyFingerprint: hex.EncodeToString(fingerprint[:]), Subjects: subjects, AuthorityDigest: hex.EncodeToString(digest[:])}, revisions, nil
+	return NativeRecoveryChallenge{Epoch: epoch, Issuer: settings.IssuerURL, KeyFingerprint: hex.EncodeToString(fingerprint[:]), Subjects: subjects, AuthorityDigest: hex.EncodeToString(digest[:])}, revisions, eligible, nil
 }
 
 // BeginNativeRecoveryHeld requires the caller's authority fences. A new challenge
 // invalidates the receipt but never weakens revision barriers or removes the hold.
 func (s *LifecycleStore) BeginNativeRecoveryHeld(ctx context.Context, root string, settings SSOSettings, key []byte, accounts []users.User, systemID, fingerprint string) (NativeRecoveryChallenge, error) {
-	c, _, err := s.nativeRecoveryInputs(root, settings, key, accounts)
+	c, _, _, err := s.nativeRecoveryInputs(root, settings, key, accounts)
 	if err != nil {
 		return c, err
 	}
@@ -235,7 +257,7 @@ func (s *LifecycleStore) AcceptNativeRecoveryHeld(ctx context.Context, root stri
 	if len(body) == 0 || len(body) > MaxNativeRecoveryEvidenceBytes {
 		return ErrNativeRecovery
 	}
-	current, minRevisions, err := s.nativeRecoveryInputs(root, settings, key, accounts)
+	current, minRevisions, eligible, err := s.nativeRecoveryInputs(root, settings, key, accounts)
 	if err != nil {
 		return err
 	}
@@ -270,11 +292,13 @@ func (s *LifecycleStore) AcceptNativeRecoveryHeld(ctx context.Context, root stri
 		if json.Unmarshal(sub.Profile, &profile) != nil || profile.ID != sub.ID || profile.ExternalID != sub.ID || profile.Active == nil || json.Unmarshal(profile.Roles, &roles) != nil || roles == nil || *profile.Active && !directoryIdentifier(profile.UserName) {
 			return ErrNativeRecovery
 		}
-		if f.RecoveryFloors == nil {
-			f.RecoveryFloors = map[string]int64{}
+		if eligible[sub.ID] {
+			if f.RecoveryFloors == nil {
+				f.RecoveryFloors = map[string]int64{}
+			}
+			k := directoryKey(c.Issuer, sub.ID)
+			f.RecoveryFloors[k] = max(f.RecoveryFloors[k], *sub.Revision)
 		}
-		k := directoryKey(c.Issuer, sub.ID)
-		f.RecoveryFloors[k] = max(f.RecoveryFloors[k], *sub.Revision)
 	}
 	if err = ctx.Err(); err != nil {
 		return err

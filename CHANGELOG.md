@@ -14,7 +14,7 @@ non-prerelease version.
 
 ## Unreleased
 
-- Add protected, challenge-bound KyIdentity recovery-evidence storage and durable revision barriers for held native restores. Preserve account state and the hold; fence local admin authority cycles and support bounded large exact-action uploads. Account repair and hold release remain pending.
+- Add protected, challenge-bound KyIdentity recovery-evidence storage and durable revision barriers for unpublished reservations in held native restores. Preserve ordinary published-account offboarding/demotion and permit ownership-validated held device/subscriber revocation without mail access. Preserve account state and the hold; fence local admin authority cycles and support bounded large exact-action uploads. Account repair and hold release remain pending.
 
 - Give each offline native restore/quarantine attempt a fresh hold epoch, including retries and failed validation. Preserve holds on entropy/write failure; no restore activation or hold release is introduced.
 

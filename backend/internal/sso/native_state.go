@@ -19,6 +19,13 @@ func (s *LifecycleStore) ValidateNativeUserStorage(stateRoot string, u users.Use
 	if err := RequireNativeRestoreReleased(stateRoot); err != nil {
 		return err
 	}
+	return s.ValidateNativeUserOwnership(stateRoot, u)
+}
+
+// ValidateNativeUserOwnership permits only ownership validation without a hold
+// release. Credential revocation uses this; ordinary state access must use
+// ValidateNativeUserStorage so held mail remains inaccessible.
+func (s *LifecycleStore) ValidateNativeUserOwnership(stateRoot string, u users.User) error {
 	if !fsutil.SafePathComponent(u.ID) || u.NativeMailboxIssuer == "" || u.NativeMailboxSource == "" || u.SSOSub == "" {
 		return ErrNativeProvisioning
 	}

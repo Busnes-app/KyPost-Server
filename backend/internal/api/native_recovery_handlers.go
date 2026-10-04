@@ -121,7 +121,7 @@ func (s *Server) handleNativeRecoveryChallenge(w http.ResponseWriter, r *http.Re
 		return
 	}
 	ac, _ := authFromContext(r)
-	s.logger.Info("native recovery challenge recorded", "actor", ac.UserID, "epoch", challenge.Epoch)
+	s.logger.Info("native recovery challenge recorded", "actor", ac.UserID, "correlation_id", challenge.Epoch)
 	writeJSON(w, 200, map[string]any{"challenge": challenge, "restoreHeld": true})
 }
 func (s *Server) handleNativeRecoveryEvidence(w http.ResponseWriter, r *http.Request) {

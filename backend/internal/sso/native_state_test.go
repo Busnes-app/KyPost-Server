@@ -50,6 +50,10 @@ func TestNativeUserStorageAdmission(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			ownershipErr := life.ValidateNativeUserOwnership(root, u)
+			if (ownershipErr == nil) != (damage == "none" || damage == "inactive" || damage == "hold") {
+				t.Fatalf("revocation ownership accepted=%t error=%v", ownershipErr == nil, ownershipErr)
+			}
 			err = life.ValidateNativeUserStorage(root, u)
 			good := damage == "none" || damage == "inactive"
 			if (err == nil) != good {
