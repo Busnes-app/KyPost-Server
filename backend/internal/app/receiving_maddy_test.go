@@ -67,13 +67,13 @@ func TestNativeReceivingCommandHelper(t *testing.T) {
 }
 
 func TestNativeReceivingMaddyRuntime(t *testing.T) {
-	for _, mode := range []string{"direct", "launcher", "supervised"} {
+	for _, mode := range []string{"direct", "launcher", "supervised", "supervised_partial"} {
 		t.Run(mode, func(t *testing.T) { testNativeReceivingMaddyRuntime(t, mode) })
 	}
 }
 
 func testNativeReceivingMaddyRuntime(t *testing.T, mode string) {
-	if mode == "supervised" && os.Getenv("RECEIVING_PROOF_IMAGE") == "" {
+	if strings.HasPrefix(mode, "supervised") && os.Getenv("RECEIVING_PROOF_IMAGE") == "" {
 		t.Skip("set RECEIVING_PROOF_IMAGE to the locally built image for Supervisor qualification")
 	}
 	binary := os.Getenv("MADDY_PROOF_BINARY")
@@ -223,7 +223,7 @@ os.execv(prefix[0], prefix + sys.argv[1:])
 		}
 	}
 	container := ""
-	if mode == "supervised" {
+	if strings.HasPrefix(mode, "supervised") {
 		digest := sha256.Sum256([]byte(root))
 		container = "kypost-receiver-proof-" + hex.EncodeToString(digest[:8])
 		proofConfig := filepath.Join(root, "supervisor.conf")
@@ -419,6 +419,81 @@ with open(sys.argv[2], "w") as out:
 	defer client.Close()
 	if err := client.StartTLS(&tls.Config{RootCAs: roots, ServerName: leaf.DNSNames[0], MinVersion: tls.VersionTLS12}); err != nil {
 		t.Fatal(err)
+	}
+	if mode == "supervised_partial" {
+		// Leave DATA open with flushed bytes, then stop the actual Supervisor.
+		// The earlier accepted obligation must survive; incomplete DATA must not
+		// become an importable payload or receive SMTP success.
+		if err := client.Mail(""); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Rcpt("one@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		partial, err := client.Data()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := partial.Write([]byte("Subject: interrupted DATA\r\n\r\npartial body\r\n")); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Text.W.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		stopCtx, cancel := context.WithTimeout(ctx, 55*time.Second)
+		output, stopErr := exec.CommandContext(stopCtx, "docker", "stop", "--time", "50", container).CombinedOutput()
+		cancel()
+		if stopErr != nil {
+			t.Fatal("active-DATA shutdown exceeded its bound", stopErr, string(output))
+		}
+		if err := cmd.Wait(); err != nil {
+			t.Fatal("Supervisor did not exit cleanly during DATA", err)
+		}
+		if err := partial.Close(); err == nil {
+			t.Fatal("incomplete DATA received SMTP success during shutdown")
+		}
+		_ = client.Close()
+		shutdownLog, err := os.ReadFile(logPath)
+		if err != nil || !bytes.Contains(shutdownLog, []byte("stopped: receiver (exit status 0)")) {
+			t.Fatal("receiver was not stopped cleanly before Supervisor exit", err, string(shutdownLog))
+		}
+		retained, err := r.holding.Get(ctx, receivingGateway, delivery.ID)
+		if err != nil || retained.State != "pending" || !bytes.Equal(retained.Raw, delivery.Raw) {
+			t.Fatal("accepted obligation changed during partial-DATA shutdown", err, retained.State)
+		}
+		remaining, err := r.holding.List(ctx, receivingGateway, 0, 100)
+		if err != nil || len(remaining) != 2 {
+			t.Fatal("expected accepted receipt and one retained partial binding", err, remaining)
+		}
+		for _, row := range remaining {
+			if row.ID == delivery.ID {
+				continue
+			}
+			staged, err := r.holding.Get(ctx, receivingGateway, row.ID)
+			if err != nil || staged.State != "staged" || len(staged.Raw) != 0 || staged.Digest != "" || len(staged.Bindings) != 1 {
+				t.Fatal("partial DATA published payload or lost its binding", err, staged.State)
+			}
+		}
+		cmd = newReceiver()
+		cmd.Stdout, cmd.Stderr = log, log
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		until = time.Now().Add(10 * time.Second)
+		for {
+			client, err = smtp.Dial(address)
+			if err == nil {
+				break
+			}
+			if time.Now().After(until) {
+				t.Fatal("receiver did not start after active-DATA shutdown", err)
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		defer client.Close()
+		if err := client.StartTLS(&tls.Config{RootCAs: roots, ServerName: leaf.DNSNames[0], MinVersion: tls.VersionTLS12}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// Test-only physical pressure: extend the already-open shared-memory file
 	// sparsely, preserving SQLite's live index and every accepted payload. This

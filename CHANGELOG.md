@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Qualify supervised receiving shutdown during incomplete SMTP DATA: retain staged recipient reservations without publishing partial payload, preserve previously accepted mail and import it after restart. The check uses the actual image and pinned engine; stalled storage/helpers and final-ack races remain separate qualification work.
+
 - Add an optional supervised Linux x86_64 direct-receiving Compose profile with explicit SMTP publication, operator-supplied read-only pinned engine/TLS mounts and fresh startup admission. Qualify real-image automatic receiver restart, durable import and idle shutdown; public MX and full turnkey deployment remain gated.
 
 - Protect container config, private-key and state roots with owner-only permissions at build and before bootstrap on every start, including mounted volumes. Preserve existing mail bytes and descendant modes; qualify the real entrypoint in isolated Docker.
