@@ -45,7 +45,7 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
   KyRecovery token under a distinct derivation label. Never replace this key.
 - Install-wide and per-user state.db snapshots including committed WAL rows,
   address books and other persistent state. Native-device secrets are in the
-  per-user databases. Pending encrypted pickup messages are included.
+  per-user databases. Capsules retain historical device/subscription evidence, but native restore revokes those registrations before publication. Pending encrypted pickup messages are included.
 - Internal mailbox.db and ingress.db snapshots inside the collected roots,
   including committed WAL rows and exact stored MIME/receipt data. Mailbox snapshots also preserve encrypted outbox intent, claims and Sent receipts; nonempty queues require the matching relay profile/key and additive verification recipe. Native
   reception and provisioning are opt-in qualification paths; public reception remains unavailable.
@@ -118,6 +118,11 @@ owner's password/recovery material; a capsule does not bypass that protection.
    persistence of `state/native-restore-hold.json`, and quarantine of restored
    queued/retryable outgoing deliveries. Their encrypted contents and claim history
    remain retained; accepted/Sent and submitting/uncertain evidence is unchanged.
+   For every native account, restore also atomically removes native device and
+   browser push registrations and rotates the subscriber ID. Old device secrets,
+   push-MFA approvers, enrollment acknowledgements and outstanding pairing tokens
+   do not regain authority. Mail, pull-notification history and opaque wrapped
+   keys remain retained. Legacy IMAP account registrations are unchanged.
    A failure leaves staging held and unpublished. Legacy restores also
    accept an existing empty target. Occupied targets/files are never overwritten.
 4. Native restores remain quarantined with **no supported release path yet**.
@@ -130,8 +135,12 @@ owner's password/recovery material; a capsule does not bypass that protection.
 5. Confirm readiness, the same recovery-key fingerprint and a new successful
    backup. Run `backup-drill` and inspect its SQLite, account and credential checks.
    Sessions are memory-only, so users sign in again. Test external mailbox access.
-   Native mailbox/device access remains blocked by the restore hold; restored
-   registrations do not qualify fresh device authority.
+   Native mailbox/device access remains blocked by the restore hold. After future
+   recovery qualification, each native device must pair and enroll again, and
+   browsers must subscribe again. Repeating quarantine rotates subscriber IDs
+   again while held; no device authority is reintroduced. Device-held private
+   keys are not remotely erased. Push-only MFA may require the existing account
+   recovery procedure before fresh pairing; restore does not disable MFA.
 
 Read the [pinned identity authority findings](NATIVE_RESTORE_AUTHORITY.md) before designing hold release: ordinary KyIdentity resync does not establish complete offboarding evidence.
 
@@ -152,8 +161,8 @@ stages for inspection; deleting directories by prefix can erase mailbox data.
 Rollback keeps services stopped and retains the original volumes and failed
 staging; use a compatible binary, not an older writer that discards ownership.
 
-If compromise prompted the restore, revoke affected native devices and re-pair them
-through Security, revoke old KyRecovery tokens at KyRecovery and pair again to the
+Native restore always revokes its historical device pairings. If compromise prompted
+recovery, also revoke affected legacy-account devices through Security, revoke old KyRecovery tokens at KyRecovery and pair again to the
 same key. For a file-backed pairing secret, stop services and remove
 `/kypost/private/pairing.key` to generate a replacement on the next start; an explicit
 PAIRING_SECRET must instead be rotated in `.env`. Rotate externally issued relay

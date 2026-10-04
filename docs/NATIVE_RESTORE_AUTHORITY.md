@@ -2,6 +2,8 @@
 
 Source review at KyIdentity `8cf7cf9f424e14eaf9d7bea8e822af904f779528` (clean worktree) and KyPost `50e60bc4a1e640a6b783152b831b7d53474f4d1d`. Findings describe existing code and recovery prerequisites; they do not enable native restore activation.
 
+Current offline restore qualification now removes native device/browser push registrations and rotates subscriber IDs before publication; mail, pull history and users/wrapped-key documents remain retained. This revokes historical registration authority, including outstanding pairing tokens. It does not establish complete account/role authority, reconcile other app credentials such as CardDAV, or authorize fresh enrollment/hold release; see the [restore implementation](../backend/internal/backup/native.go) and [restore procedure](RESTORE.md).
+
 ## Existing usable pieces
 
 - KyIdentity's protected `POST /api/admin/systems/{id}/resync` queues a resync and returns success; it does not wait for downstream delivery or return a complete snapshot manifest. The store reconciles current access first, then force-queues active users and current groups in one transaction. Force-active users use `user.created`, intended to recreate a missing suite account. [Route and handler](https://github.com/Busnes-app/KyIdentity-server/blob/8cf7cf9f424e14eaf9d7bea8e822af904f779528/internal/api/server.go#L245-L258), [store resync](https://github.com/Busnes-app/KyIdentity-server/blob/8cf7cf9f424e14eaf9d7bea8e822af904f779528/internal/store/provisioning.go#L432-L493).

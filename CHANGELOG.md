@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Revoke restored native device/browser push registrations and outstanding pairing-token authority before publication, atomically per exact-source account. Preserve mail, receiving receipts and wrapped key material; legacy IMAP registrations remain unchanged. Native recovery stays held and will require fresh device pairing/enrollment without disabling MFA.
+
 - Quarantine restored queued/retryable native outgoing deliveries before offline restore publication, preserving encrypted intent, claims and accepted/Sent evidence. Retain the whole-stack restore hold and refuse publication on quarantine failure; no automatic resubmission or hold release.
 
 - Join native signed-directory allocation, real device pairing/registration, durable receiving-store import, device mailbox/attachment/keyword reads and actual TLS ordinary/PGP sending in one regression fixture without IMAP. Physical clients, app/Maddy admission and live provider delivery remain separate checks.

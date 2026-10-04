@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
@@ -17,6 +18,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -173,6 +175,9 @@ func QuarantineNativeRestore(dir string) (bool, error) {
 	}); err != nil {
 		return true, fmt.Errorf("cannot quarantine restored outgoing work; keep workers stopped and preserve staging: %w", err)
 	}
+	if err := revokeRestoredNativeDevices(dir); err != nil {
+		return true, fmt.Errorf("cannot revoke restored native device credentials; keep workers stopped and preserve staging: %w", err)
+	}
 	return true, nil
 }
 
@@ -200,4 +205,76 @@ func quarantineRestoredOutbox(path string) (err error) {
 	}
 	_, err = db.Exec("UPDATE outbox_deliveries SET state='quarantined',next_attempt=0 WHERE state IN ('queued','retryable')")
 	return err
+}
+
+// revokeRestoredNativeDevices selects only historically qualified native users.
+// The whole restore stays held and unpublished if any account mutation fails.
+func revokeRestoredNativeDevices(dir string) error {
+	raw, err := os.ReadFile(filepath.Join(dir, "config/users.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil // Whole-snapshot validation already refused missing native users.
+	}
+	if err != nil {
+		return err
+	}
+	var doc struct {
+		Users []users.User `json:"users"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return err
+	}
+	for _, u := range doc.Users {
+		if u.NativeMailboxSource == "" {
+			continue
+		}
+		if !fsutil.SafePathComponent(u.ID) {
+			return sso.ErrNativeProvisioning
+		}
+		if err := revokeRestoredDeviceCredentials(filepath.Join(dir, "state/users", u.ID, "state.db"), u.NativeMailboxSource); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Revoke notification targets and outstanding stateless pairing tokens together.
+// Fresh pairing is required after recovery; mail and wrapped key material stay
+// intact. No schema initialization/migration or native-to-IMAP adoption occurs.
+func revokeRestoredDeviceCredentials(path, source string) (err error) {
+	if !strings.HasPrefix(source, "native:") {
+		return state.ErrMailSource
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	location := url.URL{Scheme: "file", Path: absolute}
+	db, err := sql.Open("sqlite", location.String()+"?mode=rw&_txlock=immediate&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, db.Close()) }()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var storedSource string
+	if err := tx.QueryRow("SELECT value FROM meta WHERE key='mail_source'").Scan(&storedSource); err != nil {
+		return err
+	}
+	if storedSource != source {
+		return state.ErrMailSource
+	}
+	subscriber, err := fsutil.NewUUIDv4()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM native_devices; DELETE FROM notifications"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("INSERT INTO meta(key,value) VALUES('subscriber_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", subscriber); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
