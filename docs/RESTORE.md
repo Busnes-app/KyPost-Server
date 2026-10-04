@@ -155,9 +155,7 @@ owner's password/recovery material; a capsule does not bypass that protection.
 
 Read the [pinned identity authority findings](NATIVE_RESTORE_AUTHORITY.md) before designing hold release: ordinary KyIdentity resync does not establish complete offboarding evidence.
 
-Before native recovery can resume writes, implementation must reconcile fresh
-KyIdentity activity, roles and revocation, domain proof, receiver generations
-and provider credential/relay evidence.
+The protected [held repair procedure](NATIVE_RESTORE_AUTHORITY.md#protected-consumer-procedure) reconciles fresh KyIdentity activity/roles and revokes native transport credentials while preserving the hold and retained mail/PGP data. Partial cleanup failure remains incomplete and requires fresh evidence after remediation. Before native recovery can resume writes, remaining activation work must qualify domain proof, receiver generations, restored-credential cutoffs, worker fencing and provider credential/relay evidence. Do not remove the hold manually.
 Replaying an already-applied directory revision is insufficient to repair
 restored user access. An older database also rewinds message IDs while retaining
 its namespace: the separate wire-reference generation rejects stale client
