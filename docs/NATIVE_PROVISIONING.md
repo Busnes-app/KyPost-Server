@@ -1,11 +1,11 @@
 # Native domain proof and account allocation
 
 Production directory webhooks retain verified desired state and enforce account
-access. Admin mail-domain setup is available through the API. Native allocation
+access. Admin mail-domain setup is available under Server → Mail domain and through the API. Native allocation
 and reconciliation are enabled only with `KYPOST_NATIVE_MAIL=true`. The default
 remains external IMAP. This opt-in selects prepared native mailboxes in both API
 and daemon. Direct receiving additionally requires `KYPOST_NATIVE_RECEIVING=true`;
-outgoing domain relay delivery remains unavailable.
+primary-address sending uses the operator-owned [domain relay](DOMAIN_RELAY.md).
 
 ## Operator domain setup
 
@@ -17,7 +17,9 @@ The response includes the exact `recordName` and `recordValue` to publish:
 `_kypost-mail.<domain>` TXT `kypost-mail-verify=<random challenge>`.
 Then `POST /api/admin/mail-domain/verify` with the same credential fields.
 Responses are `Cache-Control: no-store` and always `receivingEnabled:false`.
-No frontend wizard is present yet.
+The Server → Mail domain screen presents these same protected operations, with
+exact TXT fields and explicit confirmation before replacing a challenge. It
+does not install a public receiving gateway or change MX.
 
 The first profile binds one lowercase ASCII DNS domain and the configured issuer.
 Changing either is refused. Configure the issuer without a trailing slash before

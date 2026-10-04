@@ -26,3 +26,19 @@ Mail delivery and classification are not exercised without IMAP/SMTP/Ollama.
 ## Reproduce
 
 Run npm ci, npm test (where configured), and npm run build in frontend/, then start the product with isolated local preview data following its README. Use System theme, emulate OS light/dark, and inspect both viewport sizes. Do not point preview instances at production data. For KyVault, use a configured development KyIdentity or explicitly labeled read-only browser fixtures; never bypass backend authentication.
+
+## Native mail setup screen — 2026-10-04
+
+Checked the production bundle through the T3 collaborative browser against an
+isolated KyPost server with fresh scratch data. Completed real bootstrap login
+and password rotation, then opened `/admin/server?tab=mail-domain`. Inspected the
+unconfigured setup at 1280×800 and its refused-change state at 390×844. Document
+width remained within both viewports (1265 and 375 CSS pixels respectively).
+
+Submitted a test challenge with the current converted account credential and
+the shared CSRF client. Missing KyIdentity correctly returned 503, created no
+domain claim, cleared the password and disabled further changes until reload.
+No real issuer, DNS proof, relay, recipient or mail delivery was configured.
+Configured/SSO/rotation states are covered by Vitest, not these browser captures;
+no complete accessibility audit is implied. Final frontend qualification:
+926 tests, typecheck, production build and runtime dependency audit passed.
