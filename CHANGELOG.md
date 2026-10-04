@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Guard native account state access in API/maintenance and daemon paths before cache returns. Validate acknowledged owner/source/storage and refuse restore holds; open native state as existing-only with source validation before migration, preserving borrowed handles and inactive-account revocation. Runtime provisioning, mailbox selection and mail transport remain disabled.
+
 - Validate native backup ownership across accounts, reservations, namespaces and receiving bindings. Restore privately before publishing an absent native target with a persistent hold; retain failed staging and refuse allocation while held. No automatic release or native runtime activation is enabled; current-authority repair, stale-ID fencing, capacity and power-loss qualification remain gates.
 
 - Snapshot internal mailbox.db and ingress.db during sealed backups instead of copying main files without committed WAL rows. Restore drills check their SQLite integrity; external IMAP mail stays excluded. Whole-stack ownership/freshness reconciliation and mail-sized backup capacity remain gates before native activation.

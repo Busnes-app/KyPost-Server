@@ -140,7 +140,10 @@ func newTickTestPoller(t *testing.T, mail imapadapter.Client) (*Poller, users.Us
 		newMailClient:  func(string, string) imapadapter.Client { return mail },
 	}
 
-	u := users.User{ID: "user-tick", Username: "tick"}
+	u, err := usersStore.CreateSSOUser("tick", users.RoleUser, "tick-sub", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(p.userConfigDir(u.ID), 0o700); err != nil {
 		t.Fatalf("mkdir user config dir: %v", err)
 	}

@@ -3,6 +3,9 @@ package state
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
+	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -50,11 +53,16 @@ const (
 // BEGIN IMMEDIATE takes the write lock up front, so contention becomes a wait
 // that busy_timeout handles instead of an error. Pinned by
 // TestConcurrentPairingCodeConsumedOnce.
-func dsn(path string) string {
+func dsn(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	uri := (&url.URL{Scheme: "file", Path: absolute}).String()
 	return fmt.Sprintf(
-		"file:%s?_txlock=immediate&_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)",
-		path, busyTimeoutMS,
-	)
+		"%s?_txlock=immediate&_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)",
+		uri, busyTimeoutMS,
+	), nil
 }
 
 // schema is applied on every open. Every statement is IF NOT EXISTS, so this
@@ -212,8 +220,15 @@ CREATE TABLE IF NOT EXISTS sorter_corrections (
 CREATE INDEX IF NOT EXISTS sorter_corrections_label ON sorter_corrections(label, at_unix);
 `
 
-func openDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dsn(path))
+func openDB(path, existingSource string) (*sql.DB, error) {
+	uri, err := dsn(path)
+	if err != nil {
+		return nil, err
+	}
+	if existingSource != "" {
+		uri = strings.Replace(uri, "_pragma=journal_mode(WAL)&", "", 1) + "&mode=rw"
+	}
+	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return nil, fmt.Errorf("open state db: %w", err)
 	}
@@ -221,6 +236,22 @@ func openDB(path string) (*sql.DB, error) {
 	// removes any chance of two pooled connections interleaving inside what a
 	// caller believes is one transaction.
 	db.SetMaxOpenConns(1)
+	if existingSource != "" {
+		var source string
+		if err := db.QueryRow("SELECT value FROM meta WHERE key='mail_source'").Scan(&source); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("existing native state unavailable; restore acknowledged storage: %w", err)
+		}
+		if source != existingSource {
+			_ = db.Close()
+			return nil, ErrMailSource
+		}
+		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
+
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("apply state schema: %w", err)

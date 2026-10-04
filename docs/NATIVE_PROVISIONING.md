@@ -107,11 +107,33 @@ changing binaries; older writers can discard new fields/fences. Use a compatible
 binary and fresh verified directory revision before resuming. Never erase a
 ledger or switch sources to make failed preparation succeed.
 
+## State admission before runtime integration
+
+API ordinary/maintenance state access and daemon state access check native
+issuer/subject/local ID/source against the acknowledged reservation and prepared
+mailbox/state before every cache lookup. A present or unreadable restore hold
+refuses state access. Missing acknowledged storage is not recreated.
+`state.OpenNative` opens an existing database with SQLite mode=rw and checks its
+source before schema migration; it does not initialize a new database or import
+legacy JSON. SQLite file URIs escape the configured path, including `#`, `?`
+and `%`, so path punctuation cannot discard the existing-only open mode.
+Losing the file after validation therefore fails at the open boundary.
+Refusal does not close a handle already borrowed by a request.
+
+This checks immutable storage ownership, not current activity/roles or live mail
+permission. Inactive state remains available for administrative revocation when
+not held. Native classification assumes intact private user markers; arbitrary
+mixed-root/older-writer recovery is unsupported, and qualified restore rejects
+missing markers. Live admission needs coherent directory/users fencing, cached
+client checks and all sending/pickup paths before native selection is enabled.
+The provisioning worker and native mail selectors remain disabled.
+
 ## Verification and next gates
 
 ```sh
 cd backend
 GOTOOLCHAIN=go1.26.6 go test -race ./internal/fsutil ./internal/users ./internal/sso ./internal/mailbox ./internal/api -run '^TestNativeAllocation|^TestNativeDomain|^TestNativeMailDomain|^TestNativeAccountIssuer|^TestNativePublication|^TestLockFileContext|^TestPrepareAccount|^TestDirectory' -count=1 -timeout=20m
+GOTOOLCHAIN=go1.26.6 go test -race ./internal/state ./internal/sso ./internal/api ./internal/processor -run '^TestOpenNative|^TestNativeState|^TestNativeUserStorage|^TestNativePollerState' -count=1 -timeout=5m
 ```
 
 Checks use real SQLite/filesystem and authenticated admin routes for DNS purpose,

@@ -139,7 +139,7 @@ func TestDeviceAuthFromRequest_CrossUserIsolation(t *testing.T) {
 		t.Fatalf("no test user available: %v", err)
 	}
 	userID := all[0].ID
-	otherUserID := userID + "-other"
+	otherUserID := newStoreCacheUser(t, srv, "device-other").ID
 
 	deviceID, deviceSecret := pairNativeDevice(t, srv, userID, "device-owned")
 	otherDeviceID, _ := pairNativeDevice(t, srv, otherUserID, "device-elsewhere")

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"testing"
 	"time"
 )
@@ -12,13 +13,15 @@ import (
 func TestIdleUserStoresAreReclaimed(t *testing.T) {
 	srv := newTestServer(t)
 
-	if _, err := srv.userStore("user-a"); err != nil {
+	userA := newStoreCacheUser(t, srv, "user-a")
+	userB := newStoreCacheUser(t, srv, "user-b")
+	if _, err := srv.userStore(userA.ID); err != nil {
 		t.Fatalf("userStore(user-a): %v", err)
 	}
-	if _, err := srv.userContactsStore("user-a"); err != nil {
+	if _, err := srv.userContactsStore(userA.ID); err != nil {
 		t.Fatalf("userContactsStore(user-a): %v", err)
 	}
-	if _, err := srv.userStore("user-b"); err != nil {
+	if _, err := srv.userStore(userB.ID); err != nil {
 		t.Fatalf("userStore(user-b): %v", err)
 	}
 
@@ -51,7 +54,9 @@ func TestIdleUserStoresAreReclaimed(t *testing.T) {
 func TestActiveUserStoresSurviveTheSweep(t *testing.T) {
 	srv := newTestServer(t)
 
-	for _, id := range []string{"idle", "active"} {
+	idle := newStoreCacheUser(t, srv, "idle")
+	active := newStoreCacheUser(t, srv, "active")
+	for _, id := range []string{idle.ID, active.ID} {
 		if _, err := srv.userStore(id); err != nil {
 			t.Fatalf("userStore(%s): %v", id, err)
 		}
@@ -60,7 +65,7 @@ func TestActiveUserStoresSurviveTheSweep(t *testing.T) {
 	// than sweeping at a simulated future instant — that would age both.
 	now := time.Now()
 	srv.userMu.Lock()
-	srv.userLastSeen["idle"] = now.Add(-userStoreIdleTTL - time.Minute)
+	srv.userLastSeen[idle.ID] = now.Add(-userStoreIdleTTL - time.Minute)
 	srv.userMu.Unlock()
 
 	if removed := srv.sweepIdleUserStores(now); removed != 1 {
@@ -69,10 +74,10 @@ func TestActiveUserStoresSurviveTheSweep(t *testing.T) {
 
 	srv.userMu.Lock()
 	defer srv.userMu.Unlock()
-	if _, ok := srv.userStores["active"]; !ok {
+	if _, ok := srv.userStores[active.ID]; !ok {
 		t.Fatal("the sweep evicted a user who had just made a request")
 	}
-	if _, ok := srv.userStores["idle"]; ok {
+	if _, ok := srv.userStores[idle.ID]; ok {
 		t.Fatal("the idle user's store survived the sweep")
 	}
 }
@@ -95,7 +100,8 @@ func TestEvictedStoreStaysUsableForItsHolder(t *testing.T) {
 	srv := newTestServer(t)
 
 	// Acquire the store the way a request does, and keep holding it.
-	held, err := srv.userStore("slow-caller")
+	u := newStoreCacheUser(t, srv, "slow-caller")
+	held, err := srv.userStore(u.ID)
 	if err != nil {
 		t.Fatalf("userStore: %v", err)
 	}
@@ -114,7 +120,7 @@ func TestEvictedStoreStaysUsableForItsHolder(t *testing.T) {
 	}
 
 	// And the next request transparently gets a fresh, working store.
-	reopened, err := srv.userStore("slow-caller")
+	reopened, err := srv.userStore(u.ID)
 	if err != nil {
 		t.Fatalf("reopen after eviction: %v", err)
 	}
@@ -124,4 +130,13 @@ func TestEvictedStoreStaysUsableForItsHolder(t *testing.T) {
 	if _, err := reopened.Checkpoint(); err != nil {
 		t.Fatalf("the reopened store is unusable: %v", err)
 	}
+}
+
+func newStoreCacheUser(t *testing.T, srv *Server, name string) users.User {
+	t.Helper()
+	u, err := srv.users.CreateSSOUser(name, users.RoleUser, name, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }

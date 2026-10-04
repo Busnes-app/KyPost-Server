@@ -78,10 +78,8 @@ func TestNativeMailDomainAdminProofRoutes(t *testing.T) {
 func TestNativeAccountIssuerFenceUsesVerifiedProvenance(t *testing.T) {
 	srv := newDirectoryTestServer(t)
 	const issuer = "https://original.example.test"
-	u, err := srv.users.PublishPreparedSSOUser(context.Background(), "native-owner", "native-owner", users.RoleUser, issuer, "same-sub", "native-owner", "", func() (string, error) { return "native:" + strings.Repeat("ab", 32), nil })
-	if err != nil {
-		t.Fatal(err)
-	}
+	u := allocateNativeStateTestUser(t, srv, issuer, "same-sub")
+	var err error
 	// Current mutable configuration is deliberately B; the passed event issuer
 	// remains A. Neither B login nor B directory update may resolve A's owner.
 	if err = srv.ssoStore.Save(sso.SSOSettings{IssuerURL: "https://replacement.example.test"}); err != nil {
