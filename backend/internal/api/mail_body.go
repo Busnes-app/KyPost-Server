@@ -28,12 +28,6 @@ import (
 // withMailAuth, not withAuth: a paired device authenticates with per-device
 // credentials and no session cookie, and needs this as much as the browser.
 func (s *Server) handleMailBody(w http.ResponseWriter, r *http.Request) {
-	mailbox, uid, err := attachmentRequestParams(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
 	mailClient, err := s.mailFor(r)
 	if err != nil {
 		if writeMailSourceConflict(w, err) {
@@ -44,6 +38,12 @@ func (s *Server) handleMailBody(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "imap client is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	mailbox, uid, err := attachmentRequestParams(r, mailClient)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

@@ -817,6 +817,11 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 	if err = boundCache.BindMailSource(source); err != nil {
 		return err
 	}
+	if source != "imap" {
+		if err = boundCache.BindMessageReferencePrefix(imapadapter.MessageReference(uc.mail, "")); err != nil {
+			return err
+		}
+	}
 	uc.head = p.userHead(u.ID, store, settings.Labels)
 
 	// Derived from lifetimeCtx, not context.Background(): Stop() cancels the
@@ -1731,7 +1736,12 @@ func (p *Poller) maybeSendPushNotification(uc userCtx, msg imapadapter.Message, 
 	// the message rather than dropping the user on whatever tab happens to
 	// be active.
 	linkParams := url.Values{}
-	linkParams.Set("message", strings.TrimSpace(msg.ID))
+	reference := imapadapter.MessageReference(uc.mail, strings.TrimSpace(msg.ID))
+	if reference == "" {
+		p.log.Error("cannot create message notification reference", "user_id", uc.id)
+		return
+	}
+	linkParams.Set("message", reference)
 	if tab := strings.TrimSpace(selectedLabel); tab != "" {
 		linkParams.Set("tab", tab)
 	}
@@ -1740,7 +1750,7 @@ func (p *Poller) maybeSendPushNotification(uc userCtx, msg imapadapter.Message, 
 		"title": title,
 		"body":  body,
 		"url":   "/read?" + linkParams.Encode(),
-		"tag":   fmt.Sprintf("kypost-email-%s", strings.TrimSpace(msg.ID)),
+		"tag":   fmt.Sprintf("kypost-email-%s", reference),
 	})
 	if err != nil {
 		p.log.Error("failed to marshal notification payload", "error", err.Error())
@@ -1780,7 +1790,14 @@ func (p *Poller) maybeSendNativePushNotification(uc userCtx, msg imapadapter.Mes
 
 	includeContent := nativePushIncludesContent(uc.settings, msg)
 	title, body := buildNativeNotificationText(msg, includeContent)
-	data := buildNativePushData(msg, messageKeywords, title, body, includeContent)
+	// Translate only this new payload; persisted pull history retains its old IDs.
+	wireMessage := msg
+	wireMessage.ID = imapadapter.MessageReference(uc.mail, strings.TrimSpace(msg.ID))
+	if wireMessage.ID == "" {
+		p.log.Error("cannot create native message notification reference", "user_id", uc.id)
+		return
+	}
+	data := buildNativePushData(wireMessage, messageKeywords, title, body, includeContent)
 
 	// title/body are duplicated into data so a mobile client that renders its
 	// own notification from the data payload shows the sender and subject

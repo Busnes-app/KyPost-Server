@@ -50,17 +50,19 @@ type mailboxWindow struct {
 // and mutation re-reads the file from disk first, mirroring
 // contacts.Store's convention.
 type Store struct {
-	mu             sync.Mutex
-	baseDir        string
-	mailboxes      map[string]*mailboxWindow
-	omitBodies     bool
-	sourceIdentity string
+	mu              sync.Mutex
+	baseDir         string
+	mailboxes       map[string]*mailboxWindow
+	omitBodies      bool
+	sourceIdentity  string
+	referencePrefix string
 }
 
 type mailCacheFile struct {
-	SourceIdentity string                    `json:"sourceIdentity,omitempty"`
-	OmitBodies     bool                      `json:"omitBodies,omitempty"`
-	Mailboxes      map[string]*mailboxWindow `json:"mailboxes"`
+	ReferencePrefix string                    `json:"referencePrefix,omitempty"`
+	SourceIdentity  string                    `json:"sourceIdentity,omitempty"`
+	OmitBodies      bool                      `json:"omitBodies,omitempty"`
+	Mailboxes       map[string]*mailboxWindow `json:"mailboxes"`
 }
 
 func New(baseDir string) (*Store, error) {
@@ -90,6 +92,7 @@ func (s *Store) applyFile(cf mailCacheFile) {
 	s.mailboxes = cf.Mailboxes
 	s.omitBodies = cf.OmitBodies
 	s.sourceIdentity = cf.SourceIdentity
+	s.referencePrefix = cf.ReferencePrefix
 }
 
 // dropStaleVerdicts clears every cached signature verdict that was computed
@@ -185,7 +188,7 @@ func (s *Store) persistLocked() error {
 			}
 		}
 	}
-	return fsutil.PersistJSONFile(s.path(), mailCacheFile{SourceIdentity: s.sourceIdentity, Mailboxes: s.mailboxes, OmitBodies: s.omitBodies})
+	return fsutil.PersistJSONFile(s.path(), mailCacheFile{ReferencePrefix: s.referencePrefix, SourceIdentity: s.sourceIdentity, Mailboxes: s.mailboxes, OmitBodies: s.omitBodies})
 }
 
 // Snapshot returns up to limit cached entries for mailboxKey (the limit
@@ -741,5 +744,30 @@ func (s *Store) BindMailSource(source string) error {
 		return nil
 	}
 	s.sourceIdentity = source
+	return s.persistLocked()
+}
+
+// BindMessageReferencePrefix discards rebuildable windows when native wire
+// identity changes. Preserve source and body-omission policy across every writer.
+// Call before cache use, after authoritative account/source admission.
+func (s *Store) BindMessageReferencePrefix(prefix string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	release, err := fsutil.LockFile(s.path())
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err = s.refreshFromDiskLocked(); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(s.sourceIdentity, "native:") || prefix == "" {
+		return ErrMailSource
+	}
+	if s.referencePrefix == prefix {
+		return nil
+	}
+	s.referencePrefix = prefix
+	s.mailboxes = map[string]*mailboxWindow{}
 	return s.persistLocked()
 }

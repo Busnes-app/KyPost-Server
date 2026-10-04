@@ -133,7 +133,7 @@ Default section order:
 
 ## User Preferences
 
-- Native restore authority prerequisites are captured against pinned KyIdentity source in [docs/NATIVE_RESTORE_AUTHORITY.md](docs/NATIVE_RESTORE_AUTHORITY.md). Ordinary active-user resync is insufficient to prove previously offboarded/deleted subjects; offline restore revokes native device/push registrations and pairing authority, while no hold release is supported. [docs/NATIVE_RESTORE_REFERENCES.md](docs/NATIVE_RESTORE_REFERENCES.md) records cached-ID reuse and the persistent restore generation groundwork; HTTP stale-reference enforcement is still pending.
+- Native restore authority prerequisites are captured against pinned KyIdentity source in [docs/NATIVE_RESTORE_AUTHORITY.md](docs/NATIVE_RESTORE_AUTHORITY.md). Ordinary active-user resync is insufficient to prove previously offboarded/deleted subjects; offline restore revokes native device/push registrations and pairing authority, while no hold release is supported. [docs/NATIVE_RESTORE_REFERENCES.md](docs/NATIVE_RESTORE_REFERENCES.md) records cached-ID reuse and the generation-bound HTTP/notification reference boundary; physical-client and current-authority recovery qualification remain pending.
 
 - Native primary compose/client-PGP sending is opt-in and uses fresh admission, durable claims and joined recovery workers. Pickup/alias/system routing, provider readiness and restore reconciliation remain pending. Read [docs/NATIVE_OUTBOX.md](docs/NATIVE_OUTBOX.md) before changing queue claims, key derivation, retry or Sent obligations.
 

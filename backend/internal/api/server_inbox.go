@@ -456,7 +456,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		if warmed {
 			for _, e := range entries {
 				bucket(e.Keywords, inboxEmail{
-					MessageID:            e.MessageID,
+					MessageID:            imapadapter.MessageReference(mailClient, e.MessageID),
 					Sender:               e.Sender,
 					SentTo:               e.SentTo,
 					CC:                   e.CC,
@@ -503,7 +503,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 				status = "unread"
 			}
 			bucket(msg.Keywords, inboxEmail{
-				MessageID:            msg.MessageID,
+				MessageID:            imapadapter.MessageReference(mailClient, msg.MessageID),
 				Sender:               msg.Sender,
 				SentTo:               msg.SentTo,
 				CC:                   msg.CC,
@@ -657,7 +657,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			}
 		}
 		bucket(e.Keywords, inboxEmail{
-			MessageID:            e.MessageID,
+			MessageID:            imapadapter.MessageReference(mailClient, e.MessageID),
 			Sender:               e.Sender,
 			SentTo:               e.SentTo,
 			CC:                   e.CC,
@@ -678,7 +678,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 	}
 	for _, e := range result.Updated {
 		bucket(e.Keywords, inboxEmail{
-			MessageID:            e.MessageID,
+			MessageID:            imapadapter.MessageReference(mailClient, e.MessageID),
 			Sender:               e.Sender,
 			SentTo:               e.SentTo,
 			CC:                   e.CC,
@@ -697,7 +697,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 
 	removed := make([]string, 0, len(result.Removed))
 	for _, e := range result.Removed {
-		removed = append(removed, e.MessageID)
+		removed = append(removed, imapadapter.MessageReference(mailClient, e.MessageID))
 	}
 
 	cursor := result.Cursor
@@ -971,14 +971,18 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 		// concept of a keyword parameter) and call the dedicated keyword
 		// methods directly, keeping ApplyInboxAction's folder-fallback logic
 		// for the other actions untouched.
-		var err error
+		internalID, err := imapadapter.ResolveMessageReference(mailClient, messageID)
+		if err != nil {
+			failures = append(failures, inboxActionFailure{MessageID: messageID, Error: err.Error()})
+			continue
+		}
 		switch action {
 		case "label":
-			err = mailClient.ApplyLabel(r.Context(), messageID, keyword)
+			err = mailClient.ApplyLabel(r.Context(), internalID, keyword)
 		case "unlabel":
-			err = mailClient.RemoveLabel(r.Context(), messageID, keyword)
+			err = mailClient.RemoveLabel(r.Context(), internalID, keyword)
 		default:
-			err = mailClient.ApplyInboxAction(r.Context(), messageID, action, mailbox, targetMailbox)
+			err = mailClient.ApplyInboxAction(r.Context(), internalID, action, mailbox, targetMailbox)
 		}
 		if err != nil {
 			failures = append(failures, inboxActionFailure{MessageID: messageID, Error: err.Error()})
@@ -986,7 +990,7 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 		}
 		processed++
 		if action == "label" {
-			labelled = append(labelled, messageID)
+			labelled = append(labelled, internalID)
 		}
 	}
 	// Labelling a message is how a user tells the sorter it was wrong.
@@ -1069,7 +1073,7 @@ func (s *Server) handleMailSearch(w http.ResponseWriter, r *http.Request) {
 			label = inboxUncategorizedTab
 		}
 		out = append(out, inboxEmail{
-			MessageID:      overview.MessageID,
+			MessageID:      imapadapter.MessageReference(mailClient, overview.MessageID),
 			Subject:        overview.Subject,
 			Sender:         overview.Sender,
 			SentTo:         overview.SentTo,

@@ -47,12 +47,6 @@ func (s *Server) handlePGPPayload(w http.ResponseWriter, r *http.Request) {
 	// known: it refuses ciphertext, and whether that is what was asked for
 	// cannot be decided before the message has been looked at.
 
-	mailbox, uid, err := attachmentRequestParams(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
 	mailClient, err := s.mailFor(r)
 	if err != nil {
 		if writeMailSourceConflict(w, err) {
@@ -63,6 +57,12 @@ func (s *Server) handlePGPPayload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "imap client is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	mailbox, uid, err := attachmentRequestParams(r, mailClient)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -164,8 +164,12 @@ func (s *Server) handlePGPPayload(w http.ResponseWriter, r *http.Request) {
 		responseBody = ""
 	}
 
+	var responseID any = uid // Preserve the legacy IMAP response type.
+	if imapadapter.MailSourceIdentity(mailClient) != "imap" {
+		responseID = imapadapter.MessageReference(mailClient, strconv.Itoa(uid))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"messageId":        uid,
+		"messageId":        responseID,
 		"mailbox":          mailbox,
 		"encryptedPayload": encrypted,
 		// The signature and the bytes it covers both come out of the SAME raw

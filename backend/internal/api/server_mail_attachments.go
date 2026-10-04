@@ -15,11 +15,15 @@ import (
 )
 
 // attachmentRequestParams reads the shared mailbox/messageId query params of
-// the two attachment endpoints. messageId is an IMAP UID, the same id shape
-// /api/inbox and /api/inbox/actions use.
-func attachmentRequestParams(r *http.Request) (mailbox string, uid int, err error) {
+// body/attachment/PGP endpoints. Resolve the authenticated source's wire ID
+// before any numeric lookup; native restore generations must not be bypassed.
+func attachmentRequestParams(r *http.Request, client imapadapter.Client) (mailbox string, uid int, err error) {
 	mailbox = strings.TrimSpace(r.URL.Query().Get("mailbox"))
-	uid, err = strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("messageId")))
+	id, err := imapadapter.ResolveMessageReference(client, strings.TrimSpace(r.URL.Query().Get("messageId")))
+	if err != nil {
+		return "", 0, err
+	}
+	uid, err = strconv.Atoi(id)
 	if err != nil || uid <= 0 {
 		return "", 0, errors.New("valid messageId is required")
 	}
@@ -49,7 +53,7 @@ func (s *Server) handleMailAttachmentList(w http.ResponseWriter, r *http.Request
 // armored ciphertext: the server holds no key it will open under either
 // protection mode, so the browser unwraps it and indexes what is inside.
 func (s *Server) serveAttachmentList(w http.ResponseWriter, r *http.Request, mailClient imapadapter.Client) {
-	mailbox, uid, err := attachmentRequestParams(r)
+	mailbox, uid, err := attachmentRequestParams(r, mailClient)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -82,7 +86,7 @@ func (s *Server) handleMailAttachmentDownload(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) serveAttachmentDownload(w http.ResponseWriter, r *http.Request, mailClient imapadapter.Client) {
-	mailbox, uid, err := attachmentRequestParams(r)
+	mailbox, uid, err := attachmentRequestParams(r, mailClient)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

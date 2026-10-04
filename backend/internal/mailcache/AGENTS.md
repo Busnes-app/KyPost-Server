@@ -19,6 +19,8 @@ All code under `backend/internal/mailcache/`. Consumed by both `api/`
 
 - `sourceIdentity` survives every cache write. API/daemon preflight and bind before consuming mail IDs; a different native namespace or mode is refused. Legacy windows cannot adopt native sources. This cache is not migration authority: state admission must also succeed. Native HTTP ignores unscoped cursors and returns fresh full snapshots until durable scoped deltas are qualified.
 
+- Native API/daemon admission also calls `BindMessageReferencePrefix` after source binding. Under the shared file lock, a changed prefix discards all rebuildable windows before use; persist the prefix across every write and preserve source/body-omission policy. Numeric mailbox/UID keys and Sent privacy rules stay unchanged. This prevents fresh wire IDs from laundering old cached bodies/PGP verdicts after rollback. Generation rotation requires stopped workers; older writers and mixed-root live rollback remain unsupported.
+
 - Incoming-encryption opt-in calls `OmitBodies`: durably clear `Body` and `PGPProtectedSubject` across mailboxes and suppress both at the shared persistence sink, including writers in another process. This policy stays enabled after opt-out. `Remove` tombstones replaced plaintext UIDs so clients see removal through delta sync.
 
 - `Store` is instantiated per user directory (`mailcache.New(userStateDir)`),
