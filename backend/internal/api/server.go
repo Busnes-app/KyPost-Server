@@ -192,15 +192,16 @@ type Server struct {
 	// the daemon process's published health report (health.MergeDaemonReport) —
 	// which is the same store the daemon writes it to, since both processes are
 	// rooted at the same state directory.
-	classifier   *classifier.HTTPClient
-	globalStore  *state.Store
-	backup       *backup.Service
-	ssoStore     *sso.Store
-	ssoLifecycle *sso.LifecycleStore
-	ollamaMu     sync.Mutex
-	ollamaStatus ollamaVersionStatus
-	serverMu     sync.Mutex
-	serverStatus serverVersionStatus
+	classifier    *classifier.HTTPClient
+	globalStore   *state.Store
+	backup        *backup.Service
+	ssoStore      *sso.Store
+	nativeDomains *sso.NativeDomainStore
+	ssoLifecycle  *sso.LifecycleStore
+	ollamaMu      sync.Mutex
+	ollamaStatus  ollamaVersionStatus
+	serverMu      sync.Mutex
+	serverStatus  serverVersionStatus
 
 	linuxClientMu     sync.Mutex
 	linuxClientStatus linuxClientStatus
@@ -397,6 +398,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		globalStore:              globalStore,
 		wkdStore:                 wkdStore,
 		ssoStore:                 sso.NewStore(configDir),
+		nativeDomains:            sso.NewNativeDomainStore(configDir),
 		ssoLifecycle:             sso.NewLifecycleStore(configDir),
 	}
 	if globalStore != nil {
@@ -520,6 +522,10 @@ func (s *Server) routesAuth(mux *http.ServeMux) {
 // the pre-login setup hint.
 func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/backup/status", s.withAdmin(s.handleBackupStatus))
+	mux.HandleFunc("GET /api/admin/mail-domain", s.withAdmin(s.handleNativeMailDomain))
+	mux.HandleFunc("PUT /api/admin/mail-domain", s.withAdmin(withActionDigest(s.handleNativeMailDomain)))
+	mux.HandleFunc("POST /api/admin/mail-domain/verify", s.withAdmin(withActionDigest(s.handleNativeMailDomainVerify)))
+
 	mux.HandleFunc("POST /api/admin/backup/run", s.withAdmin(withActionDigest(s.handleBackupRun)))
 	mux.HandleFunc("POST /api/admin/backup/drill", s.withAdmin(withActionDigest(s.handleBackupDrill)))
 	mux.HandleFunc("POST /api/admin/backup/export-capsule", s.withAdmin(withActionDigest(s.handleBackupExport)))

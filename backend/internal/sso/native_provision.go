@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/mail"
@@ -93,6 +94,11 @@ func (s *LifecycleStore) ReconcileNativeMailbox(stateRoot, issuer, subject, loca
 }
 
 func (s *LifecycleStore) reconcileNativeMailbox(stateRoot, issuer, subject, localID, domain string, limits mailbox.Limits, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
+	ctx := context.Background()
+	return s.reconcileNativeMailboxContext(ctx, stateRoot, issuer, subject, localID, domain, limits, prepare)
+}
+
+func (s *LifecycleStore) reconcileNativeMailboxContext(ctx context.Context, stateRoot, issuer, subject, localID, domain string, limits mailbox.Limits, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
 	var result NativeAssignment
 	if stateRoot == "" || !fsutil.SafePathComponent(localID) || !directoryIdentifier(issuer) || !directoryIdentifier(subject) || !nativeDomain(domain) || limits.MessageBytes <= 0 || limits.MessageBytes > mailmsg.MaxInboundMessageBytes || limits.PayloadBytes < limits.MessageBytes || limits.Records <= 0 {
 		return result, ErrNativeProvisioning
@@ -104,7 +110,23 @@ func (s *LifecycleStore) reconcileNativeMailbox(stateRoot, issuer, subject, loca
 	// ponytail: instance-wide directory lock covers local preparation,
 	// never network work. Split locks only after measuring contention and keeping
 	// the same revision/revocation fence across publication.
-	err = fsutil.WithFileLock(s.path, func() error {
+	release, err := fsutil.LockFileContext(ctx, s.path)
+	if err != nil {
+		return result, err
+	}
+	defer release()
+	return s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, localID, domain, limits, prepare)
+}
+
+func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root, issuer, subject, localID, domain string, limits mailbox.Limits, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
+	var result NativeAssignment
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if !filepath.IsAbs(root) || !fsutil.SafePathComponent(localID) || !directoryIdentifier(issuer) || !directoryIdentifier(subject) || !nativeDomain(domain) || limits.MessageBytes <= 0 || limits.MessageBytes > mailmsg.MaxInboundMessageBytes || limits.PayloadBytes < limits.MessageBytes || limits.Records <= 0 {
+		return result, ErrNativeProvisioning
+	}
+	err := func() error {
 		d, known, e := s.Directory(issuer, subject)
 		if e != nil {
 			return e
@@ -171,6 +193,9 @@ func (s *LifecycleStore) reconcileNativeMailbox(stateRoot, issuer, subject, loca
 		a.Status = "pending"
 		a.Failure = ""
 		f.Accounts[key] = a
+		if e = ctx.Err(); e != nil {
+			return e
+		}
 		// Reserve durably BEFORE touching account files; a killed writer is repairable.
 		if e = s.saveNative(f); e != nil {
 			return e
@@ -198,7 +223,7 @@ func (s *LifecycleStore) reconcileNativeMailbox(stateRoot, issuer, subject, loca
 			return saveErr
 		}
 		return e
-	})
+	}()
 	return result, err
 }
 

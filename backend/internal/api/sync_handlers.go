@@ -54,7 +54,7 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status, err := s.ssoLifecycle.ApplyDirectoryUser(settings.IssuerURL, event, u, sso.EventDigest(event.Type, body), func() (bool, error) {
-		return s.applyDirectoryUser(u)
+		return s.applyDirectoryUser(settings.IssuerURL, u)
 	})
 	var refusal *syncRefusal
 	switch {
@@ -116,14 +116,14 @@ func (e *syncRefusal) Error() string { return e.err.Error() }
 // the change invalidates ID tokens issued before it. Nothing here erases
 // data: a disabled or deleted user keeps their mailbox and keys and loses
 // only access.
-func (s *Server) applyDirectoryUser(u sso.DirectoryUser) (bool, error) {
+func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, error) {
 	active := *u.Active
 	role := users.RoleUser
 	if active && sso.HasAdminRole(u.Roles) {
 		role = users.RoleAdmin
 	}
 
-	existing, err := s.users.GetBySSOSub(u.ID)
+	existing, err := s.users.GetBySSOSubIssuer(issuer, u.ID)
 	if errors.Is(err, users.ErrNotFound) {
 		if !active {
 			return false, nil // nothing to disable; the fence alone refuses a login

@@ -1,98 +1,124 @@
-# Native provisioning reconciliation
+# Native domain proof and account allocation
 
-Internal foundation following merged PR #249. Production directory webhooks
-retain verified desired state and enforce account access as before. They do not
-call this reconciler. No worker, new endpoint, domain setting or native selector
-is enabled by this change.
+Production directory webhooks retain verified desired state and enforce account
+access. Admin mail-domain setup is available through the API. Native allocation
+and reconciliation remain internal: no background worker, native source
+selector or receiver is enabled. Existing deployments still use external IMAP.
 
-`LifecycleStore.ReconcileNativeMailbox` reads the retained signed SCIM resource
-under the same cross-process lock used by directory updates. The trusted caller
-must prove domain authority and the NEW local account's issuer/subject binding
-before publishing that account to ordinary state consumers. Token email/name
-and generic SCIM emails provide neither proof nor alias authorization.
+## Operator domain setup
 
-The operator's domain is a lowercase ASCII DNS name. Active desired state must
-contain exactly one explicit primary bare ASCII dot-atom address in that domain.
-Address comparisons are case-insensitive; quoted and SMTPUTF8 addresses are
-refused until supported end to end. Extra non-primary emails never create aliases.
+Pair/configure KyIdentity first. As an admin, read `GET /api/admin/mail-domain`,
+then `PUT /api/admin/mail-domain` with `{domain,password}` or
+`{domain,authSecret}`. Mutations require session CSRF and the current account
+credential; KySignOn sessions use the existing request-bound step-up round trip.
+The response includes the exact `recordName` and `recordValue` to publish:
+`_kypost-mail.<domain>` TXT `kypost-mail-verify=<random challenge>`.
+Then `POST /api/admin/mail-domain/verify` with the same credential fields.
+Responses are `Cache-Control: no-store` and always `receivingEnabled:false`.
+No frontend wizard is present yet.
 
-`$CONFIG_DIR/native-provisioning.json` is an owner-only atomic JSON ledger:
-immutable issuer/subject/localID, primary address, absolute state root and limits;
-desired revision/digest/activity; pending/applied/failed status, bounded failure
-code and acknowledged mailbox source. Failed primary validation can retain an
-account reservation with no address. Successful address reservations are never
-freed implicitly, including after failure or deactivation. Renaming or transferring
-an assigned address requires a future explicit reconciliation contract.
+The first profile binds one lowercase ASCII DNS domain and the configured issuer.
+Changing either is refused. Configure the issuer without a trailing slash before
+claiming a mail domain, matching the provider verifier's effective spelling. Reconfiguring the same pair rotates the challenge,
+expires initial verification after 24 hours and clears prior establishment/verification.
+An exact TXT match establishes the profile. Thereafter retain the same record
+and automatically recheck it; operators need no daily DNS rotation. The
+`established` field only remembers that initial setup completed; it never grants
+authority without a fresh exact DNS match. A match gives at most five minutes
+of evidence; the first match is also capped by initial challenge expiry. Every allocation performs a fresh lookup; stored positive status alone
+never authorizes it. Lookup timeout is five seconds; contention has a 30-second
+context. DNS failure, expiry and in-flight challenge rotation fail closed.
+System DNS does not prove DNSSEC authenticity or instantaneous revocation;
+resolver caching remains a trust dependency. WKD challenges have a separate
+purpose and never authorize mail-domain ownership.
 
-Reserve pending before touching files. Preparation publishes the mailbox,
-prebound state and manifest atomically; applied records its source afterward.
-Killed writers retain a pending reservation; retries reuse the exact published
-namespace after lost acknowledgement. An acknowledged source uses read-only
-`ValidatePreparedAccount`, refusing missing, legacy or damaged files instead of
-creating another namespace. Preparation failures persist failed status and keep
-reservations. Conflicting desired-primary updates retain current-revision failed
-status and the original address/source. Persistence failures return explicitly;
-a stored pending record is repaired by retry, never treated as completion.
+Unauthenticated requests return 401, non-admin/CSRF refusal 403, malformed or
+oversized bodies 400, missing KyIdentity setup/unreadable GET state 503, and
+refused configuration/verification 409. KySignOn step-up returns the existing
+403 challenge response. A failed proof does not enable transport: correct the
+exact TXT record/DNS availability or rotate an expired challenge and retry.
+The owner-only `$CONFIG_DIR/native-domain.json` holds a public challenge, not a
+secret. Do not publish production MX or assume outgoing delivery readiness.
 
-An initialization fence in `sso-lifecycle.json` is durable before the first ledger
-write. Missing ledger after initialization, or a ledger with an unfenced restored
-lifecycle, refuses reconciliation/status reads. A crash between first fence and
-ledger publication requires explicit ledger recovery, sacrificing availability
-rather than releasing unknown reservations. Valid but older paired files cannot
-be detected here: whole-stack restore reconciliation remains mandatory.
+## Disabled allocation flow
 
-Offboarding retains storage/reservations. Existing signed directory handling
-revokes access; reconciliation itself grants or revokes no user credentials.
-`DesiredActive` and `Status` are historical preparation evidence, never live
-access or receiver readiness. Consumers must compare live directory revision,
-digest and activity under its lock before using them. A subject disabled before
-its first assignment does not create storage. Deactivation of a pending,
-unprepared assignment may complete without a source; reactivation prepares it.
+`LifecycleStore.AllocateNativeAccount` is an internal new-account publication
+flow. It proves the domain before acquiring locks, then holds locks in order:
+domain → directory → users → account. It requires a live retained signed SCIM
+resource with matching issuer/subject and active state. Roles come from that
+resource, never a token email/name or classifier label. Exactly one explicit
+primary bare ASCII dot-atom email in the proven domain is required; comparisons
+are case-insensitive. Quoted/SMTPUTF8 addresses and implicit aliases are refused.
 
-The instance-wide lifecycle lock covers local disk preparation and serializes
-revocation entirely before or after that work. It currently has unbounded flock
-and filesystem waits; bounded/cancellable acquisition and bounded disk work are
-activation gates. Do not promise prompt deactivation with a stalled worker.
-Whole-file ledger rewrites and address scans scale with assigned account count;
-measure before activation, move to SQLite if this becomes a bottleneck.
+Reuse an existing durable reservation's local ID or reserve a new UUID. Resolve
+username collisions under the users lock with a stable `native-<localID>` name.
+Prepare the mailbox, prebound state and manifest and durably acknowledge the
+source before exposing the user in `users.json`. An ordinary lazy state opener
+therefore cannot win first and create IMAP state. Existing linked IMAP accounts
+are refused before preparation; no migration or adoption is attempted.
 
-Verification (Linux, real SQLite/filesystem and subprocess SIGKILL):
+Private `nativeMailboxIssuer` and `nativeMailboxSource` fields bind the user
+record to prepared ownership. Retries require the same issuer/subject/local ID
+and exact source, without changing roles, activity, credentials or revocation.
+Issuer-aware login and signed-directory lookup refuse foreign issuers. Directory
+handling uses the captured verified issuer, never a later settings read. The
+existing issuerless link method refuses all native relinks; unlink retains
+ownership and revokes the credential. Supported native reauthorization is an
+activation gate. Legacy link/unlink behavior is preserved, and the shared users
+writer now refuses duplicate nonempty SSO subjects across creation and linking.
+
+Allocation context is at most 30 seconds and never outlives the domain proof.
+Cancellable flock/mutex waits leave no abandoned waiter that acquires later.
+Legacy writers preserve blocking flock behavior. Open/fsync and read-only SQLite
+validation are not cancellable: healthy-volume qualification/watchdog and prompt
+revocation under stalled storage remain activation gates. No network lookup runs
+under directory/users locks. Instance-wide preparation serializes directory
+updates; whole-file reservation rewrites/address scans require scale measurement.
+
+## Reservations, failure and restore
+
+`$CONFIG_DIR/native-provisioning.json` retains immutable issuer/subject/local ID,
+primary address, absolute state root and limits; revision/digest/activity;
+pending/applied/failed status, failure code and acknowledged source. Reserve
+pending before touching files. Keep reservations through failure/offboarding.
+Preparation uses no-replace publication; lost acknowledgement reuses the exact
+published namespace. Acknowledged sources validate existing files read-only,
+refusing missing, legacy or damaged storage rather than recreating it.
+Conflicting primary updates retain current failed status and the old address.
+Offboarding revokes access without deleting mailbox data or freeing an address.
+Status is historical preparation evidence, never a live access/receiver grant.
+
+The lifecycle initialization fence refuses a missing ledger or a ledger paired
+with an unfenced restored lifecycle. A kill between first fence and ledger write
+requires explicit recovery, sacrificing availability to preserve reservations.
+Valid older paired files cannot be detected here. Whole-stack restore must
+reconcile domain claim, users/issuer/source, directory lifecycle, reservations
+and mailbox/state together. Do not use a partial restore to release ownership.
+
+Rollback preserves all these files and mailbox bytes. Disable workers before
+changing binaries; older writers can discard new fields/fences. Use a compatible
+binary and fresh verified directory revision before resuming. Never erase a
+ledger or switch sources to make failed preparation succeed.
+
+## Verification and next gates
 
 ```sh
 cd backend
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/sso ./internal/mailbox -count=1 -timeout=20m
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/api -run '^TestDirectory' -count=1 -timeout=20m
+GOTOOLCHAIN=go1.26.6 go test -race ./internal/fsutil ./internal/users ./internal/sso ./internal/mailbox ./internal/api -run '^TestNativeAllocation|^TestNativeDomain|^TestNativeMailDomain|^TestNativeAccountIssuer|^TestNativePublication|^TestLockFileContext|^TestPrepareAccount|^TestDirectory' -count=1 -timeout=20m
 ```
 
-Checks cover primary/domain ambiguity, unverified/legacy desired state, owner,
-root and quota conflicts, concurrent collisions, lifecycle ordering, retained
-raw mail and namespaces through disable/rehire, current failed-state repair,
-legacy/missing storage, missing/corrupt ledger, partial lifecycle restore and
-actual kills before preparation and after publication but before acknowledgement.
-The signed webhook/API test resolves the existing account and explicitly calls
-reconciliation as qualification; no production webhook calls it.
+Checks use real SQLite/filesystem and authenticated admin routes for DNS purpose,
+issuer/profile immutability, expiry/rotation, transient DNS failures, cancellation,
+legacy refusal, stable reservations, username collision, retained raw mail,
+publication ordering and native login/directory/relink ownership. Existing
+preparation/reconciliation SIGKILL checks remain. Process crashes are not
+hardware power-loss evidence. A real allocator kill between acknowledgement and
+user publication remains a runtime activation gate.
 
-Local merge qualification: full backend race suites pass (API 277.369s),
-including the pinned embedding model and Maddy proof in the other-package suite.
-Formatting/vet/pinned lint/build/vulnerability checks pass. Frontend typecheck,
-918 tests/build/runtime audit, both worker typechecks/76 relay tests, script/
-workflow/compose checks and actual Docker build/health/heartbeat/cleartext refusal
-checks pass. Independent hostile review repeated provisioning/preparation and
-signed-directory race checks; no blocker remains for disabled internal scope.
-Its surviving medium findings are unbounded lock/disk waits and restore
-consistency; whole-file scaling is a low finding. Remote CI and the autonomous
-reviewer must independently clear the pushed PR head before merge.
-
-Before activation: persist/prove domain ownership; integrate new-account
-allocation before any ordinary state opener (never adopt legacy accounts);
-provide operator diagnostics and periodic repair; bound lock/storage work;
-qualify backup/restore across lifecycle, ledger and prepared mailbox/state;
-coordinate receiver routes/import commits with revocation. Source selection,
-client deltas, aliases and transport readiness remain separate work.
-
-Rollback keeps ledger, lifecycle fence and all prepared account data. Disable
-workers before changing binaries. Older writers can discard the initialization
-fence; use a compatible binary and reconcile retained lifecycle/ledger state
-with a fresh verified directory revision before resuming. Never erase a ledger
-or switch sources to make a failed preparation succeed. No new dependency,
-network call, secret or client wire contract is introduced.
+Next qualify whole-stack backup/restore and allocator publication crashes, then
+integrate explicitly enabled provisioning/periodic repair and diagnostics ahead
+of every ordinary state opener. Qualify storage waits, orphan cleanup, scale,
+receiver revocation/import ordering and runtime selectors before transport
+activation. Durable scoped client deltas, aliases and relay readiness remain
+separate work. This change adds system DNS TXT lookups, no dependency or secret,
+and no Android/Linux/iOS client wire change.

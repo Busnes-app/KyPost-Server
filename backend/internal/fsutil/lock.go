@@ -1,10 +1,13 @@
 package fsutil
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 // WithFileLock runs fn while holding an exclusive advisory lock covering
@@ -37,6 +40,12 @@ func WithFileLock(path string, fn func() error) error {
 // immediately. Prefer WithFileLock where the closure form fits; it cannot be
 // misused by forgetting the defer.
 func LockFile(path string) (release func(), err error) {
+	return LockFileContext(context.Background(), path)
+}
+
+// LockFileContext cancels contention without abandoning a goroutine holding a
+// future lock. Filesystem open/fsync itself still requires a healthy volume.
+func LockFileContext(ctx context.Context, path string) (release func(), err error) {
 	// Per-user state dirs are created lazily by the stores' own save paths, so
 	// on a first-ever write the directory may not exist yet.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -46,9 +55,36 @@ func LockFile(path string) (release func(), err error) {
 	if err != nil {
 		return nil, fmt.Errorf("open lock file for %s: %w", path, err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	for {
+		if err = ctx.Err(); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		flags := syscall.LOCK_EX
+		if ctx.Done() != nil {
+			flags |= syscall.LOCK_NB
+		}
+		err = syscall.Flock(int(f.Fd()), flags)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EINTR) {
+			_ = f.Close()
+			return nil, fmt.Errorf("lock %s: %w", path, err)
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			_ = f.Close()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if err = ctx.Err(); err != nil {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
-		return nil, fmt.Errorf("lock %s: %w", path, err)
+		return nil, err
 	}
 	return func() {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

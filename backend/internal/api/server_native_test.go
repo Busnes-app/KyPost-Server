@@ -71,6 +71,7 @@ func newTestServer(t *testing.T) *Server {
 	srv.stateDir = stateDir
 	srv.configDir = configDir
 	srv.ssoStore = sso.NewStore(configDir)
+	srv.nativeDomains = sso.NewNativeDomainStore(configDir)
 	srv.ssoLifecycle = sso.NewLifecycleStore(configDir)
 	srv.totpSecretKeyPath = filepath.Join(configDir, "totp-secret.key")
 	srv.pgpPrivateKeyPath = filepath.Join(configDir, "pgp-private-key.key")

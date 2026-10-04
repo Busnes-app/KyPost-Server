@@ -512,7 +512,7 @@ func (s *Server) linkSSOIdentity(w http.ResponseWriter, r *http.Request, userID 
 // sign the name the attacker chose. Linking an existing account now requires
 // an authenticated session on that account — see linkSSOIdentity.
 func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings, claims *sso.SSOTokenClaims) (users.User, error) {
-	user, err := s.users.GetBySSOSub(claims.Sub)
+	user, err := s.users.GetBySSOSubIssuer(claims.Issuer, claims.Sub)
 	if err == nil {
 		// The account still knows this subject — that is how directory sync
 		// addresses it — but a revocation said it is no longer a credential.

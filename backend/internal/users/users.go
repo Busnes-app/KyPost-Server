@@ -76,10 +76,14 @@ type User struct {
 	PushMFAEnabled bool `json:"pushMfaEnabled,omitempty"`
 
 	// Single Sign-On (SSO) fields.
-	SSOSub      string `json:"ssoSub,omitempty"`
-	SSOUsername string `json:"ssoUsername,omitempty"`
-	SSOEmail    string `json:"ssoEmail,omitempty"`
-	SSOLinkedAt int64  `json:"ssoLinkedAt,omitempty"`
+	// NativeMailboxSource records prepared storage before native account publication.
+	// Internal evidence only; no runtime selector or public response uses it yet.
+	NativeMailboxIssuer string `json:"nativeMailboxIssuer,omitempty"`
+	NativeMailboxSource string `json:"nativeMailboxSource,omitempty"`
+	SSOSub              string `json:"ssoSub,omitempty"`
+	SSOUsername         string `json:"ssoUsername,omitempty"`
+	SSOEmail            string `json:"ssoEmail,omitempty"`
+	SSOLinkedAt         int64  `json:"ssoLinkedAt,omitempty"`
 	// SSOLinkRevokedAt marks the link as no longer a credential without
 	// forgetting which directory identity it names.
 	//
@@ -392,8 +396,10 @@ func (u User) Public() Public {
 }
 
 var (
-	ErrNotFound      = errors.New("user not found")
-	ErrUsernameTaken = errors.New("username already in use")
+	ErrNotFound              = errors.New("user not found")
+	ErrUsernameTaken         = errors.New("username already in use")
+	ErrSSOSubTaken           = errors.New("SSO subject already belongs to another account")
+	ErrNativeAccountConflict = errors.New("native account publication conflicts with existing state; preserve storage and reconcile ownership")
 	// ErrLastActiveAdmin is returned when a write would leave the instance
 	// with no active administrator. Enforced inside the store's write lock
 	// rather than by the caller — see guardNotLastActiveAdmin.
@@ -1042,6 +1048,15 @@ func (s *Store) GetBySSOSub(ssoSub string) (User, error) {
 	return out, nil
 }
 
+// GetBySSOSubIssuer preserves legacy lookup while fencing native ownership.
+func (s *Store) GetBySSOSubIssuer(issuer, sub string) (User, error) {
+	u, err := s.GetBySSOSub(sub)
+	if err == nil && u.NativeMailboxSource != "" && (issuer == "" || u.NativeMailboxIssuer != issuer) {
+		return User{}, ErrNativeAccountConflict
+	}
+	return u, err
+}
+
 // LinkSSO connects a user's account to an SSO identity.
 func (s *Store) LinkSSO(userID, ssoSub, ssoUsername, ssoEmail string) error {
 	s.mu.Lock()
@@ -1052,9 +1067,18 @@ func (s *Store) LinkSSO(userID, ssoSub, ssoUsername, ssoEmail string) error {
 		if err != nil {
 			return err
 		}
+		for _, u := range f.Users {
+			if strings.TrimSpace(ssoSub) != "" && u.ID != userID && u.SSOSub == strings.TrimSpace(ssoSub) {
+				return ErrSSOSubTaken
+			}
+		}
 		found := false
 		for i := range f.Users {
 			if f.Users[i].ID == userID {
+				if f.Users[i].NativeMailboxSource != "" {
+					return ErrNativeAccountConflict
+				}
+
 				f.Users[i].SSOSub = strings.TrimSpace(ssoSub)
 				f.Users[i].SSOUsername = strings.TrimSpace(ssoUsername)
 				f.Users[i].SSOEmail = strings.TrimSpace(ssoEmail)
@@ -1117,6 +1141,12 @@ func (s *Store) UnlinkSSO(userID string) error {
 		found := false
 		for i := range f.Users {
 			if f.Users[i].ID == userID {
+				if f.Users[i].NativeMailboxSource != "" {
+					f.Users[i].SSOLinkRevokedAt = time.Now().UTC().Unix()
+					f.Users[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+					return s.writeFileUnlocked(f)
+				}
+
 				f.Users[i].SSOSub = ""
 				f.Users[i].SSOUsername = ""
 				f.Users[i].SSOEmail = ""
@@ -1136,46 +1166,97 @@ func (s *Store) UnlinkSSO(userID string) error {
 
 // CreateSSOUser adds a new user provisioned via SSO.
 func (s *Store) CreateSSOUser(username string, role Role, ssoSub, ssoUsername, ssoEmail string) (User, error) {
+	return s.createSSOUser(context.Background(), "", username, role, ssoSub, ssoUsername, ssoEmail, "", nil)
+}
+
+// PublishPreparedSSOUser is internal allocation: prepare runs while users.json
+// is locked, before an ordinary consumer can discover the account. The caller
+// holds the verified directory/domain fence and supplies a durable reserved ID.
+// It must never call a users.Store method from prepare (locks are not reentrant).
+func (s *Store) PublishPreparedSSOUser(ctx context.Context, id, username string, role Role, issuer, sub, ssoUsername, email string, prepare func() (string, error)) (User, error) {
+	if strings.TrimSpace(issuer) == "" || !fsutil.SafePathComponent(id) || sub == "" || prepare == nil {
+		return User{}, ErrNativeAccountConflict
+	}
+	return s.createSSOUser(ctx, id, username, role, sub, ssoUsername, email, issuer, prepare)
+}
+
+func (s *Store) createSSOUser(ctx context.Context, id, username string, role Role, ssoSub, ssoUsername, ssoEmail, nativeIssuer string, prepare func() (string, error)) (User, error) {
 	if err := ValidateUsername(username); err != nil {
 		return User{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var created User
-	err := fsutil.WithFileLock(s.path, func() error {
-		f, err := s.readFileUnlocked()
-		if err != nil {
-			return err
-		}
-		username = strings.TrimSpace(username)
-		want := NormalizeUsername(username)
-		for _, u := range f.Users {
-			if NormalizeUsername(u.Username) == want {
-				return ErrUsernameTaken
+	if ctx.Done() == nil {
+		s.mu.Lock()
+	} else {
+		for !s.mu.TryLock() {
+			timer := time.NewTimer(10 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return User{}, ctx.Err()
+			case <-timer.C:
 			}
 		}
-		id, err := fsutil.NewUUIDv4()
-		if err != nil {
-			return err
-		}
-		now := time.Now().UTC().Format(time.RFC3339)
-		created = User{
-			ID:                 id,
-			Username:           username,
-			Role:               role,
-			Active:             true,
-			MustChangePassword: false,
-			SSOSub:             strings.TrimSpace(ssoSub),
-			SSOUsername:        strings.TrimSpace(ssoUsername),
-			SSOEmail:           strings.TrimSpace(ssoEmail),
-			SSOLinkedAt:        time.Now().UTC().Unix(),
-			CreatedAt:          now,
-			UpdatedAt:          now,
-		}
-		f.Users = append(f.Users, created)
-		return s.writeFileUnlocked(f)
-	})
+	}
+	defer s.mu.Unlock()
+	release, err := fsutil.LockFileContext(ctx, s.path)
 	if err != nil {
+		return User{}, err
+	}
+	defer release()
+	f, err := s.readFileUnlocked()
+	if err != nil {
+		return User{}, err
+	}
+	username = strings.TrimSpace(username)
+	ssoSub = strings.TrimSpace(ssoSub)
+	for _, u := range f.Users {
+		if id != "" && u.ID == id {
+			if prepare == nil || u.SSOSub != ssoSub || u.NativeMailboxIssuer != nativeIssuer || u.NativeMailboxSource == "" {
+				return User{}, ErrNativeAccountConflict
+			}
+			source, e := prepare()
+			if e != nil {
+				return User{}, e
+			}
+			if source != u.NativeMailboxSource {
+				return User{}, ErrNativeAccountConflict
+			}
+			if err := ctx.Err(); err != nil {
+				return User{}, err
+			}
+			return u, nil
+		}
+		if ssoSub != "" && u.SSOSub == ssoSub {
+			return User{}, ErrSSOSubTaken
+		}
+		if NormalizeUsername(u.Username) == NormalizeUsername(username) {
+			return User{}, ErrUsernameTaken
+		}
+	}
+	if id == "" {
+		id, err = fsutil.NewUUIDv4()
+		if err != nil {
+			return User{}, err
+		}
+	}
+	var source string
+	if prepare != nil {
+		source, err = prepare()
+		if err != nil {
+			return User{}, err
+		}
+		hash, e := hex.DecodeString(strings.TrimPrefix(source, "native:"))
+		if !strings.HasPrefix(source, "native:") || e != nil || len(hash) != 32 {
+			return User{}, ErrNativeAccountConflict
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return User{}, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	created := User{ID: id, Username: username, Role: role, Active: true, SSOSub: ssoSub, SSOUsername: strings.TrimSpace(ssoUsername), SSOEmail: strings.TrimSpace(ssoEmail), SSOLinkedAt: time.Now().UTC().Unix(), CreatedAt: now, UpdatedAt: now, NativeMailboxSource: source, NativeMailboxIssuer: nativeIssuer}
+	f.Users = append(f.Users, created)
+	if err = s.writeFileUnlocked(f); err != nil {
 		return User{}, err
 	}
 	return created, nil
