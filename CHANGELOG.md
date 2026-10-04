@@ -14,6 +14,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Bound verified ID-token issuance timestamps in the shared browser/native verifier: require positive iat and at most 30 seconds of future clock skew before access grants. Preserve browser expiration and native five-minute token age; no native restore release is enabled.
 - Qualify mailbox/receiving backup refusal when committed WAL data exceeds the per-file cap although the main database fits. Check explicit failure, no local capsule or leftover scratch, and retained original rows; backup limits remain unchanged.
 - Qualify internal held-native repair planning and an atomic native-only access batch with intent-before-write ordering. Reverify current receipt/storage authority, preserve legacy credentials and PGP data, and retain the hold. Persist native-only repair intent/provenance barriers before account writes and qualify explicit before/after completion, interrupted/repeated repairs and newer-authority invalidation. Expose separately confirmed `POST /api/admin/native-recovery/repair`, retaining the original administrator/session proof through account publication and revoking native sessions, device/push, pairing and CardDAV credentials before completion. Cleanup failure stays held and incomplete. No hold release is supplied.
 

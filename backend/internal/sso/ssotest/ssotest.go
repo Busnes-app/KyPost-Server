@@ -36,6 +36,7 @@ type IdP struct {
 	ForeignKey    bool   // sign with a key absent from the published JWKS
 	AlgNone       bool   // emit an alg:none token
 	Expired       bool   // emit a token whose exp is in the past
+	DropIssuedAt  bool   // omit the ID token issuance timestamp
 	DropNonce     bool   // omit the nonce the authorization request asked for
 	WrongAudience string // put this in aud instead of ClientID
 	WrongIssuer   string // put this in iss instead of the real issuer
@@ -236,6 +237,9 @@ func (i *IdP) payload() map[string]any {
 	}
 	for k, v := range i.claims {
 		p[k] = v
+	}
+	if i.DropIssuedAt {
+		delete(p, "iat")
 	}
 	return p
 }

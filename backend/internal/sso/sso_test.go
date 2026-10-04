@@ -469,3 +469,47 @@ func TestVerifyIDTokenRunsTheExchangeChecks(t *testing.T) {
 		})
 	}
 }
+
+func TestIDTokenIssuedAtBoundsBothVerificationPaths(t *testing.T) {
+	for _, method := range []string{"exchange", "verify"} {
+		for _, tc := range []struct {
+			name   string
+			iat    any
+			accept bool
+		}{
+			{"missing", nil, false},
+			{"zero", int64(0), false},
+			{"null", nil, false},
+			{"negative", int64(-1), false},
+			{"extreme", int64(1<<63 - 1), false},
+			{"future", time.Now().Add(time.Minute).Unix(), false},
+			{"recent", time.Now().Unix(), true},
+			{"small clock skew", time.Now().Add(10 * time.Second).Unix(), true},
+			{"old but unexpired", time.Now().Add(-time.Hour).Unix(), true},
+		} {
+			t.Run(method+"/"+tc.name, func(t *testing.T) {
+				idp := newIdP(t)
+				idp.SetClaims(map[string]any{"sub": "timing-subject", "iat": tc.iat})
+				idp.DropIssuedAt = tc.name == "missing"
+				var claims *SSOTokenClaims
+				var err error
+				if method == "exchange" {
+					claims, err = exchange(t, idp)
+				} else {
+					p, setupErr := NewProvider(context.Background(), testSettings(idp.URL()), "https://mail.example.com/api/auth/oidc/callback")
+					if setupErr != nil {
+						t.Fatal(setupErr)
+					}
+					claims, err = p.VerifyIDToken(context.Background(), idp.IDToken())
+				}
+				if tc.accept {
+					if err != nil || claims == nil || claims.Sub != "timing-subject" {
+						t.Fatal("valid timestamp refused", err)
+					}
+				} else if err == nil || claims != nil {
+					t.Fatal("invalid issuance time accepted or wrong refusal", claims, err)
+				}
+			})
+		}
+	}
+}

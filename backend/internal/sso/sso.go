@@ -673,7 +673,7 @@ func (p *Provider) verifyRawIDToken(ctx context.Context, raw string) (*oidc.IDTo
 
 	// Signature against the provider's JWKS, `iss` equal to the discovered
 	// issuer, `aud` containing our client ID, and an unexpired `exp` (go-oidc
-	// v3 also checks `nbf` but never `iat`; callers bound iat themselves).
+	// v3 also checks `nbf` but never `iat`; bound iat below).
 	idToken, err := p.verifier.Verify(ctx, raw)
 	if err != nil {
 		return nil, nil, fmt.Errorf("id_token verification failed: %w", err)
@@ -698,6 +698,11 @@ func (p *Provider) verifyRawIDToken(ctx context.Context, raw string) (*oidc.IDTo
 	claims := &SSOTokenClaims{}
 	if err := idToken.Claims(claims); err != nil {
 		return nil, nil, fmt.Errorf("unreadable id_token claims: %w", err)
+	}
+	// Directory revocation compares issuance timestamps; bound them in both
+	// verified-token paths, with the existing native clock-skew allowance.
+	if claims.IssuedAt <= 0 || claims.IssuedAt > time.Now().Unix()+30 {
+		return nil, nil, errors.New("id_token iat must be positive and no more than 30 seconds in the future; check the issuer clock")
 	}
 	// Take identity from the verified token object, never from the decoded
 	// JSON, so a duplicate key in the payload cannot disagree with it.
