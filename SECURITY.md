@@ -47,6 +47,10 @@ We acknowledge security researchers and community members who help us improve. I
 
 ## Known Limitations & Trust Boundaries
 
+### Native restore evidence
+
+Protected administrator challenge/import routes can record fresh app-specific KyIdentity evidence and durable directory revision barriers. Evidence may change profiles at an unchanged observed revision, so it is retained separately and grants no account access, role change or hold release. Every request requires CSRF/account confirmation and current account/session authority; the selected pairing key is the only signing authority. Compromise of that key or administrator authority can install barriers that interrupt provisioning; preserve the hold and seek newer genuine upstream revisions. Receipts expire and remain historical; future recovery must revalidate all authority and domain/transport gates. See [the recovery contract](docs/NATIVE_RESTORE_AUTHORITY.md#protected-consumer-procedure).
+
 KyPost is honest about what it does and does not protect. Read these carefully before deploying or relying on specific features.
 
 ### PGP Key Custody

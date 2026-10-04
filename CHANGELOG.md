@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add protected, challenge-bound KyIdentity recovery-evidence storage and durable revision barriers for held native restores. Preserve account state and the hold; fence local admin authority cycles and support bounded large exact-action uploads. Account repair and hold release remain pending.
+
 - Give each offline native restore/quarantine attempt a fresh hold epoch, including retries and failed validation. Preserve holds on entropy/write failure; no restore activation or hold release is introduced.
 
 - Qualify refusal of signed recovery evidence by ordinary directory sync without account, revision or hold mutation; document the available KyIdentity exporter and pending challenge/repair boundary.
