@@ -137,7 +137,7 @@ owner's password/recovery material; a capsule does not bypass that protection.
    A failure leaves staging held and unpublished. Legacy restores also
    accept an existing empty target. Occupied targets/files are never overwritten.
 4. Native restores remain quarantined with **no supported release path yet**.
-   Preserve the hold file when copying volumes. Allocation, native runtime, native CardDAV (including cached Basic auth), local receiving and relay updates refuse a present
+   Preserve the hold file when copying volumes. Keep a separately provisioned legacy local recovery administrator: a restored native administrator cannot administer a held server. The authentication guard applies even with native feature flags disabled and either private native marker present. Refused MFA completion preserves TOTP/recovery material; held QR exchange preserves its nonce. Offline restore requires stopped services; admission checks do not cancel operations already admitted. Native password/derived login, pending MFA completion, SSO sign-in/step-up, existing session authority (including admin), QR key exchange, allocation, native runtime, native CardDAV (including cached Basic auth), local receiving and relay updates refuse a present
    or unreadable hold. Relay-only restores also persist this hold. Keep native workers stopped; manually deleting the hold
    does not qualify recovery. With services still stopped, copy `recovered/config/`, `recovered/private/` and
    `recovered/state/` into the corresponding retained/mounted volumes. Preserve

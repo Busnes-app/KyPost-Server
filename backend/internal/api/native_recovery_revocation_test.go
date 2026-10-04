@@ -78,10 +78,21 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 				}
 			}
 
+			// Obtain a real password session before restore quarantine.
+			w := httptest.NewRecorder()
+			login, _ := json.Marshal(map[string]any{"username": native.Username, "password": "retained-native-password"})
+			lr := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(string(login)))
+			lr.Header.Set("Content-Type", "application/json")
+			s.routes().ServeHTTP(w, lr)
+			if w.Code != 200 {
+				t.Fatal("native login before loss", w.Code, w.Body.String())
+			}
+			nativeCookie := sessionCookieFrom(w)
+
 			if e = fsutil.PersistJSONFile(filepath.Join(s.stateDir, sso.NativeRestoreHoldFile), map[string]any{"version": 1, "epoch": "12345678-1234-4123-8123-123456789abc"}); e != nil {
 				t.Fatal(e)
 			}
-			w := httptest.NewRecorder()
+			w = httptest.NewRecorder()
 			if e = s.startSession(w, httptest.NewRequest("GET", "/", nil), actor.ID); e != nil {
 				t.Fatal(e)
 			}
@@ -102,16 +113,7 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 				t.Fatal(w.Code, w.Body.String())
 			}
 			checkDAV(204) // Legacy mail authority is usable while native mail is held.
-			// Obtain a real password session before the queued loss.
-			w = httptest.NewRecorder()
-			login, _ := json.Marshal(map[string]any{"username": native.Username, "password": "retained-native-password"})
-			lr := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(string(login)))
-			lr.Header.Set("Content-Type", "application/json")
-			s.routes().ServeHTTP(w, lr)
-			if w.Code != 200 {
-				t.Fatal("native login before loss", w.Code, w.Body.String())
-			}
-			nativeCookie := sessionCookieFrom(w)
+
 			lossResource := runtimeDirectoryUser(demote)
 			lossResource["roles"] = []string{}
 			if scenario == "storage-failure" {
@@ -153,18 +155,10 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 			lr = httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(string(login)))
 			lr.Header.Set("Content-Type", "application/json")
 			s.routes().ServeHTTP(w, lr)
-			if !demote && w.Code != 401 {
-				t.Fatal("offboarded native local login succeeded", w.Code, w.Body.String())
+			if w.Code != 401 || sessionCookieFrom(w) != nil {
+				t.Fatal("held native local login succeeded after loss", w.Code, w.Body.String())
 			}
-			if demote {
-				if w.Code != 200 {
-					t.Fatal(w.Code, w.Body.String())
-				}
-				admin = gatedCall(t, s, sessionCookieFrom(w), "GET", "/api/admin/mail-domain", "", "")
-				if admin.Code != 403 {
-					t.Fatal("demoted native admin access", admin.Code)
-				}
-			}
+
 			if !demote {
 				devices, e := store.ListNativeDevicesStrict()
 				if e != nil || len(devices) != 0 {
