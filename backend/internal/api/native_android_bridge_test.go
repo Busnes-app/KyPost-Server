@@ -87,7 +87,6 @@ func qualifyNativeAndroidMail(t *testing.T, s *Server, userID string) *httptest.
 			t.Fatal("disposable reverse port is already owned by another test")
 		}
 	}
-	adb("push", ca, deviceCA)
 	defer func() {
 		cleanup, done := context.WithTimeout(context.Background(), 10*time.Second)
 		defer done()
@@ -97,6 +96,7 @@ func qualifyNativeAndroidMail(t *testing.T, s *Server, userID string) *httptest.
 			}
 		}
 	}()
+	adb("push", ca, deviceCA)
 	adb("reverse", "tcp:"+address, "tcp:"+address)
 	var proof struct {
 		SubscriberID string `json:"subscriberId"`

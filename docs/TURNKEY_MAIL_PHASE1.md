@@ -384,3 +384,15 @@ SMTP reception. The real Maddy/app/supervised receiving proofs remain separate.
 Physical-device behavior, Android client PGP/enrollment, live provider receipt,
 public-domain deployment, restore activation and power-loss qualification remain
 pending. No production route, setting, wire field or dependency changes here.
+
+
+Local evidence on Android 12/API 31: the joined seven-mode ordinary/PGP/device/
+uncertainty/recovery race fixture passed (20.442s); the final Android-only run with
+wrong-pin, wrong-secret and valid foreign-generation rejection passed (5.260s).
+Existing pairing/pin/Room instrumentation passed 20 tests, and all 1294 JVM tests
+in 144 suites passed. The full server API race suite passed (261.898s), and whole-
+backend vet/build/pinned lint passed with zero issues. An independent reviewer
+read both test implementations and production paths, ran the default six-mode
+server race regression (12.880s), and found no blocker; its assertion/comment
+precision findings were corrected. These results used a debug Android build
+with the repository's public CI Firebase placeholder, not production credentials.
