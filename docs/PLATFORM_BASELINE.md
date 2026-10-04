@@ -478,3 +478,12 @@ primary submission, even if intent was persisted. Inspect the owner-scoped
 repair pending Sent filing. Converted PGP generation/device-enrollment gates and
 client custody remain unchanged. Native pickup/alias/system sends remain pending;
 see [NATIVE_OUTBOX.md](NATIVE_OUTBOX.md). Existing external IMAP is unchanged.
+
+## Native CardDAV recovery
+
+Native account CardDAV Basic auth returns the existing 401 challenge while a
+restore hold is present, including when the password was cached. Offline native
+restore revokes the historical CardDAV app password; after qualified recovery,
+configure a new app password in each CardDAV client. Contact data remains retained.
+Legacy IMAP accounts keep their existing CardDAV behavior. This does not authorize
+restore hold release; see [RESTORE.md](RESTORE.md).

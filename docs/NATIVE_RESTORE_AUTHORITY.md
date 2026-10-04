@@ -2,7 +2,7 @@
 
 Source review at KyIdentity `8cf7cf9f424e14eaf9d7bea8e822af904f779528` (clean worktree) and KyPost `50e60bc4a1e640a6b783152b831b7d53474f4d1d`. Findings describe existing code and recovery prerequisites; they do not enable native restore activation.
 
-Current offline restore qualification now removes native device/browser push registrations and rotates subscriber IDs before publication; mail, pull history and users/wrapped-key documents remain retained. This revokes historical registration authority, including outstanding pairing tokens. It does not establish complete account/role authority, reconcile other app credentials such as CardDAV, or authorize fresh enrollment/hold release; see the [restore implementation](../backend/internal/backup/native.go) and [restore procedure](RESTORE.md).
+Current offline restore qualification now removes native device/browser push registrations and CardDAV app-password hashes and rotates subscriber IDs before publication; mail, pull history and users/wrapped-key documents remain retained. This revokes historical registration and CardDAV authority, including outstanding pairing tokens. Native CardDAV additionally rejects held accounts on both cached and fresh Basic auth; contact data remains retained. It does not establish complete fresh account/role authority or authorize fresh enrollment/hold release; see the [restore implementation](../backend/internal/backup/native.go) and [restore procedure](RESTORE.md).
 
 ## Existing usable pieces
 
