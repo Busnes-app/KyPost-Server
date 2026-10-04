@@ -2,10 +2,12 @@ package backup
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -158,5 +160,44 @@ func QuarantineNativeRestore(dir string) (bool, error) {
 	if checkErr != nil {
 		return true, fmt.Errorf("restored native data is unqualified; keep workers stopped and preserve the staging files for reconciliation: %w", checkErr)
 	}
+	// Validation above is read-only. Only now mutate private, stopped staging;
+	// restored queue evidence cannot authorize a future provider submission.
+	if err := filepath.WalkDir(filepath.Join(dir, "state"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && entry.Name() == "mailbox.db" {
+			return quarantineRestoredOutbox(path)
+		}
+		return nil
+	}); err != nil {
+		return true, fmt.Errorf("cannot quarantine restored outgoing work; keep workers stopped and preserve staging: %w", err)
+	}
 	return true, nil
+}
+
+// quarantineRestoredOutbox runs only after whole-snapshot qualification and hold
+// persistence. It preserves ciphertext, claims, accepted/Sent and ambiguous
+// evidence. Each database commits atomically; partial multi-store failure keeps
+// the whole restore unpublished and held, and retry is idempotent.
+func quarantineRestoredOutbox(path string) (err error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	location := url.URL{Scheme: "file", Path: absolute}
+	db, err := sql.Open("sqlite", location.String()+"?mode=rw&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, db.Close()) }()
+	var tables int
+	if err = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('outbox','outbox_deliveries')").Scan(&tables); err != nil || tables == 0 {
+		return err
+	}
+	if tables != 2 {
+		return mailbox.ErrOutbound
+	}
+	_, err = db.Exec("UPDATE outbox_deliveries SET state='quarantined',next_attempt=0 WHERE state IN ('queued','retryable')")
+	return err
 }

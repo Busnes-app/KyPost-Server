@@ -123,7 +123,14 @@ A nonempty queue requires version-1 recipe evidence
 `outbox:encrypted-jobs-claims-and-sent` plus the relay config and matching key.
 
 Snapshots preserve historical generations and interrupted claims. This evidence
-must never enable replay. Native restores persist the existing whole-stack hold;
+must never enable replay. After historical validation and persistence of the
+whole-stack hold, offline restore changes queued/retryable deliveries to
+`quarantined` and clears their retry timers before publishing recovered data.
+Frozen ciphertext, claims, attempts, accepted/Sent and submitting/uncertain
+states remain intact. This prevents old queue entries from becoming sendable
+if live authority is restored later; no automatic unquarantine exists.
+A failed per-mailbox update leaves private staging unpublished and held;
+repeating restore quarantine is safe. Native restores retain the whole-stack hold;
 fresh identity/domain/provider and stale-ID reconciliation is still required,
 with no supported release. Per-store consistency, backup size limits, power-loss
 qualification and current authority remain separate [restore gates](RESTORE.md).

@@ -114,8 +114,11 @@ owner's password/recovery material; a capsule does not bypass that protection.
    foreign-service, wrong-key or corrupted capsules. Extraction occurs in an
    owner-only sibling `.kypost-restore-*` directory. Failed extraction/validation
    retains it for inspection and prints no success summary. A native target must
-   be absent; Linux publishes it atomically without replacement after validation
-   and persistence of `state/native-restore-hold.json`. Legacy restores also
+   be absent; Linux publishes it atomically without replacement after validation,
+   persistence of `state/native-restore-hold.json`, and quarantine of restored
+   queued/retryable outgoing deliveries. Their encrypted contents and claim history
+   remain retained; accepted/Sent and submitting/uncertain evidence is unchanged.
+   A failure leaves staging held and unpublished. Legacy restores also
    accept an existing empty target. Occupied targets/files are never overwritten.
 4. Native restores remain quarantined with **no supported release path yet**.
    Preserve the hold file when copying volumes. Allocation, native runtime, local receiving and relay updates refuse a present
@@ -126,8 +129,11 @@ owner's password/recovery material; a capsule does not bypass that protection.
    and external dependencies. Recreate the container without deleting volumes.
 5. Confirm readiness, the same recovery-key fingerprint and a new successful
    backup. Run `backup-drill` and inspect its SQLite, account and credential checks.
-   Sessions are memory-only, so users sign in again. Test mailbox access and native
-   devices; their persisted registrations were restored.
+   Sessions are memory-only, so users sign in again. Test external mailbox access.
+   Native mailbox/device access remains blocked by the restore hold; restored
+   registrations do not qualify fresh device authority.
+
+Read the [pinned identity authority findings](NATIVE_RESTORE_AUTHORITY.md) before designing hold release: ordinary KyIdentity resync does not establish complete offboarding evidence.
 
 Before native recovery can resume writes, implementation must reconcile fresh
 KyIdentity activity, roles and revocation, domain proof, receiver generations
@@ -135,8 +141,8 @@ and provider credential/relay evidence.
 Replaying an already-applied directory revision is insufficient to repair
 restored user access. An older database also rewinds message IDs while retaining
 its namespace: a restore generation fence or proven ID high-watermark must
-prevent stale client references from resolving to new mail. Outbox recovery preserves interrupted/uncertain claims and must never replay
-restored queued work automatically; native hold release and current admission
+prevent stale client references from resolving to new mail. Outbox recovery preserves interrupted/uncertain claims and quarantines restored
+queued/retryable deliveries; native hold release and current admission
 remain unavailable. See [outbox qualification](NATIVE_OUTBOX.md).
 
 Private staging establishes the process-crash publication boundary, not whole-tree

@@ -10,7 +10,7 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 ## Local Contracts
 
-- Nonempty native outboxes require relay config/master key and `outbox:encrypted-jobs-claims-and-sent` recipe evidence. Decrypt actual frozen job bytes; check namespace/owner/domain, foreign keys, Sent receipts and quota. Databases with neither queue table remain compatible; a partial schema or orphan claims is corruption. Historical generations/claims are preserved, never reclaimed or replayed by restore.
+- Nonempty native outboxes require relay config/master key and `outbox:encrypted-jobs-claims-and-sent` recipe evidence. Decrypt actual frozen job bytes; check namespace/owner/domain, foreign keys, Sent receipts and quota. Databases with neither queue table remain compatible; a partial schema or orphan claims is corruption. Historical generations/claims are preserved. After whole-snapshot validation and durable hold, offline restore atomically quarantines queued/retryable deliveries per mailbox before publication; accepted/Sent and submitting/uncertain evidence remain intact. Partial failure preserves held staging; retry is idempotent.
 
 - Collect `config/native-relay.json` with `private/native-relay.key`; validate decryption of the actual collected bytes and historical native-domain issuer/domain binding. Version-1 recipes add `relay:domain-credentials-and-authority`; drills require it when relay ciphertext exists. Relay-only restores persist the native hold without qualifying unowned mailbox databases. Fresh authority/provider evidence remains separate.
 
@@ -31,7 +31,7 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 ## Verification
 
-- `TestNativeOutboxSealedClaimsSentAndDependencies` checks sealed committed claims/Sent, retained holds, required recipe/key/config and wrong-key rejection.
+- `TestNativeOutboxSealedClaimsSentAndDependencies` checks sealed committed claims/Sent, restore queue quarantine with no resubmission, retained holds, required recipe/key/config and wrong-key rejection.
 
 - `TestDomainRelay` checks sealed credential/key/generation preservation, missing dependencies, corrupt restored keys and relay-only quarantine.
 
