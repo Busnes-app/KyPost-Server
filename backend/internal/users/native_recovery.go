@@ -18,11 +18,12 @@ type NativeAccountRepair struct {
 
 // RepairNativeAccounts commits one bounded native-only batch. beforeWrite runs
 // under the fresh users fences, after validation and epoch calculation, and must
-// durably record the recovery intent/barriers before returning success. It must
-// not mutate either snapshot, reenter this Store or perform network I/O. Settings
+// durably record the recovery intent/barriers before returning success. Its returned
+// release keeps additional commit fences through the users write (also on failure).
+// It must not mutate either snapshot, reenter this Store or perform network I/O. Settings
 // and directory fences precede this call; session/credential cleanup follows it.
 // This method neither validates recovery evidence nor releases a restore hold.
-func (s *Store) RepairNativeAccounts(ctx context.Context, issuer string, repairs []NativeAccountRepair, beforeWrite func(current, repaired []User) error) error {
+func (s *Store) RepairNativeAccounts(ctx context.Context, issuer string, repairs []NativeAccountRepair, beforeWrite func(current, repaired []User) (release func(), err error)) error {
 	if issuer == "" || len(repairs) == 0 || len(repairs) > 256 || beforeWrite == nil {
 		return errors.New("bounded native recovery plan and durable intent are required")
 	}
@@ -91,7 +92,11 @@ func (s *Store) RepairNativeAccounts(ctx context.Context, issuer string, repairs
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	if err = beforeWrite(current, f.Users); err != nil {
+	releaseCommit, err := beforeWrite(current, f.Users)
+	if releaseCommit != nil {
+		defer releaseCommit()
+	}
+	if err != nil {
 		return err
 	}
 	if err = ctx.Err(); err != nil {

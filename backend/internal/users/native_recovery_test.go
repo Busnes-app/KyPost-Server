@@ -48,7 +48,7 @@ func TestNativeRecoveryBatchPreservesOwnershipAndCredentials(t *testing.T) {
 		{two.ID, two.SSOSub, two.NativeMailboxSource, true, RoleUser},
 	}
 	intentRecorded := false
-	err = s.RepairNativeAccounts(context.Background(), one.NativeMailboxIssuer, plan, func(current, repaired []User) error {
+	err = s.RepairNativeAccounts(context.Background(), one.NativeMailboxIssuer, plan, func(current, repaired []User) (func(), error) {
 		// The persisted account file must still contain the entire old batch.
 		persisted, err := s.readFileUnlocked()
 		if err != nil || !reflect.DeepEqual(persisted.Users, current) {
@@ -63,7 +63,7 @@ func TestNativeRecoveryBatchPreservesOwnershipAndCredentials(t *testing.T) {
 			}
 		}
 		intentRecorded = true
-		return nil
+		return nil, nil
 	})
 	if err != nil || !intentRecorded {
 		t.Fatal("repair refused", err)
@@ -109,7 +109,7 @@ func TestNativeRecoveryBatchRefusesWithoutChangingAccounts(t *testing.T) {
 		{"empty", u.NativeMailboxIssuer, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := s.RepairNativeAccounts(context.Background(), tc.issuer, tc.plan, func([]User, []User) error { t.Fatal("intent accepted invalid plan"); return nil }); err == nil {
+			if err := s.RepairNativeAccounts(context.Background(), tc.issuer, tc.plan, func([]User, []User) (func(), error) { t.Fatal("intent accepted invalid plan"); return nil, nil }); err == nil {
 				t.Fatal("invalid plan accepted")
 			}
 			after, _ := os.ReadFile(s.path)
@@ -119,11 +119,11 @@ func TestNativeRecoveryBatchRefusesWithoutChangingAccounts(t *testing.T) {
 		})
 	}
 	failure := errors.New("intent persistence failed")
-	if err = s.RepairNativeAccounts(context.Background(), u.NativeMailboxIssuer, []NativeAccountRepair{valid}, func([]User, []User) error { return failure }); !errors.Is(err, failure) {
+	if err = s.RepairNativeAccounts(context.Background(), u.NativeMailboxIssuer, []NativeAccountRepair{valid}, func([]User, []User) (func(), error) { return nil, failure }); !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	if err = s.RepairNativeAccounts(ctx, u.NativeMailboxIssuer, []NativeAccountRepair{valid}, func([]User, []User) error { cancel(); return nil }); !errors.Is(err, context.Canceled) {
+	if err = s.RepairNativeAccounts(ctx, u.NativeMailboxIssuer, []NativeAccountRepair{valid}, func([]User, []User) (func(), error) { cancel(); return nil, nil }); !errors.Is(err, context.Canceled) {
 		t.Fatal("cancel after intent committed users", err)
 	}
 	after, _ := os.ReadFile(s.path)
@@ -141,7 +141,7 @@ func TestNativeRecoveryBatchUsesFreshDiskFence(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	err = s.RepairNativeAccounts(ctx, u.NativeMailboxIssuer, []NativeAccountRepair{{u.ID, u.SSOSub, u.NativeMailboxSource, false, RoleUser}}, func([]User, []User) error { t.Fatal("intent while disk lock blocked"); return nil })
+	err = s.RepairNativeAccounts(ctx, u.NativeMailboxIssuer, []NativeAccountRepair{{u.ID, u.SSOSub, u.NativeMailboxSource, false, RoleUser}}, func([]User, []User) (func(), error) { t.Fatal("intent while disk lock blocked"); return nil, nil })
 	release()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
@@ -156,7 +156,10 @@ func TestNativeRecoveryBatchValidatesWholePlanBeforeIntent(t *testing.T) {
 		{u.ID, u.SSOSub, u.NativeMailboxSource, false, RoleUser},
 		{"missing-owner", "missing-subject", u.NativeMailboxSource, false, RoleUser},
 	}
-	if err := s.RepairNativeAccounts(context.Background(), u.NativeMailboxIssuer, plan, func([]User, []User) error { t.Fatal("intent persisted a partially valid batch"); return nil }); err == nil {
+	if err := s.RepairNativeAccounts(context.Background(), u.NativeMailboxIssuer, plan, func([]User, []User) (func(), error) {
+		t.Fatal("intent persisted a partially valid batch")
+		return nil, nil
+	}); err == nil {
 		t.Fatal("partially valid plan accepted")
 	}
 	after, _ := os.ReadFile(s.path)
@@ -174,7 +177,7 @@ func TestNativeRecoveryBatchValidatesWholePlanBeforeIntent(t *testing.T) {
 			break
 		}
 	}
-	if err := s.RepairNativeAccounts(context.Background(), u.NativeMailboxIssuer, []NativeAccountRepair{{legacy.ID, u.SSOSub, u.NativeMailboxSource, false, RoleUser}}, func([]User, []User) error { t.Fatal("legacy adopted"); return nil }); err == nil {
+	if err := s.RepairNativeAccounts(context.Background(), u.NativeMailboxIssuer, []NativeAccountRepair{{legacy.ID, u.SSOSub, u.NativeMailboxSource, false, RoleUser}}, func([]User, []User) (func(), error) { t.Fatal("legacy adopted"); return nil, nil }); err == nil {
 		t.Fatal("existing legacy owner adopted")
 	}
 }
@@ -184,11 +187,11 @@ func TestNativeRecoveryBatchEpochExhaustionAndUnchangedPlan(t *testing.T) {
 	u := recoveryNativeOwner(t, s, "native-one", "subject-one")
 	noop := []NativeAccountRepair{{u.ID, u.SSOSub, u.NativeMailboxSource, u.Active, u.Role}}
 	before, _ := os.ReadFile(s.path)
-	if err := s.RepairNativeAccounts(context.Background(), u.NativeMailboxIssuer, noop, func(current, repaired []User) error {
+	if err := s.RepairNativeAccounts(context.Background(), u.NativeMailboxIssuer, noop, func(current, repaired []User) (func(), error) {
 		if !reflect.DeepEqual(current, repaired) {
 			t.Fatal("unchanged repair advanced account authority")
 		}
-		return nil
+		return nil, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -210,11 +213,50 @@ func TestNativeRecoveryBatchEpochExhaustionAndUnchangedPlan(t *testing.T) {
 	}
 	before, _ = os.ReadFile(s.path)
 	noop[0].Active = false
-	if err = s.RepairNativeAccounts(context.Background(), u.NativeMailboxIssuer, noop, func([]User, []User) error { t.Fatal("intent before epoch exhaustion refusal"); return nil }); err == nil {
+	if err = s.RepairNativeAccounts(context.Background(), u.NativeMailboxIssuer, noop, func([]User, []User) (func(), error) {
+		t.Fatal("intent before epoch exhaustion refusal")
+		return nil, nil
+	}); err == nil {
 		t.Fatal("exhausted epoch accepted")
 	}
 	after, _ = os.ReadFile(s.path)
 	if string(before) != string(after) {
 		t.Fatal("epoch exhaustion changed persisted bytes")
+	}
+}
+
+func TestNativeRecoveryBatchRetainsCommitFenceThroughWriteAndFailure(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		name := "commit"
+		if fail {
+			name = "intent-failure"
+		}
+		t.Run(name, func(t *testing.T) {
+			s := newTestStore(t)
+			u := recoveryNativeOwner(t, s, "native-one", "subject-one")
+			failure := errors.New("intent failed")
+			released := 0
+			err := s.RepairNativeAccounts(context.Background(), u.NativeMailboxIssuer, []NativeAccountRepair{{u.ID, u.SSOSub, u.NativeMailboxSource, false, RoleUser}}, func([]User, []User) (func(), error) {
+				release := func() {
+					released++
+					f, err := s.readFileUnlocked()
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, after := range f.Users {
+						if after.ID == u.ID && after.Active != fail {
+							t.Fatal("commit fence released before expected write/refusal")
+						}
+					}
+				}
+				if fail {
+					return release, failure
+				}
+				return release, nil
+			})
+			if released != 1 || (err != nil) != fail {
+				t.Fatal("commit fence not released exactly once", released, err)
+			}
+		})
 	}
 }

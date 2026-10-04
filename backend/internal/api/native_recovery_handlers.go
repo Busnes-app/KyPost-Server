@@ -29,42 +29,75 @@ func decodeNativeRecoveryRequest(w http.ResponseWriter, r *http.Request, limit i
 	return true
 }
 
-// Confirmation precedes disk fences; recheck its account/settings witnesses and
-// live session under settings -> directory -> users -> session commit fences.
-func (s *Server) nativeRecoveryAdmin(w http.ResponseWriter, r *http.Request, credential nativeRecoveryCredential, action func(context.Context, sso.SSOSettings, []users.User) error) bool {
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	r = r.WithContext(ctx)
+type nativeRecoveryOperator struct {
+	actor    users.User
+	session  Session
+	token    string
+	settings sso.SSOSettings
+}
+
+// Confirmation happens once; later commits recheck its original witnesses.
+func (s *Server) confirmNativeRecoveryOperator(w http.ResponseWriter, r *http.Request, credential nativeRecoveryCredential) (nativeRecoveryOperator, bool) {
+	var operator nativeRecoveryOperator
 	ac, ok := authFromContext(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return false
+		return operator, false
 	}
-	sess, token, ok := s.sessionOf(r)
-	if !ok || sess.UserID != ac.UserID {
+	operator.session, operator.token, ok = s.sessionOf(r)
+	if !ok || operator.session.UserID != ac.UserID {
 		http.Error(w, "recovery requires a live administrator session", http.StatusUnauthorized)
-		return false
+		return operator, false
 	}
-	settings := s.ssoStore.Load()
-	var actor users.User
+	operator.settings = s.ssoStore.Load()
 	err := s.users.WithCurrentUsers(r.Context(), func(all []users.User) error {
 		for _, u := range all {
 			if u.ID == ac.UserID {
-				actor = u
+				operator.actor = u
 				return nil
 			}
 		}
 		return sso.ErrNativeRecovery
 	})
-	if err != nil || !actor.Active || actor.Role != users.RoleAdmin || actor.MustChangePassword {
-		http.Error(w, "administrator authority unavailable; sign in again", http.StatusForbidden)
-		return false
+	actor := operator.actor
+	if err != nil || !actor.Active || actor.Role != users.RoleAdmin || actor.MustChangePassword || actor.NativeMailboxIssuer != "" || actor.NativeMailboxSource != "" {
+		http.Error(w, "a usable legacy recovery administrator is required; sign in again", http.StatusForbidden)
+		return operator, false
 	}
-	if !s.confirmActor(w, r, ac.UserID, credential.Password, credential.AuthSecret) {
-		return false
+	return operator, s.confirmActor(w, r, ac.UserID, credential.Password, credential.AuthSecret)
+}
+
+// Caller already holds settings -> directory -> users. The returned release
+// keeps the live session proof fenced through the caller's actual durable write.
+func (s *Server) lockNativeRecoveryOperator(operator nativeRecoveryOperator, current sso.SSOSettings, all []users.User) (func(), error) {
+	actor := operator.actor
+	if current != operator.settings {
+		return nil, sso.ErrNativeRecovery
 	}
-	err = s.ssoStore.WithCurrentSettings(ctx, func(current sso.SSOSettings) error {
-		if current != settings {
+	found := false
+	for _, u := range all {
+		if u.ID == actor.ID {
+			found = u.Active && u.Role == users.RoleAdmin && !u.MustChangePassword && u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" && u.NativeSendEpoch == actor.NativeSendEpoch && u.PGPRevision == actor.PGPRevision && u.PasswordHash == actor.PasswordHash && u.AuthDerivation == actor.AuthDerivation && u.LoginSalt == actor.LoginSalt && u.LoginIterations == actor.LoginIterations && u.SSOSub == actor.SSOSub && u.SSOLinkRevokedAt == actor.SSOLinkRevokedAt
+			break
+		}
+	}
+	if !found {
+		return nil, sso.ErrNativeRecovery
+	}
+	s.sessMu.RLock()
+	live, exists := s.sessions[operator.token]
+	now := time.Now()
+	sess := operator.session
+	if !exists || live.UserID != actor.ID || live.IssuedAt != sess.IssuedAt || live.SSO != sess.SSO || live.SSOKySignOn != sess.SSOKySignOn || !now.Before(live.ExpiresAt) || now.Sub(live.IssuedAt) >= sessionMaxLifetime || ((live.SSO.Issuer != "" || live.SSOKySignOn) && (!current.Enabled || live.SSO.Issuer != current.IssuerURL || live.SSO.ClientID != current.ClientID || live.SSO.Subject != actor.SSOSub || actor.SSOSub == "" || actor.SSOLinkRevokedAt != 0 || !live.SSOAppAdmin)) {
+		s.sessMu.RUnlock()
+		return nil, sso.ErrNativeRecovery
+	}
+	return s.sessMu.RUnlock, nil
+}
+
+func (s *Server) withNativeRecoveryOperator(ctx context.Context, operator nativeRecoveryOperator, action func(context.Context, sso.SSOSettings, []users.User) error) error {
+	return s.ssoStore.WithCurrentSettings(ctx, func(current sso.SSOSettings) error {
+		if current != operator.settings {
 			return sso.ErrNativeRecovery
 		}
 		release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
@@ -73,30 +106,25 @@ func (s *Server) nativeRecoveryAdmin(w http.ResponseWriter, r *http.Request, cre
 		}
 		defer release()
 		return s.users.WithCurrentUsers(ctx, func(all []users.User) error {
-			found := false
-			for _, u := range all {
-				if u.ID == actor.ID {
-					found = u.Active && u.Role == users.RoleAdmin && !u.MustChangePassword && u.NativeSendEpoch == actor.NativeSendEpoch && u.PGPRevision == actor.PGPRevision && u.PasswordHash == actor.PasswordHash && u.AuthDerivation == actor.AuthDerivation && u.LoginSalt == actor.LoginSalt && u.LoginIterations == actor.LoginIterations && u.SSOSub == actor.SSOSub && u.SSOLinkRevokedAt == actor.SSOLinkRevokedAt
-					break
-				}
+			release, err := s.lockNativeRecoveryOperator(operator, current, all)
+			if err != nil {
+				return err
 			}
-			if !found {
-				return sso.ErrNativeRecovery
-			}
-			s.sessMu.RLock()
-			defer s.sessMu.RUnlock()
-			live, exists := s.sessions[token]
-			now := time.Now()
-			if !exists || live.UserID != actor.ID || live.IssuedAt != sess.IssuedAt || live.SSO != sess.SSO || live.SSOKySignOn != sess.SSOKySignOn || !now.Before(live.ExpiresAt) || now.Sub(live.IssuedAt) >= sessionMaxLifetime {
-				return sso.ErrNativeRecovery
-			}
-			if (live.SSO.Issuer != "" || live.SSOKySignOn) && (!current.Enabled || live.SSO.Issuer != current.IssuerURL || live.SSO.ClientID != current.ClientID || live.SSO.Subject != actor.SSOSub || actor.SSOSub == "" || actor.SSOLinkRevokedAt != 0 || !live.SSOAppAdmin) {
-				return sso.ErrNativeRecovery
-			}
+			defer release()
 			return action(ctx, current, all)
 		})
 	})
-	if err != nil {
+}
+
+func (s *Server) nativeRecoveryAdmin(w http.ResponseWriter, r *http.Request, credential nativeRecoveryCredential, action func(context.Context, sso.SSOSettings, []users.User) error) bool {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	r = r.WithContext(ctx)
+	operator, ok := s.confirmNativeRecoveryOperator(w, r, credential)
+	if !ok {
+		return false
+	}
+	if err := s.withNativeRecoveryOperator(ctx, operator, action); err != nil {
 		http.Error(w, "recovery evidence refused; preserve the hold, sign in again and request fresh evidence for current authority", http.StatusConflict)
 		return false
 	}

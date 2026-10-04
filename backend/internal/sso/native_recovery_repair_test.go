@@ -202,14 +202,14 @@ func applyPublishedRecoveryBatch(t *testing.T, life *LifecycleStore, root string
 	if err != nil {
 		return err
 	}
-	return accounts.RepairNativeAccounts(ctx, settings.IssuerURL, plan, func(current, repaired []users.User) error {
+	return accounts.RepairNativeAccounts(ctx, settings.IssuerURL, plan, func(current, repaired []users.User) (func(), error) {
 		if err := life.RecordNativeRecoveryRepairIntentHeld(ctx, root, settings, key, current, repaired); err != nil {
-			return err
+			return nil, err
 		}
 		if stopAfterIntent {
-			return errors.New("simulated stop after durable intent before account write")
+			return nil, errors.New("simulated stop after durable intent before account write")
 		}
-		return nil
+		return nil, nil
 	})
 }
 
@@ -455,7 +455,7 @@ func TestNativeRecoveryRepairIntentRejectsUnplannedAccountChanges(t *testing.T) 
 			}
 			before, _ := accounts.List()
 			lifecycle, _ := os.ReadFile(life.path)
-			err = accounts.RepairNativeAccounts(ctx, settings.IssuerURL, plan, func(current, repaired []users.User) error {
+			err = accounts.RepairNativeAccounts(ctx, settings.IssuerURL, plan, func(current, repaired []users.User) (func(), error) {
 				for i := range repaired {
 					if repaired[i].ID == native.ID {
 						switch field {
@@ -472,7 +472,7 @@ func TestNativeRecoveryRepairIntentRejectsUnplannedAccountChanges(t *testing.T) 
 						repaired[i].Role = users.RoleUser
 					}
 				}
-				return life.RecordNativeRecoveryRepairIntentHeld(ctx, root, settings, key, current, repaired)
+				return nil, life.RecordNativeRecoveryRepairIntentHeld(ctx, root, settings, key, current, repaired)
 			})
 			if err == nil {
 				t.Fatal("unplanned account changes qualified")
