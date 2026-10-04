@@ -1,3 +1,5 @@
+//go:build linux
+
 package backup
 
 import (
@@ -13,18 +15,28 @@ import (
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
 
 // Exercise the collector and sealed restore while committed rows exist only in WAL.
 func TestNativeDatabasesSurviveSealedRestore(t *testing.T) {
-	s := validService(t)
+	s, u := nativeService(t)
 	key := pinTestKey(t, s)
-	paths := []string{"users/u1/mailbox/mailbox.db", "receiving/ingress.db"}
+	paths := []string{"users/" + u.ID + "/mailbox/mailbox.db", "receiving/ingress.db"}
 	want := []byte("Content-Type: application/pgp-encrypted\r\n\r\nopaque bytes\x00\xff")
 	for _, rel := range paths {
 		path := filepath.Join(s.dirs.State, rel)
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			t.Fatal(err)
+		}
+		if filepath.Base(path) == "ingress.db" {
+			store, err := ingress.Open(filepath.Dir(path), ingress.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
 		}
 		db, err := sql.Open("sqlite", path)
 		if err != nil {
@@ -123,12 +135,15 @@ func TestNativeDatabasesSurviveSealedRestore(t *testing.T) {
 
 func TestNativeStoreBackupPreservesIdentityAndReplay(t *testing.T) {
 	ctx := context.Background()
-	s := validService(t)
+	s, u := nativeService(t)
 	key := pinTestKey(t, s)
-	owner := mailbox.Owner{Issuer: "https://identity.example", Subject: "subject-1", Mailbox: "u1"}
-	ml := mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100}
+	a, found, err := sso.NewLifecycleStore(s.dirs.Config).NativeAssignment(u.NativeMailboxIssuer, u.SSOSub)
+	if err != nil || !found {
+		t.Fatal("missing fixture reservation", err)
+	}
+	owner, ml := a.Owner, a.Limits
 	il := ingress.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100}
-	m, err := mailbox.Open(filepath.Join(s.dirs.State, "users/u1/mailbox"), owner, ml)
+	m, err := mailbox.Open(filepath.Join(s.dirs.State, "users", u.ID, "mailbox"), owner, ml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +153,7 @@ func TestNativeStoreBackupPreservesIdentityAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer g.Close()
-	route := ingress.Route{Address: "alice@example.com", Issuer: owner.Issuer, Subject: owner.Subject, Mailbox: owner.Mailbox, Generation: 7, Active: true, ValidUntil: time.Now().Add(time.Hour)}
+	route := ingress.Route{Address: a.Address, Issuer: owner.Issuer, Subject: owner.Subject, Mailbox: owner.Mailbox, Generation: 7, Active: true, ValidUntil: time.Now().Add(time.Hour)}
 	if err := g.SetRoute(ctx, route); err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +184,7 @@ func TestNativeStoreBackupPreservesIdentityAndReplay(t *testing.T) {
 	if _, _, err := capsule.Open(sealed, key, dir); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := mailbox.Open(filepath.Join(dir, "state/users/u1/mailbox"), owner, ml)
+	restored, err := mailbox.Open(filepath.Join(dir, "state/users", u.ID, "mailbox"), owner, ml)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/api"
 	"github.com/Busnes-app/kypost-server/backend/internal/backup"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
@@ -144,13 +146,58 @@ func outcomeWord(ok bool) string {
 // argv: a share in argv is in shell history and /proc/<pid>/cmdline.
 func runRestore(rest []string, stdin io.Reader, stdout io.Writer) error {
 	if len(rest) != 2 {
-		return errors.New("usage: kypost-server restore <capsule.kycap> <empty-target-dir>  (shares on stdin, one per line; never in argv)")
+		return errors.New("usage: kypost-server restore <capsule.kycap> <target-dir>  (shares on stdin, one per line; never in argv)")
 	}
 	shares, err := recoveryclient.ReadShares(stdin)
 	if err != nil {
 		return err
 	}
-	return recoveryclient.Restore(rest[0], filepath.Clean(rest[1]), backup.AppName, shares, stdout)
+	// Delay the library's success summary until product validation and hold persist.
+	var summary bytes.Buffer
+	target := filepath.Clean(rest[1])
+	// The supplied destination never exposes partially extracted native state.
+	// Keep failed staging for inspection; it is never the configured live root.
+	stage, err := os.MkdirTemp(filepath.Dir(target), ".kypost-restore-")
+	if err != nil {
+		return err
+	}
+	staging := filepath.Join(stage, "data")
+	if err := recoveryclient.Restore(rest[0], staging, backup.AppName, shares, &summary); err != nil {
+		return fmt.Errorf("restore failed; preserve private staging %s for inspection: %w", stage, err)
+	}
+	native, err := backup.QuarantineNativeRestore(staging)
+	if err != nil {
+		return fmt.Errorf("restore validation failed; preserve private staging %s for inspection: %w", stage, err)
+	}
+	if native {
+		err = fsutil.PublishDirectory(staging, target)
+	} else {
+		// Preserve the legacy empty-directory restore contract on other platforms.
+		entries, readErr := os.ReadDir(target)
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			err = readErr
+		} else if len(entries) != 0 {
+			err = errors.New("restore target is occupied")
+		} else {
+			err = os.Rename(staging, target)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("restore publication refused; destination retained and verified staging at %s: %w", stage, err)
+	}
+	if err := fsutil.SyncDir(filepath.Dir(target)); err != nil {
+		return fmt.Errorf("restored data published but directory sync failed; keep workers stopped: %w", err)
+	}
+	if err := os.Remove(stage); err != nil {
+		return err
+	}
+	if _, err := io.Copy(stdout, &summary); err != nil {
+		return err
+	}
+	if native {
+		_, err = fmt.Fprintln(stdout, "Native mail remains held: reconcile current identity, DNS and receiver evidence before resuming workers.")
+	}
+	return err
 }
 
 // backupLoop polls the admin's schedule every minute in the daemon process and

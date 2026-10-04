@@ -49,12 +49,15 @@ are excluded. Each database has a consistent snapshot; separate databases and JS
 files are collected sequentially, not as a transaction across the whole deployment.
 For a quiescent recovery point, stop services and use the CLI export.
 
-Native-mail qualification is incomplete: SQLite integrity does not prove that
-restored users, directory revisions, reservations, mailbox namespaces and receiving
-routes agree, or that restored delivery evidence is current. Keep native workers
-disabled until these are reconciled against authoritative identity/receiver state.
-The 64 MiB per-file and 256 MiB total limits also remain activation gates for a
-domain-sized mail store; oversized backups fail rather than omit mail.
+Native exports and drills now check historical ownership: users, issuer/subject
+reservations, directory revisions, mailbox namespace/state, domain claim and
+receiving routes/frozen bindings must agree. Missing acknowledged storage,
+orphan databases and foreign ownership fail closed. Validation uses only the
+collected/restored roots, never the original absolute ledger path. It does not
+prove current external authority or freshness; consistent old backups can pass.
+Native validation needs additional scratch space for the collected metadata and
+databases. The 64 MiB per-file and 256 MiB total limits remain activation gates
+for a domain-sized mail store; oversized backups fail rather than omit mail.
 
 The version-1 recipe remains compatible. Use this version of KyPost or newer to
 check all three database names; older drills check only state.db. A new integrity
@@ -75,7 +78,7 @@ relay keys and CAPTCHA credentials), DNS/network settings, and TLS mounts are no
 captured. Restore them before startup. Client-protected PGP still requires its
 owner's password/recovery material; a capsule does not bypass that protection.
 
-## Restore into an empty staging directory
+## Offline restore and native quarantine
 
 1. Stop the deployment and retain its existing volumes. Take a separate copy before
    replacing anything. Download the capsule using a KyRecovery operator session, or
@@ -83,10 +86,9 @@ owner's password/recovery material; a capsule does not bypass that protection.
    the receipt; successful decryption alone does not prove freshness. Run
    `sha256sum backup.kycap` and compare it with the receipt digest before restoring.
    The manifest payload hash printed by restore is a different hash.
-2. Run the same or a newer compatible KyPost binary against an empty staging path:
+2. Run the same or a newer compatible KyPost binary against an absent target path:
 
    ```sh
-   mkdir -m 700 recovered
    kypost-server restore backup.kycap "$PWD/recovered"
    ```
 
@@ -103,8 +105,17 @@ owner's password/recovery material; a capsule does not bypass that protection.
    ```
 
 3. Compare the authenticated manifest summary with the receipt. Refuse stale,
-   foreign-service, wrong-key or corrupted capsules. A nonempty target is refused.
-4. With services still stopped, copy `recovered/config/`, `recovered/private/` and
+   foreign-service, wrong-key or corrupted capsules. Extraction occurs in an
+   owner-only sibling `.kypost-restore-*` directory. Failed extraction/validation
+   retains it for inspection and prints no success summary. A native target must
+   be absent; Linux publishes it atomically without replacement after validation
+   and persistence of `state/native-restore-hold.json`. Legacy restores also
+   accept an existing empty target. Occupied targets/files are never overwritten.
+4. Native restores remain quarantined with **no supported release path yet**.
+   Preserve the hold file when copying volumes. Allocation refuses any present
+   or unreadable hold. Future native APIs, pollers and receivers must enforce it
+   before activation. Keep native workers stopped; manually deleting the hold
+   does not qualify recovery. With services still stopped, copy `recovered/config/`, `recovered/private/` and
    `recovered/state/` into the corresponding retained/mounted volumes. Preserve
    owner-only permissions and set ownership for the runtime account. Restore `.env`
    and external dependencies. Recreate the container without deleting volumes.
@@ -112,6 +123,21 @@ owner's password/recovery material; a capsule does not bypass that protection.
    backup. Run `backup-drill` and inspect its SQLite, account and credential checks.
    Sessions are memory-only, so users sign in again. Test mailbox access and native
    devices; their persisted registrations were restored.
+
+Before native recovery can resume writes, implementation must reconcile fresh
+KyIdentity activity, roles and revocation, domain proof and receiver generations.
+Replaying an already-applied directory revision is insufficient to repair
+restored user access. An older database also rewinds message IDs while retaining
+its namespace: a restore generation fence or proven ID high-watermark must
+prevent stale client references from resolving to new mail. Future outbox
+recovery must quarantine uncertain SMTP acceptance rather than resend blindly.
+
+Private staging establishes the process-crash publication boundary, not whole-tree
+power-loss durability: extraction does not fsync every restored file/directory.
+Hardware fault qualification remains open. Preserve orphan preparation/restore
+stages for inspection; deleting directories by prefix can erase mailbox data.
+Rollback keeps services stopped and retains the original volumes and failed
+staging; use a compatible binary, not an older writer that discards ownership.
 
 If compromise prompted the restore, revoke affected native devices and re-pair them
 through Security, revoke old KyRecovery tokens at KyRecovery and pair again to the

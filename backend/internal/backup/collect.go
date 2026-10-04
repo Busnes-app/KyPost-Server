@@ -182,6 +182,9 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	if err := validateDependencies(files); err != nil {
 		return empty, err
 	}
+	if err := validateNativePayload(ctx, files, scratch); err != nil {
+		return empty, err
+	}
 	return recoveryclient.Payload{ServiceName: AppName, AppVersion: s.version, Files: files,
 		Dependencies:       map[string]any{"ollama": "model cache downloads again", "layout": "restore config, private and state to CONFIG_DIR, SECRET_DIR and STATE_DIR"},
 		VerificationRecipe: map[string]any{"version": 1, "mail": ErrMailExcluded, "required": required, "sqlite": "all-state-databases", "imap": "all-stored-credentials"}}, nil

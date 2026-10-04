@@ -63,6 +63,8 @@ func drillChecks(dir string, opened capsule.Manifest) []recoveryclient.Check {
 			check("sqlite:"+file.Path, integrityOK(filepath.Join(dir, file.Path)))
 		}
 	}
+	_, nativeErr := nativeSnapshot(dir)
+	check("native:historical-ownership", nativeErr == nil)
 	var doc struct {
 		Users []struct {
 			Role   string `json:"role"`

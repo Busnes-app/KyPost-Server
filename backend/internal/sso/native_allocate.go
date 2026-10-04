@@ -19,6 +19,9 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 	if stateRoot == "" || domains == nil || accounts == nil {
 		return users.User{}, ErrNativeProvisioning
 	}
+	if err := RequireNativeRestoreReleased(stateRoot); err != nil {
+		return users.User{}, err
+	}
 	root, err := filepath.Abs(stateRoot)
 	if err != nil {
 		return users.User{}, err

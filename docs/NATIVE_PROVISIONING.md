@@ -93,9 +93,14 @@ Status is historical preparation evidence, never a live access/receiver grant.
 The lifecycle initialization fence refuses a missing ledger or a ledger paired
 with an unfenced restored lifecycle. A kill between first fence and ledger write
 requires explicit recovery, sacrificing availability to preserve reservations.
-Valid older paired files cannot be detected here. Whole-stack restore must
-reconcile domain claim, users/issuer/source, directory lifecycle, reservations
-and mailbox/state together. Do not use a partial restore to release ownership.
+Backup exports/drills and offline restore validate historical domain claim,
+users/issuer/source, directory lifecycle, reservations, mailbox/state and receiver
+bindings together. Restored roots are authoritative for file lookup, never saved
+absolute paths. Consistent older paired files cannot prove current authority.
+Offline native restores persist `state/native-restore-hold.json`; allocation
+refuses any present/unreadable hold and there is no release path. Follow
+[restore gates](RESTORE.md#offline-restore-and-native-quarantine), including fresh
+access repair and stale-message-ID fencing, before runtime activation.
 
 Rollback preserves all these files and mailbox bytes. Disable workers before
 changing binaries; older writers can discard new fields/fences. Use a compatible
