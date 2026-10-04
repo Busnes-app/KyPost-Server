@@ -10,6 +10,8 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 ## Local Contracts
 
+- Nonempty native outboxes require relay config/master key and `outbox:encrypted-jobs-claims-and-sent` recipe evidence. Decrypt actual frozen job bytes; check namespace/owner/domain, foreign keys, Sent receipts and quota. Databases with neither queue table remain compatible; a partial schema or orphan claims is corruption. Historical generations/claims are preserved, never reclaimed or replayed by restore.
+
 - Collect `config/native-relay.json` with `private/native-relay.key`; validate decryption of the actual collected bytes and historical native-domain issuer/domain binding. Version-1 recipes add `relay:domain-credentials-and-authority`; drills require it when relay ciphertext exists. Relay-only restores persist the native hold without qualifying unowned mailbox databases. Fresh authority/provider evidence remains separate.
 
 - Service name is `KyPost`. The token sealer uses the existing TOTP master key with HKDF label `kypost:setting:kyrecovery_token`; load it at operation time, never generate a replacement.
@@ -28,6 +30,8 @@ This package owns payload selection and verification. API/CLI callers own creden
 - Record an intent before mutations and a completion afterward. If completion auditing fails, state that the action may have happened.
 
 ## Verification
+
+- `TestNativeOutboxSealedClaimsSentAndDependencies` checks sealed committed claims/Sent, retained holds, required recipe/key/config and wrong-key rejection.
 
 - `TestDomainRelay` checks sealed credential/key/generation preservation, missing dependencies, corrupt restored keys and relay-only quarantine.
 

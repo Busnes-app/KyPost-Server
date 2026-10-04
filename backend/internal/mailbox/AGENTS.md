@@ -2,13 +2,15 @@
 
 ## Purpose
 
-Per-owner permanent raw mail, indexed metadata, folders, flags, labels, delivery receipts and durable change history.
+Per-owner permanent raw mail, indexed metadata, folders, flags, labels, delivery receipts, durable change history and encrypted native outbox intent/claims/Sent obligations.
 
 ## Ownership
 
 All files in this package. Internal storage and complete `imap.Client` implementation; runtime selection requires explicit native mode and current admission. `NewClient` borrows the store; its caller owns the store lifetime and verifies the supplied sender address. Runtime `OpenClient` opens existing-only storage, requires per-operation admission and owns cleanup; KeepAlive protects active borrowers from garbage collection.
 
 ## Local Contracts
+
+- Internal native outbox encrypts complete immutable intent with a relay-master HKDF key bound to owner/namespace/job ID; reserve delivery/Sent quota atomically. Claims are durable and never reclaimed after a crash; ambiguous acceptance remains excluded from automatic work. Only definite 4xx retries, at most six attempts. Sent filing has its own atomic receipt and cannot authorize resubmission. Snapshot validation is read-only historical evidence, with key/domain, shape, foreign-key and quota checks. Runtime caller must coordinate fresh authority with the claim; no native sending route is enabled. See [outbox contract](../../../docs/NATIVE_OUTBOX.md).
 
 - `PrepareAccountContext` cancels account-lock contention and checks cancellation before no-replace publication. The legacy wrapper keeps blocking flock semantics; filesystem open/fsync and read-only SQLite validation remain a healthy-volume activation gate.
 
@@ -37,6 +39,8 @@ All files in this package. Internal storage and complete `imap.Client` implement
 - Treat database paths as local process trust, not network authorization. Store correspondence in the database, never application logs.
 
 ## Verification
+
+- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailbox ./internal/backup ./internal/cryptutil -run 'TestNativeOutbox|TestOpenRefusesMalformedNonce' -count=1 -timeout=5m` checks encrypted intent, real killed submitters, competing claims, actual loopback TLS/lost ACK, Sent recovery, quota and sealed snapshots/corruption.
 
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailbox -run '^TestPrepareAccount' -count=1` checks publication, retained mail on retry, competing ordinary state creation, concurrent preparation, missing/corrupt files and subprocess SIGKILL before/after actual publication. Process crashes are not power-loss evidence.
 

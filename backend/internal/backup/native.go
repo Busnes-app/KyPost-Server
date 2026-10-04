@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -63,6 +65,13 @@ func nativeSnapshot(dir string) (bool, error) {
 			if !integrityOK(path) {
 				return errors.New("restored SQLite integrity check failed; preserve staging files")
 			}
+			if entry.Name() == "mailbox.db" {
+				key, _ := cryptutil.LoadKey(filepath.Join(dir, "private/native-relay.key"))
+				if _, err := mailbox.ValidateOutboundSnapshot(context.Background(), path, key, relay); err != nil {
+					return err
+				}
+			}
+
 		}
 		return nil
 	})

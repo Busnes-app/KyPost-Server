@@ -188,7 +188,7 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	}
 	return recoveryclient.Payload{ServiceName: AppName, AppVersion: s.version, Files: files,
 		Dependencies:       map[string]any{"ollama": "model cache downloads again", "layout": "restore config, private and state to CONFIG_DIR, SECRET_DIR and STATE_DIR"},
-		VerificationRecipe: map[string]any{"version": 1, "mail": ErrMailExcluded, "required": required, "sqlite": "all-state-databases", "imap": "all-stored-credentials", "relay": "domain-credentials-and-authority"}}, nil
+		VerificationRecipe: map[string]any{"version": 1, "mail": ErrMailExcluded, "required": required, "sqlite": "all-state-databases", "imap": "all-stored-credentials", "relay": "domain-credentials-and-authority", "outbox": "encrypted-jobs-claims-and-sent"}}, nil
 }
 
 // validateDependencies refuses a capsule whose stored identities cannot be

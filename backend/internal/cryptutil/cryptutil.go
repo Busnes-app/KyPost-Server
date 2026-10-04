@@ -228,6 +228,9 @@ func Open(env EncryptedPayload, key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(nonce) != gcm.NonceSize() {
+		return nil, errors.New("invalid encryption nonce length")
+	}
 	ciphertext, err := base64.StdEncoding.DecodeString(env.Ciphertext)
 	if err != nil {
 		return nil, err

@@ -43,7 +43,7 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
   address books and other persistent state. Native-device secrets are in the
   per-user databases. Pending encrypted pickup messages are included.
 - Internal mailbox.db and ingress.db snapshots inside the collected roots,
-  including committed WAL rows and exact stored MIME/receipt data. Native
+  including committed WAL rows and exact stored MIME/receipt data. Mailbox snapshots also preserve encrypted outbox intent, claims and Sent receipts; nonempty queues require the matching relay profile/key and additive verification recipe. Native
   reception and provisioning are opt-in qualification paths; public reception remains unavailable.
 
 IMAP mail, rebuildable mailcache.json, Ollama model blobs, logs and runtime files
@@ -54,7 +54,7 @@ For a quiescent recovery point, stop services and use the CLI export.
 Native exports and drills now check historical ownership: users, issuer/subject
 reservations, directory revisions, mailbox namespace/state, domain claim and
 receiving routes/frozen bindings must agree. Missing acknowledged storage,
-orphan databases and foreign ownership fail closed. Validation uses only the
+orphan databases and foreign ownership fail closed. Outbox checks decrypt frozen bytes, verify quota/claim/Sent consistency and refuse orphan claims or partial queue schemas; historical evidence grants no replay authority. Validation uses only the
 collected/restored roots, never the original absolute ledger path. It does not
 prove current external authority or freshness; consistent old backups can pass.
 Native validation needs additional scratch space for the collected metadata and
@@ -131,8 +131,9 @@ and provider credential/relay evidence.
 Replaying an already-applied directory revision is insufficient to repair
 restored user access. An older database also rewinds message IDs while retaining
 its namespace: a restore generation fence or proven ID high-watermark must
-prevent stale client references from resolving to new mail. Future outbox
-recovery must quarantine uncertain SMTP acceptance rather than resend blindly.
+prevent stale client references from resolving to new mail. Outbox recovery preserves interrupted/uncertain claims and must never replay
+restored queued work automatically; native hold release and current admission
+remain unavailable. See [outbox qualification](NATIVE_OUTBOX.md).
 
 Private staging establishes the process-crash publication boundary, not whole-tree
 power-loss durability: extraction does not fsync every restored file/directory.
