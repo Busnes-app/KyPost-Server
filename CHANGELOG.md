@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Snapshot internal mailbox.db and ingress.db during sealed backups instead of copying main files without committed WAL rows. Restore drills check their SQLite integrity; external IMAP mail stays excluded. Whole-stack ownership/freshness reconciliation and mail-sized backup capacity remain gates before native activation.
+
 - Add admin mail-domain DNS challenge/verification with account step-up and an issuer-bound claim. Add disabled native account allocation that prepares/acknowledges storage before users.json publication, retains issuer/source ownership and refuses legacy adoption or native relinking. Bound lock contention and proof lifetime with cancellable contexts. Reception, runtime source selection and provisioning workers remain disabled.
 
 - Add internal revision-fenced native mailbox reconciliation with durable account/address reservations and pending/applied/failed preparation status. Retain ownership through offboarding and failed retries; fail closed on a missing ledger or acknowledged storage. Runtime provisioning and reception remain disabled.

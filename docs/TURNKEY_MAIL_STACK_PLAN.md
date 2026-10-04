@@ -2,7 +2,7 @@
 
 Status: approved implementation plan, 2026-10-03. Phase 1 feasibility checks, caller audit and internal receiving-buffer implementation are in [the evidence record](TURNKEY_MAIL_PHASE1.md). Maddy's synchronous command boundary is the selected implementation candidate; verified directory/runtime integration and representative storage/deployment gates remain open. No production reception capability has shipped. New dependencies and production cutover remain separate approvals.
 
-Qualification progress: admin mail-domain DNS proof and disabled prepare-before-publication allocation are implemented in [the provisioning contract](NATIVE_PROVISIONING.md). Next qualify consistent whole-stack backup/restore, then wire an explicitly enabled provisioning worker before runtime selectors and receiver cutover. Do not change production MX for these foundations.
+Qualification progress: admin mail-domain DNS proof and disabled prepare-before-publication allocation are implemented in [the provisioning contract](NATIVE_PROVISIONING.md). Sealed backups now snapshot the internal mailbox and receiving databases, including committed WAL rows, and drills check SQLite integrity; see [restore limits](RESTORE.md). Next qualify whole-stack ownership/freshness reconciliation and mail-sized backup capacity, then wire an explicitly enabled provisioning worker before runtime selectors and receiver cutover. Do not change production MX for these foundations.
 
 ## Outcome and scope
 
