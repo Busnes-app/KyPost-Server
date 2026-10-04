@@ -10,7 +10,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 
 - Opt-in native primary-address sending through the operator-owned relay: ordinary compose and client PGP record encrypted outbox intent before SMTP; recovery retains interrupted claims, retries definite temporary refusals and files Sent independently. Included in sealed backups; see [outbox contract](docs/NATIVE_OUTBOX.md).
 
-- Admin → Server → Mail domain guides DNS proof and encrypted operator-owned relay configuration, protected by account confirmation and fresh DNS proof. KyPost holds the domain-wide relay credential on the server. Primary-address sending requires explicit native mode and fresh sender admission; saving credentials does not prove delivery or public receiving readiness; see [setup and controlled tests](docs/DOMAIN_RELAY.md).
+- Admin → Server → Mail domain guides DNS proof, encrypted operator-owned relay configuration and a no-mail TLS/authentication check, protected by account confirmation and fresh DNS proof. KyPost holds the domain-wide relay credential on the server. Primary-address sending requires explicit native mode and fresh sender admission; saving credentials does not prove delivery or public receiving readiness; see [setup and controlled tests](docs/DOMAIN_RELAY.md).
 
 - Per-user opt-in incoming encryption under Security → Encryption: classify unread, unprocessed inbox mail, then replace it with a verified public-key-encrypted copy. Requires a client-protected key, saved-key-backup acknowledgment and fresh account confirmation. The provider sees plaintext before processing; losing the private key makes replaced mail unreadable. Unreplaceable messages remain plaintext with explicit failure decisions; [read the replacement and recovery contract](docs/E2E_PGP.md#incoming-mail-encryption-opt-in).
 
@@ -809,6 +809,7 @@ Config and data:
 
 - `GET /api/mail/outbox/{id}` — session/device-authenticated native delivery state for the acting owner, with attempts/retry timing and Sent status; no MIME or credentials. Native send replies add `outboxId`; success still requires confirmed primary SMTP acceptance. Inspect uncertain jobs before resubmitting. See [outbox contract](docs/NATIVE_OUTBOX.md).
 - `GET|PUT /api/admin/mail-relay` — admin-only encrypted domain relay settings. PUT accepts `{host,port,smtpUsername,smtpPassword,password}` (or `authSecret` for account confirmation), requires CSRF/request-bound step-up and fresh issuer-bound DNS proof, and defaults port to 465. Responses redact both relay credentials and report configured native capability in `sendingEnabled` (not provider readiness); this native profile requires verified implicit TLS and AUTH. See [relay contract](docs/DOMAIN_RELAY.md).
+- `POST /api/admin/mail-relay/test` — admin-confirmed no-mail check of the saved `expectedGeneration`, using the same strict TLS/AUTH policy as delivery. Fresh domain/issuer and restore gates run before and after connection; one check per instance per 30 seconds. No MAIL/RCPT/DATA or outbox writes; success reports `deliveryTested:false` and proves neither From authorization nor inbox placement. See [check contract](docs/DOMAIN_RELAY.md#check-the-saved-relay-without-sending-mail).
 
 - `GET|PUT /api/config` (GET omits `redaction.patterns` for non-admins; PUT is admin only)
 - `GET /api/labels`

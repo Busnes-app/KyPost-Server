@@ -155,6 +155,7 @@ type Server struct {
 	// the one endpoint an authenticated caller can use to trigger the serial
 	// push fanout on demand. See notificationTestCooldownFor.
 	notificationTestCooldown *cooldown
+	nativeRelayCheckCooldown *cooldown
 	captchaVerifier          captcha.Verifier
 	captchaProvider          captcha.Provider
 	captchaSiteKey           string
@@ -388,6 +389,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		mfaPushLimiter:           newMfaPushLimiter(),
 		sendAsCooldown:           newCooldown(sendAsVerificationCooldownFor),
 		notificationTestCooldown: newCooldown(notificationTestCooldownFor),
+		nativeRelayCheckCooldown: newCooldown(30 * time.Second),
 		captchaVerifier:          captchaVerifier,
 		captchaProvider:          captchaProvider,
 		captchaSiteKey:           captchaSiteKey,
@@ -528,6 +530,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/mail-domain/verify", s.withAdmin(withActionDigest(s.handleNativeMailDomainVerify)))
 	mux.HandleFunc("GET /api/admin/mail-relay", s.withAdmin(s.handleNativeMailRelay))
 	mux.HandleFunc("PUT /api/admin/mail-relay", s.withAdmin(withActionDigest(s.handleNativeMailRelay)))
+	mux.HandleFunc("POST /api/admin/mail-relay/test", s.withAdmin(withActionDigest(s.handleNativeMailRelayTest)))
 
 	mux.HandleFunc("POST /api/admin/backup/run", s.withAdmin(withActionDigest(s.handleBackupRun)))
 	mux.HandleFunc("POST /api/admin/backup/drill", s.withAdmin(withActionDigest(s.handleBackupDrill)))
@@ -1092,7 +1095,7 @@ func (s *Server) StartCooldownSweeper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, c := range []*cooldown{s.sendAsCooldown, s.notificationTestCooldown} {
+			for _, c := range []*cooldown{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown} {
 				c.sweep(cooldownSweepMaxAge)
 			}
 		}

@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add an admin-confirmed saved-relay TLS/AUTH check without submitting mail. Bind it to the displayed generation and fresh domain/issuer/restore authority before and after connection; bound cancellation, suppress provider replies and expose a transient result in Server → Mail domain. Delivery and receiving remain separate qualification steps.
+
 - Add Server → Mail domain setup for issuer-bound TXT proof and operator-owned implicit-TLS relay settings. Reuse account confirmation, derived credentials, CSRF and identical KySignOn step-up replay; clear secrets and stop submissions after account changes/unmount. Require confirmation before challenge rotation and distinguish saved capability from tested delivery or public receiving readiness.
 
 - Add opt-in native primary-address compose/client-PGP relay sending, current identity/domain/device admission, local revocation epochs, durable intent before SMTP, owner-scoped outbox status and joined recovery workers. Preserve confirmed-send and PGP custody/enrollment contracts. Qualify actual local TLS, signed encrypted recipient/Sent verification, uncertainty and independent Sent/follow-on recovery. Native pickup/alias/system sending and live provider readiness remain pending.

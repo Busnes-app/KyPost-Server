@@ -14,7 +14,7 @@ export type MailDomain =
     };
 export type MailRelay =
   | { kind: "unconfigured" }
-  | { kind: "configured"; domain: string; issuer: string; host: string; port: number; sendingEnabled: boolean };
+  | { kind: "configured"; domain: string; issuer: string; host: string; port: number; generation: string; sendingEnabled: boolean };
 
 function object(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -63,8 +63,9 @@ export function readMailRelay(value: unknown): MailRelay {
   if (data.configured !== true) throw new Error("Invalid mail relay status.");
   const port = integer(data.port);
   const host = text(data.host), domain = text(data.domain), issuer = text(data.issuer);
-  if (!host || !domain || !issuer || !text(data.generation) || port < 1 || port > 65535) throw new Error("Invalid mail relay profile.");
-  return { kind: "configured", domain, issuer, host, port, sendingEnabled: data.sendingEnabled };
+  const generation = text(data.generation);
+  if (!host || !domain || !issuer || !generation || port < 1 || port > 65535) throw new Error("Invalid mail relay profile.");
+  return { kind: "configured", domain, issuer, host, port, generation, sendingEnabled: data.sendingEnabled };
 }
 export async function loadNativeMail() {
   const [domain, relay] = await Promise.all([
@@ -76,4 +77,13 @@ export async function loadNativeMail() {
     throw new Error("Mail domain and relay ownership differ; preserve configuration and restore the matching profile.");
   }
   return { domain: claim, relay: profile };
+}
+
+export function readMailRelayCheck(value: unknown, relay: MailRelay): void {
+  const data = object(value);
+  if (relay.kind !== "configured" || data.generation !== relay.generation ||
+      data.host !== relay.host || data.port !== relay.port || data.tls !== true ||
+      data.authenticated !== true || data.deliveryTested !== false) {
+    throw new Error("Relay check did not match the saved profile. Reload before retrying.");
+  }
 }

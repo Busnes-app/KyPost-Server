@@ -33,9 +33,26 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 			t.Fatal(err)
 		}
 		c := DomainRelay{Version: 1, Generation: "12345678-1234-4234-8234-123456789abc", Domain: "example.test", Issuer: "https://idp.example", Host: host, Port: port, Username: "operator-relay-login", Password: "operator-relay-secret"}
-		err = c.Deliver("mailbox@example.test", []string{"visible@example.test", "hidden@example.test"}, []byte(relayProofMIME))
+		mode := os.Getenv("KYPOST_RELAY_TLS_PROOF_CASE")
+		if strings.HasPrefix(mode, "check-") {
+			ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+			if mode == "check-cancel-auth" {
+				cancel()
+				ctx, cancel = context.WithCancel(context.Background())
+				timer := time.AfterFunc(150*time.Millisecond, cancel)
+				defer timer.Stop()
+			}
+			defer cancel()
+			start := time.Now()
+			err = c.Check(ctx)
+			if time.Since(start) > 2*time.Second {
+				t.Fatal("check ignored absolute cancellation budget")
+			}
+		} else {
+			err = c.Deliver("mailbox@example.test", []string{"visible@example.test", "hidden@example.test"}, []byte(relayProofMIME))
+		}
 		switch os.Getenv("KYPOST_RELAY_TLS_PROOF_CASE") {
-		case "accepted":
+		case "accepted", "check-accepted":
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -43,11 +60,11 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 			if !errors.Is(err, ErrSMTPAcceptanceUncertain) {
 				t.Fatal("expected uncertainty", err)
 			}
-		case "no-auth":
-			if err == nil || !strings.Contains(err.Error(), "AUTH") {
+		case "no-auth", "check-no-auth":
+			if err == nil || !errors.Is(err, errSMTPRelayAuthUnavailable) {
 				t.Fatal("missing AUTH did not refuse", err)
 			}
-		case "auth-echo":
+		case "auth-echo", "check-auth-echo":
 			var reply *textproto.Error
 			if err == nil || strings.Contains(err.Error(), "operator-relay") || !errors.As(err, &reply) || reply.Code != 535 {
 				t.Fatal("AUTH response leaked credentials or lost classification", err)
@@ -69,14 +86,18 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"accepted", "lost-ack", "no-auth", "auth-echo", "untrusted", "plaintext"} {
+	for _, mode := range []string{"accepted", "lost-ack", "no-auth", "auth-echo", "untrusted", "plaintext", "check-accepted", "check-no-auth", "check-auth-echo", "check-untrusted", "check-plaintext", "check-wrong-host", "check-stall-banner", "check-stall-ehlo", "check-stall-auth", "check-stall-quit", "check-cancel-auth"} {
 		t.Run(mode, func(t *testing.T) {
 			var ln net.Listener
 			var err error
-			if mode == "plaintext" {
+			if mode == "plaintext" || mode == "check-plaintext" {
 				ln, err = net.Listen("tcp", "127.0.0.1:0")
 			} else {
-				ln, err = tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
+				addr := "127.0.0.1:0"
+				if mode == "check-wrong-host" {
+					addr = "127.0.0.2:0"
+				}
+				ln, err = tls.Listen("tcp", addr, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -85,6 +106,7 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 			type observed struct {
 				auth, from, raw string
 				recipients      []string
+				commands        []string
 			}
 			done := make(chan observed, 1)
 			go func() {
@@ -97,14 +119,19 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 				defer conn.Close()
 				_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
 				write := func(v string) { _, _ = conn.Write([]byte(v + "\r\n")) }
-				write("220 relay proof")
 				r := bufio.NewReader(conn)
+				if mode == "check-stall-banner" {
+					_, _ = r.ReadString('\n')
+					return
+				}
+				write("220 relay proof")
 				inData := false
 				for {
 					line, err := r.ReadString('\n')
 					if err != nil {
 						return
 					}
+					got.commands = append(got.commands, line)
 					if inData {
 						if line == ".\r\n" {
 							if mode == "lost-ack" {
@@ -122,7 +149,11 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 					}
 					switch {
 					case strings.HasPrefix(line, "EHLO"):
-						if mode == "no-auth" {
+						if mode == "check-stall-ehlo" {
+							_, _ = r.ReadString('\n')
+							return
+						}
+						if mode == "no-auth" || mode == "check-no-auth" {
 							write("250 relay")
 						} else {
 							write("250-relay\r\n250 AUTH PLAIN")
@@ -130,7 +161,11 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 					case strings.HasPrefix(line, "AUTH PLAIN "):
 						b, _ := base64.StdEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(line, "AUTH PLAIN ")))
 						got.auth = string(b)
-						if mode == "auth-echo" {
+						if mode == "check-stall-auth" || mode == "check-cancel-auth" {
+							_, _ = r.ReadString('\n')
+							return
+						}
+						if mode == "auth-echo" || mode == "check-auth-echo" {
 							write("535 echoed operator-relay-login operator-relay-secret")
 						} else {
 							write("235 authenticated")
@@ -145,6 +180,10 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 						inData = true
 						write("354 data")
 					case line == "QUIT\r\n":
+						if mode == "check-stall-quit" {
+							_, _ = r.ReadString('\n')
+							return
+						}
 						write("221 bye")
 						return
 					default:
@@ -156,7 +195,7 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDomainRelayStrictTLSRuntime$", "-test.count=1")
 			trust := caPath
-			if mode == "untrusted" {
+			if mode == "untrusted" || mode == "check-untrusted" {
 				trust = filepath.Join(root, "missing-ca.pem")
 			}
 			cmd.Env = append(os.Environ(), "KYPOST_RELAY_TLS_PROOF_ADDR="+ln.Addr().String(), "KYPOST_RELAY_TLS_PROOF_CASE="+mode, "SSL_CERT_FILE="+trust, "SSL_CERT_DIR="+t.TempDir(), "ALLOW_INSECURE_SMTP=true")
@@ -165,7 +204,25 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 			}
 			select {
 			case got := <-done:
-				if mode == "accepted" || mode == "lost-ack" {
+				if strings.HasPrefix(mode, "check-") {
+					for _, command := range got.commands {
+						if mode == "check-plaintext" {
+							continue
+						}
+						if !strings.HasPrefix(command, "EHLO ") && !strings.HasPrefix(command, "AUTH PLAIN ") && command != "QUIT\r\n" && command != "*\r\n" {
+							t.Fatalf("no-mail check issued forbidden command: %q", command)
+						}
+					}
+					if got.from != "" || got.raw != "" || len(got.recipients) != 0 {
+						t.Fatal("check submitted mail")
+					}
+					if mode == "check-accepted" && (got.auth != "\x00operator-relay-login\x00operator-relay-secret" || len(got.commands) != 3) {
+						t.Fatal("check did not authenticate and quit")
+					}
+					if (mode == "check-untrusted" || mode == "check-wrong-host" || mode == "check-plaintext" || mode == "check-no-auth") && got.auth != "" {
+						t.Fatal("unsafe endpoint received credentials")
+					}
+				} else if mode == "accepted" || mode == "lost-ack" {
 					if got.auth != "\x00operator-relay-login\x00operator-relay-secret" || !strings.Contains(got.from, "mailbox@example.test") || len(got.recipients) != 2 || !strings.Contains(got.recipients[1], "hidden@example.test") || got.raw != relayProofMIME {
 						t.Fatalf("relay changed authentication/envelope/MIME: %+v", got)
 					}
