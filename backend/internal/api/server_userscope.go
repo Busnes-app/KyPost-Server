@@ -903,6 +903,19 @@ func (s *Server) revokeAllUserCredentials(u users.User) error {
 // tab they just changed their password in would be a surprising way to answer
 // "I secured my account".
 func (s *Server) revokeAllUserCredentialsExcept(u users.User, keepSessionToken string) error {
+	return s.revokeUserCredentials(u, keepSessionToken, false)
+}
+
+// Recovery keeps local link-revocation flags intact; only transport/session
+// credentials are deleted after exact native ownership and the hold are checked.
+func (s *Server) revokeNativeRecoveryCredentials(u users.User) error {
+	if s.ssoLifecycle.ValidateNativeUserOwnership(s.stateDir, u) != nil || !errors.Is(sso.RequireNativeRestoreReleased(s.stateDir), sso.ErrNativeRestoreHold) {
+		return sso.ErrNativeRecovery
+	}
+	return s.revokeUserCredentials(u, "", true)
+}
+
+func (s *Server) revokeUserCredentials(u users.User, keepSessionToken string, preserveSSOLink bool) error {
 	s.revokeUserSessions(u.ID, keepSessionToken)
 	// Native registration holds this lock from its final subscriber-generation
 	// check through device commit. Keep deletion and subscriber rotation in the
@@ -941,12 +954,12 @@ func (s *Server) revokeAllUserCredentialsExcept(u users.User, keepSessionToken s
 	//
 	// An unlinked or already-revoked account is a no-op; ErrNotFound means the
 	// record is gone, which is nothing left to revoke.
-	if u.HasLocalCredential() {
+	if u.HasLocalCredential() && !preserveSSOLink {
 		if err := s.users.RevokeSSOLink(u.ID); err != nil && !errors.Is(err, users.ErrNotFound) {
 			s.logger.Error("failed to revoke sso link", "user_id", u.ID, "error", err.Error())
 			errs = append(errs, fmt.Errorf("revoke SSO link: %w", err))
 		}
-	} else if u.SSOSub != "" {
+	} else if u.SSOSub != "" && !preserveSSOLink {
 		s.logger.Info("kept sso link: account has no other credential",
 			"user_id", u.ID)
 	}
