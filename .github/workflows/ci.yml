@@ -340,6 +340,9 @@ jobs:
           KYPOST_SMTP_PORT: 2525
         run: docker compose -f docker-compose.yml -f docker-compose.receiving.yml config --quiet
 
+      - name: setup wizard self-check
+        run: bash scripts/setup-mail.test.sh
+
       - name: receiver launch refusal
         run: python3 scripts/check-receiver-launch.py
 

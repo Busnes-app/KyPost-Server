@@ -8,6 +8,8 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 
 ## Features
 
+- Guided dedicated-domain qualification: `bash scripts/setup-mail.sh <public-KyPost-origin>` walks through native deployment, KyIdentity/DNS proof, operator relay, protected engine/TLS inputs, backups and receiving launch. It requires Docker-operator authority and explicit configuration/start confirmations; live delivery remains an operator check. See [guided setup](docs/RECEIVING_SETUP.md#guided-operator-setup).
+
 - Controlled direct receiving profile generation from verified domain and existing native storage; mandatory STARTTLS refuses plaintext senders. An optional Compose profile supervises the operator-supplied pinned receiver, which shares the instance’s mail-storage authority; public deployment remains gated. See [receiver setup](docs/RECEIVING_SETUP.md).
 
 - Opt-in native primary-address sending through the operator-owned relay: ordinary compose and client PGP record encrypted outbox intent before SMTP; recovery retains interrupted claims, retries definite temporary refusals and files Sent independently. Included in sealed backups; see [outbox contract](docs/NATIVE_OUTBOX.md).
@@ -390,6 +392,8 @@ Mail-domain setup adds no environment variables. Its public challenge and issuer
 - `KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY`: `false`; explicit private-network opt-in.
 
 Common variables:
+
+- The host-side setup wizard accepts `ENV_FILE` (default repository `.env`) for an owned regular mode-`0600` file. It saves public setup inputs only; provider/account credentials stay in the protected admin UI. This is a wizard input, not a backend setting.
 
 - `KYPOST_NATIVE_MAIL` (default `false`): opt-in KyIdentity native provisioning and local mailbox API/polling. Requires domain proof; preserves existing IMAP accounts. Direct receiving qualification additionally requires `KYPOST_NATIVE_RECEIVING=true`; primary compose/client-PGP sending requires the configured operator relay; pickup/alias/system sending remains pending. See [native runtime setup and rollback](docs/NATIVE_PROVISIONING.md#opt-in-native-runtime).
 - `KYPOST_NATIVE_RECEIVING` (default `false`): controlled direct receiving commands and daemon import; requires native mail, domain proof, prepared users and explicit spool initialization. `receiving config` generates a bounded TLS-only receiver profile; STARTTLS-only reception refuses plaintext senders. No bundled receiver starts. Read [controlled setup and gates](docs/RECEIVING_SETUP.md).
@@ -1130,7 +1134,7 @@ inside the container. On systems without systemd, schedule
 
 - `backend/`: Go API, poller, adapters, config, state, health, and the on-device embedding sorter (`internal/sorter`)
 - `frontend/`: React and Vite UI
-- `scripts/`: container entrypoint, supervisord orchestration, Ollama model management, host-side update helpers
+- `scripts/`: container entrypoint, supervisord orchestration, Ollama model management, host-side update helpers and the controlled native-domain setup wizard
 - `push-relay-shared/`: shared Cloudflare Worker logic for the push relays — API-key issuance, rate limiting, device-token ownership, and the `RelayCoordinator` Durable Object
 - `worker/`, `worker-apns/`: the FCM and APNs deployments of that relay. Each holds only its provider's `handleSend` plus its wrangler config; everything else is imported from `push-relay-shared/`
 - `docs/`: the contracts the client repos implement against — [PLATFORM_BASELINE.md](docs/PLATFORM_BASELINE.md) (what a client must implement to call itself a KyPost client), [E2E_PGP.md](docs/E2E_PGP.md), [WKD_Publishing.md](docs/WKD_Publishing.md), [WEBMAIL_HANDOFF.md](docs/WEBMAIL_HANDOFF.md), [INBOX_PAYLOAD_HANDOFF.md](docs/INBOX_PAYLOAD_HANDOFF.md) — plus the operator guide [Reverse_Proxy_Networking.md](docs/Reverse_Proxy_Networking.md)

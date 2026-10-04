@@ -6,6 +6,46 @@ the daemon imports into native mailboxes without IMAP. Public production MX,
 automatic receiver packaging and complete turnkey installation remain gated
 by [receiver qualification](RECEIVING_GATEWAY_ASSESSMENT.md).
 
+## Guided operator setup
+
+On the actual Linux x86_64 Docker host, run this checkout's repeatable wizard
+as the unprivileged Docker operator with Bash, Python 3 and Docker Compose:
+
+```sh
+bash scripts/setup-mail.sh https://your-kypost-origin.example
+```
+
+For a local test, a loopback HTTP origin is also accepted. Arrange the existing
+TLS/proxy configuration first; the wizard asks for the HTTP publish address (literal IPv4 or bracketed IPv6 without a scope ID)
+explicitly and retains all other `.env` settings. `ENV_FILE` optionally selects
+an owned regular mode-`0600` dotenv file (default repository `.env`); missing files
+are copied from the example after confirmation. Paths used by this wizard must
+contain only letters, digits, slash, dot, underscore or hyphen. Use the manual
+profile below for other protected paths.
+
+The eight stages guide base deployment, KyIdentity/domain proof and a new test
+user, operator relay, receiver/TLS inputs, backups/rollback, one-time spool
+initialization, launch/admission and bidirectional tests. With explicit operator
+confirmation it rebuilds the base service from this checkout in native mode,
+pauses an existing receiver, saves public settings, optionally initializes a
+**new** spool as `kypost`, and starts the receiving overlay. It never deletes
+storage or repairs missing accepted mail. Reruns retain saved inputs and existing
+state; skip initialization for an existing spool.
+
+Persisted keys are `KYPOST_BIND`, `SERVER_BASE_URL`, both native flags and the five
+receiver inputs listed below. Account/provider credentials are entered only in
+the existing protected UI. The wizard downloads no engine, requests no provider
+credentials, edits no DNS and applies no proxy/firewall rules. Keep operator
+engine/TLS paths protected; the receiver has instance mail-storage authority.
+
+Receiver status and fresh configuration admission are checked after launch.
+The final stage gives external TLS/port/DNS, ordinary/PGP/Bcc, outbox/Sent/provider
+receipt and repeat-backup checks; it does not claim those observations were made.
+TLS/AUTH and process startup do not prove delivery. Native restore remains held
+without a release path; full public deployment gates still apply. Stop at any
+stage with Ctrl-C: validated settings and completed actions remain, so use the
+rollback procedure below instead of deleting data.
+
 ## Prepare the existing stack
 
 1. Use a new native deployment with `KYPOST_NATIVE_MAIL=true` before assigning
