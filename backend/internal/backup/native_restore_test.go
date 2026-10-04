@@ -4,12 +4,17 @@ package backup
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
@@ -118,6 +123,19 @@ func TestNativeBackupRestoreOwnershipAndHold(t *testing.T) {
 			if !errors.Is(sso.RequireNativeRestoreReleased(filepath.Join(dir, "state")), sso.ErrNativeRestoreHold) {
 				t.Fatal("restore did not persist a hold")
 			}
+			data, err := os.ReadFile(filepath.Join(dir, "state", sso.NativeRestoreHoldFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var hold struct {
+				Epoch string `json:"epoch"`
+			}
+			if err := json.Unmarshal(data, &hold); err != nil {
+				t.Fatal(err)
+			}
+			if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(hold.Epoch) {
+				t.Fatal("successful or failed restore lacks a valid epoch")
+			}
 			if _, err := os.Stat(filepath.Join(dir, "config/native-provisioning.json")); err != nil {
 				t.Fatal("restore erased ownership", err)
 			}
@@ -180,6 +198,91 @@ func TestDatabaseOnlyNativeRestoreStaysHeld(t *testing.T) {
 				t.Fatal("collector sealed unowned native database")
 			}
 		})
+	}
+}
+
+func TestNativeRestoreHoldWriteFailurePreservesStaging(t *testing.T) {
+	s, u := nativeService(t)
+	key := pinTestKey(t, s)
+	result, err := s.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := os.ReadFile(result.LocalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "restored")
+	if _, _, err := capsule.Open(sealed, key, dir); err != nil {
+		t.Fatal(err)
+	}
+	hold := filepath.Join(dir, "state", sso.NativeRestoreHoldFile)
+	if err := os.Mkdir(hold, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "state/users", u.ID, "mailbox/mailbox.db")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if native, err := QuarantineNativeRestore(dir); !native || err == nil {
+		t.Fatal("failed hold write allowed quarantine", native, err)
+	}
+	if !errors.Is(sso.RequireNativeRestoreReleased(filepath.Join(dir, "state")), sso.ErrNativeRestoreHold) {
+		t.Fatal("unwritable hold stopped blocking native access")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(before) != string(after) {
+		t.Fatal("failed hold write changed staged mailbox", err)
+	}
+}
+
+func TestNativeRestoreFatalEntropyHelper(t *testing.T) {
+	dir := os.Getenv("KYPOST_TEST_RESTORE_ENTROPY_DIR")
+	if dir == "" {
+		return
+	}
+	// Only this subprocess replaces the reader; Go terminates on its error.
+	rand.Reader = iotest.ErrReader(errors.New("injected restore entropy failure"))
+	_, _ = QuarantineNativeRestore(dir)
+	t.Fatal("failed randomness did not terminate the process")
+}
+
+func TestNativeRestoreFatalEntropyKeepsHold(t *testing.T) {
+	for _, prior := range []string{"", `{"version":1,"epoch":"11111111-1111-4111-8111-111111111111"}`} {
+		dir := t.TempDir()
+		stateDir := filepath.Join(dir, "state")
+		if err := os.Mkdir(stateDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(stateDir, sso.NativeRestoreHoldFile)
+		if prior != "" {
+			if err := os.WriteFile(path, []byte(prior), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestNativeRestoreFatalEntropyHelper$")
+		child.Env = append(os.Environ(), "KYPOST_TEST_RESTORE_ENTROPY_DIR="+dir)
+		output, err := child.CombinedOutput()
+		cancel()
+		if err == nil || !strings.Contains(string(output), "crypto/rand: failed to read random data") {
+			t.Fatalf("child did not exercise actual random failure: %v %s", err, output)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal("fatal randomness lost the hold", err)
+		}
+		var hold struct {
+			Epoch   string `json:"epoch"`
+			Version int    `json:"version"`
+		}
+		if err := json.Unmarshal(data, &hold); err != nil || hold.Epoch != "" || hold.Version != 1 {
+			t.Fatal("fatal randomness retained a usable or invalid marker", hold, err)
+		}
+		if !errors.Is(sso.RequireNativeRestoreReleased(stateDir), sso.ErrNativeRestoreHold) {
+			t.Fatal("fatal randomness stopped blocking native access")
+		}
 	}
 }
 
