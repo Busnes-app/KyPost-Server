@@ -14,11 +14,11 @@ This package owns payload selection and verification. API/CLI callers own creden
 - Settings and flat `backup_audit` rows use the install-wide state.db. Pair, pin and unpair settings commit transactionally.
 - Nonblocking `backup-operation.lock` coordinates API, CLI and daemon operations across processes. Busy operations return ErrInProgress. Keep lock files on stable inodes.
 - Collect config/private/state, snapshot each state.db, mailbox.db and ingress.db with the library's SQLiteSnapshot, and refuse missing dependent keys or unsupported files. IMAP mail and rebuildable cache are excluded; local native databases and encrypted pending pickup messages are included. Collector and drill share the authoritative filename predicate. The version-1 recipe carries rules, never user-specific paths; older drills attest only state.db.
-- Snapshots are consistent per database, not across files/stores. Native ownership/source/ledger and receiver freshness reconciliation plus the 64 MiB/file, 256 MiB/total caps remain activation gates; see docs/RESTORE.md.
+- Snapshots are consistent per database, not across files/stores. Collected bytes/drills validate historical native ownership/source/ledger and receiver bindings. Current authority, stale-ID fencing, power-loss qualification and the 64 MiB/file, 256 MiB/total caps remain activation gates; see docs/RESTORE.md.
 - Local destination is outside all data roots or exactly STATE_DIR/backups. The dedicated destination, runtime supervisor files, lock files, migrated files and backup scratch are excluded. Other nonregular files are refused.
 - Individual secret overrides must resolve to their default SECRET_DIR locations. Configured VAPID keys and existing tuning overrides must be inside collected roots. A missing optional TUNING_FILE is allowed only inside CONFIG_DIR, SECRET_DIR or STATE_DIR, matching the default container fallback; external overrides are refused even when missing, and required keys remain mandatory. Operator environment and external TLS mounts are restored separately; see docs/RESTORE.md.
 - Drills serialize with all backup operations, use an opened authenticated manifest, validate its recipe and required files, verify SQLite integrity and decrypt stored IMAP credentials. Client-wrapped PGP stays opaque.
-- Restore is CLI-only, shares on stdin. No running service holds the suite recovery private key.
+- Restore is CLI-only, shares on stdin. No running service holds the suite recovery private key. Extract privately; preserve failed staging. Native publication requires an absent Linux target, validated ownership and a persisted state/native-restore-hold.json. Allocation enforces the hold; no release path exists. Future native workers must enforce it.
 
 ## Work Guidance
 

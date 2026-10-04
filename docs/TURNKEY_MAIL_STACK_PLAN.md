@@ -2,7 +2,7 @@
 
 Status: approved implementation plan, 2026-10-03. Phase 1 feasibility checks, caller audit and internal receiving-buffer implementation are in [the evidence record](TURNKEY_MAIL_PHASE1.md). Maddy's synchronous command boundary is the selected implementation candidate; verified directory/runtime integration and representative storage/deployment gates remain open. No production reception capability has shipped. New dependencies and production cutover remain separate approvals.
 
-Qualification progress: admin mail-domain DNS proof and disabled prepare-before-publication allocation are implemented in [the provisioning contract](NATIVE_PROVISIONING.md). Sealed backups now snapshot the internal mailbox and receiving databases, including committed WAL rows, and drills check SQLite integrity; see [restore limits](RESTORE.md). Next qualify whole-stack ownership/freshness reconciliation and mail-sized backup capacity, then wire an explicitly enabled provisioning worker before runtime selectors and receiver cutover. Do not change production MX for these foundations.
+Qualification progress: admin mail-domain DNS proof and disabled prepare-before-publication allocation are implemented in [the provisioning contract](NATIVE_PROVISIONING.md). Sealed backups now snapshot the internal mailbox and receiving databases, including committed WAL rows, and drills check SQLite integrity; see [restore limits](RESTORE.md). Historical ownership validation and held private restore publication are implemented; current-authority repair, stale-ID fencing and power-loss qualification remain open. Next qualify hold release and mail-sized backup capacity, then wire an explicitly enabled provisioning worker before runtime selectors and receiver cutover. Do not change production MX for these foundations.
 
 ## Outcome and scope
 
@@ -117,7 +117,29 @@ Ship a pinned stack and one admin setup flow: public hostname/domain; KyIdentity
 
 Use existing Go unit/integration checks and real SQLite/filesystem state for new logic. Fault-injection checks cover actual persistent boundaries rather than only mocked success paths. Live provider and client checks use a dedicated test domain/accounts; production receives no synthetic test data. Each phase must pass relevant package checks; release must pass the complete CI contract in backend/AGENTS.md and applicable frontend/container checks.
 
-The receiving/storage/API foundations and internal provisioning reconciler are implemented. Mail-domain proof and disabled allocation before ordinary state creation now have runnable checks, including cancellable lock waits. Next qualify whole-stack restore and publication crashes, then explicitly enabled worker integration, stalled-volume behavior and native source selection in both API and daemon. Reception remains disabled until these contracts and receiver routing/revocation are qualified.
+The receiving/storage/API foundations and internal provisioning reconciler are implemented. Mail-domain proof and disabled allocation before ordinary state creation now have runnable checks, including cancellable lock waits. Historical restore validation/publication is implemented; next qualify hold release, fresh access repair, stale-ID fences and publication crashes, then explicitly enabled worker integration, stalled-volume behavior and native source selection in both API and daemon. Reception remains disabled until these contracts and receiver routing/revocation are qualified.
+
+## Operator-owned relay test matrix
+
+Test the shared SMTP delivery path with AWS SES and Cloudflare Email Service,
+without an IMAP account. Operators supply provider credentials through the
+protected relay setting, a verified sender domain and a controlled recipient.
+Busnes does not supply accounts, pay provider bills or guarantee inbox placement.
+
+| Provider | Connection | Operator prerequisites |
+| --- | --- | --- |
+| AWS SES | Region-specific `email-smtp.<region>.amazonaws.com`, implicit TLS 465 or required STARTTLS | Region-specific SES SMTP credentials, verified sender identity; sandbox recipients must be verified or use the SES simulator. |
+| Cloudflare Email Service | `smtp.mx.cloudflare.net:465`, implicit TLS; username `api_token` | Email Sending enabled/onboarded domain and token with Email Sending: Edit. Availability is provider-controlled. |
+
+Use [SES SMTP requirements](https://docs.aws.amazon.com/ses/latest/dg/send-email-smtp.html)
+and [Cloudflare SMTP requirements](https://developers.cloudflare.com/email-service/api/send-emails/smtp/).
+Keep test messages within Cloudflare's documented 5 MiB limit regardless of an
+EHLO advertisement. Check TLS, authentication, authorized From and envelope,
+ordinary/PGP MIME, Bcc isolation, provider acceptance, confirmed recipient receipt
+and provider logs/bounces. Include revoked credentials, temporary/permanent
+rejection and lost acknowledgment; acceptance alone is not delivery proof.
+Cloudflare suppression can report acceptance without delivery, so inspect logs.
+No live mail is submitted until the operator supplies the account and recipient.
 
 ## Evidence and outstanding decisions
 
