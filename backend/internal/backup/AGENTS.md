@@ -10,6 +10,8 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 ## Local Contracts
 
+- Collect `config/native-relay.json` with `private/native-relay.key`; validate decryption of the actual collected bytes and historical native-domain issuer/domain binding. Version-1 recipes add `relay:domain-credentials-and-authority`; drills require it when relay ciphertext exists. Relay-only restores persist the native hold without qualifying unowned mailbox databases. Fresh authority/provider evidence remains separate.
+
 - Service name is `KyPost`. The token sealer uses the existing TOTP master key with HKDF label `kypost:setting:kyrecovery_token`; load it at operation time, never generate a replacement.
 - Settings and flat `backup_audit` rows use the install-wide state.db. Pair, pin and unpair settings commit transactionally.
 - Nonblocking `backup-operation.lock` coordinates API, CLI and daemon operations across processes. Busy operations return ErrInProgress. Keep lock files on stable inodes.
@@ -26,6 +28,8 @@ This package owns payload selection and verification. API/CLI callers own creden
 - Record an intent before mutations and a completion afterward. If completion auditing fails, state that the action may have happened.
 
 ## Verification
+
+- `TestDomainRelay` checks sealed credential/key/generation preservation, missing dependencies, corrupt restored keys and relay-only quarantine.
 
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/backup ./internal/state ./internal/config`
 - `go test ./internal/api -run TestBackup` covers admin/CSRF/credential gates and audit outages.

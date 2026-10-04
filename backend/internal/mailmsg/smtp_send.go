@@ -333,6 +333,12 @@ func NormalizeSMTPMessage(msg []byte) ([]byte, error) {
 // SMTPSendWithImplicitTLS delivers msg over an implicit-TLS (port 465 style)
 // SMTP connection, since net/smtp only supports STARTTLS natively.
 func SMTPSendWithImplicitTLS(host string, port int, username, password, from string, recipients []string, msg []byte, timeout time.Duration) error {
+	return smtpSendWithImplicitTLS(host, port, username, password, from, recipients, msg, timeout, false)
+}
+
+var errSMTPRelayAuthUnavailable = errors.New("domain relay submission refused: server did not offer AUTH; check the configured SMTP endpoint")
+
+func smtpSendWithImplicitTLS(host string, port int, username, password, from string, recipients []string, msg []byte, timeout time.Duration, requireAuth bool) error {
 	if err := validateSMTPEnvelope(from, recipients); err != nil {
 		return err
 	}
@@ -344,7 +350,9 @@ func SMTPSendWithImplicitTLS(host string, port int, username, password, from str
 	}
 	defer conn.Close()
 
-	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
 
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
@@ -357,6 +365,8 @@ func SMTPSendWithImplicitTLS(host string, port int, username, password, from str
 		if err := client.Auth(auth); err != nil {
 			return err
 		}
+	} else if requireAuth {
+		return errSMTPRelayAuthUnavailable
 	}
 
 	return writeSMTPMessage(client, from, recipients, msg)

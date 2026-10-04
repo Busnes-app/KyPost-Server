@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add admin-only encrypted operator-owned domain relay settings with fresh issuer-bound DNS proof, account confirmation, redacted reads and generation rotation. Qualify strict TLS/AUTH transport with safe provider errors; sealed backups validate relay ciphertext, its dedicated key and historical domain binding, including relay-only restore quarantine. This does not enable native sending or prove provider readiness.
+
 - Distinguish lost or invalid final SMTP DATA acknowledgments from definite rejection. Preserve encrypted pickup messages when their notification may already have reached the relay; report uncertainty without echoing untrusted relay response text and require provider evidence before retrying. Partial blind-copy and pickup-link warnings describe unconfirmed delivery and warn against duplicate retries, including alongside Sent-copy warnings. Native domain relay/outbox sending remains unavailable.
 
 - Add separate `KYPOST_NATIVE_RECEIVING=true` qualification opt-in: trusted-local RCPT/DATA commands durably bind and accept mail, then the daemon commits frozen-owner mailbox receipts before acknowledgment without IMAP. Existing-only storage, live directory/users fences, pipe deadlines, generation quarantine and partial-delivery recovery refuse unsafe fallback. No bundled public SMTP receiver or native outgoing relay is enabled; public-MX deployment and restore-hold release remain gated.

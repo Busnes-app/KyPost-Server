@@ -92,8 +92,10 @@ Supported verified directory desired fields now persist beside the revision/acce
 The shared SMTP boundary now distinguishes definite final DATA refusal from
 lost/invalid acknowledgment and accepted-then-teardown failure. Pickup records
 survive uncertain notification acceptance. This is a transport prerequisite;
-domain relay settings, durable outbox, reconciliation and native sending remain
-pending.
+protected [domain relay settings](DOMAIN_RELAY.md), strict implicit-TLS/AUTH
+transport qualification and sealed credential backups are implemented. Durable
+outbox, current sender admission, provider readiness, reconciliation and native
+sending remain pending.
 
 Add an encrypted domain-level relay setting, one supported SMTP transport profile, explicit allowed sender domains and address authorization. Protect configuration/secret rotation with existing admin authentication, CSRF and action-bound step-up; secret reads remain redacted. Reuse SMTP helpers and route every sending path through the shared delivery boundary: ordinary compose, client-encrypted sends, pickup notifications, alias proofs and system mail where applicable. Verify domain sending readiness and provider restrictions. Retry temporary failures with bounded backoff; reconcile uncertain acceptance; protect credentials and refuse silent plaintext/direct-MX fallback. Store Sent once independently of retries. Keep external IMAP account SMTP behavior unchanged.
 

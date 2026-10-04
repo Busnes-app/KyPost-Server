@@ -11,11 +11,22 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 func nativeSnapshot(dir string) (bool, error) {
+	relay, hasRelay, err := mailmsg.ReadDomainRelay(filepath.Join(dir, "config/native-relay.json"), filepath.Join(dir, "private/native-relay.key"))
+	if err != nil {
+		return true, err
+	}
+	if hasRelay {
+		domain, err := sso.NewNativeDomainStore(filepath.Join(dir, "config")).Read()
+		if err != nil || domain.Domain != relay.Domain || domain.Issuer != relay.Issuer {
+			return true, mailmsg.ErrDomainRelay
+		}
+	}
 	var doc struct {
 		Users []users.User `json:"users"`
 	}
@@ -37,6 +48,7 @@ func nativeSnapshot(dir string) (bool, error) {
 		return true, err
 	}
 	qualified := native
+	native = native || hasRelay
 	err = filepath.WalkDir(filepath.Join(dir, "state"), func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -62,7 +74,7 @@ func validateNativePayload(ctx context.Context, files []recoveryclient.File, scr
 	native := false
 	for _, f := range files {
 		switch filepath.Base(f.Path) {
-		case "native-provisioning.json", "native-mailbox.json", "mailbox.db", "ingress.db":
+		case "native-provisioning.json", "native-mailbox.json", "mailbox.db", "ingress.db", "native-relay.json":
 			native = true
 		case "sso-lifecycle.json":
 			var doc struct {
@@ -96,9 +108,9 @@ func validateNativePayload(ctx context.Context, files []recoveryclient.File, scr
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		// Native validation reads only account/ownership metadata and databases.
+		// Validate ownership metadata, relay ciphertext/key and database snapshots.
 		base := filepath.Base(f.Path)
-		if base != "users.json" && base != "sso-lifecycle.json" && base != "native-domain.json" && base != "native-provisioning.json" && base != "native-mailbox.json" && !snapshotDatabase(base) {
+		if base != "users.json" && base != "sso-lifecycle.json" && base != "native-domain.json" && base != "native-provisioning.json" && base != "native-mailbox.json" && base != "native-relay.json" && base != "native-relay.key" && !snapshotDatabase(base) {
 			continue
 		}
 		path := filepath.Join(dir, f.Path)

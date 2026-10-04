@@ -62,6 +62,9 @@ func drillChecks(dir string, opened capsule.Manifest) []recoveryclient.Check {
 		if snapshotDatabase(filepath.Base(file.Path)) {
 			check("sqlite:"+file.Path, integrityOK(filepath.Join(dir, file.Path)))
 		}
+		if file.Path == "config/native-relay.json" {
+			check("recipe:relay", recipe["relay"] == "domain-credentials-and-authority")
+		}
 	}
 	_, nativeErr := nativeSnapshot(dir)
 	check("native:historical-ownership", nativeErr == nil)
