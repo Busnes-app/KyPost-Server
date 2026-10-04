@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Distinguish lost or invalid final SMTP DATA acknowledgments from definite rejection. Preserve encrypted pickup messages when their notification may already have reached the relay; report uncertainty without echoing untrusted relay response text and require provider evidence before retrying. Partial blind-copy and pickup-link warnings describe unconfirmed delivery and warn against duplicate retries, including alongside Sent-copy warnings. Native domain relay/outbox sending remains unavailable.
+
 - Add separate `KYPOST_NATIVE_RECEIVING=true` qualification opt-in: trusted-local RCPT/DATA commands durably bind and accept mail, then the daemon commits frozen-owner mailbox receipts before acknowledgment without IMAP. Existing-only storage, live directory/users fences, pipe deadlines, generation quarantine and partial-delivery recovery refuse unsafe fallback. No bundled public SMTP receiver or native outgoing relay is enabled; public-MX deployment and restore-hold release remain gated.
 
 - Add explicit `KYPOST_NATIVE_MAIL=true` provisioning and native mailbox runtime in API and daemon, preserving linked IMAP accounts. Retained signed directory events prepare accounts before publication and retry pending work; current issuer/activity/role/storage checks guard cached reads and every mail operation. Native IMAP assignment and legacy SMTP/pickup/probe paths refuse access. Reception requires the separate qualification opt-in described above; domain relay/outbox sending remains unavailable and native restores remain quarantined.

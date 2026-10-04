@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/mail"
 	"net/smtp"
+	"net/textproto"
 	"os"
 	"strings"
 	"time"
@@ -223,6 +224,20 @@ func SMTPSendWithTimeout(addr string, auth smtp.Auth, from string, recipients []
 // failure.
 var ErrSMTPAcceptedThenFailed = errors.New("smtp: message was accepted but the session did not close cleanly")
 
+// ErrSMTPAcceptanceUncertain means DATA ended without a definitive server
+// response. Preserve delivery evidence and reconcile before retrying: the
+// relay may have committed the message even though its answer was lost.
+var ErrSMTPAcceptanceUncertain = errors.New("smtp: acceptance uncertain; message may already have arrived; check provider evidence before retrying to avoid duplicates")
+
+// Keep an untrusted relay response out of caller logs and HTTP errors while
+// retaining the cause for programmatic inspection with errors.Is/As.
+type smtpAcceptanceUncertainError struct{ cause error }
+
+func (e smtpAcceptanceUncertainError) Error() string { return ErrSMTPAcceptanceUncertain.Error() }
+func (e smtpAcceptanceUncertainError) Unwrap() []error {
+	return []error{ErrSMTPAcceptanceUncertain, e.cause}
+}
+
 // writeSMTPMessage runs the MAIL/RCPT/DATA/QUIT half of a send, shared by
 // the STARTTLS and implicit-TLS paths.
 func writeSMTPMessage(client *smtp.Client, from string, recipients []string, msg []byte) error {
@@ -250,7 +265,11 @@ func writeSMTPMessage(client *smtp.Client, from string, recipients []string, msg
 	// the message body. Everything after this point is teardown, and a failure
 	// in teardown does not un-deliver the message.
 	if err := writer.Close(); err != nil {
-		return err
+		var reply *textproto.Error
+		if errors.As(err, &reply) && reply.Code >= 400 && reply.Code <= 599 {
+			return err
+		}
+		return smtpAcceptanceUncertainError{cause: err}
 	}
 	if err := client.Quit(); err != nil {
 		return fmt.Errorf("%w: %w", ErrSMTPAcceptedThenFailed, err)

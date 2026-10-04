@@ -3,8 +3,8 @@ package mailmsg
 // Telling "the server never took the message" apart from "the server took the
 // message and then the connection broke".
 //
-// Both come back from a send as a non-nil error, and for ordinary mail that is
-// the right amount of detail — the user retries. The pickup path cannot treat
+// Both come back from a send as a non-nil error. Blind retries can duplicate
+// accepted mail, and the pickup path cannot treat
 // them the same: it deletes its stored record when a send fails, to stop
 // undeliverable records from holding a quota slot for seven days. Delete on the
 // second case and the recipient gets the link email for a message the server
@@ -19,6 +19,7 @@ import (
 	"bufio"
 	"errors"
 	"net"
+	"net/textproto"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ import (
 // smtpScript runs a minimal SMTP server that accepts one message. If
 // dropAfterData is set it closes the connection immediately after answering
 // 250 to the message body, without ever responding to QUIT.
-func smtpScript(t *testing.T, dropAfterData bool) string {
+func smtpScript(t *testing.T, dropAfterData bool, finalReply string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -57,7 +58,10 @@ func smtpScript(t *testing.T, dropAfterData bool) string {
 			if inData {
 				if line == "." {
 					inData = false
-					w("250 accepted")
+					if finalReply == "" {
+						return // Body received, final acceptance answer lost.
+					}
+					w(finalReply)
 					if dropAfterData {
 						// Accepted, then vanish before QUIT is answered.
 						return
@@ -99,7 +103,7 @@ func TestSMTPSendSucceedsAgainstAWellBehavedServer(t *testing.T) {
 	AllowInsecureSMTP = true
 	t.Cleanup(func() { AllowInsecureSMTP = false })
 
-	if err := sendTo(smtpScript(t, false)); err != nil {
+	if err := sendTo(smtpScript(t, false, "250 accepted")); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 }
@@ -111,13 +115,48 @@ func TestSMTPSendReportsAcceptanceWhenOnlyQuitFails(t *testing.T) {
 	AllowInsecureSMTP = true
 	t.Cleanup(func() { AllowInsecureSMTP = false })
 
-	err := sendTo(smtpScript(t, true))
+	err := sendTo(smtpScript(t, true, "250 accepted"))
 	if err == nil {
-		t.Skip("server closed cleanly enough that QUIT succeeded; nothing to assert")
+		t.Fatal("server never answered QUIT; expected an accepted-then-teardown error")
 	}
 	if !errors.Is(err, ErrSMTPAcceptedThenFailed) {
 		t.Fatalf("err = %v, want it to wrap ErrSMTPAcceptedThenFailed; a caller "+
 			"would now delete a message the recipient was told about", err)
+	}
+}
+
+func TestSMTPFinalResponseDistinguishesRefusalFromUncertainty(t *testing.T) {
+	previous := AllowInsecureSMTP
+	AllowInsecureSMTP = true
+	t.Cleanup(func() { AllowInsecureSMTP = previous })
+	for _, tc := range []struct {
+		reply     string
+		uncertain bool
+	}{
+		{"", true},
+		{"relay echoed recipient@example.com pickup-bearer-secret", true},
+		{"251 unexpected positive response", true},
+		{"451 temporarily refused", false},
+		{"550 permanently refused", false},
+	} {
+		t.Run(tc.reply, func(t *testing.T) {
+			err := sendTo(smtpScript(t, false, tc.reply))
+			if err == nil || errors.Is(err, ErrSMTPAcceptedThenFailed) {
+				t.Fatalf("lost/refused DATA must not claim acceptance: %v", err)
+			}
+			if errors.Is(err, ErrSMTPAcceptanceUncertain) != tc.uncertain {
+				t.Fatalf("final response %q classified incorrectly: %v", tc.reply, err)
+			}
+			if tc.uncertain && err.Error() != ErrSMTPAcceptanceUncertain.Error() {
+				t.Fatal("uncertain result disclosed an untrusted SMTP response")
+			}
+			if strings.HasPrefix(tc.reply, "relay echoed") {
+				var protocolError textproto.ProtocolError
+				if !errors.As(err, &protocolError) {
+					t.Fatal("uncertainty classification lost its underlying protocol error")
+				}
+			}
+		})
 	}
 }
 

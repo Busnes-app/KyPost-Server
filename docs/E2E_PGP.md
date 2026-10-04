@@ -718,6 +718,19 @@ client-custody Sent copy. The four combinations: neither goes through
 `/api/mail/send`; sign only is this path; encrypt only and both go through
 `buildEncryptedDeliveries`, where signing is inline inside the ciphertext.
 
+SMTP send errors containing `smtp: acceptance uncertain` indicate a lost or
+invalid final DATA acknowledgment. Ordinary and client-prepared PGP sends must
+be reconciled against provider/recipient evidence before retrying; the relay
+may already have accepted them. The shared transport reports a fixed safe
+reason, without echoing the relay's malformed answer. Server-sealed pickup
+notifications preserve their encrypted message on uncertain acceptance until
+the existing one-time opening or seven-day expiry. This adds no automatic send
+retry or native outbox, and does not change HTTP success semantics.
+Partial blind-copy and pickup-link warnings likewise describe unconfirmed
+delivery and warn against blind retry. They do not assert that nothing was
+sent, including an all-keyless request whose every acknowledgment is missing.
+Client-prepared PGP sends retain these warnings alongside any Sent-copy warning.
+
 On a converted account every `/api/mail/send-pgp` request must carry
 `materialGeneration`, the keyring generation the message was encrypted and
 signed with, equal to the current one: a missing or stale value is `409

@@ -215,9 +215,7 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if failed > 0 && warning == "" {
-		warning = strconv.Itoa(failed) + " bcc delivery(s) failed"
-	}
+	warning = joinWarnings(warning, partialDeliveryWarning(failed, len(req.Deliveries)-1, 0, 0))
 	s.logger.Info("client-encrypted mail send completed",
 		"user_id", ac.UserID, "deliveries", strconv.Itoa(len(req.Deliveries)), "failed", strconv.Itoa(failed))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sentSaved": sentSaved, "warning": warning})

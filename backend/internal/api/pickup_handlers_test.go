@@ -1,12 +1,141 @@
 package api
 
 import (
+	"bufio"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 )
+
+func pickupSMTPFinalReply(t *testing.T, finalReply string) (string, int, string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		r := bufio.NewReader(conn)
+		_, _ = conn.Write([]byte("220 test ready\r\n"))
+		inData := false
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if inData {
+				if line == ".\r\n" {
+					if finalReply != "" {
+						_, _ = conn.Write([]byte(finalReply + "\r\n"))
+					}
+					return // Complete DATA received, final answer optionally lost.
+				}
+				continue
+			}
+			if line == "DATA\r\n" {
+				inData = true
+				_, _ = conn.Write([]byte("354 send data\r\n"))
+			} else {
+				_, _ = conn.Write([]byte("250 test\r\n"))
+			}
+		}
+	}()
+	host, portText, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return host, port, ln.Addr().String()
+}
+
+func TestPickupNotificationPreservesMessageWhenSMTPAcknowledgmentIsLost(t *testing.T) {
+	previous := mailmsg.AllowInsecureSMTP
+	mailmsg.AllowInsecureSMTP = true // Test-only loopback SMTP transport.
+	t.Cleanup(func() { mailmsg.AllowInsecureSMTP = previous })
+	for _, finalReply := range []string{"", "451 try later", "550 rejected"} {
+		t.Run(finalReply, func(t *testing.T) {
+			srv := newTestServer(t)
+			host, port, addr := pickupSMTPFinalReply(t, finalReply)
+			err := srv.sendPickupNotification("user-1", "from@example.com", "recipient@example.com", "Subject", "Body", "plain", host, port, addr, "user", "pass")
+			if err == nil || errors.Is(err, mailmsg.ErrSMTPAcceptanceUncertain) != (finalReply == "") {
+				t.Fatalf("unexpected submission result: %v", err)
+			}
+			dir := filepath.Join(srv.stateDir, "pickup")
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if finalReply != "" {
+				if len(entries) != 0 {
+					t.Fatal("definitely refused notification retained a quota slot")
+				}
+				return
+			}
+			if len(entries) != 1 {
+				t.Fatalf("lost acknowledgment left %d records, want 1", len(entries))
+			}
+			// Reopen from disk to prove retention survives a server restart.
+			store := pgpmail.NewPickupStore(dir, filepath.Join(srv.configDir, "pickup-store.key"))
+			id := strings.TrimSuffix(entries[0].Name(), ".json")
+			subject, body, _, err := store.View(id)
+			if err != nil || subject != "Subject" || body != "Body" {
+				t.Fatalf("notification may have arrived but its message was lost: %q %q %v", subject, body, err)
+			}
+		})
+	}
+}
+
+func TestMailSendKeylessLostAcknowledgmentWarnsWithoutDiscardingMessage(t *testing.T) {
+	previous := mailmsg.AllowInsecureSMTP
+	mailmsg.AllowInsecureSMTP = true // Test-only loopback SMTP transport.
+	t.Cleanup(func() { mailmsg.AllowInsecureSMTP = previous })
+	srv, userID := newPickupGateServer(t)
+	host, port, _ := pickupSMTPFinalReply(t, "")
+	if err := writeIMAPConfigPayload(srv.userIMAPConfigPath(userID), srv.imapConfigKeyPath, imapConfigPayload{
+		Host: "imap.example.com", Port: 993, Username: "alice@example.com", Password: "pw", Mailbox: "INBOX", SMTPHost: host, SMTPPort: port,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pgpdiscovery.AddSuppression(srv.userStateDir(userID), "carol@example.com", "test"); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/mail/send", strings.NewReader(`{"to":"carol@example.com","subject":"Subject","body":"Body","encrypt":true,"allowPickupFallback":true}`))
+	authRequest(srv, req)
+	rec := httptest.NewRecorder()
+	srv.withAuth(srv.handleMailSend)(rec, req)
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "may already have arrived") || !strings.Contains(rec.Body.String(), "avoid duplicates") || strings.Contains(rec.Body.String(), "nothing was sent") {
+		t.Fatalf("HTTP response hid uncertain acceptance: %d %s", rec.Code, rec.Body.String())
+	}
+	entries, err := os.ReadDir(filepath.Join(srv.stateDir, "pickup"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("uncertain link lost its message: %v %v", entries, err)
+	}
+	id := strings.TrimSuffix(entries[0].Name(), ".json")
+	subject, body, _, err := srv.pickupStore.View(id)
+	if err != nil || subject != "Subject" || body != "Body" {
+		t.Fatalf("uncertain link cannot retrieve its message: %q %q %v", subject, body, err)
+	}
+}
 
 // pickupMux builds a minimal ServeMux with the same route pattern server.go
 // registers for the pickup page, so r.PathValue("id") resolves the way it

@@ -92,12 +92,8 @@ func TestFinishMailSendSkipsFollowOnDeliveriesWhenPrimaryFails(t *testing.T) {
 	}
 }
 
-// TestPartialDeliveryWarningCountsEveryUnreachedRecipient covers the wording
-// the two failure kinds produce. They are counted separately because they fail
-// for different reasons and the sender's next move differs: a bounced blind
-// copy is an address or server problem, a failed pickup link means that
-// recipient got nothing at all.
-func TestPartialDeliveryWarningCountsEveryUnreachedRecipient(t *testing.T) {
+// A lost SMTP acknowledgment cannot prove that a recipient got nothing.
+func TestPartialDeliveryWarningCountsEveryUnconfirmedRecipient(t *testing.T) {
 	tests := []struct {
 		name       string
 		bccFailed  int
@@ -110,17 +106,17 @@ func TestPartialDeliveryWarningCountsEveryUnreachedRecipient(t *testing.T) {
 		{
 			name:      "some blind copies bounced",
 			bccFailed: 2, bccTotal: 3,
-			want: "2 of 3 blind copies were not delivered",
+			want: "delivery could not be confirmed for 2 of 3 blind copies; some may already have arrived; check provider evidence before retrying to avoid duplicates",
 		},
 		{
 			name:       "some pickup links failed",
 			pickFailed: 1, pickTotal: 4,
-			want: "1 of 4 secure links could not be sent",
+			want: "delivery could not be confirmed for 1 of 4 secure links; some may already have arrived; check provider evidence before retrying to avoid duplicates",
 		},
 		{
 			name:      "both kinds failed",
 			bccFailed: 1, bccTotal: 1, pickFailed: 2, pickTotal: 2,
-			want: "1 of 1 blind copies were not delivered; 2 of 2 secure links could not be sent",
+			want: "delivery could not be confirmed for 1 of 1 blind copies; delivery could not be confirmed for 2 of 2 secure links; some may already have arrived; check provider evidence before retrying to avoid duplicates",
 		},
 	}
 

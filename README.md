@@ -1079,6 +1079,10 @@ inside the container. On systems without systemd, schedule
   a network you trust, set `ALLOW_INSECURE_SMTP=true` and understand what you
   are giving up.
 - Check `api.err.log` for `mail send failed` details.
+- `smtp: acceptance uncertain` means the final DATA acknowledgment was lost or
+  invalid. The relay may already have accepted the message; check its logs and
+  the recipient before retrying to avoid duplicate mail. A pickup notification
+  with this result keeps its encrypted message until it is opened or expires.
 
 ### KyPost does not apply labels
 
