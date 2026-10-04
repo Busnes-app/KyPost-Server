@@ -4,7 +4,8 @@ Production directory webhooks retain verified desired state and enforce account
 access. Admin mail-domain setup is available through the API. Native allocation
 and reconciliation are enabled only with `KYPOST_NATIVE_MAIL=true`. The default
 remains external IMAP. This opt-in selects prepared native mailboxes in both API
-and daemon; it does not enable incoming SMTP or outgoing delivery.
+and daemon. Direct receiving additionally requires `KYPOST_NATIVE_RECEIVING=true`;
+outgoing domain relay delivery remains unavailable.
 
 ## Operator domain setup
 
@@ -160,11 +161,81 @@ IMAP file. Existing key custody and WKD publication proofs are unchanged.
 
 Native sends, pickup creation, alias probes and daemon own-address SMTP probes
 are refused or skipped until domain relay/outbox integration. A leftover IMAP
-credential file cannot enable them. Receiver routing/import and operator-owned
-outgoing delivery remain the next transport work. Do not publish MX for this
-runtime alone. Roll back by disabling the flag in both processes and keeping all
+credential file cannot enable them. Operator-owned outgoing delivery remains
+the next transport work. Do not publish MX for this runtime alone. Roll back by
+disabling both native flags in both processes and keeping all
 native storage/ownership files intact; native mail becomes unavailable without
 being converted to IMAP. Use a compatible binary, not an older metadata writer.
+
+## Direct receiving runtime (qualification profile)
+
+`KYPOST_NATIVE_RECEIVING=true` requires `KYPOST_NATIVE_MAIL=true` and is disabled
+by default. It adds trusted-local `kypost-server receiving init|bind|accept`
+commands and a daemon importer; it does not install or start a public receiver.
+Use Linux with mounted procfs, existing owner-only configuration/state roots,
+the established issuer-bound domain, prepared accounts and no restore hold.
+Run `receiving init` explicitly once after domain setup; it refuses an existing
+receiving directory. Normal operation opens existing users and ingress storage
+without bootstrap, migrations or lost-spool recreation.
+
+The gateway identity is fixed to `maddy-local`. Trusted gateway configuration
+passes its own transaction ID, SMTP envelope sender and recipient to
+`receiving bind <receiver-id> <sender> <recipient>` at RCPT. An empty reverse
+path is valid. Definite unknown addresses return exit 3 (map to SMTP 550);
+storage/proof failures return exit 1 (map to 451). After every accepted recipient,
+`receiving accept <receiver-id> <sender>` reads exact raw MIME from stdin and
+commits it before exit success. Map DATA failures to 451. Run binding as the
+last RCPT authority check: a later recipient rejection would leave a phantom
+binding. No header supplies ownership, gateway identity or transaction identity.
+The process writes operation/result/correlation logs to stderr and no stdout.
+
+SMTP stdin must be a named pipe or regular file. Pipe reads have a 30-second
+deadline; inherited pipes are reopened through `/proc/self/fd` for Go's poller.
+Regular files and filesystem operations retain the stalled-volume ceiling.
+New reception performs fresh DNS proof outside locks. Domain → directory →
+users locks then fence every frozen owner through acceptance. Import validates
+all prepared owners/sources before commits and holds the same authority fences
+through mailbox receipts and ingress acknowledgment; no network or stdin work
+runs inside these fences. Local deactivation waits for admitted commits.
+
+The buffer limits are 4 MiB per message, 64 MiB live payload and 10,000 records;
+each recipient's own message limit is checked before acceptance. SMTP headers
+added by the receiver count toward this limit. The daemon revisits pending
+deliveries every five seconds. Partial mailbox failure retains holding bytes;
+after lease expiry, exact receipts prevent duplicate local delivery. Already
+accepted mail imports without fresh DNS, refreshing authorized route TTLs
+before claiming. Missing storage, restore holds or disabled authority retain
+pending mail. Same-revision local reactivation permits delivery to that same
+owner. A proven owner/signed-generation conflict quarantines pending mail with
+its bytes and frozen bindings intact; an active competing claim cannot be
+invalidated. New signed revisions conservatively fence older bindings even
+when their owner is unchanged. Quarantine requires operator reconciliation;
+there is no reassignment or automatic release.
+
+This profile is for controlled qualification. Before public MX, qualify bounded
+receiver concurrency/rates, safe abandoned-RCPT and archived-receipt cleanup,
+physical database/WAL/free-space reserves, TLS/spam policy, receiver provenance
+and licensing, and power-loss/restore behavior on the intended volumes. Logical
+payload limits do not bound physical disk growth. Successful RCPT followed by
+disconnect consumes retained records; those records do not expire automatically.
+The gateway process shares trusted local storage authority, so this profile is
+not isolation from a compromised gateway. Disable acceptance before rollback;
+preserve and reconcile all pending/quarantined bytes and receipts.
+
+Qualification uses the pinned Maddy binary from
+[receiver assessment](RECEIVING_GATEWAY_ASSESSMENT.md):
+
+```sh
+cd backend
+MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy GOTOOLCHAIN=go1.26.6 go test -race ./internal/app ./internal/ingress -run '^TestNativeReceiving|^TestMaddyHoldingBoundary|^TestMailboxImporter' -count=1 -timeout=5m
+```
+
+The actual runtime check runs Maddy against the production receiving command
+and daemon importer, with test-only loopback DNS. It checks native two-recipient
+delivery, hidden envelope recipients, raw MIME, unknown-recipient refusal and
+shutdown. Other checks cover local revocation, DNS outages, restore holds,
+missing spool, pipe deadline, signed-generation quarantine and partial quota
+failure/retry. Tests do not prove public deployment readiness.
 
 ## Verification and next gates
 
@@ -185,7 +256,8 @@ user publication remains a runtime activation gate.
 
 Next qualify whole-stack backup/restore and allocator publication crashes, then
 qualify the opt-in runtime and its periodic repair at representative scale. Qualify storage waits, orphan cleanup, scale,
-receiver revocation/import ordering and runtime selectors before transport
-activation. Durable scoped client deltas, aliases and relay readiness remain
+representative receiver revocation/import load and runtime shutdown behavior
+before public transport activation; the local receiving/selector checks above
+are implemented. Durable scoped client deltas, aliases and relay readiness remain
 separate work. This change adds system DNS TXT lookups, no dependency or secret,
 and no Android/Linux/iOS client wire change.

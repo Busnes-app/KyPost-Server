@@ -15,7 +15,7 @@ import (
 // Import commits one local copy per frozen owner before releasing holding bytes.
 // resolve opens that verified owner, never today's email-address destination.
 // Callers own stores and their lifetimes. Partial failures resume via receipts.
-// No production directory or scheduler invokes this internal bridge yet.
+// The opt-in app importer holds current authority through this bridge.
 func (s *Store) Import(ctx context.Context, gateway, id string, resolve func(mailbox.Owner) (*mailbox.Store, error)) error {
 	d, err := s.Claim(ctx, gateway, id, 5*time.Minute)
 	if err != nil {

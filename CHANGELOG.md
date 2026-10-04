@@ -14,7 +14,9 @@ non-prerelease version.
 
 ## Unreleased
 
-- Add explicit `KYPOST_NATIVE_MAIL=true` provisioning and native mailbox runtime in API and daemon, preserving linked IMAP accounts. Retained signed directory events prepare accounts before publication and retry pending work; current issuer/activity/role/storage checks guard cached reads and every mail operation. Native IMAP assignment and legacy SMTP/pickup/probe paths refuse access. Reception and domain relay/outbox sending remain unavailable; native restores remain quarantined.
+- Add separate `KYPOST_NATIVE_RECEIVING=true` qualification opt-in: trusted-local RCPT/DATA commands durably bind and accept mail, then the daemon commits frozen-owner mailbox receipts before acknowledgment without IMAP. Existing-only storage, live directory/users fences, pipe deadlines, generation quarantine and partial-delivery recovery refuse unsafe fallback. No bundled public SMTP receiver or native outgoing relay is enabled; public-MX deployment and restore-hold release remain gated.
+
+- Add explicit `KYPOST_NATIVE_MAIL=true` provisioning and native mailbox runtime in API and daemon, preserving linked IMAP accounts. Retained signed directory events prepare accounts before publication and retry pending work; current issuer/activity/role/storage checks guard cached reads and every mail operation. Native IMAP assignment and legacy SMTP/pickup/probe paths refuse access. Reception requires the separate qualification opt-in described above; domain relay/outbox sending remains unavailable and native restores remain quarantined.
 
 - Guard native account state access in API/maintenance and daemon paths before cache returns. Validate acknowledged owner/source/storage and refuse restore holds; open native state as existing-only with source validation before migration, preserving borrowed handles and inactive-account revocation. Runtime provisioning, mailbox selection and mail transport remain disabled.
 

@@ -1,0 +1,398 @@
+package app
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net/mail"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
+)
+
+const receivingGateway = "maddy-local"
+
+var receivingLimits = ingress.Limits{MessageBytes: 4 << 20, PayloadBytes: 64 << 20, Records: 10000}
+
+type receivingRuntime struct {
+	configDir string
+	stateDir  string
+	accounts  *users.Store
+	life      *sso.LifecycleStore
+	domains   *sso.NativeDomainStore
+	holding   *ingress.Store
+}
+
+type receivingCommandError struct {
+	err  error
+	code int
+}
+
+func (e *receivingCommandError) Error() string { return e.err.Error() }
+func (e *receivingCommandError) Unwrap() error { return e.err }
+func (e *receivingCommandError) ExitCode() int { return e.code }
+
+func runReceivingCommand(args []string, input io.Reader) error {
+	if len(args) == 0 || (args[0] != "init" && args[0] != "bind" && args[0] != "accept") ||
+		(args[0] == "init" && len(args) != 1) || (args[0] == "bind" && len(args) != 4) || (args[0] == "accept" && len(args) != 3) {
+		return errors.New("usage: receiving init | receiving bind <receiver-id> <sender> <recipient> | receiving accept <receiver-id> <sender>")
+	}
+	if len(args) > 1 {
+		if args[1] == "" || len(args[1]) > 256 || strings.ContainsAny(args[1], "\x00\r\n") {
+			return errors.New("invalid receiver transaction identifier")
+		}
+		if args[2] != "" {
+			a, err := mail.ParseAddress(args[2])
+			if err != nil || a.Name != "" || a.Address != args[2] {
+				return errors.New("invalid envelope sender")
+			}
+		}
+		if args[0] == "bind" {
+			a, err := mail.ParseAddress(args[3])
+			if err != nil || a.Name != "" || a.Address != args[3] {
+				return &receivingCommandError{err: ingress.ErrRoute, code: 3}
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r, err := openReceivingRuntime(ctx, args[0] == "init")
+	if err == nil {
+		defer r.holding.Close()
+		switch args[0] {
+		case "bind":
+			err = r.bind(ctx, args[1], args[2], args[3])
+		case "accept":
+			err = r.accept(ctx, args[1], args[2], input)
+		}
+	}
+	result := "committed"
+	if err != nil {
+		result = "refused"
+	}
+	correlation := "initialization"
+	if len(args) > 1 {
+		correlation = args[1]
+	}
+	slog.Info("receiving operation", "actor", receivingGateway, "task_id", "native-receiving", "action", args[0], "target", "holding-store", "result", result, "correlation_id", correlation)
+	if err != nil {
+		code := 1
+		if errors.Is(err, ingress.ErrRoute) {
+			code = 3
+		}
+		return &receivingCommandError{err: err, code: code}
+	}
+	return nil
+}
+
+// startReceivingImport uses the daemon's cancellation/drain ownership. Missing
+// state refuses startup; accepted mail is never replaced with an empty spool.
+func startReceivingImport(ctx context.Context, d runDeps) (<-chan struct{}, error) {
+	done := make(chan struct{})
+	if !d.nativeReceiving {
+		close(done)
+		return done, nil
+	}
+	r, err := openReceivingRuntime(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		defer close(done)
+		defer r.holding.Close()
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			var after int64
+			for ctx.Err() == nil {
+				rows, err := r.holding.List(ctx, receivingGateway, after, 100)
+				if err != nil {
+					d.logger.Error("receiving buffer unavailable; preserve storage and repair", "error", err.Error())
+					break
+				}
+				if len(rows) == 0 {
+					break
+				}
+				for _, row := range rows {
+					after = row.Sequence
+					if row.State != "pending" || ctx.Err() != nil {
+						continue
+					}
+					if err := r.importDelivery(ctx, row.ID); err != nil {
+						d.logger.Error("receiving import deferred; holding bytes retained", "error", err.Error(), "correlation_id", row.ID)
+					}
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return done, nil
+}
+
+func openReceivingRuntime(ctx context.Context, initialize bool) (*receivingRuntime, error) {
+	native, err := config.NativeMailEnabled()
+	if err != nil {
+		return nil, err
+	}
+	receiving, err := config.NativeReceivingEnabled()
+	if err != nil {
+		return nil, err
+	}
+	if !native || !receiving {
+		return nil, errors.New("receiving requires explicit KYPOST_NATIVE_MAIL=true and KYPOST_NATIVE_RECEIVING=true")
+	}
+	r := &receivingRuntime{configDir: config.ConfigDir(), stateDir: config.StateDir()}
+	for _, path := range []string{r.configDir, r.stateDir} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+			return nil, errors.New("receiving requires existing owner-only configuration and state directories")
+		}
+	}
+	if err := sso.RequireNativeRestoreReleased(r.stateDir); err != nil {
+		return nil, err
+	}
+	r.accounts, err = users.OpenExisting(ctx, r.configDir)
+	if err != nil {
+		return nil, err
+	}
+	r.life = sso.NewLifecycleStore(r.configDir)
+	r.domains = sso.NewNativeDomainStore(r.configDir)
+	settings := sso.NewStore(r.configDir).Load()
+	domain, err := r.domains.Read()
+	if err != nil || !settings.Enabled || domain.Issuer != settings.IssuerURL || !domain.Established {
+		return nil, sso.ErrNativeDomain
+	}
+	path := filepath.Join(r.stateDir, "receiving")
+	if initialize {
+		if _, err := r.domains.Verify(ctx); err != nil {
+			return nil, err
+		}
+		// Explicit initialization never repairs a lost acknowledged holding root.
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			return nil, errors.New("receiving directory already exists; open or reconcile it instead of initializing")
+		}
+		r.holding, err = ingress.Open(path, receivingLimits)
+	} else {
+		r.holding, err = ingress.OpenExisting(path, receivingLimits)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (r *receivingRuntime) withAuthority(ctx context.Context, ids []string, proof *sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
+	// Match allocator lock order. DNS and stdin work happen before this fence.
+	release, err := fsutil.LockFileContext(ctx, filepath.Join(r.configDir, "native-domain.json"))
+	if err != nil {
+		return err
+	}
+	defer release()
+	domain, err := r.domains.Read()
+	settings := sso.NewStore(r.configDir).Load()
+	if err != nil || !settings.Enabled || domain.Issuer != settings.IssuerURL || !domain.Established {
+		return sso.ErrNativeDomain
+	}
+	if proof != nil && (domain != *proof || domain.VerifiedUntil <= time.Now().Unix()) {
+		return sso.ErrNativeDomain
+	}
+	return r.life.WithNativeMailAccess(ctx, r.stateDir, settings.IssuerURL, r.accounts, ids, action)
+}
+
+func (r *receivingRuntime) bind(ctx context.Context, id, sender, recipient string) error {
+	parsed, err := mail.ParseAddress(recipient)
+	if err != nil || parsed.Name != "" || parsed.Address != recipient {
+		return ingress.ErrRoute
+	}
+	recipient = strings.ToLower(recipient)
+	proof, err := r.domains.Verify(ctx)
+	if err != nil {
+		return err
+	}
+	a, found, err := r.life.NativeAssignmentForAddress(proof.Issuer, recipient)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ingress.ErrRoute
+	}
+	return r.withAuthority(ctx, []string{a.Owner.Mailbox}, &proof, func(current map[string]sso.NativeAssignment) error {
+		admitted := current[a.Owner.Mailbox]
+		if admitted.Owner != a.Owner || admitted.Address != recipient {
+			return ingress.ErrRoute
+		}
+		if err := r.refreshRoute(ctx, admitted); err != nil {
+			return err
+		}
+		return r.holding.Bind(ctx, receivingGateway, id, sender, recipient)
+	})
+}
+
+// Current signed revision is deliberately conservative: newer directory
+// revisions fence older staged/accepted bindings even when ownership is equal.
+func (r *receivingRuntime) refreshRoute(ctx context.Context, a sso.NativeAssignment) error {
+	d, known, err := r.life.Directory(a.Owner.Issuer, a.Owner.Subject)
+	if err != nil || !known {
+		return sso.ErrNativeProvisioning
+	}
+	return r.holding.SetRoute(ctx, ingress.Route{Address: a.Address, Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox, Generation: d.Revision, Active: true, ValidUntil: time.Now().Add(time.Minute)})
+}
+
+func (r *receivingRuntime) frozenAuthority(ctx context.Context, d ingress.Delivery, proof *sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
+	ids := make([]string, 0, len(d.Bindings))
+	for _, b := range d.Bindings {
+		ids = append(ids, b.Mailbox)
+	}
+	return r.withAuthority(ctx, ids, proof, func(current map[string]sso.NativeAssignment) error {
+		quarantine := func() error {
+			if d.State == "pending" {
+				if err := r.holding.QuarantinePending(ctx, receivingGateway, d.ID); err != nil {
+					return err
+				}
+			}
+			return ingress.ErrRoute
+		}
+		for _, b := range d.Bindings {
+			a := current[b.Mailbox]
+			if a.Owner != (mailbox.Owner{Issuer: b.Issuer, Subject: b.Subject, Mailbox: b.Mailbox}) || a.Address != b.Address {
+				return quarantine()
+			}
+			resource, known, err := r.life.Directory(b.Issuer, b.Subject)
+			if err != nil {
+				return err
+			}
+			if !known || resource.Revision != b.Generation {
+				return quarantine()
+			}
+			if err := r.refreshRoute(ctx, a); err != nil {
+				return err
+			}
+		}
+		return action(current)
+	})
+}
+
+func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input io.Reader) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if file, ok := input.(*os.File); ok {
+		info, err := file.Stat()
+		if err != nil {
+			return err
+		}
+		// Regular files have bounded reads but retain the filesystem-stall
+		// ceiling. SMTP helper stdin is a pipe and must support a real deadline.
+		if !info.Mode().IsRegular() {
+			deadline, _ := ctx.Deadline()
+			// Inherited blocking stdin is not registered with Go's poller.
+			// Reopen the Linux pipe through its descriptor so os.Open supplies
+			// the pollable handle needed for a kernel-backed read deadline.
+			if info.Mode()&os.ModeNamedPipe == 0 {
+				return errors.New("receiving stdin must be a pipe or regular file")
+			}
+			pipe, err := os.Open("/proc/self/fd/" + strconv.FormatUint(uint64(file.Fd()), 10))
+			if err != nil {
+				return err
+			}
+			defer pipe.Close()
+			if err := pipe.SetReadDeadline(deadline); err != nil {
+				return errors.New("receiving stdin cannot enforce its deadline; configure a supported pipe")
+			}
+			input = pipe
+		}
+	}
+	raw, err := io.ReadAll(io.LimitReader(input, receivingLimits.MessageBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(raw) == 0 || int64(len(raw)) > receivingLimits.MessageBytes {
+		return ingress.ErrCapacity
+	}
+	proof, err := r.domains.Verify(ctx)
+	if err != nil {
+		return err
+	}
+	d, err := r.holding.Get(ctx, receivingGateway, id)
+	if err != nil {
+		return err
+	}
+	return r.frozenAuthority(ctx, d, &proof, func(current map[string]sso.NativeAssignment) error {
+		for _, a := range current {
+			if int64(len(raw)) > a.Limits.MessageBytes {
+				return ingress.ErrCapacity
+			}
+		}
+		return r.holding.Accept(ctx, receivingGateway, id, sender, bytes.NewReader(raw))
+	})
+}
+
+func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error {
+	d, err := r.holding.Get(ctx, receivingGateway, id)
+	if err != nil {
+		return err
+	}
+	stores := map[mailbox.Owner]*mailbox.Store{}
+	sources := map[mailbox.Owner]string{}
+	defer func() {
+		for _, store := range stores {
+			_ = store.Close()
+		}
+	}()
+	for _, b := range d.Bindings {
+		owner := mailbox.Owner{Issuer: b.Issuer, Subject: b.Subject, Mailbox: b.Mailbox}
+		if !fsutil.SafePathComponent(owner.Mailbox) {
+			return sso.ErrNativeProvisioning
+		}
+		if stores[owner] != nil {
+			continue
+		}
+		a, found, err := r.life.NativeAssignment(owner.Issuer, owner.Subject)
+		if err != nil || !found || a.Owner != owner || int64(len(d.Raw)) > a.Limits.MessageBytes {
+			return sso.ErrNativeProvisioning
+		}
+		store, err := mailbox.OpenExisting(filepath.Join(r.stateDir, "users", owner.Mailbox, "mailbox"), owner, a.Limits, a.Source)
+		if err != nil {
+			return err
+		}
+		stores[owner] = store
+		client, err := mailbox.NewClient(store, a.Address)
+		if err != nil {
+			return err
+		}
+		sources[owner] = client.MailSourceIdentity()
+	}
+	// Import authority does not require fresh DNS: already accepted bytes are
+	// owed to the frozen owner. Refresh authorized TTLs before Claim sees them.
+	return r.frozenAuthority(ctx, d, nil, func(current map[string]sso.NativeAssignment) error {
+		for _, a := range current {
+			if sources[a.Owner] != a.Source {
+				return sso.ErrNativeProvisioning
+			}
+		}
+		return r.holding.Import(ctx, receivingGateway, id, func(owner mailbox.Owner) (*mailbox.Store, error) {
+			store := stores[owner]
+			if store == nil {
+				return nil, ingress.ErrRoute
+			}
+			return store, nil
+		})
+	})
+}

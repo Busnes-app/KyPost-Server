@@ -85,6 +85,21 @@ func (s *LifecycleStore) NativeAssignment(issuer, subject string) (NativeAssignm
 	return a, ok, err
 }
 
+// NativeAssignmentForAddress locates immutable ownership, not permission.
+// Receiving callers must still admit the current account before binding mail.
+func (s *LifecycleStore) NativeAssignmentForAddress(issuer, address string) (NativeAssignment, bool, error) {
+	f, err := s.loadNative()
+	if err != nil {
+		return NativeAssignment{}, false, err
+	}
+	for _, a := range f.Accounts {
+		if a.Owner.Issuer == issuer && a.Address == address {
+			return a, true, nil
+		}
+	}
+	return NativeAssignment{}, false, nil
+}
+
 // ReconcileNativeMailbox is the blocking internal compatibility wrapper.
 // The caller proves domain authority and that localID is the NEW account bound
 // to this issuer/subject, before publishing that account to ordinary state users.

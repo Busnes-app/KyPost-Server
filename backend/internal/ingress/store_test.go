@@ -17,6 +17,46 @@ import (
 
 var proofLimits = Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 20}
 
+func TestHoldingQuarantineCannotInvalidateActiveClaim(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "holding"), proofLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SetRoute(ctx, proofRoute("one@example.test", "one", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Bind(ctx, "maddy", "claimed", "", "one@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("From: test@outside.test\r\n\r\nretained\r\n")
+	if err := s.Accept(ctx, "maddy", "claimed", "", bytes.NewReader(raw)); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.Claim(ctx, "maddy", "claimed", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QuarantinePending(ctx, "maddy", "claimed"); !errors.Is(err, ErrLease) {
+		t.Fatalf("active claim was not fenced: %v", err)
+	}
+	still, err := s.Get(ctx, "maddy", "claimed")
+	if err != nil || still.State != "pending" || still.Lease != claimed.Lease || !bytes.Equal(still.Raw, raw) {
+		t.Fatalf("quarantine altered active obligation: state=%s error=%v", still.State, err)
+	}
+	if _, err := s.db.Exec("UPDATE deliveries SET lease_until=0 WHERE gateway='maddy' AND id='claimed'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QuarantinePending(ctx, "maddy", "claimed"); err != nil {
+		t.Fatal(err)
+	}
+	quarantined, err := s.Get(ctx, "maddy", "claimed")
+	if err != nil || quarantined.State != "quarantined" || quarantined.Digest != claimed.Digest || !bytes.Equal(quarantined.Raw, raw) || len(quarantined.Bindings) != 1 || quarantined.Bindings[0] != claimed.Bindings[0] {
+		t.Fatalf("quarantine lost frozen obligation: state=%s error=%v", quarantined.State, err)
+	}
+}
+
 func proofRoute(address, owner string, generation int64) Route {
 	return Route{Address: address, Issuer: "https://identity.example.test", Subject: owner, Mailbox: owner, Generation: generation, Active: true, ValidUntil: time.Now().Add(time.Hour)}
 }
