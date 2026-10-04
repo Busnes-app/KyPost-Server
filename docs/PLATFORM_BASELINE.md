@@ -455,3 +455,14 @@ locally trusted CA.
    recognise. Keep it that way — never make an existing field's absence an
    error.
 3. Update the matrix in the same change.
+
+## Native primary-address outbound compatibility
+
+In explicit native mode, ordinary compose and client-prepared PGP retain their
+existing request/authentication contracts. Send responses add `outboxId` while
+`ok:true` still means confirmed primary SMTP acceptance; 503 means unconfirmed
+primary submission, even if intent was persisted. Inspect the owner-scoped
+`GET /api/mail/outbox/{id}` before creating another intent. Sending twice cannot
+repair pending Sent filing. Converted PGP generation/device-enrollment gates and
+client custody remain unchanged. Native pickup/alias/system sends remain pending;
+see [NATIVE_OUTBOX.md](NATIVE_OUTBOX.md). Existing external IMAP is unchanged.

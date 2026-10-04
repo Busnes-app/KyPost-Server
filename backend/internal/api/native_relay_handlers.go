@@ -21,7 +21,7 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"configured": exists, "domain": c.Domain, "issuer": c.Issuer,
 			"host": c.Host, "port": c.Port, "generation": c.Generation,
-			"transport": "implicit-tls", "authRequired": true, "sendingEnabled": false,
+			"transport": "implicit-tls", "authRequired": true, "sendingEnabled": s.nativeMail && exists,
 		})
 	}
 	if r.Method == http.MethodGet {

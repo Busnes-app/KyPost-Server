@@ -216,6 +216,9 @@ func configureSorter(log *logging.Logger, poller *processor.Poller) error {
 }
 
 func runDaemon(ctx context.Context, d runDeps) error {
+	outboundCtx, cancelOutbound := context.WithCancel(ctx)
+	outboundDone := startNativeOutbound(outboundCtx, d)
+	defer func() { cancelOutbound(); <-outboundDone }()
 	receivingCtx, cancelReceiving := context.WithCancel(ctx)
 	receivingDone, err := startReceivingImport(receivingCtx, d)
 	if err != nil {
@@ -280,6 +283,9 @@ func startBackgroundSweepers(ctx context.Context, srv *api.Server) {
 }
 
 func runServer(ctx context.Context, d runDeps) error {
+	outboundCtx, cancelOutbound := context.WithCancel(ctx)
+	outboundDone := startNativeOutbound(outboundCtx, d)
+	defer func() { cancelOutbound(); <-outboundDone }()
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, nil, d.wkdStore)
 	if d.nativeMail {
 		srv.EnableNativeMail()
@@ -321,6 +327,9 @@ func runServer(ctx context.Context, d runDeps) error {
 const shutdownTimeout = 20 * time.Second
 
 func runAll(ctx context.Context, d runDeps) error {
+	outboundCtx, cancelOutbound := context.WithCancel(ctx)
+	outboundDone := startNativeOutbound(outboundCtx, d)
+	defer func() { cancelOutbound(); <-outboundDone }()
 	receivingCtx, cancelReceiving := context.WithCancel(ctx)
 	receivingDone, err := startReceivingImport(receivingCtx, d)
 	if err != nil {

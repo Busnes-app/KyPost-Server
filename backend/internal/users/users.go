@@ -46,6 +46,9 @@ const (
 // User is a single account record. Files/directories owned by a user are
 // always keyed by ID, never Username, so a rename never requires moving data.
 type User struct {
+	// NativeSendEpoch fences durable sends across local access/credential changes.
+	// Private authority metadata; never included in Public().
+	NativeSendEpoch    uint64           `json:"nativeSendEpoch,omitempty"`
 	PGPKeyring         *PGPKeyringState `json:"pgpKeyring,omitempty"`
 	PGPRevision        uint64           `json:"pgpRevision,omitempty"`
 	ID                 string           `json:"id"`
@@ -944,6 +947,9 @@ func (s *Store) readFileUnlocked() (usersFile, error) {
 // writeFileUnlocked persists f. Callers hold both mu and the file lock, and
 // must invalidate the read cache — which this does, since every caller has to.
 func (s *Store) writeFileUnlocked(f usersFile) error {
+	if err := s.advanceNativeSendEpochs(&f); err != nil {
+		return err
+	}
 	if f.Version == 0 {
 		f.Version = 1
 	}

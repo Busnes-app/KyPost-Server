@@ -591,6 +591,7 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/imap/config", s.withAuth(s.handleIMAPConfig))
 	mux.HandleFunc("POST /api/imap/test", s.withAuth(s.handleIMAPTest))
 	mux.HandleFunc("POST /api/mail/draft", withUploadDeadline(s.withMailAuth(s.handleMailDraft)))
+	mux.HandleFunc("GET /api/mail/outbox/{id}", s.withMailAuth(s.handleNativeOutboxStatus))
 	mux.HandleFunc("POST /api/mail/send", withUploadDeadline(s.withMailAuth(s.handleMailSend)))
 	// Send path for end-to-end keys: the browser has already encrypted and
 	// signed, the server only relays over SMTP. See pgp_send_client.go.

@@ -104,25 +104,32 @@ const retryAfterKDFBusy = -1 * time.Second
 // The reservation still precedes the credential comparison, which is what
 // tryAttempt's doc requires — the concurrent-burst property is unchanged.
 func (s *Server) deviceAuthFromRequest(r *http.Request) (userID string, device state.NativeDevice, ok bool, retryAfter time.Duration) {
+	userID, device, _, ok, retryAfter = s.deviceAuthSnapshot(r)
+	return
+}
+
+// Retain the exact user authority snapshot that admitted the credential, rather
+// than attaching a newer account epoch after verification completed.
+func (s *Server) deviceAuthSnapshot(r *http.Request) (userID string, device state.NativeDevice, epoch uint64, ok bool, retryAfter time.Duration) {
 	deviceID, deviceSecret := deviceCredentialsFromRequest(r)
 	if deviceID == "" || deviceSecret == "" {
-		return "", state.NativeDevice{}, false, 0
+		return "", state.NativeDevice{}, 0, false, 0
 	}
 	ownerID, okOwner := s.lookupUserByDevice(deviceID)
 	if !okOwner {
-		return "", state.NativeDevice{}, false, 0
+		return "", state.NativeDevice{}, 0, false, 0
 	}
 	store, err := s.userStore(ownerID)
 	if err != nil {
-		return "", state.NativeDevice{}, false, 0
+		return "", state.NativeDevice{}, 0, false, 0
 	}
 	dev, okDev := store.GetNativeDevice(deviceID)
 	if !okDev {
-		return "", state.NativeDevice{}, false, 0
+		return "", state.NativeDevice{}, 0, false, 0
 	}
 	lockoutKey := s.deviceLockoutKey(deviceID, r)
 	if allowed, wait := s.deviceLockout.tryAttempt(lockoutKey); !allowed {
-		return "", state.NativeDevice{}, false, wait
+		return "", state.NativeDevice{}, 0, false, wait
 	}
 	// A legacy (pre-HashDeviceSecret) device secret still verifies through
 	// scrypt, so this can shed. An error means the secret was never COMPARED —
@@ -134,10 +141,10 @@ func (s *Server) deviceAuthFromRequest(r *http.Request) (userID string, device s
 	okSecret, err := users.VerifyDeviceSecret(r.Context(), dev.SecretHash, deviceSecret)
 	if err != nil {
 		s.deviceLockout.cancelAttempt(lockoutKey)
-		return "", state.NativeDevice{}, false, retryAfterKDFBusy
+		return "", state.NativeDevice{}, 0, false, retryAfterKDFBusy
 	}
 	if !okSecret {
-		return "", state.NativeDevice{}, false, 0
+		return "", state.NativeDevice{}, 0, false, 0
 	}
 	// Deactivation must revoke device access immediately, exactly as
 	// currentUser enforces it on the session path — not only once the device
@@ -151,7 +158,7 @@ func (s *Server) deviceAuthFromRequest(r *http.Request) (userID string, device s
 	u, err := s.users.Get(ownerID)
 	if err != nil || !u.Active {
 		s.deviceLockout.cancelAttempt(lockoutKey)
-		return "", state.NativeDevice{}, false, 0
+		return "", state.NativeDevice{}, 0, false, 0
 	}
 	// MustChangePassword confines a SESSION to the password-change and logout
 	// routes (see withAuth and withMailAuth). A device credential was exempt
@@ -170,10 +177,10 @@ func (s *Server) deviceAuthFromRequest(r *http.Request) (userID string, device s
 	// off forever.
 	if u.MustChangePassword {
 		s.deviceLockout.cancelAttempt(lockoutKey)
-		return "", state.NativeDevice{}, false, 0
+		return "", state.NativeDevice{}, 0, false, 0
 	}
 	s.deviceLockout.recordSuccess(lockoutKey)
-	return ownerID, dev, true, 0
+	return ownerID, dev, u.NativeSendEpoch, true, 0
 }
 
 // meterDeviceWrite applies the per-account write meter to a device-authenticated

@@ -129,13 +129,13 @@ Default section order:
 
 - **KyRecovery backup contract** lives in `kyrecovery-server/zero_code_pairing_handoff_spec.md` (v2.0.0) and the suite `AGENTS.md` "KyRecovery integration"; the shipped product adapter uses `ky-primitives/recoveryclient` v0.5.1, with operator procedures in `docs/RESTORE.md`. Do not copy the spec into this repo.
 
-- **Shutdown gives ordinary HTTP requests 20 seconds, then drains only active backups for up to 16 minutes.** Supervisor waits 1000 seconds for API/daemon; compose waits 17 minutes. Change these together. Optional `docker-compose.lan-dns.yml` requires explicit `KYPOST_DNS`; base compose retains host DNS.
+- **Shutdown gives ordinary HTTP requests 20 seconds, drains active backups for up to 16 minutes, and joins native outbound workers (45-second connection/TLS plus 45-second SMTP and 30-second local finalization).** Supervisor waits 1000 seconds for API/daemon; compose waits 17 minutes. Change these together. Optional `docker-compose.lan-dns.yml` requires explicit `KYPOST_DNS`; base compose retains host DNS.
 
 ## User Preferences
 
-- Native outbox storage/backup/loopback transport qualification is internal; current sender admission, worker/runtime routing and restore reconciliation still precede activation. Read [docs/NATIVE_OUTBOX.md](docs/NATIVE_OUTBOX.md) before changing queue claims, key derivation, retry or Sent obligations.
+- Native primary compose/client-PGP sending is opt-in and uses fresh admission, durable claims and joined recovery workers. Pickup/alias/system routing, provider readiness and restore reconciliation remain pending. Read [docs/NATIVE_OUTBOX.md](docs/NATIVE_OUTBOX.md) before changing queue claims, key derivation, retry or Sent obligations.
 
-- Protected domain relay settings are available through the admin API, with fresh DNS/issuer proof, encrypted credentials and sealed backup validation. Configuration does not enable sending; read [docs/DOMAIN_RELAY.md](docs/DOMAIN_RELAY.md) before changing relay authority, generations, transport or recovery.
+- Protected domain relay settings are available through the admin API, with fresh DNS/issuer proof, encrypted credentials and sealed backup validation. Saving configuration alone proves no provider readiness; native primary sends additionally require explicit mode and fresh account/domain admission; read [docs/DOMAIN_RELAY.md](docs/DOMAIN_RELAY.md) before changing relay authority, generations, transport or recovery.
 
 - Turnkey domain mail stack: extend mature KyPost from a frontend for external mail services into the integrated user-facing product, with mailbox storage/reception and automatic KyIdentity account provisioning behind it. Preserve established server/client contracts; Android leads Linux and iOS, so appliance delivery must avoid requiring simultaneous client rewrites. Evaluate mail engines against provisioning, lifecycle reconciliation and existing labels/PGP contracts; Mailflare is a candidate, not a selection.
 - Each operator owns their outgoing relay account, credentials, billing and provider relationship; Busnes supplies software, not a relay service. Default external sending uses that provider. One guided deployment/domain setup covers KyIdentity pairing, DNS/TLS, relay readiness, backups and delivery diagnostics; users need no per-account mail-server setup.

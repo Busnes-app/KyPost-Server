@@ -95,9 +95,10 @@ survive uncertain notification acceptance. This is a transport prerequisite;
 protected [domain relay settings](DOMAIN_RELAY.md), strict implicit-TLS/AUTH
 transport qualification and sealed credential backups are implemented. Durable
 [outbox storage/claims/Sent and sealed recovery](NATIVE_OUTBOX.md) are internally
-qualified through loopback TLS and killed submitters. Current sender admission,
-workers/runtime routing, provider readiness, reconciliation and native sending
-remain pending.
+qualified through loopback TLS and killed submitters. Primary-address compose/client-PGP current admission, joined recovery workers
+and owned status diagnostics are integrated and locally TLS/PGP qualified.
+Pickup/alias/system routes, provider readiness/setup UI and uncertainty
+reconciliation tooling remain pending.
 
 Integrate the protected domain relay setting and durable outbox with explicit allowed sender domains and current address authorization. Protect configuration/secret rotation with existing admin authentication, CSRF and action-bound step-up; secret reads remain redacted. Reuse SMTP helpers and route every sending path through the shared delivery boundary: ordinary compose, client-encrypted sends, pickup notifications, alias proofs and system mail where applicable. Verify domain sending readiness and provider restrictions. Retry temporary failures with bounded backoff; reconcile uncertain acceptance; protect credentials and refuse silent plaintext/direct-MX fallback. Store Sent once independently of retries. Keep external IMAP account SMTP behavior unchanged.
 

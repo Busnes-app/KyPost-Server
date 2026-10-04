@@ -323,3 +323,25 @@ func TestNativeOutboxSnapshotRefusesPartialSchema(t *testing.T) {
 		t.Fatal("partial outbox schema treated as legacy")
 	}
 }
+
+func TestNativeOutboxDiscoveryRequiresAcceptedPrimary(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t, filepath.Join(t.TempDir(), "mailbox"), testOwner, testLimits)
+	job := outboxTestJob()
+	job.Sent = nil
+	job.Deliveries = append(job.Deliveries, OutboundDelivery{Recipients: []string{"other@outside.test"}, Raw: job.Deliveries[0].Raw})
+	must(t, s.QueueOutbound(ctx, outboxMaster, outboxTestID, job))
+	_, claim, err := s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, outboxGeneration)
+	must(t, err)
+	pending, err := s.PendingOutbound(ctx, 10)
+	must(t, err)
+	if len(pending) != 0 {
+		t.Fatal("follow-ons scheduled behind submitting primary", pending)
+	}
+	must(t, s.CompleteOutbound(ctx, outboxTestID, 0, claim, nil))
+	pending, err = s.PendingOutbound(ctx, 10)
+	must(t, err)
+	if len(pending) != 1 || pending[0] != outboxTestID {
+		t.Fatal("accepted primary did not release follow-ons", pending)
+	}
+}

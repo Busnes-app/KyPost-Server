@@ -32,16 +32,23 @@ type OutboundJob struct {
 	Sent               []byte
 	MaterialGeneration uint64
 	DeviceID           string
+	DeviceWitness      string
+	NativeSendEpoch    uint64
+	PGPRevision        uint64
+	PGPFingerprint     string
+	DirectoryRevision  int64
+	RequiresEnrollment bool
+	ExpiresAt          int64
 }
 type OutboundDelivery struct {
 	Recipients []string
 	Raw        []byte
 }
 type OutboundStatus struct {
-	Sequence    int
-	State       string
-	Attempts    int
-	NextAttempt int64
+	Sequence    int    `json:"sequence"`
+	State       string `json:"state"`
+	Attempts    int    `json:"attempts"`
+	NextAttempt int64  `json:"nextAttempt"`
 }
 
 const maxOutboundBytes = 128 << 20
@@ -63,7 +70,7 @@ func (s *Store) outboundKey(master []byte, id string) ([]byte, error) {
 
 func (s *Store) validateOutbound(job OutboundJob) error {
 	from, err := mail.ParseAddress(job.From)
-	if err != nil || from.Address != job.From || strings.ContainsAny(job.From, "\r\n\x00") || !outboundID(job.RelayGeneration) || len(job.Deliveries) == 0 || len(job.Deliveries) > 100 || len(job.DeviceID) > 512 || !strings.Contains(job.From, "@") {
+	if err != nil || from.Address != job.From || strings.ContainsAny(job.From, "\r\n\x00") || !outboundID(job.RelayGeneration) || len(job.Deliveries) == 0 || len(job.Deliveries) > 100 || len(job.DeviceID) > 512 || len(job.DeviceWitness) > 64 || len(job.PGPFingerprint) > 128 || job.DirectoryRevision < 0 || job.ExpiresAt < 0 || !strings.Contains(job.From, "@") {
 		return ErrOutbound
 	}
 	total := len(job.Sent)
@@ -491,7 +498,7 @@ func (s *Store) PendingOutbound(ctx context.Context, limit int) ([]string, error
 		return nil, ErrOutbound
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT o.id,o.created_at FROM outbox o JOIN outbox_deliveries d ON d.job=o.id
- WHERE (d.state IN ('queued','retryable') AND d.next_attempt<=?) OR (d.state='accepted' AND o.sent_reserved=1)
+ WHERE (d.state IN ('queued','retryable') AND d.next_attempt<=? AND (d.sequence=0 OR EXISTS (SELECT 1 FROM outbox_deliveries p WHERE p.job=o.id AND p.sequence=0 AND p.state='accepted'))) OR (d.sequence=0 AND d.state='accepted' AND o.sent_reserved=1)
  ORDER BY o.created_at,o.id LIMIT ?`, time.Now().Unix(), limit)
 	if err != nil {
 		return nil, err
