@@ -226,8 +226,11 @@ file lengths. Reserve 32 actual SQLite pages plus twice the incoming payload
 for the next write, and keep at least 16 MiB plus that allowance available to
 the process on the filesystem. Failure to measure storage refuses new growth;
 no mail is evicted. Exact binding/payload retries remain idempotent. Near the
-budget, attempt a bounded WAL truncation checkpoint before the writer
-transaction, then recheck actual bytes under the transaction. A pinned backup
+budget, reserve the whole WAL length plus 16 MiB before attempting a bounded
+truncation checkpoint: copying uncheckpointed pages can grow the main database
+before WAL blocks are released. Insufficient or unreadable headroom skips that
+checkpoint and refuses new growth, while exact retries remain available. Recheck
+actual bytes and headroom under the writer transaction. A pinned backup
 reader can prevent reclamation; admission retries after it releases the snapshot.
 
 These are conservative admission estimates, not hard SQLite or filesystem quotas.

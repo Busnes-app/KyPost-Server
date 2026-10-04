@@ -14,7 +14,7 @@ non-prerelease version.
 
 ## Unreleased
 
-- Refuse new local receiving growth at physical database/WAL and filesystem free-space reserves, with transaction-scoped checks and near-budget checkpoint recovery. Preserve exact receipt retries and accepted-mail import through restricted unchanged-route refresh. These admission estimates do not replace operator volume quotas or enable public reception.
+- Refuse new local receiving growth at physical database/WAL and filesystem free-space reserves, with transaction-scoped checks and headroom-gated near-budget checkpoint recovery. Preserve exact receipt retries and accepted-mail import through restricted unchanged-route refresh. These admission estimates do not replace operator volume quotas or enable public reception.
 
 - Add an admin-confirmed saved-relay TLS/AUTH check without submitting mail. Bind it to the displayed generation and fresh domain/issuer/restore authority before and after connection; bound cancellation, suppress provider replies and expose a transient result in Server → Mail domain. Delivery and receiving remain separate qualification steps.
 

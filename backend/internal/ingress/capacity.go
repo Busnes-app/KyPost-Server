@@ -37,7 +37,7 @@ func (s *Store) admissionTx(ctx context.Context) (*sql.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	if used >= s.physicalLimit-2*s.limits.MessageBytes-(2<<20) {
+	if used >= s.physicalLimit-2*s.limits.MessageBytes-(2<<20) && s.checkpointHeadroom() == nil {
 		var busy, pages, checkpointed int
 		if err := s.db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &pages, &checkpointed); err != nil {
 			return nil, errors.New("receiving checkpoint failed; preserve mail and repair storage before retrying")
@@ -46,6 +46,8 @@ func (s *Store) admissionTx(ctx context.Context) (*sql.Tx, error) {
 			return nil, ctx.Err()
 		}
 	}
+	// Insufficient or unreadable checkpoint headroom skips reclamation. Exact
+	// replays may still succeed; checkAdmission refuses growth under the txn.
 	return s.db.BeginTx(ctx, nil)
 }
 
@@ -70,7 +72,25 @@ func (s *Store) checkAdmission(ctx context.Context, tx *sql.Tx, payload int64) e
 	if used > s.physicalLimit-growth {
 		return fmt.Errorf("%w; receiving database/WAL reserve exhausted", ErrCapacity)
 	}
+	if used >= s.physicalLimit-2*s.limits.MessageBytes-(2<<20) {
+		if err := s.checkpointHeadroom(); err != nil {
+			return err
+		}
+	}
 	return receivingFreeSpace(filepath.Dir(s.path), uint64((16<<20)+growth))
+}
+
+// Checkpoint copies pages to the main file before releasing WAL blocks. Reserve
+// the whole WAL length as conservative copy growth, plus recovery headroom.
+func (s *Store) checkpointHeadroom() error {
+	info, err := os.Lstat(s.path + "-wal")
+	if errors.Is(err, os.ErrNotExist) {
+		return receivingFreeSpace(filepath.Dir(s.path), 16<<20)
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Size() < 0 {
+		return errors.New("cannot measure receiving checkpoint growth; preserve mail and repair storage before retrying")
+	}
+	return receivingFreeSpace(filepath.Dir(s.path), uint64(info.Size())+(16<<20))
 }
 
 func receivingFreeSpace(dir string, required uint64) error {
