@@ -53,8 +53,13 @@ type actionDigestKey struct{}
 // confirmation earned for one action can never be spent on another. The
 // body is read once here and handed back for the handler to decode.
 func withActionDigest(next http.HandlerFunc) http.HandlerFunc {
+	return withActionDigestLimit(maxActionBytes, next)
+}
+
+// Larger signed evidence uploads retain exact-action binding with their own cap.
+func withActionDigestLimit(limit int64, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxActionBytes))
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 		if err != nil {
 			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 			return

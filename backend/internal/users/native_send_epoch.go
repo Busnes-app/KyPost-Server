@@ -3,6 +3,7 @@ package users
 import (
 	"errors"
 	"math"
+	"os"
 )
 
 // This comparable snapshot excludes correspondence, key envelopes and routine
@@ -23,14 +24,10 @@ func nativeSendState(u User) nativeSendAuthority {
 // Comparing disk state also covers SSO writers outside mutateGuarded. A local
 // deactivate/reactivate cycle must invalidate jobs even within one clock second.
 func (s *Store) advanceNativeSendEpochs(f *usersFile) error {
-	native := false
-	for _, u := range f.Users {
-		native = native || u.NativeMailboxSource != "" || u.NativeMailboxIssuer != ""
-	}
-	if !native {
+	prior, err := s.readFileUnlocked()
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	prior, err := s.readFileUnlocked()
 	if err != nil {
 		return err
 	}
@@ -40,9 +37,6 @@ func (s *Store) advanceNativeSendEpochs(f *usersFile) error {
 	}
 	for i := range f.Users {
 		u := &f.Users[i]
-		if u.NativeMailboxSource == "" && u.NativeMailboxIssuer == "" {
-			continue
-		}
 		old, exists := byID[u.ID]
 		if !exists {
 			u.NativeSendEpoch = 0
@@ -51,7 +45,7 @@ func (s *Store) advanceNativeSendEpochs(f *usersFile) error {
 		u.NativeSendEpoch = old.NativeSendEpoch
 		if nativeSendState(*u) != nativeSendState(old) {
 			if u.NativeSendEpoch == math.MaxUint64 {
-				return errors.New("native send authority exhausted; update refused without changing data")
+				return errors.New("account authority exhausted; update refused without changing data")
 			}
 			u.NativeSendEpoch++
 		}

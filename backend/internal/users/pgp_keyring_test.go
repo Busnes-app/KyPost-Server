@@ -425,6 +425,9 @@ func TestChangeKeyringPasswordPreservesMaterial(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if changed.NativeSendEpoch != u.NativeSendEpoch+1 {
+				t.Fatal("credential change did not advance account authority")
+			}
 			if changed.PGPRevision != u.PGPRevision+1 || changed.PGPPrivateKeyWrapped != `{"v":2,"new":true}` {
 				t.Fatal("missing password envelope/revision")
 			}
@@ -434,6 +437,7 @@ func TestChangeKeyringPasswordPreservesMaterial(t *testing.T) {
 			changed.UpdatedAt = u.UpdatedAt // Every store mutation stamps its ordinary audit time.
 			changed.PasswordHash, changed.LoginSalt, changed.LoginIterations = u.PasswordHash, u.LoginSalt, u.LoginIterations
 			changed.PGPRevision, changed.PGPPrivateKeyWrapped = u.PGPRevision, u.PGPPrivateKeyWrapped
+			changed.NativeSendEpoch = u.NativeSendEpoch // Asserted above; retained material comparison excludes authority counters.
 			if !reflect.DeepEqual(changed, u) {
 				t.Fatal("password change altered retained material or metadata")
 			}
