@@ -177,7 +177,9 @@ being converted to IMAP. Use a compatible binary, not an older metadata writer.
 
 `KYPOST_NATIVE_RECEIVING=true` requires `KYPOST_NATIVE_MAIL=true` and is disabled
 by default. It adds trusted-local `kypost-server receiving init|bind|accept`
-commands and a daemon importer; it does not install or start a public receiver.
+commands and a daemon importer; `receiving config` generates the bounded TLS-only
+Maddy qualification profile described in [controlled setup](RECEIVING_SETUP.md).
+It does not install or start a public receiver.
 Use Linux with mounted procfs, existing owner-only configuration/state roots,
 the established issuer-bound domain, prepared accounts and no restore hold.
 Run `receiving init` explicitly once after domain setup; it refuses an existing
