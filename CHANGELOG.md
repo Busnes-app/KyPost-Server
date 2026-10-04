@@ -14,7 +14,7 @@ non-prerelease version.
 
 ## Unreleased
 
-- Qualify internal held-native repair planning and an atomic native-only access batch with intent-before-write ordering. Reverify current receipt/storage authority, preserve legacy credentials and PGP data, and retain the hold. The administrator repair endpoint, revision-barrier provenance and cleanup/completion path remain pending.
+- Qualify internal held-native repair planning and an atomic native-only access batch with intent-before-write ordering. Reverify current receipt/storage authority, preserve legacy credentials and PGP data, and retain the hold. Persist native-only repair intent/provenance barriers before account writes and qualify explicit before/after completion, interrupted/repeated repairs and newer-authority invalidation. The administrator endpoint and actual credential cleanup remain pending.
 
 - Deny held native password/derived, MFA, SSO/step-up, session/admin and QR key-exchange authority independently of native feature flags. Preserve recovery material/nonces and legacy recovery administration; no hold release is introduced.
 

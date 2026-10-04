@@ -216,6 +216,9 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 				state.RevokedBefore = max(prior.RevokedBefore, now)
 			}
 			f.Directory[key] = state
+			if f.RecoveryRepair != nil && f.RecoveryRepair.Issuer == issuer {
+				f.RecoveryRepair = nil
+			}
 			if f.RecoveryReceipt != nil && f.RecoveryReceipt.Challenge.Issuer == issuer {
 				f.RecoveryReceipt = nil
 			}

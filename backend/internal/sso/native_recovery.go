@@ -137,6 +137,7 @@ func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings,
 		Epoch, PGPRevision                                      uint64
 	}
 	authority := []accountAuthority{}
+	nativeOwners := map[string]users.User{}
 	seen := map[string]bool{}
 	accountIDs := map[string]bool{}
 	for _, u := range accounts {
@@ -159,6 +160,7 @@ func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings,
 		}
 		if u.NativeMailboxIssuer != "" || u.NativeMailboxSource != "" {
 			a, ok := ledger.Accounts[directoryKey(settings.IssuerURL, u.SSOSub)]
+			nativeOwners[directoryKey(settings.IssuerURL, u.SSOSub)] = u
 			if !ok || a.Owner.Mailbox != u.ID || a.Source != u.NativeMailboxSource || u.NativeMailboxIssuer != settings.IssuerURL {
 				return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
 			}
@@ -185,7 +187,7 @@ func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings,
 		}
 		if issuer == settings.IssuerURL {
 			// Never discard an unsafe preview barrier or a partial-publication fence.
-			if published[k] && rev >= directory[k].Revision {
+			if published[k] && rev >= directory[k].Revision && !f.RecoveryRepairBarriers[k].matches(nativeOwners[k], rev) {
 				return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
 			}
 			if err = add(subject, rev); err != nil {
@@ -239,6 +241,7 @@ func (s *LifecycleStore) BeginNativeRecoveryHeld(ctx context.Context, root strin
 	}
 	f.RecoveryChallenge = &c
 	f.RecoveryReceipt = nil
+	f.RecoveryRepair = nil
 	if err = ctx.Err(); err != nil {
 		return NativeRecoveryChallenge{}, err
 	}

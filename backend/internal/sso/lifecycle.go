@@ -61,13 +61,15 @@ type LifecycleStore struct {
 }
 
 type lifecycleFile struct {
-	RecoveryChallenge             *NativeRecoveryChallenge  `json:"recoveryChallenge,omitempty"`
-	RecoveryReceipt               *nativeRecoveryReceipt    `json:"recoveryReceipt,omitempty"`
-	RecoveryFloors                map[string]int64          `json:"recoveryFloors,omitempty"`
-	NativeProvisioningInitialized bool                      `json:"nativeProvisioningInitialized,omitempty"`
-	Logouts                       map[string]LogoutEvent    `json:"logouts"`
-	Directory                     map[string]DirectoryState `json:"directory"`
-	Events                        map[string]directoryEvent `json:"events"`
+	RecoveryRepair                *nativeRecoveryRepair                  `json:"recoveryRepair,omitempty"`
+	RecoveryRepairBarriers        map[string]nativeRecoveryRepairBarrier `json:"recoveryRepairBarriers,omitempty"`
+	RecoveryChallenge             *NativeRecoveryChallenge               `json:"recoveryChallenge,omitempty"`
+	RecoveryReceipt               *nativeRecoveryReceipt                 `json:"recoveryReceipt,omitempty"`
+	RecoveryFloors                map[string]int64                       `json:"recoveryFloors,omitempty"`
+	NativeProvisioningInitialized bool                                   `json:"nativeProvisioningInitialized,omitempty"`
+	Logouts                       map[string]LogoutEvent                 `json:"logouts"`
+	Directory                     map[string]DirectoryState              `json:"directory"`
+	Events                        map[string]directoryEvent              `json:"events"`
 	// SignOns maps a spent native sign-on jti to its expiry (unix seconds).
 	SignOns map[string]int64 `json:"signOns"`
 }
