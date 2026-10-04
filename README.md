@@ -639,6 +639,8 @@ Back up with the container **stopped**. This is not caution for its own sake:
 
 Nothing here is Ollama: the model bind mount is a cache and re-downloads.
 
+Shutdown can take up to 36 minutes when both API and daemon are draining work: Supervisor stops their groups sequentially. Compose supplies that budget; give external orchestrators the same allowance. Idle services exit promptly. See [sealed backup shutdown](docs/RESTORE.md).
+
 ### Back up
 
 ```bash

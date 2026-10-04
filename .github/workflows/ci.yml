@@ -330,6 +330,9 @@ jobs:
           KYPOST_BIND: 127.0.0.1
         run: docker compose config --quiet
 
+      - name: cumulative supervisor shutdown budget
+        run: python3 scripts/check-supervisor-shutdown.py --contract-only
+
   docker:
     name: ci-docker
     runs-on: ubuntu-latest
@@ -354,6 +357,9 @@ jobs:
           tags: kypost-server:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: supervisor drains separate groups serially
+        run: docker run --rm --network none --user kypost --entrypoint python3 kypost-server:ci /opt/kypost/scripts/check-supervisor-shutdown.py --runtime-only
 
       # A built image that cannot start is not a passing build. This catches
       # the class of failure the build step structurally cannot: a bad

@@ -17,8 +17,12 @@ Inspect the result and receipt; a remote failure can leave a successful local co
 and a local failure does not cancel the remote attempt. Uploads are bounded to 16
 minutes. Browser disconnects do not cancel uploads; deployment shutdown allows them
 to drain separately after the normal 20-second HTTP grace; unrelated requests do
-not get the extended backup deadline. Reverse proxies may need a matching response timeout. The process lock
-rejects competing operations rather than queueing them behind an upload.
+not get the extended backup deadline. Supervisor stops API and daemon groups
+sequentially, with 1,000 seconds allowed for each; Compose therefore allows up to
+36 minutes overall. Idle services exit promptly. External orchestrators must
+provide the same shutdown budget; a shorter forced stop can interrupt deposits.
+Reverse proxies may need a matching response timeout. The process lock rejects
+competing operations rather than queueing them behind an upload.
 
 For a LAN destination, explicitly set `KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY=true`.
 HTTPS remains mandatory; redirects, loopback and link-local destinations are refused.
