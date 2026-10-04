@@ -79,12 +79,80 @@ to verify current owners and fresh domain proof. Changing the challenge can
 pause reception until the matching DNS value propagates.
 
 The foreground process inherits the native file-descriptor ceiling, bounding
-idle socket descriptors as well as active transactions. Give it explicit
-supervision, restart and log rotation before any remote test; the existing
-KyPost container does not supervise it automatically. Route a dedicated test
+idle socket descriptors as well as active transactions. For container supervision,
+use the optional profile below. A host foreground installation needs its own
+service manager and protected log rotation before any remote test. Route a dedicated test
 domain to it only after checking TLS, backups, firewall and SMTP port 25
 reachability. HTTP reverse proxies do not carry SMTP. Preserve prior DNS and
 keep the existing provider route available for rollback.
+
+## Optional supervised container profile
+
+The image leaves `KYPOST_NATIVE_RECEIVER=false`; base Compose publishes no
+SMTP port. After steps 1–5 above, use `docker-compose.receiving.yml` to enable
+all three native flags, mount the operator's engine/TLS directory read-only and
+publish an explicitly chosen SMTP address and port. This profile is for the
+controlled test domain; it does not download Maddy, initialize storage or
+change DNS.
+
+Prepare the base deployment first with `KYPOST_NATIVE_MAIL=true`. After domain
+verification and account preparation, initialize its spool once as `kypost`.
+Docker exec otherwise defaults to the image’s root user; root-owned spool files
+would prevent the unprivileged receiver and importer from opening them:
+
+```sh
+docker compose exec --user kypost -e KYPOST_NATIVE_RECEIVING=true kypost-server \
+  kypost-server receiving init
+```
+
+Set these Compose inputs in the operator's `.env`:
+
+```dotenv
+KYPOST_MADDY_BINARY=/absolute/protected/path/to/maddy
+KYPOST_RECEIVING_TLS_DIR=/absolute/protected/path/to/tls
+KYPOST_RECEIVING_HOSTNAME=mail.your-test-domain.example
+KYPOST_SMTP_BIND=127.0.0.1
+KYPOST_SMTP_PORT=2525
+```
+
+The TLS directory must contain regular `fullchain.pem` and `privkey.pem` files.
+Keep the directory traversable and files readable by the container's `kypost`
+user (UID 1000 in this image); the key must be owned by that UID with mode `0600`.
+The engine must be executable and its host file and parent directories protected
+against untrusted writes. Mount sources must already exist; Compose refuses to
+create missing paths. Loopback port 2525 supports an initial local test only.
+External SMTP requires an explicit reachable host address and port 25, firewall
+qualification and the DNS precautions above.
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.receiving.yml config -q
+docker compose -f docker-compose.yml -f docker-compose.receiving.yml up -d
+docker compose exec kypost-server supervisorctl -c /etc/supervisord.conf status receiver
+```
+
+Before every start, the unprivileged launcher checks the exact qualified engine
+hash and regenerates configuration through the production storage, TLS and
+current-domain checks. It hashes and executes the same open file; trusted host
+writes to that inode remain operator authority. Failed preflight preserves the
+previous complete configuration and exits. Supervisor bounds startup retries,
+restarts a failed receiver, rotates separate receiver logs and stops reception
+before API/daemon drains. A persistent startup failure eventually exits the
+container through the existing FATAL listener; it does not silently disable
+receiving. Health alone does not prove delivery; inspect receiver status/logs.
+
+After atomically replacing TLS files in the mounted directory, restart the
+receiver explicitly to reload them and repeat a client TLS check:
+
+```sh
+docker compose exec kypost-server supervisorctl -c /etc/supervisord.conf restart receiver
+```
+
+The launcher also supports trusted host inputs `KYPOST_RECEIVER_BINARY`,
+`KYPOST_RECEIVING_LISTEN`, `KYPOST_RECEIVING_CERT` and `KYPOST_RECEIVING_KEY`;
+the container profile uses the fixed mount paths and internal `0.0.0.0:2525`.
+Removing the overlay and recreating the base service disables the receiver and
+SMTP publish while retaining native state. Drain or reconcile accepted mail;
+never delete storage as rollback.
 
 ## Fixed qualification policy and limits
 
@@ -116,7 +184,12 @@ keep the existing provider route available for rollback.
 Use the actual pinned-Maddy test from the assessment. It consumes generated
 production configuration and proves STARTTLS, plaintext refusal without
 bindings, external-recipient refusal, per-IP concurrent and burst refusal, durable
-two-owner delivery and import after receiver SIGKILL/restart under closed storage admission. This is not a storage-process restart or power-loss proof. It uses test-only
+two-owner delivery and import after receiver SIGKILL/restart under closed storage admission. This is not a storage-process restart or power-loss proof. The launcher variant also proves failed preflight preserves old configuration.
+With `RECEIVING_PROOF_IMAGE=<locally-built-image>` alongside `MADDY_PROOF_BINARY`,
+the optional supervised variant uses the actual image Supervisor to restart a
+killed receiver before import and verifies idle container shutdown. This fixture
+uses host networking only for its loopback test DNS/SMTP and mounts only synthetic
+state; it does not start the other image services. It uses test-only
 loopback DNS and a private CA; it is not live-provider evidence.
 
 For the dedicated domain, send ordinary and PGP mail from a controlled external

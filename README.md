@@ -8,7 +8,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 
 ## Features
 
-- Controlled direct receiving profile generation from verified domain and existing native storage; mandatory STARTTLS refuses plaintext senders. The operator supplies and supervises the receiver; public deployment remains gated. See [receiver setup](docs/RECEIVING_SETUP.md).
+- Controlled direct receiving profile generation from verified domain and existing native storage; mandatory STARTTLS refuses plaintext senders. An optional Compose profile supervises the operator-supplied pinned receiver, which shares the instance’s mail-storage authority; public deployment remains gated. See [receiver setup](docs/RECEIVING_SETUP.md).
 
 - Opt-in native primary-address sending through the operator-owned relay: ordinary compose and client PGP record encrypted outbox intent before SMTP; recovery retains interrupted claims, retries definite temporary refusals and files Sent independently. Included in sealed backups; see [outbox contract](docs/NATIVE_OUTBOX.md).
 
@@ -374,6 +374,7 @@ directories.
 ## Ports
 
 - `5866`: web UI and backend API
+- `2525`: internal controlled SMTP listener only with `docker-compose.receiving.yml`; the overlay requires an explicit host address and port. See [receiver setup](docs/RECEIVING_SETUP.md).
 - `11434`: Ollama API (not exposed by default in `docker-compose.yml`)
 
 Container startup sets config, private-key and state volume roots to owner-only `0700` before bootstrap and services; host inspection or backups require the volume owner or appropriate operator privileges. Existing descendant permissions are retained.
@@ -392,6 +393,8 @@ Common variables:
 
 - `KYPOST_NATIVE_MAIL` (default `false`): opt-in KyIdentity native provisioning and local mailbox API/polling. Requires domain proof; preserves existing IMAP accounts. Direct receiving qualification additionally requires `KYPOST_NATIVE_RECEIVING=true`; primary compose/client-PGP sending requires the configured operator relay; pickup/alias/system sending remains pending. See [native runtime setup and rollback](docs/NATIVE_PROVISIONING.md#opt-in-native-runtime).
 - `KYPOST_NATIVE_RECEIVING` (default `false`): controlled direct receiving commands and daemon import; requires native mail, domain proof, prepared users and explicit spool initialization. `receiving config` generates a bounded TLS-only receiver profile; STARTTLS-only reception refuses plaintext senders. No bundled receiver starts. Read [controlled setup and gates](docs/RECEIVING_SETUP.md).
+- `KYPOST_NATIVE_RECEIVER` (image default `false`): optional Supervisor receiver startup; requires both native flags above, prepared storage, current proof and operator-owned engine/TLS files. The receiving overlay enables it explicitly.
+- Receiver launcher inputs: `KYPOST_RECEIVER_BINARY` (default `/opt/kypost/receiving/maddy`), `KYPOST_RECEIVING_LISTEN` (`0.0.0.0:2525`), required `KYPOST_RECEIVING_HOSTNAME`, `KYPOST_RECEIVING_CERT` (`/opt/kypost/receiving/tls/fullchain.pem`) and `KYPOST_RECEIVING_KEY` (`/opt/kypost/receiving/tls/privkey.pem`). Compose overlay inputs `KYPOST_MADDY_BINARY`, `KYPOST_RECEIVING_TLS_DIR`, `KYPOST_SMTP_BIND` and `KYPOST_SMTP_PORT` are required with no defaults. Follow [setup order and rollback](docs/RECEIVING_SETUP.md#optional-supervised-container-profile).
 - `WEB_PORT` (default `5866`)
 - `TZ` (default `America/New_York`)
 - `SECRET_DIR` (default `/kypost/private`. Every `*_KEY_FILE` / `*_SECRET_FILE` default below is derived from this, so moving it moves all of them together.)
@@ -1112,6 +1115,8 @@ inside the container. On systems without systemd, schedule
 - KyPost still provides a service worker and a manifest. The installation flow differs by browser.
 
 ## Project Structure
+
+- `docker-compose.receiving.yml`: optional controlled receiver supervision and explicit SMTP publish with operator-supplied read-only engine/TLS mounts.
 
 - `backend/internal/mailmsg/`: shared MIME/SMTP helpers and encrypted domain relay profile. Strict native implicit-TLS transport is internally qualified; native primary sending uses fresh admission and the durable outbox; provider readiness and pickup/alias/system paths remain pending.
 

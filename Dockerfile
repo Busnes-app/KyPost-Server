@@ -150,6 +150,8 @@ ENV CONFIG_DIR=/kypost/config
 ENV SECRET_DIR=/kypost/private
 ENV LOG_DIR=/kypost/logs
 ENV STATE_DIR=/kypost/state
+# No engine is bundled; only the explicit receiving overlay enables startup.
+ENV KYPOST_NATIVE_RECEIVER=false
 ENV WEB_PORT=5866
 ENV TZ=America/New_York
 ENV OLLAMA_BASE_URL=http://127.0.0.1:11434

@@ -17,6 +17,7 @@ All files under `scripts/`.
 - `entrypoint.sh`: creates required directories, sets config/private/state roots to `0700`, runs `bootstrap.sh` inline (as root, before the privilege-dropping `chown`), chowns `/kypost` to `kypost`, then execs `supervisord`. Running `bootstrap.sh` as a blocking step here — rather than as its own supervisord program — makes "credentials exist before any service starts" a hard guarantee instead of one relying on supervisord's priority-based ordering.
 - `bootstrap.sh`: execs `kypost-server --mode bootstrap-admin` (implemented in `backend/internal/app/bootstrap.go`). On a fresh install — neither `users.json` nor `admin.env` present — it writes Argon2id-hashed admin credentials to `admin.env`, which the backend imports into `users.json` on first start; a no-op when either file exists, so it is safe across restarts. A generated password is written to `first-run-password.txt` (mode `600`) in `CONFIG_DIR`, never to stdout; a password supplied via `BOOTSTRAP_ADMIN_PASS` writes no file. The hashing lives in the Go binary rather than inline `node -e`, which is what let the runtime image drop from `node:slim` to `debian:stable-slim` — no runtime script here may reintroduce a `node` dependency.
 - `crash-exit.sh`: supervisord event listener on `PROCESS_STATE_FATAL`. Sends `SIGTERM` to PID 1 so the container exits and `restart: unless-stopped` restarts it. It is the second half of the bounded-`startretries` design and is not optional: supervisord's default behaviour on FATAL is to keep running in front of a dead service, which leaves PID 1 healthy and the container "running" while nothing is served, and Docker restart policies react only to a container exiting. It speaks the supervisor event protocol on stdin/stdout, so it must print nothing to stdout but `READY` and `RESULT`.
+- `start-receiving.sh`: opt-in Linux x86_64 receiver launcher; requires all three native flags, hashes and executes the same open qualified read-only regular engine file, and regenerates config through existing storage/TLS/domain admission before each start. Failure retains old complete config. No download or spool initialization; trusted host same-inode writes remain operator authority. See `docs/RECEIVING_SETUP.md`.
 - `start-ollama.sh`: launches Ollama daemon on port 11434
 - `pull-ollama-model.sh`: pulls the model named by `OLLAMA_MODEL` (docker-compose default: `nemotron-3-nano:4b`); requires Ollama daemon to be running first. It runs **once** per container start (`autorestart=false`), so it owns its own retries: it exits nonzero if the Ollama API never answers within 120s, and retries the pull up to 5 times with linear backoff. Do not remove either — without them a slow first start or a brief registry outage left the container up and healthy with no model, permanently, and a supervisord retry instead of an in-script one would take the whole container down for something that does not need it. Classification being down is reported as `classifierFailing` in `GET /api/health`, not as an unhealthy container.
 - `update-host.sh`: runs only on the Docker host. It resolves the official image to a digest, verifies its GitHub attestation, locks, waits for health, and recreates the prior digest if the new container fails. It never enters the image or receives the Docker socket.
@@ -31,9 +32,10 @@ All files under `scripts/`.
 | daemon | daemon | 10 |
 | ollama | daemon | 10 |
 | ollama-model | one-shot | 10 |
+| receiver | optional daemon; disabled by default | 20 |
 | crashexit | event listener (`PROCESS_STATE_FATAL`) | n/a |
 
-`startretries` is 20 on the three long-running programs. Not 3 (supervisord's default, which gives up silently) and not a very large number: supervisord does **not** back off between restart attempts, so a program that exits immediately restarts as fast as the machine allows, forever, on a box that is also running an LLM. 20 covers the transient case — a dependency not ready yet — and `crashexit` handles what comes after.
+`startretries` is 20 on the four long-running programs (including the optional receiver). Not 3 (supervisord's default, which gives up silently) and not a very large number: supervisord does **not** back off between restart attempts, so a program that exits immediately restarts as fast as the machine allows, forever, on a box that is also running an LLM. 20 covers the transient case — a dependency not ready yet — and `crashexit` handles what comes after.
 
 ## Work Guidance
 
@@ -45,6 +47,8 @@ All files under `scripts/`.
 - Do not raise `startretries` to "fix" a crash loop, and do not remove `crashexit`. Each alone reintroduces one of the two failure modes it exists to close: an invisible hot loop, or an invisible death. A program that genuinely cannot start should take the container down where an operator and an orchestrator can both see it
 
 ## Verification
+
+- `python3 scripts/check-receiver-launch.py` verifies incomplete flags and wrong-hash, symlinked or writable engines refuse before configuration creation. The optional actual-image supervised Maddy check in `backend/internal/app/receiving_maddy_test.go` proves automatic crash restart and idle shutdown; see receiver setup.
 
 - `python3 scripts/check-private-roots.py <built-image>` checks image root permissions and boots the real entrypoint over disposable permissive Docker data volumes. It verifies unprivileged ownership, private bootstrap metadata, protected executable assets and preservation of existing bytes/descendant modes, with networking disabled.
 
