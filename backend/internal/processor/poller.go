@@ -59,6 +59,7 @@ type Poller struct {
 	classifier           *classifier.HTTPClient
 	redaction            *redaction.Engine
 	nativePushDispatcher *NativePushDispatcher
+	nativeMail           bool
 	// ctx/cancel bound the background tick loop. They are established exactly once,
 	// via ctxOnce, and never reassigned. Assigning cancel inside Run — which runs in
 	// its own goroutine — raced with Stop, which could read a nil cancel and
@@ -117,6 +118,7 @@ type Poller struct {
 type mailClientEntry struct {
 	client  imapadapter.Client
 	modTime time.Time
+	source  string
 }
 
 // userCtx bundles one user's per-tick dependencies.
@@ -652,10 +654,14 @@ func (p *Poller) tick() {
 		if !u.Active {
 			continue
 		}
-		fi, err := os.Stat(p.userIMAPConfigPath(u.ID))
-		if err != nil {
-			// No mailbox configured for this user yet — nothing to poll.
-			continue
+		modTime := time.Time{}
+		if u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" {
+			fi, err := os.Stat(p.userIMAPConfigPath(u.ID))
+			if err != nil {
+				// No external mailbox configured yet.
+				continue
+			}
+			modTime = fi.ModTime()
 		}
 		usersPolled++
 		wg.Add(1)
@@ -676,7 +682,7 @@ func (p *Poller) tick() {
 				usersFailed++
 				resMu.Unlock()
 			}
-		}(u, fi.ModTime())
+		}(u, modTime)
 	}
 	wg.Wait()
 
@@ -732,6 +738,11 @@ func mailCacheEntriesFromMessages(messages []imapadapter.Message) []mailcache.En
 }
 
 func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
+	mail, err := p.mailClientForUser(u.ID, imapConfigModTime)
+	if err != nil {
+		p.log.Error("mailbox admission refused", "user_id", u.ID, "error", err.Error())
+		return err
+	}
 	store, err := p.userStore(u.ID)
 	if err != nil {
 		p.log.Error("failed to open user state store", "user_id", u.ID, "error", err.Error())
@@ -780,7 +791,7 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		id:               u.ID,
 		username:         u.Username,
 		store:            store,
-		mail:             p.userMailClient(u.ID, imapConfigModTime),
+		mail:             mail,
 		tuning:           tuning,
 		settings:         settings.Notifications,
 		autoLabelEnabled: settings.Labels.AutoApplyEnabled,
@@ -1376,6 +1387,15 @@ func (p *Poller) rejectOversizedMessage(uc userCtx, msg imapadapter.Message) err
 // already exposed in its IMAP overview, plus the size limit: never the message's
 // own content, which this server never read into memory.
 func (p *Poller) notifyMessageTooLarge(uc userCtx, msg imapadapter.Message) error {
+	if p.users != nil {
+		u, err := p.users.Get(uc.id)
+		if err != nil {
+			return err
+		}
+		if u.NativeMailboxIssuer != "" || u.NativeMailboxSource != "" {
+			return errors.New("native outgoing relay is not configured")
+		}
+	}
 	payload, exists, err := mailmsg.ReadIMAPConfigPayload(p.userIMAPConfigPath(uc.id), p.imapKeyPath)
 	if err != nil {
 		return fmt.Errorf("read imap config: %w", err)

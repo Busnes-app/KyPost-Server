@@ -70,6 +70,13 @@ func (s *Server) handleSyncWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logger.Info("directory event "+status, "event_id", event.ID, "revision", strconv.FormatInt(revision, 10))
+	if s.nativeMail {
+		if err := s.reconcileNativeSubject(r.Context(), settings.IssuerURL, u.ID); err != nil {
+			s.logger.Error("native mailbox provisioning pending", "event_id", event.ID, "error", err.Error())
+			writeJSON(w, http.StatusOK, map[string]any{"status": status, "eventId": event.ID, "version": u.Meta.Version, "mailboxStatus": "pending"})
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": status, "eventId": event.ID, "version": u.Meta.Version})
 }
 
@@ -127,6 +134,9 @@ func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, e
 	if errors.Is(err, users.ErrNotFound) {
 		if !active {
 			return false, nil // nothing to disable; the fence alone refuses a login
+		}
+		if s.nativeMail {
+			return false, nil // retain desired state; allocate after the directory unlock
 		}
 		return false, s.provisionDirectoryUser(u, role)
 	}

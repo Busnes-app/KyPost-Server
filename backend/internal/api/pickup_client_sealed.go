@@ -53,6 +53,17 @@ func (s *Server) handlePickupCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
+	if s.users != nil {
+		u, err := s.users.Get(ac.UserID)
+		if err != nil {
+			http.Error(w, "mail account unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if u.NativeMailboxIssuer != "" || u.NativeMailboxSource != "" {
+			outboundConfigError(w, errNativeRelayUnavailable)
+			return
+		}
+	}
 	if !s.pairingSecretConfigured() {
 		http.Error(w, "pickup links are not configured (PAIRING_SECRET is unset)", http.StatusServiceUnavailable)
 		return

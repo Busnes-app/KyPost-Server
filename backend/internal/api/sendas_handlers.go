@@ -80,9 +80,9 @@ func (s *Server) handleSendAsCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Load the caller's own IMAP config.
-	imapCfg, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(ac.UserID), s.imapConfigKeyPath)
+	imapCfg, exists, err := s.outboundMailConfig(ac.UserID)
 	if err != nil {
-		http.Error(w, "failed to read mail credentials", http.StatusInternalServerError)
+		outboundConfigError(w, err)
 		return
 	}
 	if !exists {

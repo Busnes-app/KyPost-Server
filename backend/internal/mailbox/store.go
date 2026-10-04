@@ -84,13 +84,28 @@ CREATE TRIGGER IF NOT EXISTS mailbox_delete AFTER DELETE ON messages BEGIN UPDAT
 `
 
 func Open(dir string, owner Owner, limits Limits) (*Store, error) {
+	return open(dir, owner, limits, "")
+}
+
+// OpenExisting refuses missing or differently bound databases before migrations.
+// Runtime callers supply the acknowledged source, never a guessed namespace.
+func OpenExisting(dir string, owner Owner, limits Limits, source string) (*Store, error) {
+	if !strings.HasPrefix(source, "native:") {
+		return nil, ErrPreparation
+	}
+	return open(dir, owner, limits, source)
+}
+
+func open(dir string, owner Owner, limits Limits, source string) (*Store, error) {
 	if !validText(owner.Issuer, 2048) || !validText(owner.Subject, 512) || !fsutil.SafePathComponent(owner.Mailbox) || limits.MessageBytes <= 0 || limits.MessageBytes > mailmsg.MaxInboundMessageBytes || limits.PayloadBytes < limits.MessageBytes || limits.Records <= 0 {
 		return nil, errors.New("invalid mailbox identity or limits")
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
+	if source == "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
 	}
-	info, err := os.Stat(dir)
+	info, err := os.Lstat(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -102,12 +117,34 @@ func Open(dir string, owner Owner, limits Limits) (*Store, error) {
 		return nil, err
 	}
 	u := url.URL{Scheme: "file", Path: path}
-	db, err := sql.Open("sqlite", u.String()+"?_txlock=immediate&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)")
+	query := "?_txlock=immediate&_pragma=synchronous(FULL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)"
+	if source != "" {
+		query += "&mode=rw"
+	} else {
+		query += "&_pragma=journal_mode(WAL)"
+	}
+	db, err := sql.Open("sqlite", u.String()+query)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, owner: owner, limits: limits}
+	if source != "" {
+		var storedOwner Owner
+		var storedLimits Limits
+		err = db.QueryRow("SELECT issuer,subject,mailbox,message_bytes,payload_bytes,records FROM identity WHERE id=1").Scan(&storedOwner.Issuer, &storedOwner.Subject, &storedOwner.Mailbox, &storedLimits.MessageBytes, &storedLimits.PayloadBytes, &storedLimits.Records)
+		if err == nil {
+			err = db.QueryRow("SELECT token FROM namespace WHERE id=1").Scan(&s.namespace)
+		}
+		if err != nil || storedOwner != owner || storedLimits != limits || s.namespace == "" || (&Client{store: s}).MailSourceIdentity() != source {
+			_ = db.Close()
+			return nil, ErrPreparation
+		}
+		if _, err = db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
 	if err := s.initialize(); err != nil {
 		_ = db.Close()
 		return nil, err

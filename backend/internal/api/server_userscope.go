@@ -434,6 +434,12 @@ type serverMailEntry struct {
 // their stored credential payload changes (keyed by the payload UpdatedAt).
 // Returns errIMAPNotConfigured when the user has no stored credentials.
 func (s *Server) configuredMailClient(userID string) (imapadapter.Client, error) {
+	if s.users != nil {
+		client, native, err := s.nativeMailboxClient(userID)
+		if native || err != nil {
+			return client, err
+		}
+	}
 	payload, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(userID), s.imapConfigKeyPath)
 	if err != nil {
 		return nil, err
@@ -514,6 +520,9 @@ func (s *Server) mailFor(r *http.Request) (imapadapter.Client, error) {
 // account already configured through the web UI.
 func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
 	if ac, ok := s.currentUser(r); ok {
+		if _, _, err := s.nativeMailAssignment(r.Context(), ac.UserID); err != nil {
+			return AuthContext{}, errMailUnauthorized
+		}
 		return ac, nil
 	}
 	userID, device, ok, retryAfter := s.deviceAuthFromRequest(r)
@@ -528,6 +537,9 @@ func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
 		if retryAfter > 0 {
 			return AuthContext{}, &mailLockedOutError{retryAfter: retryAfter}
 		}
+		return AuthContext{}, errMailUnauthorized
+	}
+	if _, _, err := s.nativeMailAssignment(r.Context(), userID); err != nil {
 		return AuthContext{}, errMailUnauthorized
 	}
 	return AuthContext{UserID: userID, DeviceID: device.DeviceID}, nil

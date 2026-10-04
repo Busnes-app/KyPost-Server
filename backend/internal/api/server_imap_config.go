@@ -27,6 +27,18 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
+	if a, native, err := s.nativeMailAssignment(r.Context(), ac.UserID); native || err != nil {
+		if err != nil {
+			http.Error(w, "native mailbox unavailable; reconcile domain and identity ownership", http.StatusServiceUnavailable)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "native mail settings are managed by the domain administrator", http.StatusForbidden)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"configured": true, "managed": true, "native": true, "username": a.Address, "mailbox": "INBOX", "smtpConfigured": false})
+		return
+	}
 	imapConfigPath := s.userIMAPConfigPath(ac.UserID)
 	switch r.Method {
 	case http.MethodGet:
@@ -132,6 +144,10 @@ func (s *Server) handleIMAPTest(w http.ResponseWriter, r *http.Request) {
 	ac, ok := authFromContext(r)
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if _, native, err := s.nativeMailAssignment(r.Context(), ac.UserID); native || err != nil {
+		http.Error(w, "native accounts do not use IMAP connections", http.StatusForbidden)
 		return
 	}
 	// A malformed body is refused rather than silently read as "no fields

@@ -199,7 +199,7 @@ func (s *Server) sendAdminNotice(subject, body string) error {
 		return fmt.Errorf("no active admin to notify")
 	}
 
-	payload, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(admin.ID), s.imapConfigKeyPath)
+	payload, exists, err := s.outboundMailConfig(admin.ID)
 	if err != nil {
 		return fmt.Errorf("read admin imap config: %w", err)
 	}

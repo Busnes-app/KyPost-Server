@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -229,6 +230,10 @@ func (s *LifecycleStore) LockDirectory() (release func(), err error) {
 	return fsutil.LockFile(s.path)
 }
 
+func (s *LifecycleStore) LockDirectoryContext(ctx context.Context) (release func(), err error) {
+	return fsutil.LockFileContext(ctx, s.path)
+}
+
 // Directory returns the last applied state for a subject, and whether the
 // directory has ever spoken about it.
 func (s *LifecycleStore) Directory(issuer, subject string) (DirectoryState, bool, error) {
@@ -238,4 +243,20 @@ func (s *LifecycleStore) Directory(issuer, subject string) (DirectoryState, bool
 	}
 	st, ok := f.Directory[directoryKey(issuer, subject)]
 	return st, ok, nil
+}
+
+// NativeDirectorySubjects supplies retained signed resources for startup repair.
+// It grants no access: each repair reloads the resource under its directory fence.
+func (s *LifecycleStore) NativeDirectorySubjects(issuer string) ([]string, error) {
+	f, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	var subjects []string
+	for key, d := range f.Directory {
+		if d.Resource != nil && key == directoryKey(issuer, d.Resource.ID) {
+			subjects = append(subjects, d.Resource.ID)
+		}
+	}
+	return subjects, nil
 }

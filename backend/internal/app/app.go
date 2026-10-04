@@ -50,6 +50,10 @@ func Run(args []string) error {
 	if _, err := config.LoadBackupConfig(); err != nil {
 		return err
 	}
+	nativeMail, err := config.NativeMailEnabled()
+	if err != nil {
+		return err
+	}
 	paths := config.Paths{
 		ConfigFile: filepath.Join(config.ConfigDir(), "config.yaml"),
 		StateDir:   config.StateDir(),
@@ -109,6 +113,7 @@ func Run(args []string) error {
 	}
 
 	deps := runDeps{
+		nativeMail: nativeMail,
 		cfg:        cfg,
 		configPath: paths.ConfigFile,
 		configDir:  configDir,
@@ -142,6 +147,7 @@ func Run(args []string) error {
 }
 
 type runDeps struct {
+	nativeMail bool
 	cfg        config.Config
 	configPath string
 	configDir  string
@@ -204,6 +210,9 @@ func runDaemon(ctx context.Context, d runDeps) error {
 		return err
 	}
 	poller.SetConfigPath(d.configPath)
+	if d.nativeMail {
+		poller.EnableNativeMail()
+	}
 	if err := configureSorter(d.logger, poller); err != nil {
 		return err
 	}
@@ -234,6 +243,7 @@ func runDaemon(ctx context.Context, d runDeps) error {
 // is a leak that only appears in the run mode nobody is testing when they add it.
 func startBackgroundSweepers(ctx context.Context, srv *api.Server) {
 	for _, sweep := range []func(context.Context){
+		srv.StartNativeProvisioning,
 		srv.StartPickupSweeper,
 		srv.StartContactPhotoSweeper,
 		srv.StartContactsTombstoneSweeper,
@@ -252,6 +262,9 @@ func startBackgroundSweepers(ctx context.Context, srv *api.Server) {
 
 func runServer(ctx context.Context, d runDeps) error {
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, nil, d.wkdStore)
+	if d.nativeMail {
+		srv.EnableNativeMail()
+	}
 	srv.SetClassifier(newClassifierClient(d.cfg))
 
 	// Prepare constructs the *http.Server synchronously, before the Serve
@@ -301,6 +314,10 @@ func runAll(ctx context.Context, d runDeps) error {
 	}
 	poller.SetConfigPath(d.configPath)
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, poller.UpdateConfig, d.wkdStore)
+	if d.nativeMail {
+		poller.EnableNativeMail()
+		srv.EnableNativeMail()
+	}
 	srv.SetPoller(poller)
 	srv.SetClassifier(classifierClient)
 	warmupDone := warmupClassifierOnStartup(ctx, d.logger, classifierClient, poller)

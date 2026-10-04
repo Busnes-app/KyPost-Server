@@ -85,12 +85,18 @@ func (s *LifecycleStore) NativeAssignment(issuer, subject string) (NativeAssignm
 	return a, ok, err
 }
 
-// ReconcileNativeMailbox is internal and has no production scheduler/caller.
+// ReconcileNativeMailbox is the blocking internal compatibility wrapper.
 // The caller proves domain authority and that localID is the NEW account bound
 // to this issuer/subject, before publishing that account to ordinary state users.
 // SCIM email is only a requested primary address, never domain proof or aliases.
 func (s *LifecycleStore) ReconcileNativeMailbox(stateRoot, issuer, subject, localID, verifiedDomain string, limits mailbox.Limits) (NativeAssignment, error) {
 	return s.reconcileNativeMailbox(stateRoot, issuer, subject, localID, verifiedDomain, limits, mailbox.PrepareAccount)
+}
+
+func (s *LifecycleStore) ReconcileNativeMailboxContext(ctx context.Context, stateRoot, issuer, subject, localID, verifiedDomain string, limits mailbox.Limits) (NativeAssignment, error) {
+	return s.reconcileNativeMailboxContext(ctx, stateRoot, issuer, subject, localID, verifiedDomain, limits, func(root string, owner mailbox.Owner, address string, limits mailbox.Limits) (string, error) {
+		return mailbox.PrepareAccountContext(ctx, root, owner, address, limits)
+	})
 }
 
 func (s *LifecycleStore) reconcileNativeMailbox(stateRoot, issuer, subject, localID, domain string, limits mailbox.Limits, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
