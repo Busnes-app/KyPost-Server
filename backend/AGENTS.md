@@ -338,6 +338,15 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 ## Verification
 
+- With both Play debug APKs installed on a dedicated disposable emulator, set
+  `KYPOST_NATIVE_ANDROID_TEST_SERIAL=emulator-<port>` and run the existing
+  `TestNativeOutboundAPIActualTLSAndPGP/device-android` case. It serves real routes over
+  loopback HTTPS, supplies a scoped test CA/pin and synthetic pairing proof through adb,
+  then requires Android's `NativeMailboxRoundtripTest` assertions and the existing
+  outbox/TLS SMTP/Bcc/Sent/offboarding checks to pass. The bridge removes its temporary
+  CA and reverse mapping even after timeout. No emulator means this case is absent;
+  ordinary CI, physical devices, PGP enrollment and live-provider delivery are separate.
+
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/sso ./internal/users -run '^TestNativeRecovery' -count=1` also checks unchanged-revision published-account repair planning, exact receipt/current-authority/storage refusal, batch ownership/legacy preservation, intent-before-write failure/cancellation, epoch exhaustion and unchanged-plan stability. Also checks intent-before-account interruption, exact post-state completion, repeated-journal refusal, queued replay barriers, historical provenance/mismatch, signed expiry, changed authority and unplanned credential/key/legacy changes. These component checks do not prove activation or power-loss durability. The API recovery suite additionally checks actual protected repair requests, retained mail/labels/opaque PGP material, revoked sessions/device/pairing/CardDAV authority, cleanup failure and actor/session changes after confirmation. Synthetic verified step-up grants test single consumption, not a live provider round trip.
 
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/api -run "^TestNativeAuthRestore|^TestNativeCardDAV|^TestSSOStepUp" -count=1 -timeout=5m` checks held cookie/admin/password/derived/SSO/step-up/MFA/QR authority, partial markers, disabled flags, preserved recovery material/nonces and legacy recovery administration.
