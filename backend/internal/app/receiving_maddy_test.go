@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -210,6 +211,27 @@ smtp tcp://%s {
 	if err != nil || len(delivery.Bindings) != 2 || !bytes.HasSuffix(delivery.Raw, wire) {
 		t.Fatalf("envelope/raw mismatch after actual helper: bindings=%d error=%v", len(delivery.Bindings), err)
 	}
+	// Test-only physical pressure: extend the already-open shared-memory file
+	// sparsely, preserving SQLite's live index and every accepted payload. This
+	// does not fill the host disk or alter production limits/configuration.
+	pressureDB, err := sql.Open("sqlite", "file:"+filepath.Join(r.stateDir, "receiving", "ingress.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pressureDB.Close()
+	if _, err := pressureDB.Exec("UPDATE routes SET valid_until=0"); err != nil {
+		t.Fatal(err)
+	}
+	shm := filepath.Join(r.stateDir, "receiving", "ingress.db-shm")
+	if err := os.Truncate(shm, 1<<30); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Mail(""); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Rcpt("one@example.test"); !errors.As(err, &rejection) || rejection.Code != 451 {
+		t.Fatalf("physical pressure must temporarily refuse new RCPT: %v", err)
+	}
 	logger, err := logging.NewWithOutput(io.Discard)
 	if err != nil {
 		t.Fatal(err)
@@ -241,6 +263,15 @@ smtp tcp://%s {
 			t.Fatalf("actual daemon importer did not acknowledge delivery: %s", stored.State)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if err := client.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Mail(""); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Rcpt("one@example.test"); !errors.As(err, &rejection) || rejection.Code != 451 {
+		t.Fatalf("import must not reopen new admission under continuing pressure: %v", err)
 	}
 	for _, u := range created {
 		a, _, err := r.life.NativeAssignment(u.NativeMailboxIssuer, u.SSOSub)
