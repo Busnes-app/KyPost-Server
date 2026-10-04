@@ -133,6 +133,8 @@ Default section order:
 
 ## User Preferences
 
+- Native outbox storage/backup/loopback transport qualification is internal; current sender admission, worker/runtime routing and restore reconciliation still precede activation. Read [docs/NATIVE_OUTBOX.md](docs/NATIVE_OUTBOX.md) before changing queue claims, key derivation, retry or Sent obligations.
+
 - Protected domain relay settings are available through the admin API, with fresh DNS/issuer proof, encrypted credentials and sealed backup validation. Configuration does not enable sending; read [docs/DOMAIN_RELAY.md](docs/DOMAIN_RELAY.md) before changing relay authority, generations, transport or recovery.
 
 - Turnkey domain mail stack: extend mature KyPost from a frontend for external mail services into the integrated user-facing product, with mailbox storage/reception and automatic KyIdentity account provisioning behind it. Preserve established server/client contracts; Android leads Linux and iOS, so appliance delivery must avoid requiring simultaneous client rewrites. Evaluate mail engines against provisioning, lifecycle reconciliation and existing labels/PGP contracts; Mailflare is a candidate, not a selection.
@@ -144,7 +146,7 @@ Default section order:
 
 ## Child DOX Index
 
-- `backend/` — Go 1.26.6 classification engine, HTTP API, IMAP adapter, Ollama adapter, poller, config, state, health, logging, redaction, sealed backups, internal receiving buffer and permanent mailbox core; produces the `kypost-server` binary. See [backend/AGENTS.md](backend/AGENTS.md). Contains nested children: `backend/internal/backup/`, `backend/internal/adapters/`, `backend/internal/contacts/`, `backend/internal/groups/`, `backend/internal/mailcache/`, `backend/internal/ingress/`, `backend/internal/mailbox/`.
+- `backend/` — Go 1.26.6 classification engine, HTTP API, IMAP adapter, Ollama adapter, poller, config, state, health, logging, redaction, sealed backups, internal receiving buffer, permanent mailbox core and encrypted native outbox; produces the `kypost-server` binary. See [backend/AGENTS.md](backend/AGENTS.md). Contains nested children: `backend/internal/backup/`, `backend/internal/adapters/`, `backend/internal/contacts/`, `backend/internal/groups/`, `backend/internal/mailcache/`, `backend/internal/ingress/`, `backend/internal/mailbox/`.
 - `frontend/` — React 19 / TypeScript SPA for config, monitoring, decision audit, and log streaming. See [frontend/AGENTS.md](frontend/AGENTS.md).
 - `scripts/` — Container initialization, process orchestration (supervisord), Ollama model management, and host-side image updates. See [scripts/AGENTS.md](scripts/AGENTS.md).
 - `share/` — Persistent Ollama model blob cache bind-mounted from the host; never committed to git. See [share/AGENTS.md](share/AGENTS.md).

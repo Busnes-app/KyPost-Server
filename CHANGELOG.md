@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add encrypted native outbox intent in mailbox.db, owner/namespace/job-bound keys, transactional delivery claims, bounded definite-4xx retries, uncertain/crashed-claim retention and independent quota-reserved Sent receipts. Sealed snapshot checks preserve claims/Sent and refuse missing keys, orphan/partial schemas and quota corruption. Qualify with actual local TLS SMTP and killed submitters; production native sending remains disabled pending runtime admission/worker integration. Shared encrypted reads now reject malformed nonce lengths without panicking.
+
 - Add admin-only encrypted operator-owned domain relay settings with fresh issuer-bound DNS proof, account confirmation, redacted reads and generation rotation. Qualify strict TLS/AUTH transport with safe provider errors; sealed backups validate relay ciphertext, its dedicated key and historical domain binding, including relay-only restore quarantine. This does not enable native sending or prove provider readiness.
 
 - Distinguish lost or invalid final SMTP DATA acknowledgments from definite rejection. Preserve encrypted pickup messages when their notification may already have reached the relay; report uncertainty without echoing untrusted relay response text and require provider evidence before retrying. Partial blind-copy and pickup-link warnings describe unconfirmed delivery and warn against duplicate retries, including alongside Sent-copy warnings. Native domain relay/outbox sending remains unavailable.

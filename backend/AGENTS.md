@@ -10,7 +10,9 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 ## Local Contracts
 
-- Domain relay settings use admin credential/CSRF/action-bound confirmation and fresh DNS before the domain fence; recheck authority and restore hold before publication. Encrypt config with the dedicated canonical secret key, redact both credentials and rotate generation on every write. Internal transport requires verified implicit TLS and AUTH, preserves uncertainty types and renders safe errors; callers must never log unwrapped provider errors. Outbox/current sender admission and native runtime sending remain pending. See [relay contract](../docs/DOMAIN_RELAY.md).
+- Native mailbox outbox storage is internally qualified, with encrypted owner/namespace/job-bound intent, durable claims, bounded definite-refusal retry and independent Sent receipts. Native runtime sending remains refused pending current admission/worker integration. Shared `cryptutil.Open` rejects wrong nonce sizes instead of panicking. See [outbox contract](../docs/NATIVE_OUTBOX.md).
+
+- Domain relay settings use admin credential/CSRF/action-bound confirmation and fresh DNS before the domain fence; recheck authority and restore hold before publication. Encrypt config with the dedicated canonical secret key, redact both credentials and rotate generation on every write. Internal transport requires verified implicit TLS and AUTH, preserves uncertainty types and renders safe errors; callers must never log unwrapped provider errors. Outbox runtime integration, current sender admission and native runtime sending remain pending. See [relay contract](../docs/DOMAIN_RELAY.md).
 
 - Direct receiving qualification requires both native flags, existing owner-only Linux/procfs roots, established domain and no restore hold. Commands freeze RCPT owners and durably accept bounded MIME before success; daemon imports pending obligations every five seconds under domain → directory → users fences through all commits/ACK. `users.WithCurrentUsers` takes mutex then cancellable disk lock; callbacks cannot reenter authority or network. `users.OpenExisting` never bootstraps. Pipe stdin has a 30-second deadline; regular-file/stalled-volume and public receiver abuse/capacity gates remain. See [receiving runtime](../docs/NATIVE_PROVISIONING.md#direct-receiving-runtime-qualification-profile).
 
@@ -350,7 +352,7 @@ This list is the CI gate, in the order `ci-backend-api` and `ci-backend-other` r
 
 ## Child DOX Index
 
-- `internal/mailbox/` — permanent per-owner SQLite storage, delivery receipts, durable changes, atomic account preparation and the internal full mail Client; selected for admitted native accounts only with `KYPOST_NATIVE_MAIL=true`. See [internal/mailbox/AGENTS.md](internal/mailbox/AGENTS.md).
+- `internal/mailbox/` — permanent per-owner SQLite storage, delivery receipts, durable changes, encrypted outbox claims/Sent obligations, atomic account preparation and the internal full mail Client; selected for admitted native accounts only with `KYPOST_NATIVE_MAIL=true`. See [internal/mailbox/AGENTS.md](internal/mailbox/AGENTS.md).
 
 - `internal/ingress/` — durable receiving buffer, envelope ownership, receipts and claims; selected by opt-in app commands/import. See [internal/ingress/AGENTS.md](internal/ingress/AGENTS.md).
 

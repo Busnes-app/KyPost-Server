@@ -8,6 +8,8 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 
 ## Features
 
+- Internally qualified durable native outbox: encrypted intent, interrupted-claim retention, bounded definite-refusal retries and independent Sent filing, included in sealed backups. Native sending remains unavailable until runtime admission/worker integration; see [outbox contract](docs/NATIVE_OUTBOX.md).
+
 - Admin-configured, encrypted operator-owned domain relay credentials, protected by account confirmation and fresh DNS proof. This preparation does not enable native sending; see [relay configuration and activation gates](docs/DOMAIN_RELAY.md).
 
 - Per-user opt-in incoming encryption under Security → Encryption: classify unread, unprocessed inbox mail, then replace it with a verified public-key-encrypted copy. Requires a client-protected key, saved-key-backup acknowledgment and fresh account confirmation. The provider sees plaintext before processing; losing the private key makes replaced mail unreadable. Unreplaceable messages remain plaintext with explicit failure decisions; [read the replacement and recovery contract](docs/E2E_PGP.md#incoming-mail-encryption-opt-in).
@@ -389,7 +391,7 @@ Common variables:
 - `WEB_PORT` (default `5866`)
 - `TZ` (default `America/New_York`)
 - `SECRET_DIR` (default `/kypost/private`. Every `*_KEY_FILE` / `*_SECRET_FILE` default below is derived from this, so moving it moves all of them together.)
-- Domain relay configuration uses `$CONFIG_DIR/native-relay.json` and `$SECRET_DIR/native-relay.key`, with no individual path overrides or environment credentials. Configure through the protected admin API; native sending remains unavailable.
+- Domain relay configuration uses `$CONFIG_DIR/native-relay.json` and `$SECRET_DIR/native-relay.key`, with no individual path overrides or environment credentials. Its retained key also derives owner/job-bound outbox encryption keys. Configure through the protected admin API; native sending remains unavailable.
 - `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
 - `OLLAMA_MODEL` (default `nemotron-3-nano:4b`; see the model note below)
 - `CLASSIFIER_ENGINE` (default `hybrid`: the embedding sorter answers when sure, the LLM otherwise; `llm` sends everything to the LLM. Any other value refuses to start.)
@@ -1108,7 +1110,7 @@ inside the container. On systems without systemd, schedule
 - `backend/internal/sso/`: signed directory lifecycle, admin mail-domain DNS proof, native reservations and opt-in prepare-before-publication account allocation. See [provisioning contract](docs/NATIVE_PROVISIONING.md).
 
 - `backend/internal/ingress/`: durable receiving-buffer core and receipt bridge, selected by opt-in local receiving commands and daemon import; public receiver packaging remains gated. See [receiving qualification](docs/RECEIVING_GATEWAY_ASSESSMENT.md).
-- `backend/internal/mailbox/`: internal permanent per-owner SQLite mail, metadata, receipt and change storage, with a complete internal mail Client and transactional incoming-encryption recovery. The internal importer commits these receipts before releasing receiving-buffer payloads. Source guards refuse switching or reusing references against another native database. Native API qualification uses fresh full snapshots; efficient scoped deltas remain pending; `KYPOST_NATIVE_MAIL=true` selects prepared local mailboxes. The internal directory reconciler retains primary-address/account reservations and preparation status; provisioning retries retained signed directory subjects when native mode is enabled. Internal new-account preparation atomically publishes an empty mailbox plus prebound state and refuses legacy/incomplete directories; matching preparations are validated on retry. See [implementation evidence](docs/TURNKEY_MAIL_PHASE1.md#durable-directory-desired-state-and-native-account-preparation).
+- `backend/internal/mailbox/`: internal permanent per-owner SQLite mail, metadata, receipt and change storage, with a complete internal mail Client and transactional incoming-encryption recovery. The internal importer commits these receipts before releasing receiving-buffer payloads. Source guards refuse switching or reusing references against another native database. Native API qualification uses fresh full snapshots; efficient scoped deltas remain pending; `KYPOST_NATIVE_MAIL=true` selects prepared local mailboxes. The internal directory reconciler retains primary-address/account reservations and preparation status; provisioning retries retained signed directory subjects when native mode is enabled. Internal new-account preparation atomically publishes an empty mailbox plus prebound state and refuses legacy/incomplete directories; matching preparations are validated on retry. See [implementation evidence](docs/TURNKEY_MAIL_PHASE1.md#durable-directory-desired-state-and-native-account-preparation). Internal encrypted outbox storage/claims/Sent recovery are qualified; native sending remains disabled pending admission and worker integration.
 
 - `backend/internal/backup/`: KyRecovery adapter, collection and drill checks for state, native mailbox and receiving SQLite snapshots.
 - `docs/RESTORE.md`: operator backup and offline restore procedure.

@@ -130,7 +130,9 @@ missing markers. Live mail admission is separate from this storage-only check, a
 
 ## Opt-in native runtime
 
-Protected admin domain-relay settings are available separately; [the relay contract](DOMAIN_RELAY.md) describes credential confirmation, fresh DNS/issuer fencing, encrypted storage and backup dependencies. Configuration leaves native sending unavailable pending durable outbox and current sender authorization.
+The [internal outbox](NATIVE_OUTBOX.md) now preserves encrypted intent/claims/Sent through qualified storage and sealed snapshots. These methods are not current send authorization or a production worker; existing native outgoing refusals remain in force.
+
+Protected admin domain-relay settings are available separately; [the relay contract](DOMAIN_RELAY.md) describes credential confirmation, fresh DNS/issuer fencing, encrypted storage and backup dependencies. Configuration leaves native sending unavailable pending outbox runtime integration and current sender authorization.
 
 Set `KYPOST_NATIVE_MAIL=true` for both API and daemon, after configuring the
 issuer and mail-domain proof. Empty or `false` preserves external IMAP mode;

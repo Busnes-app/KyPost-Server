@@ -67,9 +67,10 @@ compatible. Historical backup evidence grants no current sending authority;
 [restore reconciliation](RESTORE.md#offline-restore-and-native-quarantine)
 remains required, with no supported hold release yet.
 
-Before activation, implement durable encrypted outbox admission, current account
-and header/envelope authorization, frozen relay generations, independent Sent
-filing and reconciliation of uncertain SMTP acceptance. Restored jobs must never
+The [internal outbox](NATIVE_OUTBOX.md) now stores encrypted intent with keys
+derived from the retained relay master key, freezes generations and separates
+Sent receipts from delivery attempts. Before activation, integrate current
+account/header/envelope admission, runtime workers and uncertainty reconciliation. Restored jobs must never
 replay automatically. The internal transport preserves acceptance error types
 while rendering safe errors; callers must not log unwrapped provider responses.
 Provider acceptance does not establish recipient delivery or inbox placement.
