@@ -1,8 +1,8 @@
 # Operator-owned domain relay configuration
 
 This is configuration and transport qualification. Native sends still return an
-explicit unavailable response; there is no native outbox, provider readiness
-probe or setup UI yet. Saving credentials reports `sendingEnabled:false` and
+explicit unavailable response; the internal outbox is qualified, but its runtime
+integration, provider readiness probe and setup UI remain pending. Saving credentials reports `sendingEnabled:false` and
 makes no provider connection. Busnes supplies no relay account or delivery service.
 
 ## Configure through the admin API
