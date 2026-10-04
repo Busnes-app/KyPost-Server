@@ -83,13 +83,25 @@ CREATE TABLE IF NOT EXISTS bindings (gateway TEXT NOT NULL, id TEXT NOT NULL, ad
 `
 
 func Open(dir string, limits Limits) (*Store, error) {
+	return open(dir, limits, false)
+}
+
+// OpenExisting is the runtime opener. Only explicit initialization may create
+// a holding database; missing accepted-mail storage must never look empty.
+func OpenExisting(dir string, limits Limits) (*Store, error) {
+	return open(dir, limits, true)
+}
+
+func open(dir string, limits Limits, existing bool) (*Store, error) {
 	if limits.MessageBytes <= 0 || limits.MessageBytes > 64<<20 || limits.PayloadBytes < limits.MessageBytes || limits.Records <= 0 {
 		return nil, errors.New("invalid ingress limits")
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
+	if !existing {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
 	}
-	info, err := os.Stat(dir)
+	info, err := os.Lstat(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -101,12 +113,43 @@ func Open(dir string, limits Limits) (*Store, error) {
 		return nil, err
 	}
 	u := url.URL{Scheme: "file", Path: path}
-	db, err := sql.Open("sqlite", u.String()+"?_txlock=immediate&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)")
+	query := u.Query()
+	query.Set("_txlock", "immediate")
+	query["_pragma"] = []string{"synchronous(FULL)", "foreign_keys(ON)", "busy_timeout(5000)"}
+	if existing {
+		query.Set("mode", "rw")
+	} else {
+		query["_pragma"] = append(query["_pragma"], "journal_mode(WAL)")
+	}
+	u.RawQuery = query.Encode()
+	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, limits: limits}
+	if existing {
+		var persisted Limits
+		err := db.QueryRow("SELECT message_bytes,payload_bytes,records FROM limits WHERE id=1").Scan(&persisted.MessageBytes, &persisted.PayloadBytes, &persisted.Records)
+		if err == nil && persisted != limits {
+			err = errors.New("ingress limits differ from durable configuration")
+		}
+		if err == nil {
+			var tables int
+			err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('routes','deliveries','bindings')").Scan(&tables)
+			if err == nil && tables != 3 {
+				err = errors.New("receiving storage is incomplete; preserve it and reconcile")
+			}
+		}
+		if err == nil {
+			_, err = db.Exec("PRAGMA journal_mode=WAL")
+		}
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		return s, nil
+	}
 	tx, err := db.Begin()
 	if err == nil {
 		defer func() { _ = tx.Rollback() }()
@@ -348,6 +391,24 @@ func (s *Store) Get(ctx context.Context, gateway, id string) (Delivery, error) {
 		return d, err
 	}
 	return d, tx.Commit()
+}
+
+// QuarantinePending retains a proven stale obligation without reassigning it.
+// The trusted caller holds current directory/users authority. An active claim
+// cannot be invalidated by a second importer that has not acquired its lease.
+func (s *Store) QuarantinePending(ctx context.Context, gateway, id string) error {
+	result, err := s.db.ExecContext(ctx, "UPDATE deliveries SET state='quarantined',lease='',lease_until=0 WHERE gateway=? AND id=? AND state='pending' AND (lease='' OR lease_until<=?)", gateway, id, time.Now().Unix())
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrLease
+	}
+	return nil
 }
 
 // List pages receipts, including staged/imported/quarantined records, without

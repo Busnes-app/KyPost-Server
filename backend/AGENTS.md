@@ -10,7 +10,9 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 ## Local Contracts
 
-- `KYPOST_NATIVE_MAIL` accepts empty/false (default external IMAP) or true (new native provisioning and API/daemon selection); other values refuse startup. Live admission binds current enabled issuer, retained directory activity/role/primary, current nonrevoked user and acknowledged source/storage under directory fencing before cached reads and every operation. Already admitted operations may finish after revocation. Native legacy SMTP/pickup/probe paths and IMAP assignment/testing refuse; receiver and domain relay integration remain pending. See [runtime contract](../docs/NATIVE_PROVISIONING.md#opt-in-native-runtime).
+- Direct receiving qualification requires both native flags, existing owner-only Linux/procfs roots, established domain and no restore hold. Commands freeze RCPT owners and durably accept bounded MIME before success; daemon imports pending obligations every five seconds under domain → directory → users fences through all commits/ACK. `users.WithCurrentUsers` takes mutex then cancellable disk lock; callbacks cannot reenter authority or network. `users.OpenExisting` never bootstraps. Pipe stdin has a 30-second deadline; regular-file/stalled-volume and public receiver abuse/capacity gates remain. See [receiving runtime](../docs/NATIVE_PROVISIONING.md#direct-receiving-runtime-qualification-profile).
+
+- `KYPOST_NATIVE_MAIL` accepts empty/false (default external IMAP) or true (new native provisioning and API/daemon selection); other values refuse startup. Live admission binds current enabled issuer, retained directory activity/role/primary, current nonrevoked user and acknowledged source/storage under directory fencing before cached reads and every operation. Already admitted operations may finish after revocation. Native legacy SMTP/pickup/probe paths and IMAP assignment/testing refuse; separate `KYPOST_NATIVE_RECEIVING=true` selects trusted-local receiving commands and daemon import for controlled qualification; domain relay remains pending. See [runtime contract](../docs/NATIVE_PROVISIONING.md#opt-in-native-runtime).
 
 - Admin mail-domain setup uses `GET|PUT /api/admin/mail-domain` and `POST /api/admin/mail-domain/verify`. Mutations require CSRF and `confirmActor` behind `withActionDigest`; proof is one immutable domain/issuer with a rotating `_kypost-mail` TXT challenge, 24-hour initial setup expiry, absolute DNS lookup/exact resolver match and at most five-minute evidence. After initial verification keep the same TXT record; every allocation still performs fresh DNS lookup. Reverify for every internal allocation; never substitute WKD proof or infer reception/SMTP readiness. Persist `$CONFIG_DIR/native-domain.json`; system DNS is not DNSSEC or immediate revocation.
 
@@ -100,7 +102,7 @@ All code under `backend/`. Produces the `kypost-server` binary consumed by the c
 
 | Package | Responsibility |
 |---------|---------------|
-| `app/` | Mode flag parsing; bootstrap logger, config, users store, legacy migration, poller, API server |
+| `app/` | Mode parsing/bootstrap, poller/API, opt-in direct receiving commands and daemon import |
 - **Per-user mailbox state is SQLite** (`STATE_DIR/users/<id>/state.db`), not JSON. `state.Store` owns processed-message ids, the decision audit log, the deferral ledger, native devices, web-push subscriptions, and the App Pull queue. `RecordProcessedDecision` writes the decision, the processed marker AND the deferral delete in one transaction: retiring a message ends its deferral, and putting that in the store is what stops a caller forgetting it. Every method reads and writes the database directly — there is no in-memory copy, no dirty flags, and no `fsutil.WithFileLock`, because SQLite's own WAL locking is what makes the api and daemon processes safe against each other. Two rules that are load-bearing rather than tuning:
   - the DSN sets `_txlock=immediate`. `database/sql`'s `Begin` issues a DEFERRED `BEGIN`, which cannot upgrade to a writer under contention and fails `SQLITE_BUSY_SNAPSHOT` (517) — `busy_timeout` does not retry an upgrade. Pinned by `TestConcurrentUpdateNotifyLatchFiresOnce`.
   - `state.Store` releases its handle on UNREACHABILITY, via the `runtime.AddCleanup` registered in `state.New` — **not** on cache eviction. `api.Server.sweepIdleUserStores` must only drop the map entry. The caches hand out bare pointers and release `userMu` before the caller is done, and `userLastSeen` records acquisition rather than release, so "idle" never means "unheld": closing at eviction severed the handle under long-running callers and their next query failed `sql: database is closed`. `Close()` remains, is idempotent, and is for callers that genuinely own the last reference. Pinned by `TestEvictedStoreStaysUsableForItsHolder`.
@@ -318,6 +320,8 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 ## Verification
 
+- `MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy GOTOOLCHAIN=go1.26.6 go test -race ./internal/app ./internal/ingress -run '^TestNativeReceiving|^TestMaddyHoldingBoundary|^TestMailboxImporter' -count=1 -timeout=5m` checks actual command/daemon integration, frozen hidden recipients, raw MIME, local revocation, DNS outage, missing spool/restore hold, pipe deadline, generation quarantine and partial quota retry. The actual-Maddy check explicitly skips without the pinned binary.
+
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/api ./internal/processor ./internal/mailbox ./internal/config -run '^TestNativeRuntime|^TestRuntimeClient|^TestExistingMailbox|^TestNativeMailRequiresExplicitBoolean' -count=1` checks real directory-to-mailbox reads, no-IMAP daemon polling, held-client/cached-read revocation, issuer/role fences, retained DNS retries, local deactivation, and existing-only/GC lifetime guards.
 
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/fsutil ./internal/users ./internal/sso ./internal/mailbox ./internal/api -run '^TestNativeAllocation|^TestNativeDomain|^TestNativeMailDomain|^TestNativeAccountIssuer|^TestNativePublication|^TestLockFileContext|^TestPrepareAccountContext' -count=1` checks domain proof rotation/failure, prepare-before-publication, reserved-ID retry, legacy refusal, native issuer/link boundaries and cancelled contention.
@@ -343,7 +347,7 @@ This list is the CI gate, in the order `ci-backend-api` and `ci-backend-other` r
 
 - `internal/mailbox/` — permanent per-owner SQLite storage, delivery receipts, durable changes, atomic account preparation and the internal full mail Client; selected for admitted native accounts only with `KYPOST_NATIVE_MAIL=true`. See [internal/mailbox/AGENTS.md](internal/mailbox/AGENTS.md).
 
-- `internal/ingress/` — internal durable receiving buffer, envelope ownership, receipts and claims; not wired to production runtime. See [internal/ingress/AGENTS.md](internal/ingress/AGENTS.md).
+- `internal/ingress/` — durable receiving buffer, envelope ownership, receipts and claims; selected by opt-in app commands/import. See [internal/ingress/AGENTS.md](internal/ingress/AGENTS.md).
 
 - `internal/backup/` — KyRecovery adapter and verification recipe; see [internal/backup/AGENTS.md](internal/backup/AGENTS.md)
 

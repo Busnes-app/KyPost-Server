@@ -737,6 +737,74 @@ func LoadOrMigrate(ctx context.Context, configDir, legacyAdminEnvPath string) (*
 	return store, nil
 }
 
+// OpenExisting opens account authority without bootstrap or migration. Receiver
+// helpers must never create an administrator when their shared volume is absent.
+func OpenExisting(ctx context.Context, configDir string) (*Store, error) {
+	path := filepath.Join(configDir, "users.json")
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("account authority must be an owner-only regular file")
+	}
+	s := newStore(path)
+	if err := s.WithCurrentUsers(ctx, func([]User) error { return nil }); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// WithCurrentUsers fences a fresh snapshot against every cooperating user
+// mutation, including local deactivation. The callback must not call this Store
+// or perform network I/O; directory fences precede this users fence.
+func (s *Store) WithCurrentUsers(ctx context.Context, action func([]User) error) error {
+	if action == nil {
+		return errors.New("account authority action is required")
+	}
+	if err := s.lockContext(ctx); err != nil {
+		return err
+	}
+	defer s.mu.Unlock()
+	release, err := fsutil.LockFileContext(ctx, s.path)
+	if err != nil {
+		return err
+	}
+	defer release()
+	f, err := s.readFileUnlocked()
+	if err != nil {
+		return err
+	}
+	if f.Version != 1 || ctx.Err() != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return errors.New("unsupported account authority version")
+	}
+	return action(f.Users)
+}
+
+func (s *Store) lockContext(ctx context.Context) error {
+	if ctx.Done() == nil {
+		s.mu.Lock()
+		return nil
+	}
+	for !s.mu.TryLock() {
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
 // BootstrapPasswordFile is where a generated first-run admin password is left
 // for the operator to read once, inside CONFIG_DIR.
 const BootstrapPasswordFile = "first-run-password.txt"
@@ -1184,18 +1252,8 @@ func (s *Store) createSSOUser(ctx context.Context, id, username string, role Rol
 	if err := ValidateUsername(username); err != nil {
 		return User{}, err
 	}
-	if ctx.Done() == nil {
-		s.mu.Lock()
-	} else {
-		for !s.mu.TryLock() {
-			timer := time.NewTimer(10 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return User{}, ctx.Err()
-			case <-timer.C:
-			}
-		}
+	if err := s.lockContext(ctx); err != nil {
+		return User{}, err
 	}
 	defer s.mu.Unlock()
 	release, err := fsutil.LockFileContext(ctx, s.path)

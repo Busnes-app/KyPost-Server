@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"github.com/Busnes-app/kypost-server/backend/internal/app"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
@@ -17,6 +18,10 @@ func main() {
 	slog.SetDefault(slog.New(logger.Handler()))
 	if err := app.Run(os.Args[1:]); err != nil {
 		slog.Error("command failed", "error", err.Error())
+		var command interface{ ExitCode() int }
+		if errors.As(err, &command) {
+			os.Exit(command.ExitCode())
+		}
 		os.Exit(1)
 	}
 }

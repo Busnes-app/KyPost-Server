@@ -24,6 +24,46 @@ func (s *LifecycleStore) AdmitNativeMail(ctx context.Context, stateRoot, issuer,
 	if err != nil {
 		return NativeAssignment{}, err
 	}
+	return s.admitNativeMailUser(ctx, stateRoot, issuer, u)
+}
+
+// WithNativeMailAccess holds coherent directory and user authority through a
+// local receive/import commit. The action must not re-enter either authority
+// store or perform network I/O. Partial mailbox commits recover via receipts.
+func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, issuer string, accounts *users.Store, userIDs []string, action func(map[string]NativeAssignment) error) error {
+	if len(userIDs) == 0 || len(userIDs) > 100 || action == nil {
+		return ErrNativeProvisioning
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	release, err := s.LockDirectoryContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return accounts.WithCurrentUsers(ctx, func(current []users.User) error {
+		byID := make(map[string]users.User, len(current))
+		for _, u := range current {
+			byID[u.ID] = u
+		}
+		assignments := make(map[string]NativeAssignment, len(userIDs))
+		for _, id := range userIDs {
+			u, found := byID[id]
+			if !found {
+				return ErrNativeProvisioning
+			}
+			a, err := s.admitNativeMailUser(ctx, stateRoot, issuer, u)
+			if err != nil {
+				return err
+			}
+			assignments[id] = a
+		}
+		return action(assignments)
+	})
+}
+
+// Caller holds the directory fence and supplies a current user snapshot.
+func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, stateRoot, issuer string, u users.User) (NativeAssignment, error) {
 	if issuer == "" || u.NativeMailboxIssuer != issuer || u.NativeMailboxSource == "" || !u.Active || u.SSOLinkRevoked() {
 		return NativeAssignment{}, ErrNativeProvisioning
 	}

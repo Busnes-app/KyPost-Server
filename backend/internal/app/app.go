@@ -31,6 +31,9 @@ import (
 
 // Run dispatches the process mode and blocks until shutdown for long-running modes.
 func Run(args []string) error {
+	if len(args) > 0 && args[0] == "receiving" {
+		return runReceivingCommand(args[1:], os.Stdin)
+	}
 	if name, rest, ok := backupSubcommand(args); ok {
 		return runBackupCommand(name, rest, os.Stdin, os.Stdout)
 	}
@@ -53,6 +56,13 @@ func Run(args []string) error {
 	nativeMail, err := config.NativeMailEnabled()
 	if err != nil {
 		return err
+	}
+	nativeReceiving, err := config.NativeReceivingEnabled()
+	if err != nil {
+		return err
+	}
+	if nativeReceiving && !nativeMail {
+		return errors.New("KYPOST_NATIVE_RECEIVING requires KYPOST_NATIVE_MAIL=true")
 	}
 	paths := config.Paths{
 		ConfigFile: filepath.Join(config.ConfigDir(), "config.yaml"),
@@ -113,16 +123,17 @@ func Run(args []string) error {
 	}
 
 	deps := runDeps{
-		nativeMail: nativeMail,
-		cfg:        cfg,
-		configPath: paths.ConfigFile,
-		configDir:  configDir,
-		stateDir:   paths.StateDir,
-		logger:     logger,
-		store:      store,
-		users:      usersStore,
-		health:     healthSvc,
-		wkdStore:   wkdStore,
+		nativeMail:      nativeMail,
+		nativeReceiving: nativeReceiving,
+		cfg:             cfg,
+		configPath:      paths.ConfigFile,
+		configDir:       configDir,
+		stateDir:        paths.StateDir,
+		logger:          logger,
+		store:           store,
+		users:           usersStore,
+		health:          healthSvc,
+		wkdStore:        wkdStore,
 	}
 
 	// Signal handling is installed exactly once, here at the real entrypoint, and
@@ -147,16 +158,17 @@ func Run(args []string) error {
 }
 
 type runDeps struct {
-	nativeMail bool
-	cfg        config.Config
-	configPath string
-	configDir  string
-	stateDir   string
-	logger     *logging.Logger
-	store      *state.Store
-	users      *users.Store
-	health     *health.Service
-	wkdStore   *wkdpublish.Store
+	nativeMail      bool
+	nativeReceiving bool
+	cfg             config.Config
+	configPath      string
+	configDir       string
+	stateDir        string
+	logger          *logging.Logger
+	store           *state.Store
+	users           *users.Store
+	health          *health.Service
+	wkdStore        *wkdpublish.Store
 }
 
 // defaultEmbedModelDir is where the Dockerfile installs potion-base-8M,
@@ -204,6 +216,13 @@ func configureSorter(log *logging.Logger, poller *processor.Poller) error {
 }
 
 func runDaemon(ctx context.Context, d runDeps) error {
+	receivingCtx, cancelReceiving := context.WithCancel(ctx)
+	receivingDone, err := startReceivingImport(receivingCtx, d)
+	if err != nil {
+		cancelReceiving()
+		return err
+	}
+	defer func() { cancelReceiving(); <-receivingDone }()
 	classifierClient := newClassifierClient(d.cfg)
 	poller, err := processor.New(d.cfg, d.logger, d.store, d.users, d.stateDir, d.configDir, d.health, classifierClient, d.wkdStore)
 	if err != nil {
@@ -302,6 +321,13 @@ func runServer(ctx context.Context, d runDeps) error {
 const shutdownTimeout = 20 * time.Second
 
 func runAll(ctx context.Context, d runDeps) error {
+	receivingCtx, cancelReceiving := context.WithCancel(ctx)
+	receivingDone, err := startReceivingImport(receivingCtx, d)
+	if err != nil {
+		cancelReceiving()
+		return err
+	}
+	defer func() { cancelReceiving(); <-receivingDone }()
 	// Restore the sticky AI-credits flag onto the health status so a restart
 	// keeps surfacing it until a successful classify clears it.
 	if exhausted, at := d.store.AICreditsExhausted(); exhausted {

@@ -36,6 +36,11 @@ func (l *Logger) Close() error          { return nil }
 // Explicit product vocabulary. Unknown keys are dropped and counted by the
 // library; declarations never come from a request or a call site's key string.
 var (
+	_ = kylog.DeclareString("actor")
+	_ = kylog.DeclareString("task_id")
+	_ = kylog.DeclareString("target")
+	_ = kylog.DeclareString("result")
+	_ = kylog.DeclareString("correlation_id")
 	_ = kylog.DeclareString("error")
 	_ = kylog.DeclareString("reason")
 	_ = kylog.DeclareString("revision")
