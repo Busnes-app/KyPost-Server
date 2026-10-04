@@ -133,6 +133,8 @@ Default section order:
 
 ## User Preferences
 
+- Native restore authority prerequisites are captured against pinned KyIdentity source in [docs/NATIVE_RESTORE_AUTHORITY.md](docs/NATIVE_RESTORE_AUTHORITY.md). Ordinary active-user resync is insufficient to prove previously offboarded/deleted subjects; no hold release is supported.
+
 - Native primary compose/client-PGP sending is opt-in and uses fresh admission, durable claims and joined recovery workers. Pickup/alias/system routing, provider readiness and restore reconciliation remain pending. Read [docs/NATIVE_OUTBOX.md](docs/NATIVE_OUTBOX.md) before changing queue claims, key derivation, retry or Sent obligations.
 
 - Protected domain relay settings are available through Server → Mail domain and the admin API, with fresh DNS/issuer proof, encrypted credentials and sealed backup validation. A protected saved-relay check proves only transient TLS/AUTH, with no mail submission; saving configuration alone proves no provider readiness; native primary sends additionally require explicit mode and fresh account/domain admission; read [docs/DOMAIN_RELAY.md](docs/DOMAIN_RELAY.md) before changing relay authority, generations, transport or recovery.

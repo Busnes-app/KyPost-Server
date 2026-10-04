@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Quarantine restored queued/retryable native outgoing deliveries before offline restore publication, preserving encrypted intent, claims and accepted/Sent evidence. Retain the whole-stack restore hold and refuse publication on quarantine failure; no automatic resubmission or hold release.
+
 - Join native signed-directory allocation, real device pairing/registration, durable receiving-store import, device mailbox/attachment/keyword reads and actual TLS ordinary/PGP sending in one regression fixture without IMAP. Physical clients, app/Maddy admission and live provider delivery remain separate checks.
 
 - Add a repeatable host-side controlled-domain setup wizard using the existing protected domain/relay UI and supervised receiver profile. Confirm public configuration/rebuild/init/start changes, protect dotenv writes and retain explicit external delivery/backup checks; no provider secrets or DNS automation.
