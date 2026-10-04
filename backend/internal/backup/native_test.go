@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
+	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -220,5 +221,60 @@ func TestNativeStoreBackupPreservesIdentityAndReplay(t *testing.T) {
 	delivery, err := receiver.Claim(ctx, "gateway", "delivery", time.Minute)
 	if err != nil || !bytes.Equal(delivery.Raw, raw) || len(delivery.Bindings) != 1 || delivery.Bindings[0].Issuer != owner.Issuer || delivery.Bindings[0].Subject != owner.Subject || delivery.Bindings[0].Mailbox != owner.Mailbox || delivery.Bindings[0].Generation != 7 {
 		t.Fatalf("restore lost receiving bytes/route binding: %v", err)
+	}
+}
+
+// The standalone main file can fit the cap while committed WAL rows do not.
+// Synthetic probe rows measure database capacity, not accepted mail throughput.
+func TestNativeBackupRefusesOversizedWALSnapshot(t *testing.T) {
+	for _, name := range []string{"mailbox.db", "ingress.db"} {
+		t.Run(name, func(t *testing.T) {
+			s, u := nativeService(t)
+			pinTestKey(t, s)
+			rel := filepath.Join("users", u.ID, "mailbox", name)
+			if name == "ingress.db" {
+				rel = filepath.Join("receiving", name)
+			}
+			path := filepath.Join(s.dirs.State, rel)
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			db.SetMaxOpenConns(1)
+			if _, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
+				CREATE TABLE capacity_probe (raw BLOB, receipt TEXT); PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(`INSERT INTO capacity_probe VALUES (zeroblob(?), 'retain-receipt')`, recoveryclient.MaxCapsuleFileBytes+1); err != nil {
+				t.Fatal(err)
+			}
+			main, err := os.Stat(path)
+			if err != nil || main.Size() >= recoveryclient.MaxCapsuleFileBytes {
+				t.Fatal("fixture main file must fit the cap", err)
+			}
+			wal, err := os.Stat(path + "-wal")
+			if err != nil || wal.Size() <= recoveryclient.MaxCapsuleFileBytes {
+				t.Fatal("fixture requires oversized committed WAL", err)
+			}
+			result, err := s.Run(context.Background())
+			if err == nil || !strings.Contains(err.Error(), filepath.ToSlash(rel)) || !strings.Contains(err.Error(), "64 MiB") || result.LocalPath != "" {
+				t.Fatalf("oversized snapshot must fail without a capsule: %+v %v", result, err)
+			}
+			for _, dir := range []string{s.cfg.Dir, filepath.Join(s.dirs.State, scratchDirName)} {
+				entries, err := os.ReadDir(dir)
+				if err != nil || len(entries) != 0 {
+					t.Fatal("failed backup left capsule or scratch", entries, err)
+				}
+			}
+			var size int64
+			var receipt string
+			if err = db.QueryRow(`SELECT length(raw), receipt FROM capacity_probe`).Scan(&size, &receipt); err != nil || size != recoveryclient.MaxCapsuleFileBytes+1 || receipt != "retain-receipt" {
+				t.Fatal("failed backup changed original committed data", size, receipt, err)
+			}
+		})
 	}
 }
