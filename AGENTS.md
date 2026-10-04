@@ -133,6 +133,8 @@ Default section order:
 
 ## User Preferences
 
+- Protected domain relay settings are available through the admin API, with fresh DNS/issuer proof, encrypted credentials and sealed backup validation. Configuration does not enable sending; read [docs/DOMAIN_RELAY.md](docs/DOMAIN_RELAY.md) before changing relay authority, generations, transport or recovery.
+
 - Turnkey domain mail stack: extend mature KyPost from a frontend for external mail services into the integrated user-facing product, with mailbox storage/reception and automatic KyIdentity account provisioning behind it. Preserve established server/client contracts; Android leads Linux and iOS, so appliance delivery must avoid requiring simultaneous client rewrites. Evaluate mail engines against provisioning, lifecycle reconciliation and existing labels/PGP contracts; Mailflare is a candidate, not a selection.
 - Each operator owns their outgoing relay account, credentials, billing and provider relationship; Busnes supplies software, not a relay service. Default external sending uses that provider. One guided deployment/domain setup covers KyIdentity pairing, DNS/TLS, relay readiness, backups and delivery diagnostics; users need no per-account mail-server setup.
 - Mail-domain setup now has credential-gated admin challenge/verification APIs; opt-in `KYPOST_NATIVE_MAIL=true` provisions retained signed subjects and selects prepared mailboxes in API/daemon; separate `KYPOST_NATIVE_RECEIVING=true` selects local receiving commands/import for qualification, without installing a public receiver. Read [docs/NATIVE_PROVISIONING.md](docs/NATIVE_PROVISIONING.md) before changing domain proof, allocation, issuer/link ownership or lock order.

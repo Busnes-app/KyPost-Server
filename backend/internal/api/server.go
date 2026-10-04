@@ -526,6 +526,8 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/mail-domain", s.withAdmin(s.handleNativeMailDomain))
 	mux.HandleFunc("PUT /api/admin/mail-domain", s.withAdmin(withActionDigest(s.handleNativeMailDomain)))
 	mux.HandleFunc("POST /api/admin/mail-domain/verify", s.withAdmin(withActionDigest(s.handleNativeMailDomainVerify)))
+	mux.HandleFunc("GET /api/admin/mail-relay", s.withAdmin(s.handleNativeMailRelay))
+	mux.HandleFunc("PUT /api/admin/mail-relay", s.withAdmin(withActionDigest(s.handleNativeMailRelay)))
 
 	mux.HandleFunc("POST /api/admin/backup/run", s.withAdmin(withActionDigest(s.handleBackupRun)))
 	mux.HandleFunc("POST /api/admin/backup/drill", s.withAdmin(withActionDigest(s.handleBackupDrill)))

@@ -14,6 +14,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"gopkg.in/yaml.v3"
@@ -187,7 +188,7 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	}
 	return recoveryclient.Payload{ServiceName: AppName, AppVersion: s.version, Files: files,
 		Dependencies:       map[string]any{"ollama": "model cache downloads again", "layout": "restore config, private and state to CONFIG_DIR, SECRET_DIR and STATE_DIR"},
-		VerificationRecipe: map[string]any{"version": 1, "mail": ErrMailExcluded, "required": required, "sqlite": "all-state-databases", "imap": "all-stored-credentials"}}, nil
+		VerificationRecipe: map[string]any{"version": 1, "mail": ErrMailExcluded, "required": required, "sqlite": "all-state-databases", "imap": "all-stored-credentials", "relay": "domain-credentials-and-authority"}}, nil
 }
 
 // validateDependencies refuses a capsule whose stored identities cannot be
@@ -216,6 +217,15 @@ func validateDependencies(files []recoveryclient.File) error {
 			return fmt.Errorf("invalid private/%s", name)
 		}
 		return nil
+	}
+	if raw, ok := byPath["config/native-relay.json"]; ok {
+		if err := requireKey("native-relay.key"); err != nil {
+			return err
+		}
+		key, _ := base64.StdEncoding.DecodeString(strings.TrimSpace(string(byPath["private/native-relay.key"])))
+		if _, err := mailmsg.DecodeDomainRelay(raw, key); err != nil {
+			return err
+		}
 	}
 	for _, u := range accounts.Users {
 		if u.TOTP != "" {

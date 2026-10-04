@@ -8,6 +8,8 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 
 ## Features
 
+- Admin-configured, encrypted operator-owned domain relay credentials, protected by account confirmation and fresh DNS proof. This preparation does not enable native sending; see [relay configuration and activation gates](docs/DOMAIN_RELAY.md).
+
 - Per-user opt-in incoming encryption under Security → Encryption: classify unread, unprocessed inbox mail, then replace it with a verified public-key-encrypted copy. Requires a client-protected key, saved-key-backup acknowledgment and fresh account confirmation. The provider sees plaintext before processing; losing the private key makes replaced mail unreadable. Unreplaceable messages remain plaintext with explicit failure decisions; [read the replacement and recovery contract](docs/E2E_PGP.md#incoming-mail-encryption-opt-in).
 
 - Sealed configuration/state backups to KyRecovery or a local directory, with admin scheduling and restore drills. Internal native mailbox/receiving databases use SQLite snapshots including committed WAL rows; historical ownership is checked, and native restores remain held with no release path yet. Current-authority and stale-message-ID recovery qualification remains pending. Custodian shares are used only by the offline restore command; see [sealed backup and restore](docs/RESTORE.md).
@@ -387,6 +389,7 @@ Common variables:
 - `WEB_PORT` (default `5866`)
 - `TZ` (default `America/New_York`)
 - `SECRET_DIR` (default `/kypost/private`. Every `*_KEY_FILE` / `*_SECRET_FILE` default below is derived from this, so moving it moves all of them together.)
+- Domain relay configuration uses `$CONFIG_DIR/native-relay.json` and `$SECRET_DIR/native-relay.key`, with no individual path overrides or environment credentials. Configure through the protected admin API; native sending remains unavailable.
 - `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
 - `OLLAMA_MODEL` (default `nemotron-3-nano:4b`; see the model note below)
 - `CLASSIFIER_ENGINE` (default `hybrid`: the embedding sorter answers when sure, the LLM otherwise; `llm` sends everything to the LLM. Any other value refuses to start.)
@@ -802,6 +805,8 @@ Runtime:
 
 Config and data:
 
+- `GET|PUT /api/admin/mail-relay` — admin-only encrypted domain relay settings. PUT accepts `{host,port,smtpUsername,smtpPassword,password}` (or `authSecret` for account confirmation), requires CSRF/request-bound step-up and fresh issuer-bound DNS proof, and defaults port to 465. Responses redact both relay credentials and report `sendingEnabled:false`; this native profile requires verified implicit TLS and AUTH. See [relay contract](docs/DOMAIN_RELAY.md).
+
 - `GET|PUT /api/config` (GET omits `redaction.patterns` for non-admins; PUT is admin only)
 - `GET /api/labels`
 - `GET|PUT /api/labels/preferences` (the caller's own label list, auto-apply preference and optional label descriptions for the embedding sorter. `PUT` replaces the whole block.)
@@ -1097,6 +1102,8 @@ inside the container. On systems without systemd, schedule
 - KyPost still provides a service worker and a manifest. The installation flow differs by browser.
 
 ## Project Structure
+
+- `backend/internal/mailmsg/`: shared MIME/SMTP helpers and encrypted domain relay profile. Strict native implicit-TLS transport is internally qualified; outbox/runtime activation remains pending.
 
 - `backend/internal/sso/`: signed directory lifecycle, admin mail-domain DNS proof, native reservations and opt-in prepare-before-publication account allocation. See [provisioning contract](docs/NATIVE_PROVISIONING.md).
 

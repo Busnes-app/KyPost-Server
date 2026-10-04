@@ -34,6 +34,8 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
 
 ## What a capsule carries
 
+- Encrypted domain relay configuration and its matching dedicated master key. Collection and drills decrypt the collected bytes and check the historical domain/issuer binding. A missing or corrupt key refuses backup; see [relay recovery](DOMAIN_RELAY.md#storage-recovery-and-activation).
+
 - Configuration and accounts, including opaque client-wrapped PGP keys.
 - Deployment secrets in SECRET_DIR, including totp-secret.key, which seals the
   KyRecovery token under a distinct derivation label. Never replace this key.
@@ -42,7 +44,7 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
   per-user databases. Pending encrypted pickup messages are included.
 - Internal mailbox.db and ingress.db snapshots inside the collected roots,
   including committed WAL rows and exact stored MIME/receipt data. Native
-  reception and runtime provisioning remain disabled.
+  reception and provisioning are opt-in qualification paths; public reception remains unavailable.
 
 IMAP mail, rebuildable mailcache.json, Ollama model blobs, logs and runtime files
 are excluded. Each database has a consistent snapshot; separate databases and JSON
@@ -60,7 +62,7 @@ databases. The 64 MiB per-file and 256 MiB total limits remain activation gates
 for a domain-sized mail store; oversized backups fail rather than omit mail.
 
 The version-1 recipe remains compatible. Use this version of KyPost or newer to
-check all three database names; older drills check only state.db. A new integrity
+check all three database names and the additive relay credential/authority recipe; older drills do not attest the new relay checks. A new integrity
 check cannot recover WAL rows omitted from an older raw-copy native backup.
 
 The collector refuses missing keys needed by stored encrypted data, symlinks,
@@ -112,9 +114,8 @@ owner's password/recovery material; a capsule does not bypass that protection.
    and persistence of `state/native-restore-hold.json`. Legacy restores also
    accept an existing empty target. Occupied targets/files are never overwritten.
 4. Native restores remain quarantined with **no supported release path yet**.
-   Preserve the hold file when copying volumes. Allocation refuses any present
-   or unreadable hold. Future native APIs, pollers and receivers must enforce it
-   before activation. Keep native workers stopped; manually deleting the hold
+   Preserve the hold file when copying volumes. Allocation, native runtime, local receiving and relay updates refuse a present
+   or unreadable hold. Relay-only restores also persist this hold. Keep native workers stopped; manually deleting the hold
    does not qualify recovery. With services still stopped, copy `recovered/config/`, `recovered/private/` and
    `recovered/state/` into the corresponding retained/mounted volumes. Preserve
    owner-only permissions and set ownership for the runtime account. Restore `.env`
@@ -125,7 +126,8 @@ owner's password/recovery material; a capsule does not bypass that protection.
    devices; their persisted registrations were restored.
 
 Before native recovery can resume writes, implementation must reconcile fresh
-KyIdentity activity, roles and revocation, domain proof and receiver generations.
+KyIdentity activity, roles and revocation, domain proof, receiver generations
+and provider credential/relay evidence.
 Replaying an already-applied directory revision is insufficient to repair
 restored user access. An older database also rewinds message IDs while retaining
 its namespace: a restore generation fence or proven ID high-watermark must
@@ -144,8 +146,8 @@ through Security, revoke old KyRecovery tokens at KyRecovery and pair again to t
 same key. For a file-backed pairing secret, stop services and remove
 `/kypost/private/pairing.key` to generate a replacement on the next start; an explicit
 PAIRING_SECRET must instead be rotated in `.env`. Rotate externally issued relay
-credentials at their provider and update the matching environment/file. Never
-regenerate imap-config.key or totp-secret.key: doing so strands encrypted data.
+credentials at their provider and update the matching protected configuration.
+Never regenerate native-relay.key, imap-config.key or totp-secret.key: doing so strands encrypted data.
 
 ## Verification commands
 
