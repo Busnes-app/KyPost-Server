@@ -266,16 +266,13 @@ func (s *Server) sendPickupNotification(userID, from, recipient, subject, plainB
 	recipients := []string{recipient}
 	sendErr := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, smtpUsername, smtpPassword, from, recipients, notice)
 	if sendErr != nil {
-		// Not every failure means the link went nowhere. If the server accepted
-		// the message and only the session teardown failed, the recipient has
-		// the link in their inbox — deleting the record would hand them a 410
-		// for a message they were told about, with no way to ask for it again.
-		// A leaked quota slot is recoverable; that is not. Keep the record and
-		// let the sweeper collect it if the link really is never used.
-		if errors.Is(sendErr, mailmsg.ErrSMTPAcceptedThenFailed) {
+		// A lost DATA acknowledgment or failed teardown can leave the recipient
+		// with the link. Preserve its record; the existing expiry sweep bounds
+		// retention when the relay did not actually deliver the notification.
+		if errors.Is(sendErr, mailmsg.ErrSMTPAcceptedThenFailed) || errors.Is(sendErr, mailmsg.ErrSMTPAcceptanceUncertain) {
 			// No recipient address: this is the instance-wide log, which
 			// GET /api/logs serves to any admin. See log_privacy_test.go.
-			s.logger.Error("pickup link accepted by the smtp server but the session failed; keeping the record",
+			s.logger.Error("pickup link may have reached the smtp server; keeping the record",
 				"error", sendErr.Error())
 			return sendErr
 		}

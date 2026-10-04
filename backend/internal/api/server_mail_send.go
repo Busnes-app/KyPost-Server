@@ -681,13 +681,10 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		failed := s.sendPickupNotifications(ac.UserID, envelopeFrom, plan.withoutKeyEmails, req.Subject, req.Body, req.Mode, smtpHost, smtpPort, addr, payload.Username, payload.Password)
 		total := len(plan.withoutKeyEmails)
 		if total > 0 && failed == total {
-			http.Error(w, "failed to deliver a pickup link to any recipient; nothing was sent", http.StatusBadGateway)
+			http.Error(w, partialDeliveryWarning(0, 0, failed, total), http.StatusBadGateway)
 			return
 		}
-		extraWarning := ""
-		if failed > 0 {
-			extraWarning = fmt.Sprintf("failed to deliver a pickup link to %d of %d recipient(s)", failed, total)
-		}
+		extraWarning := partialDeliveryWarning(0, 0, failed, total)
 		// Passing no recipients is safe — finishMailSend skips SMTP on an empty
 		// list and still saves the Sent copy.
 		//
@@ -749,22 +746,18 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// partialDeliveryWarning describes what an encrypted send did not manage to
-// deliver, for the response's warning field.
-//
-// The two kinds are counted separately rather than summed because the sender's
-// next move differs. A blind copy that bounced is an address or receiving-server
-// problem and the message may still arrive on a retry; a pickup link that never
-// went out means that recipient has nothing at all and no idea a message exists.
-// Returns "" when everything was delivered, which is the overwhelmingly common
-// case and must not decorate a clean send with an empty warning.
+// SMTP errors include uncertain acceptance and failed teardown after acceptance.
+// Counts therefore describe unconfirmed submissions, not proven nondelivery.
 func partialDeliveryWarning(bccFailed, bccTotal, pickupFailed, pickupTotal int) string {
 	parts := []string{}
 	if bccFailed > 0 {
-		parts = append(parts, fmt.Sprintf("%d of %d blind copies were not delivered", bccFailed, bccTotal))
+		parts = append(parts, fmt.Sprintf("delivery could not be confirmed for %d of %d blind copies", bccFailed, bccTotal))
 	}
 	if pickupFailed > 0 {
-		parts = append(parts, fmt.Sprintf("%d of %d secure links could not be sent", pickupFailed, pickupTotal))
+		parts = append(parts, fmt.Sprintf("delivery could not be confirmed for %d of %d secure links", pickupFailed, pickupTotal))
+	}
+	if len(parts) > 0 {
+		parts = append(parts, "some may already have arrived; check provider evidence before retrying to avoid duplicates")
 	}
 	return strings.Join(parts, "; ")
 }
