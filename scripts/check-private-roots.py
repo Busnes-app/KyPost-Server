@@ -58,13 +58,15 @@ stderr_logfile=NONE
         for path in root.iterdir():
             path.chmod(0o644)
         name = "kypost-private-roots-" + uuid.uuid4().hex
-        command = ["docker", "run", "--rm", "--name", name, "--network", "none", "-e", "KYPOST_BIND=127.0.0.1"]
+        command = ["docker", "run", "--rm", "--name", name, "--network", "none", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--cap-add", "SETUID", "--cap-add", "SETGID", "--security-opt", "no-new-privileges", "-e", "KYPOST_BIND=127.0.0.1"]
         for source, target in (("check.py", "/tmp/check-private-roots.py"), ("supervisord.conf", "/etc/supervisord.conf")):
             command += ["--mount", f"type=bind,source={root / source},target={target},readonly"]
+        # Seed permissive runtime-owned roots without FOWNER, then test real startup.
         # Only disposable container volumes are changed; no host mail data mounts.
-        command += ["--entrypoint", "/bin/sh", image, "-ec", "chmod 0777 /kypost/config /kypost/private /kypost/state; printf 'test-only retained bytes' > /kypost/state/existing-mail; chmod 0640 /kypost/state/existing-mail; exec /opt/kypost/scripts/entrypoint.sh"]
+        command += ["--entrypoint", "/bin/sh", image, "-ec", "chown root:root /kypost/config /kypost/private /kypost/state; chmod 0777 /kypost/config /kypost/private /kypost/state; printf 'test-only retained bytes' > /kypost/state/existing-mail; chmod 0640 /kypost/state/existing-mail; chown kypost:kypost /kypost/config /kypost/private /kypost/state; exec /opt/kypost/scripts/entrypoint.sh"]
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, result.stdout + result.stderr
             assert "ok: real entrypoint protects mounted roots and retains existing data" in result.stdout, result.stdout + result.stderr
             print("ok: real entrypoint protects mounted roots and retains existing data")
         finally:

@@ -27,6 +27,9 @@ esac
 mkdir -p /kypost/config /kypost/private /kypost/logs /kypost/state /kypost/ollama-models
 # Bind mounts replace image permissions; protect authority, keys and mail
 # before bootstrap writes credentials or unprivileged services start.
+# CAP_CHOWN lets root take ownership before chmod without CAP_FOWNER.
+# Change only the roots here; the existing handoff below restores runtime ownership.
+chown root:root /kypost/config /kypost/private /kypost/state
 chmod 0700 /kypost/config /kypost/private /kypost/state
 
 # Runs synchronously (as root, before the chown below) so admin.env exists

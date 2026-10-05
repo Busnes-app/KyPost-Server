@@ -160,7 +160,7 @@ services:
 
     # Drop every capability, then add back only what the entrypoint needs
     # before it drops to the kypost user:
-    #   CHOWN, FOWNER  — chown the mounted volumes on first start
+    #   CHOWN         — take ownership of mounted data roots before chmod
     #   SETUID, SETGID — the setpriv drop itself
     #   DAC_OVERRIDE   — write into a volume whose host ownership does not
     #                    match, which is the normal case for a bind mount
@@ -169,7 +169,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - FOWNER
       - SETUID
       - SETGID
       - DAC_OVERRIDE
