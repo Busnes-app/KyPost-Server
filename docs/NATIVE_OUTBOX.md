@@ -96,7 +96,14 @@ Complete only that claim. A successful acceptance or accepted-then-QUIT failure
 becomes `accepted`. A definite 4xx can become `retryable` with exponential
 30-second–8-minute waits and at most six total attempts; the sixth refusal is
 terminal. Definite 5xx becomes `failed`. Lost final evidence and other ambiguous
-failures become `uncertain`. Provider error text is never stored in queue state.
+failures become `uncertain`. Provider error text is never stored in queue state. API and daemon log a failed
+relay attempt with its outbox `correlation_id`, zero-based delivery sequence in
+`slot`, bounded `reason` (`smtp_400`–`smtp_599` or `transport_error`) and
+`result` (`not_confirmed`, `uncertain` or `accepted_teardown_failed`). No provider
+response text, addresses, MIME or credentials are logged. This event precedes
+local finalization: inspect durable owner-scoped status separately. It identifies
+no SMTP command stage and does not prove recipient delivery. Old failures cannot
+be reconstructed from this new logging.
 
 A killed submitter remains `submitting`; no lease expiry reclaims it. Bounded,
 oldest-first work discovery excludes both `submitting` and `uncertain`. These

@@ -3,12 +3,15 @@ package sso
 import (
 	"context"
 	"errors"
+	"net/textproto"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -22,6 +25,7 @@ var ErrNativeOutboundStale = errors.New("queued sender authority changed; retain
 // Callers select this only in explicit native mode and preflight MIME/PGP policy.
 type NativeOutbound struct {
 	ConfigDir, StateRoot, SecretDir string
+	Logger                          *logging.Logger
 	Accounts                        *users.Store
 	Domains                         *NativeDomainStore
 	Settings                        *Store
@@ -245,6 +249,22 @@ func (s NativeOutbound) deliver(ctx context.Context, c nativeOutboundClaim) (Nat
 	// real outcome even if the HTTP caller disconnected after the durable claim.
 	submission := c.relay.Deliver(c.from, c.delivery.Recipients, c.delivery.Raw)
 	result := NativeOutboundResult{Accepted: submission == nil || errors.Is(submission, mailmsg.ErrSMTPAcceptedThenFailed)}
+	if submission != nil && s.Logger != nil {
+		// Provider text can echo credentials or correspondence. Retain only a
+		// bounded reply code and existing acceptance classification, never Error().
+		reason := "transport_error"
+		var reply *textproto.Error
+		if errors.As(submission, &reply) && reply.Code >= 400 && reply.Code <= 599 {
+			reason = "smtp_" + strconv.Itoa(reply.Code)
+		}
+		outcome := "not_confirmed"
+		if errors.Is(submission, mailmsg.ErrSMTPAcceptanceUncertain) {
+			outcome = "uncertain"
+		} else if result.Accepted {
+			outcome = "accepted_teardown_failed"
+		}
+		s.Logger.Error("native relay attempt requires delivery evidence before resubmitting", "correlation_id", c.id, "slot", strconv.Itoa(c.sequence), "reason", reason, "result", outcome)
+	}
 	finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	box, err := mailbox.OpenExisting(filepath.Join(s.StateRoot, "users", c.owner.Mailbox, "mailbox"), c.owner, c.limits, c.source)

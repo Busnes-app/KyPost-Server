@@ -17,7 +17,7 @@ func startNativeOutbound(ctx context.Context, d runDeps) <-chan struct{} {
 		close(done)
 		return done
 	}
-	sender := sso.NativeOutbound{ConfigDir: d.configDir, StateRoot: d.stateDir, SecretDir: config.SecretDir(), Accounts: d.users, Domains: sso.NewNativeDomainStore(d.configDir), Settings: sso.NewStore(d.configDir)}
+	sender := sso.NativeOutbound{ConfigDir: d.configDir, StateRoot: d.stateDir, SecretDir: config.SecretDir(), Accounts: d.users, Domains: sso.NewNativeDomainStore(d.configDir), Settings: sso.NewStore(d.configDir), Logger: d.logger}
 	return startNativeOutboundRuntime(ctx, d, sender)
 }
 

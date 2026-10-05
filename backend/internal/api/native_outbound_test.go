@@ -25,6 +25,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
@@ -46,6 +47,11 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 	}
 	t.Setenv("STATE_DIR", t.TempDir())
 	s := newNativeRuntimeServer(t)
+	var diagnosticLog bytes.Buffer
+	s.logger, err = logging.NewWithOutput(&diagnosticLog)
+	if err != nil {
+		t.Fatal(err)
+	}
 	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "outbound-create", 1, runtimeDirectoryUser(true)))
 	u, err := s.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
 	if err != nil {
@@ -125,7 +131,7 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 		w = request("POST", path, body)
 	}
 	want := 200
-	if mode == "lost-ack" {
+	if mode == "lost-ack" || mode == "refused" {
 		want = 503
 	}
 	if w.Code != want {
@@ -164,6 +170,16 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 	if err != nil || len(statuses) != 1 {
 		t.Fatal(statuses, err)
 	}
+	if mode == "refused" {
+		if statuses[0].State != "failed" || statuses[0].Attempts != 1 || statuses[0].NextAttempt != 0 || saved {
+			t.Fatal("refusal changed durable outcome", statuses, saved)
+		}
+		log := diagnosticLog.String()
+		if !strings.Contains(log, reply.ID) || !strings.Contains(log, "smtp_554") || strings.Contains(log, "operator-secret") || strings.Contains(log, "hidden@outside.test") || strings.Contains(log, "untrusted-reply") {
+			t.Fatal("missing or unsafe native refusal diagnostic")
+		}
+		return
+	}
 	wantState := "accepted"
 	if mode == "lost-ack" {
 		wantState = "uncertain"
@@ -172,6 +188,9 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 		t.Fatal("incorrect delivery evidence", statuses, saved)
 	}
 	if mode == "lost-ack" {
+		if !strings.Contains(diagnosticLog.String(), reply.ID) || !strings.Contains(diagnosticLog.String(), "uncertain") {
+			t.Fatal("lost acknowledgment diagnostic missing")
+		}
 		if err = s.nativeOutbound().Recover(context.Background(), u.ID, reply.ID); err != nil {
 			t.Fatal(err)
 		}
@@ -247,7 +266,7 @@ func TestNativeOutboundAPIActualTLSAndPGP(t *testing.T) {
 	certServer := httptest.NewTLSServer(nil)
 	certificate := certServer.TLS.Certificates[0]
 	certServer.Close()
-	modes := []string{"plain", "pgp", "device-plain", "device-pgp", "lost-ack", "recovery"}
+	modes := []string{"plain", "pgp", "device-plain", "device-pgp", "lost-ack", "refused", "recovery"}
 	if os.Getenv("KYPOST_NATIVE_ANDROID_TEST_SERIAL") != "" {
 		modes = append(modes, "device-android")
 	}
@@ -342,6 +361,10 @@ func TestNativeOutboundAPIActualTLSAndPGP(t *testing.T) {
 						}
 						if mode == "lost-ack" {
 							completed <- nil
+							return
+						}
+						if mode == "refused" {
+							completed <- write("554 untrusted-reply operator-secret hidden@outside.test\r\n")
 							return
 						}
 						err = write("250 accepted\r\n")
