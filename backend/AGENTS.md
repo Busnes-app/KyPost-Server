@@ -389,6 +389,8 @@ This list is the CI gate, in the order `ci-backend-api` and `ci-backend-other` r
 
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/api -run '^TestNativeRecoveryEvidenceCannotApplyDirectoryState$' -count=1` checks signed recovery-purpose refusal, exact account/lifecycle/hold preservation and ordinary sync continuity. It does not qualify evidence consumption or restore release.
 
+- Actual `TestNativeReceivingMaddyRuntime` modes also join accepted/imported mail to the production HTTPS API with synthetic pre-registered device credentials: both frozen owners get full native snapshots, exact binary attachments and bodies, while foreign-owner references are refused. Registration, full image API/daemon deployment, client UI, public-domain delivery and PGP remain separate checks.
+
 ## Child DOX Index
 
 - `internal/mailbox/` — permanent per-owner SQLite storage, delivery receipts, durable changes, encrypted outbox claims/Sent obligations, atomic account preparation and the internal full mail Client; selected for admitted native accounts only with `KYPOST_NATIVE_MAIL=true`. See [internal/mailbox/AGENTS.md](internal/mailbox/AGENTS.md).

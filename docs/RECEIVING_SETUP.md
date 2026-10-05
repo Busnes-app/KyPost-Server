@@ -237,6 +237,24 @@ uses host networking only for its loopback test DNS/SMTP and mounts only synthet
 state; it does not start the other image services. It uses test-only
 loopback DNS and a private CA; it is not live-provider evidence.
 
+The actual-Maddy fixture additionally starts the production HTTPS API against
+the same synthetic native state after daemon import. Both envelope owners fetch
+the received message and exact binary attachment, and cross-owner native message
+references are refused. This uses pre-registered synthetic device credentials;
+it does not test registration or a client UI. The HTTP client trusts only the
+fixture certificate and keeps hostname verification. The API uses its production
+TLS listener on an ephemeral port; run this optional proof on a dedicated test
+host. The supervised modes still start only the receiver inside the image; the
+API and importer run in the host test process, so this does not qualify a complete
+container deployment. No operator domain, relay or credentials are used.
+
+Local qualification (2026-10-05 UTC): direct/launcher race modes passed
+28.478s; supervised/restart and incomplete-DATA shutdown modes passed 70.496s
+with the provenance-verified main `2327a91` image
+`ghcr.io/busnes-app/kypost-server@sha256:88a4dcc0a56a707690b3f004e283b2d2df9f217a2a13357753d8e8bec1516d9c`.
+Independent direct/launcher review rerun passed 28.203s. These are synthetic
+local results, not dedicated-domain delivery observations.
+
 For the dedicated domain, send ordinary and PGP mail from a controlled external
 account, inspect both KyPost mailboxes and raw attachments, and reply through
 the configured operator relay. Check actual recipient receipt independently of
