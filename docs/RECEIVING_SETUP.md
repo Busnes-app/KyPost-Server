@@ -196,13 +196,16 @@ never delete storage as rollback.
 
 ## Optional Rspamd sidecar
 
-After preparing the receiving profile, add the optional overlay:
+After preparing the receiving profile, use a KyPost image containing this
+integration. The command below rebuilds this checkout before enabling the
+overlay; an older image can ignore the new scanner setting. Rebuilding pauses
+reception, so retain the existing spool and qualify the resulting receiver:
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.receiving.yml \
   -f docker-compose.rspamd.yml config -q
 docker compose -f docker-compose.yml -f docker-compose.receiving.yml \
-  -f docker-compose.rspamd.yml up -d
+  -f docker-compose.rspamd.yml up -d --build
 ```
 
 **Opting in can reject legitimate mail:** the fixed initial policy rejects score15
