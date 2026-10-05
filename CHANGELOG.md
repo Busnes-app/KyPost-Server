@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Retain bounded native SMTP rejection codes and outbox correlation IDs in shared API/daemon logs without provider replies, credentials or correspondence; preserve delivery, retry and client-response semantics.
+
 - Restore private data-root permissions during startup under restricted Kubernetes capabilities without requiring CAP_FOWNER, and remove that capability from Compose; preserve retained mail and descendant modes.
 
 - Add opt-in Android emulator native-mail qualification using real pinned HTTPS registration, Keystore pairing preferences, Room/native references, bodies, labels, attachments and ordinary TLS relay sending/Sent. Preserve production interfaces and keep PGP enrollment, physical devices and provider delivery as separate gates.

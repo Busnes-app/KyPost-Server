@@ -12,7 +12,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 
 - Controlled direct receiving profile generation from verified domain and existing native storage; mandatory STARTTLS refuses plaintext senders. An optional Compose profile supervises the operator-supplied pinned receiver, which shares the instance’s mail-storage authority; public deployment remains gated. See [receiver setup](docs/RECEIVING_SETUP.md).
 
-- Opt-in native primary-address sending through the operator-owned relay: ordinary compose and client PGP record encrypted outbox intent before SMTP; recovery retains interrupted claims, retries definite temporary refusals and files Sent independently. Included in sealed backups; see [outbox contract](docs/NATIVE_OUTBOX.md).
+- Opt-in native primary-address sending through the operator-owned relay: ordinary compose and client PGP record encrypted outbox intent before SMTP; recovery retains interrupted claims, retries definite temporary refusals and files Sent independently. Failed relay attempts log a bounded SMTP code and outbox correlation ID without provider text or correspondence. Included in sealed backups; see [outbox contract](docs/NATIVE_OUTBOX.md).
 
 - Admin → Server → Mail domain guides DNS proof, encrypted operator-owned relay configuration and a no-mail TLS/authentication check, protected by account confirmation and fresh DNS proof. KyPost holds the domain-wide relay credential on the server. Primary-address sending requires explicit native mode and fresh sender admission; saving credentials does not prove delivery or public receiving readiness; see [setup and controlled tests](docs/DOMAIN_RELAY.md).
 
