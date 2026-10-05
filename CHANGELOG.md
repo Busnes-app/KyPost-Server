@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Restore private data-root permissions during startup under restricted Kubernetes capabilities without requiring CAP_FOWNER, and remove that capability from Compose; preserve retained mail and descendant modes.
+
 - Add opt-in Android emulator native-mail qualification using real pinned HTTPS registration, Keystore pairing preferences, Room/native references, bodies, labels, attachments and ordinary TLS relay sending/Sent. Preserve production interfaces and keep PGP enrollment, physical devices and provider delivery as separate gates.
 - Fence pre-restore browser/device ID tokens for historically qualified published native accounts with durable directory issuance cutoffs, including accepted future clock skew. Preserve higher floors, legacy authority and the native hold.
 
