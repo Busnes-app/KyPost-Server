@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- MIME-encode non-ASCII subjects in generated messages and stored copies for SMTP relays that require seven-bit headers; preserve header sanitization and client-encrypted PGP/MIME.
+
 - Retain bounded native SMTP rejection codes and outbox correlation IDs in shared API/daemon logs without provider replies, credentials or correspondence; preserve delivery, retry and client-response semantics.
 
 - Restore private data-root permissions during startup under restricted Kubernetes capabilities without requiring CAP_FOWNER, and remove that capability from Compose; preserve retained mail and descendant modes.

@@ -63,10 +63,11 @@ func TestEncryptDecryptMIMERoundTrip(t *testing.T) {
 		t.Fatalf("GenerateIdentity bob: %v", err)
 	}
 
+	wantSubject := strings.TrimSpace(strings.Repeat("Secret 日本語 ✉ ", 40))
 	plaintext := mailmsg.Message{
 		From:    "alice@example.com",
 		To:      []string{"bob@example.com"},
-		Subject: "Secret",
+		Subject: wantSubject,
 		Body:    "meet at dawn",
 		Mode:    "plain",
 	}.Build()
@@ -80,7 +81,7 @@ func TestEncryptDecryptMIMERoundTrip(t *testing.T) {
 	}
 	// The real subject must NOT appear in cleartext anywhere on the wire; the
 	// outer Subject is replaced with the fixed placeholder.
-	if strings.Contains(string(encrypted), "Secret") {
+	if strings.Contains(string(encrypted), "Secret") || strings.Contains(string(encrypted), "=?utf-8?") {
 		t.Fatal("real subject leaked into the encrypted message bytes")
 	}
 	if !strings.Contains(string(encrypted), "Subject: "+OuterPlaceholderSubject) {
@@ -105,8 +106,11 @@ func TestEncryptDecryptMIMERoundTrip(t *testing.T) {
 	// The real subject is recovered from the decrypted payload's protected
 	// headers.
 	subject, ok := ExtractProtectedSubject(result.Content)
-	if !ok || subject != "Secret" {
-		t.Fatalf("ExtractProtectedSubject: got (%q, %v), want (\"Secret\", true)", subject, ok)
+	if !ok || subject != wantSubject {
+		t.Fatalf("ExtractProtectedSubject: got (%q, %v), want (%q, true)", subject, ok, wantSubject)
+	}
+	if _, err := mailmsg.NormalizeSMTPMessage(result.Content); err != nil {
+		t.Fatal("protected subject lost folding", err)
 	}
 	body, _, attachments, err := ParseContent(result.Content)
 	if err != nil {
@@ -216,10 +220,11 @@ func TestSignMIMERoundTripsThroughExtractSignedParts(t *testing.T) {
 		t.Fatalf("GenerateIdentity alice: %v", err)
 	}
 
+	subject := strings.TrimSpace(strings.Repeat("日本語 ✉ ", 40))
 	plaintext := mailmsg.Message{
 		From:    "alice@example.com",
 		To:      []string{"bob@example.com"},
-		Subject: "Signed only",
+		Subject: subject,
 		Body:    "trust me",
 		Mode:    "plain",
 	}.Build()
@@ -230,6 +235,18 @@ func TestSignMIMERoundTripsThroughExtractSignedParts(t *testing.T) {
 	}
 	if !strings.Contains(string(signed), "multipart/signed") {
 		t.Fatal("expected multipart/signed content type in output")
+	}
+
+	if _, err := mailmsg.NormalizeSMTPMessage(signed); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := mail.ReadMessage(bytes.NewReader(signed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := new(mime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
+	if err != nil || decoded != subject {
+		t.Fatalf("signed subject = %q, error %v", decoded, err)
 	}
 
 	signedPart, armoredSig, err := ExtractSignedParts(signed)

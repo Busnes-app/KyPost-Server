@@ -47,6 +47,32 @@ func TestBuildSinglePart(t *testing.T) {
 	}
 }
 
+func TestBuildUnicodeSubject(t *testing.T) {
+	for _, subject := range []string{"KyPost native delivery test — example.test — 20261005-02", strings.Repeat("日本語 ✉ ", 40), "café\r\nX-Injected: nope"} {
+		raw := Message{From: "sender@example.com", To: []string{"recipient@example.com"}, Subject: subject, Body: "body"}.Build()
+		msg, err := mail.ReadMessage(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NormalizeSMTPMessage(raw); err != nil {
+			t.Fatal(err)
+		}
+		header := msg.Header.Get("Subject")
+		for _, b := range []byte(header) {
+			if b >= 128 {
+				t.Fatal("subject contains raw non-ASCII bytes")
+			}
+		}
+		decoded, err := new(mime.WordDecoder).DecodeHeader(header)
+		if err != nil || decoded != SanitizeHeaderValue(subject) {
+			t.Fatalf("subject round trip = %q, error %v", decoded, err)
+		}
+		if msg.Header.Get("X-Injected") != "" {
+			t.Fatal("subject injected a header")
+		}
+	}
+}
+
 func TestContentTypePerMode(t *testing.T) {
 	cases := map[string]string{
 		"":       "text/plain; charset=UTF-8",
