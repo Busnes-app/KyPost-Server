@@ -14,6 +14,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add opt-in Android emulator native-mail qualification using real pinned HTTPS registration, Keystore pairing preferences, Room/native references, bodies, labels, attachments and ordinary TLS relay sending/Sent. Preserve production interfaces and keep PGP enrollment, physical devices and provider delivery as separate gates.
 - Fence pre-restore browser/device ID tokens for historically qualified published native accounts with durable directory issuance cutoffs, including accepted future clock skew. Preserve higher floors, legacy authority and the native hold.
 
 - Join actual SMTP receiving and daemon import to the production HTTPS native mail API, checking both frozen owners, exact binary attachments and cross-owner reference refusal without IMAP. This adds qualification only.

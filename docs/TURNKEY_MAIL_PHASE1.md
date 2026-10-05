@@ -345,3 +345,54 @@ verified directory revision before resuming preparation with a compatible build.
 Remote CI and the autonomous PR reviewer must independently clear the pushed
 head. CONTRIBUTING.md requires the human contributor's own verification and
 trust-boundary statement before merge; agent checks cannot supply that attestation.
+
+
+## Android native-mail runtime qualification
+
+The optional `device-android` case joins the existing native signed-directory,
+receiving-store and actual TLS SMTP fixture to Android's production registration
+and mail transports. Use a dedicated disposable emulator, build/install both Play
+debug APKs from an Android checkout containing `NativeMailboxRoundtripTest`, then:
+
+```bash
+cd backend
+KYPOST_NATIVE_ANDROID_TEST_SERIAL=emulator-5580 GOTOOLCHAIN=go1.26.6 \
+  go test -race ./internal/api \
+  -run '^TestNativeOutboundAPIActualTLSAndPGP$/device-android$' \
+  -count=1 -timeout=4m -v
+```
+
+The bridge binds only loopback HTTPS and uses adb reverse. Its public test CA is
+trusted only by the instrumentation client's TrustManager; hostname verification,
+leaf pinning, redirects and response bounds retain the production factory's
+behavior. All accounts, directory/DNS proof, push tokens and correspondence are
+explicit synthetic fixtures. No operator configuration or provider is used.
+The Android test clears pairing preferences on this disposable install and uses
+an in-memory Room database; never run against an operator's app account.
+
+Assertions cover real registration, persisted encrypted pairing proof/leaf pin,
+native generation IDs through Room, body retrieval/cache preservation, keyword
+labels, exact binary attachment bytes, read-state synchronization, wrong device
+credentials and leaf pins, stale-reference refusal, and ordinary client sending
+with its Sent result. The server independently checks one accepted outbox claim,
+TLS/AUTH, Bcc envelope isolation, a single durable Sent copy/recovery and directory
+offboarding. Without an explicit emulator serial the joined case is absent; green
+ordinary CI is not evidence that this runtime check ran.
+
+This uses the trusted-local durable ingress import, not Android-originated public
+SMTP reception. The real Maddy/app/supervised receiving proofs remain separate.
+Physical-device behavior, Android client PGP/enrollment, live provider receipt,
+public-domain deployment, restore activation and power-loss qualification remain
+pending. No production route, setting, wire field or dependency changes here.
+
+
+Local evidence on Android 12/API 31: the joined seven-mode ordinary/PGP/device/
+uncertainty/recovery race fixture passed (20.442s); the final Android-only run with
+wrong-pin, wrong-secret and valid foreign-generation rejection passed (5.260s).
+Existing pairing/pin/Room instrumentation passed 20 tests, and all 1294 JVM tests
+in 144 suites passed. The full server API race suite passed (261.898s), and whole-
+backend vet/build/pinned lint passed with zero issues. An independent reviewer
+read both test implementations and production paths, ran the default six-mode
+server race regression (12.880s), and found no blocker; its assertion/comment
+precision findings were corrected. These results used a debug Android build
+with the repository's public CI Firebase placeholder, not production credentials.
