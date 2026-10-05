@@ -130,6 +130,12 @@ func FoldHeaderValue(value string) string {
 	return strings.Join(parts, ";")
 }
 
+// FoldEncodedWords restores folding between RFC 2047 words after MIME parsers
+// unfold them. Each encoded word stays intact on its own physical line.
+func FoldEncodedWords(value string) string {
+	return strings.ReplaceAll(value, "?= =?", "?=\r\n =?")
+}
+
 // Build renders the complete message bytes.
 func (m Message) Build() []byte {
 	bodyEncoded := m.EncodedBody
@@ -145,7 +151,12 @@ func (m Message) Build() []byte {
 	if len(m.BCC) > 0 {
 		msg.WriteString("Bcc: " + strings.Join(sanitizeHeaderValues(m.BCC), ", ") + "\r\n")
 	}
-	msg.WriteString("Subject: " + SanitizeHeaderValue(m.Subject) + "\r\n")
+	subject := SanitizeHeaderValue(m.Subject)
+	encodedSubject := mime.QEncoding.Encode("utf-8", subject)
+	if encodedSubject != subject {
+		encodedSubject = FoldEncodedWords(encodedSubject)
+	}
+	msg.WriteString("Subject: " + encodedSubject + "\r\n")
 	msg.WriteString("MIME-Version: 1.0\r\n")
 	if m.Autocrypt != "" {
 		msg.WriteString("Autocrypt: " + FoldHeaderValue(SanitizeHeaderValue(m.Autocrypt)) + "\r\n")

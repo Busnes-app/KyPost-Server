@@ -12,8 +12,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"mime"
 	"net"
 	"net/http/httptest"
+	"net/mail"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,7 +68,7 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 		return
 	}
 	path := "/api/mail/send"
-	body := []byte(`{"to":"visible@outside.test","bcc":"hidden@outside.test","subject":"ordinary","body":"native compose"}`)
+	body := []byte(`{"to":"visible@outside.test","bcc":"hidden@outside.test","subject":"native — café ✉","body":"native compose"}`)
 	var sender, recipient *pgpmail.Identity
 	if mode == "pgp" || mode == "device-pgp" {
 		sender, err = pgpmail.GenerateIdentity("Sender", "one@example.test")
@@ -242,8 +244,32 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 				t.Fatal("native PGP plaintext changed", parseErr)
 			}
 		}
-	} else if !bytes.Contains(sent, []byte("hidden@outside.test")) {
-		t.Fatal("Sent lost BCC")
+	} else {
+		if !bytes.Contains(sent, []byte("hidden@outside.test")) {
+			t.Fatal("Sent lost BCC")
+		}
+		if mode != "device-android" {
+			wire, err := os.ReadFile(filepath.Join(root, "received.eml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, raw := range [][]byte{wire, sent} {
+				msg, err := mail.ReadMessage(bytes.NewReader(raw))
+				if err != nil {
+					t.Fatal(err)
+				}
+				header := msg.Header.Get("Subject")
+				for _, b := range []byte(header) {
+					if b >= 128 {
+						t.Fatal("SMTP or Sent subject contains raw non-ASCII bytes")
+					}
+				}
+				subject, err := new(mime.WordDecoder).DecodeHeader(header)
+				if err != nil || subject != "native — café ✉" {
+					t.Fatalf("SMTP or Sent subject = %q, error %v", subject, err)
+				}
+			}
+		}
 	}
 	if err = s.nativeOutbound().Recover(context.Background(), u.ID, reply.ID); err != nil {
 		t.Fatal(err)

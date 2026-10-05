@@ -61,21 +61,19 @@ func splitMessage(raw []byte) (envelope textproto.MIMEHeader, content []byte, er
 	return header, buf.Bytes(), nil
 }
 
-// writeEnvelopeHeaders re-emits the preserved envelope headers. splitMessage
-// read them via textproto.ReadMIMEHeader, which unfolds any RFC 5322 folded
-// continuation lines back into a single long value — so the Autocrypt header
-// (see mailmsg.FoldHeaderValue) must be re-folded here, or its long base64
-// keydata would go back out as one unfolded line exceeding the RFC 5322/5321
-// line-length limits, even though mailmsg.Message.Build() folded it
-// correctly the first time.
+// writeEnvelopeHeaders refolds encoded Subjects and Autocrypt keydata after
+// splitMessage unfolds them, preserving SMTP physical-line limits.
 func writeEnvelopeHeaders(w io.Writer, envelope textproto.MIMEHeader) {
 	for _, name := range envelopeHeaderOrder {
 		v := envelope.Get(name)
 		if v == "" {
 			continue
 		}
-		if name == "Autocrypt" {
+		switch name {
+		case "Autocrypt":
 			v = mailmsg.FoldHeaderValue(v)
+		case "Subject":
+			v = mailmsg.FoldEncodedWords(v)
 		}
 		_, _ = io.WriteString(w, name+": "+v+"\r\n")
 	}
@@ -103,7 +101,7 @@ const OuterPlaceholderSubject = "[Encrypted] Email Sent by KyPost"
 // CreatePart injects its own header separator and would corrupt the
 // byte-verbatim nested content.
 func protectContent(content []byte, subject string) []byte {
-	subject = mailmsg.SanitizeHeaderValue(subject)
+	subject = mailmsg.FoldEncodedWords(mailmsg.SanitizeHeaderValue(subject))
 	boundary := randomBoundary()
 
 	var msg bytes.Buffer
