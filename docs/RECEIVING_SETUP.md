@@ -194,6 +194,70 @@ Removing the overlay and recreating the base service disables the receiver and
 SMTP publish while retaining native state. Drain or reconcile accepted mail;
 never delete storage as rollback.
 
+## Optional Rspamd sidecar
+
+After preparing the receiving profile, add the optional overlay:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.receiving.yml \
+  -f docker-compose.rspamd.yml config -q
+docker compose -f docker-compose.yml -f docker-compose.receiving.yml \
+  -f docker-compose.rspamd.yml up -d
+```
+
+**Opting in can reject legitimate mail:** the fixed initial policy rejects score15
+and above before SMTP acceptance. Lesser scores are delivered unchanged; there is
+no automatic Junk move, header/subject rewrite or deletion. Scanner outages,
+invalid/skipped acceptance verdicts, greylisting and temporary rejection return451
+for the sender to retry. Existing committed/imported obligations are not rescanned.
+The ordinary IMAP path and client API are unchanged.
+
+The overlay enables strict `KYPOST_RECEIVING_RSPAMD=true` and pins official Rspamd
+3.14.3 by digest. The nonroot scanner shares KyPost's network namespace, listens
+only on loopback11333, publishes no ports and has no KyPost data/key mounts.
+Controller/proxy are absent. It can nevertheless reach other KyPost loopback
+services and sees raw mail, envelope and receiver-supplied connection metadata.
+Memory/CPU/PIDs and ephemeral state are bounded; learning/Redis, remote
+payload services, remote map updates and correspondence logging are disabled.
+Local MIME/header checks and SPF/DKIM/DMARC DNS checks are enabled. DNS uses the
+host resolver; encrypted PGP bodies cannot be scanned for their plaintext content.
+No antivirus or sender-reputation blocklist service is configured.
+
+The existing single DATA helper scans before durable commit, outside authority
+locks, then rechecks current ownership/revision/restore fences. Peer IP is the
+actual Maddy connection; HELO is only a sender assertion. The HTTP request has an
+8-second deadline, no environment proxy/redirects and a256KiB reply cap. Provider
+replies never become logs or SMTP error text. A rejected/deferred message can leave
+its existing staged RCPT reservation; safe reservation reclamation remains gated.
+Maddy still records envelope/IP metadata in its separately protected logs.
+
+Keep all three Compose files when updating the service so the shared network
+namespace is recreated consistently. To roll back, stop reception, remove the
+Rspamd overlay, set `KYPOST_RECEIVING_RSPAMD=false` in the operator dotenv if it
+was set manually, then recreate the receiving stack. This explicitly disables
+filtering; retain every data volume and accepted obligation. Scanner health/ping
+proves process reachability only, not spam effectiveness or delivery.
+
+Run `python3 scripts/check-rspamd.py` for the actual pinned image's effective
+module/socket/config, privacy and clean/GTUBE checks on disposable network-disabled
+state. From `backend/`, run the actual receiving proof:
+
+```sh
+RSPAMD_PROOF=true MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy \
+  GOTOOLCHAIN=go1.26.6 go test -race ./internal/app \
+  -run '^TestNativeReceivingMaddyRuntime/rspamd$|^TestReceivingRspamdProtocol$|^TestNativeReceivingRspamdRetentionAndAuthority$' \
+  -count=1 -timeout=3m
+```
+
+It uses a disposable loopback11333 scanner (refuses an occupied port), synthetic
+mail and test DNS. It checks real SMTP clean/GTUBE/outage responses, preserved
+MIME/body/attachment delivery and accepted replay during outage. Unit integration
+also checks revocation during scanning and conflicting replay. This is not live
+production tuning or physical-client qualification. The scanner helper can be
+reused by a future Cloudflare adapter; Cloudflare needs authenticated provenance,
+durable pickup/acknowledgment and retained handling for mail already accepted
+upstream. That adapter is not implemented here.
+
 ## Fixed qualification policy and limits
 
 - STARTTLS is mandatory before MAIL/RCPT; TLS versions 1.2 and 1.3 only. Senders
@@ -214,7 +278,7 @@ never delete storage as rollback.
   command metadata to stderr; protect and rotate those logs. Its command module
   discards helper stderr, so individual helper JSON diagnostics are unavailable
   through this bridge. Daemon import errors remain in KyPost's normal logs.
-- Rate/size limits are not spam authentication or filtering. Sender-written
+- Without the optional Rspamd profile, rate/size limits are not spam authentication or filtering. Sender-written
   authentication headers are untrusted. Hard volume quotas, safe reservation
   cleanup, provenance/licensing and intended-volume power-loss/restore checks
   remain public release gates. Never erase receipts or accepted mail to free space.

@@ -45,8 +45,8 @@ func (e *receivingCommandError) ExitCode() int { return e.code }
 
 func runReceivingCommand(args []string, input io.Reader) error {
 	if len(args) == 0 || (args[0] != "init" && args[0] != "bind" && args[0] != "accept") ||
-		(args[0] == "init" && len(args) != 1) || (args[0] == "bind" && len(args) != 4) || (args[0] == "accept" && len(args) != 3) {
-		return errors.New("usage: receiving init | receiving bind <receiver-id> <sender> <recipient> | receiving accept <receiver-id> <sender>")
+		(args[0] == "init" && len(args) != 1) || (args[0] == "bind" && len(args) != 4) || (args[0] == "accept" && len(args) != 3 && len(args) != 5) {
+		return errors.New("usage: receiving init | receiving bind <receiver-id> <sender> <recipient> | receiving accept <receiver-id> <sender> [<peer-ip> <helo>]")
 	}
 	if len(args) > 1 {
 		if args[1] == "" || len(args[1]) > 256 || strings.ContainsAny(args[1], "\x00\r\n") {
@@ -74,7 +74,7 @@ func runReceivingCommand(args []string, input io.Reader) error {
 		case "bind":
 			err = r.bind(ctx, args[1], args[2], args[3])
 		case "accept":
-			err = r.accept(ctx, args[1], args[2], input)
+			err = r.accept(ctx, args[1], args[2], input, args[3:]...)
 		}
 	}
 	result := "committed"
@@ -88,6 +88,10 @@ func runReceivingCommand(args []string, input io.Reader) error {
 	slog.Info("receiving operation", "actor", receivingGateway, "task_id", "native-receiving", "action", args[0], "target", "holding-store", "result", result, "correlation_id", correlation)
 	if err != nil {
 		code := 1
+		var commandError *receivingCommandError
+		if errors.As(err, &commandError) {
+			code = commandError.code
+		}
 		if errors.Is(err, ingress.ErrRoute) {
 			code = 3
 		}
@@ -294,7 +298,11 @@ func (r *receivingRuntime) frozenAuthority(ctx context.Context, d ingress.Delive
 	})
 }
 
-func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input io.Reader) error {
+func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input io.Reader, peer ...string) error {
+	enabled, err := receivingRspamdEnabled()
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if file, ok := input.(*os.File); ok {
@@ -337,6 +345,14 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 	d, err := r.holding.Get(ctx, receivingGateway, id)
 	if err != nil {
 		return err
+	}
+	if enabled && d.State == "staged" {
+		if d.Sender != sender || len(peer) != 2 {
+			return &receivingCommandError{err: errors.New("rspamd requires the bound sender and receiver-supplied IP/HELO"), code: 5}
+		}
+		if err := scanReceivingSpam(ctx, raw, d, peer[0], peer[1], receivingRspamdURL); err != nil {
+			return err
+		}
 	}
 	return r.frozenAuthority(ctx, d, &proof, func(current map[string]sso.NativeAssignment) error {
 		for _, a := range current {

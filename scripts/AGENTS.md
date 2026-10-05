@@ -50,6 +50,8 @@ All files under `scripts/`.
 
 ## Verification
 
+- `python3 scripts/check-rspamd.py` checks resolved Compose isolation and the actual pinned Rspamd effective modules/loopback-only socket, clean/GTUBE verdicts and log privacy using disposable network-disabled state. `rspamd/rspamd.conf` is the fixed selected-module policy consumed by the optional overlay; keep its upstream remote services/maps and controller/proxy disabled. Actual Maddy integration is owned by the backend receiving test.
+
 - `bash scripts/setup-mail.test.sh` loads definitions only and checks public-input rejection, private dotenv creation/upserts, unsafe-file refusal and actual base/overlay Compose resolution against conflicting inherited settings. It never opens a browser or starts a container. Verify interactive stages statically; do not run them in CI.
 
 - `python3 scripts/check-receiver-launch.py` verifies incomplete flags and wrong-hash, symlinked or writable engines refuse before configuration creation. The optional actual-image supervised Maddy check in `backend/internal/app/receiving_maddy_test.go` proves automatic crash restart, idle shutdown and incomplete-DATA shutdown; see receiver setup.

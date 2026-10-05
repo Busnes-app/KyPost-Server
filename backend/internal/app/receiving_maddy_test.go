@@ -16,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"net/smtp"
 	"net/textproto"
@@ -29,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"golang.org/x/net/dns/dnsmessage"
@@ -67,12 +69,19 @@ func TestNativeReceivingCommandHelper(t *testing.T) {
 }
 
 func TestNativeReceivingMaddyRuntime(t *testing.T) {
-	for _, mode := range []string{"direct", "launcher", "supervised", "supervised_partial"} {
+	for _, mode := range []string{"direct", "launcher", "supervised", "supervised_partial", "rspamd"} {
 		t.Run(mode, func(t *testing.T) { testNativeReceivingMaddyRuntime(t, mode) })
 	}
 }
 
 func testNativeReceivingMaddyRuntime(t *testing.T, mode string) {
+	if mode == "rspamd" {
+		if os.Getenv("RSPAMD_PROOF") != "true" {
+			t.Skip("set RSPAMD_PROOF=true for actual sidecar qualification")
+		}
+		startReceivingRspamdProof(t)
+		t.Setenv("KYPOST_RECEIVING_RSPAMD", "true")
+	}
 	if strings.HasPrefix(mode, "supervised") && os.Getenv("RECEIVING_PROOF_IMAGE") == "" {
 		t.Skip("set RECEIVING_PROOF_IMAGE to the locally built image for Supervisor qualification")
 	}
@@ -173,7 +182,7 @@ func testNativeReceivingMaddyRuntime(t *testing.T, mode string) {
 	newReceiver := func() *exec.Cmd {
 		return exec.Command(binary, "--config", configPath, "run")
 	}
-	if mode != "direct" {
+	if mode != "direct" && mode != "rspamd" {
 		// The wrapper only adds the test binary dispatch prefix; all generated
 		// authority/storage/TLS checks and subsequent helpers remain production.
 		wrapper := filepath.Join(root, "kypost-server")
@@ -340,6 +349,32 @@ with open(sys.argv[2], "w") as out:
 	if err := client.Rcpt("relay@outside.test"); !errors.As(err, &rejection) || rejection.Code != 550 {
 		t.Fatalf("external relay recipient must be refused: %v", err)
 	}
+	if mode == "rspamd" {
+		if err := client.Rcpt("one@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		writer, err := client.Data()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = writer.Write([]byte("From: sender@outside.test\r\nTo: one@example.test\r\nSubject: spam test\r\n\r\nXJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X\r\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); !errors.As(err, &rejection) || rejection.Code != 550 {
+			t.Fatal("GTUBE not rejected before commit", err)
+		}
+		rows, err := r.holding.List(context.Background(), receivingGateway, 0, 100)
+		if err != nil || len(rows) != 1 || rows[0].State != "staged" {
+			t.Fatal("rejected payload committed", rows, err)
+		}
+		if err := client.Reset(); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Mail(""); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, recipient := range []string{"one@example.test", "two@example.test"} {
 		if err := client.Rcpt(recipient); err != nil {
 			output, _ := os.ReadFile(logPath)
@@ -360,12 +395,58 @@ with open(sys.argv[2], "w") as out:
 	}
 	ctx := context.Background()
 	rows, err := r.holding.List(ctx, receivingGateway, 0, 100)
+	if mode == "rspamd" {
+		var pending []ingress.Summary
+		for _, row := range rows {
+			if row.State == "pending" {
+				pending = append(pending, row)
+			}
+		}
+		rows = pending
+	}
 	if err != nil || len(rows) != 1 || rows[0].State != "pending" {
 		t.Fatalf("SMTP success without one durable obligation: %+v %v", rows, err)
 	}
 	delivery, err := r.holding.Get(ctx, receivingGateway, rows[0].ID)
 	if err != nil || len(delivery.Bindings) != 2 || !bytes.HasSuffix(delivery.Raw, wire) {
 		t.Fatalf("envelope/raw mismatch after actual helper: bindings=%d error=%v", len(delivery.Bindings), err)
+	}
+	if mode == "rspamd" {
+		if out, err := exec.Command("docker", "rm", "-f", "kypost-rspamd-proof-"+strconv.Itoa(os.Getpid())).CombinedOutput(); err != nil {
+			t.Fatal(err, string(out))
+		}
+		if err := r.accept(ctx, delivery.ID, delivery.Sender, bytes.NewReader(delivery.Raw)); err != nil {
+			t.Fatal("durable replay failed during scanner outage", err)
+		}
+		if err := client.Mail(""); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Rcpt("one@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		writer, err := client.Data()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write(wire); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); !errors.As(err, &rejection) || rejection.Code != 451 {
+			t.Fatal("scanner outage did not temporarily refuse SMTP", err)
+		}
+		rows, err := r.holding.List(ctx, receivingGateway, 0, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending := 0
+		for _, row := range rows {
+			if row.State == "pending" {
+				pending++
+			}
+		}
+		if pending != 1 {
+			t.Fatal("outage committed another delivery", rows)
+		}
 	}
 	// The configured receiver can die after SMTP acceptance without owning the
 	// only copy. Restart it before importing the same durable obligation.
@@ -626,4 +707,39 @@ func receivingTestCertificate(t *testing.T, root string) (string, string, *x509.
 		t.Fatal(err)
 	}
 	return certPath, keyPath, leaf
+}
+
+func startReceivingRspamdProof(t *testing.T) {
+	t.Helper()
+	lockReceivingRspamdProof(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:11333")
+	if err != nil {
+		t.Fatal("proof port occupied", err)
+	}
+	_ = listener.Close()
+	config, err := filepath.Abs("../../../scripts/rspamd/rspamd.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "kypost-rspamd-proof-" + strconv.Itoa(os.Getpid())
+	image := "rspamd/rspamd:3.14.3@sha256:b2fc96714bc4e376c87c5f2ee405f6edcc7acaa10b1ad04e023c4854ef47c6fc"
+	args := []string{"run", "--rm", "-d", "--name", name, "--network", "host", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--memory", "512m", "--pids-limit", "64", "--tmpfs", "/tmp:uid=11333,gid=11333,mode=0700", "--tmpfs", "/var/lib/rspamd:uid=11333,gid=11333,mode=0700", "--mount", "type=bind,source=" + config + ",target=/etc/rspamd/rspamd.conf,readonly", "--entrypoint", "rspamd", image, "-f", "-c", "/etc/rspamd/rspamd.conf"}
+	if out, err := exec.Command("docker", args...).CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+	until := time.Now().Add(15 * time.Second)
+	for time.Now().Before(until) {
+		client := http.Client{Timeout: time.Second}
+		resp, err := client.Get("http://127.0.0.1:11333/ping")
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == 200 {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	out, _ := exec.Command("docker", "logs", name).CombinedOutput()
+	t.Fatal("Rspamd startup failed", string(out))
 }
