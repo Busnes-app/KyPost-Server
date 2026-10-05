@@ -118,7 +118,12 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 	if unauthorized.Code != 401 {
 		t.Fatal("anonymous outbox access", unauthorized.Code)
 	}
-	w := request("POST", path, body)
+	var w *httptest.ResponseRecorder
+	if mode == "device-android" {
+		w = qualifyNativeAndroidMail(t, s, u.ID)
+	} else {
+		w = request("POST", path, body)
+	}
 	want := 200
 	if mode == "lost-ack" {
 		want = 503
@@ -242,7 +247,11 @@ func TestNativeOutboundAPIActualTLSAndPGP(t *testing.T) {
 	certServer := httptest.NewTLSServer(nil)
 	certificate := certServer.TLS.Certificates[0]
 	certServer.Close()
-	for _, mode := range []string{"plain", "pgp", "device-plain", "device-pgp", "lost-ack", "recovery"} {
+	modes := []string{"plain", "pgp", "device-plain", "device-pgp", "lost-ack", "recovery"}
+	if os.Getenv("KYPOST_NATIVE_ANDROID_TEST_SERIAL") != "" {
+		modes = append(modes, "device-android")
+	}
+	for _, mode := range modes {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			ca := filepath.Join(root, "ca.pem")
@@ -346,7 +355,11 @@ func TestNativeOutboundAPIActualTLSAndPGP(t *testing.T) {
 				}
 				completed <- err
 			}()
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			timeout := 30 * time.Second
+			if mode == "device-android" {
+				timeout = 2 * time.Minute
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestNativeOutboundAPIProcess$")
 			child.Env = append(os.Environ(), "KYPOST_NATIVE_SEND_TEST_ROOT="+root, "KYPOST_NATIVE_SEND_TEST_MODE="+mode, "KYPOST_NATIVE_SEND_TEST_PORT="+strconv.Itoa(listener.Addr().(*net.TCPAddr).Port), "SSL_CERT_FILE="+ca, "SSL_CERT_DIR="+t.TempDir(), "ALLOW_INSECURE_SMTP=true")

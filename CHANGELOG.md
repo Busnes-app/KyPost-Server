@@ -14,6 +14,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add opt-in Android emulator native-mail qualification using real pinned HTTPS registration, Keystore pairing preferences, Room/native references, bodies, labels, attachments and ordinary TLS relay sending/Sent. Preserve production interfaces and keep PGP enrollment, physical devices and provider delivery as separate gates.
 - Fence pre-restore browser/device ID tokens for historically qualified published native accounts with durable directory issuance cutoffs, including accepted future clock skew. Preserve higher floors, legacy authority and the native hold.
 
 - Bound verified ID-token issuance timestamps in the shared browser/native verifier: require positive iat and at most 30 seconds of future clock skew before access grants. Preserve browser expiration and native five-minute token age; no native restore release is enabled.
