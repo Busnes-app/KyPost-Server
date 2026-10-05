@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add optional pinned local Rspamd sidecar and bounded pre-commit native SMTP filtering; defer scanner failures, preserve accepted replay and mailbox bytes, and keep existing IMAP/client behavior.
+
 - MIME-encode non-ASCII subjects in generated messages and stored copies for SMTP relays that require seven-bit headers; preserve header sanitization and client-encrypted PGP/MIME.
 
 - Retain bounded native SMTP rejection codes and outbox correlation IDs in shared API/daemon logs without provider replies, credentials or correspondence; preserve delivery, retry and client-response semantics.

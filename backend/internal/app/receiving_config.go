@@ -30,6 +30,14 @@ func runReceivingConfig(args []string, output io.Writer) (result error) {
 	if len(args) != 4 {
 		return errors.New("usage: receiving config <IP:port> <hostname> <certificate-file> <private-key-file>")
 	}
+	spamEnabled, err := receivingRspamdEnabled()
+	if err != nil {
+		return err
+	}
+	spamArgs := ""
+	if spamEnabled {
+		spamArgs = ` "{source_ip}" "{source_host}"`
+	}
 	address, err := netip.ParseAddrPort(args[0])
 	if err != nil || address.Port() == 0 || address.Addr().Zone() != "" {
 		return errors.New("receiving config requires an explicit literal IP and nonzero port")
@@ -142,16 +150,18 @@ smtp tcp://%s {
             code 1 reject 451 4.3.0 "Receiving storage unavailable"
             code 3 reject 550 5.1.1 "Recipient unavailable"
         }
-        command "%s" receiving accept "{msg_id}" "{sender}" {
+        command "%s" receiving accept "{msg_id}" "{sender}"%s {
             run_on body
             code 1 reject 451 4.3.0 "Receiving storage unavailable"
             code 3 reject 451 4.3.0 "Routing unavailable"
+            code 4 reject 550 5.7.1 "Message rejected by spam policy"
+            code 5 reject 451 4.7.0 "Spam check temporarily deferred; retry later"
         }
     }
     destination %s { deliver_to dummy }
     default_destination { reject }
 }
-`, host, r.stateDir, r.stateDir, args[2], args[3], address, executable, executable, proof.Domain)
+`, host, r.stateDir, r.stateDir, args[2], args[3], address, executable, executable, spamArgs, proof.Domain)
 	// Output is a historical configuration, not continuing authority. Never hold
 	// the domain fence across an operator's potentially blocked output pipe.
 	release()

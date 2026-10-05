@@ -1,0 +1,40 @@
+# Add after docker-compose.receiving.yml. No scanner/admin port is published.
+services:
+  kypost-server:
+    environment:
+      KYPOST_RECEIVING_RSPAMD: "true"
+  rspamd:
+    image: rspamd/rspamd:3.14.3@sha256:b2fc96714bc4e376c87c5f2ee405f6edcc7acaa10b1ad04e023c4854ef47c6fc
+    # Loopback scan channel; scanner has no KyPost files or credentials.
+    network_mode: service:kypost-server
+    user: "11333:11333"
+    entrypoint: ["rspamd"]
+    command: ["-f", "-c", "/etc/rspamd/rspamd.conf"]
+    volumes:
+      - type: bind
+        source: ./scripts/rspamd/rspamd.conf
+        target: /etc/rspamd/rspamd.conf
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,uid=11333,gid=11333,mode=0700
+      - /var/lib/rspamd:rw,noexec,nosuid,size=32m,uid=11333,gid=11333,mode=0700
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 64
+    depends_on:
+      kypost-server:
+        condition: service_started
+        restart: true
+    healthcheck:
+      test: ["CMD", "rspamc", "-h", "127.0.0.1:11333", "-t", "2", "-E"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 15s
