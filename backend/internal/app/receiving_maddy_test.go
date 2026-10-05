@@ -346,7 +346,7 @@ with open(sys.argv[2], "w") as out:
 			t.Fatalf("native RCPT: %v %s", err, output)
 		}
 	}
-	wire := []byte("From: sender@outside.test\r\nTo: one@example.test\r\nMessage-ID: <forged-receipt>\r\nX-KyPost-Owner: attacker\r\nSubject: actual runtime\r\n\r\n.dot\r\n")
+	wire := []byte("From: sender@outside.test\r\nTo: one@example.test\r\nMessage-ID: <forged-receipt>\r\nX-KyPost-Owner: attacker\r\nSubject: actual runtime\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=receiving-proof\r\n\r\n--receiving-proof\r\nContent-Type: text/plain\r\n\r\n.dot\r\n--receiving-proof\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=proof.bin\r\nContent-Transfer-Encoding: base64\r\n\r\nAAEC/w==\r\n--receiving-proof--\r\n")
 	w, err := client.Data()
 	if err != nil {
 		t.Fatal(err)
@@ -572,6 +572,7 @@ with open(sys.argv[2], "w") as out:
 			t.Fatalf("native owner did not receive exact accepted MIME: %v", err)
 		}
 	}
+	qualifyReceivedMailAPI(t, r, created, logger, certPath, keyPath, leaf)
 	_ = client.Close()
 	rateClient := newTLSClient()
 	rateRefused := false
