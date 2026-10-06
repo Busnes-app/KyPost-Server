@@ -113,24 +113,29 @@ limit and its live payload budget through a store limit migration.
 
 ## KyPost side
 
-One consumer per Worker, enforced by credential rotation. KyPost rotates both the
-bearer secret and the signing key on every restore, before its daemon loop runs, and
-refuses pickup and publish until that rotation is confirmed:
+One consumer per Worker, enforced by credential rotation. A restored instance starts
+**fenced**: no rotation, no pickup, no publish. Taking over receiving is an explicit
+operator action (setup or admin, with step-up), never a side effect of restore. The
+confirmation names the takeover and its effect: receiving moves to this host and the
+current host stops receiving.
+
+On confirmation, KyPost rotates the bearer secret and signing key:
 
 1. Generate a new secret and key and persist them locally as `pending` (so a crash
    retries the same material rather than inventing a third).
 2. `POST /rotate` signed with the restored key. A success, or a current epoch that
-   already carries the pending public key, confirms it; persist as `current`.
+   already carries the pending public key, confirms it; persist as `current` and
+   start pickup and publish.
 3. A refusal means another instance rotated first: stay fenced, report it, and never
    pick up or publish with the old credentials.
 
-The first instance to rotate owns the Worker; the original, or any other copy of the
-same backup, is refused on list, fetch, delete and `PUT /routes`. This makes a host
-migration a takeover and a test restore harmless once it rotates. Restoring for
-inspection without taking over must not start the daemon. The same procedure is the
-scheduled and on-demand rotation path. If an attacker with a backup and its seal
-rotates first, the operator recovers by redeploying the Worker's bootstrap secrets
-and clearing `credentials.json` through the Cloudflare account.
+After a takeover the previous instance is refused on list, fetch, delete and
+`PUT /routes`; it stops its loop and reports that it has been fenced, rather than
+retrying silently. A test or inspection restore that is never confirmed leaves
+production untouched. The same rotation is the scheduled and on-demand path for the
+live instance. If an attacker with a backup and its seal confirms a takeover, the
+operator recovers by redeploying the Worker's bootstrap secrets and clearing
+`credentials.json` through the Cloudflare account.
 
 A daemon loop, outbound HTTPS only, every 30 seconds and on directory change:
 
@@ -223,9 +228,10 @@ conditional put, signed/ordered/future-bounded table replacement, list paging,
 digest-checked delete, strict paths); backend race tests for publish → capture →
 pickup → import → delete killed at every boundary, replay, conflict, generation-change
 quarantine, spam-to-Junk, capacity refusal, multi-owner deliveries, restore
-reconciliation; and a restore race: a second instance restored from the same backup
-rotates, after which the original's list, fetch, delete and `PUT /routes` are all
-refused and no R2 item is deleted unless the restored instance has committed it.
+reconciliation; a restore started without takeover confirmation makes no
+`POST /rotate` call and the original's list, fetch, delete and `PUT /routes` keep
+succeeding; after a confirmed takeover the original is refused on all four, reports
+that it is fenced, and no R2 item is deleted unless the new owner has committed it.
 
 Offline, abuse blocks: five reject-verdict fixtures that pass DKIM for a shared
 domain but carry differing envelope senders and From addresses must not block any
