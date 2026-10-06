@@ -5,6 +5,7 @@ import { EmailBodyFrame } from "./read/EmailBodyFrame";
 import { DecryptedAttachments, inlineImageMap } from "./read/DecryptedAttachments";
 import { EncryptionCell } from "./read/EncryptionCell";
 import { SignatureBadge } from "./read/SignatureBadge";
+import { OtpCard } from "./read/OtpCard";
 import { displayBody } from "./read/body";
 import { firstAddressFromText, listAddressesFromText } from "../lib/addressText";
 import { isFlaggedPhishing } from "../lib/phishing";
@@ -1950,6 +1951,21 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                   </div>
                 </div>
               ) : null}
+              {(() => {
+                // Inbox only and never on flagged mail: no copy shortcut for
+                // a message already judged suspicious.
+                if (isFlaggedPhishing(selected) || (mailbox && mailbox.toUpperCase() !== "INBOX")) return null;
+                const { body, mode } = displayBody(selected, decrypted[decryptedKey(selected.messageId)]);
+                return (
+                  <OtpCard
+                    key={decryptedKey(selected.messageId)}
+                    subject={selected.subject}
+                    body={body}
+                    mode={mode}
+                    atUtc={selected.atUtc}
+                  />
+                );
+              })()}
               <div className="email-reader-body-wrap">
                 {/* What stands in for an absent body. "No message body
                     available." is only right when the server answered and had
