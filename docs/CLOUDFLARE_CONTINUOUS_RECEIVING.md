@@ -99,6 +99,12 @@ limit and its live payload budget through a store limit migration.
   - `DELETE /messages/<uuid>?digest=<sha256>` → deletes only on digest match; absent
     key is success.
   - `GET /routes` / `PUT /routes` → read the stored table; install a signed table.
+  - `POST /rotate` → install a new bearer-secret hash and signing public key, with an
+    epoch one above the current one, signed by the **current** signing key; written
+    with an etag-conditional replace of `credentials.json`. The Worker reads its live
+    credentials from `credentials.json`; the deployed secrets only bootstrap epoch 1.
+    Every other route checks the bearer against the current epoch, so rotation
+    immediately fences the previous holder.
   - Paths are matched against a strict UUID pattern; nothing else is reachable.
 - Each routed recipient is a separate invocation (one `message.to`), so a message to
   two addresses becomes two deliveries, including two copies when both belong to one
@@ -107,8 +113,24 @@ limit and its live payload budget through a store limit migration.
 
 ## KyPost side
 
-One consumer per Worker: the bearer secret and signing key are per deployment, and a
-restored second instance must not share them.
+One consumer per Worker, enforced by credential rotation. KyPost rotates both the
+bearer secret and the signing key on every restore, before its daemon loop runs, and
+refuses pickup and publish until that rotation is confirmed:
+
+1. Generate a new secret and key and persist them locally as `pending` (so a crash
+   retries the same material rather than inventing a third).
+2. `POST /rotate` signed with the restored key. A success, or a current epoch that
+   already carries the pending public key, confirms it; persist as `current`.
+3. A refusal means another instance rotated first: stay fenced, report it, and never
+   pick up or publish with the old credentials.
+
+The first instance to rotate owns the Worker; the original, or any other copy of the
+same backup, is refused on list, fetch, delete and `PUT /routes`. This makes a host
+migration a takeover and a test restore harmless once it rotates. Restoring for
+inspection without taking over must not start the daemon. The same procedure is the
+scheduled and on-demand rotation path. If an attacker with a backup and its seal
+rotates first, the operator recovers by redeploying the Worker's bootstrap secrets
+and clearing `credentials.json` through the Cloudflare account.
 
 A daemon loop, outbound HTTPS only, every 30 seconds and on directory change:
 
@@ -178,8 +200,8 @@ storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
   R2, and `routes.json` exposes the full address directory to them. Setup says so
   before enabling this profile; Maddy and external IMAP are the alternatives.
 - A stolen bearer secret can read and delete waiting mail (listing reveals digests),
-  but cannot change routing. Rotation: install a new secret, switch KyPost, remove
-  the old one. Both secret and signing key are runtime secrets in sealed backups.
+  but cannot change routing. Both secret and signing key are runtime secrets in
+  sealed backups and rotate together through `POST /rotate` (see KyPost side).
 - Origins: verified HTTPS `*.workers.dev` or the operator's custom domain; no
   redirects, no proxy, bounded responses.
 - R2: private, no public access, no lifecycle deletion. Provider copies are outside
@@ -201,7 +223,9 @@ conditional put, signed/ordered/future-bounded table replacement, list paging,
 digest-checked delete, strict paths); backend race tests for publish → capture →
 pickup → import → delete killed at every boundary, replay, conflict, generation-change
 quarantine, spam-to-Junk, capacity refusal, multi-owner deliveries, restore
-reconciliation.
+reconciliation; and a restore race: a second instance restored from the same backup
+rotates, after which the original's list, fetch, delete and `PUT /routes` are all
+refused and no R2 item is deleted unless the restored instance has committed it.
 
 Offline, abuse blocks: five reject-verdict fixtures that pass DKIM for a shared
 domain but carry differing envelope senders and From addresses must not block any
