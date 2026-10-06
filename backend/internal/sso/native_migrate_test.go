@@ -440,6 +440,44 @@ func TestNativeMigrationRefusals(t *testing.T) {
 	if _, err := MigrateNative(ctx, orphan, keyPath); err == nil {
 		t.Fatal("v1 ledger without a domain migrated")
 	}
+
+	// Rollback restore into old volumes: a backup without the relay is copied
+	// over v2 files, leaving the earlier relay copy behind. Migration must not
+	// resurrect that relay or its credential.
+	rolled := copyConfig(t, config)
+	if _, err := MigrateNative(ctx, rolled, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{legacyNativeDomainFile, nativeProvisioningFile} {
+		if err := os.WriteFile(filepath.Join(rolled, name), mustRead(t, filepath.Join(rolled, name+NativeMigrationCopySuffix)), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(filepath.Join(rolled, "native-relay.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MigrateNative(ctx, rolled, keyPath); err == nil {
+		t.Fatal("leftover relay copy used without its source")
+	}
+	if _, err := os.Lstat(filepath.Join(rolled, "native-relay.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("relay resurrected from a leftover copy", err)
+	}
+	// A relay bound to another domain or issuer is refused before any write.
+	mismatched, mismatchedKey, _ := v1Fixture(t)
+	var d map[string]any
+	if err := json.Unmarshal(mustRead(t, filepath.Join(mismatched, legacyNativeDomainFile)), &d); err != nil {
+		t.Fatal(err)
+	}
+	d["domain"] = "other.test"
+	if err := fsutil.PersistJSONFile(filepath.Join(mismatched, legacyNativeDomainFile), d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MigrateNative(ctx, mismatched, mismatchedKey); err == nil || !strings.Contains(err.Error(), "native-relay.json") {
+		t.Fatal("relay for another domain migrated", err)
+	}
+	if _, err := os.Lstat(filepath.Join(mismatched, NativeDomainsFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("output written before relay validation", err)
+	}
 }
 
 // The recovery digest hashes the single-mailbox view, which migration does

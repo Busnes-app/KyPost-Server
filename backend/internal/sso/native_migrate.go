@@ -96,6 +96,11 @@ func MigrateNative(ctx context.Context, configDir, relayKeyPath string) (bool, e
 			return false, fmt.Errorf("native-provisioning.json: %w", err)
 		}
 	}
+	if hasRelay {
+		if err := nativeRelayCopyMatches(relayKeyPath, relayRaw, domain); err != nil {
+			return false, fmt.Errorf("native-relay.json: %w", err)
+		}
+	}
 	// 2. Domain set.
 	store := NewNativeDomainStore(configDir)
 	set := nativeDomainSet{Version: 1, Issuer: domain.Issuer, Domains: map[string]nativeDomainProof{domain.Domain: {domain.Token, domain.ExpiresAt, domain.Established, domain.VerifiedUntil}}, Retired: []string{}}
@@ -144,6 +149,13 @@ func preserveNativeSource(configDir, name, relayKeyPath string) error {
 	path := filepath.Join(configDir, name)
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
+		// Migration never deletes a source, so a copy without one is left over
+		// from an earlier upgrade (e.g. a rollback restore into old volumes).
+		// Using it would resurrect state, such as relay credentials, that the
+		// restored backup does not contain.
+		if _, err := os.Lstat(path + NativeMigrationCopySuffix); err == nil {
+			return fmt.Errorf("%s is missing but %s%s is left over from an earlier migration; move that copy aside and restart", name, name, NativeMigrationCopySuffix)
+		}
 		return nil
 	}
 	if err != nil {
@@ -201,6 +213,19 @@ func (s *LifecycleStore) migratedNativeLedger(raw []byte) (nativeAssignments, er
 		}
 	}
 	return f, nil
+}
+
+// nativeRelayCopyMatches refuses a relay copy bound to another domain or issuer.
+func nativeRelayCopyMatches(keyPath string, raw []byte, domain NativeDomain) error {
+	key, err := cryptutil.LoadKey(keyPath)
+	if err != nil {
+		return mailmsg.ErrDomainRelay
+	}
+	relay, version, err := mailmsg.DecodeDomainRelay(raw, key)
+	if err != nil || version != 1 || relay.Domain != domain.Domain || relay.Issuer != domain.Issuer {
+		return mailmsg.ErrDomainRelay
+	}
+	return nil
 }
 
 // migrateNativeRelay rewrites the relay only when its content would change, so
