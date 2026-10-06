@@ -57,6 +57,9 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	proof, err := s.nativeDomains.Verify(ctx) // DNS precedes all disk fences.
+	if nativeMigrationRefused(w, err) {
+		return
+	}
 	if err != nil || proof.Issuer != settings.IssuerURL {
 		http.Error(w, "relay setup requires fresh issuer-bound domain proof; verify the current TXT record", http.StatusConflict)
 		return

@@ -68,7 +68,10 @@ for a domain-sized mail store; oversized backups fail rather than omit mail. The
 Capsules carry the native domain set `native-domains.json` and the
 `native-domain.json` tombstone, never the `*.v1-migrated` copies. Validation and
 drills accept snapshots taken before the [storage format migration](#storage-format-migration)
-(version-1 domain, ledger and relay) as well as after it; a restored version-1
+(version-1 domain, ledger and relay) as well as after it, and the mixes a migration
+crash leaves (a version-1 domain beside a version-2 ledger or relay). A version-2
+domain beside a version-1 ledger or relay, or a ledger or relay without a domain,
+is refused; a restored version-1
 snapshot is migrated by `migrate-native` at the next container start, with the
 restore hold left in place. Configuring a mail domain now also initializes an
 empty native ledger, so restoring a deployment that configured a domain but has

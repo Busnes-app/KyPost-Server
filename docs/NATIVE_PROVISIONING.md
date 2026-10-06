@@ -68,12 +68,15 @@ locks, following [the addressing spec](NATIVE_ADDRESSING_V2.md#migration-v1--v2)
 5. replace `native-domain.json` with the tombstone.
 
 Every output derives from the copies, so a crash or a version-1 binary run in
-between converges on re-run. A tombstone means already migrated; fresh installs
+between converges on re-run. Every copy is validated before the first output is
+written; a version-1 ledger behind an unset initialization fence (which version 1
+refused) is refused, not migrated. A tombstone means already migrated; fresh installs
 and deployments without native files are untouched. Migration ignores and keeps a
 restore hold and grants no authority. On failure it logs the cause with a
 remediation and the container keeps booting: every native path then refuses
-(`ErrNativeMigration`) because `native-domain.json` still holds version-1 data or
-the tombstone lacks `native-domains.json` or the ledger, while external IMAP
+(`ErrNativeMigration`) because `native-domain.json` still holds version-1 data,
+the ledger is not version 2, or the tombstone lacks `native-domains.json` or the
+ledger, so domain setup cannot adopt a leftover version-1 ledger; external IMAP
 accounts keep working. Keep the config volume and its `*.v1-migrated` copies, fix
 the reported cause and restart. Runtime readers accept only ledger and relay
 version 2.

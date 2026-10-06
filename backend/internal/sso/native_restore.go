@@ -79,7 +79,7 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 		return true, err
 	}
 	// Snapshots may predate migration: accept version-1 and version-2 files.
-	f, err := s.loadNativeLedger(true)
+	f, ledgerVersion, err := s.loadNativeLedger(true)
 	if err != nil {
 		return true, err
 	}
@@ -111,9 +111,12 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 	}
 	ids, addresses := map[string]bool{}, map[string]bool{}
 	root := ""
-	domain, err := HistoricalNativeDomain(filepath.Dir(s.path))
+	domain, domainFormat, err := HistoricalNativeDomain(filepath.Dir(s.path))
 	if err != nil {
 		return native, err
+	}
+	if !NativeSnapshotFormatsConsistent(domainFormat, ledgerVersion) {
+		return true, ErrNativeProvisioning
 	}
 	for key, a := range f.Accounts {
 		native = true

@@ -29,6 +29,8 @@ func snapshotDatabase(name string) bool {
 	return name == "state.db" || name == "mailbox.db" || name == "ingress.db"
 }
 
+// ".v1-migrated" (native storage migration copies) needs its own rule: it ends
+// in "-migrated", which the ".migrated" rule does not match.
 func skip(name string) bool {
 	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || strings.HasSuffix(name, ".lock") ||
 		strings.HasSuffix(name, ".migrated") || strings.HasSuffix(name, ".v1-migrated") || strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")

@@ -99,6 +99,19 @@ func checkNativeFormat(configDir string) error {
 	if err != nil || data {
 		return ErrNativeMigration
 	}
+	// A leftover version-1 ledger means migration failed; refuse before any
+	// v2 write (Configure included) could adopt it. The relay needs its key
+	// to read the version; its runtime reader refuses version 1 itself.
+	if raw, err := os.ReadFile(filepath.Join(configDir, nativeProvisioningFile)); err == nil {
+		var head struct {
+			Version int `json:"version"`
+		}
+		if json.Unmarshal(raw, &head) != nil || head.Version != 2 {
+			return ErrNativeMigration
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return ErrNativeMigration
+	}
 	if !tombstone {
 		return nil
 	}
@@ -126,24 +139,36 @@ func parseLegacyNativeDomain(raw []byte) (NativeDomain, error) {
 }
 
 // HistoricalNativeDomain reads a snapshot in either format: real version-1
-// data, or the domain set (required when the tombstone is present).
-func HistoricalNativeDomain(configDir string) (NativeDomain, error) {
+// data (format 1), or the domain set (format 2, required with the tombstone).
+// Format 0 means no domain. Callers check ledger/relay versions against it.
+func HistoricalNativeDomain(configDir string) (NativeDomain, int, error) {
 	tombstone, data, err := legacyNativeDomain(configDir)
 	if err != nil {
-		return NativeDomain{}, err
+		return NativeDomain{}, 0, err
 	}
 	if data {
 		raw, err := os.ReadFile(filepath.Join(configDir, legacyNativeDomainFile))
 		if err != nil {
-			return NativeDomain{}, err
+			return NativeDomain{}, 1, err
 		}
-		return parseLegacyNativeDomain(raw)
+		d, err := parseLegacyNativeDomain(raw)
+		return d, 1, err
 	}
 	d, err := NewNativeDomainStore(configDir).read()
 	if err == nil && tombstone && d.Domain == "" {
 		err = ErrNativeMigration
 	}
-	return d, err
+	if d.Domain == "" && !tombstone {
+		return d, 0, err
+	}
+	return d, 2, err
+}
+
+// NativeSnapshotFormatsConsistent is the format-mix rule for snapshots: a v1
+// domain may sit beside v1 or v2 files (migration crash windows), a v2 domain
+// only beside v2 files, and no domain beside none. Versions are 0 when absent.
+func NativeSnapshotFormatsConsistent(domainFormat, fileVersion int) bool {
+	return fileVersion == 0 || domainFormat == 1 || domainFormat == 2 && fileVersion == 2
 }
 
 // SetLookupForTest follows the existing test-only transport override contract.

@@ -30,8 +30,8 @@ func nativeSnapshot(dir string) (bool, error) {
 	}
 	hasRelay := relayVersion != 0
 	if hasRelay {
-		domain, err := sso.HistoricalNativeDomain(filepath.Join(dir, "config"))
-		if err != nil || domain.Domain != relay.Domain || domain.Issuer != relay.Issuer {
+		domain, domainFormat, err := sso.HistoricalNativeDomain(filepath.Join(dir, "config"))
+		if err != nil || !sso.NativeSnapshotFormatsConsistent(domainFormat, relayVersion) || domain.Domain != relay.Domain || domain.Issuer != relay.Issuer {
 			return true, mailmsg.ErrDomainRelay
 		}
 	}

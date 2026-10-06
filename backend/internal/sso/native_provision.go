@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -165,20 +164,22 @@ func (s *LifecycleStore) loadNative() (nativeAssignments, error) {
 	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
 		return nativeAssignments{}, err
 	}
-	return s.loadNativeLedger(false)
+	f, _, err := s.loadNativeLedger(false)
+	return f, err
 }
 
-func (s *LifecycleStore) loadNativeLedger(historical bool) (nativeAssignments, error) {
+// loadNativeLedger also reports the file's version (0 when absent).
+func (s *LifecycleStore) loadNativeLedger(historical bool) (nativeAssignments, int, error) {
 	lifecycle, err := s.load()
 	if err != nil {
-		return nativeAssignments{}, err
+		return nativeAssignments{}, 0, err
 	}
 	f := nativeAssignments{Accounts: map[string]NativeAssignment{}}
-	loaded := false
+	loaded, version := false, 0
 	var parseErr error
 	err = fsutil.LoadJSONFile(s.nativePath(), func(raw json.RawMessage) {
 		loaded = true
-		f, _, parseErr = parseNativeLedger(raw, historical)
+		f, version, parseErr = parseNativeLedger(raw, historical)
 	}, func() error {
 		if lifecycle.NativeProvisioningInitialized {
 			return ErrNativeProvisioning
@@ -188,7 +189,7 @@ func (s *LifecycleStore) loadNativeLedger(historical bool) (nativeAssignments, e
 	if err == nil && (parseErr != nil || loaded && !lifecycle.NativeProvisioningInitialized) {
 		err = ErrNativeProvisioning
 	}
-	return f, err
+	return f, version, err
 }
 
 // Initialization fences missing-ledger repair. A crash after the fence but
@@ -218,12 +219,14 @@ func (s *LifecycleStore) ensureNativeLedger(ctx context.Context) error {
 	return s.ensureNativeLedgerLocked()
 }
 
+// An existing ledger counts only when it is version 2; a version-1 one means
+// migration has not finished and must never be adopted behind its back.
 func (s *LifecycleStore) ensureNativeLedgerLocked() error {
-	if _, err := os.Lstat(s.nativePath()); !errors.Is(err, os.ErrNotExist) {
-		return err
+	f, version, err := s.loadNativeLedger(false)
+	if version != 0 && version != 2 {
+		return ErrNativeMigration
 	}
-	f, err := s.loadNativeLedger(false)
-	if err != nil {
+	if err != nil || version == 2 {
 		return err
 	}
 	return s.saveNative(f)

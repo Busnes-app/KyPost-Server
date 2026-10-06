@@ -330,6 +330,18 @@ func TestNativeMigrationFreshInstallAndConfigure(t *testing.T) {
 	}
 	// Native allocation then starts at once (outboundFixture and every
 	// allocation test run through this Configure path).
+
+	// Configure crashing between the set and the tombstone: migration finishes
+	// the tombstone, so a v1 binary cannot configure behind the set.
+	if err := os.Remove(filepath.Join(config, legacyNativeDomainFile)); err != nil {
+		t.Fatal(err)
+	}
+	if migrated, err := MigrateNative(ctx, config, filepath.Join(config, "absent.key")); err != nil || migrated {
+		t.Fatal(migrated, err)
+	}
+	if tombstone, _, err := legacyNativeDomain(config); err != nil || !tombstone {
+		t.Fatal("tombstone not restored after Configure crash window", err)
+	}
 }
 
 func TestNativeMigrationRefusals(t *testing.T) {
@@ -347,6 +359,53 @@ func TestNativeMigrationRefusals(t *testing.T) {
 	}
 	if _, _, err := mailmsg.ReadDomainRelay(filepath.Join(config, "native-relay.json"), keyPath); !errors.Is(err, mailmsg.ErrDomainRelay) {
 		t.Fatal("v1 relay admitted at runtime", err)
+	}
+	// v1 refused a ledger behind an unset initialization fence; migration must
+	// not grant it authority, and writes nothing but the preserved copies.
+	unfenced := copyConfig(t, config)
+	unfencedLife := NewLifecycleStore(unfenced)
+	lifecycle, err := unfencedLife.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle.NativeProvisioningInitialized = false
+	if err := fsutil.PersistJSONFile(unfencedLife.path, lifecycle); err != nil {
+		t.Fatal(err)
+	}
+	before := configFiles(t, unfenced, keyPath)
+	if _, err := MigrateNative(ctx, unfenced, keyPath); !errors.Is(err, ErrNativeProvisioning) {
+		t.Fatal("unfenced v1 ledger migrated", err)
+	}
+	after := configFiles(t, unfenced, keyPath)
+	for name := range after {
+		if before[name] != after[name] && !strings.HasSuffix(name, NativeMigrationCopySuffix) {
+			t.Fatal("refused migration wrote", name)
+		}
+	}
+	if _, err := NewNativeDomainStore(unfenced).Read(); !errors.Is(err, ErrNativeMigration) {
+		t.Fatal("refused migration admitted native", err)
+	}
+	// A failed migration leaves a v1 ledger; Configure must not adopt it, and
+	// the migration recovers once the cause (a lost domain file) is fixed.
+	lost := copyConfig(t, config)
+	domainBytes := mustRead(t, filepath.Join(lost, legacyNativeDomainFile))
+	if err := os.Remove(filepath.Join(lost, legacyNativeDomainFile)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MigrateNative(ctx, lost, keyPath); err == nil {
+		t.Fatal("v1 ledger without a domain migrated")
+	}
+	if _, err := NewNativeDomainStore(lost).Configure(ctx, "example.test", nativeIssuer); !errors.Is(err, ErrNativeMigration) {
+		t.Fatal("configure adopted a v1 ledger", err)
+	}
+	if err := os.WriteFile(filepath.Join(lost, legacyNativeDomainFile), domainBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if migrated, err := MigrateNative(ctx, lost, keyPath); err != nil || !migrated {
+		t.Fatal("migration did not recover", migrated, err)
+	}
+	if _, err := NewNativeDomainStore(lost).Read(); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := MigrateNative(ctx, config, keyPath); err != nil {
 		t.Fatal(err)
@@ -432,5 +491,62 @@ func TestNativeMigrationKeepsQueuedOutboxJob(t *testing.T) {
 	statuses, _, statusErr := sender.Status(ctx, u.ID, id)
 	if errors.Is(err, ErrNativeOutboundStale) || statusErr != nil || len(statuses) != 1 || statuses[0].Attempts != 1 {
 		t.Fatalf("queued job did not reach a claim after migration: result=%+v err=%v statuses=%+v statusErr=%v", result, err, statuses, statusErr)
+	}
+}
+
+// Snapshots may mix formats only as a migration crash leaves them.
+func TestNativeSnapshotFormatMixes(t *testing.T) {
+	v1, keyPath, _ := v1Fixture(t)
+	v2 := copyConfig(t, v1)
+	if _, err := MigrateNative(context.Background(), v2, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	ledger, _, err := parseNativeLedger(mustRead(t, filepath.Join(v1, nativeProvisioningFile)), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := ""
+	for _, a := range ledger.Accounts {
+		root = a.StateRoot
+	}
+	var doc struct {
+		Users []users.User `json:"users"`
+	}
+	if err := json.Unmarshal(mustRead(t, filepath.Join(v1, "users.json")), &doc); err != nil {
+		t.Fatal(err)
+	}
+	put := func(dir, name, from string) {
+		t.Helper()
+		if from == "" {
+			if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			return
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), mustRead(t, filepath.Join(from, name)), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name                string
+		domain, set, ledger string
+		pass                bool
+	}{
+		{"all-v1", v1, "", v1, true},
+		{"all-v2", v2, v2, v2, true},
+		{"v1-domain-v2-ledger", v1, v2, v2, true},
+		{"v2-domain-v1-ledger", v2, v2, v1, false},
+		{"no-domain-v1-ledger", "", "", v1, false},
+		{"no-domain-v2-ledger", "", "", v2, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := copyConfig(t, v1)
+			put(dir, legacyNativeDomainFile, tc.domain)
+			put(dir, NativeDomainsFile, tc.set)
+			put(dir, nativeProvisioningFile, tc.ledger)
+			if _, err := NewLifecycleStore(dir).ValidateNativeSnapshot(root, doc.Users); (err == nil) != tc.pass {
+				t.Fatalf("pass=%v err=%v", tc.pass, err)
+			}
+		})
 	}
 }

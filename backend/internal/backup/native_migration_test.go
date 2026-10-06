@@ -43,9 +43,46 @@ func TestNativeBackupAcceptsV1AndV2Snapshots(t *testing.T) {
 	if !v2["config/"+sso.NativeDomainsFile] || !v2["config/native-domain.json"] || v2["config/native-domain.json"+sso.NativeMigrationCopySuffix] {
 		t.Fatal("v2 snapshot must carry the domain set and tombstone, never the v1 copies", v2)
 	}
+	files := func() map[string][]byte {
+		t.Helper()
+		out := map[string][]byte{}
+		for _, name := range []string{"native-domain.json", sso.NativeDomainsFile, "native-provisioning.json", "native-relay.json"} {
+			raw, err := os.ReadFile(filepath.Join(s.dirs.Config, name))
+			if err == nil {
+				out[name] = raw
+			}
+		}
+		return out
+	}
+	install := func(set map[string][]byte) {
+		t.Helper()
+		for _, name := range []string{"native-domain.json", sso.NativeDomainsFile, "native-provisioning.json", "native-relay.json"} {
+			path := filepath.Join(s.dirs.Config, name)
+			if raw, ok := set[name]; ok {
+				if err := os.WriteFile(path, raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		}
+	}
+	v2Files := files()
 	if err := sso.WriteNativeV1ForTest(s.dirs.Config, keyPath); err != nil {
 		t.Fatal(err)
 	}
+	v1Files := files()
+	// A v1 domain may sit beside a v2 relay (migration crash window); a v2
+	// domain beside a v1 relay is no state migration produces.
+	mixed := map[string][]byte{"native-domain.json": v1Files["native-domain.json"], "native-provisioning.json": v1Files["native-provisioning.json"], "native-relay.json": v2Files["native-relay.json"]}
+	install(mixed)
+	collected()
+	mixed = map[string][]byte{"native-domain.json": v2Files["native-domain.json"], sso.NativeDomainsFile: v2Files[sso.NativeDomainsFile], "native-provisioning.json": v2Files["native-provisioning.json"], "native-relay.json": v1Files["native-relay.json"]}
+	install(mixed)
+	if _, err := s.Collect(); err == nil {
+		t.Fatal("v2 domain beside a v1 relay accepted")
+	}
+	install(v1Files)
 	if v1 := collected(); v1["config/"+sso.NativeDomainsFile] || !v1["config/native-domain.json"] {
 		t.Fatal("v1 snapshot", v1)
 	}

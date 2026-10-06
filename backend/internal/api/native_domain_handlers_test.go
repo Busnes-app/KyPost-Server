@@ -73,6 +73,16 @@ func TestNativeMailDomainAdminProofRoutes(t *testing.T) {
 	if err = json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.ReceivingEnabled {
 		t.Fatal("receiver activated", err)
 	}
+	// Unmigrated storage gets its own remediation on every domain route.
+	if err = sso.WriteNativeV1ForTest(srv.configDir, srv.configDir+"/absent-relay.key"); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = json.Marshal(map[string]string{"domain": "example.test", "password": password})
+	for _, c := range []struct{ method, path, body string }{{"GET", "", ""}, {"PUT", "", string(raw)}, {"POST", "/verify", `{"password":"` + password + `"}`}} {
+		if w := call(c.method, c.path, token, csrf, c.body); w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "migrate-native") {
+			t.Fatal("migration refusal", c.method, c.path, w.Code, w.Body)
+		}
+	}
 }
 
 func TestNativeAccountIssuerFenceUsesVerifiedProvenance(t *testing.T) {

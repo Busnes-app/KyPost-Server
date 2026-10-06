@@ -77,13 +77,26 @@ func MigrateNative(ctx context.Context, configDir, relayKeyPath string) (bool, e
 		if hasLedger || hasRelay {
 			return false, errors.New("version-1 ledger or relay without a mail domain; restore a consistent backup")
 		}
-		return false, nil // only v2 files without a tombstone: Configure's crash window
+		// Only v2 files: Configure crashed between the set and the tombstone.
+		// Finish it so a v1 binary cannot configure a domain behind the set.
+		if _, err := os.Lstat(filepath.Join(configDir, NativeDomainsFile)); err == nil {
+			return false, writeNativeDomainTombstone(configDir)
+		}
+		return false, nil
 	}
-	// 2. Domain set.
+	// Validate every copy before the first output write.
 	domain, err := parseLegacyNativeDomain(domainRaw)
 	if err != nil {
 		return false, fmt.Errorf("native-domain.json: %w", err)
 	}
+	life := NewLifecycleStore(configDir)
+	var ledger nativeAssignments
+	if hasLedger {
+		if ledger, err = life.migratedNativeLedger(ledgerRaw); err != nil {
+			return false, fmt.Errorf("native-provisioning.json: %w", err)
+		}
+	}
+	// 2. Domain set.
 	store := NewNativeDomainStore(configDir)
 	set := nativeDomainSet{Version: 1, Issuer: domain.Issuer, Domains: map[string]nativeDomainProof{domain.Domain: {domain.Token, domain.ExpiresAt, domain.Established, domain.VerifiedUntil}}, Retired: []string{}}
 	if err := fsutil.PersistJSONFile(store.path, set); err != nil {
@@ -93,9 +106,8 @@ func MigrateNative(ctx context.Context, configDir, relayKeyPath string) (bool, e
 		return false, err
 	}
 	// 3. Ledger, or an empty one when a domain exists without a ledger.
-	life := NewLifecycleStore(configDir)
 	if hasLedger {
-		if err := life.migrateNativeLedger(ledgerRaw); err != nil {
+		if err := life.saveNative(ledger); err != nil {
 			return false, fmt.Errorf("native-provisioning.json: %w", err)
 		}
 	} else if err := life.ensureNativeLedgerLocked(); err != nil {
@@ -164,18 +176,23 @@ func preserveNativeSource(configDir, name, relayKeyPath string) error {
 	return fsutil.AtomicWriteFile(path+NativeMigrationCopySuffix, raw, 0600)
 }
 
-// migrateNativeLedger seeds each primary address generation from the subject's
-// directory revision, which bounds every route and binding generation v1 wrote,
-// so older pending bindings still quarantine and current ones still import.
-// Administrator subjects that already hold a mailbox get legacyMixedUse.
-func (s *LifecycleStore) migrateNativeLedger(raw []byte) error {
+// migratedNativeLedger converts the version-1 copy. Each primary address
+// generation is later seeded from the subject's directory revision, which bounds
+// every route and binding generation v1 wrote, so older pending bindings still
+// quarantine and current ones still import. Administrator subjects that already
+// hold a mailbox get legacyMixedUse. A ledger behind an unset initialization
+// fence was refused by v1 and must not gain authority here.
+func (s *LifecycleStore) migratedNativeLedger(raw []byte) (nativeAssignments, error) {
 	f, version, err := parseNativeLedger(raw, true)
 	if err != nil || version != 1 {
-		return ErrNativeProvisioning
+		return nativeAssignments{}, ErrNativeProvisioning
 	}
 	lifecycle, err := s.load()
 	if err != nil {
-		return err
+		return nativeAssignments{}, err
+	}
+	if !lifecycle.NativeProvisioningInitialized {
+		return nativeAssignments{}, ErrNativeProvisioning
 	}
 	f.stored.Accounts = map[string]nativeLedgerAccount{}
 	for key := range f.Accounts {
@@ -183,7 +200,7 @@ func (s *LifecycleStore) migrateNativeLedger(raw []byte) error {
 			f.stored.Accounts[key] = nativeLedgerAccount{LegacyMixedUse: true}
 		}
 	}
-	return s.saveNative(f)
+	return f, nil
 }
 
 // migrateNativeRelay rewrites the relay only when its content would change, so
