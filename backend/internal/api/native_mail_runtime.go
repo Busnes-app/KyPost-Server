@@ -10,10 +10,38 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // EnableNativeMail is startup-only, before request/background goroutines start.
 func (s *Server) EnableNativeMail() { s.nativeMail = true }
+
+// refuseNativeAdministrator answers the administrator-separation refusal with
+// 403, never 401: the identity is valid, so a client must not drop its
+// session or credential. It reports false for any other error.
+func (s *Server) refuseNativeAdministrator(w http.ResponseWriter, r *http.Request, userID string, err error) bool {
+	if !errors.Is(err, sso.ErrNativeAdministrator) {
+		return false
+	}
+	s.logger.Info("native mail refused for administrator identity", "actor", userID, "action", r.Method, "target", r.URL.Path, "result", "refused")
+	writeJSON(w, http.StatusForbidden, map[string]any{"error": "administrator identities have no mailbox; use your everyday identity", "administratorIdentity": true})
+	return true
+}
+
+// refuseAdministratorIMAP keeps native-mode administrators off ordinary mail
+// setup. Stored IMAP configuration is left as is: removing it belongs to the
+// mixed-use migration. IMAP-only deployments are unaffected.
+func (s *Server) refuseAdministratorIMAP(w http.ResponseWriter, r *http.Request, userID string) bool {
+	if !s.nativeMail {
+		return false
+	}
+	u, err := s.users.Get(userID)
+	if err != nil {
+		writeUserStoreError(w, err)
+		return true
+	}
+	return u.Role == users.RoleAdmin && s.refuseNativeAdministrator(w, r, userID, sso.ErrNativeAdministrator)
+}
 
 var errNativeRelayUnavailable = errors.New("native sending requires an administrator-configured domain relay; sending is not enabled yet")
 

@@ -38,6 +38,18 @@ func v1Fixture(t *testing.T) (config, keyPath string, ids map[string]string) {
 	domains := provenNativeDomain(t, config)
 	ids = map[string]string{}
 	nativeDesired(t, life, "one", "one@example.test", 1, true)
+	// v1 gave administrators mailboxes; reproduce one by promoting after allocation.
+	nativeDesired(t, life, "boss", "boss@example.test", 1, true)
+	for _, subject := range []string{"one", "boss"} {
+		u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, subject, domains, accounts, nativeLimits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[subject] = u.ID
+	}
+	if _, err := accounts.SetRole(ids["boss"], users.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
 	raw := fmt.Sprintf(`{"schemas":[%q],"id":"boss","externalId":"boss","userName":"boss","active":true,"roles":[{"value":%q}],"emails":[{"value":"boss@example.test","primary":true}],"meta":{"version":"W/\"2\""}}`, scimUserSchema, AdminAppRole)
 	var admin DirectoryUser
 	if err := json.Unmarshal([]byte(raw), &admin); err != nil {
@@ -46,13 +58,6 @@ func v1Fixture(t *testing.T) (config, keyPath string, ids map[string]string) {
 	ev := syncauth.Event{ID: "boss-2", Type: "user.updated", At: time.Now()}
 	if _, err := life.ApplyDirectoryUser(nativeIssuer, ev, admin, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
-	}
-	for _, subject := range []string{"one", "boss"} {
-		u, err := life.AllocateNativeAccount(ctx, root, nativeIssuer, subject, domains, accounts, nativeLimits)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ids[subject] = u.ID
 	}
 	nativeDesired(t, life, "one", "one@example.test", 3, true)
 	if _, err := mailmsg.SaveDomainRelay(ctx, filepath.Join(config, "native-relay.json"), keyPath, mailmsg.DomainRelay{Domain: "example.test", Issuer: nativeIssuer, Host: "smtp.example.test", Port: 465, Username: "operator", Password: "test-only"}); err != nil {
@@ -123,6 +128,9 @@ func TestNativeMigrationLedgerRelayAndIdempotence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	legacy := want.Accounts[directoryKey(nativeIssuer, "boss")]
+	legacy.LegacyMixedUse = true // the only field migration adds to the view
+	want.Accounts[directoryKey(nativeIssuer, "boss")] = legacy
 	relayV1, version, err := mailmsg.ReadDomainRelayAnyVersion(filepath.Join(config, "native-relay.json"), keyPath)
 	if err != nil || version != 1 {
 		t.Fatal("fixture relay is not version 1", version, err)
@@ -480,8 +488,9 @@ func TestNativeMigrationRefusals(t *testing.T) {
 	}
 }
 
-// The recovery digest hashes the single-mailbox view, which migration does
-// not change, and migration leaves a restore hold untouched.
+// The recovery digest hashes the single-mailbox view, which migration changes
+// only by flagging administrator subjects, and migration leaves a restore hold
+// untouched.
 func TestNativeMigrationKeepsRecoveryDigestAndHold(t *testing.T) {
 	life, dir, settings, key, challenge := recoveryFixture(t)
 	if _, err := NewNativeDomainStore(dir).Configure(context.Background(), "example.test", settings.IssuerURL); err != nil {

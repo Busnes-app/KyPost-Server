@@ -172,6 +172,15 @@ var errIMAPNotConfigured = errors.New("imap configuration is required")
 // auth attempt (no session, no/invalid device credentials).
 var errMailUnauthorized = errors.New("unauthorized")
 
+// mailAdmissionError keeps the administrator refusal distinct (403, see
+// refuseNativeAdministrator); every other admission failure stays 401.
+func mailAdmissionError(err error) error {
+	if errors.Is(err, sso.ErrNativeAdministrator) {
+		return err
+	}
+	return errMailUnauthorized
+}
+
 // mailLockedOutError is returned by resolveMailAuthContext instead of
 // errMailUnauthorized when device-secret auth failed for a reason that is
 // "come back later" rather than "the credentials were wrong": the deviceID is
@@ -551,7 +560,7 @@ func (s *Server) mailFor(r *http.Request) (imapadapter.Client, error) {
 func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
 	if ac, ok := s.currentUser(r); ok {
 		if _, _, err := s.nativeMailAssignment(r.Context(), ac.UserID); err != nil {
-			return AuthContext{}, errMailUnauthorized
+			return ac, mailAdmissionError(err)
 		}
 		return ac, nil
 	}
@@ -570,7 +579,7 @@ func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
 		return AuthContext{}, errMailUnauthorized
 	}
 	if _, _, err := s.nativeMailAssignment(r.Context(), userID); err != nil {
-		return AuthContext{}, errMailUnauthorized
+		return AuthContext{UserID: userID}, mailAdmissionError(err)
 	}
 	return AuthContext{UserID: userID, DeviceID: device.DeviceID, NativeSendEpoch: epoch, DeviceWitness: state.NativeDeviceWitness(device)}, nil
 }

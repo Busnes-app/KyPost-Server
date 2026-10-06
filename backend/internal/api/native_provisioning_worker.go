@@ -41,7 +41,11 @@ func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject str
 	}
 	if lookupErr == nil && u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" {
 		release()
-		return nil // existing IMAP accounts never migrate through directory repair
+		return nil // existing IMAP and administrator accounts never migrate through directory repair
+	}
+	if lookupErr != nil && d.Active && sso.HasAdminRole(d.Resource.Roles) {
+		defer release()
+		return s.provisionDirectoryUser(*d.Resource, users.RoleAdmin)
 	}
 	a, reserved, err := s.ssoLifecycle.NativeAssignment(issuer, subject)
 	if err != nil {

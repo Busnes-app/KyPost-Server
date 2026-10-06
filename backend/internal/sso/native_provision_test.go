@@ -342,10 +342,21 @@ func TestNativeProvisioningRefusesMissingLedgerAndRestoredDirectory(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	nativeDesired(t, s, "two", "one@example.test", 1, true)
 	if err = os.Remove(s.nativePath()); err != nil {
 		t.Fatal(err)
 	}
-	nativeDesired(t, s, "two", "one@example.test", 1, true)
+	// An active everyday revision may clear legacyMixedUse, so a lost ledger
+	// fails it for retry; it must not be recorded past the flag.
+	raw := fmt.Sprintf(`{"schemas":[%q],"id":"two","externalId":"two","userName":"two","active":true,"emails":[{"value":"one@example.test","primary":true}],"meta":{"version":"W/\"2\""}}`, scimUserSchema)
+	var update DirectoryUser
+	if err = json.Unmarshal([]byte(raw), &update); err != nil {
+		t.Fatal(err)
+	}
+	ev := syncauth.Event{ID: "two-2", Type: "user.updated", At: time.Now()}
+	if _, err = s.ApplyDirectoryUser(nativeIssuer, ev, update, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return false, nil }); !errors.Is(err, ErrNativeProvisioning) {
+		t.Fatal("directory revision recorded over a lost ledger", err)
+	}
 	if _, err = s.ReconcileNativeMailbox(root, nativeIssuer, "two", "local-two", "example.test", nativeLimits); !errors.Is(err, ErrNativeProvisioning) {
 		t.Fatal("lost ledger freed reservation", err)
 	}

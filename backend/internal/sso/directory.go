@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,12 @@ func HasAdminRole(raw json.RawMessage) bool {
 		}
 	}
 	return false
+}
+
+// directoryDemoted is an active resource without the administrator role, the
+// only state that clears legacyMixedUse. Deactivation is not demotion.
+func directoryDemoted(u DirectoryUser) bool {
+	return u.Active != nil && *u.Active && !HasAdminRole(u.Roles)
 }
 
 const scimUserSchema = "urn:ietf:params:scim:schemas:core:2.0:User"
@@ -211,6 +218,11 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 			if err != nil {
 				return err
 			}
+			if resource != nil && directoryDemoted(*resource) {
+				if err := s.clearLegacyMixedUse(key); err != nil {
+					return err
+				}
+			}
 			state := DirectoryState{Resource: resource, Revision: revision, Digest: digest, Active: active, EventID: ev.ID, RevokedBefore: prior.RevokedBefore}
 			if fence {
 				state.RevokedBefore = max(prior.RevokedBefore, now)
@@ -231,6 +243,31 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 		return fsutil.PersistJSONFile(s.path, f)
 	})
 	return status, err
+}
+
+// clearLegacyMixedUse runs under the directory lock before the revision is
+// recorded. Any load or write failure fails the event, so the sender retries
+// it and a demotion is never recorded over a flag that survived it. Only
+// active non-administrator revisions get here; deactivations never block.
+func (s *LifecycleStore) clearLegacyMixedUse(key string) error {
+	// While version-1 domain data awaits migration, directory sync must keep
+	// working, IMAP deployments included: migration recomputes the flag from
+	// the directory resource recorded here, so the demotion still lands. Any
+	// other load failure (a lost or corrupt ledger) fails the event.
+	if _, v1, err := legacyNativeDomain(filepath.Dir(s.path)); err == nil && v1 {
+		return nil
+	}
+	f, err := s.loadNative()
+	if err != nil {
+		return err
+	}
+	a := f.Accounts[key]
+	if !a.LegacyMixedUse {
+		return nil
+	}
+	a.LegacyMixedUse = false
+	f.Accounts[key] = a
+	return s.saveNative(f)
 }
 
 // LockDirectory holds the lock ApplyDirectory applies under, so a caller can

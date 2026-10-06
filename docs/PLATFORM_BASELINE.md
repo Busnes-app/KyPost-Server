@@ -319,6 +319,13 @@ no mutation. Refresh that mailbox on stale-reference errors, never retry using
 a stripped numeric suffix. Persisted notification history keeps its original
 references, so tapping an old notification may require a fresh sync.
 
+A KyPost administrator identity owns no native mailbox. Mail routes answer it,
+by session or device credential, with 403 and `"administratorIdentity": true`
+(message "administrator identities have no mailbox; use your everyday
+identity"). This is not a credential failure: keep the session and device
+pairing, show the message, and do not retry; access returns if the identity is
+demoted. 401 keeps its existing meaning.
+
 Existing external IMAP message IDs and cursors remain unchanged. Native
 mailboxes retain numeric internal IDs and return live full
 snapshots (`delta:false`, `cursor:0`) for every inbox request, including positive

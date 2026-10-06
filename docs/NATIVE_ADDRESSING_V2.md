@@ -4,9 +4,11 @@ Status: spec, 2026-10-06. Phase 1a is implemented: the version-2 storage formats
 `kypost-server migrate-native` at startup, the tombstone, fail-closed rollback and
 v1/v2 backup validation, still with one domain and one mailbox per user and routing
 keyed to the directory revision; until phase 3 each saved primary address generation
-is `max(stored, directory revision)`. `legacyMixedUse` is stored but not yet enforced;
-administrator separation for new provisioning (rest of phase 1) and phases 2–4 are
-not implemented. Prerequisite of
+is `max(stored, directory revision)`. Phase 1b is implemented: administrator
+subjects get mailbox-less accounts and are refused by native admission unless
+`legacyMixedUse`, which only demotion clears; promotion is enforced by admission
+without a generation bump until phase 3. Phases 2–4 are not implemented.
+Prerequisite of
 [continuous Cloudflare receiving](CLOUDFLARE_CONTINUOUS_RECEIVING.md); applies to
 both native receiving profiles. External IMAP accounts are unaffected.
 
@@ -141,7 +143,10 @@ already hold a native mailbox and an administrator role at migration are flagged
 admission refusal. They keep working unchanged until the separately specified
 mixed-use migration moves their content to an everyday identity, and cannot gain
 extra mailboxes or aliases meanwhile. Exception owner: the deployment owner; expiry:
-when the mixed-use migration ships, which removes the flag.
+when the mixed-use migration ships, which removes the flag. In native mode
+administrators also cannot save or test personal IMAP settings; IMAP
+configuration stored earlier is neither deleted nor blocked, which is left to that
+migration.
 
 **Receiving.** Routes are per address with `generation` = the address generation.
 Bind resolves the address to its mailbox; authority is checked per mailbox ID
@@ -236,10 +241,11 @@ pre-migration backup.
 
 Migration grants no authority and runs **while a restore hold is in place**: it is
 an offline format change and keeps the hold. The recovery authority digest hashes
-the single-mailbox view of the ledger, which migration does not change, so an
-outstanding recovery challenge or receipt stays valid. A phase that gives the new
-fields (`legacyMixedUse`, generations, extra mailboxes) authority must add them to
-that digest.
+the single-mailbox view of the ledger, which since phase 1b includes
+`legacyMixedUse`: an outstanding recovery challenge or receipt stays valid unless
+migration flagged an administrator subject, which needs a new challenge. A phase
+that gives further fields (generations, extra mailboxes) authority must add them
+to that digest.
 
 ## Backup and restore
 
