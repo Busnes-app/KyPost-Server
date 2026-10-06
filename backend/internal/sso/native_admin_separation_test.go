@@ -339,3 +339,27 @@ func TestNativeLegacyMixedUseDemotionFailsOnUnreadableLedger(t *testing.T) {
 		t.Fatal("re-promotion regained mail", err)
 	}
 }
+
+func TestNativeDirectorySyncDuringPendingMigration(t *testing.T) {
+	ctx := context.Background()
+	config, keyPath, _ := v1Fixture(t) // v1 files, migration not yet run
+	life := NewLifecycleStore(config)
+	raw := fmt.Sprintf(`{"schemas":[%q],"id":"boss","externalId":"boss","userName":"boss","active":true,"roles":[],"emails":[{"value":"boss@example.test","primary":true}],"meta":{"version":"W/\"3\""}}`, scimUserSchema)
+	var demoted DirectoryUser
+	if err := json.Unmarshal([]byte(raw), &demoted); err != nil {
+		t.Fatal(err)
+	}
+	ev := syncauth.Event{ID: "boss-3", Type: "user.updated", At: time.Now()}
+	if _, err := life.ApplyDirectoryUser(nativeIssuer, ev, demoted, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return true, nil }); err != nil {
+		t.Fatal("directory sync blocked by a pending storage migration", err)
+	}
+	if d, _, err := life.Directory(nativeIssuer, "boss"); err != nil || d.Revision != 3 {
+		t.Fatal("demotion not recorded", d.Revision, err)
+	}
+	if _, err := MigrateNative(ctx, config, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	if legacyFlag(t, life, "boss") {
+		t.Fatal("migration kept the flag for a subject demoted before it ran")
+	}
+}

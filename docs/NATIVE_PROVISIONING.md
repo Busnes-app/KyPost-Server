@@ -157,8 +157,9 @@ administrator identity and owns no native mailbox, per the suite rule and
   the webhook, so KyIdentity retries it and the revision is never recorded over a
   surviving flag. While an initialized ledger is missing or unreadable, every
   active non-administrator revision therefore fails and is retried; deactivations
-  still apply, and deployments that never initialized a native ledger are
-  unaffected. Nothing sets the flag again; restoring an older backup brings
+  still apply, and deployments that never initialized a native ledger, or whose
+  version-1 domain data still awaits storage migration, are unaffected:
+  migration recomputes the flag from the directory recorded meanwhile. Nothing sets the flag again; restoring an older backup brings
   back flag and directory together, and the replayed demotion clears it. Snapshot
   validation refuses a flag on a demoted subject; the recovery authority digest
   includes it.

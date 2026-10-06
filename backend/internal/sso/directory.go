@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -249,6 +250,13 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 // it and a demotion is never recorded over a flag that survived it. Only
 // active non-administrator revisions get here; deactivations never block.
 func (s *LifecycleStore) clearLegacyMixedUse(key string) error {
+	// While version-1 domain data awaits migration, directory sync must keep
+	// working, IMAP deployments included: migration recomputes the flag from
+	// the directory resource recorded here, so the demotion still lands. Any
+	// other load failure (a lost or corrupt ledger) fails the event.
+	if _, v1, err := legacyNativeDomain(filepath.Dir(s.path)); err == nil && v1 {
+		return nil
+	}
 	f, err := s.loadNative()
 	if err != nil {
 		return err
