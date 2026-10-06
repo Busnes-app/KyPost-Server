@@ -527,24 +527,35 @@ func TestNativeSnapshotFormatMixes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Configure's crash window: the empty ledger is written before the set.
+	empty := t.TempDir()
+	if err := os.WriteFile(filepath.Join(empty, nativeProvisioningFile), []byte(`{"version":2,"accounts":{},"mailboxes":{},"addresses":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name                string
 		domain, set, ledger string
 		pass                bool
+		unprovisioned       bool // no native users yet, as in Configure's window
 	}{
-		{"all-v1", v1, "", v1, true},
-		{"all-v2", v2, v2, v2, true},
-		{"v1-domain-v2-ledger", v1, v2, v2, true},
-		{"v2-domain-v1-ledger", v2, v2, v1, false},
-		{"no-domain-v1-ledger", "", "", v1, false},
-		{"no-domain-v2-ledger", "", "", v2, false},
+		{"no-domain-empty-v2-ledger", "", "", empty, true, true},
+		{"all-v1", v1, "", v1, true, false},
+		{"all-v2", v2, v2, v2, true, false},
+		{"v1-domain-v2-ledger", v1, v2, v2, true, false},
+		{"v2-domain-v1-ledger", v2, v2, v1, false, false},
+		{"no-domain-v1-ledger", "", "", v1, false, false},
+		{"no-domain-v2-ledger", "", "", v2, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := copyConfig(t, v1)
 			put(dir, legacyNativeDomainFile, tc.domain)
 			put(dir, NativeDomainsFile, tc.set)
 			put(dir, nativeProvisioningFile, tc.ledger)
-			if _, err := NewLifecycleStore(dir).ValidateNativeSnapshot(root, doc.Users); (err == nil) != tc.pass {
+			list, stateRoot := doc.Users, root
+			if tc.unprovisioned {
+				list, stateRoot = nil, t.TempDir()
+			}
+			if _, err := NewLifecycleStore(dir).ValidateNativeSnapshot(stateRoot, list); (err == nil) != tc.pass {
 				t.Fatalf("pass=%v err=%v", tc.pass, err)
 			}
 		})

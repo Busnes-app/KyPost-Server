@@ -115,7 +115,9 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 	if err != nil {
 		return native, err
 	}
-	if !NativeSnapshotFormatsConsistent(domainFormat, ledgerVersion) {
+	// An account-less v2 ledger without a domain is Configure's crash window
+	// (ledger before set); it carries no authority, so it must not fail backups.
+	if !NativeSnapshotFormatsConsistent(domainFormat, ledgerVersion) && !(domainFormat == 0 && ledgerVersion == 2 && len(f.Accounts) == 0) {
 		return true, ErrNativeProvisioning
 	}
 	for key, a := range f.Accounts {
