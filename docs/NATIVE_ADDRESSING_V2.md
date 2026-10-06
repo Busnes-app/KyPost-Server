@@ -306,9 +306,9 @@ Each phase is its own PR with its own tests; behaviour stays correct between the
   old clients see only the primary; a foreign or unknown `X-KyPost-Mailbox` returns
   404 without touching storage; per-user endpoints ignore the header.
 
-## Open decisions
+## Decisions (2026-10-06)
 
-- Whether deactivating a KyIdentity subject should also disable administrator-
-  created extra mailboxes (proposed: yes, all of the subject's mailboxes).
-- Reservation before reassignment (proposed: no automatic period; reassignment is
-  always an explicit administrator action).
+- Deactivating a KyIdentity subject disables all of its mailboxes, including
+  administrator-created extra mailboxes.
+- A released address has no automatic reservation period; reassignment is always an
+  explicit administrator action.
