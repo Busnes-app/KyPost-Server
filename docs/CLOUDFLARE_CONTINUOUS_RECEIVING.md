@@ -142,16 +142,24 @@ quarantined, not guessed.
 Both receiving profiles block abusive senders with an escalating cooldown, before
 storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
 
-- **Evidence counts only DKIM-authenticated mail.** The envelope sender is
-  spoofable and the Worker sees no peer IP, so a sender accrues abuse only from
-  messages whose Rspamd DKIM result passes for its domain. Unauthenticated abuse is
-  handled per message by the spam verdict.
-- **Automatic blocks are per sender address.** DKIM proves the domain, not the
-  person: on a shared provider any free account passes DKIM for the whole domain, so
-  an address-level trigger (proposed: 5 reject verdicts in 1 hour) blocks only that
-  address.
+- **Evidence counts only an authenticated sender identity.** A message counts
+  against an address only when all three hold: the envelope sender equals the
+  RFC5322 From address; DKIM passes with `d=` aligned to that address's domain; and
+  SPF passes for the envelope domain on the receiving MTA's own result. A domain-level
+  DKIM pass alone proves nothing about which address on a shared provider sent it, so
+  without all three nobody can pin reject verdicts on someone else's address.
+  Everything else is handled per message by the spam verdict.
+- **Automatic blocks are per sender address** (proposed trigger: 5 reject verdicts in
+  1 hour from that authenticated identity).
+- **Profile coverage.** Maddy establishes all three and enforces automatic blocks.
+  The Cloudflare Worker sees no peer IP, so Rspamd cannot evaluate SPF there.
+  Automatic gateway blocks are disabled in the Cloudflare profile until
+  qualification shows Email Routing hands the Worker a trustworthy SPF result for
+  the envelope domain; until then it uses per-message spam verdicts plus manual
+  blocks.
 - **Automatic domain blocks are narrow.** A domain is blocked automatically only when
-  at least 5 distinct authenticated addresses on it are blocked within 24 hours
+  at least 5 distinct addresses on it are automatically blocked (each meeting the
+  identity rule above) within 24 hours
   **and** the deployment has never accepted non-rejected mail from that domain.
   Shared providers your users already receive from are therefore never blocked
   automatically; throwaway spam domains are.
@@ -195,11 +203,17 @@ pickup → import → delete killed at every boundary, replay, conflict, generat
 quarantine, spam-to-Junk, capacity refusal, multi-owner deliveries, restore
 reconciliation.
 
+Offline, abuse blocks: five reject-verdict fixtures that pass DKIM for a shared
+domain but carry differing envelope senders and From addresses must not block any
+address, in both the published table and Maddy's RCPT check.
+
 Live, on the test deployment, each with its own bounded plan and approval:
 1. Whether a thrown Worker exception gives the sender a temporary failure.
 2. Several messages to several addresses and domains, including an unknown one.
 3. KyPost stopped while mail arrives; restart drains R2 and deletes provider copies.
 4. Address reassignment while mail waits in R2: old-generation mail quarantines.
+5. Whether Email Routing gives the Worker a trustworthy SPF result (gates automatic
+   sender blocks in this profile).
 
 ## Decisions (2026-10-06)
 
@@ -209,5 +223,6 @@ Live, on the test deployment, each with its own bounded plan and approval:
 4. Size cap: 25 MiB in both profiles, with the ingress limit migration.
 5. Pickup interval 30 s; the oldest-unpicked warning threshold is set during
    implementation.
-6. Abusive senders: blocked with an escalating cooldown, per address automatically
-   and per domain only under the narrow rule above.
+6. Abusive senders: blocked with an escalating cooldown, per authenticated address
+   automatically (Maddy now; Cloudflare after SPF qualification) and per domain only
+   under the narrow rule above; manual blocks in both profiles.
