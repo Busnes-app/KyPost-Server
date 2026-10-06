@@ -42,6 +42,8 @@ non-prerelease version.
 
 - Qualify refusal of signed recovery evidence by ordinary directory sync without account, revision or hold mutation; document the available KyIdentity exporter and pending challenge/repair boundary.
 
+- Web reader shows a "Copy code" card with a never-share warning for a verification code in INBOX mail under 15 minutes old; never on `$Phishing` mail. It makes no claim about the sender and no network request. Detects 5-8 digit and evenly grouped codes (`123 456`) near a code word, and 4-digit, alphanumeric and mixed-case codes (`K7P2QX`, `G-123456`, `a7Bx9k`) only after "code is"/"code:"/"is your … code", by bounded pattern matching, never the classifier.
+
 - Revoke restored native CardDAV app-password hashes and deny held native accounts on both cached and fresh CardDAV authentication; preserve legacy/original credentials and contact data.
 
 - Fence native HTTP reads/actions and new notification references with the persisted mailbox reference generation. Reject stale/foreign/bare numeric IDs before mail access, retain internal numeric/encryption identities and legacy IMAP behavior, and qualify actual snapshot ID reuse plus browser body-cache separation. Native restore remains held.

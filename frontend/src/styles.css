@@ -3596,6 +3596,31 @@ pre {
   margin: 4px 0;
 }
 
+.otp-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.otp-card-warning {
+  flex-basis: 100%;
+  color: var(--ink);
+  font-size: 0.85rem;
+}
+
+.otp-card-code {
+  font-family: var(--mono);
+  font-size: 1.5rem;
+  letter-spacing: 0.2em;
+  color: var(--ink-strong);
+  user-select: all;
+}
+
 .email-attachments-status {
   opacity: 0.75;
 }
