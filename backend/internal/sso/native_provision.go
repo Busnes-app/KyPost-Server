@@ -29,10 +29,14 @@ type NativeAssignment struct {
 	Status        string         `json:"status"`
 	Failure       string         `json:"failure,omitempty"`
 	Source        string         `json:"source,omitempty"`
+	// LegacyMixedUse exempts an administrator subject from the admission
+	// refusal. Set only by migration; cleared when an active resource lacks
+	// the administrator role. Hashed into the recovery authority digest.
+	LegacyMixedUse bool `json:"legacyMixedUse,omitempty"`
 }
 
 // nativeAssignments is the single-mailbox view callers use. stored keeps the
-// version-2 fields that view does not model (generations, history, flags).
+// version-2 fields that view does not model (generations, history).
 type nativeAssignments struct {
 	Accounts map[string]NativeAssignment
 	stored   nativeLedger
@@ -56,9 +60,7 @@ type nativeLedgerAccount struct {
 	Status         string `json:"status"`
 	Failure        string `json:"failure,omitempty"`
 	PrimaryMailbox string `json:"primaryMailbox"`
-	// Set only by migration for administrator subjects that already held a
-	// mailbox. Phase 1 stores it; nothing enforces it yet.
-	LegacyMixedUse bool `json:"legacyMixedUse"`
+	LegacyMixedUse bool   `json:"legacyMixedUse"`
 }
 
 type nativeLedgerMailbox struct {
@@ -120,6 +122,7 @@ func parseNativeLedger(raw []byte, historical bool) (nativeAssignments, int, err
 			Owner:   mailbox.Owner{Issuer: m.Owner.Issuer, Subject: m.Owner.Subject, Mailbox: a.PrimaryMailbox},
 			Address: addressOf[a.PrimaryMailbox], StateRoot: m.StateRoot, Limits: m.Limits,
 			Revision: a.Revision, Digest: a.Digest, DesiredActive: a.DesiredActive, Status: a.Status, Failure: a.Failure, Source: m.Source,
+			LegacyMixedUse: a.LegacyMixedUse,
 		}
 	}
 	return f, 2, nil
@@ -138,7 +141,7 @@ func (f nativeAssignments) ledger(directory map[string]DirectoryState) nativeLed
 		if a.DesiredActive {
 			state = "active"
 		}
-		l.Accounts[key] = nativeLedgerAccount{Revision: a.Revision, Digest: a.Digest, DesiredActive: a.DesiredActive, Status: a.Status, Failure: a.Failure, PrimaryMailbox: a.Owner.Mailbox, LegacyMixedUse: f.stored.Accounts[key].LegacyMixedUse}
+		l.Accounts[key] = nativeLedgerAccount{Revision: a.Revision, Digest: a.Digest, DesiredActive: a.DesiredActive, Status: a.Status, Failure: a.Failure, PrimaryMailbox: a.Owner.Mailbox, LegacyMixedUse: a.LegacyMixedUse}
 		m := nativeLedgerMailbox{Kind: "primary", State: state, StateRoot: a.StateRoot, Limits: a.Limits, Source: a.Source}
 		m.Owner.Issuer, m.Owner.Subject = a.Owner.Issuer, a.Owner.Subject
 		l.Mailboxes[a.Owner.Mailbox] = m
@@ -324,7 +327,8 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 		if exists && (a.Owner != owner || a.StateRoot != root || a.Limits != limits || a.Revision > d.Revision || (a.Revision == d.Revision && a.Digest != d.Digest)) {
 			return ErrNativeProvisioning
 		}
-		if !exists && !d.Active {
+		// Administrator subjects get a mailbox-less account; never reserve one.
+		if !exists && (!d.Active || HasAdminRole(d.Resource.Roles)) {
 			return ErrNativeProvisioning
 		}
 		for otherKey, other := range f.Accounts {
@@ -338,6 +342,9 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 		a.Revision = d.Revision
 		a.Digest = d.Digest
 		a.DesiredActive = d.Active
+		if directoryDemoted(*d.Resource) {
+			a.LegacyMixedUse = false
+		}
 		fail := func(code string) error {
 			a.Status = "failed"
 			a.Failure = code

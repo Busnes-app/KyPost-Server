@@ -92,6 +92,10 @@ func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, stateRoot, iss
 	if err != nil {
 		return NativeAssignment{}, err
 	}
+	// Administrators get no mailbox; promotion refuses from the next request.
+	if role == users.RoleAdmin && !a.LegacyMixedUse {
+		return NativeAssignment{}, ErrNativeProvisioning
+	}
 	domain, err := NewNativeDomainStore(filepath.Dir(s.path)).Read()
 	if err != nil || domain.Issuer != issuer {
 		return NativeAssignment{}, ErrNativeProvisioning

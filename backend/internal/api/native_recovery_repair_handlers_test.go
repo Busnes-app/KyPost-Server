@@ -45,9 +45,7 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 	t.Helper()
 	t.Setenv("STATE_DIR", t.TempDir())
 	s := newNativeRuntimeServer(t)
-	resource := runtimeDirectoryUser(true)
-	resource["roles"] = []string{"kypost.admin"}
-	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "repair-native-create", 1, resource))
+	legacyMixedUseAdmin(t, s, runtimeDirectoryUser(true))
 	u, err := s.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +169,7 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 				profile["roles"] = []string{"kypost.admin"}
 			}
 		}
-		subjects = append(subjects, map[string]any{"id": subject, "revision": 1, "profile": profile})
+		subjects = append(subjects, map[string]any{"id": subject, "revision": 2, "profile": profile})
 	}
 	now := time.Now().UTC()
 	rawEvidence, _ := json.Marshal(map[string]any{"version": 1, "issuer": c.Issuer, "systemId": c.SystemID, "nonce": c.Nonce, "issuedAt": now, "expiresAt": now.Add(5 * time.Minute), "subjects": subjects})

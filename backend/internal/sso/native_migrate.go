@@ -206,11 +206,10 @@ func (s *LifecycleStore) migratedNativeLedger(raw []byte) (nativeAssignments, er
 	if !lifecycle.NativeProvisioningInitialized {
 		return nativeAssignments{}, ErrNativeProvisioning
 	}
-	f.stored.Accounts = map[string]nativeLedgerAccount{}
-	for key := range f.Accounts {
-		if d := lifecycle.Directory[key]; d.Resource != nil && HasAdminRole(d.Resource.Roles) {
-			f.stored.Accounts[key] = nativeLedgerAccount{LegacyMixedUse: true}
-		}
+	for key, a := range f.Accounts {
+		d := lifecycle.Directory[key]
+		a.LegacyMixedUse = d.Resource != nil && HasAdminRole(d.Resource.Roles)
+		f.Accounts[key] = a
 	}
 	return f, nil
 }

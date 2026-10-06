@@ -46,6 +46,12 @@ func HasAdminRole(raw json.RawMessage) bool {
 	return false
 }
 
+// directoryDemoted is an active resource without the administrator role, the
+// only state that clears legacyMixedUse. Deactivation is not demotion.
+func directoryDemoted(u DirectoryUser) bool {
+	return u.Active != nil && *u.Active && !HasAdminRole(u.Roles)
+}
+
 const scimUserSchema = "urn:ietf:params:scim:schemas:core:2.0:User"
 
 // DirectoryUser is the versioned SCIM User a KySignOn directory event
@@ -211,6 +217,11 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 			if err != nil {
 				return err
 			}
+			if resource != nil && directoryDemoted(*resource) {
+				if err := s.clearLegacyMixedUse(key); err != nil {
+					return err
+				}
+			}
 			state := DirectoryState{Resource: resource, Revision: revision, Digest: digest, Active: active, EventID: ev.ID, RevokedBefore: prior.RevokedBefore}
 			if fence {
 				state.RevokedBefore = max(prior.RevokedBefore, now)
@@ -231,6 +242,20 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 		return fsutil.PersistJSONFile(s.path, f)
 	})
 	return status, err
+}
+
+// clearLegacyMixedUse runs under the directory lock before the revision is
+// recorded, so a failed write is retried with the event. An unreadable ledger
+// refuses all native admission; reconcile clears the flag once it loads.
+func (s *LifecycleStore) clearLegacyMixedUse(key string) error {
+	f, err := s.loadNative()
+	a := f.Accounts[key]
+	if err != nil || !a.LegacyMixedUse {
+		return nil
+	}
+	a.LegacyMixedUse = false
+	f.Accounts[key] = a
+	return s.saveNative(f)
 }
 
 // LockDirectory holds the lock ApplyDirectory applies under, so a caller can

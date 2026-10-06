@@ -137,6 +137,37 @@ func TestNativeReceivingRefusesRevokedRecipientBeforeData(t *testing.T) {
 	}
 }
 
+// Promotion refuses new and frozen recipients; accepted mail stays held.
+func TestNativeReceivingRefusesPromotedRecipient(t *testing.T) {
+	r, created := receivingFixture(t)
+	ctx := context.Background()
+	if err := r.bind(ctx, "before-promotion", "", "one@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"one","externalId":"one","userName":"one","active":true,"roles":["kypost.admin"],"emails":[{"value":"one@example.test","primary":true}],"meta":{"version":"W/\"2\""}}`)
+	var resource sso.DirectoryUser
+	if err := json.Unmarshal(raw, &resource); err != nil {
+		t.Fatal(err)
+	}
+	ev := syncauth.Event{ID: "promote-one", Type: "user.updated", At: time.Now()}
+	if _, err := r.life.ApplyDirectoryUser("https://identity.example.test", ev, resource, sso.EventDigest(ev.Type, raw), func() (bool, error) { return true, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.accounts.SetRole(created[0].ID, users.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.bind(ctx, "after-promotion", "", "one@example.test"); err == nil {
+		t.Fatal("bound mail for a promoted recipient")
+	}
+	if err := r.accept(ctx, "before-promotion", "", bytes.NewBufferString("From: test@outside.test\r\n\r\nnot accepted")); err == nil {
+		t.Fatal("accepted DATA for a promoted recipient")
+	}
+	d, err := r.holding.Get(ctx, receivingGateway, "before-promotion")
+	if err != nil || d.State != "staged" || len(d.Raw) != 0 {
+		t.Fatalf("promotion changed durable holding state: %+v %v", d, err)
+	}
+}
+
 func TestNativeReceivingAuthorityFencesLocalDeactivation(t *testing.T) {
 	r, created := receivingFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

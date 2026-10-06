@@ -63,7 +63,8 @@ locks, following [the addressing spec](NATIVE_ADDRESSING_V2.md#migration-v1--v2)
 2. write `native-domains.json` from the domain copy;
 3. write the version-2 ledger from the ledger copy (or an empty one when a domain
    has no ledger), seeding each primary address generation from the subject's
-   directory revision and setting `legacyMixedUse` for administrator subjects;
+   directory revision and setting `legacyMixedUse` for administrator subjects
+   ([administrator separation](#administrator-separation));
 4. reseal the relay as version 2 with the same key and `generation`;
 5. replace `native-domain.json` with the tombstone.
 
@@ -112,6 +113,33 @@ existing issuerless link method refuses all native relinks; unlink retains
 ownership and revokes the credential. Supported native reauthorization is an
 activation gate. Legacy link/unlink behavior is preserved, and the shared users
 writer now refuses duplicate nonempty SSO subjects across creation and linking.
+
+## Administrator separation
+
+A subject whose retained directory resource carries `kypost.admin` is an
+administrator identity and owns no native mailbox, per the suite rule and
+[the addressing spec](NATIVE_ADDRESSING_V2.md#behaviour):
+
+- In native mode the webhook creates it as an ordinary non-native, mailbox-less
+  account inside the directory apply, so administrators can be provisioned while
+  native mail is held. The repair worker does the same for a retained
+  administrator resource with no account. Neither reserves an address, prepares
+  storage or sets `nativeMailboxIssuer`/`nativeMailboxSource`; allocation refuses
+  a new reservation for an administrator resource.
+- Demotion leaves that account non-native: the worker never converts an existing
+  non-native account. An everyday identity is a separate KyIdentity subject.
+- Native admission (API mail, sending, receiving bind/import, daemon polling)
+  refuses an administrator-role subject unless its ledger account has
+  `legacyMixedUse`. Promotion of an everyday native subject is enforced by
+  admission from the next request; mail, reservation and storage are retained and
+  demotion restores access. Phase 1 bumps no address generation on promotion.
+- `legacyMixedUse` is set only by migration, for subjects holding a mailbox and an
+  administrator role. It is cleared, under the directory lock, when an active
+  resource lacks the role (in the directory apply and in reconcile); deactivation
+  alone does not clear it, and a cleared flag never returns. Snapshot validation
+  refuses a flag on a demoted subject; the recovery authority digest includes it.
+  Exception owner: the deployment owner. Expiry: the mixed-use migration, which
+  moves the content to an everyday identity and removes the flag.
 
 Allocation context is at most 30 seconds and never outlives the domain proof.
 Cancellable flock/mutex waits leave no abandoned waiter that acquires later.

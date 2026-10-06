@@ -24,9 +24,7 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 			demote := scenario == "demotion"
 			t.Setenv("STATE_DIR", t.TempDir())
 			s := newNativeRuntimeServer(t)
-			resource := runtimeDirectoryUser(true)
-			resource["roles"] = []string{"kypost.admin"}
-			directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "native-create", 1, resource))
+			legacyMixedUseAdmin(t, s, runtimeDirectoryUser(true))
 			native, e := s.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
 			if e != nil || native.NativeMailboxSource == "" {
 				t.Fatal(e)
@@ -121,7 +119,7 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 				if e = os.Rename(path, path+".saved"); e != nil {
 					t.Fatal(e)
 				}
-				failed := postDirectory(t, s, testSyncKey, "user.updated", "native-loss", 2, lossResource)
+				failed := postDirectory(t, s, testSyncKey, "user.updated", "native-loss", 3, lossResource)
 				if failed.Code != 500 {
 					t.Fatal("missing state did not refuse revocation", failed.Code)
 				}
@@ -129,14 +127,14 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 					t.Fatal("missing native state recreated", e)
 				}
 				d, _, e := s.ssoLifecycle.Directory("https://idp.example", native.SSOSub)
-				if e != nil || d.Revision != 1 {
+				if e != nil || d.Revision != 2 {
 					t.Fatal("failed revocation acknowledged event", e)
 				}
 				if e = os.Rename(path+".saved", path); e != nil {
 					t.Fatal(e)
 				}
 			}
-			loss := postDirectory(t, s, testSyncKey, "user.updated", "native-loss", 2, lossResource)
+			loss := postDirectory(t, s, testSyncKey, "user.updated", "native-loss", 3, lossResource)
 			if loss.Code != 200 {
 				t.Fatal("signed queued loss refused", loss.Code, loss.Body.String())
 			}

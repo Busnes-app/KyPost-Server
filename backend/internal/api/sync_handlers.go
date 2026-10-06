@@ -135,7 +135,7 @@ func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, e
 		if !active {
 			return false, nil // nothing to disable; the fence alone refuses a login
 		}
-		if s.nativeMail {
+		if s.nativeMail && role != users.RoleAdmin {
 			return false, nil // retain desired state; allocate after the directory unlock
 		}
 		return false, s.provisionDirectoryUser(u, role)
@@ -171,8 +171,9 @@ func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, e
 	return fence, nil
 }
 
-// provisionDirectoryUser creates the account, under a distinct name when a
-// local account already owns the directory's userName.
+// provisionDirectoryUser creates a non-native account, the only kind an
+// administrator subject gets even in native mode, under a distinct name when
+// a local account already owns the directory's userName.
 func (s *Server) provisionDirectoryUser(u sso.DirectoryUser, role users.Role) error {
 	username := ssoUsername(u.UserName, u.ID)
 	_, err := s.users.CreateSSOUser(username, role, u.ID, u.UserName, u.Email())

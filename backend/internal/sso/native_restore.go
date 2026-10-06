@@ -131,7 +131,7 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 		}
 		ids[a.Owner.Mailbox], root = true, a.StateRoot
 		d, ok := lifecycle.Directory[key]
-		if !ok || d.Resource == nil || d.Resource.ID != a.Owner.Subject || d.Resource.Active == nil || *d.Resource.Active != d.Active || a.Revision > d.Revision || a.Revision == d.Revision && (a.Digest != d.Digest || a.DesiredActive != d.Active) {
+		if !ok || d.Resource == nil || d.Resource.ID != a.Owner.Subject || d.Resource.Active == nil || *d.Resource.Active != d.Active || a.Revision > d.Revision || a.Revision == d.Revision && (a.Digest != d.Digest || a.DesiredActive != d.Active) || a.LegacyMixedUse && directoryDemoted(*d.Resource) {
 			return true, ErrNativeProvisioning
 		}
 		revision, err := d.Resource.Revision("user.updated")
