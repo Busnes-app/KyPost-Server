@@ -45,14 +45,14 @@ synchronously. Both were approved on 2026-10-06; `TURNKEY_MAIL_STACK_PLAN.md` an
 
 ## Prerequisites (separate change sets, both profiles)
 
-- **Addressing model v2.** The single domain and single mailbox per user are encoded
+- **Addressing model v2** ([spec](NATIVE_ADDRESSING_V2.md)). The single domain and single mailbox per user are encoded
   in `sso` (`native-domain.json`, assignments keyed by issuer/subject with one
   `Address`), `users` (`Mailbox == User.ID`, one native source per user) and
   `app/receiving.go` (single domain lock, `users/<Mailbox>` paths). v2 introduces a
   set of verified domains, mailboxes with their own IDs owned by a subject, and an
   address table `address → mailbox, generation, state` with primary address, explicit
   aliases and reservation of released names. **Generation is per address**, bumped
-  only on reassignment, disable or release, so ordinary profile edits do not fence
+  only on reassignment, disable, re-enable or release, so ordinary profile edits do not fence
   waiting mail. Sending allows any address of the sending mailbox.
 - **Receipt archival.** Imported receipts count toward the ingress record limit
   (10,000) and are never deleted, so continuous reception would stop. Fenced
