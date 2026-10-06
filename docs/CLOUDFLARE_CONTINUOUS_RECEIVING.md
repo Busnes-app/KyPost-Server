@@ -76,8 +76,8 @@ phone photos) for both receiving profiles; this raises the ingress 4 MiB message
 limit and its live payload budget through a store limit migration.
 
 
-- `email`: lowercase `message.to` and the envelope sender domain. A sender domain on
-  the table's block list → `setReject` before reading the body. Then look the
+- `email`: lowercase `message.to` and the envelope sender domain. A sender address or
+  domain on the table's block list → `setReject` before reading the body. Then look the
   recipient up in the current table. Unknown address,
   or a domain absent from the table → `setReject` (permanent 550, intended). Over the
   address's `maxBytes` → `setReject`. Table older than the maximum age → per decision
@@ -86,7 +86,7 @@ limit and its live payload budget through a store limit migration.
   `If-None-Match: *`, awaited before success. Storage failure throws rather than
   rejecting (temporary-failure behaviour to be qualified).
 - **Routing table** `{revision, issuedAt, routes: [{address, generation, maxBytes}],
-  blockedSenders: [{domain, until}]}`,
+  blockedSenders: [{address or domain, until}]}`,
   signed by KyPost with an Ed25519 key; the Worker holds only the public key.
   Revision is KyPost's millisecond clock; the Worker refuses revisions not greater
   than the stored one or more than 5 minutes in the future, and replaces
@@ -113,7 +113,8 @@ restored second instance must not share them.
 A daemon loop, outbound HTTPS only, every 30 seconds and on directory change:
 
 1. **Publish.** Build the table from admitted assignments on currently verified
-   domains under the authority fences; sign and `PUT` when it changed. Record each
+   domains under the authority fences; sign and `PUT` when it changed, and re-sign at least hourly so an
+   unchanged directory never reaches the 14-day maximum age. Record each
    published revision locally (`revision → address, generation, owner`). A transient
    DNS failure never prunes a domain; only deliberate domain removal does.
 2. **List.** Page `GET /messages` oldest first. Check a local provider ledger
@@ -136,21 +137,29 @@ backups. After restore, `GET /routes` reconciles: KyPost publishes only above th
 stored revision, and R2 items frozen against revisions it no longer has are
 quarantined, not guessed.
 
-## Abusive sender domains
+## Abusive senders
 
-Both receiving profiles block abusive sender domains with an escalating cooldown,
-before storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
+Both receiving profiles block abusive senders with an escalating cooldown, before
+storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
 
 - **Evidence counts only DKIM-authenticated mail.** The envelope sender is
-  spoofable and the Worker sees no peer IP, so a domain accrues abuse only from
-  messages whose Rspamd DKIM result passes for that domain. Unauthenticated abuse
-  never blocks a domain; it is handled per message by the spam verdict.
-- **Trigger:** a domain whose authenticated mail draws repeated reject verdicts
-  within a window (proposed: 5 in 1 hour) is blocked.
+  spoofable and the Worker sees no peer IP, so a sender accrues abuse only from
+  messages whose Rspamd DKIM result passes for its domain. Unauthenticated abuse is
+  handled per message by the spam verdict.
+- **Automatic blocks are per sender address.** DKIM proves the domain, not the
+  person: on a shared provider any free account passes DKIM for the whole domain, so
+  an address-level trigger (proposed: 5 reject verdicts in 1 hour) blocks only that
+  address.
+- **Automatic domain blocks are narrow.** A domain is blocked automatically only when
+  at least 5 distinct authenticated addresses on it are blocked within 24 hours
+  **and** the deployment has never accepted non-rejected mail from that domain.
+  Shared providers your users already receive from are therefore never blocked
+  automatically; throwaway spam domains are.
 - **Cooldown escalates** per repeat: 1 hour, 24 hours, 7 days; a clean period
   resets the level. Blocks expire automatically at `until`.
-- **Administrators** see blocks with their evidence counts and can block or unblock
-  any domain manually; manual blocks have no automatic expiry unless one is set.
+- **Administrators** see blocks with their evidence and can block or unblock any
+  address or domain manually; manual blocks have no automatic expiry unless one is
+  set.
 - Blocked mail is rejected, not stored; senders get a permanent 550 for the
   duration. Block state is durable, in sealed backups, and audited without message
   content.
@@ -200,4 +209,5 @@ Live, on the test deployment, each with its own bounded plan and approval:
 4. Size cap: 25 MiB in both profiles, with the ingress limit migration.
 5. Pickup interval 30 s; the oldest-unpicked warning threshold is set during
    implementation.
-6. Abusive sender domains: blocked with an escalating cooldown, as above.
+6. Abusive senders: blocked with an escalating cooldown, per address automatically
+   and per domain only under the narrow rule above.
