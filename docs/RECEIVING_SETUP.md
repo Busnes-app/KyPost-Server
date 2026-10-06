@@ -257,9 +257,10 @@ mail and test DNS. It checks real SMTP clean/GTUBE/outage responses, preserved
 MIME/body/attachment delivery and accepted replay during outage. Unit integration
 also checks revocation during scanning and conflicting replay. This is not live
 production tuning or physical-client qualification. The scanner helper can be
-reused by a future Cloudflare adapter; Cloudflare needs authenticated provenance,
-durable pickup/acknowledgment and retained handling for mail already accepted
-upstream. That adapter is not implemented here.
+reused by the separate [one-message Cloudflare pilot](CLOUDFLARE_RECEIVING.md).
+Its manual pickup uses content/DKIM scanning without original peer metadata;
+provider bytes remain retained after refusal or import. Continuous hosted
+reception and provider cleanup are not implemented.
 
 ## Fixed qualification policy and limits
 

@@ -16,9 +16,9 @@ root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
 
 mapfile -t tests < <(
-  find push-relay-shared worker/src worker-apns/src \
+  find push-relay-shared worker/src worker-apns/src receiving-worker \
     -type d -name node_modules -prune -o \
-    -type f -name '*.test.mts' -print | sort
+    -type f \( -name '*.test.mts' -o -name '*.test.mjs' \) -print | sort
 )
 
 if [[ ${#tests[@]} -eq 0 ]]; then

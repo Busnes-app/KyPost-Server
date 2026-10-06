@@ -238,6 +238,9 @@ jobs:
       - name: relay behaviour
         run: ./scripts/test-relays.sh
 
+      - name: receiving Worker R2 runtime
+        run: node receiving-worker/runtime-check.mjs
+
   scripts:
     name: ci-scripts
     runs-on: ubuntu-latest

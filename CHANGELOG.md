@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Add controlled one-message Cloudflare Email Worker/R2 capture and private manual HTTPS pickup, with frozen native ownership, exact bytes and durable replay receipts. Require local content scanning without invented SMTP peer provenance; retain provider bytes on refusal and after import. No continuous receiving, automatic provider cleanup or client contract changes.
+
 - Add optional pinned local Rspamd sidecar and bounded pre-commit native SMTP filtering; defer scanner failures, preserve accepted replay and mailbox bytes, and keep existing IMAP/client behavior.
 
 - MIME-encode non-ASCII subjects in generated messages and stored copies for SMTP relays that require seven-bit headers; preserve header sanitization and client-encrypted PGP/MIME.

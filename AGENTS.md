@@ -133,7 +133,7 @@ Default section order:
 
 ## User Preferences
 
-- Optional `docker-compose.rspamd.yml` enables strict local pre-commit native SMTP scanning. Read [receiving spam setup](docs/RECEIVING_SETUP.md#optional-rspamd-sidecar) before changing policy, transport, sidecar permissions or metadata. Preserve accepted replay and exact mailbox bytes; scanning does not authorize mail movement or ownership. Cloudflare ingestion remains separate pending work.
+- Optional `docker-compose.rspamd.yml` enables strict local pre-commit native SMTP scanning. Read [receiving spam setup](docs/RECEIVING_SETUP.md#optional-rspamd-sidecar) before changing policy, transport, sidecar permissions or metadata. Preserve accepted replay and exact mailbox bytes; scanning does not authorize mail movement or ownership. Read [Cloudflare pilot](docs/CLOUDFLARE_RECEIVING.md) before changing hosted capture, frozen claims, pickup credentials or scanner provenance; the one-message profile retains provider copies and does not enable continuous reception.
 
 - Native restore authority prerequisites are captured against pinned KyIdentity source in [docs/NATIVE_RESTORE_AUTHORITY.md](docs/NATIVE_RESTORE_AUTHORITY.md). Ordinary active-user resync is insufficient to prove previously offboarded/deleted subjects; offline restore revokes native device/push registrations, CardDAV app passwords and pairing authority, while no hold release is supported. Held native login/session/SSO/MFA authority is also refused; retain an independently provisioned legacy recovery admin. [docs/NATIVE_RESTORE_REFERENCES.md](docs/NATIVE_RESTORE_REFERENCES.md) records cached-ID reuse and the generation-bound HTTP/notification reference boundary; Protected held repair reconciles existing native activity/roles and revokes transport credentials using fresh signed evidence; it preserves mail/PGP material and the hold. Read the authority contract before changing repair or completion. Physical-client and recovery activation qualification remain pending.
 
@@ -149,6 +149,8 @@ Default section order:
 - Use the shared JSON logger from ky-primitives. No audit-chain service is part of this integration; supervisord owns stderr capture/rotation (see `LOGGING.md`).
 
 ## Child DOX Index
+
+- `receiving-worker/` — Independent one-message Cloudflare Email Worker, private R2 retention and authenticated read-only pickup. See [receiving-worker/AGENTS.md](receiving-worker/AGENTS.md).
 
 - `backend/` — Go 1.26.6 classification engine, HTTP API, IMAP adapter, Ollama adapter, poller, config, state, health, logging, redaction, sealed backups, internal receiving buffer, permanent mailbox core and encrypted native outbox; produces the `kypost-server` binary. See [backend/AGENTS.md](backend/AGENTS.md). Contains nested children: `backend/internal/backup/`, `backend/internal/adapters/`, `backend/internal/contacts/`, `backend/internal/groups/`, `backend/internal/mailcache/`, `backend/internal/ingress/`, `backend/internal/mailbox/`.
 - `frontend/` — React 19 / TypeScript SPA for config, monitoring, decision audit, and log streaming. See [frontend/AGENTS.md](frontend/AGENTS.md).

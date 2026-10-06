@@ -26,12 +26,20 @@ const receivingGateway = "maddy-local"
 var receivingLimits = ingress.Limits{MessageBytes: 4 << 20, PayloadBytes: 64 << 20, Records: 10000}
 
 type receivingRuntime struct {
+	gateway   string
 	configDir string
 	stateDir  string
 	accounts  *users.Store
 	life      *sso.LifecycleStore
 	domains   *sso.NativeDomainStore
 	holding   *ingress.Store
+}
+
+func (r *receivingRuntime) gatewayID() string {
+	if r.gateway == "" {
+		return receivingGateway
+	}
+	return r.gateway
 }
 
 type receivingCommandError struct {
@@ -118,23 +126,27 @@ func startReceivingImport(ctx context.Context, d runDeps) (<-chan struct{}, erro
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
-			var after int64
-			for ctx.Err() == nil {
-				rows, err := r.holding.List(ctx, receivingGateway, after, 100)
-				if err != nil {
-					d.logger.Error("receiving buffer unavailable; preserve storage and repair", "error", err.Error())
-					break
-				}
-				if len(rows) == 0 {
-					break
-				}
-				for _, row := range rows {
-					after = row.Sequence
-					if row.State != "pending" || ctx.Err() != nil {
-						continue
+			for _, gateway := range []string{receivingGateway, cloudflareGateway} {
+				scoped := *r
+				scoped.gateway = gateway
+				var after int64
+				for ctx.Err() == nil {
+					rows, err := r.holding.List(ctx, gateway, after, 100)
+					if err != nil {
+						d.logger.Error("receiving buffer unavailable; preserve storage and repair", "error", err.Error())
+						break
 					}
-					if err := r.importDelivery(ctx, row.ID); err != nil {
-						d.logger.Error("receiving import deferred; holding bytes retained", "error", err.Error(), "correlation_id", row.ID)
+					if len(rows) == 0 {
+						break
+					}
+					for _, row := range rows {
+						after = row.Sequence
+						if row.State != "pending" || ctx.Err() != nil {
+							continue
+						}
+						if err := scoped.importDelivery(ctx, row.ID); err != nil {
+							d.logger.Error("receiving import deferred; holding bytes retained", "error", err.Error(), "correlation_id", row.ID)
+						}
 					}
 				}
 			}
@@ -222,6 +234,10 @@ func (r *receivingRuntime) withAuthority(ctx context.Context, ids []string, proo
 }
 
 func (r *receivingRuntime) bind(ctx context.Context, id, sender, recipient string) error {
+	return r.bindExpected(ctx, id, sender, recipient, nil)
+}
+
+func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipient string, expected *cloudflareRoute) error {
 	parsed, err := mail.ParseAddress(recipient)
 	if err != nil || parsed.Name != "" || parsed.Address != recipient {
 		return ingress.ErrRoute
@@ -243,10 +259,16 @@ func (r *receivingRuntime) bind(ctx context.Context, id, sender, recipient strin
 		if admitted.Owner != a.Owner || admitted.Address != recipient {
 			return ingress.ErrRoute
 		}
+		if expected != nil {
+			d, known, err := r.life.Directory(admitted.Owner.Issuer, admitted.Owner.Subject)
+			if err != nil || !known || !expected.matches(admitted, d.Revision) {
+				return ingress.ErrRoute
+			}
+		}
 		if err := r.refreshRoute(ctx, admitted, false); err != nil {
 			return err
 		}
-		return r.holding.Bind(ctx, receivingGateway, id, sender, recipient)
+		return r.holding.Bind(ctx, r.gatewayID(), id, sender, recipient)
 	})
 }
 
@@ -272,7 +294,7 @@ func (r *receivingRuntime) frozenAuthority(ctx context.Context, d ingress.Delive
 	return r.withAuthority(ctx, ids, proof, func(current map[string]sso.NativeAssignment) error {
 		quarantine := func() error {
 			if d.State == "pending" {
-				if err := r.holding.QuarantinePending(ctx, receivingGateway, d.ID); err != nil {
+				if err := r.holding.QuarantinePending(ctx, r.gatewayID(), d.ID); err != nil {
 					return err
 				}
 			}
@@ -302,6 +324,9 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 	enabled, err := receivingRspamdEnabled()
 	if err != nil {
 		return err
+	}
+	if r.gatewayID() == cloudflareGateway && !enabled {
+		return errors.New("cloudflare pickup requires KYPOST_RECEIVING_RSPAMD=true")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -342,15 +367,19 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 	if err != nil {
 		return err
 	}
-	d, err := r.holding.Get(ctx, receivingGateway, id)
+	d, err := r.holding.Get(ctx, r.gatewayID(), id)
 	if err != nil {
 		return err
 	}
 	if enabled && d.State == "staged" {
-		if d.Sender != sender || len(peer) != 2 {
+		if d.Sender != sender || r.gatewayID() != cloudflareGateway && len(peer) != 2 || r.gatewayID() == cloudflareGateway && len(peer) != 0 {
 			return &receivingCommandError{err: errors.New("rspamd requires the bound sender and receiver-supplied IP/HELO"), code: 5}
 		}
-		if err := scanReceivingSpam(ctx, raw, d, peer[0], peer[1], receivingRspamdURL); err != nil {
+		ip, helo := "", ""
+		if len(peer) == 2 {
+			ip, helo = peer[0], peer[1]
+		}
+		if err := scanReceivingSpam(ctx, raw, d, ip, helo, receivingRspamdURL); err != nil {
 			return err
 		}
 	}
@@ -360,12 +389,12 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 				return ingress.ErrCapacity
 			}
 		}
-		return r.holding.Accept(ctx, receivingGateway, id, sender, bytes.NewReader(raw))
+		return r.holding.Accept(ctx, r.gatewayID(), id, sender, bytes.NewReader(raw))
 	})
 }
 
 func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error {
-	d, err := r.holding.Get(ctx, receivingGateway, id)
+	d, err := r.holding.Get(ctx, r.gatewayID(), id)
 	if err != nil {
 		return err
 	}
@@ -407,7 +436,12 @@ func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error 
 				return sso.ErrNativeProvisioning
 			}
 		}
-		return r.holding.Import(ctx, receivingGateway, id, func(owner mailbox.Owner) (*mailbox.Store, error) {
+		// A lost pickup response may repeat a completed local obligation. Keep
+		// current ownership checks, but do not reacquire an acknowledged lease.
+		if d.State == "imported" {
+			return nil
+		}
+		return r.holding.Import(ctx, r.gatewayID(), id, func(owner mailbox.Owner) (*mailbox.Store, error) {
 			store := stores[owner]
 			if store == nil {
 				return nil, ingress.ErrRoute

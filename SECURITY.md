@@ -47,7 +47,20 @@ We acknowledge security researchers and community members who help us improve. I
 
 ## Known Limitations & Trust Boundaries
 
-- **Optional Rspamd:** native SMTP filtering gives the operator-local scanner raw MIME and SMTP envelope/peer metadata. A compromised scanner can allow/refuse incoming mail and, through its shared network namespace, reach KyPost's other loopback services; it receives no KyPost filesystem mounts or keys. The pinned nonroot/capability-free, read-only sidecar binds only loopback11333, disables controller/proxy and remote payload/map/AI services, and uses bounded temporary state. SPF/DKIM/DMARC checks make ordinary DNS lookups through the host resolver. False positives at the reject threshold permanently refuse new SMTP mail; outages, unknown/skipped acceptance verdicts and transport errors temporarily refuse it. Rejection never deletes an accepted obligation. Trusted source IP comes from Maddy, while HELO remains sender-asserted. Sender-written authentication/spam headers grant no authority. Raw response text and correspondence are excluded from scanner/application logs. This initial reject-only profile does not implement Junk placement, Bayesian learning, antivirus, PGP-body inspection or Cloudflare ingestion. See [operator policy and rollback](docs/RECEIVING_SETUP.md#optional-rspamd-sidecar).
+- **Optional Rspamd:** native SMTP filtering gives the operator-local scanner raw MIME and SMTP envelope/peer metadata. A compromised scanner can allow/refuse incoming mail and, through its shared network namespace, reach KyPost's other loopback services; it receives no KyPost filesystem mounts or keys. The pinned nonroot/capability-free, read-only sidecar binds only loopback11333, disables controller/proxy and remote payload/map/AI services, and uses bounded temporary state. SPF/DKIM/DMARC checks make ordinary DNS lookups through the host resolver. False positives at the reject threshold permanently refuse new SMTP mail; outages, unknown/skipped acceptance verdicts and transport errors temporarily refuse it. Rejection never deletes an accepted obligation. Trusted source IP comes from Maddy, while HELO remains sender-asserted. Sender-written authentication/spam headers grant no authority. Raw response text and correspondence are excluded from scanner/application logs. This initial reject-only profile does not implement Junk placement, Bayesian learning, antivirus, PGP-body inspection. The separate hosted pilot is described below. See [operator policy and rollback](docs/RECEIVING_SETUP.md#optional-rspamd-sidecar).
+
+### Cloudflare receiving pilot
+
+The optional one-message Email Worker stores exact raw mail and its frozen envelope
+in private operator-owned R2. Cloudflare administrators can read ordinary mail;
+provider copies remain after local encryption, scanner refusal and successful
+pickup. A dedicated read-only secret protects bounded HTTPS pickup, while current
+KyPost domain/identity/source/revision and restore gates authorize delivery. The
+Worker supplies no trusted original peer, so fixed hosted scanner settings disable
+SPF/DMARC/ARC groups and retain content/DKIM checks. Sender-written authentication
+headers grant no authority. A full slot rejects further mail; an ambiguous write
+may retain bytes despite SMTP refusal. No automatic deletion or continuous
+receiving guarantee exists. See [scope and rollback](docs/CLOUDFLARE_RECEIVING.md).
 
 ### Native restore evidence
 

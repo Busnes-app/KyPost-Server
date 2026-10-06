@@ -1,0 +1,14 @@
+# Copy privately and supply the dedicated operator-owned bucket/account.
+name = "kypost-receiving-pilot"
+main = "worker.mjs"
+compatibility_date = "2026-09-18"
+workers_dev = true
+
+[[r2_buckets]]
+binding = "MAIL"
+bucket_name = "REPLACE-WITH-DEDICATED-PRIVATE-PILOT-BUCKET"
+
+# Install ROUTE and PICKUP_TOKEN through Wrangler secrets, never this file.
+# Disable bucket public access, lifecycle deletion and Worker observability.
+[observability]
+enabled = false
