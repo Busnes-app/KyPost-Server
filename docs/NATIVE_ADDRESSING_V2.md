@@ -17,7 +17,8 @@ both native receiving profiles. External IMAP accounts are unaffected.
   the suite administrator-separation rule.
 - Every address has a per-address generation, bumped only on reassignment, disable,
   re-enable or release, so ordinary directory edits never fence mail waiting at a
-  receiving gateway. (The outbox stays fenced on the directory revision as today.)
+  receiving gateway. The outbox stays fenced on the directory revision as today and,
+  additionally, on the `From` address's generation (see Sending).
 - Existing v1 deployments migrate in place with no data moved; v1 backups stay
   restorable; existing client wire contracts stay valid (all API changes additive).
 
@@ -155,7 +156,11 @@ Adding a domain to the relay set does not change the relay `Generation`. Removin
 one is refused while a `queued` or `retryable` job sends from it (`submitting` and
 `uncertain` jobs are never reclaimed and do not block); the domain moves to the
 relay's `retiredDomains`, and backup validation checks historical jobs against
-`domains ∪ retiredDomains`. Unowned or inactive `From` stays 403.
+`domains ∪ retiredDomains`. Unowned or inactive `From` stays 403. Administrator actions (release, reassign,
+mailbox disable) do not change the directory revision, so each `OutboundJob` also
+records the `From` address's generation; on queue and on every claim or retry the
+address must still be `active`, owned by the sending mailbox and at that generation,
+otherwise the job ends `ErrNativeOutboundStale` and is never submitted.
 
 **Client access.** Existing clients keep working unchanged: an account session sees
 the user's primary mailbox. Additive API: `GET /api/mailboxes` lists the caller's
@@ -163,9 +168,12 @@ mailboxes and addresses; mail endpoints may select a mailbox with an
 `X-KyPost-Mailbox` header, defaulting to the primary. Authorization contract:
 
 - On every request, resolve the header through the ledger and require the mailbox
-  owner to equal the caller's `(issuer, SSOSub)`, with admission under the directory
-  fence. The header value is never used as a path before that lookup.
-- Unknown and foreign mailbox IDs return the same 404.
+  owner to equal the caller's `(issuer, SSOSub)`, the mailbox `state` to be `active`,
+  and admission under the directory fence. A disabled mailbox is not readable,
+  searchable or writable; its mail is retained and access returns when it is
+  re-enabled. The header value is never used as a path before that lookup.
+- Unknown, foreign and disabled mailbox IDs return the same 404, and
+  `GET /api/mailboxes` omits disabled mailboxes.
 - Every mail cache (`userStores`, `userMailCache`, `userMail`, the poller's clients)
   is keyed by mailbox ID.
 - Per-user endpoints (devices, pairing, CardDAV, PGP keys, settings) ignore the
@@ -246,11 +254,11 @@ challenge or receipt, because the recovery authority digest hashes the ledger.
 ## Touch points
 
 `sso` (domain store, provisioning ledger, `ApplyDirectory` bump, allocate, admission,
-storage ownership, outbound, restore, recovery and repair barriers), `users` (native
+storage ownership, outbound including the `From` generation fence, restore, recovery and repair barriers), `users` (native
 fields unchanged), `api` (domain and relay handlers, admin mailbox/address handlers,
 `GET /api/mailboxes`, mailbox selection and cache keys in userscope, send `From`,
 PGP suggestions, notifications), `app` (receiving bind/import, Maddy configuration
-generator, Cloudflare route), `mailbox` (outbox `From` domain; `PrepareAccount` and
+generator, Cloudflare route), `mailbox` (outbox `From` domain and `From` generation in `OutboundJob`; `PrepareAccount` and
 `ValidatePreparedAccount` take the storage root instead of hard-coding
 `stateRoot/users`), `backup` reference rotation by mailbox path, `mailmsg` (relay
 domain set), `processor` (runs per mailbox), `backup` (collection, both allowlists,
@@ -303,12 +311,18 @@ Each phase is its own PR with its own tests; behaviour stays correct between the
 - Domains: retiring a domain keeps its address records and lets old snapshots and
   bindings validate; historical outbox jobs on a retired relay domain validate.
 - Mailboxes: two mailboxes of one user stay isolated (storage, search, Sent, caches);
-  old clients see only the primary; a foreign or unknown `X-KyPost-Mailbox` returns
-  404 without touching storage; per-user endpoints ignore the header.
+  old clients see only the primary; a foreign, unknown or disabled
+  `X-KyPost-Mailbox` returns 404 without touching storage, and disabled mailboxes are
+  omitted from `GET /api/mailboxes`; per-user endpoints ignore the header.
+- Outbox: a job queued from an alias that becomes retryable, then has its alias
+  released (and, separately, reassigned to another mailbox), ends stale on the next
+  worker run and is never delivered.
 
 ## Decisions (2026-10-06)
 
 - Deactivating a KyIdentity subject disables all of its mailboxes, including
   administrator-created extra mailboxes.
+- A disabled mailbox is inaccessible (same 404 as unknown), with mail retained until
+  re-enabled, matching the rule that disabled users lose access immediately.
 - A released address has no automatic reservation period; reassignment is always an
   explicit administrator action.
