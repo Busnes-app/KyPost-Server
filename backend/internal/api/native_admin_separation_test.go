@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,11 +51,25 @@ func adminRuntimeUser(admin bool) map[string]any {
 }
 
 func requestAs(s *Server, userID, method, path string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(method, path, nil)
+	return requestBodyAs(s, userID, method, path, "")
+}
+
+func requestBodyAs(s *Server, userID, method, path, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
 	authRequestAs(s, r, userID)
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
 	return w
+}
+
+// assertAdministratorRefusal is the distinct 403 (never the 401 the SPA
+// answers with a reload).
+func assertAdministratorRefusal(t *testing.T, what string, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), `"administratorIdentity":true`) {
+		t.Fatalf("%s: want administrator 403, got %d %s", what, w.Code, w.Body.String())
+	}
 }
 
 // assertMailboxless checks the account is an ordinary non-native account with
@@ -153,6 +169,14 @@ func TestNativePromotionRefusesMailUntilDemotion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	deviceID, deviceSecret := pairNativeDevice(t, s, u.ID, "promoted-device")
+	viaDevice := func(path string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", path, nil)
+		setDeviceHeaders(r, deviceID, deviceSecret)
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, r)
+		return w
+	}
 	body := fmt.Sprintf("/api/mail/body?mailbox=INBOX&messageId=n1:%s:%s", store.MessageReferenceGeneration(), strconv.FormatInt(id, 10))
 	if w := requestAs(s, u.ID, "GET", body); w.Code != 200 {
 		t.Fatalf("everyday body: %d %s", w.Code, w.Body.String())
@@ -161,12 +185,63 @@ func TestNativePromotionRefusesMailUntilDemotion(t *testing.T) {
 	if _, _, err := s.nativeMailAssignment(context.Background(), u.ID); !errors.Is(err, sso.ErrNativeProvisioning) {
 		t.Fatal("promoted subject admitted", err)
 	}
-	if w := requestAs(s, u.ID, "GET", body); w.Code == 200 {
-		t.Fatal("promoted subject read native mail")
+	assertAdministratorRefusal(t, "promoted session mail", requestAs(s, u.ID, "GET", body))
+	assertAdministratorRefusal(t, "promoted device mail", viaDevice(body))
+	assertAdministratorRefusal(t, "promoted decision history", requestAs(s, u.ID, "GET", "/api/decisions"))
+	assertAdministratorRefusal(t, "promoted IMAP settings", requestAs(s, u.ID, "GET", "/api/imap/config"))
+	// A send whose authority changed after withMailAuth answers the same 403.
+	promoted, err := s.users.Get(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	s.finishNativeSend(w, httptest.NewRequest("POST", "/api/mail/send", nil), AuthContext{UserID: u.ID, NativeSendEpoch: promoted.NativeSendEpoch}, promoted, a.Address, []mailbox.OutboundDelivery{{Recipients: []string{"recipient@outside.test"}, Raw: raw}}, nil, false, nil, 0, "")
+	assertAdministratorRefusal(t, "promoted outbound send", w)
+	// Handover: the promoted identity can still administer KyPost.
+	if w := requestAs(s, u.ID, "GET", "/api/admin/mail-domain"); w.Code != 200 {
+		t.Fatalf("promoted administrator cannot administer: %d %s", w.Code, w.Body.String())
 	}
 	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.updated", "everyday-demote", 3, adminRuntimeUser(false)))
 	if w := requestAs(s, u.ID, "GET", body); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("retained body")) {
 		t.Fatalf("demoted subject lost retained mail: %d %s", w.Code, w.Body.String())
+	}
+	if w := viaDevice(body); w.Code != 200 {
+		t.Fatalf("demoted device refused: %d %s", w.Code, w.Body.String())
+	}
+}
+
+const adminIMAPBody = `{"host":"imap.example.test","username":"admin@example.test","password":"test-only"}`
+
+// Native mode keeps administrators off ordinary IMAP mail too, without
+// touching configuration stored before (that is the mixed-use migration).
+func TestNativeAdministratorIMAPSetupRefused(t *testing.T) {
+	s := newNativeRuntimeServer(t)
+	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "admin-create", 1, adminRuntimeUser(true)))
+	u := assertMailboxless(t, s, "native-runtime-one", users.RoleAdmin)
+	if err := writeIMAPConfigPayload(s.userIMAPConfigPath(u.ID), s.imapConfigKeyPath, imapConfigPayload{Host: "imap.example.test", Username: "kept", Password: "kept", UpdatedAt: "earlier"}); err != nil {
+		t.Fatal(err)
+	}
+	assertAdministratorRefusal(t, "IMAP save", requestBodyAs(s, u.ID, "POST", "/api/imap/config", adminIMAPBody))
+	assertAdministratorRefusal(t, "IMAP test", requestBodyAs(s, u.ID, "POST", "/api/imap/test", adminIMAPBody))
+	r := httptest.NewRequest("PUT", "/api/users/"+u.ID+"/imap-config", strings.NewReader(adminIMAPBody))
+	r.SetPathValue("id", u.ID)
+	w := httptest.NewRecorder()
+	s.handleAdminUserIMAPConfig(w, r)
+	assertAdministratorRefusal(t, "admin IMAP assignment", w)
+	if w := requestAs(s, u.ID, "GET", "/api/imap/config"); w.Code != 200 || !strings.Contains(w.Body.String(), "kept") {
+		t.Fatalf("stored IMAP configuration changed: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestIMAPOnlyAdministratorIMAPSetupUnchanged(t *testing.T) {
+	s := newDirectoryTestServer(t)
+	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "admin-create", 1, adminRuntimeUser(true)))
+	u, err := s.users.GetBySSOSubIssuer(separationIssuer, "native-runtime-one")
+	if err != nil || u.Role != users.RoleAdmin {
+		t.Fatal(u.Role, err)
+	}
+	if w := requestBodyAs(s, u.ID, "POST", "/api/imap/config", adminIMAPBody); w.Code != 200 {
+		t.Fatalf("IMAP-only administrator setup refused: %d %s", w.Code, w.Body.String())
 	}
 }
 

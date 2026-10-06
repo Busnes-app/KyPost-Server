@@ -125,7 +125,9 @@ administrator identity and owns no native mailbox, per the suite rule and
   native mail is held. The repair worker does the same for a retained
   administrator resource with no account. Neither reserves an address, prepares
   storage or sets `nativeMailboxIssuer`/`nativeMailboxSource`; allocation refuses
-  a new reservation for an administrator resource.
+  a new reservation for an administrator resource. A reservation left
+  unpublished when its subject was promoted stays orphaned: retained, never
+  published or delivered to.
 - Demotion leaves that account non-native: the worker never converts an existing
   non-native account. An everyday identity is a separate KyIdentity subject.
 - Native admission (API mail, sending, receiving bind/import, daemon polling)
@@ -133,11 +135,33 @@ administrator identity and owns no native mailbox, per the suite rule and
   `legacyMixedUse`. Promotion of an everyday native subject is enforced by
   admission from the next request; mail, reservation and storage are retained and
   demotion restores access. Phase 1 bumps no address generation on promotion.
+  The role change does bump `nativeSendEpoch`, so outbox jobs queued before
+  promotion are quarantined and never resume after demotion.
+- The refusal is `sso.ErrNativeAdministrator` (it wraps `ErrNativeProvisioning`,
+  so receiving and outbox keep their refusal handling). HTTP mail routes, device
+  credentials, decision history, IMAP settings and native sending answer 403
+  `{"error":"administrator identities have no mailbox; use your everyday
+  identity","administratorIdentity":true}`, never 401, and log actor, action,
+  target and result. Administrator routes stay available.
+- In native mode an administrator also cannot save or test personal IMAP
+  settings (`POST /api/imap/config`, `POST /api/imap/test`), and an
+  administrator cannot assign IMAP to an administrator account
+  (`PUT /api/users/{id}/imap-config`); same 403. IMAP-only deployments are
+  unchanged. IMAP configuration stored before native mode is neither deleted nor
+  blocked: removing it is part of the separately specified mixed-use migration
+  and out of scope here.
 - `legacyMixedUse` is set only by migration, for subjects holding a mailbox and an
   administrator role. It is cleared, under the directory lock, when an active
   resource lacks the role (in the directory apply and in reconcile); deactivation
-  alone does not clear it, and a cleared flag never returns. Snapshot validation
-  refuses a flag on a demoted subject; the recovery authority digest includes it.
+  alone does not clear it. A demotion that cannot read or write the ledger fails
+  the webhook, so KyIdentity retries it and the revision is never recorded over a
+  surviving flag. While an initialized ledger is missing or unreadable, every
+  active non-administrator revision therefore fails and is retried; deactivations
+  still apply, and deployments that never initialized a native ledger are
+  unaffected. Nothing sets the flag again; restoring an older backup brings
+  back flag and directory together, and the replayed demotion clears it. Snapshot
+  validation refuses a flag on a demoted subject; the recovery authority digest
+  includes it.
   Exception owner: the deployment owner. Expiry: the mixed-use migration, which
   moves the content to an everyday identity and removes the flag.
 

@@ -245,12 +245,16 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 }
 
 // clearLegacyMixedUse runs under the directory lock before the revision is
-// recorded, so a failed write is retried with the event. An unreadable ledger
-// refuses all native admission; reconcile clears the flag once it loads.
+// recorded. Any load or write failure fails the event, so the sender retries
+// it and a demotion is never recorded over a flag that survived it. Only
+// active non-administrator revisions get here; deactivations never block.
 func (s *LifecycleStore) clearLegacyMixedUse(key string) error {
 	f, err := s.loadNative()
+	if err != nil {
+		return err
+	}
 	a := f.Accounts[key]
-	if err != nil || !a.LegacyMixedUse {
+	if !a.LegacyMixedUse {
 		return nil
 	}
 	a.LegacyMixedUse = false

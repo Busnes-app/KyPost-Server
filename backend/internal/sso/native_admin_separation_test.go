@@ -283,3 +283,59 @@ func TestNativeRecoveryDigestIncludesLegacyMixedUse(t *testing.T) {
 		t.Fatal("legacyMixedUse missing from the recovery digest", err)
 	}
 }
+
+// A demotion that cannot read the ledger fails, so the sender retries it; it
+// is never recorded over a flag that would return on re-promotion.
+func TestNativeLegacyMixedUseDemotionFailsOnUnreadableLedger(t *testing.T) {
+	ctx := context.Background()
+	config, keyPath, ids := v1Fixture(t)
+	if _, err := MigrateNative(ctx, config, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	life := NewLifecycleStore(config)
+	accounts, err := users.LoadOrMigrate(ctx, config, filepath.Join(config, "admin.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := life.nativePath()
+	saved, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledger, []byte("{unreadable"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	raw := fmt.Sprintf(`{"schemas":[%q],"id":"boss","externalId":"boss","userName":"boss","active":true,"roles":[],"emails":[{"value":"boss@example.test","primary":true}],"meta":{"version":"W/\"3\""}}`, scimUserSchema)
+	var demoted DirectoryUser
+	if err := json.Unmarshal([]byte(raw), &demoted); err != nil {
+		t.Fatal(err)
+	}
+	ev := syncauth.Event{ID: "boss-3", Type: "user.updated", At: time.Now()}
+	apply := func() error {
+		_, err := life.ApplyDirectoryUser(nativeIssuer, ev, demoted, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return true, nil })
+		return err
+	}
+	if err := apply(); err == nil {
+		t.Fatal("demotion recorded over an unreadable ledger")
+	}
+	if d, _, err := life.Directory(nativeIssuer, "boss"); err != nil || d.Revision != 2 {
+		t.Fatal("failed demotion advanced the directory", d.Revision, err)
+	}
+	if err := os.WriteFile(ledger, saved, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(); err != nil || legacyFlag(t, life, "boss") {
+		t.Fatal("retried demotion did not clear the flag", err)
+	}
+	if _, err := accounts.SetRole(ids["boss"], users.RoleUser); err != nil {
+		t.Fatal(err)
+	}
+	nativeRole(t, life, accounts, "boss", "boss@example.test", 4, true, true)
+	a, _, err := life.NativeAssignment(nativeIssuer, "boss")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := life.AdmitNativeMail(ctx, a.StateRoot, nativeIssuer, ids["boss"], accounts); !errors.Is(err, ErrNativeAdministrator) {
+		t.Fatal("re-promotion regained mail", err)
+	}
+}

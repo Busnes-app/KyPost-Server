@@ -16,6 +16,10 @@ import (
 
 var ErrNativeProvisioning = errors.New("native provisioning refused; preserve storage and reconcile verified identity, domain and address ownership")
 
+// ErrNativeAdministrator is the administrator-separation refusal. It wraps
+// ErrNativeProvisioning, so every existing refusal path still applies.
+var ErrNativeAdministrator = fmt.Errorf("%w: administrator identities have no mailbox; use your everyday identity", ErrNativeProvisioning)
+
 // NativeAssignment is preparation evidence, never an access or receiving grant.
 // Owner, address, root and limits stay reserved even after failure/offboarding.
 type NativeAssignment struct {

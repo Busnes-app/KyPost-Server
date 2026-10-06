@@ -1132,6 +1132,9 @@ func (s *Server) withMailAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ac, err := s.resolveMailAuthContext(r)
 		if err != nil {
+			if s.refuseNativeAdministrator(w, r, ac.UserID, err) {
+				return
+			}
 			var lockErr *mailLockedOutError
 			if errors.As(err, &lockErr) {
 				if lockErr.kdfBusy {

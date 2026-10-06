@@ -48,6 +48,9 @@ func (s *Server) finishNativeSend(w http.ResponseWriter, r *http.Request, ac Aut
 	sender := s.nativeOutbound()
 	first, sendErr := sender.Send(r.Context(), ac.UserID, id, job)
 	if !first.Accepted {
+		if s.refuseNativeAdministrator(w, r, ac.UserID, sendErr) {
+			return
+		}
 		message := "native submission was not confirmed; inspect this outbox job before resubmitting to avoid duplicates"
 		if errors.Is(sendErr, sso.ErrNativeOutboundStale) || errors.Is(sendErr, sso.ErrNativeProvisioning) {
 			message = "native sender authority changed; reload account and domain setup before sending"

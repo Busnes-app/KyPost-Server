@@ -143,7 +143,10 @@ already hold a native mailbox and an administrator role at migration are flagged
 admission refusal. They keep working unchanged until the separately specified
 mixed-use migration moves their content to an everyday identity, and cannot gain
 extra mailboxes or aliases meanwhile. Exception owner: the deployment owner; expiry:
-when the mixed-use migration ships, which removes the flag.
+when the mixed-use migration ships, which removes the flag. In native mode
+administrators also cannot save or test personal IMAP settings; IMAP
+configuration stored earlier is neither deleted nor blocked, which is left to that
+migration.
 
 **Receiving.** Routes are per address with `generation` = the address generation.
 Bind resolves the address to its mailbox; authority is checked per mailbox ID

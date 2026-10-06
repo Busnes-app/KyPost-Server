@@ -38,6 +38,9 @@ func (s *Server) handleAdminUserIMAPConfig(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "native mailbox ownership is managed by the domain; IMAP assignment is unavailable", http.StatusConflict)
 		return
 	}
+	if r.Method == http.MethodPut && s.refuseAdministratorIMAP(w, r, target.ID) {
+		return
+	}
 	path := s.userIMAPConfigPath(target.ID)
 	switch r.Method {
 	case http.MethodGet:
