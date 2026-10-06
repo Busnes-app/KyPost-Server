@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -175,13 +176,15 @@ func receivingTLSFile(path string, private bool) ([]byte, error) {
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, errors.New("receiving TLS files must be existing regular files, without symlinks")
 	}
-	f, err := os.Open(path)
+	// A replacement between Lstat and open must not follow another private
+	// file or block on a substituted FIFO. Read only the inspected inode.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, errors.New("receiving TLS file unavailable; provide readable certificate and key files")
 	}
 	defer f.Close()
-	info, err = f.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 || private && info.Mode().Perm()&0o077 != 0 {
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() || opened.Size() > 1<<20 || private && opened.Mode().Perm()&0o077 != 0 {
 		return nil, errors.New("receiving TLS files must be regular and at most 1 MiB; private key requires owner-only permissions")
 	}
 	data, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))

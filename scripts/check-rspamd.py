@@ -61,15 +61,23 @@ try:
     sockets = run(["docker", "exec", name, "cat", "/proc/net/tcp", "/proc/net/tcp6"]).decode()
     listeners = [line.split()[1] for line in sockets.splitlines() if len(line.split()) > 3 and line.split()[3] == "0A"]
     assert listeners == ["0100007F:2C45"], listeners  # 11333, loopback only
-    def scan(body):
+    def scan(body, cloudflare=False):
         payload = ("Date: " + formatdate(usegmt=True) + "\r\nMessage-ID: <local-qualification@example.test>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nFrom: sender@example.test\r\nTo: one@example.test\r\nSubject: local qualification\r\n\r\n" + body + "\r\n").encode()
-        return json.loads(run(["docker", "exec", "-i", name, "rspamc", "-j", "-h", "127.0.0.1:11333"], payload))
+        command = ["docker", "exec", "-i", name, "rspamc", "-j", "-h", "127.0.0.1:11333"]
+        if cloudflare:
+            command += ["--header", 'Settings={"groups_disabled":["spf","dmarc","arc"]}']
+        return json.loads(run(command, payload))
     clean = scan("Controlled ordinary message")
     spam = scan("XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X")
     assert clean["action"] == "no action" and not clean["is_skipped"], clean
     assert spam["action"] == "reject", spam
+    hosted = scan("Controlled Cloudflare message", cloudflare=True)
+    hosted_spam = scan("XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X", cloudflare=True)
+    assert hosted["action"] == "no action" and not hosted["is_skipped"], hosted
+    assert hosted_spam["action"] == "reject", hosted_spam
+    assert not any(symbol.startswith(("R_SPF_", "DMARC_", "ARC_")) for symbol in hosted.get("symbols", {})), hosted
     logs = run(["docker", "logs", name]).decode()
     assert "sender@example.test" not in logs and "local qualification" not in logs
-    print("PASS: pinned nonroot sidecar, private scan-only socket, no remote services/maps, clean/GTUBE, private logging")
+    print("PASS: pinned nonroot sidecar, private scan-only socket, no remote services/maps, direct/Cloudflare clean/GTUBE, disabled peer authentication, private logging")
 finally:
     subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=20)

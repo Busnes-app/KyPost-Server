@@ -37,11 +37,12 @@ func scanReceivingSpam(ctx context.Context, raw []byte, delivery ingress.Deliver
 		if resultErr != nil {
 			outcome = "refused"
 		}
-		slog.Info("receiving spam check", "actor", receivingGateway, "task_id", "native-receiving", "action", "scan", "target", "local-rspamd", "result", outcome, "correlation_id", delivery.ID)
+		slog.Info("receiving spam check", "actor", delivery.Gateway, "task_id", "native-receiving", "action", "scan", "target", "local-rspamd", "result", outcome, "correlation_id", delivery.ID)
 	}()
 	failure := &receivingCommandError{err: errors.New("spam scanner unavailable or invalid; restore the local Rspamd sidecar and retry"), code: 5}
 	address, err := netip.ParseAddr(ip)
-	if err != nil || address.Zone() != "" || len(helo) > 253 || strings.ContainsFunc(helo, func(c rune) bool { return c < 32 || c > 126 }) {
+	cloudflare := delivery.Gateway == cloudflareGateway
+	if cloudflare && (ip != "" || helo != "") || !cloudflare && (err != nil || address.Zone() != "" || len(helo) > 253 || strings.ContainsFunc(helo, func(c rune) bool { return c < 32 || c > 126 })) {
 		return failure
 	}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -51,8 +52,14 @@ func scanReceivingSpam(ctx context.Context, raw []byte, delivery ingress.Deliver
 		return failure
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
-	req.Header.Set("IP", address.String())
-	req.Header.Set("Helo", helo)
+	if cloudflare {
+		// The Email Worker supplies no original peer. MIME auth headers and
+		// Cloudflare's HTTPS address cannot substitute for SMTP provenance.
+		req.Header.Set("Settings", `{"groups_disabled":["spf","dmarc","arc"]}`)
+	} else {
+		req.Header.Set("IP", address.String())
+		req.Header.Set("Helo", helo)
+	}
 	req.Header.Set("From", delivery.Sender)
 	req.Header.Set("Queue-ID", delivery.ID)
 	req.Header.Set("Pass", "all")

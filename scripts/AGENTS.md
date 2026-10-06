@@ -21,7 +21,7 @@ All files under `scripts/`.
 - `start-ollama.sh`: launches Ollama daemon on port 11434
 - `pull-ollama-model.sh`: pulls the model named by `OLLAMA_MODEL` (docker-compose default: `nemotron-3-nano:4b`); requires Ollama daemon to be running first. It runs **once** per container start (`autorestart=false`), so it owns its own retries: it exits nonzero if the Ollama API never answers within 120s, and retries the pull up to 5 times with linear backoff. Do not remove either — without them a slow first start or a brief registry outage left the container up and healthy with no model, permanently, and a supervisord retry instead of an in-script one would take the whole container down for something that does not need it. Classification being down is reported as `classifierFailing` in `GET /api/health`, not as an unhealthy container.
 - `update-host.sh`: runs only on the Docker host. It resolves the official image to a digest, verifies its GitHub attestation, locks, waits for health, and recreates the prior digest if the new container fails. It never enters the image or receives the Docker socket.
-- `test-relays.sh`: the canonical Cloudflare Worker relay test command, run by CI and by `npm test` in both Worker packages. It discovers `*.test.mts` under `push-relay-shared/`, `worker/src/`, and `worker-apns/src/` rather than naming files, so a new test cannot be added and silently not run; it prunes `node_modules` (which is why `node --test <dir>` is not used) and fails when it finds nothing.
+- `test-relays.sh`: the canonical Cloudflare Worker test command, run by CI and by `npm test` in both push Worker packages. It discovers `*.test.mts` and `*.test.mjs` under `push-relay-shared/`, `worker/src/`, `worker-apns/src/` and `receiving-worker/`; it prunes `node_modules` and fails when it finds nothing.
 - `install-auto-update.sh`: explicitly enables lingering, then installs a daily per-user systemd timer that calls `update-host.sh --auto`; it is opt-in and runs as the user already authorized to operate Docker, never as root from a mutable checkout.
 
 ### Supervisord Programs (from `supervisord.conf` at repo root)
@@ -50,7 +50,7 @@ All files under `scripts/`.
 
 ## Verification
 
-- `python3 scripts/check-rspamd.py` checks resolved Compose isolation and the actual pinned Rspamd effective modules/loopback-only socket, clean/GTUBE verdicts and log privacy using disposable network-disabled state. `rspamd/rspamd.conf` is the fixed selected-module policy consumed by the optional overlay; keep its upstream remote services/maps and controller/proxy disabled. Actual Maddy integration is owned by the backend receiving test.
+- `python3 scripts/check-rspamd.py` checks resolved Compose isolation and the actual pinned Rspamd effective modules/loopback-only socket, direct/Cloudflare clean/GTUBE verdicts, hosted disabled peer-authentication groups and log privacy using disposable network-disabled state. `rspamd/rspamd.conf` is the fixed selected-module policy consumed by the optional overlay; keep its upstream remote services/maps and controller/proxy disabled. Actual Maddy integration is owned by the backend receiving test.
 
 - `bash scripts/setup-mail.test.sh` loads definitions only and checks public-input rejection, private dotenv creation/upserts, unsafe-file refusal and actual base/overlay Compose resolution against conflicting inherited settings. It never opens a browser or starts a container. Verify interactive stages statically; do not run them in CI.
 
