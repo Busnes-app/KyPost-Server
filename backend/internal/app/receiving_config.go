@@ -101,7 +101,7 @@ func runReceivingConfig(args []string, output io.Writer) (result error) {
 	if err != nil {
 		return err
 	}
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(r.configDir, "native-domain.json"))
+	release, err := fsutil.LockFileContext(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
 	if err != nil {
 		return err
 	}

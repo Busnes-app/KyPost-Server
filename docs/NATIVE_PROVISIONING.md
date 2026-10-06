@@ -43,8 +43,45 @@ oversized bodies 400, missing KyIdentity setup/unreadable GET state 503, and
 refused configuration/verification 409. KySignOn step-up returns the existing
 403 challenge response. A failed proof does not enable transport: correct the
 exact TXT record/DNS availability or rotate an expired challenge and retry.
-The owner-only `$CONFIG_DIR/native-domain.json` holds a public challenge, not a
-secret. Do not publish production MX or assume outgoing delivery readiness.
+The owner-only `$CONFIG_DIR/native-domains.json` (domain set, version 1) holds
+the issuer and each domain's public challenge, not a secret; this profile still
+accepts exactly one domain and no retired ones. Its `native-domains.json.lock` is
+the domain fence in every lock order. Configuring a domain also creates an empty
+version-2 ledger with the initialization fence set, then replaces the version-1
+`native-domain.json` with the tombstone `{"migratedTo": "native-domains.json"}`.
+Do not publish production MX or assume outgoing delivery readiness.
+
+## Storage format migration
+
+Container startup runs `kypost-server migrate-native` as the runtime user after
+the data-volume ownership handoff and before supervisord starts any service. It
+converts version-1 native storage in place, under domain → directory → users
+locks, following [the addressing spec](NATIVE_ADDRESSING_V2.md#migration-v1--v2):
+
+1. copy `native-domain.json`, `native-provisioning.json` and `native-relay.json`
+   to `*.v1-migrated`, re-copying each while it still holds version-1 data;
+2. write `native-domains.json` from the domain copy;
+3. write the version-2 ledger from the ledger copy (or an empty one when a domain
+   has no ledger), seeding each primary address generation from the subject's
+   directory revision and setting `legacyMixedUse` for administrator subjects;
+4. reseal the relay as version 2 with the same key and `generation`;
+5. replace `native-domain.json` with the tombstone.
+
+Every output derives from the copies, so a crash or a version-1 binary run in
+between converges on re-run. A tombstone means already migrated; fresh installs
+and deployments without native files are untouched. Migration ignores and keeps a
+restore hold and grants no authority. On failure it logs the cause with a
+remediation and the container keeps booting: every native path then refuses
+(`ErrNativeMigration`) because `native-domain.json` still holds version-1 data or
+the tombstone lacks `native-domains.json` or the ledger, while external IMAP
+accounts keep working. Keep the config volume and its `*.v1-migrated` copies, fix
+the reported cause and restart. Runtime readers accept only ledger and relay
+version 2.
+
+Rollback to a version-1 binary fails closed: it rejects the tombstone (empty
+token), ledger version 2 and relay version 2, so domain setup, allocation,
+receiving, admission and sending all refuse. To roll back, restore the backup
+taken before the upgrade; see [restore](RESTORE.md#storage-format-migration).
 
 ## Account allocation
 
@@ -83,9 +120,13 @@ updates; whole-file reservation rewrites/address scans require scale measurement
 
 ## Reservations, failure and restore
 
-`$CONFIG_DIR/native-provisioning.json` retains immutable issuer/subject/local ID,
+`$CONFIG_DIR/native-provisioning.json` (version 2: `accounts`, `mailboxes`,
+`addresses`) retains immutable issuer/subject/local ID (the primary mailbox ID),
 primary address, absolute state root and limits; revision/digest/activity;
-pending/applied/failed status, failure code and acknowledged source. Reserve
+pending/applied/failed status, failure code and acknowledged source. Each primary
+address keeps a `generation` that never decreases and is at least the subject's
+directory revision whenever the reservation is saved, plus its `history`; this
+profile has only primary mailboxes and addresses. Reserve
 pending before touching files. Keep reservations through failure/offboarding.
 Preparation uses no-replace publication; lost acknowledgement reuses the exact
 published namespace. Acknowledged sources validate existing files read-only,
@@ -282,7 +323,18 @@ cd backend
 GOTOOLCHAIN=go1.26.6 go test -race ./internal/fsutil ./internal/users ./internal/sso ./internal/mailbox ./internal/api -run '^TestNativeAllocation|^TestNativeDomain|^TestNativeMailDomain|^TestNativeAccountIssuer|^TestNativePublication|^TestLockFileContext|^TestPrepareAccount|^TestDirectory' -count=1 -timeout=20m
 GOTOOLCHAIN=go1.26.6 go test -race ./internal/api ./internal/processor ./internal/mailbox ./internal/config -run '^TestNativeRuntime|^TestRuntimeClient|^TestExistingMailbox|^TestNativeMailRequiresExplicitBoolean' -count=1 -timeout=5m
 GOTOOLCHAIN=go1.26.6 go test -race ./internal/state ./internal/sso ./internal/api ./internal/processor -run '^TestOpenNative|^TestNativeState|^TestNativeUserStorage|^TestNativePollerState' -count=1 -timeout=5m
+GOTOOLCHAIN=go1.26.6 go test -race ./internal/sso ./internal/app ./internal/backup -run 'TestNativeMigration|TestMigrateNative|TestNativeBackupAcceptsV1AndV2Snapshots' -count=1 -timeout=5m
 ```
+
+The migration checks start from real version-1 files (allocated accounts, an
+administrator subject, a relay, receiving bindings at an older and the current
+directory revision and a queued outbox job) and check unchanged assignments,
+relay generation, quarantine/import outcomes and claims; byte-identical results
+after a crash at every step; convergence after a version-1 rewrite; refusal of
+unmigrated and half-migrated state; version-1 rejection of migrated files; the
+unchanged recovery digest and hold; and v1/v2 snapshot validation.
+`scripts/check-private-roots.py` seeds a version-1 domain and checks the real
+entrypoint migrates it as the runtime user.
 
 Checks use real SQLite/filesystem and authenticated admin routes for DNS purpose,
 issuer/profile immutability, expiry/rotation, transient DNS failures, cancellation,

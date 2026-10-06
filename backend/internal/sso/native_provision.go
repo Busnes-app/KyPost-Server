@@ -2,9 +2,11 @@ package sso
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/mail"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -30,32 +32,160 @@ type NativeAssignment struct {
 	Source        string         `json:"source,omitempty"`
 }
 
+// nativeAssignments is the single-mailbox view callers use. stored keeps the
+// version-2 fields that view does not model (generations, history, flags).
 type nativeAssignments struct {
-	Version  int                         `json:"version"`
-	Accounts map[string]NativeAssignment `json:"accounts"`
+	Accounts map[string]NativeAssignment
+	stored   nativeLedger
+}
+
+const nativeProvisioningFile = "native-provisioning.json"
+
+// nativeLedger is native-provisioning.json version 2. Phase 1 has only primary
+// mailboxes (ID = user ID) and their primary addresses.
+type nativeLedger struct {
+	Version   int                            `json:"version"`
+	Accounts  map[string]nativeLedgerAccount `json:"accounts"`
+	Mailboxes map[string]nativeLedgerMailbox `json:"mailboxes"`
+	Addresses map[string]nativeLedgerAddress `json:"addresses"`
+}
+
+type nativeLedgerAccount struct {
+	Revision       int64  `json:"revision"`
+	Digest         string `json:"digest"`
+	DesiredActive  bool   `json:"desiredActive"`
+	Status         string `json:"status"`
+	Failure        string `json:"failure,omitempty"`
+	PrimaryMailbox string `json:"primaryMailbox"`
+	// Set only by migration for administrator subjects that already held a
+	// mailbox. Phase 1 stores it; nothing enforces it yet.
+	LegacyMixedUse bool `json:"legacyMixedUse"`
+}
+
+type nativeLedgerMailbox struct {
+	Owner struct {
+		Issuer  string `json:"issuer"`
+		Subject string `json:"subject"`
+	} `json:"owner"`
+	Kind      string         `json:"kind"`
+	State     string         `json:"state"`
+	StateRoot string         `json:"stateRoot"`
+	Limits    mailbox.Limits `json:"limits"`
+	Source    string         `json:"source,omitempty"`
+}
+
+type nativeLedgerAddress struct {
+	Mailbox    string                 `json:"mailbox"`
+	Kind       string                 `json:"kind"`
+	State      string                 `json:"state"`
+	Generation int64                  `json:"generation"`
+	History    []nativeAddressHistory `json:"history"`
+}
+
+type nativeAddressHistory struct {
+	Mailbox    string `json:"mailbox"`
+	Generation int64  `json:"generation"`
+}
+
+// parseNativeLedger returns the file's version. Version 1 is accepted only for
+// historical snapshots and migration; the runtime reads version 2 alone.
+func parseNativeLedger(raw []byte, historical bool) (nativeAssignments, int, error) {
+	var head struct {
+		Version  int                         `json:"version"`
+		Accounts map[string]NativeAssignment `json:"accounts"`
+	}
+	if err := json.Unmarshal(raw, &head); err != nil {
+		return nativeAssignments{}, 0, err
+	}
+	if head.Version == 1 && historical && head.Accounts != nil {
+		return nativeAssignments{Accounts: head.Accounts}, 1, nil
+	}
+	var l nativeLedger
+	if head.Version != 2 || json.Unmarshal(raw, &l) != nil || l.Accounts == nil || l.Mailboxes == nil || l.Addresses == nil || len(l.Mailboxes) != len(l.Accounts) {
+		return nativeAssignments{}, head.Version, ErrNativeProvisioning
+	}
+	addressOf := map[string]string{}
+	for address, x := range l.Addresses {
+		if _, ok := l.Mailboxes[x.Mailbox]; !ok || x.Kind != "primary" || addressOf[x.Mailbox] != "" || x.Generation < 1 || len(x.History) == 0 {
+			return nativeAssignments{}, 2, ErrNativeProvisioning
+		}
+		addressOf[x.Mailbox] = address
+	}
+	f := nativeAssignments{Accounts: map[string]NativeAssignment{}, stored: l}
+	for key, a := range l.Accounts {
+		m, ok := l.Mailboxes[a.PrimaryMailbox]
+		if !ok || m.Kind != "primary" || key != directoryKey(m.Owner.Issuer, m.Owner.Subject) {
+			return nativeAssignments{}, 2, ErrNativeProvisioning
+		}
+		f.Accounts[key] = NativeAssignment{
+			Owner:   mailbox.Owner{Issuer: m.Owner.Issuer, Subject: m.Owner.Subject, Mailbox: a.PrimaryMailbox},
+			Address: addressOf[a.PrimaryMailbox], StateRoot: m.StateRoot, Limits: m.Limits,
+			Revision: a.Revision, Digest: a.Digest, DesiredActive: a.DesiredActive, Status: a.Status, Failure: a.Failure, Source: m.Source,
+		}
+	}
+	return f, 2, nil
+}
+
+// ledger renders version 2. Address generations never decrease and stay at
+// least the subject's directory revision, which is what phase-1 routes and
+// bindings carry; history starts at generation 1.
+func (f nativeAssignments) ledger(directory map[string]DirectoryState) nativeLedger {
+	l := nativeLedger{Version: 2, Accounts: map[string]nativeLedgerAccount{}, Mailboxes: map[string]nativeLedgerMailbox{}, Addresses: map[string]nativeLedgerAddress{}}
+	for address, x := range f.stored.Addresses {
+		l.Addresses[address] = x
+	}
+	for key, a := range f.Accounts {
+		state := "disabled"
+		if a.DesiredActive {
+			state = "active"
+		}
+		l.Accounts[key] = nativeLedgerAccount{Revision: a.Revision, Digest: a.Digest, DesiredActive: a.DesiredActive, Status: a.Status, Failure: a.Failure, PrimaryMailbox: a.Owner.Mailbox, LegacyMixedUse: f.stored.Accounts[key].LegacyMixedUse}
+		m := nativeLedgerMailbox{Kind: "primary", State: state, StateRoot: a.StateRoot, Limits: a.Limits, Source: a.Source}
+		m.Owner.Issuer, m.Owner.Subject = a.Owner.Issuer, a.Owner.Subject
+		l.Mailboxes[a.Owner.Mailbox] = m
+		if a.Address == "" {
+			continue
+		}
+		x, ok := l.Addresses[a.Address]
+		if !ok {
+			x.History = []nativeAddressHistory{{Mailbox: a.Owner.Mailbox, Generation: 1}}
+		}
+		x.Mailbox, x.Kind, x.State = a.Owner.Mailbox, "primary", state
+		x.Generation = max(x.Generation, directory[key].Revision, 1)
+		l.Addresses[a.Address] = x
+	}
+	return l
 }
 
 func (s *LifecycleStore) nativePath() string {
-	return filepath.Join(filepath.Dir(s.path), "native-provisioning.json")
+	return filepath.Join(filepath.Dir(s.path), nativeProvisioningFile)
 }
 
 func (s *LifecycleStore) loadNative() (nativeAssignments, error) {
+	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
+		return nativeAssignments{}, err
+	}
+	return s.loadNativeLedger(false)
+}
+
+func (s *LifecycleStore) loadNativeLedger(historical bool) (nativeAssignments, error) {
 	lifecycle, err := s.load()
 	if err != nil {
 		return nativeAssignments{}, err
 	}
-	f := nativeAssignments{Version: 1, Accounts: map[string]NativeAssignment{}}
+	f := nativeAssignments{Accounts: map[string]NativeAssignment{}}
 	loaded := false
-	err = fsutil.LoadJSONFile(s.nativePath(), func(v nativeAssignments) {
-		f = v
+	var parseErr error
+	err = fsutil.LoadJSONFile(s.nativePath(), func(raw json.RawMessage) {
 		loaded = true
+		f, _, parseErr = parseNativeLedger(raw, historical)
 	}, func() error {
 		if lifecycle.NativeProvisioningInitialized {
 			return ErrNativeProvisioning
 		}
 		return nil
 	})
-	if err == nil && (loaded && !lifecycle.NativeProvisioningInitialized || f.Version != 1 || f.Accounts == nil) {
+	if err == nil && (parseErr != nil || loaded && !lifecycle.NativeProvisioningInitialized) {
 		err = ErrNativeProvisioning
 	}
 	return f, err
@@ -74,7 +204,29 @@ func (s *LifecycleStore) saveNative(f nativeAssignments) error {
 			return err
 		}
 	}
-	return fsutil.PersistJSONFile(s.nativePath(), f)
+	return fsutil.PersistJSONFile(s.nativePath(), f.ledger(lifecycle.Directory))
+}
+
+// ensureNativeLedger creates an empty version-2 ledger when none exists. A
+// fenced (initialized) deployment with a lost ledger still refuses.
+func (s *LifecycleStore) ensureNativeLedger(ctx context.Context) error {
+	release, err := fsutil.LockFileContext(ctx, s.path)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.ensureNativeLedgerLocked()
+}
+
+func (s *LifecycleStore) ensureNativeLedgerLocked() error {
+	if _, err := os.Lstat(s.nativePath()); !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	f, err := s.loadNativeLedger(false)
+	if err != nil {
+		return err
+	}
+	return s.saveNative(f)
 }
 
 // NativeAssignment reads persisted status only. Consumers must recheck the live

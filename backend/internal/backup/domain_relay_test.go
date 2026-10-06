@@ -66,17 +66,17 @@ func TestDomainRelaySurvivesSealedRestoreAndRejectsIncompleteSnapshots(t *testin
 	if err := os.WriteFile(keyPath, keyBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
-	domainBytes, err := os.ReadFile(filepath.Join(s.dirs.Config, "native-domain.json"))
+	domainBytes, err := os.ReadFile(filepath.Join(s.dirs.Config, sso.NativeDomainsFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(s.dirs.Config, "native-domain.json")); err != nil {
+	if err := os.Remove(filepath.Join(s.dirs.Config, sso.NativeDomainsFile)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Collect(); err == nil {
 		t.Fatal("collector sealed relay without domain authority")
 	}
-	if err := os.WriteFile(filepath.Join(s.dirs.Config, "native-domain.json"), domainBytes, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(s.dirs.Config, sso.NativeDomainsFile), domainBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "private/native-relay.key"), []byte("corrupt-key"), 0600); err != nil {

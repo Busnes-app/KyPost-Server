@@ -31,7 +31,7 @@ func snapshotDatabase(name string) bool {
 
 func skip(name string) bool {
 	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || strings.HasSuffix(name, ".lock") ||
-		strings.HasSuffix(name, ".migrated") || strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")
+		strings.HasSuffix(name, ".migrated") || strings.HasSuffix(name, ".v1-migrated") || strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")
 }
 
 func (s *Service) Collect() (recoveryclient.Payload, error) { return s.collect(context.Background()) }
@@ -223,7 +223,7 @@ func validateDependencies(files []recoveryclient.File) error {
 			return err
 		}
 		key, _ := base64.StdEncoding.DecodeString(strings.TrimSpace(string(byPath["private/native-relay.key"])))
-		if _, err := mailmsg.DecodeDomainRelay(raw, key); err != nil {
+		if _, _, err := mailmsg.DecodeDomainRelay(raw, key); err != nil {
 			return err
 		}
 	}

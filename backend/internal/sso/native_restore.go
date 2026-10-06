@@ -78,7 +78,8 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 	if err != nil {
 		return true, err
 	}
-	f, err := s.loadNative()
+	// Snapshots may predate migration: accept version-1 and version-2 files.
+	f, err := s.loadNativeLedger(true)
 	if err != nil {
 		return true, err
 	}
@@ -110,7 +111,7 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 	}
 	ids, addresses := map[string]bool{}, map[string]bool{}
 	root := ""
-	domain, err := NewNativeDomainStore(filepath.Dir(s.path)).Read()
+	domain, err := HistoricalNativeDomain(filepath.Dir(s.path))
 	if err != nil {
 		return native, err
 	}

@@ -217,7 +217,7 @@ func openReceivingRuntime(ctx context.Context, initialize bool) (*receivingRunti
 
 func (r *receivingRuntime) withAuthority(ctx context.Context, ids []string, proof *sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
 	// Match allocator lock order. DNS and stdin work happen before this fence.
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(r.configDir, "native-domain.json"))
+	release, err := fsutil.LockFileContext(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
 	if err != nil {
 		return err
 	}

@@ -306,7 +306,7 @@ func TestNativeOutboxSnapshotRefusesOrphanClaims(t *testing.T) {
 	_, err := s.db.Exec("PRAGMA foreign_keys=OFF; DELETE FROM outbox")
 	must(t, err)
 	must(t, s.Close())
-	relay := mailmsg.DomainRelay{Version: 1, Generation: outboxGeneration, Domain: "example.test", Issuer: testOwner.Issuer, Host: "smtp.provider.test", Port: 465, Username: "operator", Password: "secret"}
+	relay := mailmsg.DomainRelay{Generation: outboxGeneration, Domain: "example.test", Issuer: testOwner.Issuer, Host: "smtp.provider.test", Port: 465, Username: "operator", Password: "secret"}
 	if _, err = ValidateOutboundSnapshot(ctx, filepath.Join(dir, "mailbox.db"), outboxMaster, relay); err == nil {
 		t.Fatal("orphan claim granted clean snapshot")
 	}

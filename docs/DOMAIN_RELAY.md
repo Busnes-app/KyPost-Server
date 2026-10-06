@@ -128,7 +128,12 @@ explicit error rather than an unconfigured fallback.
 ## Storage, recovery and activation
 
 `$CONFIG_DIR/native-relay.json` is encrypted with the dedicated
-`$SECRET_DIR/native-relay.key`; both are created owner-only. There are no relay
+`$SECRET_DIR/native-relay.key`; both are created owner-only. Its sealed JSON is
+version 2, holding a domain set (`domains`, `retiredDomains`); this profile accepts
+exactly one domain and no retired ones. Startup migration reseals a version-1 file
+with the same key and the same `generation`, so queued and retrying deliveries stay
+valid; the runtime refuses version 1, and backups accept both. See
+[storage format migration](NATIVE_PROVISIONING.md#storage-format-migration). There are no relay
 path overrides or environment credentials. The dedicated key lets KyPost protect
 one domain-wide provider credential without borrowing per-user IMAP keys. The
 admin routes are needed to configure that credential without per-account setup;

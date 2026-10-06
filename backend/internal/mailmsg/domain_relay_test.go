@@ -81,7 +81,7 @@ func TestDomainRelayRejectsInvalidTransportAndStoredPlaintext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := DecodeDomainRelay([]byte(`{"version":1,"smtpPassword":"plaintext"}`), key); !errors.Is(err, ErrDomainRelay) {
+	if _, _, err := DecodeDomainRelay([]byte(`{"version":1,"smtpPassword":"plaintext"}`), key); !errors.Is(err, ErrDomainRelay) {
 		t.Fatal("plaintext relay accepted", err)
 	}
 }

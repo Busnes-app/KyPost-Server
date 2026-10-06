@@ -33,7 +33,7 @@ func recoveryFixture(t *testing.T) (*LifecycleStore, string, SSOSettings, []byte
 		t.Fatal(err)
 	}
 	// Retained preparation has never published a local account.
-	if err := life.saveNative(nativeAssignments{Version: 1, Accounts: map[string]NativeAssignment{
+	if err := life.saveNative(nativeAssignments{Accounts: map[string]NativeAssignment{
 		directoryKey(settings.IssuerURL, "subject"): {Owner: mailbox.Owner{Issuer: settings.IssuerURL, Subject: "subject", Mailbox: "reserved-mailbox"}, Revision: 1, Digest: "old-digest"},
 	}}); err != nil {
 		t.Fatal(err)
