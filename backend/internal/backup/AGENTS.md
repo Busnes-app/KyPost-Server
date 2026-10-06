@@ -18,6 +18,8 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 - Offline native restore also removes device/browser push registrations and rotates subscriber IDs in one FULL SQLite transaction per exact-source native account. Historical devices, MFA approval/enrollment and outstanding pairing tokens confer no restored authority. Legacy IMAP accounts, mail, pull history and users/key documents stay intact. Retries rotate again while held; any failure keeps staging unpublished. After each qualified native account/device fence, remove its config/users/<id>/carddav-auth.json app-password hash. This separate file mutation is retry-safe; failure keeps the whole staging held/unpublished. Preserve original and legacy credentials. Fresh pairing/enrollment and CardDAV app-password setup require qualified recovery; do not clear MFA requirements as a fallback.
 
+- Snapshots may predate the native storage migration: payload detection, the validation allowlist, collection checks and drills accept the version-1 domain/ledger/relay and the version-2 `native-domains.json`/tombstone/ledger/relay alike. Mixes follow `sso.NativeSnapshotFormatsConsistent`: a v1 domain beside v1 or v2 files, a v2 domain only beside v2 files, no domain beside none. `*.v1-migrated` copies are never collected. A restored version-1 snapshot is migrated by `migrate-native` at next start under the hold.
+
 - Collect `config/native-relay.json` with `private/native-relay.key`; validate decryption of the actual collected bytes and historical native-domain issuer/domain binding. Version-1 recipes add `relay:domain-credentials-and-authority`; drills require it when relay ciphertext exists. Relay-only restores persist the native hold without qualifying unowned mailbox databases. Fresh authority/provider evidence remains separate.
 
 - Service name is `KyPost`. The token sealer uses the existing TOTP master key with HKDF label `kypost:setting:kyrecovery_token`; load it at operation time, never generate a replacement.
@@ -48,6 +50,8 @@ This package owns payload selection and verification. API/CLI callers own creden
 - `TestNativeOutboxSealedClaimsSentAndDependencies` checks sealed committed claims/Sent, restore queue quarantine with no resubmission, retained holds, required recipe/key/config and wrong-key rejection.
 
 - `TestDomainRelay` checks sealed credential/key/generation preservation, missing dependencies, corrupt restored keys and relay-only quarantine.
+
+- `TestNativeBackupAcceptsV1AndV2Snapshots` checks v2 payload contents (set and tombstone, no copies), a sealed version-1 snapshot through drill and quarantine, and its migration under the retained hold. `TestNativeDomainOnlyRestoreIsHeld` checks that a domain-only deployment (initialized empty ledger) restores held.
 
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/backup ./internal/state ./internal/config`
 - `go test ./internal/api -run TestBackup` covers admin/CSRF/credential gates and audit outages.

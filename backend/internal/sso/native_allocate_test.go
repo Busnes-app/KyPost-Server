@@ -137,7 +137,7 @@ func TestNativeAllocationCannotOutliveProofDuringContention(t *testing.T) {
 		t.Fatal(err)
 	}
 	proof.ExpiresAt = time.Now().Add(2 * time.Second).Unix()
-	if err = fsutil.PersistJSONFile(domains.path, proof); err != nil {
+	if err = domains.persist(proof); err != nil {
 		t.Fatal(err)
 	}
 	release, err := fsutil.LockFile(life.path)

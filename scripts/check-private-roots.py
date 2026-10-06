@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Check image and mounted-root permissions through the real entrypoint."""
 import argparse
+import json
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import uuid
 
 
-CHECK = '''import os, pathlib, signal, stat
+# A version-1 mail domain (test-only public challenge) that startup must migrate.
+LEGACY_DOMAIN = json.dumps({"domain": "example.test", "issuer": "https://idp.example", "token": "0" * 64, "expiresAt": 4102444800})
+
+CHECK = '''import json, os, pathlib, signal, stat
 try:
     assert os.getuid() != 0, "services still run as root"
     for name in ("config", "private", "state"):
@@ -23,6 +28,10 @@ try:
     for name in ("admin.env", "first-run-password.txt"):
         info = (pathlib.Path("/kypost/config") / name).stat()
         assert info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o600, "bootstrap secret metadata is unsafe"
+    config = pathlib.Path("/kypost/config")
+    assert json.loads((config / "native-domain.json").read_text()) == {"migratedTo": "native-domains.json"}, "native storage migration did not run"
+    for path in config.rglob("*"):
+        assert path.stat().st_uid == os.getuid(), "native migration left a file not owned by the runtime user: " + path.name
     print("ok: real entrypoint protects mounted roots and retains existing data", flush=True)
 except Exception as error:
     print("refused: " + str(error), flush=True)
@@ -63,7 +72,7 @@ stderr_logfile=NONE
             command += ["--mount", f"type=bind,source={root / source},target={target},readonly"]
         # Seed permissive runtime-owned roots without FOWNER, then test real startup.
         # Only disposable container volumes are changed; no host mail data mounts.
-        command += ["--entrypoint", "/bin/sh", image, "-ec", "chown root:root /kypost/config /kypost/private /kypost/state; chmod 0777 /kypost/config /kypost/private /kypost/state; printf 'test-only retained bytes' > /kypost/state/existing-mail; chmod 0640 /kypost/state/existing-mail; chown kypost:kypost /kypost/config /kypost/private /kypost/state; exec /opt/kypost/scripts/entrypoint.sh"]
+        command += ["--entrypoint", "/bin/sh", image, "-ec", "chown root:root /kypost/config /kypost/private /kypost/state; chmod 0777 /kypost/config /kypost/private /kypost/state; printf 'test-only retained bytes' > /kypost/state/existing-mail; chmod 0640 /kypost/state/existing-mail; printf '%s' " + shlex.quote(LEGACY_DOMAIN) + " > /kypost/config/native-domain.json; chown kypost:kypost /kypost/config /kypost/private /kypost/state; exec /opt/kypost/scripts/entrypoint.sh"]
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=30)
             assert result.returncode == 0, result.stdout + result.stderr

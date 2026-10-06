@@ -165,7 +165,7 @@ func editAssignment(t *testing.T, s *LifecycleStore, edit func(*NativeAssignment
 	a := f.Accounts[key]
 	edit(&a)
 	f.Accounts[key] = a
-	if err := fsutil.PersistJSONFile(s.nativePath(), f); err != nil {
+	if err := s.saveNative(f); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -189,11 +189,17 @@ func TestNativeRestoreHoldRefusesAllocation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, NativeRestoreHoldFile), []byte("malformed hold still blocks"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", provenNativeDomain(t, config), accounts, nativeLimits)
+	domains := provenNativeDomain(t, config)
+	// Configuring the domain creates the empty ledger; allocation must not touch it.
+	before, err := os.ReadFile(s.nativePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.AllocateNativeAccount(context.Background(), root, nativeIssuer, "one", domains, accounts, nativeLimits)
 	if !errors.Is(err, ErrNativeRestoreHold) {
 		t.Fatal("held native allocation proceeded", err)
 	}
-	if _, err := os.Stat(s.nativePath()); !errors.Is(err, os.ErrNotExist) {
+	if after, err := os.ReadFile(s.nativePath()); err != nil || !bytes.Equal(before, after) {
 		t.Fatal("held allocation wrote a ledger", err)
 	}
 }

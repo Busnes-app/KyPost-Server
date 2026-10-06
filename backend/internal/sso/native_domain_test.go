@@ -3,7 +3,6 @@ package sso
 import (
 	"context"
 	"errors"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"os"
 	"strings"
 	"testing"
@@ -55,7 +54,7 @@ func TestNativeDomainProofAndFailure(t *testing.T) {
 	d.Established = false
 	d.ExpiresAt = time.Now().Unix() - 1
 	d.VerifiedUntil = 0
-	if err := fsutil.PersistJSONFile(s.path, d); err != nil {
+	if err := s.persist(d); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Verify(ctx); !errors.Is(err, ErrNativeDomain) {
@@ -100,7 +99,7 @@ func TestNativeDomainEstablishedProfileRechecksWithoutDailyDNSChanges(t *testing
 	token := d.Token
 	d.ExpiresAt = time.Now().Add(-time.Hour).Unix()
 	d.VerifiedUntil = 0
-	if err = fsutil.PersistJSONFile(s.path, d); err != nil {
+	if err = s.persist(d); err != nil {
 		t.Fatal(err)
 	}
 	d, err = s.Verify(context.Background())
@@ -130,7 +129,7 @@ func TestNativeDomainRefusesOversizedChallengeName(t *testing.T) {
 		t.Fatal("valid boundary refused", d, err)
 	}
 	d.Domain = oversized
-	if err = fsutil.PersistJSONFile(s.path, d); err != nil {
+	if err = s.persist(d); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.Read(); !errors.Is(err, ErrNativeDomain) {

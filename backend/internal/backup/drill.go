@@ -65,7 +65,7 @@ func drillChecks(dir string, opened capsule.Manifest) []recoveryclient.Check {
 			check("sqlite:"+file.Path, integrityOK(filepath.Join(dir, file.Path)))
 		}
 		if filepath.Base(file.Path) == "mailbox.db" {
-			relay, _, _ := mailmsg.ReadDomainRelay(filepath.Join(dir, "config/native-relay.json"), filepath.Join(dir, "private/native-relay.key"))
+			relay, _, _ := mailmsg.ReadDomainRelayAnyVersion(filepath.Join(dir, "config/native-relay.json"), filepath.Join(dir, "private/native-relay.key"))
 			key, _ := cryptutil.LoadKey(filepath.Join(dir, "private/native-relay.key"))
 			has, err := mailbox.ValidateOutboundSnapshot(context.Background(), filepath.Join(dir, file.Path), key, relay)
 			check("outbox:"+file.Path, err == nil)

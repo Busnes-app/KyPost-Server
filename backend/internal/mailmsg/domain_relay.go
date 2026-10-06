@@ -21,15 +21,30 @@ var ErrDomainRelay = errors.New("domain relay configuration missing or invalid; 
 // DomainRelay is always encrypted on disk. Username authenticates the relay;
 // it is never the mailbox's From address or authority to send as an address.
 // This profile supports verified implicit TLS with mandatory authentication.
+// Domain is the one entry of the version-2 domain set in this phase.
 type DomainRelay struct {
-	Version    int    `json:"version"`
-	Generation string `json:"generation"`
-	Domain     string `json:"domain"`
-	Issuer     string `json:"issuer"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Username   string `json:"smtpUsername"`
-	Password   string `json:"smtpPassword"`
+	Generation string
+	Domain     string
+	Issuer     string
+	Host       string
+	Port       int
+	Username   string
+	Password   string
+}
+
+// domainRelayFile is the sealed JSON. Version 2 holds a domain set; version 1
+// (a single "domain") is read only by migration and backup validation.
+type domainRelayFile struct {
+	Version        int      `json:"version"`
+	Generation     string   `json:"generation"`
+	Domain         string   `json:"domain,omitempty"`
+	Domains        []string `json:"domains"`
+	RetiredDomains []string `json:"retiredDomains"`
+	Issuer         string   `json:"issuer"`
+	Host           string   `json:"host"`
+	Port           int      `json:"port"`
+	Username       string   `json:"smtpUsername"`
+	Password       string   `json:"smtpPassword"`
 }
 
 // Deliver is the native relay transport boundary, not account admission. Its
@@ -117,49 +132,87 @@ func relayDNSName(v string) bool {
 }
 
 func (c DomainRelay) Validate() error {
-	if c.Version != 1 || len(c.Generation) != 36 || !fsutil.SafePathComponent(c.Generation) || !relayDNSName(c.Domain) || !relayDNSName(c.Host) || c.Issuer == "" || len(c.Issuer) > 2048 || strings.ContainsAny(c.Issuer, "\r\n\x00") || c.Port < 1 || c.Port > 65535 || c.Username == "" || len(c.Username) > 512 || c.Password == "" || len(c.Password) > 4096 || strings.ContainsAny(c.Username+c.Password, "\r\n\x00") {
+	if len(c.Generation) != 36 || !fsutil.SafePathComponent(c.Generation) || !relayDNSName(c.Domain) || !relayDNSName(c.Host) || c.Issuer == "" || len(c.Issuer) > 2048 || strings.ContainsAny(c.Issuer, "\r\n\x00") || c.Port < 1 || c.Port > 65535 || c.Username == "" || len(c.Username) > 512 || c.Password == "" || len(c.Password) > 4096 || strings.ContainsAny(c.Username+c.Password, "\r\n\x00") {
 		return ErrDomainRelay
 	}
 	return nil
 }
 
-// DecodeDomainRelay refuses plaintext, corrupt envelopes and malformed config.
-// Used by runtime reads and backup validation of the actual collected bytes.
-func DecodeDomainRelay(raw, key []byte) (DomainRelay, error) {
+// DecodeDomainRelay refuses plaintext, corrupt envelopes and malformed config,
+// and reports the format version (1 or 2). Backup validation and migration
+// accept both; runtime reads go through ReadDomainRelay, which accepts 2 only.
+func DecodeDomainRelay(raw, key []byte) (DomainRelay, int, error) {
 	if len(raw) > 64<<10 {
-		return DomainRelay{}, ErrDomainRelay
+		return DomainRelay{}, 0, ErrDomainRelay
 	}
 	envelope, ok := cryptutil.ParseEnvelope(raw)
 	if !ok {
-		return DomainRelay{}, ErrDomainRelay
+		return DomainRelay{}, 0, ErrDomainRelay
 	}
 	plain, err := cryptutil.Open(envelope, key)
-	var c DomainRelay
-	if err != nil || json.Unmarshal(plain, &c) != nil || c.Validate() != nil {
-		return DomainRelay{}, ErrDomainRelay
+	var f domainRelayFile
+	if err != nil || json.Unmarshal(plain, &f) != nil {
+		return DomainRelay{}, 0, ErrDomainRelay
 	}
-	return c, nil
+	c := DomainRelay{Generation: f.Generation, Domain: f.Domain, Issuer: f.Issuer, Host: f.Host, Port: f.Port, Username: f.Username, Password: f.Password}
+	switch {
+	case f.Version == 1 && f.Domains == nil && f.RetiredDomains == nil:
+	case f.Version == 2 && f.Domain == "" && len(f.Domains) == 1 && len(f.RetiredDomains) == 0:
+		c.Domain = f.Domains[0]
+	default:
+		return DomainRelay{}, 0, ErrDomainRelay
+	}
+	if c.Validate() != nil {
+		return DomainRelay{}, 0, ErrDomainRelay
+	}
+	return c, f.Version, nil
 }
 
-func ReadDomainRelay(path, keyPath string) (DomainRelay, bool, error) {
+// SealDomainRelay encrypts c as version 2 with an existing key.
+func SealDomainRelay(c DomainRelay, key []byte) ([]byte, error) {
+	if c.Validate() != nil {
+		return nil, ErrDomainRelay
+	}
+	plain, err := json.Marshal(domainRelayFile{Version: 2, Generation: c.Generation, Domains: []string{c.Domain}, RetiredDomains: []string{}, Issuer: c.Issuer, Host: c.Host, Port: c.Port, Username: c.Username, Password: c.Password})
+	if err != nil {
+		return nil, err
+	}
+	envelope, err := cryptutil.Seal(plain, key)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(envelope)
+}
+
+// ReadDomainRelayAnyVersion returns version 0 when the file is absent.
+func ReadDomainRelayAnyVersion(path, keyPath string) (DomainRelay, int, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return DomainRelay{}, false, nil
+		return DomainRelay{}, 0, nil
 	}
 	if err != nil {
-		return DomainRelay{}, false, ErrDomainRelay
+		return DomainRelay{}, 0, ErrDomainRelay
 	}
 	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, (64<<10)+1))
 	if err != nil || len(raw) > 64<<10 {
-		return DomainRelay{}, false, ErrDomainRelay
+		return DomainRelay{}, 0, ErrDomainRelay
 	}
 	key, err := cryptutil.LoadKey(keyPath) // Never replace a missing decryption key.
 	if err != nil {
+		return DomainRelay{}, 0, ErrDomainRelay
+	}
+	return DecodeDomainRelay(raw, key)
+}
+
+// ReadDomainRelay is the runtime reader: version 2 only. A version-1 file
+// means migrate-native has not run, and is refused like any invalid profile.
+func ReadDomainRelay(path, keyPath string) (DomainRelay, bool, error) {
+	c, version, err := ReadDomainRelayAnyVersion(path, keyPath)
+	if err == nil && version == 1 {
 		return DomainRelay{}, false, ErrDomainRelay
 	}
-	c, err := DecodeDomainRelay(raw, key)
-	return c, err == nil, err
+	return c, version != 0, err
 }
 
 // SaveDomainRelay is called only under the admin's fresh domain-proof fence.
@@ -167,7 +220,6 @@ func ReadDomainRelay(path, keyPath string) (DomainRelay, bool, error) {
 // generating anything. A new generation prevents queued jobs adopting a later
 // relay configuration silently. It does not enable sending or test the provider.
 func SaveDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay) (DomainRelay, error) {
-	c.Version = 1
 	var err error
 	c.Generation, err = fsutil.NewUUIDv4()
 	if err != nil || c.Validate() != nil {
@@ -186,15 +238,7 @@ func SaveDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay) (
 	if err != nil {
 		return DomainRelay{}, ErrDomainRelay
 	}
-	plain, err := json.Marshal(c)
-	if err != nil {
-		return DomainRelay{}, err
-	}
-	envelope, err := cryptutil.Seal(plain, key)
-	if err != nil {
-		return DomainRelay{}, err
-	}
-	raw, err := json.Marshal(envelope)
+	raw, err := SealDomainRelay(c, key)
 	if err != nil {
 		return DomainRelay{}, err
 	}

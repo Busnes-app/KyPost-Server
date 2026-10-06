@@ -58,6 +58,15 @@ chown -R kypost:kypost /kypost/config /kypost/private /kypost/logs /kypost/state
 chown kypost:kypost /kypost/ollama-models 2>/dev/null \
 	|| echo "note: could not chown /kypost/ollama-models; continuing (read-only or externally owned mount)"
 
+# Convert native mail storage to the current format before any service reads
+# it, as the runtime user so every file it creates is owned by that user.
+# Idempotent, and a no-op without native files. A failure must not stop the
+# container: the services refuse half-migrated native state on their own while
+# external IMAP users keep working.
+setpriv --reuid=kypost --regid=kypost --init-groups \
+	/usr/local/bin/kypost-server migrate-native \
+	|| echo "native mail storage migration failed; native mail stays refused. Fix the error above and restart, or restore the pre-migration backup (docs/RESTORE.md)" >&2
+
 # Drop to the unprivileged user for everything from here on, explicitly,
 # rather than relying on supervisord's own `user=` option to do it. Two
 # reasons: PID 1 itself is then unprivileged (so a container escape does not

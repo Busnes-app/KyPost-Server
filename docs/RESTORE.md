@@ -65,6 +65,18 @@ Native validation needs additional scratch space for the collected metadata and
 databases. The 64 MiB per-file and 256 MiB total limits remain activation gates
 for a domain-sized mail store; oversized backups fail rather than omit mail. The limit applies to the consistent snapshot, including committed WAL rows, not just the main database file size. A small main file is therefore insufficient to predict whether a backup will fit. Automated mailbox/receiving capacity checks verify refusal without a local capsule or scratch leftovers and preservation of original committed probe data; they do not qualify domain-sized mail throughput.
 
+Capsules carry the native domain set `native-domains.json` and the
+`native-domain.json` tombstone, never the `*.v1-migrated` copies. Validation and
+drills accept snapshots taken before the [storage format migration](#storage-format-migration)
+(version-1 domain, ledger and relay) as well as after it, and the mixes a migration
+crash leaves (a version-1 domain beside a version-2 ledger or relay). A version-2
+domain beside a version-1 ledger or relay, or a ledger or relay without a domain,
+is refused; a restored version-1
+snapshot is migrated by `migrate-native` at the next container start, with the
+restore hold left in place. Configuring a mail domain now also initializes an
+empty native ledger, so restoring a deployment that configured a domain but has
+no native accounts is held like a relay-only restore.
+
 The version-1 recipe remains compatible. Use this version of KyPost or newer to
 check all three database names and the additive relay credential/authority recipe; older drills do not attest the new relay checks. A new integrity
 check cannot recover WAL rows omitted from an older raw-copy native backup.
@@ -178,6 +190,20 @@ same key. For a file-backed pairing secret, stop services and remove
 PAIRING_SECRET must instead be rotated in `.env`. Rotate externally issued relay
 credentials at their provider and update the matching protected configuration.
 Never regenerate native-relay.key, imap-config.key or totp-secret.key: doing so strands encrypted data.
+
+## Storage format migration
+
+Each container start runs `kypost-server migrate-native` as the runtime user before
+any service, converting version-1 native domain, ledger and relay files to the
+version-2 formats; see [native provisioning](NATIVE_PROVISIONING.md#storage-format-migration).
+It keeps the version-1 sources as `$CONFIG_DIR/*.v1-migrated` and ends by replacing
+`native-domain.json` with a tombstone. Take a backup before upgrading.
+
+If migration fails, the log names the cause; native mail stays refused while
+external IMAP works. Fix the cause and restart; re-running is safe. A version-1
+binary refuses migrated state instead of reading it, so rollback to one means
+restoring the backup taken before the upgrade with the procedure above, not
+editing or deleting the tombstone, copies or ledger.
 
 ## Verification commands
 

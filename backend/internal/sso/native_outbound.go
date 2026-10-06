@@ -60,7 +60,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID string, action
 	}
 	ctx, expire := context.WithDeadline(ctx, time.Unix(proof.VerifiedUntil, 0))
 	defer expire()
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(s.ConfigDir, "native-domain.json"))
+	release, err := fsutil.LockFileContext(ctx, filepath.Join(s.ConfigDir, NativeDomainsFile))
 	if err != nil {
 		return err
 	}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,7 +16,15 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
+// NativeDomainsFile is the domain set; its sibling ".lock" is the domain fence.
+// The version-1 single-domain file native-domain.json becomes a tombstone.
+const NativeDomainsFile = "native-domains.json"
+
+const legacyNativeDomainFile = "native-domain.json"
+
 var ErrNativeDomain = errors.New("mail domain proof missing, expired or changed; configure and verify the current DNS challenge")
+
+var ErrNativeMigration = errors.New("native mail storage is not in the current format (migration to native-domains.json pending, failed or incomplete); native mail is refused and external IMAP is unaffected. Read the `kypost-server migrate-native` error in the container log, fix its cause and restart, or restore the pre-migration backup")
 
 // NativeDomain is a single operator/issuer-bound mail claim. The public DNS
 // challenge is not a secret and never grants receiver or SMTP readiness.
@@ -40,13 +50,125 @@ func (d NativeDomain) RecordValue() string {
 	return "kypost-mail-verify=" + d.Token
 }
 
+// nativeDomainSet is native-domains.json version 1. Phase 1 holds exactly one
+// domain and no retired ones; the single-domain API below reads and writes it.
+type nativeDomainSet struct {
+	Version int                          `json:"version"`
+	Issuer  string                       `json:"issuer"`
+	Domains map[string]nativeDomainProof `json:"domains"`
+	Retired []string                     `json:"retired"`
+}
+
+type nativeDomainProof struct {
+	Token         string `json:"token"`
+	ExpiresAt     int64  `json:"expiresAt"`
+	Established   bool   `json:"established"`
+	VerifiedUntil int64  `json:"verifiedUntil"`
+}
+
 type NativeDomainStore struct {
 	path   string
 	lookup func(context.Context, string) ([]string, error)
 }
 
 func NewNativeDomainStore(configDir string) *NativeDomainStore {
-	return &NativeDomainStore{path: filepath.Join(configDir, "native-domain.json"), lookup: net.DefaultResolver.LookupTXT}
+	return &NativeDomainStore{path: filepath.Join(configDir, NativeDomainsFile), lookup: net.DefaultResolver.LookupTXT}
+}
+
+// legacyNativeDomain reports whether native-domain.json is the v2 tombstone or
+// still holds version-1 data. Anything but the exact tombstone counts as data.
+func legacyNativeDomain(configDir string) (tombstone, data bool, err error) {
+	raw, err := os.ReadFile(filepath.Join(configDir, legacyNativeDomainFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	var doc map[string]any
+	if json.Unmarshal(raw, &doc) == nil && len(doc) == 1 && doc["migratedTo"] == NativeDomainsFile {
+		return true, false, nil
+	}
+	return false, true, nil
+}
+
+// checkNativeFormat is the runtime refusal for unmigrated or half-migrated
+// storage. A fresh install (neither file) passes as "not configured".
+func checkNativeFormat(configDir string) error {
+	tombstone, data, err := legacyNativeDomain(configDir)
+	if err != nil || data {
+		return ErrNativeMigration
+	}
+	// A leftover version-1 ledger means migration failed; refuse before any
+	// v2 write (Configure included) could adopt it. The relay needs its key
+	// to read the version; its runtime reader refuses version 1 itself.
+	if raw, err := os.ReadFile(filepath.Join(configDir, nativeProvisioningFile)); err == nil {
+		var head struct {
+			Version int `json:"version"`
+		}
+		if json.Unmarshal(raw, &head) != nil || head.Version != 2 {
+			return ErrNativeMigration
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return ErrNativeMigration
+	}
+	if !tombstone {
+		return nil
+	}
+	for _, name := range []string{NativeDomainsFile, nativeProvisioningFile} {
+		if _, err := os.Lstat(filepath.Join(configDir, name)); err != nil {
+			return ErrNativeMigration
+		}
+	}
+	return nil
+}
+
+// validNativeDomain is the version-1 claim rule, unchanged. It also rejects
+// the tombstone (empty token), which is what makes a v1 binary fail closed.
+func validNativeDomain(d NativeDomain) bool {
+	token, err := hex.DecodeString(d.Token)
+	return err == nil && len(token) == 32 && d.VerifiedUntil >= 0 && (d.Established || d.VerifiedUntil == 0) && nativeDomain(d.Domain) && len(d.RecordName()) <= 253 && directoryIdentifier(d.Issuer) && len(d.Token) == 64 && d.ExpiresAt > 0
+}
+
+func parseLegacyNativeDomain(raw []byte) (NativeDomain, error) {
+	var d NativeDomain
+	if json.Unmarshal(raw, &d) != nil || !validNativeDomain(d) {
+		return NativeDomain{}, ErrNativeDomain
+	}
+	return d, nil
+}
+
+// HistoricalNativeDomain reads a snapshot in either format: real version-1
+// data (format 1), or the domain set (format 2, required with the tombstone).
+// Format 0 means no domain. Callers check ledger/relay versions against it.
+func HistoricalNativeDomain(configDir string) (NativeDomain, int, error) {
+	tombstone, data, err := legacyNativeDomain(configDir)
+	if err != nil {
+		return NativeDomain{}, 0, err
+	}
+	if data {
+		raw, err := os.ReadFile(filepath.Join(configDir, legacyNativeDomainFile))
+		if err != nil {
+			return NativeDomain{}, 1, err
+		}
+		d, err := parseLegacyNativeDomain(raw)
+		return d, 1, err
+	}
+	d, err := NewNativeDomainStore(configDir).read()
+	if err == nil && tombstone && d.Domain == "" {
+		err = ErrNativeMigration
+	}
+	if d.Domain == "" && !tombstone {
+		return d, 0, err
+	}
+	return d, 2, err
+}
+
+// NativeSnapshotFormatsConsistent is the format-mix rule for snapshots: a v1
+// domain may sit beside v1 or v2 files (migration crash windows), a v2 domain
+// only beside v2 files, and no domain beside none. Versions are 0 when absent.
+func NativeSnapshotFormatsConsistent(domainFormat, fileVersion int) bool {
+	return fileVersion == 0 || domainFormat == 1 || domainFormat == 2 && fileVersion == 2
 }
 
 // SetLookupForTest follows the existing test-only transport override contract.
@@ -56,15 +178,50 @@ func (s *NativeDomainStore) SetLookupForTest(lookup func(context.Context, string
 	}
 	s.lookup = lookup
 }
+
+// Read is the choke point every native path passes: it refuses unmigrated or
+// half-migrated storage before returning the single configured domain.
 func (s *NativeDomainStore) Read() (NativeDomain, error) {
-	var d NativeDomain
-	present := false
-	err := fsutil.LoadJSONFile(s.path, func(v NativeDomain) { d = v; present = true }, nil)
-	token, tokenErr := hex.DecodeString(d.Token)
-	if err == nil && present && (tokenErr != nil || len(token) != 32 || d.VerifiedUntil < 0 || !d.Established && d.VerifiedUntil > 0 || !nativeDomain(d.Domain) || len(d.RecordName()) > 253 || !directoryIdentifier(d.Issuer) || len(d.Token) != 64 || d.ExpiresAt <= 0) {
-		err = ErrNativeDomain
+	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
+		return NativeDomain{}, err
 	}
-	return d, err
+	return s.read()
+}
+
+func (s *NativeDomainStore) read() (NativeDomain, error) {
+	var set nativeDomainSet
+	present := false
+	if err := fsutil.LoadJSONFile(s.path, func(v nativeDomainSet) { set = v; present = true }, nil); err != nil || !present {
+		return NativeDomain{}, err
+	}
+	if set.Version != 1 || len(set.Domains) != 1 || len(set.Retired) != 0 {
+		return NativeDomain{}, ErrNativeDomain
+	}
+	var d NativeDomain
+	for domain, p := range set.Domains {
+		d = NativeDomain{Domain: domain, Issuer: set.Issuer, Token: p.Token, ExpiresAt: p.ExpiresAt, Established: p.Established, VerifiedUntil: p.VerifiedUntil}
+	}
+	if !validNativeDomain(d) {
+		return d, ErrNativeDomain
+	}
+	return d, nil
+}
+
+// persist writes the set, then the tombstone if it is not already there, so a
+// v1 binary can never configure a domain behind a v2 one.
+func (s *NativeDomainStore) persist(d NativeDomain) error {
+	set := nativeDomainSet{Version: 1, Issuer: d.Issuer, Domains: map[string]nativeDomainProof{d.Domain: {d.Token, d.ExpiresAt, d.Established, d.VerifiedUntil}}, Retired: []string{}}
+	if err := fsutil.PersistJSONFile(s.path, set); err != nil {
+		return err
+	}
+	return writeNativeDomainTombstone(filepath.Dir(s.path))
+}
+
+func writeNativeDomainTombstone(configDir string) error {
+	if tombstone, _, err := legacyNativeDomain(configDir); err != nil || tombstone {
+		return err
+	}
+	return fsutil.PersistJSONFile(filepath.Join(configDir, legacyNativeDomainFile), map[string]string{"migratedTo": NativeDomainsFile})
 }
 func (s *NativeDomainStore) Configure(ctx context.Context, domain, issuer string) (NativeDomain, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -92,7 +249,12 @@ func (s *NativeDomainStore) Configure(ctx context.Context, domain, issuer string
 	if err = ctx.Err(); err != nil {
 		return NativeDomain{}, err
 	}
-	err = fsutil.PersistJSONFile(s.path, d)
+	// The ledger exists before the set and tombstone, so native can start at
+	// once and a crash never leaves a tombstone without a ledger.
+	if err = NewLifecycleStore(filepath.Dir(s.path)).ensureNativeLedger(ctx); err != nil {
+		return NativeDomain{}, err
+	}
+	err = s.persist(d)
 	return d, err
 }
 func (s *NativeDomainStore) Verify(ctx context.Context) (NativeDomain, error) {
@@ -140,7 +302,7 @@ func (s *NativeDomainStore) Verify(ctx context.Context) (NativeDomain, error) {
 	if err = ctx.Err(); err != nil {
 		return d, err
 	}
-	if err = fsutil.PersistJSONFile(s.path, d); err != nil {
+	if err = s.persist(d); err != nil {
 		return d, err
 	}
 	if lookupErr != nil {

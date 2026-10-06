@@ -57,11 +57,14 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	proof, err := s.nativeDomains.Verify(ctx) // DNS precedes all disk fences.
+	if nativeMigrationRefused(w, err) {
+		return
+	}
 	if err != nil || proof.Issuer != settings.IssuerURL {
 		http.Error(w, "relay setup requires fresh issuer-bound domain proof; verify the current TXT record", http.StatusConflict)
 		return
 	}
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(s.configDir, "native-domain.json"))
+	release, err := fsutil.LockFileContext(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
 	if err != nil {
 		http.Error(w, "relay setup busy or cancelled; retry without deleting configuration", http.StatusServiceUnavailable)
 		return
@@ -150,7 +153,7 @@ func (s *Server) nativeRelayCheckProfile(ctx context.Context, generation string,
 		prior != nil && (proof.Domain != prior.Domain || proof.Issuer != prior.Issuer || proof.Token != prior.Token || proof.ExpiresAt != prior.ExpiresAt) {
 		return mailmsg.DomainRelay{}, sso.NativeDomain{}, refused
 	}
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(s.configDir, "native-domain.json"))
+	release, err := fsutil.LockFileContext(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
 	if err != nil {
 		return mailmsg.DomainRelay{}, sso.NativeDomain{}, refused
 	}

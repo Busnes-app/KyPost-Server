@@ -40,6 +40,9 @@ func Run(args []string) error {
 		}
 		return runReceivingCommand(args[1:], os.Stdin)
 	}
+	if len(args) > 0 && args[0] == "migrate-native" {
+		return runMigrateNative(args[1:])
+	}
 	if name, rest, ok := backupSubcommand(args); ok {
 		return runBackupCommand(name, rest, os.Stdin, os.Stdout)
 	}

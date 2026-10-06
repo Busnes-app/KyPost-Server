@@ -2,15 +2,31 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
+
+// nativeMigrationRefused answers a pending/failed storage migration with its
+// own remediation instead of a generic domain error.
+func nativeMigrationRefused(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, sso.ErrNativeMigration) {
+		return false
+	}
+	http.Error(w, "native mail storage migration is pending or failed, so native mail is refused; read the kypost-server migrate-native error in the container log, fix it and restart, or restore the pre-upgrade backup (docs/RESTORE.md#storage-format-migration)", http.StatusServiceUnavailable)
+	return true
+}
 
 func (s *Server) handleNativeMailDomain(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	store := s.nativeDomains
 	if r.Method == http.MethodGet {
 		d, err := store.Read()
+		if nativeMigrationRefused(w, err) {
+			return
+		}
 		if err != nil {
 			http.Error(w, "mail domain state unreadable; preserve configuration and restore it", http.StatusServiceUnavailable)
 			return
@@ -32,6 +48,9 @@ func (s *Server) handleNativeMailDomain(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	d, err := store.Configure(r.Context(), body.Domain, issuer)
+	if nativeMigrationRefused(w, err) {
+		return
+	}
 	if err != nil {
 		http.Error(w, "mail domain configuration refused; preserve the existing domain, use an issuer without a trailing slash and retry a valid challenge", http.StatusConflict)
 		return
@@ -49,6 +68,9 @@ func (s *Server) handleNativeMailDomainVerify(w http.ResponseWriter, r *http.Req
 	}
 	store := s.nativeDomains
 	prior, err := store.Read()
+	if nativeMigrationRefused(w, err) {
+		return
+	}
 	if err != nil || prior.Issuer == "" || prior.Issuer != s.ssoStore.Load().IssuerURL {
 		http.Error(w, "mail domain issuer missing or changed; restore matching configuration", http.StatusConflict)
 		return
