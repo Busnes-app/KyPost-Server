@@ -207,10 +207,10 @@ function MailDomainForm() {
       <p>KyPost holds this domain-wide credential on the server. A compromise exposing both its encrypted file and key exposes the relay account.</p>
       {domainSet && <fieldset>
         <legend>Relay sending domains</legend>
-        {inService.map(d => <label key={d.domain}>
+        {inService.map(d => <label key={d.domain} className="config-checkbox">
           <input type="checkbox" checked={selected.includes(d.domain)} disabled={!d.established && !relayDomains.includes(d.domain)}
             onChange={e => setSelected(e.target.checked ? [...selected, d.domain] : selected.filter(x => x !== d.domain))} />
-          {d.domain}{!d.established && " (not verified)"}
+          <span>{d.domain}{!d.established && " (not verified)"}</span>
         </label>)}
         {inService.length === 0 && <p>Add and verify a domain first.</p>}
         <p>Adding a domain needs a current DNS proof: KyPost checks its TXT record when you save. Removing a domain is refused while queued or retryable mail sends from it. A domain must leave the relay before it can be retired.</p>
