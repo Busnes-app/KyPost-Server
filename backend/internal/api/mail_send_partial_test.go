@@ -21,6 +21,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
 // finishArgs fills in the parameters these tests do not care about, so each
@@ -34,8 +36,8 @@ func (s *Server) finishForTest(t *testing.T, userID string, recipients []string,
 		"alice@example.com",
 		[]string{"bob@example.com"}, nil, []string{"carol@example.com"},
 		recipients, msg,
-		mailRequest{Subject: "hi", Body: "hello", Mode: "plain"},
-		nil, "", afterPrimary)
+		mailmsg.Message{From: "alice@example.com", To: []string{"bob@example.com"}, BCC: []string{"carol@example.com"}, Subject: "hi", Body: "hello"}.Build(),
+		"", afterPrimary)
 	return rec
 }
 

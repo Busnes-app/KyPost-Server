@@ -6,12 +6,15 @@ package mailmsg
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
 	"io"
 	"mime"
 	"mime/multipart"
+	"net/mail"
 	"net/textproto"
 	"strings"
+	"time"
 )
 
 type Attachment struct {
@@ -42,6 +45,28 @@ type Message struct {
 	// outer, unencrypted envelope so correspondents' clients can harvest it.
 	Autocrypt   string
 	Attachments []Attachment
+	// MessageID ("<id@domain>") and Date are filled by Stamp when empty.
+	// Stamp once and Build every copy (delivered, Sent) from the result so
+	// they share one identity.
+	MessageID string
+	Date      time.Time
+}
+
+// Stamp fills an empty Date and Message-ID. The Message-ID domain is the From
+// address's domain; an unparseable From gets no Message-ID rather than an
+// invented domain.
+func (m Message) Stamp() Message {
+	if m.Date.IsZero() {
+		m.Date = time.Now()
+	}
+	if m.MessageID == "" {
+		if addr, err := mail.ParseAddress(m.From); err == nil {
+			if at := strings.LastIndexByte(addr.Address, '@'); at >= 0 {
+				m.MessageID = "<" + strings.ToLower(rand.Text()) + "@" + strings.ToLower(addr.Address[at+1:]) + ">"
+			}
+		}
+	}
+	return m
 }
 
 // ContentType is the text part's Content-Type for the message mode.
@@ -138,6 +163,7 @@ func FoldEncodedWords(value string) string {
 
 // Build renders the complete message bytes.
 func (m Message) Build() []byte {
+	m = m.Stamp()
 	bodyEncoded := m.EncodedBody
 	if bodyEncoded == "" {
 		bodyEncoded = base64.StdEncoding.EncodeToString([]byte(m.Body))
@@ -157,6 +183,10 @@ func (m Message) Build() []byte {
 		encodedSubject = FoldEncodedWords(encodedSubject)
 	}
 	msg.WriteString("Subject: " + encodedSubject + "\r\n")
+	msg.WriteString("Date: " + m.Date.UTC().Format(time.RFC1123Z) + "\r\n")
+	if id := SanitizeHeaderValue(m.MessageID); id != "" {
+		msg.WriteString("Message-ID: " + id + "\r\n")
+	}
 	msg.WriteString("MIME-Version: 1.0\r\n")
 	if m.Autocrypt != "" {
 		msg.WriteString("Autocrypt: " + FoldHeaderValue(SanitizeHeaderValue(m.Autocrypt)) + "\r\n")

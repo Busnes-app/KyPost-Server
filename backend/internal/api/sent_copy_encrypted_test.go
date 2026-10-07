@@ -1,9 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/mail"
+	"slices"
 	"strings"
 	"testing"
 
@@ -130,7 +133,6 @@ func TestSentCopyDraftAppendsTheEncryptedCopyVerbatim(t *testing.T) {
 	const ciphertext = "From: alice@example.com\r\nSubject: [Encrypted] Email Sent by KyPost\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nx\r\n-----END PGP MESSAGE-----\r\n"
 
 	draft, save := sentCopyDraftForSend(
-		mailRequest{Encrypt: true, Subject: "Quarterly numbers", Body: "revenue fell 40%", Mode: "plain"},
 		[]string{"bob@example.com"}, []string{"carol@example.com"}, []string{"dave@example.com"},
 		[]byte(ciphertext),
 	)
@@ -149,12 +151,9 @@ func TestSentCopyDraftAppendsTheEncryptedCopyVerbatim(t *testing.T) {
 	if draft.Subject == "Quarterly numbers" {
 		t.Fatal("the real subject was carried on the draft alongside the ciphertext")
 	}
-	// Recipients stay in the clear: the Sent listing is unusable without them.
-	//
-	// These fields serve the PLAINTEXT branch only. SaveSent ignores every one
-	// of them once Raw is set (client_append.go), so asserting on them proves
-	// nothing about what reaches IMAP for an encrypted copy — see
-	// TestEncryptedSentCopyKeepsBCC, which reads the bytes instead.
+	// SaveSent appends Raw verbatim (client_append.go), so these fields prove
+	// nothing about what reaches IMAP — TestEncryptedSentCopyKeepsBCC reads the
+	// bytes instead.
 	if len(draft.To) != 1 || len(draft.CC) != 1 || len(draft.BCC) != 1 {
 		t.Fatalf("recipients were dropped: %v / %v / %v", draft.To, draft.CC, draft.BCC)
 	}
@@ -206,21 +205,11 @@ func TestEncryptedSentCopyKeepsBCC(t *testing.T) {
 	}
 }
 
-func TestSentCopyDraftKeepsPlaintextWhenThereIsNoEncryptedCopy(t *testing.T) {
-	draft, save := sentCopyDraftForSend(
-		mailRequest{Subject: "Lunch", Body: "one o'clock", Mode: "plain"},
-		[]string{"bob@example.com"}, nil, nil,
-		nil,
-	)
-
-	if !save {
-		t.Fatal("an unencrypted send lost its Sent copy")
-	}
-	if len(draft.Raw) != 0 {
-		t.Fatal("an unencrypted send produced a Raw draft")
-	}
-	if draft.Subject != "Lunch" || draft.Body != "one o'clock" {
-		t.Fatalf("the plaintext copy lost its content: %+v", draft)
+// No prepared copy means no Sent copy, encrypted or not: the copy is never
+// rebuilt from request fields, which would mint a second Message-ID.
+func TestSentCopyDraftSavesNothingWithoutAPreparedCopy(t *testing.T) {
+	if draft, save := sentCopyDraftForSend([]string{"bob@example.com"}, nil, nil, nil); save || draft.Raw != nil || draft.Body != "" || len(draft.To) != 0 {
+		t.Fatalf("a send with no prepared copy produced a Sent draft: %+v", draft)
 	}
 }
 
@@ -234,7 +223,6 @@ func TestSentCopyDraftKeepsPlaintextWhenThereIsNoEncryptedCopy(t *testing.T) {
 // this; this is the same refusal on the server-custody path.
 func TestSentCopyDraftRefusesPlaintextForAnEncryptedSend(t *testing.T) {
 	_, save := sentCopyDraftForSend(
-		mailRequest{Encrypt: true, Subject: "Quarterly numbers", Body: "revenue fell 40%", Mode: "plain"},
 		[]string{"bob@example.com"}, nil, nil,
 		nil,
 	)
@@ -261,7 +249,6 @@ func TestFinishMailSendReportsAnUnsavedEncryptedCopy(t *testing.T) {
 		"alice@example.com",
 		[]string{"bob@example.com"}, nil, nil,
 		nil, nil,
-		mailRequest{Encrypt: true, Subject: "Quarterly numbers", Body: "revenue fell 40%", Mode: "plain"},
 		nil, "copy warning", nil)
 
 	if rec.Code != http.StatusOK {
@@ -408,5 +395,49 @@ func TestSentCopyForUnencryptedSendIsPlaintext(t *testing.T) {
 
 	if copyBytes, _ := srv.sentCopyForSend(userID, msg, mailRequest{Encrypt: false, Subject: "Lunch", Body: "one o'clock"}, nil); copyBytes != nil {
 		t.Fatal("an unencrypted send produced an encrypted Sent copy")
+	}
+}
+
+// An unencrypted send appends the bytes it delivered (plus Bcc), so the Sent
+// copy keeps the delivered Message-ID, Date and From instead of a rebuild.
+func TestSentCopyDraftAppendsPlaintextSourceVerbatim(t *testing.T) {
+	source := mailmsg.Message{From: "Alias <alias@example.com>", To: []string{"bob@example.com"}, BCC: []string{"dave@example.com"}, Subject: "Lunch", Body: "one o'clock"}.Build()
+	draft, save := sentCopyDraftForSend([]string{"bob@example.com"}, nil, []string{"dave@example.com"}, source)
+	if !save || !bytes.Equal(draft.Raw, source) {
+		t.Fatal("the plaintext Sent copy was not appended verbatim")
+	}
+}
+
+// The external IMAP/SMTP compose path: the wire bytes name no blind recipient,
+// the envelope still reaches them, and the Sent copy records them while
+// sharing the wire message's identity.
+func TestComposeSendKeepsBCCOffTheWireAndInSent(t *testing.T) {
+	wire, sent, recipients := composeSend(mailmsg.Message{From: "alice@example.com", To: []string{"bob@example.com"}, CC: []string{"carol@example.com"}, Subject: "hi", Body: "x"}, []string{"dave@example.com"})
+	w, err := mail.ReadMessage(bytes.NewReader(wire))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := mail.ReadMessage(bytes.NewReader(sent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := w.Header["Bcc"]; ok {
+		t.Fatal("wire carries a Bcc header")
+	}
+	for name, values := range w.Header {
+		if strings.Contains(strings.ToLower(strings.Join(values, " ")), "dave@example.com") {
+			t.Fatalf("wire header %s names the blind recipient", name)
+		}
+	}
+	if !slices.Contains(recipients, "dave@example.com") || len(recipients) != 3 {
+		t.Fatalf("envelope recipients = %v", recipients)
+	}
+	if s.Header.Get("Bcc") != "dave@example.com" {
+		t.Fatalf("Sent Bcc = %q", s.Header.Get("Bcc"))
+	}
+	for _, name := range []string{"Message-Id", "Date"} {
+		if len(w.Header[name]) != 1 || len(s.Header[name]) != 1 || w.Header[name][0] != s.Header[name][0] {
+			t.Fatalf("%s differs: wire %q, Sent %q", name, w.Header[name], s.Header[name])
+		}
 	}
 }

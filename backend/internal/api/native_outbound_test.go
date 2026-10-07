@@ -80,7 +80,6 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		source := mailmsg.Message{From: "one@example.test", To: []string{"visible@outside.test"}, Subject: "protected native subject", Body: "native signed secret"}.Build()
-		source = append([]byte("Date: "+time.Now().UTC().Format(time.RFC1123Z)+"\r\n"), source...)
 		wire, err := pgpmail.EncryptMIME(source, []string{recipient.ArmoredPublicKey}, sender)
 		if err != nil {
 			t.Fatal(err)
@@ -253,11 +252,17 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			identities := map[string]bool{}
 			for _, raw := range [][]byte{wire, sent} {
 				msg, err := mail.ReadMessage(bytes.NewReader(raw))
 				if err != nil {
 					t.Fatal(err)
 				}
+				ids, dates := msg.Header["Message-Id"], msg.Header["Date"]
+				if len(ids) != 1 || !strings.HasSuffix(ids[0], "@example.test>") || len(dates) != 1 {
+					t.Fatalf("Message-ID %q / Date %q", ids, dates)
+				}
+				identities[ids[0]+" "+dates[0]] = true
 				header := msg.Header.Get("Subject")
 				for _, b := range []byte(header) {
 					if b >= 128 {
@@ -268,6 +273,9 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 				if err != nil || subject != "native — café ✉" {
 					t.Fatalf("SMTP or Sent subject = %q, error %v", subject, err)
 				}
+			}
+			if len(identities) != 1 {
+				t.Fatalf("submitted and Sent copies differ in Message-ID/Date: %v", identities)
 			}
 		}
 	}

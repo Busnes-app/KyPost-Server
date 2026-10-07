@@ -72,6 +72,8 @@ qualified first. It grants no account or sending authority.
    [SES SMTP setup](https://docs.aws.amazon.com/ses/latest/dg/send-email-smtp.html)
    and [Cloudflare SMTP setup](https://developers.cloudflare.com/email-service/api/send-emails/smtp/).
    Native sending supports implicit TLS only. Keep provider credentials private.
+   SES replaces KyPost's `Message-ID` and `Date`, so replies will not thread
+   against the Sent copy; see [native outbox](NATIVE_OUTBOX.md#persistent-contract).
 4. Configure sealed backups under Server → Backup and run a restore drill.
    Review [native restore limits](RESTORE.md#offline-restore-and-native-quarantine):
    restored native mail remains held, with no supported hold release yet.

@@ -27,7 +27,7 @@ import (
 // encrypted/signed part. Autocrypt is here rather than folded into the encrypted
 // content because it exists to let a receiving client opportunistically pick up
 // the sender's public key without decrypting anything.
-var envelopeHeaderOrder = []string{"From", "To", "Cc", "Bcc", "Subject", "Autocrypt", "Date", "Message-Id", "Reply-To", "In-Reply-To", "References"}
+var envelopeHeaderOrder = []string{"From", "To", "Cc", "Bcc", "Subject", "Autocrypt", "Date", "Message-ID", "Reply-To", "In-Reply-To", "References"}
 
 // splitMessage separates a raw RFC 5322 message (as produced by
 // mailmsg.Message.Build()) into its preserved envelope headers and its inner

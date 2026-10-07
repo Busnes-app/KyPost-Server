@@ -994,7 +994,9 @@ nothing on the server to decrypt with.
    delivery missing any of those rather than sending malformed mail. Put the
    real subject inside the encrypted part as a protected header and use the
    placeholder `[Encrypted] Email Sent by KyPost` outside, matching both
-   other send paths.
+   other send paths. The client owns `Message-ID` too: server-built messages
+   get one (and `Date`) on the outer envelope, never inside signed or
+   encrypted content, but client MIME is never rewritten.
 
 ### kypost-android
 

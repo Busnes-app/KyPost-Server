@@ -10,6 +10,7 @@ import (
 	"net/mail"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpautocrypt"
 )
@@ -313,5 +314,60 @@ func TestFoldHeaderValueNeverSplitsAttributeName(t *testing.T) {
 	in := strings.Repeat("nofoldpoints", 20)
 	if got := FoldHeaderValue(in); got != in {
 		t.Fatalf("FoldHeaderValue without '=' must pass through unchanged, got %q", got)
+	}
+}
+
+func TestBuildStampsDateAndMessageID(t *testing.T) {
+	fixed := time.Date(2026, 10, 6, 9, 30, 0, 0, time.FixedZone("CEST", 2*3600))
+	raw := Message{From: `"Alice" <Alice@Example.COM>`, To: []string{"bob@example.com"}, Subject: "hi", Body: "x", Date: fixed}.Build()
+	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := msg.Header["Date"]; len(got) != 1 || got[0] != "Tue, 06 Oct 2026 07:30:00 +0000" {
+		t.Fatalf("Date = %q", got)
+	}
+	if d, err := msg.Header.Date(); err != nil || !d.Equal(fixed) {
+		t.Fatalf("Date parses to %v, %v", d, err)
+	}
+	ids := msg.Header["Message-Id"]
+	if len(ids) != 1 || !strings.HasPrefix(ids[0], "<") || !strings.HasSuffix(ids[0], "@example.com>") || len(ids[0]) != len("<@example.com>")+26 {
+		t.Fatalf("Message-ID = %q", ids)
+	}
+	if _, err := mail.ParseAddress(strings.Trim(ids[0], "<>")); err != nil {
+		t.Fatalf("Message-ID is not addr-spec shaped: %v", err)
+	}
+}
+
+func TestStampIsReusedAcrossBuilds(t *testing.T) {
+	m := Message{From: "alice@example.com", To: []string{"bob@example.com"}, Subject: "hi", Body: "x"}.Stamp()
+	withBCC := m
+	withBCC.BCC = []string{"carol@example.com"}
+	a, _ := mail.ReadMessage(bytes.NewReader(m.Build()))
+	b, _ := mail.ReadMessage(bytes.NewReader(withBCC.Build()))
+	for _, name := range []string{"Date", "Message-Id"} {
+		if a.Header.Get(name) == "" || a.Header.Get(name) != b.Header.Get(name) {
+			t.Fatalf("%s differs: %q vs %q", name, a.Header.Get(name), b.Header.Get(name))
+		}
+	}
+	other, _ := mail.ReadMessage(bytes.NewReader(Message{From: "alice@example.com"}.Build()))
+	if other.Header.Get("Message-Id") == a.Header.Get("Message-Id") {
+		t.Fatal("two messages share a Message-ID")
+	}
+}
+
+func TestBuildKeepsSuppliedMessageIDAndOmitsItWithoutFromDomain(t *testing.T) {
+	raw := Message{From: "alice@example.com", MessageID: "<given@example.com>\r\nBcc: x@evil.test"}.Build()
+	msg, _ := mail.ReadMessage(bytes.NewReader(raw))
+	if ids := msg.Header["Message-Id"]; len(ids) != 1 || !strings.HasPrefix(ids[0], "<given@example.com> ") {
+		t.Fatalf("Message-ID = %q", ids)
+	}
+	if len(msg.Header["Bcc"]) != 0 {
+		t.Fatal("Message-ID injected a header")
+	}
+	raw = Message{From: "not an address"}.Build()
+	msg, _ = mail.ReadMessage(bytes.NewReader(raw))
+	if len(msg.Header["Message-Id"]) != 0 || len(msg.Header["Date"]) != 1 {
+		t.Fatalf("unparseable From: headers %v", msg.Header)
 	}
 }
