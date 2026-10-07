@@ -1088,6 +1088,14 @@ but automatic blocks in the shared list are published like manual ones.
   - Either way enough addresses on one domain could block a provider your
     users have not yet received authenticated mail from, after the warm-up.
     Unblock it; the 30-day suppression then stands.
+  - Saturation is chosen over eviction. Every bound refuses new entries
+    rather than evicting existing ones, because eviction would let attacker
+    entries free abusers or unprotect real domains. An attacker who earns
+    2500 automatic blocks (at least 12,500 reject-scored authenticated
+    messages) stops further automatic blocks, and one who records 50,000
+    authenticated domains across at least 1000 parents stops further
+    protection. Both show in status (`automaticFull`, `goodFull`); the
+    remedy is a manual block.
   The [Rspamd sidecar](RECEIVING_SETUP.md#optional-rspamd-sidecar) is
   required; without it there are only manual blocks.
 
