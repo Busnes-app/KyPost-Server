@@ -2,14 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../../auth";
 import { credentialFields, deriveCredential } from "../../api/auth";
 import { deleteJSON, getJSON, HttpError, postJSON, toErrorMessage } from "../../api/client";
-import { readMailAddresses, readMailAddressChange, type NativeMailbox } from "../../api/nativeMail";
+import { readMailAddresses, readMailAddressChange, readMailboxChange, type NativeMailbox } from "../../api/nativeMail";
 import { listUsers } from "../../api/users";
 import { withSSOStepUp } from "../../api/stepup";
 
 type Change =
   | { action: "add"; address: string; mailbox: string }
   | { action: "release"; address: string }
-  | { action: "reassign"; address: string; mailbox: string };
+  | { action: "reassign"; address: string; mailbox: string }
+  | { action: "create"; address: string; user: string }
+  | { action: "disable"; mailbox: string }
+  | { action: "enable"; mailbox: string };
 
 export function MailAddresses() {
   const auth = useAuth();
@@ -32,6 +35,8 @@ function MailAddressesForm() {
   const [owner, setOwner] = useState("");
   const [addTo, setAddTo] = useState("");
   const [address, setAddress] = useState("");
+  const [newOwner, setNewOwner] = useState("");
+  const [newAddress, setNewAddress] = useState("");
   const [targets, setTargets] = useState<Record<string, string>>({});
   function requireLive() {
     if (!live.current) throw new Error("Mail addresses closed; reopen them to continue.");
@@ -61,6 +66,23 @@ function MailAddressesForm() {
     const user = m && (names.get(m.user) ?? m.user);
     return `${primary ?? id}${user ? ` (${user})` : ""}`;
   }
+  // Throws unless the answer is the requested change; returns its notice.
+  function settle(change: Change, result: unknown): { warning: string; notice: string } {
+    if (change.action === "create" || change.action === "disable" || change.action === "enable") {
+      const { mailbox: m, warning } = readMailboxChange(result);
+      const matches = m.kind === "extra" && (change.action === "create"
+        ? m.user === change.user && m.state === "active" && m.addresses.some(a => a.address === change.address.toLowerCase())
+        : m.mailbox === change.mailbox && m.state === (change.action === "enable" ? "active" : "disabled"));
+      if (!matches) throw new Error("Mailbox change answer does not match the request; reload before retrying.");
+      return { warning, notice: change.action === "create" ? `${change.address.toLowerCase()} is a new mailbox for ${names.get(m.user) ?? m.user}.` : `${label(m.mailbox)} is ${m.state}.` };
+    }
+    const { record, warning } = readMailAddressChange(result, change.address);
+    if (change.action === "release" ? record.state !== "reserved" : record.mailbox !== change.mailbox) {
+      throw new Error("Address change answer does not match the request; reload before retrying.");
+    }
+    return { warning, notice: change.action === "release" ? `${record.address} released and reserved (generation ${record.generation}). It receives and sends nothing until reassigned.`
+      : `${record.address} is ${record.state} on ${label(record.mailbox)} (generation ${record.generation}).` };
+  }
   async function act(change: Change, confirmText = "") {
     if (!mailboxes || inFlight.current) return;
     if (confirmText && !window.confirm(confirmText)) return;
@@ -68,8 +90,10 @@ function MailAddressesForm() {
     setBusy(true); setError(""); setNotice(""); setWarning("");
     // Freeze the request before credential derivation or KySignOn confirmation.
     const fields = change.action === "add" ? { mailbox: change.mailbox, address: change.address }
-      : change.action === "reassign" ? { mailbox: change.mailbox } : {};
-    const path = `/api/admin/mail-addresses/${encodeURIComponent(change.address)}`;
+      : change.action === "reassign" ? { mailbox: change.mailbox }
+      : change.action === "create" ? { user: change.user, address: change.address } : {};
+    const path = "address" in change ? `/api/admin/mail-addresses/${encodeURIComponent(change.address)}`
+      : `/api/admin/mailboxes/${encodeURIComponent(change.mailbox)}/${change.action}`;
     const accountPassword = password;
     setPassword("");
     let committed = false;
@@ -80,14 +104,12 @@ function MailAddressesForm() {
       const result = await withSSOStepUp((headers) => {
         requireLive();
         return change.action === "add" ? postJSON<unknown>("/api/admin/mail-addresses", body, headers)
+          : change.action === "create" ? postJSON<unknown>("/api/admin/mailboxes", body, headers)
           : change.action === "release" ? deleteJSON<unknown>(path, body, headers)
-          : postJSON<unknown>(`${path}/reassign`, body, headers);
+          : postJSON<unknown>(change.action === "reassign" ? `${path}/reassign` : path, body, headers);
       });
       requireLive();
-      const { record, warning } = readMailAddressChange(result, change.address);
-      if (change.action === "release" ? record.state !== "reserved" : record.mailbox !== change.mailbox) {
-        throw new Error("Address change answer does not match the request; reload before retrying.");
-      }
+      const { warning, notice } = settle(change, result);
       committed = true;
       setWarning(warning);
       // A committed change followed by an unreadable list must not leave stale controls enabled.
@@ -95,8 +117,8 @@ function MailAddressesForm() {
       await refresh();
       requireLive();
       if (change.action === "add") setAddress("");
-      setNotice(change.action === "release" ? `${record.address} released and reserved (generation ${record.generation}). It receives and sends nothing until reassigned.`
-        : `${record.address} is ${record.state} on ${label(record.mailbox)} (generation ${record.generation}).`);
+      if (change.action === "create") setNewAddress("");
+      setNotice(notice);
     } catch (e: unknown) {
       if (live.current) {
         setMailboxes(null);
@@ -115,9 +137,11 @@ function MailAddressesForm() {
   const owners = [...new Set(mailboxes?.map(m => m.user).filter(Boolean))];
   const shown = mailboxes?.filter(m => !owner || m.user === owner) ?? [];
   const typed = address.trim();
+  const typedMailbox = newAddress.trim();
+  const ownerName = names.get(newOwner) ?? newOwner;
   return <div className="config-section">
     <h3>Mail addresses</h3>
-    <p>Native mailboxes and the addresses that deliver to them. Primary addresses come from KyIdentity and change only there. Aliases belong to everyday identities; administrator identities own none.</p>
+    <p>Native mailboxes and the addresses that deliver to them. Each user's primary mailbox and address come from KyIdentity and change only there. Aliases and additional mailboxes belong to everyday identities; administrator identities own none.</p>
     {error && <p className="notice notice-error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
     {warning && <p className="notice notice-warning" role="status">Change saved with a warning: {warning}</p>}
@@ -150,7 +174,13 @@ function MailAddressesForm() {
           </> : <button className="button secondary" aria-label={`Release ${a.address}`} disabled={!unlocked} onClick={() => void act({ action: "release", address: a.address },
             `Release ${a.address}? It becomes reserved: delivery to it and sending from it stop immediately. Mail already delivered stays in ${label(m.mailbox)}. It returns to service only when an administrator explicitly reassigns it.`)}>Release</button>)}</td>
         </tr>)}</tbody>
-      </table></div>)}
+      </table>
+      {m.kind === "extra" && <p>Additional mailbox, {m.state}{!m.prepared && "; creation unfinished: repeat New mailbox with the same user and address"}.{" "}
+        {m.state === "active" ? <button className="button secondary" aria-label={`Disable ${label(m.mailbox)}`} disabled={!unlocked} onClick={() => void act({ action: "disable", mailbox: m.mailbox },
+          `Disable ${label(m.mailbox)}? Delivery to its addresses and sending from it stop at once; its mail is kept. Outgoing mail still queued in it is quarantined permanently and is not resumed if it is enabled again.`)}>Disable</button>
+          : <button className="button secondary" aria-label={`Enable ${label(m.mailbox)}`} disabled={!unlocked} onClick={() => void act({ action: "enable", mailbox: m.mailbox },
+            `Enable ${label(m.mailbox)}? Its addresses deliver to it and it can send again. Outgoing mail quarantined while it was disabled stays quarantined.`)}>Enable</button>}</p>}
+      </div>)}
       <h4>Add an alias</h4>
       <label>Mailbox<select value={addTo} onChange={e => setAddTo(e.target.value)}>
         <option value="">Choose a mailbox</option>
@@ -160,6 +190,15 @@ function MailAddressesForm() {
       <p>ASCII address on a configured mail domain; stored in lowercase. An address KyPost has ever held, or any KyIdentity primary address, is refused; a released alias returns only through Reassign.</p>
       <button className="button secondary" disabled={!unlocked || !addTo || !typed} onClick={() => void act({ action: "add", address: typed, mailbox: addTo },
         `Add ${typed} to ${label(addTo)}? KyPost holds this address permanently: records are never deleted, and releasing it later only reserves it.`)}>Add alias</button>
+      <h4>New mailbox</h4>
+      <label>User<select value={newOwner} onChange={e => setNewOwner(e.target.value)}>
+        <option value="">Choose a user</option>
+        {owners.map(id => <option key={id} value={id}>{names.get(id) ?? id}</option>)}
+      </select></label>
+      <label>Mailbox address<input value={newAddress} placeholder="team@example.com" autoComplete="off" onChange={e => setNewAddress(e.target.value)} /></label>
+      <p>A separate mailbox with its own primary address, on an established mail domain. The user selects it in their mail client.</p>
+      <button className="button secondary" disabled={!unlocked || !newOwner || !typedMailbox} onClick={() => void act({ action: "create", address: typedMailbox, user: newOwner },
+        `Create mailbox ${typedMailbox} for ${ownerName}? KyPost holds this address permanently: records are never deleted. ${ownerName} selects the new mailbox in their mail client. Incoming encryption is unavailable to ${ownerName} while they have additional mailboxes.`)}>Create mailbox</button>
     </fieldset>
     {busy && <p role="status">Working…</p>}
   </div>;

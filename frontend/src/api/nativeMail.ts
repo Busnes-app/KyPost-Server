@@ -137,7 +137,7 @@ export function readMailRelayCheck(value: unknown, relay: MailRelay): void {
 }
 
 export type MailAddress = { address: string; mailbox: string; kind: "primary" | "alias"; state: "active" | "disabled" | "reserved"; generation: number };
-export type NativeMailbox = { mailbox: string; user: string; addresses: MailAddress[] };
+export type NativeMailbox = { mailbox: string; user: string; kind: "primary" | "extra"; state: "active" | "disabled"; prepared: boolean; addresses: MailAddress[] };
 // Lowercase bare dot-atom, the only form the ledger stores.
 const atom = "[a-z0-9!#$%&'*+/=?^_`{|}~-]+";
 const addressPattern = new RegExp(`^${atom}(\\.${atom})*@[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`);
@@ -151,27 +151,40 @@ function readAddress(value: unknown): MailAddress {
   }
   return { address, mailbox, kind, state, generation: integer(generation) };
 }
+// A routes-pending answer omits prepared; absent reads as not prepared.
+function readMailbox(item: unknown): NativeMailbox {
+  const entry = object(item);
+  const mailbox = text(entry.mailbox), user = text(entry.user), { kind, state, prepared = false } = entry;
+  if (!mailbox || (kind !== "primary" && kind !== "extra") || (state !== "active" && state !== "disabled") || typeof prepared !== "boolean" ||
+      !Array.isArray(entry.addresses) || entry.addresses.length > 1000) throw new Error("Invalid mailbox list.");
+  const addresses = entry.addresses.map(readAddress);
+  if (addresses.some(a => a.mailbox !== mailbox)) throw new Error("Inconsistent mailbox list; reload before making changes.");
+  return { mailbox, user, kind, state, prepared, addresses };
+}
 export function readMailAddresses(value: unknown): NativeMailbox[] {
   const data = object(value);
   if (!Array.isArray(data.mailboxes) || data.mailboxes.length > 10000) throw new Error("Invalid mailbox list.");
   const seen = new Set<string>();
   return data.mailboxes.map((item: unknown) => {
-    const entry = object(item);
-    const mailbox = text(entry.mailbox), user = text(entry.user);
-    if (!mailbox || !Array.isArray(entry.addresses) || entry.addresses.length > 1000) throw new Error("Invalid mailbox list.");
-    const addresses = entry.addresses.map(readAddress);
-    for (const a of addresses) {
-      if (a.mailbox !== mailbox || seen.has(a.address)) throw new Error("Inconsistent mailbox list; reload before making changes.");
+    const box = readMailbox(item);
+    for (const a of box.addresses) {
+      if (seen.has(a.address)) throw new Error("Inconsistent mailbox list; reload before making changes.");
       seen.add(a.address);
     }
-    return { mailbox, user, addresses };
+    return box;
   });
 }
-// A change answer must name the address acted on. A warning means the change is
-// committed but its receiving route is still pending.
+// A warning means the change is committed but its receiving route is still pending.
+function warningOf(value: unknown): string {
+  const { warning } = object(value);
+  return warning === undefined ? "" : text(warning);
+}
+// A change answer must name the address acted on.
 export function readMailAddressChange(value: unknown, address: string): { record: MailAddress; warning: string } {
   const record = readAddress(value);
-  const warning = object(value).warning === undefined ? "" : text(object(value).warning);
   if (record.address !== address.toLowerCase()) throw new Error("Address change answer does not match the request; reload before retrying.");
-  return { record, warning };
+  return { record, warning: warningOf(value) };
+}
+export function readMailboxChange(value: unknown): { mailbox: NativeMailbox; warning: string } {
+  return { mailbox: readMailbox(value), warning: warningOf(value) };
 }

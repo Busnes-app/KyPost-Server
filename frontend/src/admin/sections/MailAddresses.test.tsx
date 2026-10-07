@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { AuthContext, type AuthState } from "../../auth";
 import { deriveCredential } from "../../api/auth";
 import { withSSOStepUp } from "../../api/stepup";
-import { readMailAddressChange, readMailAddresses } from "../../api/nativeMail";
+import { readMailAddressChange, readMailAddresses, readMailboxChange } from "../../api/nativeMail";
 import { MailAddresses } from "./MailAddresses";
 
 vi.mock("../../api/auth", async (original) => ({
@@ -15,13 +15,18 @@ vi.mock("../../api/stepup", () => ({ withSSOStepUp: vi.fn() }));
 const sales = { address: "sales@example.com", mailbox: "alice-id", kind: "alias", state: "active", generation: 1 };
 const old = { address: "old@example.com", mailbox: "alice-id", kind: "alias", state: "reserved", generation: 2 };
 const list = { mailboxes: [
-  { mailbox: "alice-id", user: "alice-id", kind: "primary", addresses: [
+  { mailbox: "alice-id", user: "alice-id", kind: "primary", state: "active", prepared: true, addresses: [
     { address: "alice@example.com", mailbox: "alice-id", kind: "primary", state: "active", generation: 3 }, old, sales,
   ] },
-  { mailbox: "bob-id", user: "bob-id", kind: "primary", addresses: [
+  { mailbox: "bob-id", user: "bob-id", kind: "primary", state: "disabled", prepared: true, addresses: [
     { address: "bob@example.com", mailbox: "bob-id", kind: "primary", state: "disabled", generation: 1 },
   ] },
+  { mailbox: "mbx-1", user: "alice-id", kind: "extra", state: "active", prepared: true, addresses: [
+    { address: "team@example.com", mailbox: "mbx-1", kind: "primary", state: "active", generation: 2 },
+  ] },
 ] };
+const team = list.mailboxes[2]!;
+const disabledTeam = { ...team, state: "disabled", addresses: [{ ...team.addresses[0]!, state: "disabled", generation: 3 }] };
 const users = { users: [{ id: "alice-id", username: "alice" }, { id: "bob-id", username: "bob" }] };
 let listResponse: unknown;
 let answer: () => Response;
@@ -68,12 +73,16 @@ it("validates untrusted address lists and change answers", () => {
     with1({ ...sales, state: "deleted" }), with1({ ...sales, kind: "forward" }), with1({ ...sales, generation: 0 }),
     with1({ ...sales, generation: "1" }), with1({ ...sales, address: "Sales@example.com" }), with1({ ...sales, address: "<b>x</b>@example.com" }),
     with1({ ...sales, address: `${"a".repeat(65)}@example.com` }), with1({ ...sales, mailbox: "bob-id" }), with1({ ...sales, address: "x".repeat(2000) }),
-    { mailboxes: [box, { ...box, mailbox: "bob-id", addresses: [{ ...sales, mailbox: "bob-id" }] }] }]) {
+    { mailboxes: [box, { ...box, mailbox: "bob-id", addresses: [{ ...sales, mailbox: "bob-id" }] }] },
+    { mailboxes: [{ ...box, kind: "shared" }] }, { mailboxes: [{ ...box, state: "reserved" }] }, { mailboxes: [{ ...box, prepared: "yes" }] }]) {
     expect(() => readMailAddresses(value)).toThrow();
   }
   expect(readMailAddressChange({ ...sales, warning: "routes pending" }, "Sales@Example.com").warning).toBe("routes pending");
   expect(() => readMailAddressChange(sales, "other@example.com")).toThrow();
   expect(() => readMailAddressChange({ ...sales, warning: 7 }, "sales@example.com")).toThrow();
+  const { prepared: _, ...pending } = team;
+  expect(readMailboxChange({ ...pending, warning: "routes pending" })).toEqual({ mailbox: { ...team, prepared: false }, warning: "routes pending" });
+  expect(() => readMailboxChange({ ...team, state: "deleted" })).toThrow();
 });
 
 it("lists addresses as text by state, filters by user and offers no primary actions", async () => {
@@ -261,4 +270,111 @@ it("says a committed change was saved when the follow-up read fails", async () =
   fireEvent.click(screen.getByRole("button", { name: "Release sales@example.com" }));
   expect((await screen.findByRole("alert")).textContent).toBe("Change saved; reload to see current addresses. Invalid mailbox list.");
   expect(fieldset().disabled).toBe(true);
+});
+
+it("creates a mailbox only after confirmation naming the user and its consequences", async () => {
+  await unlocked();
+  const create = screen.getByRole("button", { name: "Create mailbox" });
+  expect(create.hasAttribute("disabled")).toBe(true);
+  fireEvent.change(screen.getByLabelText("User"), { target: { value: "alice-id" } });
+  fireEvent.change(screen.getByLabelText("Mailbox address"), { target: { value: " desk@example.com " } });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(create);
+  expect(confirm.mock.calls[0]?.[0]).toBe("Create mailbox desk@example.com for alice? KyPost holds this address permanently: records are never deleted. alice selects the new mailbox in their mail client. Incoming encryption is unavailable to alice while they have additional mailboxes.");
+  expect(deriveCredential).not.toHaveBeenCalled();
+  expect(writes()).toHaveLength(0);
+  confirm.mockReturnValue(true);
+  answer = () => json({ mailbox: "mbx-2", user: "alice-id", kind: "extra", state: "active", prepared: true, addresses: [{ address: "desk@example.com", mailbox: "mbx-2", kind: "primary", state: "active", generation: 1 }] });
+  fireEvent.click(create);
+  await screen.findByText("desk@example.com is a new mailbox for alice.");
+  const [write] = writes();
+  expect(write?.[0]).toBe("/api/admin/mailboxes");
+  expect(write?.[1]?.method).toBe("POST");
+  expect(JSON.parse(String(write?.[1]?.body))).toEqual({ user: "alice-id", address: "desk@example.com", authSecret: "derived-test-secret" });
+  expect(new Headers(write?.[1]?.headers).get("X-CSRF-Token")).toBe("test-csrf");
+  expect(screen.getByLabelText("Mailbox address").getAttribute("value")).toBe("");
+});
+
+it("disables an extra mailbox after confirming that queued mail is quarantined for good", async () => {
+  await unlocked();
+  expect(screen.queryByRole("button", { name: "Disable alice@example.com (alice)" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Enable bob@example.com (bob)" })).toBeNull();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Disable team@example.com (alice)" }));
+  expect(confirm.mock.calls[0]?.[0]).toMatch(/stop at once; its mail is kept\. .*quarantined permanently and is not resumed/);
+  expect(writes()).toHaveLength(0);
+  confirm.mockReturnValue(true);
+  answer = () => json(disabledTeam);
+  fireEvent.click(screen.getByRole("button", { name: "Disable team@example.com (alice)" }));
+  await screen.findByText("team@example.com (alice) is disabled.");
+  const [write] = writes();
+  expect(write?.[0]).toBe("/api/admin/mailboxes/mbx-1/disable");
+  expect(write?.[1]?.method).toBe("POST");
+  expect(JSON.parse(String(write?.[1]?.body))).toEqual({ authSecret: "derived-test-secret" });
+  expect(new Headers(write?.[1]?.headers).get("X-CSRF-Token")).toBe("test-csrf");
+});
+
+it("enables a disabled extra mailbox", async () => {
+  listResponse = { mailboxes: [list.mailboxes[0], disabledTeam] };
+  await unlocked();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Enable team@example.com (alice)" }));
+  expect(writes()).toHaveLength(0);
+  confirm.mockReturnValue(true);
+  answer = () => json({ ...team, addresses: [{ ...team.addresses[0]!, generation: 4 }] });
+  fireEvent.click(screen.getByRole("button", { name: "Enable team@example.com (alice)" }));
+  await screen.findByText("team@example.com (alice) is active.");
+  expect(writes()[0]?.[0]).toBe("/api/admin/mailboxes/mbx-1/enable");
+});
+
+it("shows the server's refusal of a mailbox beside incoming encryption and re-reads", async () => {
+  await unlocked();
+  const before = reads().length;
+  answer = () => json({ error: "this user has incoming encryption on (or a replacement pending); they must turn it off before an additional mailbox can be created" }, 409);
+  fireEvent.change(screen.getByLabelText("User"), { target: { value: "alice-id" } });
+  fireEvent.change(screen.getByLabelText("Mailbox address"), { target: { value: "desk@example.com" } });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Create mailbox" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("request failed: 409 - this user has incoming encryption on (or a replacement pending); they must turn it off before an additional mailbox can be created");
+  await waitFor(() => expect(actions().disabled).toBe(false));
+  expect(reads().length).toBeGreaterThan(before);
+});
+
+it("locks mailbox changes when no answer arrived", async () => {
+  await unlocked();
+  const before = reads().length;
+  failWrite = true;
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Disable team@example.com (alice)" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("network connection lost");
+  expect(actions().disabled).toBe(true);
+  expect(reads().length).toBe(before);
+});
+
+it("locks when a mailbox answer does not match the request", async () => {
+  await unlocked();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  answer = () => json(team);
+  fireEvent.click(screen.getByRole("button", { name: "Disable team@example.com (alice)" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("Mailbox change answer does not match");
+  expect(fieldset().disabled).toBe(true);
+});
+
+it("locks when a created mailbox belongs to someone else", async () => {
+  await unlocked();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  answer = () => json({ ...team, user: "bob-id", addresses: [{ ...team.addresses[0]!, address: "desk@example.com" }] });
+  fireEvent.change(screen.getByLabelText("User"), { target: { value: "alice-id" } });
+  fireEvent.change(screen.getByLabelText("Mailbox address"), { target: { value: "desk@example.com" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create mailbox" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("Mailbox change answer does not match");
+  expect(fieldset().disabled).toBe(true);
+});
+
+it("locks when a mailbox answer is not an extra mailbox", async () => {
+  await unlocked();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  answer = () => json({ ...disabledTeam, kind: "primary" });
+  fireEvent.click(screen.getByRole("button", { name: "Disable team@example.com (alice)" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("Mailbox change answer does not match");
 });

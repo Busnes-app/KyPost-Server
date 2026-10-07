@@ -30,8 +30,8 @@ one journal per user, so it and active extra mailboxes exclude each other:
 creating or re-enabling an extra mailbox is refused while the owner has it on,
 and enabling it is refused while the user has an active, prepared extra
 mailbox; disabling them restores the option. Disabling an extra mailbox quarantines its
-queued or retryable outbox jobs for good. Phase 4b
-(the admin screen for mailboxes) is not implemented.
+queued or retryable outbox jobs for good. Phase 4b is implemented: Server →
+Mail addresses creates, disables and re-enables extra mailboxes.
 Prerequisite of
 [continuous Cloudflare receiving](CLOUDFLARE_CONTINUOUS_RECEIVING.md); applies to
 both native receiving profiles. External IMAP accounts are unaffected.
