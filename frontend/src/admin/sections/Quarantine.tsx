@@ -7,11 +7,14 @@ import { listUsers } from "../../api/users";
 import { withSSOStepUp } from "../../api/stepup";
 
 const PAGE = 100;
-// Envelope text is sender-controlled: control, format (bidi, zero-width) and
-// line/paragraph separators are shown as code points, never applied.
+// Envelope text is sender-controlled: control, format (bidi, zero-width),
+// line/paragraph separators, blank "letters" and every stacked combining mark
+// after the first are shown as code points, never applied.
+const hidden = /[\p{Cc}\p{Cf}\u2028\u2029\u034F\u115F\u1160\u17B4\u17B5\u180E\u2800\u3164\uFFA0]|(?<=[\p{Mn}\p{Me}])[\p{Mn}\p{Me}]/gu;
 function visible(value: string): string {
-  return value.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, c => `[U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}]`);
+  return value.replace(hidden, c => `[U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}]`);
 }
+const ownerChanged = "mailbox gone or owner changed; release will be refused";
 // "." and ".." are URL dot segments: fetch would resolve them to another route.
 const addressable = (d: QuarantinedDelivery) => ![d.gateway, d.id].some(v => v === "." || v === "..");
 function size(bytes: number) {
@@ -85,27 +88,33 @@ function QuarantineForm() {
     }
   }
   function recipient(r: QuarantinedDelivery["recipients"][number]) {
-    return `${visible(r.address)} → mailbox ${visible(r.mailbox)} / ${r.user ? visible(names.get(r.user) ?? r.user) : "mailbox gone"}`;
+    return `${visible(r.address)} → mailbox ${visible(r.mailbox)}${r.user ? ` / ${visible(names.get(r.user) ?? r.user)}` : ` (${ownerChanged})`}`;
   }
   async function act(d: QuarantinedDelivery, action: "release" | "discard") {
     if (!deliveries || inFlight.current) return;
     const what = `delivery ${visible(d.id)} from ${d.sender ? visible(d.sender) : "an empty sender"}`;
     const listed = d.recipients.slice(0, 10).map(recipient).join("; ") + (d.recipients.length > 10 ? `; and ${d.recipients.length - 10} more listed in the table` : "");
     if (!window.confirm(action === "release"
-      ? `Release ${what}? It goes only to the mailboxes it was frozen to when it arrived: ${listed || "none"}. It never goes to an address's current owner. Each mailbox must still be active and its owner admitted.`
-      : `Discard ${what}? Its bytes are deleted permanently: it can never be released afterwards, and a re-pickup or receiver replay will not bring it back. If a release had started, some of its mailboxes may already hold it; those copies stay and the result is recorded as partially released.`)) return;
+      ? `Release only to the mailboxes this mail was frozen to when it arrived, never to an address's current owner? Each mailbox must still be active and its owner admitted. Releasing ${what} to: ${listed || "none"}.`
+      : `Discard permanently? The bytes are deleted: the mail can never be released afterwards, and a re-pickup or receiver replay will not bring it back. If a release had started, some of its mailboxes may already hold it; those copies stay and the result is recorded as partially released. Discarding ${what}.`)) return;
     inFlight.current = true;
     setBusy(true); setError(""); setNotice(""); setWarning("");
     const accountPassword = password;
     setPassword("");
-    let committed = false;
+    // answered: a change answer arrived; unanswered: a change request is out with no answer yet.
+    let answered = false, committed = false, unanswered = false;
     try {
       const body = ssoSession ? {} : credentialFields(await deriveCredential("", accountPassword));
       requireLive();
-      const result = await withSSOStepUp((headers) => {
+      const result = await withSSOStepUp(async (headers) => {
         requireLive();
-        return postJSON<unknown>(`/api/admin/receiving/quarantine/${encodeURIComponent(d.gateway)}/${encodeURIComponent(d.id)}/${action}`, body, headers);
+        unanswered = true;
+        const answer = await postJSON<unknown>(`/api/admin/receiving/quarantine/${encodeURIComponent(d.gateway)}/${encodeURIComponent(d.id)}/${action}`, body, headers)
+          .catch((e: unknown) => { if (e instanceof HttpError) unanswered = false; throw e; });
+        unanswered = false;
+        return answer;
       });
+      answered = true;
       requireLive();
       const outcome = readQuarantineChange(result, d.gateway, d.id, action);
       committed = true;
@@ -120,8 +129,13 @@ function QuarantineForm() {
       }
     } catch (e: unknown) {
       if (live.current) {
-        setDeliveries(null);
         const message = toErrorMessage(e, "Quarantine change failed. Reload before retrying an uncertain change.");
+        if (!answered && !unanswered && !(e instanceof HttpError)) {
+          // Credential derivation or KySignOn failed before the change was sent.
+          setError(`Not confirmed; nothing changed. ${message}`);
+          return;
+        }
+        setDeliveries(null);
         setError(committed ? `Change saved; reload to see current quarantine. ${message}` : message);
         // The server answered, so controls return only if a fresh list validates.
         // A request that never got an answer stays locked until reload.
@@ -136,6 +150,8 @@ function QuarantineForm() {
   if (off) return <div className="config-section">
     <h3>Quarantine</h3>
     {error && <p className="notice notice-error" role="alert">{error}</p>}
+    {notice && <p className="notice" role="status">{notice}</p>}
+    {warning && <p className="notice notice-warning" role="status">{warning}</p>}
     <p>Native mail is off on this server, so there is no quarantine to review.</p>
   </div>;
   return <div className="config-section">
@@ -152,18 +168,18 @@ function QuarantineForm() {
     <fieldset className="config-card config-grid" disabled={busy || !deliveries}>
       <legend>Quarantined mail</legend>
       {deliveries?.length === 0 && <p>No quarantined mail.</p>}
-      {!!deliveries?.length && <div className="users-table-wrap"><table className="users-table">
+      {!!deliveries?.length && <div className="users-table-wrap"><table className="users-table quarantine-table">
         <caption>Quarantined deliveries, oldest first</caption>
         <thead><tr><th scope="col">Received</th><th scope="col">Sender</th><th scope="col">Recipients</th><th scope="col">Size</th><th scope="col">Gateway / ID</th><th scope="col">Actions</th></tr></thead>
         <tbody>{deliveries.map(d => <tr key={d.sequence}>
-          <td>{new Date(d.receivedAt).toLocaleString()}</td>
+          <td>{new Date(d.receivedAt).toLocaleString(undefined, { timeZoneName: "short" })}</td>
           <td>{d.sender ? visible(d.sender) : "(empty sender)"}</td>
           <td>{d.recipients.length ? <ul>{d.recipients.map((r, i) => <li key={i}>{recipient(r)}</li>)}</ul> : "none"}</td>
           <td>{size(d.size)}</td>
           <td>{`${visible(d.gateway)} / ${visible(d.id)}`}</td>
           <td>{addressable(d) ? <>
-            <button className="button secondary" aria-label={`Release ${visible(d.id)}`} disabled={!unlocked} onClick={() => void act(d, "release")}>Release</button>
-            <button className="button secondary" aria-label={`Discard ${visible(d.id)}`} disabled={!unlocked} onClick={() => void act(d, "discard")}>Discard</button>
+            <button className="button secondary" aria-label={`Release ${visible(d.gateway)} / ${visible(d.id)}`} disabled={!unlocked} onClick={() => void act(d, "release")}>Release</button>
+            <button className="button secondary" aria-label={`Discard ${visible(d.gateway)} / ${visible(d.id)}`} disabled={!unlocked} onClick={() => void act(d, "discard")}>Discard</button>
           </> : "Use the CLI: this ID cannot be sent in a URL."}</td>
         </tr>)}</tbody>
       </table></div>}

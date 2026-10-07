@@ -1629,6 +1629,13 @@ pre {
   border-bottom: 0;
 }
 
+/* Sender-controlled text: stacked marks and long tokens stay inside their cell. */
+.quarantine-table td {
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  contain: paint;
+}
+
 .users-row {
   transition: background 140ms ease;
 }

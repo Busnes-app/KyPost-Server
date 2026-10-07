@@ -87,8 +87,11 @@ it("lists envelope fields as text with frozen recipients", async () => {
   await waitFor(() => expect(rows[1]!.textContent).toContain("sales@example.com → mailbox alice-id / alice"));
   expect(rows[1]!.textContent).toContain("bounce@sender.example");
   expect(rows[1]!.textContent).toContain("sales@example.com → mailbox alice-id / alice");
-  expect(rows[1]!.textContent).toContain("old@example.com → mailbox gone-id / mailbox gone");
+  expect(rows[1]!.textContent).toContain("old@example.com → mailbox gone-id (mailbox gone or owner changed; release will be refused)");
   expect(rows[1]!.textContent).toContain("2.0 KiB");
+  const received = new Date(first.receivedAt);
+  expect(within(rows[1]!).getAllByRole("cell")[0]!.textContent).toBe(received.toLocaleString(undefined, { timeZoneName: "short" }));
+  expect(received.toLocaleString(undefined, { timeZoneName: "short" })).not.toBe(received.toLocaleString());
   expect(rows[1]!.textContent).toContain("smtp-1 / d1/x");
   expect(rows[2]!.textContent).toContain("(empty sender)");
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
@@ -136,10 +139,10 @@ it("loads more after the last sequence", async () => {
 
 it("releases after a confirmation naming the frozen mailboxes, with credential and CSRF", async () => {
   await unlocked();
-  const release = screen.getByRole("button", { name: "Release d1/x" });
+  const release = screen.getByRole("button", { name: "Release smtp-1 / d1/x" });
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   fireEvent.click(release);
-  expect(confirm.mock.calls[0]?.[0]).toBe("Release delivery d1/x from bounce@sender.example? It goes only to the mailboxes it was frozen to when it arrived: sales@example.com → mailbox alice-id / alice; old@example.com → mailbox gone-id / mailbox gone. It never goes to an address's current owner. Each mailbox must still be active and its owner admitted.");
+  expect(confirm.mock.calls[0]?.[0]).toBe("Release only to the mailboxes this mail was frozen to when it arrived, never to an address's current owner? Each mailbox must still be active and its owner admitted. Releasing delivery d1/x from bounce@sender.example to: sales@example.com → mailbox alice-id / alice; old@example.com → mailbox gone-id (mailbox gone or owner changed; release will be refused).");
   expect(deriveCredential).not.toHaveBeenCalled();
   expect(writes()).toHaveLength(0);
   confirm.mockReturnValue(true);
@@ -160,12 +163,12 @@ it("releases after a confirmation naming the frozen mailboxes, with credential a
 it("discards after a confirmation that the bytes are gone for good", async () => {
   await unlocked();
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-  fireEvent.click(screen.getByRole("button", { name: "Discard d1/x" }));
-  expect(confirm.mock.calls[0]?.[0]).toBe("Discard delivery d1/x from bounce@sender.example? Its bytes are deleted permanently: it can never be released afterwards, and a re-pickup or receiver replay will not bring it back. If a release had started, some of its mailboxes may already hold it; those copies stay and the result is recorded as partially released.");
+  fireEvent.click(screen.getByRole("button", { name: "Discard smtp-1 / d1/x" }));
+  expect(confirm.mock.calls[0]?.[0]).toBe("Discard permanently? The bytes are deleted: the mail can never be released afterwards, and a re-pickup or receiver replay will not bring it back. If a release had started, some of its mailboxes may already hold it; those copies stay and the result is recorded as partially released. Discarding delivery d1/x from bounce@sender.example.");
   expect(writes()).toHaveLength(0);
   confirm.mockReturnValue(true);
   answer = () => json({ gateway: "smtp-1", id: "d1/x", result: "discarded" });
-  fireEvent.click(screen.getByRole("button", { name: "Discard d1/x" }));
+  fireEvent.click(screen.getByRole("button", { name: "Discard smtp-1 / d1/x" }));
   await screen.findByText("Discarded delivery d1/x from bounce@sender.example. Its bytes are deleted.");
   expect(writes()[0]?.[0]).toBe(`${base}/smtp-1/d1%2Fx/discard`);
 });
@@ -174,7 +177,7 @@ it("shows a partially released discard as a warning", async () => {
   await unlocked();
   vi.spyOn(window, "confirm").mockReturnValue(true);
   answer = () => json({ gateway: "smtp-1", id: "d1/x", result: "partially_released" });
-  fireEvent.click(screen.getByRole("button", { name: "Discard d1/x" }));
+  fireEvent.click(screen.getByRole("button", { name: "Discard smtp-1 / d1/x" }));
   const warning = await screen.findByText(/recorded as partially released: an earlier release reached some of its mailboxes, and those copies stay/);
   expect(warning.className).toContain("notice-warning");
   expect(screen.queryByText(/Its bytes are deleted\./)).toBeNull();
@@ -189,7 +192,7 @@ it("replays an identical request through KySignOn step-up", async () => {
   await unlocked({ ...admin, ssoSession: true });
   expect(screen.queryByLabelText("Account password")).toBeNull();
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Release d1/x" }));
+  fireEvent.click(screen.getByRole("button", { name: "Release smtp-1 / d1/x" }));
   await screen.findByText(/to its original mailboxes/);
   const [a, b] = writes();
   expect(writes()).toHaveLength(2);
@@ -204,7 +207,7 @@ it("shows the 409 reason as returned, re-reads and restores controls", async () 
   const before = reads().length;
   answer = () => new Response("release refused: a frozen mailbox was deleted or disabled, or its owner was offboarded, promoted or changed; discard remains available", { status: 409 });
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Release d1/x" }));
+  fireEvent.click(screen.getByRole("button", { name: "Release smtp-1 / d1/x" }));
   expect((await screen.findByRole("alert")).textContent).toBe("request failed: 409 - release refused: a frozen mailbox was deleted or disabled, or its owner was offboarded, promoted or changed; discard remains available");
   await waitFor(() => expect(fieldset().disabled).toBe(false));
   expect(actions().disabled).toBe(false);
@@ -216,7 +219,7 @@ it("locks until reload when no answer arrived", async () => {
   const before = reads().length;
   failWrite = true;
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Release d1/x" }));
+  fireEvent.click(screen.getByRole("button", { name: "Release smtp-1 / d1/x" }));
   expect((await screen.findByRole("alert")).textContent).toContain("network connection lost");
   expect(screen.getByText("Quarantine unavailable. Reload this page before making changes.")).toBeDefined();
   expect(fieldset().disabled).toBe(true);
@@ -229,7 +232,7 @@ it("locks when a success answer names another delivery", async () => {
   const before = reads().length;
   vi.spyOn(window, "confirm").mockReturnValue(true);
   answer = () => json({ gateway: "smtp-1", id: "d2", result: "released" });
-  fireEvent.click(screen.getByRole("button", { name: "Release d1/x" }));
+  fireEvent.click(screen.getByRole("button", { name: "Release smtp-1 / d1/x" }));
   expect((await screen.findByRole("alert")).textContent).toContain("does not match the request");
   expect(fieldset().disabled).toBe(true);
   expect(reads().length).toBe(before);
@@ -239,7 +242,7 @@ it("says a committed change was saved when the follow-up read fails", async () =
   await unlocked();
   vi.spyOn(window, "confirm").mockReturnValue(true);
   pages[base] = { deliveries: "unreadable" };
-  fireEvent.click(screen.getByRole("button", { name: "Release d1/x" }));
+  fireEvent.click(screen.getByRole("button", { name: "Release smtp-1 / d1/x" }));
   expect((await screen.findByRole("alert")).textContent).toBe("Change saved; reload to see current quarantine. Invalid quarantine list; reload before releasing or discarding.");
   expect(fieldset().disabled).toBe(true);
 });
@@ -248,5 +251,61 @@ it("offers no URL action for a dot-segment ID", async () => {
   pages[base] = { deliveries: [{ ...first, id: ".." }] };
   render(view());
   expect(await screen.findByText("Use the CLI: this ID cannot be sent in a URL.")).toBeDefined();
-  expect(screen.queryByRole("button", { name: "Release .." })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^(Release|Discard)/ })).toBeNull();
+});
+
+it("offers no URL action for a dot-segment gateway", async () => {
+  pages[base] = { deliveries: [{ ...first, gateway: "." }] };
+  render(view());
+  expect(await screen.findByText("Use the CLI: this ID cannot be sent in a URL.")).toBeDefined();
+  expect(screen.queryByRole("button", { name: /^(Release|Discard)/ })).toBeNull();
+});
+
+it("escapes stacked combining marks after the first", async () => {
+  pages[base] = { deliveries: [{ ...first, sender: "a" + "\u0336".repeat(100) + "@sender.example" }] };
+  render(view());
+  const cell = await screen.findByText((text) => text.startsWith("a\u0336[U+0336]"));
+  expect(cell.textContent).toBe("a\u0336" + "[U+0336]".repeat(99) + "@sender.example");
+  expect(cell.closest("table")?.className).toContain("quarantine-table");
+});
+
+it("shows blank letters as code points", async () => {
+  const blanks = "\u034F\u115F\u1160\u17B4\u17B5\u180E\u2800\u3164\uFFA0";
+  pages[base] = { deliveries: [{ ...first, sender: "ceo\u3164@corp.example", recipients: [{ ...first.recipients[0]!, address: `x${blanks}@example.com` }] }] };
+  render(view());
+  expect(await screen.findByText("ceo[U+3164]@corp.example")).toBeDefined();
+  expect(screen.getByText(/x\[U\+034F\]\[U\+115F\]\[U\+1160\]\[U\+17B4\]\[U\+17B5\]\[U\+180E\]\[U\+2800\]\[U\+3164\]\[U\+FFA0\]@example\.com/)).toBeDefined();
+});
+
+it("stays usable when KySignOn confirmation is cancelled", async () => {
+  answer = () => json({ error: "sso_step_up_required", challenge: "c1" }, 403);
+  vi.mocked(withSSOStepUp).mockImplementation(async run => {
+    await run({}).catch(() => undefined);
+    throw new Error("confirmation cancelled");
+  });
+  await unlocked({ ...admin, ssoSession: true });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Release smtp-1 / d1/x" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("Not confirmed; nothing changed. confirmation cancelled");
+  await waitFor(() => expect(actions().disabled).toBe(false));
+  expect(screen.getByText("smtp-1 / d1/x")).toBeDefined();
+});
+
+it("stays usable when the local credential cannot be derived", async () => {
+  vi.mocked(deriveCredential).mockRejectedValue(new Error("login parameters unavailable"));
+  await unlocked();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Discard smtp-1 / d1/x" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("Not confirmed; nothing changed. login parameters unavailable");
+  await waitFor(() => expect(fieldset().disabled).toBe(false));
+  expect(writes()).toHaveLength(0);
+});
+
+it("keeps the change notice when native mail is off on re-read", async () => {
+  await unlocked();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  off = true;
+  fireEvent.click(screen.getByRole("button", { name: "Release smtp-1 / d1/x" }));
+  expect(await screen.findByText("Native mail is off on this server, so there is no quarantine to review.")).toBeDefined();
+  expect(screen.getByText("Released delivery d1/x from bounce@sender.example to its original mailboxes.")).toBeDefined();
 });
