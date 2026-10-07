@@ -474,6 +474,9 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 	if err != nil {
 		return err
 	}
+	// Only a direct scan fills auth (receivingAuthentication); hosted
+	// gateways and an absent scanner leave it empty, so they feed nothing.
+	var auth ingress.Authentication
 	if enabled && d.State == "staged" {
 		if d.Sender != sender || r.gatewayID() != cloudflareGateway && len(peer) != 2 || r.gatewayID() == cloudflareGateway && len(peer) != 0 {
 			return &receivingCommandError{err: errors.New("rspamd requires the bound sender and receiver-supplied IP/HELO"), code: 5}
@@ -482,11 +485,19 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 		if len(peer) == 2 {
 			ip, helo = peer[0], peer[1]
 		}
-		if err := scanReceivingSpam(ctx, raw, d, ip, helo, receivingRspamdURL); err != nil {
+		var err error
+		if auth, err = scanReceivingSpam(ctx, raw, d, ip, helo, receivingRspamdURL); errors.Is(err, errSpamReject) {
+			r.senderEvidence(ctx, d.ID, auth, true)
+		}
+		if err != nil {
 			return err
 		}
 	}
-	return r.commitAccept(ctx, d, sender, raw, proofs)
+	if err := r.commitAccept(ctx, d, sender, raw, proofs); err != nil {
+		return err
+	}
+	r.senderEvidence(ctx, d.ID, auth, false)
+	return nil
 }
 
 // commitAccept stores scanned bytes for a staged delivery under its frozen

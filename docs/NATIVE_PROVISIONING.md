@@ -902,9 +902,10 @@ a URL dot segment (`.` or `..`) is CLI-only.
 ### Sender blocks
 
 Administrators block an envelope sender address or domain manually, through
-the admin API or the CLI; both receiving profiles enforce the same list before
-storing anything. Automatic blocks (escalating cooldown, Maddy only) and an
-admin UI are pending; see [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#abusive-senders).
+the admin API or the CLI; with the Rspamd sidecar, the Maddy profile also
+blocks authenticated abusive senders automatically ([below](#automatic-sender-blocks)).
+Both receiving profiles enforce the same list before storing anything. An
+admin UI and evidence display are pending; see [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#abusive-senders).
 
 - **Store.** `STATE_DIR/receiving/sender-blocks.json` (0600), written under its
   own lock file and published by rename; it exists only after `receiving init`
@@ -912,8 +913,8 @@ admin UI are pending; see [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#a
   backups collect it. Each entry has `id` (first 16 hex of SHA-256 of
   `kind:value`), `kind` (`address` or `domain`), `value`, `until` (Unix
   milliseconds, or null: manual blocks never expire unless one is set),
-  `source` (`manual`; `automatic` with an escalation `level` is reserved for
-  the automatic change), `createdAt`, `actor` and `reason` (a code: `spam`,
+  `source` (`manual`, level 0; or `automatic`, actor `automatic`, reason
+  `abuse`, with its escalation `level` 1-3), `createdAt`, `actor` and `reason` (a code: `spam`,
   `phishing`, `abuse` or `other`, the default; no free text). Expired entries
   are ignored and dropped at the next write. At most 5000 blocks (the Worker's
   limit) and 512 KiB of their exact signed-table encoding (measured with the
@@ -977,16 +978,20 @@ admin UI are pending; see [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#a
 API (admin only; POST and DELETE need CSRF and the account credential, or
 KySignOn step-up, in the JSON body as for quarantine):
 
-- `GET /api/admin/receiving/blocks` returns `{blocks:[{id,kind,value,until,source,level,createdAt,actor,reason}]}`
+- `GET /api/admin/receiving/blocks` returns `{blocks:[{id,kind,value,until,source,level,createdAt,actor,reason}],evidence:{damaged,resetAt,domainBlocksFrom,goodFull,automaticFull}}`
   for blocks in force (empty before `receiving init`).
 - `POST /api/admin/receiving/blocks` with `{kind, value, until?, reason?}`
-  returns `{block}`; adding an existing kind/value replaces it. 400 invalid
-  value, kind, reason or past `until`; 409 own domain, list full or receiving
-  not initialized; 503 storage.
+  returns `{block}`; adding an existing kind/value replaces it, and automatic
+  blocks give way when the list is full. 400 invalid value, kind, reason or
+  past `until`; 409 own domain, list full of manual blocks or receiving not
+  initialized; 503 storage.
 - `DELETE /api/admin/receiving/blocks/{id}` with the listed 16-hex `id`
   returns `{id,result:"unblocked"}`; 400 malformed ID, 404 when no such block
   is in force. The URL carries the ID, never the address, so reverse-proxy
-  access logs record no blocked senders.
+  access logs record no blocked senders. Removing a block (either source)
+  also suppresses automatic re-blocking of that exact address or domain for
+  30 days; if that cannot be recorded the block is still removed and the
+  answer carries a `warning`.
 
 CLI, as the runtime user that owns `STATE_DIR` (it refuses any other), with the
 value typed again after `--confirm`:
@@ -997,9 +1002,102 @@ docker compose exec --user kypost kypost-server kypost-server receiving blocks a
 docker compose exec --user kypost kypost-server kypost-server receiving blocks remove address|domain <value> --confirm <value>
 ```
 
-Both audit `block_sender`/`unblock_sender` with actor, kind, result and the
+Both audit `block_sender`/`unblock_sender` (the CLI's `list` as `list_sender_blocks`) with actor, kind, result and the
 block `id` whenever the value is valid (refusals included; empty otherwise),
 never the address or domain (API to `api.err.log`, CLI to the terminal). The value is attacker-chosen: render it as plain text.
+
+#### Automatic sender blocks
+
+Maddy profile with `KYPOST_RECEIVING_RSPAMD=true` only. The Cloudflare
+profiles never feed evidence (the Worker has no SMTP peer, so there is no SPF),
+but automatic blocks in the shared list are published like manual ones.
+
+- **Evidence.** A reject verdict counts against an address only when all
+  hold: the envelope sender equals the single address of the message's single
+  `From` header (A-Z lowercased on both sides, non-ASCII exact); the scanner's
+  `R_SPF_ALLOW` is present (SPF pass for the envelope domain, evaluated from
+  the actual Maddy peer IP); and an `R_DKIM_ALLOW` option `d:s=selector` has
+  `d` exactly equal to that address's domain (DMARC strict alignment: a parent
+  or subdomain signature does not count). Nothing else is trusted:
+  `Authentication-Results`, `DKIM_TRACE`, other headers and symbols are
+  ignored. Tagged, deferred and accepted mail never counts; the null sender,
+  the deployment's own domains (and addresses on them) never count.
+- **Address blocks.** 5 counted verdicts within 1 hour block the address
+  (`source: automatic`) for 1 hour, then 24 hours, then 7 days on each repeat
+  (level 1-3, capped). The level climbs only when a block was actually made.
+  30 days with no counted verdict resets it. Blocks expire at `until`.
+- **Domain blocks.** When 5 distinct addresses on one domain have been
+  automatically blocked within 24 hours (counting only blocks since that
+  domain's last automatic block), the domain is blocked with the same
+  escalation, but only if no *authenticated* mail (same identity rule) was
+  accepted from it. Accepted authenticated domains are recorded and never
+  evicted, so a flood of authenticated throwaway domains cannot unprotect a
+  real one: at most 50,000 in all and 50 per crude parent (the last two
+  labels, so all of `co.uk` shares one parent: past 50 there, further domains
+  stay unprotected). A full record stops recording (`goodFull` in status);
+  domain blocks continue for unrecorded domains only. Domain
+  blocks start only 30 days after the first authenticated acceptance was
+  recorded, so a new or freshly restored-from-nothing deployment cannot
+  mistake its short history for "never". A restore keeps that start time.
+  Automatic domain blocks are listed with `source: automatic`, `kind: domain`.
+- **Administrators win.** An automatic block never replaces or extends a
+  manual block that covers the address or its domain. Automatic blocks may
+  use at most half the list (2500 entries and half its wire budget). A manual
+  block that needs room evicts the soonest-expiring automatic block
+  (unaudited; the list shows what is in force), so it never fails because of
+  automatic ones. An automatic block never evicts anything: past the share it
+  is refused, without escalation, logged (`receiving sender evidence`, result
+  `automatic-full`) and reported as `automaticFull` in status, so an attacker
+  cannot earn blocks on throwaway identities to free an abuser early. Add a
+  manual domain block to cover a flood. Removing any block suppresses
+  automatic blocks of that exact address or domain for 30 days; by then its
+  escalation has reset. The removal never depends on that record: if it
+  cannot be written, the block is still removed, the API answers with a
+  `warning` and the CLI prints one.
+- **State.** `STATE_DIR/receiving/sender-evidence.json` (0600, own lock,
+  rename publish, never creates the receiving directory). Every key is a block
+  ID and every value a count or time: per address or domain the counted verdict
+  times inside the hour, level and last evidence/block times; accepted domains
+  with last-seen time and the warm-up start; unblock suppressions. No addresses
+  and no content. At most 4096 records of each kind (one-off identities are
+  evicted before any with a level, so a flood cannot reset a known abuser),
+  which keeps the file under 6 MiB at worst (8 MiB bound). A malformed or
+  oversized file is renamed to `sender-evidence.damaged.json` on the next write
+  and counting restarts (logged; `resetAt` in status). Backups seal a valid
+  file and skip a bad or damaged one with a warning; it is heuristic state.
+- **Status.** `GET /api/admin/receiving/blocks` and `receiving blocks list`
+  include `evidence: {damaged, resetAt, domainBlocksFrom, goodFull,
+  automaticFull}` (`domainBlocksFrom` is null until an authenticated
+  acceptance has been recorded).
+- **SMTP path.** Evidence work runs after the verdict or commit with its own
+  2-second deadline; on lock contention it is dropped and logged, never
+  holding up or changing the SMTP reply.
+- **Audit.** Each automatic block logs `receiving sender block change`, actor
+  `automatic`, action `block_sender`, kind, result `blocked`, block `id`,
+  `block_level` and `until_ms`; dropped or failed evidence logs `receiving
+  sender evidence` with the delivery ID. Never addresses or content.
+- **Residual risks.** The identity rule trusts the sending provider:
+  - A provider that lets one account send with another account's envelope
+    and `From` under its own DKIM and SPF can get that other address blocked
+    here (for up to 7 days, until an administrator unblocks it).
+  - DKIM replay: anyone holding a message DKIM-signed by a victim's domain
+    can resend it. If they also send from an IP the domain's SPF authorizes
+    (a shared ESP or provider relay that does not bind the envelope to the
+    account) with the victim as envelope sender, and the replayed message
+    still scores a reject, it counts against the victim.
+  - Either way enough addresses on one domain could block a provider your
+    users have not yet received authenticated mail from, after the warm-up.
+    Unblock it; the 30-day suppression then stands.
+  - Saturation is chosen over eviction. Every bound refuses new entries
+    rather than evicting existing ones, because eviction would let attacker
+    entries free abusers or unprotect real domains. An attacker who earns
+    2500 automatic blocks (at least 12,500 reject-scored authenticated
+    messages) stops further automatic blocks, and one who records 50,000
+    authenticated domains across at least 1000 parents stops further
+    protection. Both show in status (`automaticFull`, `goodFull`); the
+    remedy is a manual block.
+  The [Rspamd sidecar](RECEIVING_SETUP.md#optional-rspamd-sidecar) is
+  required; without it there are only manual blocks.
 
 New route writes, RCPT bindings and MIME acceptance also check physical storage
 inside the immediate SQLite writer transaction. The admission budget is derived

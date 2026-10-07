@@ -375,12 +375,13 @@ Operator steps: [continuous Cloudflare profile](RECEIVING_SETUP.md#continuous-cl
 - **Warning.** `oldestUnpickedWarning` when the oldest waiting capture is over
   one hour old (decision 5): 120 missed cycles means an operator problem, still
   far inside the 14-day table age.
-- **Blocks.** `blockedSenders` carries the manual [sender blocks](NATIVE_PROVISIONING.md#sender-blocks)
-  in force (`until` in Unix ms or null). A block change republishes within
+- **Blocks.** `blockedSenders` carries the [sender blocks](NATIVE_PROVISIONING.md#sender-blocks)
+  in force (manual, and automatic ones a Maddy profile recorded in the same store) (`until` in Unix ms or null). A block change republishes within
   one loop tick; an unreadable block list still publishes routes, with the
   last installed revision's blocks (recorded per revision in `cloudflare.db`;
   none if never published), and reports `error`.
-- **Not built.** Automatic abuse blocks, an admin takeover screen with step-up (CLI only),
+- **Not built.** Automatic abuse blocks from Cloudflare evidence (pending SPF
+  qualification), an admin takeover screen with step-up (CLI only),
   custom Worker domains, removing the pilot, live qualification.
 
 ## Abusive senders
@@ -395,9 +396,12 @@ storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
   DKIM pass alone proves nothing about which address on a shared provider sent it, so
   without all three nobody can pin reject verdicts on someone else's address.
   Everything else is handled per message by the spam verdict.
-- **Automatic blocks are per sender address** (proposed trigger: 5 reject verdicts in
-  1 hour from that authenticated identity).
-- **Profile coverage.** Maddy establishes all three and enforces automatic blocks.
+- **Automatic blocks are per sender address**: 5 reject verdicts in 1 hour from
+  that authenticated identity. DKIM alignment is strict (`d=` equals the
+  address's domain exactly).
+- **Profile coverage.** Maddy establishes all three through the Rspamd
+  sidecar (`R_SPF_ALLOW` from the real peer IP and envelope, `R_DKIM_ALLOW`'s
+  verified `d=`) and enforces automatic blocks.
   The Cloudflare Worker sees no peer IP, so Rspamd cannot evaluate SPF there.
   Automatic gateway blocks are disabled in the Cloudflare profile until
   qualification shows Email Routing hands the Worker a trustworthy SPF result for
@@ -406,18 +410,25 @@ storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
 - **Automatic domain blocks are narrow.** A domain is blocked automatically only when
   at least 5 distinct addresses on it are automatically blocked (each meeting the
   identity rule above) within 24 hours
-  **and** the deployment has never accepted non-rejected mail from that domain.
+  **and** the deployment has never accepted non-rejected mail from that domain
+  under the same identity rule (a never-evicted record of authenticated
+  accepted domains, at most 50,000 and 50 per parent), and only once that
+  record has been collecting for 30 days.
   Shared providers your users already receive from are therefore never blocked
   automatically; throwaway spam domains are.
 - **Cooldown escalates** per repeat: 1 hour, 24 hours, 7 days; a clean period
-  resets the level. Blocks expire automatically at `until`.
+  (30 days without a counted verdict) resets the level. Blocks expire automatically at `until`.
 - **Administrators** see blocks with their evidence and can block or unblock any
   address or domain manually; manual blocks have no automatic expiry unless one is
   set. Manual blocks are implemented in both profiles (API and CLI:
   [sender blocks](NATIVE_PROVISIONING.md#sender-blocks)); the deployment's own
   mail domains and addresses on them cannot be blocked, and the null sender is
-  never blocked. Automatic blocks, evidence display and the admin UI are pending;
-  the store's `source: automatic` entries with an escalation `level` are the seam.
+  never blocked. A manual unblock suppresses automatic re-blocking of that
+  exact address or domain for 30 days, an automatic block never replaces a
+  manual one, and automatic blocks use at most half the list, give way to
+  manual ones and never evict each other. Automatic blocks are implemented for Maddy
+  ([automatic sender blocks](NATIVE_PROVISIONING.md#automatic-sender-blocks));
+  evidence display and the admin UI are pending.
 - Blocked mail is rejected, not stored; senders get a permanent 550 for the
   duration. Block state is durable, in sealed backups, and audited without message
   content.
@@ -469,7 +480,12 @@ state, not by killing a process.
 
 Offline, abuse blocks: five reject-verdict fixtures that pass DKIM for a shared
 domain but carry differing envelope senders and From addresses must not block any
-address, in both the published table and Maddy's RCPT check.
+address, in both the published table and Maddy's RCPT check — done against the
+block store and Maddy's bind (`go test ./internal/ingress -run TestAutomatic`,
+`./internal/app -run TestNativeReceivingAutomaticBlocks`), and against the
+pinned Rspamd with real DKIM/SPF over test DNS (`RSPAMD_PROOF=true go test
+./internal/app -run TestReceivingRspamdAuthenticationProof`). The Cloudflare
+table carries no automatic evidence of its own.
 
 Live, on the test deployment, each with its own bounded plan and approval:
 1. Whether a thrown Worker exception gives the sender a temporary failure.

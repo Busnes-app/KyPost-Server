@@ -169,7 +169,9 @@ func (s *Server) handleSenderBlocksList(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "sender block list unreadable; preserve it and repair", http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"blocks": append([]ingress.SenderBlock{}, list...)})
+	// Automatic-block health; a damaged file is reported, never fatal here.
+	evidence := ingress.NewEvidence(filepath.Join(s.stateDir, "receiving")).Status(time.Now())
+	writeJSON(w, http.StatusOK, map[string]any{"blocks": append([]ingress.SenderBlock{}, list...), "evidence": evidence})
 }
 
 // handleSenderBlockAdd blocks {"kind":"address"|"domain","value",
@@ -226,6 +228,11 @@ func (s *Server) handleSenderBlockRemove(w http.ResponseWriter, r *http.Request)
 	if s.nativeMail {
 		found, err = s.senderBlocks().Remove(r.Context(), id, time.Now())
 	}
+	warning := ""
+	if found && errors.Is(err, ingress.ErrUnblockNotRecorded) {
+		s.logger.Error("receiving sender evidence", "actor", ac.UserID, "task_id", "native-receiving", "action", "unblock_sender", "target", "sender-evidence", "result", "suppression-failed", "correlation_id", id, "error", err.Error())
+		warning, err = ingress.ErrUnblockNotRecorded.Error(), nil
+	}
 	if errors.Is(err, ingress.ErrBlockInvalid) {
 		id = "" // malformed path values are not logged
 	}
@@ -239,7 +246,11 @@ func (s *Server) handleSenderBlockRemove(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "no such block in force", http.StatusNotFound)
 	default:
 		result = "unblocked"
-		writeJSON(w, http.StatusOK, map[string]any{"id": id, "result": result})
+		body := map[string]any{"id": id, "result": result}
+		if warning != "" {
+			body["warning"] = warning
+		}
+		writeJSON(w, http.StatusOK, body)
 	}
 }
 

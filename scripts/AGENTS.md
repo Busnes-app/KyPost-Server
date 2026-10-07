@@ -50,7 +50,7 @@ All files under `scripts/`.
 
 ## Verification
 
-- `python3 scripts/check-rspamd.py` checks resolved Compose isolation and the actual pinned Rspamd effective modules/loopback-only socket, direct/Cloudflare clean/GTUBE verdicts, hosted disabled peer-authentication groups and log privacy using disposable network-disabled state. `rspamd/rspamd.conf` is the fixed selected-module policy consumed by the optional overlay; keep its upstream remote services/maps and controller/proxy disabled. Actual Maddy integration is owned by the backend receiving test.
+- `python3 scripts/check-rspamd.py` checks resolved Compose isolation and the actual pinned Rspamd effective modules/loopback-only socket, direct/Cloudflare clean/GTUBE verdicts, hosted disabled peer-authentication groups and log privacy using disposable network-disabled state. `rspamd/rspamd.conf` is the fixed selected-module policy consumed by the optional overlay; keep its upstream remote services/maps and controller/proxy disabled. Its SPF and DKIM modules feed automatic sender blocks (`R_SPF_ALLOW`, `R_DKIM_ALLOW`); keep both enabled, and rerun the backend `TestReceivingRspamdAuthenticationProof` (`RSPAMD_PROOF=true`) after any policy or image change. Actual Maddy integration is owned by the backend receiving test.
 
 - `bash scripts/setup-mail.test.sh` loads definitions only and checks public-input rejection, private dotenv creation/upserts, unsafe-file refusal and actual base/overlay Compose resolution against conflicting inherited settings. It never opens a browser or starts a container. Verify interactive stages statically; do not run them in CI.
 

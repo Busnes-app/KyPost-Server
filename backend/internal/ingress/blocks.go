@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -165,9 +166,16 @@ func (s Blocks) Blocked(sender string, now time.Time) (bool, error) {
 }
 
 // Put adds or replaces the block for b.Kind/b.Value. own is the deployment's
-// mail domains: neither they nor addresses on them can be blocked. Source
-// "automatic" with Level ≥ 1 is the seam for escalating automatic blocks;
-// their evidence rules live with the caller. Expired entries are dropped.
+// mail domains: neither they nor addresses on them can be blocked. An
+// automatic block (Evidence.Reject) never replaces or duplicates a manual
+// block that covers it. Expired entries are dropped.
+//
+// Automatic blocks never cost an administrator a block: they may use at most
+// half the count and half the wire budget, and give way, soonest-expiring
+// first, to a new manual block (unaudited; List shows what is in force), so
+// ErrBlockFull means manual blocks alone fill the list. An automatic block
+// never evicts anything: past its share it is refused (ErrAutomaticFull), or
+// an attacker could earn blocks on throwaway identities to free an abuser.
 func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.Time) (SenderBlock, error) {
 	value, err := NormalizeBlock(b.Kind, b.Value)
 	if err != nil {
@@ -184,24 +192,73 @@ func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.T
 		return SenderBlock{}, ErrBlockOwn
 	}
 	return b, s.change(ctx, now, func(blocks []SenderBlock) ([]SenderBlock, error) {
+		at := strings.LastIndexByte(b.Value, '@')
+		if b.Source == "automatic" && slices.ContainsFunc(blocks, func(x SenderBlock) bool {
+			return x.Source == "manual" && (x.ID == b.ID || at >= 0 && x.Kind == "domain" && x.Value == b.Value[at+1:])
+		}) {
+			return nil, errManualCovers
+		}
 		blocks = slices.DeleteFunc(blocks, func(x SenderBlock) bool { return x.ID == b.ID })
 		blocks = append(blocks, b)
-		wire := 0
-		for _, x := range blocks {
-			wire += cfreceiving.BlockWireBytes(x.Wire())
-		}
-		if len(blocks) > MaxBlocks || wire > maxBlockWire {
-			return nil, ErrBlockFull
+		for !fits(blocks) {
+			if b.Source == "automatic" {
+				return nil, ErrAutomaticFull
+			}
+			victim := -1
+			for i, x := range blocks {
+				if x.Source == "automatic" && (victim < 0 || *x.Until < *blocks[victim].Until) {
+					victim = i
+				}
+			}
+			if victim < 0 {
+				return nil, ErrBlockFull
+			}
+			blocks = slices.Delete(blocks, victim, victim+1)
 		}
 		return blocks, nil
 	})
 }
 
+// maxOneBlockWire bounds one block's wire size (a 320-byte sender of
+// six-byte escapes), TestAutomaticBlocksBudget checks it.
+const maxOneBlockWire = 2048
+
+// automaticFull: the automatic share cannot take another block.
+func automaticFull(blocks []SenderBlock) bool {
+	count, wire := 0, 0
+	for _, x := range blocks {
+		if x.Source == "automatic" {
+			count, wire = count+1, wire+cfreceiving.BlockWireBytes(x.Wire())
+		}
+	}
+	return count >= MaxBlocks/2 || wire > maxBlockWire/2-maxOneBlockWire
+}
+
+// fits is the list budget: in all, and for automatic blocks their half.
+func fits(blocks []SenderBlock) bool {
+	count, wire, autoCount, autoWire := 0, 0, 0, 0
+	for _, x := range blocks {
+		n := cfreceiving.BlockWireBytes(x.Wire())
+		count, wire = count+1, wire+n
+		if x.Source == "automatic" {
+			autoCount, autoWire = autoCount+1, autoWire+n
+		}
+	}
+	return count <= MaxBlocks && wire <= maxBlockWire && autoCount <= MaxBlocks/2 && autoWire <= maxBlockWire/2
+}
+
 // Remove deletes the block with this ID (BlockID of its normalized
-// kind/value); false when none is in force.
+// kind/value); false when none is in force. It first suppresses automatic
+// re-blocking of it for UnblockWindow, so the decision stands even if the
+// removal is interrupted; the removal never depends on that. If suppression
+// fails the block is still removed and the error wraps ErrUnblockNotRecorded.
 func (s Blocks) Remove(ctx context.Context, id string, now time.Time) (bool, error) {
-	if raw, err := hex.DecodeString(id); err != nil || len(raw) != 8 || hex.EncodeToString(raw) != id {
+	if !validID(id) {
 		return false, ErrBlockInvalid
+	}
+	var suppressed error
+	if list, err := s.List(now); err == nil && slices.ContainsFunc(list, func(x SenderBlock) bool { return x.ID == id }) {
+		suppressed = NewEvidence(s.dir).unblocked(ctx, id, now)
 	}
 	found := false
 	err := s.change(ctx, now, func(blocks []SenderBlock) ([]SenderBlock, error) {
@@ -210,6 +267,9 @@ func (s Blocks) Remove(ctx context.Context, id string, now time.Time) (bool, err
 		found = len(blocks) < before
 		return blocks, nil
 	})
+	if err == nil && found && suppressed != nil {
+		err = fmt.Errorf("%w: %w", ErrUnblockNotRecorded, suppressed)
+	}
 	return found, err
 }
 

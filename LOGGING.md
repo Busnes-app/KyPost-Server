@@ -32,6 +32,16 @@ Sender block changes log `receiving sender block change` with action
 `block_sender` or `unblock_sender`, the kind (`address` or `domain`) as target,
 the result and the block ID (a SHA-256 prefix) as correlation; never the blocked
 address or domain (an unblock logs only the ID). API changes go to the API stream, CLI changes to the terminal.
+The CLI logs the same action names (`list` as `list_sender_blocks`).
+Automatic blocks (Maddy with Rspamd) log the same line from the receiving
+command with actor `automatic`, action `block_sender`, result `blocked`, plus
+`block_level` and `until_ms`; evidence work that is dropped or fails logs
+`receiving sender evidence` (warning, result `dropped`, or `automatic-full`
+when automatic blocks fill their share) with the delivery ID as correlation, and an unblock whose suppression could not be recorded logs it
+with result `suppression-failed`. A damaged evidence file logs an error,
+action `reset`, result `damaged-file-set-aside`. A backup that leaves out a bad
+evidence file logs `backup skipped sender evidence` (result `skipped-malformed`
+or `skipped-oversized`). None carries an address or message content.
 An unreadable block list logs `cloudflare sender blocks unreadable` (error,
 result `previous-blocks-kept`) on every publish attempt until repaired; blocks
 left out of a full table log `cloudflare sender blocks truncated` (result
