@@ -38,6 +38,7 @@ function fill(kind: string, value: string, expiry = "", reason = "spam") {
   fireEvent.change(screen.getByLabelText("Expires (optional; empty means no expiry)"), { target: { value: expiry } });
   fireEvent.change(screen.getByLabelText("Reason"), { target: { value: reason } });
 }
+const at = (ms: number) => new Date(ms).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
 const removeManual = () => screen.getByRole("button", { name: "Remove address block spammer@bad.example" });
 beforeEach(() => {
   list = { blocks: [manual, auto], evidence: quiet };
@@ -60,6 +61,7 @@ afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); vi.resto
 
 it("validates untrusted block lists and change answers", () => {
   expect(readSenderBlocks({ blocks: [manual, auto], evidence: quiet, future: 1 }).blocks).toHaveLength(2);
+  expect(readSenderBlocks({ blocks: [{ ...auto, level: 7 }], evidence: quiet }).blocks[0]?.level).toBe(7);
   expect(readSenderBlocks({ blocks: Array.from({ length: 5000 }, (_, i) => ({ ...manual, id: i.toString(16).padStart(16, "0") })), evidence: quiet }).blocks).toHaveLength(5000);
   expect(readSenderBlocks({ blocks: [{ ...manual, extra: "x" }], evidence: { ...quiet, extra: true } }).blocks[0]?.value).toBe(manual.value);
   const one = (b: unknown) => ({ blocks: [b], evidence: quiet });
@@ -69,7 +71,7 @@ it("validates untrusted block lists and change answers", () => {
     { blocks: [], evidence: { ...quiet, resetAt: "2026-10-01" } }, { blocks: [], evidence: { ...quiet, domainBlocksFrom: undefined } },
     one({ ...manual, id: "0123" }), one({ ...manual, id: "0123456789ABCDEF" }), one({ ...manual, kind: "ip" }), one({ ...auto, kind: "ip" }), one({ ...manual, value: "" }),
     one({ ...manual, value: "a\r\n@b.example" }), one({ ...manual, value: `${"a".repeat(320)}@b` }), one({ ...manual, value: "bad.example" }), one({ ...auto, value: "a@provider.example" }),
-    one({ ...manual, source: "imported" }), one({ ...manual, level: 1 }), one({ ...auto, level: 0 }), one({ ...auto, level: 4 }),
+    one({ ...manual, source: "imported" }), one({ ...manual, level: 1 }), one({ ...auto, level: 0 }), one({ ...auto, level: 1.5 }), one({ ...auto, level: "2" }),
     one({ ...manual, until: "never" }), one({ ...manual, until: 1.5 }), one({ ...manual, until: -1 }), one({ ...manual, until: undefined }), one({ ...manual, createdAt: null }),
     one({ ...manual, actor: "" }), one({ ...manual, reason: "spite" })]) {
     expect(() => readSenderBlocks(value)).toThrow();
@@ -88,10 +90,13 @@ it("validates untrusted block lists and change answers", () => {
 });
 
 it("converts the expiry input as local time and refuses garbage", () => {
-  expect(expiryMs("")).toBeNull();
-  expect(expiryMs("2026-10-08T12:30")).toBe(new Date(2026, 9, 8, 12, 30).getTime());
-  expect(expiryMs("2026-10-08T12:30:15")).toBe(new Date(2026, 9, 8, 12, 30, 15).getTime());
-  for (const bad of ["tomorrow", "2026-10-08", "2026-10-08T25:00", "2026-10-08T12:30Z", "1760000000000"]) expect(() => expiryMs(bad)).toThrow();
+  const now = new Date(2026, 9, 7, 9, 0).getTime();
+  expect(expiryMs("", now)).toBeNull();
+  expect(expiryMs("2026-10-08T12:30", now)).toBe(new Date(2026, 9, 8, 12, 30).getTime());
+  expect(expiryMs("2026-10-08T12:30:15", now)).toBe(new Date(2026, 9, 8, 12, 30, 15).getTime());
+  expect(expiryMs("2026-10-07T09:01", now)).toBe(now + 60_000);
+  for (const bad of ["tomorrow", "2026-10-08", "2026-10-08T25:00", "2026-10-08T12:30Z", "1760000000000"]) expect(() => expiryMs(bad, now)).toThrow("not a valid");
+  for (const past of ["2026-10-07T09:00", "2026-10-06T23:59"]) expect(() => expiryMs(past, now)).toThrow("Expiry must be in the future.");
 });
 
 it("lists blocks as text and marks automatic domain blocks in words", async () => {
@@ -99,10 +104,11 @@ it("lists blocks as text and marks automatic domain blocks in words", async () =
   const rows = within(await screen.findByRole("table", { name: "Sender blocks in force" })).getAllByRole("row");
   expect(rows).toHaveLength(3);
   const cells = (i: number) => within(rows[i]!).getAllByRole("cell").map(c => c.textContent);
-  const at = (ms: number) => new Date(ms).toLocaleString(undefined, { timeZoneName: "short" });
   expect(cells(1)).toEqual(["address", "spammer@bad.example", "manual", "—", "no expiry", at(manual.createdAt), "spam", "Remove…"]);
-  expect(cells(2)).toEqual(["domain", "provider.example", "Automatic domain block: refuses every sender at this domain, which can be a whole mail provider", "2", at(auto.until), at(auto.createdAt), "abuse", "Remove…"]);
-  expect(screen.getByText(/1 automatic domain block refuses every sender at that domain/)).toBeDefined();
+  expect(cells(2)).toEqual(["domain", "provider.example", "automatic domain", "2", at(auto.until), at(auto.createdAt), "abuse", "Remove…"]);
+  expect(within(rows[2]!).getByText("automatic domain").tagName).toBe("STRONG");
+  expect(within(rows[1]!).getAllByRole("cell")[1]!.className).toBe("sender-block-value");
+  expect(screen.getByText("1 automatic domain block refuses every sender at its domain, which can be a whole mail provider. Remove it if your users get mail from there.")).toBeDefined();
   expect(screen.queryAllByRole("note")).toHaveLength(1);
 });
 
@@ -137,14 +143,19 @@ it("shows only the evidence states that apply", async () => {
   await screen.findByText("spammer@bad.example");
   expect(screen.getAllByRole("note").map(n => n.textContent)).toEqual([
     "Automatic-block evidence is unreadable. A malformed file is set aside at the next write and counting restarts; any other read failure needs storage repair. Blocks in force are unaffected.",
-    "Automatic domain blocks are not active yet: they start 30 days after the first authenticated mail is recorded (Maddy with Rspamd only).",
+  ]);
+  cleanup();
+  list = { blocks: [manual], evidence: { ...quiet, domainBlocksFrom: null } };
+  render(view());
+  await screen.findByText("spammer@bad.example");
+  expect(screen.getAllByRole("note").map(n => n.textContent)).toEqual([
+    "Automatic blocks (address and domain) need Maddy with the Rspamd sidecar. Automatic domain blocks are not active yet: they start 30 days after the first authenticated mail is recorded.",
   ]);
   cleanup();
   const reset = Date.UTC(2026, 9, 2), later = Date.now() + 86_400_000;
   list = { blocks: [manual], evidence: { damaged: false, resetAt: reset, domainBlocksFrom: later, goodFull: true, automaticFull: true } };
   render(view());
   await screen.findByText("spammer@bad.example");
-  const at = (ms: number) => new Date(ms).toLocaleString(undefined, { timeZoneName: "short" });
   expect(screen.getAllByRole("note").map(n => n.textContent)).toEqual([
     `Automatic-block evidence was damaged and restarted at ${at(reset)}; counts before then are lost.`,
     `Automatic domain blocks are not active until ${at(later)}.`,
@@ -162,11 +173,11 @@ it("shows a clear state when native mail is off", async () => {
 
 it("adds a block after a confirmation naming the value, with credential and CSRF", async () => {
   await unlocked();
-  fill("domain", " Bad.Example ", "2026-10-08T12:30", "phishing");
-  const until = new Date(2026, 9, 8, 12, 30).getTime();
+  fill("domain", " Bad.Example ", "2099-10-08T12:30", "phishing");
+  const until = new Date(2099, 9, 8, 12, 30).getTime();
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   fireEvent.click(screen.getByRole("button", { name: "Block sender…" }));
-  expect(confirm.mock.calls[0]?.[0]).toBe(`Block the domain Bad.Example until ${new Date(until).toLocaleString(undefined, { timeZoneName: "short" })} (reason: phishing)? Its mail is refused at reception from now on; mail already received is unaffected. Only this exact domain is blocked, not its subdomains. This deployment's own mail domains, and addresses on them, cannot be blocked.`);
+  expect(confirm.mock.calls[0]?.[0]).toBe(`Block the domain Bad.Example until ${new Date(until).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" })} (reason: phishing)? Its mail is refused at reception from now on; mail already received is unaffected. Only this exact domain is blocked, not its subdomains. If the list is full, the automatic blocks that expire soonest are removed to make room. This deployment's own mail domains, and addresses on them, cannot be blocked.`);
   expect(deriveCredential).not.toHaveBeenCalled();
   expect(writes()).toHaveLength(0);
   confirm.mockReturnValue(true);
@@ -291,4 +302,101 @@ it("stays usable when KySignOn confirmation is cancelled", async () => {
   expect((await screen.findByRole("alert")).textContent).toBe("Not confirmed; nothing changed. confirmation cancelled");
   await waitFor(() => expect(table().disabled).toBe(false));
   expect(screen.getByText("spammer@bad.example")).toBeDefined();
+});
+
+const autoAddress = (n: number, until: number) => ({ ...auto, id: n.toString(16).padStart(16, "a"), kind: "address", value: `a${n}@flood.example`, until });
+
+it("names the block an add replaces", async () => {
+  await unlocked();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fill("domain", "PROVIDER.example");
+  fireEvent.click(screen.getByRole("button", { name: "Block sender…" }));
+  expect(confirm.mock.calls[0]?.[0]).toContain(`unaffected. This replaces the existing automatic block (level 2) until ${at(auto.until)}. Only this exact domain`);
+  fill("address", "spammer@bad.example");
+  fireEvent.click(screen.getByRole("button", { name: "Block sender…" }));
+  expect(confirm.mock.calls[1]?.[0]).toContain("unaffected. This replaces the existing manual block with no expiry. If the list is full");
+  fill("address", "other@bad.example");
+  fireEvent.click(screen.getByRole("button", { name: "Block sender…" }));
+  expect(confirm.mock.calls[2]?.[0]).not.toContain("replaces");
+  expect(writes()).toHaveLength(0);
+});
+
+it("says how many automatic blocks a manual add removed to make room", async () => {
+  const later = Date.now() + 86_400_000, expired = Date.now() + 200;
+  list = { blocks: [manual, auto, autoAddress(1, later), autoAddress(2, later), autoAddress(3, expired)], evidence: quiet };
+  await unlocked();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fill("domain", "provider.example");
+  const added = { ...manual, id: auto.id, kind: "domain", value: "provider.example", reason: "spam" };
+  answer = () => json({ block: added });
+  // The replaced automatic block and one that merely expired are not counted.
+  await new Promise(r => setTimeout(r, 250));
+  list = { blocks: [manual, added, autoAddress(2, later)], evidence: quiet };
+  fireEvent.click(screen.getByRole("button", { name: "Block sender…" }));
+  expect((await screen.findByText(/^Blocked the domain provider\.example\./)).textContent).toBe("Blocked the domain provider.example. 1 automatic block was removed to make room.");
+  cleanup();
+  list = { blocks: [manual, auto, autoAddress(1, later), autoAddress(2, later)], evidence: quiet };
+  await unlocked();
+  fill("address", "x@bad.example");
+  answer = () => json({ block: { ...manual, id: "2222222222222222", value: "x@bad.example" } });
+  list = { blocks: [manual, { ...manual, id: "2222222222222222", value: "x@bad.example" }], evidence: quiet };
+  fireEvent.click(screen.getByRole("button", { name: "Block sender…" }));
+  expect((await screen.findByText(/^Blocked the address/)).textContent).toBe("Blocked the address x@bad.example. 3 automatic blocks were removed to make room.");
+});
+
+it("says what still refuses the sender after a removal", async () => {
+  const domainBlock = { ...manual, id: "3333333333333333", kind: "domain", value: "bad.example" };
+  const second = { ...manual, id: "4444444444444444", value: "two@bad.example" };
+  list = { blocks: [manual, second, domainBlock], evidence: quiet };
+  await unlocked();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(removeManual());
+  expect(confirm.mock.calls[0]?.[0]).toBe("Remove the manual address block on spammer@bad.example? Mail from this address stays refused by the domain block on bad.example. Automatic blocks of this exact address are then suppressed for 30 days.");
+  fireEvent.click(screen.getByRole("button", { name: "Remove domain block bad.example" }));
+  expect(confirm.mock.calls[1]?.[0]).toBe("Remove the manual domain block on bad.example? Other mail from this domain is accepted again from now on; 2 address blocks on this domain stay in force. Automatic blocks of this exact domain are then suppressed for 30 days.");
+  cleanup();
+  list = { blocks: [manual, domainBlock], evidence: quiet };
+  await unlocked();
+  fireEvent.click(screen.getByRole("button", { name: "Remove domain block bad.example" }));
+  expect(confirm.mock.calls[2]?.[0]).toContain("Other mail from this domain is accepted again from now on; 1 address block on this domain stays in force.");
+  expect(writes()).toHaveLength(0);
+});
+
+it("escapes non-ASCII spaces and @ lookalikes that fake another domain", async () => {
+  const value = `billing\uFF20partner.com${"\u3000".repeat(100)}x@evil.tld`;
+  list = { blocks: [{ ...manual, value }, { ...manual, id: "5555555555555555", value: "a\u00A0b\u2003c\u202Fd\u205Fe\uFE6Bf\u2028g\u2029h@x.example" }], evidence: quiet };
+  render(view());
+  expect(await screen.findByText("billing[U+FF20]partner.com[U+3000 \u00D7100]x@evil.tld")).toBeDefined();
+  expect(screen.getByText("a[U+00A0]b[U+2003]c[U+202F]d[U+205F]e[U+FE6B]f[U+2028]g[U+2029]h@x.example")).toBeDefined();
+  expect(document.body.textContent).not.toMatch(/[\u00A0\u2003\u202F\u205F\u3000\uFF20\uFE6B\u2028\u2029]/);
+});
+
+it("refuses a past expiry and an unpaired surrogate before confirming", async () => {
+  await unlocked();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  fill("address", "x@bad.example", "2020-01-01T00:00");
+  fireEvent.click(screen.getByRole("button", { name: "Block sender…" }));
+  expect(screen.getByRole("alert").textContent).toBe("Expiry must be in the future.");
+  expect((screen.getByLabelText("Expires (optional; empty means no expiry)") as HTMLInputElement).min).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  fill("address", "x\uD800@bad.example");
+  fireEvent.click(screen.getByRole("button", { name: "Block sender…" }));
+  expect(screen.getByRole("alert").textContent).toBe("The value contains an unpaired surrogate code unit, so it cannot be a sender.");
+  expect(confirm).not.toHaveBeenCalled();
+  expect(writes()).toHaveLength(0);
+});
+
+it("explains disabled actions and keeps the status regions mounted", async () => {
+  render(view());
+  await screen.findByText("spammer@bad.example");
+  expect(screen.getByText("Enter your account password above to add or remove blocks.")).toBeDefined();
+  expect((removeManual() as HTMLButtonElement).disabled).toBe(true);
+  const regions = screen.getAllByRole("status");
+  expect(regions).toHaveLength(2);
+  expect(regions.every(r => r.textContent === "")).toBe(true);
+  fireEvent.change(screen.getByLabelText("Account password"), { target: { value: "account-secret" } });
+  expect(screen.queryByText("Enter your account password above to add or remove blocks.")).toBeNull();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(removeManual());
+  await waitFor(() => expect(regions[0]!.textContent).toBe("Removed the manual address block on spammer@bad.example."));
+  expect(regions[0]!.isConnected).toBe(true);
 });

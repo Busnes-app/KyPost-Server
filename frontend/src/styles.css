@@ -1648,6 +1648,17 @@ pre {
   overflow-wrap: anywhere;
 }
 
+/* Fits 8 columns in 1280px: values keep ordinary addresses whole, times wrap to two lines. */
+.sender-blocks-table .sender-block-value {
+  min-width: 20ch;
+  max-width: 40ch;
+  overflow-wrap: anywhere;
+}
+
+.sender-blocks-table .sender-block-time {
+  min-width: 14ch;
+}
+
 .users-row {
   transition: background 140ms ease;
 }

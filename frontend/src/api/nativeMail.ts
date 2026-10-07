@@ -250,9 +250,9 @@ function readSenderBlock(value: unknown): SenderBlock {
   const { id, kind, value: v, source, level, actor, reason } = b;
   if (typeof id !== "string" || !/^[0-9a-f]{16}$/.test(id) || (kind !== "address" && kind !== "domain") ||
       typeof v !== "string" || !v || v.length > 320 || /[\r\n\0]/.test(v) || v.includes("@") !== (kind === "address") ||
-      !(source === "manual" && level === 0 || source === "automatic" && (level === 1 || level === 2 || level === 3)) ||
+      !(source === "manual" && level === 0 || source === "automatic" && Number.isSafeInteger(level) && Number(level) >= 1) ||
       typeof actor !== "string" || !actor || actor.length > 128 || !blockReasons.some(r => r === reason)) throw new Error(invalidBlocks);
-  return { id, kind, value: v, until: optionalTime(b.until), source, level, createdAt: integer(b.createdAt), actor, reason: reason as BlockReason };
+  return { id, kind, value: v, until: optionalTime(b.until), source, level: Number(level), createdAt: integer(b.createdAt), actor, reason: reason as BlockReason };
 }
 export function readSenderBlocks(value: unknown): { blocks: SenderBlock[]; evidence: BlockEvidence } {
   const data = object(value), e = object(data.evidence);

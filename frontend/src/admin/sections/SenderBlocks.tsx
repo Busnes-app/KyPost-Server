@@ -6,15 +6,32 @@ import { blockReasons, readSenderBlockAdded, readSenderBlockRemoved, readSenderB
 import { withSSOStepUp } from "../../api/stepup";
 import { visible } from "../../lib/visibleText";
 
-const time = (ms: number) => new Date(ms).toLocaleString(undefined, { timeZoneName: "short" });
-const wholeDomain = "Automatic domain block: refuses every sender at this domain, which can be a whole mail provider";
+const time = (ms: number) => new Date(ms).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
+const domainOf = (address: string) => address.slice(address.lastIndexOf("@") + 1);
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const describe = (b: SenderBlock) => `${b.source} block${b.source === "automatic" ? ` (level ${b.level})` : ""} ${b.until === null ? "with no expiry" : `until ${time(b.until)}`}`;
+// The datetime-local form of now, for the input's min.
+const localNow = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 
 /** expiryMs reads a datetime-local value as local time; empty means no expiry. */
-export function expiryMs(input: string): number | null {
+export function expiryMs(input: string, now: number): number | null {
   if (!input) return null;
   const ms = new Date(input).getTime();
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(input) || !Number.isSafeInteger(ms)) throw new Error("Expiry is not a valid date and time.");
+  if (ms <= now) throw new Error("Expiry must be in the future.");
   return ms;
+}
+
+// What still refuses the sender once b is gone: blocks match an exact address or exact domain.
+function afterRemoval(b: SenderBlock, list: SenderBlock[]): string {
+  if (b.kind === "address") {
+    const domain = domainOf(b.value);
+    return list.some(x => x.kind === "domain" && x.value === domain)
+      ? `Mail from this address stays refused by the domain block on ${visible(domain)}.`
+      : "Its mail is accepted again from now on.";
+  }
+  const n = list.filter(x => x.kind === "address" && domainOf(x.value) === b.value).length;
+  return n ? `Other mail from this domain is accepted again from now on; ${plural(n, "address block on this domain stays", "address blocks on this domain stay")} in force.` : "Its mail is accepted again from now on.";
 }
 
 export function SenderBlocks() {
@@ -23,7 +40,8 @@ export function SenderBlocks() {
   return <SenderBlocksForm key={`${auth.userId}:${auth.username}:${auth.ssoSession}`} />;
 }
 
-type Change = { confirm: string; send: (body: object, headers: Record<string, string>) => Promise<unknown>; done: (answer: unknown) => { notice: string; warning: string } };
+// after: extra notice text from the re-read list.
+type Change = { confirm: string; send: (body: object, headers: Record<string, string>) => Promise<unknown>; done: (answer: unknown) => { notice: string; warning: string }; after?: (fresh: SenderBlock[]) => string };
 
 function SenderBlocksForm() {
   const ssoSession = useAuth().ssoSession === true;
@@ -45,7 +63,7 @@ function SenderBlocksForm() {
   function requireLive() {
     if (!live.current) throw new Error("Sender blocks closed; reopen them to continue.");
   }
-  async function read() {
+  async function read(): Promise<SenderBlock[] | null> {
     const generation = ++readGeneration.current;
     let raw: unknown;
     try {
@@ -53,13 +71,14 @@ function SenderBlocksForm() {
     } catch (e: unknown) {
       if (!(e instanceof HttpError && e.status === 404)) throw e;
       if (live.current && generation === readGeneration.current) setOff(true);
-      return;
+      return null;
     }
     const list = readSenderBlocks(raw);
-    if (!live.current || generation !== readGeneration.current) return;
+    if (!live.current || generation !== readGeneration.current) return null;
     setOff(false);
     setEvidence(list.evidence);
     setBlocks(list.blocks);
+    return list.blocks;
   }
   useEffect(() => {
     live.current = true;
@@ -92,9 +111,9 @@ function SenderBlocksForm() {
       const outcome = c.done(result);
       committed = true;
       setBlocks(null);
-      await read();
+      const fresh = await read();
       requireLive();
-      setNotice(outcome.notice);
+      setNotice(outcome.notice + (fresh && c.after ? c.after(fresh) : ""));
       setWarning(outcome.warning);
     } catch (e: unknown) {
       if (live.current) {
@@ -113,29 +132,46 @@ function SenderBlocksForm() {
     }
   }
   function add() {
+    if (!blocks) return;
     let until: number | null;
+    setError("");
     try {
-      until = expiryMs(expiry);
+      until = expiryMs(expiry, Date.now());
     } catch (e: unknown) {
       setError(toErrorMessage(e, "Expiry is not a valid date and time."));
       return;
     }
     const want = { kind, value: value.trim(), until, reason };
+    // An unpaired surrogate cannot be sent as UTF-8, so it can never name a sender.
+    if (/\p{Cs}/u.test(want.value)) {
+      setError("The value contains an unpaired surrogate code unit, so it cannot be a sender.");
+      return;
+    }
     const shown = `${kind} ${visible(want.value)}`;
+    const lower = want.value.replace(/[A-Z]/g, c => c.toLowerCase());
+    const existing = blocks.find(b => b.kind === kind && b.value === lower);
+    // A manual add evicts the soonest-expiring automatic blocks when the list is full; a replaced one keeps its ID.
+    const automatic = blocks.filter(b => b.source === "automatic");
     void change({
-      confirm: `Block the ${shown} ${until === null ? "with no expiry" : `until ${time(until)}`} (reason: ${reason})? Its mail is refused at reception from now on; mail already received is unaffected.${kind === "domain" ? " Only this exact domain is blocked, not its subdomains." : ""} This deployment's own mail domains, and addresses on them, cannot be blocked.`,
+      confirm: `Block the ${shown} ${until === null ? "with no expiry" : `until ${time(until)}`} (reason: ${reason})? Its mail is refused at reception from now on; mail already received is unaffected.${existing ? ` This replaces the existing ${describe(existing)}.` : ""}${kind === "domain" ? " Only this exact domain is blocked, not its subdomains." : ""} If the list is full, the automatic blocks that expire soonest are removed to make room. This deployment's own mail domains, and addresses on them, cannot be blocked.`,
       send: (body, headers) => postJSON<unknown>("/api/admin/receiving/blocks", { ...body, kind: want.kind, value: want.value, reason: want.reason, ...(until === null ? {} : { until }) }, headers),
       done: answer => {
         readSenderBlockAdded(answer, want);
         setValue(""); setExpiry("");
         return { notice: `Blocked the ${shown}.`, warning: "" };
       },
+      after: fresh => {
+        const now = Date.now();
+        const gone = automatic.filter(b => (b.until === null || b.until > now) && !fresh.some(f => f.id === b.id)).length;
+        return gone ? ` ${plural(gone, "automatic block was", "automatic blocks were")} removed to make room.` : "";
+      },
     });
   }
   function remove(b: SenderBlock) {
+    if (!blocks) return;
     const shown = `${b.source} ${b.kind} block on ${visible(b.value)}`;
     void change({
-      confirm: `Remove the ${shown}? Its mail is accepted again from now on. Automatic blocks of this exact ${b.kind} are then suppressed for 30 days.`,
+      confirm: `Remove the ${shown}? ${afterRemoval(b, blocks)} Automatic blocks of this exact ${b.kind} are then suppressed for 30 days.`,
       send: (body, headers) => deleteJSON<unknown>(`/api/admin/receiving/blocks/${encodeURIComponent(b.id)}`, body, headers),
       done: answer => ({ notice: `Removed the ${shown}.`, warning: readSenderBlockRemoved(answer, b.id) }),
     });
@@ -143,8 +179,8 @@ function SenderBlocksForm() {
   const unlocked = ssoSession || password.length > 0;
   const notices = <>
     {error && <p className="notice notice-error" role="alert">{error}</p>}
-    {notice && <p className="notice" role="status">{notice}</p>}
-    {warning && <p className="notice notice-warning" role="status">{warning}</p>}
+    <p className={notice ? "notice" : undefined} role="status">{notice}</p>
+    <p className={warning ? "notice notice-warning" : undefined} role="status">{warning}</p>
   </>;
   if (off) return <div className="config-section">
     <h3>Sender blocks</h3>
@@ -158,11 +194,13 @@ function SenderBlocksForm() {
     <p>Envelope senders refused at reception, by both receiving profiles. Blocks never delete mail already received. Bounces (the empty sender) are never blocked.</p>
     {evidence?.damaged && <p className="notice notice-warning" role="note">Automatic-block evidence is unreadable. A malformed file is set aside at the next write and counting restarts; any other read failure needs storage repair. Blocks in force are unaffected.</p>}
     {evidence?.resetAt != null && <p className="notice notice-warning" role="note">Automatic-block evidence was damaged and restarted at {time(evidence.resetAt)}; counts before then are lost.</p>}
-    {evidence && from === null && <p className="notice" role="note">Automatic domain blocks are not active yet: they start 30 days after the first authenticated mail is recorded (Maddy with Rspamd only).</p>}
+    {evidence && !evidence.damaged && from === null && <p className="notice" role="note">Automatic blocks (address and domain) need Maddy with the Rspamd sidecar. Automatic domain blocks are not active yet: they start 30 days after the first authenticated mail is recorded.</p>}
     {from !== null && from > Date.now() && <p className="notice" role="note">Automatic domain blocks are not active until {time(from)}.</p>}
     {evidence?.automaticFull && <p className="notice notice-warning" role="note">Automatic blocking is full: new automatic blocks are refused until some expire. Add a manual domain block to cover a flood.</p>}
     {evidence?.goodFull && <p className="notice notice-warning" role="note">New domains are no longer protected from automatic domain blocks: the record of domains that sent authenticated mail is full.</p>}
-    {automaticDomains > 0 && <p className="notice notice-warning" role="note">{automaticDomains === 1 ? "1 automatic domain block refuses" : `${automaticDomains} automatic domain blocks refuse`} every sender at that domain, which can be a whole mail provider. Remove it if your users get mail from there.</p>}
+    {automaticDomains > 0 && <p className="notice notice-warning" role="note">{automaticDomains === 1
+      ? "1 automatic domain block refuses every sender at its domain, which can be a whole mail provider. Remove it if your users get mail from there."
+      : `${automaticDomains} automatic domain blocks each refuse every sender at their domain, which can be a whole mail provider. Remove any your users get mail from.`}</p>}
     {notices}
     {!blocks && <p>{error ? "Sender blocks unavailable. Reload this page before making changes." : "Loading sender blocks…"}</p>}
     <fieldset className="config-card config-grid" disabled={busy || !blocks}>
@@ -175,7 +213,7 @@ function SenderBlocksForm() {
         <option value="address">address</option><option value="domain">domain</option>
       </select></label>
       <label>Sender {kind}<input value={value} onChange={e => setValue(e.target.value)} autoComplete="off" spellCheck={false} /></label>
-      <label>Expires (optional; empty means no expiry)<input type="datetime-local" value={expiry} onChange={e => setExpiry(e.target.value)} /></label>
+      <label>Expires (optional; empty means no expiry)<input type="datetime-local" min={localNow()} value={expiry} onChange={e => setExpiry(e.target.value)} /></label>
       <label>Reason<select value={reason} onChange={e => setReason(blockReasons.find(r => r === e.target.value) ?? "other")}>
         {blockReasons.map(r => <option key={r} value={r}>{r}</option>)}
       </select></label>
@@ -185,16 +223,17 @@ function SenderBlocksForm() {
     <fieldset className="config-card config-grid" disabled={busy || !blocks}>
       <legend>Blocks in force</legend>
       {blocks?.length === 0 && <p>No sender blocks.</p>}
-      {!!blocks?.length && <div className="users-table-wrap"><table className="users-table quarantine-table">
+      {!unlocked && !!blocks?.length && <p>Enter your account password above to add or remove blocks.</p>}
+      {!!blocks?.length && <div className="users-table-wrap"><table className="users-table quarantine-table sender-blocks-table">
         <caption>Sender blocks in force</caption>
         <thead><tr><th scope="col">Kind</th><th scope="col">Value</th><th scope="col">Source</th><th scope="col">Level</th><th scope="col">Until</th><th scope="col">Created</th><th scope="col">Reason</th><th scope="col">Actions</th></tr></thead>
         <tbody>{blocks.map(b => <tr key={b.id}>
           <td>{b.kind}</td>
-          <td className="quarantine-sender">{visible(b.value)}</td>
-          <td>{b.source === "automatic" && b.kind === "domain" ? <strong>{wholeDomain}</strong> : b.source}</td>
+          <td className="sender-block-value">{visible(b.value)}</td>
+          <td>{b.source === "automatic" && b.kind === "domain" ? <strong>automatic domain</strong> : b.source}</td>
           <td>{b.source === "automatic" ? b.level : "—"}</td>
-          <td>{b.until === null ? "no expiry" : time(b.until)}</td>
-          <td>{time(b.createdAt)}</td>
+          <td className="sender-block-time">{b.until === null ? "no expiry" : time(b.until)}</td>
+          <td className="sender-block-time">{time(b.createdAt)}</td>
           <td>{b.reason}</td>
           <td className="quarantine-nowrap"><button className="button secondary" aria-label={`Remove ${b.kind} block ${visible(b.value)}`} disabled={!unlocked} onClick={() => remove(b)}>Remove…</button></td>
         </tr>)}</tbody>
