@@ -1,6 +1,8 @@
 # Continuous Cloudflare receiving: design
 
-Status: approved design, 2026-10-06. Not implemented. Replaces the one-message
+Status: approved design, 2026-10-06. Worker implemented offline
+(`receiving-worker/continuous.mjs`, [wire contract](#wire-contract)); KyPost side
+pending; nothing qualified live. Replaces the one-message
 pilot in [CLOUDFLARE_RECEIVING.md](CLOUDFLARE_RECEIVING.md) once qualified. Cloudflare
 is the primary receiving profile; bundled Maddy and external IMAP remain supported
 alternatives (see root `AGENTS.md`). Both receiving profiles share the ingress
@@ -115,6 +117,97 @@ limit and its live payload budget through a store limit migration.
   mailbox. Deduplication by Message-ID stays forbidden. (Per-recipient invocation is
   inferred from the pilot interface; confirm in qualification.)
 
+## Wire contract
+
+Implemented by `receiving-worker/continuous.mjs`, selected by deploying it as the
+Worker's `main` (the pilot stays `worker.mjs` until continuous is qualified). Times are
+milliseconds since the Unix epoch. Every response carries `Cache-Control: no-store`;
+error bodies are empty. The Worker never redirects and never logs.
+
+**Bindings.** R2 bucket `MAIL`. Secrets `PICKUP_TOKEN_SHA256` (lowercase hex SHA-256 of
+the bearer string) and `ROUTING_PUBLIC_KEY` (standard base64 of the raw 32-byte Ed25519
+public key) define epoch 1 and are read **only while `credentials.json` is absent**.
+
+**R2 objects.**
+
+| Key | Content |
+| --- | --- |
+| `inbox/<uuid>` | Exact raw message; `customMetadata.envelope` = envelope JSON |
+| `routes.json` | `{"table": "<json>", "signature": "<base64>"}` as installed; `customMetadata.revision` |
+| `credentials.json` | `{"epoch": n, "tokenSha256": "<hex>", "publicKey": "<base64>"}` |
+
+`<uuid>` is a lowercase UUIDv7 (`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+whose first 48 bits are the capture millisecond, so key order is capture order at
+millisecond granularity.
+
+**Bearer.** `Authorization: Bearer <64 lowercase hex>`, a fresh 256-bit random value.
+The Worker hashes the 64 ASCII characters with SHA-256 and compares with
+`tokenSha256` in constant time. The only storage read before that check is
+`credentials.json`; a wrong bearer reads no mail or routes. Order: non-HTTPS → 403;
+unreadable or invalid credentials → 503; bad bearer → 401; then routing.
+
+**Signed documents.** One Ed25519 key signs two document types, separated by a context
+prefix. The signature (standard base64, 64 bytes, canonical encoding) covers exactly
+`UTF-8(context) || UTF-8(payload string)`; the payload is carried as a JSON string, so
+the verifier checks the bytes it received and no canonical JSON form exists.
+
+| Document | Body | Context (with trailing LF) | Payload limit |
+| --- | --- | --- | --- |
+| Routing table | `{"table": "<json>", "signature": "<b64>"}` | `kypost-cf-routes/1\n` | 1 MiB |
+| Rotation | `{"rotation": "<json>", "signature": "<b64>"}` | `kypost-cf-rotate/1\n` | 4 KiB body |
+
+Both bodies are objects with exactly those two keys. Payload JSON has exactly the
+listed keys:
+
+- **table**: `{"revision", "issuedAt", "routes": [{"address", "generation", "maxBytes"}],
+  "blockedSenders": [{"address", "until"} | {"domain", "until"}]}`. `revision`,
+  `issuedAt`, `generation`: safe integers ≥ 1. `maxBytes`: 1 to 26214400. `until`:
+  safe integer or `null` (no expiry). Addresses and domains are lowercase, without
+  whitespace or controls; addresses are `local@domain`, at most 254 characters with a
+  local part of at most 64, unique within `routes`. At most 5000 routes and 5000 blocks.
+- **rotation**: `{"epoch", "tokenSha256", "publicKey"}` in the credentials format.
+
+**Email handler.** One invocation per recipient. In order: lowercase `message.to`
+and the sender's domain (the local part keeps its case; the null sender stays `""`);
+malformed recipient or sender → reject. Read `routes.json` (absent → reject; storage
+error → throw). Sender address or domain blocked with `until` null or in the future →
+reject. `now - issuedAt` over 14 days → reject. Recipient not in `routes` → reject.
+Announced or actual size over the route's `maxBytes`, or empty → reject. None of these
+reads the body except the actual-size check. Otherwise put `inbox/<uuid>` with
+`If-None-Match: *`, the SHA-256 checksum and the envelope, awaited; a failed put or a
+key collision throws (never a reject, never an overwrite). The envelope, at most 2000
+bytes, is exactly:
+
+```json
+{"id":"<uuid>","sender":"<normalized sender>","recipient":"<lowercase>","generation":3,
+ "tableRevision":1790000000000,"capturedAt":1790000000123,"size":1234,"digest":"<sha256 hex>"}
+```
+
+**Routes.**
+
+| Request | Success | Refusals |
+| --- | --- | --- |
+| `GET /messages[?after=<uuid>][&limit=1..100]` | 200 `{"messages":[{"key","size","digest"}],"truncated":bool}` in key order, starting after `after` | 400 bad `after`/`limit`, 404 other or repeated parameters |
+| `GET /messages/<uuid>` | 200 raw bytes, `Content-Type: application/octet-stream`, `Content-Length`, `X-KyPost-Envelope: base64url(no padding) of the stored envelope's UTF-8 bytes` | 404 absent |
+| `DELETE /messages/<uuid>?digest=<64 hex>` | 204 deleted, or already absent | 409 digest differs (object kept) |
+| `GET /routes` | 200 the stored signed body | 404 none installed |
+| `PUT /routes` | 204 installed | 413 body over 2 MiB + 4 KiB; 400 malformed; 403 signature; 422 `revision` or `issuedAt` more than 5 min ahead, or `issuedAt` over 14 days old; 409 `revision` not above the stored one, or a concurrent install won |
+| `POST /rotate` | 204 installed | 413, 400, 403 not signed by the **current** key; 409 `epoch` ≠ current + 1, or a concurrent rotation won |
+
+Any other method, path, trailing slash, upper-case UUID or query → 404. Paging:
+continue with `after` = last key while `truncated` is true. Listing is not a durable
+cursor: a capture in the same millisecond, or on a Worker instance with a slower
+clock, can sort before a key already seen, so each pickup cycle lists from the start;
+deleted keys drop out.
+
+`PUT /routes` and `POST /rotate` replace their object conditionally on the etag read
+in the same request (`If-Match`, or `If-None-Match: *` when absent). For rotate this is
+the record the bearer was checked against, so of two concurrent rotations exactly one
+installs. After a rotation the previous bearer gets 401 on every route and the previous
+key gets 403 on `PUT /routes` and `POST /rotate`. KyPost confirms a rotation whose
+response it lost by any request with the pending bearer: 200 means it is installed,
+401 means it is not (or someone else rotated: stay fenced).
+
 ## KyPost side
 
 One consumer per Worker, enforced by credential rotation. A restored instance starts
@@ -224,12 +317,17 @@ storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
 The single slot, 15-minute `ROUTE` secret and `route`/`pickup` CLI are removed once the
 continuous protocol is qualified. Bucket and Worker names may be reused; the pilot's
 object is already deleted.
+Until then both live in `receiving-worker/`: `worker.mjs` (pilot) and the self-contained
+`continuous.mjs`, chosen by the deployment's `main`. Removing the pilot deletes
+`worker.mjs`, its tests and runtime check, and the CLI.
 
 ## Qualification
 
 Offline: Worker unit and workerd/R2 runtime tests (unknown-recipient reject, size cap,
 conditional put, signed/ordered/future-bounded table replacement, list paging,
-digest-checked delete, strict paths); backend race tests for publish → capture →
+digest-checked delete, strict paths, rotation fencing) — done:
+`node --test receiving-worker/continuous.test.mjs` and
+`node receiving-worker/runtime-continuous-check.mjs`; backend race tests for publish → capture →
 pickup → import → delete killed at every boundary, replay, conflict, generation-change
 quarantine, spam-to-Junk, capacity refusal, multi-owner deliveries, restore
 reconciliation; a restore started without takeover confirmation makes no
