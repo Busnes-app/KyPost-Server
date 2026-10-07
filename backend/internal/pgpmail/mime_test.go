@@ -12,6 +12,7 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ProtonMail/gopenpgp/v3/constants"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
@@ -257,6 +258,22 @@ func TestSignMIMERoundTripsThroughExtractSignedParts(t *testing.T) {
 	fingerprint := verifyDetachedForTest(t, signedPart, armoredSig, alice.ArmoredPublicKey)
 	if fingerprint != alice.Fingerprint {
 		t.Fatalf("signer fingerprint mismatch: got %s want %s", fingerprint, alice.Fingerprint)
+	}
+
+	// Date and Message-ID ride on the outer envelope only; the signed part is
+	// exactly the content split from the plaintext.
+	original, err := mail.ReadMessage(bytes.NewReader(plaintext))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Date", "Message-ID"} {
+		if got, want := msg.Header.Get(name), original.Header.Get(name); want == "" || got != want {
+			t.Fatalf("outer %s = %q, want %q", name, got, want)
+		}
+	}
+	_, content, err := splitMessage(plaintext)
+	if err != nil || !bytes.Equal(signedPart, content) {
+		t.Fatalf("signed part is not the plaintext content byte for byte (err %v)", err)
 	}
 }
 
@@ -922,8 +939,8 @@ func TestEncryptStoredMIMEPreservesOriginalAndReadableAttachments(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	original := mailmsg.Message{From: "bob@example.com", To: []string{"alice@example.com"}, Subject: "secret subject", Body: "secret body", Attachments: []mailmsg.Attachment{{Name: "report.txt", MimeType: "text/plain", Content: []byte("attachment contents")}}}.Build()
-	original = append([]byte("Date: Fri, 02 Oct 2026 12:00:00 +0000\r\nMessage-ID: <original@example.com>\r\nDKIM-Signature: preserved-evidence\r\nReceived: original trace\r\n"), original...)
+	original := mailmsg.Message{From: "bob@example.com", To: []string{"alice@example.com"}, Subject: "secret subject", Body: "secret body", Attachments: []mailmsg.Attachment{{Name: "report.txt", MimeType: "text/plain", Content: []byte("attachment contents")}}, MessageID: "<original@example.com>", Date: time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)}.Build()
+	original = append([]byte("DKIM-Signature: preserved-evidence\r\nReceived: original trace\r\n"), original...)
 	encrypted, err := EncryptStoredMIME(original, identity.ArmoredPublicKey)
 	if err != nil {
 		t.Fatal(err)
@@ -931,7 +948,7 @@ func TestEncryptStoredMIMEPreservesOriginalAndReadableAttachments(t *testing.T) 
 	if bytes.Contains(encrypted, []byte("secret subject")) || bytes.Contains(encrypted, []byte("secret body")) || bytes.Contains(encrypted, []byte("attachment contents")) {
 		t.Fatal("plaintext escaped encryption")
 	}
-	if !bytes.Contains(encrypted, []byte("Message-Id: <original@example.com>")) || !bytes.Contains(encrypted, []byte("Date: Fri, 02 Oct 2026")) {
+	if !bytes.Contains(encrypted, []byte("Message-ID: <original@example.com>")) || !bytes.Contains(encrypted, []byte("Date: Fri, 02 Oct 2026")) {
 		t.Fatal("threading/date headers missing")
 	}
 	payload, ok := extractOctetStreamPart(t, encrypted)

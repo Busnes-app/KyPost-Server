@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -408,5 +409,15 @@ func TestSentCopyForUnencryptedSendIsPlaintext(t *testing.T) {
 
 	if copyBytes, _ := srv.sentCopyForSend(userID, msg, mailRequest{Encrypt: false, Subject: "Lunch", Body: "one o'clock"}, nil); copyBytes != nil {
 		t.Fatal("an unencrypted send produced an encrypted Sent copy")
+	}
+}
+
+// An unencrypted send appends the bytes it delivered (plus Bcc), so the Sent
+// copy keeps the delivered Message-ID, Date and From instead of a rebuild.
+func TestSentCopyDraftAppendsPlaintextSourceVerbatim(t *testing.T) {
+	source := mailmsg.Message{From: "Alias <alias@example.com>", To: []string{"bob@example.com"}, BCC: []string{"dave@example.com"}, Subject: "Lunch", Body: "one o'clock"}.Build()
+	draft, save := sentCopyDraftForSend(mailRequest{Subject: "Lunch", Body: "one o'clock", Mode: "plain"}, []string{"bob@example.com"}, nil, []string{"dave@example.com"}, source)
+	if !save || !bytes.Equal(draft.Raw, source) {
+		t.Fatal("the plaintext Sent copy was not appended verbatim")
 	}
 }

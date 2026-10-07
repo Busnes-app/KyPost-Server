@@ -61,6 +61,15 @@ leaks and noncanonical SMTP bytes; it never rewrites a stored signature body.
 Body/key material remains opaque. Each message obeys the mailbox's message cap;
 a job allows at most 100 recipients/delivery groups and 64 MiB of wire/Sent bytes.
 
+Server-composed mail gets one `Date` and one `Message-ID: <random@from-domain>`
+(130 random bits) when it is built, before admission, so the stored wire MIME,
+every retry and the Sent copy carry the same values. Client-supplied MIME
+(`/api/mail/send-pgp`) is stored as sent; its client owns those headers. Some
+relays replace them: AWS SES overrides both
+([header fields](https://docs.aws.amazon.com/ses/latest/dg/header-fields.html)),
+so the delivered Message-ID differs from the Sent copy's and replies to
+SES-relayed mail do not thread against it. That is a provider limitation.
+
 Use a server-generated UUID job ID. Exact enqueue replay preserves existing
 states; a different intent under that ID is refused. One transaction commits all
 deliveries and reserves both bytes and a record for Sent, within the same quota

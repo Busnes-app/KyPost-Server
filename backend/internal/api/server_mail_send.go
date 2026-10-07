@@ -375,9 +375,10 @@ func joinWarnings(warnings ...string) string {
 }
 
 // sentCopyDraftForSend decides what finishMailSend APPENDs to Sent: the
-// already-wrapped ciphertext verbatim when there is one, the message rebuilt
-// from the request when the send was not encrypted, and NOTHING (save=false)
-// for an encrypted send with no ciphertext to append.
+// prepared copy verbatim when there is one (ciphertext, or the plaintext bytes
+// that share the delivered Message-ID), the message rebuilt from the request
+// when an unencrypted send supplied none, and NOTHING (save=false) for an
+// encrypted send with no ciphertext to append.
 //
 // The third case is the one worth stating. It is reached when encryption of the
 // copy failed, or when the sender has no key of their own, and the only two
@@ -397,11 +398,13 @@ func joinWarnings(warnings ...string) string {
 //
 // Recipient lists stay in the clear either way: the Sent folder listing is
 // unusable without them, and SMTP already carried them.
-func sentCopyDraftForSend(req mailRequest, toList, ccList, bccList []string, encryptedCopy []byte) (imapadapter.DraftMessage, bool) {
+func sentCopyDraftForSend(req mailRequest, toList, ccList, bccList []string, sentCopy []byte) (imapadapter.DraftMessage, bool) {
 	draft := imapadapter.DraftMessage{To: toList, CC: ccList, BCC: bccList}
-	if len(encryptedCopy) > 0 {
-		draft.Subject = pgpmail.OuterPlaceholderSubject
-		draft.Raw = encryptedCopy
+	if len(sentCopy) > 0 {
+		if req.Encrypt {
+			draft.Subject = pgpmail.OuterPlaceholderSubject
+		}
+		draft.Raw = sentCopy
 		return draft, true
 	}
 	if req.Encrypt {
@@ -547,7 +550,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	}
 	autocryptHeader := s.outboundAutocryptHeader(ac.UserID, envelopeFrom)
 
-	msg := mailmsg.Message{
+	// Stamped once so the delivered message and its Sent copy share one
+	// Date and Message-ID.
+	source := mailmsg.Message{
 		From:        headerFrom,
 		To:          toList,
 		CC:          ccList,
@@ -556,7 +561,8 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		Mode:        req.Mode,
 		Attachments: req.Attachments,
 		Autocrypt:   autocryptHeader,
-	}.Build()
+	}.Stamp()
+	msg := source.Build()
 
 	// The Sent copy is built from its own source because msg deliberately omits
 	// BCC — a delivered message must not name its blind recipients — while a
@@ -571,17 +577,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	// Bcc stays on the outer envelope rather than moving inside the ciphertext,
 	// matching To and Cc: the Sent listing is unreadable without recipients,
 	// and pgpmail's protected headers are deliberately Subject-only.
-	sentCopySource := mailmsg.Message{
-		From:        headerFrom,
-		To:          toList,
-		CC:          ccList,
-		BCC:         bccList,
-		Subject:     req.Subject,
-		EncodedBody: req.EncodedBody,
-		Mode:        req.Mode,
-		Attachments: req.Attachments,
-		Autocrypt:   autocryptHeader,
-	}.Build()
+	withBCC := source
+	withBCC.BCC = bccList
+	sentCopySource := withBCC.Build()
 
 	// Signing on the user's behalf needs a private key this server can open, and
 	// no account has one any more: client custody keeps it in the browser, and
@@ -634,8 +632,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			s.finishNativeSend(w, r, ac, nativeUser, envelopeFrom, []mailbox.OutboundDelivery{{Recipients: recipients, Raw: msg}}, sentCopySource, false, nil, 0, "")
 			return
 		}
-		// Nothing was encrypted, so the Sent copy stays readable.
-		s.finishMailSend(w, r, ac.UserID, smtpHost, smtpPort, addr, payload.Username, payload.Password, envelopeFrom, toList, ccList, bccList, recipients, msg, req, nil, "", nil)
+		// Nothing was encrypted, so the Sent copy stays readable; it is these
+		// bytes, not a rebuild, so it keeps the delivered Message-ID and From.
+		s.finishMailSend(w, r, ac.UserID, smtpHost, smtpPort, addr, payload.Username, payload.Password, envelopeFrom, toList, ccList, bccList, recipients, msg, req, sentCopySource, "", nil)
 		return
 	}
 
