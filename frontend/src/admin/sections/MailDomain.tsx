@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { useAuth } from "../../auth";
 import { credentialFields, deriveCredential } from "../../api/auth";
-import { deleteJSON, postJSON, putJSON, toErrorMessage } from "../../api/client";
+import { deleteJSON, HttpError, postJSON, putJSON, toErrorMessage } from "../../api/client";
 import { loadNativeMail, readMailRelayCheck, type MailDomainEntry, type NativeMailSetup } from "../../api/nativeMail";
 import { withSSOStepUp } from "../../api/stepup";
 
 type Action = "claim" | "rotate" | "verify" | "retire" | "relay" | "domains" | "check";
 
 function retireWarning(domain: string) {
-  return `Retire ${domain}? KyPost refuses while any address on it is active, queued or retryable mail sends from it, accepted incoming mail is waiting for it, or the relay still sends for it. Existing address records are kept. You can re-add it later, but it then needs a new TXT challenge and fresh DNS proof before it carries mail.`;
+  return `Retire ${domain}? KyPost refuses while any address on it is active, queued or retryable mail sends from it, accepted incoming mail is waiting for it, or the relay still sends for it, or while a restore hold is in place. Existing address records are kept. You can re-add it later, but it then needs a new TXT challenge and fresh DNS proof before it carries mail.`;
 }
 
 function domainStatus(d: MailDomainEntry, now: number) {
@@ -117,6 +117,9 @@ function MailDomainForm() {
       if (live.current) {
         setSetup(null);
         setError(toErrorMessage(e, "Mail setup failed. Reload status before retrying an uncertain change."));
+        // The server answered, so controls return only if a fresh status read validates.
+        // A request that never got an answer stays locked until reload.
+        if (e instanceof HttpError) await refresh().catch(() => undefined);
       }
     } finally {
       inFlight.current = false;
@@ -134,6 +137,8 @@ function MailDomainForm() {
   const canCheck = domainSet ? relayDomains.some(d => inService.some(l => l.domain === d && l.established)) : claim?.kind === "configured" && claim.established;
   const validPort = /^\d+$/.test(port) && Number(port) >= 1 && Number(port) <= 65535;
   const now = Date.now() / 1000;
+  const typed = domain.trim().toLowerCase().replace(/\.$/, "");
+  const duplicate = inService.some(d => d.domain === typed);
   return <div className="config-section">
     <h3>Mail domain</h3>
     <p>Connect your mail domains to KyIdentity and use your own outgoing relay. You own the provider account, credentials, billing and delivery reputation.</p>
@@ -162,33 +167,39 @@ function MailDomainForm() {
       </> : <>
         {domainSet?.issuer && <p>Identity issuer: <code>{domainSet.issuer}</code>. Every domain is bound to this issuer.</p>}
         {domainSet && domainSet.domains.length === 0 && <p>No mail domains yet.</p>}
-        {domainSet?.domains.map(d => {
-          const status = domainStatus(d, now);
-          return <section key={d.domain} aria-label={d.domain} className="config-status-card">
-            <div className="security-card-head">
-              <strong>{d.domain}{d.domain === domainSet?.founding && " (founding domain)"}</strong>
-              <span className={`security-badge ${d.established ? "security-badge-on" : "security-badge-off"}`}><span className="security-dot" aria-hidden="true" />{status.label}</span>
-            </div>
-            <p>{status.detail}</p>
-            {!d.retired && <>
-              <label>TXT name<input readOnly value={d.recordName} /></label>
-              <label>TXT value<textarea readOnly value={d.recordValue} /></label>
-            </>}
-            <div className="config-actions">
-              {d.retired
-                ? <button className="button secondary" aria-label={`Re-add ${d.domain}`} disabled={!unlocked} onClick={() => void act("claim", d.domain)}>Re-add</button>
-                : <>
-                  <button className="button secondary" aria-label={`Verify ${d.domain}`} disabled={!unlocked} onClick={() => void act("verify", d.domain)}>Verify</button>
-                  <button className="button secondary" aria-label={`Replace challenge for ${d.domain}`} disabled={!unlocked} onClick={() => void act("rotate", d.domain)}>Replace challenge</button>
-                  <button className="button secondary" aria-label={`Retire ${d.domain}`} disabled={!unlocked} onClick={() => void act("retire", d.domain)}>Retire</button>
-                </>}
-            </div>
-          </section>;
-        })}
+        {domainSet && domainSet.domains.length > 0 && <ul className="config-status-card" aria-label="Mail domains" style={{ listStyle: "none" }}>
+          {domainSet.domains.map(d => {
+            const status = domainStatus(d, now);
+            const relayed = relayDomains.includes(d.domain);
+            return <li key={d.domain} style={{ padding: "10px 0" }}>
+              <div className="security-card-head">
+                <h5>{d.domain}</h5>
+                <span className={`security-badge ${d.established ? "security-badge-on" : "security-badge-off"}`}><span className="security-dot" aria-hidden="true" />{status.label}</span>
+              </div>
+              {d.domain === domainSet.founding && <p>Founding domain.</p>}
+              <p>{status.detail}</p>
+              {!d.retired && <>
+                <label>TXT name<input readOnly value={d.recordName} /></label>
+                <label>TXT value<textarea readOnly value={d.recordValue} /></label>
+              </>}
+              {relayed && <p>The relay sends for this domain; remove it from the relay first to retire it.</p>}
+              <div className="config-actions">
+                {d.retired
+                  ? <button className="button secondary" aria-label={`Re-add ${d.domain}`} disabled={!unlocked} onClick={() => void act("claim", d.domain)}>Re-add</button>
+                  : <>
+                    <button className="button secondary" aria-label={`Verify ${d.domain}`} disabled={!unlocked} onClick={() => void act("verify", d.domain)}>Verify</button>
+                    <button className="button secondary" aria-label={`Replace challenge for ${d.domain}`} disabled={!unlocked} onClick={() => void act("rotate", d.domain)}>Replace challenge</button>
+                    <button className="button secondary" aria-label={`Retire ${d.domain}`} disabled={!unlocked || relayed} onClick={() => void act("retire", d.domain)}>Retire</button>
+                  </>}
+              </div>
+            </li>;
+          })}
+        </ul>}
         {domainSet?.founding && <p>Older clients and the single-domain API use the founding domain. Retiring it hands that role to the alphabetically first remaining domain.</p>}
         <label>Domain<input value={domain} placeholder="example.com" autoComplete="off" onChange={e => setDomain(e.target.value)} /></label>
-        <p>Use a lowercase ASCII domain. Each domain gets its own TXT challenge under the same identity issuer.</p>
-        <button className="button secondary" disabled={!unlocked || !domain} onClick={() => void act("claim", domain)}>Add domain</button>
+        {duplicate ? <p>{typed} is already configured; use its Replace challenge to rotate the TXT record.</p>
+          : <p>Use a lowercase ASCII domain. Each domain gets its own TXT challenge under the same identity issuer.</p>}
+        <button className="button secondary" disabled={!unlocked || !domain || duplicate} onClick={() => void act("claim", domain)}>Add domain</button>
       </>}
       <h4>2. Configure outgoing delivery</h4>
       {relay?.kind === "configured" && <p>Saved relay: {relay.host}:{relay.port}. {relay.sendingEnabled ? "Native primary sending is enabled." : "Native sending is disabled; enable KYPOST_NATIVE_MAIL in deployment to use it."} Provider delivery remains untested.</p>}

@@ -183,7 +183,7 @@ func (s *Server) handleNativeMailDomainsRetire(w http.ResponseWriter, r *http.Re
 	if nativeMigrationRefused(w, err) {
 		return
 	}
-	if errors.Is(err, sso.ErrNativeDomainInUse) {
+	if errors.Is(err, sso.ErrNativeDomainInUse) || errors.Is(err, sso.ErrNativeRestoreHold) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}

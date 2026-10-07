@@ -37,7 +37,9 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   fetchMock.mockImplementation(async (url, init) => {
     if (init?.method && init.method !== "GET") {
-      return new Response(failWrite ? "uncertain request" : "{}", { status: failWrite ? 503 : 200 });
+      // A rejected fetch is an answer that never arrived.
+      if (failWrite) throw new TypeError("network connection lost");
+      return new Response("{}");
     }
     if (failRead) return new Response("preserve unreadable configuration", { status: 503 });
     // null emulates a server without the domain-set API (single-domain fallback).
@@ -144,7 +146,7 @@ it("refuses an SSO replay after the account changes", async () => {
   expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
 });
 
-it("clears credentials and disables changes after an uncertain write", async () => {
+it("clears credentials and stays locked after a write whose answer never arrived", async () => {
   render(view()); await screen.findByLabelText("TXT name");
   fill("Account password", "account-secret"); fill("Relay host", "smtp.example.com");
   fill("Relay username", "provider-login"); fill("Relay password", "provider-secret");
@@ -229,7 +231,7 @@ const domainSet = { issuer, founding: "example.com", receivingEnabled: false, do
 ] };
 const setRelay = { ...configuredRelay, domains: ["example.com"], retiredDomains: ["gone.example"] };
 const writes = (method: string) => fetchMock.mock.calls.filter(([, init]) => init?.method === method);
-const region = (domain: string) => within(screen.getByRole("region", { name: domain }));
+const region = (domain: string) => within(screen.getByRole("heading", { name: domain }).closest("li")!);
 
 it("validates the domain set and relay domains at the boundary", () => {
   expect(readMailDomains({ issuer: "", founding: "", domains: [], receivingEnabled: false })).toEqual({ issuer: "", founding: "", domains: [] });
@@ -239,6 +241,7 @@ it("validates the domain set and relay domains at the boundary", () => {
     { ...domainSet, domains: [entry("example.com", { recordValue: "foreign" })] },
     { ...domainSet, domains: [entry("example.com"), { ...retiredEntry, recordValue: `kypost-mail-verify=${token}` }] },
     { ...domainSet, domains: [entry("example.com", { configured: false })] },
+    { ...domainSet, domains: [entry("example.com"), entry("example.com")] },
   ]) expect(() => readMailDomains(value)).toThrow();
   expect(readMailRelay(configuredRelay)).toMatchObject({ domains: ["example.com"], retiredDomains: [] });
   expect(() => readMailRelay({ ...setRelay, domains: ["other.example"] })).toThrow();
@@ -246,8 +249,9 @@ it("validates the domain set and relay domains at the boundary", () => {
 
 it("lists every domain status with its record, founding mark and actions", async () => {
   setResponse = domainSet;
-  render(view()); await screen.findByRole("region", { name: "example.com" });
-  expect(region("example.com").getByText(/founding domain/)).toBeDefined();
+  render(view()); await screen.findByRole("heading", { name: "example.com" });
+  expect(region("example.com").getByText("Founding domain.")).toBeDefined();
+  expect(screen.getByRole("list", { name: "Mail domains" }).children).toHaveLength(5);
   expect(region("example.com").getByText("Established")).toBeDefined();
   expect(region("pending.example").getByText("Awaiting verification")).toBeDefined();
   expect(region("pending.example").getByLabelText("TXT name").getAttribute("value")).toBe("_kypost-mail.pending.example");
@@ -265,13 +269,13 @@ it("lists every domain status with its record, founding mark and actions", async
 
 it("adds, verifies, retires and re-adds domains through confirmed protected requests", async () => {
   setResponse = domainSet;
-  render(view()); await screen.findByRole("region", { name: "example.com" });
+  render(view()); await screen.findByRole("heading", { name: "example.com" });
   const step = async (click: () => void) => {
     fill("Account password", "account-secret");
     const before = fetchMock.mock.calls.length;
     click();
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(before + 1));
-    await screen.findByRole("region", { name: "example.com" });
+    await screen.findByRole("heading", { name: "example.com" });
     const [url, init] = fetchMock.mock.calls[before]!;
     return { url, method: init?.method, body: JSON.parse(String(init?.body)) };
   };
@@ -303,7 +307,7 @@ it("replays an identical retire request through KySignOn step-up", async () => {
   setResponse = domainSet;
   vi.spyOn(window, "confirm").mockReturnValue(true);
   vi.mocked(withSSOStepUp).mockImplementation(async run => { await run({}); return run({ "X-Kypost-Step-Up": "test-grant" }); });
-  render(view({ ...admin, ssoSession: true })); await screen.findByRole("region", { name: "example.com" });
+  render(view({ ...admin, ssoSession: true })); await screen.findByRole("heading", { name: "example.com" });
   fireEvent.click(screen.getByRole("button", { name: "Retire second.example" }));
   await screen.findByText(/second.example retired/);
   const deletes = writes("DELETE");
@@ -314,21 +318,41 @@ it("replays an identical retire request through KySignOn step-up", async () => {
   expect(deriveCredential).not.toHaveBeenCalled();
 });
 
-it("shows the server's in-use refusal when retirement is refused", async () => {
+it("shows server refusals and returns controls once status re-reads", async () => {
   setResponse = domainSet;
   const inUse = "mail domain still in use by an active address, a queued or retryable outbox job, held incoming mail or the relay; disable those addresses, let the mail finish and remove the domain from the relay first, then retry";
   const read = fetchMock.getMockImplementation();
-  fetchMock.mockImplementation(async (url, init) => init?.method === "DELETE" ? new Response(inUse, { status: 409 }) : read!(url, init));
+  const verifyRefused = "mail domain verification failed; check the domain is configured, the exact TXT record, challenge expiry and DNS availability";
+  fetchMock.mockImplementation(async (url, init) => init?.method === "DELETE" ? new Response(inUse, { status: 409 })
+    : init?.method === "POST" ? new Response(verifyRefused, { status: 409 }) : read!(url, init));
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  render(view()); await screen.findByRole("region", { name: "example.com" });
-  fill("Account password", "account-secret");
-  fireEvent.click(screen.getByRole("button", { name: "Retire example.com" }));
-  expect((await screen.findByRole("alert")).textContent).toBe(`request failed: 409 - ${inUse}`);
+  render(view()); await screen.findByRole("heading", { name: "example.com" });
+  const fieldset = () => screen.getByRole("button", { name: "Add domain" }).closest("fieldset");
+  for (const [button, message] of [["Retire example.com", inUse], ["Verify pending.example", verifyRefused]] as const) {
+    fill("Account password", "account-secret");
+    fireEvent.click(screen.getByRole("button", { name: button }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(`request failed: 409 - ${message}`));
+    await waitFor(() => expect(fieldset()?.disabled).toBe(false));
+    expect(screen.getByRole("alert").textContent).toBe(`request failed: 409 - ${message}`);
+  }
+});
+
+it("refuses to add a domain that is already in service", async () => {
+  setResponse = domainSet;
+  render(view()); await screen.findByRole("heading", { name: "example.com" });
+  fill("Account password", "account-secret"); fill("Domain", " Second.Example ");
+  const add = screen.getByRole("button", { name: "Add domain" });
+  expect(add.hasAttribute("disabled")).toBe(true);
+  expect(screen.getByText(/second.example is already configured; use its Replace challenge/)).toBeDefined();
+  fireEvent.click(add);
+  expect(writes("POST")).toHaveLength(0);
+  fill("Domain", "old.example");
+  expect(add.hasAttribute("disabled")).toBe(false);
 });
 
 it("saves relay sending domains alone without relay credentials", async () => {
   setResponse = domainSet; relayResponse = setRelay;
-  render(view()); await screen.findByRole("region", { name: "example.com" });
+  render(view()); await screen.findByRole("heading", { name: "example.com" });
   const group = within(screen.getByRole("group", { name: "Relay sending domains" }));
   expect((group.getByLabelText("example.com") as HTMLInputElement).checked).toBe(true);
   expect((group.getByLabelText(/pending.example/) as HTMLInputElement).disabled).toBe(true);
@@ -336,9 +360,12 @@ it("saves relay sending domains alone without relay credentials", async () => {
   expect(group.getByText(/gone.example/)).toBeDefined();
   expect(group.getByText(/needs a current DNS proof/)).toBeDefined();
   expect(group.getByText(/refused while queued or retryable mail/)).toBeDefined();
+  fill("Account password", "account-secret");
+  expect(screen.getByRole("button", { name: "Retire second.example" }).hasAttribute("disabled")).toBe(false);
+  expect(screen.getByRole("button", { name: "Retire example.com" }).hasAttribute("disabled")).toBe(true);
+  expect(region("example.com").getByText(/remove it from the relay first/)).toBeDefined();
   const save = group.getByRole("button", { name: "Save sending domains" });
   expect(save.hasAttribute("disabled")).toBe(true);
-  fill("Account password", "account-secret");
   fireEvent.click(group.getByLabelText("second.example"));
   relayResponse = { ...setRelay, domains: ["example.com", "second.example"] };
   fireEvent.click(save);

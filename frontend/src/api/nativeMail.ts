@@ -93,6 +93,7 @@ export function readMailDomains(value: unknown): MailDomainSet {
     }
     return { domain, retired, recordName, recordValue, established, expiresAt: integer(entry.expiresAt), verifiedUntil: integer(entry.verifiedUntil) };
   });
+  if (new Set(domains.map(d => d.domain)).size !== domains.length) throw new Error("Duplicate mail domain; reload before making changes.");
   const inService = domains.filter(d => !d.retired);
   if ((founding !== "") !== (inService.length > 0) || founding && !inService.some(d => d.domain === founding) || inService.length > 0 && !issuer) {
     throw new Error("Inconsistent mail domain status.");
