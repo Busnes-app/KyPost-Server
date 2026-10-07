@@ -10,7 +10,8 @@ subjects get mailbox-less accounts and are refused by native admission unless
 without a generation bump until phase 3. Phase 2a is implemented: the backend
 for several verified domains (domain-set admin API, primary address on any
 configured domain, per-domain fences, retirement, relay domain set, Maddy
-destinations); the admin UI (phase 2b) and phases 3–4 are not implemented.
+destinations). Phase 2b is implemented: the Server → Mail domain admin screen
+for the domain set and relay sending domains. Phases 3–4 are not implemented.
 Prerequisite of
 [continuous Cloudflare receiving](CLOUDFLARE_CONTINUOUS_RECEIVING.md); applies to
 both native receiving profiles. External IMAP accounts are unaffected.

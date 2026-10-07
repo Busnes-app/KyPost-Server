@@ -11,9 +11,13 @@ delivery qualification and full deployment setup remain pending. A protected sav
 ## Configure through the admin API
 
 For browser setup, open **Admin → Server → Mail domain** after pairing
-KyIdentity under SSO. Create the challenge, publish the exact TXT name/value,
-then verify. Domain and issuer stay fixed; replacing the challenge requires
-confirmation and clears verification until DNS is updated. Enter your provider's
+KyIdentity under SSO. Add a domain, publish its exact TXT name/value, then
+verify it; repeat for each domain. The issuer stays fixed for the set; replacing
+a challenge requires confirmation and clears that domain's verification until
+DNS is updated. Choose the relay's sending domains with the checkboxes: adding a
+domain needs its current DNS proof, removing one is refused while queued mail
+uses it, and **Save sending domains** changes only the set, without relay
+credentials or a new generation. Enter your provider's
 implicit-TLS host, port and SMTP credentials separately from your admin account
 password. KySignOn sessions confirm each change there. The screen clears account
 and relay credentials after each action and never reads relay secrets back.
