@@ -5,17 +5,9 @@ import { getJSON, HttpError, postJSON, toErrorMessage } from "../../api/client";
 import { readQuarantine, readQuarantineChange, type QuarantinedDelivery } from "../../api/nativeMail";
 import { listUsers } from "../../api/users";
 import { withSSOStepUp } from "../../api/stepup";
+import { visible } from "../../lib/visibleText";
 
 const PAGE = 100;
-// Envelope text is sender-controlled: control, format (bidi, zero-width),
-// line/paragraph separators, blank "letters" and every stacked combining mark
-// after the first are shown as code points, never applied.
-const hidden = /[\p{Cc}\p{Cf}\u2028\u2029\u034F\u115F\u1160\u17B4\u17B5\u180E\u2800\u3164\uFFA0]|(?<=[\p{Mn}\p{Me}])[\p{Mn}\p{Me}]/gu;
-// A run of one escaped code point collapses to a single counted token.
-function visible(value: string): string {
-  return value.replace(hidden, c => `[U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}]`)
-    .replace(/\[U\+([0-9A-F]+)\](?:\[U\+\1\])+/g, (run, hex: string) => `[U+${hex} \u00D7${run.length / (hex.length + 4)}]`);
-}
 const ownerChanged = "mailbox gone or owner changed; release will be refused";
 // "." and ".." are URL dot segments: fetch would resolve them to another route.
 const addressable = (d: QuarantinedDelivery) => ![d.gateway, d.id].some(v => v === "." || v === "..");

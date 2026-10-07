@@ -144,8 +144,13 @@ type Server struct {
 	// passwordChangeLockout bounds current-credential guessing on
 	// POST /api/auth/password, keyed on the acting user's ID.
 	passwordChangeLockout *failureLockout
-	deviceLockout         *failureLockout
-	wkdLimiter            *ipRateLimiter
+	// imapLoginLockout bounds failed provider sign-ins for mail import, keyed
+	// on the user across every grant; imapListSlots bounds listings dialling
+	// out at once.
+	imapLoginLockout *failureLockout
+	imapListSlots    chan struct{}
+	deviceLockout    *failureLockout
+	wkdLimiter       *ipRateLimiter
 	// accountWriteLimiter meters MUTATING withAuth requests per account. Every
 	// such request is at least one whole-file users.json marshal + fsync under
 	// a global cross-process lock that every authenticated request also reads
@@ -393,6 +398,8 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		davLockout:               newFailureLockout(davMaxFailures, davLockoutFor),
 		mfaLockout:               newFailureLockout(mfaMaxFailures, mfaLockoutFor),
 		passwordChangeLockout:    newFailureLockout(passwordChangeMaxFailures, passwordChangeLockoutFor),
+		imapLoginLockout:         newFailureLockout(imapLoginMaxFailures, imapLoginLockoutFor),
+		imapListSlots:            make(chan struct{}, maxIMAPListings),
 		deviceLockout:            newFailureLockout(deviceMaxFailures, deviceLockoutFor),
 		wkdLimiter:               newIPRateLimiter(wkdRateBurst, wkdRateRefillPerSec),
 		accountWriteLimiter:      newIPRateLimiter(accountWriteBurst, accountWriteRefillPerSec),

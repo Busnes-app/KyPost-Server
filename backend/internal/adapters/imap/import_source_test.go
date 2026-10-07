@@ -31,7 +31,7 @@ func TestImportSourceRefusesPlaintextTricks(t *testing.T) {
 			}
 			_, _ = r.ReadString('\n') // anything further would be a credential
 		}()
-		_, err := OpenImportSource(context.Background(), client, "imap.example.com", true, nil, "user", []byte("secret"))
+		_, err := OpenImportSource(context.Background(), client, "imap.example.com", true, nil, "user", []byte("secret"), 1<<20)
 		if !errors.Is(err, ErrImportProtocol) && !errors.Is(err, ErrImportRefused) {
 			t.Errorf("%s: %v", name, err)
 		}

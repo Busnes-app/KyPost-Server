@@ -30,7 +30,27 @@ type ImportSource struct {
 	tag    int
 	budget int   // bytes left in this response outside literals
 	lits   int64 // literal bytes left in this response
+	left   int64 // bytes the whole session may still read
 	stop   func() bool
+}
+
+// budgeted counts every byte read from the connection, before or after TLS,
+// whatever the response it belongs to.
+type budgeted struct {
+	r io.Reader
+	s *ImportSource
+}
+
+func (b budgeted) Read(p []byte) (int, error) {
+	if b.s.left <= 0 {
+		return 0, ErrImportBudget
+	}
+	if int64(len(p)) > b.s.left {
+		p = p[:b.s.left]
+	}
+	n, err := b.r.Read(p)
+	b.s.left -= int64(n)
+	return n, err
 }
 
 // RemoteFolder is a selectable folder: Name exactly as listed (what EXAMINE
@@ -57,6 +77,8 @@ var (
 	ErrImportProtocol = errors.New("the server answered in a way the import does not understand")
 	ErrImportTooLarge = errors.New("the server sent a message larger than it announced")
 	ErrImportFolders  = errors.New("the account has more than 1000 folders")
+	// ErrImportBudget: the session read everything OpenImportSource allowed.
+	ErrImportBudget = errors.New("the server sent more than the import allows")
 	// ErrImportGone: the message was deleted on the server during the import.
 	ErrImportGone = errors.New("the message is no longer on the server")
 )
@@ -76,9 +98,11 @@ var (
 
 // OpenImportSource speaks TLS over conn, implicit or after STARTTLS, verifying
 // the certificate for serverName against roots (nil: the system's), and signs
-// in. password is not retained. Cancelling ctx closes the connection.
-func OpenImportSource(ctx context.Context, conn net.Conn, serverName string, startTLS bool, roots *x509.CertPool, username string, password []byte) (*ImportSource, error) {
-	s := &ImportSource{raw: conn, conn: conn, r: bufio.NewReader(conn)}
+// in. password is not retained. The session reads at most maxBytes in all
+// (ErrImportBudget). Cancelling ctx closes the connection.
+func OpenImportSource(ctx context.Context, conn net.Conn, serverName string, startTLS bool, roots *x509.CertPool, username string, password []byte, maxBytes int64) (*ImportSource, error) {
+	s := &ImportSource{raw: conn, conn: conn, left: maxBytes}
+	s.r = bufio.NewReader(budgeted{conn, s})
 	s.stop = context.AfterFunc(ctx, func() { _ = conn.Close() })
 	if err := s.open(ctx, serverName, startTLS, roots, username, password); err != nil {
 		s.stop()
@@ -109,7 +133,7 @@ func (s *ImportSource) open(ctx context.Context, serverName string, startTLS boo
 	if err := tc.HandshakeContext(ctx); err != nil {
 		return ErrImportTLS
 	}
-	s.conn, s.r = tc, bufio.NewReader(tc)
+	s.conn, s.r = tc, bufio.NewReader(budgeted{tc, s})
 	if !startTLS {
 		if err := s.greeting(); err != nil {
 			return err
@@ -196,7 +220,8 @@ func (s *ImportSource) astring(b []byte) error {
 }
 
 // Folders lists every selectable folder (no \Noselect or \NonExistent) whose
-// name is safe to send back: no control character, backslash or quote.
+// name is safe to send back (no control character, backslash or quote) and at
+// most 255 bytes.
 func (s *ImportSource) Folders() ([]RemoteFolder, error) {
 	var out []RemoteFolder
 	err := s.run(importStepTimeout, importMetaLit, func(f []any) error {
@@ -213,7 +238,7 @@ func (s *ImportSource) Folders() ([]RemoteFolder, error) {
 			}
 			folder.Attrs = append(folder.Attrs, a)
 		}
-		if ValidateMailboxName(name) != nil {
+		if len(name) > 255 || ValidateMailboxName(name) != nil {
 			return nil
 		}
 		decoded, ok := decodeMUTF7(name)

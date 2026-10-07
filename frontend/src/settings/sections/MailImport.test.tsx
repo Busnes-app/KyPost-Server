@@ -163,6 +163,7 @@ const remoteFolders = { target: "Imported/imap-example-com", folders: [
   { name: "INBOX", path: ["INBOX"], attributes: ["\\hasnochildren"] },
   { name: "[Gmail]/All Mail", path: ["[Gmail]", "All Mail"], attributes: ["\\all"] },
   { name: "Sent", path: ["Sent"], attributes: [] },
+  { name: "Evil", path: ["Inv\u202Eoice"], attributes: [] },
 ] };
 
 async function fillAccount(provider = "provider-secret") {
@@ -213,6 +214,8 @@ it("imports from another account: confirms without the provider password, lists,
   expect((screen.getByLabelText(/INBOX/) as HTMLInputElement).checked).toBe(true);
   expect(posts().filter(([url]) => url === "/api/import/imap")).toHaveLength(1);
   expect((screen.getByLabelText("Into folder") as HTMLInputElement).value).toBe("Imported/imap-example-com");
+  expect(screen.getByLabelText(/Inv\[U\+202E\]oice/)).toBeTruthy();
+  fireEvent.click(screen.getByLabelText(/Inv\[U\+202E\]oice/));
 
   fireEvent.click(screen.getByLabelText(/Sent/));
   statuses = [{ ...running, host: "imap.example.com", folder: "Imported/imap-example-com", foldersTotal: 2, foldersDone: 1, current: "Imported/imap-example-com/Sent" },

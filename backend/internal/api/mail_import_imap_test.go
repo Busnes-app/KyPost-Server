@@ -41,6 +41,7 @@ type fakeMsg struct {
 type fakeFolder struct {
 	name, attrs string
 	msgs        []fakeMsg
+	exists      int // announced EXISTS when not 0
 }
 
 // fakeIMAP is just enough of an IMAP server, over implicit TLS or STARTTLS,
@@ -177,6 +178,10 @@ func (f *fakeIMAP) serve(c net.Conn) {
 				}
 				args = strings.TrimRight(args, "\r\n")
 			}
+			if creds[0] == "slow" { // a sign-in that never answers
+				<-f.release
+				return
+			}
 			if creds[0] == f.user && creds[1] == f.pass {
 				say(tag + " OK logged in")
 			} else {
@@ -198,7 +203,11 @@ func (f *fakeIMAP) serve(c net.Conn) {
 				say(tag + " NO no such folder")
 				continue
 			}
-			say(fmt.Sprintf("* %d EXISTS", len(f.folders[selected].msgs)), "* OK [UIDVALIDITY 7] ok", tag+" OK [READ-ONLY] EXAMINE done")
+			exists := len(f.folders[selected].msgs)
+			if f.folders[selected].exists != 0 {
+				exists = f.folders[selected].exists
+			}
+			say(fmt.Sprintf("* %d EXISTS", exists), "* OK [UIDVALIDITY 7] ok", tag+" OK [READ-ONLY] EXAMINE done")
 		case "FETCH":
 			var lo, hi int
 			fmt.Sscanf(args, "%d:%d", &lo, &hi)
@@ -217,6 +226,14 @@ func (f *fakeIMAP) serve(c net.Conn) {
 			if selected >= 0 && f.folders[selected].name == "Slow" {
 				<-f.release
 				return
+			}
+			if selected >= 0 && f.folders[selected].name == "Flood" {
+				// Unsolicited bodies of other messages, without end.
+				for {
+					if _, err := io.WriteString(w, "* 9 FETCH (UID 999 BODY[] {10000}\r\n"+strings.Repeat("x", 10000)+")\r\n"); err != nil {
+						return
+					}
+				}
 			}
 			if seq := (uid - 3) / 10; selected >= 0 && seq >= 1 && seq <= len(f.folders[selected].msgs) {
 				m := f.folders[selected].msgs[seq-1]
@@ -390,6 +407,9 @@ func TestIMAPImport(t *testing.T) {
 		{name: `Bad\Name`, attrs: ``},
 		{name: "Slow", attrs: ``, msgs: []fakeMsg{{raw: seen, date: "06-May-2019 07:08:09 -0700"}}},
 		{name: "Lies", msgs: []fakeMsg{{raw: "Subject: lie\r\n\r\n" + strings.Repeat("x", 2<<10), size: 100, date: " 1-Jan-2020 00:00:00 +0000"}}},
+		{name: "Flood", msgs: []fakeMsg{{raw: "Subject: flood\r\n\r\nx\r\n", size: 10000, date: " 1-Jan-2020 00:00:00 +0000"}}},
+		{name: "Huge", exists: 1000000},
+		{name: strings.Repeat("L", 256)},
 	})
 	defer func(r func(context.Context, string) ([]net.IPAddr, error), d func(context.Context, string, string) (net.Conn, error), roots *x509.CertPool) {
 		imapResolve, imapDial, imapRoots = r, d, roots
@@ -458,18 +478,63 @@ func TestIMAPImport(t *testing.T) {
 		t.Fatal("KySignOn listing", w.Code, w.Body)
 	}
 
-	// Wrong provider password: three tries per grant, then it is gone.
-	token := grant(account)
-	for i := range imapListAttempts {
+	// Failed sign-ins are the user's budget across grants: neither a fresh
+	// step-up nor a correct sign-in resets it, and once spent nothing is
+	// dialled.
+	var token string
+	for i := range imapLoginMaxFailures {
+		if i%3 == 0 {
+			token = grant(account)
+		}
+		if i == imapLoginMaxFailures-1 {
+			if w, _ := list(me, grant(account), fake.pass); w.Code != 200 {
+				t.Fatal("correct sign-in within the budget", w.Code, w.Body)
+			}
+			token = grant(account)
+		}
 		if w, got := list(me, token, "wrong-password"); w.Code != 400 || !strings.Contains(got.Error, "app password") {
 			t.Fatal("wrong provider password", i, w.Code, w.Body)
 		}
 	}
-	if w, _ := list(me, token, fake.pass); w.Code != 404 {
-		t.Fatal("grant outlived its sign-in attempts", w.Code, w.Body)
+	dials := len(dialedList())
+	token = grant(account)
+	if w, got := list(me, token, fake.pass); w.Code != 429 || w.Header().Get("Retry-After") == "" || !strings.Contains(got.Error, "too many") || len(dialedList()) != dials {
+		t.Fatal("sign-in budget reset by a new grant", w.Code, w.Body, len(dialedList())-dials)
+	}
+	srv.imapLoginLockout = newFailureLockout(imapLoginMaxFailures, imapLoginLockoutFor)
+
+	// Listings dialling out at once are bounded server-wide; a refusal spends
+	// no sign-in attempt.
+	for range maxIMAPListings {
+		srv.imapListSlots <- struct{}{}
+	}
+	if w, _ := list(me, token, fake.pass); w.Code != 503 || len(dialedList()) != dials {
+		t.Fatal("listing past the server-wide slots", w.Code, w.Body)
+	}
+	for range maxIMAPListings {
+		<-srv.imapListSlots
 	}
 
+	// A new grant cancels the user's listing in flight.
+	slowGrant := grant(`"host":"imap.example.com","port":993,"security":"tls","username":"slow",`)
+	answered := make(chan int, 1)
+	go func() { w, _ := list(me, slowGrant, "x"); answered <- w.Code }()
+	for deadline := time.Now().Add(10 * time.Second); !strings.Contains(fmt.Sprint(fake.recorded()), `LOGIN "slow"`); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("slow sign-in never arrived")
+		}
+	}
 	token = grant(account)
+	select {
+	case code := <-answered:
+		if code != 404 {
+			t.Fatal("cancelled listing answered", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a new grant left the old listing running")
+	}
+	srv.imapLoginLockout = newFailureLockout(imapLoginMaxFailures, imapLoginLockoutFor)
+
 	if w = call("/api/import/"+token, me, "From a b\r\nSubject: x\r\n\r\nx\r\n", map[string]string{"Content-Type": "application/octet-stream"}); w.Code != 404 {
 		t.Fatal("an IMAP grant was spent as a file upload link", w.Code, w.Body)
 	}
@@ -496,7 +561,7 @@ func TestIMAPImport(t *testing.T) {
 	for _, f := range got.Folders {
 		names = append(names, f.Name+"="+strings.Join(f.Path, "|")+"="+strings.Join(f.Attributes, ","))
 	}
-	if want := []string{`INBOX=INBOX=\hasnochildren`, `[Gmail]/All Mail=[Gmail]|All Mail=\all,\hasnochildren`, "Caf&AOk-.Notes=Café.Notes=", "Slow=Slow=", "Lies=Lies="}; fmt.Sprint(names) != fmt.Sprint(want) {
+	if want := []string{`INBOX=INBOX=\hasnochildren`, `[Gmail]/All Mail=[Gmail]|All Mail=\all,\hasnochildren`, "Caf&AOk-.Notes=Café.Notes=", "Slow=Slow=", "Lies=Lies=", "Flood=Flood=", "Huge=Huge="}; fmt.Sprint(names) != fmt.Sprint(want) {
 		t.Fatalf("folders %q, want %q", names, want)
 	}
 	for _, addr := range dialedList() {
@@ -709,19 +774,40 @@ func TestIMAPImport(t *testing.T) {
 		t.Fatalf("cancelled %+v", st)
 	}
 
-	// A server sending more than it announced stops the job.
-	defer func(old int64) { importMessageBytes = old }(importMessageBytes)
-	importMessageBytes = 1 << 10
-	token = grant(account)
-	if w, _ = list(me, token, fake.pass); w.Code != 200 {
-		t.Fatal("list", w.Code)
+	// A message larger than announced, a session past its byte budget and a
+	// huge EXISTS each stop the job.
+	defer func(old int64) { imapImportBytes = old }(imapImportBytes)
+	imapImportBytes = 64 << 10
+	for folder, want := range map[string]string{"Lies": "larger than it announced", "Flood": "sent more than twice", "Huge": "more than 20000 messages"} {
+		token = grant(account)
+		if w, _ = list(me, token, fake.pass); w.Code != 200 {
+			t.Fatal("list", w.Code)
+		}
+		before := len(fake.recorded())
+		if w = run(token, `{"folders":["`+folder+`"]}`); w.Code != 202 {
+			t.Fatal(folder, "start", w.Code, w.Body)
+		}
+		if st = wait(); st.State != "failed" || !strings.Contains(st.Error, want) {
+			t.Fatalf("%s %+v", folder, st)
+		}
+		if folder == "Huge" && strings.Contains(fmt.Sprint(fake.recorded()[before:]), "FETCH") {
+			t.Fatal("walked a huge folder")
+		}
 	}
-	if w = run(token, `{"folders":["Lies"]}`); w.Code != 202 {
-		t.Fatal("lies start", w.Code, w.Body)
+
+	// Neither a grant nor a listing while the user's job runs.
+	srv.importMu.Lock()
+	srv.imports[one.ID] = &importJob{State: "running"}
+	srv.importMu.Unlock()
+	if w = start(me, account); w.Code != 409 {
+		t.Fatal("grant during a job", w.Code, w.Body)
 	}
-	if st = wait(); st.State != "failed" || !strings.Contains(st.Error, "larger than it announced") {
-		t.Fatalf("lie %+v", st)
+	if w, _ = list(me, token, fake.pass); w.Code != 409 {
+		t.Fatal("listing during a job", w.Code, w.Body)
 	}
+	srv.importMu.Lock()
+	srv.imports[one.ID] = &importJob{State: "finished"}
+	srv.importMu.Unlock()
 
 	// No job starts once shutdown began.
 	token = grant(account)
@@ -731,5 +817,11 @@ func TestIMAPImport(t *testing.T) {
 	srv.cancelImports()
 	if w = run(token, `{"folders":["INBOX"]}`); w.Code != 503 {
 		t.Fatal("start after shutdown", w.Code, w.Body)
+	}
+	if w, _ = list(me, token, fake.pass); w.Code != 503 {
+		t.Fatal("listing after shutdown", w.Code, w.Body)
+	}
+	if w = start(me, account); w.Code != 503 {
+		t.Fatal("grant after shutdown", w.Code, w.Body)
 	}
 }

@@ -2,6 +2,7 @@ import { useState, type ChangeEvent } from "react";
 import { credentialFields, deriveCredential } from "../../api/auth";
 import { HttpError, postJSON, toErrorMessage } from "../../api/client";
 import { withSSOStepUp } from "../../api/stepup";
+import { visible } from "../../lib/visibleText";
 import type { ImportStatus } from "./MailImport";
 
 type RemoteFolder = { name: string; path: string[]; attributes: string[] };
@@ -106,7 +107,7 @@ export function MailImportAccount({ mailbox, ssoSession, disabled, onStarted }: 
       <legend>Folders to import</legend>
       {folders.length === 0 && <p>The account has no folders that can be imported.</p>}
       {folders.map(f => <label key={f.name}>
-        <input type="checkbox" checked={chosen.has(f.name)} onChange={() => toggle(f.name)} /> {f.path.join(" / ")}
+        <input type="checkbox" checked={chosen.has(f.name)} onChange={() => toggle(f.name)} /> {visible(f.path.join(" / "))}
         {repeats(f) && " (repeats mail from your other folders; usually left out)"}
       </label>)}
       <label>Into folder<input aria-label="Into folder" value={target} onChange={e => setTarget(e.target.value)} /></label>

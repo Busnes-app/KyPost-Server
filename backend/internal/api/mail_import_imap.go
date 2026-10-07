@@ -23,15 +23,22 @@ import (
 // and mailbox. The provider password never travels in that request, whose
 // body the KySignOn step-up digests: .../{token}/folders takes it, signs in
 // and lists folders, and the grant keeps it in memory only; .../{token}/start
-// runs the job, which wipes it after signing in. Status and cancel are the
-// file import's. A re-run is safe: duplicates are skipped per folder.
+// runs the job, which wipes it after signing in (best effort: see
+// dropImportGrantLocked). Status and cancel are the file import's. A re-run is
+// safe: duplicates are skipped per folder.
 
 const (
-	imapGrantTTL = 10 * time.Minute
-	// imapListAttempts bounds sign-in attempts per step-up.
-	imapListAttempts = 3
-	imapListTimeout  = 90 * time.Second
-	imapPage         = 200
+	imapGrantTTL    = 10 * time.Minute
+	imapListTimeout = 90 * time.Second
+	// imapListBytes bounds what one listing reads and so what a grant holds.
+	imapListBytes = 4 << 20
+	// maxIMAPListings bounds listings dialling out at once, server-wide.
+	maxIMAPListings = 4
+	// A user's failed provider sign-ins, across every grant: the budget is
+	// the user's, so minting a new grant (a fresh step-up) does not reset it.
+	imapLoginMaxFailures = 6
+	imapLoginLockoutFor  = time.Hour
+	imapPage             = 200
 )
 
 var (
@@ -51,7 +58,7 @@ var (
 	errIMAPPrivate  = errors.New("that server is on a private or internal network; import works only from a public mail provider")
 	errIMAPResolve  = errors.New("the server name could not be found")
 	errIMAPConnect  = errors.New("could not connect to the server; check the server name and port")
-	errIMAPTooMuch  = imapStop("the import downloaded more than twice your mailbox's storage, counting duplicates; choose fewer folders")
+	errIMAPTooMuch  = imapStop("the mail server sent more than twice your mailbox's storage, counting duplicates; choose fewer folders")
 	errIMAPTooLong  = imapStop("the import took longer than 4 hours and stopped; import again to continue (messages already imported are skipped as duplicates)")
 	errIMAPLost     = imapStop("the connection to the mail server failed; import again to continue (messages already imported are skipped as duplicates)")
 	errIMAPTooLarge = imapStop("the mail server sent a message larger than it announced, so the import stopped")
@@ -73,13 +80,14 @@ type imapAccount struct {
 }
 
 // imapGrant is an unspent IMAP import. password is set by a successful
-// listing; folders are what it listed, by name.
+// listing; folders are what it listed, by name; stop cancels a listing in
+// flight.
 type imapGrant struct {
 	imapAccount
 	password []byte
 	folders  map[string]imapadapter.RemoteFolder
-	attempts int
 	listing  bool
+	stop     context.CancelFunc
 }
 
 // imapHost normalizes a host name or IP literal.
@@ -135,9 +143,9 @@ func imapAddress(ctx context.Context, host string) (net.IP, error) {
 	return ips[0], nil
 }
 
-// open dials the approved address, never the name, and verifies TLS for the
-// name.
-func (a *imapAccount) open(ctx context.Context, password []byte) (*imapadapter.ImportSource, error) {
+// open dials the approved address, never the name, verifies TLS for the name
+// and allows the session to read maxBytes.
+func (a *imapAccount) open(ctx context.Context, password []byte, maxBytes int64) (*imapadapter.ImportSource, error) {
 	if a.ip == nil {
 		ip, err := imapAddress(ctx, a.host)
 		if err != nil {
@@ -152,7 +160,7 @@ func (a *imapAccount) open(ctx context.Context, password []byte) (*imapadapter.I
 		}
 		return nil, errIMAPConnect
 	}
-	return imapadapter.OpenImportSource(ctx, conn, a.host, a.startTLS, imapRoots, a.username, password)
+	return imapadapter.OpenImportSource(ctx, conn, a.host, a.startTLS, imapRoots, a.username, password, maxBytes)
 }
 
 // imapFailure is the status and the user's explanation for err; it never
@@ -173,13 +181,17 @@ func imapFailure(err error) (int, string) {
 	return http.StatusBadGateway, "the server did not answer as an IMAP server should; check the server name, port and security"
 }
 
-// dropImportGrantLocked deletes the grant at token and wipes its held
-// password. A listing in flight holds its own copy and wipes it on finding the
-// grant gone. Hold importMu.
+// dropImportGrantLocked deletes the grant at token, cancels its listing in
+// flight and wipes its held password. The listing holds its own copy and
+// wipes it on finding the grant gone. Wiping is best effort: the JSON decoder
+// and TLS buffers held copies that only the collector reclaims. Hold importMu.
 func (s *Server) dropImportGrantLocked(token string) {
 	g, ok := s.importGrants[token]
 	delete(s.importGrants, token)
 	if ok && g.imap != nil {
+		if g.imap.stop != nil {
+			g.imap.stop()
+		}
 		clear(g.imap.password)
 		g.imap.password = nil
 	}
@@ -226,8 +238,9 @@ func (s *Server) handleIMAPImportStart(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only the two IMAP ports: nothing else is a mail server worth reaching,
 	// and a free port would make this a scanner of other services.
-	startTLS := body.Security == "starttls"
-	if !(body.Security == "tls" && body.Port == 993 || startTLS && body.Port == 143) {
+	implicitTLS := body.Security == "tls" && body.Port == 993
+	startTLS := body.Security == "starttls" && body.Port == 143
+	if !implicitTLS && !startTLS {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "use port 993 with TLS, or port 143 with STARTTLS"})
 		return
 	}
@@ -239,11 +252,7 @@ func (s *Server) handleIMAPImportStart(w http.ResponseWriter, r *http.Request) {
 	if !s.confirmActor(w, r, ac.UserID, body.Password, body.AuthSecret) {
 		return
 	}
-	s.importMu.Lock()
-	busy := s.importBusy(ac.UserID)
-	s.importMu.Unlock()
-	if busy != "" {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": busy})
+	if !s.imapAdmissible(w, ac.UserID) {
 		return
 	}
 	token, err := sso.RandomToken(32)
@@ -268,6 +277,7 @@ func (s *Server) handleIMAPImportStart(w http.ResponseWriter, r *http.Request) {
 			s.dropImportGrantLocked(k)
 		}
 	}
+	// Replacing the user's grant cancels its listing in flight.
 	s.importGrants[token] = g
 	s.importMu.Unlock()
 	// A held password must not outlive the grant waiting for the next request.
@@ -280,6 +290,23 @@ func (s *Server) handleIMAPImportStart(w http.ResponseWriter, r *http.Request) {
 	})
 	s.auditImport(importJob{Mailbox: g.mailbox, Host: host, user: g.user, correlation: correlation}, "authorized", "")
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "expiresInSeconds": int(imapGrantTTL.Seconds()), "target": imapDefaultTarget(host)})
+}
+
+// imapAdmissible refuses (and answers) while the server shuts down or the
+// user's import, or the server's import slots, are busy.
+func (s *Server) imapAdmissible(w http.ResponseWriter, user string) bool {
+	s.importMu.Lock()
+	closed, busy := s.importClosed, s.importBusy(user)
+	s.importMu.Unlock()
+	switch {
+	case closed:
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "the server is shutting down; import again after it restarts"})
+	case busy != "":
+		writeJSON(w, http.StatusConflict, map[string]any{"error": busy})
+	default:
+		return true
+	}
+	return false
 }
 
 func imapDefaultTarget(host string) string {
@@ -320,6 +347,12 @@ func (s *Server) handleIMAPImportFolders(w http.ResponseWriter, r *http.Request)
 	body.Password = ""
 	token := r.PathValue("token")
 	user, session := s.imapCaller(r)
+	if !s.imapAdmissible(w, user) {
+		clear(password)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), imapListTimeout)
+	defer cancel()
 	s.importMu.Lock()
 	g, ok := s.imapGrantOf(user, session, token)
 	if !ok || g.imap.listing {
@@ -328,30 +361,28 @@ func (s *Server) handleIMAPImportFolders(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusNotFound, errIMAPGrant)
 		return
 	}
-	g.imap.listing = true
-	g.imap.attempts++
+	g.imap.listing, g.imap.stop = true, cancel
 	account := g.imap.imapAccount
 	s.importMu.Unlock()
 
-	ctx, cancel := context.WithTimeout(r.Context(), imapListTimeout)
-	defer cancel()
 	var folders []imapadapter.RemoteFolder
-	src, err := account.open(ctx, password)
-	if err == nil {
-		folders, err = src.Folders()
-		_ = src.Close()
-	}
+	err := s.listIMAP(ctx, user, &account, password, &folders)
 	s.importMu.Lock()
-	g.imap.listing = false
+	g.imap.listing, g.imap.stop = false, nil
 	_, live := s.importGrants[token]
 	switch {
 	case err != nil || !live:
-		if live && g.imap.attempts >= imapListAttempts {
-			s.dropImportGrantLocked(token)
-		}
 		s.importMu.Unlock()
 		clear(password)
-		if err == nil {
+		var refused imapRefusal
+		switch {
+		case errors.As(err, &refused):
+			if refused.retryAfter > 0 {
+				w.Header().Set("Retry-After", strconv.Itoa(int(refused.retryAfter.Seconds())+1))
+			}
+			writeJSON(w, refused.status, map[string]any{"error": refused.reason})
+			return
+		case err == nil, !live:
 			writeJSON(w, http.StatusNotFound, errIMAPGrant)
 			return
 		}
@@ -378,6 +409,37 @@ func (s *Server) handleIMAPImportFolders(w http.ResponseWriter, r *http.Request)
 		out = append(out, folder{f.Name, f.Path, append([]string{}, f.Attrs...)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"folders": out, "target": imapDefaultTarget(account.host)})
+}
+
+// imapRefusal is a listing refused before any dial.
+type imapRefusal struct {
+	status     int
+	reason     string
+	retryAfter time.Duration
+}
+
+func (e imapRefusal) Error() string { return e.reason }
+
+// listIMAP signs in and lists folders within the server-wide listing slots
+// and the user's sign-in budget, which only a successful sign-in refunds.
+func (s *Server) listIMAP(ctx context.Context, user string, account *imapAccount, password []byte, folders *[]imapadapter.RemoteFolder) error {
+	select {
+	case s.imapListSlots <- struct{}{}:
+		defer func() { <-s.imapListSlots }()
+	default:
+		return imapRefusal{http.StatusServiceUnavailable, "the server is busy connecting to other mail accounts; try again in a minute", 0}
+	}
+	if ok, retry := s.imapLoginLockout.tryAttempt(user); !ok {
+		return imapRefusal{http.StatusTooManyRequests, "too many failed attempts to sign in to other mail accounts; try again in an hour", retry}
+	}
+	src, err := account.open(ctx, password, imapListBytes)
+	if err != nil {
+		return err
+	}
+	s.imapLoginLockout.cancelAttempt(user)
+	*folders, err = src.Folders()
+	_ = src.Close()
+	return err
 }
 
 type imapImportFolder struct {
@@ -497,14 +559,21 @@ func (s *Server) runIMAPImport(ctx context.Context, job *importJob, im mailImpor
 }
 
 func (s *Server) copyIMAP(ctx context.Context, job *importJob, im mailImporter, account imapAccount, password []byte, folders []imapImportFolder) error {
-	src, err := account.open(ctx, password)
+	src, err := account.open(ctx, password, imapImportBytes)
 	clear(password)
 	if err != nil {
 		_, reason := imapFailure(err)
 		return imapStop(reason)
 	}
 	defer func() { _ = src.Close() }()
-	seen, fetched := 0, int64(0)
+	// lost names why a session failed: its byte budget, or anything else.
+	lost := func(err error) error {
+		if errors.Is(err, imapadapter.ErrImportBudget) {
+			return errIMAPTooMuch
+		}
+		return errIMAPLost
+	}
+	seen := 0
 	for i, f := range folders {
 		s.importMu.Lock()
 		job.Current, job.FoldersDone = f.local, i
@@ -513,18 +582,22 @@ func (s *Server) copyIMAP(ctx context.Context, job *importJob, im mailImporter, 
 			return err
 		}
 		n, err := src.Examine(f.remote)
-		if err != nil {
+		if errors.Is(err, imapadapter.ErrImportBudget) {
+			return errIMAPTooMuch
+		} else if err != nil {
 			return imapStop("the mail server would not open " + f.local + "; leave that folder out and import again")
+		}
+		// Every sequence number walked counts, so a huge EXISTS is refused
+		// before any page is fetched.
+		if seen += n; seen > importMaxMessages {
+			return mailbox.ErrImportTooMany
 		}
 		for lo := 1; lo <= n; lo += imapPage {
 			msgs, err := src.Messages(lo, min(n, lo+imapPage-1))
 			if err != nil {
-				return errIMAPLost
+				return lost(err)
 			}
 			for _, m := range msgs {
-				if seen++; seen > importMaxMessages {
-					return mailbox.ErrImportTooMany
-				}
 				// Refused by its announced size, never downloaded.
 				if m.Size <= 0 || m.Size > importMessageBytes {
 					if err = s.countImport(job, 0, mailbox.ErrUnimportable); err != nil {
@@ -532,10 +605,8 @@ func (s *Server) copyIMAP(ctx context.Context, job *importJob, im mailImporter, 
 					}
 					continue
 				}
-				if fetched += m.Size; fetched > imapImportBytes {
-					return errIMAPTooMuch
-				}
-				raw, err := src.Fetch(m.UID, importMessageBytes)
+				// Held to its announced size: more stops the job.
+				raw, err := src.Fetch(m.UID, m.Size)
 				switch {
 				case err == nil:
 					err = s.importOne(ctx, job, im, f.local, raw, mailbox.ImportMeta{Unseen: !m.Seen, Starred: m.Flagged, Received: m.Received})
@@ -544,7 +615,7 @@ func (s *Server) copyIMAP(ctx context.Context, job *importJob, im mailImporter, 
 				case errors.Is(err, imapadapter.ErrImportTooLarge):
 					return errIMAPTooLarge
 				default:
-					return errIMAPLost
+					return lost(err)
 				}
 				if err = s.countImport(job, int64(len(raw)), err); err != nil {
 					return err

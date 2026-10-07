@@ -649,19 +649,28 @@ message, under the settings lock) and shutdown are the file import's.
   expiresInSeconds: 600, target: "Imported/<host with '.' as '-'>"}` (folder
   names cannot contain `.`). The grant is in memory, one per user, bound to user,
   session and mailbox like the upload link, and holds host, port, security and
-  username.
+  username. Minting refuses (409) while the user's import runs or the server's
+  two import slots are taken, and (503) once shutdown began; it cancels the
+  user's previous grant, including a listing still in flight.
 - `POST /api/import/imap/{token}/folders` with `{password}` (the provider's)
   connects, signs in and answers `{folders: [{name, path, attributes}], target}`.
-  It needs no step-up of its own: the grant is the proof, and it allows three
-  sign-in attempts before it is dropped, so one step-up is three guesses at
-  most. The provider password is kept out of the step-up request because the
+  It needs no step-up of its own: the grant is the proof. Sign-ins are bounded
+  per user, not per grant, so a fresh step-up does not reset them: six listings
+  that do not sign in (wrong password, unreachable or refused server) lock the
+  user out of listing for an hour (429 with `Retry-After`, before any dial); a
+  successful sign-in refunds only its own attempt. At most four listings dial
+  out at once server-wide (503 beyond, spending no attempt), one per grant, and
+  none while the user's import runs (409) or after shutdown began (503). A
+  listing reads at most 4 MiB, which also bounds what the grant holds. The
+  provider password is kept out of the step-up request because the
   KySignOn grant is bound to a SHA-256 of that request's body; an unsalted
   digest over otherwise guessable fields would be an offline guessing target
   wherever it was kept, and replaying the body after the KySignOn popup would
   resend it. After a successful sign-in the grant keeps the password as a byte
-  slice; it is wiped when the job signs in, or when the grant is replaced,
-  expires (a timer at 10 minutes) or runs out of attempts. Go strings cannot be
-  wiped: the request's decoded copy is dropped and left to the collector.
+  slice; it is wiped when the job signs in, or when the grant is replaced or
+  expires (a timer at 10 minutes). The wipe is best effort: the JSON decoder's
+  string, the TLS buffers and the copies Go made along the way are only dropped
+  and left to the collector.
 - `POST /api/import/imap/{token}/start` with `{folders: [name], target}` spends
   the grant and answers `202` with the job status. Folders must come from the
   listing; `target` (default above) and each mapped folder must be valid folder
@@ -685,21 +694,28 @@ message, under the settings lock) and shutdown are the file import's.
   and a literal at the per-message cap (64 KiB outside a body fetch). Timeouts:
   10 s to connect, 30 s per command, 2 minutes per message, 90 s for a listing,
   4 hours for a job.
-- Folders: `\Noselect` and `\NonExistent` are skipped, as are names with a
-  control character, backslash or double quote (they cannot be quoted back
-  safely). Names are decoded from modified UTF-7 and split at the server's
+- Folders: `\Noselect` and `\NonExistent` are skipped, as are names over 255
+  bytes or with a control character, backslash or double quote (they cannot be
+  quoted back safely). Names are decoded from modified UTF-7 and split at the server's
   delimiter; each level maps under the target with `/` and `.` replaced by `_`.
-  Two remote folders that map to the same name share it. The screen leaves
-  `\All` and `\Flagged` (Gmail's All Mail and Starred) unchecked: they hold
-  every message again, and dedupe is per folder.
+  Two remote folders that map to the same local name (say `a.b` and `a_b`) are
+  merged into one folder. The screen leaves `\All` and `\Flagged` (Gmail's All
+  Mail and Starred) unchecked, since they hold every message again and dedupe is
+  per folder, and shows names with control, bidi and zero-width characters
+  escaped as code points.
 - Messages are paged 200 at a time by sequence number; a message deleted on the
-  server meanwhile is skipped. One announcing more than the per-message cap
-  (`RFC822.SIZE`) is skipped without being downloaded; a server that then sends
-  more than it announced stops the job. Each message is stored as its exact
+  server meanwhile is skipped. Every sequence number a folder's `EXISTS`
+  announces counts toward the job's message cap before any page is fetched, so
+  a huge `EXISTS` fails the job at once. One announcing more than the
+  per-message cap (`RFC822.SIZE`) is skipped without being downloaded; each
+  other is fetched with its announced size as the limit, so sending more than
+  announced stops the job. Each message is stored as its exact
   bytes with `INTERNALDATE` as its date (the `Date` header when absent), `\Seen`
   as read and `\Flagged` as starred; other flags are ignored. Unread imported
-  mail stays out of the poller through the `imported` table. A job downloads at
-  most twice the mailbox's storage, duplicates included.
+  mail stays out of the poller through the `imported` table. The job's session
+  reads at most twice the mailbox's storage, counting every byte from the
+  server (duplicates, metadata and unsolicited responses included), then
+  stops.
 - Not resumable: a failed, cancelled or restarted job is imported again, and
   duplicates are skipped. The status adds `host`, `current` (the local folder in
   progress), `foldersDone` and `foldersTotal`; never the username.
