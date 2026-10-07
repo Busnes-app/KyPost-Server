@@ -605,6 +605,16 @@ receipt.
 The sender is attacker-controlled: any interface must render it, and every
 other listed field, as plain text.
 
+Admin UI: Server → Quarantine lists the same envelope fields 100 at a time
+(Load more pages with `after`), as plain text with control, bidi and
+zero-width characters shown as `[U+XXXX]`. Release confirms the frozen
+recipients and mailboxes and that the mail goes only there; Discard confirms
+the deletion is permanent and may be recorded as partially released. Both use
+the account credential or KySignOn step-up. A 409 reason is shown as returned
+and the list re-read; an unanswered or mismatched answer locks until reload.
+With native mail off (404) the tab says so. A delivery whose gateway or ID is
+a URL dot segment (`.` or `..`) is CLI-only.
+
 New route writes, RCPT bindings and MIME acceptance also check physical storage
 inside the immediate SQLite writer transaction. The admission budget is derived
 from the durable limits: `max(32 MiB, 4 × payload bytes + 32 KiB × records)`
