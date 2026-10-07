@@ -195,7 +195,8 @@ func TestCollectSealsCloudflareCredentialsNotHostRecord(t *testing.T) {
 	}
 }
 
-// The sender block list is sealed as written; its lock file is not.
+// The sender block list and automatic-block evidence are sealed as
+// written; their lock files are not.
 func TestCollectSealsSenderBlocks(t *testing.T) {
 	d := fixtureDirs(t)
 	dir := filepath.Join(d.State, "receiving")
@@ -205,30 +206,47 @@ func TestCollectSealsSenderBlocks(t *testing.T) {
 	if _, err := ingress.NewBlocks(dir).Put(context.Background(), ingress.SenderBlock{Kind: "domain", Value: "evil.test", Source: "manual", Actor: "a", Reason: "spam"}, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	live, err := os.ReadFile(filepath.Join(dir, ingress.BlocksFile))
-	if err != nil {
+	if err := ingress.NewEvidence(dir).Accepted(context.Background(), "friend@friendly.test", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	p, err := openService(t, d, config.BackupConfig{}).Collect()
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, f := range p.Files {
-		found = found || f.Path == "state/receiving/"+ingress.BlocksFile && string(f.Data) == string(live)
-		if strings.HasSuffix(f.Path, ".lock") {
-			t.Fatal("lock file collected", f.Path)
+	for _, name := range []string{ingress.BlocksFile, ingress.EvidenceFile} {
+		live, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := openService(t, d, config.BackupConfig{}).Collect()
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, f := range p.Files {
+			found = found || f.Path == "state/receiving/"+name && string(f.Data) == string(live)
+			if strings.HasSuffix(f.Path, ".lock") {
+				t.Fatal("lock file collected", f.Path)
+			}
+		}
+		if !found {
+			t.Fatal("not sealed", name)
 		}
 	}
-	if !found {
-		t.Fatal("sender block list not sealed")
-	}
-	// A list load would refuse is refused at backup time too.
-	malformed := strings.Replace(string(live), `"evil.test"`, `"Evil.test"`, 1)
-	if err := os.WriteFile(filepath.Join(dir, ingress.BlocksFile), []byte(malformed), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := openService(t, d, config.BackupConfig{}).Collect(); err == nil || !strings.Contains(err.Error(), ingress.BlocksFile) {
-		t.Fatal("malformed block list sealed", err)
+	// A file load would refuse is refused at backup time too.
+	for name, malformed := range map[string]string{
+		ingress.BlocksFile:   `{"version":1,"blocks":[{"kind":"domain","value":"Evil.test"}]}`,
+		ingress.EvidenceFile: `{"version":1,"subject":"x"}`,
+	} {
+		path := filepath.Join(dir, name)
+		live, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(malformed), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := openService(t, d, config.BackupConfig{}).Collect(); err == nil || !strings.Contains(err.Error(), name) {
+			t.Fatal("malformed file sealed", name, err)
+		}
+		if err := os.WriteFile(path, live, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

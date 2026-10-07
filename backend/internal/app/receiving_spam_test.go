@@ -60,7 +60,7 @@ func TestReceivingRspamdProtocol(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
-			err := scanReceivingSpam(context.Background(), raw, d, "192.0.2.2", "claimed.example.test", server.URL)
+			_, err := scanReceivingSpam(context.Background(), raw, d, "192.0.2.2", "claimed.example.test", server.URL)
 			if (err == nil) != tc.ok {
 				t.Fatal("unexpected result", err)
 			}
@@ -74,7 +74,7 @@ func TestReceivingRspamdProtocol(t *testing.T) {
 		})
 	}
 	for _, peer := range []struct{ ip, helo string }{{"bad", "a"}, {"192.0.2.2", "a\r\nInjected: yes"}, {"fe80::1%eth0", "a"}} {
-		if scanReceivingSpam(context.Background(), raw, d, peer.ip, peer.helo, "http://127.0.0.1:1") == nil {
+		if _, err := scanReceivingSpam(context.Background(), raw, d, peer.ip, peer.helo, "http://127.0.0.1:1"); err == nil {
 			t.Fatal("unsafe peer admitted")
 		}
 	}
@@ -82,7 +82,7 @@ func TestReceivingRspamdProtocol(t *testing.T) {
 	defer cancel()
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(100 * time.Millisecond) }))
 	defer slow.Close()
-	if scanReceivingSpam(ctx, raw, d, "192.0.2.2", "a", slow.URL) == nil {
+	if _, err := scanReceivingSpam(ctx, raw, d, "192.0.2.2", "a", slow.URL); err == nil {
 		t.Fatal("deadline bypass")
 	}
 	for _, value := range []string{"TRUE", "1", "false\n"} {

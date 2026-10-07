@@ -8,11 +8,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"net/netip"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 )
 
@@ -29,9 +31,13 @@ func receivingRspamdEnabled() (bool, error) {
 	}
 }
 
+var errSpamReject = errors.New("message rejected by configured spam policy")
+
 // Scan before holding.Accept and outside authority locks. Raw MIME remains
 // unchanged; neither sender-written spam headers nor verdicts grant authority.
-func scanReceivingSpam(ctx context.Context, raw []byte, delivery ingress.Delivery, ip, helo, endpoint string) (resultErr error) {
+// For direct SMTP it also returns the scanner's own SPF/DKIM result, computed
+// from the real peer IP and envelope (receivingAuthentication).
+func scanReceivingSpam(ctx context.Context, raw []byte, delivery ingress.Delivery, ip, helo, endpoint string) (auth ingress.Authentication, resultErr error) {
 	defer func() {
 		outcome := "allowed"
 		if resultErr != nil {
@@ -43,13 +49,13 @@ func scanReceivingSpam(ctx context.Context, raw []byte, delivery ingress.Deliver
 	address, err := netip.ParseAddr(ip)
 	cloudflare := delivery.Gateway == cloudflareGateway || delivery.Gateway == cfGateway
 	if cloudflare && (ip != "" || helo != "") || !cloudflare && (err != nil || address.Zone() != "" || len(helo) > 253 || strings.ContainsFunc(helo, func(c rune) bool { return c < 32 || c > 126 })) {
-		return failure
+		return auth, failure
 	}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
-		return failure
+		return auth, failure
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	if cloudflare {
@@ -71,37 +77,71 @@ func scanReceivingSpam(ctx context.Context, raw []byte, delivery ingress.Deliver
 	client := &http.Client{Transport: transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
-		return failure
+		return auth, failure
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return failure
+		return auth, failure
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, (256<<10)+1))
 	if err != nil || len(body) > 256<<10 {
-		return failure
+		return auth, failure
 	}
 	var result struct {
 		Action  string          `json:"action"`
 		Skipped *bool           `json:"is_skipped"`
 		Error   json.RawMessage `json:"error"`
+		Symbols json.RawMessage `json:"symbols"`
 	}
 	if json.Unmarshal(body, &result) != nil || (len(result.Error) != 0 && string(result.Error) != "null") {
-		return failure
+		return auth, failure
 	}
 	// GTUBE intentionally skips the remaining checks while forcing rejection.
 	// A skipped scan can refuse mail, but cannot authorize acceptance.
 	if result.Action != "reject" && (result.Skipped == nil || *result.Skipped) {
-		return failure
+		return auth, failure
+	}
+	if !cloudflare {
+		auth = receivingAuthentication(raw, delivery.Sender, result.Symbols)
 	}
 	switch result.Action {
 	case "no action", "add header", "rewrite subject":
-		return nil
+		return auth, nil
 	case "reject":
-		return &receivingCommandError{err: errors.New("message rejected by configured spam policy"), code: 4}
+		return auth, &receivingCommandError{err: errSpamReject, code: 4}
 	case "soft reject", "greylist":
-		return &receivingCommandError{err: errors.New("spam policy temporarily deferred this message; retry later"), code: 5}
+		return auth, &receivingCommandError{err: errors.New("spam policy temporarily deferred this message; retry later"), code: 5}
 	default:
-		return failure
+		return auth, failure
 	}
+}
+
+// receivingAuthentication trusts exactly two scanner fields, both computed by
+// the pinned Rspamd from the actual peer IP and MAIL FROM KyPost sent it:
+// R_SPF_ALLOW (SPF pass for the envelope domain; the null sender never
+// counts) and the "domain:s=selector" options of R_DKIM_ALLOW (signatures it
+// verified against DNS). Authentication-Results and other message headers are
+// sender-written and ignored. From is the single From header's single mailbox.
+// A symbols field that does not parse yields no authentication, never a
+// refusal: evidence must not change whether mail is accepted.
+func receivingAuthentication(raw []byte, sender string, rawSymbols json.RawMessage) ingress.Authentication {
+	auth := ingress.Authentication{Sender: sender}
+	var symbols map[string]struct {
+		Options []string `json:"options"`
+	}
+	if json.Unmarshal(rawSymbols, &symbols) != nil {
+		return auth
+	}
+	_, auth.SPF = symbols["R_SPF_ALLOW"]
+	for _, option := range symbols["R_DKIM_ALLOW"].Options {
+		if domain, _, ok := strings.Cut(option, ":s="); ok {
+			auth.DKIM = append(auth.DKIM, cfreceiving.LowerASCII(domain))
+		}
+	}
+	if message, err := mail.ReadMessage(bytes.NewReader(raw)); err == nil && len(message.Header["From"]) == 1 {
+		if list, err := mail.ParseAddressList(message.Header["From"][0]); err == nil && len(list) == 1 {
+			auth.From = list[0].Address
+		}
+	}
+	return auth
 }

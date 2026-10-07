@@ -165,9 +165,9 @@ func (s Blocks) Blocked(sender string, now time.Time) (bool, error) {
 }
 
 // Put adds or replaces the block for b.Kind/b.Value. own is the deployment's
-// mail domains: neither they nor addresses on them can be blocked. Source
-// "automatic" with Level ≥ 1 is the seam for escalating automatic blocks;
-// their evidence rules live with the caller. Expired entries are dropped.
+// mail domains: neither they nor addresses on them can be blocked. An
+// automatic block (Evidence.Reject) never replaces or duplicates a manual
+// block that covers it. Expired entries are dropped.
 func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.Time) (SenderBlock, error) {
 	value, err := NormalizeBlock(b.Kind, b.Value)
 	if err != nil {
@@ -184,6 +184,12 @@ func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.T
 		return SenderBlock{}, ErrBlockOwn
 	}
 	return b, s.change(ctx, now, func(blocks []SenderBlock) ([]SenderBlock, error) {
+		at := strings.LastIndexByte(b.Value, '@')
+		if b.Source == "automatic" && slices.ContainsFunc(blocks, func(x SenderBlock) bool {
+			return x.Source == "manual" && (x.ID == b.ID || at >= 0 && x.Kind == "domain" && x.Value == b.Value[at+1:])
+		}) {
+			return nil, errManualCovers
+		}
 		blocks = slices.DeleteFunc(blocks, func(x SenderBlock) bool { return x.ID == b.ID })
 		blocks = append(blocks, b)
 		wire := 0
@@ -198,13 +204,22 @@ func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.T
 }
 
 // Remove deletes the block with this ID (BlockID of its normalized
-// kind/value); false when none is in force.
+// kind/value); false when none is in force. Removing one first suppresses
+// automatic re-blocking of it for UnblockWindow, so the administrator's
+// decision stands even if the removal is interrupted.
 func (s Blocks) Remove(ctx context.Context, id string, now time.Time) (bool, error) {
 	if raw, err := hex.DecodeString(id); err != nil || len(raw) != 8 || hex.EncodeToString(raw) != id {
 		return false, ErrBlockInvalid
 	}
+	list, err := s.List(now)
+	if i := slices.IndexFunc(list, func(x SenderBlock) bool { return x.ID == id }); err == nil && i >= 0 {
+		err = NewEvidence(s.dir).unblocked(ctx, list[i].Kind, list[i].Value, now)
+	}
+	if err != nil {
+		return false, err
+	}
 	found := false
-	err := s.change(ctx, now, func(blocks []SenderBlock) ([]SenderBlock, error) {
+	err = s.change(ctx, now, func(blocks []SenderBlock) ([]SenderBlock, error) {
 		before := len(blocks)
 		blocks = slices.DeleteFunc(blocks, func(x SenderBlock) bool { return x.ID == id })
 		found = len(blocks) < before

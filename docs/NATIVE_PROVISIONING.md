@@ -902,9 +902,10 @@ a URL dot segment (`.` or `..`) is CLI-only.
 ### Sender blocks
 
 Administrators block an envelope sender address or domain manually, through
-the admin API or the CLI; both receiving profiles enforce the same list before
-storing anything. Automatic blocks (escalating cooldown, Maddy only) and an
-admin UI are pending; see [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#abusive-senders).
+the admin API or the CLI; with the Rspamd sidecar, the Maddy profile also
+blocks authenticated abusive senders automatically ([below](#automatic-sender-blocks)).
+Both receiving profiles enforce the same list before storing anything. An
+admin UI and evidence display are pending; see [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#abusive-senders).
 
 - **Store.** `STATE_DIR/receiving/sender-blocks.json` (0600), written under its
   own lock file and published by rename; it exists only after `receiving init`
@@ -912,8 +913,8 @@ admin UI are pending; see [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#a
   backups collect it. Each entry has `id` (first 16 hex of SHA-256 of
   `kind:value`), `kind` (`address` or `domain`), `value`, `until` (Unix
   milliseconds, or null: manual blocks never expire unless one is set),
-  `source` (`manual`; `automatic` with an escalation `level` is reserved for
-  the automatic change), `createdAt`, `actor` and `reason` (a code: `spam`,
+  `source` (`manual`, level 0; or `automatic`, actor `automatic`, reason
+  `abuse`, with its escalation `level` 1-3), `createdAt`, `actor` and `reason` (a code: `spam`,
   `phishing`, `abuse` or `other`, the default; no free text). Expired entries
   are ignored and dropped at the next write. At most 5000 blocks (the Worker's
   limit) and 512 KiB of their exact signed-table encoding (measured with the
@@ -986,7 +987,9 @@ KySignOn step-up, in the JSON body as for quarantine):
 - `DELETE /api/admin/receiving/blocks/{id}` with the listed 16-hex `id`
   returns `{id,result:"unblocked"}`; 400 malformed ID, 404 when no such block
   is in force. The URL carries the ID, never the address, so reverse-proxy
-  access logs record no blocked senders.
+  access logs record no blocked senders. Removing a block (either source)
+  also suppresses automatic re-blocking of that exact address or domain for
+  30 days.
 
 CLI, as the runtime user that owns `STATE_DIR` (it refuses any other), with the
 value typed again after `--confirm`:
@@ -1000,6 +1003,55 @@ docker compose exec --user kypost kypost-server kypost-server receiving blocks r
 Both audit `block_sender`/`unblock_sender` with actor, kind, result and the
 block `id` whenever the value is valid (refusals included; empty otherwise),
 never the address or domain (API to `api.err.log`, CLI to the terminal). The value is attacker-chosen: render it as plain text.
+
+#### Automatic sender blocks
+
+Maddy profile with `KYPOST_RECEIVING_RSPAMD=true` only. The Cloudflare
+profiles never feed evidence (the Worker has no SMTP peer, so there is no SPF),
+but automatic blocks in the shared list are published like manual ones.
+
+- **Evidence.** A reject verdict counts against an address only when all
+  hold: the envelope sender equals the single address of the message's single
+  `From` header (A-Z lowercased on both sides, non-ASCII exact); the scanner's
+  `R_SPF_ALLOW` is present (SPF pass for the envelope domain, evaluated from
+  the actual Maddy peer IP); and an `R_DKIM_ALLOW` option `d:s=selector` has
+  `d` exactly equal to that address's domain (DMARC strict alignment: a parent
+  or subdomain signature does not count). Nothing else is trusted:
+  `Authentication-Results`, `DKIM_TRACE`, other headers and symbols are
+  ignored. Tagged, deferred and accepted mail never counts; the null sender,
+  the deployment's own domains (and addresses on them) never count.
+- **Address blocks.** 5 counted verdicts within 1 hour block the address
+  (`source: automatic`) for 1 hour, then 24 hours, then 7 days on each repeat
+  (level 1-3, capped). 30 days with no counted verdict resets the level.
+  Blocks expire at `until`.
+- **Domain blocks.** When 5 distinct addresses on one domain have been
+  automatically blocked within 24 hours (counting only blocks since that
+  domain's last automatic block), the domain is blocked with the same
+  escalation, but only if this deployment has never accepted mail from it. Every
+  Maddy acceptance (any verdict but reject, or no scanner) records its envelope
+  domain, never pruned; at most 10,000 domains, after which automatic domain
+  blocks stop rather than risk blocking a provider that was forgotten
+  (`receiving sender evidence`, action `accepted-domain`, logs each refusal).
+- **Administrators win.** An automatic block never replaces or extends a
+  manual block that covers the address or its domain. Removing any block
+  suppresses automatic blocks of that exact address or domain for 30 days; by
+  then its escalation has reset.
+- **State.** `STATE_DIR/receiving/sender-evidence.json` (0600, own lock,
+  rename publish, never creates the receiving directory): per address or
+  domain the counted verdict times inside the hour, level and last
+  evidence/block times; the accepted domains; unblock suppressions by block
+  ID. No message content. At most 4096 records of each kind (the oldest is
+  evicted), validated on load and when sealed in backups; a malformed file
+  stops counting (logged) and never changes an SMTP answer.
+- **Audit.** Each automatic block logs `receiving sender block change`, actor
+  `automatic`, action `block_sender`, kind, result `blocked`, block `id`,
+  `level` and `until`; evidence failures log `receiving sender evidence` with
+  the delivery ID. Never addresses or content.
+- **Residual risk.** A provider that lets one account send with another
+  account's envelope and `From` under its own DKIM and SPF can get that other
+  address blocked here (for up to 7 days, until an administrator unblocks it).
+  The trigger is fixed; the [Rspamd sidecar](RECEIVING_SETUP.md#optional-rspamd-sidecar)
+  is required.
 
 New route writes, RCPT bindings and MIME acceptance also check physical storage
 inside the immediate SQLite writer transaction. The admission budget is derived

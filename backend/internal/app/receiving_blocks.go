@@ -122,3 +122,20 @@ func runReceivingBlocks(args []string, output io.Writer) (result error) {
 		return err
 	}
 }
+
+// rejectEvidence counts a Maddy reject verdict toward automatic sender
+// blocks and audits each block it makes by ID and level, never the address.
+// A failure is logged and never changes the SMTP outcome.
+func (r *receivingRuntime) rejectEvidence(ctx context.Context, deliveryID string, auth ingress.Authentication) {
+	set, err := r.domains.ReadSet()
+	var made []ingress.SenderBlock
+	if err == nil {
+		made, err = ingress.NewEvidence(filepath.Join(r.stateDir, "receiving")).Reject(ctx, auth, slices.Collect(maps.Keys(set.Domains)), time.Now())
+	}
+	for _, b := range made {
+		slog.Info("receiving sender block change", "actor", "automatic", "task_id", "native-receiving", "action", "block_sender", "target", b.Kind, "result", "blocked", "correlation_id", b.ID, "level", b.Level, "until", *b.Until)
+	}
+	if err != nil {
+		slog.Warn("receiving sender evidence", "actor", "automatic", "task_id", "native-receiving", "action", "reject", "target", "sender-evidence", "result", "failed", "correlation_id", deliveryID, "error", err.Error())
+	}
+}

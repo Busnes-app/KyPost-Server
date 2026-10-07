@@ -240,6 +240,14 @@ replies never become logs or SMTP error text. A rejected/deferred message can le
 its existing staged RCPT reservation; safe reservation reclamation remains gated.
 Maddy still records envelope/IP metadata in its separately protected logs.
 
+The sidecar also drives [automatic sender blocks](NATIVE_PROVISIONING.md#automatic-sender-blocks).
+They need its SPF and DKIM modules (in the fixed policy) and the real client
+IP: put no TCP proxy in front of Maddy's port 25, or SPF evaluates the proxy's
+address and fails, so nothing is counted and nothing is blocked automatically
+(the safe direction). Only `R_SPF_ALLOW` and `R_DKIM_ALLOW`'s `d=` are trusted;
+`Authentication-Results` in the message never are. Without the sidecar there
+are no automatic blocks, only manual ones.
+
 Keep all three Compose files when updating the service so the shared network
 namespace is recreated consistently. To roll back, stop reception, remove the
 Rspamd overlay, set `KYPOST_RECEIVING_RSPAMD=false` in the operator dotenv if it
@@ -254,13 +262,19 @@ state. From `backend/`, run the actual receiving proof:
 ```sh
 RSPAMD_PROOF=true MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy \
   GOTOOLCHAIN=go1.26.6 go test -race ./internal/app \
-  -run '^TestNativeReceivingMaddyRuntime/rspamd$|^TestReceivingRspamdProtocol$|^TestNativeReceivingRspamdRetentionAndAuthority$' \
+  -run '^TestNativeReceivingMaddyRuntime/rspamd$|^TestReceivingRspamdProtocol$|^TestNativeReceivingRspamdRetentionAndAuthority$|^TestReceivingRspamdAuthenticationProof$' \
   -count=1 -timeout=3m
 ```
 
 It uses a disposable loopback11333 scanner (refuses an occupied port), synthetic
 mail and test DNS. It checks real SMTP clean/GTUBE/outage responses, preserved
-MIME/body/attachment delivery and accepted replay during outage. Unit integration
+MIME/body/attachment delivery and accepted replay during outage. The
+authentication proof signs mail with a test DKIM key, serves its key and an SPF
+record from test DNS (the scanner's only resolver; a blackhole `resolv.conf`
+backs it up), forces every verdict to reject, and checks the pinned scanner's
+`R_SPF_ALLOW`/`R_DKIM_ALLOW` through KyPost's own parser, then that five
+spoofed shared-domain identities block nobody at RCPT while five rejects from
+one authenticated identity block it. Unit integration
 also checks revocation during scanning and conflicting replay. This is not live
 production tuning or physical-client qualification. The scanner helper can be
 reused by the separate [one-message Cloudflare pilot](CLOUDFLARE_RECEIVING.md).

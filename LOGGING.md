@@ -32,6 +32,11 @@ Sender block changes log `receiving sender block change` with action
 `block_sender` or `unblock_sender`, the kind (`address` or `domain`) as target,
 the result and the block ID (a SHA-256 prefix) as correlation; never the blocked
 address or domain (an unblock logs only the ID). API changes go to the API stream, CLI changes to the terminal.
+Automatic blocks (Maddy with Rspamd) log the same line from the receiving
+command with actor `automatic`, action `block_sender`, result `blocked`, plus
+`level` and `until`; a failure to read or write the evidence logs
+`receiving sender evidence` (warning, result `failed`) with the delivery ID as
+correlation. Neither carries an address or message content.
 An unreadable block list logs `cloudflare sender blocks unreadable` (error,
 result `previous-blocks-kept`) on every publish attempt until repaired; blocks
 left out of a full table log `cloudflare sender blocks truncated` (result

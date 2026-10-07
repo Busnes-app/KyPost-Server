@@ -482,11 +482,23 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 		if len(peer) == 2 {
 			ip, helo = peer[0], peer[1]
 		}
-		if err := scanReceivingSpam(ctx, raw, d, ip, helo, receivingRspamdURL); err != nil {
+		auth, err := scanReceivingSpam(ctx, raw, d, ip, helo, receivingRspamdURL)
+		if errors.Is(err, errSpamReject) {
+			r.rejectEvidence(ctx, d.ID, auth)
+		}
+		if err != nil {
 			return err
 		}
 	}
-	return r.commitAccept(ctx, d, sender, raw, proofs)
+	if err := r.commitAccept(ctx, d, sender, raw, proofs); err != nil {
+		return err
+	}
+	if r.gatewayID() == receivingGateway {
+		if err := ingress.NewEvidence(filepath.Join(r.stateDir, "receiving")).Accepted(ctx, sender, time.Now()); err != nil {
+			slog.Warn("receiving sender evidence", "actor", "automatic", "task_id", "native-receiving", "action", "accepted-domain", "target", "sender-evidence", "result", "failed", "correlation_id", d.ID, "error", err.Error())
+		}
+	}
+	return nil
 }
 
 // commitAccept stores scanned bytes for a staged delivery under its frozen
