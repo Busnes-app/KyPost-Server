@@ -65,10 +65,14 @@ step-up, answer `no-store` and use the same status codes:
   challenge, under the set's one issuer, or rotates the challenge of one already
   configured. A retired domain is never re-added.
 - `POST /api/admin/mail-domains/{domain}/verify` proves that domain only.
-- `DELETE /api/admin/mail-domains/{domain}` retires it: refused (409) while any
-  address on it is `active` or a `queued`/`retryable` outbox job sends from it.
+- `DELETE /api/admin/mail-domains/{domain}` retires it permanently: refused (409)
+  while any address on it is `active`, a `queued`/`retryable` outbox job sends
+  from it, staged or pending incoming mail is bound to it, or the relay still
+  sends for it (remove it from the relay first); a restore hold also refuses.
   Retirement keeps its address records, so generations are never reused and old
-  bindings and snapshots still validate. It is never automatic. Retiring the
+  bindings and snapshots still validate. It is never automatic and cannot be
+  undone: a retired domain cannot be re-added, and a subject whose KyIdentity
+  primary sits on it cannot be re-provisioned until phase 3. Retiring the
   founding domain hands the single-domain routes to the smallest remaining one.
 
 Every fence compares only the proofs of the domains an operation touches:
@@ -77,6 +81,15 @@ sending the `From` domain. Re-verifying one domain never fences work on
 another; a lapsed proof suspends only its own domain, and a delivery to several
 domains is all-or-nothing. A version-1 binary refuses a set with more than one
 domain or any retired one.
+
+A primary whose domain is missing or not a configured, non-retired member is
+recorded once per revision as `failed` / `primary_domain_unavailable`, without
+DNS. Sending ends a job (stale, quarantined) whose `From` domain is unconfigured
+or retired or no longer in the relay set; a lapsed proof on a configured domain
+leaves it for retry. Ownership and directory staleness are checked before the
+proof is required, so a deactivated owner's job ends even while DNS is down. The
+repair worker records deactivations with a disable-only reconcile that refuses
+if the subject is active again.
 
 ## Storage format migration
 

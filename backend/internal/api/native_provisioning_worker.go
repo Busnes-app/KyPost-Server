@@ -73,7 +73,7 @@ func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject str
 		if err != nil || domains.Issuer != issuer || !domains.Known(domain) {
 			return sso.ErrNativeProvisioning
 		}
-		_, err = s.ssoLifecycle.ReconcileNativeMailboxContext(ctx, s.stateDir, issuer, subject, a.Owner.Mailbox, domain, a.Limits)
+		_, err = s.ssoLifecycle.DisableNativeMailboxContext(ctx, s.stateDir, issuer, subject, a.Owner.Mailbox, domain, a.Limits)
 		return err
 	}
 	limits := nativeMailboxLimits

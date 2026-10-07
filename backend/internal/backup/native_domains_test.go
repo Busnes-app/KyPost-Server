@@ -62,6 +62,19 @@ func TestNativeRetiredRelayDomainKeepsHistoricalJobsValid(t *testing.T) {
 	if _, err = s.Collect(); err != nil {
 		t.Fatal("historical job on a retired relay domain refused", err)
 	}
+	// The relay may not still send for a retired domain.
+	if _, err = mailmsg.SetDomainRelayDomains(ctx, configPath, keyPath, []string{"example.test", "second.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Collect(); err == nil {
+		t.Fatal("live relay domain that is retired accepted")
+	}
+	if _, err = mailmsg.SetDomainRelayDomains(ctx, configPath, keyPath, []string{"example.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Collect(); err != nil {
+		t.Fatal(err)
+	}
 	// A relay domain outside the domain set's history is refused.
 	path := filepath.Join(s.dirs.Config, sso.NativeDomainsFile)
 	var set map[string]any

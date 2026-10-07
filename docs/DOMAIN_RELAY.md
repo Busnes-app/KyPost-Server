@@ -114,17 +114,21 @@ Each update supplies the complete relay profile and rotates its generation.
 The relay sends for a set of domains. An optional `"domains": ["a.example",
 "b.example"]` field selects it; omitted, an update keeps the saved set, and a
 first profile uses the founding domain, so the single-domain request above is a
-one-domain set. Every domain in the resulting set must be configured, not retired
-and freshly proven by DNS on each update; one lapsed domain therefore blocks
-relay updates until it is proven or removed. A body carrying only `domains`
+one-domain set. Every domain in the resulting set must be configured and not
+retired. A domain new to the set needs a fresh DNS proof; retained domains are
+proven when they can, and at least one domain must prove, so one lapsed retained
+domain never blocks a credential rotation. The saved-relay check applies the
+same rule. A body carrying only `domains`
 (plus the confirmation field) changes the set alone: the saved credentials stay
 and the `generation` is kept, so jobs queued on retained domains stay valid.
 Removing a domain is refused (409) while a `queued` or `retryable` outbox job
 sends from it (`submitting` and `uncertain` jobs are never reclaimed and do not
 block); a removed domain moves to `retiredDomains`. A job whose domain was removed
-afterwards is never submitted. `From` must be on a domain in `domains`;
-backup validation checks historical jobs against `domains ∪ retiredDomains`,
-and both lists against the domain set's configured and retired domains.
+afterwards ends stale (quarantined) and is never submitted. `From` must be on a
+domain in `domains`. A domain must be removed from the relay before it can be
+retired. Backup validation checks historical jobs against
+`domains ∪ retiredDomains`, requires every live `domains` entry to be configured
+and not retired, and allows retired domains only in `retiredDomains`.
 
 The host is a lowercase ASCII dotted DNS name or IPv4 literal; URLs, IPv6
 literals and hosts with an appended port are refused. Port zero or omission selects 465. Other valid ports still use

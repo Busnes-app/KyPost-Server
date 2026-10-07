@@ -271,17 +271,24 @@ func (s *LifecycleStore) ReconcileNativeMailbox(stateRoot, issuer, subject, loca
 }
 
 func (s *LifecycleStore) ReconcileNativeMailboxContext(ctx context.Context, stateRoot, issuer, subject, localID, verifiedDomain string, limits mailbox.Limits) (NativeAssignment, error) {
-	return s.reconcileNativeMailboxContext(ctx, stateRoot, issuer, subject, localID, verifiedDomain, limits, func(root string, owner mailbox.Owner, address string, limits mailbox.Limits) (string, error) {
+	return s.reconcileNativeMailboxContext(ctx, stateRoot, issuer, subject, localID, verifiedDomain, limits, false, func(root string, owner mailbox.Owner, address string, limits mailbox.Limits) (string, error) {
 		return mailbox.PrepareAccountContext(ctx, root, owner, address, limits)
 	})
 }
 
-func (s *LifecycleStore) reconcileNativeMailbox(stateRoot, issuer, subject, localID, domain string, limits mailbox.Limits, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
-	ctx := context.Background()
-	return s.reconcileNativeMailboxContext(ctx, stateRoot, issuer, subject, localID, domain, limits, prepare)
+// DisableNativeMailboxContext records a deactivation without domain proof. It
+// refuses, changing nothing, if the subject is active again by the time the
+// directory fence is held: reactivation needs allocation's fresh proof.
+func (s *LifecycleStore) DisableNativeMailboxContext(ctx context.Context, stateRoot, issuer, subject, localID, addressDomain string, limits mailbox.Limits) (NativeAssignment, error) {
+	return s.reconcileNativeMailboxContext(ctx, stateRoot, issuer, subject, localID, addressDomain, limits, true, nil)
 }
 
-func (s *LifecycleStore) reconcileNativeMailboxContext(ctx context.Context, stateRoot, issuer, subject, localID, domain string, limits mailbox.Limits, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
+func (s *LifecycleStore) reconcileNativeMailbox(stateRoot, issuer, subject, localID, domain string, limits mailbox.Limits, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
+	ctx := context.Background()
+	return s.reconcileNativeMailboxContext(ctx, stateRoot, issuer, subject, localID, domain, limits, false, prepare)
+}
+
+func (s *LifecycleStore) reconcileNativeMailboxContext(ctx context.Context, stateRoot, issuer, subject, localID, domain string, limits mailbox.Limits, disableOnly bool, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
 	var result NativeAssignment
 	if stateRoot == "" || !fsutil.SafePathComponent(localID) || !directoryIdentifier(issuer) || !directoryIdentifier(subject) || !nativeDomain(domain) || limits.MessageBytes <= 0 || limits.MessageBytes > mailmsg.MaxInboundMessageBytes || limits.PayloadBytes < limits.MessageBytes || limits.Records <= 0 {
 		return result, ErrNativeProvisioning
@@ -298,15 +305,17 @@ func (s *LifecycleStore) reconcileNativeMailboxContext(ctx context.Context, stat
 		return result, err
 	}
 	defer release()
-	return s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, localID, domain, limits, prepare)
+	return s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, localID, domain, limits, disableOnly, prepare)
 }
 
-func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root, issuer, subject, localID, domain string, limits mailbox.Limits, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
+// domain is the freshly proven domain; "" means the requested primary is not on
+// a configured domain, which is recorded as a failure for an active subject.
+func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root, issuer, subject, localID, domain string, limits mailbox.Limits, disableOnly bool, prepare func(string, mailbox.Owner, string, mailbox.Limits) (string, error)) (NativeAssignment, error) {
 	var result NativeAssignment
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if !filepath.IsAbs(root) || !fsutil.SafePathComponent(localID) || !directoryIdentifier(issuer) || !directoryIdentifier(subject) || !nativeDomain(domain) || limits.MessageBytes <= 0 || limits.MessageBytes > mailmsg.MaxInboundMessageBytes || limits.PayloadBytes < limits.MessageBytes || limits.Records <= 0 {
+	if !filepath.IsAbs(root) || !fsutil.SafePathComponent(localID) || !directoryIdentifier(issuer) || !directoryIdentifier(subject) || domain != "" && !nativeDomain(domain) || limits.MessageBytes <= 0 || limits.MessageBytes > mailmsg.MaxInboundMessageBytes || limits.PayloadBytes < limits.MessageBytes || limits.Records <= 0 {
 		return result, ErrNativeProvisioning
 	}
 	err := func() error {
@@ -318,7 +327,7 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 			return ErrNativeProvisioning
 		}
 		revision, e := d.Resource.Revision("user.updated")
-		if e != nil || revision != d.Revision {
+		if e != nil || revision != d.Revision || disableOnly && d.Active {
 			return ErrNativeProvisioning
 		}
 		f, e := s.loadNative()
@@ -360,6 +369,9 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 			return ErrNativeProvisioning
 		}
 		address := a.Address
+		if d.Active && domain == "" {
+			return fail("primary_domain_unavailable")
+		}
 		if d.Active {
 			address, e = nativePrimary(*d.Resource, domain)
 			if e != nil {

@@ -3,11 +3,13 @@ package sso
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"maps"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +20,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
 // NativeDomainsFile is the domain set; its sibling ".lock" is the domain fence.
@@ -28,7 +31,7 @@ const legacyNativeDomainFile = "native-domain.json"
 
 var ErrNativeDomain = errors.New("mail domain proof missing, expired or changed; configure and verify the current DNS challenge")
 
-var ErrNativeDomainInUse = errors.New("mail domain still in use by an active address or a queued or retryable outbox job; disable those addresses or let the jobs finish, then retry")
+var ErrNativeDomainInUse = errors.New("mail domain still in use by an active address, a queued or retryable outbox job, held incoming mail or the relay; disable those addresses, let the mail finish and remove the domain from the relay first, then retry")
 
 var ErrNativeMigration = errors.New("native mail storage is not in the current format (migration to native-domains.json pending, failed or incomplete); native mail is refused and external IMAP is unaffected. Read the `kypost-server migrate-native` error in the container log, fix its cause and restart, or restore the pre-migration backup")
 
@@ -422,11 +425,15 @@ func (s NativeDomainSet) CurrentProof(proof NativeDomain) bool {
 	return proof.Domain != "" && s.Domains[proof.Domain] == proof && proof.VerifiedUntil > time.Now().Unix()
 }
 
-// RetireDomain moves a configured domain to retired: no proof, routing or
-// sending, while its address records stay so generations are never reused.
-// Lock order: domain -> directory -> mailbox SQLite. Holding the domain fence
-// keeps new outbox jobs out while their mailboxes are scanned.
+// RetireDomain permanently moves a configured domain to retired: no proof,
+// routing or sending, while its address records stay so generations are never
+// reused. Lock order: domain -> directory -> mailbox/ingress SQLite. Holding the
+// domain fence keeps new outbox jobs, receiving binds and relay writes out
+// while they are checked.
 func (s *NativeDomainStore) RetireDomain(ctx context.Context, domain, stateRoot, relayKeyPath string) error {
+	if err := RequireNativeRestoreReleased(stateRoot); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	release, err := fsutil.LockFileContext(ctx, s.path)
@@ -440,6 +447,13 @@ func (s *NativeDomainStore) RetireDomain(ctx context.Context, domain, stateRoot,
 	}
 	if _, ok := set.Domains[domain]; !ok {
 		return ErrNativeDomain
+	}
+	relay, _, err := mailmsg.ReadDomainRelay(filepath.Join(filepath.Dir(s.path), "native-relay.json"), relayKeyPath)
+	if err != nil {
+		return err
+	}
+	if relay.Sends(domain) {
+		return ErrNativeDomainInUse
 	}
 	life := NewLifecycleStore(filepath.Dir(s.path))
 	releaseDirectory, err := fsutil.LockFileContext(ctx, life.path)
@@ -463,9 +477,47 @@ func (s *NativeDomainStore) RetireDomain(ctx context.Context, domain, stateRoot,
 	if queued[domain] {
 		return ErrNativeDomainInUse
 	}
+	held, err := nativeHeldRecipients(ctx, stateRoot)
+	if err != nil {
+		return err
+	}
+	if slices.ContainsFunc(held, func(address string) bool { return AddressDomain(address) == domain }) {
+		return ErrNativeDomainInUse
+	}
 	delete(set.Domains, domain)
 	set.Retired = append(set.Retired, domain)
 	return s.persistSet(set)
+}
+
+// nativeHeldRecipients lists recipients bound to staged or pending incoming
+// mail. Binds take the domain fence, which the caller holds.
+func nativeHeldRecipients(ctx context.Context, stateRoot string) ([]string, error) {
+	path, err := filepath.Abs(filepath.Join(stateRoot, "receiving", "ingress.db"))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=ro")
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.QueryContext(ctx, `SELECT DISTINCT b.address FROM bindings b JOIN deliveries d ON d.gateway=b.gateway AND d.id=b.id WHERE d.state IN ('staged','pending')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	held := []string{}
+	for rows.Next() {
+		var address string
+		if err := rows.Scan(&address); err != nil {
+			return nil, err
+		}
+		held = append(held, address)
+	}
+	return held, rows.Err()
 }
 
 // NativeQueuedFromDomains lists the From domains of outbox jobs with a queued

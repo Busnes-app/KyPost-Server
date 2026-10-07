@@ -49,12 +49,18 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 			}
 		}
 	}
-	proof, err := domains.VerifyDomain(ctx, domain)
-	if err != nil {
-		return users.User{}, err
+	// A primary missing or off the configured domains is recorded as a durable
+	// failure below, without DNS, instead of being retried as a lapsed proof.
+	_, configured := set.Domains[domain]
+	var proof NativeDomain
+	if configured {
+		if proof, err = domains.VerifyDomain(ctx, domain); err != nil {
+			return users.User{}, err
+		}
+		var proofCancel context.CancelFunc
+		ctx, proofCancel = context.WithDeadline(ctx, time.Unix(proof.VerifiedUntil, 0))
+		defer proofCancel()
 	}
-	ctx, proofCancel := context.WithDeadline(ctx, time.Unix(proof.VerifiedUntil, 0))
-	defer proofCancel()
 	release, err := fsutil.LockFileContext(ctx, domains.path)
 	if err != nil {
 		return users.User{}, err
@@ -64,7 +70,7 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 	if err != nil {
 		return users.User{}, err
 	}
-	if !current.CurrentProof(proof) {
+	if _, nowConfigured := current.Domains[domain]; configured != nowConfigured || configured && !current.CurrentProof(proof) {
 		return users.User{}, ErrNativeDomain
 	}
 	releaseDirectory, err := fsutil.LockFileContext(ctx, s.path)
@@ -98,8 +104,12 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 	if users.ValidateUsername(username) != nil {
 		username = "native-" + id
 	}
+	if !configured {
+		_, err = s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, "", limits, false, nil)
+		return users.User{}, err
+	}
 	prepare := func() (string, error) {
-		a, e := s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, proof.Domain, limits, func(root string, o mailbox.Owner, address string, l mailbox.Limits) (string, error) {
+		a, e := s.reconcileNativeMailboxLocked(ctx, root, issuer, subject, id, proof.Domain, limits, false, func(root string, o mailbox.Owner, address string, l mailbox.Limits) (string, error) {
 			return mailbox.PrepareAccountContext(ctx, root, o, address, l)
 		})
 		return a.Source, e

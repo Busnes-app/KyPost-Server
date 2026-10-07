@@ -58,10 +58,11 @@ func TestNativeMailDomainsAdminSetAndRelayDomains(t *testing.T) {
 		t.Fatal("member listed domains", w.Code)
 	}
 	u := allocateNativeStateTestUser(t, srv, "https://idp.example", "one")
+	lapsed := map[string]bool{}
 	srv.nativeDomains.SetLookupForTest(func(_ context.Context, name string) ([]string, error) {
 		set, err := srv.nativeDomains.ReadSet()
 		for _, d := range set.Domains {
-			if name == d.RecordName()+"." {
+			if name == d.RecordName()+"." && !lapsed[d.Domain] {
 				return []string{d.RecordValue()}, err
 			}
 		}
@@ -114,6 +115,36 @@ func TestNativeMailDomainsAdminSetAndRelayDomains(t *testing.T) {
 	if code, _ = relay(`{"domains":["example.test","unknown.test"],"password":"` + password + `"}`); code != 409 {
 		t.Fatal("unverified relay domain accepted", code)
 	}
+	// A lapsed retained domain no longer blocks a credential rotation or the
+	// relay check; a newly added domain still needs fresh proof, and at least
+	// one domain must prove.
+	lapsed["second.test"] = true
+	code, rotated := relay(`{"host":"smtp.example.test","smtpUsername":"login","smtpPassword":"rotated","password":"` + password + `"}`)
+	if code != 200 || rotated.Generation == first.Generation || !slices.Equal(rotated.Domains, both.Domains) {
+		t.Fatal("lapsed retained domain blocked rotation", code, rotated)
+	}
+	if _, proofs, err := srv.nativeRelayCheckProfile(context.Background(), rotated.Generation, nil); err != nil || len(proofs) != 1 || proofs[0].Domain != "example.test" {
+		t.Fatal("lapsed retained domain blocked the relay check", proofs, err)
+	}
+	if w = call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"third.test","password":"`+password+`"}`); w.Code != 200 {
+		t.Fatal("add third", w.Code, w.Body)
+	}
+	lapsed["third.test"] = true
+	if code, _ = relay(`{"domains":["example.test","second.test","third.test"],"password":"` + password + `"}`); code != 409 {
+		t.Fatal("unproven new relay domain accepted", code)
+	}
+	lapsed["example.test"] = true
+	if code, _ = relay(`{"host":"smtp.example.test","smtpUsername":"login","smtpPassword":"rotated","password":"` + password + `"}`); code != 409 {
+		t.Fatal("relay rotated with no fresh proof", code)
+	}
+	if _, _, err := srv.nativeRelayCheckProfile(context.Background(), rotated.Generation, nil); err == nil {
+		t.Fatal("relay check passed with no fresh proof")
+	}
+	lapsed["example.test"], lapsed["second.test"] = false, false
+	if w = call("DELETE", "/api/admin/mail-domains/third.test", token, csrf, confirm); w.Code != 200 {
+		t.Fatal("retire third", w.Code, w.Body)
+	}
+	first = rotated
 	// A queued job From the second domain blocks its removal.
 	a, _, err := srv.ssoLifecycle.NativeAssignment(u.NativeMailboxIssuer, u.SSOSub)
 	if err != nil {
@@ -160,7 +191,7 @@ func TestNativeMailDomainsAdminSetAndRelayDomains(t *testing.T) {
 			Configured, Retired bool
 		}
 	}
-	if err = json.Unmarshal(w.Body.Bytes(), &list); w.Code != 200 || err != nil || list.Founding != "example.test" || len(list.Domains) != 2 || list.Domains[1].Domain != "second.test" || !list.Domains[1].Retired || list.Domains[1].Configured {
+	if err = json.Unmarshal(w.Body.Bytes(), &list); w.Code != 200 || err != nil || list.Founding != "example.test" || len(list.Domains) != 3 || list.Domains[1].Domain != "second.test" || !list.Domains[1].Retired || list.Domains[1].Configured {
 		t.Fatal("list", w.Code, w.Body)
 	}
 	if w = call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"second.test","password":"`+password+`"}`); w.Code != 409 {
