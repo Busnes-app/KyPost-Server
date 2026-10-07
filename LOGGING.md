@@ -24,4 +24,8 @@ streams (10 MiB each, three backups). Maddy emits envelope/IP/command metadata
 rather than the Go JSON format and discards helper stderr; protect these logs.
 Debug/wire logging remains disabled.
 
+Continuous Cloudflare receiving logs actions (`publish`, `pickup`, `delete`,
+`quarantine`, `refuse`, `fence`, `rotate`) with the R2 key or table revision as
+correlation; never addresses, message content, bearers or keys.
+
 The viewer is a transitional compatibility feature, not a new log platform.

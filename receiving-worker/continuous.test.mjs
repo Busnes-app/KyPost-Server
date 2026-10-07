@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
+import {readFileSync} from "node:fs";
 import worker, {contexts, limits, primeOrderPoint} from "./continuous.mjs";
 
 const enc = new TextEncoder();
@@ -400,13 +401,14 @@ test("sender, null sender, IDN, empty and envelope limits", async () => {
   assert.equal(await install(f, table({routes: [{address: "one@example.test", generation: 1, maxBytes: 1024}, {address: long, generation: 1, maxBytes: 1024}]})), 204);
   const cases = [
     [{from: "<>"}, []], [{from: ""}, []],
-    [{from: "x".repeat(506) + "@a.test"}, ["Address refused"]],
-    [{from: "x".repeat(505) + "@a.test"}, []],
+    [{from: "x".repeat(314) + "@a.test"}, ["Address refused"]],
+    [{from: "x".repeat(313) + "@a.test"}, []],
     [{from: "a@bücher.example"}, ["Address refused"]],
     [{from: "ü@xn--bcher-kva.example"}, []],
     [{to: "one@exämple.test"}, ["Address refused"]],
-    [{from: "€".repeat(505) + "@a.test", to: long}, ["Address refused"]],
-    [{from: "€".repeat(495) + "@a.test", to: long}, []],
+    [{from: "€".repeat(105) + "@a.test", to: long}, ["Address refused"]],
+    [{from: "€".repeat(104) + "@a.test", to: long}, []],
+    [{from: "\ud800@a.test"}, ["Address refused"]],
   ];
   for (const [over, rejected] of cases) {
     const m = mail(over);
@@ -463,4 +465,19 @@ test("an empty truncated page follows the R2 cursor", async () => {
   f.env.MAIL.emptyPage = true;
   const page = await (await call(f.env, "GET", "/messages")).json();
   assert.equal(page.messages.length, 1);
+});
+
+// Shared with KyPost's Go test: every sender the Worker accepts must be one the
+// holding store can hold; the rest bounce here instead of waiting in R2.
+test("senders match KyPost's holding-store rule", async () => {
+  const f = await fixture();
+  await install(f, table());
+  const {accept, reject} = JSON.parse(readFileSync(new URL("./senders.json", import.meta.url), "utf8"));
+  for (const [list, want] of [[accept, []], [reject, ["Address refused"]]]) {
+    for (const from of list) {
+      const m = mail({from});
+      await worker.email(m, f.env);
+      assert.deepEqual(m.rejected, want, from.slice(0, 60));
+    }
+  }
 });

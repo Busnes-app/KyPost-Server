@@ -188,8 +188,12 @@ export function readMailboxChange(value: unknown): { mailbox: NativeMailbox; war
   return { mailbox: readMailbox(value), warning: warningOf(value) };
 }
 
-export type QuarantinedRecipient = { address: string; mailbox: string; user: string; generation: number };
-export type QuarantinedDelivery = { sequence: number; gateway: string; id: string; sender: string; receivedAt: string; size: number; recipients: QuarantinedRecipient[] };
+// currentMailbox/currentUser: today's owner of an unresolved delivery's
+// address, not proven to be the original. Empty when the address is inactive.
+export type QuarantinedRecipient = { address: string; mailbox: string; user: string; generation: number; currentMailbox: string; currentUser: string };
+// unresolved: captured under a routing table this server does not know (for
+// example after a restore); only a release to the current owner or a discard applies.
+export type QuarantinedDelivery = { sequence: number; gateway: string; id: string; sender: string; receivedAt: string; size: number; recipients: QuarantinedRecipient[]; unresolved: boolean };
 export type QuarantineResult = "released" | "discarded" | "partially_released";
 const invalidQuarantine = "Invalid quarantine list; reload before releasing or discarding.";
 // The server's envelope rules: identifiers up to 256, addresses up to 320, never CR, LF or NUL.
@@ -197,9 +201,14 @@ function envelope(value: unknown, max: number, empty = false): string {
   if (typeof value !== "string" || value.length > max || (!empty && !value) || /[\r\n\0]/.test(value)) throw new Error(invalidQuarantine);
   return value;
 }
-function readRecipient(value: unknown): QuarantinedRecipient {
+function readRecipient(value: unknown, unresolved: boolean): QuarantinedRecipient {
   const data = object(value);
-  return { address: envelope(data.address, 320), mailbox: envelope(data.mailbox, 1024), user: envelope(data.user, 1024, true), generation: integer(data.generation) };
+  const optional = (v: unknown) => v === undefined ? "" : envelope(v, 1024, true);
+  const r = { address: envelope(data.address, 320), mailbox: envelope(data.mailbox, 1024, unresolved), user: envelope(data.user, 1024, true), generation: integer(data.generation),
+    currentMailbox: optional(data.currentMailbox), currentUser: optional(data.currentUser) };
+  // Only an unresolved recipient has no frozen mailbox and may name a current owner.
+  if (unresolved ? r.mailbox !== "" || r.user !== "" : r.currentMailbox !== "" || r.currentUser !== "") throw new Error(invalidQuarantine);
+  return r;
 }
 // One page after `after`: at most 100, rising sequences, no repeated delivery.
 export function readQuarantine(value: unknown, after: number): QuarantinedDelivery[] {
@@ -212,10 +221,11 @@ export function readQuarantine(value: unknown, after: number): QuarantinedDelive
     const sequence = integer(d.sequence), receivedAt = envelope(d.receivedAt, 64);
     const gateway = envelope(d.gateway, 256), id = envelope(d.id, 256), key = JSON.stringify([gateway, id]);
     if (sequence <= last || seen.has(key) || !Number.isFinite(Date.parse(receivedAt)) ||
-        !Array.isArray(d.recipients) || d.recipients.length > 1000) throw new Error(invalidQuarantine);
+        !Array.isArray(d.recipients) || d.recipients.length > 1000 || (d.unresolved !== undefined && typeof d.unresolved !== "boolean")) throw new Error(invalidQuarantine);
     last = sequence;
     seen.add(key);
-    return { sequence, gateway, id, sender: envelope(d.sender, 320, true), receivedAt, size: integer(d.size), recipients: d.recipients.map(readRecipient) };
+    const unresolved = d.unresolved === true;
+    return { sequence, gateway, id, sender: envelope(d.sender, 320, true), receivedAt, size: integer(d.size), recipients: d.recipients.map((r: unknown) => readRecipient(r, unresolved)), unresolved };
   });
 }
 // The answer must name the requested delivery and a result its action can produce.

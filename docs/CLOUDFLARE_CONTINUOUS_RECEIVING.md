@@ -1,8 +1,9 @@
 # Continuous Cloudflare receiving: design
 
-Status: approved design, 2026-10-06. Worker implemented offline
-(`receiving-worker/continuous.mjs`, [wire contract](#wire-contract)); KyPost side
-pending; nothing qualified live. Replaces the one-message
+Status: approved design, 2026-10-06. Worker (`receiving-worker/continuous.mjs`,
+[wire contract](#wire-contract)) and KyPost side (`backend/internal/cfreceiving`,
+`backend/internal/app/receiving_cfcontinuous.go`, [implementation](#kypost-implementation))
+implemented and tested offline; nothing qualified live. Replaces the one-message
 pilot in [CLOUDFLARE_RECEIVING.md](CLOUDFLARE_RECEIVING.md) once qualified. Cloudflare
 is the primary receiving profile; bundled Maddy and external IMAP remain supported
 alternatives (see root `AGENTS.md`). Both receiving profiles share the ingress
@@ -186,9 +187,12 @@ listed keys:
 
 **Email handler.** One invocation per recipient. In order: lowercase `message.to`
 and the sender's domain (the local part keeps its case; a null sender, `""` or `<>`,
-becomes `""`); a malformed or non-ASCII recipient, a sender over 512 characters, or a
-sender domain that is not printable ASCII (a U-label could dodge an A-label block)
-→ reject. Read `routes.json` (absent → reject; storage error → throw); each isolate
+becomes `""`); a malformed or non-ASCII recipient, or a sender KyPost's holding
+store could not hold → reject. A sender must be at most 320 UTF-8 bytes, well-formed
+UTF-16, with a dot-atom local part (ASCII atext or any non-ASCII character) and an
+ASCII dot-atom domain (a U-label could dodge an A-label block; domain literals and
+quoted local parts are refused). `receiving-worker/senders.json` is the shared
+fixture both sides test against. Read `routes.json` (absent → reject; storage error → throw); each isolate
 keeps the parsed table and revalidates it on every message with a conditional get on
 its etag, so a new table applies to the next message. Sender address or domain blocked with `until` null or in the future →
 reject. `now - issuedAt` over 14 days → reject. Recipient not in `routes` → reject.
@@ -286,9 +290,88 @@ A daemon loop, outbound HTTPS only, every 30 seconds and on directory change:
    capacity refusal stops fetching; mail waits in R2.
 
 Restore: the ledger, published-revision records and signing key are in sealed
-backups. After restore, `GET /routes` reconciles: KyPost publishes only above the
+backups. Because tables are re-signed hourly, a restored `cloudflare.db` almost
+never knows the revision mail waiting in R2 was captured under, so after a
+takeover that mail is quarantined *unresolved* and needs an administrator's
+release to the current owner (see KyPost implementation). Take over promptly
+after a restore to keep that set small. A takeover needs the Worker's current
+key: a backup older than the last rotation cannot take over; re-bootstrap
+through the Cloudflare account instead ([setup](RECEIVING_SETUP.md#continuous-cloudflare-profile)).
+Cloning a volume (as opposed to restoring a backup) copies the host marker too and
+yields two live consumers; never clone a receiving instance. After restore, `GET /routes` reconciles: KyPost publishes only above the
 stored revision, and R2 items frozen against revisions it no longer has are
 quarantined, not guessed.
+
+### KyPost implementation
+
+Operator steps: [continuous Cloudflare profile](RECEIVING_SETUP.md#continuous-cloudflare-profile).
+
+- **Selection.** `KYPOST_CLOUDFLARE_RECEIVING_ORIGIN` (an HTTPS `*.workers.dev`
+  origin; custom domains are not accepted yet) starts the loop in the daemon. It
+  requires `KYPOST_NATIVE_RECEIVING=true` and `KYPOST_RECEIVING_RSPAMD=true` and
+  refuses startup beside `KYPOST_NATIVE_RECEIVER=true`. Ingress gateway
+  `cloudflare-continuous`; the pilot keeps `cloudflare-worker`.
+- **Credentials.** `SECRET_DIR/cloudflare-receiving.json` (0600, sealed) holds the
+  current epoch, bearer and Ed25519 seed. `SECRET_DIR/cloudflare-receiving.host.json`
+  (0600, excluded from backups) holds this host's live marker (the current
+  bearer's SHA-256) and any rotation in flight. A restored copy lacks it, so it
+  starts fenced and never reuses rotation material the original may already
+  have installed. `receiving cloudflare init` creates epoch 1 and prints only
+  `PICKUP_TOKEN_SHA256` and `ROUTING_PUBLIC_KEY`; the bearer is never shown.
+- **State.** `STATE_DIR/receiving/cloudflare.db` (sealed as a SQLite snapshot):
+  published tables (`revision → address, generation, maxBytes, owner`), the
+  provider ledger and the last status. Ledger states: `junk` (reject verdict;
+  Junk delivery owed, durable before the bytes are accepted), `imported` and
+  `quarantined` (provider delete owed), `refused` (an object KyPost cannot hold;
+  kept in R2, dropped from the ledger once gone there). Rows leave after the
+  provider delete.
+- **Loop.** Every 30 seconds, and within 5 seconds of an address-ledger change.
+  Publish compares the table digest with the last installed one and re-signs
+  hourly; the revision is `max(now, last recorded + 1, Worker's + 1)`, recorded
+  before the PUT. A route whose domain proof or mailbox admission fails this
+  cycle is carried from the last installed table at the same generation.
+  Pickup lists from the start, fetches at most 100 objects a cycle, binds with
+  the frozen owner and generation through the shared `bindExpected`, scans,
+  accepts and imports with the existing runtime, and quarantines with bytes
+  (`ingress.Store.Quarantine`) when authority no longer matches, the message
+  exceeds its mailbox's per-message limit, or the revision is unknown. An
+  unknown revision leaves the owner empty (*unresolved*): an administrator can
+  release it only to the recipient address's current owner, with an explicit
+  confirmation that today's owner is not proven to be the original, or
+  discard it ([quarantine release](NATIVE_PROVISIONING.md#quarantine-release)).
+  Equal generations are never taken as proof after a restore. A key refused for
+  a transient reason (domain proof, admission, scanner) backs off in memory
+  from one minute to an hour, so stuck mail neither refetches every cycle nor
+  uses the per-cycle fetch budget ahead of newer mail. Only a full receiving
+  store stops fetching. An empty truncated listing page ends the cycle as an
+  error. The provider
+  delete uses the local digest and runs only when the holding store has the
+  delivery archived or quarantined; a ledger row the holding store does not
+  back (an older restored store) is dropped and the object picked up again.
+- **Junk verdict.** The `junk` ledger row is the only record of a reject
+  verdict until the delivery is archived; it is not stored with the ingress
+  delivery (that would change its schema and restore validation). If
+  `cloudflare.db` is lost or restored older while a delivery is pending, or an
+  administrator releases a quarantined delivery that had a reject verdict, it
+  is filed to INBOX. No mail is lost either way. A `junk` row whose provider copy
+  has vanished and whose delivery is not pending is dropped.
+- **Refused** objects are counted in status `refused`, not as waiting, and do
+  not raise the oldest-unpicked warning.
+- **Fencing.** A 401 is rechecked under the credential lock (which serializes
+  init, rotation, promotion and this fence decision; cycles do not hold it): a rotation that
+  landed meanwhile is not a fence, an in-flight rotation is confirmed with its
+  own bearer, otherwise the host marker is cleared and the loop reports
+  `fenced` and stops calling the Worker. `receiving cloudflare rotate` and
+  `takeover --confirm move-receiving-here` persist pending material first, POST
+  it signed by the current key, confirm a missing or refused answer with the
+  pending bearer and then promote it; a refused pending bearer means another
+  instance rotated first, and this one stays fenced.
+- **Warning.** `oldestUnpickedWarning` when the oldest waiting capture is over
+  one hour old (decision 5): 120 missed cycles means an operator problem, still
+  far inside the 14-day table age.
+- **Not built.** Abuse blocks (`blockedSenders` is empty; the seam is
+  `cfLoop.blockedSenders`), an admin takeover screen with step-up (CLI only),
+  custom Worker domains, removing the pilot, live qualification.
 
 ## Abusive senders
 
@@ -357,13 +440,18 @@ Offline: Worker unit and workerd/R2 runtime tests (unknown-recipient reject, siz
 conditional put, signed/ordered/future-bounded table replacement, list paging,
 digest-checked delete, strict paths, rotation fencing) — done:
 `node --test receiving-worker/continuous.test.mjs` and
-`node receiving-worker/runtime-continuous-check.mjs`; backend race tests for publish → capture →
-pickup → import → delete killed at every boundary, replay, conflict, generation-change
-quarantine, spam-to-Junk, capacity refusal, multi-owner deliveries, restore
-reconciliation; a restore started without takeover confirmation makes no
-`POST /rotate` call and the original's list, fetch, delete and `PUT /routes` keep
-succeeding; after a confirmed takeover the original is refused on all four, reports
-that it is fenced, and no R2 item is deleted unless the new owner has committed it.
+`node receiving-worker/runtime-continuous-check.mjs`; backend race tests against a
+Go fake of the wire contract for publish → capture → pickup → import → delete
+interrupted at every boundary, replay, conflict, generation-change and
+unknown-revision quarantine, spam-to-Junk, scanner retry, capacity refusal,
+multi-owner deliveries, restore reconciliation; a restore started without takeover
+confirmation makes no `POST /rotate` call and the original's list, fetch, delete
+and `PUT /routes` keep succeeding; after a confirmed takeover the original is
+refused on all four, reports that it is fenced, and no R2 item is deleted unless
+the new owner has committed it — done: `GOTOOLCHAIN=go1.26.6 go test -race
+./internal/app -run TestCloudflareContinuous` and `./internal/cfreceiving`. Boundaries
+are simulated by aborting the cycle and restarting the loop over the same durable
+state, not by killing a process.
 
 Offline, abuse blocks: five reject-verdict fixtures that pass DKIM for a shared
 domain but carry differing envelope senders and From addresses must not block any
@@ -391,8 +479,7 @@ Live, on the test deployment, each with its own bounded plan and approval:
 2. Frozen binding at pickup for the hosted profile: approved.
 3. Spam after acceptance: delivered to Junk.
 4. Size cap: 25 MiB in both profiles, with the ingress limit migration.
-5. Pickup interval 30 s; the oldest-unpicked warning threshold is set during
-   implementation.
+5. Pickup interval 30 s; the oldest-unpicked warning threshold is one hour.
 6. Abusive senders: blocked with an escalating cooldown, per authenticated address
    automatically (Maddy now; Cloudflare after SPF qualification) and per domain only
    under the narrow rule above; manual blocks in both profiles.

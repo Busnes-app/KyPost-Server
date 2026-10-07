@@ -9,6 +9,7 @@ import { visible } from "../../lib/visibleText";
 
 const PAGE = 100;
 const ownerChanged = "mailbox gone or owner changed; release will be refused";
+const unknownTable = "This mail was captured under a routing table this server does not know (for example mail that waited at Cloudflare through a restore), so its original owner cannot be proven.";
 // "." and ".." are URL dot segments: fetch would resolve them to another route.
 const addressable = (d: QuarantinedDelivery) => ![d.gateway, d.id].some(v => v === "." || v === "..");
 function size(bytes: number) {
@@ -82,13 +83,20 @@ function QuarantineForm() {
     }
   }
   function recipient(r: QuarantinedDelivery["recipients"][number]) {
+    if (!r.mailbox) {
+      return `${visible(r.address)} → original owner unknown; ${r.currentMailbox
+        ? `today's owner: mailbox ${visible(r.currentMailbox)}${r.currentUser ? ` / ${visible(names.get(r.currentUser) ?? r.currentUser)}` : ""}`
+        : "the address is not active now, so release will be refused"}`;
+    }
     return `${visible(r.address)} → mailbox ${visible(r.mailbox)}${r.user ? ` / ${visible(names.get(r.user) ?? r.user)}` : ` (${ownerChanged})`}`;
   }
-  async function act(d: QuarantinedDelivery, action: "release" | "discard") {
+  async function act(d: QuarantinedDelivery, action: "release" | "release-current" | "discard") {
     if (!deliveries || inFlight.current) return;
     const what = `delivery ${visible(d.id)} from ${d.sender ? visible(d.sender) : "an empty sender"}`;
     const listed = d.recipients.slice(0, 10).map(recipient).join("; ") + (d.recipients.length > 10 ? `; and ${d.recipients.length - 10} more listed in the table` : "");
-    if (!window.confirm(action === "release"
+    if (!window.confirm(action === "release-current"
+      ? `${unknownTable} Release it to the address's current owner instead? The owner shown is today's, not proven to be the one it was sent to. Releasing ${what} to: ${listed || "none"}.`
+      : action === "release"
       ? `Release only to the mailboxes this mail was frozen to when it arrived, never to an address's current owner? Each mailbox must still be active and its owner admitted. Releasing ${what} to: ${listed || "none"}.`
       : `Discard permanently? The bytes are deleted: the mail can never be released afterwards, and a re-pickup or receiver replay will not bring it back. If a release had started, some of its mailboxes may already hold it; those copies stay and the result is recorded as partially released. Discarding ${what}.`)) return;
     inFlight.current = true;
@@ -98,19 +106,20 @@ function QuarantineForm() {
     // answered: a change answer arrived; unanswered: a change request is out with no answer yet.
     let answered = false, committed = false, unanswered = false;
     try {
-      const body = ssoSession ? {} : credentialFields(await deriveCredential("", accountPassword));
+      const body = { ...(ssoSession ? {} : credentialFields(await deriveCredential("", accountPassword))), ...(action === "release-current" ? { toCurrentOwner: true, currentMailbox: d.recipients[0]?.currentMailbox ?? "" } : {}) };
+      const path = action === "discard" ? "discard" : "release";
       requireLive();
       const result = await withSSOStepUp(async (headers) => {
         requireLive();
         unanswered = true;
-        const answer = await postJSON<unknown>(`/api/admin/receiving/quarantine/${encodeURIComponent(d.gateway)}/${encodeURIComponent(d.id)}/${action}`, body, headers)
+        const answer = await postJSON<unknown>(`/api/admin/receiving/quarantine/${encodeURIComponent(d.gateway)}/${encodeURIComponent(d.id)}/${path}`, body, headers)
           .catch((e: unknown) => { if (e instanceof HttpError) unanswered = false; throw e; });
         unanswered = false;
         return answer;
       });
       answered = true;
       requireLive();
-      const outcome = readQuarantineChange(result, d.gateway, d.id, action);
+      const outcome = readQuarantineChange(result, d.gateway, d.id, path);
       committed = true;
       // A committed change followed by an unreadable list must not leave stale controls enabled.
       setDeliveries(null);
@@ -119,7 +128,7 @@ function QuarantineForm() {
       if (outcome === "partially_released") {
         setWarning(`Discarded ${what}, recorded as partially released: an earlier release reached some of its mailboxes, and those copies stay.`);
       } else {
-        setNotice(outcome === "released" ? `Released ${what} to its original mailboxes.` : `Discarded ${what}. Its bytes are deleted.`);
+        setNotice(outcome === "discarded" ? `Discarded ${what}. Its bytes are deleted.` : action === "release-current" ? `Released ${what} to the address's current owner.` : `Released ${what} to its original mailboxes.`);
       }
     } catch (e: unknown) {
       if (live.current) {
@@ -151,6 +160,7 @@ function QuarantineForm() {
   return <div className="config-section">
     <h3>Quarantine</h3>
     <p>Received mail held back from delivery, usually because an address changed mailbox after it arrived. Only the envelope is shown, never the body or subject. The sender is not verified.</p>
+    {deliveries?.some(d => d.unresolved) && <p className="notice notice-warning" role="note">Some mail shows "original owner unknown". {unknownTable} It can only be released to the address's current owner, which is not proven to be the original, or discarded.</p>}
     {error && <p className="notice notice-error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
     {warning && <p className="notice notice-warning" role="status">{warning}</p>}
@@ -172,7 +182,9 @@ function QuarantineForm() {
           <td className="quarantine-nowrap">{size(d.size)}</td>
           <td>{`${visible(d.gateway)} / ${visible(d.id)}`}</td>
           <td className="quarantine-nowrap">{addressable(d) ? <>
-            <button className="button secondary" aria-label={`Release ${visible(d.gateway)} / ${visible(d.id)}`} disabled={!unlocked} onClick={() => void act(d, "release")}>Release</button>
+            {d.unresolved
+              ? <button className="button secondary" aria-label={`Release ${visible(d.gateway)} / ${visible(d.id)} to the current owner`} disabled={!unlocked || d.recipients.length !== 1 || !d.recipients[0]?.currentMailbox} onClick={() => void act(d, "release-current")}>Release to current owner…</button>
+              : <button className="button secondary" aria-label={`Release ${visible(d.gateway)} / ${visible(d.id)}`} disabled={!unlocked} onClick={() => void act(d, "release")}>Release</button>}
             <button className="button secondary" aria-label={`Discard ${visible(d.gateway)} / ${visible(d.id)}`} disabled={!unlocked} onClick={() => void act(d, "discard")}>Discard</button>
           </> : "Use the CLI: this ID cannot be sent in a URL."}</td>
         </tr>)}</tbody>

@@ -48,6 +48,9 @@ type Recipient struct {
 type Receipt struct {
 	Gateway, Delivery, Sender string
 	Recipients                []Recipient
+	// Folder is INBOX when empty, or Junk. It is not part of the receipt
+	// identity: an exact replay returns the original wherever it was filed.
+	Folder string `json:"-"`
 }
 type Message struct {
 	ID                                          int64
@@ -284,7 +287,13 @@ func (s *Store) Import(ctx context.Context, receipt Receipt, input io.Reader) (i
 	if err != nil {
 		return 0, err
 	}
-	return s.append(ctx, "INBOX", input, receipt.Gateway, receipt.Delivery, envelope, false, nil)
+	folder := "INBOX"
+	if receipt.Folder == "Junk" {
+		folder = "Junk"
+	} else if receipt.Folder != "" && receipt.Folder != "INBOX" {
+		return 0, errors.New("invalid delivery folder")
+	}
+	return s.append(ctx, folder, input, receipt.Gateway, receipt.Delivery, envelope, false, nil)
 }
 
 // Append stores a local Drafts/Sent copy without an SMTP delivery receipt.

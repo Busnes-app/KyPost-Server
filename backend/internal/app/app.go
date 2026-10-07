@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,6 +33,9 @@ import (
 // Run dispatches the process mode and blocks until shutdown for long-running modes.
 func Run(args []string) error {
 	if len(args) > 0 && args[0] == "receiving" {
+		if len(args) > 2 && args[1] == "cloudflare" && slices.Contains([]string{"init", "rotate", "takeover", "status"}, args[2]) {
+			return runCloudflareContinuous(args[2:], os.Stdout)
+		}
 		if len(args) > 1 && args[1] == "cloudflare" {
 			return runCloudflareReceiving(args[2:], os.Stdout)
 		}
@@ -238,6 +242,11 @@ func runDaemon(ctx context.Context, d runDeps) error {
 		return err
 	}
 	defer func() { cancelReceiving(); <-receivingDone }()
+	cloudflareDone, err := startCloudflareReceiving(receivingCtx, d)
+	if err != nil {
+		return err
+	}
+	defer func() { cancelReceiving(); <-cloudflareDone }()
 	classifierClient := newClassifierClient(d.cfg)
 	poller, err := processor.New(d.cfg, d.logger, d.store, d.users, d.stateDir, d.configDir, d.health, classifierClient, d.wkdStore)
 	if err != nil {
@@ -349,6 +358,11 @@ func runAll(ctx context.Context, d runDeps) error {
 		return err
 	}
 	defer func() { cancelReceiving(); <-receivingDone }()
+	cloudflareDone, err := startCloudflareReceiving(receivingCtx, d)
+	if err != nil {
+		return err
+	}
+	defer func() { cancelReceiving(); <-cloudflareDone }()
 	// Restore the sticky AI-credits flag onto the health status so a restart
 	// keeps surfacing it until a successful classify clears it.
 	if exhausted, at := d.store.AICreditsExhausted(); exhausted {
