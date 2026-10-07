@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -29,6 +30,7 @@ const (
 	// MaxMessageBytes is the Worker's per-route maxBytes ceiling (25 MiB).
 	MaxMessageBytes = 25 << 20
 	maxRoutes       = 5000
+	maxBlocks       = 5000
 	maxTableBytes   = 1 << 20
 	maxRoutesBody   = 2*maxTableBytes + 4096
 	maxEnvelope     = 2000
@@ -121,29 +123,133 @@ func ValidAddress(a string) bool {
 	return true
 }
 
-// SignTable is the PUT /routes body for routes and blocks.
-func SignTable(m Material, revision, issuedAt int64, routes []Route, blocks []Block) ([]byte, error) {
-	type wireRoute struct {
-		Address    string `json:"address"`
-		Generation int64  `json:"generation"`
-		MaxBytes   int64  `json:"maxBytes"`
+// LowerASCII lowercases A-Z only. Both matchers compare senders this way:
+// Unicode case mapping differs between Go and JavaScript (U+0130) and folds
+// some non-ASCII into ASCII (the Kelvin sign to k), so non-ASCII compares
+// exactly.
+func LowerASCII(s string) string {
+	return strings.Map(func(c rune) rune {
+		if c >= 'A' && c <= 'Z' {
+			return c + 'a' - 'A'
+		}
+		return c
+	}, s)
+}
+
+func atoms(s string, ok func(rune) bool) bool {
+	for atom := range strings.SplitSeq(s, ".") {
+		if atom == "" || strings.ContainsFunc(atom, func(c rune) bool { return !ok(c) }) {
+			return false
+		}
 	}
-	table := struct {
-		Revision       int64       `json:"revision"`
-		IssuedAt       int64       `json:"issuedAt"`
-		Routes         []wireRoute `json:"routes"`
-		BlockedSenders []Block     `json:"blockedSenders"`
-	}{revision, issuedAt, make([]wireRoute, 0, len(routes)), append([]Block{}, blocks...)}
+	return true
+}
+
+func atext(c rune) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+/=?^_`{|}~-", c)
+}
+
+// ValidSender is the sender rule both receiving profiles enforce (the
+// Worker's senderOk, fixture receiving-worker/senders.json): the null
+// sender, or at most 320 UTF-8 bytes with a dot-atom local part of ASCII
+// atext or any non-ASCII character, and an ASCII dot-atom domain (compared
+// after LowerASCII). Quoted local parts, domain literals and U-label domains
+// are refused: no block could match them on both sides.
+func ValidSender(s string) bool {
+	if s == "" {
+		return true
+	}
+	at := strings.LastIndexByte(s, '@')
+	return utf8.ValidString(s) && len(s) <= 320 && at > 0 &&
+		atoms(s[:at], func(c rune) bool { return atext(c) || c >= 0x80 }) &&
+		atoms(LowerASCII(s[at+1:]), func(c rune) bool { return atext(c) && (c < 'A' || c > 'Z') })
+}
+
+// ValidBlock is the Worker's blockedSenders rule: exactly one of a non-null
+// sender address or a sender domain, already LowerASCII, and until null or
+// at least 1.
+func ValidBlock(b Block) bool {
+	value, sender := b.Address, b.Address
+	if b.Domain != "" {
+		value, sender = b.Domain, "x@"+b.Domain
+	}
+	return (b.Address == "") != (b.Domain == "") && value == LowerASCII(value) && sender != "" && ValidSender(sender) && (b.Until == nil || *b.Until >= 1)
+}
+
+type wireRoute struct {
+	Address    string `json:"address"`
+	Generation int64  `json:"generation"`
+	MaxBytes   int64  `json:"maxBytes"`
+}
+
+type wireTable struct {
+	Revision       int64       `json:"revision"`
+	IssuedAt       int64       `json:"issuedAt"`
+	Routes         []wireRoute `json:"routes"`
+	BlockedSenders []Block     `json:"blockedSenders"`
+}
+
+func newWireTable(revision, issuedAt int64, routes []Route) (wireTable, error) {
+	table := wireTable{revision, issuedAt, make([]wireRoute, 0, len(routes)), []Block{}}
 	seen := map[string]bool{}
 	for _, r := range routes {
 		if !ValidAddress(r.Address) || seen[r.Address] || r.Generation < 1 || r.MaxBytes < 1 || r.MaxBytes > MaxMessageBytes {
-			return nil, errors.New("invalid route for the Worker")
+			return table, errors.New("invalid route for the Worker")
 		}
 		seen[r.Address] = true
 		table.Routes = append(table.Routes, wireRoute{r.Address, r.Generation, r.MaxBytes})
 	}
+	if len(routes) > maxRoutes {
+		return table, errors.New("routing table exceeds the Worker's limits")
+	}
+	return table, nil
+}
+
+// BlockWireBytes is a block's exact size in the signed table, with the
+// separating comma, measured by the encoder SignTable uses (json.Marshal
+// escapes &, < and > to six bytes each).
+func BlockWireBytes(b Block) int {
+	raw, _ := json.Marshal(b)
+	return len(raw) + 1
+}
+
+// FitBlocks returns the longest prefix of blocks that fits the Worker's
+// table beside routes (at most 5000 blocks and 1 MiB in all), so blocks can
+// never stop route publication; callers order blocks by priority first. An
+// error means the routes alone cannot be published.
+func FitBlocks(routes []Route, blocks []Block) ([]Block, error) {
+	const safe = 1<<53 - 1 // widest revision and issuedAt the Worker accepts
+	table, err := newWireTable(safe, safe, routes)
+	if err != nil {
+		return nil, err
+	}
+	base, err := json.Marshal(table)
+	if err != nil || len(base) > maxTableBytes {
+		return nil, errors.New("routing table exceeds the Worker's limits")
+	}
+	size := len(base) - 1 // the first block has no comma
+	for i, b := range blocks {
+		if size += BlockWireBytes(b); i == maxBlocks || size > maxTableBytes {
+			return blocks[:i], nil
+		}
+	}
+	return blocks, nil
+}
+
+// SignTable is the PUT /routes body for routes and blocks.
+func SignTable(m Material, revision, issuedAt int64, routes []Route, blocks []Block) ([]byte, error) {
+	table, err := newWireTable(revision, issuedAt, routes)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range blocks {
+		if !ValidBlock(b) {
+			return nil, errors.New("invalid sender block for the Worker")
+		}
+	}
+	table.BlockedSenders = append(table.BlockedSenders, blocks...)
 	payload, err := json.Marshal(table)
-	if err != nil || revision < 1 || issuedAt < 1 || len(routes) > maxRoutes || len(blocks) > maxRoutes || len(payload) > maxTableBytes {
+	if err != nil || revision < 1 || issuedAt < 1 || len(blocks) > maxBlocks || len(payload) > maxTableBytes {
 		return nil, errors.New("routing table exceeds the Worker's limits")
 	}
 	return m.signed("table", routesContext, payload)

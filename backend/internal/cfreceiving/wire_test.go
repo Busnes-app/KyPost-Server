@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,6 +96,22 @@ func TestSignedDocumentsMatchContract(t *testing.T) {
 			t.Fatal("invalid route signed", bad)
 		}
 	}
+	// Blocks: {"address"|"domain", "until"} with until null or Unix ms.
+	until := int64(1790000000000)
+	body, err = SignTable(m, 2, 2, nil, []Block{{Address: "bad@spam.test", Until: &until}, {Domain: "evil.test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	table = verifyContract(t, body, "table", "kypost-cf-routes/1\n", public)
+	if string(table["blockedSenders"]) != `[{"address":"bad@spam.test","until":1790000000000},{"domain":"evil.test","until":null}]` {
+		t.Fatal("blocks wire", string(table["blockedSenders"]))
+	}
+	zero := int64(0)
+	for _, bad := range []Block{{}, {Address: "a@x.test", Domain: "x.test"}, {Address: "Bad@x.test"}, {Domain: "bücher.test"}, {Domain: "a@x.test"}, {Domain: "x.test", Until: &zero}} {
+		if _, err := SignTable(m, 1, 1, nil, []Block{bad}); err == nil {
+			t.Fatal("invalid block signed", bad)
+		}
+	}
 	if _, err := SignTable(m, 1, 1, []Route{routes[0], routes[0]}, nil); err == nil {
 		t.Fatal("duplicate address signed")
 	}
@@ -176,5 +193,51 @@ func TestKeysHostRecordAndPromotionWindow(t *testing.T) {
 	}
 	if s, err := CurrentStatus(t.Context(), keys, t.TempDir()); err != nil || s.State != "error" {
 		t.Fatal("corrupt credentials not reported", s, err)
+	}
+}
+
+// Blocks never stop routes: FitBlocks keeps the longest prefix that signs.
+func TestFitBlocksKeepsRoutesPublishable(t *testing.T) {
+	m, err := NewMaterial(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := []Route{}
+	for i := range 3000 {
+		routes = append(routes, Route{Address: fmt.Sprintf("user%04d@%s.test", i, strings.Repeat("r", 120)), Generation: 1, MaxBytes: 1})
+	}
+	worst := func(i int) Block {
+		return Block{Address: fmt.Sprintf("%05d", i) + strings.Repeat("&", 300) + "@x.test"}
+	}
+	for _, tc := range []struct {
+		name   string
+		blocks []Block
+	}{{"bytes", nil}, {"count", nil}} {
+		if tc.name == "bytes" {
+			for i := range 1000 {
+				tc.blocks = append(tc.blocks, worst(i))
+			}
+		} else {
+			for i := range maxBlocks + 10 {
+				tc.blocks = append(tc.blocks, Block{Domain: fmt.Sprintf("d%d.test", i)})
+			}
+			routes = routes[:1]
+		}
+		if _, err := SignTable(m, 1<<53-1, 1<<53-1, routes, tc.blocks); err == nil {
+			t.Fatal(tc.name, "over-limit table signed")
+		}
+		fitted, err := FitBlocks(routes, tc.blocks)
+		if err != nil || len(fitted) == 0 || len(fitted) >= len(tc.blocks) || fitted[0] != tc.blocks[0] {
+			t.Fatal(tc.name, len(fitted), err)
+		}
+		if _, err := SignTable(m, 1<<53-1, 1<<53-1, routes, fitted); err != nil {
+			t.Fatal(tc.name, "fitted table does not sign", err)
+		}
+		if _, err := SignTable(m, 1<<53-1, 1<<53-1, routes, tc.blocks[:len(fitted)+1]); err == nil {
+			t.Fatal(tc.name, "FitBlocks left room unused")
+		}
+	}
+	if fitted, err := FitBlocks(routes, nil); err != nil || len(fitted) != 0 {
+		t.Fatal(fitted, err)
 	}
 }

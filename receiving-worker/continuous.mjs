@@ -19,8 +19,7 @@ const exactKeys = (o, keys) => o !== null && typeof o === "object" && !Array.isA
 const response = (status, body = null, headers = {}) =>
   new Response(body, {status, headers: {"Cache-Control": "no-store", ...headers}});
 
-// Lowercase printable ASCII; domains are A-labels, so a U-label cannot dodge a block.
-const domainOk = d => typeof d === "string" && d.length <= 253 && d === d.toLowerCase() && /^[\x21-\x3f\x41-\x7e]+$/.test(d);
+// Route addresses: lowercase printable ASCII; domains are A-labels.
 const addressOk = a => typeof a === "string" && a.length <= 254 && a === a.toLowerCase() &&
   /^[\x21-\x3f\x41-\x7e]{1,64}@[\x21-\x3f\x41-\x7e]+$/.test(a);
 // Envelope senders KyPost's holding store accepts (Go net/mail, at most 320 bytes):
@@ -30,8 +29,15 @@ const addressOk = a => typeof a === "string" && a.length <= 254 && a === a.toLow
 const ATOM = "(?:[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]|[^\\x00-\\x7f])+";
 const localPart = new RegExp(`^${ATOM}(?:\\.${ATOM})*$`, "u");
 const senderDomain = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/;
-const senderOk = s => s === "" || s.isWellFormed() && enc.encode(s).length <= 320 &&
+const senderOk = s => s === "" || s.isWellFormed() && enc.encode(s).length <= 320 && s.lastIndexOf("@") > 0 &&
   localPart.test(s.slice(0, s.lastIndexOf("@"))) && senderDomain.test(s.slice(s.lastIndexOf("@") + 1));
+// Senders compare after lowercasing A-Z only, exactly as KyPost's Go matcher:
+// Unicode case mapping differs between engines (U+0130) and folds some
+// non-ASCII into ASCII (the Kelvin sign to k), so non-ASCII compares exactly.
+const asciiLower = s => s.replace(/[A-Z]+/g, x => x.toLowerCase());
+// Every sender this Worker accepts can be blocked by address, and its domain by domain.
+const blockAddressOk = a => typeof a === "string" && a !== "" && a === asciiLower(a) && senderOk(a);
+const blockDomainOk = d => typeof d === "string" && d === asciiLower(d) && senderOk("x@" + d);
 
 function base64(text, length) {
   if (typeof text !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(text)) return null;
@@ -136,7 +142,7 @@ export function validTable(t) {
     seen.add(r.address);
   }
   return t.blockedSenders.every(b => (b?.until === null || isInt(b?.until)) &&
-    (exactKeys(b, ["address", "until"]) && addressOk(b.address) || exactKeys(b, ["domain", "until"]) && domainOk(b.domain)));
+    (exactKeys(b, ["address", "until"]) && blockAddressOk(b.address) || exactKeys(b, ["domain", "until"]) && blockDomainOk(b.domain)));
 }
 
 function validCredentials(c) {
@@ -260,10 +266,10 @@ async function currentTable(env) {
   return table;
 }
 
-function blocked(table, sender, now) {
-  const domain = sender.slice(sender.lastIndexOf("@") + 1);
+export function blocked(table, sender, now) {
+  const address = asciiLower(sender), domain = address.slice(address.lastIndexOf("@") + 1);
   return table.blockedSenders.some(b => (b.until === null || b.until > now) &&
-    (b.address !== undefined ? b.address === sender.toLowerCase() : b.domain === domain));
+    (b.address !== undefined ? b.address === address : b.domain === domain));
 }
 
 export default {
@@ -271,8 +277,8 @@ export default {
     const recipient = typeof message.to === "string" ? message.to.toLowerCase() : "";
     const from = message.from;
     const at = typeof from === "string" ? from.lastIndexOf("@") : -1;
-    // Null sender ("" or "<>") is "". The local part keeps its case; the domain is lowercased ASCII.
-    const sender = from === "" || from === "<>" ? "" : at > 0 ? from.slice(0, at + 1) + from.slice(at + 1).toLowerCase() : null;
+    // Null sender ("" or "<>") is "". The local part keeps its case; the domain's A-Z are lowercased.
+    const sender = from === "" || from === "<>" ? "" : at > 0 ? from.slice(0, at + 1) + asciiLower(from.slice(at + 1)) : null;
     if (!addressOk(recipient) || sender === null || !senderOk(sender)) {
       message.setReject("Address refused");
       return;

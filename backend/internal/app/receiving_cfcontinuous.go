@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -133,18 +134,12 @@ func startCloudflareReceiving(ctx context.Context, d runDeps) (<-chan struct{}, 
 		defer close(done)
 		defer r.holding.Close()
 		defer db.Close()
-		// Directory changes publish within one tick; the domain file is
-		// rewritten by every proof, so only the address ledger is watched.
-		ledger := filepath.Join(r.configDir, "native-provisioning.json")
 		var last time.Time
 		var seen string
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
-			mark := ""
-			if info, err := os.Stat(ledger); err == nil {
-				mark = info.ModTime().String() + strconv.FormatInt(info.Size(), 10)
-			}
+			mark := cfChangeMark(r)
 			if time.Since(last) >= cfInterval || mark != seen {
 				last, seen = time.Now(), mark
 				if err := l.cycle(ctx); err != nil && ctx.Err() == nil {
@@ -159,6 +154,24 @@ func startCloudflareReceiving(ctx context.Context, d runDeps) (<-chan struct{}, 
 		}
 	}()
 	return done, nil
+}
+
+// cfChangeMark changes when the address ledger or the sender block list is
+// rewritten, so either publishes within one tick. The domain file is
+// rewritten by every proof, so it is not watched.
+func cfChangeMark(r *receivingRuntime) string {
+	mark := ""
+	for _, path := range []string{filepath.Join(r.configDir, "native-provisioning.json"), filepath.Join(r.stateDir, "receiving", ingress.BlocksFile)} {
+		if info, err := os.Stat(path); err == nil {
+			mark += info.ModTime().String() + strconv.FormatInt(info.Size(), 10)
+			// Both files publish by rename: a new inode even within one mtime tick.
+			if st, ok := info.Sys().(*syscall.Stat_t); ok {
+				mark += "/" + strconv.FormatUint(st.Ino, 10)
+			}
+		}
+		mark += "|"
+	}
+	return mark
 }
 
 // cycle publishes and picks up once, then saves status.
@@ -222,9 +235,26 @@ func (l *cfLoop) refused(ctx context.Context, used cfreceiving.Material) error {
 	return cfreceiving.ErrUnauthorized
 }
 
-// blockedSenders is the seam for abuse blocks (manual, and automatic once
-// qualification allows); empty until that change set.
-func (l *cfLoop) blockedSenders() []cfreceiving.Block { return nil }
+// blockedSenders is the block list in force in the Worker's form, by
+// priority: manual before automatic, then newest first, so truncation
+// (cfreceiving.FitBlocks) drops automatic and old blocks first.
+func (l *cfLoop) blockedSenders() ([]cfreceiving.Block, error) {
+	list, err := ingress.NewBlocks(filepath.Join(l.r.stateDir, "receiving")).List(l.now())
+	slices.SortStableFunc(list, func(a, b ingress.SenderBlock) int {
+		if am, bm := a.Source == "manual", b.Source == "manual"; am != bm {
+			if am {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Compare(b.CreatedAt, a.CreatedAt)
+	})
+	blocks := make([]cfreceiving.Block, 0, len(list))
+	for _, b := range list {
+		blocks = append(blocks, b.Wire())
+	}
+	return blocks, err
+}
 
 // publish signs and installs the table when it changed, when the Worker holds
 // a newer revision than ours, or hourly.
@@ -241,7 +271,26 @@ func (l *cfLoop) publish(ctx context.Context, cur cfreceiving.Material) error {
 	if err != nil {
 		return err
 	}
-	blocks := l.blockedSenders()
+	// An unreadable block list must not stop routes: the Worker refuses all
+	// mail once its table is 14 days old. Keep the last installed blocks
+	// (none if never published) and report the error.
+	blocks, blockErr := l.blockedSenders()
+	if blockErr != nil {
+		if blocks, err = l.db.InstalledBlocks(ctx); err != nil {
+			return err
+		}
+		blockErr = fmt.Errorf("%w; publishing routes with the last published blocks", blockErr)
+		slog.Error("cloudflare sender blocks unreadable", "actor", cfGateway, "task_id", "native-receiving", "action", "publish", "target", "sender-blocks", "result", "previous-blocks-kept", "correlation_id", "sender-blocks", "error", blockErr.Error())
+	}
+	// Blocks never stop routes: whatever does not fit the Worker's table is
+	// left out and reported.
+	if fitted, err := cfreceiving.FitBlocks(routes, blocks); err != nil {
+		return err
+	} else if len(fitted) < len(blocks) {
+		blockErr = errors.Join(blockErr, fmt.Errorf("%d sender blocks do not fit the Worker's table beside the routes and were left out (automatic and oldest first); remove blocks", len(blocks)-len(fitted)))
+		slog.Error("cloudflare sender blocks truncated", "actor", cfGateway, "task_id", "native-receiving", "action", "publish", "target", "sender-blocks", "result", "truncated", "correlation_id", "sender-blocks", "error", blockErr.Error())
+		blocks = fitted
+	}
 	digest := cfreceiving.Digest(routes, blocks)
 	installed, installedDigest, at, err := l.db.LastInstalled(ctx)
 	if err != nil {
@@ -249,7 +298,7 @@ func (l *cfLoop) publish(ctx context.Context, cur cfreceiving.Material) error {
 	}
 	l.status.LastRevision, l.status.LastPublishAt = installed, at
 	if installed >= l.workerRevision && installedDigest == digest && now-at < cfResign.Milliseconds() {
-		return nil
+		return blockErr
 	}
 	recorded, err := l.db.LastRevision(ctx)
 	if err != nil {
@@ -263,7 +312,7 @@ func (l *cfLoop) publish(ctx context.Context, cur cfreceiving.Material) error {
 	if err != nil {
 		return err
 	}
-	if err := l.db.Record(ctx, rev, now, digest, routes); err != nil {
+	if err := l.db.Record(ctx, rev, now, digest, routes, blocks); err != nil {
 		return err
 	}
 	if err := l.hit("recorded"); err != nil {
@@ -278,7 +327,10 @@ func (l *cfLoop) publish(ctx context.Context, cur cfreceiving.Material) error {
 	l.workerRevision = rev
 	l.status.LastRevision, l.status.LastPublishAt = rev, now
 	slog.Info("cloudflare routing published", "actor", cfGateway, "task_id", "native-receiving", "action", "publish", "target", "cloudflare-worker", "result", "installed", "revision", strconv.FormatInt(rev, 10), "correlation_id", digest[:16])
-	return l.db.Installed(ctx, rev, now)
+	if err := l.db.Installed(ctx, rev, now); err != nil {
+		return err
+	}
+	return blockErr
 }
 
 // buildRoutes lists admitted active addresses on proven domains. A failed
