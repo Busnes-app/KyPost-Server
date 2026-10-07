@@ -1223,7 +1223,7 @@ func TestCloudflareContinuousStuckItemsDoNotStarve(t *testing.T) {
 		t.Fatal(err)
 	}
 	rev := last + 1
-	if err := e.db.Record(ctx, rev, 1, "oversized-fixture", []cfreceiving.Route{{Address: "small@example.test", Generation: 1, MaxBytes: cfreceiving.MaxMessageBytes, Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox}}); err != nil {
+	if err := e.db.Record(ctx, rev, 1, "oversized-fixture", []cfreceiving.Route{{Address: "small@example.test", Generation: 1, MaxBytes: cfreceiving.MaxMessageBytes, Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	big := e.w.capture("small@example.test", "", strings.Repeat("x", 2<<20), func(env *cfreceiving.Envelope) { env.TableRevision = rev })

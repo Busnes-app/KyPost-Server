@@ -267,9 +267,16 @@ func (l *cfLoop) publish(ctx context.Context, cur cfreceiving.Material) error {
 	if err != nil {
 		return err
 	}
-	blocks, err := l.blockedSenders()
-	if err != nil {
-		return err
+	// An unreadable block list must not stop routes: the Worker refuses all
+	// mail once its table is 14 days old. Keep the last installed blocks
+	// (none if never published) and report the error.
+	blocks, blockErr := l.blockedSenders()
+	if blockErr != nil {
+		if blocks, err = l.db.InstalledBlocks(ctx); err != nil {
+			return err
+		}
+		blockErr = fmt.Errorf("%w; publishing routes with the last published blocks", blockErr)
+		slog.Error("cloudflare sender blocks unreadable", "actor", cfGateway, "task_id", "native-receiving", "action", "publish", "target", "sender-blocks", "result", "previous-blocks-kept", "correlation_id", "sender-blocks", "error", blockErr.Error())
 	}
 	digest := cfreceiving.Digest(routes, blocks)
 	installed, installedDigest, at, err := l.db.LastInstalled(ctx)
@@ -278,7 +285,7 @@ func (l *cfLoop) publish(ctx context.Context, cur cfreceiving.Material) error {
 	}
 	l.status.LastRevision, l.status.LastPublishAt = installed, at
 	if installed >= l.workerRevision && installedDigest == digest && now-at < cfResign.Milliseconds() {
-		return nil
+		return blockErr
 	}
 	recorded, err := l.db.LastRevision(ctx)
 	if err != nil {
@@ -292,7 +299,7 @@ func (l *cfLoop) publish(ctx context.Context, cur cfreceiving.Material) error {
 	if err != nil {
 		return err
 	}
-	if err := l.db.Record(ctx, rev, now, digest, routes); err != nil {
+	if err := l.db.Record(ctx, rev, now, digest, routes, blocks); err != nil {
 		return err
 	}
 	if err := l.hit("recorded"); err != nil {
@@ -307,7 +314,10 @@ func (l *cfLoop) publish(ctx context.Context, cur cfreceiving.Material) error {
 	l.workerRevision = rev
 	l.status.LastRevision, l.status.LastPublishAt = rev, now
 	slog.Info("cloudflare routing published", "actor", cfGateway, "task_id", "native-receiving", "action", "publish", "target", "cloudflare-worker", "result", "installed", "revision", strconv.FormatInt(rev, 10), "correlation_id", digest[:16])
-	return l.db.Installed(ctx, rev, now)
+	if err := l.db.Installed(ctx, rev, now); err != nil {
+		return err
+	}
+	return blockErr
 }
 
 // buildRoutes lists admitted active addresses on proven domains. A failed

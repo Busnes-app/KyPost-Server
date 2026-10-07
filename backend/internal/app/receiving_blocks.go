@@ -107,7 +107,10 @@ func runReceivingBlocks(args []string, output io.Writer) (result error) {
 		status = "blocked"
 		return json.NewEncoder(output).Encode(added)
 	default:
-		found, err := store.Remove(ctx, block.Kind, block.Value, time.Now())
+		if id == "" {
+			return ingress.ErrBlockInvalid
+		}
+		found, err := store.Remove(ctx, id, time.Now())
 		if err == nil && !found {
 			err = errors.New("no such block in force")
 		}

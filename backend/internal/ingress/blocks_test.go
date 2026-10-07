@@ -86,10 +86,15 @@ func TestSenderBlocks(t *testing.T) {
 	if got, _ := s.Blocked("x@evil.test", later); got {
 		t.Fatal("expired block enforced")
 	}
-	if found, err := s.Remove(ctx, "address", "BAD@spam.test", later); err != nil || !found {
+	for _, id := range []string{"", "BAD", BlockID("address", "bad@spam.test")[:15], strings.ToUpper(BlockID("address", "bad@spam.test"))} {
+		if _, err := s.Remove(ctx, id, later); !errors.Is(err, ErrBlockInvalid) {
+			t.Fatal("malformed id accepted", id, err)
+		}
+	}
+	if found, err := s.Remove(ctx, BlockID("address", "bad@spam.test"), later); err != nil || !found {
 		t.Fatal("remove", found, err)
 	}
-	if found, err := s.Remove(ctx, "address", "bad@spam.test", later); err != nil || found {
+	if found, err := s.Remove(ctx, BlockID("address", "bad@spam.test"), later); err != nil || found {
 		t.Fatal("second remove", found, err)
 	}
 	raw, _ := os.ReadFile(filepath.Join(s.dir, BlocksFile))

@@ -135,21 +135,47 @@ func TestCloudflareContinuousPublishesBlocks(t *testing.T) {
 	if e.w.putCount() != puts+1 {
 		t.Fatal("unchanged blocks republished")
 	}
-	if _, err := ingress.NewBlocks(e.receiving).Remove(context.Background(), "domain", "evil.test", time.Now()); err != nil {
+	if _, err := ingress.NewBlocks(e.receiving).Remove(context.Background(), ingress.BlockID("domain", "evil.test"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	e.cycle(t)
 	if got, _ = json.Marshal(e.w.lastPut().BlockedSenders); e.w.putCount() != puts+2 || strings.Contains(string(got), "evil.test") {
 		t.Fatal("unblock not republished", string(got))
 	}
-	// An unreadable list never publishes a table without its blocks.
+	// An unreadable list keeps publishing routes, with the last published
+	// blocks, and reports the error.
+	previous, _ := json.Marshal(e.w.lastPut().BlockedSenders)
 	if err := os.WriteFile(filepath.Join(e.receiving, ingress.BlocksFile), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	e.clock.advance(2 * time.Hour)
 	e.cycle(t)
-	if s := cfStatus(t, e); e.w.putCount() != puts+2 || s.State != "error" || !strings.Contains(s.Detail, "sender block list") {
-		t.Fatalf("published without the block list: %d %+v", e.w.putCount()-puts, s)
+	got, _ = json.Marshal(e.w.lastPut().BlockedSenders)
+	if s := cfStatus(t, e); e.w.putCount() != puts+3 || string(got) != string(previous) || s.State != "error" || !strings.Contains(s.Detail, "sender block list") || !strings.Contains(s.Detail, "last published blocks") {
+		t.Fatalf("unreadable blocks: puts %d blocks %s status %+v", e.w.putCount()-puts, got, s)
+	}
+	// An unchanged table is not re-sent, but the error stays reported.
+	e.cycle(t)
+	if s := cfStatus(t, e); e.w.putCount() != puts+3 || s.State != "error" || !strings.Contains(s.Detail, "sender block list") {
+		t.Fatalf("unchanged cycle hid the error: puts %d status %+v", e.w.putCount()-puts, s)
+	}
+	// A route change still publishes while the list stays unreadable.
+	receivingDirectory(t, e.r, "two", 2, false)
+	e.cycle(t)
+	if got, _ = json.Marshal(e.w.lastPut().BlockedSenders); e.w.putCount() != puts+4 || len(e.w.lastPut().Routes) != 1 || string(got) != string(previous) {
+		t.Fatalf("route change not published: puts %d routes %d blocks %s", e.w.putCount()-puts, len(e.w.lastPut().Routes), got)
+	}
+}
+
+// With no previous publish, an unreadable list publishes no blocks.
+func TestCloudflareContinuousUnreadableBlocksFirstPublish(t *testing.T) {
+	e := cfFixture(t)
+	if err := os.WriteFile(filepath.Join(e.receiving, ingress.BlocksFile), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.cycle(t)
+	if s := cfStatus(t, e); e.w.putCount() != 1 || len(e.w.lastPut().Routes) != 2 || e.w.lastPut().BlockedSenders == nil || len(e.w.lastPut().BlockedSenders) != 0 || s.State != "error" || !strings.Contains(s.Detail, "sender block list") {
+		t.Fatalf("first publish: puts %d %+v status %+v", e.w.putCount(), e.w.lastPut(), s)
 	}
 }
 

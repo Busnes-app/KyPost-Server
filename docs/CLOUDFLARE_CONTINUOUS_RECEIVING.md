@@ -371,8 +371,9 @@ Operator steps: [continuous Cloudflare profile](RECEIVING_SETUP.md#continuous-cl
   far inside the 14-day table age.
 - **Blocks.** `blockedSenders` carries the manual [sender blocks](NATIVE_PROVISIONING.md#sender-blocks)
   in force (`until` in Unix ms or null). A block change republishes within
-  one loop tick; an unreadable block list fails the publish and the Worker
-  keeps its last table.
+  one loop tick; an unreadable block list still publishes routes, with the
+  last installed revision's blocks (recorded per revision in `cloudflare.db`;
+  none if never published), and reports `error`.
 - **Not built.** Automatic abuse blocks, an admin takeover screen with step-up (CLI only),
   custom Worker domains, removing the pilot, live qualification.
 

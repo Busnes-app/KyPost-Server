@@ -208,28 +208,26 @@ func (s *Server) handleSenderBlockAdd(w http.ResponseWriter, r *http.Request) {
 	senderBlockError(w, err)
 }
 
-// handleSenderBlockRemove unblocks /api/admin/receiving/blocks/{kind}/{value}.
+// handleSenderBlockRemove unblocks /api/admin/receiving/blocks/{id}. The
+// path carries the block ID, never the address, so proxy logs record none.
 func (s *Server) handleSenderBlockRemove(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !s.nativeDomainGate(w, r, &struct{}{}) {
 		return
 	}
 	ac, _ := authFromContext(r)
-	kind, result, id := r.PathValue("kind"), "refused", ""
-	value, err := ingress.NormalizeBlock(kind, r.PathValue("value"))
-	if err == nil {
-		id = ingress.BlockID(kind, value)
+	id, result := r.PathValue("id"), "refused"
+	found, err := false, error(nil)
+	if s.nativeMail {
+		found, err = s.senderBlocks().Remove(r.Context(), id, time.Now())
 	}
-	defer func() { s.auditSenderBlock(ac.UserID, "unblock_sender", kind, result, id) }()
-	if !s.nativeMail {
-		http.Error(w, "native mail is disabled", http.StatusNotFound)
-		return
+	if errors.Is(err, ingress.ErrBlockInvalid) {
+		id = "" // malformed path values are not logged
 	}
-	found := false
-	if err == nil {
-		found, err = s.senderBlocks().Remove(r.Context(), kind, value, time.Now())
-	}
+	defer func() { s.auditSenderBlock(ac.UserID, "unblock_sender", "", result, id) }()
 	switch {
+	case !s.nativeMail:
+		http.Error(w, "native mail is disabled", http.StatusNotFound)
 	case err != nil:
 		senderBlockError(w, err)
 	case !found:

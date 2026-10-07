@@ -934,8 +934,12 @@ admin UI are pending; see [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#a
   or any binding. Cloudflare: the publisher signs the blocks in force into the
   routing table's `blockedSenders`; a change to the list republishes within
   one loop tick (5 seconds), and the Worker rejects with "Sender blocked". An
-  unreadable list fails the publish, leaving the Worker's last table (and its
-  blocks) in place, and shows as `error` in status. Mail already accepted or
+  unreadable list never stops route publishing (the Worker refuses all mail
+  once its table is 14 days old): the table is still published, hourly and on
+  every route change, with the blocks of the last installed revision
+  (`cloudflare.db` records each revision's blocks), or none if nothing was
+  published before. Status shows `error` with that reason and the daemon logs
+  it until the list is repaired or restored. Mail already accepted or
   waiting in R2 is unaffected: blocks never delete mail retroactively.
 
 API (admin only; POST and DELETE need CSRF and the account credential, or
@@ -947,8 +951,10 @@ KySignOn step-up, in the JSON body as for quarantine):
   returns `{block}`; adding an existing kind/value replaces it. 400 invalid
   value, kind, reason or past `until`; 409 own domain, list full or receiving
   not initialized; 503 storage.
-- `DELETE /api/admin/receiving/blocks/{kind}/{value}` returns `{id,result:"unblocked"}`;
-  404 when no such block is in force.
+- `DELETE /api/admin/receiving/blocks/{id}` with the listed 16-hex `id`
+  returns `{id,result:"unblocked"}`; 400 malformed ID, 404 when no such block
+  is in force. The URL carries the ID, never the address, so reverse-proxy
+  access logs record no blocked senders.
 
 CLI, as the runtime user that owns `STATE_DIR` (it refuses any other), with the
 value typed again after `--confirm`:

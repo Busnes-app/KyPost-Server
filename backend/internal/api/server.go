@@ -567,7 +567,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/receiving/cloudflare", s.withAdmin(s.handleCloudflareReceivingStatus))
 	mux.HandleFunc("GET /api/admin/receiving/blocks", s.withAdmin(s.handleSenderBlocksList))
 	mux.HandleFunc("POST /api/admin/receiving/blocks", s.withAdmin(withActionDigest(s.handleSenderBlockAdd)))
-	mux.HandleFunc("DELETE /api/admin/receiving/blocks/{kind}/{value}", s.withAdmin(withActionDigest(s.handleSenderBlockRemove)))
+	mux.HandleFunc("DELETE /api/admin/receiving/blocks/{id}", s.withAdmin(withActionDigest(s.handleSenderBlockRemove)))
 	mux.HandleFunc("POST /api/admin/receiving/quarantine/{gateway}/{id}/release", s.withAdmin(withActionDigest(s.handleQuarantineRelease)))
 	mux.HandleFunc("POST /api/admin/receiving/quarantine/{gateway}/{id}/discard", s.withAdmin(withActionDigest(s.handleQuarantineDiscard)))
 	mux.HandleFunc("GET /api/admin/mail-relay", s.withAdmin(s.handleNativeMailRelay))

@@ -224,16 +224,16 @@ func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.T
 	})
 }
 
-// Remove deletes the block for kind/value; false when none is in force.
-func (s Blocks) Remove(ctx context.Context, kind, value string, now time.Time) (bool, error) {
-	value, err := NormalizeBlock(kind, value)
-	if err != nil {
-		return false, err
+// Remove deletes the block with this ID (BlockID of its normalized
+// kind/value); false when none is in force.
+func (s Blocks) Remove(ctx context.Context, id string, now time.Time) (bool, error) {
+	if raw, err := hex.DecodeString(id); err != nil || len(raw) != 8 || hex.EncodeToString(raw) != id {
+		return false, ErrBlockInvalid
 	}
 	found := false
-	err = s.change(ctx, now, func(blocks []SenderBlock) ([]SenderBlock, error) {
+	err := s.change(ctx, now, func(blocks []SenderBlock) ([]SenderBlock, error) {
 		before := len(blocks)
-		blocks = slices.DeleteFunc(blocks, func(x SenderBlock) bool { return x.ID == BlockID(kind, value) })
+		blocks = slices.DeleteFunc(blocks, func(x SenderBlock) bool { return x.ID == id })
 		found = len(blocks) < before
 		return blocks, nil
 	})

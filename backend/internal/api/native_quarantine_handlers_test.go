@@ -347,7 +347,7 @@ func TestSenderBlocksAdminAPI(t *testing.T) {
 	if w := call("GET", base, mtoken, mcsrf, ""); w.Code != 403 {
 		t.Fatal("member listed blocks", w.Code)
 	}
-	for _, c := range [][2]string{{"POST", base}, {"DELETE", base + "/domain/evil.test"}} {
+	for _, c := range [][2]string{{"POST", base}, {"DELETE", base + "/" + ingress.BlockID("domain", "evil.test")}} {
 		if w := call(c[0], c[1], mtoken, mcsrf, `{"kind":"domain","value":"evil.test","password":"x"}`); w.Code != 403 {
 			t.Fatal("member changed blocks", c, w.Code)
 		}
@@ -384,10 +384,19 @@ func TestSenderBlocksAdminAPI(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"value":"bad@spam.test"`) || !strings.Contains(w.Body.String(), `"value":"evil.test"`) {
 		t.Fatal("list", w.Code, w.Body)
 	}
-	if w = call("DELETE", base+"/address/BAD@spam.test", token, csrf, `{`+confirm+`}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"result":"unblocked"`) {
+	badID := ingress.BlockID("address", "bad@spam.test")
+	if !strings.Contains(w.Body.String(), `"id":"`+badID+`"`) {
+		t.Fatal("list lacks the block id", w.Body)
+	}
+	for _, path := range []string{base + "/address/bad@spam.test", base + "/bad@spam.test", base + "/" + strings.ToUpper(badID)} {
+		if w = call("DELETE", path, token, csrf, `{`+confirm+`}`); w.Code != 400 && w.Code != 404 && w.Code != 405 || strings.Contains(w.Body.String(), "unblocked") {
+			t.Fatal("unblock by address", path, w.Code, w.Body)
+		}
+	}
+	if w = call("DELETE", base+"/"+badID, token, csrf, `{`+confirm+`}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"result":"unblocked"`) {
 		t.Fatal("unblock", w.Code, w.Body)
 	}
-	if w = call("DELETE", base+"/address/bad@spam.test", token, csrf, `{`+confirm+`}`); w.Code != 404 {
+	if w = call("DELETE", base+"/"+badID, token, csrf, `{`+confirm+`}`); w.Code != 404 {
 		t.Fatal("second unblock", w.Code, w.Body)
 	}
 	if w = call("GET", base, token, csrf, ""); strings.Contains(w.Body.String(), "bad@spam.test") || !strings.Contains(w.Body.String(), "evil.test") {
@@ -395,8 +404,7 @@ func TestSenderBlocksAdminAPI(t *testing.T) {
 	}
 	// Audited with actor, action and block ID; never the address.
 	audit := logs.String()
-	id, _ := ingress.NormalizeBlock("address", "bad@spam.test")
-	for _, want := range []string{`"action":"block_sender"`, `"action":"unblock_sender"`, `"result":"blocked"`, `"result":"unblocked"`, `"result":"refused"`, `"actor":"` + admin.ID + `"`, `"correlation_id":"` + ingress.BlockID("address", id) + `"`} {
+	for _, want := range []string{`"action":"block_sender"`, `"action":"unblock_sender"`, `"result":"blocked"`, `"result":"unblocked"`, `"result":"refused"`, `"actor":"` + admin.ID + `"`, `"correlation_id":"` + badID + `"`} {
 		if !strings.Contains(audit, want) {
 			t.Fatal("audit missing", want, audit)
 		}
