@@ -788,7 +788,7 @@ func (s *Server) routesRules(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/rules/reorder", s.withAuth(s.handleRulesReorder))
 	mux.HandleFunc("GET /api/rules/{id}/sieve", s.withMailAuth(s.handleRuleSieve))
 	mux.HandleFunc("PUT /api/rules/{id}/sieve", s.withAuth(s.handleRuleSieve))
-	mux.HandleFunc("POST /api/rules/run", s.withMailAuth(s.handleRulesRun))
+	mux.HandleFunc("POST /api/rules/run", s.withMailAuth(s.withMailbox(s.handleRulesRun)))
 }
 
 // routesFrontend registers the SPA fallback. "/" is the least specific

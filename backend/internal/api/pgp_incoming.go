@@ -50,6 +50,15 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid incoming encryption preference", http.StatusBadRequest)
 			return
 		}
+		if req.Enabled {
+			if owns, err := s.ownsExtraMailbox(ac.UserID); err != nil {
+				http.Error(w, "cannot verify your mailboxes; incoming encryption was not enabled", http.StatusServiceUnavailable)
+				return
+			} else if owns {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": errIncomingEncryptionExtraMailbox.Error()})
+				return
+			}
+		}
 		if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
 			return
 		}

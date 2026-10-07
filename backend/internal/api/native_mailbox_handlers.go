@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -28,6 +29,9 @@ func (s *Server) withMailbox(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if _, _, err := s.nativeMailboxAssignment(r.Context(), ac.UserID, id); err != nil {
+			if s.refuseNativeAdministrator(w, r, ac.UserID, err) {
+				return
+			}
 			if errors.Is(err, sso.ErrNativeMailboxUnknown) {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "mailbox not found"})
 				return
@@ -104,7 +108,7 @@ func (s *Server) handleMailboxes(w http.ResponseWriter, r *http.Request) {
 	for _, m := range all {
 		// The primary was admitted above; its ledger state may lag a
 		// reactivation until the worker reconciles it.
-		if m.User != ac.UserID || m.Kind == "extra" && m.State != "active" {
+		if m.User != ac.UserID || m.Kind == "extra" && (m.State != "active" || !m.Prepared) {
 			continue
 		}
 		box := clientMailbox{ID: m.ID, Kind: m.Kind, Addresses: []clientAddress{}}
@@ -145,6 +149,9 @@ func (s *Server) handleNativeMailboxes(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, users.ErrNotFound) || err == nil && u.NativeMailboxSource == "":
 		err = sso.ErrNativeAddressUnknown
 	}
+	if err == nil {
+		err = s.refuseExtraBesideIncomingEncryption(u)
+	}
 	m := sso.NativeMailbox{}
 	if err == nil {
 		m, err = s.ssoLifecycle.CreateNativeMailbox(r.Context(), s.stateDir, body.User, body.Address)
@@ -173,9 +180,54 @@ func (s *Server) setNativeMailboxState(w http.ResponseWriter, r *http.Request, a
 	s.answerNativeMailbox(w, r, action, m, err)
 }
 
+// Incoming encryption keeps one journal per user and covers the primary
+// mailbox only, so it and extra mailboxes are mutually exclusive: an extra
+// mailbox's mail would otherwise stay plaintext while the user believes it
+// is encrypted. The poller refuses to poll past this rule as a backstop.
+var (
+	errExtraMailboxIncomingEncryption = errors.New("this user has incoming encryption on (or a replacement pending); they must turn it off before an additional mailbox can be created")
+	errIncomingEncryptionExtraMailbox = errors.New("incoming encryption covers only your primary mailbox, so it cannot be turned on while you have additional mailboxes; ask an administrator if you no longer need them")
+)
+
+func (s *Server) refuseExtraBesideIncomingEncryption(u users.User) error {
+	settings, err := config.LoadUserSettings(s.userSettingsPath(u.ID))
+	if err != nil {
+		return err
+	}
+	if settings.EncryptIncoming || u.IncomingEncryptionPending {
+		return errExtraMailboxIncomingEncryption
+	}
+	return nil
+}
+
+// ownsExtraMailbox reports whether the user has an extra mailbox in any state,
+// prepared or not. Only native accounts can.
+func (s *Server) ownsExtraMailbox(userID string) (bool, error) {
+	u, err := s.users.Get(userID)
+	if err != nil || u.NativeMailboxSource == "" {
+		return false, err
+	}
+	all, err := s.ssoLifecycle.NativeMailboxes()
+	if err != nil {
+		return false, err
+	}
+	for _, m := range all {
+		if m.User == userID && m.Kind == "extra" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // answerNativeMailbox maps the ledger's fixed errors as answerNativeAddress
 // does and audits the mailbox, never an address.
 func (s *Server) answerNativeMailbox(w http.ResponseWriter, r *http.Request, action string, m sso.NativeMailbox, err error) {
+	if errors.Is(err, errExtraMailboxIncomingEncryption) {
+		ac, _ := authFromContext(r)
+		s.logger.Info("native mailbox change", "actor", ac.UserID, "action", action, "target", m.ID, "result", "refused")
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return
+	}
 	if err == nil {
 		ac, _ := authFromContext(r)
 		s.logger.Info("native mailbox change", "actor", ac.UserID, "action", action, "target", m.ID, "result", "committed")

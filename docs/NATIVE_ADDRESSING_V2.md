@@ -25,7 +25,10 @@ for extra mailboxes (admin create, disable and re-enable API; `$STATE/mailboxes/
 storage with a mail-only `state.db`; authority, caches, poller and outbox keyed
 by mailbox ID; `GET /api/mailboxes` and `X-KyPost-Mailbox`; notifications carry
 the mailbox ID; backup validation, reference rotation and the recovery digest).
-Incoming encryption and sorter learning cover the primary mailbox only. Phase 4b
+Sorter learning covers the primary mailbox only; incoming encryption keeps
+one journal per user, so it and extra mailboxes exclude each other (each is
+refused while the other exists). Disabling an extra mailbox quarantines its
+queued or retryable outbox jobs for good. Phase 4b
 (the admin screen for mailboxes) is not implemented.
 Prerequisite of
 [continuous Cloudflare receiving](CLOUDFLARE_CONTINUOUS_RECEIVING.md); applies to

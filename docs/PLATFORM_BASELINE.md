@@ -507,7 +507,8 @@ are unchanged: without the header below every route serves the primary mailbox.
   `/api/inbox/folders`, `/api/inbox/actions`, `/api/mail/search`,
   `/api/mail/draft`, `/api/mail/send`, `/api/mail/send-pgp`,
   `/api/mail/outbox/{id}`, `/api/mail/body`, `/api/mail/pgp-payload`,
-  `/api/mail/attachments`, `/api/mail/attachment` and `/api/decisions`. An
+  `/api/mail/attachments`, `/api/mail/attachment`, `/api/rules/run` and
+  `/api/decisions`. An
   absent header or the primary's ID selects the primary. An unknown, foreign or
   disabled mailbox answers `404 {"error":"mailbox not found"}`, identical for
   all three: drop the mailbox from the local list and refresh
@@ -515,7 +516,11 @@ are unchanged: without the header below every route serves the primary mailbox.
   send one to another mailbox. `from` names an active address of the selected
   mailbox (omitted means its primary address).
 - Every other route (devices, pairing, notifications, contacts, CardDAV, PGP
-  keys, settings, rules, labels) is per user and ignores the header.
+  keys, settings, rule definitions, labels) is per user and ignores the header;
+  `/api/labels` reports labels discovered in the primary mailbox only.
+- `PUT /api/pgp/incoming` with `enabled:true` answers 409 with an explanatory
+  `error` while the user has any additional mailbox: incoming encryption covers
+  the primary only. Show the text; do not retry.
 - Push data and pull notifications for native mail carry an additive `mailbox`
   field (the mailbox ID; web push payloads too). Select that mailbox before
   opening the referenced message. Older notifications have no field: they

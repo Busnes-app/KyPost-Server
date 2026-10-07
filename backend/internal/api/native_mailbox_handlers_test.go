@@ -11,13 +11,16 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -98,7 +101,7 @@ func TestNativeMailboxesAdminAPIAndSelection(t *testing.T) {
 	}
 
 	// One message in each mailbox.
-	put := func(mailboxID, subject string) {
+	put := func(mailboxID, subject string) string {
 		t.Helper()
 		a, err := srv.ssoLifecycle.AdmitNativeMailbox(ctx, srv.stateDir, "https://idp.example", one.ID, mailboxID, srv.users)
 		if err != nil {
@@ -110,12 +113,14 @@ func TestNativeMailboxesAdminAPIAndSelection(t *testing.T) {
 		}
 		defer store.Close()
 		raw := mailmsg.Message{From: "sender@outside.test", To: []string{a.Address}, Subject: subject, Body: subject + " body"}.Build()
-		if _, err := store.Import(ctx, mailbox.Receipt{Gateway: "qualified-test", Delivery: subject, Sender: "sender@outside.test", Recipients: []mailbox.Recipient{{Address: a.Address, Generation: 1}}}, bytes.NewReader(raw)); err != nil {
+		id, err := store.Import(ctx, mailbox.Receipt{Gateway: "qualified-test", Delivery: subject, Sender: "sender@outside.test", Recipients: []mailbox.Recipient{{Address: a.Address, Generation: 1}}}, bytes.NewReader(raw))
+		if err != nil {
 			t.Fatal(err)
 		}
+		return "n1:" + store.MessageReferenceGeneration() + ":" + strconv.FormatInt(id, 10)
 	}
 	put(one.ID, "primary-only-subject")
-	put(extra.ID, "extra-only-subject")
+	extraRef := put(extra.ID, "extra-only-subject")
 	as := func(userID, method, path, header string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, nil)
 		authRequestAs(srv, req, userID)
@@ -267,4 +272,202 @@ func TestNativeMailboxesAdminAPIAndSelection(t *testing.T) {
 		t.Fatal("enable", w.Code, w.Body)
 	}
 	sees(as(one.ID, "GET", "/api/inbox?limit=10", extra.ID), "extra-only-subject", "primary-only-subject")
+
+	// Sorter state is the primary's. A primary prediction under the same
+	// numeric ID as the extra message must not learn from labelling it, nor
+	// from the extra inbox sync that follows.
+	settings := config.DefaultUserSettings()
+	settings.Labels.Seeded = true
+	settings.Labels.Allowlist = []string{"Primary", "Promotions"}
+	if err := config.SaveUserSettings(srv.userSettingsPath(one.ID), settings); err != nil {
+		t.Fatal(err)
+	}
+	primaryCache, err := srv.mailboxCacheStore(one.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	extraMailCache, err := srv.mailboxCacheStore(one.ID, extra.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primaryEntries, _, err := primaryCache.Snapshot(inboxCacheMailboxKey(""), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extraEntries, _, err := extraMailCache.Snapshot(inboxCacheMailboxKey(""), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(primaryEntries) != 1 || len(extraEntries) != 1 || primaryEntries[0].UID != extraEntries[0].UID {
+		t.Fatal("fixture: the two mailboxes' first messages share a numeric ID", primaryEntries, extraEntries)
+	}
+	primaryState, err := srv.userStore(one.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	predict := func(e mailcache.Entry) {
+		t.Helper()
+		if err := primaryState.RecordSorterPrediction(strconv.Itoa(e.UID), state.SorterCheck(e.Sender, e.Subject), "m", []float32{1, 0}, "Primary"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	untaught := func(step string) {
+		t.Helper()
+		if ex, err := primaryState.SorterCorrectionsStrict("m"); err != nil || len(ex) != 0 {
+			t.Fatal(step+": extra mailbox taught the primary sorter", ex, err)
+		}
+	}
+	generation, err := primaryState.SorterGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	predict(primaryEntries[0])
+	label := httptest.NewRequest("POST", "/api/inbox/actions", strings.NewReader(`{"action":"label","keyword":"Promotions","messageIds":["`+extraRef+`"]}`))
+	label.Header.Set("Content-Type", "application/json")
+	authRequestAs(srv, label, one.ID)
+	label.Header.Set(mailboxHeader, extra.ID)
+	w = httptest.NewRecorder()
+	srv.routes().ServeHTTP(w, label)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"processed":1`) {
+		t.Fatal("label in the extra mailbox", w.Code, w.Body)
+	}
+	untaught("label")
+	predict(extraEntries[0])
+	sees(as(one.ID, "GET", "/api/inbox?limit=10", extra.ID), "extra-only-subject", "primary-only-subject")
+	untaught("sync")
+	if after, err := primaryState.SorterGeneration(); err != nil || after != generation {
+		t.Fatal("sorter generation changed", generation, after, err)
+	}
+
+	// The manual rules run acts on the selected mailbox only.
+	rulesStore, err := srv.userRulesStore(one.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := rulesTestRule("archive outside")
+	rule.Match.Conditions[0].Value = "outside"
+	if _, err := rulesStore.Upsert(rule); err != nil {
+		t.Fatal(err)
+	}
+	run := httptest.NewRequest("POST", "/api/rules/run", strings.NewReader(`{"mailbox":"INBOX"}`))
+	authRequestAs(srv, run, one.ID)
+	run.Header.Set(mailboxHeader, extra.ID)
+	w = httptest.NewRecorder()
+	srv.routes().ServeHTTP(w, run)
+	var ran rulesRunResult
+	if err := json.Unmarshal(w.Body.Bytes(), &ran); w.Code != 200 || err != nil || ran.Scanned != 1 || ran.Applied != 1 {
+		t.Fatal("rules run in the extra mailbox", w.Code, w.Body)
+	}
+	sees(as(one.ID, "GET", "/api/inbox?limit=10", ""), "primary-only-subject", "extra-only-subject")
+	if w := as(one.ID, "GET", "/api/inbox?limit=10", extra.ID); w.Code != 200 || strings.Contains(w.Body.String(), "extra-only-subject") {
+		t.Fatal("rule did not archive the extra mailbox's message", w.Code, w.Body)
+	}
+}
+
+// Incoming encryption covers the primary mailbox only, so it and extra
+// mailboxes exclude each other in both directions.
+func TestNativeExtraMailboxExcludesIncomingEncryption(t *testing.T) {
+	ctx := context.Background()
+	srv := newNativeRuntimeServer(t)
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "exclusive-one", 1, runtimeDirectoryUser(true)))
+	one, err := srv.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const password = "long-password-for-mailboxes"
+	admin, err := srv.users.Create(ctx, "exclusive-admin", password, users.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, csrf := mintSessionForTest(srv, admin.ID)
+	create := func(address string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/admin/mailboxes", strings.NewReader(`{"user":"`+one.ID+`","address":"`+address+`","password":"`+password+`"}`))
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
+		req.Header.Set("X-CSRF-Token", csrf)
+		w := httptest.NewRecorder()
+		srv.routes().ServeHTTP(w, req)
+		return w
+	}
+	setEncrypt := func(on bool) {
+		t.Helper()
+		if err := config.UpdateUserSettings(srv.userSettingsPath(one.ID), func(s *config.UserSettings) error { s.EncryptIncoming = on; return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setEncrypt(true)
+	if w := create("sales@example.test"); w.Code != 409 || !strings.Contains(w.Body.String(), "incoming encryption") {
+		t.Fatal("extra mailbox created beside incoming encryption", w.Code, w.Body)
+	}
+	setEncrypt(false)
+	if _, err := srv.users.ReserveIncomingEncryption(one.ID, one.PGPFingerprint, one.PGPRevision); err != nil {
+		t.Fatal(err)
+	}
+	if w := create("sales@example.test"); w.Code != 409 || !strings.Contains(w.Body.String(), "incoming encryption") {
+		t.Fatal("extra mailbox created beside a pending replacement", w.Code, w.Body)
+	}
+	if err := srv.users.ReleaseIncomingEncryption(one.ID); err != nil {
+		t.Fatal(err)
+	}
+	w := create("sales@example.test")
+	var extra sso.NativeMailbox
+	if err := json.Unmarshal(w.Body.Bytes(), &extra); w.Code != 200 || err != nil {
+		t.Fatal("create", w.Code, w.Body)
+	}
+	enable := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("PUT", "/api/pgp/incoming", strings.NewReader(`{"enabled":true,"acknowledgeReplacement":true}`))
+		req.Header.Set("Content-Type", "application/json")
+		authRequestAs(srv, req, one.ID)
+		w := httptest.NewRecorder()
+		srv.routes().ServeHTTP(w, req)
+		return w
+	}
+	want := `{"error":"` + errIncomingEncryptionExtraMailbox.Error() + `"}`
+	if w := enable(); w.Code != 409 || strings.TrimSpace(w.Body.String()) != want {
+		t.Fatal("incoming encryption enabled beside an extra mailbox", w.Code, w.Body)
+	}
+	if _, err := srv.ssoLifecycle.SetNativeMailboxState(ctx, srv.stateDir, extra.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if w := enable(); w.Code != 409 || strings.TrimSpace(w.Body.String()) != want {
+		t.Fatal("a disabled extra mailbox allowed incoming encryption", w.Code, w.Body)
+	}
+	// An active mailbox whose creation never published storage is not listed.
+	if _, err := srv.ssoLifecycle.SetNativeMailboxState(ctx, srv.stateDir, extra.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(srv.configDir, "native-provisioning.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ledger map[string]any
+	if err := json.Unmarshal(raw, &ledger); err != nil {
+		t.Fatal(err)
+	}
+	delete(ledger["mailboxes"].(map[string]any)[extra.ID].(map[string]any), "source")
+	if raw, err = json.Marshal(ledger); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/api/mailboxes", nil)
+	authRequestAs(srv, req, one.ID)
+	w = httptest.NewRecorder()
+	srv.routes().ServeHTTP(w, req)
+	if w.Code != 200 || strings.Contains(w.Body.String(), extra.ID) {
+		t.Fatal("unprepared mailbox listed", w.Code, w.Body)
+	}
+	// A promoted subject selecting a mailbox gets the administrator 403.
+	promoted := scimUser("native-runtime-one", "runtime-one", true, "kypost.admin")
+	promoted["emails"] = runtimeDirectoryUser(true)["emails"]
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.updated", "exclusive-one-promoted", 2, promoted))
+	req = httptest.NewRequest("GET", "/api/decisions", nil)
+	authRequestAs(srv, req, one.ID)
+	req.Header.Set(mailboxHeader, extra.ID)
+	w = httptest.NewRecorder()
+	srv.routes().ServeHTTP(w, req)
+	if w.Code != 403 || !strings.Contains(w.Body.String(), "administratorIdentity") {
+		t.Fatal("administrator selecting a mailbox", w.Code, w.Body)
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -128,6 +129,52 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 	if pulled, _, err := extra.PullNotificationsAfterStrict("phone", 0); err != nil || len(pulled) != 0 {
 		t.Fatal("extra mailbox state gained notifications", pulled, err)
 	}
+	// Backstop: with incoming encryption on, the extra mailbox is not polled.
+	appendTo(m.ID, "while-encrypting")
+	setEncrypt := func(on bool) {
+		t.Helper()
+		if err := config.UpdateUserSettings(p.userSettingsPath(u.ID), func(s *config.UserSettings) error { s.EncryptIncoming = on; return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setEncrypt(true)
+	logs.Reset()
+	p.tick()
+	if d := extra.Decisions(10); len(d) != 1 || !bytes.Contains(logs.Bytes(), []byte("extra mailbox not polled")) {
+		t.Fatalf("extra mailbox polled beside incoming encryption %+v", d)
+	}
+	setEncrypt(false)
+	// A creation interrupted before publication (no source) is not polled.
+	ledgerPath := filepath.Join(p.configDir, "native-provisioning.json")
+	raw, err = os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ledger map[string]any
+	if err := json.Unmarshal(raw, &ledger); err != nil {
+		t.Fatal(err)
+	}
+	record := ledger["mailboxes"].(map[string]any)[m.ID].(map[string]any)
+	source := record["source"]
+	delete(record, "source")
+	write := func() {
+		t.Helper()
+		data, err := json.Marshal(ledger)
+		if err == nil {
+			err = os.WriteFile(ledgerPath, data, 0o600)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	logs.Reset()
+	p.tick()
+	if d := extra.Decisions(10); len(d) != 1 || bytes.Contains(logs.Bytes(), []byte("mailbox admission refused")) {
+		t.Fatalf("unprepared mailbox polled %+v %s", d, logs.Bytes())
+	}
+	record["source"] = source
+	write()
 	// A disabled mailbox is not polled; its mail waits.
 	appendTo(m.ID, "while-disabled")
 	if _, err := life.SetNativeMailboxState(ctx, p.stateDir, m.ID, false); err != nil {

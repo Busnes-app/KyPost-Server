@@ -163,6 +163,8 @@ type userCtx struct {
 	guesses map[string]sortGuess
 }
 
+var errIncomingEncryptionExtraMailbox = errors.New("incoming encryption is on for the owner of an extra mailbox; disable it or the mailbox")
+
 // primaryStore is the user's primary state.
 func (uc userCtx) primaryStore() *state.Store {
 	if uc.primary != nil {
@@ -534,28 +536,46 @@ func (p *Poller) cleanupAllUsers() {
 
 // cleanupExtraMailboxes trims the state of every admitted extra mailbox.
 func (p *Poller) cleanupExtraMailboxes() {
+	p.forExtraMailboxStores("state cleanup", func(store *state.Store) error { return store.Cleanup(stateRetentionDays) })
+}
+
+// activeExtraMailboxes lists each user's extra mailboxes that may be polled:
+// active and prepared. Admission refuses the rest anyway; listing them would
+// only log a refusal every tick.
+func (p *Poller) activeExtraMailboxes() map[string][]string {
+	extras := map[string][]string{}
 	if !p.nativeMail {
-		return
+		return extras
 	}
 	mailboxes, err := sso.NewLifecycleStore(p.configDir).NativeMailboxes()
 	if err != nil {
-		p.log.Error("failed to list mailboxes for state cleanup", "error", err.Error())
-		return
+		p.log.Error("failed to list extra mailboxes", "error", err.Error())
+		return extras
 	}
 	for _, m := range mailboxes {
-		if m.Kind != "extra" || m.State != "active" {
-			continue
+		if m.Kind == "extra" && m.State == "active" && m.Prepared {
+			extras[m.User] = append(extras[m.User], m.ID)
 		}
-		a, _, err := p.nativeMailboxAssignment(p.lifetimeCtx(), m.User, m.ID)
-		var store *state.Store
-		if err == nil {
-			store, err = p.mailboxStore(a)
-		}
-		if err == nil {
-			err = store.Cleanup(stateRetentionDays)
-		}
-		if err != nil {
-			p.log.Error("mailbox state cleanup failed", "user_id", m.User, "error", err.Error())
+	}
+	return extras
+}
+
+// forExtraMailboxStores runs action on the state of every admitted extra
+// mailbox, logging failures per mailbox.
+func (p *Poller) forExtraMailboxStores(what string, action func(*state.Store) error) {
+	for userID, ids := range p.activeExtraMailboxes() {
+		for _, id := range ids {
+			a, _, err := p.nativeMailboxAssignment(p.lifetimeCtx(), userID, id)
+			var store *state.Store
+			if err == nil {
+				store, err = p.mailboxStore(a)
+			}
+			if err == nil {
+				err = action(store)
+			}
+			if err != nil {
+				p.log.Error("mailbox "+what+" failed", "user_id", userID, "error", err.Error())
+			}
 		}
 	}
 }
@@ -613,6 +633,7 @@ func (p *Poller) TriggerUnreadSweep() {
 				p.log.Error("failed to reset checkpoint for unread sweep", "user_id", u.ID, "error", err.Error())
 			}
 		}
+		p.forExtraMailboxStores("unread sweep", func(store *state.Store) error { return store.SetCheckpoint("") })
 	}
 	p.tick()
 }
@@ -695,18 +716,7 @@ func (p *Poller) tick() {
 	var resMu sync.Mutex
 	usersPolled := 0
 	usersFailed := 0
-	// Extra mailboxes poll beside their owner's primary; admission refuses a
-	// disabled one, so only active ones are listed.
-	extras := map[string][]string{}
-	if p.nativeMail {
-		if mailboxes, err := sso.NewLifecycleStore(p.configDir).NativeMailboxes(); err == nil {
-			for _, m := range mailboxes {
-				if m.Kind == "extra" && m.State == "active" {
-					extras[m.User] = append(extras[m.User], m.ID)
-				}
-			}
-		}
-	}
+	extras := p.activeExtraMailboxes()
 
 	for _, u := range all {
 		if !u.Active {
@@ -830,6 +840,13 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 	if err != nil {
 		p.log.Error("cannot read or seed user settings; skipping tick", "user_id", u.ID, "error", err.Error())
 		return err
+	}
+	// Incoming encryption has one journal per user, kept for the primary.
+	// The API refuses enabling it beside extra mailboxes and creating one
+	// while it is on; never poll an extra mailbox past that rule.
+	if mailboxID != "" && (settings.EncryptIncoming || u.IncomingEncryptionPending) {
+		p.log.Error("extra mailbox not polled: incoming encryption is on for its owner", "user_id", u.ID)
+		return errIncomingEncryptionExtraMailbox
 	}
 
 	tuning := ""

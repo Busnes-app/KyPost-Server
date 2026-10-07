@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -274,5 +275,35 @@ func TestNativeReceivingExtraMailbox(t *testing.T) {
 	}
 	if err := r.bind(ctx, "after-disable", "", "sales@example.test"); err == nil {
 		t.Fatal("disabled mailbox bound new mail")
+	}
+}
+
+// A creation interrupted before its storage was published leaves an active,
+// unprepared mailbox: outbox discovery skips it rather than failing on it.
+func TestNativeOutboxSkipsUnpreparedMailbox(t *testing.T) {
+	r, created := receivingFixture(t)
+	m, err := r.life.CreateNativeMailbox(context.Background(), r.stateDir, created[0].ID, "sales@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := r.accounts.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mailboxes, err := r.life.NativeMailboxes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range mailboxes {
+		if mailboxes[i].ID == m.ID {
+			if !mailboxes[i].Prepared {
+				t.Fatal("prepared mailbox reported unprepared")
+			}
+			mailboxes[i].Prepared = false
+		}
+	}
+	ids := outboxMailboxes(all, mailboxes)
+	if len(ids) != len(created) || slices.Contains(ids, m.ID) {
+		t.Fatal("outbox discovery", ids)
 	}
 }

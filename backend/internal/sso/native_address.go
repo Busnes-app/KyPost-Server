@@ -34,10 +34,13 @@ type NativeAddress struct {
 // NativeMailbox lists a mailbox and its addresses for administrators. User is
 // the owning account's ID (its primary mailbox ID).
 type NativeMailbox struct {
-	ID        string          `json:"mailbox"`
-	User      string          `json:"user"`
-	Kind      string          `json:"kind"`
-	State     string          `json:"state"`
+	ID    string `json:"mailbox"`
+	User  string `json:"user"`
+	Kind  string `json:"kind"`
+	State string `json:"state"`
+	// Prepared is false while a creation has reserved the mailbox but not yet
+	// published its storage; nothing may poll, send from or open it.
+	Prepared  bool            `json:"prepared"`
 	Addresses []NativeAddress `json:"addresses"`
 }
 
@@ -68,7 +71,7 @@ func (s *LifecycleStore) NativeMailboxes() ([]NativeMailbox, error) {
 	mailboxes := []NativeMailbox{}
 	for _, id := range slices.Sorted(maps.Keys(f.stored.Mailboxes)) {
 		m := f.stored.Mailboxes[id]
-		box := NativeMailbox{ID: id, User: f.stored.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].PrimaryMailbox, Kind: m.Kind, State: m.State, Addresses: []NativeAddress{}}
+		box := NativeMailbox{ID: id, User: f.stored.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].PrimaryMailbox, Kind: m.Kind, State: m.State, Prepared: m.Source != "", Addresses: []NativeAddress{}}
 		for _, address := range slices.Sorted(maps.Keys(f.stored.Addresses)) {
 			if x := f.stored.Addresses[address]; x.Mailbox == id {
 				box.Addresses = append(box.Addresses, x.public(address))

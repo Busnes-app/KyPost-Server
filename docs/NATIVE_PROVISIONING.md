@@ -318,7 +318,15 @@ KyIdentity primary ([spec](NATIVE_ADDRESSING_V2.md#mailbox-storage)).
     address resumes an interrupted creation.
   - `POST /api/admin/mailboxes/{id}/disable` and `/enable` change an extra
     mailbox's state (409 when already in it, 404 for a primary or unknown ID).
-    Mail is retained while disabled.
+    Mail is retained while disabled; outbox jobs still queued or retryable in
+    it are quarantined on their next recovery attempt and never resume, even
+    after re-enabling (accepted Sent obligations still finish).
+  - Listings carry `prepared`: false while a creation has reserved a mailbox
+    but not published its storage. Poller, outbox discovery and
+    `GET /api/mailboxes` skip unprepared mailboxes; repeat the creation to
+    finish it.
+  - Creating one is also 409 while the owner has incoming encryption on or a
+    replacement pending (see below).
 - **Authority.** `AdmitNativeMailbox` and `WithNativeMailAccess` take mailbox
   IDs: the owner is admitted as today, then an extra mailbox must belong to the
   same subject, be `active` and prepared, and pass storage validation. Unknown,
@@ -432,12 +440,19 @@ Mail endpoints accept an optional `X-KyPost-Mailbox` header selecting one of
 the caller's mailboxes (absent, or the caller's user ID, is the primary). It is
 resolved through the ledger on every request after authentication; an unknown,
 foreign or disabled mailbox answers `404 {"error":"mailbox not found"}` before
-any storage is opened. Per-user endpoints (devices, pairing, contacts, CardDAV,
-PGP keys, settings, rules) ignore it. `GET /api/mailboxes` lists the caller's
+any storage is opened (an administrator subject gets the usual 403). Per-user
+endpoints (devices, pairing, contacts, CardDAV, PGP keys, settings, rule
+definitions) ignore it; `/api/labels` reports the primary mailbox's labels. The
+manual `POST /api/rules/run` runs the user's rules in the selected mailbox. `GET /api/mailboxes` lists the caller's
 accessible mailboxes and their active addresses. Every mail cache is keyed by
 mailbox ID. The poller polls each active mailbox with the owner's settings,
-rules and labels; incoming encryption and sorter learning cover the primary
-mailbox only, so an extra mailbox's mail stays as received. Native pickup creation and system/own-address SMTP
+rules and labels, skipping disabled and unprepared mailboxes; sorter learning
+covers the primary mailbox only. Incoming encryption keeps one journal per user
+for the primary mailbox, so it and extra mailboxes exclude each other: creating
+an extra mailbox is 409 while the owner has incoming encryption on or a
+replacement pending, enabling incoming encryption is 409 while the user has any
+extra mailbox (disabled ones included), and the poller refuses to poll an extra
+mailbox whose owner has it on. Native pickup creation and system/own-address SMTP
 probes remain refused or skipped pending their authority/dependency integration. A leftover IMAP
 credential file cannot enable any native legacy SMTP path. Do not publish MX for this runtime alone. Roll back by
 disabling both native flags in both processes and keeping all

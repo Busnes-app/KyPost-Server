@@ -7,6 +7,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // Each API/daemon process may discover the same work: durable claims arbitrate.
@@ -43,16 +44,7 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 				// after measuring relay limits and storage contention with representative load.
 				slots := make(chan struct{}, 4)
 				var workers sync.WaitGroup
-				native := map[string]bool{}
-				for _, u := range all {
-					native[u.ID] = u.NativeMailboxSource != "" && u.NativeMailboxIssuer != ""
-				}
-				// Every mailbox (primary or extra) of a published native user
-				// has its own outbox; disabled ones still finish Sent filing.
-				for _, m := range mailboxes {
-					if !native[m.User] {
-						continue
-					}
+				for _, mailboxID := range outboxMailboxes(all, mailboxes) {
 					select {
 					case slots <- struct{}{}:
 					case <-ctx.Done():
@@ -78,7 +70,7 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 								d.logger.Error("native outbox recovery deferred; inspect delivery evidence before resubmitting", "correlation_id", id, "error", "storage, sender authority or relay unavailable")
 							}
 						}
-					}(m.ID)
+					}(mailboxID)
 				}
 				workers.Wait()
 			}
@@ -90,4 +82,21 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 		}
 	}()
 	return done
+}
+
+// outboxMailboxes lists every mailbox (primary or extra) of a published
+// native user with storage: each has its own outbox, and disabled ones still
+// finish Sent filing. An unprepared mailbox has no storage, hence no outbox.
+func outboxMailboxes(all []users.User, mailboxes []sso.NativeMailbox) []string {
+	native := map[string]bool{}
+	for _, u := range all {
+		native[u.ID] = u.NativeMailboxSource != "" && u.NativeMailboxIssuer != ""
+	}
+	ids := []string{}
+	for _, m := range mailboxes {
+		if native[m.User] && m.Prepared {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids
 }
