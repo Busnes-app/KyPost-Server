@@ -62,6 +62,27 @@ func TestNativeRetiredRelayDomainKeepsHistoricalJobsValid(t *testing.T) {
 	if _, err = s.Collect(); err != nil {
 		t.Fatal("historical job on a retired relay domain refused", err)
 	}
+	// Re-adding the domain keeps the snapshot and the historical job valid,
+	// on and off the relay; then retire it again.
+	if _, err = domains.ConfigureDomain(ctx, "second.test", u.NativeMailboxIssuer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Collect(); err != nil {
+		t.Fatal("snapshot after re-add refused", err)
+	}
+	readded, err := mailmsg.SetDomainRelayDomains(ctx, configPath, keyPath, []string{"example.test", "second.test"})
+	if err != nil || len(readded.RetiredDomains) != 0 || readded.Generation != relay.Generation {
+		t.Fatal("relay re-add", readded, err)
+	}
+	if _, err = s.Collect(); err != nil {
+		t.Fatal("snapshot with the domain back on the relay refused", err)
+	}
+	if _, err = mailmsg.SetDomainRelayDomains(ctx, configPath, keyPath, []string{"example.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = domains.RetireDomain(ctx, "second.test", s.dirs.State, keyPath); err != nil {
+		t.Fatal(err)
+	}
 	// The relay may not still send for a retired domain.
 	if _, err = mailmsg.SetDomainRelayDomains(ctx, configPath, keyPath, []string{"example.test", "second.test"}); err != nil {
 		t.Fatal(err)

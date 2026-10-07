@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,5 +149,86 @@ func TestNativeReceivingConfigListsEveryDomain(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "    destination example.test fourth.test second.test { deliver_to dummy }\n") || strings.Contains(output.String(), "third.test") {
 		t.Fatal("destinations", output.String())
+	}
+}
+
+func TestNativeReceivingResumesAfterDomainReadd(t *testing.T) {
+	r, _ := receivingFixture(t)
+	ctx := context.Background()
+	const issuer = "https://identity.example.test"
+	if _, err := r.domains.ConfigureDomain(ctx, "second.test", issuer); err != nil {
+		t.Fatal(err)
+	}
+	lapsed := map[string]bool{}
+	r.domains.SetLookupForTest(func(_ context.Context, name string) ([]string, error) {
+		set, err := r.domains.ReadSet()
+		for _, d := range set.Domains {
+			if name == d.RecordName()+"." && !lapsed[d.Domain] {
+				return []string{d.RecordValue()}, err
+			}
+		}
+		return nil, err
+	})
+	directory := func(revision int, active bool) {
+		t.Helper()
+		raw := []byte(fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"three","externalId":"three","userName":"three","active":%t,"emails":[{"value":"three@second.test","primary":true}],"meta":{"version":"W/\"%d\""}}`, active, revision))
+		var resource sso.DirectoryUser
+		if err := json.Unmarshal(raw, &resource); err != nil {
+			t.Fatal(err)
+		}
+		ev := syncauth.Event{ID: fmt.Sprintf("three-%d", revision), Type: "user.updated", At: time.Now()}
+		if _, err := r.life.ApplyDirectoryUser(issuer, ev, resource, sso.EventDigest(ev.Type, raw), func() (bool, error) { return !active, nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	limits := mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000}
+	directory(1, true)
+	three, err := r.life.AllocateNativeAccount(ctx, r.stateDir, issuer, "three", r.domains, r.accounts, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory(2, false)
+	if _, err = r.life.DisableNativeMailboxContext(ctx, r.stateDir, issuer, "three", three.ID, "second.test", limits); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.domains.RetireDomain(ctx, "second.test", r.stateDir, filepath.Join(t.TempDir(), "absent.key")); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.bind(ctx, "retired", "", "three@second.test"); !errors.Is(err, ingress.ErrRoute) {
+		t.Fatal("retired domain routed", err)
+	}
+	directory(3, true)
+	if _, err = r.domains.ConfigureDomain(ctx, "second.test", issuer); err != nil {
+		t.Fatal(err)
+	}
+	lapsed["second.test"] = true
+	if err = r.bind(ctx, "unproven", "", "three@second.test"); !errors.Is(err, sso.ErrNativeDomain) {
+		t.Fatal("unproven re-added domain routed", err)
+	}
+	lapsed["second.test"] = false
+	if _, err = r.life.AllocateNativeAccount(ctx, r.stateDir, issuer, "three", r.domains, r.accounts, limits); err != nil {
+		t.Fatal(err)
+	}
+	message := []byte("From: sender@outside.test\r\nSubject: resumed\r\n\r\nbody\r\n")
+	if err = r.bind(ctx, "resumed", "sender@outside.test", "three@second.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.accept(ctx, "resumed", "sender@outside.test", bytes.NewReader(message)); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.importDelivery(ctx, "resumed"); err != nil {
+		t.Fatal(err)
+	}
+	a, _, err := r.life.NativeAssignment(issuer, "three")
+	if err != nil || a.Owner.Mailbox != three.ID {
+		t.Fatal("owner changed", a, err)
+	}
+	box, err := mailbox.OpenExisting(filepath.Join(r.stateDir, "users", three.ID, "mailbox"), a.Owner, a.Limits, a.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer box.Close()
+	if got, err := box.Raw(ctx, "INBOX", 1); err != nil || !bytes.Equal(got, message) {
+		t.Fatal("resumed delivery missing", err)
 	}
 }
