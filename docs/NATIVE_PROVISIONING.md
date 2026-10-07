@@ -240,21 +240,30 @@ recorded as `address_conflict`.
   Each change bumps the generation. The same write then writes the ingress route
   of every non-`active` address inactive at its generation
   (`ingress.DeactivateRoutes`; no receiving store is a no-op). A failed ledger or
-  route write fails the webhook; KyIdentity retries and the rule converges.
+  route write fails the webhook; KyIdentity retries and the rule converges. The
+  ledger is written first, so a route write that fails after it leaves the change
+  durable (`ErrNativeRoutesPending`); every later commit and the worker pass
+  retry the routes, and import already quarantines on the ledger generation.
 - **Administrator actions** (`withAdmin`, CSRF, `withActionDigest` +
   `confirmActor` step-up, audited with actor, action, mailbox and result; never
   the address), under domain → directory locks and refused by a restore hold:
   - `GET /api/admin/mail-addresses[?user=<id>]` lists mailboxes with `address`,
     `kind`, `state`, `generation`.
   - `POST /api/admin/mail-addresses` `{mailbox, address}` adds an alias on a
-    configured, non-retired domain to an everyday identity's mailbox.
+    configured, non-retired domain to an everyday identity's mailbox. An address
+    that any subject's KyIdentity resource names as its primary
+    (case-insensitive, any domain, administrators and not-yet-provisioned
+    subjects included) is refused, for add and reassign alike.
   - `DELETE /api/admin/mail-addresses/{address}` releases an alias (`reserved`,
     generation + 1, route inactive).
   - `POST /api/admin/mail-addresses/{address}/reassign` `{mailbox}` hands a
     reserved alias to a mailbox, the original included, at generation + 1.
   - 400 malformed address, 404 unknown mailbox/address, 409 taken, reserved,
-    primary, wrong state, administrator or `legacyMixedUse` owner, unconfigured
-    or retired domain, or a restore hold.
+    primary, a KyIdentity primary, wrong state, administrator or
+    `legacyMixedUse` owner, unconfigured or retired domain, or a restore hold. A
+    committed change whose route write failed answers 200 with the committed
+    record and a `warning`, audited `committed_routes_pending`; repeating it gets
+    the ordinary answer for the new state (a second release is 409).
 - **Switch-over safety.** Ledgers written before this change (no
   `addressGenerations` marker) carried the directory revision in routes and
   bindings; loading raises each address generation to the owner's current

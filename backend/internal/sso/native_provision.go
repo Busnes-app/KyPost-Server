@@ -292,6 +292,17 @@ func (s *LifecycleStore) persistNative(f nativeAssignments, overlay map[string]D
 	if err = fsutil.PersistJSONFile(s.nativePath(), l); err != nil {
 		return err
 	}
+	return deactivateRoutes(l, inactive)
+}
+
+// ErrNativeRoutesPending: the ledger change is durable but a route could not be
+// written inactive yet. Every later commit and the worker pass retry it; until
+// then import still quarantines on the ledger generation.
+var ErrNativeRoutesPending = errors.New("address change saved, but its receiving route is not yet inactive; it is retried automatically, check the receiving store if this persists")
+
+// deactivateRoutes writes the routes of non-active addresses inactive under the
+// ledger's state root (all mailboxes share it).
+func deactivateRoutes(l nativeLedger, inactive map[string]int64) error {
 	root := ""
 	for _, m := range l.Mailboxes {
 		root = m.StateRoot
@@ -301,7 +312,10 @@ func (s *LifecycleStore) persistNative(f nativeAssignments, overlay map[string]D
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return ingress.DeactivateRoutes(ctx, filepath.Join(root, "receiving"), inactive)
+	if err := ingress.DeactivateRoutes(ctx, filepath.Join(root, "receiving"), inactive); err != nil {
+		return fmt.Errorf("%w: %w", ErrNativeRoutesPending, err)
+	}
+	return nil
 }
 
 // syncAddressStates is the level-triggered desired-state rule: active iff the

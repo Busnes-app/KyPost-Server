@@ -18,6 +18,7 @@ var (
 	ErrNativeAddressConflict      = errors.New("address is taken, reserved, a primary address or not in the required state")
 	ErrNativeAddressAdministrator = errors.New("administrator identities own no aliases; use the everyday identity's mailbox")
 	ErrNativeAddressDomain        = errors.New("address domain is not a configured mail domain")
+	ErrNativeAddressDirectory     = errors.New("address is a KyIdentity primary address")
 )
 
 // NativeAddress is one ledger address. It locates ownership, not permission:
@@ -79,7 +80,8 @@ func (s *LifecycleStore) NativeMailboxes() ([]NativeMailbox, error) {
 
 // ReconcileNativeAddresses is the worker's level-triggered pass. It commits
 // only when an address state diverged from the rule (for example after a
-// retired domain is re-added), so a healthy ledger is not rewritten.
+// retired domain is re-added), so a healthy ledger is not rewritten; it always
+// retries the inactive routes a failed commit left pending.
 func (s *LifecycleStore) ReconcileNativeAddresses(ctx context.Context) error {
 	release, err := fsutil.LockFileContext(ctx, s.path)
 	if err != nil {
@@ -96,11 +98,12 @@ func (s *LifecycleStore) ReconcileNativeAddresses(ctx context.Context) error {
 	}
 	l := f.ledger(lifecycle.Directory)
 	before := maps.Clone(l.Addresses)
-	if _, err := s.syncAddressStates(&l, lifecycle.Directory); err != nil {
+	inactive, err := s.syncAddressStates(&l, lifecycle.Directory)
+	if err != nil {
 		return err
 	}
 	if maps.EqualFunc(before, l.Addresses, func(a, b nativeLedgerAddress) bool { return a.State == b.State && a.Generation == b.Generation }) {
-		return nil
+		return deactivateRoutes(l, inactive)
 	}
 	return s.commitNative(f, nil)
 }
@@ -113,7 +116,7 @@ func (s *LifecycleStore) AddNativeAlias(ctx context.Context, stateRoot, mailboxI
 		if exists {
 			return x, ErrNativeAddressConflict
 		}
-		if err := f.stored.aliasOwner(mailboxID, directory); err != nil {
+		if err := f.stored.aliasOwner(mailboxID, address, directory); err != nil {
 			return x, err
 		}
 		x = nativeLedgerAddress{Mailbox: mailboxID, Kind: "alias", State: "disabled", Generation: 1, History: []nativeAddressHistory{{Mailbox: mailboxID, Generation: 1}}}
@@ -151,7 +154,7 @@ func (s *LifecycleStore) ReassignNativeAddress(ctx context.Context, stateRoot, a
 		if x.Kind != "alias" || x.State != "reserved" {
 			return x, ErrNativeAddressConflict
 		}
-		if err := f.stored.aliasOwner(mailboxID, directory); err != nil {
+		if err := f.stored.aliasOwner(mailboxID, address, directory); err != nil {
 			return x, err
 		}
 		x.Generation++
@@ -165,8 +168,10 @@ func (s *LifecycleStore) ReassignNativeAddress(ctx context.Context, stateRoot, a
 	})
 }
 
-// aliasOwner admits only an everyday identity's existing mailbox.
-func (l nativeLedger) aliasOwner(mailboxID string, directory map[string]DirectoryState) error {
+// aliasOwner admits only an everyday identity's existing mailbox, and never an
+// address any KyIdentity resource names as its primary: that subject may not
+// have a ledger record yet, and its provisioning must not fail.
+func (l nativeLedger) aliasOwner(mailboxID, address string, directory map[string]DirectoryState) error {
 	m, ok := l.Mailboxes[mailboxID]
 	if !ok {
 		return ErrNativeAddressUnknown
@@ -174,6 +179,16 @@ func (l nativeLedger) aliasOwner(mailboxID string, directory map[string]Director
 	key := directoryKey(m.Owner.Issuer, m.Owner.Subject)
 	if d := directory[key]; d.Resource == nil || HasAdminRole(d.Resource.Roles) || l.Accounts[key].LegacyMixedUse {
 		return ErrNativeAddressAdministrator
+	}
+	for _, d := range directory {
+		if d.Resource == nil {
+			continue
+		}
+		for _, email := range d.Resource.Emails {
+			if email.Primary && strings.EqualFold(strings.TrimSpace(email.Value), address) {
+				return ErrNativeAddressDirectory
+			}
+		}
 	}
 	return nil
 }
@@ -226,6 +241,9 @@ func (s *LifecycleStore) changeNativeAddress(ctx context.Context, stateRoot, add
 	}
 	f.stored.Addresses[address] = x
 	if err := s.commitNative(f, nil); err != nil {
+		if errors.Is(err, ErrNativeRoutesPending) {
+			return x.public(address), err
+		}
 		return NativeAddress{}, err
 	}
 	return x.public(address), nil

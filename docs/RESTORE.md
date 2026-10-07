@@ -94,7 +94,9 @@ interval); one bound outside every interval is refused. Every alias and reserved
 address must be canonical and on a known domain. Version-1 snapshots keep the
 primary-address check. Ledgers written before per-address generations have their
 generations raised to the owner's directory revision when loaded, so their
-routes and bindings validate unchanged.
+routes and bindings validate unchanged. The recovery authority digest includes
+every address record, so any alias add, release, reassignment or state change
+invalidates an outstanding recovery challenge: reissue it afterwards.
 
 The version-1 recipe remains compatible. Use this version of KyPost or newer to
 check all three database names and the additive relay credential/authority recipe; older drills do not attest the new relay checks. A new integrity

@@ -102,6 +102,9 @@ func TestNativeAliasLedgerOperations(t *testing.T) {
 	if _, err := f.life.AllocateNativeAccount(ctx, f.root, nativeIssuer, "three", f.domains, f.accounts, nativeLimits); !errors.Is(err, ErrNativeProvisioning) {
 		t.Fatal("primary took an alias", err)
 	}
+	// While "three" names sales@ as its KyIdentity primary, no mailbox may take
+	// it as an alias; move that primary away so reassignment can proceed.
+	nativeDesired(t, f.life, "three", "three@example.test", 2, true)
 	if _, err := f.life.ReleaseNativeAlias(ctx, f.root, "one@example.test"); !errors.Is(err, ErrNativeAddressConflict) {
 		t.Fatal("primary released", err)
 	}
@@ -398,5 +401,76 @@ func TestNativeRecoveryDigestIncludesAddresses(t *testing.T) {
 	c, _, _, err := life.nativeRecoveryInputs(dir, settings, key, nil)
 	if err != nil || c.AuthorityDigest == challenge.AuthorityDigest {
 		t.Fatal("addresses missing from the recovery digest", err)
+	}
+}
+
+// Another subject's KyIdentity primary is never an alias, even before that
+// subject has a ledger record (unconfigured domain, administrator, pending).
+func TestNativeAliasRefusesAnotherSubjectsDirectoryPrimary(t *testing.T) {
+	ctx := context.Background()
+	f := newAddressFixture(t, "one")
+	nativeDesired(t, f.life, "bee", "Bee@Example.test", 1, true)
+	nativeDesired(t, f.life, "away", "away@unconfigured.test", 1, true)
+	nativeRole(t, f.life, nil, "boss", "boss@example.test", 1, true, true)
+	for _, address := range []string{"bee@example.test", "away@unconfigured.test", "boss@example.test"} {
+		if _, err := f.life.AddNativeAlias(ctx, f.root, f.ids["one"], address); !errors.Is(err, ErrNativeAddressDirectory) {
+			t.Fatal("alias took a directory primary", address, err)
+		}
+	}
+	if _, err := f.life.AddNativeAlias(ctx, f.root, f.ids["one"], "spare@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.life.ReleaseNativeAlias(ctx, f.root, "spare@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	nativeDesired(t, f.life, "two", "two@example.test", 1, true)
+	if _, err := f.life.AllocateNativeAccount(ctx, f.root, nativeIssuer, "two", f.domains, f.accounts, nativeLimits); err != nil {
+		t.Fatal(err)
+	}
+	// Reassignment checks the same rule: "spare" becomes someone's primary.
+	nativeDesired(t, f.life, "two", "spare@example.test", 2, true)
+	if _, err := f.life.ReassignNativeAddress(ctx, f.root, "spare@example.test", f.ids["one"]); !errors.Is(err, ErrNativeAddressDirectory) {
+		t.Fatal("reassigned onto a directory primary", err)
+	}
+	if _, err := f.life.AllocateNativeAccount(ctx, f.root, nativeIssuer, "bee", f.domains, f.accounts, nativeLimits); err != nil {
+		t.Fatal("subject with a protected primary could not provision", err)
+	}
+	if x := f.address(t, "bee@example.test"); x.Kind != "primary" || x.State != "active" {
+		t.Fatal(x)
+	}
+}
+
+// A route write that fails after the ledger commit fails the directory event
+// (KyIdentity retries) and names the pending route.
+func TestNativeDirectoryEventWithPendingRouteIsRetried(t *testing.T) {
+	ctx := context.Background()
+	f := newAddressFixture(t, "one")
+	holding, err := ingress.Open(filepath.Join(f.root, "receiving"), ingress.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holding.Close()
+	if err = holding.SetRoute(ctx, ingress.Route{Address: "one@example.test", Issuer: nativeIssuer, Subject: "one", Mailbox: f.ids["one"], Generation: 50, Active: true, ValidUntil: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"one","externalId":"one","userName":"one","active":false,"emails":[{"value":"one@example.test","primary":true}],"meta":{"version":"W/\"2\""}}`
+	var u DirectoryUser
+	if err := json.Unmarshal([]byte(raw), &u); err != nil {
+		t.Fatal(err)
+	}
+	ev := syncauth.Event{ID: "one-2", Type: "user.updated", At: time.Now()}
+	if _, err := f.life.ApplyDirectoryUser(nativeIssuer, ev, u, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return true, nil }); !errors.Is(err, ErrNativeRoutesPending) {
+		t.Fatal("route failure not reported", err)
+	}
+	if d, _, _ := f.life.Directory(nativeIssuer, "one"); d.Revision != 1 {
+		t.Fatal("event recorded over a pending route", d.Revision)
+	}
+	// The ledger never stays ahead of the recorded directory: the worker
+	// converges it back (another bump), and KyIdentity's retry redoes the event.
+	if err := f.life.ReconcileNativeAddresses(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if x := f.address(t, "one@example.test"); x.State != "active" || x.Generation != 3 {
+		t.Fatal("ledger left ahead of the recorded directory", x)
 	}
 }

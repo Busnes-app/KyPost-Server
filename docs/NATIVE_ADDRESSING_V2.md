@@ -291,8 +291,9 @@ to that digest.
   mailbox ID equals its user's ID; extra mailboxes are under `$STATE/mailboxes/`
   with mail-only `state.db`; orphans, manifests and `mailbox.db` placement are
   checked per mailbox; every ledger address is on a domain in the set or retired.
-- Receiving: current routes are validated against the current ledger; historical
-  bindings are validated against the address `history`: a binding to mailbox `m`
+- Receiving: routes and bindings are both validated against the address
+  `history` (a route can lag a reassignment until the next bind): a route or
+  binding to mailbox `m`
   at generation `g` is valid only if some history entry `i` has mailbox `m` and
   `history[i].generation ≤ g < history[i+1].generation`, or `i` is the last entry and
   `history[i].generation ≤ g ≤ generation`.

@@ -5,12 +5,15 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -174,5 +177,60 @@ func TestNativeSendFromAcceptsOnlyOwnedActiveAddresses(t *testing.T) {
 	}
 	if w := send("sales@example.test"); w.Code != 403 {
 		t.Fatal("released alias passed", w.Code, w.Body)
+	}
+}
+
+// A committed release whose route write fails is still a success: 200 with
+// the committed record and a warning; a retry sees the reserved address.
+func TestNativeMailAddressReleaseWithPendingRoute(t *testing.T) {
+	srv := newNativeRuntimeServer(t)
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "pending-one", 1, runtimeDirectoryUser(true)))
+	one, err := srv.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const password = "long-password-for-addresses"
+	admin, err := srv.users.Create(context.Background(), "pending-admin", password, users.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, csrf := mintSessionForTest(srv, admin.ID)
+	if _, err = srv.ssoLifecycle.AddNativeAlias(context.Background(), srv.stateDir, one.ID, "sales@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	// A route ahead of the ledger makes the inactive-route write refuse.
+	holding, err := ingress.Open(filepath.Join(srv.stateDir, "receiving"), ingress.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holding.Close()
+	if err = holding.SetRoute(context.Background(), ingress.Route{Address: "sales@example.test", Issuer: "https://idp.example", Subject: "native-runtime-one", Mailbox: one.ID, Generation: 50, Active: true, ValidUntil: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	release := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("DELETE", "/api/admin/mail-addresses/sales@example.test", strings.NewReader(`{"password":"`+password+`"}`))
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
+		req.Header.Set("X-CSRF-Token", csrf)
+		w := httptest.NewRecorder()
+		srv.routes().ServeHTTP(w, req)
+		return w
+	}
+	w := release()
+	var got struct {
+		State, Warning string
+		Generation     int64
+	}
+	if err = json.Unmarshal(w.Body.Bytes(), &got); w.Code != 200 || err != nil || got.State != "reserved" || got.Generation != 2 || got.Warning != sso.ErrNativeRoutesPending.Error() {
+		t.Fatal("committed release with a pending route", w.Code, w.Body)
+	}
+	addresses, err := srv.ssoLifecycle.NativeAddresses()
+	if err != nil || addresses["sales@example.test"].State != "reserved" {
+		t.Fatal("ledger change not durable", addresses, err)
+	}
+	if w = release(); w.Code != 409 {
+		t.Fatal("retry of a committed release", w.Code, w.Body)
+	}
+	if err = srv.ssoLifecycle.ReconcileNativeAddresses(context.Background()); !errors.Is(err, sso.ErrNativeRoutesPending) {
+		t.Fatal("worker pass did not retry the pending route", err)
 	}
 }
