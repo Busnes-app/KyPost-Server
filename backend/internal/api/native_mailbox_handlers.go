@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -14,6 +15,11 @@ import (
 
 // mailboxHeader selects one of the caller's mailboxes on mail endpoints.
 const mailboxHeader = "X-KyPost-Mailbox"
+
+// extraMailboxID is the only shape CreateNativeMailbox mints: "mbx-" + UUIDv4.
+// Checked at the boundary so a header or path value is never a path before
+// the ledger resolves it.
+var extraMailboxID = regexp.MustCompile(`^mbx-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 // withMailbox admits the mailbox an X-KyPost-Mailbox header selects, inside
 // withMailAuth, on every request. Absent or the caller's own user ID is the
@@ -26,6 +32,10 @@ func (s *Server) withMailbox(next http.HandlerFunc) http.HandlerFunc {
 		id := r.Header.Get(mailboxHeader)
 		if !ok || id == "" || id == ac.UserID {
 			next(w, r)
+			return
+		}
+		if !extraMailboxID.MatchString(id) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "mailbox not found"})
 			return
 		}
 		if _, _, err := s.nativeMailboxAssignment(r.Context(), ac.UserID, id); err != nil {
@@ -173,9 +183,13 @@ func (s *Server) setNativeMailboxState(w http.ResponseWriter, r *http.Request, a
 	if !s.nativeDomainGate(w, r, &body) {
 		return
 	}
-	m, err := s.ssoLifecycle.SetNativeMailboxState(r.Context(), s.stateDir, r.PathValue("id"), active)
+	id := r.PathValue("id")
+	m, err := sso.NativeMailbox{ID: id}, sso.ErrNativeAddressUnknown
+	if extraMailboxID.MatchString(id) {
+		m, err = s.ssoLifecycle.SetNativeMailboxState(r.Context(), s.stateDir, id, active)
+	}
 	if m.ID == "" {
-		m.ID = r.PathValue("id")
+		m.ID = id
 	}
 	s.answerNativeMailbox(w, r, action, m, err)
 }

@@ -168,6 +168,7 @@ func TestNativeMailboxesAdminAPIAndSelection(t *testing.T) {
 	srv.userMu.Unlock()
 	refused(second.ID, extra.ID)
 	refused(one.ID, "mbx-unknown")
+	refused(one.ID, "mbx-00000000-0000-4000-8000-000000000000")
 	refused(one.ID, "../users/"+second.ID)
 	refused(one.ID, second.ID)
 	if _, err := os.Lstat(filepath.Join(srv.stateDir, "mailboxes", "mbx-unknown")); !os.IsNotExist(err) {
