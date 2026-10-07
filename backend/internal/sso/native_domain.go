@@ -543,11 +543,11 @@ func nativeQueuedFromDomains(ctx context.Context, f nativeAssignments, stateRoot
 		return nil, err
 	}
 	domains := map[string]bool{}
-	for _, a := range f.Accounts {
+	for _, a := range f.mailboxes() {
 		if a.Source == "" {
 			continue
 		}
-		box, err := mailbox.OpenExisting(filepath.Join(stateRoot, "users", a.Owner.Mailbox, "mailbox"), a.Owner, a.Limits, a.Source)
+		box, err := mailbox.OpenExisting(filepath.Join(a.Dir(stateRoot), "mailbox"), a.Owner, a.Limits, a.Source)
 		if err != nil {
 			return nil, err
 		}

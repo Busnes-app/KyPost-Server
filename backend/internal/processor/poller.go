@@ -125,7 +125,13 @@ type mailClientEntry struct {
 type userCtx struct {
 	id       string
 	username string
-	store    *state.Store
+	// store is the polled mailbox's state (processed, decisions, checkpoint);
+	// primary is the user's primary state, which alone holds devices,
+	// subscriptions, notifications and sorter data. nil means store is it.
+	store   *state.Store
+	primary *state.Store
+	// mailbox is the native mailbox ID notifications carry ("" for IMAP).
+	mailbox  string
 	mail     imapadapter.Client
 	tuning   string
 	settings config.UserNotificationSettings
@@ -156,6 +162,19 @@ type userCtx struct {
 	head    *sorter.Head
 	guesses map[string]sortGuess
 }
+
+var errIncomingEncryptionExtraMailbox = errors.New("incoming encryption is on for the owner of an extra mailbox; disable it or the mailbox")
+
+// primaryStore is the user's primary state.
+func (uc userCtx) primaryStore() *state.Store {
+	if uc.primary != nil {
+		return uc.primary
+	}
+	return uc.store
+}
+
+// extraMailbox reports whether the polled mailbox is an extra one.
+func (uc userCtx) extraMailbox() bool { return uc.mailbox != "" && uc.mailbox != uc.id }
 
 func New(cfg config.Config, log *logging.Logger, globalStore *state.Store, usersStore *users.Store, stateDir, configDir string, healthSvc *health.Service, classifierClient *classifier.HTTPClient, wkdStore *wkdpublish.Store) (*Poller, error) {
 	re, err := redaction.New(cfg.Redaction.Patterns)
@@ -512,6 +531,53 @@ func (p *Poller) cleanupAllUsers() {
 			p.log.Error("state cleanup failed", "user_id", u.ID, "error", err.Error())
 		}
 	}
+	p.cleanupExtraMailboxes()
+}
+
+// cleanupExtraMailboxes trims the state of every admitted extra mailbox.
+func (p *Poller) cleanupExtraMailboxes() {
+	p.forExtraMailboxStores("state cleanup", func(store *state.Store) error { return store.Cleanup(stateRetentionDays) })
+}
+
+// activeExtraMailboxes lists each user's extra mailboxes that may be polled:
+// active and prepared. Admission refuses the rest anyway; listing them would
+// only log a refusal every tick.
+func (p *Poller) activeExtraMailboxes() map[string][]string {
+	extras := map[string][]string{}
+	if !p.nativeMail {
+		return extras
+	}
+	mailboxes, err := sso.NewLifecycleStore(p.configDir).NativeMailboxes()
+	if err != nil {
+		p.log.Error("failed to list extra mailboxes", "error", err.Error())
+		return extras
+	}
+	for _, m := range mailboxes {
+		if m.Kind == "extra" && m.State == "active" && m.Prepared {
+			extras[m.User] = append(extras[m.User], m.ID)
+		}
+	}
+	return extras
+}
+
+// forExtraMailboxStores runs action on the state of every admitted extra
+// mailbox, logging failures per mailbox.
+func (p *Poller) forExtraMailboxStores(what string, action func(*state.Store) error) {
+	for userID, ids := range p.activeExtraMailboxes() {
+		for _, id := range ids {
+			a, _, err := p.nativeMailboxAssignment(p.lifetimeCtx(), userID, id)
+			var store *state.Store
+			if err == nil {
+				store, err = p.mailboxStore(a)
+			}
+			if err == nil {
+				err = action(store)
+			}
+			if err != nil {
+				p.log.Error("mailbox "+what+" failed", "user_id", userID, "error", err.Error())
+			}
+		}
+	}
 }
 
 // Start runs the tick loop in its own goroutine, tracked so Wait can observe
@@ -567,6 +633,7 @@ func (p *Poller) TriggerUnreadSweep() {
 				p.log.Error("failed to reset checkpoint for unread sweep", "user_id", u.ID, "error", err.Error())
 			}
 		}
+		p.forExtraMailboxStores("unread sweep", func(store *state.Store) error { return store.SetCheckpoint("") })
 	}
 	p.tick()
 }
@@ -649,6 +716,7 @@ func (p *Poller) tick() {
 	var resMu sync.Mutex
 	usersPolled := 0
 	usersFailed := 0
+	extras := p.activeExtraMailboxes()
 
 	for _, u := range all {
 		if !u.Active {
@@ -663,26 +731,28 @@ func (p *Poller) tick() {
 			}
 			modTime = fi.ModTime()
 		}
-		usersPolled++
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(u users.User, modTime time.Time) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			defer func() {
-				if r := recover(); r != nil {
-					p.log.Error("user poll tick panic", "user_id", u.ID, "panic", fmt.Sprint(r))
+		for _, mailboxID := range append([]string{""}, extras[u.ID]...) {
+			usersPolled++
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(u users.User, mailboxID string, modTime time.Time) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				defer func() {
+					if r := recover(); r != nil {
+						p.log.Error("user poll tick panic", "user_id", u.ID, "panic", fmt.Sprint(r))
+						resMu.Lock()
+						usersFailed++
+						resMu.Unlock()
+					}
+				}()
+				if err := p.tickMailbox(u, mailboxID, modTime); err != nil {
 					resMu.Lock()
 					usersFailed++
 					resMu.Unlock()
 				}
-			}()
-			if err := p.tickUser(u, modTime); err != nil {
-				resMu.Lock()
-				usersFailed++
-				resMu.Unlock()
-			}
-		}(u, modTime)
+			}(u, mailboxID, modTime)
+		}
 	}
 	wg.Wait()
 
@@ -738,15 +808,29 @@ func mailCacheEntriesFromMessages(messages []imapadapter.Message) []mailcache.En
 }
 
 func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
-	mail, err := p.mailClientForUser(u.ID, imapConfigModTime)
+	return p.tickMailbox(u, "", imapConfigModTime)
+}
+
+// tickMailbox polls one of the user's mailboxes ("" is the primary) with the
+// user's settings, rules and labels. Incoming encryption keeps one journal per
+// user, so it runs on the primary mailbox only.
+func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime time.Time) error {
+	mail, a, err := p.mailClientForMailbox(u.ID, mailboxID, imapConfigModTime)
 	if err != nil {
 		p.log.Error("mailbox admission refused", "user_id", u.ID, "error", err.Error())
 		return err
 	}
-	store, err := p.userStore(u.ID)
+	primary, err := p.userStore(u.ID)
 	if err != nil {
 		p.log.Error("failed to open user state store", "user_id", u.ID, "error", err.Error())
 		return err
+	}
+	store := primary
+	if mailboxID != "" {
+		if store, err = p.mailboxStore(a); err != nil {
+			p.log.Error("failed to open mailbox state store", "user_id", u.ID, "error", err.Error())
+			return err
+		}
 	}
 	// Cleanup runs on its own ticker (cleanupAllUsers), NOT here: it is two
 	// DELETEs in one transaction against a 30-day retention window, and there
@@ -756,6 +840,13 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 	if err != nil {
 		p.log.Error("cannot read or seed user settings; skipping tick", "user_id", u.ID, "error", err.Error())
 		return err
+	}
+	// Incoming encryption has one journal per user, kept for the primary.
+	// The API refuses enabling it beside an active extra mailbox and creating
+	// or enabling one while it is on; never poll an extra mailbox past that rule.
+	if mailboxID != "" && (settings.EncryptIncoming || u.IncomingEncryptionPending) {
+		p.log.Error("extra mailbox not polled: incoming encryption is on for its owner", "user_id", u.ID)
+		return errIncomingEncryptionExtraMailbox
 	}
 
 	tuning := ""
@@ -791,19 +882,21 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 		id:               u.ID,
 		username:         u.Username,
 		store:            store,
+		primary:          primary,
+		mailbox:          a.Owner.Mailbox,
 		mail:             mail,
 		tuning:           tuning,
 		settings:         settings.Notifications,
 		autoLabelEnabled: settings.Labels.AutoApplyEnabled,
-		encryptIncoming:  settings.EncryptIncoming,
-		incomingPending:  u.IncomingEncryptionPending,
+		encryptIncoming:  settings.EncryptIncoming && mailboxID == "",
+		incomingPending:  u.IncomingEncryptionPending && mailboxID == "",
 		allowlist:        settings.Labels.Allowlist,
 		keywordMappings:  settings.Labels.KeywordMappings,
 		rules:            activeRules,
 		guesses:          map[string]sortGuess{},
 	}
 
-	boundCache, err := p.userMailCacheStore(u.ID)
+	boundCache, err := p.mailboxCacheStore(u.ID, a)
 	if err != nil {
 		return err
 	}
@@ -822,7 +915,7 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 			return err
 		}
 	}
-	uc.head = p.userHead(u.ID, store, settings.Labels)
+	uc.head = p.userHead(u.ID, primary, settings.Labels)
 
 	// Derived from lifetimeCtx, not context.Background(): Stop() cancels the
 	// poller's context, and a tick rooted at Background did not observe it. The
@@ -836,9 +929,12 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 
 	// Resume a durable replacement even when the user disabled future encryption,
 	// or another mail client has marked the original read.
-	if err := p.resumeIncomingEncryption(ctx, uc); err != nil {
-		p.log.Error("incoming encryption paused; original or verified encrypted copy retained", "user_id", u.ID, "error", err.Error())
-		return err
+	// The one incoming-encryption journal belongs to the primary mailbox.
+	if mailboxID == "" {
+		if err := p.resumeIncomingEncryption(ctx, uc); err != nil {
+			p.log.Error("incoming encryption paused; original or verified encrypted copy retained", "user_id", u.ID, "error", err.Error())
+			return err
+		}
 	}
 
 	checkpoint, err := store.Checkpoint()
@@ -869,7 +965,7 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 	var mailCache *mailcache.Store
 	if len(messages) > 0 {
 		var err error
-		if mailCache, err = p.userMailCacheStore(u.ID); err != nil {
+		if mailCache, err = p.mailboxCacheStore(u.ID, a); err != nil {
 			p.log.Error("failed to open mail cache store", "user_id", u.ID, "error", err.Error())
 			mailCache = nil
 		} else if err := mailCache.Upsert("INBOX", mailCacheEntriesFromMessages(messages)); err != nil {
@@ -1697,7 +1793,7 @@ func (p *Poller) maybeSendPushNotification(uc userCtx, msg imapadapter.Message, 
 		return
 	}
 
-	subs, err := uc.store.ListNotificationSubscriptionsStrict()
+	subs, err := uc.primaryStore().ListNotificationSubscriptionsStrict()
 	if err != nil {
 		p.log.Error("failed to list notification subscriptions", "user_id", uc.id, "error", err.Error())
 		return
@@ -1746,18 +1842,22 @@ func (p *Poller) maybeSendPushNotification(uc userCtx, msg imapadapter.Message, 
 		linkParams.Set("tab", tab)
 	}
 
-	payloadBytes, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"title": title,
 		"body":  body,
 		"url":   "/read?" + linkParams.Encode(),
 		"tag":   fmt.Sprintf("kypost-email-%s", reference),
-	})
+	}
+	if uc.mailbox != "" {
+		payload["mailbox"] = uc.mailbox
+	}
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		p.log.Error("failed to marshal notification payload", "error", err.Error())
 		return
 	}
 
-	outcome, err := SendWebPush(p.lifetimeCtx(), uc.store, publicKey, privateKeyPath, 300, payloadBytes)
+	outcome, err := SendWebPush(p.lifetimeCtx(), uc.primaryStore(), publicKey, privateKeyPath, 300, payloadBytes)
 	if err != nil {
 		p.log.Error("failed to load notification private key", "error", err.Error())
 		return
@@ -1779,7 +1879,7 @@ func (p *Poller) maybeSendNativePushNotification(uc userCtx, msg imapadapter.Mes
 		return
 	}
 
-	devices, err := uc.store.ListNativeDevicesStrict()
+	devices, err := uc.primaryStore().ListNativeDevicesStrict()
 	if err != nil {
 		p.log.Error("failed to list native devices", "user_id", uc.id, "error", err.Error())
 		return
@@ -1798,13 +1898,16 @@ func (p *Poller) maybeSendNativePushNotification(uc userCtx, msg imapadapter.Mes
 		return
 	}
 	data := buildNativePushData(wireMessage, messageKeywords, title, body, includeContent)
+	if uc.mailbox != "" {
+		data["mailbox"] = uc.mailbox
+	}
 
 	// title/body are duplicated into data so a mobile client that renders its
 	// own notification from the data payload shows the sender and subject
 	// instead of a generic fallback.
 	notification := NativePushMessage{Title: title, Body: body, Data: data}
 
-	outcome, err := SendNativePush(p.lifetimeCtx(), p.nativePushDispatcher, p.health, uc.store, notification, func(device state.NativeDevice, platform string, sendErr error) {
+	outcome, err := SendNativePush(p.lifetimeCtx(), p.nativePushDispatcher, p.health, uc.primaryStore(), notification, func(device state.NativeDevice, platform string, sendErr error) {
 		// This fires only after sendWithRetry has spent its attempts — transient
 		// failures (relay unreachable, upstream 5xx, 429) are retried with backoff,
 		// honouring the relay's Retry-After. What reaches here is a relay that stayed

@@ -1,6 +1,6 @@
 # Native outbox storage and qualification
 
-Native sending from the primary or an owned alias is available with `KYPOST_NATIVE_MAIL=true` and
+Native sending from the primary or an owned alias, of the primary or an extra mailbox, is available with `KYPOST_NATIVE_MAIL=true` and
 an admin-configured operator-owned relay. Ordinary compose, public-key encrypted
 compose and client-prepared PGP use the same durable admission/claim boundary.
 API and daemon processes recover due definite-refusal attempts and accepted Sent
@@ -18,6 +18,18 @@ change refuses sends. Relay credentials authenticate the operator; `From` is the
 primary or any `active` ledger address of the sending mailbox on a relay domain
 (the API answers 403 for any other before queueing).
 Legacy IMAP credentials and verified send-as rows grant no native authority.
+
+Each mailbox has its own outbox. `NativeOutbound` methods take the sending
+mailbox ID (a primary's is its user ID): the owner is admitted, an extra mailbox
+must be `active` and owned by the same subject, and the job, its claims and its
+Sent copy live in that mailbox's `mailbox.db`. The API sends from the mailbox
+`X-KyPost-Mailbox` selects and reads outbox status there; recovery workers walk
+every mailbox of each published native user. Device fences always read the
+owner's primary `state.db` under the owner's own source. A disabled mailbox
+queues nothing new; its accepted Sent obligations still finish, while its
+queued or retryable jobs are quarantined on their next recovery attempt (the
+refusal is terminal, like a deactivated owner's) and stay quarantined after
+re-enabling. Unprepared mailboxes have no outbox and are not discovered.
 
 Freeze directory revision, `From` address generation (`FromGeneration`), relay
 generation, local send-authority epoch, PGP revision/fingerprint and applicable

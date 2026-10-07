@@ -222,7 +222,8 @@ func (s *Server) handleLabelPreferences(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
-	if ac, ok := authFromContext(r); ok && s.users != nil {
+	ac, ok := authFromContext(r)
+	if ok && s.users != nil {
 		if _, _, err := s.nativeMailAssignment(r.Context(), ac.UserID); err != nil {
 			if s.refuseNativeAdministrator(w, r, ac.UserID, err) {
 				return
@@ -232,6 +233,9 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	store, err := s.storeFor(r)
+	if ac.Mailbox != "" {
+		store, err = s.mailboxStore(r.Context(), ac.UserID, ac.Mailbox)
+	}
 	if err != nil {
 		http.Error(w, "failed to open user state", http.StatusInternalServerError)
 		return

@@ -482,11 +482,11 @@ func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error 
 		if stores[owner] != nil {
 			continue
 		}
-		a, found, err := r.life.NativeAssignment(owner.Issuer, owner.Subject)
+		a, found, err := r.life.NativeMailboxAssignment(owner.Mailbox)
 		if err != nil || !found || a.Owner != owner || int64(len(d.Raw)) > a.Limits.MessageBytes {
 			return sso.ErrNativeProvisioning
 		}
-		store, err := mailbox.OpenExisting(filepath.Join(r.stateDir, "users", owner.Mailbox, "mailbox"), owner, a.Limits, a.Source)
+		store, err := mailbox.OpenExisting(filepath.Join(a.Dir(r.stateDir), "mailbox"), owner, a.Limits, a.Source)
 		if err != nil {
 			return err
 		}

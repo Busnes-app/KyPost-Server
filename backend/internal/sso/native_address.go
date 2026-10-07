@@ -34,9 +34,13 @@ type NativeAddress struct {
 // NativeMailbox lists a mailbox and its addresses for administrators. User is
 // the owning account's ID (its primary mailbox ID).
 type NativeMailbox struct {
-	ID        string          `json:"mailbox"`
-	User      string          `json:"user"`
-	Kind      string          `json:"kind"`
+	ID    string `json:"mailbox"`
+	User  string `json:"user"`
+	Kind  string `json:"kind"`
+	State string `json:"state"`
+	// Prepared is false while a creation has reserved the mailbox but not yet
+	// published its storage; nothing may poll, send from or open it.
+	Prepared  bool            `json:"prepared"`
 	Addresses []NativeAddress `json:"addresses"`
 }
 
@@ -67,7 +71,7 @@ func (s *LifecycleStore) NativeMailboxes() ([]NativeMailbox, error) {
 	mailboxes := []NativeMailbox{}
 	for _, id := range slices.Sorted(maps.Keys(f.stored.Mailboxes)) {
 		m := f.stored.Mailboxes[id]
-		box := NativeMailbox{ID: id, User: f.stored.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].PrimaryMailbox, Kind: m.Kind, Addresses: []NativeAddress{}}
+		box := NativeMailbox{ID: id, User: f.stored.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].PrimaryMailbox, Kind: m.Kind, State: m.State, Prepared: m.Source != "", Addresses: []NativeAddress{}}
 		for _, address := range slices.Sorted(maps.Keys(f.stored.Addresses)) {
 			if x := f.stored.Addresses[address]; x.Mailbox == id {
 				box.Addresses = append(box.Addresses, x.public(address))
@@ -177,7 +181,13 @@ func (l nativeLedger) aliasOwner(mailboxID, address string, directory map[string
 		return ErrNativeAddressUnknown
 	}
 	key := directoryKey(m.Owner.Issuer, m.Owner.Subject)
-	if d := directory[key]; d.Resource == nil || HasAdminRole(d.Resource.Roles) || l.Accounts[key].LegacyMixedUse {
+	return everydayOwner(l.Accounts[key], directory[key], address, directory)
+}
+
+// everydayOwner admits an everyday (non-administrator, non-legacyMixedUse)
+// owner and refuses an address any KyIdentity resource names as its primary.
+func everydayOwner(a nativeLedgerAccount, d DirectoryState, address string, directory map[string]DirectoryState) error {
+	if d.Resource == nil || HasAdminRole(d.Resource.Roles) || a.LegacyMixedUse {
 		return ErrNativeAddressAdministrator
 	}
 	for _, d := range directory {

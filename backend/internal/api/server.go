@@ -539,6 +539,10 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/mail-addresses", s.withAdmin(withActionDigest(s.handleNativeMailAddresses)))
 	mux.HandleFunc("DELETE /api/admin/mail-addresses/{address}", s.withAdmin(withActionDigest(s.handleNativeMailAddressRelease)))
 	mux.HandleFunc("POST /api/admin/mail-addresses/{address}/reassign", s.withAdmin(withActionDigest(s.handleNativeMailAddressReassign)))
+	mux.HandleFunc("GET /api/admin/mailboxes", s.withAdmin(s.handleNativeMailboxes))
+	mux.HandleFunc("POST /api/admin/mailboxes", s.withAdmin(withActionDigest(s.handleNativeMailboxes)))
+	mux.HandleFunc("POST /api/admin/mailboxes/{id}/disable", s.withAdmin(withActionDigest(s.handleNativeMailboxDisable)))
+	mux.HandleFunc("POST /api/admin/mailboxes/{id}/enable", s.withAdmin(withActionDigest(s.handleNativeMailboxEnable)))
 	mux.HandleFunc("GET /api/admin/mail-relay", s.withAdmin(s.handleNativeMailRelay))
 	mux.HandleFunc("PUT /api/admin/mail-relay", s.withAdmin(withActionDigest(s.handleNativeMailRelay)))
 	mux.HandleFunc("POST /api/admin/mail-relay/test", s.withAdmin(withActionDigest(s.handleNativeMailRelayTest)))
@@ -563,7 +567,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/admin/sso", s.withAdmin(s.handleAdminSSOPut))
 	mux.HandleFunc("POST /api/sync/webhook", withPublicRoute(s.handleSyncWebhook))
 	mux.HandleFunc("GET /api/labels", s.withAuth(s.handleLabels))
-	mux.HandleFunc("GET /api/decisions", s.withAuth(s.handleDecisions))
+	mux.HandleFunc("GET /api/decisions", s.withAuth(s.withMailbox(s.handleDecisions)))
 	mux.HandleFunc("GET /api/logs", s.withAdmin(s.handleLogs))
 	mux.HandleFunc("GET /api/logs/list", s.withAdmin(s.handleLogsList))
 	mux.HandleFunc("GET /api/users", s.withAdmin(s.handleUsersList))
@@ -593,33 +597,36 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 // devices reach them without a web session; credential setup stays on
 // withAuth (web UI only).
 func (s *Server) routesMail(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/inbox", s.withMailAuth(s.handleInbox))
-	mux.HandleFunc("GET /api/inbox/folders", s.withMailAuth(s.handleInboxFolders))
-	mux.HandleFunc("POST /api/inbox/folders", s.withMailAuth(s.handleInboxFolders))
-	mux.HandleFunc("PUT /api/inbox/folders", s.withMailAuth(s.handleInboxFolders))
-	mux.HandleFunc("DELETE /api/inbox/folders", s.withMailAuth(s.handleInboxFolders))
-	mux.HandleFunc("POST /api/inbox/actions", s.withMailAuth(s.handleInboxActions))
-	mux.HandleFunc("GET /api/mail/search", s.withMailAuth(s.handleMailSearch))
+	// Mailbox-scoped routes accept X-KyPost-Mailbox (withMailbox); the list of
+	// the caller's mailboxes is per user and ignores it.
+	mux.HandleFunc("GET /api/mailboxes", s.withMailAuth(s.handleMailboxes))
+	mux.HandleFunc("GET /api/inbox", s.withMailAuth(s.withMailbox(s.handleInbox)))
+	mux.HandleFunc("GET /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
+	mux.HandleFunc("POST /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
+	mux.HandleFunc("PUT /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
+	mux.HandleFunc("DELETE /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
+	mux.HandleFunc("POST /api/inbox/actions", s.withMailAuth(s.withMailbox(s.handleInboxActions)))
+	mux.HandleFunc("GET /api/mail/search", s.withMailAuth(s.withMailbox(s.handleMailSearch)))
 	mux.HandleFunc("GET /api/imap/config", s.withAuth(s.handleIMAPConfig))
 	mux.HandleFunc("POST /api/imap/config", s.withAuth(s.handleIMAPConfig))
 	mux.HandleFunc("DELETE /api/imap/config", s.withAuth(s.handleIMAPConfig))
 	mux.HandleFunc("POST /api/imap/test", s.withAuth(s.handleIMAPTest))
-	mux.HandleFunc("POST /api/mail/draft", withUploadDeadline(s.withMailAuth(s.handleMailDraft)))
-	mux.HandleFunc("GET /api/mail/outbox/{id}", s.withMailAuth(s.handleNativeOutboxStatus))
-	mux.HandleFunc("POST /api/mail/send", withUploadDeadline(s.withMailAuth(s.handleMailSend)))
+	mux.HandleFunc("POST /api/mail/draft", withUploadDeadline(s.withMailAuth(s.withMailbox(s.handleMailDraft))))
+	mux.HandleFunc("GET /api/mail/outbox/{id}", s.withMailAuth(s.withMailbox(s.handleNativeOutboxStatus)))
+	mux.HandleFunc("POST /api/mail/send", withUploadDeadline(s.withMailAuth(s.withMailbox(s.handleMailSend))))
 	// Send path for end-to-end keys: the browser has already encrypted and
 	// signed, the server only relays over SMTP. See pgp_send_client.go.
-	mux.HandleFunc("POST /api/mail/send-pgp", withUploadDeadline(s.withMailAuth(s.handleMailSendPGP)))
+	mux.HandleFunc("POST /api/mail/send-pgp", withUploadDeadline(s.withMailAuth(s.withMailbox(s.handleMailSendPGP))))
 	// Read path for end-to-end keys: lazy per-message ciphertext fetch, since
 	// the inbox DTO cannot carry it. See pgp_client_read.go.
-	mux.HandleFunc("GET /api/mail/body", s.withMailAuth(s.handleMailBody))
-	mux.HandleFunc("GET /api/mail/pgp-payload", s.withMailAuth(s.handlePGPPayload))
+	mux.HandleFunc("GET /api/mail/body", s.withMailAuth(s.withMailbox(s.handleMailBody)))
+	mux.HandleFunc("GET /api/mail/pgp-payload", s.withMailAuth(s.withMailbox(s.handlePGPPayload)))
 	mux.HandleFunc("GET /api/mail/send-as", s.withAuth(s.handleSendAs))
 	mux.HandleFunc("POST /api/mail/send-as", s.withAuth(s.handleSendAs))
 	mux.HandleFunc("DELETE /api/mail/send-as/{id}", s.withAuth(s.handleSendAsByID))
 	mux.HandleFunc("POST /api/mail/send-as/{id}/confirm", s.withAuth(s.handleSendAsConfirm))
-	mux.HandleFunc("GET /api/mail/attachments", s.withMailAuth(s.handleMailAttachmentList))
-	mux.HandleFunc("GET /api/mail/attachment", s.withMailAuth(s.handleMailAttachmentDownload))
+	mux.HandleFunc("GET /api/mail/attachments", s.withMailAuth(s.withMailbox(s.handleMailAttachmentList)))
+	mux.HandleFunc("GET /api/mail/attachment", s.withMailAuth(s.withMailbox(s.handleMailAttachmentDownload)))
 }
 
 // routesContacts registers the address book, groups, and the CardDAV
@@ -781,7 +788,7 @@ func (s *Server) routesRules(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/rules/reorder", s.withAuth(s.handleRulesReorder))
 	mux.HandleFunc("GET /api/rules/{id}/sieve", s.withMailAuth(s.handleRuleSieve))
 	mux.HandleFunc("PUT /api/rules/{id}/sieve", s.withAuth(s.handleRuleSieve))
-	mux.HandleFunc("POST /api/rules/run", s.withMailAuth(s.handleRulesRun))
+	mux.HandleFunc("POST /api/rules/run", s.withMailAuth(s.withMailbox(s.handleRulesRun)))
 }
 
 // routesFrontend registers the SPA fallback. "/" is the least specific

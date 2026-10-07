@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -443,20 +444,52 @@ func (s *Server) userContactPhotoPath(userID, ref string) string {
 }
 
 func (s *Server) userMailCacheStore(userID string) (*mailcache.Store, error) {
-	return getOrCreateUserStore(&s.userMu, s.userMailCache, s.userLastSeen, userID, func() (*mailcache.Store, error) {
-		return mailcache.New(s.userStateDir(userID))
+	return s.mailboxCacheStore(userID, "")
+}
+
+// Mail caches are keyed by mailbox ID: the primary's equals its user ID and
+// extra IDs never do. mailboxID must come from an admitted AuthContext (or
+// the ledger); "" is the primary.
+func (s *Server) mailboxCacheStore(userID, mailboxID string) (*mailcache.Store, error) {
+	key := cmp.Or(mailboxID, userID)
+	return getOrCreateUserStore(&s.userMu, s.userMailCache, s.userLastSeen, key, func() (*mailcache.Store, error) {
+		return mailcache.New(s.mailboxStateDir(userID, mailboxID))
 	})
 }
 
-// mailCacheFor resolves the calling user's mail cache store from the
-// request's AuthContext (requires the handler to be wrapped in
-// withMailAuth, as handleInbox already is).
+// mailboxStateDir is an admitted mailbox's storage directory.
+func (s *Server) mailboxStateDir(userID, mailboxID string) string {
+	if mailboxID == "" {
+		return s.userStateDir(userID)
+	}
+	return filepath.Join(s.stateDir, "mailboxes", safeUserPathComponent(mailboxID))
+}
+
+// mailboxStore is the selected mailbox's state (processed, decisions,
+// checkpoint). Device, pairing and notification state always uses userStore.
+// An extra mailbox is readmitted before every cache hit, as userStore
+// validates storage.
+func (s *Server) mailboxStore(ctx context.Context, userID, mailboxID string) (*state.Store, error) {
+	if mailboxID == "" {
+		return s.userStore(userID)
+	}
+	a, _, err := s.nativeMailboxAssignment(ctx, userID, mailboxID)
+	if err != nil {
+		return nil, err
+	}
+	return getOrCreateUserStore(&s.userMu, s.userStores, s.userLastSeen, mailboxID, func() (*state.Store, error) {
+		return state.OpenNative(a.Dir(s.stateDir), a.Source)
+	})
+}
+
+// mailCacheFor resolves the selected mailbox's cache from the request's
+// AuthContext (requires withMailAuth, plus withMailbox for a selection).
 func (s *Server) mailCacheFor(r *http.Request) (*mailcache.Store, error) {
 	ac, ok := authFromContext(r)
 	if !ok {
 		return nil, errors.New("no auth context on request")
 	}
-	return s.userMailCacheStore(ac.UserID)
+	return s.mailboxCacheStore(ac.UserID, ac.Mailbox)
 }
 
 type serverMailEntry struct {
@@ -464,15 +497,20 @@ type serverMailEntry struct {
 	updatedAt string
 }
 
-// configuredMailClient returns a cached IMAP client for the user, rebuilt whenever
+// configuredMailboxClient returns a cached IMAP client for the user, rebuilt whenever
 // their stored credential payload changes (keyed by the payload UpdatedAt).
 // Returns errIMAPNotConfigured when the user has no stored credentials.
-func (s *Server) configuredMailClient(userID string) (imapadapter.Client, error) {
+// It serves an admitted mailbox ("" is the primary); only native accounts have
+// extra mailboxes.
+func (s *Server) configuredMailboxClient(userID, mailboxID string) (imapadapter.Client, error) {
 	if s.users != nil {
-		client, native, err := s.nativeMailboxClient(userID)
+		client, native, err := s.nativeMailboxClient(userID, mailboxID)
 		if native || err != nil {
 			return client, err
 		}
+	}
+	if mailboxID != "" {
+		return nil, sso.ErrNativeMailboxUnknown
 	}
 	payload, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(userID), s.imapConfigKeyPath)
 	if err != nil {
@@ -497,11 +535,17 @@ func (s *Server) configuredMailClient(userID string) (imapadapter.Client, error)
 // Bind before handing a client to any route. State and cache independently
 // fail closed; interrupted first binding can resume only with the same source.
 func (s *Server) userMailClient(userID string) (imapadapter.Client, error) {
-	client, err := s.configuredMailClient(userID)
+	return s.mailboxMailClient(userID, "")
+}
+
+// mailboxMailClient binds the selected mailbox's client to its own state and
+// cache; "" is the primary.
+func (s *Server) mailboxMailClient(userID, mailboxID string) (imapadapter.Client, error) {
+	client, err := s.configuredMailboxClient(userID, mailboxID)
 	if err != nil {
 		return nil, err
 	}
-	cache, err := s.userMailCacheStore(userID)
+	cache, err := s.mailboxCacheStore(userID, mailboxID)
 	if err != nil {
 		return nil, err
 	}
@@ -509,7 +553,7 @@ func (s *Server) userMailClient(userID string) (imapadapter.Client, error) {
 	if err = cache.CheckMailSource(source); err != nil {
 		return nil, err
 	}
-	st, err := s.userStore(userID)
+	st, err := s.mailboxStore(context.Background(), userID, mailboxID)
 	if err != nil {
 		return nil, err
 	}
@@ -548,7 +592,7 @@ func (s *Server) mailFor(r *http.Request) (imapadapter.Client, error) {
 	if !ok {
 		return nil, errors.New("no auth context on request")
 	}
-	return s.userMailClient(ac.UserID)
+	return s.mailboxMailClient(ac.UserID, ac.Mailbox)
 }
 
 // resolveMailAuthContext authenticates a mail request either by session cookie
