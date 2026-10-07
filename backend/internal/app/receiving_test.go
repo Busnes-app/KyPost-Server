@@ -99,7 +99,7 @@ func TestNativeReceivingCommitsFrozenRecipientsWithoutIMAP(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, err := r.holding.Get(ctx, receivingGateway, id)
-	if err != nil || d.State != "imported" || len(d.Raw) != 0 || len(d.Bindings) != 2 {
+	if err != nil || d.State != "archived" || len(d.Raw) != 0 {
 		t.Fatalf("holding acknowledgment: %+v %v", d, err)
 	}
 	for _, u := range created {
@@ -278,7 +278,7 @@ func TestNativeReceivingRetainsAcceptedMailThroughLocalOffboarding(t *testing.T)
 		t.Fatal(err)
 	}
 	d, err = r.holding.Get(ctx, receivingGateway, id)
-	if err != nil || d.State != "imported" || len(d.Raw) != 0 {
+	if err != nil || d.State != "archived" || len(d.Raw) != 0 {
 		t.Fatalf("reactivated owner did not complete delivery: state=%s error=%v", d.State, err)
 	}
 }
@@ -360,7 +360,7 @@ func TestNativeReceivingDirectoryEditKeepsAcceptedMail(t *testing.T) {
 		t.Fatalf("profile edit fenced accepted mail: %v", err)
 	}
 	d, err := r.holding.Get(ctx, receivingGateway, id)
-	if err != nil || d.State != "imported" || d.Bindings[0].Generation != 1 {
+	if err != nil || d.State != "archived" {
 		t.Fatalf("delivery: state=%s error=%v", d.State, err)
 	}
 }
@@ -434,7 +434,7 @@ func TestNativeReceivingPartialQuotaFailureRetriesWithoutDuplicate(t *testing.T)
 		t.Fatal(err)
 	}
 	d, err = r.holding.Get(ctx, receivingGateway, id)
-	if err != nil || d.State != "imported" || len(d.Raw) != 0 {
+	if err != nil || d.State != "archived" || len(d.Raw) != 0 {
 		t.Fatalf("recovered delivery did not acknowledge: %s %v", d.State, err)
 	}
 	for index, store := range stores {

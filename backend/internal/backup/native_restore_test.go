@@ -387,7 +387,7 @@ func TestNativeRestoreFatalEntropyKeepsHold(t *testing.T) {
 }
 
 func TestNativeBackupRefusesOrphanMailboxAndForeignReceiving(t *testing.T) {
-	for _, damage := range []string{"orphan-mailbox", "foreign-route", "foreign-binding", "missing-binding"} {
+	for _, damage := range []string{"orphan-mailbox", "foreign-route", "foreign-binding", "missing-binding", "reshaped-archive"} {
 		t.Run(damage, func(t *testing.T) {
 			s, u := nativeService(t)
 			if damage == "orphan-mailbox" {
@@ -427,6 +427,9 @@ func TestNativeBackupRefusesOrphanMailboxAndForeignReceiving(t *testing.T) {
 				}
 				if damage == "missing-binding" {
 					query = `UPDATE deliveries SET state='pending'; DELETE FROM bindings`
+				}
+				if damage == "reshaped-archive" {
+					query = `DROP TABLE archived; CREATE TABLE archived(gateway TEXT, id TEXT)`
 				}
 				if _, err := db.Exec(query); err != nil {
 					t.Fatal(err)

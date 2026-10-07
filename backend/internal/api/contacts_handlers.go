@@ -668,12 +668,15 @@ func (s *Server) invalidatePGPVerdictsOnKeyChange(r *http.Request, before, after
 	if !ok {
 		return
 	}
-	cache, err := s.userMailCacheStore(ac.UserID)
-	if err != nil {
-		s.logger.Error("could not open the mail cache to invalidate pgp verdicts", "error", err.Error())
-		return
-	}
-	if err := cache.InvalidatePGPVerdicts(); err != nil {
-		s.logger.Error("failed to invalidate cached pgp verdicts after a contact key change", "error", err.Error())
+	// Every mailbox of the user caches verdicts against the same contacts.
+	for _, mailboxID := range append([]string{""}, s.extraMailboxIDs(ac.UserID)...) {
+		cache, err := s.mailboxCacheStore(ac.UserID, mailboxID)
+		if err != nil {
+			s.logger.Error("could not open the mail cache to invalidate pgp verdicts", "error", err.Error())
+			continue
+		}
+		if err := cache.InvalidatePGPVerdicts(); err != nil {
+			s.logger.Error("failed to invalidate cached pgp verdicts after a contact key change", "error", err.Error())
+		}
 	}
 }

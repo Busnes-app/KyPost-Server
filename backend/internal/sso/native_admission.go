@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -27,11 +28,30 @@ func (s *LifecycleStore) AdmitNativeMail(ctx context.Context, stateRoot, issuer,
 	return s.admitNativeMailUser(ctx, stateRoot, issuer, u)
 }
 
+// AdmitNativeMailbox is AdmitNativeMail for one of the user's mailboxes:
+// mailboxID equal to the user ID is the primary. Unknown, foreign and
+// disabled mailboxes refuse alike with ErrNativeMailboxUnknown.
+func (s *LifecycleStore) AdmitNativeMailbox(ctx context.Context, stateRoot, issuer, userID, mailboxID string, accounts *users.Store) (NativeAssignment, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	release, err := fsutil.LockFileContext(ctx, s.path)
+	if err != nil {
+		return NativeAssignment{}, err
+	}
+	defer release()
+	u, err := accounts.Get(userID)
+	if err != nil {
+		return NativeAssignment{}, err
+	}
+	return s.admitNativeMailbox(ctx, stateRoot, issuer, u, mailboxID)
+}
+
 // WithNativeMailAccess holds coherent directory and user authority through a
 // local receive/import commit. The action must not re-enter either authority
 // store or perform network I/O. Partial mailbox commits recover via receipts.
-func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, issuer string, accounts *users.Store, userIDs []string, action func(map[string]NativeAssignment) error) error {
-	if len(userIDs) == 0 || len(userIDs) > 100 || action == nil {
+// mailboxIDs name primary or extra mailboxes; each owner is admitted.
+func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(map[string]NativeAssignment) error) error {
+	if len(mailboxIDs) == 0 || len(mailboxIDs) > 100 || action == nil {
 		return ErrNativeProvisioning
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -46,13 +66,19 @@ func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, is
 		for _, u := range current {
 			byID[u.ID] = u
 		}
-		assignments := make(map[string]NativeAssignment, len(userIDs))
-		for _, id := range userIDs {
-			u, found := byID[id]
-			if !found {
+		f, err := s.loadNative()
+		if err != nil {
+			return err
+		}
+		assignments := make(map[string]NativeAssignment, len(mailboxIDs))
+		for _, id := range mailboxIDs {
+			m, _, ok := f.mailbox(id)
+			owner := f.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].Owner.Mailbox
+			u, found := byID[owner]
+			if !ok || !found {
 				return ErrNativeProvisioning
 			}
-			a, err := s.admitNativeMailUser(ctx, stateRoot, issuer, u)
+			a, err := s.admitNativeMailbox(ctx, stateRoot, issuer, u, id)
 			if err != nil {
 				return err
 			}
@@ -60,6 +86,32 @@ func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, is
 		}
 		return action(assignments)
 	})
+}
+
+// admitNativeMailbox admits the owner, then the mailbox: the primary when
+// mailboxID is the user's ID, else an extra one owned by the same subject,
+// not administrator-disabled, with its storage intact.
+func (s *LifecycleStore) admitNativeMailbox(ctx context.Context, stateRoot, issuer string, u users.User, mailboxID string) (NativeAssignment, error) {
+	a, err := s.admitNativeMailUser(ctx, stateRoot, issuer, u)
+	if err != nil || mailboxID == u.ID {
+		return a, err
+	}
+	f, err := s.loadNative()
+	if err != nil {
+		return NativeAssignment{}, err
+	}
+	m, record, ok := f.mailbox(mailboxID)
+	if !ok || record.State != "active" || m.Owner.Issuer != issuer || m.Owner.Subject != u.SSOSub || m.Source == "" || m.StateRoot != a.StateRoot {
+		return NativeAssignment{}, ErrNativeMailboxUnknown
+	}
+	source, err := mailbox.ValidatePreparedMailbox(filepath.Join(m.StateRoot, nativeMailboxesDir), m.Owner, m.Address, m.Limits)
+	if err != nil {
+		return NativeAssignment{}, err
+	}
+	if source != m.Source {
+		return NativeAssignment{}, ErrNativeProvisioning
+	}
+	return m, ctx.Err()
 }
 
 // Caller holds the directory fence and supplies a current user snapshot.

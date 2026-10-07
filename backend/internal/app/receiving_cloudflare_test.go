@@ -79,7 +79,7 @@ func TestCloudflarePickupPermanentReceiptReplayAndNamespace(t *testing.T) {
 		t.Fatal("committed replay depended on scanner", err)
 	}
 	d, err := r.holding.Get(ctx, cloudflareGateway, m.ID)
-	if err != nil || d.State != "imported" || len(d.Raw) != 0 || d.Digest != m.Digest {
+	if err != nil || d.State != "archived" || len(d.Raw) != 0 || d.Digest != m.Digest {
 		t.Fatal("receipt not durable", d, err)
 	}
 	a, _, err := r.life.NativeAssignment(m.Route.Issuer, m.Route.Subject)

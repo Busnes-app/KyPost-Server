@@ -38,15 +38,23 @@ func PrepareAccount(stateRoot string, owner Owner, address string, limits Limits
 // PrepareAccountContext cancels lock contention and checks cancellation before
 // publication. Blocking disk calls remain a separate deployment qualification.
 func PrepareAccountContext(ctx context.Context, stateRoot string, owner Owner, address string, limits Limits) (string, error) {
-	return prepareAccountContext(ctx, stateRoot, owner, address, limits, publishPreparedAccount)
+	return prepareAccountContext(ctx, filepath.Join(stateRoot, "users"), owner, address, limits, publishPreparedAccount)
+}
+
+// PrepareMailboxContext prepares a mailbox under parent ($STATE_DIR/mailboxes
+// for extra mailboxes). Its state.db is created like an account's but holds
+// mail state only; callers never write device or notification rows to it.
+func PrepareMailboxContext(ctx context.Context, parent string, owner Owner, address string, limits Limits) (string, error) {
+	return prepareAccountContext(ctx, parent, owner, address, limits, publishPreparedAccount)
 }
 
 // publish is the syscall boundary exercised by killed-process checks.
 func prepareAccount(stateRoot string, owner Owner, address string, limits Limits, publish func(string, string) error) (string, error) {
-	return prepareAccountContext(context.Background(), stateRoot, owner, address, limits, publish)
+	return prepareAccountContext(context.Background(), filepath.Join(stateRoot, "users"), owner, address, limits, publish)
 }
 
-func prepareAccountContext(ctx context.Context, stateRoot string, owner Owner, address string, limits Limits, publish func(string, string) error) (string, error) {
+// root is the parent directory the mailbox is published into.
+func prepareAccountContext(ctx context.Context, root string, owner Owner, address string, limits Limits, publish func(string, string) error) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -54,7 +62,6 @@ func prepareAccountContext(ctx context.Context, stateRoot string, owner Owner, a
 	if !fsutil.SafePathComponent(owner.Mailbox) || err != nil || a.Address != address {
 		return "", ErrPreparation
 	}
-	root := filepath.Join(stateRoot, "users")
 	if err = os.MkdirAll(root, 0700); err != nil {
 		return "", err
 	}
@@ -139,7 +146,15 @@ func ValidatePreparedAccount(stateRoot string, owner Owner, address string, limi
 	if !fsutil.SafePathComponent(owner.Mailbox) {
 		return "", ErrPreparation
 	}
-	return preparedSource(filepath.Join(stateRoot, "users", owner.Mailbox), owner, address, limits)
+	return ValidatePreparedMailbox(filepath.Join(stateRoot, "users"), owner, address, limits)
+}
+
+// ValidatePreparedMailbox is ValidatePreparedAccount under an explicit parent.
+func ValidatePreparedMailbox(parent string, owner Owner, address string, limits Limits) (string, error) {
+	if !fsutil.SafePathComponent(owner.Mailbox) {
+		return "", ErrPreparation
+	}
+	return preparedSource(filepath.Join(parent, owner.Mailbox), owner, address, limits)
 }
 
 // Check before any constructor: constructors create missing schemas/identities.

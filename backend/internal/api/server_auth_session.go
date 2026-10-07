@@ -111,6 +111,9 @@ type AuthContext struct {
 	// DeviceID names the paired device when the request authenticated with a
 	// device credential (withMailAuth's device arm); empty for a session.
 	DeviceID string
+	// Mailbox is the extra mailbox an X-KyPost-Mailbox header selected and
+	// withMailbox admitted; empty means the primary (mailbox ID == UserID).
+	Mailbox string
 	// SSOSession is true for a session minted by a KySignOn login, one whose
 	// token spoke the KySignOn contract. Such a session re-authenticates to
 	// KySignOn rather than with a password; a session from any other

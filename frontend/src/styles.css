@@ -1629,6 +1629,25 @@ pre {
   border-bottom: 0;
 }
 
+/* Sender-controlled text: stacked marks and long tokens stay inside their cell. */
+.quarantine-table td {
+  overflow: hidden;
+  overflow-wrap: break-word;
+  contain: paint;
+}
+
+.quarantine-table .quarantine-nowrap,
+.quarantine-table button {
+  white-space: nowrap;
+}
+
+/* Only the sender may break anywhere: an unbroken hostile token wraps inside its own column. */
+.quarantine-table .quarantine-sender {
+  min-width: 16ch;
+  max-width: 28ch;
+  overflow-wrap: anywhere;
+}
+
 .users-row {
   transition: background 140ms ease;
 }

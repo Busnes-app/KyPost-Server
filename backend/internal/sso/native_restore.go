@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -168,6 +169,31 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 			return true, err
 		}
 	}
+	// Extra mailboxes belong to a published native user's subject, live under
+	// $STATE/mailboxes with a mail-only state.db and match their manifest.
+	for id, m := range f.stored.Mailboxes {
+		if m.Kind != "extra" {
+			continue
+		}
+		a, _, ok := f.mailbox(id)
+		owner, published := byID[a.UserID()]
+		if !ok || !strings.HasPrefix(id, extraMailboxPrefix) || !fsutil.SafePathComponent(id) || ids[id] || byID[id].ID != "" || !published || owner.NativeMailboxSource == "" || owner.SSOSub != a.Owner.Subject || a.StateRoot != root || a.Limits != f.Accounts[directoryKey(a.Owner.Issuer, a.Owner.Subject)].Limits || a.Address == "" {
+			return true, ErrNativeProvisioning
+		}
+		ids[id] = true
+		dir := filepath.Join(stateRoot, nativeMailboxesDir, id)
+		_, err := os.Lstat(filepath.Join(dir, "native-mailbox.json"))
+		if a.Source == "" && errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return true, err
+		}
+		source, err := mailbox.ValidatePreparedMailbox(filepath.Dir(dir), a.Owner, a.Address, a.Limits)
+		if err != nil || a.Source != "" && source != a.Source || mailOnlyState(filepath.Join(dir, "state.db")) != nil {
+			return true, ErrNativeProvisioning
+		}
+	}
 	// Every ledger address, alias or reserved included, is canonical and on a
 	// domain in the set, retired or not.
 	for address := range f.stored.Addresses {
@@ -175,28 +201,35 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 			return true, ErrNativeProvisioning
 		}
 	}
-	// Find complete orphan preparations, including a missing ledger/lifecycle pair.
-	entries, err := os.ReadDir(filepath.Join(stateRoot, "users"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return native, err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	// Find complete orphan preparations, including a missing ledger/lifecycle
+	// pair, under both mailbox roots; placement is checked per database below.
+	for _, parent := range []string{"users", nativeMailboxesDir} {
+		entries, err := os.ReadDir(filepath.Join(stateRoot, parent))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return native, err
 		}
-		_, manifestErr := os.Lstat(filepath.Join(stateRoot, "users", entry.Name(), "native-mailbox.json"))
-		if manifestErr == nil && !ids[entry.Name()] {
-			return true, ErrNativeProvisioning
-		}
-		if manifestErr != nil && !errors.Is(manifestErr, os.ErrNotExist) {
-			return native, manifestErr
-		}
-		_, dbErr := os.Lstat(filepath.Join(stateRoot, "users", entry.Name(), "mailbox/mailbox.db"))
-		if dbErr == nil && (!ids[entry.Name()] || manifestErr != nil) {
-			return true, ErrNativeProvisioning
-		}
-		if dbErr != nil && !errors.Is(dbErr, os.ErrNotExist) {
-			return native, dbErr
+		for _, entry := range entries {
+			if parent == nativeMailboxesDir {
+				native = true
+			}
+			if !entry.IsDir() {
+				continue
+			}
+			known := ids[entry.Name()]
+			_, manifestErr := os.Lstat(filepath.Join(stateRoot, parent, entry.Name(), "native-mailbox.json"))
+			if manifestErr == nil && !known {
+				return true, ErrNativeProvisioning
+			}
+			if manifestErr != nil && !errors.Is(manifestErr, os.ErrNotExist) {
+				return native, manifestErr
+			}
+			_, dbErr := os.Lstat(filepath.Join(stateRoot, parent, entry.Name(), "mailbox/mailbox.db"))
+			if dbErr == nil && (!known || manifestErr != nil) {
+				return true, ErrNativeProvisioning
+			}
+			if dbErr != nil && !errors.Is(dbErr, os.ErrNotExist) {
+				return native, dbErr
+			}
 		}
 	}
 	err = filepath.WalkDir(stateRoot, func(path string, entry fs.DirEntry, err error) error {
@@ -214,7 +247,7 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 			native = true
 			rel, err := filepath.Rel(stateRoot, path)
 			parts := strings.Split(filepath.ToSlash(rel), "/")
-			if err != nil || len(parts) != 4 || parts[0] != "users" || parts[2] != "mailbox" || !ids[parts[1]] {
+			if err != nil || len(parts) != 4 || parts[0] != "users" && parts[0] != nativeMailboxesDir || parts[2] != "mailbox" || !ids[parts[1]] || strings.HasPrefix(parts[1], extraMailboxPrefix) != (parts[0] == nativeMailboxesDir) {
 				return ErrNativeProvisioning
 			}
 		case "ingress.db":
@@ -251,6 +284,14 @@ func validateNativeReceiving(path string, f nativeAssignments, ledgerVersion int
 		return err
 	}
 	defer db.Close()
+	// Tombstones answer replays; a reshaped table could not. Absent predates archival.
+	var archived string
+	if err := db.QueryRow(`SELECT COALESCE(group_concat(name||' '||type,','),'') FROM pragma_table_info('archived')`).Scan(&archived); err != nil {
+		return err
+	}
+	if archived != "" && archived != ingress.ArchivedColumns {
+		return ErrNativeProvisioning
+	}
 	var orphaned int
 	if err := db.QueryRow(`SELECT count(*) FROM deliveries d WHERE d.state!='staged' AND NOT EXISTS(SELECT 1 FROM bindings b WHERE b.gateway=d.gateway AND b.id=d.id)`).Scan(&orphaned); err != nil {
 		return err
@@ -276,6 +317,9 @@ func validateNativeReceiving(path string, f nativeAssignments, ledgerVersion int
 			return err
 		}
 		a, ok := f.Accounts[directoryKey(issuer, subject)]
+		if ledgerVersion != 1 {
+			a, _, ok = f.mailbox(mailboxID)
+		}
 		if !ok || a.Owner.Issuer != issuer || a.Owner.Subject != subject || a.Owner.Mailbox != mailboxID || a.Source == "" || generation <= 0 {
 			return ErrNativeProvisioning
 		}
@@ -284,4 +328,26 @@ func validateNativeReceiving(path string, f nativeAssignments, ledgerVersion int
 		}
 	}
 	return rows.Err()
+}
+
+// mailOnlyState refuses an extra mailbox state.db holding any device,
+// pairing, subscriber or notification row: those belong to the primary.
+func mailOnlyState(path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: abs}).String()+"?mode=ro")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var rows int
+	if err := db.QueryRow(`SELECT (SELECT count(*) FROM native_devices)+(SELECT count(*) FROM notifications)+(SELECT count(*) FROM pull_notifications)+(SELECT count(*) FROM meta WHERE key='subscriber_id')`).Scan(&rows); err != nil {
+		return err
+	}
+	if rows != 0 {
+		return ErrNativeProvisioning
+	}
+	return nil
 }

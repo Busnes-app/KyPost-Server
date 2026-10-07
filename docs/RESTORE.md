@@ -98,6 +98,17 @@ routes and bindings validate unchanged. The recovery authority digest includes
 every address record, so any alias add, release, reassignment or state change
 invalidates an outstanding recovery challenge: reissue it afterwards.
 
+Extra mailboxes (`$STATE/mailboxes/<mailboxID>/`) are collected like the rest of
+STATE_DIR. Validation requires each to belong to a published native user's
+subject, carry an `mbx-` ID that is no user's, share the owner's state root and
+limits, match its manifest and keep a mail-only `state.db`: any device,
+notification, pull-notification or subscriber row refuses the snapshot. Storage
+is checked per mailbox root, so a mailbox database under the wrong root, or an
+unknown one under either, is an orphan. A mailbox reserved but not yet prepared
+(an interrupted creation) carries no storage and still validates. The recovery
+authority digest includes extra mailbox records (owner, state, storage), so
+creating, disabling or re-enabling one also needs a fresh recovery challenge.
+
 The version-1 recipe remains compatible. Use this version of KyPost or newer to
 check all three database names and the additive relay credential/authority recipe; older drills do not attest the new relay checks. A new integrity
 check cannot recover WAL rows omitted from an older raw-copy native backup.
@@ -163,8 +174,8 @@ owner's password/recovery material; a capsule does not bypass that protection.
    do not regain authority. Mail, pull-notification history and opaque wrapped
    keys remain retained. After the account/device fence, remove each native CardDAV app-password hash; failure leaves staging held and unpublished. Legacy IMAP registrations and CardDAV credentials are unchanged.
    After historical ownership and credential cleanup, restore atomically raises each published native subject’s existing directory ID-token cutoff to at least the current server time plus 31 seconds. This includes the accepted 30-second future clock skew; higher cutoffs and legacy directory entries remain unchanged. Earlier browser/device tokens are refused before grants. Wait for the cutoff interval to pass and obtain a new provider token after future recovery qualification. This does not prove fresh primary authentication or revoke local passwords/MFA recovery material. Missing authority or persistence failure keeps staging held and unpublished.
-   Restore also rotates a separate mailbox reference generation, preserving the
-   immutable encryption namespace. Native HTTP/notification references include
+   Restore also rotates a separate mailbox reference generation, in every
+   primary and extra mailbox, preserving the immutable encryption namespace. Native HTTP/notification references include
    this generation; old-generation or bare numeric references are refused.
    Corrupt generation metadata refuses publication; older snapshots without the
    table gain a fresh generation. See [reference qualification](NATIVE_RESTORE_REFERENCES.md).
