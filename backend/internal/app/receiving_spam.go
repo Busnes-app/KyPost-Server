@@ -41,7 +41,7 @@ func scanReceivingSpam(ctx context.Context, raw []byte, delivery ingress.Deliver
 	}()
 	failure := &receivingCommandError{err: errors.New("spam scanner unavailable or invalid; restore the local Rspamd sidecar and retry"), code: 5}
 	address, err := netip.ParseAddr(ip)
-	cloudflare := delivery.Gateway == cloudflareGateway
+	cloudflare := delivery.Gateway == cloudflareGateway || delivery.Gateway == cfGateway
 	if cloudflare && (ip != "" || helo != "") || !cloudflare && (err != nil || address.Zone() != "" || len(helo) > 253 || strings.ContainsFunc(helo, func(c rune) bool { return c < 32 || c > 126 })) {
 		return failure
 	}

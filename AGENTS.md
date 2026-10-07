@@ -156,9 +156,9 @@ Default section order:
 
 ## Child DOX Index
 
-- `receiving-worker/` — Independent one-message Cloudflare Email Worker, private R2 retention and authenticated read-only pickup. See [receiving-worker/AGENTS.md](receiving-worker/AGENTS.md).
+- `receiving-worker/` — Independent Cloudflare Email Workers: the one-message pilot and the continuous protocol (signed routing table, R2 queue, authenticated pickup and rotation), with private R2 retention. See [receiving-worker/AGENTS.md](receiving-worker/AGENTS.md).
 
-- `backend/` — Go 1.26.6 classification engine, HTTP API, IMAP adapter, Ollama adapter, poller, config, state, health, logging, redaction, sealed backups, internal receiving buffer, permanent mailbox core and encrypted native outbox; produces the `kypost-server` binary. See [backend/AGENTS.md](backend/AGENTS.md). Contains nested children: `backend/internal/backup/`, `backend/internal/adapters/`, `backend/internal/contacts/`, `backend/internal/groups/`, `backend/internal/mailcache/`, `backend/internal/ingress/`, `backend/internal/mailbox/`.
+- `backend/` — Go 1.26.6 classification engine, HTTP API, IMAP adapter, Ollama adapter, poller, config, state, health, logging, redaction, sealed backups, internal receiving buffer, permanent mailbox core and encrypted native outbox; produces the `kypost-server` binary. See [backend/AGENTS.md](backend/AGENTS.md). Contains nested children: `backend/internal/backup/`, `backend/internal/cfreceiving/`, `backend/internal/adapters/`, `backend/internal/contacts/`, `backend/internal/groups/`, `backend/internal/mailcache/`, `backend/internal/ingress/`, `backend/internal/mailbox/`.
 - `frontend/` — React 19 / TypeScript SPA for config, monitoring, decision audit, and log streaming. See [frontend/AGENTS.md](frontend/AGENTS.md).
 - `scripts/` — Container initialization, process orchestration (supervisord), Ollama model management, host-side image updates, guided operator setup and fixed optional Rspamd policy/qualification. See [scripts/AGENTS.md](scripts/AGENTS.md).
 - `share/` — Persistent Ollama model blob cache bind-mounted from the host; never committed to git. See [share/AGENTS.md](share/AGENTS.md).

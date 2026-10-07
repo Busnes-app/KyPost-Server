@@ -1,14 +1,21 @@
 # Copy privately and supply the dedicated operator-owned bucket/account.
 name = "kypost-receiving-pilot"
+# Pilot (one message): main = "worker.mjs", secrets ROUTE and PICKUP_TOKEN.
+# Continuous: main = "continuous.mjs", secrets PICKUP_TOKEN_SHA256 (lowercase hex
+# SHA-256 of the 64-hex bearer string) and ROUTING_PUBLIC_KEY (standard base64 of
+# KyPost's raw 32-byte Ed25519 public key). They bootstrap epoch 1 only while the
+# bucket has no credentials.json; see docs/CLOUDFLARE_CONTINUOUS_RECEIVING.md.
+# Continuous needs Workers Paid (Free's 10 ms CPU cannot hash a 25 MiB message) and
+# its own key and bearer: never share them with another Worker.
 main = "worker.mjs"
 compatibility_date = "2026-09-18"
 workers_dev = true
 
 [[r2_buckets]]
 binding = "MAIL"
-bucket_name = "REPLACE-WITH-DEDICATED-PRIVATE-PILOT-BUCKET"
+bucket_name = "REPLACE-WITH-DEDICATED-PRIVATE-BUCKET"
 
-# Install ROUTE and PICKUP_TOKEN through Wrangler secrets, never this file.
+# Install secrets through Wrangler secrets, never this file.
 # Disable bucket public access, lifecycle deletion and Worker observability.
 [observability]
 enabled = false

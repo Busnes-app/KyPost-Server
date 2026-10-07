@@ -241,6 +241,9 @@ jobs:
       - name: receiving Worker R2 runtime
         run: node receiving-worker/runtime-check.mjs
 
+      - name: receiving Worker continuous R2 runtime
+        run: node receiving-worker/runtime-continuous-check.mjs
+
   scripts:
     name: ci-scripts
     runs-on: ubuntu-latest

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
@@ -20,6 +22,22 @@ func (s *Server) openHolding() (*ingress.Store, error) {
 		return nil, nil
 	}
 	return ingress.OpenExisting(dir, ingress.ReceivingLimits)
+}
+
+// handleCloudflareReceivingStatus reports the continuous Cloudflare profile:
+// state, revisions, times and counts, never addresses or envelopes.
+func (s *Server) handleCloudflareReceivingStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.nativeMail {
+		http.Error(w, "native mail is disabled", http.StatusNotFound)
+		return
+	}
+	status, err := cfreceiving.CurrentStatus(r.Context(), cfreceiving.Keys{Dir: config.SecretDir()}, filepath.Join(s.stateDir, "receiving"))
+	if err != nil {
+		http.Error(w, "cloudflare receiving state unreadable; preserve it and repair", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 // handleQuarantineList pages quarantined envelopes (?after=<sequence>), never
@@ -63,11 +81,25 @@ func (s *Server) handleQuarantineDiscard(w http.ResponseWriter, r *http.Request)
 }
 
 // changeQuarantine is step-up confirmed and audited with the delivery ID only.
+// {"toCurrentOwner": true, "currentMailbox": "<id shown>"} releases an
+// unresolved delivery (original owner unknown) to its address's current owner,
+// only while that owner's mailbox is still the one the administrator reviewed;
+// the step-up binds both, and the audit names that action.
 func (s *Server) changeQuarantine(w http.ResponseWriter, r *http.Request, action, done string) {
 	w.Header().Set("Cache-Control", "no-store")
-	var body struct{}
+	var body struct {
+		ToCurrentOwner bool   `json:"toCurrentOwner"`
+		CurrentMailbox string `json:"currentMailbox"`
+	}
 	if !s.nativeDomainGate(w, r, &body) {
 		return
+	}
+	if body.ToCurrentOwner && (done != "released" || body.CurrentMailbox == "") || !body.ToCurrentOwner && body.CurrentMailbox != "" {
+		http.Error(w, "invalid mail administration request", http.StatusBadRequest)
+		return
+	}
+	if body.ToCurrentOwner {
+		action = "release_quarantine_to_current_owner"
 	}
 	ac, _ := authFromContext(r)
 	gateway, id := r.PathValue("gateway"), r.PathValue("id")
@@ -96,7 +128,7 @@ func (s *Server) changeQuarantine(w http.ResponseWriter, r *http.Request, action
 			if settings := s.ssoStore.Load(); settings.Enabled {
 				issuer = settings.IssuerURL
 			}
-			err = s.ssoLifecycle.ReleaseQuarantined(r.Context(), s.stateDir, issuer, s.users, holding, gateway, id)
+			err = s.ssoLifecycle.ReleaseQuarantined(r.Context(), s.stateDir, issuer, s.users, holding, gateway, id, body.CurrentMailbox)
 		} else if err = sso.RequireNativeRestoreReleased(s.stateDir); err == nil {
 			// partially_released: an interrupted release may have reached
 			// some frozen mailboxes before this discard.

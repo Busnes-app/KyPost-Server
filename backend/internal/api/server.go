@@ -564,6 +564,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/mailboxes/{id}/disable", s.withAdmin(withActionDigest(s.handleNativeMailboxDisable)))
 	mux.HandleFunc("POST /api/admin/mailboxes/{id}/enable", s.withAdmin(withActionDigest(s.handleNativeMailboxEnable)))
 	mux.HandleFunc("GET /api/admin/receiving/quarantine", s.withAdmin(s.handleQuarantineList))
+	mux.HandleFunc("GET /api/admin/receiving/cloudflare", s.withAdmin(s.handleCloudflareReceivingStatus))
 	mux.HandleFunc("POST /api/admin/receiving/quarantine/{gateway}/{id}/release", s.withAdmin(withActionDigest(s.handleQuarantineRelease)))
 	mux.HandleFunc("POST /api/admin/receiving/quarantine/{gateway}/{id}/discard", s.withAdmin(withActionDigest(s.handleQuarantineDiscard)))
 	mux.HandleFunc("GET /api/admin/mail-relay", s.withAdmin(s.handleNativeMailRelay))
