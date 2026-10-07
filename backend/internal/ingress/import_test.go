@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,7 +100,7 @@ func TestMailboxImportPartialFailureAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, err = s.Get(ctx, "maddy", "delivery")
-	if err != nil || d.State != "imported" || len(d.Raw) != 0 {
+	if err != nil || d.State != "archived" || len(d.Raw) != 0 {
 		t.Fatalf("complete commit not acknowledged: %+v %v", d, err)
 	}
 	for owner, store := range stores {
@@ -240,7 +241,7 @@ func TestMailboxImporterSurvivesKilledWriter(t *testing.T) {
 		}
 	}
 	d, err = s.Get(ctx, "maddy", "crash")
-	if err != nil || d.State != "imported" || len(d.Raw) != 0 {
+	if err != nil || d.State != "archived" || len(d.Raw) != 0 {
 		t.Fatal("all mailbox commits not acknowledged")
 	}
 }
@@ -281,5 +282,215 @@ func TestMailboxImporterRetainsBytesOnMidImportReassignment(t *testing.T) {
 		if err != nil || len(list) != 1 {
 			t.Fatalf("frozen copy lost for %s: %v", owner, err)
 		}
+	}
+}
+
+// More acknowledged imports than the record limit keep reception open, and
+// every archived delivery still refuses re-delivery on exact replay.
+func TestArchivedReceiptsFreeRecordLimitAndDedupe(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	s, err := Open(filepath.Join(root, "holding"), Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	owner := mailbox.Owner{Issuer: "https://identity.example.test", Subject: "alice", Mailbox: "alice"}
+	box := openMailbox(t, root, owner)
+	resolve := func(mailbox.Owner) (*mailbox.Store, error) { return box, nil }
+	if err := s.SetRoute(ctx, proofRoute("alice@example.test", "alice", 1)); err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{"1", "2", "3", "4", "5"}
+	for _, id := range ids {
+		if err := s.Bind(ctx, "maddy", id, "sender@outside.test", "alice@example.test"); err != nil {
+			t.Fatalf("reception stopped at %s: %v", id, err)
+		}
+		if err := s.Accept(ctx, "maddy", id, "sender@outside.test", bytes.NewReader(importRaw)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Import(ctx, "maddy", id, resolve); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range ids {
+		if err := s.Bind(ctx, "maddy", id, "sender@outside.test", "alice@example.test"); err != nil {
+			t.Fatalf("exact RCPT replay: %v", err)
+		}
+		if err := s.Accept(ctx, "maddy", id, "sender@outside.test", bytes.NewReader(importRaw)); err != nil {
+			t.Fatalf("exact DATA replay: %v", err)
+		}
+		if err := s.Import(ctx, "maddy", id, resolve); !errors.Is(err, ErrLease) {
+			t.Fatalf("archived delivery reclaimed: %v", err)
+		}
+		if err := s.Bind(ctx, "maddy", id, "sender@outside.test", "other@example.test"); !errors.Is(err, ErrConflict) {
+			t.Fatalf("archived delivery gained a recipient: %v", err)
+		}
+		if err := s.Bind(ctx, "maddy", id, "forged@outside.test", "alice@example.test"); !errors.Is(err, ErrConflict) {
+			t.Fatalf("archived delivery changed sender: %v", err)
+		}
+		if err := s.Accept(ctx, "maddy", id, "sender@outside.test", strings.NewReader("changed")); !errors.Is(err, ErrConflict) {
+			t.Fatalf("archived delivery accepted other bytes: %v", err)
+		}
+	}
+	list, err := box.List(ctx, "INBOX", 0, 100)
+	if err != nil || len(list) != len(ids) {
+		t.Fatalf("replay duplicated or lost mail: %d %v", len(list), err)
+	}
+	var stamped int
+	now := time.Now().Unix()
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM archived WHERE archived_at BETWEEN ? AND ?", now-60, now+60).Scan(&stamped); err != nil || stamped != len(ids) {
+		t.Fatalf("archived_at not UTC unix seconds: %d %v", stamped, err)
+	}
+	if rows, err := s.List(ctx, "maddy", 0, 100); err != nil || len(rows) != 0 {
+		t.Fatalf("archived deliveries still listed: %+v %v", rows, err)
+	}
+	// The limit still bounds live obligations.
+	for _, id := range []string{"live-1", "live-2"} {
+		if err := s.Bind(ctx, "maddy", id, "", "alice@example.test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Bind(ctx, "maddy", "live-3", "", "alice@example.test"); !errors.Is(err, ErrCapacity) {
+		t.Fatalf("live record limit: %v", err)
+	}
+}
+
+// A writer that dies between the tombstone and the delete leaves the pending
+// delivery intact; the retry imports once and archives.
+func TestArchiveIsAtomicWithAcknowledgment(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	s, err := Open(filepath.Join(root, "holding"), proofLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	createImport(t, s, "torn")
+	if _, err := s.db.Exec("CREATE TRIGGER crash BEFORE DELETE ON deliveries BEGIN SELECT RAISE(ABORT,'crash'); END"); err != nil {
+		t.Fatal(err)
+	}
+	stores := map[mailbox.Owner]*mailbox.Store{}
+	resolve := func(owner mailbox.Owner) (*mailbox.Store, error) {
+		if stores[owner] == nil {
+			stores[owner] = openMailbox(t, root, owner)
+		}
+		return stores[owner], nil
+	}
+	if err := s.Import(ctx, "maddy", "torn", resolve); err == nil {
+		t.Fatal("torn archival acknowledged")
+	}
+	var tombstones int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM archived").Scan(&tombstones); err != nil || tombstones != 0 {
+		t.Fatalf("tombstone survived a failed archival: %d %v", tombstones, err)
+	}
+	d, err := s.Get(ctx, "maddy", "torn")
+	if err != nil || d.State != "pending" || !bytes.Equal(d.Raw, importRaw) || len(d.Bindings) != 3 {
+		t.Fatalf("failed archival lost the obligation: %+v %v", d, err)
+	}
+	if _, err := s.db.Exec("DROP TRIGGER crash; UPDATE deliveries SET lease_until=0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Import(ctx, "maddy", "torn", resolve); err != nil {
+		t.Fatal(err)
+	}
+	if d, err = s.Get(ctx, "maddy", "torn"); err != nil || d.State != "archived" {
+		t.Fatalf("retry not archived: %+v %v", d, err)
+	}
+	for owner, store := range stores {
+		if list, err := store.List(ctx, "INBOX", 0, 10); err != nil || len(list) != 1 {
+			t.Fatalf("%s duplicated or lost: %d %v", owner.Subject, len(list), err)
+		}
+	}
+}
+
+// Receipts acknowledged before tombstones existed are archived on the next
+// open; staged, pending and quarantined deliveries never are.
+func TestArchiveMigratesOnlyImportedReceipts(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "holding")
+	s, err := Open(dir, proofLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRoute(ctx, proofRoute("alice@example.test", "alice", 1)); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"staged", "pending", "quarantined", "legacy", "downgraded"} {
+		if err := s.Bind(ctx, "maddy", id, "sender@outside.test", "alice@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		if id != "staged" {
+			if err := s.Accept(ctx, "maddy", id, "sender@outside.test", bytes.NewReader(importRaw)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := s.QuarantinePending(ctx, "maddy", "quarantined"); err != nil {
+		t.Fatal(err)
+	}
+	// Model the pre-tombstone schema and its acknowledged receipt.
+	if _, err := s.db.Exec("DROP TABLE archived; UPDATE deliveries SET state='imported',raw=NULL WHERE id='legacy'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for round := range 2 {
+		s, err = OpenExisting(dir, proofLimits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		downgraded := "pending"
+		if round == 1 {
+			downgraded = "archived"
+		}
+		for id, state := range map[string]string{"staged": "staged", "pending": "pending", "quarantined": "quarantined", "legacy": "archived", "downgraded": downgraded} {
+			d, err := s.Get(ctx, "maddy", id)
+			if err != nil || d.State != state || (state == "pending" || state == "quarantined") && !bytes.Equal(d.Raw, importRaw) || state != "archived" && len(d.Bindings) != 1 {
+				t.Fatalf("%s after migration: %+v %v", id, d, err)
+			}
+		}
+		if err := s.Bind(ctx, "maddy", "legacy", "sender@outside.test", "alice@example.test"); err != nil {
+			t.Fatalf("migrated receipt replay: %v", err)
+		}
+		// An older binary run after the table exists still leaves 'imported'.
+		if _, err := s.db.Exec("UPDATE deliveries SET state='imported',raw=NULL WHERE id='downgraded'"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Every recipient of a multi-owner delivery replays after archival, and a lost
+// ACK replay needs the archived digest.
+func TestArchivedMultiRecipientReplay(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	s, err := Open(filepath.Join(root, "holding"), proofLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	createImport(t, s, "multi")
+	claimed, err := s.Get(ctx, "maddy", "multi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Import(ctx, "maddy", "multi", func(owner mailbox.Owner) (*mailbox.Store, error) { return openMailbox(t, root, owner), nil }); err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range []string{"alice@example.test", "alias@example.test", "hidden@example.test"} {
+		if err := s.Bind(ctx, "maddy", "multi", "sender@outside.test", address); err != nil {
+			t.Fatalf("archived recipient %s replay: %v", address, err)
+		}
+	}
+	if err := s.Acknowledge(ctx, "maddy", "multi", "lost", claimed.Digest); err != nil {
+		t.Fatalf("lost ACK replay: %v", err)
+	}
+	if err := s.Acknowledge(ctx, "maddy", "multi", "lost", strings.Repeat("0", 64)); !errors.Is(err, ErrLease) {
+		t.Fatalf("wrong-digest ACK replay: %v", err)
 	}
 }

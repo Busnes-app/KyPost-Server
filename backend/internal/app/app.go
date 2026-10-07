@@ -35,6 +35,9 @@ func Run(args []string) error {
 		if len(args) > 1 && args[1] == "cloudflare" {
 			return runCloudflareReceiving(args[2:], os.Stdout)
 		}
+		if len(args) > 1 && args[1] == "quarantine" {
+			return runReceivingQuarantine(args[2:], os.Stdout)
+		}
 		if len(args) > 1 && args[1] == "config" {
 			return runReceivingConfig(args[2:], os.Stdout)
 		}

@@ -19,10 +19,23 @@ bindings by address generation; `From` any owned active address with the
 record in the recovery authority digest). Ledgers
 written before it carried the directory revision in routes, so loading one
 without the `addressGenerations` marker raises each generation to the owner's
-directory revision once and the next write freezes it. Phase 3b (admin UI) and
-phase 4 are not implemented; with no administrator mailbox disable yet, the
-"mailbox not administrator-disabled" term of the desired-state rule is always
-true.
+directory revision once and the next write freezes it. Phase 3b is implemented:
+the Server → Mail addresses admin screen. Phase 4a is implemented: the backend
+for extra mailboxes (admin create, disable and re-enable API; `$STATE/mailboxes/`
+storage with a mail-only `state.db`; authority, caches, poller and outbox keyed
+by mailbox ID; `GET /api/mailboxes` and `X-KyPost-Mailbox`; notifications carry
+the mailbox ID; backup validation, reference rotation and the recovery digest).
+Sorter learning covers the primary mailbox only; incoming encryption keeps
+one journal per user, so it and active extra mailboxes exclude each other:
+creating or re-enabling an extra mailbox is refused while the owner has it on,
+and enabling it is refused while the user has an active, prepared extra
+mailbox; disabling them restores the option. Disabling an extra mailbox quarantines its
+queued or retryable outbox jobs for good. Accepted incoming mail still waiting for a
+disabled mailbox, or for an owner KyIdentity offboarded or promoted, is quarantined at
+its next import attempt, because its address generation has moved; after re-enabling
+the mailbox an administrator can release it to that mailbox
+([quarantine release](NATIVE_PROVISIONING.md#quarantine-release)). Phase 4b is implemented: Server →
+Mail addresses creates, disables and re-enables extra mailboxes.
 Prerequisite of
 [continuous Cloudflare receiving](CLOUDFLARE_CONTINUOUS_RECEIVING.md); applies to
 both native receiving profiles. External IMAP accounts are unaffected.

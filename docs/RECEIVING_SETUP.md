@@ -352,5 +352,7 @@ separately. It does not replace the external observations above.
 
 Rollback: stop new reception first, restore prior test-domain DNS, retain a
 compatible KyPost binary and all native state, and drain or reconcile pending
-and quarantined deliveries. DNS rollback changes future routing only. Disabling
+and quarantined deliveries (`docker compose exec --user kypost kypost-server kypost-server receiving quarantine list`, then
+release or discard each; see
+[quarantine release](NATIVE_PROVISIONING.md#quarantine-release)). DNS rollback changes future routing only. Disabling
 the receiver or native flags does not migrate native mail to an IMAP service.

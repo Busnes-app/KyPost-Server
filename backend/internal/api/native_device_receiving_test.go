@@ -117,7 +117,7 @@ func qualifyNativeDeviceReceiving(t *testing.T, s *Server, userID string, sessio
 		t.Fatal(err)
 	}
 	delivery, err := holding.Get(ctx, "qualified-test", "device-incoming")
-	if err != nil || delivery.State != "imported" || len(delivery.Raw) != 0 {
+	if err != nil || delivery.State != "archived" || len(delivery.Raw) != 0 {
 		t.Fatal("import did not retain receipt and release holding payload", err)
 	}
 	stored, err := box.List(ctx, "INBOX", 0, 10)

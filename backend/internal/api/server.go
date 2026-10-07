@@ -43,7 +43,7 @@ import (
 // Server holds the HTTP surface and its process-wide state.
 //
 // LOCK ORDER: cfgMu before sessMu before pairingMu before userMu before ollamaMu before serverMu before
-// pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu. Never the reverse.
+// pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu before exportMu before importMu. Never the reverse.
 // The sso-lifecycle file lock (sso.LifecycleStore) ranks before all of them and
 // is not modelled by lockRank or TestLockOrderIsRespected: hold no Server mutex
 // when calling LockDirectory, ApplyDirectory, RecordLogout or RecordSignOnJTI.
@@ -119,6 +119,19 @@ type Server struct {
 	// innermost, taken alone, never while another Server mutex is held.
 	stepUpMu sync.Mutex
 	stepUps  map[string]ssoStepUp
+	// exports are the unspent mail-export download grants, keyed by token,
+	// and exporting the users with a download streaming. Innermost, taken
+	// alone, never while another Server mutex is held.
+	exportMu  sync.Mutex
+	exports   map[string]exportGrant
+	exporting map[string]bool
+	// importGrants are the unspent mail-import upload links and IMAP grants, keyed by token,
+	// and imports each user's latest import job. Innermost, taken alone,
+	// never while another Server mutex is held.
+	importMu     sync.Mutex
+	importGrants map[string]importGrant
+	imports      map[string]*importJob
+	importClosed bool // set at Shutdown: no new import job starts
 	// singleUse makes each one-shot token — PGP QR key exchange, native device
 	// pairing nonces — redeemable exactly once. See singleUseTokens.
 	singleUse            *singleUseTokens
@@ -131,8 +144,13 @@ type Server struct {
 	// passwordChangeLockout bounds current-credential guessing on
 	// POST /api/auth/password, keyed on the acting user's ID.
 	passwordChangeLockout *failureLockout
-	deviceLockout         *failureLockout
-	wkdLimiter            *ipRateLimiter
+	// imapLoginLockout bounds failed provider sign-ins for mail import, keyed
+	// on the user across every grant; imapListSlots bounds listings dialling
+	// out at once.
+	imapLoginLockout *failureLockout
+	imapListSlots    chan struct{}
+	deviceLockout    *failureLockout
+	wkdLimiter       *ipRateLimiter
 	// accountWriteLimiter meters MUTATING withAuth requests per account. Every
 	// such request is at least one whole-file users.json marshal + fsync under
 	// a global cross-process lock that every authenticated request also reads
@@ -380,6 +398,8 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		davLockout:               newFailureLockout(davMaxFailures, davLockoutFor),
 		mfaLockout:               newFailureLockout(mfaMaxFailures, mfaLockoutFor),
 		passwordChangeLockout:    newFailureLockout(passwordChangeMaxFailures, passwordChangeLockoutFor),
+		imapLoginLockout:         newFailureLockout(imapLoginMaxFailures, imapLoginLockoutFor),
+		imapListSlots:            make(chan struct{}, maxIMAPListings),
 		deviceLockout:            newFailureLockout(deviceMaxFailures, deviceLockoutFor),
 		wkdLimiter:               newIPRateLimiter(wkdRateBurst, wkdRateRefillPerSec),
 		accountWriteLimiter:      newIPRateLimiter(accountWriteBurst, accountWriteRefillPerSec),
@@ -539,6 +559,13 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/mail-addresses", s.withAdmin(withActionDigest(s.handleNativeMailAddresses)))
 	mux.HandleFunc("DELETE /api/admin/mail-addresses/{address}", s.withAdmin(withActionDigest(s.handleNativeMailAddressRelease)))
 	mux.HandleFunc("POST /api/admin/mail-addresses/{address}/reassign", s.withAdmin(withActionDigest(s.handleNativeMailAddressReassign)))
+	mux.HandleFunc("GET /api/admin/mailboxes", s.withAdmin(s.handleNativeMailboxes))
+	mux.HandleFunc("POST /api/admin/mailboxes", s.withAdmin(withActionDigest(s.handleNativeMailboxes)))
+	mux.HandleFunc("POST /api/admin/mailboxes/{id}/disable", s.withAdmin(withActionDigest(s.handleNativeMailboxDisable)))
+	mux.HandleFunc("POST /api/admin/mailboxes/{id}/enable", s.withAdmin(withActionDigest(s.handleNativeMailboxEnable)))
+	mux.HandleFunc("GET /api/admin/receiving/quarantine", s.withAdmin(s.handleQuarantineList))
+	mux.HandleFunc("POST /api/admin/receiving/quarantine/{gateway}/{id}/release", s.withAdmin(withActionDigest(s.handleQuarantineRelease)))
+	mux.HandleFunc("POST /api/admin/receiving/quarantine/{gateway}/{id}/discard", s.withAdmin(withActionDigest(s.handleQuarantineDiscard)))
 	mux.HandleFunc("GET /api/admin/mail-relay", s.withAdmin(s.handleNativeMailRelay))
 	mux.HandleFunc("PUT /api/admin/mail-relay", s.withAdmin(withActionDigest(s.handleNativeMailRelay)))
 	mux.HandleFunc("POST /api/admin/mail-relay/test", s.withAdmin(withActionDigest(s.handleNativeMailRelayTest)))
@@ -563,7 +590,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/admin/sso", s.withAdmin(s.handleAdminSSOPut))
 	mux.HandleFunc("POST /api/sync/webhook", withPublicRoute(s.handleSyncWebhook))
 	mux.HandleFunc("GET /api/labels", s.withAuth(s.handleLabels))
-	mux.HandleFunc("GET /api/decisions", s.withAuth(s.handleDecisions))
+	mux.HandleFunc("GET /api/decisions", s.withAuth(s.withMailbox(s.handleDecisions)))
 	mux.HandleFunc("GET /api/logs", s.withAdmin(s.handleLogs))
 	mux.HandleFunc("GET /api/logs/list", s.withAdmin(s.handleLogsList))
 	mux.HandleFunc("GET /api/users", s.withAdmin(s.handleUsersList))
@@ -593,33 +620,46 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 // devices reach them without a web session; credential setup stays on
 // withAuth (web UI only).
 func (s *Server) routesMail(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/inbox", s.withMailAuth(s.handleInbox))
-	mux.HandleFunc("GET /api/inbox/folders", s.withMailAuth(s.handleInboxFolders))
-	mux.HandleFunc("POST /api/inbox/folders", s.withMailAuth(s.handleInboxFolders))
-	mux.HandleFunc("PUT /api/inbox/folders", s.withMailAuth(s.handleInboxFolders))
-	mux.HandleFunc("DELETE /api/inbox/folders", s.withMailAuth(s.handleInboxFolders))
-	mux.HandleFunc("POST /api/inbox/actions", s.withMailAuth(s.handleInboxActions))
-	mux.HandleFunc("GET /api/mail/search", s.withMailAuth(s.handleMailSearch))
+	// Mailbox-scoped routes accept X-KyPost-Mailbox (withMailbox); the list of
+	// the caller's mailboxes is per user and ignores it.
+	mux.HandleFunc("GET /api/mailboxes", s.withMailAuth(s.handleMailboxes))
+	mux.HandleFunc("GET /api/export/folders", s.withMailAuth(s.withMailbox(s.handleExportFolders)))
+	mux.HandleFunc("POST /api/export", s.withMailAuth(withActionDigest(s.handleExportStart)))
+	mux.HandleFunc("GET /api/export/{token}", s.withMailAuth(s.handleExportDownload))
+	mux.HandleFunc("GET /api/import", s.withMailAuth(s.handleImportStatus))
+	mux.HandleFunc("POST /api/import", s.withMailAuth(withActionDigest(s.handleImportStart)))
+	mux.HandleFunc("POST /api/import/cancel", s.withMailAuth(s.handleImportCancel))
+	mux.HandleFunc("POST /api/import/{token}", s.withMailAuth(s.handleImportUpload))
+	mux.HandleFunc("POST /api/import/imap", s.withMailAuth(withActionDigest(s.handleIMAPImportStart)))
+	mux.HandleFunc("POST /api/import/imap/{token}/folders", s.withMailAuth(s.handleIMAPImportFolders))
+	mux.HandleFunc("POST /api/import/imap/{token}/start", s.withMailAuth(s.handleIMAPImportRun))
+	mux.HandleFunc("GET /api/inbox", s.withMailAuth(s.withMailbox(s.handleInbox)))
+	mux.HandleFunc("GET /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
+	mux.HandleFunc("POST /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
+	mux.HandleFunc("PUT /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
+	mux.HandleFunc("DELETE /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
+	mux.HandleFunc("POST /api/inbox/actions", s.withMailAuth(s.withMailbox(s.handleInboxActions)))
+	mux.HandleFunc("GET /api/mail/search", s.withMailAuth(s.withMailbox(s.handleMailSearch)))
 	mux.HandleFunc("GET /api/imap/config", s.withAuth(s.handleIMAPConfig))
 	mux.HandleFunc("POST /api/imap/config", s.withAuth(s.handleIMAPConfig))
 	mux.HandleFunc("DELETE /api/imap/config", s.withAuth(s.handleIMAPConfig))
 	mux.HandleFunc("POST /api/imap/test", s.withAuth(s.handleIMAPTest))
-	mux.HandleFunc("POST /api/mail/draft", withUploadDeadline(s.withMailAuth(s.handleMailDraft)))
-	mux.HandleFunc("GET /api/mail/outbox/{id}", s.withMailAuth(s.handleNativeOutboxStatus))
-	mux.HandleFunc("POST /api/mail/send", withUploadDeadline(s.withMailAuth(s.handleMailSend)))
+	mux.HandleFunc("POST /api/mail/draft", withUploadDeadline(s.withMailAuth(s.withMailbox(s.handleMailDraft))))
+	mux.HandleFunc("GET /api/mail/outbox/{id}", s.withMailAuth(s.withMailbox(s.handleNativeOutboxStatus)))
+	mux.HandleFunc("POST /api/mail/send", withUploadDeadline(s.withMailAuth(s.withMailbox(s.handleMailSend))))
 	// Send path for end-to-end keys: the browser has already encrypted and
 	// signed, the server only relays over SMTP. See pgp_send_client.go.
-	mux.HandleFunc("POST /api/mail/send-pgp", withUploadDeadline(s.withMailAuth(s.handleMailSendPGP)))
+	mux.HandleFunc("POST /api/mail/send-pgp", withUploadDeadline(s.withMailAuth(s.withMailbox(s.handleMailSendPGP))))
 	// Read path for end-to-end keys: lazy per-message ciphertext fetch, since
 	// the inbox DTO cannot carry it. See pgp_client_read.go.
-	mux.HandleFunc("GET /api/mail/body", s.withMailAuth(s.handleMailBody))
-	mux.HandleFunc("GET /api/mail/pgp-payload", s.withMailAuth(s.handlePGPPayload))
+	mux.HandleFunc("GET /api/mail/body", s.withMailAuth(s.withMailbox(s.handleMailBody)))
+	mux.HandleFunc("GET /api/mail/pgp-payload", s.withMailAuth(s.withMailbox(s.handlePGPPayload)))
 	mux.HandleFunc("GET /api/mail/send-as", s.withAuth(s.handleSendAs))
 	mux.HandleFunc("POST /api/mail/send-as", s.withAuth(s.handleSendAs))
 	mux.HandleFunc("DELETE /api/mail/send-as/{id}", s.withAuth(s.handleSendAsByID))
 	mux.HandleFunc("POST /api/mail/send-as/{id}/confirm", s.withAuth(s.handleSendAsConfirm))
-	mux.HandleFunc("GET /api/mail/attachments", s.withMailAuth(s.handleMailAttachmentList))
-	mux.HandleFunc("GET /api/mail/attachment", s.withMailAuth(s.handleMailAttachmentDownload))
+	mux.HandleFunc("GET /api/mail/attachments", s.withMailAuth(s.withMailbox(s.handleMailAttachmentList)))
+	mux.HandleFunc("GET /api/mail/attachment", s.withMailAuth(s.withMailbox(s.handleMailAttachmentDownload)))
 }
 
 // routesContacts registers the address book, groups, and the CardDAV
@@ -781,7 +821,7 @@ func (s *Server) routesRules(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/rules/reorder", s.withAuth(s.handleRulesReorder))
 	mux.HandleFunc("GET /api/rules/{id}/sieve", s.withMailAuth(s.handleRuleSieve))
 	mux.HandleFunc("PUT /api/rules/{id}/sieve", s.withAuth(s.handleRuleSieve))
-	mux.HandleFunc("POST /api/rules/run", s.withMailAuth(s.handleRulesRun))
+	mux.HandleFunc("POST /api/rules/run", s.withMailAuth(s.withMailbox(s.handleRulesRun)))
 }
 
 // routesFrontend registers the SPA fallback. "/" is the least specific
@@ -801,6 +841,10 @@ func (s *Server) routesFrontend(mux *http.ServeMux) {
 //
 // Serve and Run call Prepare automatically if it wasn't already called.
 func (s *Server) Prepare() {
+	// No import job survives a restart; its upload may have.
+	if err := os.RemoveAll(filepath.Join(s.stateDir, importDir)); err != nil {
+		s.logger.Error("leftover import uploads could not be removed", "error", err.Error())
+	}
 	port := config.EnvInt("WEB_PORT", 5866)
 	// Timeouts are set explicitly because net/http's zero values mean "no limit":
 	// without them a connection that dribbles one header line every few seconds is
@@ -898,6 +942,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	httpErr := s.httpServer.Shutdown(ctx)
+	s.cancelImports()
 	backupCtx, cancel := context.WithTimeout(context.Background(), depositBudget)
 	defer cancel()
 	return errors.Join(httpErr, s.waitForBackups(backupCtx))

@@ -171,6 +171,20 @@ func TestNativeStoreBackupPreservesIdentityAndReplay(t *testing.T) {
 	if err := g.Accept(ctx, "gateway", "delivery", "sender@example.com", bytes.NewReader(raw)); err != nil {
 		t.Fatal(err)
 	}
+	// An acknowledged delivery survives backup only as its replay tombstone.
+	if err := g.Bind(ctx, "gateway", "archived", "sender@example.com", route.Address); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Accept(ctx, "gateway", "archived", "sender@example.com", bytes.NewReader(raw)); err != nil {
+		t.Fatal(err)
+	}
+	done, err := g.Claim(ctx, "gateway", "archived", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Acknowledge(ctx, "gateway", "archived", done.Lease, done.Digest); err != nil {
+		t.Fatal(err)
+	}
 	receipt := mailbox.Receipt{Gateway: "gateway", Delivery: "delivery", Sender: "sender@example.com", Recipients: []mailbox.Recipient{{Address: route.Address, Generation: route.Generation}}}
 	id, err := m.Import(ctx, receipt, bytes.NewReader(raw))
 	if err != nil {
@@ -227,6 +241,15 @@ func TestNativeStoreBackupPreservesIdentityAndReplay(t *testing.T) {
 	delivery, err := receiver.Claim(ctx, "gateway", "delivery", time.Minute)
 	if err != nil || !bytes.Equal(delivery.Raw, raw) || len(delivery.Bindings) != 1 || delivery.Bindings[0].Issuer != owner.Issuer || delivery.Bindings[0].Subject != owner.Subject || delivery.Bindings[0].Mailbox != owner.Mailbox || delivery.Bindings[0].Generation != route.Generation {
 		t.Fatalf("restore lost receiving bytes/route binding: %v", err)
+	}
+	if archived, err := receiver.Get(ctx, "gateway", "archived"); err != nil || archived.State != "archived" || archived.Digest != done.Digest {
+		t.Fatalf("restore lost archived receipt: %+v %v", archived, err)
+	}
+	if err := receiver.Bind(ctx, "gateway", "archived", "sender@example.com", route.Address); err != nil {
+		t.Fatalf("restored tombstone did not recognise replay: %v", err)
+	}
+	if err := receiver.Accept(ctx, "gateway", "archived", "sender@example.com", bytes.NewReader(raw)); err != nil {
+		t.Fatalf("restored tombstone did not recognise replay: %v", err)
 	}
 }
 

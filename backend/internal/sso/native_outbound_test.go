@@ -275,7 +275,7 @@ func TestNativeOutboundConvertedDeviceKeyFence(t *testing.T) {
 	}
 	defer devices.Close()
 	device := state.NativeDevice{DeviceID: "device", Platform: "android", PushToken: "push", SecretHash: "credential", EncryptionEnrolled: true, EnrolledGeneration: 2, EnrolledFingerprint: "current-fingerprint"}
-	u := users.User{ID: owner.Mailbox, PGPRevision: 7, PGPFingerprint: device.EnrolledFingerprint, PGPKeyring: &users.PGPKeyringState{MaterialGeneration: 2}}
+	u := users.User{ID: owner.Mailbox, NativeMailboxSource: source, PGPRevision: 7, PGPFingerprint: device.EnrolledFingerprint, PGPKeyring: &users.PGPKeyringState{MaterialGeneration: 2}}
 	job := mailbox.OutboundJob{From: "one@example.test", RelayGeneration: "generation", DirectoryRevision: 1, PGPRevision: u.PGPRevision, PGPFingerprint: u.PGPFingerprint, MaterialGeneration: 2, DeviceID: device.DeviceID, DeviceWitness: state.NativeDeviceWitness(device), RequiresEnrollment: true}
 	a := NativeAssignment{Address: job.From, Source: source}
 	d := DirectoryState{Revision: 1}

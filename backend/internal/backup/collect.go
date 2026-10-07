@@ -75,6 +75,25 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 		files = append(files, recoveryclient.File{Path: rel, Data: data, Mode: 0600})
 		return nil
 	}
+	// Snapshot receiving before any mailbox: a delivery archived after this
+	// snapshot is still pending in it and re-imports idempotently, whereas a
+	// tombstone captured before its mailbox commit would lose that mail.
+	const ingressRel = "receiving/ingress.db"
+	ingressPath := filepath.Join(s.dirs.State, filepath.FromSlash(ingressRel))
+	if info, err := os.Lstat(ingressPath); err == nil {
+		if !info.Mode().IsRegular() {
+			return empty, fmt.Errorf("cannot back up non-regular file state/%s", ingressRel)
+		}
+		raw, err := state.SnapshotDB(ctx, ingressPath, scratch)
+		if err == nil {
+			err = add("state/"+ingressRel, raw)
+		}
+		if err != nil {
+			return empty, fmt.Errorf("collect state/%s: %w", ingressRel, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return empty, err
+	}
 	for _, r := range []struct{ path, prefix string }{{s.dirs.Config, "config"}, {s.dirs.Secret, "private"}, {s.dirs.State, "state"}} {
 		root, err := os.OpenRoot(r.path)
 		if err != nil {
@@ -103,7 +122,7 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 					}
 					return fmt.Errorf("backup directory is not a directory")
 				}
-				if d.IsDir() {
+				if d.IsDir() || r.prefix == "state" && rel == ingressRel {
 					return nil
 				}
 				if !d.Type().IsRegular() {

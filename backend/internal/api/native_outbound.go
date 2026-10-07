@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -46,7 +47,9 @@ func (s *Server) finishNativeSend(w http.ResponseWriter, r *http.Request, ac Aut
 		return
 	}
 	sender := s.nativeOutbound()
-	first, sendErr := sender.Send(r.Context(), ac.UserID, id, job)
+	// The selected mailbox sends and files Sent; a primary's ID is its user's.
+	mailboxID := cmp.Or(ac.Mailbox, ac.UserID)
+	first, sendErr := sender.Send(r.Context(), mailboxID, id, job)
 	if !first.Accepted {
 		if s.refuseNativeAdministrator(w, r, ac.UserID, sendErr) {
 			return
@@ -63,7 +66,7 @@ func (s *Server) finishNativeSend(w http.ResponseWriter, r *http.Request, ac Aut
 	}
 	unconfirmed := 0
 	for sequence := 1; sequence < len(deliveries); sequence++ {
-		result, err := sender.Submit(r.Context(), ac.UserID, id, sequence)
+		result, err := sender.Submit(r.Context(), mailboxID, id, sequence)
 		if !result.Accepted || err != nil {
 			unconfirmed++
 		}
@@ -73,7 +76,7 @@ func (s *Server) finishNativeSend(w http.ResponseWriter, r *http.Request, ac Aut
 	}
 	if !first.SentSaved && len(sent) > 0 {
 		finish, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
-		first.SentSaved = sender.FileSent(finish, ac.UserID, id) == nil
+		first.SentSaved = sender.FileSent(finish, mailboxID, id) == nil
 		cancel()
 	}
 	if !first.SentSaved && len(sent) > 0 {
@@ -83,7 +86,7 @@ func (s *Server) finishNativeSend(w http.ResponseWriter, r *http.Request, ac Aut
 }
 
 // nativeFrom resolves the requested From to an active ledger address of the
-// caller's mailbox (empty means the primary). Outbound rechecks it, with its
+// sending mailbox a (empty means that mailbox's primary address). Outbound rechecks it, with its
 // generation, under the authority fence.
 func (s *Server) nativeFrom(a sso.NativeAssignment, requested string) (string, bool, error) {
 	requested = strings.ToLower(strings.TrimSpace(requested))
@@ -126,7 +129,7 @@ func (s *Server) handleNativeOutboxStatus(w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid outbox id", http.StatusBadRequest)
 		return
 	}
-	statuses, sentSaved, err := s.nativeOutbound().Status(r.Context(), ac.UserID, id)
+	statuses, sentSaved, err := s.nativeOutbound().Status(r.Context(), cmp.Or(ac.Mailbox, ac.UserID), id)
 	if err != nil {
 		http.Error(w, "native outbox unavailable; retain mail and repair storage before resubmitting", http.StatusServiceUnavailable)
 		return

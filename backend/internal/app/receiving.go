@@ -23,7 +23,7 @@ import (
 
 const receivingGateway = "maddy-local"
 
-var receivingLimits = ingress.Limits{MessageBytes: 4 << 20, PayloadBytes: 64 << 20, Records: 10000}
+var receivingLimits = ingress.ReceivingLimits
 
 type receivingRuntime struct {
 	gateway   string
@@ -76,8 +76,14 @@ func runReceivingCommand(args []string, input io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	r, err := openReceivingRuntime(ctx, args[0] == "init")
+	replayed := false
 	if err == nil {
 		defer r.holding.Close()
+		// Archived is terminal, so checking first cannot mislabel new mail.
+		if args[0] != "init" {
+			d, errGet := r.holding.Get(ctx, r.gatewayID(), args[1])
+			replayed = errGet == nil && d.State == "archived"
+		}
 		switch args[0] {
 		case "bind":
 			err = r.bind(ctx, args[1], args[2], args[3])
@@ -88,6 +94,8 @@ func runReceivingCommand(args []string, input io.Reader) error {
 	result := "committed"
 	if err != nil {
 		result = "refused"
+	} else if replayed {
+		result = "replayed"
 	}
 	correlation := "initialization"
 	if len(args) > 1 {
@@ -428,6 +436,10 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 	if err != nil {
 		return err
 	}
+	if d.State == "archived" {
+		// Completed delivery: only an exact replay succeeds; nothing is written.
+		return r.holding.Accept(ctx, r.gatewayID(), id, sender, bytes.NewReader(raw))
+	}
 	proofs, err := r.verifyDomains(ctx, bindingAddresses(d))
 	if err != nil {
 		return err
@@ -467,6 +479,51 @@ func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error 
 	if err != nil {
 		return err
 	}
+	// A lost pickup response may repeat a completed local obligation.
+	if d.State == "archived" {
+		return nil
+	}
+	err = r.importFrozen(ctx, d)
+	if err != nil && d.State == "pending" && !errors.Is(err, ingress.ErrRoute) && !errors.Is(err, sso.ErrNativeRestoreHold) {
+		if stale := r.quarantineRetired(ctx, d); stale != nil {
+			return stale
+		}
+	}
+	return err
+}
+
+// quarantineRetired runs after import was refused, usually by admission
+// before the generation check could run. It quarantines the delivery when the
+// ledger durably records a frozen address as moved, inactive or at a newer
+// generation: an administrator disabled the mailbox or released the address,
+// or the directory offboarded or promoted the owner. Such a binding can never
+// import again, and would otherwise hold receiving capacity forever. Directory
+// lag, storage or lock failures and missing sign-on settings change no
+// address, so that mail stays pending and retries. Returns nil when nothing
+// is proven stale.
+func (r *receivingRuntime) quarantineRetired(ctx context.Context, d ingress.Delivery) error {
+	release, err := r.life.LockDirectoryContext(ctx)
+	if err != nil {
+		return nil
+	}
+	defer release()
+	addresses, err := r.life.NativeAddresses()
+	if err != nil {
+		return nil
+	}
+	for _, b := range d.Bindings {
+		if x := addresses[b.Address]; x.Mailbox != b.Mailbox || x.State != "active" || x.Generation != b.Generation {
+			if err := r.holding.QuarantinePending(ctx, r.gatewayID(), d.ID); err != nil {
+				return err
+			}
+			return ingress.ErrRoute
+		}
+	}
+	return nil
+}
+
+func (r *receivingRuntime) importFrozen(ctx context.Context, d ingress.Delivery) error {
+	id := d.ID
 	stores := map[mailbox.Owner]*mailbox.Store{}
 	sources := map[mailbox.Owner]string{}
 	defer func() {
@@ -482,11 +539,11 @@ func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error 
 		if stores[owner] != nil {
 			continue
 		}
-		a, found, err := r.life.NativeAssignment(owner.Issuer, owner.Subject)
+		a, found, err := r.life.NativeMailboxAssignment(owner.Mailbox)
 		if err != nil || !found || a.Owner != owner || int64(len(d.Raw)) > a.Limits.MessageBytes {
 			return sso.ErrNativeProvisioning
 		}
-		store, err := mailbox.OpenExisting(filepath.Join(r.stateDir, "users", owner.Mailbox, "mailbox"), owner, a.Limits, a.Source)
+		store, err := mailbox.OpenExisting(filepath.Join(a.Dir(r.stateDir), "mailbox"), owner, a.Limits, a.Source)
 		if err != nil {
 			return err
 		}
@@ -504,11 +561,6 @@ func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error 
 			if sources[a.Owner] != a.Source {
 				return sso.ErrNativeProvisioning
 			}
-		}
-		// A lost pickup response may repeat a completed local obligation. Keep
-		// current ownership checks, but do not reacquire an acknowledged lease.
-		if d.State == "imported" {
-			return nil
 		}
 		return r.holding.Import(ctx, r.gatewayID(), id, func(owner mailbox.Owner) (*mailbox.Store, error) {
 			store := stores[owner]

@@ -205,14 +205,23 @@ func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings,
 	}
 	slices.SortFunc(authority, func(a, b accountAuthority) int { return strings.Compare(a.ID, b.ID) })
 	fingerprint := sha256.Sum256(key)
-	// Address states and generations route and fence mail, so they are authority.
+	// Address states and generations route and fence mail, so they are
+	// authority; so are extra mailboxes (owner, state, storage), omitted when
+	// none exist so earlier digests stay valid.
+	extras := map[string]nativeLedgerMailbox{}
+	for id, m := range ledger.stored.Mailboxes {
+		if m.Kind == "extra" {
+			extras[id] = m
+		}
+	}
 	payload, err := json.Marshal(struct {
 		Settings     SSOSettings
 		Directory    map[string]DirectoryState
 		Reservations map[string]NativeAssignment
 		Accounts     []accountAuthority
 		Addresses    map[string]nativeLedgerAddress
-	}{settings, directory, reservations, authority, ledger.stored.Addresses})
+		Mailboxes    map[string]nativeLedgerMailbox `json:",omitempty"`
+	}{settings, directory, reservations, authority, ledger.stored.Addresses, extras})
 	if err != nil {
 		return NativeRecoveryChallenge{}, nil, nil, err
 	}
