@@ -259,6 +259,9 @@ func (s *ImportSource) Folders() ([]RemoteFolder, error) {
 	return out, err
 }
 
+// Server numbers (message counts, sequence numbers, sizes) are 32-bit in IMAP
+// (RFC 3501 number/nz-number); anything wider is refused, never wrapped.
+
 // Examine opens name read-only and returns how many messages it holds.
 func (s *ImportSource) Examine(name string) (int, error) {
 	if err := ValidateMailboxName(name); err != nil {
@@ -267,11 +270,11 @@ func (s *ImportSource) Examine(name string) (int, error) {
 	exists := 0
 	err := s.run(importStepTimeout, importMetaLit, func(f []any) error {
 		if len(f) == 2 && strings.EqualFold(atomOf(f[1]), "EXISTS") {
-			n, err := strconv.Atoi(atomOf(f[0]))
-			if err != nil || n < 0 {
+			n, err := strconv.ParseUint(atomOf(f[0]), 10, 32)
+			if err != nil {
 				return ErrImportProtocol
 			}
-			exists = n
+			exists = int(n)
 		}
 		return nil
 	}, `EXAMINE "`+name+`"`)
@@ -292,8 +295,8 @@ func (s *ImportSource) Messages(lo, hi int) ([]RemoteMessage, error) {
 			return nil // unsolicited, or a flags update
 		}
 		m := RemoteMessage{UID: uint32(uid), Size: -1}
-		if n, err := strconv.ParseInt(atomOf(items["RFC822.SIZE"]), 10, 64); err == nil {
-			m.Size = n
+		if n, err := strconv.ParseUint(atomOf(items["RFC822.SIZE"]), 10, 32); err == nil {
+			m.Size = int64(n)
 		}
 		flags, _ := items["FLAGS"].([]any)
 		for _, fl := range flags {
@@ -485,7 +488,7 @@ func (s *ImportSource) value(depth int, literal int64) (any, error) {
 			if c == '}' {
 				break
 			}
-			if c < '0' || c > '9' || n > 1<<40 {
+			if c < '0' || c > '9' || n > 1<<40 { // checked before n*10, which then cannot overflow
 				return nil, ErrImportProtocol
 			}
 			n = n*10 + int64(c-'0')
@@ -569,7 +572,7 @@ func fetchItems(f []any) (int, map[string]any) {
 	if len(f) != 3 || !strings.EqualFold(atomOf(f[1]), "FETCH") {
 		return 0, nil
 	}
-	seq, err := strconv.Atoi(atomOf(f[0]))
+	seq, err := strconv.ParseUint(atomOf(f[0]), 10, 32)
 	list, ok := f[2].([]any)
 	if err != nil || !ok || len(list)%2 != 0 {
 		return 0, nil
@@ -578,7 +581,7 @@ func fetchItems(f []any) (int, map[string]any) {
 	for i := 0; i < len(list); i += 2 {
 		items[strings.ToUpper(atomOf(list[i]))] = list[i+1]
 	}
-	return seq, items
+	return int(seq), items
 }
 
 func atomOf(v any) string {

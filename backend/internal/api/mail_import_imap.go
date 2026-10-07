@@ -28,12 +28,13 @@ import (
 // safe: duplicates are skipped per folder.
 
 const (
-	imapGrantTTL    = 10 * time.Minute
-	imapListTimeout = 90 * time.Second
+	imapGrantTTL = 10 * time.Minute
 	// imapListBytes bounds what one listing reads and so what a grant holds.
 	imapListBytes = 4 << 20
-	// maxIMAPListings bounds listings dialling out at once, server-wide.
+	// maxIMAPListings bounds listings dialling out at once, server-wide; a
+	// user has at most one, since a new grant cancels the old one's listing.
 	maxIMAPListings = 4
+	imapSlotWait    = 3 * time.Second
 	// A user's failed provider sign-ins, across every grant: the budget is
 	// the user's, so minting a new grant (a fresh step-up) does not reset it.
 	imapLoginMaxFailures = 6
@@ -42,6 +43,9 @@ const (
 )
 
 var (
+	// imapListTimeout bounds a listing, so a server that never answers holds
+	// a slot this long at most.
+	imapListTimeout = 45 * time.Second
 	// imapImportWindow bounds a whole job.
 	imapImportWindow = 4 * time.Hour
 	// imapImportBytes bounds what one job downloads, duplicates included:
@@ -423,11 +427,17 @@ func (e imapRefusal) Error() string { return e.reason }
 // listIMAP signs in and lists folders within the server-wide listing slots
 // and the user's sign-in budget, which only a successful sign-in refunds.
 func (s *Server) listIMAP(ctx context.Context, user string, account *imapAccount, password []byte, folders *[]imapadapter.RemoteFolder) error {
+	// A short wait lets a listing just cancelled by a new grant hand back its
+	// slot before this one is refused.
+	wait := time.NewTimer(imapSlotWait)
+	defer wait.Stop()
 	select {
 	case s.imapListSlots <- struct{}{}:
 		defer func() { <-s.imapListSlots }()
-	default:
+	case <-wait.C:
 		return imapRefusal{http.StatusServiceUnavailable, "the server is busy connecting to other mail accounts; try again in a minute", 0}
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	if ok, retry := s.imapLoginLockout.tryAttempt(user); !ok {
 		return imapRefusal{http.StatusTooManyRequests, "too many failed attempts to sign in to other mail accounts; try again in an hour", retry}
@@ -588,10 +598,11 @@ func (s *Server) copyIMAP(ctx context.Context, job *importJob, im mailImporter, 
 			return imapStop("the mail server would not open " + f.local + "; leave that folder out and import again")
 		}
 		// Every sequence number walked counts, so a huge EXISTS is refused
-		// before any page is fetched.
-		if seen += n; seen > importMaxMessages {
+		// before any page is fetched; compared before adding, so it cannot wrap.
+		if n > importMaxMessages-seen {
 			return mailbox.ErrImportTooMany
 		}
+		seen += n
 		for lo := 1; lo <= n; lo += imapPage {
 			msgs, err := src.Messages(lo, min(n, lo+imapPage-1))
 			if err != nil {

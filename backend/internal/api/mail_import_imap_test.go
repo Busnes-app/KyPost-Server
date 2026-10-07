@@ -409,6 +409,10 @@ func TestIMAPImport(t *testing.T) {
 		{name: "Lies", msgs: []fakeMsg{{raw: "Subject: lie\r\n\r\n" + strings.Repeat("x", 2<<10), size: 100, date: " 1-Jan-2020 00:00:00 +0000"}}},
 		{name: "Flood", msgs: []fakeMsg{{raw: "Subject: flood\r\n\r\nx\r\n", size: 10000, date: " 1-Jan-2020 00:00:00 +0000"}}},
 		{name: "Huge", exists: 1000000},
+		{name: "Five", exists: 5},
+		{name: "Max32", exists: 4294967295},
+		{name: "Wider", exists: 4294967296},
+		{name: "Widest", exists: 9223372036854775807},
 		{name: strings.Repeat("L", 256)},
 	})
 	defer func(r func(context.Context, string) ([]net.IPAddr, error), d func(context.Context, string, string) (net.Conn, error), roots *x509.CertPool) {
@@ -515,7 +519,11 @@ func TestIMAPImport(t *testing.T) {
 		<-srv.imapListSlots
 	}
 
-	// A new grant cancels the user's listing in flight.
+	// A new grant cancels the user's listing in flight, which hands back its
+	// slot in time for the new grant's listing even with every other slot taken.
+	for range maxIMAPListings - 1 {
+		srv.imapListSlots <- struct{}{}
+	}
 	slowGrant := grant(`"host":"imap.example.com","port":993,"security":"tls","username":"slow",`)
 	answered := make(chan int, 1)
 	go func() { w, _ := list(me, slowGrant, "x"); answered <- w.Code }()
@@ -525,6 +533,12 @@ func TestIMAPImport(t *testing.T) {
 		}
 	}
 	token = grant(account)
+	if w, _ := list(me, token, fake.pass); w.Code != 200 {
+		t.Fatal("the cancelled listing kept its slot", w.Code, w.Body)
+	}
+	for range maxIMAPListings - 1 {
+		<-srv.imapListSlots
+	}
 	select {
 	case code := <-answered:
 		if code != 404 {
@@ -533,6 +547,17 @@ func TestIMAPImport(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("a new grant left the old listing running")
 	}
+
+	// A server that never answers holds its slot only until the listing
+	// timeout.
+	defer func(old time.Duration) { imapListTimeout = old }(imapListTimeout)
+	imapListTimeout = time.Second
+	began := time.Now()
+	if w, _ := list(me, grant(`"host":"imap.example.com","port":993,"security":"tls","username":"slow",`), "x"); w.Code != 504 || time.Since(began) > 10*time.Second || len(srv.imapListSlots) != 0 {
+		t.Fatal("a silent server outlived the listing timeout", w.Code, w.Body, time.Since(began), len(srv.imapListSlots))
+	}
+	imapListTimeout = 45 * time.Second
+	token = grant(account)
 	srv.imapLoginLockout = newFailureLockout(imapLoginMaxFailures, imapLoginLockoutFor)
 
 	if w = call("/api/import/"+token, me, "From a b\r\nSubject: x\r\n\r\nx\r\n", map[string]string{"Content-Type": "application/octet-stream"}); w.Code != 404 {
@@ -561,7 +586,7 @@ func TestIMAPImport(t *testing.T) {
 	for _, f := range got.Folders {
 		names = append(names, f.Name+"="+strings.Join(f.Path, "|")+"="+strings.Join(f.Attributes, ","))
 	}
-	if want := []string{`INBOX=INBOX=\hasnochildren`, `[Gmail]/All Mail=[Gmail]|All Mail=\all,\hasnochildren`, "Caf&AOk-.Notes=Café.Notes=", "Slow=Slow=", "Lies=Lies=", "Flood=Flood=", "Huge=Huge="}; fmt.Sprint(names) != fmt.Sprint(want) {
+	if want := []string{`INBOX=INBOX=\hasnochildren`, `[Gmail]/All Mail=[Gmail]|All Mail=\all,\hasnochildren`, "Caf&AOk-.Notes=Café.Notes=", "Slow=Slow=", "Lies=Lies=", "Flood=Flood=", "Huge=Huge=", "Five=Five=", "Max32=Max32=", "Wider=Wider=", "Widest=Widest="}; fmt.Sprint(names) != fmt.Sprint(want) {
 		t.Fatalf("folders %q, want %q", names, want)
 	}
 	for _, addr := range dialedList() {
@@ -778,7 +803,10 @@ func TestIMAPImport(t *testing.T) {
 	// huge EXISTS each stop the job.
 	defer func(old int64) { imapImportBytes = old }(imapImportBytes)
 	imapImportBytes = 64 << 10
-	for folder, want := range map[string]string{"Lies": "larger than it announced", "Flood": "sent more than twice", "Huge": "more than 20000 messages"} {
+	// After a small folder, an EXISTS over 32 bits is refused rather than
+	// wrapped, and a 32-bit one past the cap is refused before any walk.
+	for folder, want := range map[string]string{"Lies": "larger than it announced", "Flood": "sent more than twice", "Huge": "more than 20000 messages",
+		`Five","Max32`: "more than 20000 messages", `Five","Wider`: "would not open Imported/imap-example-com/Wider", `Five","Widest`: "would not open Imported/imap-example-com/Widest"} {
 		token = grant(account)
 		if w, _ = list(me, token, fake.pass); w.Code != 200 {
 			t.Fatal("list", w.Code)
@@ -790,7 +818,14 @@ func TestIMAPImport(t *testing.T) {
 		if st = wait(); st.State != "failed" || !strings.Contains(st.Error, want) {
 			t.Fatalf("%s %+v", folder, st)
 		}
-		if folder == "Huge" && strings.Contains(fmt.Sprint(fake.recorded()[before:]), "FETCH") {
+		cmds := fake.recorded()[before:]
+		last := 0
+		for i, c := range cmds {
+			if strings.HasPrefix(c, "EXAMINE") {
+				last = i
+			}
+		}
+		if folder != "Lies" && folder != "Flood" && strings.Contains(fmt.Sprint(cmds[last:]), "FETCH") {
 			t.Fatal("walked a huge folder")
 		}
 	}

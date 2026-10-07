@@ -659,7 +659,8 @@ message, under the settings lock) and shutdown are the file import's.
   that do not sign in (wrong password, unreachable or refused server) lock the
   user out of listing for an hour (429 with `Retry-After`, before any dial); a
   successful sign-in refunds only its own attempt. At most four listings dial
-  out at once server-wide (503 beyond, spending no attempt), one per grant, and
+  out at once server-wide (503 after waiting up to 3 s for a slot, spending no
+  attempt), one per user (a new grant cancels the old listing), and
   none while the user's import runs (409) or after shutdown began (503). A
   listing reads at most 4 MiB, which also bounds what the grant holds. The
   provider password is kept out of the step-up request because the
@@ -692,7 +693,7 @@ message, under the settings lock) and shutdown are the file import's.
   alone. A greeting other than `* OK` (PREAUTH would skip TLS) or bytes after the
   STARTTLS answer are refused. Responses are bounded at 64 KiB outside literals
   and a literal at the per-message cap (64 KiB outside a body fetch). Timeouts:
-  10 s to connect, 30 s per command, 2 minutes per message, 90 s for a listing,
+  10 s to connect, 30 s per command, 2 minutes per message, 45 s for a listing (so a server that never answers holds a slot that long),
   4 hours for a job.
 - Folders: `\Noselect` and `\NonExistent` are skipped, as are names over 255
   bytes or with a control character, backslash or double quote (they cannot be
@@ -703,7 +704,9 @@ message, under the settings lock) and shutdown are the file import's.
   Mail and Starred) unchecked, since they hold every message again and dedupe is
   per folder, and shows names with control, bidi and zero-width characters
   escaped as code points.
-- Messages are paged 200 at a time by sequence number; a message deleted on the
+- Message counts, sequence numbers and sizes from the server are parsed as the
+  32-bit numbers IMAP defines; a wider value is a protocol error, never
+  wrapped. Messages are paged 200 at a time by sequence number; a message deleted on the
   server meanwhile is skipped. Every sequence number a folder's `EXISTS`
   announces counts toward the job's message cap before any page is fetched, so
   a huge `EXISTS` fails the job at once. One announcing more than the
