@@ -54,7 +54,9 @@ type fakeWorker struct {
 	// abort names "METHOD kind" requests to perform and then drop unanswered.
 	abort    map[string]bool
 	onDelete func(key string)
-	server   *httptest.Server
+	// emptyTruncated answers the next listing with no items and truncated.
+	emptyTruncated bool
+	server         *httptest.Server
 }
 
 type fakeObject struct{ raw, envelope []byte }
@@ -157,6 +159,9 @@ func (w *fakeWorker) route(req *http.Request, header http.Header) (int, []byte) 
 	q := req.URL.Query()
 	id, item := strings.CutPrefix(req.URL.Path, "/messages/")
 	switch {
+	case req.URL.Path == "/messages" && req.Method == "GET" && w.emptyTruncated:
+		w.emptyTruncated = false
+		return 200, []byte(`{"messages":[],"truncated":true}`)
 	case req.URL.Path == "/messages" && req.Method == "GET":
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		keys := []string{}
@@ -380,6 +385,7 @@ func cfScanner(t *testing.T) *atomic.Value {
 		if req.Header.Get("Settings") != `{"groups_disabled":["spf","dmarc","arc"]}` || req.Header.Get("IP") != "" || req.Header.Get("Rcpt") == "" || req.Header.Get("Queue-ID") == "" {
 			t.Error("scanner request lacks the fixed Cloudflare settings or frozen envelope")
 		}
+		_, _ = io.Copy(io.Discard, req.Body)
 		if action.Load() == "fail" {
 			w.WriteHeader(503)
 			return
@@ -583,6 +589,9 @@ func TestCloudflareContinuousReplayConflictAndFrozenBindings(t *testing.T) {
 	e.cycle(t)
 	fetches := e.w.count(func(c fakeCall) bool { return c.kind == "/messages/<id>" })
 	e.cycle(t)
+	if s := cfStatus(t, e); s.Refused != 1 || s.Waiting != 0 || s.OldestUnpickedAt != 0 {
+		t.Fatalf("refused object counted as waiting: %+v", s)
+	}
 	if _, kept := e.w.object(key); !kept || cfStatus(t, e).Ledger["refused"] != 1 || e.w.count(func(c fakeCall) bool { return c.kind == "/messages/<id>" }) != fetches {
 		t.Fatal("conflicting provider object deleted or refetched")
 	}
@@ -632,7 +641,7 @@ func TestCloudflareContinuousReplayConflictAndFrozenBindings(t *testing.T) {
 	if err != nil || d.State != "quarantined" || d.Bindings[0].Mailbox != "" || d.Bindings[0].Address != "one@example.test" {
 		t.Fatalf("unknown revision not quarantined unresolved: %+v %v", d.Bindings, err)
 	}
-	if err := e.r.life.ReleaseQuarantined(ctx, e.r.stateDir, "https://identity.example.test", e.r.accounts, e.r.holding, cfGateway, unknown); err == nil {
+	if err := e.r.life.ReleaseQuarantined(ctx, e.r.stateDir, "https://identity.example.test", e.r.accounts, e.r.holding, cfGateway, unknown, false); err == nil {
 		t.Fatal("unresolved owner released")
 	}
 	if got := cfFolder(t, e.r, one, "INBOX"); !slices.Equal(got, []string{"once"}) {
@@ -663,6 +672,11 @@ func TestCloudflareContinuousSpamScannerAndCapacity(t *testing.T) {
 	}
 	e.scan.Store("no action")
 	e.cycle(t)
+	if got := cfFolder(t, e.r, e.users[0], "INBOX"); len(got) != 0 {
+		t.Fatal("backed-off mail refetched before its delay", got)
+	}
+	e.clock.advance(2 * time.Minute)
+	e.cycle(t)
 	if got := cfFolder(t, e.r, e.users[0], "INBOX"); !slices.Equal(got, []string{"later-fail", "later-soft reject"}) || e.w.waiting() != 0 {
 		t.Fatal("retried mail", got)
 	}
@@ -684,7 +698,7 @@ func TestCloudflareContinuousSpamScannerAndCapacity(t *testing.T) {
 	fetches := e.w.count(func(c fakeCall) bool { return c.kind == "/messages/<id>" })
 	e.cycle(t)
 	s := cfStatus(t, e)
-	if got := e.w.count(func(c fakeCall) bool { return c.kind == "/messages/<id>" }) - fetches; got != 1 || e.w.waiting() != 2 || s.State != "error" || s.Waiting != 2 || !strings.Contains(s.Detail, "capacity") {
+	if got := e.w.count(func(c fakeCall) bool { return c.kind == "/messages/<id>" }) - fetches; got != 1 || e.w.waiting() != 2 || s.State != "error" || s.Waiting != 2 || !strings.Contains(s.Detail, "receiving store is full") {
 		t.Fatalf("capacity refusal kept fetching: %d fetches, status %+v", got, s)
 	}
 }
@@ -864,6 +878,7 @@ func TestCloudflareContinuousRestoreFencedAndTakeover(t *testing.T) {
 		t.Fatal("provider copy deleted on the restored ledger's word")
 	}
 	e.scan.Store("no action")
+	e.clock.advance(2 * time.Minute)
 	if err := restored.l.cycle(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1054,5 +1069,196 @@ func TestCloudflareContinuousInitPrintsOnlyWorkerSecrets(t *testing.T) {
 	}
 	if strings.Contains(out.String(), m.Token) {
 		t.Fatal("status printed the bearer")
+	}
+}
+
+// Mail frozen under an unknown revision (after a restore) goes only to an
+// address's current owner, and only by the explicit release.
+func TestCloudflareContinuousUnresolvedReleaseToCurrentOwner(t *testing.T) {
+	e := cfFixture(t)
+	ctx := context.Background()
+	one, two := e.users[0], e.users[1]
+	if _, err := e.r.life.AddNativeAlias(ctx, e.r.stateDir, one.ID, "sales@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	e.cycle(t)
+	unknown := func(env *cfreceiving.Envelope) { env.TableRevision = 4242 }
+	toOne := e.w.capture("one@example.test", "", "to-one", unknown)
+	moved := e.w.capture("sales@example.test", "", "moved", unknown)
+	gone := e.w.capture("sales@example.test", "", "gone", unknown)
+	frozen := e.w.capture("sales@example.test", "", "frozen", nil)
+	if _, err := e.r.life.ReleaseNativeAlias(ctx, e.r.stateDir, "sales@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.r.life.ReassignNativeAddress(ctx, e.r.stateDir, "sales@example.test", two.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.cycle(t)
+	release := func(id string, current bool) error {
+		return e.r.life.ReleaseQuarantined(ctx, e.r.stateDir, "https://identity.example.test", e.r.accounts, e.r.holding, cfGateway, id, current)
+	}
+	if err := release(toOne, false); !errors.Is(err, sso.ErrQuarantineUnresolved) {
+		t.Fatal("unresolved released without the flag", err)
+	}
+	if err := release(frozen, true); !errors.Is(err, sso.ErrQuarantineResolved) {
+		t.Fatal("frozen-owner delivery redirected to the current owner", err)
+	}
+	listed, err := e.r.life.QuarantinedDeliveries(ctx, e.r.holding, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range listed {
+		if d.ID == moved && (!d.Unresolved || d.Recipients[0].CurrentUser != two.ID || d.Recipients[0].User != "") {
+			t.Fatalf("unresolved listing %+v", d)
+		}
+	}
+	for _, id := range []string{toOne, moved} {
+		if err := release(id, true); err != nil {
+			t.Fatal(id, err)
+		}
+	}
+	if got := cfFolder(t, e.r, one, "INBOX"); !slices.Equal(got, []string{"to-one"}) {
+		t.Fatal("first owner", got)
+	}
+	if got := cfFolder(t, e.r, two, "INBOX"); !slices.Equal(got, []string{"moved"}) {
+		t.Fatal("current owner of the reassigned address", got)
+	}
+	if d, err := e.r.holding.Get(ctx, cfGateway, moved); err != nil || d.State != "archived" || d.Disposition != "released" {
+		t.Fatal("not archived as released", d.State, err)
+	}
+	if _, err := e.r.life.ReleaseNativeAlias(ctx, e.r.stateDir, "sales@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := release(gone, true); !errors.Is(err, sso.ErrQuarantineAddressInactive) {
+		t.Fatal("released to an inactive address", err)
+	}
+	if d, err := e.r.holding.Get(ctx, cfGateway, gone); err != nil || d.State != "quarantined" || !d.Bindings[0].Unresolved() {
+		t.Fatal("refused release changed the delivery", err)
+	}
+}
+
+// Stuck mail backs off instead of starving newer mail; one message over its
+// mailbox's limit is quarantined without halting pickup.
+func TestCloudflareContinuousStuckItemsDoNotStarve(t *testing.T) {
+	e := cfFixture(t)
+	ctx := context.Background()
+	e.cycle(t)
+	if _, err := e.r.accounts.Deactivate(e.users[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 150 {
+		e.w.capture("one@example.test", "", "stuck-"+strconv.Itoa(i), nil)
+	}
+	e.cycle(t)
+	fresh := e.w.capture("two@example.test", "", "fresh", nil)
+	e.cycle(t)
+	if got := cfFolder(t, e.r, e.users[1], "INBOX"); !slices.Equal(got, []string{"fresh"}) {
+		t.Fatal("stuck mail starved another user", got)
+	}
+	if _, kept := e.w.object(fresh); kept {
+		t.Fatal("fresh mail not deleted")
+	}
+	fetches := e.w.count(func(c fakeCall) bool { return c.kind == "/messages/<id>" })
+	e.cycle(t)
+	if e.w.count(func(c fakeCall) bool { return c.kind == "/messages/<id>" }) != fetches {
+		t.Fatal("backed-off mail downloaded again")
+	}
+	if s := cfStatus(t, e); s.Waiting != 150 || s.State != "running" {
+		t.Fatalf("status %+v", s)
+	}
+
+	// A table record whose maxBytes the mailbox does not allow: the message
+	// is quarantined with its bytes and the next one still arrives.
+	if _, err := e.r.accounts.Reactivate(e.users[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	const issuer = "https://identity.example.test"
+	raw := []byte(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"small","externalId":"small","userName":"small","active":true,"emails":[{"value":"small@example.test","primary":true}],"meta":{"version":"W/\"1\""}}`)
+	var resource sso.DirectoryUser
+	if err := json.Unmarshal(raw, &resource); err != nil {
+		t.Fatal(err)
+	}
+	ev := syncauth.Event{ID: "create-small", Type: "user.created", At: time.Now()}
+	if _, err := e.r.life.ApplyDirectoryUser(issuer, ev, resource, sso.EventDigest(ev.Type, raw), func() (bool, error) { return false, nil }); err != nil {
+		t.Fatal(err)
+	}
+	small, err := e.r.life.AllocateNativeAccount(ctx, e.r.stateDir, issuer, "small", e.r.domains, e.r.accounts, mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 32 << 20, Records: 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _, err := e.r.life.NativeAssignment(issuer, "small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.cycle(t) // publishes small@ at maxBytes 1 MiB
+	// A table record claiming more than the mailbox allows, as if its limit
+	// shrank after capture.
+	last, err := e.db.LastRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := last + 1
+	if err := e.db.Record(ctx, rev, 1, "oversized-fixture", []cfreceiving.Route{{Address: "small@example.test", Generation: 1, MaxBytes: cfreceiving.MaxMessageBytes, Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox}}); err != nil {
+		t.Fatal(err)
+	}
+	big := e.w.capture("small@example.test", "", strings.Repeat("x", 2<<20), func(env *cfreceiving.Envelope) { env.TableRevision = rev })
+	e.w.capture("small@example.test", "", "after-big", nil)
+	e.clock.advance(time.Hour)
+	for range 2 { // the reactivated 150 drain at 100 fetches a cycle
+		e.cycle(t)
+	}
+	if d, err := e.r.holding.Get(ctx, cfGateway, big); err != nil || d.State != "quarantined" || len(d.Raw) == 0 {
+		t.Fatal("oversized message not quarantined with its bytes", d.State, err)
+	}
+	if got := cfFolder(t, e.r, small, "INBOX"); !slices.Equal(got, []string{"after-big"}) || cfStatus(t, e).State != "running" {
+		t.Fatal("one oversized message halted pickup", got, cfStatus(t, e))
+	}
+}
+
+// An empty truncated page stops the cycle; a junk verdict whose provider copy
+// vanished before the bytes were accepted leaves the ledger.
+func TestCloudflareContinuousListingAndStaleJunk(t *testing.T) {
+	e := cfFixture(t)
+	ctx := context.Background()
+	e.cycle(t)
+	e.w.set(func() { e.w.emptyTruncated = true })
+	if err := e.l.cycle(ctx); err == nil || cfStatus(t, e).State != "error" {
+		t.Fatal("empty truncated page accepted")
+	}
+	e.cycle(t)
+	e.scan.Store("reject")
+	key := e.w.capture("one@example.test", "", "spam", nil)
+	e.l.crash = func(p string) error {
+		if p == "junk" {
+			return errCrash
+		}
+		return nil
+	}
+	_ = e.l.cycle(ctx)
+	if entry, found, _ := e.db.Entry(ctx, key); !found || entry.State != "junk" {
+		t.Fatal("fixture: junk verdict not recorded")
+	}
+	e.w.set(func() { delete(e.w.inbox, key) })
+	e.l = e.restart()
+	e.cycle(t)
+	if _, found, _ := e.db.Entry(ctx, key); found {
+		t.Fatal("junk row outlived its provider copy")
+	}
+}
+
+// The Worker's sender fixture: everything it accepts, KyPost can hold.
+func TestCloudflareContinuousSendersMatchWorker(t *testing.T) {
+	raw, err := os.ReadFile("../../../receiving-worker/senders.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct{ Accept, Reject []string }
+	if err := json.Unmarshal(raw, &fixture); err != nil || len(fixture.Accept) == 0 {
+		t.Fatal(err)
+	}
+	for _, sender := range fixture.Accept {
+		if !validEnvelopeSender(sender) {
+			t.Error("Worker accepts a sender KyPost refuses", sender)
+		}
 	}
 }

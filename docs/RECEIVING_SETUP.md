@@ -332,9 +332,15 @@ bucket bound as `MAIL` and Email Routing's catch-all pointing at it.
    inspection and leave the ledger once removed there.
 
 Quarantined Cloudflare deliveries appear with gateway `cloudflare-continuous`
-in `receiving quarantine list`. Mail frozen against a table revision this
-instance never published (typically after a restore) has no owner and can only
-be discarded.
+in `receiving quarantine list` and Server → Quarantine. Mail frozen against a
+table revision this instance never published, typically mail that waited at
+Cloudflare through a restore and takeover, is *unresolved*: its original owner
+cannot be proven. Server → Quarantine marks it "original owner unknown" and
+shows the recipient address's owner today; **Release to current owner…** (or
+`receiving quarantine release-to-current-owner <gateway> <id> --confirm <id>`)
+delivers it there after confirmation, and only while the address is active.
+Otherwise discard it. See
+[quarantine release](NATIVE_PROVISIONING.md#quarantine-release).
 
 **Rotate** the bearer and signing key at any time: `kypost-server receiving
 cloudflare rotate`. A crash or lost answer is safe to retry with the same
@@ -348,6 +354,10 @@ restore therefore changes nothing. To move receiving to the restored host:
 docker compose exec --user kypost kypost-server kypost-server receiving cloudflare takeover --confirm move-receiving-here
 ```
 
+Take over promptly after a restore: tables are re-signed hourly, so mail
+captured after the backup's last table is unresolved on this host and needs an
+administrator's release to the current owner (above).
+
 Receiving moves to this host and the current host stops receiving: the Worker
 refuses the previous credentials on every route, and that host stops and reports
 `fenced`. If another instance rotated first, the command says so and this host
@@ -357,8 +367,17 @@ has committed it itself. Mail the original picked up and deleted after the
 backup was taken exists only on the original host; export it from there before
 retiring that host.
 
-If an attacker may hold a backup and its seal, recover through the Cloudflare
-account in this order: on the host that should receive, move the credential
+**Takeover needs the Worker's current key.** A backup older than the last
+rotation (scheduled, on demand, or another takeover) cannot take over: the
+Worker refuses its bearer. If the original host is gone, re-bootstrap as below;
+mail already waiting in R2 then arrives unresolved and follows the release path
+above.
+
+**Never clone** a receiving instance's volumes (as opposed to restoring a
+backup): a clone copies the host marker and both copies consume the queue.
+
+If the original host is dead, or an attacker may hold a backup and its seal,
+recover through the Cloudflare account in this order: on the host that should receive, move the credential
 files aside (`SECRET_DIR/cloudflare-receiving.json` and
 `cloudflare-receiving.host.json`), run `init`, deploy the two new values as the
 Worker secrets, and only then delete `credentials.json` from the R2 bucket.

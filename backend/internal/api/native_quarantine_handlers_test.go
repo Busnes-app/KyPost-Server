@@ -201,3 +201,71 @@ func TestCloudflareReceivingStatusAPI(t *testing.T) {
 		t.Fatal("restored host not reported fenced", w.Body.String())
 	}
 }
+
+// An unresolved delivery (owner unknown, e.g. after a restore) is listed with
+// today's owner and released only with the explicit flag, audited apart.
+func TestQuarantineReleaseToCurrentOwnerAPI(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("SECRET_DIR", t.TempDir())
+	srv := newNativeRuntimeServer(t)
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "unresolved-one", 1, runtimeDirectoryUser(true)))
+	one, err := srv.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _, err := srv.nativeMailAssignment(ctx, one.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holding, err := ingress.Open(filepath.Join(srv.stateDir, "receiving"), ingress.ReceivingLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = holding.Quarantine(ctx, "cloudflare-continuous", "waited", "envelope@outside.test", ingress.Binding{Address: a.Address, Generation: 1}, []byte("Subject: secret-subject\r\n\r\nsecret-body\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	_ = holding.Close()
+	const password = "long-password-for-unresolved"
+	admin, err := srv.users.Create(ctx, "unresolved-admin", password, users.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	if srv.logger, err = logging.NewWithOutput(&logs); err != nil {
+		t.Fatal(err)
+	}
+	token, csrf := mintSessionForTest(srv, admin.ID)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
+		req.Header.Set("X-CSRF-Token", csrf)
+		w := httptest.NewRecorder()
+		srv.routes().ServeHTTP(w, req)
+		return w
+	}
+	const base = "/api/admin/receiving/quarantine"
+	if w := call("GET", base, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"unresolved":true`) || !strings.Contains(w.Body.String(), `"currentMailbox":"`+one.ID+`"`) || !strings.Contains(w.Body.String(), `"currentUser":"`+one.ID+`"`) || !strings.Contains(w.Body.String(), `"mailbox":""`) {
+		t.Fatal("unresolved listing", w.Code, w.Body)
+	}
+	plain, flagged := `{"password":"`+password+`"}`, `{"password":"`+password+`","toCurrentOwner":true}`
+	if w := call("POST", base+"/cloudflare-continuous/waited/release", plain); w.Code != 409 || !strings.Contains(w.Body.String(), "current owner") || strings.Contains(w.Body.String(), "resync and retry") {
+		t.Fatal("unresolved released without the flag", w.Code, w.Body)
+	}
+	if w := call("POST", base+"/cloudflare-continuous/waited/discard", flagged); w.Code != 400 {
+		t.Fatal("flag accepted on discard", w.Code)
+	}
+	if w := call("POST", base+"/cloudflare-continuous/waited/release", flagged); w.Code != 200 || !strings.Contains(w.Body.String(), `"result":"released"`) {
+		t.Fatal("release to current owner", w.Code, w.Body)
+	}
+	if !strings.Contains(logs.String(), "release_quarantine_to_current_owner") || strings.Contains(logs.String(), "secret-") {
+		t.Fatal("distinct audit", logs.String())
+	}
+	box, err := mailbox.OpenExisting(filepath.Join(a.Dir(srv.stateDir), "mailbox"), a.Owner, a.Limits, a.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer box.Close()
+	if rows, err := box.List(ctx, "INBOX", 0, 10); err != nil || len(rows) != 1 {
+		t.Fatal("not delivered to the current owner exactly once", len(rows), err)
+	}
+}

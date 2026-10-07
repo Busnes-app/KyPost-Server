@@ -58,6 +58,11 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
   [continuous Cloudflare profile](RECEIVING_SETUP.md#continuous-cloudflare-profile).
   If compromise prompted recovery, re-bootstrap through the Cloudflare account
   as described there instead of taking over with the restored credentials.
+  Take over promptly: mail waiting in R2 under a table newer than the backup
+  arrives quarantined as unresolved, and an administrator releases it to the
+  address's current owner or discards it
+  ([quarantine release](NATIVE_PROVISIONING.md#quarantine-release)). A backup
+  older than the last rotation cannot take over; re-bootstrap instead.
 
 IMAP mail, rebuildable mailcache.json, Ollama model blobs, logs and runtime files
 are excluded. Each database has a consistent snapshot; separate databases and JSON

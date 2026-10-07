@@ -576,9 +576,8 @@ func (s *Store) admitPayload(ctx context.Context, tx *sql.Tx, size int64) error 
 // it and discard remains. A staged delivery with the same sender and binding
 // gains the bytes. An exact replay succeeds.
 func (s *Store) Quarantine(ctx context.Context, gateway, id, sender string, b Binding, raw []byte) error {
-	unresolved := b.Issuer == "" && b.Subject == "" && b.Mailbox == ""
 	if !identifier(gateway) || !identifier(id) || !address(sender, true) || !address(b.Address, false) || b.Generation <= 0 ||
-		!unresolved && (!identifier(b.Issuer) || !identifier(b.Subject) || !identifier(b.Mailbox)) {
+		!b.Unresolved() && (!identifier(b.Issuer) || !identifier(b.Subject) || !identifier(b.Mailbox)) {
 		return ErrConflict
 	}
 	if len(raw) == 0 || int64(len(raw)) > s.limits.MessageBytes {
@@ -909,6 +908,44 @@ func (s *Store) Discard(ctx context.Context, gateway, id string) (string, error)
 		return "", err
 	}
 	return disposition, tx.Commit()
+}
+
+// Unresolved reports a binding Quarantine recorded without an owner.
+func (b Binding) Unresolved() bool { return b.Issuer == "" && b.Subject == "" && b.Mailbox == "" }
+
+// ResolveQuarantined binds an unresolved quarantined delivery's recipient to
+// owner b, chosen by an administrator. It stays quarantined; Release then
+// delivers it. Repeating with the same owner succeeds; any other change, a
+// resolved binding or a live release lease is refused.
+func (s *Store) ResolveQuarantined(ctx context.Context, gateway, id string, b Binding) error {
+	if b.Unresolved() || !identifier(b.Issuer) || !identifier(b.Subject) || !identifier(b.Mailbox) || b.Generation <= 0 {
+		return ErrConflict
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var state string
+	var until int64
+	err = tx.QueryRowContext(ctx, "SELECT state,lease_until FROM deliveries WHERE gateway=? AND id=?", gateway, id).Scan(&state, &until)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (state != "quarantined" || until > time.Now().Unix()) {
+		return ErrNotQuarantined
+	}
+	if err != nil {
+		return err
+	}
+	bindings, err := readBindings(ctx, tx, gateway, id)
+	if err != nil {
+		return err
+	}
+	if len(bindings) != 1 || bindings[0].Address != b.Address || !bindings[0].Unresolved() && bindings[0] != b {
+		return ErrConflict
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE bindings SET issuer=?,subject=?,mailbox=?,generation=? WHERE gateway=? AND id=?", b.Issuer, b.Subject, b.Mailbox, b.Generation, gateway, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ListQuarantined pages quarantined envelopes across gateways, without MIME.

@@ -265,6 +265,24 @@ func TestQuarantineFrozenBinding(t *testing.T) {
 			t.Fatal(id, d.State, err)
 		}
 	}
+	resolved := Binding{Address: unresolved.Address, Issuer: frozen.Issuer, Subject: frozen.Subject, Mailbox: frozen.Mailbox, Generation: 4}
+	if err := s.ResolveQuarantined(ctx, "hosted", "new", Binding{Address: "other@example.test", Issuer: frozen.Issuer, Subject: "x", Mailbox: "x", Generation: 1}); !errors.Is(err, ErrConflict) {
+		t.Fatal("resolved another address", err)
+	}
+	for range 2 {
+		if err := s.ResolveQuarantined(ctx, "hosted", "new", resolved); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ResolveQuarantined(ctx, "hosted", "new", frozen); !errors.Is(err, ErrConflict) {
+		t.Fatal("resolved binding rebound", err)
+	}
+	if err := s.ResolveQuarantined(ctx, "hosted", "staged", resolved); !errors.Is(err, ErrConflict) {
+		t.Fatal("frozen owner replaced", err)
+	}
+	if d, err := s.Get(ctx, "hosted", "new"); err != nil || d.State != "quarantined" || d.Bindings[0] != resolved {
+		t.Fatal("resolve", d.Bindings, err)
+	}
 	// Two records held: a third delivery is refused, never evicted.
 	if err := s.Quarantine(ctx, "hosted", "third", "", unresolved, raw); !errors.Is(err, ErrCapacity) {
 		t.Fatal("capacity", err)

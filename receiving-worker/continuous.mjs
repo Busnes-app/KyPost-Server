@@ -23,6 +23,15 @@ const response = (status, body = null, headers = {}) =>
 const domainOk = d => typeof d === "string" && d.length <= 253 && d === d.toLowerCase() && /^[\x21-\x3f\x41-\x7e]+$/.test(d);
 const addressOk = a => typeof a === "string" && a.length <= 254 && a === a.toLowerCase() &&
   /^[\x21-\x3f\x41-\x7e]{1,64}@[\x21-\x3f\x41-\x7e]+$/.test(a);
+// Envelope senders KyPost's holding store accepts (Go net/mail, at most 320 bytes):
+// a dot-atom local part of ASCII atext or any non-ASCII character, and an ASCII
+// dot-atom domain. Anything else is rejected here, so its sender gets a bounce
+// instead of mail KyPost could never hold.
+const ATOM = "(?:[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]|[^\\x00-\\x7f])+";
+const localPart = new RegExp(`^${ATOM}(?:\\.${ATOM})*$`, "u");
+const senderDomain = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/;
+const senderOk = s => s === "" || s.isWellFormed() && enc.encode(s).length <= 320 &&
+  localPart.test(s.slice(0, s.lastIndexOf("@"))) && senderDomain.test(s.slice(s.lastIndexOf("@") + 1));
 
 function base64(text, length) {
   if (typeof text !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(text)) return null;
@@ -264,8 +273,7 @@ export default {
     const at = typeof from === "string" ? from.lastIndexOf("@") : -1;
     // Null sender ("" or "<>") is "". The local part keeps its case; the domain is lowercased ASCII.
     const sender = from === "" || from === "<>" ? "" : at > 0 ? from.slice(0, at + 1) + from.slice(at + 1).toLowerCase() : null;
-    if (!addressOk(recipient) || sender === null || sender.length > 512 ||
-        sender !== "" && !(/^[^\s<>@\x00-\x1f\x7f]+@[^@]+$/.test(sender) && domainOk(sender.slice(sender.lastIndexOf("@") + 1)))) {
+    if (!addressOk(recipient) || sender === null || !senderOk(sender)) {
       message.setReject("Address refused");
       return;
     }

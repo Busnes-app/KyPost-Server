@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/mail"
@@ -24,6 +25,10 @@ import (
 const receivingGateway = "maddy-local"
 
 var receivingLimits = ingress.ReceivingLimits
+
+// errMailboxMessageLimit is one message over one frozen mailbox's limit, not
+// a full receiving store.
+var errMailboxMessageLimit = fmt.Errorf("%w: the message exceeds a recipient mailbox's per-message limit", ingress.ErrCapacity)
 
 type receivingRuntime struct {
 	gateway   string
@@ -467,7 +472,7 @@ func (r *receivingRuntime) commitAccept(ctx context.Context, d ingress.Delivery,
 	return r.frozenAuthority(ctx, d, proofs, func(current map[string]sso.NativeAssignment) error {
 		for _, a := range current {
 			if int64(len(raw)) > a.Limits.MessageBytes {
-				return ingress.ErrCapacity
+				return errMailboxMessageLimit
 			}
 		}
 		return r.holding.Accept(ctx, r.gatewayID(), d.ID, sender, bytes.NewReader(raw))

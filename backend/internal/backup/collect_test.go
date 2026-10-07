@@ -171,7 +171,7 @@ func TestCollectOptionalTuningOverride(t *testing.T) {
 // copy starts fenced. The ledger database is snapshotted, never copied raw.
 func TestCollectSealsCloudflareCredentialsNotHostRecord(t *testing.T) {
 	d := fixtureDirs(t)
-	for _, name := range []string{cfreceiving.CredentialsFile, cfreceiving.HostFile} {
+	for _, name := range []string{cfreceiving.CredentialsFile, cfreceiving.HostFile, cfreceiving.HostFile + ".tmp.123"} {
 		if err := os.WriteFile(filepath.Join(d.Secret, name), []byte("{}"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -184,7 +184,7 @@ func TestCollectSealsCloudflareCredentialsNotHostRecord(t *testing.T) {
 	for _, f := range p.Files {
 		paths[f.Path] = true
 	}
-	if !paths["private/"+cfreceiving.CredentialsFile] || paths["private/"+cfreceiving.HostFile] {
+	if !paths["private/"+cfreceiving.CredentialsFile] || paths["private/"+cfreceiving.HostFile] || paths["private/"+cfreceiving.HostFile+".tmp.123"] {
 		t.Fatal("credentials must be sealed and the host record excluded", paths)
 	}
 	if !snapshotDatabase(cfreceiving.DBFile) {

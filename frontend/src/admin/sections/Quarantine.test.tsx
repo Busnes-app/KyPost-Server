@@ -315,3 +315,42 @@ it("keeps the change notice when native mail is off on re-read", async () => {
   expect(await screen.findByText("Native mail is off on this server, so there is no quarantine to review.")).toBeDefined();
   expect(screen.getByText("Released delivery d1/x from bounce@sender.example to its original mailboxes.")).toBeDefined();
 });
+
+const unresolved = { ...first, sequence: 12, gateway: "cloudflare-continuous", id: "u1", sender: "late@sender.example", unresolved: true,
+  recipients: [{ address: "sales@example.com", mailbox: "", user: "", generation: 1, currentMailbox: "alice-id", currentUser: "alice-id" }] };
+
+it("validates unresolved recipients", () => {
+  expect(readQuarantine({ deliveries: [unresolved] }, 0)[0]?.unresolved).toBe(true);
+  const r0 = unresolved.recipients[0]!;
+  for (const d of [{ ...unresolved, unresolved: "yes" }, { ...unresolved, recipients: [{ ...r0, mailbox: "alice-id" }] }, { ...unresolved, recipients: [{ ...r0, user: "alice-id" }] },
+    { ...first, recipients: [{ ...first.recipients[0]!, currentMailbox: "x" }] }, { ...unresolved, recipients: [{ ...r0, currentUser: "a\nb" }] }]) {
+    expect(() => readQuarantine({ deliveries: [d] }, 0)).toThrow();
+  }
+});
+
+it("releases unresolved mail only to the current owner after saying the owner is not proven", async () => {
+  pages[base] = { deliveries: [first, unresolved] };
+  answer = () => json({ gateway: "cloudflare-continuous", id: "u1", result: "released" });
+  await unlocked();
+  expect(screen.queryByRole("button", { name: "Release cloudflare-continuous / u1" })).toBeNull();
+  expect(screen.getByRole("note").textContent).toContain("routing table this server does not know");
+  const release = screen.getByRole("button", { name: "Release cloudflare-continuous / u1 to the current owner" });
+  expect(release.textContent).toBe("Release to current owner…");
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(release);
+  expect(confirm.mock.calls[0]?.[0]).toBe("This mail was captured under a routing table this server does not know (for example mail that waited at Cloudflare through a restore), so its original owner cannot be proven. Release it to the address's current owner instead? The owner shown is today's, not proven to be the one it was sent to. Releasing delivery u1 from late@sender.example to: sales@example.com → original owner unknown; today's owner: mailbox alice-id / alice.");
+  expect(writes()).toHaveLength(0);
+  confirm.mockReturnValue(true);
+  pages[base] = { deliveries: [first] };
+  fireEvent.click(release);
+  await screen.findByText("Released delivery u1 from late@sender.example to the address's current owner.");
+  const [write] = writes();
+  expect(write?.[0]).toBe(`${base}/cloudflare-continuous/u1/release`);
+  expect(JSON.parse(String(write?.[1]?.body))).toEqual({ authSecret: "derived-test-secret", toCurrentOwner: true });
+});
+
+it("says release will be refused when the unresolved address is inactive", async () => {
+  pages[base] = { deliveries: [{ ...unresolved, recipients: [{ ...unresolved.recipients[0]!, currentMailbox: "", currentUser: "" }] }] };
+  render(view());
+  await screen.findByText(/original owner unknown; the address is not active now, so release will be refused/);
+});

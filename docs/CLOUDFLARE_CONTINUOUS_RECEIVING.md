@@ -187,9 +187,12 @@ listed keys:
 
 **Email handler.** One invocation per recipient. In order: lowercase `message.to`
 and the sender's domain (the local part keeps its case; a null sender, `""` or `<>`,
-becomes `""`); a malformed or non-ASCII recipient, a sender over 512 characters, or a
-sender domain that is not printable ASCII (a U-label could dodge an A-label block)
-→ reject. Read `routes.json` (absent → reject; storage error → throw); each isolate
+becomes `""`); a malformed or non-ASCII recipient, or a sender KyPost's holding
+store could not hold → reject. A sender must be at most 320 UTF-8 bytes, well-formed
+UTF-16, with a dot-atom local part (ASCII atext or any non-ASCII character) and an
+ASCII dot-atom domain (a U-label could dodge an A-label block; domain literals and
+quoted local parts are refused). `receiving-worker/senders.json` is the shared
+fixture both sides test against. Read `routes.json` (absent → reject; storage error → throw); each isolate
 keeps the parsed table and revalidates it on every message with a conditional get on
 its etag, so a new table applies to the next message. Sender address or domain blocked with `until` null or in the future →
 reject. `now - issuedAt` over 14 days → reject. Recipient not in `routes` → reject.
@@ -287,7 +290,15 @@ A daemon loop, outbound HTTPS only, every 30 seconds and on directory change:
    capacity refusal stops fetching; mail waits in R2.
 
 Restore: the ledger, published-revision records and signing key are in sealed
-backups. After restore, `GET /routes` reconciles: KyPost publishes only above the
+backups. Because tables are re-signed hourly, a restored `cloudflare.db` almost
+never knows the revision mail waiting in R2 was captured under, so after a
+takeover that mail is quarantined *unresolved* and needs an administrator's
+release to the current owner (see KyPost implementation). Take over promptly
+after a restore to keep that set small. A takeover needs the Worker's current
+key: a backup older than the last rotation cannot take over; re-bootstrap
+through the Cloudflare account instead ([setup](RECEIVING_SETUP.md#continuous-cloudflare-profile)).
+Cloning a volume (as opposed to restoring a backup) copies the host marker too and
+yields two live consumers; never clone a receiving instance. After restore, `GET /routes` reconciles: KyPost publishes only above the
 stored revision, and R2 items frozen against revisions it no longer has are
 quarantined, not guessed.
 
@@ -322,12 +333,32 @@ Operator steps: [continuous Cloudflare profile](RECEIVING_SETUP.md#continuous-cl
   Pickup lists from the start, fetches at most 100 objects a cycle, binds with
   the frozen owner and generation through the shared `bindExpected`, scans,
   accepts and imports with the existing runtime, and quarantines with bytes
-  (`ingress.Store.Quarantine`) when authority no longer matches or the revision
-  is unknown (owner left empty: release refuses, discard remains). The provider
+  (`ingress.Store.Quarantine`) when authority no longer matches, the message
+  exceeds its mailbox's per-message limit, or the revision is unknown. An
+  unknown revision leaves the owner empty (*unresolved*): an administrator can
+  release it only to the recipient address's current owner, with an explicit
+  confirmation that today's owner is not proven to be the original, or
+  discard it ([quarantine release](NATIVE_PROVISIONING.md#quarantine-release)).
+  Equal generations are never taken as proof after a restore. A key refused for
+  a transient reason (domain proof, admission, scanner) backs off in memory
+  from one minute to an hour, so stuck mail neither refetches every cycle nor
+  uses the per-cycle fetch budget ahead of newer mail. Only a full receiving
+  store stops fetching. An empty truncated listing page ends the cycle as an
+  error. The provider
   delete uses the local digest and runs only when the holding store has the
   delivery archived or quarantined; a ledger row the holding store does not
   back (an older restored store) is dropped and the object picked up again.
-- **Fencing.** A 401 is rechecked under the credential lock: a rotation that
+- **Junk verdict.** The `junk` ledger row is the only record of a reject
+  verdict until the delivery is archived; it is not stored with the ingress
+  delivery (that would change its schema and restore validation). If
+  `cloudflare.db` is lost or restored older while a delivery is pending, or an
+  administrator releases a quarantined delivery that had a reject verdict, it
+  is filed to INBOX. No mail is lost either way. A `junk` row whose provider copy
+  has vanished and whose delivery is not pending is dropped.
+- **Refused** objects are counted in status `refused`, not as waiting, and do
+  not raise the oldest-unpicked warning.
+- **Fencing.** A 401 is rechecked under the credential lock (which serializes
+  init, rotation, promotion and this fence decision; cycles do not hold it): a rotation that
   landed meanwhile is not a fence, an in-flight rotation is confirmed with its
   own bearer, otherwise the host marker is cleared and the loop reports
   `fenced` and stops calling the Worker. `receiving cloudflare rotate` and

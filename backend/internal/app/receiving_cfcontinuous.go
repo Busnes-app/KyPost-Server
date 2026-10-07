@@ -40,7 +40,7 @@ const (
 	cfTakeover = "move-receiving-here"
 )
 
-var errCFStop = errors.New("local receiving capacity refused; mail waits in R2 until imports drain")
+var errCFStop = errors.New("the receiving store is full (waiting or quarantined mail); new mail waits in R2 until imports finish or quarantined mail is released or discarded")
 
 // cfOrigin is the operator's explicit profile selection; "" means off.
 func cfOrigin() (string, error) {
@@ -61,14 +61,29 @@ type cfLoop struct {
 	crash func(point string) error
 	// workerRevision is the Worker's stored revision; -1 until read.
 	workerRevision int64
-	lapsed         map[string]bool   // domains whose proof failed this cycle
-	waiting        map[string]string // key → domain whose proof refused it
-	status         cfreceiving.Status
+	// backoff holds keys refused for a transient reason (domain proof,
+	// admission, scanner) so they neither refetch every cycle nor use the
+	// per-cycle fetch budget ahead of newer mail.
+	backoff map[string]cfBackoff
+	status  cfreceiving.Status
 }
 
 func newCFLoop(r *receivingRuntime, db *cfreceiving.DB, origin string) *cfLoop {
 	return &cfLoop{r: r, db: db, keys: cfreceiving.Keys{Dir: config.SecretDir()}, client: cfreceiving.Client{Origin: origin, HTTP: cfreceiving.NewHTTPClient()},
-		now: time.Now, workerRevision: -1, lapsed: map[string]bool{}, waiting: map[string]string{}}
+		now: time.Now, workerRevision: -1, backoff: map[string]cfBackoff{}}
+}
+
+type cfBackoff struct {
+	until time.Time
+	delay time.Duration
+}
+
+// defer doubles a key's wait from one minute to at most an hour.
+func (l *cfLoop) postpone(key string) {
+	b := l.backoff[key]
+	b.delay = min(max(2*b.delay, time.Minute), time.Hour)
+	b.until = l.now().Add(b.delay)
+	l.backoff[key] = b
 }
 
 func (l *cfLoop) hit(point string) error {
@@ -277,15 +292,12 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 		return nil, err
 	}
 	proofs := map[string]sso.NativeDomain{}
-	l.lapsed = map[string]bool{}
 	for name, d := range set.Domains {
 		if !d.Established {
 			continue
 		}
 		if proof, err := r.domains.VerifyDomain(ctx, name); err == nil {
 			proofs[name] = proof
-		} else {
-			l.lapsed[name] = true
 		}
 	}
 	addresses, err := r.life.NativeAddresses()
@@ -358,15 +370,18 @@ func (l *cfLoop) pickup(ctx context.Context, cur cfreceiving.Material) error {
 	stopped := false
 	for after := ""; ; {
 		items, truncated, err := l.client.List(ctx, cur.Token, after)
+		if err == nil && truncated && len(items) == 0 {
+			err = errors.New("the Worker returned an empty truncated listing page; retrying next cycle")
+		}
 		if err != nil {
 			return err
 		}
 		for _, it := range items {
 			after, listed[it.Key] = it.Key, true
-			done := false
+			settled := false
 			if !stopped && fetches < cfFetches {
 				var fetched bool
-				done, fetched, err = l.item(ctx, cur, it)
+				settled, fetched, err = l.item(ctx, cur, it)
 				if fetched {
 					fetches++
 				}
@@ -380,7 +395,7 @@ func (l *cfLoop) pickup(ctx context.Context, cur cfreceiving.Material) error {
 					slog.Warn("cloudflare pickup deferred; provider copy retained", "actor", cfGateway, "task_id", "native-receiving", "action", "pickup", "target", "holding-store", "result", "deferred", "error", err.Error(), "correlation_id", it.Key)
 				}
 			}
-			if !done {
+			if !settled {
 				waiting++
 				if t := cfreceiving.KeyTime(it.Key); oldest == 0 || t < oldest {
 					oldest = t
@@ -397,19 +412,21 @@ func (l *cfLoop) pickup(ctx context.Context, cur cfreceiving.Material) error {
 		slog.Warn("cloudflare mail waiting over an hour in R2; check scanner, domain proof, capacity and status", "actor", cfGateway, "task_id", "native-receiving", "action", "pickup", "target", "cloudflare-worker", "result", "delayed", "correlation_id", "oldest-unpicked")
 	}
 	l.status.Waiting, l.status.OldestUnpickedAt, l.status.OldestWarning, l.status.LastPickupAt = waiting, oldest, warn, now
-	for key := range l.waiting {
+	for key := range l.backoff {
 		if !listed[key] {
-			delete(l.waiting, key)
+			delete(l.backoff, key)
 		}
 	}
 	return l.deleteCommitted(ctx, cur, listed)
 }
 
-// item returns done once the local record is terminal (provider delete owed).
-func (l *cfLoop) item(ctx context.Context, cur cfreceiving.Material, it cfreceiving.Item) (done, fetched bool, err error) {
+// item returns settled once the key no longer waits for pickup: its local
+// record is terminal (provider delete owed) or it is refused (kept for the
+// operator, counted separately).
+func (l *cfLoop) item(ctx context.Context, cur cfreceiving.Material, it cfreceiving.Item) (settled, fetched bool, err error) {
 	entry, found, err := l.db.Entry(ctx, it.Key)
 	if err != nil || found && entry.State == "refused" {
-		return false, false, err
+		return err == nil, false, err
 	}
 	d, err := l.r.holding.Get(ctx, cfGateway, it.Key)
 	absent := errors.Is(err, sql.ErrNoRows)
@@ -420,7 +437,7 @@ func (l *cfLoop) item(ctx context.Context, cur cfreceiving.Material, it cfreceiv
 	}
 	if !absent && d.State != "staged" && d.Digest != it.Digest || found && entry.Digest != it.Digest {
 		// The provider object differs from this key's local record.
-		return false, false, l.refuse(ctx, it.Key, it.Digest)
+		return true, false, l.refuse(ctx, it.Key, it.Digest)
 	}
 	switch d.State {
 	case "archived", "quarantined":
@@ -430,18 +447,18 @@ func (l *cfLoop) item(ctx context.Context, cur cfreceiving.Material, it cfreceiv
 		}
 		return true, false, l.db.SetEntry(ctx, it.Key, d.Digest, state)
 	case "pending":
-		done, err = l.deliver(ctx, it.Key, d.Digest, found && entry.State == "junk")
-		return done, false, err
+		settled, err = l.deliver(ctx, it.Key, d.Digest, found && entry.State == "junk")
+		return settled, false, err
 	}
-	if domain, ok := l.waiting[it.Key]; ok && l.lapsed[domain] {
+	if l.now().Before(l.backoff[it.Key].until) {
 		return false, false, nil
 	}
 	if it.Size > receivingLimits.MessageBytes {
-		return false, false, l.refuse(ctx, it.Key, it.Digest)
+		return true, false, l.refuse(ctx, it.Key, it.Digest)
 	}
 	env, raw, err := l.client.Fetch(ctx, cur.Token, it.Key, receivingLimits.MessageBytes)
 	if errors.Is(err, cfreceiving.ErrInvalid) || err == nil && (env.Digest != it.Digest || !validEnvelopeSender(env.Sender)) {
-		return false, true, l.refuse(ctx, it.Key, it.Digest)
+		return true, true, l.refuse(ctx, it.Key, it.Digest)
 	}
 	if err == nil {
 		err = l.hit("fetched")
@@ -449,8 +466,11 @@ func (l *cfLoop) item(ctx context.Context, cur cfreceiving.Material, it cfreceiv
 	if err != nil {
 		return false, true, err
 	}
-	done, err = l.capture(ctx, env, raw, absent)
-	return done, true, err
+	settled, err = l.capture(ctx, env, raw, absent)
+	if err != nil && !errors.Is(err, errCFStop) {
+		l.postpone(it.Key)
+	}
+	return settled, true, err
 }
 
 // validEnvelopeSender is the holding store's sender rule; the Worker admits
@@ -539,17 +559,17 @@ func (l *cfLoop) capture(ctx context.Context, env cfreceiving.Envelope, raw []by
 	return l.deliver(ctx, env.ID, env.Digest, junk)
 }
 
-// unbound sorts a refused bind or accept: a durable authority change
-// quarantines with bytes, capacity stops fetching, anything else (lapsed
-// proof, DNS, admission) leaves the mail waiting in R2.
+// unbound sorts a refused bind or accept: a durable authority change, or a
+// message over its mailbox's per-message limit, quarantines with bytes; a
+// full receiving store stops fetching; anything else (lapsed proof, DNS,
+// admission) leaves the mail waiting in R2 with a backoff.
 func (l *cfLoop) unbound(ctx context.Context, env cfreceiving.Envelope, raw []byte, b ingress.Binding, err error) (bool, error) {
 	switch {
-	case errors.Is(err, ingress.ErrRoute) || l.r.bindingsRetired(ctx, []ingress.Binding{b}):
+	case errors.Is(err, ingress.ErrRoute) || errors.Is(err, errMailboxMessageLimit) || l.r.bindingsRetired(ctx, []ingress.Binding{b}):
 		return l.quarantine(ctx, env, raw, b)
 	case errors.Is(err, ingress.ErrCapacity):
 		return false, errCFStop
 	}
-	l.waiting[env.ID] = sso.AddressDomain(env.Recipient)
 	return false, err
 }
 
@@ -618,7 +638,7 @@ func (l *cfLoop) importOwed(ctx context.Context) {
 // ledger: after a restore the ledger may name deliveries the restored store
 // never committed, and those stay at the provider to be picked up again.
 func (l *cfLoop) deleteCommitted(ctx context.Context, cur cfreceiving.Material, listed map[string]bool) error {
-	entries, err := l.db.Entries(ctx, "imported", "quarantined", "refused")
+	entries, err := l.db.Entries(ctx, "imported", "quarantined", "refused", "junk")
 	if err != nil {
 		return err
 	}
@@ -628,14 +648,24 @@ func (l *cfLoop) deleteCommitted(ctx context.Context, cur cfreceiving.Material, 
 			return err
 		}
 		committed := err == nil && d.Digest == e.Digest && (d.State == "archived" || d.State == "quarantined")
-		// Refused rows leave once their provider copy is gone; delete-owed
-		// rows the holding store has not committed are picked up again.
-		if e.State == "refused" && !listed[e.Key] || e.State != "refused" && !committed {
+		var stale bool
+		switch e.State {
+		case "refused":
+			stale = !listed[e.Key] // gone from the provider
+		case "junk":
+			// Still owed only while pending here or fetchable there.
+			stale = !listed[e.Key] && (err != nil || d.State != "pending")
+		default:
+			// A delete-owed row the holding store has not committed is
+			// picked up again.
+			stale = !committed
+		}
+		if stale {
 			if err := l.db.RemoveEntry(ctx, e.Key); err != nil {
 				return err
 			}
 		}
-		if e.State == "refused" || !committed {
+		if e.State == "refused" || e.State == "junk" || !committed {
 			continue
 		}
 		if err := l.hit("delete"); err != nil {

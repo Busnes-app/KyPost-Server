@@ -34,7 +34,7 @@ func snapshotDatabase(name string) bool {
 // in "-migrated", which the ".migrated" rule does not match.
 func skip(name string) bool {
 	// The Cloudflare host record is this host's live marker: a restore must start fenced.
-	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || name == cfreceiving.HostFile || strings.HasSuffix(name, ".lock") ||
+	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || strings.HasPrefix(name, cfreceiving.HostFile) || strings.HasSuffix(name, ".lock") ||
 		strings.HasSuffix(name, ".migrated") || strings.HasSuffix(name, ".v1-migrated") || strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")
 }
 

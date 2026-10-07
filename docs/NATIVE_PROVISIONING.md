@@ -817,6 +817,21 @@ a delivery was quarantined is not stored.
   currently admitted (directory sync, storage or sign-on configuration;
   resync and retry). Release ends in the same tombstone as import, with
   disposition `released`. Repeating a completed release succeeds.
+- **Release to the current owner** applies only to an *unresolved* delivery:
+  one the hosted Cloudflare profile captured under a routing table this server
+  never published, typically mail that waited at Cloudflare through a restore
+  and takeover. Its original owner cannot be proven (after a restore the
+  original and the restored instance can each bump an address's generation from
+  the same base, so equal generations prove nothing), so it is stored with an
+  empty owner. Listing marks it `unresolved` and names the recipient address's
+  owner today (`currentMailbox`, `currentUser`), which is not proven to be the
+  original. An ordinary release refuses it with that explanation; the explicit
+  release binds it to that owner at the address's current generation, under
+  the same fences as import and only while the address is active, then
+  releases as above. It is refused while the address is inactive (discard
+  remains), and for any delivery that already has an owner. It is audited as
+  its own action. A crash between binding and release leaves the delivery bound
+  to that owner; finish it with an ordinary release.
 - **Discard** removes the bytes and bindings and leaves a tombstone, so an
   exact receiver replay or re-pickup is answered without delivering. Its
   disposition is `discarded`, or `partially_released` when a release had
@@ -831,19 +846,24 @@ API (admin only; POSTs need CSRF and the account credential, or KySignOn
 step-up, as for `/api/admin/mailboxes`):
 
 - `GET /api/admin/receiving/quarantine[?after=<sequence>]` returns up to 100
-  `{deliveries:[{sequence,gateway,id,sender,receivedAt,size,recipients:[{address,mailbox,user,generation}]}]}`;
-  page with the last `sequence`.
+  `{deliveries:[{sequence,gateway,id,sender,receivedAt,size,unresolved,recipients:[{address,mailbox,user,generation,currentMailbox?,currentUser?}]}]}`;
+  page with the last `sequence`. An unresolved recipient has an empty `mailbox`
+  and `user` and, while its address is active, today's owner.
 - `POST /api/admin/receiving/quarantine/{gateway}/{id}/release` and
   `.../discard` return `{gateway,id,result}` (`released`, `discarded` or
   `partially_released`); 404 unknown or malformed, 409 not quarantined,
   release in progress, release refused or restore hold, 503 storage or mailbox
-  capacity (the holding copy is kept).
+  capacity (the holding copy is kept). For an unresolved delivery, release
+  takes `{"toCurrentOwner": true}` beside the credential (the step-up binds it)
+  and is audited as `release_quarantine_to_current_owner`; discard refuses the
+  flag with 400.
 
 CLI, as the runtime user that owns `STATE_DIR` (it refuses any other):
 
 ```sh
 docker compose exec --user kypost kypost-server kypost-server receiving quarantine list [<after-sequence>]
 docker compose exec --user kypost kypost-server kypost-server receiving quarantine release <gateway> <id> --confirm <id>
+docker compose exec --user kypost kypost-server kypost-server receiving quarantine release-to-current-owner <gateway> <id> --confirm <id>
 docker compose exec --user kypost kypost-server kypost-server receiving quarantine discard <gateway> <id> --confirm <id>
 ```
 

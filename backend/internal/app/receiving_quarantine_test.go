@@ -200,7 +200,7 @@ func TestNativeQuarantineReleaseRefusesChangedMailbox(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(r.stateDir, sso.NativeRestoreHoldFile), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.life.ReleaseQuarantined(ctx, r.stateDir, "https://identity.example.test", r.accounts, r.holding, receivingGateway, "impostor"); !errors.Is(err, sso.ErrNativeRestoreHold) {
+	if err := r.life.ReleaseQuarantined(ctx, r.stateDir, "https://identity.example.test", r.accounts, r.holding, receivingGateway, "impostor", false); !errors.Is(err, sso.ErrNativeRestoreHold) {
 		t.Fatal("release under restore hold", err)
 	}
 	if _, err := cli("discard", receivingGateway, "impostor", "--confirm", "impostor"); !errors.Is(err, sso.ErrNativeRestoreHold) {
@@ -229,7 +229,7 @@ func TestNativeReceivingQuarantinesDurablyInactiveOwners(t *testing.T) {
 		if _, err := r.life.SetNativeMailboxState(ctx, r.stateDir, m.ID, true); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.life.ReleaseQuarantined(ctx, r.stateDir, "https://identity.example.test", r.accounts, r.holding, receivingGateway, "disabled"); err != nil {
+		if err := r.life.ReleaseQuarantined(ctx, r.stateDir, "https://identity.example.test", r.accounts, r.holding, receivingGateway, "disabled", false); err != nil {
 			t.Fatal(err)
 		}
 		if got := receivingMailbox(t, r, m.ID); len(got) != 1 || got[0] != "secret-body" {

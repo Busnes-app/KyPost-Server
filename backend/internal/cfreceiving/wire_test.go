@@ -171,4 +171,10 @@ func TestKeysHostRecordAndPromotionWindow(t *testing.T) {
 	if _, _, live, err := keys.Load(); err != nil || live {
 		t.Fatal("fence did not stop the host", err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, CredentialsFile), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := CurrentStatus(t.Context(), keys, t.TempDir()); err != nil || s.State != "error" {
+		t.Fatal("corrupt credentials not reported", s, err)
+	}
 }

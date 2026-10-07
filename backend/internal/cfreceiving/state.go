@@ -40,7 +40,10 @@ type hostRecord struct {
 	Pending *Material `json:"pending,omitempty"`
 }
 
-// Lock serializes rotation, fencing and each daemon cycle across processes.
+// Lock serializes credential changes across processes: init, rotation and
+// promotion, and the daemon's fence decision after a 401. Daemon cycles do not
+// hold it; they read the credentials once per cycle and recheck under it only
+// when refused.
 func (k Keys) Lock(ctx context.Context) (func(), error) {
 	return fsutil.LockFileContext(ctx, filepath.Join(k.Dir, CredentialsFile))
 }
@@ -135,17 +138,20 @@ func (k Keys) Fence() error {
 // Status is the profile's operator view: counts and times, never addresses,
 // envelopes or credentials. Times are Unix milliseconds; zero is never.
 type Status struct {
-	State            string         `json:"state"`
-	Detail           string         `json:"detail,omitempty"`
-	Epoch            int64          `json:"epoch,omitempty"`
-	LastRevision     int64          `json:"lastRevision"`
-	LastPublishAt    int64          `json:"lastPublishAt"`
-	LastPickupAt     int64          `json:"lastPickupAt"`
-	OldestUnpickedAt int64          `json:"oldestUnpickedAt"`
-	OldestWarning    bool           `json:"oldestUnpickedWarning"`
-	Waiting          int            `json:"waiting"`
-	Ledger           map[string]int `json:"ledger"`
-	UpdatedAt        int64          `json:"updatedAt"`
+	State            string `json:"state"`
+	Detail           string `json:"detail,omitempty"`
+	Epoch            int64  `json:"epoch,omitempty"`
+	LastRevision     int64  `json:"lastRevision"`
+	LastPublishAt    int64  `json:"lastPublishAt"`
+	LastPickupAt     int64  `json:"lastPickupAt"`
+	OldestUnpickedAt int64  `json:"oldestUnpickedAt"`
+	OldestWarning    bool   `json:"oldestUnpickedWarning"`
+	Waiting          int    `json:"waiting"`
+	// Refused provider objects stay in R2 for the operator and are not
+	// counted as waiting.
+	Refused   int            `json:"refused"`
+	Ledger    map[string]int `json:"ledger"`
+	UpdatedAt int64          `json:"updatedAt"`
 }
 
 const schema = `
@@ -382,6 +388,7 @@ func ReadStatus(ctx context.Context, dir string) (Status, error) {
 		}
 		s.Ledger[state] = n
 	}
+	s.Refused = s.Ledger["refused"]
 	return s, rows.Err()
 }
 
@@ -394,7 +401,9 @@ func CurrentStatus(ctx context.Context, keys Keys, receivingDir string) (Status,
 	}
 	if _, _, live, err := keys.Load(); errors.Is(err, ErrNoCredentials) {
 		s.State, s.Detail = "uninitialized", ErrNoCredentials.Error()
-	} else if err == nil && !live {
+	} else if err != nil {
+		s.State, s.Detail = "error", "cloudflare receiving credentials are unreadable or corrupt; preserve them and repair"
+	} else if !live {
 		s.State, s.Detail = "fenced", "this instance does not hold Cloudflare receiving; confirm a takeover to move receiving here"
 	}
 	return s, nil
