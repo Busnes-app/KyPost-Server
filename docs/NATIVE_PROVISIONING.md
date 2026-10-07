@@ -284,6 +284,46 @@ recorded as `address_conflict`.
   monotonic. Roll back by restoring the pre-upgrade backup.
 - The recovery authority digest includes every address record.
 
+## Extra mailboxes
+
+Administrators give an everyday identity further mailboxes beside the
+KyIdentity primary ([spec](NATIVE_ADDRESSING_V2.md#mailbox-storage)).
+
+- **Ledger.** An extra mailbox is a `mailboxes` record of kind `extra`, owned by
+  an existing account's subject, with a random ID `mbx-<uuid>` (user IDs are bare
+  UUIDs, so the two never collide), its own `stateRoot`/`limits` copied from the
+  owner's primary, `state` `active` or `disabled` (the administrator's choice)
+  and `source` once prepared. Its primary address is an address record of kind
+  `primary` in that mailbox. Primary mailbox IDs stay equal to user IDs.
+- **Storage.** `$STATE/mailboxes/<mailboxID>/` with `native-mailbox.json`,
+  `mailbox/mailbox.db` and a mail-only `state.db` (processed, decisions,
+  checkpoint, deferrals; never devices, pairing, subscribers or
+  notifications). `mailbox.PrepareMailboxContext`/`ValidatePreparedMailbox`
+  take the parent directory. Device, notification and sorter state stays in the
+  owner's primary `state.db`.
+- **Desired-state rule.** An extra mailbox's addresses are `active` only while
+  the mailbox is prepared and not administrator-disabled, besides the owner
+  terms above, so subject deactivation or promotion disables every mailbox of
+  the subject and disable/re-enable bump generations through the same rule.
+- **Admin API** (same gates, audit and error mapping as the address routes;
+  audit names the mailbox, never an address):
+  - `GET /api/admin/mailboxes[?user=<id>]` lists mailboxes with `kind` and
+    `state` (the address listing carries `state` too).
+  - `POST /api/admin/mailboxes` `{user, address}` creates an extra mailbox for a
+    published native everyday account. The address must be on a configured,
+    established, non-retired domain, globally unique and not any subject's
+    KyIdentity primary; administrator and `legacyMixedUse` owners are 409, an
+    unknown or non-native user 404. The ledger records the mailbox before its
+    storage and the source after; repeating the request with the same user and
+    address resumes an interrupted creation.
+  - `POST /api/admin/mailboxes/{id}/disable` and `/enable` change an extra
+    mailbox's state (409 when already in it, 404 for a primary or unknown ID).
+    Mail is retained while disabled.
+- **Authority.** `AdmitNativeMailbox` and `WithNativeMailAccess` take mailbox
+  IDs: the owner is admitted as today, then an extra mailbox must belong to the
+  same subject, be `active` and prepared, and pass storage validation. Unknown,
+  foreign and disabled IDs refuse alike (`ErrNativeMailboxUnknown`).
+
 Allocation context is at most 30 seconds and never outlives the domain proof.
 Cancellable flock/mutex waits leave no abandoned waiter that acquires later.
 Legacy writers preserve blocking flock behavior. Open/fsync and read-only SQLite
@@ -385,8 +425,19 @@ primary address; incoming encryption uses native INBOX rather than a leftover
 IMAP file. Existing key custody and WKD publication proofs are unchanged.
 
 Native compose/client-PGP sends use the configured relay and durable outbox,
-from the primary or any `active` alias of the sender's mailbox (an unowned or
-inactive `From` is 403). Native pickup creation and system/own-address SMTP
+from the primary or any `active` alias of the sending mailbox (an unowned or
+inactive `From` is 403).
+
+Mail endpoints accept an optional `X-KyPost-Mailbox` header selecting one of
+the caller's mailboxes (absent, or the caller's user ID, is the primary). It is
+resolved through the ledger on every request after authentication; an unknown,
+foreign or disabled mailbox answers `404 {"error":"mailbox not found"}` before
+any storage is opened. Per-user endpoints (devices, pairing, contacts, CardDAV,
+PGP keys, settings, rules) ignore it. `GET /api/mailboxes` lists the caller's
+accessible mailboxes and their active addresses. Every mail cache is keyed by
+mailbox ID. The poller polls each active mailbox with the owner's settings,
+rules and labels; incoming encryption and sorter learning cover the primary
+mailbox only, so an extra mailbox's mail stays as received. Native pickup creation and system/own-address SMTP
 probes remain refused or skipped pending their authority/dependency integration. A leftover IMAP
 credential file cannot enable any native legacy SMTP path. Do not publish MX for this runtime alone. Roll back by
 disabling both native flags in both processes and keeping all

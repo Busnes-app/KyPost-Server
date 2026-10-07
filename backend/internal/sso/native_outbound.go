@@ -33,12 +33,12 @@ type NativeOutbound struct {
 
 type NativeOutboundResult struct{ Accepted, SentSaved bool }
 type nativeOutboundClaim struct {
-	id, token, from, source string
-	sequence                int
-	owner                   mailbox.Owner
-	limits                  mailbox.Limits
-	relay                   mailmsg.DomainRelay
-	delivery                mailbox.OutboundDelivery
+	id, token, from, source, dir string
+	sequence                     int
+	owner                        mailbox.Owner
+	limits                       mailbox.Limits
+	relay                        mailmsg.DomainRelay
+	delivery                     mailbox.OutboundDelivery
 }
 
 func (s NativeOutbound) keyPath() string { return filepath.Join(s.SecretDir, "native-relay.key") }
@@ -49,8 +49,9 @@ func (s NativeOutbound) keyPath() string { return filepath.Join(s.SecretDir, "na
 // unproven set, so a stale job is quarantined even while DNS is down, and
 // withJobAuthority refuses to commit (the job stays for retry). x is the
 // current ledger record of from (zero when unknown), read under the fence.
-func (s NativeOutbound) withAuthority(ctx context.Context, userID, from string, action func(ctx context.Context, u users.User, a NativeAssignment, x NativeAddress, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error) error {
-	if s.Accounts == nil || s.Domains == nil || s.Settings == nil || s.ConfigDir == "" || s.StateRoot == "" || s.SecretDir == "" || !fsutil.SafePathComponent(userID) || !strings.Contains(from, "@") || action == nil {
+// mailboxID selects the sending mailbox; a primary one's ID is its user's.
+func (s NativeOutbound) withAuthority(ctx context.Context, mailboxID, from string, action func(ctx context.Context, u users.User, a NativeAssignment, x NativeAddress, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error) error {
+	if s.Accounts == nil || s.Domains == nil || s.Settings == nil || s.ConfigDir == "" || s.StateRoot == "" || s.SecretDir == "" || !fsutil.SafePathComponent(mailboxID) || !strings.Contains(from, "@") || action == nil {
 		return ErrNativeProvisioning
 	}
 	if err := RequireNativeRestoreReleased(s.StateRoot); err != nil {
@@ -59,17 +60,14 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID, from string, 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	life := NewLifecycleStore(s.ConfigDir)
-	hint, err := s.Accounts.Get(userID)
-	if err != nil {
-		return ErrNativeProvisioning
-	}
-	sender, known, err := life.NativeAssignment(hint.NativeMailboxIssuer, hint.SSOSub)
+	sender, known, err := life.NativeMailboxAssignment(mailboxID)
 	if err != nil {
 		return err
 	}
 	if !known || sender.Address == "" {
 		return ErrNativeProvisioning
 	}
+	userID := sender.UserID()
 	domain := AddressDomain(from)
 	proof, unproven := s.Domains.VerifyDomain(ctx, domain)
 	if unproven == nil {
@@ -108,7 +106,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID, from string, 
 				if u.ID != userID {
 					continue
 				}
-				a, err := life.admitNativeMailUser(ctx, s.StateRoot, current.Issuer, u)
+				a, err := life.admitNativeMailbox(ctx, s.StateRoot, current.Issuer, u, mailboxID)
 				if err != nil {
 					return err
 				}
@@ -134,7 +132,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID, from string, 
 				if err != nil {
 					return mailmsg.ErrDomainRelay
 				}
-				box, err := mailbox.OpenExisting(filepath.Join(s.StateRoot, "users", userID, "mailbox"), a.Owner, a.Limits, a.Source)
+				box, err := mailbox.OpenExisting(filepath.Join(a.Dir(s.StateRoot), "mailbox"), a.Owner, a.Limits, a.Source)
 				if err != nil {
 					return err
 				}
@@ -195,7 +193,8 @@ func (s NativeOutbound) withJobAuthority(ctx context.Context, u users.User, a Na
 		}
 		return commit()
 	}
-	devices, err := state.OpenNative(filepath.Join(s.StateRoot, "users", u.ID), a.Source)
+	// Devices live only in the owner's primary state, under its source.
+	devices, err := state.OpenNative(filepath.Join(s.StateRoot, "users", u.ID), u.NativeMailboxSource)
 	if err != nil {
 		return err
 	}
@@ -213,9 +212,9 @@ func (s NativeOutbound) withJobAuthority(ctx context.Context, u users.User, a Na
 
 // queue holds current authority through both enqueue and the primary claim so
 // a worker cannot win the first attempt between the foreground's transactions.
-func (s NativeOutbound) queue(ctx context.Context, userID, id string, job mailbox.OutboundJob, claimPrimary bool) (nativeOutboundClaim, error) {
+func (s NativeOutbound) queue(ctx context.Context, mailboxID, id string, job mailbox.OutboundJob, claimPrimary bool) (nativeOutboundClaim, error) {
 	var claim nativeOutboundClaim
-	err := s.withAuthority(ctx, userID, job.From, func(ctx context.Context, u users.User, a NativeAssignment, x NativeAddress, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error {
+	err := s.withAuthority(ctx, mailboxID, job.From, func(ctx context.Context, u users.User, a NativeAssignment, x NativeAddress, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error {
 		if job.NativeSendEpoch != u.NativeSendEpoch || job.PGPRevision != u.PGPRevision {
 			return ErrNativeOutboundStale
 		}
@@ -237,7 +236,7 @@ func (s NativeOutbound) queue(ctx context.Context, userID, id string, job mailbo
 			if err != nil {
 				return err
 			}
-			claim = nativeOutboundClaim{id: id, token: token, from: job.From, source: a.Source, owner: a.Owner, limits: a.Limits, relay: relay, delivery: delivery}
+			claim = nativeOutboundClaim{id: id, token: token, from: job.From, source: a.Source, dir: a.Dir(s.StateRoot), owner: a.Owner, limits: a.Limits, relay: relay, delivery: delivery}
 			return nil
 		})
 	})
@@ -246,14 +245,15 @@ func (s NativeOutbound) queue(ctx context.Context, userID, id string, job mailbo
 
 // Queue persists intent without contacting the provider. It is never a send
 // success response. Internal callers supply a server-generated immutable ID.
-func (s NativeOutbound) Queue(ctx context.Context, userID, id string, job mailbox.OutboundJob) error {
-	_, err := s.queue(ctx, userID, id, job, false)
+// Every mailboxID below names the sending mailbox; a primary's is its user ID.
+func (s NativeOutbound) Queue(ctx context.Context, mailboxID, id string, job mailbox.OutboundJob) error {
+	_, err := s.queue(ctx, mailboxID, id, job, false)
 	return err
 }
 
 // Send records every delivery and Sent obligation before dialing the first.
-func (s NativeOutbound) Send(ctx context.Context, userID, id string, job mailbox.OutboundJob) (NativeOutboundResult, error) {
-	claim, err := s.queue(ctx, userID, id, job, true)
+func (s NativeOutbound) Send(ctx context.Context, mailboxID, id string, job mailbox.OutboundJob) (NativeOutboundResult, error) {
+	claim, err := s.queue(ctx, mailboxID, id, job, true)
 	if err != nil {
 		return NativeOutboundResult{}, err
 	}
@@ -261,9 +261,9 @@ func (s NativeOutbound) Send(ctx context.Context, userID, id string, job mailbox
 }
 
 // Submit rechecks current authority for a stored attempt, never a cached grant.
-func (s NativeOutbound) Submit(ctx context.Context, userID, id string, sequence int) (NativeOutboundResult, error) {
+func (s NativeOutbound) Submit(ctx context.Context, mailboxID, id string, sequence int) (NativeOutboundResult, error) {
 	// The stored From selects the domain to prove; the job is reread under the fence.
-	box, key, err := s.openStorage(userID)
+	box, key, err := s.openStorage(mailboxID)
 	if err != nil {
 		return NativeOutboundResult{}, err
 	}
@@ -273,7 +273,7 @@ func (s NativeOutbound) Submit(ctx context.Context, userID, id string, sequence 
 		return NativeOutboundResult{}, err
 	}
 	var claim nativeOutboundClaim
-	err = s.withAuthority(ctx, userID, stored.From, func(ctx context.Context, u users.User, a NativeAssignment, x NativeAddress, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error {
+	err = s.withAuthority(ctx, mailboxID, stored.From, func(ctx context.Context, u users.User, a NativeAssignment, x NativeAddress, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error {
 		job, statuses, _, err := box.ReadOutbound(ctx, key, id)
 		if err != nil {
 			return err
@@ -286,7 +286,7 @@ func (s NativeOutbound) Submit(ctx context.Context, userID, id string, sequence 
 			if err != nil {
 				return err
 			}
-			claim = nativeOutboundClaim{id: id, token: token, from: job.From, sequence: sequence, source: a.Source, owner: a.Owner, limits: a.Limits, relay: relay, delivery: delivery}
+			claim = nativeOutboundClaim{id: id, token: token, from: job.From, sequence: sequence, source: a.Source, dir: a.Dir(s.StateRoot), owner: a.Owner, limits: a.Limits, relay: relay, delivery: delivery}
 			return nil
 		})
 	})
@@ -319,7 +319,7 @@ func (s NativeOutbound) deliver(ctx context.Context, c nativeOutboundClaim) (Nat
 	}
 	finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	box, err := mailbox.OpenExisting(filepath.Join(s.StateRoot, "users", c.owner.Mailbox, "mailbox"), c.owner, c.limits, c.source)
+	box, err := mailbox.OpenExisting(filepath.Join(c.dir, "mailbox"), c.owner, c.limits, c.source)
 	if err != nil {
 		return result, mailbox.ErrOutbound
 	}
@@ -338,33 +338,37 @@ func (s NativeOutbound) deliver(ctx context.Context, c nativeOutboundClaim) (Nat
 }
 
 // openStorage proves immutable historical storage only. It deliberately allows
-// inactive users' accepted Sent obligations to finish, without network authority.
-func (s NativeOutbound) openStorage(userID string) (*mailbox.Store, []byte, error) {
-	if !fsutil.SafePathComponent(userID) || s.Accounts == nil {
-		return nil, nil, ErrNativeProvisioning
-	}
-	u, err := s.Accounts.Get(userID)
-	if err != nil || u.NativeMailboxIssuer == "" || u.NativeMailboxSource == "" {
+// inactive users' and disabled mailboxes' accepted Sent obligations to finish,
+// without network authority.
+func (s NativeOutbound) openStorage(mailboxID string) (*mailbox.Store, []byte, error) {
+	if !fsutil.SafePathComponent(mailboxID) || s.Accounts == nil {
 		return nil, nil, ErrNativeProvisioning
 	}
 	life := NewLifecycleStore(s.ConfigDir)
+	a, known, err := life.NativeMailboxAssignment(mailboxID)
+	if err != nil || !known || a.Source == "" {
+		return nil, nil, ErrNativeProvisioning
+	}
+	u, err := s.Accounts.Get(a.UserID())
+	if err != nil || u.NativeMailboxIssuer != a.Owner.Issuer || u.SSOSub != a.Owner.Subject || u.NativeMailboxSource == "" {
+		return nil, nil, ErrNativeProvisioning
+	}
 	if err := life.ValidateNativeUserStorage(s.StateRoot, u); err != nil {
 		return nil, nil, err
 	}
-	a, known, err := life.NativeAssignment(u.NativeMailboxIssuer, u.SSOSub)
-	if err != nil || !known {
+	if source, err := mailbox.ValidatePreparedMailbox(filepath.Dir(a.Dir(s.StateRoot)), a.Owner, a.Address, a.Limits); err != nil || source != a.Source {
 		return nil, nil, ErrNativeProvisioning
 	}
 	key, err := cryptutil.LoadKey(s.keyPath())
 	if err != nil {
 		return nil, nil, mailbox.ErrOutbound
 	}
-	box, err := mailbox.OpenExisting(filepath.Join(s.StateRoot, "users", userID, "mailbox"), a.Owner, a.Limits, a.Source)
+	box, err := mailbox.OpenExisting(filepath.Join(a.Dir(s.StateRoot), "mailbox"), a.Owner, a.Limits, a.Source)
 	return box, key, err
 }
 
-func (s NativeOutbound) Status(ctx context.Context, userID, id string) ([]mailbox.OutboundStatus, bool, error) {
-	box, key, err := s.openStorage(userID)
+func (s NativeOutbound) Status(ctx context.Context, mailboxID, id string) ([]mailbox.OutboundStatus, bool, error) {
+	box, key, err := s.openStorage(mailboxID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -372,16 +376,16 @@ func (s NativeOutbound) Status(ctx context.Context, userID, id string) ([]mailbo
 	job, statuses, sent, err := box.ReadOutbound(ctx, key, id)
 	return statuses, len(job.Sent) > 0 && sent > 0, err
 }
-func (s NativeOutbound) Pending(ctx context.Context, userID string, limit int) ([]string, error) {
-	box, _, err := s.openStorage(userID)
+func (s NativeOutbound) Pending(ctx context.Context, mailboxID string, limit int) ([]string, error) {
+	box, _, err := s.openStorage(mailboxID)
 	if err != nil {
 		return nil, err
 	}
 	defer box.Close()
 	return box.PendingOutbound(ctx, limit)
 }
-func (s NativeOutbound) FileSent(ctx context.Context, userID, id string) error {
-	box, key, err := s.openStorage(userID)
+func (s NativeOutbound) FileSent(ctx context.Context, mailboxID, id string) error {
+	box, key, err := s.openStorage(mailboxID)
 	if err != nil {
 		return err
 	}
@@ -389,8 +393,8 @@ func (s NativeOutbound) FileSent(ctx context.Context, userID, id string) error {
 	_, err = box.FileOutboundSent(ctx, key, id)
 	return err
 }
-func (s NativeOutbound) Quarantine(ctx context.Context, userID, id string, sequence int) error {
-	box, _, err := s.openStorage(userID)
+func (s NativeOutbound) Quarantine(ctx context.Context, mailboxID, id string, sequence int) error {
+	box, _, err := s.openStorage(mailboxID)
 	if err != nil {
 		return err
 	}
@@ -400,8 +404,8 @@ func (s NativeOutbound) Quarantine(ctx context.Context, userID, id string, seque
 
 // Recover attempts only due, definitely unsent work. A primary must be accepted
 // before follow-ons; ambiguous/crashed attempts never authorize an automatic retry.
-func (s NativeOutbound) Recover(ctx context.Context, userID, id string) error {
-	box, key, err := s.openStorage(userID)
+func (s NativeOutbound) Recover(ctx context.Context, mailboxID, id string) error {
+	box, key, err := s.openStorage(mailboxID)
 	if err != nil {
 		return err
 	}
@@ -416,7 +420,7 @@ func (s NativeOutbound) Recover(ctx context.Context, userID, id string) error {
 	primaryAccepted := statuses[0].State == "accepted"
 	var filingErr error
 	if primaryAccepted && len(job.Sent) > 0 && sent == 0 {
-		filingErr = s.FileSent(ctx, userID, id)
+		filingErr = s.FileSent(ctx, mailboxID, id)
 	}
 	for _, status := range statuses {
 		if ctx.Err() != nil {
@@ -428,13 +432,13 @@ func (s NativeOutbound) Recover(ctx context.Context, userID, id string) error {
 		if (status.State != "queued" && status.State != "retryable") || status.NextAttempt > time.Now().Unix() {
 			continue
 		}
-		result, submitErr := s.Submit(ctx, userID, id, status.Sequence)
+		result, submitErr := s.Submit(ctx, mailboxID, id, status.Sequence)
 		if status.Sequence == 0 {
 			primaryAccepted = result.Accepted
 		}
 		if submitErr != nil {
 			if errors.Is(submitErr, ErrNativeOutboundStale) || errors.Is(submitErr, ErrNativeProvisioning) || errors.Is(submitErr, state.ErrNativeSendDevice) {
-				if quarantineErr := s.Quarantine(ctx, userID, id, status.Sequence); quarantineErr != nil {
+				if quarantineErr := s.Quarantine(ctx, mailboxID, id, status.Sequence); quarantineErr != nil {
 					return quarantineErr
 				}
 			}

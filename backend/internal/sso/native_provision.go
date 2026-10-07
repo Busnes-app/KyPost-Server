@@ -40,6 +40,26 @@ type NativeAssignment struct {
 	// refusal. Set only by migration; cleared when an active resource lacks
 	// the administrator role. Hashed into the recovery authority digest.
 	LegacyMixedUse bool `json:"legacyMixedUse,omitempty"`
+	// extra marks an administrator-created mailbox: Owner.Mailbox is its own
+	// ID and its storage is under $STATE/mailboxes, not $STATE/users.
+	extra bool
+	user  string
+}
+
+// UserID is the owning account's ID (the primary mailbox ID).
+func (a NativeAssignment) UserID() string {
+	if a.extra {
+		return a.user
+	}
+	return a.Owner.Mailbox
+}
+
+// Dir is the mailbox's storage directory under stateRoot.
+func (a NativeAssignment) Dir(stateRoot string) string {
+	if a.extra {
+		return filepath.Join(stateRoot, nativeMailboxesDir, a.Owner.Mailbox)
+	}
+	return filepath.Join(stateRoot, "users", a.Owner.Mailbox)
 }
 
 // nativeAssignments is the single-mailbox view callers use. stored keeps the
@@ -144,7 +164,7 @@ func parseNativeLedger(raw []byte, historical bool) (nativeAssignments, int, err
 		return nativeAssignments{Accounts: head.Accounts}, 1, nil
 	}
 	var l nativeLedger
-	if head.Version != 2 || json.Unmarshal(raw, &l) != nil || l.Accounts == nil || l.Mailboxes == nil || l.Addresses == nil || len(l.Mailboxes) != len(l.Accounts) {
+	if head.Version != 2 || json.Unmarshal(raw, &l) != nil || l.Accounts == nil || l.Mailboxes == nil || l.Addresses == nil {
 		return nativeAssignments{}, head.Version, ErrNativeProvisioning
 	}
 	addressOf := map[string]string{}
@@ -172,7 +192,61 @@ func parseNativeLedger(raw []byte, historical bool) (nativeAssignments, int, err
 			LegacyMixedUse: a.LegacyMixedUse,
 		}
 	}
+	// Every other mailbox is an extra one of an existing account, with its
+	// own primary address and an ID that is no account's.
+	for id, m := range l.Mailboxes {
+		key := directoryKey(m.Owner.Issuer, m.Owner.Subject)
+		if a, ok := l.Accounts[key]; ok && a.PrimaryMailbox == id && m.Kind == "primary" {
+			continue
+		}
+		if _, owned := l.Accounts[key]; !owned || m.Kind != "extra" || m.State != "active" && m.State != "disabled" || addressOf[id] == "" || f.primaryMailbox(id) {
+			return nativeAssignments{}, 2, ErrNativeProvisioning
+		}
+	}
 	return f, 2, nil
+}
+
+func (f nativeAssignments) primaryMailbox(id string) bool {
+	for _, a := range f.Accounts {
+		if a.Owner.Mailbox == id {
+			return true
+		}
+	}
+	return false
+}
+
+// mailbox resolves a ledger mailbox: a primary one is its account; an extra
+// one carries its account's authority with its own ID, primary address and
+// storage. It locates ownership, not permission.
+func (f nativeAssignments) mailbox(id string) (NativeAssignment, nativeLedgerMailbox, bool) {
+	m, ok := f.stored.Mailboxes[id]
+	a, owned := f.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)]
+	if !ok || !owned || m.Kind == "primary" && a.Owner.Mailbox != id || m.Kind != "primary" && m.Kind != "extra" {
+		return NativeAssignment{}, m, false
+	}
+	if m.Kind == "primary" {
+		return a, m, true
+	}
+	a.user = a.Owner.Mailbox
+	a.Owner.Mailbox, a.StateRoot, a.Limits, a.Source, a.extra = id, m.StateRoot, m.Limits, m.Source, true
+	a.Address = ""
+	for address, x := range f.stored.Addresses {
+		if x.Mailbox == id && x.Kind == "primary" {
+			a.Address = address
+		}
+	}
+	return a, m, true
+}
+
+// mailboxes lists every mailbox, primary and extra.
+func (f nativeAssignments) mailboxes() []NativeAssignment {
+	all := []NativeAssignment{}
+	for id := range f.stored.Mailboxes {
+		if a, _, ok := f.mailbox(id); ok {
+			all = append(all, a)
+		}
+	}
+	return all
 }
 
 // seedGenerations is the one-time switch to authoritative generations. Routes
@@ -199,6 +273,11 @@ func (f nativeAssignments) ledger(directory map[string]DirectoryState) nativeLed
 	l := nativeLedger{Version: 2, AddressGenerations: true, Accounts: map[string]nativeLedgerAccount{}, Mailboxes: map[string]nativeLedgerMailbox{}, Addresses: map[string]nativeLedgerAddress{}}
 	for address, x := range f.stored.Addresses {
 		l.Addresses[address] = x
+	}
+	for id, m := range f.stored.Mailboxes {
+		if m.Kind == "extra" {
+			l.Mailboxes[id] = m
+		}
 	}
 	for key, a := range f.Accounts {
 		state := "disabled"
@@ -357,7 +436,9 @@ func (l nativeLedger) desiredActive(address, mailboxID string, directory map[str
 	key := directoryKey(m.Owner.Issuer, m.Owner.Subject)
 	d := directory[key]
 	_, configured := domains.Domains[AddressDomain(address)]
-	return configured && d.Active && d.Resource != nil && (!HasAdminRole(d.Resource.Roles) || l.Accounts[key].LegacyMixedUse)
+	// An extra mailbox routes only once prepared and while not disabled.
+	enabled := m.Kind != "extra" || m.State == "active" && m.Source != ""
+	return configured && enabled && d.Active && d.Resource != nil && (!HasAdminRole(d.Resource.Roles) || l.Accounts[key].LegacyMixedUse)
 }
 
 // ensureNativeLedger creates an empty version-2 ledger when none exists. A
@@ -402,12 +483,21 @@ func (s *LifecycleStore) NativeAssignmentForAddress(issuer, address string) (Nat
 		return NativeAssignment{}, false, err
 	}
 	x, ok := f.stored.Addresses[address]
-	for _, a := range f.Accounts {
-		if ok && a.Owner.Issuer == issuer && a.Owner.Mailbox == x.Mailbox {
-			return a, true, nil
-		}
+	if a, _, found := f.mailbox(x.Mailbox); ok && found && a.Owner.Issuer == issuer {
+		return a, true, nil
 	}
 	return NativeAssignment{}, false, nil
+}
+
+// NativeMailboxAssignment reads one mailbox, primary or extra: ownership, not
+// permission. Import uses it to open frozen owners' storage.
+func (s *LifecycleStore) NativeMailboxAssignment(mailboxID string) (NativeAssignment, bool, error) {
+	f, err := s.loadNative()
+	if err != nil {
+		return NativeAssignment{}, false, err
+	}
+	a, _, ok := f.mailbox(mailboxID)
+	return a, ok, nil
 }
 
 // ReconcileNativeMailbox is the blocking internal compatibility wrapper.
@@ -496,6 +586,9 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 			if otherKey != key && other.Owner.Mailbox == localID {
 				return ErrNativeProvisioning
 			}
+		}
+		if m, taken := f.stored.Mailboxes[localID]; taken && m.Kind != "primary" {
+			return ErrNativeProvisioning
 		}
 		a.Owner = owner
 		a.StateRoot = root

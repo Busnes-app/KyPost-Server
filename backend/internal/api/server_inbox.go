@@ -554,7 +554,10 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 	// A keyword change made in another IMAP client surfaces here and nowhere
 	// else; New as well as Updated, since a message relabelled on a phone before
 	// this caller first saw it arrives as New.
-	s.learnFromSyncedKeywords(userID, cacheKey, append(slices.Clone(result.New), result.Updated...))
+	// Sorter state is the primary's; extra mailbox IDs would collide in it.
+	if !selectedExtraMailbox(ctx) {
+		s.learnFromSyncedKeywords(userID, cacheKey, append(slices.Clone(result.New), result.Updated...))
+	}
 
 	needBodies := make([]int, 0, len(result.New))
 	for _, e := range result.New {
@@ -993,8 +996,9 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 			labelled = append(labelled, internalID)
 		}
 	}
-	// Labelling a message is how a user tells the sorter it was wrong.
-	if ac, ok := authFromContext(r); ok && len(labelled) > 0 {
+	// Labelling a message is how a user tells the sorter it was wrong. Sorter
+	// state is the primary's; extra mailbox IDs would collide in it.
+	if ac, ok := authFromContext(r); ok && len(labelled) > 0 && ac.Mailbox == "" {
 		s.learnFromLabelAction(ac.UserID, keyword, labelled)
 	}
 

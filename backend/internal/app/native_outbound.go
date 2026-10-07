@@ -32,6 +32,10 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 				return
 			}
 			all, err := d.users.List()
+			var mailboxes []sso.NativeMailbox
+			if err == nil {
+				mailboxes, err = sso.NewLifecycleStore(sender.ConfigDir).NativeMailboxes()
+			}
 			if err != nil {
 				d.logger.Error("native outbox discovery deferred; retain queued mail", "error", "account storage unavailable")
 			} else {
@@ -39,8 +43,14 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 				// after measuring relay limits and storage contention with representative load.
 				slots := make(chan struct{}, 4)
 				var workers sync.WaitGroup
+				native := map[string]bool{}
 				for _, u := range all {
-					if u.NativeMailboxSource == "" || u.NativeMailboxIssuer == "" {
+					native[u.ID] = u.NativeMailboxSource != "" && u.NativeMailboxIssuer != ""
+				}
+				// Every mailbox (primary or extra) of a published native user
+				// has its own outbox; disabled ones still finish Sent filing.
+				for _, m := range mailboxes {
+					if !native[m.User] {
 						continue
 					}
 					select {
@@ -50,10 +60,10 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 						return
 					}
 					workers.Add(1)
-					go func(userID string) {
+					go func(mailboxID string) {
 						defer workers.Done()
 						defer func() { <-slots }()
-						ids, err := sender.Pending(ctx, userID, 50)
+						ids, err := sender.Pending(ctx, mailboxID, 50)
 						if err != nil {
 							if ctx.Err() == nil {
 								d.logger.Error("native outbox discovery deferred; retain queued mail", "error", "mailbox storage unavailable")
@@ -64,11 +74,11 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 							if ctx.Err() != nil {
 								return
 							}
-							if err := sender.Recover(ctx, userID, id); err != nil && ctx.Err() == nil {
+							if err := sender.Recover(ctx, mailboxID, id); err != nil && ctx.Err() == nil {
 								d.logger.Error("native outbox recovery deferred; inspect delivery evidence before resubmitting", "correlation_id", id, "error", "storage, sender authority or relay unavailable")
 							}
 						}
-					}(u.ID)
+					}(m.ID)
 				}
 				workers.Wait()
 			}

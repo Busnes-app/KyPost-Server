@@ -215,3 +215,64 @@ func TestNativeReceivingDeactivateReactivateFencesAcceptedMail(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func receivingMailbox(t *testing.T, r *receivingRuntime, mailboxID string) []string {
+	t.Helper()
+	a, ok, err := r.life.NativeMailboxAssignment(mailboxID)
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	s, err := mailbox.OpenExisting(filepath.Join(a.Dir(r.stateDir), "mailbox"), a.Owner, a.Limits, a.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	rows, err := s.List(context.Background(), "INBOX", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjects := []string{}
+	for _, row := range rows {
+		raw, err := s.Raw(context.Background(), "INBOX", row.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, body, _ := strings.Cut(string(raw), "\r\n\r\n")
+		subjects = append(subjects, strings.TrimSpace(body))
+	}
+	return subjects
+}
+
+// Mail to an extra mailbox's address lands there, not in the owner's primary;
+// a delivery to both mailboxes produces one copy in each.
+func TestNativeReceivingExtraMailbox(t *testing.T) {
+	r, created := receivingFixture(t)
+	ctx := context.Background()
+	m, err := r.life.CreateNativeMailbox(ctx, r.stateDir, created[0].ID, "sales@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receive(t, r, "to-extra", "sales@example.test")
+	receive(t, r, "to-both", "one@example.test", "sales@example.test")
+	for _, id := range []string{"to-extra", "to-both"} {
+		if err := r.importDelivery(ctx, id); err != nil {
+			t.Fatal(id, err)
+		}
+	}
+	if got := strings.Join(receivingMailbox(t, r, m.ID), ","); got != "to-extra,to-both" && got != "to-both,to-extra" {
+		t.Fatal("extra mailbox mail", got)
+	}
+	if got := receivingInbox(t, r, created[0]); len(got) != 1 || got[0] != "to-both" {
+		t.Fatal("primary received extra mailbox mail", got)
+	}
+	if mailboxID, _, active := receivingRoute(t, r, "sales@example.test"); mailboxID != m.ID || !active {
+		t.Fatal("route", mailboxID, active)
+	}
+	// A disabled mailbox receives nothing new.
+	if _, err := r.life.SetNativeMailboxState(ctx, r.stateDir, m.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.bind(ctx, "after-disable", "", "sales@example.test"); err == nil {
+		t.Fatal("disabled mailbox bound new mail")
+	}
+}

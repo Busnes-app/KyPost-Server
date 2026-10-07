@@ -20,9 +20,13 @@ record in the recovery authority digest). Ledgers
 written before it carried the directory revision in routes, so loading one
 without the `addressGenerations` marker raises each generation to the owner's
 directory revision once and the next write freezes it. Phase 3b is implemented:
-the Server → Mail addresses admin screen. Phase 4 is not implemented; with no administrator mailbox disable yet, the
-"mailbox not administrator-disabled" term of the desired-state rule is always
-true.
+the Server → Mail addresses admin screen. Phase 4a is implemented: the backend
+for extra mailboxes (admin create, disable and re-enable API; `$STATE/mailboxes/`
+storage with a mail-only `state.db`; authority, caches, poller and outbox keyed
+by mailbox ID; `GET /api/mailboxes` and `X-KyPost-Mailbox`; notifications carry
+the mailbox ID; backup validation, reference rotation and the recovery digest).
+Incoming encryption and sorter learning cover the primary mailbox only. Phase 4b
+(the admin screen for mailboxes) is not implemented.
 Prerequisite of
 [continuous Cloudflare receiving](CLOUDFLARE_CONTINUOUS_RECEIVING.md); applies to
 both native receiving profiles. External IMAP accounts are unaffected.
