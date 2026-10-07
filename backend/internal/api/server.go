@@ -43,7 +43,7 @@ import (
 // Server holds the HTTP surface and its process-wide state.
 //
 // LOCK ORDER: cfgMu before sessMu before pairingMu before userMu before ollamaMu before serverMu before
-// pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu. Never the reverse.
+// pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu before exportMu. Never the reverse.
 // The sso-lifecycle file lock (sso.LifecycleStore) ranks before all of them and
 // is not modelled by lockRank or TestLockOrderIsRespected: hold no Server mutex
 // when calling LockDirectory, ApplyDirectory, RecordLogout or RecordSignOnJTI.
@@ -119,6 +119,12 @@ type Server struct {
 	// innermost, taken alone, never while another Server mutex is held.
 	stepUpMu sync.Mutex
 	stepUps  map[string]ssoStepUp
+	// exports are the unspent mail-export download grants, keyed by token,
+	// and exporting the users with a download streaming. Innermost, taken
+	// alone, never while another Server mutex is held.
+	exportMu  sync.Mutex
+	exports   map[string]exportGrant
+	exporting map[string]bool
 	// singleUse makes each one-shot token — PGP QR key exchange, native device
 	// pairing nonces — redeemable exactly once. See singleUseTokens.
 	singleUse            *singleUseTokens
@@ -603,6 +609,9 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	// Mailbox-scoped routes accept X-KyPost-Mailbox (withMailbox); the list of
 	// the caller's mailboxes is per user and ignores it.
 	mux.HandleFunc("GET /api/mailboxes", s.withMailAuth(s.handleMailboxes))
+	mux.HandleFunc("GET /api/export/folders", s.withMailAuth(s.withMailbox(s.handleExportFolders)))
+	mux.HandleFunc("POST /api/export", s.withMailAuth(withActionDigest(s.handleExportStart)))
+	mux.HandleFunc("GET /api/export/{token}", s.withMailAuth(s.handleExportDownload))
 	mux.HandleFunc("GET /api/inbox", s.withMailAuth(s.withMailbox(s.handleInbox)))
 	mux.HandleFunc("GET /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
 	mux.HandleFunc("POST /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))

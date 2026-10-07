@@ -29,30 +29,36 @@ var extraMailboxID = regexp.MustCompile(`^mbx-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{
 // resolved through the ledger and never used as a path before that.
 func (s *Server) withMailbox(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ac, ok := authFromContext(r)
-		id := r.Header.Get(mailboxHeader)
-		if !ok || id == "" || id == ac.UserID {
+		if r, ok := s.admitMailbox(w, r, r.Header.Get(mailboxHeader)); ok {
 			next(w, r)
-			return
 		}
-		if !extraMailboxID.MatchString(id) {
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": "mailbox not found"})
-			return
-		}
-		if _, _, err := s.nativeMailboxAssignment(r.Context(), ac.UserID, id); err != nil {
-			if s.refuseNativeAdministrator(w, r, ac.UserID, err) {
-				return
-			}
-			if errors.Is(err, sso.ErrNativeMailboxUnknown) {
-				writeJSON(w, http.StatusNotFound, map[string]any{"error": "mailbox not found"})
-				return
-			}
-			http.Error(w, "mailbox authority is unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		ac.Mailbox = id
-		next(w, r.WithContext(context.WithValue(r.Context(), authContextKey{}, ac)))
 	}
+}
+
+// admitMailbox is withMailbox's admission for a mailbox ID from any source.
+// It writes the refusal and returns false when the caller may not proceed.
+func (s *Server) admitMailbox(w http.ResponseWriter, r *http.Request, id string) (*http.Request, bool) {
+	ac, ok := authFromContext(r)
+	if !ok || id == "" || id == ac.UserID {
+		return r, true
+	}
+	if !extraMailboxID.MatchString(id) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "mailbox not found"})
+		return r, false
+	}
+	if _, _, err := s.nativeMailboxAssignment(r.Context(), ac.UserID, id); err != nil {
+		if s.refuseNativeAdministrator(w, r, ac.UserID, err) {
+			return r, false
+		}
+		if errors.Is(err, sso.ErrNativeMailboxUnknown) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "mailbox not found"})
+			return r, false
+		}
+		http.Error(w, "mailbox authority is unavailable", http.StatusServiceUnavailable)
+		return r, false
+	}
+	ac.Mailbox = id
+	return r.WithContext(context.WithValue(r.Context(), authContextKey{}, ac)), true
 }
 
 // selectedExtraMailbox reports whether ctx carries an admitted extra mailbox.

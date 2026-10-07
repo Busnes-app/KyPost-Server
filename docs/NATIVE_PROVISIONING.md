@@ -473,6 +473,46 @@ disabling both native flags in both processes and keeping all
 native storage/ownership files intact; native mail becomes unavailable without
 being converted to IMAP. Use a compatible binary, not an older metadata writer.
 
+### Mail export
+
+Users export their own native mailbox, or one folder of it, from Settings →
+Mail → Export Mail. Import is not built yet.
+
+- `GET /api/export/folders` lists every folder of the selected mailbox
+  (`X-KyPost-Mailbox`).
+- `POST /api/export` with `{mailbox, folder, format, password|authSecret}`:
+  `mailbox` is an ID from `GET /api/mailboxes` (empty or the user ID is the
+  primary), `folder` empty for all folders (exact name; only `INBOX` is
+  case-insensitive), `format` `mbox` or `eml-zip`. Web session only (403 for a
+  device credential), CSRF, and `confirmActor` behind `withActionDigest`, so the
+  mailbox selection is part of the confirmed request. Answers
+  `{url:"/api/export/<64 hex>", expiresInSeconds:300}`. One unspent grant per
+  user; a new one replaces it. A foreign, unknown or disabled mailbox is 404, a
+  missing folder 404, an external IMAP account 409, an administrator identity
+  403 (native) or 409 (no native mailbox): administrators cannot export for
+  anyone.
+- `GET /api/export/{token}` spends the grant once and streams
+  `Content-Disposition: attachment`. The grant is held in memory and bound to
+  user, session, mailbox, folder and format; anything else (another session or
+  user, expired, spent, unknown) is one 404. One export streams per user and
+  two server-wide; a busy slot answers 429 and keeps the grant. Admission is
+  rechecked when the download starts and on every 200-message page. A failed
+  stream aborts the connection, so a truncated file never looks complete.
+- Formats hold the exact stored bytes, so PGP-encrypted messages stay
+  encrypted and the server decrypts nothing. Flags and labels are not exported.
+  mbox is mboxrd: a `From <envelope sender> <asctime UTC>` separator
+  (`MAILER-DAEMON` when no delivery receipt holds a sender, or it contains
+  whitespace or control characters), one `>` added to every `^>*From ` line,
+  stored line endings kept (normally CRLF) and an LF blank line after each
+  message. The zip holds `<folder>/<message id>.eml` (Deflate); each folder
+  segment keeps letters, digits, space, `-`, `_` and `.`, replaces anything
+  else with `_`, is cut to 64 bytes and loses leading and trailing dots and
+  spaces, so no entry is absolute or climbs out. Messages are read in ID order,
+  one in memory at a time; one moved or deleted mid-export is skipped.
+- Each export is audited as `mail export` with actor, mailbox, folder, format,
+  message count, bytes and result (`authorized`, `started`, `finished`,
+  `failed`); never subjects or addresses.
+
 ## Direct receiving runtime (qualification profile)
 
 `KYPOST_NATIVE_RECEIVING=true` requires `KYPOST_NATIVE_MAIL=true` and is disabled

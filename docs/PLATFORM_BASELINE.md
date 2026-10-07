@@ -507,8 +507,9 @@ are unchanged: without the header below every route serves the primary mailbox.
   `/api/inbox/folders`, `/api/inbox/actions`, `/api/mail/search`,
   `/api/mail/draft`, `/api/mail/send`, `/api/mail/send-pgp`,
   `/api/mail/outbox/{id}`, `/api/mail/body`, `/api/mail/pgp-payload`,
-  `/api/mail/attachments`, `/api/mail/attachment`, `/api/rules/run` and
-  `/api/decisions`. An
+  `/api/mail/attachments`, `/api/mail/attachment`, `/api/rules/run`,
+  `/api/decisions` and `/api/export/folders` (web export, which names the
+  mailbox in its `POST /api/export` body). An
   absent header or the primary's ID selects the primary. An unknown, foreign or
   disabled mailbox answers `404 {"error":"mailbox not found"}`, identical for
   all three: drop the mailbox from the local list and refresh

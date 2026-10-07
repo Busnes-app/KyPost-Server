@@ -32,6 +32,7 @@ All files in this package. Internal storage and complete `imap.Client` implement
 - `incoming_encryption.go` binds sources to immutable owner plus a durable random database namespace. Recreated same-owner databases reject old jobs. Replacement creates a new numeric ID, copies current flags/date, tombstones original live raw/header metadata and writes exact-ciphertext recovery receipt/change events in one transaction. Quota uses net live-byte growth plus one retained record; rollback preserves the original. Gateway receipts retain the original ID, so delivery retries never resurrect it.
 - Encrypted action verification and mutations share a writer transaction. Exact bytes plus replacement receipt authorize replay; marker headers alone never do. Moves preserve IDs and retry only in the exact expected destination; a verified stop remains valid after a terminal move. Changed/deleted copies or wrong folders pause recovery for reconciliation.
 - Bound raw reads before materializing BLOBs, body batches to 1,000 messages/192 MiB and poll pages to 200 messages. Malformed MIME sets ParseError per message: the poller records a failed decision and continues; lazy body reads answer 422 while original bytes remain retained.
+- `export.go`: `ExportFolders`/`Export` page live messages in ID order (200 per page, admission per page, one raw message in memory, moved/deleted ones skipped) with the receipt envelope sender; `WriteMboxrd` and `WriteEML`/`ZipFolder` write exact stored bytes, never decrypting. Format rules: [mail export](../../../docs/NATIVE_PROVISIONING.md#mail-export).
 - Search uses bounded metadata/raw scans (five seconds/192 MiB), returning an explicit error on exhaustion. No decrypted PGP body index exists; representative large-folder search performance remains a release gate.
 
 ## Work Guidance
@@ -54,6 +55,8 @@ All files in this package. Internal storage and complete `imap.Client` implement
 
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailbox -run '^TestNativeIncoming' -count=1` covers replacement receipts, namespace/byte fences, quota/rollback, contested writers, exact original MIME and real killed writers after replacement/move commits. These are process-crash checks, not hardware power-loss evidence.
 - `GOTOOLCHAIN=go1.26.6 go test -race ./internal/processor -run '^TestNativeIncomingPollerJournalRecovery$' -count=1` checks the real Client with lost acknowledgements, journal/key/cache guards, classification and action recovery.
+
+- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailbox -run 'TestMboxrd|TestZipFolder|TestNativeExport' -count=1` checks mboxrd quoting round-trip, hostile zip folder names, paging past one page and exact EML bytes; `go test -race ./internal/api -run '^TestMailExport$' -count=1` checks step-up, grant binding/single use/expiry, mailbox selection, 409/404 refusals, concurrency limits, bounded streaming writes and abort on failure.
 
 ## Child DOX Index
 
