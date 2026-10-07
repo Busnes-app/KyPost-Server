@@ -158,7 +158,7 @@ func TestHoldingStore(t *testing.T) {
 	require(s.Accept(ctx, "maddy", "new", "", bytes.NewReader(raw))) // Never resurrect raw.
 	got, err := s.Get(ctx, "maddy", "new")
 	require(err)
-	if got.State != "imported" || len(got.Raw) != 0 || got.Digest != d.Digest {
+	if got.State != "archived" || len(got.Raw) != 0 || got.Digest != d.Digest {
 		t.Fatal("import receipt not retained")
 	}
 	var cursor int64
@@ -172,7 +172,7 @@ func TestHoldingStore(t *testing.T) {
 		listed = append(listed, page...)
 		cursor = page[0].Sequence
 	}
-	if len(listed) != 3 || listed[0].ID != "old" || listed[0].State != "quarantined" || listed[2].State != "imported" {
+	if len(listed) != 2 || listed[0].ID != "old" || listed[0].State != "quarantined" {
 		t.Fatalf("scoped receipt pages: %+v", listed)
 	}
 }

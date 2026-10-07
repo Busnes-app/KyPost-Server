@@ -428,6 +428,10 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 	if err != nil {
 		return err
 	}
+	if d.State == "archived" {
+		// Completed delivery: only an exact replay succeeds; nothing is written.
+		return r.holding.Accept(ctx, r.gatewayID(), id, sender, bytes.NewReader(raw))
+	}
 	proofs, err := r.verifyDomains(ctx, bindingAddresses(d))
 	if err != nil {
 		return err
@@ -467,6 +471,10 @@ func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error 
 	if err != nil {
 		return err
 	}
+	// A lost pickup response may repeat a completed local obligation.
+	if d.State == "archived" {
+		return nil
+	}
 	stores := map[mailbox.Owner]*mailbox.Store{}
 	sources := map[mailbox.Owner]string{}
 	defer func() {
@@ -504,11 +512,6 @@ func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error 
 			if sources[a.Owner] != a.Source {
 				return sso.ErrNativeProvisioning
 			}
-		}
-		// A lost pickup response may repeat a completed local obligation. Keep
-		// current ownership checks, but do not reacquire an acknowledged lease.
-		if d.State == "imported" {
-			return nil
 		}
 		return r.holding.Import(ctx, r.gatewayID(), id, func(owner mailbox.Owner) (*mailbox.Store, error) {
 			store := stores[owner]

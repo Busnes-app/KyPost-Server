@@ -511,7 +511,13 @@ The buffer limits are 4 MiB per message, 64 MiB live payload and 10,000 records;
 each recipient's own message limit is checked before acceptance. SMTP headers
 added by the receiver count toward this limit. The daemon revisits pending
 deliveries every five seconds. Partial mailbox failure retains holding bytes;
-after lease expiry, exact receipts prevent duplicate local delivery. Already
+after lease expiry, exact receipts prevent duplicate local delivery. The
+acknowledgment that follows every owner's commit archives the delivery in the
+same transaction: a compact tombstone (sender, digest, recipients) replaces the
+row and its bindings, answers exact replays and stops the receiver ID from being
+delivered again. The 10,000-record limit counts only staged, pending and
+quarantined deliveries; tombstones are never pruned and count only toward the
+physical budget (about 0.2 KiB each). Already
 accepted mail imports without fresh DNS, refreshing authorized route TTLs
 before claiming. Missing storage, restore holds or disabled authority retain
 pending mail. Local reactivation without a directory state change permits
@@ -549,7 +555,7 @@ reconciliation or an operator volume quota is needed. Never remove WAL or
 shared-memory files from an open database to make space.
 
 This profile is for controlled qualification. Before public MX, qualify bounded
-receiver concurrency/rates, safe abandoned-RCPT and archived-receipt cleanup,
+receiver concurrency/rates, safe abandoned-RCPT cleanup,
 hard database/WAL/volume quotas and representative free-space reserves, TLS/spam policy, receiver provenance
 and licensing, and power-loss/restore behavior on the intended volumes. Logical
 payload limits do not bound physical disk growth. Successful RCPT followed by
