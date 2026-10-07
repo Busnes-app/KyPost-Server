@@ -704,9 +704,9 @@ message, under the settings lock) and shutdown are the file import's.
   Mail and Starred) unchecked, since they hold every message again and dedupe is
   per folder, and shows names with control, bidi and zero-width characters
   escaped as code points.
-- Message counts, sequence numbers and sizes from the server are parsed as the
-  32-bit numbers IMAP defines; a wider value is a protocol error, never
-  wrapped. Messages are paged 200 at a time by sequence number; a message deleted on the
+- Message counts and sequence numbers from the server are at most 2^31-1 and
+  sizes at most 2^32-1; a wider value is a protocol error, never wrapped. A
+  response line over its 64 KiB budget ends the session at once. Messages are paged 200 at a time by sequence number; a message deleted on the
   server meanwhile is skipped. Every sequence number a folder's `EXISTS`
   announces counts toward the job's message cap before any page is fetched, so
   a huge `EXISTS` fails the job at once. One announcing more than the

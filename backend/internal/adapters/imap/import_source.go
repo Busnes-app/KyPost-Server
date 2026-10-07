@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -271,7 +272,7 @@ func (s *ImportSource) Examine(name string) (int, error) {
 	err := s.run(importStepTimeout, importMetaLit, func(f []any) error {
 		if len(f) == 2 && strings.EqualFold(atomOf(f[1]), "EXISTS") {
 			n, err := strconv.ParseUint(atomOf(f[0]), 10, 32)
-			if err != nil {
+			if err != nil || n > math.MaxInt32 {
 				return ErrImportProtocol
 			}
 			exists = int(n)
@@ -405,7 +406,9 @@ func (s *ImportSource) response(literal int64) (string, []any, error) {
 	}
 	var fields []any
 	for {
-		s.spaces()
+		if err := s.spaces(); err != nil {
+			return "", nil, err
+		}
 		b, err := s.peek()
 		if err != nil {
 			return "", nil, err
@@ -440,16 +443,19 @@ func (s *ImportSource) value(depth int, literal int64) (any, error) {
 		if depth == importMaxDepth {
 			return nil, ErrImportProtocol
 		}
-		_, _ = s.byte()
+		if err = s.skip(); err != nil {
+			return nil, err
+		}
 		list := []any{}
 		for {
-			s.spaces()
+			if err = s.spaces(); err != nil {
+				return nil, err
+			}
 			if b, err = s.peek(); err != nil {
 				return nil, err
 			}
 			if b == ')' {
-				_, _ = s.byte()
-				return list, nil
+				return list, s.skip()
 			}
 			v, err := s.value(depth+1, literal)
 			if err != nil {
@@ -458,7 +464,9 @@ func (s *ImportSource) value(depth int, literal int64) (any, error) {
 			list = append(list, v)
 		}
 	case '"':
-		_, _ = s.byte()
+		if err = s.skip(); err != nil {
+			return nil, err
+		}
 		var out []byte
 		for {
 			c, err := s.byte()
@@ -478,7 +486,9 @@ func (s *ImportSource) value(depth int, literal int64) (any, error) {
 			out = append(out, c)
 		}
 	case '{':
-		_, _ = s.byte()
+		if err = s.skip(); err != nil {
+			return nil, err
+		}
 		n := int64(0)
 		for {
 			c, err := s.byte()
@@ -509,7 +519,10 @@ func (s *ImportSource) value(depth int, literal int64) (any, error) {
 		return nil, ErrImportProtocol
 	}
 	a, err := s.atom()
-	if err != nil || a == "" {
+	if err != nil {
+		return nil, err
+	}
+	if a == "" {
 		return nil, ErrImportProtocol
 	}
 	if strings.EqualFold(a, "NIL") {
@@ -529,15 +542,23 @@ func (s *ImportSource) atom() (string, error) {
 		if b == '\r' || b == '\n' || !bracket && strings.IndexByte(` (){"`, b) >= 0 {
 			return string(out), nil
 		}
-		_, _ = s.byte()
+		if err = s.skip(); err != nil {
+			return "", err
+		}
 		bracket = bracket && b != ']' || b == '['
 		out = append(out, b)
 	}
 }
 
-func (s *ImportSource) spaces() {
-	for b, err := s.peek(); err == nil && b == ' '; b, err = s.peek() {
-		_, _ = s.byte()
+func (s *ImportSource) spaces() error {
+	for {
+		b, err := s.peek()
+		if err != nil || b != ' ' {
+			return err
+		}
+		if err = s.skip(); err != nil {
+			return err
+		}
 	}
 }
 
@@ -551,7 +572,12 @@ func (s *ImportSource) discardLine() error {
 	}
 }
 
+// peek returns the next byte without consuming it; past the line budget it
+// fails like byte, so no loop can spin on a byte it cannot consume.
 func (s *ImportSource) peek() (byte, error) {
+	if s.budget <= 0 {
+		return 0, ErrImportProtocol
+	}
 	b, err := s.r.Peek(1)
 	if err != nil {
 		return 0, err
@@ -560,11 +586,19 @@ func (s *ImportSource) peek() (byte, error) {
 }
 
 // byte reads one byte outside a literal, refusing a line over importLineMax.
+// Every caller must stop on its error: it consumes nothing then.
 func (s *ImportSource) byte() (byte, error) {
-	if s.budget--; s.budget < 0 {
+	if s.budget <= 0 {
 		return 0, ErrImportProtocol
 	}
+	s.budget--
 	return s.r.ReadByte()
+}
+
+// skip consumes the byte peek returned.
+func (s *ImportSource) skip() error {
+	_, err := s.byte()
+	return err
 }
 
 // fetchItems reads "<seq> FETCH (name value ...)" into upper-cased names.
@@ -574,7 +608,7 @@ func fetchItems(f []any) (int, map[string]any) {
 	}
 	seq, err := strconv.ParseUint(atomOf(f[0]), 10, 32)
 	list, ok := f[2].([]any)
-	if err != nil || !ok || len(list)%2 != 0 {
+	if err != nil || seq > math.MaxInt32 || !ok || len(list)%2 != 0 {
 		return 0, nil
 	}
 	items := make(map[string]any, len(list)/2)

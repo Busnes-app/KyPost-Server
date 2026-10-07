@@ -5,7 +5,10 @@ import (
 	"context"
 	"errors"
 	"net"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 )
 
 // A STARTTLS answer must not smuggle plaintext past the upgrade, and PREAUTH
@@ -47,6 +50,37 @@ func TestDecodeMUTF7(t *testing.T) {
 	for _, bad := range []string{"&AOk", "&!!-", "caf\xe9"} {
 		if got, ok := decodeMUTF7(bad); ok {
 			t.Errorf("decodeMUTF7(%q) accepted as %q", bad, got)
+		}
+	}
+}
+
+// A response over the line budget ends promptly with ErrImportProtocol wherever
+// the budget runs out, without spinning on a byte it may not consume.
+func TestImportSourceLineBudget(t *testing.T) {
+	long := strings.Repeat("a", importLineMax+10)
+	for name, input := range map[string]string{
+		"atom":        "* " + long + "\r\n",
+		"whitespace":  "* LIST" + strings.Repeat(" ", importLineMax+10) + "x\r\n",
+		"quoted":      `* LIST "` + long + "\"\r\n",
+		"nested list": "* LIST (a (" + strings.Repeat("b ", importLineMax/2+10) + "))\r\n",
+		"tag":         long,
+	} {
+		s := &ImportSource{r: bufio.NewReaderSize(strings.NewReader(input), 4096), left: 1 << 30}
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		done := make(chan error, 1)
+		go func() { _, _, err := s.response(importMetaLit); done <- err }()
+		select {
+		case err := <-done:
+			runtime.ReadMemStats(&after)
+			if !errors.Is(err, ErrImportProtocol) {
+				t.Errorf("%s: %v", name, err)
+			}
+			if grown := after.TotalAlloc - before.TotalAlloc; grown > 8<<20 {
+				t.Errorf("%s: allocated %d bytes", name, grown)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: the parser did not stop at the line budget", name)
 		}
 	}
 }

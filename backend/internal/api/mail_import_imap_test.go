@@ -410,6 +410,7 @@ func TestIMAPImport(t *testing.T) {
 		{name: "Flood", msgs: []fakeMsg{{raw: "Subject: flood\r\n\r\nx\r\n", size: 10000, date: " 1-Jan-2020 00:00:00 +0000"}}},
 		{name: "Huge", exists: 1000000},
 		{name: "Five", exists: 5},
+		{name: "Max31", exists: 2147483647},
 		{name: "Max32", exists: 4294967295},
 		{name: "Wider", exists: 4294967296},
 		{name: "Widest", exists: 9223372036854775807},
@@ -586,7 +587,7 @@ func TestIMAPImport(t *testing.T) {
 	for _, f := range got.Folders {
 		names = append(names, f.Name+"="+strings.Join(f.Path, "|")+"="+strings.Join(f.Attributes, ","))
 	}
-	if want := []string{`INBOX=INBOX=\hasnochildren`, `[Gmail]/All Mail=[Gmail]|All Mail=\all,\hasnochildren`, "Caf&AOk-.Notes=Café.Notes=", "Slow=Slow=", "Lies=Lies=", "Flood=Flood=", "Huge=Huge=", "Five=Five=", "Max32=Max32=", "Wider=Wider=", "Widest=Widest="}; fmt.Sprint(names) != fmt.Sprint(want) {
+	if want := []string{`INBOX=INBOX=\hasnochildren`, `[Gmail]/All Mail=[Gmail]|All Mail=\all,\hasnochildren`, "Caf&AOk-.Notes=Café.Notes=", "Slow=Slow=", "Lies=Lies=", "Flood=Flood=", "Huge=Huge=", "Five=Five=", "Max31=Max31=", "Max32=Max32=", "Wider=Wider=", "Widest=Widest="}; fmt.Sprint(names) != fmt.Sprint(want) {
 		t.Fatalf("folders %q, want %q", names, want)
 	}
 	for _, addr := range dialedList() {
@@ -803,10 +804,10 @@ func TestIMAPImport(t *testing.T) {
 	// huge EXISTS each stop the job.
 	defer func(old int64) { imapImportBytes = old }(imapImportBytes)
 	imapImportBytes = 64 << 10
-	// After a small folder, an EXISTS over 32 bits is refused rather than
-	// wrapped, and a 32-bit one past the cap is refused before any walk.
+	// After a small folder, an EXISTS over 31 bits is refused rather than
+	// wrapped, and one within 31 bits past the cap is refused before any walk.
 	for folder, want := range map[string]string{"Lies": "larger than it announced", "Flood": "sent more than twice", "Huge": "more than 20000 messages",
-		`Five","Max32`: "more than 20000 messages", `Five","Wider`: "would not open Imported/imap-example-com/Wider", `Five","Widest`: "would not open Imported/imap-example-com/Widest"} {
+		`Five","Max31`: "more than 20000 messages", `Five","Max32`: "would not open Imported/imap-example-com/Max32", `Five","Wider`: "would not open Imported/imap-example-com/Wider", `Five","Widest`: "would not open Imported/imap-example-com/Widest"} {
 		token = grant(account)
 		if w, _ = list(me, token, fake.pass); w.Code != 200 {
 			t.Fatal("list", w.Code)
