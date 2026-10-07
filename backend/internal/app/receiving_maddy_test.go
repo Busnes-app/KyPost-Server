@@ -79,7 +79,11 @@ func testNativeReceivingMaddyRuntime(t *testing.T, mode string) {
 		if os.Getenv("RSPAMD_PROOF") != "true" {
 			t.Skip("set RSPAMD_PROOF=true for actual sidecar qualification")
 		}
-		startReceivingRspamdProof(t)
+		config, err := filepath.Abs("../../../scripts/rspamd/rspamd.conf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		startReceivingRspamdProof(t, config)
 		t.Setenv("KYPOST_RECEIVING_RSPAMD", "true")
 	}
 	if strings.HasPrefix(mode, "supervised") && os.Getenv("RECEIVING_PROOF_IMAGE") == "" {
@@ -724,7 +728,9 @@ func receivingTestCertificate(t *testing.T, root string) (string, string, *x509.
 	return certPath, keyPath, leaf
 }
 
-func startReceivingRspamdProof(t *testing.T) {
+// startReceivingRspamdProof runs the pinned scanner with config; extra are
+// further docker run options (mounts).
+func startReceivingRspamdProof(t *testing.T, config string, extra ...string) {
 	t.Helper()
 	lockReceivingRspamdProof(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:11333")
@@ -732,13 +738,10 @@ func startReceivingRspamdProof(t *testing.T) {
 		t.Fatal("proof port occupied", err)
 	}
 	_ = listener.Close()
-	config, err := filepath.Abs("../../../scripts/rspamd/rspamd.conf")
-	if err != nil {
-		t.Fatal(err)
-	}
 	name := "kypost-rspamd-proof-" + strconv.Itoa(os.Getpid())
 	image := "rspamd/rspamd:3.14.3@sha256:b2fc96714bc4e376c87c5f2ee405f6edcc7acaa10b1ad04e023c4854ef47c6fc"
-	args := []string{"run", "--rm", "-d", "--name", name, "--network", "host", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--memory", "512m", "--pids-limit", "64", "--tmpfs", "/tmp:uid=11333,gid=11333,mode=0700", "--tmpfs", "/var/lib/rspamd:uid=11333,gid=11333,mode=0700", "--mount", "type=bind,source=" + config + ",target=/etc/rspamd/rspamd.conf,readonly", "--entrypoint", "rspamd", image, "-f", "-c", "/etc/rspamd/rspamd.conf"}
+	args := []string{"run", "--rm", "-d", "--name", name, "--network", "host", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--memory", "512m", "--pids-limit", "64", "--tmpfs", "/tmp:uid=11333,gid=11333,mode=0700", "--tmpfs", "/var/lib/rspamd:uid=11333,gid=11333,mode=0700", "--mount", "type=bind,source=" + config + ",target=/etc/rspamd/rspamd.conf,readonly"}
+	args = append(append(args, extra...), "--entrypoint", "rspamd", image, "-f", "-c", "/etc/rspamd/rspamd.conf")
 	if out, err := exec.Command("docker", args...).CombinedOutput(); err != nil {
 		t.Fatal(err, string(out))
 	}

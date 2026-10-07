@@ -41,6 +41,8 @@ var (
 	_ = kylog.DeclareString("target")
 	_ = kylog.DeclareString("result")
 	_ = kylog.DeclareString("correlation_id")
+	_ = kylog.DeclareString("block_level")
+	_ = kylog.DeclareString("until_ms")
 	_ = kylog.DeclareString("error")
 	_ = kylog.DeclareString("reason")
 	_ = kylog.DeclareString("revision")

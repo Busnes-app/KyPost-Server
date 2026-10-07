@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -34,7 +36,7 @@ func snapshotDatabase(name string) bool {
 // in "-migrated", which the ".migrated" rule does not match.
 func skip(name string) bool {
 	// The Cloudflare host record is this host's live marker: a restore must start fenced.
-	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || strings.HasPrefix(name, cfreceiving.HostFile) || strings.HasSuffix(name, ".lock") ||
+	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || strings.HasPrefix(name, cfreceiving.HostFile) || name == ingress.EvidenceDamagedFile || strings.HasSuffix(name, ".lock") ||
 		strings.HasSuffix(name, ".migrated") || strings.HasSuffix(name, ".v1-migrated") || strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")
 }
 
@@ -135,6 +137,12 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 				if err != nil {
 					return err
 				}
+				// Automatic-block evidence is heuristic: a bad copy is left out,
+				// never a reason to refuse the backup.
+				if d.Name() == ingress.EvidenceFile && info.Size() > ingress.MaxEvidenceBytes {
+					slog.Warn("backup skipped sender evidence", "actor", "backup", "task_id", "backup", "action", "collect", "target", name, "result", "skipped-oversized")
+					return nil
+				}
 				if info.Size() > recoveryclient.MaxCapsuleFileBytes {
 					return fmt.Errorf("%s exceeds the 64 MiB per-file backup cap", name)
 				}
@@ -152,6 +160,10 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 				}
 				if err != nil {
 					return fmt.Errorf("collect %s: %w", name, err)
+				}
+				if d.Name() == ingress.EvidenceFile && ingress.ParseEvidence(raw) != nil {
+					slog.Warn("backup skipped sender evidence", "actor", "backup", "task_id", "backup", "action", "collect", "target", name, "result", "skipped-malformed")
+					return nil
 				}
 				if d.Name() == "imap-config.json" {
 					imaps = append(imaps, name)

@@ -584,7 +584,8 @@ func (l *cfLoop) capture(ctx context.Context, env cfreceiving.Envelope, raw []by
 	}
 	if !junk {
 		var verdict *receivingCommandError
-		if err := scanReceivingSpam(ctx, raw, d, "", "", receivingRspamdURL); errors.As(err, &verdict) && verdict.code == 4 {
+		// Hosted mail has no SMTP peer: its scan never feeds sender evidence.
+		if _, err := scanReceivingSpam(ctx, raw, d, "", "", receivingRspamdURL); errors.As(err, &verdict) && verdict.code == 4 {
 			// Cloudflare already accepted it, so it cannot bounce: file it
 			// to Junk, never drop it. Durable before the bytes are.
 			if err := l.db.SetEntry(ctx, env.ID, env.Digest, "junk"); err != nil {
