@@ -522,14 +522,88 @@ the budget below); an attacker flooding many aliases with 320-byte senders and
 100 recipients fits about 170,000. Backups refuse `ingress.db` above 64 MiB, at
 about 360,000 typical tombstones. Already
 accepted mail imports without fresh DNS, refreshing authorized route TTLs
-before claiming. Missing storage, restore holds or disabled authority retain
-pending mail. Local reactivation without a directory state change permits
-delivery to that same owner. Routes and bindings carry the address generation;
+before claiming. Missing storage, restore holds, directory lag, lock timeouts,
+missing sign-on settings and local deactivation retain pending mail. Local
+reactivation without a directory state change permits delivery to that same
+owner. When admission refuses an import and the ledger durably records a frozen
+address as moved, inactive or at a newer generation (an administrator disabled
+the mailbox or released the address, or KyIdentity offboarded the owner or
+promoted it to administrator), the delivery is quarantined instead: it could
+never import again and would hold the 10,000-record and 64 MiB budgets for
+good. A restore hold suppresses this. After re-enabling the mailbox an
+administrator can release it, since release goes to the frozen mailbox. Routes and bindings carry the address generation;
 a binding whose address is no longer `active`, owned by the bound mailbox and at
 the bound generation quarantines with its bytes and frozen bindings intact; an
 active competing claim cannot be invalidated. Ordinary directory edits change no
-generation, so they fence nothing. Quarantine requires operator reconciliation;
-there is no reassignment or automatic release.
+generation, so they fence nothing. Quarantine is never reassigned or released
+automatically; an administrator releases or discards it (below).
+
+### Quarantine release
+
+Administrators list quarantined deliveries and release or discard each one,
+through the admin API or the CLI. Both show envelope metadata only: gateway,
+delivery ID, received time, envelope sender, size and, per recipient, the
+address, frozen mailbox ID, owning user ID (empty once the mailbox is gone) and
+frozen generation. Bodies, subjects and headers are never shown, and the reason
+a delivery was quarantined is not stored.
+
+- **Release** delivers to the mailboxes the delivery was frozen to, never to a
+  newly chosen target or an address's current owner. Each frozen mailbox must
+  still exist, be active, belong to the same issuer/subject, and its owner and
+  storage must pass the same admission import uses, checked under the
+  directory and users fences import holds. The address generation is not
+  checked: the mail was addressed to that mailbox at that time, and a
+  reassignment is the usual reason it was quarantined. Admission is all
+  owners or none, but a capacity failure or crash during the commits can
+  leave some owners with the mail; a retry completes it, and mailbox receipts
+  prevent duplicates. A refusal answers 409 with one of two reasons: the
+  mailbox was deleted or disabled, or its owner was offboarded, promoted or
+  changed (durable; discard remains available), or the mailbox is not
+  currently admitted (directory sync, storage or sign-on configuration;
+  resync and retry). Release ends in the same tombstone as import, with
+  disposition `released`. Repeating a completed release succeeds.
+- **Discard** removes the bytes and bindings and leaves a tombstone, so an
+  exact receiver replay or re-pickup is answered without delivering. Its
+  disposition is `discarded`, or `partially_released` when a release had
+  started: that release may already have reached some frozen mailboxes, and
+  those copies stay. Discard remains available after an interrupted release
+  because one owner may stay disabled for good. SQLite free pages, WAL and
+  earlier backups may hold the bytes until reused or rotated.
+- A release in progress holds a five-minute lease; discard refuses until it
+  ends. Both refuse under a restore hold.
+
+API (admin only; POSTs need CSRF and the account credential, or KySignOn
+step-up, as for `/api/admin/mailboxes`):
+
+- `GET /api/admin/receiving/quarantine[?after=<sequence>]` returns up to 100
+  `{deliveries:[{sequence,gateway,id,sender,receivedAt,size,recipients:[{address,mailbox,user,generation}]}]}`;
+  page with the last `sequence`.
+- `POST /api/admin/receiving/quarantine/{gateway}/{id}/release` and
+  `.../discard` return `{gateway,id,result}` (`released`, `discarded` or
+  `partially_released`); 404 unknown or malformed, 409 not quarantined,
+  release in progress, release refused or restore hold, 503 storage or mailbox
+  capacity (the holding copy is kept).
+
+CLI, as the runtime user that owns `STATE_DIR` (it refuses any other):
+
+```sh
+docker compose exec --user kypost kypost-server kypost-server receiving quarantine list [<after-sequence>]
+docker compose exec --user kypost kypost-server kypost-server receiving quarantine release <gateway> <id> --confirm <id>
+docker compose exec --user kypost kypost-server kypost-server receiving quarantine discard <gateway> <id> --confirm <id>
+```
+
+Shell access as that user already reaches every key the API's step-up
+protects, so the CLI asks for deliberate intent instead: the delivery ID typed
+again after `--confirm`. Discard prints its disposition. Every action is
+audited with actor, action, gateway/ID and result, never correspondence. API
+actions go to the API log (`api.err.log`) with the administrator's user ID.
+CLI actions are logged as actor `cli:<uid>` to the invoking terminal only:
+KyPost opens no log files of its own (see `LOGGING.md`). For the CLI the
+durable record is the tombstone disposition and, for a release, the mailbox
+receipt.
+
+The sender is attacker-controlled: any interface must render it, and every
+other listed field, as plain text.
 
 New route writes, RCPT bindings and MIME acceptance also check physical storage
 inside the immediate SQLite writer transaction. The admission budget is derived

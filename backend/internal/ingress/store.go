@@ -29,7 +29,14 @@ var (
 	ErrRoute        = errors.New("recipient is unknown, disabled or routing is stale; reconcile the directory")
 	ErrRoutingStale = errors.New("routing snapshot expired; refresh it before accepting mail")
 	ErrLease        = errors.New("ingress claim expired or changed; reacquire before acknowledging")
+	// ErrNotQuarantined refuses release/discard of anything else, or while a
+	// release holds the delivery.
+	ErrNotQuarantined = errors.New("delivery is not quarantined, or a release is in progress; list quarantine again")
 )
+
+// ReceivingLimits are the durable holding-store limits every opener of the
+// production spool must pass.
+var ReceivingLimits = Limits{MessageBytes: 4 << 20, PayloadBytes: 64 << 20, Records: 10000}
 
 type Limits struct {
 	MessageBytes int64
@@ -64,6 +71,19 @@ type Delivery struct {
 	State    string
 	Bindings []Binding
 	Lease    string
+	// Disposition of an archived delivery: imported, released or discarded.
+	Disposition string
+}
+
+// Quarantined is a quarantined delivery's envelope, never its bytes.
+type Quarantined struct {
+	Sequence int64
+	Gateway  string
+	ID       string
+	Sender   string
+	Received time.Time
+	Size     int64
+	Bindings []Binding
 }
 
 type Summary struct {
@@ -86,21 +106,22 @@ CREATE TABLE IF NOT EXISTS deliveries (gateway TEXT NOT NULL, id TEXT NOT NULL, 
 CREATE TABLE IF NOT EXISTS bindings (gateway TEXT NOT NULL, id TEXT NOT NULL, address TEXT NOT NULL, issuer TEXT NOT NULL, subject TEXT NOT NULL, mailbox TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(gateway,id,address), FOREIGN KEY(gateway,id) REFERENCES deliveries(gateway,id) ON DELETE CASCADE);
 `
 
-// Acknowledged deliveries become tombstones outside the record limit: enough
-// to recognise an exact replay, never enough to deliver again. archived_at (UTC
-// unix seconds) lets a future age pruner be one DELETE. The partial index keeps
-// the per-open legacy check off the payload pages.
-const archivedSchema = `CREATE TABLE IF NOT EXISTS archived (gateway TEXT NOT NULL, id TEXT NOT NULL, sender TEXT NOT NULL, digest TEXT NOT NULL, recipients TEXT NOT NULL, archived_at INTEGER NOT NULL, PRIMARY KEY(gateway,id)) WITHOUT ROWID;
+// Acknowledged, released and discarded deliveries become tombstones outside
+// the record limit: enough to recognise an exact replay, never enough to
+// deliver again. archived_at (UTC unix seconds) lets a future age pruner be one
+// DELETE; disposition tells audit how the delivery ended. The partial index
+// keeps the per-open legacy check off the payload pages.
+const archivedSchema = `CREATE TABLE IF NOT EXISTS archived (gateway TEXT NOT NULL, id TEXT NOT NULL, sender TEXT NOT NULL, digest TEXT NOT NULL, recipients TEXT NOT NULL, archived_at INTEGER NOT NULL, disposition TEXT NOT NULL CHECK(disposition IN ('imported','released','discarded','partially_released')), PRIMARY KEY(gateway,id)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS imported ON deliveries(gateway,id) WHERE state='imported';`
 
 // ArchivedColumns is the tombstone table shape restore validation expects.
-const ArchivedColumns = "gateway TEXT,id TEXT,sender TEXT,digest TEXT,recipients TEXT,archived_at INTEGER"
+const ArchivedColumns = "gateway TEXT,id TEXT,sender TEXT,digest TEXT,recipients TEXT,archived_at INTEGER,disposition TEXT"
 
-// archive moves acknowledged deliveries matching where into tombstones inside
-// the caller's writer transaction; bindings cascade with the delivery row.
-// insert is "INSERT" (a duplicate is a bug) or "INSERT OR IGNORE" (legacy).
-func archive(ctx context.Context, tx *sql.Tx, insert, where string, args ...any) error {
-	_, err := tx.ExecContext(ctx, insert+` INTO archived(gateway,id,sender,digest,recipients,archived_at) SELECT gateway,id,sender,digest,(SELECT group_concat(b.address,char(10)) FROM bindings b WHERE b.gateway=d.gateway AND b.id=d.id),unixepoch() FROM deliveries d WHERE `+where, args...)
+// archive moves deliveries matching where into tombstones inside the caller's
+// writer transaction; bindings cascade with the delivery row. insert is
+// "INSERT" (a duplicate is a bug) or "INSERT OR IGNORE" (legacy).
+func archive(ctx context.Context, tx *sql.Tx, insert, disposition, where string, args ...any) error {
+	_, err := tx.ExecContext(ctx, insert+` INTO archived(gateway,id,sender,digest,recipients,archived_at,disposition) SELECT gateway,id,sender,digest,(SELECT group_concat(b.address,char(10)) FROM bindings b WHERE b.gateway=d.gateway AND b.id=d.id),unixepoch(),? FROM deliveries d WHERE `+where, append([]any{disposition}, args...)...)
 	if err == nil {
 		_, err = tx.ExecContext(ctx, "DELETE FROM deliveries WHERE "+where, args...)
 	}
@@ -111,12 +132,12 @@ func archive(ctx context.Context, tx *sql.Tx, insert, where string, args ...any)
 // by an earlier (or downgraded) binary. A plain read skips the writer lock when
 // there is nothing to do; the write is one idempotent transaction.
 func migrateArchive(ctx context.Context, db *sql.DB) error {
-	var ready, legacy int
+	var ready, legacy, disposition int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('archived','imported')").Scan(&ready); err != nil {
 		return err
 	}
 	if ready == 2 {
-		if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM deliveries INDEXED BY imported WHERE state='imported')").Scan(&legacy); err != nil || legacy == 0 {
+		if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM deliveries INDEXED BY imported WHERE state='imported'),(SELECT COUNT(*) FROM pragma_table_info('archived') WHERE name='disposition')").Scan(&legacy, &disposition); err != nil || legacy == 0 && disposition == 1 {
 			return err
 		}
 	}
@@ -128,21 +149,30 @@ func migrateArchive(ctx context.Context, db *sql.DB) error {
 	if _, err := tx.ExecContext(ctx, archivedSchema); err != nil {
 		return err
 	}
-	if err := archive(ctx, tx, "INSERT OR IGNORE", "state='imported'"); err != nil {
+	// Tombstones written before dispositions existed were all imports.
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('archived') WHERE name='disposition'").Scan(&disposition); err != nil {
+		return err
+	}
+	if disposition == 0 {
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE archived ADD COLUMN disposition TEXT NOT NULL DEFAULT 'imported' CHECK(disposition IN ('imported','released','discarded','partially_released'))"); err != nil {
+			return err
+		}
+	}
+	if err := archive(ctx, tx, "INSERT OR IGNORE", "imported", "state='imported'"); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 type tombstone struct {
-	sender, digest string
-	recipients     []string
+	sender, digest, disposition string
+	recipients                  []string
 }
 
 func archivedDelivery(ctx context.Context, tx *sql.Tx, gateway, id string) (tombstone, error) {
 	var t tombstone
 	var recipients string
-	err := tx.QueryRowContext(ctx, "SELECT sender,digest,recipients FROM archived WHERE gateway=? AND id=?", gateway, id).Scan(&t.sender, &t.digest, &recipients)
+	err := tx.QueryRowContext(ctx, "SELECT sender,digest,disposition,recipients FROM archived WHERE gateway=? AND id=?", gateway, id).Scan(&t.sender, &t.digest, &t.disposition, &recipients)
 	t.recipients = strings.Split(recipients, "\n")
 	return t, err
 }
@@ -261,6 +291,9 @@ func address(v string, allowEmpty bool) bool {
 	a, err := mail.ParseAddress(v)
 	return err == nil && a.Name == "" && a.Address == v
 }
+
+// ValidIdentifier reports whether v can be a gateway or delivery ID.
+func ValidIdentifier(v string) bool { return identifier(v) }
 
 func identifier(v string) bool {
 	return v != "" && len(v) <= 256 && !strings.ContainsAny(v, "\x00\r\n")
@@ -534,25 +567,31 @@ func readDelivery(ctx context.Context, tx *sql.Tx, gateway, id string) (Delivery
 	err := tx.QueryRowContext(ctx, "SELECT sender,digest,raw,state,lease FROM deliveries WHERE gateway=? AND id=?", gateway, id).Scan(&d.Sender, &d.Digest, &d.Raw, &d.State, &d.Lease)
 	if errors.Is(err, sql.ErrNoRows) {
 		t, err := archivedDelivery(ctx, tx, gateway, id)
-		d.Sender, d.Digest, d.State = t.sender, t.digest, "archived"
+		d.Sender, d.Digest, d.State, d.Disposition = t.sender, t.digest, "archived", t.disposition
 		return d, err
 	}
 	if err != nil {
 		return d, err
 	}
+	d.Bindings, err = readBindings(ctx, tx, gateway, id)
+	return d, err
+}
+
+func readBindings(ctx context.Context, tx *sql.Tx, gateway, id string) ([]Binding, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT address,issuer,subject,mailbox,generation FROM bindings WHERE gateway=? AND id=? ORDER BY address", gateway, id)
 	if err != nil {
-		return d, err
+		return nil, err
 	}
 	defer rows.Close()
+	var bindings []Binding
 	for rows.Next() {
 		var b Binding
 		if err := rows.Scan(&b.Address, &b.Issuer, &b.Subject, &b.Mailbox, &b.Generation); err != nil {
-			return d, err
+			return nil, err
 		}
-		d.Bindings = append(d.Bindings, b)
+		bindings = append(bindings, b)
 	}
-	return d, rows.Err()
+	return bindings, rows.Err()
 }
 
 // Get is for a trusted local operator/importer, never a user-facing mail API.
@@ -619,6 +658,17 @@ func currentBindings(ctx context.Context, tx *sql.Tx, gateway, id string) (bool,
 // Claim fences competing importers. A stale owner binding is retained in
 // quarantine, never replaced with the address's current owner.
 func (s *Store) Claim(ctx context.Context, gateway, id string, duration time.Duration) (Delivery, error) {
+	return s.claim(ctx, gateway, id, duration, false)
+}
+
+// claim leases a pending delivery, or for release a quarantined one: release
+// skips the route check because the caller has re-admitted the frozen owners.
+// The delivery stays quarantined while leased, so the importer never sees it.
+func (s *Store) claim(ctx context.Context, gateway, id string, duration time.Duration, release bool) (Delivery, error) {
+	want := "pending"
+	if release {
+		want = "quarantined"
+	}
 	if duration < time.Second || duration > 5*time.Minute {
 		return Delivery{}, ErrLease
 	}
@@ -631,7 +681,7 @@ func (s *Store) Claim(ctx context.Context, gateway, id string, duration time.Dur
 	if err != nil {
 		return d, err
 	}
-	if d.State != "pending" {
+	if d.State != want {
 		return d, ErrLease
 	}
 	var until int64
@@ -645,7 +695,7 @@ func (s *Store) Claim(ctx context.Context, gateway, id string, duration time.Dur
 	if err != nil {
 		return d, err
 	}
-	if !current {
+	if !current && !release {
 		_, err = tx.ExecContext(ctx, "UPDATE deliveries SET state='quarantined',lease='',lease_until=0 WHERE gateway=? AND id=?", gateway, id)
 		if err != nil {
 			return d, err
@@ -671,6 +721,14 @@ func (s *Store) Claim(ctx context.Context, gateway, id string, duration time.Dur
 // MUST have committed every binding's mailbox receipt first. Lost acknowledgments
 // are reconciled using the retained digest, never by resending/deleting blindly.
 func (s *Store) Acknowledge(ctx context.Context, gateway, id, lease, digest string) error {
+	return s.acknowledge(ctx, gateway, id, lease, digest, false)
+}
+
+func (s *Store) acknowledge(ctx context.Context, gateway, id, lease, digest string, release bool) error {
+	want, disposition := "pending", "imported"
+	if release {
+		want, disposition = "quarantined", "released"
+	}
 	if lease == "" || digest == "" {
 		return ErrLease
 	}
@@ -685,7 +743,7 @@ func (s *Store) Acknowledge(ctx context.Context, gateway, id, lease, digest stri
 	if errors.Is(err, sql.ErrNoRows) {
 		// Lost local ACK reply: the archived digest is all that remains.
 		t, err := archivedDelivery(ctx, tx, gateway, id)
-		if err != nil || t.digest != digest {
+		if err != nil || t.digest != digest || t.disposition != disposition {
 			return ErrLease
 		}
 		return tx.Commit()
@@ -696,14 +754,14 @@ func (s *Store) Acknowledge(ctx context.Context, gateway, id, lease, digest stri
 	if oldDigest != digest || oldLease != lease {
 		return ErrLease
 	}
-	if state != "pending" || until <= time.Now().Unix() {
+	if state != want || until <= time.Now().Unix() {
 		return ErrLease
 	}
 	current, err := currentBindings(ctx, tx, gateway, id)
 	if err != nil {
 		return err
 	}
-	if !current {
+	if !current && !release {
 		_, err = tx.ExecContext(ctx, "UPDATE deliveries SET state='quarantined',lease='',lease_until=0 WHERE gateway=? AND id=?", gateway, id)
 		if err != nil {
 			return err
@@ -717,8 +775,86 @@ func (s *Store) Acknowledge(ctx context.Context, gateway, id, lease, digest stri
 	// in the default budget; ~170K attacker-shaped), and ingress.db hits the
 	// 64 MiB backup file cap near 360K. Pruning by archived_at, or after a
 	// gateway proves its source copy gone, is a public-MX gate.
-	if err := archive(ctx, tx, "INSERT", "gateway=? AND id=? AND state='pending'", gateway, id); err != nil {
+	if err := archive(ctx, tx, "INSERT", disposition, "gateway=? AND id=? AND state=?", gateway, id, want); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// Discard drops a quarantined delivery's bytes and bindings, leaving a
+// tombstone so an exact replay or re-pickup cannot resurrect it, and returns
+// its disposition. A live release lease refuses; after an interrupted release
+// some frozen mailboxes may already hold the mail, so the tombstone says
+// partially_released. Repeating a discard succeeds.
+func (s *Store) Discard(ctx context.Context, gateway, id string) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var state, lease string
+	var until int64
+	err = tx.QueryRowContext(ctx, "SELECT state,lease,lease_until FROM deliveries WHERE gateway=? AND id=?", gateway, id).Scan(&state, &lease, &until)
+	if errors.Is(err, sql.ErrNoRows) {
+		t, err := archivedDelivery(ctx, tx, gateway, id)
+		if err != nil {
+			return "", err
+		}
+		if t.disposition != "discarded" && t.disposition != "partially_released" {
+			return "", ErrNotQuarantined
+		}
+		return t.disposition, tx.Commit()
+	}
+	if err != nil {
+		return "", err
+	}
+	if state != "quarantined" || until > time.Now().Unix() {
+		return "", ErrNotQuarantined
+	}
+	// Every path into quarantine clears the lease; only Release sets one.
+	disposition := "discarded"
+	if lease != "" {
+		disposition = "partially_released"
+	}
+	if err := archive(ctx, tx, "INSERT", disposition, "gateway=? AND id=? AND state='quarantined'", gateway, id); err != nil {
+		return "", err
+	}
+	return disposition, tx.Commit()
+}
+
+// ListQuarantined pages quarantined envelopes across gateways, without MIME.
+func (s *Store) ListQuarantined(ctx context.Context, after int64, limit int) ([]Quarantined, error) {
+	if after < 0 || limit < 1 || limit > 100 {
+		return nil, ErrConflict
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, "SELECT rowid,gateway,id,sender,created,length(raw) FROM deliveries WHERE state='quarantined' AND rowid>? ORDER BY rowid LIMIT ?", after, limit)
+	if err != nil {
+		return nil, err
+	}
+	var result []Quarantined
+	for rows.Next() {
+		var q Quarantined
+		var created int64
+		if err := rows.Scan(&q.Sequence, &q.Gateway, &q.ID, &q.Sender, &created, &q.Size); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		q.Received = time.Unix(created, 0).UTC()
+		result = append(result, q)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range result {
+		if result[i].Bindings, err = readBindings(ctx, tx, result[i].Gateway, result[i].ID); err != nil {
+			return nil, err
+		}
+	}
+	return result, tx.Commit()
 }
