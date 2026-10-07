@@ -207,6 +207,18 @@ it("sends no until for an empty expiry", async () => {
   expect(JSON.parse(String(writes()[0]?.[1]?.body))).toEqual({ authSecret: "derived-test-secret", kind: "address", value: "x@bad.example", reason: "spam" });
 });
 
+it("keeps a leading non-ASCII space in an address and strips only ASCII padding", async () => {
+  await unlocked();
+  const sender = String.fromCodePoint(0x3000) + "x@bad.example";
+  fill("address", "  " + sender + " ");
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  answer = () => json({ block: { ...manual, id: "3333333333333333", value: sender } });
+  fireEvent.click(screen.getByRole("button", { name: "Block sender…" }));
+  await screen.findByText("Blocked the address [U+3000]x@bad.example.");
+  expect(confirm.mock.calls[0]?.[0]).toContain("address [U+3000]x@bad.example with no expiry");
+  expect(JSON.parse(String(writes()[0]?.[1]?.body)).value).toBe(sender);
+});
+
 it("removes a block after saying automatic re-blocking is suppressed", async () => {
   await unlocked();
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);

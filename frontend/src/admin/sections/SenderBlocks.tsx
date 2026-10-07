@@ -14,6 +14,8 @@ const describe = (b: SenderBlock) => `${b.source} block${b.source === "automatic
 const localNow = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 
 /** expiryMs reads a datetime-local value as local time; empty means no expiry. */
+const asciiTrim = (v: string) => v.replace(/^[ \t]+|[ \t]+$/g, "");
+
 export function expiryMs(input: string, now: number): number | null {
   if (!input) return null;
   const ms = new Date(input).getTime();
@@ -141,7 +143,8 @@ function SenderBlocksForm() {
       setError(toErrorMessage(e, "Expiry is not a valid date and time."));
       return;
     }
-    const want = { kind, value: value.trim(), until, reason };
+    // Only ASCII padding is stripped: receivers compare non-ASCII local-part characters exactly.
+    const want = { kind, value: asciiTrim(value), until, reason };
     // An unpaired surrogate cannot be sent as UTF-8, so it can never name a sender.
     if (/\p{Cs}/u.test(want.value)) {
       setError("The value contains an unpaired surrogate code unit, so it cannot be a sender.");
@@ -218,7 +221,7 @@ function SenderBlocksForm() {
         {blockReasons.map(r => <option key={r} value={r}>{r}</option>)}
       </select></label>
       <p>A domain block matches that exact domain only, not its subdomains: block sub.example.com separately. Enter internationalized domains as A-labels (xn--…). This deployment's own mail domains cannot be blocked.</p>
-      <button className="button" disabled={!unlocked || !value.trim()} onClick={add}>Block sender…</button>
+      <button className="button" disabled={!unlocked || !asciiTrim(value)} onClick={add}>Block sender…</button>
     </fieldset>
     <fieldset className="config-card config-grid" disabled={busy || !blocks}>
       <legend>Blocks in force</legend>
