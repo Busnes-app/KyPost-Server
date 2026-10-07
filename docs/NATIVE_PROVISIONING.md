@@ -473,6 +473,68 @@ disabling both native flags in both processes and keeping all
 native storage/ownership files intact; native mail becomes unavailable without
 being converted to IMAP. Use a compatible binary, not an older metadata writer.
 
+### Mail export
+
+Users export their own native mailbox, or one folder of it, from Settings →
+Mail → Export Mail. Import is not built yet.
+
+- `GET /api/export/folders` lists every folder of the selected mailbox
+  (`X-KyPost-Mailbox`).
+- `POST /api/export` with `{mailbox, folder, format, password|authSecret}`:
+  `mailbox` is an ID from `GET /api/mailboxes` (empty or the user ID is the
+  primary), `folder` empty for all folders (exact name; only `INBOX` is
+  case-insensitive), `format` `mbox` or `eml-zip`. Browser session only (a
+  paired-device credential has none and gets 403), CSRF, and `confirmActor`
+  behind `withActionDigest`, so the mailbox selection is part of the confirmed
+  request. Answers `{url:"/api/export/<64 hex>", expiresInSeconds:300,
+  messages}`; `messages` is the live count when the grant is made, shown so the
+  user can compare it with the file. One unspent grant per user; a new one
+  replaces it. A foreign, unknown or disabled mailbox is 404, a missing folder
+  404, an external IMAP account 409, mbox over HTTP/1.0 409. Export follows mail
+  admission: an administrator identity holding no mailbox gets 409, a promoted
+  KyIdentity administrator 403, and a `legacyMixedUse` administrator exports
+  their own mailboxes until migrated. Nobody can export another user's mail.
+- `GET /api/export/{token}` spends the grant once and streams
+  `Content-Disposition: attachment`; HEAD is 405 and spends nothing. The grant
+  is held in memory and bound to user, session, mailbox, folder and format.
+  The browser navigated here, so every refusal is `303 See Other` to
+  `/settings/mail?tab=export&export=<code>`, which explains it: `expired`
+  (another session or user, expired, spent or unknown), `busy` (the slot is
+  taken; the grant is kept and `retry=<token>` lets the page retry it),
+  `proxy` (mbox over HTTP/1.0; grant kept) or `unavailable` (the mailbox or
+  folder is no longer admitted; grant spent).
+- One export streams per user and two server-wide (`maxExports`). A reader
+  gets 30 seconds plus the message size at 64 KiB/s to take each message
+  (a 25 MiB message: 430 seconds), replacing the server-wide 10-minute write
+  timeout; a stalled reader times out and frees its slot. Admission is
+  rechecked when the download starts and on every 200-message page, so a
+  mailbox disabled mid-export stops it.
+- A failed stream aborts the connection. Over HTTP/1.1 the body is chunked, so
+  the client sees an unterminated body rather than a clean end. HTTP/1.0 has no
+  chunking and the response no Content-Length, so a cut-off mbox would end like
+  a whole one: mbox therefore requires HTTP/1.1 (behind nginx, set
+  `proxy_http_version 1.1;`; its default upstream protocol is 1.0). An EML zip
+  is still served over HTTP/1.0, since a truncated zip lacks its central
+  directory.
+- Formats hold the exact stored bytes, so PGP-encrypted messages stay
+  encrypted and the server decrypts nothing. Flags and labels are not exported.
+  mbox is mboxrd: a `From <envelope sender> <asctime UTC>` separator
+  (`MAILER-DAEMON` when no delivery receipt holds a sender, or it contains
+  whitespace or control characters), one `>` added to every `^>*From ` line,
+  stored line endings kept (normally CRLF) and an LF blank line after each
+  message. The zip holds `<folder>/<message id>.eml` (Deflate); each folder
+  segment keeps letters, digits, space, `-`, `_` and `.`, replaces anything
+  else with `_`, is cut to 64 bytes, loses leading and trailing dots and
+  spaces, and gains a `_` prefix when it names a Windows device (`CON`, `PRN`,
+  `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, any case, with or without an
+  extension), so no entry is absolute, climbs out or opens a device. Messages
+  are read in ID order, one in memory at a time; one moved or deleted
+  mid-export is skipped.
+- Each export is audited as `mail export` with actor, target (the mailbox),
+  folder, format, `messages` and `bytes` as integers, a random per-grant
+  `correlation_id` (never the token) and result (`authorized`, `started`,
+  `finished`, `failed`, `refused`); never subjects or addresses.
+
 ## Direct receiving runtime (qualification profile)
 
 `KYPOST_NATIVE_RECEIVING=true` requires `KYPOST_NATIVE_MAIL=true` and is disabled

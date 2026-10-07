@@ -23,7 +23,8 @@ func (s *Server) refuseNativeAdministrator(w http.ResponseWriter, r *http.Reques
 	if !errors.Is(err, sso.ErrNativeAdministrator) {
 		return false
 	}
-	s.logger.Info("native mail refused for administrator identity", "actor", userID, "action", r.Method, "target", r.URL.Path, "result", "refused")
+	// The route pattern, never the path: a path can carry a download token.
+	s.logger.Info("native mail refused for administrator identity", "actor", userID, "action", r.Method, "target", r.Pattern, "result", "refused")
 	writeJSON(w, http.StatusForbidden, map[string]any{"error": "administrator identities have no mailbox; use your everyday identity", "administratorIdentity": true})
 	return true
 }

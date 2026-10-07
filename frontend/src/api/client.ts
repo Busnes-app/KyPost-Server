@@ -122,8 +122,9 @@ async function requestJSON<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function getJSON<T>(path: string): Promise<T> {
-  return requestJSON<T>(path);
+// The optional headers carry an X-KyPost-Mailbox selection.
+export async function getJSON<T>(path: string, headers?: Record<string, string>): Promise<T> {
+  return requestJSON<T>(path, headers && { headers });
 }
 
 // The optional headers carry a KySignOn step-up grant (see api/stepup.ts);
