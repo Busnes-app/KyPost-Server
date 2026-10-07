@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
@@ -30,8 +31,9 @@ func nativeSnapshot(dir string) (bool, error) {
 	}
 	hasRelay := relayVersion != 0
 	if hasRelay {
-		domain, domainFormat, err := sso.HistoricalNativeDomain(filepath.Join(dir, "config"))
-		if err != nil || !sso.NativeSnapshotFormatsConsistent(domainFormat, relayVersion) || domain.Domain != relay.Domain || domain.Issuer != relay.Issuer {
+		// Relay domains, retired or not, stay within the domain set's history.
+		domains, domainFormat, err := sso.HistoricalNativeDomains(filepath.Join(dir, "config"))
+		if err != nil || !sso.NativeSnapshotFormatsConsistent(domainFormat, relayVersion) || domains.Issuer != relay.Issuer || slices.ContainsFunc(slices.Concat(relay.Domains, relay.RetiredDomains), func(d string) bool { return !domains.Known(d) }) {
 			return true, mailmsg.ErrDomainRelay
 		}
 	}

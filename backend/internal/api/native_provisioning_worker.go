@@ -64,11 +64,16 @@ func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject str
 		if !reserved {
 			return nil
 		}
-		domain, err := s.nativeDomains.Read()
-		if err != nil || domain.Issuer != issuer {
+		// Disabling needs no proof; the reserved address's domain may be retired.
+		domains, err := s.nativeDomains.ReadSet()
+		domain := sso.AddressDomain(a.Address)
+		if a.Address == "" {
+			domain = domains.Founding
+		}
+		if err != nil || domains.Issuer != issuer || !domains.Known(domain) {
 			return sso.ErrNativeProvisioning
 		}
-		_, err = s.ssoLifecycle.ReconcileNativeMailboxContext(ctx, s.stateDir, issuer, subject, a.Owner.Mailbox, domain.Domain, a.Limits)
+		_, err = s.ssoLifecycle.ReconcileNativeMailboxContext(ctx, s.stateDir, issuer, subject, a.Owner.Mailbox, domain, a.Limits)
 		return err
 	}
 	limits := nativeMailboxLimits

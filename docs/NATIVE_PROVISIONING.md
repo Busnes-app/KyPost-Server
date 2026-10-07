@@ -44,12 +44,39 @@ refused configuration/verification 409. KySignOn step-up returns the existing
 403 challenge response. A failed proof does not enable transport: correct the
 exact TXT record/DNS availability or rotate an expired challenge and retry.
 The owner-only `$CONFIG_DIR/native-domains.json` (domain set, version 1) holds
-the issuer and each domain's public challenge, not a secret; this profile still
-accepts exactly one domain and no retired ones. Its `native-domains.json.lock` is
-the domain fence in every lock order. Configuring a domain also creates an empty
+the issuer, the founding domain and each domain's public challenge, not a
+secret, plus the retired domains. Its `native-domains.json.lock` is the domain
+fence in every lock order. Configuring a domain also creates an empty
 version-2 ledger with the initialization fence set, then replaces the version-1
 `native-domain.json` with the tombstone `{"migratedTo": "native-domains.json"}`.
 Do not publish production MX or assume outgoing delivery readiness.
+
+### Several domains
+
+The single-domain routes above serve the founding domain (the first configured
+one still in service) and refuse any other, so existing clients are unchanged.
+The domain-set routes take the same CSRF, credential confirmation and KySignOn
+step-up, answer `no-store` and use the same status codes:
+
+- `GET /api/admin/mail-domains` returns `{issuer, founding, domains[]}`; each
+  entry has `domain`, `configured`, `retired`, `recordName`, `recordValue`,
+  `established`, `expiresAt` and `verifiedUntil`. Retired entries have no record.
+- `POST /api/admin/mail-domains` with `{domain}` adds a domain with its own
+  challenge, under the set's one issuer, or rotates the challenge of one already
+  configured. A retired domain is never re-added.
+- `POST /api/admin/mail-domains/{domain}/verify` proves that domain only.
+- `DELETE /api/admin/mail-domains/{domain}` retires it: refused (409) while any
+  address on it is `active` or a `queued`/`retryable` outbox job sends from it.
+  Retirement keeps its address records, so generations are never reused and old
+  bindings and snapshots still validate. It is never automatic. Retiring the
+  founding domain hands the single-domain routes to the smallest remaining one.
+
+Every fence compares only the proofs of the domains an operation touches:
+allocation the requested primary's domain, receiving each recipient's domain,
+sending the `From` domain. Re-verifying one domain never fences work on
+another; a lapsed proof suspends only its own domain, and a delivery to several
+domains is all-or-nothing. A version-1 binary refuses a set with more than one
+domain or any retired one.
 
 ## Storage format migration
 
@@ -94,8 +121,9 @@ flow. It proves the domain before acquiring locks, then holds locks in order:
 domain → directory → users → account. It requires a live retained signed SCIM
 resource with matching issuer/subject and active state. Roles come from that
 resource, never a token email/name or classifier label. Exactly one explicit
-primary bare ASCII dot-atom email in the proven domain is required; comparisons
-are case-insensitive. Quoted/SMTPUTF8 addresses and implicit aliases are refused.
+primary bare ASCII dot-atom email is required; its domain must be a configured,
+non-retired member of the set and is the one freshly proven; comparisons are
+case-insensitive. Quoted/SMTPUTF8 addresses and implicit aliases are refused.
 
 Reuse an existing durable reservation's local ID or reserve a new UUID. Resolve
 username collisions under the users lock with a stable `native-<localID>` name.
@@ -251,8 +279,8 @@ and 10,000 retained records per mailbox; existing reservations keep their limits
 
 Every mailbox operation and mail-authenticated cache read checks the configured
 active issuer, current user and retained directory activity/role, primary
-address, reservation revision and immutable storage source under the directory
-fence. Restore holds deny admission. Cached clients confer no continuing
+address on a configured, non-retired domain, reservation revision and immutable
+storage source under the directory fence. Restore holds deny admission. Cached clients confer no continuing
 permission. An operation already admitted may finish after revocation; network
 and database work do not hold the directory lock. Missing databases are opened
 existing-only before initialization. Runtime clients retain their store during
@@ -282,7 +310,7 @@ commands and a daemon importer; `receiving config` generates the bounded TLS-onl
 Maddy qualification profile described in [controlled setup](RECEIVING_SETUP.md).
 It does not install or start a public receiver.
 Use Linux with mounted procfs, existing owner-only configuration/state roots,
-the established issuer-bound domain, prepared accounts and no restore hold.
+at least one established issuer-bound domain, prepared accounts and no restore hold.
 Run `receiving init` explicitly once after domain setup; it refuses an existing
 receiving directory. Normal operation opens existing users and ingress storage
 without bootstrap, migrations or lost-spool recreation.
@@ -301,7 +329,8 @@ The process writes operation/result/correlation logs to stderr and no stdout.
 SMTP stdin must be a named pipe or regular file. Pipe reads have a 30-second
 deadline; inherited pipes are reopened through `/proc/self/fd` for Go's poller.
 Regular files and filesystem operations retain the stalled-volume ceiling.
-New reception performs fresh DNS proof outside locks. Domain → directory →
+New reception performs fresh DNS proof of each recipient domain outside locks;
+an address on a domain outside the set is unknown (exit 3). Domain → directory →
 users locks then fence every frozen owner through acceptance. Import validates
 all prepared owners/sources before commits and holds the same authority fences
 through mailbox receipts and ingress acknowledgment; no network or stdin work

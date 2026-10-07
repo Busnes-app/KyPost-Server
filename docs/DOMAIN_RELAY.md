@@ -109,6 +109,23 @@ the admin; `smtpUsername` and `smtpPassword` authenticate the relay. Supply
 credentials privately through the protected API, never in chat or shell argv.
 Each update supplies the complete relay profile and rotates its generation.
 
+### Relay domain set
+
+The relay sends for a set of domains. An optional `"domains": ["a.example",
+"b.example"]` field selects it; omitted, an update keeps the saved set, and a
+first profile uses the founding domain, so the single-domain request above is a
+one-domain set. Every domain in the resulting set must be configured, not retired
+and freshly proven by DNS on each update; one lapsed domain therefore blocks
+relay updates until it is proven or removed. A body carrying only `domains`
+(plus the confirmation field) changes the set alone: the saved credentials stay
+and the `generation` is kept, so jobs queued on retained domains stay valid.
+Removing a domain is refused (409) while a `queued` or `retryable` outbox job
+sends from it (`submitting` and `uncertain` jobs are never reclaimed and do not
+block); a removed domain moves to `retiredDomains`. A job whose domain was removed
+afterwards is never submitted. `From` must be on a domain in `domains`;
+backup validation checks historical jobs against `domains ∪ retiredDomains`,
+and both lists against the domain set's configured and retired domains.
+
 The host is a lowercase ASCII dotted DNS name or IPv4 literal; URLs, IPv6
 literals and hosts with an appended port are refused. Port zero or omission selects 465. Other valid ports still use
 implicit TLS; STARTTLS and plaintext are unsupported by this native profile.
@@ -120,7 +137,8 @@ alone never authorize sending as a user.
 Each update rechecks the current TXT record and issuer/domain claim before
 writing under the domain fence. Changed authority, unavailable DNS or a restore
 hold refuses the update. It cannot adopt another domain or issuer's relay file.
-`GET /api/admin/mail-relay` returns configuration status, domain, issuer, host,
+`GET /api/admin/mail-relay` returns configuration status, `domain` (the founding
+domain when the relay sends for it), `domains`, `retiredDomains`, issuer, host,
 port and generation with `Cache-Control:no-store`. Both methods omit the relay
 username and password; unreadable existing ciphertext or key produces an
 explicit error rather than an unconfigured fallback.
@@ -129,8 +147,8 @@ explicit error rather than an unconfigured fallback.
 
 `$CONFIG_DIR/native-relay.json` is encrypted with the dedicated
 `$SECRET_DIR/native-relay.key`; both are created owner-only. Its sealed JSON is
-version 2, holding a domain set (`domains`, `retiredDomains`); this profile accepts
-exactly one domain and no retired ones. Startup migration reseals a version-1 file
+version 2, holding a sorted domain set (`domains`, at least one, and
+`retiredDomains`, disjoint from it). Startup migration reseals a version-1 file
 with the same key and the same `generation`, so queued and retrying deliveries stay
 valid; the runtime refuses version 1, and backups accept both. See
 [storage format migration](NATIVE_PROVISIONING.md#storage-format-migration). There are no relay
@@ -146,7 +164,7 @@ rotating provider credentials requires deliberate recovery, not deleting files
 to silence an error.
 
 Sealed backups include both files, decrypt the collected relay bytes and check
-their historical domain/issuer binding. Drills enforce the additive version-1
+their historical domain-set/issuer binding. Drills enforce the additive version-1
 recipe field `relay:domain-credentials-and-authority`. A relay-only restore also
 persists the native restore hold. Old backups without relay configuration remain
 compatible. Historical backup evidence grants no current sending authority;
@@ -169,7 +187,7 @@ controlled recipient; see the [test matrix](TURNKEY_MAIL_STACK_PLAN.md#operator-
 From `backend/`:
 
 ```sh
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailmsg ./internal/api ./internal/backup -run 'TestDomainRelay|TestNativeMailRelay' -count=1 -timeout=20m
+GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailmsg ./internal/api ./internal/backup -run 'TestDomainRelay|TestNativeMailRelay|TestNativeMailDomains|TestNativeRetiredRelayDomain' -count=1 -timeout=20m
 ```
 
 These tests use encrypted files, sealed capsules, actual authenticated HTTP

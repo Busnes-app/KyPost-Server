@@ -110,8 +110,14 @@ fi
 ( ulimit -n 256; exec "$MADDY_BINARY" --config "$CONFIG_DIR/receiving.conf" run )
 ```
 
-Generation performs existing-only storage admission, fresh TXT verification,
-and a final domain/issuer/restore check before emitting complete configuration.
+Generation performs existing-only storage admission, fresh TXT verification of
+every configured domain, and a final domain-set/issuer/restore check before
+emitting complete configuration. Every configured, non-retired domain is listed
+as a Maddy `destination`; at least one must currently prove. A domain whose
+proof has lapsed stays listed and its RCPT binds answer 451 until it proves
+again, so one lapsed domain never blocks the others. The configuration is not
+live: after adding or retiring a domain, regenerate it with the commands above
+and restart the receiver (or the supervised container). No hot reload exists.
 Validation failure emits no configuration; the temporary-file pattern preserves an older
 configuration after failure. Successful generation is historical evidence,
 not continuing authority or permission to change MX. RCPT and DATA continue

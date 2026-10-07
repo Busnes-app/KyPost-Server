@@ -111,7 +111,7 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 	}
 	ids, addresses := map[string]bool{}, map[string]bool{}
 	root := ""
-	domain, domainFormat, err := HistoricalNativeDomain(filepath.Dir(s.path))
+	domains, domainFormat, err := HistoricalNativeDomains(filepath.Dir(s.path))
 	if err != nil {
 		return native, err
 	}
@@ -138,7 +138,7 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 		if err != nil || revision != d.Revision {
 			return true, ErrNativeProvisioning
 		}
-		if domain.Issuer != a.Owner.Issuer || domain.Domain == "" {
+		if domains.Issuer != a.Owner.Issuer || domainFormat == 0 {
 			return true, ErrNativeProvisioning
 		}
 		if a.Address != "" {
@@ -147,8 +147,9 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 				Value   string `json:"value"`
 				Primary bool   `json:"primary"`
 			}{a.Address, true})
-			address, err := nativePrimary(requested, domain.Domain)
-			if err != nil || address != a.Address || addresses[address] {
+			// Every ledger address sits on a domain in the set, retired or not.
+			address, err := nativePrimary(requested, AddressDomain(a.Address))
+			if err != nil || address != a.Address || addresses[address] || !domains.Known(AddressDomain(address)) {
 				return true, ErrNativeProvisioning
 			}
 			addresses[address] = true

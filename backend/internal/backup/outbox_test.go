@@ -27,7 +27,7 @@ func TestNativeOutboxSealedClaimsSentAndDependencies(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath, keyPath := filepath.Join(s.dirs.Config, "native-relay.json"), filepath.Join(s.dirs.Secret, "native-relay.key")
-	relay, err := mailmsg.SaveDomainRelay(ctx, configPath, keyPath, mailmsg.DomainRelay{Domain: "example.test", Issuer: u.NativeMailboxIssuer, Host: "smtp.provider.test", Port: 465, Username: "operator-login", Password: "operator-secret"})
+	relay, err := mailmsg.SaveDomainRelay(ctx, configPath, keyPath, mailmsg.DomainRelay{Domains: []string{"example.test"}, Issuer: u.NativeMailboxIssuer, Host: "smtp.provider.test", Port: 465, Username: "operator-login", Password: "operator-secret"})
 	if err != nil {
 		t.Fatal(err)
 	}

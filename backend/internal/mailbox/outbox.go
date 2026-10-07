@@ -456,7 +456,7 @@ func ValidateOutboundSnapshot(ctx context.Context, path string, master []byte, r
 			return true, err
 		}
 		_, domain, _ := strings.Cut(job.From, "@")
-		if strings.ToLower(domain) != relay.Domain {
+		if !relay.Historical(strings.ToLower(domain)) {
 			return true, ErrOutbound
 		}
 		accepted := false
@@ -468,6 +468,38 @@ func ValidateOutboundSnapshot(ctx context.Context, path string, master []byte, r
 		}
 	}
 	return true, nil
+}
+
+// QueuedOutboundFrom lists the From address of every job with a queued or
+// retryable delivery. Submitting and uncertain attempts never count.
+func (s *Store) QueuedOutboundFrom(ctx context.Context, master []byte) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT job FROM outbox_deliveries WHERE state IN ('queued','retryable') ORDER BY job")
+	if err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	from := make([]string, 0, len(ids))
+	for _, id := range ids {
+		job, _, _, err := s.ReadOutbound(ctx, master, id)
+		if err != nil {
+			return nil, err
+		}
+		from = append(from, job.From)
+	}
+	return from, nil
 }
 
 // QuarantineOutbound retains unclaimed intent after authority/configuration

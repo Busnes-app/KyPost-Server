@@ -25,6 +25,16 @@ func provenNativeDomain(t *testing.T, config string) *NativeDomainStore {
 	return s
 }
 
+// persist replaces one domain's stored proof, as a restored or tampered file would.
+func (s *NativeDomainStore) persist(d NativeDomain) error {
+	set, err := s.readSet()
+	if err != nil {
+		return err
+	}
+	set.Domains[d.Domain] = d
+	return s.persistSet(set)
+}
+
 func TestNativeDomainProofAndFailure(t *testing.T) {
 	ctx := context.Background()
 	s := provenNativeDomain(t, t.TempDir())

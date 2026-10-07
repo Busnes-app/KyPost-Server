@@ -54,7 +54,20 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID string, action
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	proof, err := s.Domains.Verify(ctx)
+	// The From domain is the primary address's; it is rechecked under the fence.
+	life := NewLifecycleStore(s.ConfigDir)
+	hint, err := s.Accounts.Get(userID)
+	if err != nil {
+		return ErrNativeProvisioning
+	}
+	sender, known, err := life.NativeAssignment(hint.NativeMailboxIssuer, hint.SSOSub)
+	if err != nil {
+		return err
+	}
+	if !known || sender.Address == "" {
+		return ErrNativeProvisioning
+	}
+	proof, err := s.Domains.VerifyDomain(ctx, AddressDomain(sender.Address))
 	if err != nil {
 		return err
 	}
@@ -65,15 +78,14 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID string, action
 		return err
 	}
 	defer release()
-	current, err := s.Domains.Read()
-	if err != nil || current != proof || proof.VerifiedUntil <= time.Now().Unix() {
+	current, err := s.Domains.ReadSet()
+	if err != nil || !current.CurrentProof(proof) {
 		return ErrNativeDomain
 	}
 	return s.Settings.WithCurrentSettings(ctx, func(settings SSOSettings) error {
 		if !settings.Enabled || settings.IssuerURL != proof.Issuer {
 			return ErrNativeDomain
 		}
-		life := NewLifecycleStore(s.ConfigDir)
 		release, err := life.LockDirectoryContext(ctx)
 		if err != nil {
 			return err
@@ -88,6 +100,9 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID string, action
 				if err != nil {
 					return err
 				}
+				if AddressDomain(a.Address) != proof.Domain {
+					return ErrNativeDomain
+				}
 				if u.MustChangePassword {
 					return ErrNativeOutboundStale
 				}
@@ -96,7 +111,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID string, action
 					return ErrNativeProvisioning
 				}
 				relay, exists, err := mailmsg.ReadDomainRelay(filepath.Join(s.ConfigDir, "native-relay.json"), s.keyPath())
-				if err != nil || !exists || relay.Issuer != proof.Issuer || relay.Domain != proof.Domain {
+				if err != nil || !exists || relay.Issuer != proof.Issuer || !relay.Sends(proof.Domain) {
 					return mailmsg.ErrDomainRelay
 				}
 				key, err := cryptutil.LoadKey(s.keyPath())

@@ -186,7 +186,7 @@ func TestNativeReceivingAuthorityFencesLocalDeactivation(t *testing.T) {
 	}()
 	finished := make(chan error, 1)
 	go func() {
-		finished <- r.withAuthority(ctx, []string{created[0].ID}, nil, func(map[string]sso.NativeAssignment) error {
+		finished <- r.withAuthority(ctx, []string{created[0].ID}, []string{"one@example.test"}, nil, func(map[string]sso.NativeAssignment) error {
 			close(entered)
 			select {
 			case <-release:
@@ -225,7 +225,7 @@ func TestNativeReceivingAuthorityFencesLocalDeactivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	err = r.withAuthority(context.Background(), []string{created[0].ID}, nil, func(map[string]sso.NativeAssignment) error { called = true; return nil })
+	err = r.withAuthority(context.Background(), []string{created[0].ID}, []string{"one@example.test"}, nil, func(map[string]sso.NativeAssignment) error { called = true; return nil })
 	if err == nil || called {
 		t.Fatal("revoked local authority entered receive commit")
 	}

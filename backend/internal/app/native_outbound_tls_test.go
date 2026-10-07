@@ -38,7 +38,7 @@ func TestNativeOutboundWorkerTLSProcess(t *testing.T) {
 	secretDir := t.TempDir()
 	ctx := context.Background()
 	sender := sso.NativeOutbound{ConfigDir: r.configDir, StateRoot: r.stateDir, SecretDir: secretDir, Accounts: r.accounts, Domains: r.domains, Settings: sso.NewStore(r.configDir)}
-	_, err = mailmsg.SaveDomainRelay(ctx, filepath.Join(r.configDir, "native-relay.json"), filepath.Join(secretDir, "native-relay.key"), mailmsg.DomainRelay{Domain: "example.test", Issuer: u.NativeMailboxIssuer, Host: "127.0.0.1", Port: port, Username: "operator", Password: "test-secret"})
+	_, err = mailmsg.SaveDomainRelay(ctx, filepath.Join(r.configDir, "native-relay.json"), filepath.Join(secretDir, "native-relay.key"), mailmsg.DomainRelay{Domains: []string{"example.test"}, Issuer: u.NativeMailboxIssuer, Host: "127.0.0.1", Port: port, Username: "operator", Password: "test-secret"})
 	if err != nil {
 		t.Fatal(err)
 	}

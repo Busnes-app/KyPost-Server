@@ -20,7 +20,7 @@ func TestDomainRelaySurvivesSealedRestoreAndRejectsIncompleteSnapshots(t *testin
 	}
 	path, keyPath := filepath.Join(s.dirs.Config, "native-relay.json"), filepath.Join(s.dirs.Secret, "native-relay.key")
 	relay, err := mailmsg.SaveDomainRelay(context.Background(), path, keyPath, mailmsg.DomainRelay{
-		Domain: "example.test", Issuer: "https://idp.example", Host: "smtp.example.test", Port: 465, Username: "operator-login", Password: "operator-secret",
+		Domains: []string{"example.test"}, Issuer: "https://idp.example", Host: "smtp.example.test", Port: 465, Username: "operator-login", Password: "operator-secret",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +40,7 @@ func TestDomainRelaySurvivesSealedRestoreAndRejectsIncompleteSnapshots(t *testin
 		t.Fatal(err)
 	}
 	restored, exists, err := mailmsg.ReadDomainRelay(filepath.Join(dir, "config/native-relay.json"), filepath.Join(dir, "private/native-relay.key"))
-	if err != nil || !exists || restored != relay {
+	if err != nil || !exists || !restored.Equal(relay) {
 		t.Fatal("restored relay/key mismatch", exists, err)
 	}
 	for _, check := range drillChecks(dir, manifest) {

@@ -96,11 +96,13 @@ func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, stateRoot, iss
 	if role == users.RoleAdmin && !a.LegacyMixedUse {
 		return NativeAssignment{}, ErrNativeAdministrator
 	}
-	domain, err := NewNativeDomainStore(filepath.Dir(s.path)).Read()
-	if err != nil || domain.Issuer != issuer {
+	// The primary address may sit on any configured, non-retired domain.
+	domains, err := NewNativeDomainStore(filepath.Dir(s.path)).ReadSet()
+	domain := AddressDomain(a.Address)
+	if _, configured := domains.Domains[domain]; err != nil || domains.Issuer != issuer || !configured {
 		return NativeAssignment{}, ErrNativeProvisioning
 	}
-	address, err := nativePrimary(*d.Resource, domain.Domain)
+	address, err := nativePrimary(*d.Resource, domain)
 	if err != nil || address != a.Address || a.Revision > d.Revision {
 		return NativeAssignment{}, ErrNativeProvisioning
 	}

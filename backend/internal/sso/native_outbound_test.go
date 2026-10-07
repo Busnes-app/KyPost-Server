@@ -78,7 +78,7 @@ func outboundFixture(t *testing.T) (NativeOutbound, users.User, mailbox.Outbound
 	if err = settings.Save(SSOSettings{Enabled: true, IssuerURL: nativeIssuer}); err != nil {
 		t.Fatal(err)
 	}
-	_, err = mailmsg.SaveDomainRelay(ctx, filepath.Join(config, "native-relay.json"), filepath.Join(secrets, "native-relay.key"), mailmsg.DomainRelay{Domain: "example.test", Issuer: nativeIssuer, Host: "127.0.0.1", Port: 465, Username: "operator", Password: "test-only"})
+	_, err = mailmsg.SaveDomainRelay(ctx, filepath.Join(config, "native-relay.json"), filepath.Join(secrets, "native-relay.key"), mailmsg.DomainRelay{Domains: []string{"example.test"}, Issuer: nativeIssuer, Host: "127.0.0.1", Port: 465, Username: "operator", Password: "test-only"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestNativeOutboundRevocationBeforeClaim(t *testing.T) {
 			case "directory-revision":
 				nativeDesired(t, NewLifecycleStore(sender.ConfigDir), "one", "one@example.test", 2, true)
 			case "relay-generation":
-				_, err = mailmsg.SaveDomainRelay(ctx, filepath.Join(sender.ConfigDir, "native-relay.json"), sender.keyPath(), mailmsg.DomainRelay{Domain: "example.test", Issuer: nativeIssuer, Host: "127.0.0.1", Port: 465, Username: "operator", Password: "rotated"})
+				_, err = mailmsg.SaveDomainRelay(ctx, filepath.Join(sender.ConfigDir, "native-relay.json"), sender.keyPath(), mailmsg.DomainRelay{Domains: []string{"example.test"}, Issuer: nativeIssuer, Host: "127.0.0.1", Port: 465, Username: "operator", Password: "rotated"})
 				if err != nil {
 					t.Fatal(err)
 				}

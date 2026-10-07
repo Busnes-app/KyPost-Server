@@ -192,14 +192,28 @@ func openReceivingRuntime(ctx context.Context, initialize bool) (*receivingRunti
 	r.life = sso.NewLifecycleStore(r.configDir)
 	r.domains = sso.NewNativeDomainStore(r.configDir)
 	settings := sso.NewStore(r.configDir).Load()
-	domain, err := r.domains.Read()
-	if err != nil || !settings.Enabled || domain.Issuer != settings.IssuerURL || !domain.Established {
+	domains, err := r.domains.ReadSet()
+	established := []string{}
+	for name, d := range domains.Domains {
+		if d.Established {
+			established = append(established, name)
+		}
+	}
+	if err != nil || !settings.Enabled || domains.Issuer != settings.IssuerURL || len(established) == 0 {
 		return nil, sso.ErrNativeDomain
 	}
 	path := filepath.Join(r.stateDir, "receiving")
 	if initialize {
-		if _, err := r.domains.Verify(ctx); err != nil {
-			return nil, err
+		// One currently proven domain suffices; a lapsed one never blocks others.
+		proven := false
+		for _, name := range established {
+			if _, err := r.domains.VerifyDomain(ctx, name); err == nil {
+				proven = true
+				break
+			}
+		}
+		if !proven {
+			return nil, sso.ErrNativeDomain
 		}
 		// Explicit initialization never repairs a lost acknowledged holding root.
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
@@ -215,20 +229,58 @@ func openReceivingRuntime(ctx context.Context, initialize bool) (*receivingRunti
 	return r, nil
 }
 
-func (r *receivingRuntime) withAuthority(ctx context.Context, ids []string, proof *sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
+// verifyDomains freshly proves each distinct recipient domain. A delivery to
+// several domains is all-or-nothing, so one lapsed domain delays only it.
+// A domain outside the set (or retired) is no route at all.
+func (r *receivingRuntime) verifyDomains(ctx context.Context, addresses []string) ([]sso.NativeDomain, error) {
+	domains, err := r.domains.ReadSet()
+	if err != nil {
+		return nil, err
+	}
+	proofs := []sso.NativeDomain{}
+	seen := map[string]bool{}
+	for _, address := range addresses {
+		domain := sso.AddressDomain(address)
+		if seen[domain] {
+			continue
+		}
+		seen[domain] = true
+		if _, configured := domains.Domains[domain]; !configured {
+			return nil, ingress.ErrRoute
+		}
+		proof, err := r.domains.VerifyDomain(ctx, domain)
+		if err != nil {
+			return nil, err
+		}
+		proofs = append(proofs, proof)
+	}
+	return proofs, nil
+}
+
+// withAuthority fences only the recipients' domains: each must still be an
+// established member of the set, and every supplied proof still current.
+// Import supplies none, since accepted bytes are owed without fresh DNS.
+func (r *receivingRuntime) withAuthority(ctx context.Context, ids, addresses []string, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
 	// Match allocator lock order. DNS and stdin work happen before this fence.
 	release, err := fsutil.LockFileContext(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
 	if err != nil {
 		return err
 	}
 	defer release()
-	domain, err := r.domains.Read()
+	domains, err := r.domains.ReadSet()
 	settings := sso.NewStore(r.configDir).Load()
-	if err != nil || !settings.Enabled || domain.Issuer != settings.IssuerURL || !domain.Established {
+	if err != nil || !settings.Enabled || domains.Issuer != settings.IssuerURL {
 		return sso.ErrNativeDomain
 	}
-	if proof != nil && (domain != *proof || domain.VerifiedUntil <= time.Now().Unix()) {
-		return sso.ErrNativeDomain
+	for _, address := range addresses {
+		if !domains.Domains[sso.AddressDomain(address)].Established {
+			return sso.ErrNativeDomain
+		}
+	}
+	for _, proof := range proofs {
+		if !domains.CurrentProof(proof) {
+			return sso.ErrNativeDomain
+		}
 	}
 	return r.life.WithNativeMailAccess(ctx, r.stateDir, settings.IssuerURL, r.accounts, ids, action)
 }
@@ -243,18 +295,18 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 		return ingress.ErrRoute
 	}
 	recipient = strings.ToLower(recipient)
-	proof, err := r.domains.Verify(ctx)
+	proofs, err := r.verifyDomains(ctx, []string{recipient})
 	if err != nil {
 		return err
 	}
-	a, found, err := r.life.NativeAssignmentForAddress(proof.Issuer, recipient)
+	a, found, err := r.life.NativeAssignmentForAddress(proofs[0].Issuer, recipient)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return ingress.ErrRoute
 	}
-	return r.withAuthority(ctx, []string{a.Owner.Mailbox}, &proof, func(current map[string]sso.NativeAssignment) error {
+	return r.withAuthority(ctx, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
 		admitted := current[a.Owner.Mailbox]
 		if admitted.Owner != a.Owner || admitted.Address != recipient {
 			return ingress.ErrRoute
@@ -286,12 +338,12 @@ func (r *receivingRuntime) refreshRoute(ctx context.Context, a sso.NativeAssignm
 	return r.holding.SetRoute(ctx, route)
 }
 
-func (r *receivingRuntime) frozenAuthority(ctx context.Context, d ingress.Delivery, proof *sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
+func (r *receivingRuntime) frozenAuthority(ctx context.Context, d ingress.Delivery, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
 	ids := make([]string, 0, len(d.Bindings))
 	for _, b := range d.Bindings {
 		ids = append(ids, b.Mailbox)
 	}
-	return r.withAuthority(ctx, ids, proof, func(current map[string]sso.NativeAssignment) error {
+	return r.withAuthority(ctx, ids, bindingAddresses(d), proofs, func(current map[string]sso.NativeAssignment) error {
 		quarantine := func() error {
 			if d.State == "pending" {
 				if err := r.holding.QuarantinePending(ctx, r.gatewayID(), d.ID); err != nil {
@@ -312,7 +364,7 @@ func (r *receivingRuntime) frozenAuthority(ctx context.Context, d ingress.Delive
 			if !known || resource.Revision != b.Generation {
 				return quarantine()
 			}
-			if err := r.refreshRoute(ctx, a, proof == nil); err != nil {
+			if err := r.refreshRoute(ctx, a, proofs == nil); err != nil {
 				return err
 			}
 		}
@@ -363,11 +415,11 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 	if len(raw) == 0 || int64(len(raw)) > receivingLimits.MessageBytes {
 		return ingress.ErrCapacity
 	}
-	proof, err := r.domains.Verify(ctx)
+	d, err := r.holding.Get(ctx, r.gatewayID(), id)
 	if err != nil {
 		return err
 	}
-	d, err := r.holding.Get(ctx, r.gatewayID(), id)
+	proofs, err := r.verifyDomains(ctx, bindingAddresses(d))
 	if err != nil {
 		return err
 	}
@@ -383,7 +435,7 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 			return err
 		}
 	}
-	return r.frozenAuthority(ctx, d, &proof, func(current map[string]sso.NativeAssignment) error {
+	return r.frozenAuthority(ctx, d, proofs, func(current map[string]sso.NativeAssignment) error {
 		for _, a := range current {
 			if int64(len(raw)) > a.Limits.MessageBytes {
 				return ingress.ErrCapacity
@@ -391,6 +443,14 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 		}
 		return r.holding.Accept(ctx, r.gatewayID(), id, sender, bytes.NewReader(raw))
 	})
+}
+
+func bindingAddresses(d ingress.Delivery) []string {
+	addresses := make([]string, 0, len(d.Bindings))
+	for _, b := range d.Bindings {
+		addresses = append(addresses, b.Address)
+	}
+	return addresses
 }
 
 func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error {

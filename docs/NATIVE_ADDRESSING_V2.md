@@ -7,7 +7,10 @@ keyed to the directory revision; until phase 3 each saved primary address genera
 is `max(stored, directory revision)`. Phase 1b is implemented: administrator
 subjects get mailbox-less accounts and are refused by native admission unless
 `legacyMixedUse`, which only demotion clears; promotion is enforced by admission
-without a generation bump until phase 3. Phases 2–4 are not implemented.
+without a generation bump until phase 3. Phase 2a is implemented: the backend
+for several verified domains (domain-set admin API, primary address on any
+configured domain, per-domain fences, retirement, relay domain set, Maddy
+destinations); the admin UI (phase 2b) and phases 3–4 are not implemented.
 Prerequisite of
 [continuous Cloudflare receiving](CLOUDFLARE_CONTINUOUS_RECEIVING.md); applies to
 both native receiving profiles. External IMAP accounts are unaffected.
@@ -40,8 +43,11 @@ separation).
 
 ### Domain set: `$CONFIG/native-domains.json` (version 1)
 
-`{version, issuer, domains: {"<domain>": {token, expiresAt, established,
-verifiedUntil}}, retired: ["<domain>"]}`. One issuer for the whole set; each domain keeps its own
+`{version, issuer, founding, domains: {"<domain>": {token, expiresAt, established,
+verifiedUntil}}, retired: ["<domain>"]}`. `founding` is the first configured
+domain still in service, which the single-domain admin routes serve (absent in
+files that hold one domain); retiring it hands those routes to the smallest
+remaining domain. One issuer for the whole set; each domain keeps its own
 `_kypost-mail.<domain>` proof and re-verification as today. One lock,
 `native-domains.json.lock`, takes the position of `native-domain.json.lock` in every
 lock order. Fences compare the proofs of the domains an operation touches, so
@@ -53,6 +59,7 @@ Removing a domain **retires** it: refused while any address on it is `active` or
 a `queued`/`retryable` outbox job sends from it; otherwise the domain moves to
 `retired` (no proof, no routing, no sending) and its address records stay, with
 their history, so generations are never reused and old bindings still validate.
+A retired domain is never re-added.
 Retirement is never automatic: a lapsed proof suspends reception and sending on that
 domain; mail stays where it is.
 

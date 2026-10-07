@@ -20,7 +20,7 @@ func TestNativeBackupAcceptsV1AndV2Snapshots(t *testing.T) {
 	ctx := context.Background()
 	keyPath := filepath.Join(s.dirs.Secret, "native-relay.key")
 	if _, err := mailmsg.SaveDomainRelay(ctx, filepath.Join(s.dirs.Config, "native-relay.json"), keyPath, mailmsg.DomainRelay{
-		Domain: "example.test", Issuer: "https://identity.example.test", Host: "smtp.example.test", Port: 465, Username: "operator", Password: "test-only",
+		Domains: []string{"example.test"}, Issuer: "https://identity.example.test", Host: "smtp.example.test", Port: 465, Username: "operator", Password: "test-only",
 	}); err != nil {
 		t.Fatal(err)
 	}

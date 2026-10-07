@@ -28,12 +28,30 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	proof, err := domains.Verify(ctx)
+	set, err := domains.ReadSet()
 	if err != nil {
 		return users.User{}, err
 	}
-	if proof.Issuer != issuer {
+	if set.Issuer != issuer {
 		return users.User{}, ErrNativeDomain
+	}
+	// Prove the requested primary address's domain; reconcile rechecks the
+	// address against it under the directory fence.
+	requested, _, err := s.Directory(issuer, subject)
+	if err != nil {
+		return users.User{}, err
+	}
+	domain := ""
+	if requested.Resource != nil {
+		for _, email := range requested.Resource.Emails {
+			if email.Primary {
+				domain = AddressDomain(email.Value)
+			}
+		}
+	}
+	proof, err := domains.VerifyDomain(ctx, domain)
+	if err != nil {
+		return users.User{}, err
 	}
 	ctx, proofCancel := context.WithDeadline(ctx, time.Unix(proof.VerifiedUntil, 0))
 	defer proofCancel()
@@ -42,11 +60,11 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 		return users.User{}, err
 	}
 	defer release()
-	current, err := domains.Read()
+	current, err := domains.ReadSet()
 	if err != nil {
 		return users.User{}, err
 	}
-	if current != proof || proof.VerifiedUntil <= time.Now().Unix() {
+	if !current.CurrentProof(proof) {
 		return users.User{}, ErrNativeDomain
 	}
 	releaseDirectory, err := fsutil.LockFileContext(ctx, s.path)

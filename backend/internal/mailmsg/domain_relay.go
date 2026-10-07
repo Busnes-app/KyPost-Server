@@ -9,6 +9,7 @@ import (
 	"net/smtp"
 	"net/textproto"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,15 +22,29 @@ var ErrDomainRelay = errors.New("domain relay configuration missing or invalid; 
 // DomainRelay is always encrypted on disk. Username authenticates the relay;
 // it is never the mailbox's From address or authority to send as an address.
 // This profile supports verified implicit TLS with mandatory authentication.
-// Domain is the one entry of the version-2 domain set in this phase.
+// Domains may be used as From; RetiredDomains only validate historical jobs.
+// Both are sorted and disjoint.
 type DomainRelay struct {
-	Generation string
-	Domain     string
-	Issuer     string
-	Host       string
-	Port       int
-	Username   string
-	Password   string
+	Generation     string
+	Domains        []string
+	RetiredDomains []string
+	Issuer         string
+	Host           string
+	Port           int
+	Username       string
+	Password       string
+}
+
+// Sends reports whether From may use domain.
+func (c DomainRelay) Sends(domain string) bool { return slices.Contains(c.Domains, domain) }
+
+// Historical reports whether a stored job's From domain was ever in the set.
+func (c DomainRelay) Historical(domain string) bool {
+	return c.Sends(domain) || slices.Contains(c.RetiredDomains, domain)
+}
+
+func (c DomainRelay) Equal(o DomainRelay) bool {
+	return c.Generation == o.Generation && slices.Equal(c.Domains, o.Domains) && slices.Equal(c.RetiredDomains, o.RetiredDomains) && c.Issuer == o.Issuer && c.Host == o.Host && c.Port == o.Port && c.Username == o.Username && c.Password == o.Password
 }
 
 // domainRelayFile is the sealed JSON. Version 2 holds a domain set; version 1
@@ -58,7 +73,7 @@ func (c DomainRelay) Deliver(from string, recipients []string, msg []byte) error
 		return err
 	}
 	_, domain, _ := strings.Cut(from, "@")
-	if strings.ToLower(domain) != c.Domain || len(recipients) == 0 {
+	if !c.Sends(strings.ToLower(domain)) || len(recipients) == 0 {
 		return errors.New("domain relay sender or recipients refused; authorize the mailbox address in the configured domain")
 	}
 	normalized, err := NormalizeSMTPMessage(msg)
@@ -132,7 +147,11 @@ func relayDNSName(v string) bool {
 }
 
 func (c DomainRelay) Validate() error {
-	if len(c.Generation) != 36 || !fsutil.SafePathComponent(c.Generation) || !relayDNSName(c.Domain) || !relayDNSName(c.Host) || c.Issuer == "" || len(c.Issuer) > 2048 || strings.ContainsAny(c.Issuer, "\r\n\x00") || c.Port < 1 || c.Port > 65535 || c.Username == "" || len(c.Username) > 512 || c.Password == "" || len(c.Password) > 4096 || strings.ContainsAny(c.Username+c.Password, "\r\n\x00") {
+	all := slices.Concat(c.Domains, c.RetiredDomains)
+	if len(c.Domains) == 0 || !slices.IsSorted(c.Domains) || !slices.IsSorted(c.RetiredDomains) || len(slices.Compact(slices.Sorted(slices.Values(all)))) != len(all) || slices.ContainsFunc(all, func(d string) bool { return !relayDNSName(d) }) {
+		return ErrDomainRelay
+	}
+	if len(c.Generation) != 36 || !fsutil.SafePathComponent(c.Generation) || !relayDNSName(c.Host) || c.Issuer == "" || len(c.Issuer) > 2048 || strings.ContainsAny(c.Issuer, "\r\n\x00") || c.Port < 1 || c.Port > 65535 || c.Username == "" || len(c.Username) > 512 || c.Password == "" || len(c.Password) > 4096 || strings.ContainsAny(c.Username+c.Password, "\r\n\x00") {
 		return ErrDomainRelay
 	}
 	return nil
@@ -154,11 +173,11 @@ func DecodeDomainRelay(raw, key []byte) (DomainRelay, int, error) {
 	if err != nil || json.Unmarshal(plain, &f) != nil {
 		return DomainRelay{}, 0, ErrDomainRelay
 	}
-	c := DomainRelay{Generation: f.Generation, Domain: f.Domain, Issuer: f.Issuer, Host: f.Host, Port: f.Port, Username: f.Username, Password: f.Password}
+	c := DomainRelay{Generation: f.Generation, Domains: f.Domains, RetiredDomains: f.RetiredDomains, Issuer: f.Issuer, Host: f.Host, Port: f.Port, Username: f.Username, Password: f.Password}
 	switch {
 	case f.Version == 1 && f.Domains == nil && f.RetiredDomains == nil:
-	case f.Version == 2 && f.Domain == "" && len(f.Domains) == 1 && len(f.RetiredDomains) == 0:
-		c.Domain = f.Domains[0]
+		c.Domains = []string{f.Domain}
+	case f.Version == 2 && f.Domain == "":
 	default:
 		return DomainRelay{}, 0, ErrDomainRelay
 	}
@@ -173,7 +192,7 @@ func SealDomainRelay(c DomainRelay, key []byte) ([]byte, error) {
 	if c.Validate() != nil {
 		return nil, ErrDomainRelay
 	}
-	plain, err := json.Marshal(domainRelayFile{Version: 2, Generation: c.Generation, Domains: []string{c.Domain}, RetiredDomains: []string{}, Issuer: c.Issuer, Host: c.Host, Port: c.Port, Username: c.Username, Password: c.Password})
+	plain, err := json.Marshal(domainRelayFile{Version: 2, Generation: c.Generation, Domains: c.Domains, RetiredDomains: append([]string{}, c.RetiredDomains...), Issuer: c.Issuer, Host: c.Host, Port: c.Port, Username: c.Username, Password: c.Password})
 	if err != nil {
 		return nil, err
 	}
@@ -220,18 +239,43 @@ func ReadDomainRelay(path, keyPath string) (DomainRelay, bool, error) {
 // generating anything. A new generation prevents queued jobs adopting a later
 // relay configuration silently. It does not enable sending or test the provider.
 func SaveDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay) (DomainRelay, error) {
-	var err error
-	c.Generation, err = fsutil.NewUUIDv4()
-	if err != nil || c.Validate() != nil {
-		return DomainRelay{}, ErrDomainRelay
-	}
+	return saveDomainRelay(ctx, path, keyPath, c, true)
+}
+
+// SetDomainRelayDomains changes only the saved relay's domain set and keeps its
+// Generation, so queued jobs on retained domains stay valid. Callers hold the
+// domain fence and have refused removing a domain that queued jobs still use.
+func SetDomainRelayDomains(ctx context.Context, path, keyPath string, domains []string) (DomainRelay, error) {
+	return saveDomainRelay(ctx, path, keyPath, DomainRelay{Domains: domains}, false)
+}
+
+// Domains leaving the set move to RetiredDomains; re-added ones leave it.
+func saveDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay, transport bool) (DomainRelay, error) {
+	domains := slices.Compact(slices.Sorted(slices.Values(c.Domains)))
 	release, err := fsutil.LockFileContext(ctx, path)
 	if err != nil {
 		return DomainRelay{}, err
 	}
 	defer release()
 	prior, exists, err := ReadDomainRelay(path, keyPath)
-	if err != nil || exists && (prior.Domain != c.Domain || prior.Issuer != c.Issuer) {
+	if err != nil || !exists && !transport || exists && transport && prior.Issuer != c.Issuer {
+		return DomainRelay{}, ErrDomainRelay
+	}
+	if transport {
+		if c.Generation, err = fsutil.NewUUIDv4(); err != nil {
+			return DomainRelay{}, ErrDomainRelay
+		}
+	} else {
+		c = prior
+	}
+	c.Domains, c.RetiredDomains = domains, nil
+	for _, domain := range slices.Concat(prior.Domains, prior.RetiredDomains) {
+		if !slices.Contains(domains, domain) {
+			c.RetiredDomains = append(c.RetiredDomains, domain)
+		}
+	}
+	slices.Sort(c.RetiredDomains)
+	if c.Validate() != nil {
 		return DomainRelay{}, ErrDomainRelay
 	}
 	key, err := cryptutil.LoadOrCreateKey(keyPath)
