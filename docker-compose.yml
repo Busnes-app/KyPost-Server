@@ -64,6 +64,9 @@ services:
       KYPOST_BACKUP_DIR: ${KYPOST_BACKUP_DIR:-}
       KYPOST_BACKUP_KEEP: ${KYPOST_BACKUP_KEEP:-7}
       KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY: ${KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY:-false}
+      # Restic repository for mail databases (see the commented volume below and
+      # docs/RESTORE.md). Empty keeps them inside the capsule, capped at 64 MiB each.
+      KYPOST_BULK_BACKUP_REPOSITORY: ${KYPOST_BULK_BACKUP_REPOSITORY:-}
       # Peers whose X-Forwarded-For/Proto/Host may be believed: a comma-separated
       # list of CIDRs or bare IPs (not hostnames). Empty trusts nothing and uses
       # the connection's own address.
@@ -131,6 +134,10 @@ services:
       - kypost_private:/kypost/private
       - kypost_logs:/kypost/logs
       - kypost_state:/kypost/state
+      # Uncomment for KYPOST_BULK_BACKUP_REPOSITORY=/kypost-bulk: an operator-owned
+      # host directory, ideally on another disk, writable by the container's
+      # kypost user. Never inside the volumes above.
+      # - /srv/kypost-restic:/kypost-bulk
       - ${OLLAMA_MODELS_HOST_DIR:-./share/ollama/models}:/kypost/ollama-models
     restart: unless-stopped
 

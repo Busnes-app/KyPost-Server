@@ -85,24 +85,14 @@ func (s *Store) RecentBackupAudit(limit int) ([]BackupAudit, error) {
 }
 
 // SnapshotDB returns a consistent copy of the SQLite database at path,
-// including rows still in its WAL, through the library's VACUUM INTO. It opens
-// a fresh handle because the collector runs in whichever process was asked
-// (api or daemon) and neither holds every user's store; WAL locking is what
-// makes a third reader safe. scratchDir must be a 0700 directory the caller
-// owns and removes; the copy is written there under a fresh name and read back.
+// including rows still in its WAL. scratchDir must be a 0700 directory the
+// caller owns and removes; the copy is written there under a fresh name and
+// read back, at most one byte past the capsule's per-file cap.
 func SnapshotDB(ctx context.Context, path, scratchDir string) ([]byte, error) {
-	if _, err := os.Stat(path); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=rw&_pragma=busy_timeout(5000)")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
 	dest := filepath.Join(scratchDir, fmt.Sprintf("snap-%d.db", time.Now().UnixNano()))
 	defer os.Remove(dest)
-	if err := recoveryclient.SQLiteSnapshot(ctx, db, dest); err != nil {
-		return nil, fmt.Errorf("snapshot %s: %w", path, err)
+	if err := SnapshotDBToFile(ctx, path, dest); err != nil {
+		return nil, err
 	}
 	f, err := os.Open(dest)
 	if err != nil {
@@ -110,6 +100,26 @@ func SnapshotDB(ctx context.Context, path, scratchDir string) ([]byte, error) {
 	}
 	defer f.Close()
 	return io.ReadAll(io.LimitReader(f, recoveryclient.MaxCapsuleFileBytes+1))
+}
+
+// SnapshotDBToFile writes a consistent copy of the SQLite database at path to
+// dest, which must not exist, through the library's VACUUM INTO; nothing is
+// buffered in memory. It opens a fresh handle because the collector runs in
+// whichever process was asked (api or daemon) and neither holds every user's
+// store; WAL locking is what makes a third reader safe.
+func SnapshotDBToFile(ctx context.Context, path, dest string) error {
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=rw&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := recoveryclient.SQLiteSnapshot(ctx, db, dest); err != nil {
+		return fmt.Errorf("snapshot %s: %w", path, err)
+	}
+	return nil
 }
 
 // BackupSettingsTransaction publishes a multi-row pairing change atomically.

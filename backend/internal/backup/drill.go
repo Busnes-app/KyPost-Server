@@ -26,7 +26,35 @@ func (s *Service) Drill(ctx context.Context) (*recoveryclient.DrillResult, error
 	if err != nil {
 		return nil, err
 	}
-	return recoveryclient.Drill(ctx, filepath.Join(s.dirs.State, scratchDirName), p, drillChecks)
+	return recoveryclient.Drill(ctx, filepath.Join(s.dirs.State, scratchDirName), p, func(dir string, opened capsule.Manifest) []recoveryclient.Check {
+		// The bulk snapshot round-trips through the same restore an operator runs.
+		bulk := []recoveryclient.Check{}
+		if _, err := os.Stat(filepath.Join(dir, bulkManifestPath)); err == nil {
+			err = RestoreBulk(ctx, dir, s.cfg.BulkRepository, s.cfg.ResticBinary)
+			check := recoveryclient.Check{Name: "bulk:restore", Passed: err == nil, Message: "mail snapshot restored and every digest matched"}
+			if err != nil {
+				check.Message = recoveryclient.AuditSafe(err.Error())
+			}
+			bulk = append(bulk, check)
+		}
+		return append(bulk, drillChecks(dir, opened)...)
+	})
+}
+
+// drillPaths is every member to check: the capsule's files and, when its
+// sealed manifest names them, the restored bulk mail databases.
+func drillPaths(dir string, opened capsule.Manifest) []string {
+	paths := []string{}
+	for _, f := range opened.Files {
+		paths = append(paths, f.Path)
+	}
+	var m BulkManifest
+	if raw, err := os.ReadFile(filepath.Join(dir, bulkManifestPath)); err == nil && json.Unmarshal(raw, &m) == nil {
+		for _, f := range m.Files {
+			paths = append(paths, f.Path)
+		}
+	}
+	return paths
 }
 
 func drillChecks(dir string, opened capsule.Manifest) []recoveryclient.Check {
@@ -56,24 +84,24 @@ func drillChecks(dir string, opened capsule.Manifest) []recoveryclient.Check {
 		_, err := os.Stat(filepath.Join(dir, name))
 		check("present:"+name, err == nil)
 	}
-	for _, file := range opened.Files {
-		if !fs.ValidPath(file.Path) {
+	for _, path := range drillPaths(dir, opened) {
+		if !fs.ValidPath(path) {
 			check("file path", false)
 			continue
 		}
-		if snapshotDatabase(filepath.Base(file.Path)) {
-			check("sqlite:"+file.Path, integrityOK(filepath.Join(dir, file.Path)))
+		if snapshotDatabase(filepath.Base(path)) {
+			check("sqlite:"+path, integrityOK(filepath.Join(dir, path)))
 		}
-		if filepath.Base(file.Path) == "mailbox.db" {
+		if filepath.Base(path) == "mailbox.db" {
 			relay, _, _ := mailmsg.ReadDomainRelayAnyVersion(filepath.Join(dir, "config/native-relay.json"), filepath.Join(dir, "private/native-relay.key"))
 			key, _ := cryptutil.LoadKey(filepath.Join(dir, "private/native-relay.key"))
-			has, err := mailbox.ValidateOutboundSnapshot(context.Background(), filepath.Join(dir, file.Path), key, relay)
-			check("outbox:"+file.Path, err == nil)
+			has, err := mailbox.ValidateOutboundSnapshot(context.Background(), filepath.Join(dir, path), key, relay)
+			check("outbox:"+path, err == nil)
 			if has {
 				check("recipe:outbox", recipe["outbox"] == "encrypted-jobs-claims-and-sent")
 			}
 		}
-		if file.Path == "config/native-relay.json" {
+		if path == "config/native-relay.json" {
 			check("recipe:relay", recipe["relay"] == "domain-credentials-and-authority")
 		}
 	}

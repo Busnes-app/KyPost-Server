@@ -130,6 +130,10 @@ jobs:
       # Run all non-api backend tests in parallel. This includes processor,
       # users, pgpmail, contacts, state, rules, mailmsg, adapters, and
       # utility packages. These can safely run together and complete in ~4-5 minutes.
+      # Mail bulk backup tests run the real restic CLI and fail without it in CI.
+      - name: install restic
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends restic
+
       - name: go test -race (all packages except api)
         run: go list ./... | grep -v "^github.com/Busnes-app/kypost-server/backend/internal/api$" | xargs go test -race -count=1 -timeout=20m
 

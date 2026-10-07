@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -36,7 +37,7 @@ func snapshotDatabase(name string) bool {
 // in "-migrated", which the ".migrated" rule does not match.
 func skip(name string) bool {
 	// The Cloudflare host record is this host's live marker: a restore must start fenced.
-	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || strings.HasPrefix(name, cfreceiving.HostFile) || name == ingress.EvidenceDamagedFile || strings.HasSuffix(name, ".lock") ||
+	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || name == bulkManifestName || strings.HasPrefix(name, cfreceiving.HostFile) || name == ingress.EvidenceDamagedFile || strings.HasSuffix(name, ".lock") ||
 		strings.HasSuffix(name, ".migrated") || strings.HasSuffix(name, ".v1-migrated") || strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")
 }
 
@@ -63,17 +64,37 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 		return empty, err
 	}
 	defer os.RemoveAll(scratch)
+	// The repository key exists before the walk so the capsule seals it.
+	var bulk *bulkStage
+	var bulkKey []byte
+	if s.cfg.BulkRepository != "" {
+		if bulkKey, err = s.bulkKey(ctx); err != nil {
+			return empty, fmt.Errorf("bulk backup repository: %w", err)
+		}
+		bulk = &bulkStage{dir: filepath.Join(scratch, "bulk")}
+	}
 	files := []recoveryclient.File{}
 	var total int64
 	have := map[string]bool{}
 	imaps := []string{}
+	totalHint := ""
+	fileCap := func(rel string) error {
+		hint := ""
+		if bulkDatabase(path.Base(rel)) {
+			hint = bulkHint
+		}
+		return fmt.Errorf("%s exceeds the 64 MiB per-file backup cap%s", rel, hint)
+	}
 	add := func(rel string, data []byte) error {
 		if int64(len(data)) > recoveryclient.MaxCapsuleFileBytes {
-			return fmt.Errorf("%s exceeds the 64 MiB per-file backup cap", rel)
+			return fileCap(rel)
+		}
+		if bulkDatabase(path.Base(rel)) {
+			totalHint = bulkHint
 		}
 		total += int64(len(data))
 		if total > recoveryclient.MaxCapsuleTotalBytes {
-			return fmt.Errorf("payload exceeds the 256 MiB backup cap")
+			return fmt.Errorf("payload exceeds the 256 MiB backup cap%s", totalHint)
 		}
 		have[rel] = true
 		files = append(files, recoveryclient.File{Path: rel, Data: data, Mode: 0600})
@@ -88,9 +109,13 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 		if !info.Mode().IsRegular() {
 			return empty, fmt.Errorf("cannot back up non-regular file state/%s", ingressRel)
 		}
-		raw, err := state.SnapshotDB(ctx, ingressPath, scratch)
-		if err == nil {
-			err = add("state/"+ingressRel, raw)
+		if bulk != nil {
+			err = bulk.snapshot(ctx, ingressPath, "state/"+ingressRel)
+		} else {
+			var raw []byte
+			if raw, err = state.SnapshotDB(ctx, ingressPath, scratch); err == nil {
+				err = add("state/"+ingressRel, raw)
+			}
 		}
 		if err != nil {
 			return empty, fmt.Errorf("collect state/%s: %w", ingressRel, err)
@@ -143,8 +168,14 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 					slog.Warn("backup skipped sender evidence", "actor", "backup", "task_id", "backup", "action", "collect", "target", name, "result", "skipped-oversized")
 					return nil
 				}
+				if bulk != nil && bulkDatabase(d.Name()) {
+					if err := bulk.snapshot(ctx, full, name); err != nil {
+						return fmt.Errorf("collect %s: %w", name, err)
+					}
+					return nil
+				}
 				if info.Size() > recoveryclient.MaxCapsuleFileBytes {
-					return fmt.Errorf("%s exceeds the 64 MiB per-file backup cap", name)
+					return fileCap(name)
 				}
 				var raw []byte
 				if snapshotDatabase(d.Name()) {
@@ -218,8 +249,28 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	if err := validateDependencies(files); err != nil {
 		return empty, err
 	}
-	if err := validateNativePayload(ctx, files, scratch); err != nil {
+	staged := map[string]string{}
+	if bulk != nil {
+		for _, rel := range bulk.files {
+			staged[rel] = bulk.path(rel)
+		}
+	}
+	if err := validateNativePayload(ctx, files, staged, scratch); err != nil {
 		return empty, err
+	}
+	// Restic runs last: a payload refused above leaves no snapshot behind. The
+	// snapshot points are the VACUUM INTO copies, so this order changes nothing.
+	if len(staged) > 0 {
+		if !have["private/"+bulkKeyName] {
+			return empty, fmt.Errorf("refusing to seal a bulk snapshot without private/%s", bulkKeyName)
+		}
+		manifest, err := s.backupBulk(ctx, bulk, bulkKey)
+		if err != nil {
+			return empty, fmt.Errorf("mail bulk backup: %w", err)
+		}
+		if err := add(bulkManifestPath, manifest); err != nil {
+			return empty, err
+		}
 	}
 	return recoveryclient.Payload{ServiceName: AppName, AppVersion: s.version, Files: files,
 		Dependencies:       map[string]any{"ollama": "model cache downloads again", "layout": "restore config, private and state to CONFIG_DIR, SECRET_DIR and STATE_DIR"},

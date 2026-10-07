@@ -57,6 +57,27 @@ it("requires a credential and sends the derived form for backup", async () => {
   );
 });
 
+it("shows where mail databases are backed up", async () => {
+  vi.mocked(getJSON).mockResolvedValue({
+    keyId: "paired-key",
+    paired: false,
+    localCopies: [],
+    intervalSec: 0,
+    recent: [],
+    excluded: "IMAP mail excluded",
+    bulkRepository: "/kypost-bulk",
+    lastBulk: {
+      snapshot: "0123456789abcdef".repeat(4),
+      at: "2026-10-07T10:00:00Z",
+      sizeBytes: 42,
+    },
+  });
+  render(<Backup />);
+  await screen.findByText(
+    "Restic snapshot 0123456789ab, 2026-10-07T10:00:00Z, 42 bytes",
+  );
+});
+
 it("keeps paired setup and history collapsed while backup actions stay visible", async () => {
   vi.mocked(getJSON).mockResolvedValue({
     keyId: "paired-key",

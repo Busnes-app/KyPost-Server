@@ -22,14 +22,18 @@ type BackupConfig struct {
 	Dir                  string
 	Keep                 int
 	AllowPrivateRecovery bool
+	// BulkRepository is the restic repository for mail databases; empty keeps them in the capsule.
+	BulkRepository string
+	ResticBinary   string
 }
 
 // LoadBackupConfig reads KYPOST_BACKUP_DEPOSIT_INTERVAL (default 24h; 0 off;
 // otherwise within the library's [MinInterval, MaxInterval]), KYPOST_BACKUP_DIR
 // (absolute, empty off), KYPOST_BACKUP_KEEP (default 7, at least 1) and
-// KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY (true/false).
+// KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY (true/false), KYPOST_BULK_BACKUP_REPOSITORY
+// (absolute, empty off) and KYPOST_RESTIC_BINARY (default "restic").
 func LoadBackupConfig() (BackupConfig, error) {
-	c := BackupConfig{DepositInterval: 24 * time.Hour, Keep: DefaultBackupKeep}
+	c := BackupConfig{DepositInterval: 24 * time.Hour, Keep: DefaultBackupKeep, ResticBinary: "restic"}
 	if raw := strings.TrimSpace(os.Getenv("KYPOST_BACKUP_DEPOSIT_INTERVAL")); raw != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil {
@@ -59,6 +63,15 @@ func LoadBackupConfig() (BackupConfig, error) {
 			return c, fmt.Errorf("KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY must be a boolean")
 		}
 		c.AllowPrivateRecovery = enabled
+	}
+	if repo := strings.TrimSpace(os.Getenv("KYPOST_BULK_BACKUP_REPOSITORY")); repo != "" {
+		if !filepath.IsAbs(repo) {
+			return c, fmt.Errorf("KYPOST_BULK_BACKUP_REPOSITORY %q must be an absolute path", repo)
+		}
+		c.BulkRepository = filepath.Clean(repo)
+	}
+	if bin := strings.TrimSpace(os.Getenv("KYPOST_RESTIC_BINARY")); bin != "" {
+		c.ResticBinary = bin
 	}
 	return c, nil
 }

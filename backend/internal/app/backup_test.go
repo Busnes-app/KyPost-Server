@@ -94,3 +94,33 @@ func TestRestoreCLIFailurePreservesNativeDataWithoutSuccess(t *testing.T) {
 		t.Fatal("failed restore did not leave hold")
 	}
 }
+
+// A capsule naming a bulk snapshot never restores without its repository.
+func TestRestoreCLIRefusesBulkWithoutRepository(t *testing.T) {
+	t.Setenv("KYPOST_BULK_BACKUP_REPOSITORY", "")
+	key, err := recoverykey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	shares, err := recoverykey.Split(key, 2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte(`{"version":1,"snapshot":"` + strings.Repeat("a", 64) + `","root":"/mail","files":[{"path":"state/receiving/ingress.db","sha256":"` + strings.Repeat("b", 64) + `","size":1}]}`)
+	raw, _, err := recoveryclient.Seal(recoveryclient.Payload{ServiceName: backup.AppName, AppVersion: "test", Files: []recoveryclient.File{{Path: "state/mail-bulk.json", Data: manifest, Mode: 0600}}}, recoveryclient.RecoveryKey{Public: key.Public(), Threshold: 2, TotalShares: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, target := filepath.Join(t.TempDir(), "bulk.kycap"), filepath.Join(t.TempDir(), "restore")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = runRestore([]string{path, target}, strings.NewReader(shares[0].String()+"\n"+shares[1].String()+"\n"), &out)
+	if err == nil || !strings.Contains(err.Error(), "KYPOST_BULK_BACKUP_REPOSITORY") || out.Len() != 0 {
+		t.Fatalf("bulk capsule restored without its repository: output=%q err=%v", out.String(), err)
+	}
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("refused restore published destination", err)
+	}
+}

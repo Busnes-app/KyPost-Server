@@ -7,7 +7,7 @@ import (
 
 func clearBackupEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"KYPOST_BACKUP_DEPOSIT_INTERVAL", "KYPOST_BACKUP_DIR", "KYPOST_BACKUP_KEEP", "KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY"} {
+	for _, k := range []string{"KYPOST_BACKUP_DEPOSIT_INTERVAL", "KYPOST_BACKUP_DIR", "KYPOST_BACKUP_KEEP", "KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY", "KYPOST_BULK_BACKUP_REPOSITORY", "KYPOST_RESTIC_BINARY"} {
 		t.Setenv(k, "")
 	}
 }
@@ -18,7 +18,7 @@ func TestLoadBackupConfigDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.DepositInterval != 24*time.Hour || c.Dir != "" || c.Keep != 7 || c.AllowPrivateRecovery {
+	if c.DepositInterval != 24*time.Hour || c.Dir != "" || c.Keep != 7 || c.AllowPrivateRecovery || c.BulkRepository != "" || c.ResticBinary != "restic" {
 		t.Fatalf("defaults wrong: %+v", c)
 	}
 }
@@ -30,6 +30,7 @@ func TestLoadBackupConfigRejectsBadValues(t *testing.T) {
 		"interval not a duration": {"KYPOST_BACKUP_DEPOSIT_INTERVAL", "daily"},
 		"relative dir":            {"KYPOST_BACKUP_DIR", "backups"},
 		"keep zero":               {"KYPOST_BACKUP_KEEP", "0"},
+		"relative bulk repo":      {"KYPOST_BULK_BACKUP_REPOSITORY", "restic-repo"},
 	}
 	for name, kv := range cases {
 		t.Run(name, func(t *testing.T) {

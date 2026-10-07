@@ -165,6 +165,14 @@ func runRestore(rest []string, stdin io.Reader, stdout io.Writer) error {
 	if err := recoveryclient.Restore(rest[0], staging, backup.AppName, shares, &summary); err != nil {
 		return fmt.Errorf("restore failed; preserve private staging %s for inspection: %w", stage, err)
 	}
+	// Mail databases from a bulk snapshot are placed before any validation runs.
+	bc, err := config.LoadBackupConfig()
+	if err == nil {
+		err = backup.RestoreBulk(context.Background(), staging, bc.BulkRepository, bc.ResticBinary)
+	}
+	if err != nil {
+		return fmt.Errorf("bulk restore failed; preserve private staging %s for inspection: %w", stage, err)
+	}
 	native, err := backup.QuarantineNativeRestore(staging)
 	if err != nil {
 		return fmt.Errorf("restore validation failed; preserve private staging %s for inspection: %w", stage, err)

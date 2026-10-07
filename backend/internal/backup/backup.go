@@ -100,12 +100,25 @@ func New(d Dirs, bc config.BackupConfig, store *state.Store, appVersion string) 
 			}
 		}
 	}
+	if repo := bc.BulkRepository; repo != "" {
+		for _, other := range []string{d.Config, d.State, d.Secret, bc.Dir} {
+			if other != "" && (within(other, repo) || within(repo, other)) {
+				return nil, errors.New("KYPOST_BULK_BACKUP_REPOSITORY must be outside every data root and the local backup directory")
+			}
+		}
+	}
 
 	return &Service{
 		dirs: d, cfg: bc, store: store, settings: settings{store}, logger: logger,
 		client:  recoveryclient.NewClient(recoveryclient.Options{AllowPrivate: bc.AllowPrivateRecovery}),
 		version: appVersion,
 	}, nil
+}
+
+// within reports whether path is root or below it.
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // AllowPrivate reports the KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY switch, for the
@@ -258,6 +271,8 @@ type Status struct {
 	NextRun       string                     `json:"nextRun,omitempty"`
 	AllowPrivate  bool                       `json:"allowPrivateRecovery"`
 	Excluded      string                     `json:"excluded"`
+	BulkRepo      string                     `json:"bulkRepository,omitempty"`
+	LastBulk      *BulkSnapshot              `json:"lastBulk,omitempty"`
 	Recent        []state.BackupAudit        `json:"recent"`
 }
 
@@ -267,7 +282,10 @@ func (s *Service) Status() (Status, error) {
 		return Status{}, err
 	}
 	defer release()
-	st := Status{LocalDir: s.cfg.Dir, AllowPrivate: s.cfg.AllowPrivateRecovery, Excluded: ErrMailExcluded, LocalCopies: []recoveryclient.LocalCopy{}}
+	st := Status{LocalDir: s.cfg.Dir, AllowPrivate: s.cfg.AllowPrivateRecovery, Excluded: ErrMailExcluded, LocalCopies: []recoveryclient.LocalCopy{}, BulkRepo: s.cfg.BulkRepository}
+	if st.LastBulk, err = s.lastBulk(); err != nil {
+		return st, err
+	}
 	key, err := s.loadKey()
 	switch {
 	case err == nil:

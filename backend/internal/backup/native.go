@@ -94,8 +94,9 @@ func every(values []string, ok func(string) bool) bool {
 }
 
 // Validate the collected bytes, not live files that can change during collection.
-func validateNativePayload(ctx context.Context, files []recoveryclient.File, scratch string) error {
-	native := false
+// staged maps capsule paths of bulk mail snapshots to their files on disk.
+func validateNativePayload(ctx context.Context, files []recoveryclient.File, staged map[string]string, scratch string) error {
+	native := len(staged) > 0
 	for _, f := range files {
 		switch filepath.Base(f.Path) {
 		case ingress.BlocksFile:
@@ -146,6 +147,16 @@ func validateNativePayload(ctx context.Context, files []recoveryclient.File, scr
 			return err
 		}
 		if err := os.WriteFile(path, f.Data, 0600); err != nil {
+			return err
+		}
+	}
+	// Validators open databases read-only, so a link stands in for a multi-GB copy.
+	for rel, src := range staged {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return err
+		}
+		if err := os.Link(src, path); err != nil {
 			return err
 		}
 	}
