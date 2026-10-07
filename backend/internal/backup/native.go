@@ -16,6 +16,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -97,6 +98,10 @@ func validateNativePayload(ctx context.Context, files []recoveryclient.File, scr
 	native := false
 	for _, f := range files {
 		switch filepath.Base(f.Path) {
+		case ingress.BlocksFile:
+			if _, err := ingress.ParseBlocks(f.Data); err != nil {
+				return fmt.Errorf("refusing to seal %s: %w", f.Path, err)
+			}
 		case "native-provisioning.json", sso.NativeDomainsFile, "native-mailbox.json", "mailbox.db", "ingress.db", "native-relay.json":
 			native = true
 		case "sso-lifecycle.json":

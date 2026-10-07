@@ -3,10 +3,14 @@ package api
 import (
 	"database/sql"
 	"errors"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -147,4 +151,130 @@ func (s *Server) changeQuarantine(w http.ResponseWriter, r *http.Request, action
 	default:
 		http.Error(w, "quarantine change refused; the holding copy is retained. Check mailbox capacity and storage, then retry", http.StatusServiceUnavailable)
 	}
+}
+
+func (s *Server) senderBlocks() ingress.Blocks {
+	return ingress.NewBlocks(filepath.Join(s.stateDir, "receiving"))
+}
+
+// handleSenderBlocksList lists manual and automatic sender blocks in force.
+func (s *Server) handleSenderBlocksList(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.nativeMail {
+		http.Error(w, "native mail is disabled", http.StatusNotFound)
+		return
+	}
+	list, err := s.senderBlocks().List(time.Now())
+	if err != nil {
+		http.Error(w, "sender block list unreadable; preserve it and repair", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"blocks": append([]ingress.SenderBlock{}, list...)})
+}
+
+// handleSenderBlockAdd blocks {"kind":"address"|"domain","value",
+// "until"?: Unix ms, "reason"?: code} for both receiving profiles. Step-up
+// confirmed; the audit carries the block ID, never the address.
+func (s *Server) handleSenderBlockAdd(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	var body struct {
+		Kind   string `json:"kind"`
+		Value  string `json:"value"`
+		Until  *int64 `json:"until"`
+		Reason string `json:"reason"`
+	}
+	if !s.nativeDomainGate(w, r, &body) {
+		return
+	}
+	ac, _ := authFromContext(r)
+	result, id := "refused", ""
+	// Same correlation as the CLI: the ID whenever the value normalizes.
+	if value, err := ingress.NormalizeBlock(body.Kind, body.Value); err == nil {
+		id = ingress.BlockID(body.Kind, value)
+	}
+	defer func() { s.auditSenderBlock(ac.UserID, "block_sender", body.Kind, result, id) }()
+	if !s.nativeMail {
+		http.Error(w, "native mail is disabled", http.StatusNotFound)
+		return
+	}
+	set, err := s.nativeDomains.ReadSet()
+	if nativeMigrationRefused(w, err) {
+		return
+	}
+	var block ingress.SenderBlock
+	if err == nil {
+		block, err = s.senderBlocks().Put(r.Context(), ingress.SenderBlock{Kind: body.Kind, Value: body.Value, Until: body.Until, Reason: body.Reason, Source: "manual", Actor: ac.UserID}, slices.Collect(maps.Keys(set.Domains)), time.Now())
+	}
+	if err == nil {
+		result = "blocked"
+		writeJSON(w, http.StatusOK, map[string]any{"block": block})
+		return
+	}
+	senderBlockError(w, err)
+}
+
+// handleSenderBlockRemove unblocks /api/admin/receiving/blocks/{id}. The
+// path carries the block ID, never the address, so proxy logs record none.
+func (s *Server) handleSenderBlockRemove(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.nativeDomainGate(w, r, &struct{}{}) {
+		return
+	}
+	ac, _ := authFromContext(r)
+	id, result := r.PathValue("id"), "refused"
+	found, err := false, error(nil)
+	if s.nativeMail {
+		found, err = s.senderBlocks().Remove(r.Context(), id, time.Now())
+	}
+	if errors.Is(err, ingress.ErrBlockInvalid) {
+		id = "" // malformed path values are not logged
+	}
+	defer func() { s.auditSenderBlock(ac.UserID, "unblock_sender", "", result, id) }()
+	switch {
+	case !s.nativeMail:
+		http.Error(w, "native mail is disabled", http.StatusNotFound)
+	case err != nil:
+		senderBlockError(w, err)
+	case !found:
+		http.Error(w, "no such block in force", http.StatusNotFound)
+	default:
+		result = "unblocked"
+		writeJSON(w, http.StatusOK, map[string]any{"id": id, "result": result})
+	}
+}
+
+func (s *Server) auditSenderBlock(actor, action, kind, result, id string) {
+	if kind != "address" && kind != "domain" {
+		kind = ""
+	}
+	s.logger.Info("receiving sender block change", "actor", actor, "task_id", "native-receiving", "action", action, "target", kind, "result", result, "correlation_id", id)
+}
+
+func senderBlockError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ingress.ErrBlockInvalid):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, ingress.ErrBlockOwn), errors.Is(err, ingress.ErrBlockFull), errors.Is(err, ingress.ErrBlockStore):
+		http.Error(w, err.Error(), http.StatusConflict)
+	default:
+		http.Error(w, "sender block change refused; the list is unchanged. Check receiving storage, then retry", http.StatusServiceUnavailable)
+	}
+}
+
+// refuseBlockedDomain answers 409 when a sender block matches domain or an
+// address on it: adding it as a mail domain would refuse its own mail.
+func (s *Server) refuseBlockedDomain(w http.ResponseWriter, domain string) bool {
+	list, err := s.senderBlocks().List(time.Now())
+	if err != nil {
+		http.Error(w, "sender block list unreadable; preserve it and repair", http.StatusServiceUnavailable)
+		return true
+	}
+	domain = cfreceiving.LowerASCII(domain)
+	if slices.ContainsFunc(list, func(b ingress.SenderBlock) bool {
+		return b.Value == domain || b.Kind == "address" && strings.HasSuffix(b.Value, "@"+domain)
+	}) {
+		http.Error(w, "a sender block matches this domain or an address on it; unblock it first (receiving blocks remove, or DELETE /api/admin/receiving/blocks/{id}), then add the domain", http.StatusConflict)
+		return true
+	}
+	return false
 }

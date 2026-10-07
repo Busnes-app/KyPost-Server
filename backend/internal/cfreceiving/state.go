@@ -158,6 +158,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS tables (digest TEXT PRIMARY KEY, routes TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS revisions (revision INTEGER PRIMARY KEY, issued_at INTEGER NOT NULL, digest TEXT NOT NULL REFERENCES tables(digest), installed_at INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS ledger (key TEXT PRIMARY KEY, digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('junk','imported','quarantined','refused')), updated INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS blocks (digest TEXT PRIMARY KEY REFERENCES tables(digest), blocks TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS status (id INTEGER PRIMARY KEY CHECK(id=1), doc TEXT NOT NULL);`
 
 // DB is the local pickup state beside ingress.db.
@@ -227,10 +228,15 @@ func (d *DB) LastRevision(ctx context.Context) (int64, error) {
 	return rev, err
 }
 
-// Record stores revision → routes before the table is sent, so captures
-// under it resolve after a crash. Revisions strictly increase.
-func (d *DB) Record(ctx context.Context, revision, issuedAt int64, digest string, routes []Route) error {
+// Record stores revision → routes and blocks before the table is sent, so
+// captures under it resolve after a crash and an unreadable block list can
+// reuse the last installed blocks. Revisions strictly increase.
+func (d *DB) Record(ctx context.Context, revision, issuedAt int64, digest string, routes []Route, blocks []Block) error {
 	raw, err := json.Marshal(routes)
+	if err != nil {
+		return err
+	}
+	rawBlocks, err := json.Marshal(append([]Block{}, blocks...))
 	if err != nil {
 		return err
 	}
@@ -247,6 +253,9 @@ func (d *DB) Record(ctx context.Context, revision, issuedAt int64, digest string
 		return errors.New("routing revision must increase")
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO tables VALUES(?,?)", digest, string(raw)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO blocks VALUES(?,?)", digest, string(rawBlocks)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO revisions(revision,issued_at,digest) VALUES(?,?,?)", revision, issuedAt, digest); err != nil {
@@ -268,6 +277,22 @@ func (d *DB) LastInstalled(ctx context.Context) (revision int64, digest string, 
 		err = nil
 	}
 	return revision, digest, at, err
+}
+
+// InstalledBlocks is the blockedSenders of the newest installed revision that
+// recorded them; empty when none did (no publish yet, or only publishes from
+// before blocks were recorded, which carried none).
+func (d *DB) InstalledBlocks(ctx context.Context) ([]Block, error) {
+	var raw string
+	err := d.db.QueryRowContext(ctx, "SELECT b.blocks FROM revisions r JOIN blocks b ON b.digest=r.digest WHERE r.installed_at>0 ORDER BY r.revision DESC LIMIT 1").Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return []Block{}, nil
+	}
+	blocks := []Block{}
+	if err == nil {
+		err = json.Unmarshal([]byte(raw), &blocks)
+	}
+	return blocks, err
 }
 
 // Routes is a recorded revision's table by address; false when unknown.

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -294,5 +295,133 @@ func TestQuarantineReleaseToCurrentOwnerAPI(t *testing.T) {
 	defer box.Close()
 	if rows, err := box.List(ctx, "INBOX", 0, 10); err != nil || len(rows) != 1 {
 		t.Fatal("not delivered to the current owner exactly once", len(rows), err)
+	}
+}
+
+func TestSenderBlocksAdminAPI(t *testing.T) {
+	t.Setenv("SECRET_DIR", t.TempDir())
+	srv := newNativeRuntimeServer(t)
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "blocks-one", 1, runtimeDirectoryUser(true)))
+	one, err := srv.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const password = "long-password-for-sender-blocks"
+	admin, err := srv.users.Create(context.Background(), "blocks-admin", password, users.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	if srv.logger, err = logging.NewWithOutput(&logs); err != nil {
+		t.Fatal(err)
+	}
+	token, csrf := mintSessionForTest(srv, admin.ID)
+	mtoken, mcsrf := mintSessionForTest(srv, one.ID)
+	call := func(method, path, token, csrf, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
+		req.Header.Set("X-CSRF-Token", csrf)
+		w := httptest.NewRecorder()
+		srv.routes().ServeHTTP(w, req)
+		return w
+	}
+	const base = "/api/admin/receiving/blocks"
+	confirm := `"password":"` + password + `"`
+	// Before receiving init: empty list, and changes refuse without creating the spool.
+	if w := call("GET", base, token, csrf, ""); w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"blocks":[]}` {
+		t.Fatal("empty list", w.Code, w.Body)
+	}
+	if w := call("POST", base, token, csrf, `{"kind":"domain","value":"evil.test",`+confirm+`}`); w.Code != 409 {
+		t.Fatal("block before receiving init", w.Code, w.Body)
+	}
+	if _, err := os.Stat(filepath.Join(srv.stateDir, "receiving")); !os.IsNotExist(err) {
+		t.Fatal("block created the receiving directory", err)
+	}
+	holding, err := ingress.Open(filepath.Join(srv.stateDir, "receiving"), ingress.ReceivingLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = holding.Close()
+
+	// AuthZ and step-up.
+	if w := call("GET", base, mtoken, mcsrf, ""); w.Code != 403 {
+		t.Fatal("member listed blocks", w.Code)
+	}
+	for _, c := range [][2]string{{"POST", base}, {"DELETE", base + "/" + ingress.BlockID("domain", "evil.test")}} {
+		if w := call(c[0], c[1], mtoken, mcsrf, `{"kind":"domain","value":"evil.test","password":"x"}`); w.Code != 403 {
+			t.Fatal("member changed blocks", c, w.Code)
+		}
+		if w := call(c[0], c[1], token, csrf, `{"kind":"domain","value":"evil.test"}`); w.Code != 401 {
+			t.Fatal("no step-up accepted", c, w.Code)
+		}
+		if w := call(c[0], c[1], token, csrf, `{"kind":"domain","value":"evil.test","password":"wrong-password-for-blocks"}`); w.Code != 401 {
+			t.Fatal("wrong step-up accepted", c, w.Code)
+		}
+	}
+	// Refusals: own domain or address on it, non-ASCII, malformed, free text.
+	for body, code := range map[string]int{
+		`{"kind":"domain","value":"Example.test",`:               409,
+		`{"kind":"address","value":"anyone@example.test",`:       409,
+		`{"kind":"domain","value":"bücher.test",`:                400,
+		`{"kind":"address","value":"Name <a@x.test>",`:           400,
+		`{"kind":"user","value":"a@x.test",`:                     400,
+		`{"kind":"domain","value":"evil.test","reason":"hello",`: 400,
+		`{"kind":"domain","value":"evil.test","until":1,`:        400,
+	} {
+		if w := call("POST", base, token, csrf, body+confirm+`}`); w.Code != code {
+			t.Fatal("refusal", body, w.Code, w.Body)
+		}
+	}
+	until := time.Now().Add(time.Hour).UnixMilli()
+	w := call("POST", base, token, csrf, `{"kind":"address","value":"Bad@Spam.test","reason":"phishing","until":`+strconv.FormatInt(until, 10)+`,`+confirm+`}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"value":"bad@spam.test"`) || !strings.Contains(w.Body.String(), `"actor":"`+admin.ID+`"`) || !strings.Contains(w.Body.String(), `"source":"manual"`) {
+		t.Fatal("block", w.Code, w.Body)
+	}
+	if w = call("POST", base, token, csrf, `{"kind":"domain","value":"evil.test",`+confirm+`}`); w.Code != 200 {
+		t.Fatal("block domain", w.Code, w.Body)
+	}
+	// Adding a blocked domain, or one with a blocked address, as a mail domain is refused.
+	if w = call("POST", base, token, csrf, `{"kind":"address","value":"someone@blocked-addr.test",`+confirm+`}`); w.Code != 200 {
+		t.Fatal("block address", w.Code, w.Body)
+	}
+	for _, c := range [][3]string{{"POST", "/api/admin/mail-domains", "Evil.test"}, {"POST", "/api/admin/mail-domains", "blocked-addr.test"}, {"PUT", "/api/admin/mail-domain", "evil.test"}} {
+		if w := call(c[0], c[1], token, csrf, `{"domain":"`+c[2]+`",`+confirm+`}`); w.Code != 409 || !strings.Contains(w.Body.String(), "unblock it first") {
+			t.Fatal("blocked domain added", c, w.Code, w.Body)
+		}
+	}
+	if w := call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"clean.test",`+confirm+`}`); strings.Contains(w.Body.String(), "unblock") {
+		t.Fatal("unblocked domain refused for a block", w.Code, w.Body)
+	}
+	w = call("GET", base, token, csrf, "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"value":"bad@spam.test"`) || !strings.Contains(w.Body.String(), `"value":"evil.test"`) {
+		t.Fatal("list", w.Code, w.Body)
+	}
+	badID := ingress.BlockID("address", "bad@spam.test")
+	if !strings.Contains(w.Body.String(), `"id":"`+badID+`"`) {
+		t.Fatal("list lacks the block id", w.Body)
+	}
+	for _, path := range []string{base + "/address/bad@spam.test", base + "/bad@spam.test", base + "/" + strings.ToUpper(badID)} {
+		if w = call("DELETE", path, token, csrf, `{`+confirm+`}`); w.Code != 400 && w.Code != 404 && w.Code != 405 || strings.Contains(w.Body.String(), "unblocked") {
+			t.Fatal("unblock by address", path, w.Code, w.Body)
+		}
+	}
+	if w = call("DELETE", base+"/"+badID, token, csrf, `{`+confirm+`}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"result":"unblocked"`) {
+		t.Fatal("unblock", w.Code, w.Body)
+	}
+	if w = call("DELETE", base+"/"+badID, token, csrf, `{`+confirm+`}`); w.Code != 404 {
+		t.Fatal("second unblock", w.Code, w.Body)
+	}
+	if w = call("GET", base, token, csrf, ""); strings.Contains(w.Body.String(), "bad@spam.test") || !strings.Contains(w.Body.String(), "evil.test") {
+		t.Fatal("list after unblock", w.Body)
+	}
+	// Audited with actor, action and block ID; never the address.
+	audit := logs.String()
+	for _, want := range []string{`"action":"block_sender"`, `"action":"unblock_sender"`, `"result":"blocked"`, `"result":"unblocked"`, `"result":"refused"`, `"actor":"` + admin.ID + `"`, `"correlation_id":"` + badID + `"`, `"result":"refused","correlation_id":"` + ingress.BlockID("domain", "example.test") + `"`} {
+		if !strings.Contains(audit, want) {
+			t.Fatal("audit missing", want, audit)
+		}
+	}
+	if strings.Contains(audit, "spam.test") || strings.Contains(audit, "evil.test") || strings.Contains(audit, "blocked-addr") {
+		t.Fatal("audit logged a sender", audit)
 	}
 }
