@@ -190,15 +190,15 @@ func (r *receivingRuntime) cloudflareRoute(ctx context.Context, recipient string
 	if err != nil || parsed.Name != "" || parsed.Address != recipient || recipient != strings.ToLower(recipient) {
 		return claim, ingress.ErrRoute
 	}
-	proof, err := r.domains.Verify(ctx)
+	proofs, err := r.verifyDomains(ctx, []string{recipient})
 	if err != nil {
 		return claim, err
 	}
-	a, found, err := r.life.NativeAssignmentForAddress(proof.Issuer, recipient)
+	a, found, err := r.life.NativeAssignmentForAddress(proofs[0].Issuer, recipient)
 	if err != nil || !found {
 		return claim, ingress.ErrRoute
 	}
-	err = r.withAuthority(ctx, []string{a.Owner.Mailbox}, &proof, func(current map[string]sso.NativeAssignment) error {
+	err = r.withAuthority(ctx, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
 		admitted := current[a.Owner.Mailbox]
 		if admitted.Owner != a.Owner || admitted.Address != recipient {
 			return ingress.ErrRoute

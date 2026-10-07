@@ -20,7 +20,7 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 - Snapshots may predate the native storage migration: payload detection, the validation allowlist, collection checks and drills accept the version-1 domain/ledger/relay and the version-2 `native-domains.json`/tombstone/ledger/relay alike. Mixes follow `sso.NativeSnapshotFormatsConsistent`: a v1 domain beside v1 or v2 files, a v2 domain only beside v2 files, no domain beside none. `*.v1-migrated` copies are never collected. A restored version-1 snapshot is migrated by `migrate-native` at next start under the hold.
 
-- Collect `config/native-relay.json` with `private/native-relay.key`; validate decryption of the actual collected bytes and historical native-domain issuer/domain binding. Version-1 recipes add `relay:domain-credentials-and-authority`; drills require it when relay ciphertext exists. Relay-only restores persist the native hold without qualifying unowned mailbox databases. Fresh authority/provider evidence remains separate.
+- Collect `config/native-relay.json` with `private/native-relay.key`; validate decryption of the actual collected bytes and the historical issuer binding; live relay `domains` must be configured and not retired, `retiredDomains` within the domain set (configured or retired), and outbox jobs are checked against `domains ∪ retiredDomains`. Version-1 recipes add `relay:domain-credentials-and-authority`; drills require it when relay ciphertext exists. Relay-only restores persist the native hold without qualifying unowned mailbox databases. Fresh authority/provider evidence remains separate.
 
 - Service name is `KyPost`. The token sealer uses the existing TOTP master key with HKDF label `kypost:setting:kyrecovery_token`; load it at operation time, never generate a replacement.
 - Settings and flat `backup_audit` rows use the install-wide state.db. Pair, pin and unpair settings commit transactionally.
@@ -50,6 +50,8 @@ This package owns payload selection and verification. API/CLI callers own creden
 - `TestNativeOutboxSealedClaimsSentAndDependencies` checks sealed committed claims/Sent, restore queue quarantine with no resubmission, retained holds, required recipe/key/config and wrong-key rejection.
 
 - `TestDomainRelay` checks sealed credential/key/generation preservation, missing dependencies, corrupt restored keys and relay-only quarantine.
+
+- `TestNativeRetiredRelayDomainKeepsHistoricalJobsValid` checks that a job on a relay domain later removed and retired still validates, and that a relay domain outside the set is refused.
 
 - `TestNativeBackupAcceptsV1AndV2Snapshots` checks v2 payload contents (set and tombstone, no copies), a sealed version-1 snapshot through drill and quarantine, and its migration under the retained hold. `TestNativeDomainOnlyRestoreIsHeld` checks that a domain-only deployment (initialized empty ledger) restores held.
 

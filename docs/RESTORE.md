@@ -56,7 +56,7 @@ files are collected sequentially, not as a transaction across the whole deployme
 For a quiescent recovery point, stop services and use the CLI export.
 
 Native exports and drills now check historical ownership: users, issuer/subject
-reservations, directory revisions, mailbox namespace/state, domain claim and
+reservations, directory revisions, mailbox namespace/state, domain set and
 receiving routes/frozen bindings must agree. Missing acknowledged storage,
 orphan databases and foreign ownership fail closed. Outbox checks decrypt frozen bytes, verify quota/claim/Sent consistency and refuse orphan claims or partial queue schemas; historical evidence grants no replay authority. Validation uses only the
 collected/restored roots, never the original absolute ledger path. It does not
@@ -76,6 +76,13 @@ snapshot is migrated by `migrate-native` at the next container start, with the
 restore hold left in place. Configuring a mail domain now also initializes an
 empty native ledger, so restoring a deployment that configured a domain but has
 no native accounts is held like a relay-only restore.
+
+With several domains, validation checks each domain's proof format, that every
+ledger address sits on a domain in the set (configured or retired), that the
+relay's `domains` and `retiredDomains` are within the same set, and outbox jobs
+against the relay's `domains ∪ retiredDomains`. Retired domains keep their
+address records, so a snapshot taken after retirement, and historical jobs and
+bindings on a retired domain, still validate.
 
 The version-1 recipe remains compatible. Use this version of KyPost or newer to
 check all three database names and the additive relay credential/authority recipe; older drills do not attest the new relay checks. A new integrity

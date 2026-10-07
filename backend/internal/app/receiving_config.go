@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -68,17 +70,23 @@ func runReceivingConfig(args []string, output io.Writer) (result error) {
 		return err
 	}
 	defer r.holding.Close()
-	for _, path := range []string{executable, r.stateDir, args[2], args[3]} {
+	return r.writeConfig(ctx, executable, address.String(), host, args[2], args[3], spamArgs, output)
+}
+
+// writeConfig renders the profile after the runtime's storage, TLS and fresh
+// domain checks. Every configured domain is a Maddy destination.
+func (r *receivingRuntime) writeConfig(ctx context.Context, executable, address, host, certPath, keyPath, spamArgs string, output io.Writer) error {
+	for _, path := range []string{executable, r.stateDir, certPath, keyPath} {
 		// Maddy expands {env:...} even inside quotes and only escapes quotes.
 		if !filepath.IsAbs(path) || len(path) > 4096 || strings.ContainsAny(path, "\\\"{}$") || strings.ContainsFunc(path, unicode.IsControl) {
 			return errors.New("receiving configuration paths must be absolute, without controls, quotes, backslashes or braces")
 		}
 	}
-	certificate, err := receivingTLSFile(args[2], false)
+	certificate, err := receivingTLSFile(certPath, false)
 	if err != nil {
 		return err
 	}
-	key, err := receivingTLSFile(args[3], true)
+	key, err := receivingTLSFile(keyPath, true)
 	if err != nil {
 		return err
 	}
@@ -97,9 +105,18 @@ func runReceivingConfig(args []string, output io.Writer) (result error) {
 	if !serverUsage {
 		return errors.New("receiving certificate must permit TLS server authentication")
 	}
-	proof, err := r.domains.Verify(ctx)
+	// Every configured domain is a destination; binds still refuse a domain
+	// whose proof has lapsed, so one lapsed domain never blocks the others.
+	domains, err := r.domains.ReadSet()
 	if err != nil {
 		return err
+	}
+	destinations := slices.Sorted(maps.Keys(domains.Domains))
+	proofs := []sso.NativeDomain{}
+	for _, domain := range destinations {
+		if proof, err := r.domains.VerifyDomain(ctx, domain); err == nil {
+			proofs = append(proofs, proof)
+		}
 	}
 	release, err := fsutil.LockFileContext(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
 	if err != nil {
@@ -110,10 +127,15 @@ func runReceivingConfig(args []string, output io.Writer) (result error) {
 			release()
 		}
 	}()
-	current, err := r.domains.Read()
+	current, err := r.domains.ReadSet()
 	settings := sso.NewStore(r.configDir).Load()
-	if err != nil || current != proof || !settings.Enabled || settings.IssuerURL != proof.Issuer || proof.VerifiedUntil <= time.Now().Unix() {
+	if err != nil || len(proofs) == 0 || !slices.Equal(slices.Sorted(maps.Keys(current.Domains)), destinations) || !settings.Enabled || settings.IssuerURL != current.Issuer {
 		return sso.ErrNativeDomain
+	}
+	for _, proof := range proofs {
+		if !current.CurrentProof(proof) {
+			return sso.ErrNativeDomain
+		}
 	}
 	if err := sso.RequireNativeRestoreReleased(r.stateDir); err != nil {
 		return err
@@ -162,7 +184,7 @@ smtp tcp://%s {
     destination %s { deliver_to dummy }
     default_destination { reject }
 }
-`, host, r.stateDir, r.stateDir, args[2], args[3], address, executable, executable, spamArgs, proof.Domain)
+`, host, r.stateDir, r.stateDir, certPath, keyPath, address, executable, executable, spamArgs, strings.Join(destinations, " "))
 	// Output is a historical configuration, not continuing authority. Never hold
 	// the domain fence across an operator's potentially blocked output pipe.
 	release()

@@ -27,7 +27,7 @@ func TestNativeOutboxSMTPProcess(t *testing.T) {
 	}
 	port, err := strconv.Atoi(os.Getenv("KYPOST_OUTBOX_SMTP_PORT"))
 	must(t, err)
-	relay := mailmsg.DomainRelay{Generation: outboxGeneration, Domain: "example.test", Issuer: testOwner.Issuer, Host: "127.0.0.1", Port: port, Username: "operator-login", Password: "operator-secret"}
+	relay := mailmsg.DomainRelay{Generation: outboxGeneration, Domains: []string{"example.test"}, Issuer: testOwner.Issuer, Host: "127.0.0.1", Port: port, Username: "operator-login", Password: "operator-secret"}
 	ctx := context.Background()
 	s := openTest(t, dir, testOwner, testLimits)
 	job := outboxTestJob()

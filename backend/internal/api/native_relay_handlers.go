@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -18,9 +19,18 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(s.configDir, "native-relay.json")
 	keyPath := filepath.Join(config.SecretDir(), "native-relay.key")
 	respond := func(c mailmsg.DomainRelay, exists bool) {
+		// "domain" is the founding domain the single-domain UI pairs with its claim.
+		domain := ""
+		if exists {
+			domain = c.Domains[0]
+			if founding, err := s.nativeDomains.Read(); err == nil && c.Sends(founding.Domain) {
+				domain = founding.Domain
+			}
+		}
 		// Neither relay authentication username nor password is a read API field.
 		writeJSON(w, http.StatusOK, map[string]any{
-			"configured": exists, "domain": c.Domain, "issuer": c.Issuer,
+			"configured": exists, "domain": domain, "domains": append([]string{}, c.Domains...),
+			"retiredDomains": append([]string{}, c.RetiredDomains...), "issuer": c.Issuer,
 			"host": c.Host, "port": c.Port, "generation": c.Generation,
 			"transport": "implicit-tls", "authRequired": true, "sendingEnabled": s.nativeMail && exists,
 		})
@@ -35,12 +45,13 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Host         string `json:"host"`
-		Port         int    `json:"port"`
-		SMTPUsername string `json:"smtpUsername"`
-		SMTPPassword string `json:"smtpPassword"`
-		Password     string `json:"password"`
-		AuthSecret   string `json:"authSecret"`
+		Host         string   `json:"host"`
+		Port         int      `json:"port"`
+		SMTPUsername string   `json:"smtpUsername"`
+		SMTPPassword string   `json:"smtpPassword"`
+		Domains      []string `json:"domains"`
+		Password     string   `json:"password"`
+		AuthSecret   string   `json:"authSecret"`
 	}
 	if !s.nativeDomainGate(w, r, &body) {
 		return
@@ -54,14 +65,47 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "enable KyIdentity and prove the mail domain before configuring a relay", http.StatusConflict)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	proof, err := s.nativeDomains.Verify(ctx) // DNS precedes all disk fences.
-	if nativeMigrationRefused(w, err) {
+	// Domains alone change only the set and keep the relay generation.
+	domainsOnly := body.Domains != nil && body.Host == "" && body.Port == 0 && body.SMTPUsername == "" && body.SMTPPassword == ""
+	prior, exists, err := mailmsg.ReadDomainRelay(path, keyPath)
+	if err != nil {
+		http.Error(w, mailmsg.ErrDomainRelay.Error(), http.StatusConflict)
 		return
 	}
-	if err != nil || proof.Issuer != settings.IssuerURL {
-		http.Error(w, "relay setup requires fresh issuer-bound domain proof; verify the current TXT record", http.StatusConflict)
+	domains := body.Domains
+	if domains == nil && exists {
+		domains = prior.Domains
+	} else if domains == nil {
+		founding, err := s.nativeDomains.Read()
+		if nativeMigrationRefused(w, err) {
+			return
+		}
+		domains = []string{founding.Domain}
+	}
+	domains = slices.Compact(slices.Sorted(slices.Values(domains)))
+	if len(domains) == 0 {
+		http.Error(w, "select at least one verified relay domain", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	// New domains need fresh proof; retained ones prove if they can, so one
+	// lapsed domain never blocks the others. At least one proof is required.
+	proofs := make([]sso.NativeDomain, 0, len(domains))
+	for _, domain := range domains {
+		proof, err := s.nativeDomains.VerifyDomain(ctx, domain) // DNS precedes all disk fences.
+		if nativeMigrationRefused(w, err) {
+			return
+		}
+		if err == nil && proof.Issuer == settings.IssuerURL {
+			proofs = append(proofs, proof)
+		} else if !slices.Contains(prior.Domains, domain) {
+			http.Error(w, "a new relay domain needs fresh issuer-bound proof; verify its current TXT record", http.StatusConflict)
+			return
+		}
+	}
+	if len(proofs) == 0 {
+		http.Error(w, "relay setup requires fresh issuer-bound proof of at least one relay domain; verify the current TXT records", http.StatusConflict)
 		return
 	}
 	release, err := fsutil.LockFileContext(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
@@ -70,22 +114,47 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	current, err := s.nativeDomains.Read()
+	current, err := s.nativeDomains.ReadSet()
 	currentSettings := s.ssoStore.Load()
-	if err != nil || current != proof || proof.VerifiedUntil <= time.Now().Unix() || !currentSettings.Enabled || currentSettings.IssuerURL != proof.Issuer {
-		http.Error(w, "mail-domain authority changed during relay setup; reverify and retry", http.StatusConflict)
+	again, againExists, againErr := mailmsg.ReadDomainRelay(path, keyPath)
+	changed := err != nil || againErr != nil || againExists != exists || !again.Equal(prior) || !currentSettings.Enabled || currentSettings.IssuerURL != settings.IssuerURL
+	for _, proof := range proofs {
+		changed = changed || !current.CurrentProof(proof)
+	}
+	for _, domain := range domains {
+		_, configured := current.Domains[domain]
+		changed = changed || !configured
+	}
+	if changed {
+		http.Error(w, "mail-domain authority or relay changed during relay setup; reverify and retry", http.StatusConflict)
 		return
 	}
-	if body.Port == 0 {
-		body.Port = 465
+	if slices.ContainsFunc(prior.Domains, func(d string) bool { return !slices.Contains(domains, d) }) {
+		queued, err := sso.NativeQueuedFromDomains(ctx, s.configDir, s.stateDir, keyPath)
+		if err != nil {
+			http.Error(w, "outbox unavailable; preserve queued mail and retry removing the relay domain", http.StatusServiceUnavailable)
+			return
+		}
+		if slices.ContainsFunc(prior.Domains, func(d string) bool { return queued[d] && !slices.Contains(domains, d) }) {
+			http.Error(w, "a relay domain still has queued or retryable outbox jobs; let them finish before removing it", http.StatusConflict)
+			return
+		}
 	}
 	if err := sso.RequireNativeRestoreReleased(s.stateDir); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	c, err := mailmsg.SaveDomainRelay(ctx, path, keyPath, mailmsg.DomainRelay{
-		Domain: proof.Domain, Issuer: proof.Issuer, Host: body.Host, Port: body.Port, Username: body.SMTPUsername, Password: body.SMTPPassword,
-	})
+	var c mailmsg.DomainRelay
+	if domainsOnly {
+		c, err = mailmsg.SetDomainRelayDomains(ctx, path, keyPath, domains)
+	} else {
+		if body.Port == 0 {
+			body.Port = 465
+		}
+		c, err = mailmsg.SaveDomainRelay(ctx, path, keyPath, mailmsg.DomainRelay{
+			Domains: domains, Issuer: settings.IssuerURL, Host: body.Host, Port: body.Port, Username: body.SMTPUsername, Password: body.SMTPPassword,
+		})
+	}
 	if err != nil {
 		http.Error(w, mailmsg.ErrDomainRelay.Error(), http.StatusConflict)
 		return
@@ -110,7 +179,7 @@ func (s *Server) handleNativeMailRelayTest(w http.ResponseWriter, r *http.Reques
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	profile, proof, err := s.nativeRelayCheckProfile(ctx, body.ExpectedGeneration, nil)
+	profile, proofs, err := s.nativeRelayCheckProfile(ctx, body.ExpectedGeneration, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -126,7 +195,7 @@ func (s *Server) handleNativeMailRelayTest(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	if _, _, err := s.nativeRelayCheckProfile(ctx, body.ExpectedGeneration, &proof); err != nil {
+	if _, _, err := s.nativeRelayCheckProfile(ctx, body.ExpectedGeneration, proofs); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
@@ -136,30 +205,45 @@ func (s *Server) handleNativeMailRelayTest(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// DNS runs before domain -> settings -> relay disk fences. After network I/O,
-// stable challenge identity must still match even though Verify renews its cache.
-func (s *Server) nativeRelayCheckProfile(ctx context.Context, generation string, prior *sso.NativeDomain) (mailmsg.DomainRelay, sso.NativeDomain, error) {
+// DNS runs before domain -> settings -> relay disk fences. Every relay domain
+// that can prove does; at least one must. After network I/O, the stable
+// challenge identity of each proven domain must still match even though Verify
+// renews its cache.
+func (s *Server) nativeRelayCheckProfile(ctx context.Context, generation string, prior []sso.NativeDomain) (mailmsg.DomainRelay, []sso.NativeDomain, error) {
 	refused := errors.New("relay check authority or saved profile changed; verify the current TXT record, issuer and restore status, then reload the saved relay")
 	path, keyPath := filepath.Join(s.configDir, "native-relay.json"), filepath.Join(config.SecretDir(), "native-relay.key")
 	profile, exists, err := mailmsg.ReadDomainRelay(path, keyPath)
 	if err != nil {
-		return mailmsg.DomainRelay{}, sso.NativeDomain{}, mailmsg.ErrDomainRelay
+		return mailmsg.DomainRelay{}, nil, mailmsg.ErrDomainRelay
 	}
 	if !exists || profile.Generation != generation || sso.RequireNativeRestoreReleased(s.stateDir) != nil {
-		return mailmsg.DomainRelay{}, sso.NativeDomain{}, refused
+		return mailmsg.DomainRelay{}, nil, refused
 	}
-	proof, err := s.nativeDomains.Verify(ctx)
-	if err != nil || !proof.Established || proof.Domain != profile.Domain || proof.Issuer != profile.Issuer ||
-		prior != nil && (proof.Domain != prior.Domain || proof.Issuer != prior.Issuer || proof.Token != prior.Token || proof.ExpiresAt != prior.ExpiresAt) {
-		return mailmsg.DomainRelay{}, sso.NativeDomain{}, refused
+	before := map[string]sso.NativeDomain{}
+	for _, p := range prior {
+		before[p.Domain] = p
+	}
+	proofs := make([]sso.NativeDomain, 0, len(profile.Domains))
+	for _, domain := range profile.Domains {
+		proof, err := s.nativeDomains.VerifyDomain(ctx, domain)
+		if err != nil || !proof.Established || proof.Issuer != profile.Issuer {
+			continue
+		}
+		if p, ok := before[domain]; prior != nil && (!ok || proof.Issuer != p.Issuer || proof.Token != p.Token || proof.ExpiresAt != p.ExpiresAt) {
+			return mailmsg.DomainRelay{}, nil, refused
+		}
+		proofs = append(proofs, proof)
+	}
+	if len(proofs) == 0 {
+		return mailmsg.DomainRelay{}, nil, refused
 	}
 	release, err := fsutil.LockFileContext(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
 	if err != nil {
-		return mailmsg.DomainRelay{}, sso.NativeDomain{}, refused
+		return mailmsg.DomainRelay{}, nil, refused
 	}
 	defer release()
 	err = s.ssoStore.WithCurrentSettings(ctx, func(settings sso.SSOSettings) error {
-		if !settings.Enabled || settings.IssuerURL != proof.Issuer {
+		if !settings.Enabled || settings.IssuerURL != profile.Issuer {
 			return refused
 		}
 		releaseRelay, err := fsutil.LockFileContext(ctx, path)
@@ -167,21 +251,31 @@ func (s *Server) nativeRelayCheckProfile(ctx context.Context, generation string,
 			return refused
 		}
 		defer releaseRelay()
-		current, err := s.nativeDomains.Read()
-		if err != nil || current != proof || proof.VerifiedUntil <= time.Now().Unix() {
+		current, err := s.nativeDomains.ReadSet()
+		if err != nil {
 			return refused
+		}
+		for _, proof := range proofs {
+			if !current.CurrentProof(proof) {
+				return refused
+			}
+		}
+		for _, domain := range profile.Domains {
+			if _, configured := current.Domains[domain]; !configured {
+				return refused
+			}
 		}
 		currentProfile, exists, err := mailmsg.ReadDomainRelay(path, keyPath)
 		if err != nil {
 			return mailmsg.ErrDomainRelay
 		}
-		if !exists || currentProfile != profile || ctx.Err() != nil || sso.RequireNativeRestoreReleased(s.stateDir) != nil {
+		if !exists || !currentProfile.Equal(profile) || ctx.Err() != nil || sso.RequireNativeRestoreReleased(s.stateDir) != nil {
 			return refused
 		}
 		return nil
 	})
 	if err != nil {
-		return mailmsg.DomainRelay{}, sso.NativeDomain{}, err
+		return mailmsg.DomainRelay{}, nil, err
 	}
-	return profile, proof, nil
+	return profile, proofs, nil
 }

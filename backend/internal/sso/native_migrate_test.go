@@ -60,7 +60,7 @@ func v1Fixture(t *testing.T) (config, keyPath string, ids map[string]string) {
 		t.Fatal(err)
 	}
 	nativeDesired(t, life, "one", "one@example.test", 3, true)
-	if _, err := mailmsg.SaveDomainRelay(ctx, filepath.Join(config, "native-relay.json"), keyPath, mailmsg.DomainRelay{Domain: "example.test", Issuer: nativeIssuer, Host: "smtp.example.test", Port: 465, Username: "operator", Password: "test-only"}); err != nil {
+	if _, err := mailmsg.SaveDomainRelay(ctx, filepath.Join(config, "native-relay.json"), keyPath, mailmsg.DomainRelay{Domains: []string{"example.test"}, Issuer: nativeIssuer, Host: "smtp.example.test", Port: 465, Username: "operator", Password: "test-only"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := WriteNativeV1ForTest(config, keyPath); err != nil {
@@ -145,7 +145,7 @@ func TestNativeMigrationLedgerRelayAndIdempotence(t *testing.T) {
 		t.Fatalf("assignments changed: %v\n%+v\n%+v", err, got.Accounts, want.Accounts)
 	}
 	relay, exists, err := mailmsg.ReadDomainRelay(filepath.Join(config, "native-relay.json"), keyPath)
-	if err != nil || !exists || relay != relayV1 {
+	if err != nil || !exists || !relay.Equal(relayV1) {
 		t.Fatal("relay generation or profile changed", relay, relayV1, err)
 	}
 	raw, err := os.ReadFile(filepath.Join(config, nativeProvisioningFile))

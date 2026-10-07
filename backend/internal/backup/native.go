@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
@@ -30,8 +31,11 @@ func nativeSnapshot(dir string) (bool, error) {
 	}
 	hasRelay := relayVersion != 0
 	if hasRelay {
-		domain, domainFormat, err := sso.HistoricalNativeDomain(filepath.Join(dir, "config"))
-		if err != nil || !sso.NativeSnapshotFormatsConsistent(domainFormat, relayVersion) || domain.Domain != relay.Domain || domain.Issuer != relay.Issuer {
+		// Live relay domains are configured, never retired; retired relay
+		// domains stay within the domain set's history.
+		domains, domainFormat, err := sso.HistoricalNativeDomains(filepath.Join(dir, "config"))
+		configured := func(d string) bool { _, ok := domains.Domains[d]; return ok }
+		if err != nil || !sso.NativeSnapshotFormatsConsistent(domainFormat, relayVersion) || domains.Issuer != relay.Issuer || !every(relay.Domains, configured) || !every(relay.RetiredDomains, domains.Known) {
 			return true, mailmsg.ErrDomainRelay
 		}
 	}
@@ -82,6 +86,10 @@ func nativeSnapshot(dir string) (bool, error) {
 		return nil
 	})
 	return native, err
+}
+
+func every(values []string, ok func(string) bool) bool {
+	return !slices.ContainsFunc(values, func(v string) bool { return !ok(v) })
 }
 
 // Validate the collected bytes, not live files that can change during collection.

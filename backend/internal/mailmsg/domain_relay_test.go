@@ -14,7 +14,7 @@ import (
 func TestDomainRelayEncryptedRotationAndMissingKeyRefusal(t *testing.T) {
 	dir := t.TempDir()
 	path, keyPath := filepath.Join(dir, "native-relay.json"), filepath.Join(dir, "native-relay.key")
-	c := DomainRelay{Domain: "example.test", Issuer: "https://idp.example", Host: "smtp.example.test", Port: 465, Username: "operator-relay-login", Password: "operator-test-secret"}
+	c := DomainRelay{Domains: []string{"example.test"}, Issuer: "https://idp.example", Host: "smtp.example.test", Port: 465, Username: "operator-relay-login", Password: "operator-test-secret"}
 	first, err := SaveDomainRelay(context.Background(), path, keyPath, c)
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +30,7 @@ func TestDomainRelayEncryptedRotationAndMissingKeyRefusal(t *testing.T) {
 		t.Fatal("relay credentials appeared in stored plaintext", err)
 	}
 	got, exists, err := ReadDomainRelay(path, keyPath)
-	if err != nil || !exists || got != first {
+	if err != nil || !exists || !got.Equal(first) {
 		t.Fatal("encrypted round trip", got, exists, err)
 	}
 	second, err := SaveDomainRelay(context.Background(), path, keyPath, c)
@@ -59,7 +59,7 @@ func TestDomainRelayEncryptedRotationAndMissingKeyRefusal(t *testing.T) {
 func TestDomainRelayRejectsInvalidTransportAndStoredPlaintext(t *testing.T) {
 	dir := t.TempDir()
 	path, keyPath := filepath.Join(dir, "relay"), filepath.Join(dir, "key")
-	c := DomainRelay{Domain: "example.test", Issuer: "https://idp.example", Host: "smtp.example.test", Port: 465, Username: "login", Password: "secret"}
+	c := DomainRelay{Domains: []string{"example.test"}, Issuer: "https://idp.example", Host: "smtp.example.test", Port: 465, Username: "login", Password: "secret"}
 	for _, mutate := range []func(*DomainRelay){
 		func(c *DomainRelay) { c.Host = "smtp.example.test:465" },
 		func(c *DomainRelay) { c.Host = "https://smtp.example.test" },
@@ -83,5 +83,30 @@ func TestDomainRelayRejectsInvalidTransportAndStoredPlaintext(t *testing.T) {
 	}
 	if _, _, err := DecodeDomainRelay([]byte(`{"version":1,"smtpPassword":"plaintext"}`), key); !errors.Is(err, ErrDomainRelay) {
 		t.Fatal("plaintext relay accepted", err)
+	}
+}
+
+func TestDomainRelaySetMembership(t *testing.T) {
+	c := DomainRelay{Generation: "12345678-1234-4234-8234-123456789abc", Domains: []string{"a.test", "example.test"}, RetiredDomains: []string{"old.test"}, Issuer: "https://idp.example", Host: "127.0.0.1", Port: 1, Username: "login", Password: "secret"}
+	msg := []byte("From: x@old.test\r\n\r\nbody\r\n")
+	for _, from := range []string{"x@old.test", "x@other.test"} {
+		if err := c.Deliver(from, []string{"r@outside.test"}, msg); err == nil || !strings.Contains(err.Error(), "sender or recipients refused") {
+			t.Fatal("From outside the relay set reached transport", from, err)
+		}
+	}
+	if !c.Historical("old.test") || c.Sends("old.test") || !c.Sends("example.test") {
+		t.Fatal("membership")
+	}
+	for _, mutate := range []func(*DomainRelay){
+		func(c *DomainRelay) { c.Domains = nil },
+		func(c *DomainRelay) { c.Domains = []string{"example.test", "a.test"} },
+		func(c *DomainRelay) { c.RetiredDomains = []string{"a.test"} },
+		func(c *DomainRelay) { c.Domains = []string{"a.test", "a.test"} },
+	} {
+		bad := c
+		mutate(&bad)
+		if bad.Validate() == nil {
+			t.Fatal("invalid domain set accepted", bad.Domains, bad.RetiredDomains)
+		}
 	}
 }

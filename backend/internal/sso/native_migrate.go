@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
@@ -221,7 +222,7 @@ func nativeRelayCopyMatches(keyPath string, raw []byte, domain NativeDomain) err
 		return mailmsg.ErrDomainRelay
 	}
 	relay, version, err := mailmsg.DecodeDomainRelay(raw, key)
-	if err != nil || version != 1 || relay.Domain != domain.Domain || relay.Issuer != domain.Issuer {
+	if err != nil || version != 1 || !slices.Equal(relay.Domains, []string{domain.Domain}) || relay.Issuer != domain.Issuer {
 		return mailmsg.ErrDomainRelay
 	}
 	return nil
@@ -238,7 +239,7 @@ func migrateNativeRelay(path, keyPath string, v1 []byte) error {
 	if err != nil || version != 1 {
 		return mailmsg.ErrDomainRelay
 	}
-	if current, version, err := mailmsg.ReadDomainRelayAnyVersion(path, keyPath); err == nil && version == 2 && current == relay {
+	if current, version, err := mailmsg.ReadDomainRelayAnyVersion(path, keyPath); err == nil && version == 2 && current.Equal(relay) {
 		return nil
 	}
 	sealed, err := mailmsg.SealDomainRelay(relay, key)
@@ -272,7 +273,7 @@ func WriteNativeV1ForTest(configDir, relayKeyPath string) error {
 		if err != nil {
 			return err
 		}
-		plain, err := json.Marshal(map[string]any{"version": 1, "generation": relay.Generation, "domain": relay.Domain, "issuer": relay.Issuer, "host": relay.Host, "port": relay.Port, "smtpUsername": relay.Username, "smtpPassword": relay.Password})
+		plain, err := json.Marshal(map[string]any{"version": 1, "generation": relay.Generation, "domain": relay.Domains[0], "issuer": relay.Issuer, "host": relay.Host, "port": relay.Port, "smtpUsername": relay.Username, "smtpPassword": relay.Password})
 		if err != nil {
 			return err
 		}

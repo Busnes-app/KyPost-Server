@@ -7,7 +7,10 @@ keyed to the directory revision; until phase 3 each saved primary address genera
 is `max(stored, directory revision)`. Phase 1b is implemented: administrator
 subjects get mailbox-less accounts and are refused by native admission unless
 `legacyMixedUse`, which only demotion clears; promotion is enforced by admission
-without a generation bump until phase 3. Phases 2–4 are not implemented.
+without a generation bump until phase 3. Phase 2a is implemented: the backend
+for several verified domains (domain-set admin API, primary address on any
+configured domain, per-domain fences, retirement, relay domain set, Maddy
+destinations); the admin UI (phase 2b) and phases 3–4 are not implemented.
 Prerequisite of
 [continuous Cloudflare receiving](CLOUDFLARE_CONTINUOUS_RECEIVING.md); applies to
 both native receiving profiles. External IMAP accounts are unaffected.
@@ -40,8 +43,11 @@ separation).
 
 ### Domain set: `$CONFIG/native-domains.json` (version 1)
 
-`{version, issuer, domains: {"<domain>": {token, expiresAt, established,
-verifiedUntil}}, retired: ["<domain>"]}`. One issuer for the whole set; each domain keeps its own
+`{version, issuer, founding, domains: {"<domain>": {token, expiresAt, established,
+verifiedUntil}}, retired: ["<domain>"]}`. `founding` is the first configured
+domain still in service, which the single-domain admin routes serve (absent in
+files that hold one domain); retiring it hands those routes to the smallest
+remaining domain. One issuer for the whole set; each domain keeps its own
 `_kypost-mail.<domain>` proof and re-verification as today. One lock,
 `native-domains.json.lock`, takes the position of `native-domain.json.lock` in every
 lock order. Fences compare the proofs of the domains an operation touches, so
@@ -49,10 +55,15 @@ re-verifying one domain does not fence work on another; concurrent re-verificati
 of the same domain still fences, as today. A delivery to recipients on several
 domains is all-or-nothing, so one lapsed domain delays the others in that delivery.
 
-Removing a domain **retires** it: refused while any address on it is `active` or
-a `queued`/`retryable` outbox job sends from it; otherwise the domain moves to
+Removing a domain **retires** it, permanently: refused while any address on it is
+`active`, a `queued`/`retryable` outbox job sends from it, accepted incoming mail
+bound to it is still pending (abandoned staged transactions never block it), the relay still sends for it, or a restore hold is
+in place; otherwise the domain moves to
 `retired` (no proof, no routing, no sending) and its address records stay, with
 their history, so generations are never reused and old bindings still validate.
+A retired domain is never re-added (whether it may be is an open owner decision);
+a subject whose KyIdentity primary sits on a retired domain cannot be
+re-provisioned until phase 3.
 Retirement is never automatic: a lapsed proof suspends reception and sending on that
 domain; mail stays where it is.
 
@@ -153,10 +164,11 @@ Bind resolves the address to its mailbox; authority is checked per mailbox ID
 (`WithNativeMailAccess` takes mailbox IDs, cap 100, matching Maddy's 100
 recipients). Deliveries to several addresses of one mailbox produce one copy
 (existing grouping). Only `active` addresses on verified domains are routable.
-Maddy's configuration is generated, not live: adding or removing a domain
-regenerates it, listing every configured domain, and restarts the receiver; each
-bind still refuses an address whose domain proof has lapsed, so one lapsed domain
-never blocks adding another.
+Maddy's configuration is generated, not live: after adding or retiring a domain
+the operator regenerates it (`kypost-server receiving config`, listing every
+configured domain) and restarts the receiver; KyPost does neither automatically
+(see [receiving setup](RECEIVING_SETUP.md)). Each bind still refuses an address
+whose domain proof has lapsed, so one lapsed domain never blocks the others.
 
 **Sending.** `From` may be any `active` address of the sending mailbox on a domain in
 the relay's domain set. `native-relay.json` version 2 holds a domain set; every

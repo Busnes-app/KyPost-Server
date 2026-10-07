@@ -32,7 +32,7 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c := DomainRelay{Generation: "12345678-1234-4234-8234-123456789abc", Domain: "example.test", Issuer: "https://idp.example", Host: host, Port: port, Username: "operator-relay-login", Password: "operator-relay-secret"}
+		c := DomainRelay{Generation: "12345678-1234-4234-8234-123456789abc", Domains: []string{"example.test"}, Issuer: "https://idp.example", Host: host, Port: port, Username: "operator-relay-login", Password: "operator-relay-secret"}
 		mode := os.Getenv("KYPOST_RELAY_TLS_PROOF_CASE")
 		if strings.HasPrefix(mode, "check-") {
 			ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)

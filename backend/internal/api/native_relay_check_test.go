@@ -75,7 +75,7 @@ func TestNativeMailRelayCheckRuntime(t *testing.T) {
 			_, portText, _ := net.SplitHostPort(ln.Addr().String())
 			port, _ := strconv.Atoi(portText)
 			path, keyPath := filepath.Join(srv.configDir, "native-relay.json"), filepath.Join(srv.configDir, "native-relay.key")
-			profile, err := mailmsg.SaveDomainRelay(context.Background(), path, keyPath, mailmsg.DomainRelay{Domain: "example.test", Issuer: srv.ssoStore.Load().IssuerURL, Host: "127.0.0.1", Port: port, Username: "relay-login", Password: "relay-secret"})
+			profile, err := mailmsg.SaveDomainRelay(context.Background(), path, keyPath, mailmsg.DomainRelay{Domains: []string{"example.test"}, Issuer: srv.ssoStore.Load().IssuerURL, Host: "127.0.0.1", Port: port, Username: "relay-login", Password: "relay-secret"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -128,7 +128,7 @@ func TestNativeMailRelayCheckRuntime(t *testing.T) {
 						case "rotate-relay":
 							_, changeErr = mailmsg.SaveDomainRelay(context.Background(), path, keyPath, profile)
 						case "rotate-challenge":
-							_, changeErr = srv.nativeDomains.Configure(context.Background(), profile.Domain, profile.Issuer)
+							_, changeErr = srv.nativeDomains.Configure(context.Background(), profile.Domains[0], profile.Issuer)
 						case "disable-issuer":
 							st := srv.ssoStore.Load()
 							st.Enabled = false

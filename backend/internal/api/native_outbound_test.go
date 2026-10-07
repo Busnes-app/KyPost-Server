@@ -59,7 +59,7 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = mailmsg.SaveDomainRelay(context.Background(), filepath.Join(s.configDir, "native-relay.json"), filepath.Join(config.SecretDir(), "native-relay.key"), mailmsg.DomainRelay{Domain: "example.test", Issuer: "https://idp.example", Host: "127.0.0.1", Port: port, Username: "operator-login", Password: "operator-secret"})
+	_, err = mailmsg.SaveDomainRelay(context.Background(), filepath.Join(s.configDir, "native-relay.json"), filepath.Join(config.SecretDir(), "native-relay.key"), mailmsg.DomainRelay{Domains: []string{"example.test"}, Issuer: "https://idp.example", Host: "127.0.0.1", Port: port, Username: "operator-login", Password: "operator-secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
