@@ -474,6 +474,9 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 	if err != nil {
 		return err
 	}
+	// Only a direct scan fills auth (receivingAuthentication); hosted
+	// gateways and an absent scanner leave it empty, so they feed nothing.
+	var auth ingress.Authentication
 	if enabled && d.State == "staged" {
 		if d.Sender != sender || r.gatewayID() != cloudflareGateway && len(peer) != 2 || r.gatewayID() == cloudflareGateway && len(peer) != 0 {
 			return &receivingCommandError{err: errors.New("rspamd requires the bound sender and receiver-supplied IP/HELO"), code: 5}
@@ -482,9 +485,9 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 		if len(peer) == 2 {
 			ip, helo = peer[0], peer[1]
 		}
-		auth, err := scanReceivingSpam(ctx, raw, d, ip, helo, receivingRspamdURL)
-		if errors.Is(err, errSpamReject) {
-			r.rejectEvidence(ctx, d.ID, auth)
+		var err error
+		if auth, err = scanReceivingSpam(ctx, raw, d, ip, helo, receivingRspamdURL); errors.Is(err, errSpamReject) {
+			r.senderEvidence(ctx, d.ID, auth, true)
 		}
 		if err != nil {
 			return err
@@ -493,11 +496,7 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 	if err := r.commitAccept(ctx, d, sender, raw, proofs); err != nil {
 		return err
 	}
-	if r.gatewayID() == receivingGateway {
-		if err := ingress.NewEvidence(filepath.Join(r.stateDir, "receiving")).Accepted(ctx, sender, time.Now()); err != nil {
-			slog.Warn("receiving sender evidence", "actor", "automatic", "task_id", "native-receiving", "action", "accepted-domain", "target", "sender-evidence", "result", "failed", "correlation_id", d.ID, "error", err.Error())
-		}
-	}
+	r.senderEvidence(ctx, d.ID, auth, false)
 	return nil
 }
 

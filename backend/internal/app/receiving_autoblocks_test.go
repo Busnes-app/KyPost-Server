@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 )
 
@@ -111,14 +112,46 @@ func TestNativeReceivingAutomaticBlocks(t *testing.T) {
 	if err != nil || len(list) != 1 || list[0].Source != "automatic" || list[0].Level != 1 || list[0].Value != "spammer@shared.test" {
 		t.Fatal("automatic block", list, err)
 	}
-	// Accepted mail records its envelope domain, never content.
+	// Accepted mail records only an authenticated domain (the tagged mail's
+	// shared.test), never a forged envelope domain, an address or content.
 	verdict = "no action"
 	if err := maddyMessage(t, r, "good", "friend@friendly.test", "friend@friendly.test", ""); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(evidence)
-	if err != nil || !bytes.Contains(raw, []byte(`"good":["friendly.test","shared.test"]`)) || bytes.Contains(raw, []byte("private")) || bytes.Contains(raw, []byte("forged")) {
+	if err != nil || !bytes.Contains(raw, []byte(`"`+ingress.BlockID("domain", "shared.test")+`":`)) || bytes.Contains(raw, []byte(ingress.BlockID("domain", "friendly.test"))) ||
+		bytes.Contains(raw, []byte("@")) || bytes.Contains(raw, []byte("private")) {
 		t.Fatal("evidence", string(raw), err)
+	}
+	// Evidence work never holds up the SMTP reply: with its lock held, a
+	// message is still accepted promptly and the evidence is dropped.
+	release, err := fsutil.LockFileContext(context.Background(), evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(release)
+	defer func(old time.Duration) { evidenceTimeout = old }(evidenceTimeout)
+	evidenceTimeout = 200 * time.Millisecond
+	started := time.Now()
+	domain = "contended.test" // a new good domain, so the lock is needed
+	if err := maddyMessage(t, r, "contended", "other@contended.test", "other@contended.test", ""); err != nil || time.Since(started) > 5*time.Second {
+		t.Fatal("evidence contention held the reply", err, time.Since(started))
+	}
+	release()
+	if after, _ := os.ReadFile(evidence); !bytes.Equal(after, raw) {
+		t.Fatal("contended evidence written")
+	}
+}
+
+// Without the scanner nothing is authenticated, so nothing is recorded.
+func TestNativeReceivingNoScannerNoEvidence(t *testing.T) {
+	r, _ := receivingFixture(t)
+	t.Setenv("KYPOST_RECEIVING_RSPAMD", "false")
+	if err := maddyMessage(t, r, "plain", "friend@friendly.test", "friend@friendly.test", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(r.stateDir, "receiving", ingress.EvidenceFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("evidence recorded without a scanner", err)
 	}
 }
 

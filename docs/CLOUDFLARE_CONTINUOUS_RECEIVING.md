@@ -411,8 +411,9 @@ storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
   at least 5 distinct addresses on it are automatically blocked (each meeting the
   identity rule above) within 24 hours
   **and** the deployment has never accepted non-rejected mail from that domain
-  (a never-pruned record of accepted envelope domains, at most 10,000; when it
-  is full, no domain is blocked automatically).
+  under the same identity rule (a record of authenticated accepted domains with
+  last-seen times, at most 10,000, longest-unseen evicted), and only once that
+  record has been collecting for 30 days.
   Shared providers your users already receive from are therefore never blocked
   automatically; throwaway spam domains are.
 - **Cooldown escalates** per repeat: 1 hour, 24 hours, 7 days; a clean period
@@ -423,8 +424,9 @@ storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
   [sender blocks](NATIVE_PROVISIONING.md#sender-blocks)); the deployment's own
   mail domains and addresses on them cannot be blocked, and the null sender is
   never blocked. A manual unblock suppresses automatic re-blocking of that
-  exact address or domain for 30 days, and an automatic block never replaces
-  a manual one. Automatic blocks are implemented for Maddy
+  exact address or domain for 30 days, an automatic block never replaces a
+  manual one, and automatic blocks use at most half the list and give way to
+  manual ones. Automatic blocks are implemented for Maddy
   ([automatic sender blocks](NATIVE_PROVISIONING.md#automatic-sender-blocks));
   evidence display and the admin UI are pending.
 - Blocked mail is rejected, not stored; senders get a permanent 550 for the

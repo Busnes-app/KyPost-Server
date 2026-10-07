@@ -3,9 +3,11 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -115,9 +117,13 @@ func TestNativeReceivingBlocksCLI(t *testing.T) {
 			t.Fatal("refused command succeeded", args)
 		}
 	}
-	if out, err := cli("list"); err != nil || strings.TrimSpace(out) != `{"blocks":[]}` {
+	if out, err := cli("list"); err != nil || strings.TrimSpace(out) != `{"blocks":[],"evidence":{"damaged":false,"resetAt":null,"domainBlocksFrom":null}}` {
 		t.Fatal("refusals changed the list", out, err)
 	}
+	var audit bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&audit, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
 	until := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	out, err := cli("add", "domain", "Evil.test", "--until", until, "--reason", "phishing", "--confirm", "Evil.test")
 	var added ingress.SenderBlock
@@ -136,6 +142,28 @@ func TestNativeReceivingBlocksCLI(t *testing.T) {
 	}
 	if out, err = cli("list"); err != nil || strings.Contains(out, "evil.test") {
 		t.Fatal("list after remove", out, err)
+	}
+	// The CLI audits with the API's action names, never the value.
+	if log := audit.String(); !strings.Contains(log, `"action":"block_sender"`) || !strings.Contains(log, `"action":"unblock_sender"`) || strings.Contains(log, "evil.test") {
+		t.Fatal("CLI audit", log)
+	}
+	// An unblock whose suppression cannot be recorded still removes the
+	// block and says so.
+	evidence := filepath.Join(r.stateDir, "receiving", ingress.EvidenceFile)
+	if err := os.Remove(evidence); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(evidence, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if out, err = cli("remove", "address", "bad@spam.test", "--confirm", "bad@spam.test"); err != nil || !strings.HasPrefix(out, "removed; warning:") {
+		t.Fatal("remove with unwritable evidence", out, err)
+	}
+	if out, err = cli("list"); err != nil || strings.Contains(out, "bad@spam.test") || !strings.Contains(out, `"damaged":true`) {
+		t.Fatal("block kept", out, err)
+	}
+	if err := os.Remove(evidence); err != nil {
+		t.Fatal(err)
 	}
 	if os.Geteuid() != 0 {
 		t.Setenv("STATE_DIR", "/")

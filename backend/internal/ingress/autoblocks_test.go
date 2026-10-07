@@ -1,15 +1,19 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 )
 
 var t0 = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
@@ -139,7 +143,7 @@ func TestAutomaticBlocksEscalate(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc map[string]any
-	if json.Unmarshal(raw, &doc) != nil || len(doc) != 5 {
+	if json.Unmarshal(raw, &doc) != nil || len(doc) != 7 || bytes.Contains(raw, []byte("spam.test")) {
 		t.Fatal("unexpected evidence shape", string(raw))
 	}
 }
@@ -173,6 +177,18 @@ func TestAutomaticBlocksExclusions(t *testing.T) {
 	if err != nil || len(list) != 2 || list[0].Source != "manual" || list[1].Source != "manual" || list[1].Until != nil {
 		t.Fatal("manual block changed", list, err)
 	}
+	// The level climbs only when a block was made: once a brief manual block
+	// lapses, the first automatic block is level 1.
+	soon := t0.Add(2 * time.Hour).UnixMilli()
+	if _, err := blocks.Put(ctx, SenderBlock{Kind: "address", Value: "brief@spam.test", Until: &soon, Source: "manual", Actor: "admin", Reason: "spam"}, nil, t0); err != nil {
+		t.Fatal(err)
+	}
+	if made := rejects(t, e, authed("brief@spam.test"), nil, t0, 10); len(made) != 0 {
+		t.Fatal("automatic block over manual", made)
+	}
+	if made := rejects(t, e, authed("brief@spam.test"), nil, t0.Add(3*time.Hour), 5); len(made) != 1 || made[0].Level != 1 {
+		t.Fatal("level climbed without a block", made)
+	}
 	// A manual unblock suppresses automatic re-blocking for UnblockWindow
 	// and resets the escalation.
 	a := authed("bob@spam.test")
@@ -195,156 +211,377 @@ func TestAutomaticBlocksExclusions(t *testing.T) {
 	}
 }
 
-// Five distinct automatically blocked addresses within a day block a domain
-// mail was never accepted from; a domain with accepted mail is never blocked.
-func TestAutomaticDomainBlocks(t *testing.T) {
-	ctx := context.Background()
-	run := func(t *testing.T, dir, domain string, n int, gap time.Duration) []SenderBlock {
-		t.Helper()
-		var domains []SenderBlock
-		for i := range n {
-			for _, b := range rejects(t, NewEvidence(dir), authed(fmt.Sprintf("u%d@%s", i, domain)), nil, t0.Add(time.Duration(i)*gap), 5) {
-				if b.Kind == "domain" {
-					domains = append(domains, b)
-				}
+// warm starts the accepted-domain record long enough ago that automatic
+// domain blocks are enabled at t0.
+func warm(t *testing.T, dir string) {
+	t.Helper()
+	if err := NewEvidence(dir).Accepted(context.Background(), authed("x@warm.test"), t0.Add(-31*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// blockAddresses blocks n authenticated addresses u<from>.. on domain, gap
+// apart, and returns the domain blocks made.
+func blockAddresses(t *testing.T, dir, domain string, from, n int, start time.Time, gap time.Duration) []SenderBlock {
+	t.Helper()
+	var domains []SenderBlock
+	for i := from; i < from+n; i++ {
+		for _, b := range rejects(t, NewEvidence(dir), authed(fmt.Sprintf("u%d@%s", i, domain)), nil, start.Add(time.Duration(i-from)*gap), 5) {
+			if b.Kind == "domain" {
+				domains = append(domains, b)
 			}
 		}
-		return domains
 	}
-	if got := run(t, t.TempDir(), "throwaway.test", 4, time.Minute); len(got) != 0 {
+	return domains
+}
+
+// Five distinct automatically blocked addresses within a day block a domain
+// no authenticated mail was accepted from, once the record has warmed up.
+func TestAutomaticDomainBlocks(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	warm(t, dir)
+	if got := blockAddresses(t, dir, "throwaway.test", 0, 4, t0, time.Minute); len(got) != 0 {
 		t.Fatal("domain blocked by four addresses", got)
 	}
-	dir := t.TempDir()
-	if got := run(t, dir, "throwaway.test", 5, time.Minute); len(got) != 1 || got[0].Value != "throwaway.test" || got[0].Level != 1 || got[0].Source != "automatic" {
+	got := blockAddresses(t, dir, "throwaway.test", 4, 1, t0.Add(10*time.Minute), time.Minute)
+	if len(got) != 1 || got[0].Value != "throwaway.test" || got[0].Level != 1 || got[0].Source != "automatic" {
 		t.Fatal("domain not blocked", got)
-	} else if !blockedAt(t, dir, "new@throwaway.test", t0.Add(time.Hour)) || blockedAt(t, dir, "new@sub.throwaway.test", t0.Add(time.Hour)) {
+	}
+	at := t0.Add(20 * time.Minute)
+	if !blockedAt(t, dir, "new@throwaway.test", at) || blockedAt(t, dir, "new@sub.throwaway.test", at) {
 		t.Fatal("domain block does not match exactly")
 	}
 	// After it expires, the addresses that made it do not make it again:
 	// five new ones within a day do, one level up.
-	after := t0.Add(2 * time.Hour)
-	for i := 5; i < 10; i++ {
-		for _, b := range rejects(t, NewEvidence(dir), authed(fmt.Sprintf("u%d@throwaway.test", i)), nil, after.Add(time.Duration(i)*time.Minute), 5) {
-			if b.Kind == "domain" && (i < 9 || b.Level != 2) {
-				t.Fatal("domain re-blocked by old evidence", i, b)
-			}
+	for i, b := range blockAddresses(t, dir, "throwaway.test", 5, 5, t0.Add(2*time.Hour), time.Minute) {
+		if i > 0 || b.Level != 2 {
+			t.Fatal("domain re-blocked by old evidence", b)
 		}
 	}
-	if !blockedAt(t, dir, "new@throwaway.test", after.Add(time.Hour)) {
+	if !blockedAt(t, dir, "new@throwaway.test", t0.Add(3*time.Hour)) {
 		t.Fatal("domain not re-blocked")
 	}
 	// Spread over more than a day: never five at once.
-	if got := run(t, t.TempDir(), "slow.test", 5, 7*time.Hour); len(got) != 0 {
+	dir = t.TempDir()
+	warm(t, dir)
+	if got := blockAddresses(t, dir, "slow.test", 0, 5, t0, 7*time.Hour); len(got) != 0 {
 		t.Fatal("window ignored", got)
 	}
-	// Any accepted mail from the domain, even long ago, rules it out.
+	// Warm-up: no domain blocks until authenticated acceptances have been
+	// recorded for 30 days, and none before any.
 	dir = t.TempDir()
-	if err := NewEvidence(dir).Accepted(ctx, "Someone@Provider.TEST", t0.Add(-365*24*time.Hour)); err != nil {
+	if got := blockAddresses(t, dir, "early.test", 0, 5, t0, time.Minute); len(got) != 0 {
+		t.Fatal("domain blocked with no accepted-domain record", got)
+	}
+	if err := NewEvidence(dir).Accepted(ctx, authed("x@warm.test"), t0.Add(-29*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if got := run(t, dir, "provider.test", 6, time.Minute); len(got) != 0 {
+	if got := blockAddresses(t, dir, "early.test", 5, 5, t0.Add(2*time.Hour), time.Minute); len(got) != 0 {
+		t.Fatal("domain blocked during warm-up", got)
+	}
+	if got := blockAddresses(t, dir, "early.test", 10, 5, t0.Add(25*24*time.Hour), time.Minute); len(got) != 1 {
+		t.Fatal("domain not blocked after warm-up", got)
+	}
+	// Authenticated mail accepted from the domain, even long ago, rules it
+	// out; a forged envelope domain on accepted mail does not.
+	dir = t.TempDir()
+	warm(t, dir)
+	if err := NewEvidence(dir).Accepted(ctx, Authentication{Sender: "Someone@Provider.TEST", From: "someone@provider.test", SPF: true, DKIM: []string{"provider.test"}}, t0.Add(-365*24*time.Hour+time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	spoofed := Authentication{Sender: "x@forged.test", From: "x@forged.test", DKIM: []string{"forged.test"}}
+	if err := NewEvidence(dir).Accepted(ctx, spoofed, t0); err != nil {
+		t.Fatal(err)
+	}
+	if got := blockAddresses(t, dir, "provider.test", 0, 6, t0, time.Minute); len(got) != 0 {
 		t.Fatal("shared provider blocked", got)
 	}
-	if blockedAt(t, dir, "u0@provider.test", t0.Add(time.Minute)) == false {
+	if !blockedAt(t, dir, "u0@provider.test", t0.Add(time.Minute)) {
 		t.Fatal("address blocks still apply on a good domain")
 	}
-	// Null and malformed senders record nothing.
-	for _, sender := range []string{"", "<>", "x@[1.2.3.4]"} {
-		if err := NewEvidence(dir).Accepted(ctx, sender, t0); err != nil {
-			t.Fatal(err)
-		}
+	if got := blockAddresses(t, dir, "forged.test", 0, 5, t0, time.Minute); len(got) != 1 {
+		t.Fatal("unauthenticated acceptance protected a domain", got)
 	}
-	raw, _ := os.ReadFile(filepath.Join(dir, EvidenceFile))
-	if !strings.Contains(string(raw), `"good":["provider.test"]`) {
-		t.Fatal("good domains", string(raw))
-	}
-	// A full accepted-domain record can no longer prove a domain never-good,
-	// so it disables automatic domain blocks instead of forgetting one.
+	// A full accepted-domain record evicts its oldest entry and keeps
+	// domain blocks enabled.
 	dir = t.TempDir()
-	good := make([]string, MaxGoodDomains)
-	for i := range good {
-		good[i] = fmt.Sprintf("d%05d.test", i)
+	good := map[string]int64{}
+	for i := range MaxGoodDomains {
+		good[BlockID("domain", fmt.Sprintf("d%05d.test", i))] = t0.Add(-40*24*time.Hour).UnixMilli() + int64(i)
 	}
-	full, _ := json.Marshal(map[string]any{"version": 1, "good": good})
+	full, _ := json.Marshal(evidenceDoc{Version: 1, Good: good, GoodSince: t0.Add(-40 * 24 * time.Hour).UnixMilli()})
 	if err := os.WriteFile(filepath.Join(dir, EvidenceFile), full, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewEvidence(dir).Accepted(ctx, "x@new.test", t0); !errors.Is(err, ErrGoodDomainsFull) {
-		t.Fatal("full record grew", err)
+	if err := NewEvidence(dir).Accepted(ctx, authed("x@new.test"), t0); err != nil {
+		t.Fatal(err)
 	}
-	if err := NewEvidence(dir).Accepted(ctx, "x@d00001.test", t0); err != nil {
-		t.Fatal("known domain refused", err)
+	doc, err := NewEvidence(dir).load()
+	if _, kept := doc.Good[BlockID("domain", "d00000.test")]; err != nil || len(doc.Good) != MaxGoodDomains || kept || doc.Good[BlockID("domain", "new.test")] == 0 {
+		t.Fatal("full record did not evict its oldest", len(doc.Good), kept, err)
 	}
-	if got := run(t, dir, "throwaway.test", 5, time.Minute); len(got) != 0 {
-		t.Fatal("domain blocked with a full record", got)
+	if got := blockAddresses(t, dir, "throwaway.test", 0, 5, t0, time.Minute); len(got) != 1 {
+		t.Fatal("a full record disabled domain blocks", got)
 	}
 	// An unblocked domain is suppressed like an address.
 	dir = t.TempDir()
-	got := run(t, dir, "again.test", 5, time.Minute)
+	warm(t, dir)
+	got = blockAddresses(t, dir, "again.test", 0, 5, t0, time.Minute)
 	if len(got) != 1 {
 		t.Fatal("domain not blocked", got)
 	}
 	if removed, err := NewBlocks(dir).Remove(ctx, got[0].ID, t0.Add(10*time.Minute)); err != nil || !removed {
 		t.Fatal(err)
 	}
-	for i := 5; i < 10; i++ {
-		for _, b := range rejects(t, NewEvidence(dir), authed(fmt.Sprintf("u%d@again.test", i)), nil, t0.Add(20*time.Minute), 5) {
-			if b.Kind == "domain" {
-				t.Fatal("unblocked domain re-blocked", b)
-			}
-		}
+	if got := blockAddresses(t, dir, "again.test", 5, 5, t0.Add(20*time.Minute), time.Minute); len(got) != 0 {
+		t.Fatal("unblocked domain re-blocked", got)
 	}
 }
 
 func TestAutomaticBlocksEvidenceBounded(t *testing.T) {
 	dir := t.TempDir()
+	e := NewEvidence(dir)
+	// A known abuser at level 2, then a flood of one-off identities filling
+	// the cap: the abuser's level survives, the oldest one-offs go.
+	abuser := authed("abuser@spam.test")
+	rejects(t, e, abuser, nil, t0, 5)
+	rejects(t, e, abuser, nil, t0.Add(2*time.Hour), 5)
 	addresses := map[string]evidenceRecord{}
-	for i := range MaxEvidence {
-		addresses[fmt.Sprintf("u%d@spam.test", i)] = evidenceRecord{Hits: []int64{t0.UnixMilli() + int64(i)}, Last: t0.UnixMilli() + int64(i)}
+	doc, err := e.load()
+	if err != nil {
+		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(evidenceDoc{Version: 1, Addresses: addresses})
+	maps.Copy(addresses, doc.Addresses)
+	for i := len(addresses); i < MaxEvidence; i++ {
+		addresses[BlockID("address", fmt.Sprintf("u%d@spam.test", i))] = evidenceRecord{Domain: BlockID("domain", "spam.test"), Hits: []int64{t0.UnixMilli() + int64(i)}, Last: t0.Add(3*time.Hour).UnixMilli() + int64(i)}
+	}
+	doc.Addresses = addresses
+	raw, _ := json.Marshal(doc)
 	if err := os.WriteFile(filepath.Join(dir, EvidenceFile), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	rejects(t, NewEvidence(dir), authed("new@spam.test"), nil, t0.Add(time.Hour), 1)
-	doc, err := NewEvidence(dir).load()
-	if err != nil || len(doc.Addresses) != MaxEvidence {
-		t.Fatal("evidence unbounded", len(doc.Addresses), err)
+	for i := range 3 {
+		rejects(t, e, authed(fmt.Sprintf("new%d@spam.test", i)), nil, t0.Add(4*time.Hour), 1)
 	}
-	if _, ok := doc.Addresses["u0@spam.test"]; ok {
-		t.Fatal("oldest record kept")
+	if doc, err = e.load(); err != nil || len(doc.Addresses) != MaxEvidence || doc.Addresses[BlockID("address", "abuser@spam.test")].Level != 2 {
+		t.Fatal("eviction reset a known abuser", len(doc.Addresses), err)
 	}
-	if _, ok := doc.Addresses["new@spam.test"]; !ok {
+	if _, ok := doc.Addresses[BlockID("address", "new2@spam.test")]; !ok {
 		t.Fatal("newest record evicted")
 	}
-	addresses["over@spam.test"] = evidenceRecord{Last: 1}
-	over, _ := json.Marshal(evidenceDoc{Version: 1, Addresses: addresses})
+	if made := rejects(t, e, abuser, nil, t0.Add(30*time.Hour), 5); len(made) != 1 || made[0].Level != 3 {
+		t.Fatal("abuser escalation lost", made)
+	}
+	over := evidenceDoc{Version: 1, Addresses: map[string]evidenceRecord{}}
+	for i := range MaxEvidence + 1 {
+		over.Addresses[fmt.Sprintf("%016x", i)] = evidenceRecord{Domain: fmt.Sprintf("%016x", i), Last: 1}
+	}
+	overRaw, _ := json.Marshal(over)
+	id := BlockID("address", "a@b.test")
 	for name, bad := range map[string]string{
-		"over cap":     string(over),
-		"unknown":      `{"version":1,"subject":"hello"}`,
-		"version":      `{"version":2}`,
-		"hits":         `{"version":1,"addresses":{"a@b.test":{"hits":[1,2,3,4,5],"level":0,"last":5,"blocked":0}}}`,
-		"level":        `{"version":1,"addresses":{"a@b.test":{"hits":[],"level":4,"last":5,"blocked":0}}}`,
-		"address":      `{"version":1,"addresses":{"A@b.test":{"hits":[],"level":1,"last":5,"blocked":0}}}`,
-		"unsorted":     `{"version":1,"good":["b.test","a.test"]}`,
-		"duplicate":    `{"version":1,"good":["a.test","a.test"]}`,
-		"unblock id":   `{"version":1,"unblocked":{"alice@b.test":5}}`,
-		"trailing":     `{"version":1} {}`,
-		"domain value": `{"version":1,"domains":{"a@b.test":{"hits":[],"level":1,"last":5,"blocked":5}}}`,
+		"over cap":      string(overRaw),
+		"unknown":       `{"version":1,"subject":"hello"}`,
+		"version":       `{"version":2}`,
+		"raw address":   `{"version":1,"addresses":{"a@b.test":{"domain":"` + id + `","hits":[],"level":1,"last":5,"blocked":0}}}`,
+		"no domain":     `{"version":1,"addresses":{"` + id + `":{"hits":[],"level":1,"last":5,"blocked":0}}}`,
+		"hits":          `{"version":1,"addresses":{"` + id + `":{"domain":"` + id + `","hits":[1,2,3,4,5],"level":0,"last":5,"blocked":0}}}`,
+		"level":         `{"version":1,"addresses":{"` + id + `":{"domain":"` + id + `","hits":[],"level":4,"last":5,"blocked":0}}}`,
+		"domain domain": `{"version":1,"domains":{"` + id + `":{"domain":"` + id + `","hits":[],"level":1,"last":5,"blocked":5}}}`,
+		"good":          `{"version":1,"good":{"b.test":5}}`,
+		"unblock id":    `{"version":1,"unblocked":{"alice@b.test":5}}`,
+		"trailing":      `{"version":1} {}`,
+		"oversized":     `{"version":1}` + strings.Repeat(" ", MaxEvidenceBytes),
 	} {
 		if ParseEvidence([]byte(bad)) == nil {
 			t.Fatal("accepted", name)
 		}
 	}
-	// A malformed file refuses counting rather than starting over.
-	if err := os.WriteFile(filepath.Join(dir, EvidenceFile), []byte("{"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NewEvidence(dir).Reject(context.Background(), authed("x@spam.test"), nil, t0); err == nil {
-		t.Fatal("malformed evidence replaced")
-	}
 	// Like Blocks, Evidence never creates the receiving directory.
 	if _, err := NewEvidence(filepath.Join(dir, "missing")).Reject(context.Background(), authed("x@spam.test"), nil, t0); !errors.Is(err, ErrBlockStore) {
 		t.Fatal("created the receiving directory", err)
+	}
+}
+
+// Every map at its cap with the widest values stays well under the byte
+// bound: the file is bounded by construction, not by luck.
+func TestEvidenceWorstCaseSize(t *testing.T) {
+	widest := int64(1<<53 - 1)
+	hits := []int64{widest, widest, widest, widest}
+	doc := evidenceDoc{Version: 1, Addresses: map[string]evidenceRecord{}, Domains: map[string]evidenceRecord{}, Good: map[string]int64{}, Unblocked: map[string]int64{}, GoodSince: widest, ResetAt: widest}
+	for i := range MaxGoodDomains {
+		id := fmt.Sprintf("%016x", uint64(i)<<40)
+		if i < MaxEvidence {
+			doc.Addresses[id] = evidenceRecord{Domain: id, Hits: hits, Level: 3, Last: widest, Blocked: widest}
+			doc.Domains[id] = evidenceRecord{Hits: hits, Level: 3, Last: widest, Blocked: widest}
+			doc.Unblocked[id] = widest
+		}
+		doc.Good[id] = widest
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil || len(raw) > MaxEvidenceBytes/2 || ParseEvidence(raw) != nil {
+		t.Fatal("worst case", len(raw), err)
+	}
+}
+
+// Damaged or oversized evidence never needs file surgery: unblocking works,
+// counting restarts after setting the file aside, and status reports it.
+func TestAutomaticBlocksEvidenceRecovery(t *testing.T) {
+	ctx := context.Background()
+	for name, poison := range map[string][]byte{"malformed": []byte("{"), "oversized": bytes.Repeat([]byte(" "), MaxEvidenceBytes+1)} {
+		dir := t.TempDir()
+		e := NewEvidence(dir)
+		made := rejects(t, e, authed("bob@spam.test"), nil, t0, 5)
+		if len(made) != 1 {
+			t.Fatal(name, made)
+		}
+		path := filepath.Join(dir, EvidenceFile)
+		if err := os.WriteFile(path, poison, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if status := e.Status(); !status.Damaged {
+			t.Fatal(name, "damage not reported", status)
+		}
+		if removed, err := NewBlocks(dir).Remove(ctx, made[0].ID, t0.Add(time.Minute)); err != nil || !removed {
+			t.Fatal(name, "unblock failed", removed, err)
+		}
+		if aside, err := os.ReadFile(filepath.Join(dir, EvidenceDamagedFile)); err != nil || !bytes.Equal(aside, poison) {
+			t.Fatal(name, "damaged file not set aside", err)
+		}
+		if status := e.Status(); status.Damaged || status.ResetAt == nil || *status.ResetAt != t0.Add(time.Minute).UnixMilli() {
+			t.Fatal(name, "reset not reported", status)
+		}
+		// The unblock was recorded in the fresh file; others count again.
+		if again := rejects(t, e, authed("bob@spam.test"), nil, t0.Add(time.Hour), 5); len(again) != 0 {
+			t.Fatal(name, "suppression lost", again)
+		}
+		if again := rejects(t, e, authed("eve@spam.test"), nil, t0.Add(time.Hour), 5); len(again) != 1 {
+			t.Fatal(name, "counting did not recover", again)
+		}
+	}
+	// An evidence store that cannot be written never keeps a block in force.
+	dir := t.TempDir()
+	made := rejects(t, NewEvidence(dir), authed("bob@spam.test"), nil, t0, 5)
+	path := filepath.Join(dir, EvidenceFile)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := NewBlocks(dir).Remove(ctx, made[0].ID, t0.Add(time.Minute))
+	if !removed || !errors.Is(err, ErrUnblockNotRecorded) || blockedAt(t, dir, "bob@spam.test", t0.Add(time.Minute)) {
+		t.Fatal("unblock depended on evidence", removed, err)
+	}
+}
+
+// Automatic blocks never cost an administrator a block.
+func TestAutomaticBlocksBudget(t *testing.T) {
+	ctx := context.Background()
+	write := func(t *testing.T, dir string, blocks []SenderBlock) {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]any{"version": 1, "blocks": blocks})
+		if err := os.WriteFile(filepath.Join(dir, BlocksFile), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	auto := func(value string, until time.Duration) SenderBlock {
+		u := t0.Add(until).UnixMilli()
+		return SenderBlock{ID: BlockID("address", value), Kind: "address", Value: value, Until: &u, Source: "automatic", Level: 1, CreatedAt: t0.UnixMilli(), Actor: "automatic", Reason: "abuse"}
+	}
+	manual := func(value string) SenderBlock {
+		return SenderBlock{ID: BlockID("address", value), Kind: "address", Value: value, Source: "manual", CreatedAt: t0.UnixMilli(), Actor: "admin", Reason: "spam"}
+	}
+	put := func(dir string, b SenderBlock) error {
+		_, err := NewBlocks(dir).Put(ctx, b, nil, t0)
+		return err
+	}
+	count := func(t *testing.T, dir string) (manuals, autos int, ids map[string]bool) {
+		t.Helper()
+		list, err := NewBlocks(dir).List(t0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = map[string]bool{}
+		for _, b := range list {
+			ids[b.ID] = true
+			if b.Source == "manual" {
+				manuals++
+			} else {
+				autos++
+			}
+		}
+		return manuals, autos, ids
+	}
+	// Count: the list full, half automatic; a manual add evicts the
+	// soonest-expiring automatic block.
+	dir := t.TempDir()
+	var blocks []SenderBlock
+	for i := range MaxBlocks / 2 {
+		blocks = append(blocks, manual(fmt.Sprintf("m%d@x.test", i)), auto(fmt.Sprintf("a%d@x.test", i), time.Duration(i+2)*time.Hour))
+	}
+	write(t, dir, blocks)
+	if err := put(dir, manual("admin@x.test")); err != nil {
+		t.Fatal("manual add refused by automatic blocks", err)
+	}
+	if m, a, ids := count(t, dir); m != MaxBlocks/2+1 || a != MaxBlocks/2-1 || ids[BlockID("address", "a0@x.test")] || !ids[BlockID("address", "a1@x.test")] {
+		t.Fatal("wrong eviction", m, a)
+	}
+	// Automatic blocks alone: their half of the count is all they get.
+	dir2 := t.TempDir()
+	blocks = nil
+	for i := range MaxBlocks / 2 {
+		blocks = append(blocks, auto(fmt.Sprintf("a%d@x.test", i), time.Duration(i+2)*time.Hour))
+	}
+	write(t, dir2, blocks)
+	if err := put(dir2, auto("extra@x.test", time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, a, ids := count(t, dir2); a != MaxBlocks/2 || ids[BlockID("address", "a0@x.test")] {
+		t.Fatal("automatic count share", a)
+	}
+	// The automatic share full: a new automatic block evicts the
+	// soonest-expiring automatic one, never a manual one.
+	b := auto("new@x.test", time.Hour)
+	if err := put(dir, b); err != nil {
+		t.Fatal(err)
+	}
+	if m, a, ids := count(t, dir); m != MaxBlocks/2+1 || a != MaxBlocks/2-1 || !ids[b.ID] || ids[BlockID("address", "a1@x.test")] {
+		t.Fatal("automatic share", m, a)
+	}
+	// Only manual blocks fill the list: a manual add is refused, an
+	// automatic one too.
+	blocks = nil
+	for i := range MaxBlocks {
+		blocks = append(blocks, manual(fmt.Sprintf("m%d@x.test", i)))
+	}
+	write(t, dir, blocks)
+	if err := put(dir, manual("admin@x.test")); !errors.Is(err, ErrBlockFull) {
+		t.Fatal(err)
+	}
+	if err := put(dir, auto("new@x.test", time.Hour)); !errors.Is(err, ErrBlockFull) {
+		t.Fatal(err)
+	}
+	// Wire budget: long automatic values hold the automatic half of it.
+	long := func(i int) string { return fmt.Sprintf("%0200d@%s.test", i, strings.Repeat("d", 40)) }
+	blocks = nil
+	for i := range 1700 { // about 500 KiB, under the whole wire budget
+		blocks = append(blocks, auto(long(i), time.Duration(i+2)*time.Hour))
+	}
+	write(t, dir, blocks)
+	if err := put(dir, auto(long(9999), time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	wire, n := 0, 0
+	list, _ := NewBlocks(dir).List(t0)
+	for _, x := range list {
+		wire, n = wire+cfreceiving.BlockWireBytes(x.Wire()), n+1
+	}
+	if wire > maxBlockWire/2 || wire < maxBlockWire/2-2*cfreceiving.BlockWireBytes(list[0].Wire()) {
+		t.Fatal("automatic wire share", wire, n)
+	}
+	write(t, dir, blocks)
+	if err := put(dir, manual(long(9998))); err != nil {
+		t.Fatal("manual add refused by automatic wire use", err)
 	}
 }

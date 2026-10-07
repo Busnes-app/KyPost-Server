@@ -328,7 +328,7 @@ func TestSenderBlocksAdminAPI(t *testing.T) {
 	const base = "/api/admin/receiving/blocks"
 	confirm := `"password":"` + password + `"`
 	// Before receiving init: empty list, and changes refuse without creating the spool.
-	if w := call("GET", base, token, csrf, ""); w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"blocks":[]}` {
+	if w := call("GET", base, token, csrf, ""); w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"blocks":[],"evidence":{"damaged":false,"resetAt":null,"domainBlocksFrom":null}}` {
 		t.Fatal("empty list", w.Code, w.Body)
 	}
 	if w := call("POST", base, token, csrf, `{"kind":"domain","value":"evil.test",`+confirm+`}`); w.Code != 409 {
@@ -405,8 +405,18 @@ func TestSenderBlocksAdminAPI(t *testing.T) {
 			t.Fatal("unblock by address", path, w.Code, w.Body)
 		}
 	}
-	if w = call("DELETE", base+"/"+badID, token, csrf, `{`+confirm+`}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"result":"unblocked"`) {
+	// Evidence that cannot record the suppression never keeps a block: the
+	// unblock succeeds with a warning.
+	evidence := filepath.Join(srv.stateDir, "receiving", ingress.EvidenceFile)
+	_ = os.Remove(evidence)
+	if err := os.Mkdir(evidence, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if w = call("DELETE", base+"/"+badID, token, csrf, `{`+confirm+`}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"result":"unblocked"`) || !strings.Contains(w.Body.String(), `"warning":`) {
 		t.Fatal("unblock", w.Code, w.Body)
+	}
+	if err := os.Remove(evidence); err != nil {
+		t.Fatal(err)
 	}
 	if w = call("DELETE", base+"/"+badID, token, csrf, `{`+confirm+`}`); w.Code != 404 {
 		t.Fatal("second unblock", w.Code, w.Body)

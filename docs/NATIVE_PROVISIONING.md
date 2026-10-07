@@ -978,18 +978,20 @@ admin UI and evidence display are pending; see [abusive senders](CLOUDFLARE_CONT
 API (admin only; POST and DELETE need CSRF and the account credential, or
 KySignOn step-up, in the JSON body as for quarantine):
 
-- `GET /api/admin/receiving/blocks` returns `{blocks:[{id,kind,value,until,source,level,createdAt,actor,reason}]}`
+- `GET /api/admin/receiving/blocks` returns `{blocks:[{id,kind,value,until,source,level,createdAt,actor,reason}],evidence:{damaged,resetAt,domainBlocksFrom}}`
   for blocks in force (empty before `receiving init`).
 - `POST /api/admin/receiving/blocks` with `{kind, value, until?, reason?}`
-  returns `{block}`; adding an existing kind/value replaces it. 400 invalid
-  value, kind, reason or past `until`; 409 own domain, list full or receiving
-  not initialized; 503 storage.
+  returns `{block}`; adding an existing kind/value replaces it, and automatic
+  blocks give way when the list is full. 400 invalid value, kind, reason or
+  past `until`; 409 own domain, list full of manual blocks or receiving not
+  initialized; 503 storage.
 - `DELETE /api/admin/receiving/blocks/{id}` with the listed 16-hex `id`
   returns `{id,result:"unblocked"}`; 400 malformed ID, 404 when no such block
   is in force. The URL carries the ID, never the address, so reverse-proxy
   access logs record no blocked senders. Removing a block (either source)
   also suppresses automatic re-blocking of that exact address or domain for
-  30 days.
+  30 days; if that cannot be recorded the block is still removed and the
+  answer carries a `warning`.
 
 CLI, as the runtime user that owns `STATE_DIR` (it refuses any other), with the
 value typed again after `--confirm`:
@@ -1000,7 +1002,7 @@ docker compose exec --user kypost kypost-server kypost-server receiving blocks a
 docker compose exec --user kypost kypost-server kypost-server receiving blocks remove address|domain <value> --confirm <value>
 ```
 
-Both audit `block_sender`/`unblock_sender` with actor, kind, result and the
+Both audit `block_sender`/`unblock_sender` (the CLI's `list` as `list_sender_blocks`) with actor, kind, result and the
 block `id` whenever the value is valid (refusals included; empty otherwise),
 never the address or domain (API to `api.err.log`, CLI to the terminal). The value is attacker-chosen: render it as plain text.
 
@@ -1022,36 +1024,63 @@ but automatic blocks in the shared list are published like manual ones.
   the deployment's own domains (and addresses on them) never count.
 - **Address blocks.** 5 counted verdicts within 1 hour block the address
   (`source: automatic`) for 1 hour, then 24 hours, then 7 days on each repeat
-  (level 1-3, capped). 30 days with no counted verdict resets the level.
-  Blocks expire at `until`.
+  (level 1-3, capped). The level climbs only when a block was actually made.
+  30 days with no counted verdict resets it. Blocks expire at `until`.
 - **Domain blocks.** When 5 distinct addresses on one domain have been
   automatically blocked within 24 hours (counting only blocks since that
   domain's last automatic block), the domain is blocked with the same
-  escalation, but only if this deployment has never accepted mail from it. Every
-  Maddy acceptance (any verdict but reject, or no scanner) records its envelope
-  domain, never pruned; at most 10,000 domains, after which automatic domain
-  blocks stop rather than risk blocking a provider that was forgotten
-  (`receiving sender evidence`, action `accepted-domain`, logs each refusal).
+  escalation, but only if no *authenticated* mail (same identity rule) was
+  accepted from it. Accepted authenticated domains are recorded with their
+  last-seen time (at most 10,000; the longest unseen is evicted). Domain
+  blocks start only 30 days after the first authenticated acceptance was
+  recorded, so a new or freshly restored-from-nothing deployment cannot
+  mistake its short history for "never". A restore keeps that start time.
+  Automatic domain blocks are listed with `source: automatic`, `kind: domain`.
 - **Administrators win.** An automatic block never replaces or extends a
-  manual block that covers the address or its domain. Removing any block
-  suppresses automatic blocks of that exact address or domain for 30 days; by
-  then its escalation has reset.
+  manual block that covers the address or its domain. Automatic blocks may
+  use at most half the list (2500 entries and half its wire budget); past
+  that, or when a manual block needs room, the soonest-expiring automatic
+  block is evicted (unaudited; the list shows what is in force), so a manual
+  block never fails because of automatic ones. Removing any block suppresses
+  automatic blocks of that exact address or domain for 30 days; by then its
+  escalation has reset. The removal never depends on that record: if it
+  cannot be written, the block is still removed, the API answers with a
+  `warning` and the CLI prints one.
 - **State.** `STATE_DIR/receiving/sender-evidence.json` (0600, own lock,
-  rename publish, never creates the receiving directory): per address or
-  domain the counted verdict times inside the hour, level and last
-  evidence/block times; the accepted domains; unblock suppressions by block
-  ID. No message content. At most 4096 records of each kind (the oldest is
-  evicted), validated on load and when sealed in backups; a malformed file
-  stops counting (logged) and never changes an SMTP answer.
+  rename publish, never creates the receiving directory). Every key is a block
+  ID and every value a count or time: per address or domain the counted verdict
+  times inside the hour, level and last evidence/block times; accepted domains
+  with last-seen time and the warm-up start; unblock suppressions. No addresses
+  and no content. At most 4096 records of each kind (one-off identities are
+  evicted before any with a level, so a flood cannot reset a known abuser),
+  which keeps the file near 2 MiB at worst (4 MiB bound). A malformed or
+  oversized file is renamed to `sender-evidence.damaged.json` on the next write
+  and counting restarts (logged; `resetAt` in status). Backups seal a valid
+  file and skip a bad or damaged one with a warning; it is heuristic state.
+- **Status.** `GET /api/admin/receiving/blocks` and `receiving blocks list`
+  include `evidence: {damaged, resetAt, domainBlocksFrom}` (`domainBlocksFrom`
+  is null until an authenticated acceptance has been recorded).
+- **SMTP path.** Evidence work runs after the verdict or commit with its own
+  2-second deadline; on lock contention it is dropped and logged, never
+  holding up or changing the SMTP reply.
 - **Audit.** Each automatic block logs `receiving sender block change`, actor
   `automatic`, action `block_sender`, kind, result `blocked`, block `id`,
-  `level` and `until`; evidence failures log `receiving sender evidence` with
-  the delivery ID. Never addresses or content.
-- **Residual risk.** A provider that lets one account send with another
-  account's envelope and `From` under its own DKIM and SPF can get that other
-  address blocked here (for up to 7 days, until an administrator unblocks it).
-  The trigger is fixed; the [Rspamd sidecar](RECEIVING_SETUP.md#optional-rspamd-sidecar)
-  is required.
+  `block_level` and `until_ms`; dropped or failed evidence logs `receiving
+  sender evidence` with the delivery ID. Never addresses or content.
+- **Residual risks.** The identity rule trusts the sending provider:
+  - A provider that lets one account send with another account's envelope
+    and `From` under its own DKIM and SPF can get that other address blocked
+    here (for up to 7 days, until an administrator unblocks it).
+  - DKIM replay: anyone holding a message DKIM-signed by a victim's domain
+    can resend it. If they also send from an IP the domain's SPF authorizes
+    (a shared ESP or provider relay that does not bind the envelope to the
+    account) with the victim as envelope sender, and the replayed message
+    still scores a reject, it counts against the victim.
+  - Either way enough addresses on one domain could block a provider your
+    users have not yet received authenticated mail from, after the warm-up.
+    Unblock it; the 30-day suppression then stands.
+  The [Rspamd sidecar](RECEIVING_SETUP.md#optional-rspamd-sidecar) is
+  required; without it there are only manual blocks.
 
 New route writes, RCPT bindings and MIME acceptance also check physical storage
 inside the immediate SQLite writer transaction. The admission budget is derived

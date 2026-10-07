@@ -246,7 +246,7 @@ IP: put no TCP proxy in front of Maddy's port 25, or SPF evaluates the proxy's
 address and fails, so nothing is counted and nothing is blocked automatically
 (the safe direction). Only `R_SPF_ALLOW` and `R_DKIM_ALLOW`'s `d=` are trusted;
 `Authentication-Results` in the message never are. Without the sidecar there
-are no automatic blocks, only manual ones.
+are no automatic blocks and nothing is recorded, only manual blocks.
 
 Keep all three Compose files when updating the service so the shared network
 namespace is recreated consistently. To roll back, stop reception, remove the

@@ -17,6 +17,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
 
 const blocksUsage = "usage: receiving blocks list | receiving blocks add address|domain <value> [--until <RFC3339>] [--reason spam|phishing|abuse|other] --confirm <value> | receiving blocks remove address|domain <value> --confirm <value>"
@@ -32,7 +33,12 @@ func runReceivingBlocks(args []string, output io.Writer) (result error) {
 		if result != nil {
 			status = "refused"
 		}
-		slog.Info("receiving sender block change", "actor", actor, "task_id", "native-receiving", "action", action, "target", target, "result", status, "correlation_id", id)
+		// The API's action names, so one audit vocabulary covers both.
+		audit := map[string]string{"add": "block_sender", "remove": "unblock_sender"}[action]
+		if audit == "" {
+			audit = "list_sender_blocks"
+		}
+		slog.Info("receiving sender block change", "actor", actor, "task_id", "native-receiving", "action", audit, "target", target, "result", status, "correlation_id", id)
 	}()
 	if len(args) > 0 {
 		action = args[0]
@@ -94,7 +100,8 @@ func runReceivingBlocks(args []string, output io.Writer) (result error) {
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(output).Encode(map[string]any{"blocks": list})
+		evidence := ingress.NewEvidence(filepath.Join(r.stateDir, "receiving")).Status()
+		return json.NewEncoder(output).Encode(map[string]any{"blocks": list, "evidence": evidence})
 	case "add":
 		set, err := r.domains.ReadSet()
 		if err != nil {
@@ -111,31 +118,52 @@ func runReceivingBlocks(args []string, output io.Writer) (result error) {
 			return ingress.ErrBlockInvalid
 		}
 		found, err := store.Remove(ctx, id, time.Now())
+		warning := errors.Is(err, ingress.ErrUnblockNotRecorded)
 		if err == nil && !found {
 			err = errors.New("no such block in force")
 		}
-		if err != nil {
+		if err != nil && !warning {
 			return err
 		}
 		status = "unblocked"
+		if warning {
+			slog.Warn("receiving sender evidence", "actor", actor, "task_id", "native-receiving", "action", "unblock_sender", "target", "sender-evidence", "result", "suppression-failed", "correlation_id", id, "error", err.Error())
+			_, err = fmt.Fprintln(output, "removed; warning:", ingress.ErrUnblockNotRecorded)
+			return err
+		}
 		_, err = fmt.Fprintln(output, "removed")
 		return err
 	}
 }
 
-// rejectEvidence counts a Maddy reject verdict toward automatic sender
-// blocks and audits each block it makes by ID and level, never the address.
-// A failure is logged and never changes the SMTP outcome.
-func (r *receivingRuntime) rejectEvidence(ctx context.Context, deliveryID string, auth ingress.Authentication) {
-	set, err := r.domains.ReadSet()
-	var made []ingress.SenderBlock
-	if err == nil {
-		made, err = ingress.NewEvidence(filepath.Join(r.stateDir, "receiving")).Reject(ctx, auth, slices.Collect(maps.Keys(set.Domains)), time.Now())
-	}
-	for _, b := range made {
-		slog.Info("receiving sender block change", "actor", "automatic", "task_id", "native-receiving", "action", "block_sender", "target", b.Kind, "result", "blocked", "correlation_id", b.ID, "level", b.Level, "until", *b.Until)
+// senderEvidence feeds automatic sender blocks from one scanned message: a
+// reject verdict counts (Evidence.Reject, each block made audited by ID and
+// level, never the address); an accepted one records the authenticated
+// domain as good. It runs after the verdict or commit, with its own short
+// deadline: on contention it drops the work rather than hold up the SMTP
+// reply, and a failure never changes that reply.
+func (r *receivingRuntime) senderEvidence(ctx context.Context, deliveryID string, auth ingress.Authentication, reject bool) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), evidenceTimeout)
+	defer cancel()
+	evidence, action := ingress.NewEvidence(filepath.Join(r.stateDir, "receiving")), "accepted-domain"
+	var err error
+	if reject {
+		action = "reject"
+		var set sso.NativeDomainSet
+		var made []ingress.SenderBlock
+		if set, err = r.domains.ReadSet(); err == nil {
+			made, err = evidence.Reject(ctx, auth, slices.Collect(maps.Keys(set.Domains)), time.Now())
+		}
+		for _, b := range made {
+			slog.Info("receiving sender block change", "actor", "automatic", "task_id", "native-receiving", "action", "block_sender", "target", b.Kind, "result", "blocked", "correlation_id", b.ID, "block_level", b.Level, "until_ms", *b.Until)
+		}
+	} else {
+		err = evidence.Accepted(ctx, auth, time.Now())
 	}
 	if err != nil {
-		slog.Warn("receiving sender evidence", "actor", "automatic", "task_id", "native-receiving", "action", "reject", "target", "sender-evidence", "result", "failed", "correlation_id", deliveryID, "error", err.Error())
+		slog.Warn("receiving sender evidence", "actor", "automatic", "task_id", "native-receiving", "action", action, "target", "sender-evidence", "result", "dropped", "correlation_id", deliveryID, "error", err.Error())
 	}
 }
+
+// evidenceTimeout bounds evidence work on the SMTP path.
+var evidenceTimeout = 2 * time.Second

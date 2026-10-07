@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
@@ -206,7 +207,7 @@ func TestCollectSealsSenderBlocks(t *testing.T) {
 	if _, err := ingress.NewBlocks(dir).Put(context.Background(), ingress.SenderBlock{Kind: "domain", Value: "evil.test", Source: "manual", Actor: "a", Reason: "spam"}, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := ingress.NewEvidence(dir).Accepted(context.Background(), "friend@friendly.test", time.Now()); err != nil {
+	if err := ingress.NewEvidence(dir).Accepted(context.Background(), ingress.Authentication{Sender: "friend@friendly.test", From: "friend@friendly.test", SPF: true, DKIM: []string{"friendly.test"}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{ingress.BlocksFile, ingress.EvidenceFile} {
@@ -229,24 +230,44 @@ func TestCollectSealsSenderBlocks(t *testing.T) {
 			t.Fatal("not sealed", name)
 		}
 	}
-	// A file load would refuse is refused at backup time too.
-	for name, malformed := range map[string]string{
-		ingress.BlocksFile:   `{"version":1,"blocks":[{"kind":"domain","value":"Evil.test"}]}`,
-		ingress.EvidenceFile: `{"version":1,"subject":"x"}`,
-	} {
-		path := filepath.Join(dir, name)
-		live, err := os.ReadFile(path)
+	// A block list load would refuse is refused at backup time too.
+	path := filepath.Join(dir, ingress.BlocksFile)
+	live, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"version":1,"blocks":[{"kind":"domain","value":"Evil.test"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openService(t, d, config.BackupConfig{}).Collect(); err == nil || !strings.Contains(err.Error(), ingress.BlocksFile) {
+		t.Fatal("malformed block list sealed", err)
+	}
+	if err := os.WriteFile(path, live, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Evidence is heuristic: a malformed or oversized copy, and a damaged one
+	// set aside, are left out and the backup still seals.
+	if err := os.WriteFile(filepath.Join(dir, ingress.EvidenceDamagedFile), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, size := range []int64{0, ingress.MaxEvidenceBytes + 1, recoveryclient.MaxCapsuleFileBytes + 1} {
+		evidence := filepath.Join(dir, ingress.EvidenceFile)
+		if err := os.WriteFile(evidence, []byte(`{"version":1,"subject":"x"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if size > 0 { // sparse: no disk is spent on the oversized cases
+			if err := os.Truncate(evidence, size); err != nil {
+				t.Fatal(err)
+			}
+		}
+		p, err := openService(t, d, config.BackupConfig{}).Collect()
 		if err != nil {
-			t.Fatal(err)
+			t.Fatal("bad evidence refused the backup", err)
 		}
-		if err := os.WriteFile(path, []byte(malformed), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := openService(t, d, config.BackupConfig{}).Collect(); err == nil || !strings.Contains(err.Error(), name) {
-			t.Fatal("malformed file sealed", name, err)
-		}
-		if err := os.WriteFile(path, live, 0o600); err != nil {
-			t.Fatal(err)
+		for _, f := range p.Files {
+			if strings.Contains(f.Path, "sender-evidence") {
+				t.Fatal("bad evidence sealed", f.Path)
+			}
 		}
 	}
 }
