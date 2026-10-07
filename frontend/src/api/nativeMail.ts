@@ -135,3 +135,43 @@ export function readMailRelayCheck(value: unknown, relay: MailRelay): void {
     throw new Error("Relay check did not match the saved profile. Reload before retrying.");
   }
 }
+
+export type MailAddress = { address: string; mailbox: string; kind: "primary" | "alias"; state: "active" | "disabled" | "reserved"; generation: number };
+export type NativeMailbox = { mailbox: string; user: string; addresses: MailAddress[] };
+// Lowercase bare dot-atom, the only form the ledger stores.
+const atom = "[a-z0-9!#$%&'*+/=?^_`{|}~-]+";
+const addressPattern = new RegExp(`^${atom}(\\.${atom})*@[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`);
+function readAddress(value: unknown): MailAddress {
+  const data = object(value);
+  const address = text(data.address), mailbox = text(data.mailbox), { kind, state, generation } = data;
+  if (address.length > 254 || address.indexOf("@") > 64 || !addressPattern.test(address) || !mailbox ||
+      (kind !== "primary" && kind !== "alias") || (state !== "active" && state !== "disabled" && state !== "reserved") ||
+      integer(generation) < 1) {
+    throw new Error("Invalid mail address record; reload before making changes.");
+  }
+  return { address, mailbox, kind, state, generation: integer(generation) };
+}
+export function readMailAddresses(value: unknown): NativeMailbox[] {
+  const data = object(value);
+  if (!Array.isArray(data.mailboxes) || data.mailboxes.length > 10000) throw new Error("Invalid mailbox list.");
+  const seen = new Set<string>();
+  return data.mailboxes.map((item: unknown) => {
+    const entry = object(item);
+    const mailbox = text(entry.mailbox), user = text(entry.user);
+    if (!mailbox || !Array.isArray(entry.addresses) || entry.addresses.length > 1000) throw new Error("Invalid mailbox list.");
+    const addresses = entry.addresses.map(readAddress);
+    for (const a of addresses) {
+      if (a.mailbox !== mailbox || seen.has(a.address)) throw new Error("Inconsistent mailbox list; reload before making changes.");
+      seen.add(a.address);
+    }
+    return { mailbox, user, addresses };
+  });
+}
+// A change answer must name the address acted on. A warning means the change is
+// committed but its receiving route is still pending.
+export function readMailAddressChange(value: unknown, address: string): { record: MailAddress; warning: string } {
+  const record = readAddress(value);
+  const warning = object(value).warning === undefined ? "" : text(object(value).warning);
+  if (record.address !== address.toLowerCase()) throw new Error("Address change answer does not match the request; reload before retrying.");
+  return { record, warning };
+}

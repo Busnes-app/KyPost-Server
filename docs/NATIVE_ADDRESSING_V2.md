@@ -19,8 +19,8 @@ bindings by address generation; `From` any owned active address with the
 record in the recovery authority digest). Ledgers
 written before it carried the directory revision in routes, so loading one
 without the `addressGenerations` marker raises each generation to the owner's
-directory revision once and the next write freezes it. Phase 3b (admin UI) and
-phase 4 are not implemented; with no administrator mailbox disable yet, the
+directory revision once and the next write freezes it. Phase 3b is implemented:
+the Server → Mail addresses admin screen. Phase 4 is not implemented; with no administrator mailbox disable yet, the
 "mailbox not administrator-disabled" term of the desired-state rule is always
 true.
 Prerequisite of

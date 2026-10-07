@@ -264,6 +264,15 @@ recorded as `address_conflict`.
     committed change whose route write failed answers 200 with the committed
     record and a `warning`, audited `committed_routes_pending`; repeating it gets
     the ordinary answer for the new state (a second release is 409).
+- **Admin screen.** Server → Mail addresses lists each mailbox (labelled by its
+  primary address and owner) with every address's kind, state and generation,
+  filterable by user. Aliases offer Release (confirmation: the address becomes
+  reserved, delivery and sending stop immediately, delivered mail stays,
+  reassignment is explicit) and, once reserved, Reassign to a chosen mailbox
+  (confirmation names the target); primaries offer nothing. Add alias takes a
+  mailbox and an address and confirms that the address is held permanently. The list does not say which owners are
+  administrators, so their refusal is the server's 409 text. A `warning` answer
+  is shown as a committed change with pending routes, not an error.
 - **Switch-over safety.** Ledgers written before this change (no
   `addressGenerations` marker) carried the directory revision in routes and
   bindings; loading raises each address generation to the owner's current
