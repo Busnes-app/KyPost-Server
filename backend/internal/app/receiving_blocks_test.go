@@ -117,7 +117,7 @@ func TestNativeReceivingBlocksCLI(t *testing.T) {
 			t.Fatal("refused command succeeded", args)
 		}
 	}
-	if out, err := cli("list"); err != nil || strings.TrimSpace(out) != `{"blocks":[],"evidence":{"damaged":false,"resetAt":null,"domainBlocksFrom":null}}` {
+	if out, err := cli("list"); err != nil || strings.TrimSpace(out) != `{"blocks":[],"evidence":{"damaged":false,"resetAt":null,"domainBlocksFrom":null,"goodFull":false,"automaticFull":false}}` {
 		t.Fatal("refusals changed the list", out, err)
 	}
 	var audit bytes.Buffer

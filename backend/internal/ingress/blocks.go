@@ -172,9 +172,10 @@ func (s Blocks) Blocked(sender string, now time.Time) (bool, error) {
 //
 // Automatic blocks never cost an administrator a block: they may use at most
 // half the count and half the wire budget, and give way, soonest-expiring
-// first, both to a new manual block and to a newer automatic one when their
-// share is full. ErrBlockFull therefore means manual blocks alone fill the
-// list. Evicted automatic blocks are not audited; List shows what is in force.
+// first, to a new manual block (unaudited; List shows what is in force), so
+// ErrBlockFull means manual blocks alone fill the list. An automatic block
+// never evicts anything: past its share it is refused (ErrAutomaticFull), or
+// an attacker could earn blocks on throwaway identities to free an abuser.
 func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.Time) (SenderBlock, error) {
 	value, err := NormalizeBlock(b.Kind, b.Value)
 	if err != nil {
@@ -200,9 +201,12 @@ func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.T
 		blocks = slices.DeleteFunc(blocks, func(x SenderBlock) bool { return x.ID == b.ID })
 		blocks = append(blocks, b)
 		for !fits(blocks) {
+			if b.Source == "automatic" {
+				return nil, ErrAutomaticFull
+			}
 			victim := -1
 			for i, x := range blocks {
-				if x.Source == "automatic" && x.ID != b.ID && (victim < 0 || *x.Until < *blocks[victim].Until) {
+				if x.Source == "automatic" && (victim < 0 || *x.Until < *blocks[victim].Until) {
 					victim = i
 				}
 			}
@@ -213,6 +217,21 @@ func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.T
 		}
 		return blocks, nil
 	})
+}
+
+// maxOneBlockWire bounds one block's wire size (a 320-byte sender of
+// six-byte escapes), TestAutomaticBlocksBudget checks it.
+const maxOneBlockWire = 2048
+
+// automaticFull: the automatic share cannot take another block.
+func automaticFull(blocks []SenderBlock) bool {
+	count, wire := 0, 0
+	for _, x := range blocks {
+		if x.Source == "automatic" {
+			count, wire = count+1, wire+cfreceiving.BlockWireBytes(x.Wire())
+		}
+	}
+	return count >= MaxBlocks/2 || wire > maxBlockWire/2-maxOneBlockWire
 }
 
 // fits is the list budget: in all, and for automatic blocks their half.

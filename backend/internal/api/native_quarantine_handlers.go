@@ -170,7 +170,7 @@ func (s *Server) handleSenderBlocksList(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// Automatic-block health; a damaged file is reported, never fatal here.
-	evidence := ingress.NewEvidence(filepath.Join(s.stateDir, "receiving")).Status()
+	evidence := ingress.NewEvidence(filepath.Join(s.stateDir, "receiving")).Status(time.Now())
 	writeJSON(w, http.StatusOK, map[string]any{"blocks": append([]ingress.SenderBlock{}, list...), "evidence": evidence})
 }
 

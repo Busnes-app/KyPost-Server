@@ -100,7 +100,7 @@ func runReceivingBlocks(args []string, output io.Writer) (result error) {
 		if err != nil {
 			return err
 		}
-		evidence := ingress.NewEvidence(filepath.Join(r.stateDir, "receiving")).Status()
+		evidence := ingress.NewEvidence(filepath.Join(r.stateDir, "receiving")).Status(time.Now())
 		return json.NewEncoder(output).Encode(map[string]any{"blocks": list, "evidence": evidence})
 	case "add":
 		set, err := r.domains.ReadSet()
@@ -161,7 +161,11 @@ func (r *receivingRuntime) senderEvidence(ctx context.Context, deliveryID string
 		err = evidence.Accepted(ctx, auth, time.Now())
 	}
 	if err != nil {
-		slog.Warn("receiving sender evidence", "actor", "automatic", "task_id", "native-receiving", "action", action, "target", "sender-evidence", "result", "dropped", "correlation_id", deliveryID, "error", err.Error())
+		result := "dropped"
+		if errors.Is(err, ingress.ErrAutomaticFull) {
+			result = "automatic-full" // also in the block list's evidence status
+		}
+		slog.Warn("receiving sender evidence", "actor", "automatic", "task_id", "native-receiving", "action", action, "target", "sender-evidence", "result", result, "correlation_id", deliveryID, "error", err.Error())
 	}
 }
 

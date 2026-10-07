@@ -36,8 +36,8 @@ The CLI logs the same action names (`list` as `list_sender_blocks`).
 Automatic blocks (Maddy with Rspamd) log the same line from the receiving
 command with actor `automatic`, action `block_sender`, result `blocked`, plus
 `block_level` and `until_ms`; evidence work that is dropped or fails logs
-`receiving sender evidence` (warning, result `dropped`) with the delivery ID as
-correlation, and an unblock whose suppression could not be recorded logs it
+`receiving sender evidence` (warning, result `dropped`, or `automatic-full`
+when automatic blocks fill their share) with the delivery ID as correlation, and an unblock whose suppression could not be recorded logs it
 with result `suppression-failed`. A damaged evidence file logs an error,
 action `reset`, result `damaged-file-set-aside`. A backup that leaves out a bad
 evidence file logs `backup skipped sender evidence` (result `skipped-malformed`

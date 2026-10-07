@@ -978,7 +978,7 @@ admin UI and evidence display are pending; see [abusive senders](CLOUDFLARE_CONT
 API (admin only; POST and DELETE need CSRF and the account credential, or
 KySignOn step-up, in the JSON body as for quarantine):
 
-- `GET /api/admin/receiving/blocks` returns `{blocks:[{id,kind,value,until,source,level,createdAt,actor,reason}],evidence:{damaged,resetAt,domainBlocksFrom}}`
+- `GET /api/admin/receiving/blocks` returns `{blocks:[{id,kind,value,until,source,level,createdAt,actor,reason}],evidence:{damaged,resetAt,domainBlocksFrom,goodFull,automaticFull}}`
   for blocks in force (empty before `receiving init`).
 - `POST /api/admin/receiving/blocks` with `{kind, value, until?, reason?}`
   returns `{block}`; adding an existing kind/value replaces it, and automatic
@@ -1030,18 +1030,26 @@ but automatic blocks in the shared list are published like manual ones.
   automatically blocked within 24 hours (counting only blocks since that
   domain's last automatic block), the domain is blocked with the same
   escalation, but only if no *authenticated* mail (same identity rule) was
-  accepted from it. Accepted authenticated domains are recorded with their
-  last-seen time (at most 10,000; the longest unseen is evicted). Domain
+  accepted from it. Accepted authenticated domains are recorded and never
+  evicted, so a flood of authenticated throwaway domains cannot unprotect a
+  real one: at most 50,000 in all and 50 per crude parent (the last two
+  labels, so all of `co.uk` shares one parent: past 50 there, further domains
+  stay unprotected). A full record stops recording (`goodFull` in status);
+  domain blocks continue for unrecorded domains only. Domain
   blocks start only 30 days after the first authenticated acceptance was
   recorded, so a new or freshly restored-from-nothing deployment cannot
   mistake its short history for "never". A restore keeps that start time.
   Automatic domain blocks are listed with `source: automatic`, `kind: domain`.
 - **Administrators win.** An automatic block never replaces or extends a
   manual block that covers the address or its domain. Automatic blocks may
-  use at most half the list (2500 entries and half its wire budget); past
-  that, or when a manual block needs room, the soonest-expiring automatic
-  block is evicted (unaudited; the list shows what is in force), so a manual
-  block never fails because of automatic ones. Removing any block suppresses
+  use at most half the list (2500 entries and half its wire budget). A manual
+  block that needs room evicts the soonest-expiring automatic block
+  (unaudited; the list shows what is in force), so it never fails because of
+  automatic ones. An automatic block never evicts anything: past the share it
+  is refused, without escalation, logged (`receiving sender evidence`, result
+  `automatic-full`) and reported as `automaticFull` in status, so an attacker
+  cannot earn blocks on throwaway identities to free an abuser early. Add a
+  manual domain block to cover a flood. Removing any block suppresses
   automatic blocks of that exact address or domain for 30 days; by then its
   escalation has reset. The removal never depends on that record: if it
   cannot be written, the block is still removed, the API answers with a
@@ -1053,13 +1061,14 @@ but automatic blocks in the shared list are published like manual ones.
   with last-seen time and the warm-up start; unblock suppressions. No addresses
   and no content. At most 4096 records of each kind (one-off identities are
   evicted before any with a level, so a flood cannot reset a known abuser),
-  which keeps the file near 2 MiB at worst (4 MiB bound). A malformed or
+  which keeps the file under 6 MiB at worst (8 MiB bound). A malformed or
   oversized file is renamed to `sender-evidence.damaged.json` on the next write
   and counting restarts (logged; `resetAt` in status). Backups seal a valid
   file and skip a bad or damaged one with a warning; it is heuristic state.
 - **Status.** `GET /api/admin/receiving/blocks` and `receiving blocks list`
-  include `evidence: {damaged, resetAt, domainBlocksFrom}` (`domainBlocksFrom`
-  is null until an authenticated acceptance has been recorded).
+  include `evidence: {damaged, resetAt, domainBlocksFrom, goodFull,
+  automaticFull}` (`domainBlocksFrom` is null until an authenticated
+  acceptance has been recorded).
 - **SMTP path.** Evidence work runs after the verdict or commit with its own
   2-second deadline; on lock contention it is dropped and logged, never
   holding up or changing the SMTP reply.

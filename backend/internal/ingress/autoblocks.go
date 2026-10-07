@@ -39,18 +39,23 @@ const (
 	// Automatic domain blocks wait until authenticated acceptances have been
 	// recorded this long, so "never accepted mail from it" means something.
 	domainWarmUp   = 30 * 24 * time.Hour
-	goodRefresh    = 24 * time.Hour // last-seen granularity of accepted domains, bounding writes
-	MaxEvidence    = 4096           // address, domain and unblock records, each
-	MaxGoodDomains = 10000
+	MaxEvidence    = 4096 // address, domain and unblock records, each
+	MaxGoodDomains = 50000
+	// ponytail: a crude registrable parent, the last two labels, since no
+	// public suffix list is installed. Its ceiling: every domain under a
+	// two-label public suffix (co.uk, com.au) shares one parent, so past 50
+	// of them further ones there stay unprotected. Upgrade: x/net/publicsuffix.
+	maxGoodPerParent = 50
 	// MaxEvidenceBytes bounds the file. Records are fixed-width IDs and
-	// integers, so the caps above keep it near 2 MiB (TestEvidenceWorstCaseSize).
-	MaxEvidenceBytes = 4 << 20
+	// integers, so the caps above keep it under it (TestEvidenceWorstCaseSize).
+	MaxEvidenceBytes = 8 << 20
 )
 
 // Cooldown per escalation level 1..3.
 var autoCooldown = [...]time.Duration{time.Hour, 24 * time.Hour, 7 * 24 * time.Hour}
 
 var (
+	ErrAutomaticFull      = errors.New("automatic blocks fill their half of the block list; add a manual (domain) block or wait for some to expire")
 	ErrUnblockNotRecorded = errors.New("block removed, but automatic re-blocking could not be suppressed, so it may come back; check receiving storage")
 	errEvidence           = errors.New("sender evidence is malformed or oversized")
 	errManualCovers       = errors.New("a manual block covers this sender")
@@ -89,7 +94,8 @@ type evidenceDoc struct {
 	Version   int                       `json:"version"`
 	Addresses map[string]evidenceRecord `json:"addresses"` // address BlockID → record
 	Domains   map[string]evidenceRecord `json:"domains"`   // domain BlockID → record
-	Good      map[string]int64          `json:"good"`      // domain BlockID → last authenticated acceptance
+	Good      map[string]int64          `json:"good"`      // domain BlockID → first authenticated acceptance; never evicted
+	Parents   map[string]int            `json:"parents"`   // crude parent BlockID → good domains under it
 	GoodSince int64                     `json:"goodSince"` // first authenticated acceptance recorded, 0 none
 	Unblocked map[string]int64          `json:"unblocked"` // BlockID → end of suppression
 	ResetAt   int64                     `json:"resetAt"`   // a damaged file was set aside then, 0 never
@@ -119,7 +125,7 @@ func parseEvidence(raw []byte) (evidenceDoc, error) {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if len(raw) > MaxEvidenceBytes || d.Decode(&doc) != nil || d.Decode(new(any)) != io.EOF || doc.Version != 1 || doc.GoodSince < 0 || doc.ResetAt < 0 ||
-		len(doc.Addresses) > MaxEvidence || len(doc.Domains) > MaxEvidence || len(doc.Unblocked) > MaxEvidence || len(doc.Good) > MaxGoodDomains {
+		len(doc.Addresses) > MaxEvidence || len(doc.Domains) > MaxEvidence || len(doc.Unblocked) > MaxEvidence || len(doc.Good) > MaxGoodDomains || len(doc.Parents) > MaxGoodDomains {
 		return evidenceDoc{}, errEvidence
 	}
 	records := func(records map[string]evidenceRecord, address bool) bool {
@@ -138,6 +144,11 @@ func parseEvidence(raw []byte) (evidenceDoc, error) {
 			}
 		}
 		return true
+	}
+	for id, n := range doc.Parents {
+		if !validID(id) || n < 1 || n > maxGoodPerParent {
+			return evidenceDoc{}, errEvidence
+		}
 	}
 	if !records(doc.Addresses, true) || !records(doc.Domains, false) || !times(doc.Good) || !times(doc.Unblocked) {
 		return evidenceDoc{}, errEvidence
@@ -207,7 +218,6 @@ func (e Evidence) change(ctx context.Context, now int64, edit func(*evidenceDoc)
 	trim(doc.Addresses, MaxEvidence, keep)
 	trim(doc.Domains, MaxEvidence, keep)
 	trim(doc.Unblocked, MaxEvidence, func(until int64) int64 { return until })
-	trim(doc.Good, MaxGoodDomains, func(seen int64) int64 { return seen })
 	raw, err := json.Marshal(doc)
 	if err != nil {
 		return err
@@ -313,26 +323,37 @@ func (e Evidence) Reject(ctx context.Context, auth Authentication, own []string,
 // Accepted records the domain of an authenticated identity (Identity) whose
 // mail this deployment accepted, so it is never blocked automatically as a
 // domain. Unauthenticated envelope domains are never recorded: anyone can
-// forge them. The oldest-seen domain is evicted past MaxGoodDomains.
+// forge them. Recorded domains are never evicted, so a flood of authenticated
+// throwaway domains cannot unprotect a real one: past MaxGoodDomains, or
+// maxGoodPerParent under one parent, new domains are simply not recorded.
 func (e Evidence) Accepted(ctx context.Context, auth Authentication, now time.Time) error {
 	address, ok := auth.Identity()
 	if !ok {
 		return nil
 	}
-	id, ms := BlockID("domain", address[strings.LastIndexByte(address, '@')+1:]), now.UnixMilli()
+	domain := address[strings.LastIndexByte(address, '@')+1:]
+	labels := strings.Split(domain, ".")
+	id, parent, ms := BlockID("domain", domain), BlockID("domain", strings.Join(labels[max(len(labels)-2, 0):], ".")), now.UnixMilli()
 	// ponytail: parses the whole file per authenticated acceptance, fine at
 	// household volume; past that, cache it by file inode and mtime.
-	if doc, err := e.load(); err == nil && doc.Good[id] > ms-goodRefresh.Milliseconds() {
+	if doc, err := e.load(); err == nil && doc.Good[id] > 0 {
 		return nil
 	}
 	return e.change(ctx, ms, func(doc *evidenceDoc) error {
-		if doc.Good == nil {
-			doc.Good = map[string]int64{}
-		}
 		if doc.GoodSince == 0 {
 			doc.GoodSince = ms
 		}
+		if doc.Good[id] > 0 || len(doc.Good) >= MaxGoodDomains || doc.Parents[parent] >= maxGoodPerParent {
+			return nil
+		}
+		if doc.Good == nil {
+			doc.Good = map[string]int64{}
+		}
+		if doc.Parents == nil {
+			doc.Parents = map[string]int{}
+		}
 		doc.Good[id] = ms
+		doc.Parents[parent]++
 		return nil
 	})
 }
@@ -362,14 +383,26 @@ type EvidenceStatus struct {
 	// DomainBlocksFrom: automatic domain blocks are possible from then;
 	// null until an authenticated acceptance has been recorded.
 	DomainBlocksFrom *int64 `json:"domainBlocksFrom"`
+	// GoodFull: no more accepted domains are recorded; domains not yet
+	// recorded stay domain-blockable.
+	GoodFull bool `json:"goodFull"`
+	// AutomaticFull: automatic blocks are within one block of their half of
+	// the list, so new ones are refused until some expire. A manual domain
+	// block covers a flood of addresses.
+	AutomaticFull bool `json:"automaticFull"`
 }
 
-func (e Evidence) Status() EvidenceStatus {
+func (e Evidence) Status(now time.Time) EvidenceStatus {
+	var s EvidenceStatus
+	if blocks, err := NewBlocks(e.dir).List(now); err == nil {
+		s.AutomaticFull = automaticFull(blocks)
+	}
 	doc, err := e.load()
 	if err != nil {
-		return EvidenceStatus{Damaged: true}
+		s.Damaged = true
+		return s
 	}
-	var s EvidenceStatus
+	s.GoodFull = len(doc.Good) >= MaxGoodDomains
 	if doc.ResetAt > 0 {
 		s.ResetAt = &doc.ResetAt
 	}

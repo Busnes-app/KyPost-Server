@@ -328,7 +328,7 @@ func TestSenderBlocksAdminAPI(t *testing.T) {
 	const base = "/api/admin/receiving/blocks"
 	confirm := `"password":"` + password + `"`
 	// Before receiving init: empty list, and changes refuse without creating the spool.
-	if w := call("GET", base, token, csrf, ""); w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"blocks":[],"evidence":{"damaged":false,"resetAt":null,"domainBlocksFrom":null}}` {
+	if w := call("GET", base, token, csrf, ""); w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"blocks":[],"evidence":{"damaged":false,"resetAt":null,"domainBlocksFrom":null,"goodFull":false,"automaticFull":false}}` {
 		t.Fatal("empty list", w.Code, w.Body)
 	}
 	if w := call("POST", base, token, csrf, `{"kind":"domain","value":"evil.test",`+confirm+`}`); w.Code != 409 {
