@@ -151,10 +151,9 @@ function readAddress(value: unknown): MailAddress {
   }
   return { address, mailbox, kind, state, generation: integer(generation) };
 }
-// A routes-pending answer omits prepared; absent reads as not prepared.
 function readMailbox(item: unknown): NativeMailbox {
   const entry = object(item);
-  const mailbox = text(entry.mailbox), user = text(entry.user), { kind, state, prepared = false } = entry;
+  const mailbox = text(entry.mailbox), user = text(entry.user), { kind, state, prepared } = entry;
   if (!mailbox || (kind !== "primary" && kind !== "extra") || (state !== "active" && state !== "disabled") || typeof prepared !== "boolean" ||
       !Array.isArray(entry.addresses) || entry.addresses.length > 1000) throw new Error("Invalid mailbox list.");
   const addresses = entry.addresses.map(readAddress);

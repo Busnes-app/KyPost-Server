@@ -327,14 +327,17 @@ KyIdentity primary ([spec](NATIVE_ADDRESSING_V2.md#mailbox-storage)).
     finish it.
   - Creating or enabling one is also 409 while the owner has incoming
     encryption on or a replacement pending (see below).
-- **Admin screen.** Server → Mail addresses lists extra mailboxes beside
-  primaries with their state (and an unfinished creation). New mailbox takes a
-  user and an address and confirms that the address is held permanently, that
-  the user selects the mailbox in their client and that incoming encryption is
-  unavailable while they have extra mailboxes. Extra mailboxes offer Disable
-  (confirmation: delivery and sending stop at once, mail is kept, queued
-  outgoing mail is quarantined for good) or Enable; primaries offer nothing.
-  Errors, warnings and locking follow the address actions.
+- **Admin screen.** Server → Mail addresses captions each mailbox with its
+  kind and state; an unfinished extra mailbox shows "not in service" and how to
+  finish it, with no actions. New mailbox takes a user and an address and
+  confirms that the address is held permanently and the mailbox cannot be
+  deleted, that the user selects it in their client, and that incoming
+  encryption is unavailable while it is active (disabling restores the option;
+  it cannot be re-enabled while their encryption is on). Prepared extra
+  mailboxes offer Disable (confirmation: delivery and sending stop at once,
+  mail is kept, the user cannot open it until it is enabled, queued outgoing
+  mail is quarantined for good) or Enable; primaries offer nothing. Errors,
+  warnings and locking follow the address actions.
 - **Authority.** `AdmitNativeMailbox` and `WithNativeMailAccess` take mailbox
   IDs: the owner is admitted as today, then an extra mailbox must belong to the
   same subject, be `active` and prepared, and pass storage validation. Unknown,

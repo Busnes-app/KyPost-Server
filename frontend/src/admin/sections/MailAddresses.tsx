@@ -71,7 +71,7 @@ function MailAddressesForm() {
     if (change.action === "create" || change.action === "disable" || change.action === "enable") {
       const { mailbox: m, warning } = readMailboxChange(result);
       const matches = m.kind === "extra" && (change.action === "create"
-        ? m.user === change.user && m.state === "active" && m.addresses.some(a => a.address === change.address.toLowerCase())
+        ? m.user === change.user && m.state === "active" && m.addresses.some(a => a.kind === "primary" && a.address === change.address.toLowerCase())
         : m.mailbox === change.mailbox && m.state === (change.action === "enable" ? "active" : "disabled"));
       if (!matches) throw new Error("Mailbox change answer does not match the request; reload before retrying.");
       return { warning, notice: change.action === "create" ? `${change.address.toLowerCase()} is a new mailbox for ${names.get(m.user) ?? m.user}.` : `${label(m.mailbox)} is ${m.state}.` };
@@ -92,8 +92,6 @@ function MailAddressesForm() {
     const fields = change.action === "add" ? { mailbox: change.mailbox, address: change.address }
       : change.action === "reassign" ? { mailbox: change.mailbox }
       : change.action === "create" ? { user: change.user, address: change.address } : {};
-    const path = "address" in change ? `/api/admin/mail-addresses/${encodeURIComponent(change.address)}`
-      : `/api/admin/mailboxes/${encodeURIComponent(change.mailbox)}/${change.action}`;
     const accountPassword = password;
     setPassword("");
     let committed = false;
@@ -103,10 +101,13 @@ function MailAddressesForm() {
       const body = { ...fields, ...credential };
       const result = await withSSOStepUp((headers) => {
         requireLive();
-        return change.action === "add" ? postJSON<unknown>("/api/admin/mail-addresses", body, headers)
-          : change.action === "create" ? postJSON<unknown>("/api/admin/mailboxes", body, headers)
-          : change.action === "release" ? deleteJSON<unknown>(path, body, headers)
-          : postJSON<unknown>(change.action === "reassign" ? `${path}/reassign` : path, body, headers);
+        switch (change.action) {
+          case "add": return postJSON<unknown>("/api/admin/mail-addresses", body, headers);
+          case "release": return deleteJSON<unknown>(`/api/admin/mail-addresses/${encodeURIComponent(change.address)}`, body, headers);
+          case "reassign": return postJSON<unknown>(`/api/admin/mail-addresses/${encodeURIComponent(change.address)}/reassign`, body, headers);
+          case "create": return postJSON<unknown>("/api/admin/mailboxes", body, headers);
+          default: return postJSON<unknown>(`/api/admin/mailboxes/${encodeURIComponent(change.mailbox)}/${change.action}`, body, headers);
+        }
       });
       requireLive();
       const { warning, notice } = settle(change, result);
@@ -158,7 +159,7 @@ function MailAddressesForm() {
       <legend>Mailboxes and aliases</legend>
       {mailboxes?.length === 0 && <p>No native mailboxes yet. KyPost creates one when KyIdentity assigns an everyday identity a primary address.</p>}
       {shown.map(m => <div key={m.mailbox} className="users-table-wrap"><table className="users-table">
-        <caption>{label(m.mailbox)}</caption>
+        <caption>{`${label(m.mailbox)}: ${m.kind === "extra" ? "additional" : "primary"} mailbox, ${m.kind === "extra" && !m.prepared ? "not in service" : m.state}`}</caption>
         <thead><tr><th scope="col">Address</th><th scope="col">Kind</th><th scope="col">State</th><th scope="col">Generation</th><th scope="col">Actions</th></tr></thead>
         <tbody>{m.addresses.map(a => <tr key={a.address}>
           <td>{a.address}</td><td>{a.kind}</td><td>{a.state}</td><td>{a.generation}</td>
@@ -175,11 +176,11 @@ function MailAddressesForm() {
             `Release ${a.address}? It becomes reserved: delivery to it and sending from it stop immediately. Mail already delivered stays in ${label(m.mailbox)}. It returns to service only when an administrator explicitly reassigns it.`)}>Release</button>)}</td>
         </tr>)}</tbody>
       </table>
-      {m.kind === "extra" && <p>Additional mailbox, {m.state}{!m.prepared && "; creation unfinished: repeat New mailbox with the same user and address"}.{" "}
-        {m.state === "active" ? <button className="button secondary" aria-label={`Disable ${label(m.mailbox)}`} disabled={!unlocked} onClick={() => void act({ action: "disable", mailbox: m.mailbox },
-          `Disable ${label(m.mailbox)}? Delivery to its addresses and sending from it stop at once; its mail is kept. Outgoing mail still queued in it is quarantined permanently and is not resumed if it is enabled again.`)}>Disable</button>
+      {m.kind === "extra" && (!m.prepared ? <p>Not in service: creation unfinished, repeat New mailbox with the same user and address.</p>
+        : <p>{m.state === "active" ? <button className="button secondary" aria-label={`Disable ${label(m.mailbox)}`} disabled={!unlocked} onClick={() => void act({ action: "disable", mailbox: m.mailbox },
+          `Disable ${label(m.mailbox)}? Delivery to its addresses and sending from it stop at once; its mail is kept. ${names.get(m.user) ?? m.user} can no longer open it until it is enabled again. Outgoing mail still queued in it is quarantined permanently and is not resumed if it is enabled again.`)}>Disable</button>
           : <button className="button secondary" aria-label={`Enable ${label(m.mailbox)}`} disabled={!unlocked} onClick={() => void act({ action: "enable", mailbox: m.mailbox },
-            `Enable ${label(m.mailbox)}? Its addresses deliver to it and it can send again. Outgoing mail quarantined while it was disabled stays quarantined.`)}>Enable</button>}</p>}
+            `Enable ${label(m.mailbox)}? Its addresses deliver to it and it can send again. Outgoing mail quarantined while it was disabled stays quarantined.`)}>Enable</button>}</p>)}
       </div>)}
       <h4>Add an alias</h4>
       <label>Mailbox<select value={addTo} onChange={e => setAddTo(e.target.value)}>
@@ -198,7 +199,7 @@ function MailAddressesForm() {
       <label>Mailbox address<input value={newAddress} placeholder="team@example.com" autoComplete="off" onChange={e => setNewAddress(e.target.value)} /></label>
       <p>A separate mailbox with its own primary address, on an established mail domain. The user selects it in their mail client.</p>
       <button className="button secondary" disabled={!unlocked || !newOwner || !typedMailbox} onClick={() => void act({ action: "create", address: typedMailbox, user: newOwner },
-        `Create mailbox ${typedMailbox} for ${ownerName}? KyPost holds this address permanently: records are never deleted. ${ownerName} selects the new mailbox in their mail client. Incoming encryption is unavailable to ${ownerName} while they have additional mailboxes.`)}>Create mailbox</button>
+        `Create mailbox ${typedMailbox} for ${ownerName}? KyPost holds this address permanently: records are never deleted, and additional mailboxes cannot be deleted. ${ownerName} selects the new mailbox in their mail client. Incoming encryption is unavailable to ${ownerName} while this mailbox is active; disabling it restores the option, and it cannot be re-enabled while their encryption is on.`)}>Create mailbox</button>
     </fieldset>
     {busy && <p role="status">Working…</p>}
   </div>;
