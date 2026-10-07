@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -141,6 +142,17 @@ func TestNativeMailDomainsAdminSetAndRelayDomains(t *testing.T) {
 		t.Fatal("relay check passed with no fresh proof")
 	}
 	lapsed["example.test"], lapsed["second.test"] = false, false
+	// A restore hold refuses retirement with its own remediation.
+	hold := filepath.Join(srv.stateDir, sso.NativeRestoreHoldFile)
+	if err = os.WriteFile(hold, []byte("hold"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if w = call("DELETE", "/api/admin/mail-domains/third.test", token, csrf, confirm); w.Code != 409 || !strings.Contains(w.Body.String(), sso.ErrNativeRestoreHold.Error()) {
+		t.Fatal("retire under restore hold", w.Code, w.Body)
+	}
+	if err = os.Remove(hold); err != nil {
+		t.Fatal(err)
+	}
 	if w = call("DELETE", "/api/admin/mail-domains/third.test", token, csrf, confirm); w.Code != 200 {
 		t.Fatal("retire third", w.Code, w.Body)
 	}

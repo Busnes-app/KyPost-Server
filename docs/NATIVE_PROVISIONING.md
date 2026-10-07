@@ -17,9 +17,15 @@ The response includes the exact `recordName` and `recordValue` to publish:
 `_kypost-mail.<domain>` TXT `kypost-mail-verify=<random challenge>`.
 Then `POST /api/admin/mail-domain/verify` with the same credential fields.
 Responses are `Cache-Control: no-store` and always `receivingEnabled:false`.
-The Server → Mail domain screen presents these same protected operations, with
-exact TXT fields and explicit confirmation before replacing a challenge. It
-does not install a public receiving gateway or change MX.
+The Server → Mail domain screen lists every domain of the set (see
+[Several domains](#several-domains)) with its status (established, awaiting
+verification with the exact TXT fields and expiry, lapsed, retired), marks the
+founding domain and offers Add, Verify, Replace challenge, Retire and Re-add
+through the same protected operations. Replacing a challenge and retiring ask
+for confirmation first; the retire prompt names the in-use refusals, that address
+records are kept and that re-adding needs fresh DNS proof. Against a server
+without the domain-set API it shows the single founding domain. It does not
+install a public receiving gateway or change MX.
 
 The first profile binds one lowercase ASCII DNS domain and the configured issuer.
 Changing either is refused. Configure the issuer without a trailing slash before
