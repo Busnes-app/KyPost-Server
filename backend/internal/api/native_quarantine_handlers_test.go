@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -153,5 +155,49 @@ func TestQuarantineAdminAPI(t *testing.T) {
 	defer box.Close()
 	if rows, err := box.List(ctx, "INBOX", 0, 10); err != nil || len(rows) != 1 {
 		t.Fatal("released mail not delivered exactly once", len(rows), err)
+	}
+}
+
+// The Cloudflare status is admin-only, counts-only, and reports a host
+// without its host record as fenced.
+func TestCloudflareReceivingStatusAPI(t *testing.T) {
+	srv := newNativeRuntimeServer(t)
+	secret := config.SecretDir()
+	admin, err := srv.users.Create(context.Background(), "cloudflare-admin", "long-password-for-cloudflare", users.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := srv.users.Create(context.Background(), "cloudflare-member", "long-password-for-cloudflare", users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(id string) *httptest.ResponseRecorder {
+		token, csrf := mintSessionForTest(srv, id)
+		req := httptest.NewRequest("GET", "/api/admin/receiving/cloudflare", nil)
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
+		req.Header.Set("X-CSRF-Token", csrf)
+		w := httptest.NewRecorder()
+		srv.routes().ServeHTTP(w, req)
+		return w
+	}
+	if w := get(member.ID); w.Code != 403 {
+		t.Fatal("member read receiving status", w.Code)
+	}
+	if w := get(admin.ID); w.Code != 200 || !strings.Contains(w.Body.String(), `"state":"uninitialized"`) || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	keys := cfreceiving.Keys{Dir: secret}
+	m, err := keys.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := get(admin.ID); !strings.Contains(w.Body.String(), `"state":"not-started"`) || strings.Contains(w.Body.String(), m.Token) {
+		t.Fatal(w.Body.String())
+	}
+	if err := os.Remove(filepath.Join(secret, cfreceiving.HostFile)); err != nil {
+		t.Fatal(err)
+	}
+	if w := get(admin.ID); !strings.Contains(w.Body.String(), `"state":"fenced"`) {
+		t.Fatal("restored host not reported fenced", w.Body.String())
 	}
 }

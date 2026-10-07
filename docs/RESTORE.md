@@ -50,6 +50,15 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
   including committed WAL rows and exact stored MIME/receipt data. Mailbox snapshots also preserve encrypted outbox intent, claims and Sent receipts; nonempty queues require the matching relay profile/key and additive verification recipe. Native
   reception and provisioning are opt-in qualification paths; public reception remains unavailable.
 
+- Continuous Cloudflare receiving credentials (`cloudflare-receiving.json`) and
+  the `cloudflare.db` snapshot (published tables and the pickup ledger). The
+  host-local `cloudflare-receiving.host.json` is not collected, so a restored
+  instance starts fenced and contacts no Worker until an operator confirms
+  `receiving cloudflare takeover`; see
+  [continuous Cloudflare profile](RECEIVING_SETUP.md#continuous-cloudflare-profile).
+  If compromise prompted recovery, re-bootstrap through the Cloudflare account
+  as described there instead of taking over with the restored credentials.
+
 IMAP mail, rebuildable mailcache.json, Ollama model blobs, logs and runtime files
 are excluded. Each database has a consistent snapshot; separate databases and JSON
 files are collected sequentially, not as a transaction across the whole deployment.

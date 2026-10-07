@@ -297,7 +297,9 @@ func (r *receivingRuntime) bind(ctx context.Context, id, sender, recipient strin
 	return r.bindExpected(ctx, id, sender, recipient, nil)
 }
 
-func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipient string, expected *cloudflareRoute) error {
+// bindExpected is bind for a hosted gateway that froze its routing earlier:
+// expected must accept the current admitted assignment and address.
+func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipient string, expected func(sso.NativeAssignment, sso.NativeAddress) bool) error {
 	parsed, err := mail.ParseAddress(recipient)
 	if err != nil || parsed.Name != "" || parsed.Address != recipient {
 		return ingress.ErrRoute
@@ -323,7 +325,7 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 		if admitted.Owner != a.Owner || x.Mailbox != a.Owner.Mailbox {
 			return ingress.ErrRoute
 		}
-		if expected != nil && !expected.matches(admitted, x) {
+		if expected != nil && !expected(admitted, x) {
 			return ingress.ErrRoute
 		}
 		if err := r.refreshRoute(ctx, admitted, x, false); err != nil {
@@ -456,13 +458,19 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 			return err
 		}
 	}
+	return r.commitAccept(ctx, d, sender, raw, proofs)
+}
+
+// commitAccept stores scanned bytes for a staged delivery under its frozen
+// owners' current authority and their per-message limits.
+func (r *receivingRuntime) commitAccept(ctx context.Context, d ingress.Delivery, sender string, raw []byte, proofs []sso.NativeDomain) error {
 	return r.frozenAuthority(ctx, d, proofs, func(current map[string]sso.NativeAssignment) error {
 		for _, a := range current {
 			if int64(len(raw)) > a.Limits.MessageBytes {
 				return ingress.ErrCapacity
 			}
 		}
-		return r.holding.Accept(ctx, r.gatewayID(), id, sender, bytes.NewReader(raw))
+		return r.holding.Accept(ctx, r.gatewayID(), d.ID, sender, bytes.NewReader(raw))
 	})
 }
 
@@ -475,6 +483,10 @@ func bindingAddresses(d ingress.Delivery) []string {
 }
 
 func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error {
+	return r.importDeliveryTo(ctx, id, "INBOX")
+}
+
+func (r *receivingRuntime) importDeliveryTo(ctx context.Context, id, folder string) error {
 	d, err := r.holding.Get(ctx, r.gatewayID(), id)
 	if err != nil {
 		return err
@@ -483,7 +495,7 @@ func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error 
 	if d.State == "archived" {
 		return nil
 	}
-	err = r.importFrozen(ctx, d)
+	err = r.importFrozen(ctx, d, folder)
 	if err != nil && d.State == "pending" && !errors.Is(err, ingress.ErrRoute) && !errors.Is(err, sso.ErrNativeRestoreHold) {
 		if stale := r.quarantineRetired(ctx, d); stale != nil {
 			return stale
@@ -511,18 +523,16 @@ func (r *receivingRuntime) quarantineRetired(ctx context.Context, d ingress.Deli
 	if err != nil {
 		return nil
 	}
-	for _, b := range d.Bindings {
-		if x := addresses[b.Address]; x.Mailbox != b.Mailbox || x.State != "active" || x.Generation != b.Generation {
-			if err := r.holding.QuarantinePending(ctx, r.gatewayID(), d.ID); err != nil {
-				return err
-			}
-			return ingress.ErrRoute
+	if retiredBinding(addresses, d.Bindings) {
+		if err := r.holding.QuarantinePending(ctx, r.gatewayID(), d.ID); err != nil {
+			return err
 		}
+		return ingress.ErrRoute
 	}
 	return nil
 }
 
-func (r *receivingRuntime) importFrozen(ctx context.Context, d ingress.Delivery) error {
+func (r *receivingRuntime) importFrozen(ctx context.Context, d ingress.Delivery, folder string) error {
 	id := d.ID
 	stores := map[mailbox.Owner]*mailbox.Store{}
 	sources := map[mailbox.Owner]string{}
@@ -562,7 +572,7 @@ func (r *receivingRuntime) importFrozen(ctx context.Context, d ingress.Delivery)
 				return sso.ErrNativeProvisioning
 			}
 		}
-		return r.holding.Import(ctx, r.gatewayID(), id, func(owner mailbox.Owner) (*mailbox.Store, error) {
+		return r.holding.ImportTo(ctx, r.gatewayID(), id, folder, func(owner mailbox.Owner) (*mailbox.Store, error) {
 			store := stores[owner]
 			if store == nil {
 				return nil, ingress.ErrRoute

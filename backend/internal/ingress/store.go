@@ -543,7 +543,18 @@ func (s *Store) Accept(ctx context.Context, gateway, id, sender string, raw io.R
 		}
 		return tx.Commit()
 	}
-	if err := s.checkAdmission(ctx, tx, int64(len(data))); err != nil {
+	if err := s.admitPayload(ctx, tx, int64(len(data))); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, "UPDATE deliveries SET raw=?,digest=?,state='pending' WHERE gateway=? AND id=?", data, digest, gateway, id)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) admitPayload(ctx context.Context, tx *sql.Tx, size int64) error {
+	if err := s.checkAdmission(ctx, tx, size); err != nil {
 		return err
 	}
 	var used int64
@@ -552,11 +563,89 @@ func (s *Store) Accept(ctx context.Context, gateway, id, sender string, raw io.R
 	if err := tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(length(raw)),0) FROM deliveries").Scan(&used); err != nil {
 		return err
 	}
-	if int64(len(data)) > s.limits.PayloadBytes-used {
+	if size > s.limits.PayloadBytes-used {
 		return ErrCapacity
 	}
-	_, err = tx.ExecContext(ctx, "UPDATE deliveries SET raw=?,digest=?,state='pending' WHERE gateway=? AND id=?", data, digest, gateway, id)
+	return nil
+}
+
+// Quarantine records a hosted gateway's frozen binding, with its bytes, when
+// current authority no longer matches it or it cannot be resolved: never
+// imported, kept for release or discard. An all-empty owner means the
+// binding could not be resolved (an unknown table revision); release refuses
+// it and discard remains. A staged delivery with the same sender and binding
+// gains the bytes. An exact replay succeeds.
+func (s *Store) Quarantine(ctx context.Context, gateway, id, sender string, b Binding, raw []byte) error {
+	unresolved := b.Issuer == "" && b.Subject == "" && b.Mailbox == ""
+	if !identifier(gateway) || !identifier(id) || !address(sender, true) || !address(b.Address, false) || b.Generation <= 0 ||
+		!unresolved && (!identifier(b.Issuer) || !identifier(b.Subject) || !identifier(b.Mailbox)) {
+		return ErrConflict
+	}
+	if len(raw) == 0 || int64(len(raw)) > s.limits.MessageBytes {
+		return ErrCapacity
+	}
+	hash := sha256.Sum256(raw)
+	digest := hex.EncodeToString(hash[:])
+	tx, err := s.admissionTx(ctx)
 	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var oldSender, oldDigest, state string
+	err = tx.QueryRowContext(ctx, "SELECT sender,digest,state FROM deliveries WHERE gateway=? AND id=?", gateway, id).Scan(&oldSender, &oldDigest, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		t, err := archivedDelivery(ctx, tx, gateway, id)
+		if err == nil {
+			if t.sender != sender || t.digest != digest {
+				return ErrConflict
+			}
+			return tx.Commit()
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		var count int
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM deliveries").Scan(&count); err != nil {
+			return err
+		}
+		if count >= s.limits.Records {
+			return ErrCapacity
+		}
+		if err := s.admitPayload(ctx, tx, int64(len(raw))); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO deliveries(gateway,id,sender,created,digest,raw,state) VALUES(?,?,?,?,?,?,'quarantined')", gateway, id, sender, time.Now().Unix(), digest, raw); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO bindings VALUES(?,?,?,?,?,?,?)", gateway, id, b.Address, b.Issuer, b.Subject, b.Mailbox, b.Generation); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	if err != nil {
+		return err
+	}
+	if oldSender != sender {
+		return ErrConflict
+	}
+	if state == "quarantined" {
+		if oldDigest != digest {
+			return ErrConflict
+		}
+		return tx.Commit()
+	}
+	bindings, err := readBindings(ctx, tx, gateway, id)
+	if err != nil {
+		return err
+	}
+	// A pending delivery already holds bytes: QuarantinePending fences it.
+	if state != "staged" || len(bindings) != 1 || bindings[0] != b {
+		return ErrConflict
+	}
+	if err := s.admitPayload(ctx, tx, int64(len(raw))); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE deliveries SET raw=?,digest=?,state='quarantined',lease='',lease_until=0 WHERE gateway=? AND id=?", raw, digest, gateway, id); err != nil {
 		return err
 	}
 	return tx.Commit()

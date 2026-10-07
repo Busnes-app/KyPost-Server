@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
@@ -163,5 +164,30 @@ func TestCollectOptionalTuningOverride(t *testing.T) {
 				t.Fatalf("custom prompt included = %v, want %v", found, tc.present)
 			}
 		})
+	}
+}
+
+// Cloudflare credentials are sealed; the host record is not, so a restored
+// copy starts fenced. The ledger database is snapshotted, never copied raw.
+func TestCollectSealsCloudflareCredentialsNotHostRecord(t *testing.T) {
+	d := fixtureDirs(t)
+	for _, name := range []string{cfreceiving.CredentialsFile, cfreceiving.HostFile} {
+		if err := os.WriteFile(filepath.Join(d.Secret, name), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := openService(t, d, config.BackupConfig{}).Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := map[string]bool{}
+	for _, f := range p.Files {
+		paths[f.Path] = true
+	}
+	if !paths["private/"+cfreceiving.CredentialsFile] || paths["private/"+cfreceiving.HostFile] {
+		t.Fatal("credentials must be sealed and the host record excluded", paths)
+	}
+	if !snapshotDatabase(cfreceiving.DBFile) {
+		t.Fatal("ledger database copied without a SQLite snapshot")
 	}
 }

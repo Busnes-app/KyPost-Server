@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
@@ -20,6 +22,22 @@ func (s *Server) openHolding() (*ingress.Store, error) {
 		return nil, nil
 	}
 	return ingress.OpenExisting(dir, ingress.ReceivingLimits)
+}
+
+// handleCloudflareReceivingStatus reports the continuous Cloudflare profile:
+// state, revisions, times and counts, never addresses or envelopes.
+func (s *Server) handleCloudflareReceivingStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.nativeMail {
+		http.Error(w, "native mail is disabled", http.StatusNotFound)
+		return
+	}
+	status, err := cfreceiving.CurrentStatus(r.Context(), cfreceiving.Keys{Dir: config.SecretDir()}, filepath.Join(s.stateDir, "receiving"))
+	if err != nil {
+		http.Error(w, "cloudflare receiving state unreadable; preserve it and repair", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 // handleQuarantineList pages quarantined envelopes (?after=<sequence>), never

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -26,13 +27,14 @@ const scratchDirName = "backup-scratch"
 var required = []string{"config/config.yaml", "config/users.json", "private/totp-secret.key", "state/state.db"}
 
 func snapshotDatabase(name string) bool {
-	return name == "state.db" || name == "mailbox.db" || name == "ingress.db"
+	return name == "state.db" || name == "mailbox.db" || name == "ingress.db" || name == cfreceiving.DBFile
 }
 
 // ".v1-migrated" (native storage migration copies) needs its own rule: it ends
 // in "-migrated", which the ".migrated" rule does not match.
 func skip(name string) bool {
-	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || strings.HasSuffix(name, ".lock") ||
+	// The Cloudflare host record is this host's live marker: a restore must start fenced.
+	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || name == cfreceiving.HostFile || strings.HasSuffix(name, ".lock") ||
 		strings.HasSuffix(name, ".migrated") || strings.HasSuffix(name, ".v1-migrated") || strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")
 }
 
