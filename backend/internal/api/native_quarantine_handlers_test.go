@@ -3,16 +3,20 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -63,6 +67,10 @@ func TestQuarantineAdminAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var logs bytes.Buffer
+	if srv.logger, err = logging.NewWithOutput(&logs); err != nil {
+		t.Fatal(err)
+	}
 	token, csrf := mintSessionForTest(srv, admin.ID)
 	mtoken, mcsrf := mintSessionForTest(srv, one.ID)
 	call := func(method, path, token, csrf, body string) *httptest.ResponseRecorder {
@@ -102,6 +110,19 @@ func TestQuarantineAdminAPI(t *testing.T) {
 	if w = call("POST", base+"/maddy-local/missing/release", token, csrf, confirm); w.Code != 404 {
 		t.Fatal("missing release", w.Code, w.Body)
 	}
+	if w = call("POST", base+"/maddy-local/"+strings.Repeat("x", 257)+"/discard", token, csrf, confirm); w.Code != 404 || strings.Contains(logs.String(), "xxxxxxxx") {
+		t.Fatal("overlong id looked up or logged", w.Code, w.Body)
+	}
+	hold := filepath.Join(srv.stateDir, sso.NativeRestoreHoldFile)
+	if err = os.WriteFile(hold, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if w = call("POST", base+"/maddy-local/drop/discard", token, csrf, confirm); w.Code != 409 {
+		t.Fatal("discard under restore hold", w.Code, w.Body)
+	}
+	if err = os.Remove(hold); err != nil {
+		t.Fatal(err)
+	}
 	if w = call("POST", base+"/maddy-local/keep/release", token, csrf, confirm); w.Code != 200 || !strings.Contains(w.Body.String(), `"result":"released"`) {
 		t.Fatal("release", w.Code, w.Body)
 	}
@@ -113,6 +134,17 @@ func TestQuarantineAdminAPI(t *testing.T) {
 	}
 	if w = call("GET", base, token, csrf, ""); w.Code != 200 || strings.Contains(w.Body.String(), `"id":`) {
 		t.Fatal("list after", w.Code, w.Body)
+	}
+	audit := logs.String()
+	for _, want := range []string{"maddy-local/keep", "released", "maddy-local/drop", "discarded", admin.ID} {
+		if !strings.Contains(audit, want) {
+			t.Fatal("audit lacks", want, audit)
+		}
+	}
+	for _, secret := range []string{"secret-subject", "secret-body", "header-from", "envelope@outside.test"} {
+		if strings.Contains(audit, secret) {
+			t.Fatal("audit logged correspondence", secret)
+		}
 	}
 	box, err := mailbox.OpenExisting(filepath.Join(a.Dir(srv.stateDir), "mailbox"), a.Owner, a.Limits, a.Source)
 	if err != nil {

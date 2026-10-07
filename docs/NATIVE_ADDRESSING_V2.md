@@ -30,7 +30,11 @@ one journal per user, so it and active extra mailboxes exclude each other:
 creating or re-enabling an extra mailbox is refused while the owner has it on,
 and enabling it is refused while the user has an active, prepared extra
 mailbox; disabling them restores the option. Disabling an extra mailbox quarantines its
-queued or retryable outbox jobs for good. Phase 4b is implemented: Server →
+queued or retryable outbox jobs for good. Accepted incoming mail still waiting for a
+disabled mailbox, or for an owner KyIdentity offboarded or promoted, is quarantined at
+its next import attempt, because its address generation has moved; after re-enabling
+the mailbox an administrator can release it to that mailbox
+([quarantine release](NATIVE_PROVISIONING.md#quarantine-release)). Phase 4b is implemented: Server →
 Mail addresses creates, disables and re-enables extra mailboxes.
 Prerequisite of
 [continuous Cloudflare receiving](CLOUDFLARE_CONTINUOUS_RECEIVING.md); applies to

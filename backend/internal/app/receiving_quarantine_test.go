@@ -6,15 +6,20 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Busnes-app/ky-primitives/syncauth"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 const quarantineRaw = "From: header-from@outside.test\r\nSubject: secret-subject\r\n\r\nsecret-body\r\n"
@@ -90,6 +95,16 @@ func TestNativeQuarantineReleaseToFrozenMailbox(t *testing.T) {
 	if d, err := r.holding.Get(ctx, receivingGateway, "frozen-at-one"); err != nil || d.State != "quarantined" {
 		t.Fatal("refused release changed state", d.State, err)
 	}
+	// Local deactivation records nothing durable: not admitted, not retired.
+	if _, err := r.accounts.Deactivate(one.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cli("release", receivingGateway, "frozen-at-one", "--confirm", "frozen-at-one"); !errors.Is(err, sso.ErrQuarantineUnadmitted) {
+		t.Fatal("transient refusal", err)
+	}
+	if _, err := r.accounts.Reactivate(one.ID); err != nil {
+		t.Fatal(err)
+	}
 	for range 2 {
 		if _, err := cli("release", receivingGateway, "frozen-at-one", "--confirm", "frozen-at-one"); err != nil {
 			t.Fatal(err)
@@ -118,8 +133,8 @@ func TestNativeQuarantineReleaseRefusesChangedMailbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Import defers (never quarantines) mail for a disabled mailbox or an
-	// offboarded owner, so each is quarantined by a generation change first.
+	// Each is quarantined by an address change first, then its mailbox or
+	// owner is made durably inactive while it waits.
 	if _, err := r.life.AddNativeAlias(ctx, r.stateDir, m.ID, "alias@example.test"); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +170,7 @@ func TestNativeQuarantineReleaseRefusesChangedMailbox(t *testing.T) {
 	receivingDirectory(t, r, "one", 4, false)
 	cli := quarantineCLI(t, r)
 	for _, id := range []string{"disabled", "impostor", "offboarded"} {
-		if _, err := cli("release", receivingGateway, id, "--confirm", id); !errors.Is(err, sso.ErrQuarantineRelease) {
+		if _, err := cli("release", receivingGateway, id, "--confirm", id); !errors.Is(err, sso.ErrQuarantineInactive) {
 			t.Fatal(id, "release not refused with reason", err)
 		}
 		if d, err := r.holding.Get(ctx, receivingGateway, id); err != nil || d.State != "quarantined" {
@@ -165,8 +180,8 @@ func TestNativeQuarantineReleaseRefusesChangedMailbox(t *testing.T) {
 	if got := receivingInbox(t, r, created[1]); len(got) != 0 {
 		t.Fatal("impostor-frozen mail reached the mailbox", got)
 	}
-	if _, err := cli("discard", receivingGateway, "disabled", "--confirm", "disabled"); err != nil {
-		t.Fatal(err)
+	if out, err := cli("discard", receivingGateway, "disabled", "--confirm", "disabled"); err != nil || out != "discarded\n" {
+		t.Fatal(out, err)
 	}
 	d, err := r.holding.Get(ctx, receivingGateway, "disabled")
 	if err != nil || d.Disposition != "discarded" || len(d.Raw) != 0 {
@@ -187,5 +202,114 @@ func TestNativeQuarantineReleaseRefusesChangedMailbox(t *testing.T) {
 	}
 	if err := r.life.ReleaseQuarantined(ctx, r.stateDir, "https://identity.example.test", r.accounts, r.holding, receivingGateway, "impostor"); !errors.Is(err, sso.ErrNativeRestoreHold) {
 		t.Fatal("release under restore hold", err)
+	}
+	if _, err := cli("discard", receivingGateway, "impostor", "--confirm", "impostor"); !errors.Is(err, sso.ErrNativeRestoreHold) {
+		t.Fatal("discard under restore hold", err)
+	}
+	if d, err := r.holding.Get(ctx, receivingGateway, "impostor"); err != nil || d.State != "quarantined" {
+		t.Fatal("restore hold lost quarantined mail", d.State, err)
+	}
+}
+
+// Pending mail whose frozen owner is durably inactive quarantines instead of
+// holding receiving capacity forever; local deactivation stays pending.
+func TestNativeReceivingQuarantinesDurablyInactiveOwners(t *testing.T) {
+	ctx := context.Background()
+	t.Run("disabled mailbox, then released after re-enable", func(t *testing.T) {
+		r, created := receivingFixture(t)
+		m, err := r.life.CreateNativeMailbox(ctx, r.stateDir, created[0].ID, "sales@example.test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		quarantineVia(t, r, "disabled", "sales@example.test", func() {
+			if _, err := r.life.SetNativeMailboxState(ctx, r.stateDir, m.ID, false); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if _, err := r.life.SetNativeMailboxState(ctx, r.stateDir, m.ID, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.life.ReleaseQuarantined(ctx, r.stateDir, "https://identity.example.test", r.accounts, r.holding, receivingGateway, "disabled"); err != nil {
+			t.Fatal(err)
+		}
+		if got := receivingMailbox(t, r, m.ID); len(got) != 1 || got[0] != "secret-body" {
+			t.Fatal("re-enabled mailbox", got)
+		}
+	})
+	t.Run("restore hold leaves even a disabled mailbox pending", func(t *testing.T) {
+		r, created := receivingFixture(t)
+		m, err := r.life.CreateNativeMailbox(ctx, r.stateDir, created[0].ID, "sales@example.test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := r.bind(ctx, "held", "envelope@outside.test", "sales@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.accept(ctx, "held", "envelope@outside.test", strings.NewReader(quarantineRaw)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.life.SetNativeMailboxState(ctx, r.stateDir, m.ID, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(r.stateDir, sso.NativeRestoreHoldFile), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.importDelivery(ctx, "held"); !errors.Is(err, sso.ErrNativeRestoreHold) {
+			t.Fatal(err)
+		}
+		if d, err := r.holding.Get(ctx, receivingGateway, "held"); err != nil || d.State != "pending" {
+			t.Fatal("restore hold quarantined", d.State, err)
+		}
+	})
+	t.Run("directory offboarding", func(t *testing.T) {
+		r, _ := receivingFixture(t)
+		quarantineVia(t, r, "offboarded", "one@example.test", func() { receivingDirectory(t, r, "one", 2, false) })
+	})
+	t.Run("promotion to administrator", func(t *testing.T) {
+		r, created := receivingFixture(t)
+		quarantineVia(t, r, "promoted", "one@example.test", func() {
+			raw := []byte(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"one","externalId":"one","userName":"one","active":true,"roles":["kypost.admin"],"emails":[{"value":"one@example.test","primary":true}],"meta":{"version":"W/\"2\""}}`)
+			var resource sso.DirectoryUser
+			if err := json.Unmarshal(raw, &resource); err != nil {
+				t.Fatal(err)
+			}
+			ev := syncauth.Event{ID: "promote-one", Type: "user.updated", At: time.Now()}
+			if _, err := r.life.ApplyDirectoryUser("https://identity.example.test", ev, resource, sso.EventDigest(ev.Type, raw), func() (bool, error) { return true, nil }); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.accounts.SetRole(created[0].ID, users.RoleAdmin); err != nil {
+				t.Fatal(err)
+			}
+		})
+	})
+	t.Run("local deactivation stays pending", func(t *testing.T) {
+		r, created := receivingFixture(t)
+		if err := r.bind(ctx, "local", "envelope@outside.test", "one@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.accept(ctx, "local", "envelope@outside.test", strings.NewReader(quarantineRaw)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.accounts.Deactivate(created[0].ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.importDelivery(ctx, "local"); err == nil || errors.Is(err, ingress.ErrRoute) {
+			t.Fatal("transient refusal", err)
+		}
+		if d, err := r.holding.Get(ctx, receivingGateway, "local"); err != nil || d.State != "pending" {
+			t.Fatal("transient refusal quarantined", d.State, err)
+		}
+	})
+}
+
+func TestNativeQuarantineCLIRefusesOtherUser(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root owns every candidate directory")
+	}
+	r, _ := receivingFixture(t)
+	cli := quarantineCLI(t, r)
+	t.Setenv("STATE_DIR", "/")
+	if _, err := cli("list"); err == nil || !strings.Contains(err.Error(), "docker compose exec --user kypost kypost-server kypost-server receiving quarantine") {
+		t.Fatal("ran as another user than the state owner", err)
 	}
 }

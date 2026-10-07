@@ -72,11 +72,16 @@ func (s *Server) changeQuarantine(w http.ResponseWriter, r *http.Request, action
 	ac, _ := authFromContext(r)
 	gateway, id := r.PathValue("gateway"), r.PathValue("id")
 	result := "refused"
+	// Malformed path values are neither logged nor looked up.
+	valid := ingress.ValidIdentifier(gateway) && ingress.ValidIdentifier(id)
+	if !valid {
+		gateway, id = "", ""
+	}
 	defer func() {
 		s.logger.Info("receiving quarantine change", "actor", ac.UserID, "task_id", "native-receiving", "action", action, "target", gateway+"/"+id, "result", result, "correlation_id", id)
 	}()
-	if !s.nativeMail {
-		http.Error(w, "native mail is disabled", http.StatusNotFound)
+	if !s.nativeMail || !valid {
+		http.Error(w, "quarantined delivery not found", http.StatusNotFound)
 		return
 	}
 	holding, err := s.openHolding()
@@ -93,12 +98,14 @@ func (s *Server) changeQuarantine(w http.ResponseWriter, r *http.Request, action
 			}
 			err = s.ssoLifecycle.ReleaseQuarantined(r.Context(), s.stateDir, issuer, s.users, holding, gateway, id)
 		} else if err = sso.RequireNativeRestoreReleased(s.stateDir); err == nil {
-			err = holding.Discard(r.Context(), gateway, id)
+			// partially_released: an interrupted release may have reached
+			// some frozen mailboxes before this discard.
+			done, err = holding.Discard(r.Context(), gateway, id)
 		}
 	}
 	switch {
 	case err == nil:
-		result = "committed"
+		result = done
 		writeJSON(w, http.StatusOK, map[string]any{"gateway": gateway, "id": id, "result": done})
 	case nativeMigrationRefused(w, err):
 	case errors.Is(err, sql.ErrNoRows):

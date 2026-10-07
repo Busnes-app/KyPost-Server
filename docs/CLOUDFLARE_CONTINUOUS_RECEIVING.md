@@ -62,7 +62,8 @@ synchronously. Both were approved on 2026-10-06; `TURNKEY_MAIL_STACK_PLAN.md` an
   only) and release or discard them through the admin API or CLI, step-up confirmed
   and audited. Release goes only to the frozen mailbox, and only while it exists, is
   active and is still owned by the same issuer/subject; otherwise it refuses and
-  discard remains. See
+  discard remains. Mail waiting for a durably inactive owner quarantines instead of
+  holding receiving capacity. See
   [quarantine release](NATIVE_PROVISIONING.md#quarantine-release).
 
 ## Cloudflare side

@@ -54,7 +54,7 @@ func TestReleaseDeliversToFrozenOwnersOnce(t *testing.T) {
 	if err = s.Release(ctx, "maddy", "q", resolve("bob")); err == nil {
 		t.Fatal("interrupted release acknowledged")
 	}
-	if err = s.Discard(ctx, "maddy", "q"); !errors.Is(err, ErrNotQuarantined) {
+	if _, err = s.Discard(ctx, "maddy", "q"); !errors.Is(err, ErrNotQuarantined) {
 		t.Fatal("discard raced a live release lease", err)
 	}
 	if _, err = s.db.Exec("UPDATE deliveries SET lease_until=0"); err != nil {
@@ -79,7 +79,7 @@ func TestReleaseDeliversToFrozenOwnersOnce(t *testing.T) {
 			t.Fatalf("%s: want one copy, got %d %v", owner, len(list), err)
 		}
 	}
-	if err = s.Discard(ctx, "maddy", "q"); !errors.Is(err, ErrNotQuarantined) {
+	if _, err = s.Discard(ctx, "maddy", "q"); !errors.Is(err, ErrNotQuarantined) {
 		t.Fatal("released delivery discarded", err)
 	}
 }
@@ -94,13 +94,13 @@ func TestDiscardTombstoneBlocksRepickup(t *testing.T) {
 	}
 	defer s.Close()
 	createImport(t, s, "pending")
-	if err = s.Discard(ctx, "maddy", "pending"); !errors.Is(err, ErrNotQuarantined) {
+	if _, err = s.Discard(ctx, "maddy", "pending"); !errors.Is(err, ErrNotQuarantined) {
 		t.Fatal("pending delivery discarded", err)
 	}
 	quarantined(t, s, "q")
 	for range 2 {
-		if err = s.Discard(ctx, "maddy", "q"); err != nil {
-			t.Fatal(err)
+		if disposition, err := s.Discard(ctx, "maddy", "q"); err != nil || disposition != "discarded" {
+			t.Fatal(disposition, err)
 		}
 	}
 	d, err := s.Get(ctx, "maddy", "q")
@@ -144,5 +144,79 @@ func TestListQuarantinedIsEnvelopeOnly(t *testing.T) {
 	}
 	if rows, err = s.ListQuarantined(ctx, rows[0].Sequence, 100); err != nil || len(rows) != 0 {
 		t.Fatal("paging", rows, err)
+	}
+}
+
+// A discard after an interrupted release says some owners may have the mail,
+// and the owner the release reached keeps exactly one copy.
+func TestDiscardAfterInterruptedReleaseIsPartial(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	s, err := Open(filepath.Join(root, "holding"), proofLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	quarantined(t, s, "q")
+	alice := openMailbox(t, root, mailbox.Owner{Issuer: "https://identity.example.test", Subject: "alice", Mailbox: "alice"})
+	if err = s.Release(ctx, "maddy", "q", func(owner mailbox.Owner) (*mailbox.Store, error) {
+		if owner.Subject == "alice" {
+			return alice, nil
+		}
+		return nil, errors.New("bob disabled for good")
+	}); err == nil {
+		t.Fatal("interrupted release acknowledged")
+	}
+	if _, err = s.db.Exec("UPDATE deliveries SET lease_until=0"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if disposition, err := s.Discard(ctx, "maddy", "q"); err != nil || disposition != "partially_released" {
+			t.Fatal(disposition, err)
+		}
+	}
+	if d, err := s.Get(ctx, "maddy", "q"); err != nil || d.Disposition != "partially_released" || len(d.Raw) != 0 {
+		t.Fatalf("%+v %v", d, err)
+	}
+	if list, err := alice.List(ctx, "INBOX", 0, 10); err != nil || len(list) != 1 {
+		t.Fatal("reached owner lost or duplicated its copy", len(list), err)
+	}
+}
+
+// A store whose tombstones predate dispositions gains the column, reading
+// existing tombstones as imports, and keeps archiving.
+func TestArchiveGainsDispositionColumn(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "holding")
+	s, err := Open(dir, proofLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec("DROP TABLE archived; CREATE TABLE archived (gateway TEXT NOT NULL, id TEXT NOT NULL, sender TEXT NOT NULL, digest TEXT NOT NULL, recipients TEXT NOT NULL, archived_at INTEGER NOT NULL, PRIMARY KEY(gateway,id)) WITHOUT ROWID; INSERT INTO archived VALUES('maddy','old','sender@outside.test','digest','alice@example.test',1)"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if s, err = OpenExisting(dir, proofLimits); err != nil {
+			t.Fatal(err)
+		}
+		if d, err := s.Get(ctx, "maddy", "old"); err != nil || d.State != "archived" || d.Disposition != "imported" {
+			t.Fatalf("%+v %v", d, err)
+		}
+		var columns string
+		if err := s.db.QueryRow(`SELECT group_concat(name||' '||type,',') FROM pragma_table_info('archived')`).Scan(&columns); err != nil || columns != ArchivedColumns {
+			t.Fatal(columns, err)
+		}
+		_ = s.Close()
+	}
+	if s, err = OpenExisting(dir, proofLimits); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	quarantined(t, s, "q")
+	if disposition, err := s.Discard(ctx, "maddy", "q"); err != nil || disposition != "discarded" {
+		t.Fatal(disposition, err)
 	}
 }

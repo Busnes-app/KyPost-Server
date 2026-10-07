@@ -483,6 +483,47 @@ func (r *receivingRuntime) importDelivery(ctx context.Context, id string) error 
 	if d.State == "archived" {
 		return nil
 	}
+	err = r.importFrozen(ctx, d)
+	if err != nil && d.State == "pending" && !errors.Is(err, ingress.ErrRoute) && !errors.Is(err, sso.ErrNativeRestoreHold) {
+		if stale := r.quarantineRetired(ctx, d); stale != nil {
+			return stale
+		}
+	}
+	return err
+}
+
+// quarantineRetired runs after import was refused, usually by admission
+// before the generation check could run. It quarantines the delivery when the
+// ledger durably records a frozen address as moved, inactive or at a newer
+// generation: an administrator disabled the mailbox or released the address,
+// or the directory offboarded or promoted the owner. Such a binding can never
+// import again, and would otherwise hold receiving capacity forever. Directory
+// lag, storage or lock failures and missing sign-on settings change no
+// address, so that mail stays pending and retries. Returns nil when nothing
+// is proven stale.
+func (r *receivingRuntime) quarantineRetired(ctx context.Context, d ingress.Delivery) error {
+	release, err := r.life.LockDirectoryContext(ctx)
+	if err != nil {
+		return nil
+	}
+	defer release()
+	addresses, err := r.life.NativeAddresses()
+	if err != nil {
+		return nil
+	}
+	for _, b := range d.Bindings {
+		if x := addresses[b.Address]; x.Mailbox != b.Mailbox || x.State != "active" || x.Generation != b.Generation {
+			if err := r.holding.QuarantinePending(ctx, r.gatewayID(), d.ID); err != nil {
+				return err
+			}
+			return ingress.ErrRoute
+		}
+	}
+	return nil
+}
+
+func (r *receivingRuntime) importFrozen(ctx context.Context, d ingress.Delivery) error {
+	id := d.ID
 	stores := map[mailbox.Owner]*mailbox.Store{}
 	sources := map[mailbox.Owner]string{}
 	defer func() {
