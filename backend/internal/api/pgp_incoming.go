@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -49,6 +50,15 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 		if err := decoder.Decode(&req); err != nil {
 			http.Error(w, "invalid incoming encryption preference", http.StatusBadRequest)
 			return
+		}
+		if req.Enabled {
+			if owns, err := s.ownsActiveExtraMailbox(ac.UserID); err != nil {
+				http.Error(w, "cannot verify your mailboxes; incoming encryption was not enabled", http.StatusServiceUnavailable)
+				return
+			} else if owns {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": errIncomingEncryptionExtraMailbox.Error()})
+				return
+			}
 		}
 		if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
 			return
@@ -100,7 +110,21 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if err := config.UpdateUserSettings(path, func(settings *config.UserSettings) error { settings.EncryptIncoming = req.Enabled; return nil }); err != nil {
+		err := config.UpdateUserSettings(path, func(settings *config.UserSettings) error {
+			// Decide again under the lock admin create and enable hold.
+			if req.Enabled {
+				if owns, err := s.ownsActiveExtraMailbox(ac.UserID); err != nil || owns {
+					return cmp.Or(err, errIncomingEncryptionExtraMailbox)
+				}
+			}
+			settings.EncryptIncoming = req.Enabled
+			return nil
+		})
+		if errors.Is(err, errIncomingEncryptionExtraMailbox) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+			return
+		}
+		if err != nil {
 			http.Error(w, "cannot save incoming encryption preference", http.StatusInternalServerError)
 			return
 		}

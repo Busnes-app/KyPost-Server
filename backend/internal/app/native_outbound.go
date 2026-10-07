@@ -7,6 +7,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // Each API/daemon process may discover the same work: durable claims arbitrate.
@@ -32,6 +33,10 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 				return
 			}
 			all, err := d.users.List()
+			var mailboxes []sso.NativeMailbox
+			if err == nil {
+				mailboxes, err = sso.NewLifecycleStore(sender.ConfigDir).NativeMailboxes()
+			}
 			if err != nil {
 				d.logger.Error("native outbox discovery deferred; retain queued mail", "error", "account storage unavailable")
 			} else {
@@ -39,10 +44,7 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 				// after measuring relay limits and storage contention with representative load.
 				slots := make(chan struct{}, 4)
 				var workers sync.WaitGroup
-				for _, u := range all {
-					if u.NativeMailboxSource == "" || u.NativeMailboxIssuer == "" {
-						continue
-					}
+				for _, mailboxID := range outboxMailboxes(all, mailboxes) {
 					select {
 					case slots <- struct{}{}:
 					case <-ctx.Done():
@@ -50,10 +52,10 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 						return
 					}
 					workers.Add(1)
-					go func(userID string) {
+					go func(mailboxID string) {
 						defer workers.Done()
 						defer func() { <-slots }()
-						ids, err := sender.Pending(ctx, userID, 50)
+						ids, err := sender.Pending(ctx, mailboxID, 50)
 						if err != nil {
 							if ctx.Err() == nil {
 								d.logger.Error("native outbox discovery deferred; retain queued mail", "error", "mailbox storage unavailable")
@@ -64,11 +66,11 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 							if ctx.Err() != nil {
 								return
 							}
-							if err := sender.Recover(ctx, userID, id); err != nil && ctx.Err() == nil {
+							if err := sender.Recover(ctx, mailboxID, id); err != nil && ctx.Err() == nil {
 								d.logger.Error("native outbox recovery deferred; inspect delivery evidence before resubmitting", "correlation_id", id, "error", "storage, sender authority or relay unavailable")
 							}
 						}
-					}(u.ID)
+					}(mailboxID)
 				}
 				workers.Wait()
 			}
@@ -80,4 +82,21 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 		}
 	}()
 	return done
+}
+
+// outboxMailboxes lists every mailbox (primary or extra) of a published
+// native user with storage: each has its own outbox, and disabled ones still
+// finish Sent filing. An unprepared mailbox has no storage, hence no outbox.
+func outboxMailboxes(all []users.User, mailboxes []sso.NativeMailbox) []string {
+	native := map[string]bool{}
+	for _, u := range all {
+		native[u.ID] = u.NativeMailboxSource != "" && u.NativeMailboxIssuer != ""
+	}
+	ids := []string{}
+	for _, m := range mailboxes {
+		if native[m.User] && m.Prepared {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids
 }

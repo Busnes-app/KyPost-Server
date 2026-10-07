@@ -39,6 +39,18 @@ describe("incoming encryption opt-in", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save incoming encryption" }));
     await waitFor(() => expect(setIncomingEncryption).toHaveBeenCalledWith(true, "", identity, true));
   });
+  it("shows the server's refusal, such as additional mailboxes", async () => {
+    const refusal = "incoming encryption covers only your primary mailbox, so it cannot be turned on while you have an active additional mailbox; an administrator can disable your additional mailboxes, and they must stay disabled while encryption is on";
+    vi.mocked(setIncomingEncryption).mockRejectedValue(new Error(refusal));
+    render(<IncomingEncryption identity={identity} clientProtected />);
+    const enabled = await screen.findByLabelText("Encrypt incoming mail after classification");
+    await waitFor(() => expect((enabled as HTMLInputElement).disabled).toBe(false));
+    fireEvent.click(enabled);
+    fireEvent.click(screen.getByLabelText(/I saved a private-key/));
+    fireEvent.change(screen.getByLabelText("Account password"), { target: { value: "account credential" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save incoming encryption" }));
+    await screen.findByText(refusal);
+  });
   it("requires a client-protected key and reports pending recovery", async () => {
     vi.mocked(getIncomingEncryption).mockResolvedValue({ enabled: false, pending: true });
     render(<IncomingEncryption identity={null} clientProtected={false} />);

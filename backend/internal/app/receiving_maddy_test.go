@@ -621,7 +621,7 @@ with open(sys.argv[2], "w") as out:
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stored.State == "imported" {
+		if stored.State == "archived" {
 			break
 		}
 		if time.Now().After(until) {

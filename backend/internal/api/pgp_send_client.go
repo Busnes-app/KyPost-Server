@@ -137,7 +137,7 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a, native, admissionErr := s.nativeMailAssignment(r.Context(), ac.UserID)
+	a, native, admissionErr := s.nativeMailboxAssignment(r.Context(), ac.UserID, ac.Mailbox)
 	if admissionErr != nil {
 		http.Error(w, "native mailbox unavailable; preserve mail and repair account authority", http.StatusServiceUnavailable)
 		return

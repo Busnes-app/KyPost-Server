@@ -23,7 +23,8 @@ func (s *Server) refuseNativeAdministrator(w http.ResponseWriter, r *http.Reques
 	if !errors.Is(err, sso.ErrNativeAdministrator) {
 		return false
 	}
-	s.logger.Info("native mail refused for administrator identity", "actor", userID, "action", r.Method, "target", r.URL.Path, "result", "refused")
+	// The route pattern, never the path: a path can carry a download token.
+	s.logger.Info("native mail refused for administrator identity", "actor", userID, "action", r.Method, "target", r.Pattern, "result", "refused")
 	writeJSON(w, http.StatusForbidden, map[string]any{"error": "administrator identities have no mailbox; use your everyday identity", "administratorIdentity": true})
 	return true
 }
@@ -87,18 +88,42 @@ func (s *Server) nativeMailAssignment(ctx context.Context, userID string) (sso.N
 	return a, true, err
 }
 
-func (s *Server) nativeMailboxClient(userID string) (imapadapter.Client, bool, error) {
-	a, native, err := s.nativeMailAssignment(context.Background(), userID)
+// nativeMailboxAssignment admits one of the user's mailboxes ("" is the
+// primary). Unknown, foreign and disabled mailboxes refuse alike with
+// sso.ErrNativeMailboxUnknown; a non-native account has none.
+func (s *Server) nativeMailboxAssignment(ctx context.Context, userID, mailboxID string) (sso.NativeAssignment, bool, error) {
+	if mailboxID == "" {
+		return s.nativeMailAssignment(ctx, userID)
+	}
+	u, err := s.users.Get(userID)
+	if err != nil {
+		return sso.NativeAssignment{}, false, err
+	}
+	if u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" || !s.nativeMail {
+		return sso.NativeAssignment{}, false, sso.ErrNativeMailboxUnknown
+	}
+	settings := s.ssoStore.Load()
+	if !settings.Enabled {
+		return sso.NativeAssignment{}, true, sso.ErrNativeProvisioning
+	}
+	a, err := s.ssoLifecycle.AdmitNativeMailbox(ctx, s.stateDir, settings.IssuerURL, userID, mailboxID, s.users)
+	return a, true, err
+}
+
+// The client cache is keyed by mailbox ID (a primary's is its user ID).
+func (s *Server) nativeMailboxClient(userID, mailboxID string) (imapadapter.Client, bool, error) {
+	a, native, err := s.nativeMailboxAssignment(context.Background(), userID, mailboxID)
 	if err != nil || !native {
 		return nil, native, err
 	}
+	key := a.Owner.Mailbox
 	s.userMu.Lock()
 	defer s.userMu.Unlock()
-	if entry, ok := s.userMail[userID]; ok && entry.updatedAt == a.Source {
+	if entry, ok := s.userMail[key]; ok && entry.updatedAt == a.Source {
 		return entry.client, true, nil
 	}
-	client, err := mailbox.OpenClient(filepath.Join(s.userStateDir(userID), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context) error {
-		current, _, err := s.nativeMailAssignment(ctx, userID)
+	client, err := mailbox.OpenClient(filepath.Join(a.Dir(s.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context) error {
+		current, _, err := s.nativeMailboxAssignment(ctx, userID, mailboxID)
 		if err != nil {
 			return err
 		}
@@ -110,9 +135,9 @@ func (s *Server) nativeMailboxClient(userID string) (imapadapter.Client, bool, e
 	if err != nil {
 		return nil, true, err
 	}
-	if entry, ok := s.userMail[userID]; ok {
+	if entry, ok := s.userMail[key]; ok {
 		closeMailClient(entry.client)
 	}
-	s.userMail[userID] = &serverMailEntry{client: client, updatedAt: a.Source}
+	s.userMail[key] = &serverMailEntry{client: client, updatedAt: a.Source}
 	return client, true, nil
 }

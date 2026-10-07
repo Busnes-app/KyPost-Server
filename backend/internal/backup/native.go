@@ -261,7 +261,19 @@ func fenceRestoredNativeAccounts(dir string) error {
 			return err
 		}
 	}
-	return sso.NewLifecycleStore(filepath.Join(dir, "config")).FenceRestoredNativeTokens(filepath.Join(dir, "state"), doc.Users)
+	life := sso.NewLifecycleStore(filepath.Join(dir, "config"))
+	// Extra mailboxes hold mail only: rotate their references; devices and
+	// CardDAV were revoked with their owner above.
+	extras, err := life.NativeExtraMailboxSources()
+	if err != nil {
+		return err
+	}
+	for id, source := range extras {
+		if err := mailbox.RotateRestoredMessageReferences(filepath.Join(dir, "state/mailboxes", id, "mailbox/mailbox.db"), source); err != nil {
+			return err
+		}
+	}
+	return life.FenceRestoredNativeTokens(filepath.Join(dir, "state"), doc.Users)
 }
 
 // Revoke notification targets and outstanding stateless pairing tokens together.

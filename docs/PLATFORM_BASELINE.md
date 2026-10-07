@@ -408,6 +408,7 @@ Update it in the same change that breaks or adds a contract above.
 | `pull` delivery mode | 0.3.0 | n/a | 0.3.3 | ✅ | ✅ |
 | Contact sync, 500-change batching | 0.3.0 | n/a | ❌ sends one request | unverified | 0.4.0 |
 | `bodies=0` + `/api/mail/body` | 0.4.0 | 0.4.0 | not adopted | not adopted | not adopted |
+| Native mailbox selection (`/api/mailboxes`, `X-KyPost-Mailbox`) | unreleased | not adopted | not adopted | not adopted | not adopted |
 
 The Apple client is unreleased; `0.4.0` is the version it will first ship as,
 set in `MARKETING_VERSION`. It is one target building both macOS and iOS, so
@@ -491,6 +492,44 @@ ignored); omitted or empty still means the primary. Any other `from`, including
 a released or another mailbox's address, stays 403, and client-prepared PGP MIME
 must carry that same `From`. Native pickup/system sends remain pending; see
 [NATIVE_OUTBOX.md](NATIVE_OUTBOX.md). Existing external IMAP is unchanged.
+
+## Native mailbox selection (additive)
+
+A native user may own extra mailboxes an administrator created. Old clients
+are unchanged: without the header below every route serves the primary mailbox.
+
+- `GET /api/mailboxes` (session or device credential) answers
+  `{"mailboxes":[{"id","kind":"primary"|"extra","addresses":[{"address","kind":"primary"|"alias"}]}]}`
+  with the primary first and only `active` addresses. Disabled mailboxes are
+  omitted; a non-native account gets an empty list. The primary's `id` is the
+  account's user ID.
+- Mailbox-scoped routes accept `X-KyPost-Mailbox: <id>`: `/api/inbox` and
+  `/api/inbox/folders`, `/api/inbox/actions`, `/api/mail/search`,
+  `/api/mail/draft`, `/api/mail/send`, `/api/mail/send-pgp`,
+  `/api/mail/outbox/{id}`, `/api/mail/body`, `/api/mail/pgp-payload`,
+  `/api/mail/attachments`, `/api/mail/attachment`, `/api/rules/run`,
+  `/api/decisions` and `/api/export/folders` (web export and import, which
+  name the mailbox in their `POST /api/export`, `POST /api/import` and
+  `POST /api/import/imap` bodies; the IMAP grant's folder and start routes
+  take the mailbox from the grant). An
+  absent header or the primary's ID selects the primary. An unknown, foreign or
+  disabled mailbox answers `404 {"error":"mailbox not found"}`, identical for
+  all three: drop the mailbox from the local list and refresh
+  `GET /api/mailboxes`; do not retry. Message references are per mailbox; never
+  send one to another mailbox. `from` names an active address of the selected
+  mailbox (omitted means its primary address).
+- Every other route (devices, pairing, notifications, contacts, CardDAV, PGP
+  keys, settings, rule definitions, labels, import status and cancel) is per
+  user and ignores the header;
+  `/api/labels` reports labels discovered in the primary mailbox only.
+- `PUT /api/pgp/incoming` with `enabled:true` answers 409 with an explanatory
+  `error` while the user has any additional mailbox: incoming encryption covers
+  the primary only. Show the text; do not retry.
+- Push data and pull notifications for native mail carry an additive `mailbox`
+  field (the mailbox ID; web push payloads too). Select that mailbox before
+  opening the referenced message. Older notifications have no field: they
+  belong to the primary.
+- Android adopts selection first; other clients keep the primary-only view.
 
 ## Native CardDAV recovery
 

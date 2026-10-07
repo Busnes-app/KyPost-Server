@@ -17,7 +17,19 @@ import (
 // Callers own stores and their lifetimes. Partial failures resume via receipts.
 // The opt-in app importer holds current authority through this bridge.
 func (s *Store) Import(ctx context.Context, gateway, id string, resolve func(mailbox.Owner) (*mailbox.Store, error)) error {
-	d, err := s.Claim(ctx, gateway, id, 5*time.Minute)
+	return s.deliver(ctx, gateway, id, false, resolve)
+}
+
+// Release is Import for a quarantined delivery: the same frozen owners and
+// mailbox receipts, ending in a released tombstone. It skips the address
+// route check, so the caller must re-admit every frozen owner under the same
+// authority fences first. An interrupted release resumes via the receipts.
+func (s *Store) Release(ctx context.Context, gateway, id string, resolve func(mailbox.Owner) (*mailbox.Store, error)) error {
+	return s.deliver(ctx, gateway, id, true, resolve)
+}
+
+func (s *Store) deliver(ctx context.Context, gateway, id string, release bool, resolve func(mailbox.Owner) (*mailbox.Store, error)) error {
+	d, err := s.claim(ctx, gateway, id, 5*time.Minute, release)
 	if err != nil {
 		return err
 	}
@@ -61,5 +73,5 @@ func (s *Store) Import(ctx context.Context, gateway, id string, resolve func(mai
 			return err
 		}
 	}
-	return s.Acknowledge(ctx, d.Gateway, d.ID, d.Lease, d.Digest)
+	return s.acknowledge(ctx, d.Gateway, d.ID, d.Lease, d.Digest, release)
 }

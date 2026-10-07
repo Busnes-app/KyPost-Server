@@ -264,6 +264,15 @@ recorded as `address_conflict`.
     committed change whose route write failed answers 200 with the committed
     record and a `warning`, audited `committed_routes_pending`; repeating it gets
     the ordinary answer for the new state (a second release is 409).
+- **Admin screen.** Server → Mail addresses lists each mailbox (labelled by its
+  primary address and owner) with every address's kind, state and generation,
+  filterable by user. Aliases offer Release (confirmation: the address becomes
+  reserved, delivery and sending stop immediately, delivered mail stays,
+  reassignment is explicit) and, once reserved, Reassign to a chosen mailbox
+  (confirmation names the target); primaries offer nothing. Add alias takes a
+  mailbox and an address and confirms that the address is held permanently. The list does not say which owners are
+  administrators, so their refusal is the server's 409 text. A `warning` answer
+  is shown as a committed change with pending routes, not an error.
 - **Switch-over safety.** Ledgers written before this change (no
   `addressGenerations` marker) carried the directory revision in routes and
   bindings; loading raises each address generation to the owner's current
@@ -274,6 +283,65 @@ recorded as `address_conflict`.
   unaffected); without aliases it resumes raising generations, which stays
   monotonic. Roll back by restoring the pre-upgrade backup.
 - The recovery authority digest includes every address record.
+
+## Extra mailboxes
+
+Administrators give an everyday identity further mailboxes beside the
+KyIdentity primary ([spec](NATIVE_ADDRESSING_V2.md#mailbox-storage)).
+
+- **Ledger.** An extra mailbox is a `mailboxes` record of kind `extra`, owned by
+  an existing account's subject, with a random ID `mbx-<uuid>` (user IDs are bare
+  UUIDs, so the two never collide), its own `stateRoot`/`limits` copied from the
+  owner's primary, `state` `active` or `disabled` (the administrator's choice)
+  and `source` once prepared. Its primary address is an address record of kind
+  `primary` in that mailbox. Primary mailbox IDs stay equal to user IDs.
+- **Storage.** `$STATE/mailboxes/<mailboxID>/` with `native-mailbox.json`,
+  `mailbox/mailbox.db` and a mail-only `state.db` (processed, decisions,
+  checkpoint, deferrals; never devices, pairing, subscribers or
+  notifications). `mailbox.PrepareMailboxContext`/`ValidatePreparedMailbox`
+  take the parent directory. Device, notification and sorter state stays in the
+  owner's primary `state.db`.
+- **Desired-state rule.** An extra mailbox's addresses are `active` only while
+  the mailbox is prepared and not administrator-disabled, besides the owner
+  terms above, so subject deactivation or promotion disables every mailbox of
+  the subject and disable/re-enable bump generations through the same rule.
+- **Admin API** (same gates, audit and error mapping as the address routes;
+  audit names the mailbox, never an address):
+  - `GET /api/admin/mailboxes[?user=<id>]` lists mailboxes with `kind` and
+    `state` (the address listing carries `state` too).
+  - `POST /api/admin/mailboxes` `{user, address}` creates an extra mailbox for a
+    published native everyday account. The address must be on a configured,
+    established, non-retired domain, globally unique and not any subject's
+    KyIdentity primary; administrator and `legacyMixedUse` owners are 409, an
+    unknown or non-native user 404. The ledger records the mailbox before its
+    storage and the source after; repeating the request with the same user and
+    address resumes an interrupted creation.
+  - `POST /api/admin/mailboxes/{id}/disable` and `/enable` change an extra
+    mailbox's state (409 when already in it, 404 for a primary or unknown ID).
+    Mail is retained while disabled; outbox jobs still queued or retryable in
+    it are quarantined on their next recovery attempt and never resume, even
+    after re-enabling (accepted Sent obligations still finish).
+  - Listings carry `prepared`: false while a creation has reserved a mailbox
+    but not published its storage. Poller, outbox discovery and
+    `GET /api/mailboxes` skip unprepared mailboxes; repeat the creation to
+    finish it.
+  - Creating or enabling one is also 409 while the owner has incoming
+    encryption on or a replacement pending (see below).
+- **Admin screen.** Server → Mail addresses captions each mailbox with its
+  kind and state; an unfinished extra mailbox shows "not in service" and how to
+  finish it, with no actions. New mailbox takes a user and an address and
+  confirms that the address is held permanently and the mailbox cannot be
+  deleted, that the user selects it in their client, and that incoming
+  encryption is unavailable while it is active (disabling restores the option;
+  it cannot be re-enabled while their encryption is on). Prepared extra
+  mailboxes offer Disable (confirmation: delivery and sending stop at once,
+  mail is kept, the user cannot open it until it is enabled, queued outgoing
+  mail is quarantined for good) or Enable; primaries offer nothing. Errors,
+  warnings and locking follow the address actions.
+- **Authority.** `AdmitNativeMailbox` and `WithNativeMailAccess` take mailbox
+  IDs: the owner is admitted as today, then an extra mailbox must belong to the
+  same subject, be `active` and prepared, and pass storage validation. Unknown,
+  foreign and disabled IDs refuse alike (`ErrNativeMailboxUnknown`).
 
 Allocation context is at most 30 seconds and never outlives the domain proof.
 Cancellable flock/mutex waits leave no abandoned waiter that acquires later.
@@ -376,13 +444,289 @@ primary address; incoming encryption uses native INBOX rather than a leftover
 IMAP file. Existing key custody and WKD publication proofs are unchanged.
 
 Native compose/client-PGP sends use the configured relay and durable outbox,
-from the primary or any `active` alias of the sender's mailbox (an unowned or
-inactive `From` is 403). Native pickup creation and system/own-address SMTP
+from the primary or any `active` alias of the sending mailbox (an unowned or
+inactive `From` is 403).
+
+Mail endpoints accept an optional `X-KyPost-Mailbox` header selecting one of
+the caller's mailboxes (absent, or the caller's user ID, is the primary). It is
+resolved through the ledger on every request after authentication; an unknown,
+foreign or disabled mailbox answers `404 {"error":"mailbox not found"}` before
+any storage is opened (an administrator subject gets the usual 403). Per-user
+endpoints (devices, pairing, contacts, CardDAV, PGP keys, settings, rule
+definitions) ignore it; `/api/labels` reports the primary mailbox's labels. The
+manual `POST /api/rules/run` runs the user's rules in the selected mailbox. `GET /api/mailboxes` lists the caller's
+accessible mailboxes and their active addresses. Every mail cache is keyed by
+mailbox ID. The poller polls each active mailbox with the owner's settings,
+rules and labels, skipping disabled and unprepared mailboxes; sorter learning
+covers the primary mailbox only. Incoming encryption keeps one journal per user
+for the primary mailbox, so it and extra mailboxes exclude each other: creating
+an extra mailbox is 409 while the owner has incoming encryption on or a
+replacement pending, so is re-enabling one, enabling incoming encryption is 409
+while the user has an active, prepared extra mailbox (disabling every extra
+mailbox lifts it; an unfinished one finishes only through create), and the
+poller refuses to poll an extra mailbox whose owner has it on. Both sides decide
+under the owner's settings file lock, so concurrent requests cannot leave both
+on; the lock order is settings, then domains, then directory. Native pickup creation and system/own-address SMTP
 probes remain refused or skipped pending their authority/dependency integration. A leftover IMAP
 credential file cannot enable any native legacy SMTP path. Do not publish MX for this runtime alone. Roll back by
 disabling both native flags in both processes and keeping all
 native storage/ownership files intact; native mail becomes unavailable without
 being converted to IMAP. Use a compatible binary, not an older metadata writer.
+
+### Mail export
+
+Users export their own native mailbox, or one folder of it, from Settings →
+Mail → Export Mail; [mail import](#mail-import) is its mirror.
+
+- `GET /api/export/folders` lists every folder of the selected mailbox
+  (`X-KyPost-Mailbox`).
+- `POST /api/export` with `{mailbox, folder, format, password|authSecret}`:
+  `mailbox` is an ID from `GET /api/mailboxes` (empty or the user ID is the
+  primary), `folder` empty for all folders (exact name; only `INBOX` is
+  case-insensitive), `format` `mbox` or `eml-zip`. Browser session only (a
+  paired-device credential has none and gets 403), CSRF, and `confirmActor`
+  behind `withActionDigest`, so the mailbox selection is part of the confirmed
+  request. Answers `{url:"/api/export/<64 hex>", expiresInSeconds:300,
+  messages}`; `messages` is the live count when the grant is made, shown so the
+  user can compare it with the file. One unspent grant per user; a new one
+  replaces it. A foreign, unknown or disabled mailbox is 404, a missing folder
+  404, an external IMAP account 409, mbox over HTTP/1.0 409. Export follows mail
+  admission: an administrator identity holding no mailbox gets 409, a promoted
+  KyIdentity administrator 403, and a `legacyMixedUse` administrator exports
+  their own mailboxes until migrated. Nobody can export another user's mail.
+- `GET /api/export/{token}` spends the grant once and streams
+  `Content-Disposition: attachment`; HEAD is 405 and spends nothing. The grant
+  is held in memory and bound to user, session, mailbox, folder and format.
+  The browser navigated here, so every refusal is `303 See Other` to
+  `/settings/mail?tab=export&export=<code>`, which explains it: `expired`
+  (another session or user, expired, spent or unknown), `busy` (the slot is
+  taken; the grant is kept and `retry=<token>` lets the page retry it),
+  `proxy` (mbox over HTTP/1.0; grant kept) or `unavailable` (the mailbox or
+  folder is no longer admitted; grant spent).
+- One export streams per user and two server-wide (`maxExports`). A reader
+  gets 30 seconds plus the message size at 64 KiB/s to take each message
+  (a 25 MiB message: 430 seconds), replacing the server-wide 10-minute write
+  timeout; a stalled reader times out and frees its slot. Admission is
+  rechecked when the download starts and on every 200-message page, so a
+  mailbox disabled mid-export stops it.
+- A failed stream aborts the connection. Over HTTP/1.1 the body is chunked, so
+  the client sees an unterminated body rather than a clean end. HTTP/1.0 has no
+  chunking and the response no Content-Length, so a cut-off mbox would end like
+  a whole one: mbox therefore requires HTTP/1.1 (behind nginx, set
+  `proxy_http_version 1.1;`; its default upstream protocol is 1.0). An EML zip
+  is still served over HTTP/1.0, since a truncated zip lacks its central
+  directory.
+- Formats hold the exact stored bytes, so PGP-encrypted messages stay
+  encrypted and the server decrypts nothing. Flags and labels are not exported.
+  mbox is mboxrd: a `From <envelope sender> <asctime UTC>` separator
+  (`MAILER-DAEMON` when no delivery receipt holds a sender, or it contains
+  whitespace or control characters), one `>` added to every `^>*From ` line,
+  stored line endings kept (normally CRLF) and an LF blank line after each
+  message. The zip holds `<folder>/<message id>.eml` (Deflate); each folder
+  segment keeps letters, digits, space, `-`, `_` and `.`, replaces anything
+  else with `_`, is cut to 64 bytes, loses leading and trailing dots and
+  spaces, and gains a `_` prefix when it names a Windows device (`CON`, `PRN`,
+  `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, any case, with or without an
+  extension), so no entry is absolute, climbs out or opens a device. Messages
+  are read in ID order, one in memory at a time; one moved or deleted
+  mid-export is skipped.
+- Each export is audited as `mail export` with actor, target (the mailbox),
+  folder, format, `messages` and `bytes` as integers, a random per-grant
+  `correlation_id` (never the token) and result (`authorized`, `started`,
+  `finished`, `failed`, `refused`); never subjects or addresses.
+
+### Mail import
+
+Users import mbox and EML files, or the folders of another mail account over
+IMAP, into their own native mailbox from Settings → Mail → Import Mail ("From a
+file" or "From another mail account"). The file rules come first; [import from
+another account](#import-from-another-mail-account) adds its own below.
+
+- `POST /api/import` with `{mailbox, folder, password|authSecret}`: `mailbox`
+  as for export, `folder` an existing folder or a new one under an existing
+  parent (empty is `Imported`; only `INBOX` is case-insensitive). Browser
+  session only (a paired device gets 403), CSRF, and `confirmActor` behind
+  `withActionDigest`, because a stolen session must not plant mail (a fake
+  bank message) in the user's history. Answers `{url:"/api/import/<64 hex>",
+  expiresInSeconds:300, folder, maxBytes}`. The folder name and its parent are
+  checked here; a new folder is created only when the upload arrives. One
+  unspent link per user, held in memory and bound to user, session, mailbox
+  and folder. A foreign, unknown or disabled mailbox is 404, a missing parent
+  404, an invalid name 400, an external IMAP account 409, a busy user or server
+  409. Admission matches export: an administrator identity holding no mailbox
+  gets 409, a promoted KyIdentity administrator 403, and a `legacyMixedUse`
+  administrator imports into their own mailboxes until migrated. Nobody can
+  import into another user's mailbox.
+- `POST /api/import/{token}` spends the link and takes the raw file as the body
+  (`application/octet-stream`). It streams to a `0600` temp file in
+  `$STATE_DIR/imports/`, never to memory, refusing more than `maxBytes` (413)
+  and an empty body (400); the cap is the mailbox's whole storage quota
+  (32 MiB today), since nothing larger can fit. An upload idle for a minute,
+  or still sending after 20 minutes in total (at least 27 KiB/s for 32 MiB),
+  is cut off (408), so a trickling upload frees its slot. It answers `202`
+  with the job status and the job runs in the background, past the end of
+  the request. A busy refusal (409) keeps the link. An upload that finishes
+  after shutdown began starts no job (503).
+- `GET /api/import` is the caller's latest job: `{state, mailbox, folder,
+  imported, duplicates, skipped, bytes, error?, maxBytes, maxMessageBytes}`
+  with `state` `idle`, `uploading`, `running`, `finished`, `failed` or
+  `cancelled`. `POST /api/import/cancel` (CSRF) stops a running job before
+  its next message; 409 when none runs.
+- One import uploads or runs per user and two server-wide (`maxImports`).
+  Jobs live in memory: a restart or shutdown cancels them and the startup
+  removes `$STATE_DIR/imports/`; every other path removes the temp file when
+  the job or upload ends. The user re-imports, and duplicates make that safe.
+- Formats are detected by content: a zip (`PK`), an mbox (starts `From `),
+  otherwise one EML. mbox splits at a `From ` line at the start of the file or
+  after a blank line, drops that blank line, removes one `>` from every
+  `^>+From ` line (mboxrd; for mboxo it undoes the `>From ` quoting) and keeps
+  CRLF or LF line endings as they are, so a KyPost export round-trips exactly.
+  Messages are stored as parsed from the file, which for mboxo is not always
+  the original: mboxo never quoted a genuine `>From ` line, so it loses one
+  `>`, and an unquoted body line starting `From ` after a blank line splits the
+  message in two.
+  A zip passes every `*.eml` entry (any case) into the one target folder, in
+  directory order, read into memory one at a time; entry names are never used
+  as paths and folders inside the zip are not recreated. More than 10,000
+  entries, or more inflated bytes than `maxBytes`, refuses the archive; an
+  entry inflating past 100 times its compressed size (at least 1 MiB) is a
+  bomb and skipped, as are entries not named `*.eml` and unreadable or
+  corrupt ones.
+- Each message is stored as its parsed bytes, seen, with the `Date` header as
+  its date (now when absent or invalid) and no flags or labels. A message that
+  is empty, has no RFC 5322 header, or exceeds the smaller of the 25 MiB
+  inbound cap and the mailbox's message limit (5 MiB today) is skipped and
+  counted, before any lock or admission is taken; one bad message never stops
+  the import. A job handles at most 20,000 messages (twice the mailbox's
+  10,000 records), counting duplicates and skipped ones, and fails beyond that
+  with a request to split the file, so a flood of empty separators or
+  duplicates is bounded work. Each stored message takes the settings lock and
+  mailbox admission on its own: holding them across a batch would block the
+  user's settings writes, or keep storing into a mailbox already disabled, for
+  the whole batch. A folder already holding a
+  live copy of the same bytes (SHA-256, indexed per folder) counts a
+  duplicate instead; a deleted copy no longer blocks re-import. A full
+  mailbox, a mailbox no longer admitted or a zip refused as a whole stops the
+  job as `failed` with the reason.
+- Imported mail is not received mail: no delivery receipt (receiving dedupe
+  and quarantine are untouched). It is stored seen and recorded in the
+  mailbox's `imported` table, which the poller's unread-INBOX query excludes,
+  so even marked unread or moved to INBOX it never gets rules,
+  classification, sorter learning, notifications or push, and it is not
+  scanned for spam. The screen says so. (Advancing the poller's checkpoint
+  instead would mean the API writing daemon-owned state.)
+- Incoming encryption sweeps only unread INBOX mail, so imported mail would
+  stay plaintext: import is refused (409) while the user has incoming
+  encryption on or a replacement pending, at the link, at upload and before
+  every message, which is stored under the owner's settings file lock (the
+  lock enabling encryption takes) with the setting re-read. Turning
+  encryption on mid-import fails the job before its next message.
+- Each import is audited as `mail import` with actor, target (the mailbox),
+  folder, `messages` (imported), `duplicates`, `skipped` and `bytes` as
+  integers, `reason` for a failure, a random per-link `correlation_id` (never
+  the token) and result (`authorized`, `started`, `finished`, `failed`,
+  `cancel_requested`, `cancelled`); never subjects or addresses.
+- `archive/zip` reads the whole central directory before the entry cap
+  applies: about 4.5 times the upload live and 6 times allocated at worst.
+  That is bounded by the quota cap; raising the per-mailbox quota raises it
+  too.
+
+#### Import from another mail account
+
+The server signs in to the user's other provider and copies the folders they
+choose. Admission, the per-user and server-wide job limits, status and cancel,
+the per-message cap, the job's message cap, dedupe per folder, the `imported`
+table, the incoming-encryption refusal (at the grant, at start and before every
+message, under the settings lock) and shutdown are the file import's.
+
+- `POST /api/import/imap` with `{mailbox, host, port, security, username,
+  password|authSecret}` (the KyPost step-up; never the provider password):
+  browser session, CSRF and `confirmActor` behind `withActionDigest`. `security`
+  is `tls` on port 993 or `starttls` on 143; nothing else, because no other port
+  is an IMAP server worth reaching and a free port would make the server a
+  scanner of other services. Plaintext and unverified certificates are not
+  offered. `host` is a DNS name or IP literal. Answers `{token: <64 hex>,
+  expiresInSeconds: 600, target: "Imported/<host with '.' as '-'>"}` (folder
+  names cannot contain `.`). The grant is in memory, one per user, bound to user,
+  session and mailbox like the upload link, and holds host, port, security and
+  username. Minting refuses (409) while the user's import runs or the server's
+  two import slots are taken, and (503) once shutdown began; it cancels the
+  user's previous grant, including a listing still in flight.
+- `POST /api/import/imap/{token}/folders` with `{password}` (the provider's)
+  connects, signs in and answers `{folders: [{name, path, attributes}], target}`.
+  It needs no step-up of its own: the grant is the proof. Sign-ins are bounded
+  per user, not per grant, so a fresh step-up does not reset them: six listings
+  that do not sign in (wrong password, unreachable or refused server) lock the
+  user out of listing for an hour (429 with `Retry-After`, before any dial); a
+  successful sign-in refunds only its own attempt. At most four listings dial
+  out at once server-wide (503 after waiting up to 3 s for a slot, spending no
+  attempt), one per user (a new grant cancels the old listing), and
+  none while the user's import runs (409) or after shutdown began (503). A
+  listing reads at most 4 MiB, which also bounds what the grant holds. The
+  provider password is kept out of the step-up request because the
+  KySignOn grant is bound to a SHA-256 of that request's body; an unsalted
+  digest over otherwise guessable fields would be an offline guessing target
+  wherever it was kept, and replaying the body after the KySignOn popup would
+  resend it. After a successful sign-in the grant keeps the password as a byte
+  slice; it is wiped when the job signs in, or when the grant is replaced or
+  expires (a timer at 10 minutes). The wipe is best effort: the JSON decoder's
+  string, the TLS buffers and the copies Go made along the way are only dropped
+  and left to the collector.
+- `POST /api/import/imap/{token}/start` with `{folders: [name], target}` spends
+  the grant and answers `202` with the job status. Folders must come from the
+  listing; `target` (default above) and each mapped folder must be valid folder
+  names, else 400 naming the folder. Missing folders are created as the job
+  reaches them.
+- SSRF: the host is resolved once (`netguard.IsPrivateOrReserved`, the guard the
+  CardDAV and UnifiedPush clients share). Any loopback, private, link-local,
+  CGNAT, multicast, unspecified or reserved answer, IPv4-mapped forms included,
+  refuses the name (400), so it cannot pair a public address with an internal
+  one. The connection goes to that validated IP and the job reuses it, while TLS
+  verifies the certificate for the host name (system roots, TLS 1.2 or newer).
+  Unlike the CardDAV guard, `SANDBOX_PRIVATE_HOSTS` does not apply.
+- The client is `imap.ImportSource`, not go-imap: that library dials the host
+  name itself, again on every automatic reconnect, keeps certificate checks in a
+  process-wide variable, has no STARTTLS and buffers whole responses. Its
+  vocabulary is `STARTTLS`, `LOGIN`, `LIST "" "*"`, `EXAMINE`, `FETCH lo:hi (UID
+  RFC822.SIZE FLAGS INTERNALDATE)`, `UID FETCH <uid> (BODY.PEEK[])` and
+  `LOGOUT`: read-only by construction, and EXAMINE plus BODY.PEEK leave `\Seen`
+  alone. A greeting other than `* OK` (PREAUTH would skip TLS) or bytes after the
+  STARTTLS answer are refused. Responses are bounded at 64 KiB outside literals
+  and a literal at the per-message cap (64 KiB outside a body fetch). Timeouts:
+  10 s to connect, 30 s per command, 2 minutes per message, 45 s for a listing (so a server that never answers holds a slot that long),
+  4 hours for a job.
+- Folders: `\Noselect` and `\NonExistent` are skipped, as are names over 255
+  bytes or with a control character, backslash or double quote (they cannot be
+  quoted back safely). Names are decoded from modified UTF-7 and split at the server's
+  delimiter; each level maps under the target with `/` and `.` replaced by `_`.
+  Two remote folders that map to the same local name (say `a.b` and `a_b`) are
+  merged into one folder. The screen leaves `\All` and `\Flagged` (Gmail's All
+  Mail and Starred) unchecked, since they hold every message again and dedupe is
+  per folder, and shows names with control, bidi and zero-width characters
+  escaped as code points.
+- Message counts and sequence numbers from the server are at most 2^31-1 and
+  sizes at most 2^32-1; a wider value is a protocol error, never wrapped. A
+  response line over its 64 KiB budget ends the session at once. Messages are paged 200 at a time by sequence number; a message deleted on the
+  server meanwhile is skipped. Every sequence number a folder's `EXISTS`
+  announces counts toward the job's message cap before any page is fetched, so
+  a huge `EXISTS` fails the job at once. One announcing more than the
+  per-message cap (`RFC822.SIZE`) is skipped without being downloaded; each
+  other is fetched with its announced size as the limit, so sending more than
+  announced stops the job. Each message is stored as its exact
+  bytes with `INTERNALDATE` as its date (the `Date` header when absent), `\Seen`
+  as read and `\Flagged` as starred; other flags are ignored. Unread imported
+  mail stays out of the poller through the `imported` table. The job's session
+  reads at most twice the mailbox's storage, counting every byte from the
+  server (duplicates, metadata and unsolicited responses included), then
+  stops.
+- Not resumable: a failed, cancelled or restarted job is imported again, and
+  duplicates are skipped. The status adds `host`, `current` (the local folder in
+  progress), `foldersDone` and `foldersTotal`; never the username.
+- Audit: the `mail import` record adds `source` (`file` or `imap`) and `host`,
+  never the username or password, with results `authorized`, `listed`,
+  `list_failed` (with the reason shown to the user), `started`, `finished`,
+  `failed`, `cancel_requested` and `cancelled`. The provider's own error text is
+  never shown or logged.
 
 ## Direct receiving runtime (qualification profile)
 
@@ -422,16 +766,112 @@ The buffer limits are 4 MiB per message, 64 MiB live payload and 10,000 records;
 each recipient's own message limit is checked before acceptance. SMTP headers
 added by the receiver count toward this limit. The daemon revisits pending
 deliveries every five seconds. Partial mailbox failure retains holding bytes;
-after lease expiry, exact receipts prevent duplicate local delivery. Already
+after lease expiry, exact receipts prevent duplicate local delivery. The
+acknowledgment that follows every owner's commit archives the delivery in the
+same transaction: a compact tombstone (sender, digest, recipients) replaces the
+row and its bindings, answers exact replays and stops the receiver ID from being
+delivered again. The 10,000-record limit counts only staged, pending and
+quarantined deliveries; tombstones are never pruned and count only toward the
+physical budget. A typical tombstone is about 190-210 bytes (about 2 million in
+the budget below); an attacker flooding many aliases with 320-byte senders and
+100 recipients fits about 170,000. Backups refuse `ingress.db` above 64 MiB, at
+about 360,000 typical tombstones. Already
 accepted mail imports without fresh DNS, refreshing authorized route TTLs
-before claiming. Missing storage, restore holds or disabled authority retain
-pending mail. Local reactivation without a directory state change permits
-delivery to that same owner. Routes and bindings carry the address generation;
+before claiming. Missing storage, restore holds, directory lag, lock timeouts,
+missing sign-on settings and local deactivation retain pending mail. Local
+reactivation without a directory state change permits delivery to that same
+owner. When admission refuses an import and the ledger durably records a frozen
+address as moved, inactive or at a newer generation (an administrator disabled
+the mailbox or released the address, or KyIdentity offboarded the owner or
+promoted it to administrator), the delivery is quarantined instead: it could
+never import again and would hold the 10,000-record and 64 MiB budgets for
+good. A restore hold suppresses this. After re-enabling the mailbox an
+administrator can release it, since release goes to the frozen mailbox. Routes and bindings carry the address generation;
 a binding whose address is no longer `active`, owned by the bound mailbox and at
 the bound generation quarantines with its bytes and frozen bindings intact; an
 active competing claim cannot be invalidated. Ordinary directory edits change no
-generation, so they fence nothing. Quarantine requires operator reconciliation;
-there is no reassignment or automatic release.
+generation, so they fence nothing. Quarantine is never reassigned or released
+automatically; an administrator releases or discards it (below).
+
+### Quarantine release
+
+Administrators list quarantined deliveries and release or discard each one,
+through the admin API or the CLI. Both show envelope metadata only: gateway,
+delivery ID, received time, envelope sender, size and, per recipient, the
+address, frozen mailbox ID, owning user ID (empty once the mailbox is gone) and
+frozen generation. Bodies, subjects and headers are never shown, and the reason
+a delivery was quarantined is not stored.
+
+- **Release** delivers to the mailboxes the delivery was frozen to, never to a
+  newly chosen target or an address's current owner. Each frozen mailbox must
+  still exist, be active, belong to the same issuer/subject, and its owner and
+  storage must pass the same admission import uses, checked under the
+  directory and users fences import holds. The address generation is not
+  checked: the mail was addressed to that mailbox at that time, and a
+  reassignment is the usual reason it was quarantined. Admission is all
+  owners or none, but a capacity failure or crash during the commits can
+  leave some owners with the mail; a retry completes it, and mailbox receipts
+  prevent duplicates. A refusal answers 409 with one of two reasons: the
+  mailbox was deleted or disabled, or its owner was offboarded, promoted or
+  changed (durable; discard remains available), or the mailbox is not
+  currently admitted (directory sync, storage or sign-on configuration;
+  resync and retry). Release ends in the same tombstone as import, with
+  disposition `released`. Repeating a completed release succeeds.
+- **Discard** removes the bytes and bindings and leaves a tombstone, so an
+  exact receiver replay or re-pickup is answered without delivering. Its
+  disposition is `discarded`, or `partially_released` when a release had
+  started: that release may already have reached some frozen mailboxes, and
+  those copies stay. Discard remains available after an interrupted release
+  because one owner may stay disabled for good. SQLite free pages, WAL and
+  earlier backups may hold the bytes until reused or rotated.
+- A release in progress holds a five-minute lease; discard refuses until it
+  ends. Both refuse under a restore hold.
+
+API (admin only; POSTs need CSRF and the account credential, or KySignOn
+step-up, as for `/api/admin/mailboxes`):
+
+- `GET /api/admin/receiving/quarantine[?after=<sequence>]` returns up to 100
+  `{deliveries:[{sequence,gateway,id,sender,receivedAt,size,recipients:[{address,mailbox,user,generation}]}]}`;
+  page with the last `sequence`.
+- `POST /api/admin/receiving/quarantine/{gateway}/{id}/release` and
+  `.../discard` return `{gateway,id,result}` (`released`, `discarded` or
+  `partially_released`); 404 unknown or malformed, 409 not quarantined,
+  release in progress, release refused or restore hold, 503 storage or mailbox
+  capacity (the holding copy is kept).
+
+CLI, as the runtime user that owns `STATE_DIR` (it refuses any other):
+
+```sh
+docker compose exec --user kypost kypost-server kypost-server receiving quarantine list [<after-sequence>]
+docker compose exec --user kypost kypost-server kypost-server receiving quarantine release <gateway> <id> --confirm <id>
+docker compose exec --user kypost kypost-server kypost-server receiving quarantine discard <gateway> <id> --confirm <id>
+```
+
+Shell access as that user already reaches every key the API's step-up
+protects, so the CLI asks for deliberate intent instead: the delivery ID typed
+again after `--confirm`. Discard prints its disposition. Every action is
+audited with actor, action, gateway/ID and result, never correspondence. API
+actions go to the API log (`api.err.log`) with the administrator's user ID.
+CLI actions are logged as actor `cli:<uid>` to the invoking terminal only:
+KyPost opens no log files of its own (see `LOGGING.md`). For the CLI the
+durable record is the tombstone disposition and, for a release, the mailbox
+receipt.
+
+The sender is attacker-controlled: any interface must render it, and every
+other listed field, as plain text.
+
+Admin UI: Server → Quarantine lists the same envelope fields 100 at a time
+(Load more pages with `after`), as plain text with control, bidi,
+zero-width and blank-letter characters and stacked combining marks shown as
+`[U+XXXX]` (a run of one code point as `[U+XXXX ×N]`). An empty user reads "mailbox gone or owner changed; release will
+be refused". Release confirms first that the mail goes only to the frozen
+mailboxes, then names them; Discard confirms first that the deletion is
+permanent and may be recorded as partially released. A cancelled KySignOn or
+local credential failure changes nothing and leaves the screen usable. Both use
+the account credential or KySignOn step-up. A 409 reason is shown as returned
+and the list re-read; an unanswered or mismatched answer locks until reload.
+With native mail off (404) the tab says so. A delivery whose gateway or ID is
+a URL dot segment (`.` or `..`) is CLI-only.
 
 New route writes, RCPT bindings and MIME acceptance also check physical storage
 inside the immediate SQLite writer transaction. The admission budget is derived
@@ -460,7 +900,9 @@ reconciliation or an operator volume quota is needed. Never remove WAL or
 shared-memory files from an open database to make space.
 
 This profile is for controlled qualification. Before public MX, qualify bounded
-receiver concurrency/rates, safe abandoned-RCPT and archived-receipt cleanup,
+receiver concurrency/rates, safe abandoned-RCPT cleanup, tombstone pruning and
+capacity recovery (durable limits cannot be raised, so a full budget stops
+reception for good),
 hard database/WAL/volume quotas and representative free-space reserves, TLS/spam policy, receiver provenance
 and licensing, and power-loss/restore behavior on the intended volumes. Logical
 payload limits do not bound physical disk growth. Successful RCPT followed by

@@ -86,6 +86,7 @@ function MailDomainForm() {
     const path = `/api/admin/mail-domains/${encodeURIComponent(target)}`;
     const accountPassword = password;
     setPassword(""); setSecret(""); setUsername("");
+    let committed = false;
     try {
       const credential = ssoSession ? {} : credentialFields(await deriveCredential("", accountPassword));
       requireLive();
@@ -101,6 +102,7 @@ function MailDomainForm() {
       });
       requireLive();
       if (action === "check") readMailRelayCheck(result, setup.relay);
+      else committed = true;
       // A successful mutation followed by an unreadable GET must not leave stale controls enabled.
       setSetup(null);
       const refreshed = await refresh();
@@ -116,10 +118,11 @@ function MailDomainForm() {
     } catch (e: unknown) {
       if (live.current) {
         setSetup(null);
-        setError(toErrorMessage(e, "Mail setup failed. Reload status before retrying an uncertain change."));
+        const message = toErrorMessage(e, "Mail setup failed. Reload status before retrying an uncertain change.");
+        setError(committed ? `Change saved; reload to see current mail setup. ${message}` : message);
         // The server answered, so controls return only if a fresh status read validates.
         // A request that never got an answer stays locked until reload.
-        if (e instanceof HttpError) await refresh().catch(() => undefined);
+        if (!committed && e instanceof HttpError) await refresh().catch(() => undefined);
       }
     } finally {
       inFlight.current = false;

@@ -115,7 +115,8 @@ func (p *Poller) guess(uc userCtx, msg imapadapter.Message, allowlist []string) 
 // user can be learned. Best effort: losing one prediction loses one possible
 // lesson, never mail, so a failure is logged and the message carries on.
 func (p *Poller) rememberPrediction(uc userCtx, msg imapadapter.Message, g sortGuess, applied string) {
-	if g.vec == nil || applied == "" {
+	// Sorter data is the primary's; extra mailbox message IDs would collide.
+	if g.vec == nil || applied == "" || uc.extraMailbox() {
 		return
 	}
 	if err := uc.store.RecordSorterPrediction(msg.ID, state.SorterCheck(msg.Sender, msg.Subject),

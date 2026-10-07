@@ -135,3 +135,94 @@ export function readMailRelayCheck(value: unknown, relay: MailRelay): void {
     throw new Error("Relay check did not match the saved profile. Reload before retrying.");
   }
 }
+
+export type MailAddress = { address: string; mailbox: string; kind: "primary" | "alias"; state: "active" | "disabled" | "reserved"; generation: number };
+export type NativeMailbox = { mailbox: string; user: string; kind: "primary" | "extra"; state: "active" | "disabled"; prepared: boolean; addresses: MailAddress[] };
+// Lowercase bare dot-atom, the only form the ledger stores.
+const atom = "[a-z0-9!#$%&'*+/=?^_`{|}~-]+";
+const addressPattern = new RegExp(`^${atom}(\\.${atom})*@[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`);
+function readAddress(value: unknown): MailAddress {
+  const data = object(value);
+  const address = text(data.address), mailbox = text(data.mailbox), { kind, state, generation } = data;
+  if (address.length > 254 || address.indexOf("@") > 64 || !addressPattern.test(address) || !mailbox ||
+      (kind !== "primary" && kind !== "alias") || (state !== "active" && state !== "disabled" && state !== "reserved") ||
+      integer(generation) < 1) {
+    throw new Error("Invalid mail address record; reload before making changes.");
+  }
+  return { address, mailbox, kind, state, generation: integer(generation) };
+}
+function readMailbox(item: unknown): NativeMailbox {
+  const entry = object(item);
+  const mailbox = text(entry.mailbox), user = text(entry.user), { kind, state, prepared } = entry;
+  if (!mailbox || (kind !== "primary" && kind !== "extra") || (state !== "active" && state !== "disabled") || typeof prepared !== "boolean" ||
+      !Array.isArray(entry.addresses) || entry.addresses.length > 1000) throw new Error("Invalid mailbox list.");
+  const addresses = entry.addresses.map(readAddress);
+  if (addresses.some(a => a.mailbox !== mailbox)) throw new Error("Inconsistent mailbox list; reload before making changes.");
+  return { mailbox, user, kind, state, prepared, addresses };
+}
+export function readMailAddresses(value: unknown): NativeMailbox[] {
+  const data = object(value);
+  if (!Array.isArray(data.mailboxes) || data.mailboxes.length > 10000) throw new Error("Invalid mailbox list.");
+  const seen = new Set<string>();
+  return data.mailboxes.map((item: unknown) => {
+    const box = readMailbox(item);
+    for (const a of box.addresses) {
+      if (seen.has(a.address)) throw new Error("Inconsistent mailbox list; reload before making changes.");
+      seen.add(a.address);
+    }
+    return box;
+  });
+}
+// A warning means the change is committed but its receiving route is still pending.
+function warningOf(value: unknown): string {
+  const { warning } = object(value);
+  return warning === undefined ? "" : text(warning);
+}
+// A change answer must name the address acted on.
+export function readMailAddressChange(value: unknown, address: string): { record: MailAddress; warning: string } {
+  const record = readAddress(value);
+  if (record.address !== address.toLowerCase()) throw new Error("Address change answer does not match the request; reload before retrying.");
+  return { record, warning: warningOf(value) };
+}
+export function readMailboxChange(value: unknown): { mailbox: NativeMailbox; warning: string } {
+  return { mailbox: readMailbox(value), warning: warningOf(value) };
+}
+
+export type QuarantinedRecipient = { address: string; mailbox: string; user: string; generation: number };
+export type QuarantinedDelivery = { sequence: number; gateway: string; id: string; sender: string; receivedAt: string; size: number; recipients: QuarantinedRecipient[] };
+export type QuarantineResult = "released" | "discarded" | "partially_released";
+const invalidQuarantine = "Invalid quarantine list; reload before releasing or discarding.";
+// The server's envelope rules: identifiers up to 256, addresses up to 320, never CR, LF or NUL.
+function envelope(value: unknown, max: number, empty = false): string {
+  if (typeof value !== "string" || value.length > max || (!empty && !value) || /[\r\n\0]/.test(value)) throw new Error(invalidQuarantine);
+  return value;
+}
+function readRecipient(value: unknown): QuarantinedRecipient {
+  const data = object(value);
+  return { address: envelope(data.address, 320), mailbox: envelope(data.mailbox, 1024), user: envelope(data.user, 1024, true), generation: integer(data.generation) };
+}
+// One page after `after`: at most 100, rising sequences, no repeated delivery.
+export function readQuarantine(value: unknown, after: number): QuarantinedDelivery[] {
+  const data = object(value);
+  if (!Array.isArray(data.deliveries) || data.deliveries.length > 100) throw new Error(invalidQuarantine);
+  let last = after;
+  const seen = new Set<string>();
+  return data.deliveries.map((item: unknown) => {
+    const d = object(item);
+    const sequence = integer(d.sequence), receivedAt = envelope(d.receivedAt, 64);
+    const gateway = envelope(d.gateway, 256), id = envelope(d.id, 256), key = JSON.stringify([gateway, id]);
+    if (sequence <= last || seen.has(key) || !Number.isFinite(Date.parse(receivedAt)) ||
+        !Array.isArray(d.recipients) || d.recipients.length > 1000) throw new Error(invalidQuarantine);
+    last = sequence;
+    seen.add(key);
+    return { sequence, gateway, id, sender: envelope(d.sender, 320, true), receivedAt, size: integer(d.size), recipients: d.recipients.map(readRecipient) };
+  });
+}
+// The answer must name the requested delivery and a result its action can produce.
+export function readQuarantineChange(value: unknown, gateway: string, id: string, action: "release" | "discard"): QuarantineResult {
+  const data = object(value);
+  const allowed: readonly QuarantineResult[] = action === "release" ? ["released"] : ["discarded", "partially_released"];
+  const result = allowed.find(r => r === data.result);
+  if (result && data.gateway === gateway && data.id === id) return result;
+  throw new Error("Quarantine answer does not match the request; reload before retrying.");
+}
