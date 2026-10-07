@@ -60,7 +60,7 @@ func runReceivingQuarantine(args []string, output io.Writer) (result error) {
 		return err
 	}
 	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || int(stat.Uid) != os.Geteuid() {
-		return fmt.Errorf("run as the owner of %s: docker compose exec --user kypost kypost-server kypost-server receiving quarantine ...", config.StateDir())
+		return fmt.Errorf("run as the owner of %s: docker compose exec --user kypost kypost-server kypost-server receiving quarantine <command>", config.StateDir())
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
