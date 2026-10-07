@@ -39,10 +39,21 @@ const (
 // since nothing larger can fit. A zip may expand to the same size.
 var importUploadCap = nativeMailboxLimits.PayloadBytes
 
+var (
+	// importUploadWindow bounds a whole upload (32 MiB in 20 minutes is
+	// 27 KiB/s), so a trickling upload frees its slot.
+	importUploadWindow = 20 * time.Minute
+	// importMaxMessages bounds one job's work, counting duplicates and
+	// skipped messages: twice what the mailbox can hold.
+	importMaxMessages = 2 * nativeMailboxLimits.Records
+	// importMessageBytes is the per-message limit the screen shows.
+	importMessageBytes = min(nativeMailboxLimits.MessageBytes, mailmsg.MaxInboundMessageBytes)
+)
+
 var errImportIncomingEncryption = errors.New("import is unavailable while incoming encryption is on or a replacement is pending: imported mail would be stored unencrypted")
 
 type mailImporter interface {
-	ImportFolder(ctx context.Context, folder string) (string, error)
+	ImportFolder(ctx context.Context, folder string, create bool) (string, error)
 	ImportMessage(ctx context.Context, folder string, raw []byte) error
 }
 
@@ -111,11 +122,11 @@ func (s *Server) handleImportStatus(w http.ResponseWriter, r *http.Request) {
 		importJob
 		MaxBytes        int64 `json:"maxBytes"`
 		MaxMessageBytes int64 `json:"maxMessageBytes"`
-	}{status, importUploadCap, min(nativeMailboxLimits.MessageBytes, mailmsg.MaxInboundMessageBytes)})
+	}{status, importUploadCap, importMessageBytes})
 }
 
-// handleImportStart proves the caller, prepares the folder and mints the
-// upload link. Only a browser session may import: the link is bound to it.
+// handleImportStart proves the caller, checks the folder and mints the
+// upload link; the folder is created once the upload arrives. Only a browser session may import: the link is bound to it.
 func (s *Server) handleImportStart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, session, ok := s.sessionOf(r)
@@ -157,7 +168,7 @@ func (s *Server) handleImportStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": busy})
 		return
 	}
-	folder, err := im.ImportFolder(r.Context(), body.Folder)
+	folder, err := im.ImportFolder(r.Context(), body.Folder, false)
 	switch {
 	case errors.Is(err, mailbox.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "the parent folder does not exist"})
@@ -214,6 +225,11 @@ func (s *Server) handleImportUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "this upload link expired or was already used; start the import again"})
 		return
 	}
+	if s.importClosed {
+		s.importMu.Unlock()
+		http.Error(w, "the server is shutting down", http.StatusServiceUnavailable)
+		return
+	}
 	if busy := s.importBusy(g.user); busy != "" { // the link is kept for a retry
 		s.importMu.Unlock()
 		writeJSON(w, http.StatusConflict, map[string]any{"error": busy})
@@ -249,8 +265,20 @@ func (s *Server) handleImportUpload(w http.ResponseWriter, r *http.Request) {
 		fail(status, err)
 		return
 	}
+	if _, err = im.ImportFolder(r.Context(), g.folder, true); err != nil {
+		_ = os.Remove(path)
+		fail(http.StatusConflict, errors.New("the target folder could not be created; start the import again"))
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.importMu.Lock()
+	if s.importClosed { // shutdown began during the upload
+		s.importMu.Unlock()
+		cancel()
+		_ = os.Remove(path)
+		fail(http.StatusServiceUnavailable, errors.New("the server is shutting down; import again after it restarts"))
+		return
+	}
 	job.State, job.cancel = "running", cancel
 	started := *job
 	s.importMu.Unlock()
@@ -276,14 +304,17 @@ func (s *Server) receiveImport(w http.ResponseWriter, r *http.Request) (string, 
 		return "", 0, http.StatusServiceUnavailable, errors.New("import storage is unavailable")
 	}
 	rc := http.NewResponseController(w)
-	n, err := io.Copy(f, idleReader{http.MaxBytesReader(w, r.Body, importUploadCap), rc})
+	n, err := io.Copy(f, &idleReader{http.MaxBytesReader(w, r.Body, importUploadCap), rc, time.Now().Add(importUploadWindow)})
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	var maxErr *http.MaxBytesError
+	status := http.StatusBadRequest
 	switch {
 	case errors.As(err, &maxErr):
-		err = tooLarge
+		err, status = tooLarge, http.StatusRequestEntityTooLarge
+	case errors.Is(err, errUploadTooSlow):
+		status = http.StatusRequestTimeout
 	case err != nil:
 		err = errors.New("the upload was interrupted; try again")
 	case n == 0:
@@ -291,10 +322,6 @@ func (s *Server) receiveImport(w http.ResponseWriter, r *http.Request) (string, 
 	}
 	if err != nil {
 		_ = os.Remove(f.Name())
-		status := http.StatusBadRequest
-		if maxErr != nil {
-			status = http.StatusRequestEntityTooLarge
-		}
 		return "", 0, status, err
 	}
 	// A long upload may have outlived the server-wide write timeout.
@@ -302,17 +329,32 @@ func (s *Server) receiveImport(w http.ResponseWriter, r *http.Request) (string, 
 	return f.Name(), n, 0, nil
 }
 
-// idleReader moves the read deadline before every read, so an upload may
-// take as long as it keeps sending.
+var errUploadTooSlow = errors.New("the upload took too long (20 minutes at most); try again on a faster connection or with a smaller file")
+
+// idleReader moves the read deadline before every read to importIdle from
+// now, never past the whole upload's deadline.
 type idleReader struct {
-	r  io.Reader
-	rc *http.ResponseController
+	r        io.Reader
+	rc       *http.ResponseController
+	deadline time.Time
 }
 
-func (i idleReader) Read(p []byte) (int, error) {
+func (i *idleReader) Read(p []byte) (int, error) {
+	now := time.Now()
+	if !now.Before(i.deadline) {
+		return 0, errUploadTooSlow
+	}
 	// Unsupported only on test writers; the server-wide timeout then applies.
-	_ = i.rc.SetReadDeadline(time.Now().Add(importIdle))
-	return i.r.Read(p)
+	next := now.Add(importIdle)
+	if next.After(i.deadline) {
+		next = i.deadline
+	}
+	_ = i.rc.SetReadDeadline(next)
+	n, err := i.r.Read(p)
+	if err != nil && !time.Now().Before(i.deadline) && !errors.Is(err, io.EOF) {
+		err = errUploadTooSlow
+	}
+	return n, err
 }
 
 // runImport stores every message of the uploaded file, then removes it.
@@ -325,7 +367,11 @@ func (s *Server) runImport(ctx context.Context, job *importJob, im mailImporter,
 	if err == nil {
 		defer f.Close()
 		var skipped int
-		skipped, err = mailbox.ReadImport(f, size, mailmsg.MaxInboundMessageBytes, importUploadCap, func(raw []byte) error {
+		// Junk is skipped inside ReadImport before any lock. Each message then
+		// takes the settings lock and mailbox admission on its own: holding
+		// either across a batch would block the user's settings writes, or keep
+		// storing into a mailbox already disabled, for the whole batch.
+		skipped, err = mailbox.ReadImport(f, size, importMessageBytes, importUploadCap, importMaxMessages, func(raw []byte) error {
 			err := s.withIncomingEncryptionOff(job.user, func() error { return im.ImportMessage(ctx, job.Folder, raw) })
 			s.importMu.Lock()
 			defer s.importMu.Unlock()
@@ -365,6 +411,8 @@ func importFailure(err error) string {
 		return "incoming encryption was turned on, so the import stopped rather than store mail unencrypted"
 	case errors.Is(err, mailbox.ErrImportArchive):
 		return err.Error()
+	case errors.Is(err, mailbox.ErrImportTooMany):
+		return "the file holds more than " + strconv.Itoa(importMaxMessages) + " messages, counting duplicates and skipped ones (twice what your mailbox holds); split it and import the parts"
 	case errors.Is(err, sso.ErrNativeMailboxUnknown) || errors.Is(err, sso.ErrNativeAdministrator):
 		return "the mailbox is no longer available"
 	}
@@ -403,11 +451,12 @@ func (s *Server) handleImportCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, status)
 }
 
-// cancelImports stops every running import at shutdown; their temp files
-// go with them, or at the next startup.
+// cancelImports stops every running import at shutdown, and no later
+// upload starts one; their temp files go with them, or at the next startup.
 func (s *Server) cancelImports() {
 	s.importMu.Lock()
 	defer s.importMu.Unlock()
+	s.importClosed = true
 	for _, j := range s.imports {
 		if j.cancel != nil {
 			j.cancel()

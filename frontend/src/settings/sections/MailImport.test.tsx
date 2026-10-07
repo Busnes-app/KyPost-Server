@@ -126,7 +126,8 @@ it("aborts the upload on cancel and refuses an unexpected link or an oversized f
   await waitFor(() => expect(FakeXHR.last).not.toBeNull());
   fireEvent.click(screen.getByRole("button", { name: "Cancel upload" }));
   expect(FakeXHR.last!.aborted).toBe(true);
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Cancel upload" })).toBeNull());
+  expect(await screen.findByText("Upload cancelled. Nothing was imported.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Cancel upload" })).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
 
   FakeXHR.last = null;
@@ -145,3 +146,14 @@ it("explains import is for KyPost-hosted mailboxes when there are none", async (
   expect(await screen.findByText(/Import is available for mailboxes KyPost hosts/)).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Import mail" })).toBeNull();
 });
+
+it("stops polling after repeated failures and says so", async () => {
+  statuses = [running];
+  view({ ...user, ssoSession: true });
+  await screen.findByRole("button", { name: "Cancel import" });
+  fetchMock.mockImplementation(async () => json({ error: "down" }, 502));
+  expect((await screen.findByRole("alert", {}, { timeout: 8000 })).textContent).toMatch(/Lost contact with the server/);
+  const calls = fetchMock.mock.calls.length;
+  await new Promise(r => setTimeout(r, 1500));
+  expect(fetchMock.mock.calls.length).toBe(calls);
+}, 12000);

@@ -131,6 +131,7 @@ type Server struct {
 	importMu     sync.Mutex
 	importGrants map[string]importGrant
 	imports      map[string]*importJob
+	importClosed bool // set at Shutdown: no new import job starts
 	// singleUse makes each one-shot token — PGP QR key exchange, native device
 	// pairing nonces — redeemable exactly once. See singleUseTokens.
 	singleUse            *singleUseTokens

@@ -12,11 +12,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func readAll(t *testing.T, data []byte, limit, maxExpanded int64) (msgs []string, skipped int, err error) {
 	t.Helper()
-	skipped, err = ReadImport(bytes.NewReader(data), int64(len(data)), limit, maxExpanded, func(raw []byte) error {
+	return readCapped(t, data, limit, maxExpanded, 1<<20)
+}
+
+func readCapped(t *testing.T, data []byte, limit, maxExpanded int64, maxMessages int) (msgs []string, skipped int, err error) {
+	t.Helper()
+	skipped, err = ReadImport(bytes.NewReader(data), int64(len(data)), limit, maxExpanded, maxMessages, func(raw []byte) error {
 		msgs = append(msgs, string(raw))
 		return nil
 	})
@@ -69,6 +75,33 @@ func TestReadImportMbox(t *testing.T) {
 	}
 }
 
+// Junk never reaches the store callback, and a flood of it or of valid
+// duplicates stops at the message cap.
+func TestReadImportFloods(t *testing.T) {
+	junk := bytes.Repeat([]byte("From \n\n"), 200000)
+	start := time.Now()
+	msgs, skipped, err := readCapped(t, junk, 1<<20, 0, 1000)
+	if !errors.Is(err, ErrImportTooMany) || len(msgs) != 0 || skipped != 1000 || time.Since(start) > 5*time.Second {
+		t.Fatal("empty flood", len(msgs), skipped, err, time.Since(start))
+	}
+	if msgs, skipped, err = readCapped(t, []byte("From \n\nFrom a\nno header\n\nFrom b\nSubject: ok\n\nx\n"), 1<<20, 0, 10); err != nil || skipped != 2 || len(msgs) != 1 {
+		t.Fatal("junk reached the callback", msgs, skipped, err)
+	}
+	dupes := bytes.Repeat([]byte("From a b\nSubject: same\n\nx\n\n"), 5000)
+	if msgs, _, err = readCapped(t, dupes, 1<<20, 0, 1000); !errors.Is(err, ErrImportTooMany) || len(msgs) != 1000 {
+		t.Fatal("duplicate flood", len(msgs), err)
+	}
+	many := map[string][]byte{}
+	order := []string{}
+	for i := range 20 {
+		name := fmt.Sprintf("%d.eml", i)
+		many[name], order = nil, append(order, name)
+	}
+	if _, skipped, err = readCapped(t, zipOf(t, many, order...), 1<<20, 1<<20, 10); !errors.Is(err, ErrImportTooMany) || skipped != 10 {
+		t.Fatal("zip flood", skipped, err)
+	}
+}
+
 func TestReadImportEML(t *testing.T) {
 	if msgs, skipped, err := readAll(t, testRaw, 1<<20, 0); err != nil || skipped != 0 || len(msgs) != 1 || msgs[0] != string(testRaw) {
 		t.Fatal("eml", msgs, skipped, err)
@@ -115,8 +148,9 @@ func TestReadImportZip(t *testing.T) {
 		"/abs.EML":       []byte("Subject: abs\r\n\r\nx\r\n"),
 		`C:\x.eml`:       []byte("Subject: drive\r\n\r\nx\r\n"),
 		"notes.txt":      []byte("Subject: not mail\r\n\r\n"),
-		"bomb.eml":       bytes.Repeat([]byte{0}, 4<<20),
-		"big.eml":        append([]byte("Subject: big\r\n\r\n"), noise(1536<<10)...),
+		// A valid message, so only the ratio guard can refuse it.
+		"bomb.eml": append([]byte("Subject: bomb\r\n\r\n"), bytes.Repeat([]byte("a"), 4<<20)...),
+		"big.eml":  append([]byte("Subject: big\r\n\r\n"), noise(1536<<10)...),
 	}
 	data := zipOf(t, entries, names...)
 	msgs, skipped, err := readAll(t, data, 25<<20, 64<<20)
@@ -157,20 +191,29 @@ func TestReadImportZip(t *testing.T) {
 func TestNativeImportMessage(t *testing.T) {
 	ctx := context.Background()
 	s, c := newTestClient(t)
-	folder, err := c.ImportFolder(ctx, "")
+	folder, err := c.ImportFolder(ctx, "", true)
 	if err != nil || folder != "Imported" {
 		t.Fatal("default folder", folder, err)
 	}
-	if folder, err = c.ImportFolder(ctx, "inbox"); err != nil || folder != "INBOX" {
+	if folder, err = c.ImportFolder(ctx, "inbox", true); err != nil || folder != "INBOX" {
 		t.Fatal("inbox folder", folder, err)
 	}
-	if _, err = c.ImportFolder(ctx, "Missing/Child"); !errors.Is(err, ErrNotFound) {
-		t.Fatal("missing parent", err)
+	for _, create := range []bool{false, true} {
+		if _, err = c.ImportFolder(ctx, "Missing/Child", create); !errors.Is(err, ErrNotFound) {
+			t.Fatal("missing parent", create, err)
+		}
+		if _, err = c.ImportFolder(ctx, "../x", create); err == nil {
+			t.Fatal("unsafe folder accepted", create)
+		}
 	}
-	if _, err = c.ImportFolder(ctx, "../x"); err == nil {
-		t.Fatal("unsafe folder accepted")
+	// Checking a new folder does not create it.
+	if folder, err = c.ImportFolder(ctx, "Imported/2026", false); err != nil || folder != "Imported/2026" {
+		t.Fatal("nested folder check", folder, err)
 	}
-	if folder, err = c.ImportFolder(ctx, "Imported/2026"); err != nil || folder != "Imported/2026" {
+	if all, _ := s.Folders(ctx); strings.Contains(strings.Join(all, ","), "2026") {
+		t.Fatal("check created the folder", all)
+	}
+	if folder, err = c.ImportFolder(ctx, "Imported/2026", true); err != nil || folder != "Imported/2026" {
 		t.Fatal("nested folder", folder, err)
 	}
 
@@ -200,6 +243,15 @@ func TestNativeImportMessage(t *testing.T) {
 	// Exact bytes.
 	list, err := s.List(ctx, "INBOX", 0, 10)
 	must(t, err)
+	// Marked unread later, imported mail still never reaches the poller.
+	must(t, s.Update(ctx, "INBOX", list[0].ID, false, false, nil))
+	if msgs, _, err := c.ListUnreadInbox(ctx, ""); err != nil || len(msgs) != 0 {
+		t.Fatal("unread imported mail reached the poller", len(msgs), err)
+	}
+	importClient(t, s, "received", []byte("Subject: received\r\n\r\nx\r\n"))
+	if msgs, _, err := c.ListUnreadInbox(ctx, ""); err != nil || len(msgs) != 1 {
+		t.Fatal("received mail no longer reaches the poller", len(msgs), err)
+	}
 	if raw, err := s.Raw(ctx, "INBOX", list[0].ID); err != nil || !bytes.Equal(raw, testRaw) {
 		t.Fatal("bytes changed", err)
 	}

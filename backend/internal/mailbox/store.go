@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS labels (name TEXT PRIMARY KEY COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, folder TEXT NOT NULL REFERENCES folders(name), raw BLOB, digest TEXT NOT NULL, sender TEXT NOT NULL, subject TEXT NOT NULL, sent_to TEXT NOT NULL, cc TEXT NOT NULL, bcc TEXT NOT NULL, at_utc TEXT NOT NULL, seen INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0, draft INTEGER NOT NULL DEFAULT 0, labels TEXT NOT NULL DEFAULT '[]');
 CREATE INDEX IF NOT EXISTS message_folder_ids ON messages(folder,id) WHERE raw IS NOT NULL;
 CREATE INDEX IF NOT EXISTS message_folder_digests ON messages(folder,digest) WHERE raw IS NOT NULL;
+CREATE TABLE IF NOT EXISTS imported (message_id INTEGER PRIMARY KEY REFERENCES messages(id));
 CREATE TABLE IF NOT EXISTS receipts (gateway TEXT NOT NULL, delivery TEXT NOT NULL, envelope TEXT NOT NULL, digest TEXT NOT NULL, message_id INTEGER NOT NULL REFERENCES messages(id), PRIMARY KEY(gateway,delivery));
 CREATE TABLE IF NOT EXISTS changes (revision INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL, folder TEXT NOT NULL, removed INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS usage (id INTEGER PRIMARY KEY CHECK(id=1), records INTEGER NOT NULL, payload_bytes INTEGER NOT NULL);
@@ -296,7 +297,7 @@ func (s *Store) Append(ctx context.Context, folder string, input io.Reader, draf
 
 // append stores one message. An imported message is stored seen and refused
 // with ErrDuplicate (and the holding ID) while the folder holds a live copy of
-// the same bytes.
+// the same bytes; the imported table keeps it from the poller for good.
 func (s *Store) append(ctx context.Context, folder string, input io.Reader, gateway, delivery, envelope string, draft, imported bool) (int64, error) {
 	raw, err := mailmsg.BoundedRead(input, s.limits.MessageBytes)
 	if err != nil {
@@ -356,6 +357,11 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 	}
 	if gateway != "" {
 		if _, err = tx.ExecContext(ctx, "INSERT INTO receipts VALUES(?,?,?,?,?)", gateway, delivery, envelope, digest, id); err != nil {
+			return 0, err
+		}
+	}
+	if imported {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO imported VALUES(?)", id); err != nil {
 			return 0, err
 		}
 	}

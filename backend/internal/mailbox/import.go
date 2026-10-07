@@ -23,6 +23,8 @@ var (
 	ErrUnimportable = errors.New("message cannot be imported")
 	// ErrImportArchive: the zip as a whole is refused.
 	ErrImportArchive = errors.New("the zip is not readable, has more than 10,000 entries, or expands beyond the mailbox's storage")
+	// ErrImportTooMany: the file holds more messages than one job processes.
+	ErrImportTooMany = errors.New("the file holds more messages than one import processes")
 )
 
 const (
@@ -35,9 +37,9 @@ const (
 	importZipRatio = 100
 )
 
-// ImportFolder normalizes an import target ("" is Imported) and creates it,
-// under an existing parent, when it is missing.
-func (c *Client) ImportFolder(ctx context.Context, folder string) (string, error) {
+// ImportFolder normalizes an import target ("" is Imported), which must exist
+// or be creatable under an existing parent, and creates it when create is set.
+func (c *Client) ImportFolder(ctx context.Context, folder string, create bool) (string, error) {
 	defer runtime.KeepAlive(c)
 	if err := c.checkAccess(ctx); err != nil {
 		return "", err
@@ -60,59 +62,92 @@ func (c *Client) ImportFolder(ctx context.Context, folder string) (string, error
 	if err = leaf(name); err != nil {
 		return "", err
 	}
+	if !create {
+		if parent != "" && !slices.Contains(all, parent) {
+			return "", ErrNotFound
+		}
+		return folder, nil
+	}
 	return folder, c.store.createFolder(ctx, parent, folder)
 }
 
-// ImportMessage stores raw in folder as seen mail: no receipt, so receiving
-// dedupe is untouched, and seen, so the poller (rules, sorter, notifications,
-// incoming encryption) never takes it. ErrDuplicate and ErrUnimportable are
-// per-message; anything else stops the import.
-func (c *Client) ImportMessage(ctx context.Context, folder string, raw []byte) error {
-	defer runtime.KeepAlive(c)
-	if err := c.checkAccess(ctx); err != nil {
-		return err
-	}
-	if len(raw) == 0 || int64(len(raw)) > c.store.limits.MessageBytes {
+// ImportValid refuses (ErrUnimportable) a message that is empty, over limit
+// bytes or has no RFC 5322 header. It takes no lock and touches no store.
+func ImportValid(raw []byte, limit int64) error {
+	if len(raw) == 0 || int64(len(raw)) > limit {
 		return ErrUnimportable
 	}
 	if h, _, err := rawMetadata(raw); err != nil || len(h) == 0 {
 		return ErrUnimportable
 	}
+	return nil
+}
+
+// ImportMessage stores raw in folder as seen mail: no receipt, so receiving
+// dedupe is untouched, and recorded as imported, so the poller (rules, sorter,
+// notifications, incoming encryption) never takes it, even marked unread.
+// ErrDuplicate and ErrUnimportable are per-message; anything else stops the
+// import.
+func (c *Client) ImportMessage(ctx context.Context, folder string, raw []byte) error {
+	defer runtime.KeepAlive(c)
+	if err := ImportValid(raw, c.store.limits.MessageBytes); err != nil {
+		return err
+	}
+	if err := c.checkAccess(ctx); err != nil {
+		return err
+	}
 	_, err := c.store.append(ctx, folder, bytes.NewReader(raw), "", "", "", false, true)
 	return err
 }
 
-// ReadImport calls fn with each message of an uploaded file, detected by
-// content: a zip, an mbox (starts "From "), else one EML. fn must not retain
-// the slice; an error from it stops the read. Messages over limit bytes and
-// zip entries refused by the guards are not passed to fn but counted in
-// skipped; maxExpanded bounds a zip's total inflated bytes.
-func ReadImport(f io.ReaderAt, size, limit, maxExpanded int64, fn func([]byte) error) (skipped int, err error) {
+// ReadImport calls fn with each valid message (ImportValid with limit) of an
+// uploaded file, detected by content: a zip, an mbox (starts "From "), else
+// one EML. fn must not retain the slice; an error from it stops the read.
+// Invalid messages and zip entries refused by the guards are counted in
+// skipped instead; maxExpanded bounds a zip's total inflated bytes. More than
+// maxMessages messages, passed or skipped, stop it with ErrImportTooMany.
+func ReadImport(f io.ReaderAt, size, limit, maxExpanded int64, maxMessages int, fn func([]byte) error) (skipped int, err error) {
+	seen := 0
+	each := func(raw []byte, ok bool) error {
+		if seen++; seen > maxMessages {
+			return ErrImportTooMany
+		}
+		if !ok || ImportValid(raw, limit) != nil {
+			skipped++
+			return nil
+		}
+		return fn(raw)
+	}
 	head := make([]byte, 5)
 	n, _ := f.ReadAt(head, 0)
 	switch head = head[:n]; {
 	case bytes.HasPrefix(head, []byte("PK\x03\x04")) || bytes.HasPrefix(head, []byte("PK\x05\x06")):
-		return readImportZip(f, size, limit, maxExpanded, fn)
+		err = readImportZip(f, size, limit, maxExpanded, each)
+		return skipped, err
 	case bytes.Equal(head, []byte("From ")):
-		return readMbox(io.NewSectionReader(f, 0, size), limit, fn)
+		err = readMbox(io.NewSectionReader(f, 0, size), limit, each)
+		return skipped, err
 	case size > limit:
-		return 1, nil
+		err = each(nil, false)
+		return skipped, err
 	}
 	raw, err := io.ReadAll(io.NewSectionReader(f, 0, size))
 	if err != nil {
-		return 0, err
+		return skipped, err
 	}
-	return 0, fn(raw)
+	err = each(raw, true)
+	return skipped, err
 }
 
 // readMbox splits at "From " lines that start the file or follow a blank
 // line, drops the blank line before each separator, and removes one '>' from
 // every ^>+From line (mboxrd; for mboxo this undoes its ">From " quoting).
-// Line endings stay as in the file, CRLF or LF. One message is in memory.
-func readMbox(r io.Reader, limit int64, fn func([]byte) error) (int, error) {
+// Line endings stay as in the file, CRLF or LF. One message is in memory;
+// each is passed to each with ok false when it outgrew limit.
+func readMbox(r io.Reader, limit int64, each func([]byte, bool) error) error {
 	br := bufio.NewReaderSize(r, 64<<10)
 	var msg []byte
-	skipped, started, over := 0, false, false
+	started, over := false, false
 	lineStart, prevBlank := true, true
 	flush := func() error {
 		if !started {
@@ -123,33 +158,29 @@ func readMbox(r io.Reader, limit int64, fn func([]byte) error) (int, error) {
 		} else if bytes.HasSuffix(msg, []byte("\n\n")) {
 			msg = msg[:len(msg)-1]
 		}
-		if over || int64(len(msg)) > limit {
-			skipped++
-			return nil
-		}
-		return fn(msg)
+		return each(msg, !over)
 	}
 	for {
 		chunk, err := br.ReadSlice('\n')
 		if err != nil && err != io.EOF && !errors.Is(err, bufio.ErrBufferFull) {
-			return skipped, err
+			return err
 		}
 		ended := len(chunk) > 0 && chunk[len(chunk)-1] == '\n'
 		switch {
 		case len(chunk) == 0:
 		case lineStart && prevBlank && bytes.HasPrefix(chunk, []byte("From ")):
 			if e := flush(); e != nil {
-				return skipped, e
+				return e
 			}
 			msg, started, over = msg[:0], true, false
 			for errors.Is(err, bufio.ErrBufferFull) { // a separator longer than the buffer
 				_, err = br.ReadSlice('\n')
 			}
 			if err == io.EOF {
-				return skipped, flush()
+				return flush()
 			}
 			if err != nil {
-				return skipped, err
+				return err
 			}
 			lineStart, prevBlank = true, false
 			continue
@@ -172,7 +203,7 @@ func readMbox(r io.Reader, limit int64, fn func([]byte) error) (int, error) {
 			lineStart = ended
 		}
 		if err == io.EOF {
-			return skipped, flush()
+			return flush()
 		}
 	}
 }
@@ -182,51 +213,49 @@ func readMbox(r io.Reader, limit int64, fn func([]byte) error) (int, error) {
 // are skipped. A bomb (over importZipRatio), oversized, unreadable or corrupt
 // entry is skipped; too many entries or too many expanded bytes refuse the
 // whole archive.
-func readImportZip(f io.ReaderAt, size, limit, maxExpanded int64, fn func([]byte) error) (int, error) {
+func readImportZip(f io.ReaderAt, size, limit, maxExpanded int64, each func([]byte, bool) error) error {
 	// ponytail: archive/zip reads the whole central directory before the entry
-	// cap applies, about 4x the upload in memory at worst; the upload is capped
-	// at the mailbox quota. A streaming directory walk is the upgrade if that
-	// quota grows large.
+	// cap applies: about 4.5x the upload live and 6x allocated at worst, with
+	// the upload capped at the mailbox quota. A streaming directory walk is the
+	// upgrade if that quota grows large.
 	zr, err := zip.NewReader(f, size)
 	if err != nil && !errors.Is(err, zip.ErrInsecurePath) {
-		return 0, ErrImportArchive
+		return ErrImportArchive
 	}
 	if len(zr.File) > maxImportZipEntries {
-		return 0, ErrImportArchive
+		return ErrImportArchive
 	}
-	skipped, expanded := 0, int64(0)
+	expanded := int64(0)
 	var buf bytes.Buffer
 	for _, e := range zr.File {
 		if strings.HasSuffix(e.Name, "/") {
 			continue
 		}
 		if !strings.EqualFold(path.Ext(e.Name), ".eml") {
-			skipped++
+			if err = each(nil, false); err != nil {
+				return err
+			}
 			continue
 		}
 		budget := limit
 		if e.CompressedSize64 < uint64(limit)/importZipRatio {
-			budget = max(1<<20, int64(e.CompressedSize64)*importZipRatio)
-		}
-		budget = min(budget, limit)
-		rc, err := e.Open()
-		if err != nil {
-			skipped++
-			continue
+			budget = min(limit, max(1<<20, int64(e.CompressedSize64)*importZipRatio))
 		}
 		buf.Reset()
-		n, err := io.Copy(&buf, io.LimitReader(rc, budget+1))
-		_ = rc.Close()
-		if expanded += n; expanded > maxExpanded {
-			return skipped, ErrImportArchive
+		rc, err := e.Open()
+		ok := err == nil
+		if ok {
+			var n int64
+			n, err = io.Copy(&buf, io.LimitReader(rc, budget+1))
+			_ = rc.Close()
+			if expanded += n; expanded > maxExpanded {
+				return ErrImportArchive
+			}
+			ok = err == nil && n <= budget
 		}
-		if err != nil || n > budget {
-			skipped++
-			continue
-		}
-		if err = fn(buf.Bytes()); err != nil {
-			return skipped, err
+		if err = each(buf.Bytes(), ok); err != nil {
+			return err
 		}
 	}
-	return skipped, nil
+	return nil
 }

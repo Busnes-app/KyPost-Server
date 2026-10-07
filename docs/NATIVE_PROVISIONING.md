@@ -546,7 +546,8 @@ Mail → Import Mail. Importing from an external IMAP account is not built yet.
   session only (a paired device gets 403), CSRF, and `confirmActor` behind
   `withActionDigest`, because a stolen session must not plant mail (a fake
   bank message) in the user's history. Answers `{url:"/api/import/<64 hex>",
-  expiresInSeconds:300, folder, maxBytes}` after creating a missing folder. One
+  expiresInSeconds:300, folder, maxBytes}`. The folder name and its parent are
+  checked here; a new folder is created only when the upload arrives. One
   unspent link per user, held in memory and bound to user, session, mailbox
   and folder. A foreign, unknown or disabled mailbox is 404, a missing parent
   404, an invalid name 400, an external IMAP account 409, a busy user or server
@@ -558,11 +559,12 @@ Mail → Import Mail. Importing from an external IMAP account is not built yet.
   (`application/octet-stream`). It streams to a `0600` temp file in
   `$STATE_DIR/imports/`, never to memory, refusing more than `maxBytes` (413)
   and an empty body (400); the cap is the mailbox's whole storage quota
-  (32 MiB today), since nothing larger can fit. The read deadline moves before
-  every read, so an upload may take as long as it keeps sending; one idle for
-  a minute is cut off. It answers `202` with the job status and the job runs in
-  the background, past the end of the request. A busy refusal (409) keeps the
-  link.
+  (32 MiB today), since nothing larger can fit. An upload idle for a minute,
+  or still sending after 20 minutes in total (at least 27 KiB/s for 32 MiB),
+  is cut off (408), so a trickling upload frees its slot. It answers `202`
+  with the job status and the job runs in the background, past the end of
+  the request. A busy refusal (409) keeps the link. An upload that finishes
+  after shutdown began starts no job (503).
 - `GET /api/import` is the caller's latest job: `{state, mailbox, folder,
   imported, duplicates, skipped, bytes, error?, maxBytes, maxMessageBytes}`
   with `state` `idle`, `uploading`, `running`, `finished`, `failed` or
@@ -577,6 +579,10 @@ Mail → Import Mail. Importing from an external IMAP account is not built yet.
   after a blank line, drops that blank line, removes one `>` from every
   `^>+From ` line (mboxrd; for mboxo it undoes the `>From ` quoting) and keeps
   CRLF or LF line endings as they are, so a KyPost export round-trips exactly.
+  Messages are stored as parsed from the file, which for mboxo is not always
+  the original: mboxo never quoted a genuine `>From ` line, so it loses one
+  `>`, and an unquoted body line starting `From ` after a blank line splits the
+  message in two.
   A zip passes every `*.eml` entry (any case) into the one target folder, in
   directory order, read into memory one at a time; entry names are never used
   as paths and folders inside the zip are not recreated. More than 10,000
@@ -584,19 +590,29 @@ Mail → Import Mail. Importing from an external IMAP account is not built yet.
   entry inflating past 100 times its compressed size (at least 1 MiB) is a
   bomb and skipped, as are entries not named `*.eml` and unreadable or
   corrupt ones.
-- Each message is stored as its exact bytes, seen, with the `Date` header as
+- Each message is stored as its parsed bytes, seen, with the `Date` header as
   its date (now when absent or invalid) and no flags or labels. A message that
   is empty, has no RFC 5322 header, or exceeds the smaller of the 25 MiB
   inbound cap and the mailbox's message limit (5 MiB today) is skipped and
-  counted; one bad message never stops the import. A folder already holding a
+  counted, before any lock or admission is taken; one bad message never stops
+  the import. A job handles at most 20,000 messages (twice the mailbox's
+  10,000 records), counting duplicates and skipped ones, and fails beyond that
+  with a request to split the file, so a flood of empty separators or
+  duplicates is bounded work. Each stored message takes the settings lock and
+  mailbox admission on its own: holding them across a batch would block the
+  user's settings writes, or keep storing into a mailbox already disabled, for
+  the whole batch. A folder already holding a
   live copy of the same bytes (SHA-256, indexed per folder) counts a
   duplicate instead; a deleted copy no longer blocks re-import. A full
   mailbox, a mailbox no longer admitted or a zip refused as a whole stops the
   job as `failed` with the reason.
 - Imported mail is not received mail: no delivery receipt (receiving dedupe
-  and quarantine are untouched), and because it is seen the poller never
-  takes it, so no rules, classification, sorter learning, notifications or
-  push run on it and it is not scanned for spam. The screen says so.
+  and quarantine are untouched). It is stored seen and recorded in the
+  mailbox's `imported` table, which the poller's unread-INBOX query excludes,
+  so even marked unread or moved to INBOX it never gets rules,
+  classification, sorter learning, notifications or push, and it is not
+  scanned for spam. The screen says so. (Advancing the poller's checkpoint
+  instead would mean the API writing daemon-owned state.)
 - Incoming encryption sweeps only unread INBOX mail, so imported mail would
   stay plaintext: import is refused (409) while the user has incoming
   encryption on or a replacement pending, at the link, at upload and before
@@ -609,8 +625,9 @@ Mail → Import Mail. Importing from an external IMAP account is not built yet.
   the token) and result (`authorized`, `started`, `finished`, `failed`,
   `cancel_requested`, `cancelled`); never subjects or addresses.
 - `archive/zip` reads the whole central directory before the entry cap
-  applies, about four times the upload in memory at worst. That is bounded by
-  the quota cap; raising the per-mailbox quota raises it too.
+  applies: about 4.5 times the upload live and 6 times allocated at worst.
+  That is bounded by the quota cap; raising the per-mailbox quota raises it
+  too.
 
 ## Direct receiving runtime (qualification profile)
 

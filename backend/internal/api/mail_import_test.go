@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -350,6 +352,68 @@ func TestMailImport(t *testing.T) {
 	}
 	setEncryption(false)
 
+	// Turned on concurrently through the settings lock: no message is stored
+	// while the committed setting is on.
+	if _, err = native.ImportFolder(ctx, "Concurrent", true); err != nil {
+		t.Fatal(err)
+	}
+	var many bytes.Buffer
+	for i := range 300 {
+		fmt.Fprintf(&many, "From a b\r\nSubject: concurrent %d\r\n\r\nx\r\n\r\n", i)
+	}
+	var violated atomic.Bool
+	var once sync.Once
+	committed := make(chan struct{})
+	job = &importJob{State: "running", Folder: "Concurrent", user: one.ID}
+	// Checked before and after each store, both inside the import's lock.
+	check := func() {
+		if s, err := config.LoadUserSettings(path); err != nil || s.EncryptIncoming {
+			violated.Store(true)
+		}
+	}
+	srv.runImport(ctx, job, &onImport{mailImporter: native, before: check, after: func() {
+		check()
+		once.Do(func() {
+			go func() {
+				defer close(committed)
+				if err := config.UpdateUserSettings(path, func(s *config.UserSettings) error { s.EncryptIncoming = true; return nil }); err != nil {
+					t.Error(err)
+				}
+			}()
+		})
+	}}, tempUpload(t, many.Bytes()), int64(many.Len()))
+	<-committed
+	if violated.Load() || job.State != "failed" && job.State != "finished" || job.State == "failed" && !strings.Contains(job.Error, "incoming encryption was turned on") {
+		t.Fatalf("concurrent encryption %+v violated=%v", job, violated.Load())
+	}
+	t.Logf("concurrent encryption: %s after %d messages", job.State, job.Imported)
+	setEncryption(false)
+
+	// Floods of junk or of duplicates stop at the job's message cap.
+	defer func(old int) { importMaxMessages = old }(importMaxMessages)
+	importMaxMessages = 50
+	for name, data := range map[string][]byte{
+		"empty":     bytes.Repeat([]byte("From \n\n"), 100000),
+		"duplicate": bytes.Repeat([]byte("From a b\nSubject: flood\n\nx\n\n"), 1000),
+	} {
+		began := time.Now()
+		job = &importJob{State: "running", Folder: "Imported", user: one.ID}
+		srv.runImport(ctx, job, native, tempUpload(t, data), int64(len(data)))
+		if job.State != "failed" || !strings.Contains(job.Error, "more than 50 messages") || job.Imported+job.Duplicates+job.Skipped != 50 || time.Since(began) > 10*time.Second {
+			t.Fatalf("%s flood %+v in %s", name, job, time.Since(began))
+		}
+	}
+	importMaxMessages = 2 * nativeMailboxLimits.Records
+
+	// A trickling upload frees its slot at the whole-upload deadline.
+	defer func(old time.Duration) { importUploadWindow = old }(importUploadWindow)
+	importUploadWindow = -time.Second
+	if w = upload(me, grant(me, ``), mbox); w.Code != 408 || !strings.Contains(w.Body.String(), "took too long") || status(me).State != "failed" {
+		t.Fatal("slow upload", w.Code, w.Body)
+	}
+	noTempFiles("slow upload")
+	importUploadWindow = 20 * time.Minute
+
 	// Cancel stops a running job, whose temp file goes with it.
 	jobCtx, cancel := context.WithCancel(context.Background())
 	job = &importJob{State: "running", Folder: "Imported", user: one.ID, cancel: cancel}
@@ -379,6 +443,29 @@ func TestMailImport(t *testing.T) {
 		t.Fatal("cancel with nothing running", w.Code)
 	}
 
+	// The target folder is created when the upload arrives, not before.
+	url = grant(me, `"folder":"Arrives",`)
+	if folders, _ := store.Folders(ctx); strings.Contains(fmt.Sprint(folders), "Arrives") {
+		t.Fatal("folder created before the upload", folders)
+	}
+	if w = upload(me, url, mbox); w.Code != 202 || wait(me).Folder != "Arrives" {
+		t.Fatal("upload into a new folder", w.Code, w.Body)
+	}
+
+	// An upload finishing after shutdown began starts no job.
+	req = httptest.NewRequest("POST", grant(me, ``), &onRead{Reader: bytes.NewReader(mbox), fn: srv.cancelImports})
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: me.token})
+	req.Header.Set("X-CSRF-Token", me.csrf)
+	w = httptest.NewRecorder()
+	srv.routes().ServeHTTP(w, req)
+	if w.Code != 503 || status(me).State != "failed" {
+		t.Fatal("upload during shutdown", w.Code, w.Body)
+	}
+	if w = upload(me, grant(me, ``), mbox); w.Code != 503 {
+		t.Fatal("upload after shutdown", w.Code, w.Body)
+	}
+	noTempFiles("upload during shutdown")
+
 	// A crash leftover is removed at startup.
 	if err = os.MkdirAll(uploads, 0o700); err != nil {
 		t.Fatal(err)
@@ -404,12 +491,30 @@ func (c *chunkedOnly) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// onRead calls fn on the first read, as a shutdown arriving mid-upload.
+type onRead struct {
+	io.Reader
+	fn   func()
+	done bool
+}
+
+func (o *onRead) Read(p []byte) (int, error) {
+	if !o.done {
+		o.done = true
+		o.fn()
+	}
+	return o.Reader.Read(p)
+}
+
 type onImport struct {
 	mailImporter
-	after func()
+	before, after func()
 }
 
 func (o *onImport) ImportMessage(ctx context.Context, folder string, raw []byte) error {
+	if o.before != nil {
+		o.before()
+	}
 	err := o.mailImporter.ImportMessage(ctx, folder, raw)
 	if o.after != nil {
 		o.after()
@@ -420,7 +525,7 @@ func (o *onImport) ImportMessage(ctx context.Context, folder string, raw []byte)
 // blocking stores nothing and waits for cancellation.
 type blocking struct{}
 
-func (blocking) ImportFolder(context.Context, string) (string, error) { return "", nil }
+func (blocking) ImportFolder(context.Context, string, bool) (string, error) { return "", nil }
 func (blocking) ImportMessage(ctx context.Context, _ string, _ []byte) error {
 	<-ctx.Done()
 	return ctx.Err()

@@ -20,6 +20,8 @@ type ImportStatus = {
 // The only URL the server mints; anything else is not followed.
 const importURL = /^\/api\/import\/[0-9a-f]{64}$/;
 export const POLL_MS = 1000;
+// Polling stops after this many failures in a row.
+const POLL_FAILURES = 5;
 const mib = (n: number) => `${Math.max(1, Math.round(n / (1 << 20)))} MiB`;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -36,6 +38,8 @@ export function MailImport() {
   const [progress, setProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [status, setStatus] = useState<ImportStatus | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [lost, setLost] = useState(false);
   const upload = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -61,16 +65,23 @@ export function MailImport() {
 
   const running = status?.state === "running";
   useEffect(() => {
-    if (!running) return;
+    if (!running || lost) return;
+    let failures = 0;
     const timer = window.setInterval(() => {
-      getJSON<ImportStatus>("/api/import").then(setStatus).catch((e: unknown) => setError(toErrorMessage(e, "Could not read the import status.")));
+      getJSON<ImportStatus>("/api/import")
+        .then(s => { failures = 0; setStatus(s); })
+        .catch(() => {
+          if (++failures < POLL_FAILURES) return;
+          setLost(true);
+          setError("Lost contact with the server; the import may still be running. Reload this page to check on it.");
+        });
     }, POLL_MS);
     return () => window.clearInterval(timer);
-  }, [running]);
+  }, [running, lost]);
 
   async function start() {
     if (!file) return;
-    setBusy(true); setError(""); setProgress(null);
+    setBusy(true); setError(""); setNotice(""); setLost(false); setProgress(null);
     const accountPassword = password;
     setPassword("");
     try {
@@ -84,8 +95,13 @@ export function MailImport() {
       const started = await uploadWithProgress<ImportStatus>(url, file, (loaded, total) => setProgress({ loaded, total }), upload.current.signal);
       setStatus(old => ({ ...old, ...started }));
     } catch (e: unknown) {
-      if (!(e instanceof DOMException && e.name === "AbortError")) setError(toErrorMessage(e, "Import failed."));
-      getJSON<ImportStatus>("/api/import").then(setStatus).catch(() => undefined);
+      if (e instanceof DOMException && e.name === "AbortError") {
+        setNotice("Upload cancelled. Nothing was imported.");
+        setStatus(old => old && { ...old, state: "idle" });
+      } else {
+        setError(toErrorMessage(e, "Import failed."));
+        getJSON<ImportStatus>("/api/import").then(setStatus).catch(() => undefined);
+      }
     } finally {
       upload.current = null;
       setProgress(null);
@@ -110,8 +126,9 @@ export function MailImport() {
   return <div className="config-section">
     <h3>Import mail</h3>
     {error && <p className="notice notice-error" role="alert">{error}</p>}
+    {notice && <p className="notice" role="status">{notice}</p>}
     {mailboxes.length === 0 ? <p>Import is available for mailboxes KyPost hosts.</p> : <>
-      <p>Bring mail from another app: an mbox file (Thunderbird, Apple Mail, Google Takeout, or a KyPost export), a single .eml message, or a zip of .eml files. Messages are stored exactly as they are, marked read, in the folder you choose. Importing the same file again skips the messages already there.{limits}</p>
+      <p>Bring mail from another app: an mbox file (Thunderbird, Apple Mail, Google Takeout, or a KyPost export), a single .eml message, or a zip of .eml files. Messages are stored as parsed from the file, marked read, in the folder you choose. Importing the same file again skips the messages already there.{limits}</p>
       <p className="notice notice-warning">Imported mail is not scanned for spam, not run through your rules, and sends no notifications. Only import files you trust. Import is unavailable while incoming encryption is on, because imported mail would be stored unencrypted.</p>
       <fieldset className="config-card config-grid" disabled={busy || running}>
         <legend>What to import</legend>
