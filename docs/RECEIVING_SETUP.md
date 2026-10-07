@@ -337,8 +337,10 @@ table revision this instance never published, typically mail that waited at
 Cloudflare through a restore and takeover, is *unresolved*: its original owner
 cannot be proven. Server → Quarantine marks it "original owner unknown" and
 shows the recipient address's owner today; **Release to current owner…** (or
-`receiving quarantine release-to-current-owner <gateway> <id> --confirm <id>`)
-delivers it there after confirmation, and only while the address is active.
+`receiving quarantine release-to-current-owner <gateway> <id> <currentMailbox> --confirm <id>`,
+naming the `currentMailbox` the list showed) delivers it there after
+confirmation, only while the address is active and still owned by that mailbox;
+if it moved since you looked, the release is refused and you review it again.
 Otherwise discard it. See
 [quarantine release](NATIVE_PROVISIONING.md#quarantine-release).
 

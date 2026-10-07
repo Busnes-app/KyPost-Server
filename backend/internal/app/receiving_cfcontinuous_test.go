@@ -641,7 +641,7 @@ func TestCloudflareContinuousReplayConflictAndFrozenBindings(t *testing.T) {
 	if err != nil || d.State != "quarantined" || d.Bindings[0].Mailbox != "" || d.Bindings[0].Address != "one@example.test" {
 		t.Fatalf("unknown revision not quarantined unresolved: %+v %v", d.Bindings, err)
 	}
-	if err := e.r.life.ReleaseQuarantined(ctx, e.r.stateDir, "https://identity.example.test", e.r.accounts, e.r.holding, cfGateway, unknown, false); err == nil {
+	if err := e.r.life.ReleaseQuarantined(ctx, e.r.stateDir, "https://identity.example.test", e.r.accounts, e.r.holding, cfGateway, unknown, ""); err == nil {
 		t.Fatal("unresolved owner released")
 	}
 	if got := cfFolder(t, e.r, one, "INBOX"); !slices.Equal(got, []string{"once"}) {
@@ -1094,13 +1094,13 @@ func TestCloudflareContinuousUnresolvedReleaseToCurrentOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.cycle(t)
-	release := func(id string, current bool) error {
-		return e.r.life.ReleaseQuarantined(ctx, e.r.stateDir, "https://identity.example.test", e.r.accounts, e.r.holding, cfGateway, id, current)
+	release := func(id, reviewed string) error {
+		return e.r.life.ReleaseQuarantined(ctx, e.r.stateDir, "https://identity.example.test", e.r.accounts, e.r.holding, cfGateway, id, reviewed)
 	}
-	if err := release(toOne, false); !errors.Is(err, sso.ErrQuarantineUnresolved) {
+	if err := release(toOne, ""); !errors.Is(err, sso.ErrQuarantineUnresolved) {
 		t.Fatal("unresolved released without the flag", err)
 	}
-	if err := release(frozen, true); !errors.Is(err, sso.ErrQuarantineResolved) {
+	if err := release(frozen, two.ID); !errors.Is(err, sso.ErrQuarantineResolved) {
 		t.Fatal("frozen-owner delivery redirected to the current owner", err)
 	}
 	listed, err := e.r.life.QuarantinedDeliveries(ctx, e.r.holding, 0)
@@ -1112,10 +1112,15 @@ func TestCloudflareContinuousUnresolvedReleaseToCurrentOwner(t *testing.T) {
 			t.Fatalf("unresolved listing %+v", d)
 		}
 	}
-	for _, id := range []string{toOne, moved} {
-		if err := release(id, true); err != nil {
-			t.Fatal(id, err)
-		}
+	if err := release(toOne, two.ID); !errors.Is(err, sso.ErrQuarantineOwnerChanged) {
+		t.Fatal("released to an owner other than the one reviewed", err)
+	}
+	if err := release(moved, two.ID); err != nil {
+		t.Fatal(err)
+	}
+	cli := quarantineCLI(t, e.r)
+	if _, err := cli("release-to-current-owner", cfGateway, toOne, one.ID, "--confirm", toOne); err != nil {
+		t.Fatal("CLI release to the reviewed owner", err)
 	}
 	if got := cfFolder(t, e.r, one, "INBOX"); !slices.Equal(got, []string{"to-one"}) {
 		t.Fatal("first owner", got)
@@ -1126,10 +1131,30 @@ func TestCloudflareContinuousUnresolvedReleaseToCurrentOwner(t *testing.T) {
 	if d, err := e.r.holding.Get(ctx, cfGateway, moved); err != nil || d.State != "archived" || d.Disposition != "released" {
 		t.Fatal("not archived as released", d.State, err)
 	}
+	// Reviewed in the list as two's, then reassigned back to one before the
+	// confirmation: the CLI release is refused and nothing is delivered.
+	if out, err := cli("list"); err != nil || !strings.Contains(out, `"id":"`+gone+`"`) || !strings.Contains(out, `"currentMailbox":"`+two.ID+`"`) {
+		t.Fatal("CLI list lacks the current mailbox", out, err)
+	}
 	if _, err := e.r.life.ReleaseNativeAlias(ctx, e.r.stateDir, "sales@example.test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := release(gone, true); !errors.Is(err, sso.ErrQuarantineAddressInactive) {
+	if _, err := e.r.life.ReassignNativeAddress(ctx, e.r.stateDir, "sales@example.test", one.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cli("release-to-current-owner", cfGateway, gone, "--confirm", gone); err == nil {
+		t.Fatal("CLI release without the reviewed mailbox")
+	}
+	if _, err := cli("release-to-current-owner", cfGateway, gone, two.ID, "--confirm", gone); !errors.Is(err, sso.ErrQuarantineOwnerChanged) {
+		t.Fatal("CLI released to an owner changed since review", err)
+	}
+	if got := cfFolder(t, e.r, one, "INBOX"); !slices.Equal(got, []string{"to-one"}) {
+		t.Fatal("delivered after a refused release", got)
+	}
+	if _, err := e.r.life.ReleaseNativeAlias(ctx, e.r.stateDir, "sales@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := release(gone, one.ID); !errors.Is(err, sso.ErrQuarantineAddressInactive) {
 		t.Fatal("released to an inactive address", err)
 	}
 	if d, err := e.r.holding.Get(ctx, cfGateway, gone); err != nil || d.State != "quarantined" || !d.Bindings[0].Unresolved() {

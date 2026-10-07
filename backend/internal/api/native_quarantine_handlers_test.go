@@ -221,8 +221,20 @@ func TestQuarantineReleaseToCurrentOwnerAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = holding.Quarantine(ctx, "cloudflare-continuous", "waited", "envelope@outside.test", ingress.Binding{Address: a.Address, Generation: 1}, []byte("Subject: secret-subject\r\n\r\nsecret-body\r\n")); err != nil {
+	two := scimUser("native-runtime-two", "runtime-two", true)
+	two["emails"] = []map[string]any{{"value": "two@example.test", "primary": true}}
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "unresolved-two", 1, two))
+	second, err := srv.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-two")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err = srv.ssoLifecycle.AddNativeAlias(ctx, srv.stateDir, one.ID, "sales@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	for id, address := range map[string]string{"waited": a.Address, "moved": "sales@example.test"} {
+		if err = holding.Quarantine(ctx, "cloudflare-continuous", id, "envelope@outside.test", ingress.Binding{Address: address, Generation: 1}, []byte("Subject: secret-subject\r\n\r\nsecret-body\r\n")); err != nil {
+			t.Fatal(err)
+		}
 	}
 	_ = holding.Close()
 	const password = "long-password-for-unresolved"
@@ -247,12 +259,27 @@ func TestQuarantineReleaseToCurrentOwnerAPI(t *testing.T) {
 	if w := call("GET", base, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"unresolved":true`) || !strings.Contains(w.Body.String(), `"currentMailbox":"`+one.ID+`"`) || !strings.Contains(w.Body.String(), `"currentUser":"`+one.ID+`"`) || !strings.Contains(w.Body.String(), `"mailbox":""`) {
 		t.Fatal("unresolved listing", w.Code, w.Body)
 	}
-	plain, flagged := `{"password":"`+password+`"}`, `{"password":"`+password+`","toCurrentOwner":true}`
+	plain, flagged := `{"password":"`+password+`"}`, `{"password":"`+password+`","toCurrentOwner":true,"currentMailbox":"`+one.ID+`"}`
 	if w := call("POST", base+"/cloudflare-continuous/waited/release", plain); w.Code != 409 || !strings.Contains(w.Body.String(), "current owner") || strings.Contains(w.Body.String(), "resync and retry") {
 		t.Fatal("unresolved released without the flag", w.Code, w.Body)
 	}
 	if w := call("POST", base+"/cloudflare-continuous/waited/discard", flagged); w.Code != 400 {
 		t.Fatal("flag accepted on discard", w.Code)
+	}
+	for _, bad := range []string{`{"password":"` + password + `","toCurrentOwner":true}`, `{"password":"` + password + `","currentMailbox":"` + one.ID + `"}`} {
+		if w := call("POST", base+"/cloudflare-continuous/waited/release", bad); w.Code != 400 {
+			t.Fatal("release without the reviewed mailbox, or a mailbox without the flag", w.Code, w.Body)
+		}
+	}
+	// Reviewed as one's in the list, then reassigned to two before confirming.
+	if _, err = srv.ssoLifecycle.ReleaseNativeAlias(ctx, srv.stateDir, "sales@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = srv.ssoLifecycle.ReassignNativeAddress(ctx, srv.stateDir, "sales@example.test", second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w := call("POST", base+"/cloudflare-continuous/moved/release", flagged); w.Code != 409 || !strings.Contains(w.Body.String(), "changed since you reviewed it") {
+		t.Fatal("released to an owner the administrator never reviewed", w.Code, w.Body)
 	}
 	if w := call("POST", base+"/cloudflare-continuous/waited/release", flagged); w.Code != 200 || !strings.Contains(w.Body.String(), `"result":"released"`) {
 		t.Fatal("release to current owner", w.Code, w.Body)

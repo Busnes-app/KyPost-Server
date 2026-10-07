@@ -346,11 +346,12 @@ it("releases unresolved mail only to the current owner after saying the owner is
   await screen.findByText("Released delivery u1 from late@sender.example to the address's current owner.");
   const [write] = writes();
   expect(write?.[0]).toBe(`${base}/cloudflare-continuous/u1/release`);
-  expect(JSON.parse(String(write?.[1]?.body))).toEqual({ authSecret: "derived-test-secret", toCurrentOwner: true });
+  expect(JSON.parse(String(write?.[1]?.body))).toEqual({ authSecret: "derived-test-secret", toCurrentOwner: true, currentMailbox: "alice-id" });
 });
 
 it("says release will be refused when the unresolved address is inactive", async () => {
   pages[base] = { deliveries: [{ ...unresolved, recipients: [{ ...unresolved.recipients[0]!, currentMailbox: "", currentUser: "" }] }] };
   render(view());
   await screen.findByText(/original owner unknown; the address is not active now, so release will be refused/);
+  expect((screen.getByRole("button", { name: "Release cloudflare-continuous / u1 to the current owner" }) as HTMLButtonElement).disabled).toBe(true);
 });

@@ -827,8 +827,11 @@ a delivery was quarantined is not stored.
   owner today (`currentMailbox`, `currentUser`), which is not proven to be the
   original. An ordinary release refuses it with that explanation; the explicit
   release binds it to that owner at the address's current generation, under
-  the same fences as import and only while the address is active, then
-  releases as above. It is refused while the address is inactive (discard
+  the same fences as import and only while the address is active and its
+  owner's mailbox is still the one the administrator reviewed in the list (the
+  request names it), then releases as above. If the address moved to another
+  mailbox between review and confirmation, it refuses: today's owner changed
+  since you reviewed it; reload. It is refused while the address is inactive (discard
   remains), and for any delivery that already has an owner. It is audited as
   its own action. A crash between binding and release leaves the delivery bound
   to that owner; finish it with an ordinary release.
@@ -854,7 +857,8 @@ step-up, as for `/api/admin/mailboxes`):
   `partially_released`); 404 unknown or malformed, 409 not quarantined,
   release in progress, release refused or restore hold, 503 storage or mailbox
   capacity (the holding copy is kept). For an unresolved delivery, release
-  takes `{"toCurrentOwner": true}` beside the credential (the step-up binds it)
+  takes `{"toCurrentOwner": true, "currentMailbox": "<currentMailbox as listed>"}`
+  beside the credential (the step-up binds both; either alone is 400)
   and is audited as `release_quarantine_to_current_owner`; discard refuses the
   flag with 400.
 
@@ -863,7 +867,7 @@ CLI, as the runtime user that owns `STATE_DIR` (it refuses any other):
 ```sh
 docker compose exec --user kypost kypost-server kypost-server receiving quarantine list [<after-sequence>]
 docker compose exec --user kypost kypost-server kypost-server receiving quarantine release <gateway> <id> --confirm <id>
-docker compose exec --user kypost kypost-server kypost-server receiving quarantine release-to-current-owner <gateway> <id> --confirm <id>
+docker compose exec --user kypost kypost-server kypost-server receiving quarantine release-to-current-owner <gateway> <id> <currentMailbox-as-listed> --confirm <id>
 docker compose exec --user kypost kypost-server kypost-server receiving quarantine discard <gateway> <id> --confirm <id>
 ```
 

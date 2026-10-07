@@ -26,6 +26,7 @@ var (
 	// a restore do not mean the same owner.
 	ErrQuarantineUnresolved      = fmt.Errorf("%w: captured under a routing table this server does not know (for example mail waiting through a restore), so its original owner is unknown; release it to the recipient address's current owner with explicit confirmation, or discard it", ErrQuarantineRelease)
 	ErrQuarantineResolved        = fmt.Errorf("%w: release to the current owner applies only to deliveries whose original owner is unknown; use an ordinary release", ErrQuarantineRelease)
+	ErrQuarantineOwnerChanged    = fmt.Errorf("%w: today's owner changed since you reviewed it; reload and review the delivery again", ErrQuarantineRelease)
 	ErrQuarantineAddressInactive = fmt.Errorf("%w: the recipient address is not active now, so it has no current owner; discard remains available", ErrQuarantineRelease)
 )
 
@@ -119,12 +120,13 @@ func (f nativeAssignments) currentOwner(address string) (ingress.Binding, error)
 }
 
 // ReleaseQuarantined delivers a quarantined delivery to the mailboxes it was
-// frozen to, never to an address's current owner. The one exception is
-// toCurrentOwner, an administrator's explicit choice for an unresolved
-// delivery (no known original owner): it binds the recipient to the owner of
-// its active address now, at the current generation, under the same fences,
-// then releases. Without it an unresolved delivery is refused, and with it a
-// resolved one is. Each frozen mailbox must
+// frozen to, never to an address's current owner. The one exception is a
+// non-empty reviewedMailbox, an administrator's explicit choice for an
+// unresolved delivery (no known original owner): it binds the recipient to
+// the owner of its active address now, at the current generation, under the
+// same fences, then releases, and only while that owner's mailbox is still
+// the one the administrator reviewed. Without it an unresolved delivery is
+// refused, and with it a resolved one is. Each frozen mailbox must
 // still exist, be active, belong to the same issuer/subject and have admitted
 // storage, checked under the directory and users fences Import holds. The
 // address generation is not checked: the mail was addressed to that mailbox
@@ -132,7 +134,8 @@ func (f nativeAssignments) currentOwner(address string) (ingress.Binding, error)
 // all owners or none; a capacity or crash failure during the commits can leave
 // some owners with the mail, which a retry completes without duplicates. A
 // repeated release of a released delivery succeeds.
-func (s *LifecycleStore) ReleaseQuarantined(ctx context.Context, stateRoot, issuer string, accounts *users.Store, holding *ingress.Store, gateway, id string, toCurrentOwner bool) error {
+func (s *LifecycleStore) ReleaseQuarantined(ctx context.Context, stateRoot, issuer string, accounts *users.Store, holding *ingress.Store, gateway, id, reviewedMailbox string) error {
+	toCurrentOwner := reviewedMailbox != ""
 	if err := RequireNativeRestoreReleased(stateRoot); err != nil {
 		return err
 	}
@@ -164,6 +167,9 @@ func (s *LifecycleStore) ReleaseQuarantined(ctx context.Context, stateRoot, issu
 		b, err := f.currentOwner(bindings[0].Address)
 		if err != nil {
 			return err
+		}
+		if b.Mailbox != reviewedMailbox {
+			return ErrQuarantineOwnerChanged
 		}
 		bindings = []ingress.Binding{b}
 	}
@@ -228,8 +234,8 @@ func (s *LifecycleStore) ReleaseQuarantined(ctx context.Context, stateRoot, issu
 			if err != nil {
 				return err
 			}
-			if b, err := f.currentOwner(bindings[0].Address); err != nil || b != bindings[0] {
-				return ErrQuarantineRelease
+			if b, err := f.currentOwner(bindings[0].Address); err != nil || b != bindings[0] || b.Mailbox != reviewedMailbox {
+				return ErrQuarantineOwnerChanged
 			}
 			if err := holding.ResolveQuarantined(ctx, gateway, id, bindings[0]); err != nil {
 				return err
@@ -242,7 +248,7 @@ func (s *LifecycleStore) ReleaseQuarantined(ctx context.Context, stateRoot, issu
 			return stores[owner], nil
 		})
 	})
-	if errors.Is(err, ErrQuarantineAddressInactive) {
+	if errors.Is(err, ErrQuarantineAddressInactive) || errors.Is(err, ErrQuarantineOwnerChanged) {
 		return err
 	}
 	if errors.Is(err, ErrNativeProvisioning) || errors.Is(err, ErrNativeMailboxUnknown) || errors.Is(err, ErrQuarantineRelease) {

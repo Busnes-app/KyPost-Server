@@ -106,7 +106,7 @@ function QuarantineForm() {
     // answered: a change answer arrived; unanswered: a change request is out with no answer yet.
     let answered = false, committed = false, unanswered = false;
     try {
-      const body = { ...(ssoSession ? {} : credentialFields(await deriveCredential("", accountPassword))), ...(action === "release-current" ? { toCurrentOwner: true } : {}) };
+      const body = { ...(ssoSession ? {} : credentialFields(await deriveCredential("", accountPassword))), ...(action === "release-current" ? { toCurrentOwner: true, currentMailbox: d.recipients[0]?.currentMailbox ?? "" } : {}) };
       const path = action === "discard" ? "discard" : "release";
       requireLive();
       const result = await withSSOStepUp(async (headers) => {
@@ -183,7 +183,7 @@ function QuarantineForm() {
           <td>{`${visible(d.gateway)} / ${visible(d.id)}`}</td>
           <td className="quarantine-nowrap">{addressable(d) ? <>
             {d.unresolved
-              ? <button className="button secondary" aria-label={`Release ${visible(d.gateway)} / ${visible(d.id)} to the current owner`} disabled={!unlocked} onClick={() => void act(d, "release-current")}>Release to current owner…</button>
+              ? <button className="button secondary" aria-label={`Release ${visible(d.gateway)} / ${visible(d.id)} to the current owner`} disabled={!unlocked || d.recipients.length !== 1 || !d.recipients[0]?.currentMailbox} onClick={() => void act(d, "release-current")}>Release to current owner…</button>
               : <button className="button secondary" aria-label={`Release ${visible(d.gateway)} / ${visible(d.id)}`} disabled={!unlocked} onClick={() => void act(d, "release")}>Release</button>}
             <button className="button secondary" aria-label={`Discard ${visible(d.gateway)} / ${visible(d.id)}`} disabled={!unlocked} onClick={() => void act(d, "discard")}>Discard</button>
           </> : "Use the CLI: this ID cannot be sent in a URL."}</td>

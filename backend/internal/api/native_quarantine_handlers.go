@@ -81,18 +81,20 @@ func (s *Server) handleQuarantineDiscard(w http.ResponseWriter, r *http.Request)
 }
 
 // changeQuarantine is step-up confirmed and audited with the delivery ID only.
-// {"toCurrentOwner": true} releases an unresolved delivery (original owner
-// unknown) to its address's current owner; the step-up binds the flag, and the
-// audit names that action.
+// {"toCurrentOwner": true, "currentMailbox": "<id shown>"} releases an
+// unresolved delivery (original owner unknown) to its address's current owner,
+// only while that owner's mailbox is still the one the administrator reviewed;
+// the step-up binds both, and the audit names that action.
 func (s *Server) changeQuarantine(w http.ResponseWriter, r *http.Request, action, done string) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body struct {
-		ToCurrentOwner bool `json:"toCurrentOwner"`
+		ToCurrentOwner bool   `json:"toCurrentOwner"`
+		CurrentMailbox string `json:"currentMailbox"`
 	}
 	if !s.nativeDomainGate(w, r, &body) {
 		return
 	}
-	if body.ToCurrentOwner && done != "released" {
+	if body.ToCurrentOwner && (done != "released" || body.CurrentMailbox == "") || !body.ToCurrentOwner && body.CurrentMailbox != "" {
 		http.Error(w, "invalid mail administration request", http.StatusBadRequest)
 		return
 	}
@@ -126,7 +128,7 @@ func (s *Server) changeQuarantine(w http.ResponseWriter, r *http.Request, action
 			if settings := s.ssoStore.Load(); settings.Enabled {
 				issuer = settings.IssuerURL
 			}
-			err = s.ssoLifecycle.ReleaseQuarantined(r.Context(), s.stateDir, issuer, s.users, holding, gateway, id, body.ToCurrentOwner)
+			err = s.ssoLifecycle.ReleaseQuarantined(r.Context(), s.stateDir, issuer, s.users, holding, gateway, id, body.CurrentMailbox)
 		} else if err = sso.RequireNativeRestoreReleased(s.stateDir); err == nil {
 			// partially_released: an interrupted release may have reached
 			// some frozen mailboxes before this discard.
