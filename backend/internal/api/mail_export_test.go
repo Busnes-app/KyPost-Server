@@ -4,11 +4,14 @@ package api
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -92,17 +95,24 @@ func TestMailExport(t *testing.T) {
 	start := func(c caller, fields string) *httptest.ResponseRecorder {
 		return call("POST", "/api/export", c, `{`+fields+`"password":"`+password+`"}`, nil)
 	}
+	counted := -1
 	grant := func(c caller, fields string) string {
 		t.Helper()
 		w := start(c, fields)
 		var got struct {
-			URL     string
-			Expires int `json:"expiresInSeconds"`
+			URL      string
+			Expires  int `json:"expiresInSeconds"`
+			Messages int
 		}
 		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &got) != nil || !strings.HasPrefix(got.URL, "/api/export/") || got.Expires != 300 {
 			t.Fatalf("start %s: %d %s", fields, w.Code, w.Body)
 		}
+		counted = got.Messages
 		return got.URL
+	}
+	// A refused download sends the browser back to the export page.
+	bounced := func(w *httptest.ResponseRecorder, code string) bool {
+		return w.Code == http.StatusSeeOther && w.Header().Get("Location") == "/settings/mail?tab=export&export="+code
 	}
 	adminCall := func(body string) *httptest.ResponseRecorder {
 		return call("POST", "/api/admin/mailboxes", adm, body, nil)
@@ -202,16 +212,33 @@ func TestMailExport(t *testing.T) {
 
 	// mbox of the whole primary: bound to user and session, single use.
 	url := grant(me, `"format":"mbox",`)
+	if counted != 2 {
+		t.Fatal("message count", counted)
+	}
 	if len(srv.exports) != 1 {
 		t.Fatal("a new grant did not replace the user's previous one", len(srv.exports))
 	}
 	for _, c := range []caller{meAgain, other, meSSO} {
-		if w = call("GET", url, c, "", nil); w.Code != 404 {
-			t.Fatal("grant crossed sessions or users", c.token, w.Code)
+		if w = call("GET", url, c, "", nil); !bounced(w, "expired") {
+			t.Fatal("grant crossed sessions or users", c.token, w.Code, w.Header())
 		}
 	}
-	if w = call("GET", "/api/export/unknown", me, "", nil); w.Code != 404 {
+	if w = call("GET", "/api/export/unknown", me, "", nil); !bounced(w, "expired") {
 		t.Fatal("unknown token", w.Code)
+	}
+	// HEAD neither streams nor spends the grant.
+	if w = call("HEAD", url, me, "", nil); w.Code != 405 || len(srv.exports) != 1 {
+		t.Fatal("HEAD", w.Code, len(srv.exports))
+	}
+	// A POST arriving over HTTP/1.0 cannot export mbox.
+	req := httptest.NewRequest("POST", "/api/export", strings.NewReader(`{"format":"mbox","password":"`+password+`"}`))
+	req.Proto, req.ProtoMinor = "HTTP/1.0", 0
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: me.token})
+	req.Header.Set("X-CSRF-Token", me.csrf)
+	w = httptest.NewRecorder()
+	srv.routes().ServeHTTP(w, req)
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "proxy_http_version 1.1") || len(srv.exports) != 1 {
+		t.Fatal("HTTP/1.0 mbox start", w.Code, w.Body)
 	}
 	w = call("GET", url, me, "", nil)
 	if w.Code != 200 || w.Header().Get("Content-Type") != "application/mbox" || !strings.HasPrefix(w.Header().Get("Content-Disposition"), `attachment; filename="kypost-mail-`) {
@@ -222,7 +249,7 @@ func TestMailExport(t *testing.T) {
 		!strings.Contains(got, "\r\n\r\n>From x\r\n>>From x\r\nbody\r\n\n") || !strings.Contains(got, "From MAILER-DAEMON ") || strings.Contains(got, "extra") {
 		t.Fatalf("mbox content %q", got)
 	}
-	if w = call("GET", url, me, "", nil); w.Code != 404 {
+	if w = call("GET", url, me, "", nil); !bounced(w, "expired") {
 		t.Fatal("grant reused", w.Code)
 	}
 
@@ -234,6 +261,9 @@ func TestMailExport(t *testing.T) {
 		t.Fatal("folder export", w.Code, w.Body)
 	}
 	w = call("GET", grant(me, `"format":"eml-zip","mailbox":"`+extra.ID+`",`), me, "", nil)
+	if counted != 1 {
+		t.Fatal("extra count", counted)
+	}
 	zr, err := zip.NewReader(bytes.NewReader(w.Body.Bytes()), int64(w.Body.Len()))
 	if w.Code != 200 || w.Header().Get("Content-Type") != "application/zip" || err != nil || len(zr.File) != 1 || !strings.HasPrefix(zr.File[0].Name, "INBOX/") {
 		t.Fatal("zip download", w.Code, err)
@@ -251,7 +281,7 @@ func TestMailExport(t *testing.T) {
 	g.expires = time.Now().Add(-time.Second)
 	srv.exports[token] = g
 	srv.exportMu.Unlock()
-	if w = call("GET", url, me, "", nil); w.Code != 404 || len(srv.exports) != 0 {
+	if w = call("GET", url, me, "", nil); !bounced(w, "expired") || len(srv.exports) != 0 {
 		t.Fatal("expired grant", w.Code, len(srv.exports))
 	}
 
@@ -264,7 +294,7 @@ func TestMailExport(t *testing.T) {
 			srv.exporting[id] = true
 		}
 		srv.exportMu.Unlock()
-		if w = call("GET", url, me, "", nil); w.Code != 429 || len(srv.exports) != 1 {
+		if w = call("GET", url, me, "", nil); !bounced(w, "busy&retry="+strings.TrimPrefix(url, "/api/export/")) || len(srv.exports) != 1 {
 			t.Fatal("busy export", busy, w.Code)
 		}
 	}
@@ -299,5 +329,143 @@ func TestMailExport(t *testing.T) {
 	}()
 	if broken.writes != 1 || len(srv.exporting) != 0 || len(srv.exports) != 0 {
 		t.Fatal("failed export state", broken.writes, len(srv.exporting), len(srv.exports))
+	}
+
+	// Over real HTTP/1.1 an aborted stream is a truncated chunked body, not a
+	// clean end. The mailbox is disabled after the first page reaches the
+	// wire; the per-page admission check stops the export.
+	for i := range 100 {
+		put(one.ID, extra.ID, "INBOX", append([]byte(fmt.Sprintf("Subject: more %d\r\n\r\n", i)), big...))
+	}
+	toggle := func(action string) int {
+		return call("POST", "/api/admin/mailboxes/"+extra.ID+"/"+action, adm, `{"password":"`+password+`"}`, nil).Code
+	}
+	disabled := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv.routes().ServeHTTP(&onFirstWrite{ResponseWriter: w, fn: func() { disabled = toggle("disable") }}, r)
+	}))
+	defer ts.Close()
+	get := func(path string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest("GET", ts.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: me.token})
+		client := ts.Client()
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	resp := get(grant(me, `"format":"mbox","mailbox":"`+extra.ID+`",`))
+	_, err = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || fmt.Sprint(resp.TransferEncoding) != "[chunked]" || !errors.Is(err, io.ErrUnexpectedEOF) || disabled != 200 {
+		t.Fatal("aborted export looked complete", resp.StatusCode, resp.TransferEncoding, err, disabled)
+	}
+	if code := toggle("enable"); code != 200 {
+		t.Fatal("re-enable", code)
+	}
+
+	// mbox over HTTP/1.0 is refused at download too, keeping the grant.
+	url = grant(me, `"format":"mbox",`)
+	conn, err := net.Dial("tcp", strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "GET %s HTTP/1.0\r\nHost: kypost.test\r\nCookie: kypost_session=%s\r\n\r\n", url, me.token)
+	resp, err = http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil || resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/settings/mail?tab=export&export=proxy" || len(srv.exports) != 1 {
+		t.Fatal("HTTP/1.0 mbox download", err, resp, len(srv.exports))
+	}
+	if resp = get(url); resp.StatusCode != 200 {
+		t.Fatal("grant kept after the HTTP/1.0 refusal", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+type onFirstWrite struct {
+	http.ResponseWriter
+	fn   func()
+	done bool
+}
+
+func (o *onFirstWrite) Write(p []byte) (int, error) {
+	if !o.done {
+		o.done = true
+		o.fn()
+	}
+	return o.ResponseWriter.Write(p)
+}
+
+func (o *onFirstWrite) Unwrap() http.ResponseWriter { return o.ResponseWriter }
+
+func TestExportWriteWindow(t *testing.T) {
+	for size, want := range map[int]time.Duration{0: 30 * time.Second, 64 << 10: 31 * time.Second, 25 << 20: 430 * time.Second} {
+		if got := exportWriteWindow(size); got != want {
+			t.Errorf("exportWriteWindow(%d) = %s, want %s", size, got, want)
+		}
+	}
+}
+
+// A paired device cannot start an export, a promoted KyIdentity administrator
+// gets the administrator 403, and a migrated legacyMixedUse administrator
+// keeps exporting their own primary mailbox.
+func TestMailExportIdentities(t *testing.T) {
+	ctx := context.Background()
+	const password = "long-password-for-export"
+	start := func(s *Server, userID string, device ...string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/api/export", strings.NewReader(`{"format":"mbox","password":"`+password+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		if device != nil {
+			setDeviceHeaders(r, device[0], device[1])
+		} else {
+			authRequestAs(s, r, userID)
+		}
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, r)
+		return w
+	}
+
+	s := newNativeRuntimeServer(t)
+	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "everyday-create", 1, adminRuntimeUser(false)))
+	u, err := s.users.GetBySSOSubIssuer(separationIssuer, "native-runtime-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.users.SetPassword(ctx, u.ID, password, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	deviceID, secret := pairNativeDevice(t, s, u.ID, "export-device")
+	if w := start(s, u.ID, deviceID, secret); w.Code != 403 || !strings.Contains(w.Body.String(), "browser session") || len(s.exports) != 0 {
+		t.Fatal("device started an export", w.Code, w.Body)
+	}
+	if w := start(s, u.ID); w.Code != 200 {
+		t.Fatal("everyday export", w.Code, w.Body)
+	}
+	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.updated", "everyday-promote", 2, adminRuntimeUser(true)))
+	assertAdministratorRefusal(t, "promoted export", start(s, u.ID))
+	assertAdministratorRefusal(t, "promoted export folders", requestAs(s, u.ID, "GET", "/api/export/folders"))
+
+	legacy := newNativeRuntimeServer(t)
+	legacyMixedUseAdmin(t, legacy, runtimeDirectoryUser(true))
+	lu, err := legacy.users.GetBySSOSubIssuer(separationIssuer, "native-runtime-one")
+	if err != nil || lu.Role != users.RoleAdmin {
+		t.Fatal("legacy administrator", lu.Role, err)
+	}
+	if _, err = legacy.users.SetPassword(ctx, lu.ID, password, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	w := start(legacy, lu.ID)
+	var got struct{ URL string }
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &got) != nil {
+		t.Fatal("legacy administrator export", w.Code, w.Body)
+	}
+	if w = requestAs(legacy, lu.ID, "GET", got.URL); w.Code != 200 || w.Header().Get("Content-Type") != "application/mbox" {
+		t.Fatal("legacy administrator download", w.Code, w.Header())
 	}
 }

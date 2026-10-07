@@ -50,6 +50,24 @@ func (c *Client) ExportFolders(ctx context.Context, folder string) ([]string, er
 	return nil, ErrNotFound
 }
 
+// ExportCount is the number of live messages in folders now; moves during the
+// export can change what is written.
+func (c *Client) ExportCount(ctx context.Context, folders []string) (int, error) {
+	defer runtime.KeepAlive(c)
+	if err := c.checkAccess(ctx); err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, folder := range folders {
+		var n int
+		if err := c.store.db.QueryRowContext(ctx, "SELECT count(*) FROM messages WHERE folder=? AND raw IS NOT NULL", folder).Scan(&n); err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
 // Export calls fn for every live message in folders, oldest first, holding
 // one message in memory at a time. A message moved or deleted mid-export is
 // skipped. Admission is rechecked on every page.
@@ -165,7 +183,8 @@ func WriteEML(z *zip.Writer, m ExportMessage) error {
 // ZipFolder maps a folder path to a relative zip directory: each segment
 // keeps letters, digits, space, '-', '_' and '.', replaces anything else, is
 // cut to 64 bytes and loses leading/trailing dots and spaces; an empty or
-// dot-only segment becomes "_". No result is absolute or climbs out.
+// dot-only segment becomes "_", and a Windows device name gains a "_" prefix.
+// No result is absolute or climbs out.
 func ZipFolder(folder string) string {
 	parts := strings.Split(folder, "/")
 	for i, part := range parts {
@@ -175,14 +194,35 @@ func ZipFolder(folder string) string {
 			}
 			return '_'
 		}, part)
-		for len(part) > 64 {
-			_, size := utf8.DecodeLastRuneInString(part)
-			part = part[:len(part)-size]
+		if part = zipSegment(part); windowsDevice(part) {
+			part = zipSegment("_" + part)
 		}
-		if part = strings.Trim(part, ". "); part == "" {
+		if part == "" {
 			part = "_"
 		}
 		parts[i] = part
 	}
 	return strings.Join(parts, "/")
+}
+
+func zipSegment(part string) string {
+	for len(part) > 64 {
+		_, size := utf8.DecodeLastRuneInString(part)
+		part = part[:len(part)-size]
+	}
+	return strings.Trim(part, ". ")
+}
+
+// windowsDevice reports CON, PRN, AUX, NUL, COM1-9 and LPT1-9 in any case,
+// alone or before an extension, which Windows opens as devices.
+func windowsDevice(part string) bool {
+	stem, _, _ := strings.Cut(part, ".")
+	stem = strings.ToUpper(strings.TrimRight(stem, " "))
+	switch {
+	case stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL":
+		return true
+	case len(stem) == 4 && (stem[:3] == "COM" || stem[:3] == "LPT"):
+		return stem[3] >= '1' && stem[3] <= '9'
+	}
+	return false
 }

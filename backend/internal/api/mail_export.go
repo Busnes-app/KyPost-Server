@@ -8,8 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
-	"strconv"
+	"net/url"
 	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
@@ -27,85 +28,103 @@ const (
 	exportGrantTTL = 5 * time.Minute
 	// maxExports bounds streaming downloads server-wide; each user has one.
 	maxExports = 2
-	// exportWriteWindow is how long the client has to take each message,
-	// replacing the server-wide WriteTimeout that would cut a long download.
-	exportWriteWindow = 2 * time.Minute
+	// exportSettingsPage is where a failed download sends the browser back.
+	exportSettingsPage = "/settings/mail?tab=export&export="
+	// HTTP/1.0 has no chunking: without a Content-Length an aborted mbox
+	// ends like a complete one.
+	exportHTTP10 = "mbox export needs HTTP/1.1 between the proxy and KyPost (nginx: proxy_http_version 1.1), where a cut-off download is detectable; or choose EML zip"
 )
 
+// exportWriteWindow is the time a reader gets for one message: 30 seconds
+// plus the message at 64 KiB/s, so a 25 MiB message fits a slow link while a
+// stalled reader loses its slot.
+func exportWriteWindow(size int) time.Duration {
+	return 30*time.Second + time.Duration(size)*time.Second/(64<<10)
+}
+
 type exportGrant struct {
-	user, session, mailbox, folder, format string
-	expires                                time.Time
+	user, session, mailbox, folder, format, correlation string
+	expires                                             time.Time
 }
 
 type mailExporter interface {
 	ExportFolders(ctx context.Context, folder string) ([]string, error)
+	ExportCount(ctx context.Context, folders []string) (int, error)
 	Export(ctx context.Context, folders []string, fn func(mailbox.ExportMessage) error) error
 }
 
-// exporter admits the mailbox again and answers 409 for anything not native.
-func (s *Server) exporter(w http.ResponseWriter, r *http.Request, userID, mailboxID string) (mailExporter, bool) {
-	_, native, err := s.nativeMailboxAssignment(r.Context(), userID, mailboxID)
-	if err != nil {
-		if s.refuseNativeAdministrator(w, r, userID, err) {
-			return nil, false
-		}
-		if errors.Is(err, sso.ErrNativeMailboxUnknown) {
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": "mailbox not found"})
-			return nil, false
-		}
-		http.Error(w, "mailbox authority is unavailable", http.StatusServiceUnavailable)
-		return nil, false
-	}
-	if native {
-		client, err := s.mailboxMailClient(userID, mailboxID)
-		if err != nil {
-			http.Error(w, "mailbox is unavailable", http.StatusServiceUnavailable)
-			return nil, false
-		}
-		if ex, ok := client.(mailExporter); ok {
-			return ex, true
-		}
-	}
-	writeJSON(w, http.StatusConflict, map[string]any{"error": "export is available for native mailboxes; your provider offers its own export"})
-	return nil, false
+type exportRefusal struct {
+	status int
+	error  string
 }
 
-// exportFolders resolves the folders to export, writing 400/404/503.
-func exportFolders(w http.ResponseWriter, r *http.Request, ex mailExporter, folder string) ([]string, bool) {
-	folders, err := ex.ExportFolders(r.Context(), folder)
+func (e *exportRefusal) write(w http.ResponseWriter) {
+	body := map[string]any{"error": e.error}
+	if e.status == http.StatusForbidden {
+		body["administratorIdentity"] = true
+	}
+	writeJSON(w, e.status, body)
+}
+
+// exporter admits the mailbox again; anything not native is 409.
+func (s *Server) exporter(ctx context.Context, userID, mailboxID string) (mailExporter, *exportRefusal) {
+	_, native, err := s.nativeMailboxAssignment(ctx, userID, mailboxID)
+	switch {
+	case errors.Is(err, sso.ErrNativeAdministrator):
+		return nil, &exportRefusal{http.StatusForbidden, "administrator identities have no mailbox; use your everyday identity"}
+	case errors.Is(err, sso.ErrNativeMailboxUnknown):
+		return nil, &exportRefusal{http.StatusNotFound, "mailbox not found"}
+	case err != nil:
+		return nil, &exportRefusal{http.StatusServiceUnavailable, "mailbox authority is unavailable"}
+	case native:
+		client, err := s.mailboxMailClient(userID, mailboxID)
+		if err != nil {
+			return nil, &exportRefusal{http.StatusServiceUnavailable, "mailbox is unavailable"}
+		}
+		if ex, ok := client.(mailExporter); ok {
+			return ex, nil
+		}
+	}
+	return nil, &exportRefusal{http.StatusConflict, "export is available for native mailboxes; your provider offers its own export"}
+}
+
+// exportFolders resolves the folders to export.
+func exportFolders(ctx context.Context, ex mailExporter, folder string) ([]string, *exportRefusal) {
+	folders, err := ex.ExportFolders(ctx, folder)
 	switch {
 	case err == nil:
-		return folders, true
+		return folders, nil
 	case errors.Is(err, mailbox.ErrNotFound):
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "folder not found"})
+		return nil, &exportRefusal{http.StatusNotFound, "folder not found"}
 	case errors.Is(err, imapadapter.ErrUnsafeMailbox):
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid folder"})
-	default:
-		http.Error(w, "mailbox is unavailable", http.StatusServiceUnavailable)
+		return nil, &exportRefusal{http.StatusBadRequest, "invalid folder"}
 	}
-	return nil, false
+	return nil, &exportRefusal{http.StatusServiceUnavailable, "mailbox is unavailable"}
 }
 
 // handleExportFolders lists every folder of the selected mailbox.
 func (s *Server) handleExportFolders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ac, _ := authFromContext(r)
-	ex, ok := s.exporter(w, r, ac.UserID, ac.Mailbox)
-	if !ok {
+	ex, refused := s.exporter(r.Context(), ac.UserID, ac.Mailbox)
+	if refused != nil {
+		refused.write(w)
 		return
 	}
-	if folders, ok := exportFolders(w, r, ex, ""); ok {
-		writeJSON(w, http.StatusOK, map[string]any{"folders": folders})
+	folders, refused := exportFolders(r.Context(), ex, "")
+	if refused != nil {
+		refused.write(w)
+		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"folders": folders})
 }
 
 // handleExportStart proves the caller and mints the download grant. Only a
 // browser session may export: the grant is bound to it.
 func (s *Server) handleExportStart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	ac, _ := authFromContext(r)
 	_, session, ok := s.sessionOf(r)
-	if !ok || ac.DeviceID != "" {
+	if !ok { // a device credential has no session
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "export needs a signed-in browser session"})
 		return
 	}
@@ -120,20 +139,31 @@ func (s *Server) handleExportStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "choose a format: mbox or eml-zip"})
 		return
 	}
+	if body.Format == "mbox" && !r.ProtoAtLeast(1, 1) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": exportHTTP10})
+		return
+	}
 	r, ok = s.admitMailbox(w, r, body.Mailbox)
 	if !ok {
 		return
 	}
-	ac, _ = authFromContext(r)
-	ex, ok := s.exporter(w, r, ac.UserID, ac.Mailbox)
-	if !ok {
+	ac, _ := authFromContext(r)
+	ex, refused := s.exporter(r.Context(), ac.UserID, ac.Mailbox)
+	if refused != nil {
+		refused.write(w)
 		return
 	}
-	folders, ok := exportFolders(w, r, ex, body.Folder)
-	if !ok {
+	folders, refused := exportFolders(r.Context(), ex, body.Folder)
+	if refused != nil {
+		refused.write(w)
 		return
 	}
 	if !s.confirmActor(w, r, ac.UserID, body.Password, body.AuthSecret) {
+		return
+	}
+	count, err := ex.ExportCount(r.Context(), folders)
+	if err != nil {
+		http.Error(w, "mailbox is unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	token, err := sso.RandomToken(32)
@@ -141,7 +171,12 @@ func (s *Server) handleExportStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "export unavailable", http.StatusInternalServerError)
 		return
 	}
-	grant := exportGrant{user: ac.UserID, session: session, mailbox: ac.Mailbox, format: body.Format, expires: time.Now().Add(exportGrantTTL)}
+	correlation, err := sso.RandomToken(8)
+	if err != nil {
+		http.Error(w, "export unavailable", http.StatusInternalServerError)
+		return
+	}
+	grant := exportGrant{user: ac.UserID, session: session, mailbox: ac.Mailbox, format: body.Format, correlation: correlation, expires: time.Now().Add(exportGrantTTL)}
 	if body.Folder != "" {
 		grant.folder = folders[0]
 	}
@@ -157,15 +192,23 @@ func (s *Server) handleExportStart(w http.ResponseWriter, r *http.Request) {
 	}
 	s.exports[token] = grant
 	s.exportMu.Unlock()
-	s.auditExport(grant, "authorized", 0, 0)
-	writeJSON(w, http.StatusOK, map[string]any{"url": "/api/export/" + token, "expiresInSeconds": int(exportGrantTTL.Seconds())})
+	s.auditExport(grant, "authorized", count, 0)
+	writeJSON(w, http.StatusOK, map[string]any{"url": "/api/export/" + token, "expiresInSeconds": int(exportGrantTTL.Seconds()), "messages": count})
 }
 
-// handleExportDownload spends a grant and streams the export. Unknown,
-// expired, spent, foreign-session and foreign-user tokens are one 404; a busy
-// slot answers 429 and leaves the grant for a retry.
+// handleExportDownload spends a grant and streams the export. The browser
+// navigated here, so a refusal sends it back to the export page with a code:
+// expired (unknown, expired, spent, other session or user), busy (slot taken;
+// the grant is kept and retry names it), proxy (mbox over HTTP/1.0; kept too)
+// or unavailable.
 func (s *Server) handleExportDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	back := func(code string) { http.Redirect(w, r, exportSettingsPage+code, http.StatusSeeOther) }
 	ac, _ := authFromContext(r)
 	_, session, ok := s.sessionOf(r)
 	token := r.PathValue("token")
@@ -175,15 +218,19 @@ func (s *Server) handleExportDownload(w http.ResponseWriter, r *http.Request) {
 	if found && !now.Before(g.expires) {
 		delete(s.exports, token)
 	}
-	if !ok || ac.DeviceID != "" || !found || g.user != ac.UserID || g.session != session || !now.Before(g.expires) {
+	if !ok || !found || g.user != ac.UserID || g.session != session || !now.Before(g.expires) {
 		s.exportMu.Unlock()
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "export link is unknown, expired or already used"})
+		back("expired")
+		return
+	}
+	if g.format == "mbox" && !r.ProtoAtLeast(1, 1) {
+		s.exportMu.Unlock()
+		back("proxy")
 		return
 	}
 	if s.exporting[g.user] || len(s.exporting) >= maxExports {
 		s.exportMu.Unlock()
-		w.Header().Set("Retry-After", "30")
-		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "another export is running; try again shortly"})
+		back("busy&retry=" + url.QueryEscape(token))
 		return
 	}
 	delete(s.exports, token)
@@ -194,12 +241,14 @@ func (s *Server) handleExportDownload(w http.ResponseWriter, r *http.Request) {
 	s.exportMu.Unlock()
 	defer s.endExport(g.user)
 
-	ex, ok := s.exporter(w, r, g.user, g.mailbox)
-	if !ok {
-		return
+	ex, refused := s.exporter(r.Context(), g.user, g.mailbox)
+	var folders []string
+	if refused == nil {
+		folders, refused = exportFolders(r.Context(), ex, g.folder)
 	}
-	folders, ok := exportFolders(w, r, ex, g.folder)
-	if !ok {
+	if refused != nil {
+		s.auditExport(g, "refused", 0, 0)
+		back("unavailable")
 		return
 	}
 	name, contentType := "kypost-mail-"+now.UTC().Format("20060102T150405Z"), "application/mbox"
@@ -221,7 +270,7 @@ func (s *Server) handleExportDownload(w http.ResponseWriter, r *http.Request) {
 	messages := 0
 	err := ex.Export(r.Context(), folders, func(m mailbox.ExportMessage) error {
 		// Unsupported only on test writers; the server-wide timeout then applies.
-		_ = rc.SetWriteDeadline(time.Now().Add(exportWriteWindow))
+		_ = rc.SetWriteDeadline(time.Now().Add(exportWriteWindow(len(m.Raw))))
 		messages++
 		if archive != nil {
 			return mailbox.WriteEML(archive, m)
@@ -236,7 +285,7 @@ func (s *Server) handleExportDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.auditExport(g, "failed", messages, counted.n)
-		// Abort the connection: a clean end would pass a truncated mbox as whole.
+		// Abort the connection: the client sees an unterminated chunked body.
 		panic(http.ErrAbortHandler)
 	}
 	s.auditExport(g, "finished", messages, counted.n)
@@ -248,9 +297,10 @@ func (s *Server) endExport(user string) {
 	s.exportMu.Unlock()
 }
 
-// auditExport records the export without correspondence: never subjects or addresses.
+// auditExport records the export without correspondence: never subjects or
+// addresses. The correlation ID is random per grant, never the token.
 func (s *Server) auditExport(g exportGrant, result string, messages int, bytes int64) {
-	s.logger.Info("mail export", "actor", g.user, "action", "mail_export", "mailbox", cmp.Or(g.mailbox, g.user), "folder", cmp.Or(g.folder, "(all)"), "format", g.format, "messages", strconv.Itoa(messages), "bytes", strconv.FormatInt(bytes, 10), "result", result)
+	slog.New(s.logger.Handler()).Info("mail export", "actor", g.user, "action", "mail_export", "target", cmp.Or(g.mailbox, g.user), "folder", cmp.Or(g.folder, "(all)"), "format", g.format, "messages", int64(messages), "bytes", bytes, "result", result, "correlation_id", g.correlation)
 }
 
 type countingWriter struct {

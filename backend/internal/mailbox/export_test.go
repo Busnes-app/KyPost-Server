@@ -91,6 +91,14 @@ func TestZipFolderSanitizes(t *testing.T) {
 		"Привет/日本":        "Привет/日本",
 		"rtl\u202egnp.exe": "rtl_gnp.exe",
 		long:               strings.Repeat("é", 32),
+		"CON":              "_CON",
+		"nul.txt":          "_nul.txt",
+		"Com1":             "_Com1",
+		"lpt9 .log":        "_lpt9 .log",
+		"aux/prn":          "_aux/_prn",
+		"COM0":             "COM0",
+		"CONSOLE":          "CONSOLE",
+		"LPT10":            "LPT10",
 	} {
 		got := ZipFolder(in)
 		if got != want {
@@ -129,6 +137,9 @@ func TestNativeExportPagesExactBytesToZip(t *testing.T) {
 	}
 	folders, err := c.ExportFolders(ctx, "")
 	must(t, err)
+	if n, err := c.ExportCount(ctx, folders); err != nil || n != len(want)+1 {
+		t.Fatal("count", n, err)
+	}
 	var buf bytes.Buffer
 	z := zip.NewWriter(&buf)
 	calls := 0
