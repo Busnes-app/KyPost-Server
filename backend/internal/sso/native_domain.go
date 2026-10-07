@@ -302,7 +302,8 @@ func (s *NativeDomainStore) Configure(ctx context.Context, domain, issuer string
 }
 
 // ConfigureDomain adds a domain to the set, or rotates the challenge of one
-// already configured. Retired domains are never re-added.
+// already configured. Re-adding a retired domain configures it afresh: nothing
+// routes, sends or allocates on it until VerifyDomain proves the new challenge.
 func (s *NativeDomainStore) ConfigureDomain(ctx context.Context, domain, issuer string) (NativeDomain, error) {
 	return s.configure(ctx, domain, issuer, false)
 }
@@ -322,7 +323,7 @@ func (s *NativeDomainStore) configure(ctx context.Context, domain, issuer string
 	if err != nil {
 		return NativeDomain{}, err
 	}
-	if set.Issuer != "" && set.Issuer != issuer || slices.Contains(set.Retired, domain) || foundingOnly && set.Founding != "" && set.Founding != domain {
+	if set.Issuer != "" && set.Issuer != issuer || foundingOnly && set.Founding != "" && set.Founding != domain {
 		return NativeDomain{}, ErrNativeDomain
 	}
 	var b [32]byte
@@ -339,6 +340,8 @@ func (s *NativeDomainStore) configure(ctx context.Context, domain, issuer string
 		return NativeDomain{}, err
 	}
 	set.Issuer = issuer
+	set.Retired = slices.DeleteFunc(set.Retired, func(r string) bool { return r == domain })
+	// Founding changes only when no domain is in service.
 	if set.Founding == "" {
 		set.Founding = domain
 	}
@@ -425,7 +428,7 @@ func (s NativeDomainSet) CurrentProof(proof NativeDomain) bool {
 	return proof.Domain != "" && s.Domains[proof.Domain] == proof && proof.VerifiedUntil > time.Now().Unix()
 }
 
-// RetireDomain permanently moves a configured domain to retired: no proof,
+// RetireDomain moves a configured domain to retired until re-added: no proof,
 // routing or sending, while its address records stay so generations are never
 // reused. Lock order: domain -> directory -> mailbox/ingress SQLite. Holding the
 // domain fence keeps new outbox jobs, receiving binds and relay writes out

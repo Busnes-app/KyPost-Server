@@ -63,16 +63,19 @@ step-up, answer `no-store` and use the same status codes:
   `established`, `expiresAt` and `verifiedUntil`. Retired entries have no record.
 - `POST /api/admin/mail-domains` with `{domain}` adds a domain with its own
   challenge, under the set's one issuer, or rotates the challenge of one already
-  configured. A retired domain is never re-added.
+  configured. Re-adding a retired domain configures it afresh (new challenge, not
+  established): nothing routes, sends or allocates on it until it verifies again,
+  then its kept addresses resume for their recorded mailboxes. Re-adding never
+  changes the founding domain unless no domain is in service.
 - `POST /api/admin/mail-domains/{domain}/verify` proves that domain only.
-- `DELETE /api/admin/mail-domains/{domain}` retires it permanently: refused (409)
+- `DELETE /api/admin/mail-domains/{domain}` retires it: refused (409)
   while any address on it is `active`, a `queued`/`retryable` outbox job sends
   from it, accepted (pending) incoming mail is bound to it, or the relay still
   sends for it (remove it from the relay first); a restore hold also refuses.
   Retirement keeps its address records, so generations are never reused and old
-  bindings and snapshots still validate. It is never automatic and cannot be
-  undone: a retired domain cannot be re-added, and a subject whose KyIdentity
-  primary sits on it cannot be re-provisioned until phase 3. Retiring the
+  bindings and snapshots still validate. It is never automatic. Until the domain
+  is re-added and verified, a subject whose KyIdentity primary sits on it cannot
+  be provisioned or admitted. Retiring the
   founding domain hands the single-domain routes to the smallest remaining one.
 
 Every fence compares only the proofs of the domains an operation touches:

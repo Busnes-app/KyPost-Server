@@ -123,7 +123,9 @@ same rule. A body carrying only `domains`
 and the `generation` is kept, so jobs queued on retained domains stay valid.
 Removing a domain is refused (409) while a `queued` or `retryable` outbox job
 sends from it (`submitting` and `uncertain` jobs are never reclaimed and do not
-block); a removed domain moves to `retiredDomains`. A job whose domain was removed
+block); a removed domain moves to `retiredDomains`, and one added again (for
+example after the domain set re-adds a retired domain and it verifies) leaves
+`retiredDomains`, so the two lists never overlap. A job whose domain was removed
 afterwards ends stale (quarantined) and is never submitted. `From` must be on a
 domain in `domains`. A domain must be removed from the relay before it can be
 retired. Backup validation checks historical jobs against

@@ -189,9 +189,6 @@ func TestNativeTwoDomainsAllocateLapseAndRetire(t *testing.T) {
 	if a, ok, _ := life.NativeAssignment(nativeIssuer, "two"); !ok || a.Address != "two@second.test" {
 		t.Fatal("retirement dropped the address record", a)
 	}
-	if _, err = domains.ConfigureDomain(ctx, "second.test", nativeIssuer); !errors.Is(err, ErrNativeDomain) {
-		t.Fatal("retired domain re-added", err)
-	}
 	if err = domains.RetireDomain(ctx, "second.test", root, relayKey); !errors.Is(err, ErrNativeDomain) {
 		t.Fatal("retired twice", err)
 	}
@@ -379,5 +376,108 @@ func TestNativeOutboundFromMustBeARelayDomain(t *testing.T) {
 	}
 	if _, err = mailmsg.SetDomainRelayDomains(ctx, path, sender.keyPath(), []string{"example.test"}); !errors.Is(err, mailmsg.ErrDomainRelay) {
 		t.Fatal("domain-only update created a relay", err)
+	}
+}
+
+func TestNativeDomainReaddKeepsFoundingStable(t *testing.T) {
+	ctx := context.Background()
+	config, root := t.TempDir(), t.TempDir()
+	s := NewNativeDomainStore(config)
+	key := filepath.Join(t.TempDir(), "absent.key")
+	for _, domain := range []string{"example.test", "second.test"} {
+		if _, err := s.ConfigureDomain(ctx, domain, nativeIssuer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	step := func(retire bool, domain, founding string) {
+		t.Helper()
+		var err error
+		if retire {
+			err = s.RetireDomain(ctx, domain, root, key)
+		} else {
+			_, err = s.ConfigureDomain(ctx, domain, nativeIssuer)
+		}
+		set, readErr := s.ReadSet()
+		if err != nil || readErr != nil || set.Founding != founding || set.Known(domain) != true {
+			t.Fatal("founding", retire, domain, set.Founding, err, readErr)
+		}
+	}
+	step(true, "second.test", "example.test")
+	step(false, "second.test", "example.test") // re-add never takes over
+	step(true, "example.test", "second.test")  // retiring founding hands over
+	step(false, "example.test", "second.test")
+	step(true, "second.test", "example.test")
+	step(true, "example.test", "") // nothing in service
+	step(false, "second.test", "second.test")
+	set, err := s.ReadSet()
+	if err != nil || !slices.Equal(set.Retired, []string{"example.test"}) || set.Domains["second.test"].Established {
+		t.Fatal("re-added domain", set, err)
+	}
+}
+
+func TestNativeRetiredDomainResumesForItsOwnerAfterReadd(t *testing.T) {
+	ctx := context.Background()
+	sender, _, _ := outboundFixture(t)
+	if _, err := sender.Domains.ConfigureDomain(ctx, "second.test", nativeIssuer); err != nil {
+		t.Fatal(err)
+	}
+	lapsed := map[string]bool{}
+	answerEveryDomain(sender.Domains, lapsed)
+	life := NewLifecycleStore(sender.ConfigDir)
+	nativeDesired(t, life, "two", "two@second.test", 1, true)
+	two, err := life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayPath := filepath.Join(sender.ConfigDir, "native-relay.json")
+	before, err := mailmsg.SetDomainRelayDomains(ctx, relayPath, sender.keyPath(), []string{"example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nativeDesired(t, life, "two", "two@second.test", 2, false)
+	if _, err = life.DisableNativeMailboxContext(ctx, sender.StateRoot, nativeIssuer, "two", two.ID, "second.test", nativeLimits); err != nil {
+		t.Fatal(err)
+	}
+	if err = sender.Domains.RetireDomain(ctx, "second.test", sender.StateRoot, sender.keyPath()); err != nil {
+		t.Fatal(err)
+	}
+	nativeDesired(t, life, "two", "two@second.test", 3, true)
+	if _, err = sender.Domains.ConfigureDomain(ctx, "second.test", nativeIssuer); err != nil {
+		t.Fatal(err)
+	}
+	relay, err := mailmsg.SetDomainRelayDomains(ctx, relayPath, sender.keyPath(), []string{"example.test", "second.test"})
+	if err != nil || relay.Generation != before.Generation || len(relay.RetiredDomains) != 0 {
+		t.Fatal("relay re-add", relay, err)
+	}
+	raw := []byte("From: two@second.test\r\nTo: recipient@example.test\r\nSubject: resumed\r\n\r\nmessage\r\n")
+	queue := func() error {
+		id, err := fsutil.NewUUIDv4()
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, err := sender.Accounts.Get(two.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sender.Queue(ctx, two.ID, id, mailbox.OutboundJob{From: "two@second.test", NativeSendEpoch: current.NativeSendEpoch, PGPRevision: current.PGPRevision, Deliveries: []mailbox.OutboundDelivery{{Recipients: []string{"recipient@example.test"}, Raw: raw}}})
+	}
+	// Until the new challenge proves, nothing allocates or sends on it.
+	lapsed["second.test"] = true
+	if _, err = life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits); !errors.Is(err, ErrNativeDomain) {
+		t.Fatal("unproven re-added domain allocated", err)
+	}
+	if err = queue(); err == nil {
+		t.Fatal("unproven re-added domain sent")
+	}
+	lapsed["second.test"] = false
+	again, err := life.AllocateNativeAccount(ctx, sender.StateRoot, nativeIssuer, "two", sender.Domains, sender.Accounts, nativeLimits)
+	if err != nil || again.ID != two.ID {
+		t.Fatal("original owner not resumed", again.ID, two.ID, err)
+	}
+	if a, _, _ := life.NativeAssignment(nativeIssuer, "two"); a.Address != "two@second.test" || a.Owner.Mailbox != two.ID || a.Status != "applied" {
+		t.Fatal("address record not resumed", a)
+	}
+	if err = queue(); err != nil {
+		t.Fatal("resumed owner cannot send", err)
 	}
 }

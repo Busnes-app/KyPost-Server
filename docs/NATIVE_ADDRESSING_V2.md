@@ -55,15 +55,24 @@ re-verifying one domain does not fence work on another; concurrent re-verificati
 of the same domain still fences, as today. A delivery to recipients on several
 domains is all-or-nothing, so one lapsed domain delays the others in that delivery.
 
-Removing a domain **retires** it, permanently: refused while any address on it is
+Removing a domain **retires** it: refused while any address on it is
 `active`, a `queued`/`retryable` outbox job sends from it, accepted incoming mail
 bound to it is still pending (abandoned staged transactions never block it), the relay still sends for it, or a restore hold is
 in place; otherwise the domain moves to
 `retired` (no proof, no routing, no sending) and its address records stay, with
 their history, so generations are never reused and old bindings still validate.
-A retired domain is never re-added (whether it may be is an open owner decision);
-a subject whose KyIdentity primary sits on a retired domain cannot be
-re-provisioned until phase 3.
+A retired domain may be re-added (decided 2026-10-06): it is configured afresh
+with a new challenge, not established, so nothing routes, sends or allocates on it
+until a fresh verification succeeds. Its kept address records then resume for
+their recorded mailboxes, with no reassignment or new allocation. Re-adding never
+changes the founding domain unless no domain is in service. Phase 2 bumps no
+address generation on re-add: receiving and sending still fence on the directory
+revision, the mailbox recorded for each address is unchanged, and retirement was
+refused while accepted mail or queued jobs used the domain, so nothing frozen
+before retirement can reach another mailbox. Phase 3's disable/re-enable bump
+covers retirement once generations gain authority. Until a retired domain is
+re-added and verified, a subject whose KyIdentity primary sits on it cannot be
+provisioned or admitted.
 Retirement is never automatic: a lapsed proof suspends reception and sending on that
 domain; mail stays where it is.
 
@@ -353,3 +362,5 @@ Each phase is its own PR with its own tests; behaviour stays correct between the
   re-enabled, matching the rule that disabled users lose access immediately.
 - A released address has no automatic reservation period; reassignment is always an
   explicit administrator action.
+- A retired domain may be re-added. It needs a fresh verification before it routes,
+  sends or allocates, and its kept addresses resume for their recorded mailboxes.
