@@ -842,8 +842,8 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 		return err
 	}
 	// Incoming encryption has one journal per user, kept for the primary.
-	// The API refuses enabling it beside extra mailboxes and creating one
-	// while it is on; never poll an extra mailbox past that rule.
+	// The API refuses enabling it beside an active extra mailbox and creating
+	// or enabling one while it is on; never poll an extra mailbox past that rule.
 	if mailboxID != "" && (settings.EncryptIncoming || u.IncomingEncryptionPending) {
 		p.log.Error("extra mailbox not polled: incoming encryption is on for its owner", "user_id", u.ID)
 		return errIncomingEncryptionExtraMailbox

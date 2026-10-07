@@ -186,7 +186,13 @@ func (s *Server) setNativeMailboxState(w http.ResponseWriter, r *http.Request, a
 	id := r.PathValue("id")
 	m, err := sso.NativeMailbox{ID: id}, sso.ErrNativeAddressUnknown
 	if extraMailboxID.MatchString(id) {
-		m, err = s.ssoLifecycle.SetNativeMailboxState(r.Context(), s.stateDir, id, active)
+		err = nil
+		if active {
+			err = s.refuseEnableBesideIncomingEncryption(id)
+		}
+		if err == nil {
+			m, err = s.ssoLifecycle.SetNativeMailboxState(r.Context(), s.stateDir, id, active)
+		}
 	}
 	if m.ID == "" {
 		m.ID = id
@@ -195,13 +201,33 @@ func (s *Server) setNativeMailboxState(w http.ResponseWriter, r *http.Request, a
 }
 
 // Incoming encryption keeps one journal per user and covers the primary
-// mailbox only, so it and extra mailboxes are mutually exclusive: an extra
-// mailbox's mail would otherwise stay plaintext while the user believes it
-// is encrypted. The poller refuses to poll past this rule as a backstop.
+// mailbox only, so it and an active extra mailbox are mutually exclusive: an
+// extra mailbox's mail would otherwise stay plaintext while the user believes
+// it is encrypted. Disabling every extra mailbox lifts the rule. The poller
+// refuses to poll past it as a backstop.
 var (
-	errExtraMailboxIncomingEncryption = errors.New("this user has incoming encryption on (or a replacement pending); they must turn it off before an additional mailbox can be created")
-	errIncomingEncryptionExtraMailbox = errors.New("incoming encryption covers only your primary mailbox, so it cannot be turned on while you have additional mailboxes; ask an administrator if you no longer need them")
+	errExtraMailboxIncomingEncryption = errors.New("this user has incoming encryption on (or a replacement pending); they must turn it off before an additional mailbox can be created or enabled")
+	errIncomingEncryptionExtraMailbox = errors.New("incoming encryption covers only your primary mailbox, so it cannot be turned on while you have an active additional mailbox; an administrator can disable your additional mailboxes, and they must stay disabled while encryption is on")
 )
+
+// refuseEnableBesideIncomingEncryption applies the rule to the owner of the
+// extra mailbox id; an unknown id is left to the ledger's 404.
+func (s *Server) refuseEnableBesideIncomingEncryption(id string) error {
+	all, err := s.ssoLifecycle.NativeMailboxes()
+	if err != nil {
+		return err
+	}
+	for _, m := range all {
+		if m.ID == id {
+			u, err := s.users.Get(m.User)
+			if err != nil {
+				return err
+			}
+			return s.refuseExtraBesideIncomingEncryption(u)
+		}
+	}
+	return nil
+}
 
 func (s *Server) refuseExtraBesideIncomingEncryption(u users.User) error {
 	settings, err := config.LoadUserSettings(s.userSettingsPath(u.ID))
@@ -214,9 +240,10 @@ func (s *Server) refuseExtraBesideIncomingEncryption(u users.User) error {
 	return nil
 }
 
-// ownsExtraMailbox reports whether the user has an extra mailbox in any state,
-// prepared or not. Only native accounts can.
-func (s *Server) ownsExtraMailbox(userID string) (bool, error) {
+// ownsActiveExtraMailbox reports whether the user has an active, prepared
+// extra mailbox. An unfinished one can only finish through create, which
+// refuses an owner with incoming encryption. Only native accounts can.
+func (s *Server) ownsActiveExtraMailbox(userID string) (bool, error) {
 	u, err := s.users.Get(userID)
 	if err != nil || u.NativeMailboxSource == "" {
 		return false, err
@@ -226,7 +253,7 @@ func (s *Server) ownsExtraMailbox(userID string) (bool, error) {
 		return false, err
 	}
 	for _, m := range all {
-		if m.User == userID && m.Kind == "extra" {
+		if m.User == userID && m.Kind == "extra" && m.State == "active" && m.Prepared {
 			return true, nil
 		}
 	}
@@ -251,7 +278,7 @@ func (s *Server) answerNativeMailbox(w http.ResponseWriter, r *http.Request, act
 	if errors.Is(err, sso.ErrNativeRoutesPending) {
 		ac, _ := authFromContext(r)
 		s.logger.Info("native mailbox change", "actor", ac.UserID, "action", action, "target", m.ID, "result", "committed_routes_pending")
-		writeJSON(w, http.StatusOK, map[string]any{"mailbox": m.ID, "user": m.User, "kind": m.Kind, "state": m.State, "addresses": m.Addresses, "warning": sso.ErrNativeRoutesPending.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{"mailbox": m.ID, "user": m.User, "kind": m.Kind, "state": m.State, "prepared": m.Prepared, "addresses": m.Addresses, "warning": sso.ErrNativeRoutesPending.Error()})
 		return
 	}
 	s.answerNativeAddress(w, r, action, m.ID, sso.NativeAddress{}, err)

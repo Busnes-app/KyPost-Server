@@ -51,7 +51,7 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Enabled {
-			if owns, err := s.ownsExtraMailbox(ac.UserID); err != nil {
+			if owns, err := s.ownsActiveExtraMailbox(ac.UserID); err != nil {
 				http.Error(w, "cannot verify your mailboxes; incoming encryption was not enabled", http.StatusServiceUnavailable)
 				return
 			} else if owns {

@@ -325,8 +325,8 @@ KyIdentity primary ([spec](NATIVE_ADDRESSING_V2.md#mailbox-storage)).
     but not published its storage. Poller, outbox discovery and
     `GET /api/mailboxes` skip unprepared mailboxes; repeat the creation to
     finish it.
-  - Creating one is also 409 while the owner has incoming encryption on or a
-    replacement pending (see below).
+  - Creating or enabling one is also 409 while the owner has incoming
+    encryption on or a replacement pending (see below).
 - **Authority.** `AdmitNativeMailbox` and `WithNativeMailAccess` take mailbox
   IDs: the owner is admitted as today, then an extra mailbox must belong to the
   same subject, be `active` and prepared, and pass storage validation. Unknown,
@@ -450,9 +450,10 @@ rules and labels, skipping disabled and unprepared mailboxes; sorter learning
 covers the primary mailbox only. Incoming encryption keeps one journal per user
 for the primary mailbox, so it and extra mailboxes exclude each other: creating
 an extra mailbox is 409 while the owner has incoming encryption on or a
-replacement pending, enabling incoming encryption is 409 while the user has any
-extra mailbox (disabled ones included), and the poller refuses to poll an extra
-mailbox whose owner has it on. Native pickup creation and system/own-address SMTP
+replacement pending, so is re-enabling one, enabling incoming encryption is 409
+while the user has an active, prepared extra mailbox (disabling every extra
+mailbox lifts it; an unfinished one finishes only through create), and the
+poller refuses to poll an extra mailbox whose owner has it on. Native pickup creation and system/own-address SMTP
 probes remain refused or skipped pending their authority/dependency integration. A leftover IMAP
 credential file cannot enable any native legacy SMTP path. Do not publish MX for this runtime alone. Roll back by
 disabling both native flags in both processes and keeping all

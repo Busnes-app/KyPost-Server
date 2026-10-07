@@ -26,8 +26,10 @@ storage with a mail-only `state.db`; authority, caches, poller and outbox keyed
 by mailbox ID; `GET /api/mailboxes` and `X-KyPost-Mailbox`; notifications carry
 the mailbox ID; backup validation, reference rotation and the recovery digest).
 Sorter learning covers the primary mailbox only; incoming encryption keeps
-one journal per user, so it and extra mailboxes exclude each other (each is
-refused while the other exists). Disabling an extra mailbox quarantines its
+one journal per user, so it and active extra mailboxes exclude each other:
+creating or re-enabling an extra mailbox is refused while the owner has it on,
+and enabling it is refused while the user has an active, prepared extra
+mailbox; disabling them restores the option. Disabling an extra mailbox quarantines its
 queued or retryable outbox jobs for good. Phase 4b
 (the admin screen for mailboxes) is not implemented.
 Prerequisite of

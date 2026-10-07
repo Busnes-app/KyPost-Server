@@ -40,7 +40,7 @@ describe("incoming encryption opt-in", () => {
     await waitFor(() => expect(setIncomingEncryption).toHaveBeenCalledWith(true, "", identity, true));
   });
   it("shows the server's refusal, such as additional mailboxes", async () => {
-    const refusal = "incoming encryption covers only your primary mailbox, so it cannot be turned on while you have additional mailboxes; ask an administrator if you no longer need them";
+    const refusal = "incoming encryption covers only your primary mailbox, so it cannot be turned on while you have an active additional mailbox; an administrator can disable your additional mailboxes, and they must stay disabled while encryption is on";
     vi.mocked(setIncomingEncryption).mockRejectedValue(new Error(refusal));
     render(<IncomingEncryption identity={identity} clientProtected />);
     const enabled = await screen.findByLabelText("Encrypt incoming mail after classification");

@@ -426,16 +426,33 @@ func TestNativeExtraMailboxExcludesIncomingEncryption(t *testing.T) {
 	if w := enable(); w.Code != 409 || strings.TrimSpace(w.Body.String()) != want {
 		t.Fatal("incoming encryption enabled beside an extra mailbox", w.Code, w.Body)
 	}
+	// Disabling every extra mailbox lifts the rule: the request passes the
+	// mailbox gate and stops at step-up.
 	if _, err := srv.ssoLifecycle.SetNativeMailboxState(ctx, srv.stateDir, extra.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if w := enable(); w.Code != 409 || strings.TrimSpace(w.Body.String()) != want {
-		t.Fatal("a disabled extra mailbox allowed incoming encryption", w.Code, w.Body)
+	if w := enable(); w.Code == 409 || strings.Contains(w.Body.String(), "additional mailbox") {
+		t.Fatal("a disabled extra mailbox still blocks incoming encryption", w.Code, w.Body)
 	}
-	// An active mailbox whose creation never published storage is not listed.
-	if _, err := srv.ssoLifecycle.SetNativeMailboxState(ctx, srv.stateDir, extra.ID, true); err != nil {
-		t.Fatal(err)
+	toggle := func(action string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/admin/mailboxes/"+extra.ID+"/"+action, strings.NewReader(`{"password":"`+password+`"}`))
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
+		req.Header.Set("X-CSRF-Token", csrf)
+		w := httptest.NewRecorder()
+		srv.routes().ServeHTTP(w, req)
+		return w
 	}
+	setEncrypt(true)
+	refused := `{"error":"` + errExtraMailboxIncomingEncryption.Error() + `"}`
+	if w := toggle("enable"); w.Code != 409 || strings.TrimSpace(w.Body.String()) != refused {
+		t.Fatal("extra mailbox enabled beside incoming encryption", w.Code, w.Body)
+	}
+	setEncrypt(false)
+	if w := toggle("enable"); w.Code != 200 {
+		t.Fatal("enable", w.Code, w.Body)
+	}
+	// An active mailbox whose creation never published storage is not listed
+	// and does not block incoming encryption.
 	path := filepath.Join(srv.configDir, "native-provisioning.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -458,6 +475,9 @@ func TestNativeExtraMailboxExcludesIncomingEncryption(t *testing.T) {
 	srv.routes().ServeHTTP(w, req)
 	if w.Code != 200 || strings.Contains(w.Body.String(), extra.ID) {
 		t.Fatal("unprepared mailbox listed", w.Code, w.Body)
+	}
+	if w := enable(); w.Code == 409 || strings.Contains(w.Body.String(), "additional mailbox") {
+		t.Fatal("an unfinished extra mailbox blocks incoming encryption", w.Code, w.Body)
 	}
 	// A promoted subject selecting a mailbox gets the administrator 403.
 	promoted := scimUser("native-runtime-one", "runtime-one", true, "kypost.admin")
