@@ -288,10 +288,121 @@ reception and provider cleanup are not implemented.
   command metadata to stderr; protect and rotate those logs. Its command module
   discards helper stderr, so individual helper JSON diagnostics are unavailable
   through this bridge. Daemon import errors remain in KyPost's normal logs.
+- Manually blocked senders are refused at RCPT with `550 5.7.1 Sender blocked`
+  (helper exit 6) before anything is stored; the Cloudflare profile enforces the
+  same list in the Worker. Sender shapes the Worker refuses (quoted local
+  parts, domain literals, internationalized sender domains) are refused here
+  too with `550 5.1.7` (exit 7), so every accepted sender can be blocked; an
+  unreadable block list answers `451 4.3.0 Sender blocks unreadable` (exit 8)
+  until repaired. An address block matches that address, a domain
+  block exactly that domain (not subdomains); the null sender is never blocked
+  and your own mail domains cannot be. Manage blocks with
+  `receiving blocks list|add|remove` or the admin API; see
+  [sender blocks](NATIVE_PROVISIONING.md#sender-blocks). Configurations
+  generated before this release lack the exit 6-8 mappings; `start-receiving.sh`
+  regenerates it at every start, a hand-generated one must be regenerated.
 - Without the optional Rspamd profile, rate/size limits are not spam authentication or filtering. Sender-written
   authentication headers are untrusted. Hard volume quotas, safe reservation
   cleanup, provenance/licensing and intended-volume power-loss/restore checks
   remain public release gates. Never erase receipts or accepted mail to free space.
+
+## Continuous Cloudflare profile
+
+The hosted alternative to the receiver above: Cloudflare Email Routing accepts
+mail into the operator's Worker and private R2 bucket, and the daemon picks it
+up over outbound HTTPS. No inbound port is opened. Cloudflare and its account
+administrators can read mail in transit and in R2, and the published table
+shows them every routed address. Design, wire contract and remaining live
+qualification: [continuous receiving](CLOUDFLARE_CONTINUOUS_RECEIVING.md).
+Enable one profile only: KyPost refuses to start with both this origin and
+`KYPOST_NATIVE_RECEIVER=true`.
+
+Prerequisites: native mail and receiving with an initialized spool, a proven
+domain, the Rspamd overlay (`KYPOST_RECEIVING_RSPAMD=true`), Workers Paid, and
+a Worker deployed with `receiving-worker/continuous.mjs` as its `main`, an R2
+bucket bound as `MAIL` and Email Routing's catch-all pointing at it.
+
+1. Create this instance's credentials, as the state owner:
+
+   ```sh
+   docker compose exec --user kypost kypost-server kypost-server receiving cloudflare init
+   ```
+
+   It prints `PICKUP_TOKEN_SHA256` and `ROUTING_PUBLIC_KEY`. Neither is secret
+   and neither can read mail; the bearer and signing key never leave
+   `SECRET_DIR`. Deploy both with `wrangler secret put <NAME>`. Use a fresh pair
+   for every Worker. `init` refuses when credentials already exist.
+2. Set `KYPOST_CLOUDFLARE_RECEIVING_ORIGIN=https://<worker>.<account>.workers.dev`
+   in `.env` and recreate the container. Within 30 seconds the daemon publishes
+   the routing table; mail to an unrouted address is refused by Cloudflare.
+3. Watch `kypost-server receiving cloudflare status` (or
+   `GET /api/admin/receiving/cloudflare`): `running`, the last revision and
+   pickup time, waiting and ledger counts. `oldestUnpickedWarning` turns true
+   when mail has waited in R2 over an hour; check the scanner, domain proof,
+   receiving capacity and fencing. `refused` ledger entries are provider objects
+   KyPost cannot hold (a malformed envelope, an unparseable sender or bytes that
+   differ from a committed delivery with the same key); they stay in R2 for
+   inspection and leave the ledger once removed there.
+
+Quarantined Cloudflare deliveries appear with gateway `cloudflare-continuous`
+in `receiving quarantine list` and Server → Quarantine. Mail frozen against a
+table revision this instance never published, typically mail that waited at
+Cloudflare through a restore and takeover, is *unresolved*: its original owner
+cannot be proven. Server → Quarantine marks it "original owner unknown" and
+shows the recipient address's owner today; **Release to current owner…** (or
+`receiving quarantine release-to-current-owner <gateway> <id> <currentMailbox> --confirm <id>`,
+naming the `currentMailbox` the list showed) delivers it there after
+confirmation, only while the address is active and still owned by that mailbox;
+if it moved since you looked, the release is refused and you review it again.
+Otherwise discard it. See
+[quarantine release](NATIVE_PROVISIONING.md#quarantine-release).
+
+**Rotate** the bearer and signing key at any time: `kypost-server receiving
+cloudflare rotate`. A crash or lost answer is safe to retry with the same
+command; it resends the same new material and confirms it with the new bearer.
+
+**Restore and takeover.** A restored instance starts fenced: its daemon makes no
+request to the Worker, and the original keeps receiving. Testing or inspecting a
+restore therefore changes nothing. To move receiving to the restored host:
+
+```sh
+docker compose exec --user kypost kypost-server kypost-server receiving cloudflare takeover --confirm move-receiving-here
+```
+
+Take over promptly after a restore: tables are re-signed hourly, so mail
+captured after the backup's last table is unresolved on this host and needs an
+administrator's release to the current owner (above).
+
+Receiving moves to this host and the current host stops receiving: the Worker
+refuses the previous credentials on every route, and that host stops and reports
+`fenced`. If another instance rotated first, the command says so and this host
+stays fenced. This host picks up everything still in R2, including mail the
+original committed but had not yet deleted, and deletes nothing from R2 until it
+has committed it itself. Mail the original picked up and deleted after the
+backup was taken exists only on the original host; export it from there before
+retiring that host.
+
+**Takeover needs the Worker's current key.** A backup older than the last
+rotation (scheduled, on demand, or another takeover) cannot take over: the
+Worker refuses its bearer. If the original host is gone, re-bootstrap as below;
+mail already waiting in R2 then arrives unresolved and follows the release path
+above.
+
+**Never clone** a receiving instance's volumes (as opposed to restoring a
+backup): a clone copies the host marker and both copies consume the queue.
+
+If the original host is dead, or an attacker may hold a backup and its seal,
+recover through the Cloudflare account in this order: on the host that should receive, move the credential
+files aside (`SECRET_DIR/cloudflare-receiving.json` and
+`cloudflare-receiving.host.json`), run `init`, deploy the two new values as the
+Worker secrets, and only then delete `credentials.json` from the R2 bucket.
+Deleting it first, or redeploying old secrets, hands receiving back to the old
+key.
+
+**Roll back** by unsetting `KYPOST_CLOUDFLARE_RECEIVING_ORIGIN` and recreating
+the container. Mail already in R2 waits there (the Worker keeps accepting
+against its last table for up to 14 days); set the origin again to drain it.
+Disabling Email Routing deletes Cloudflare's locked SPF record; restore your own.
 
 ## Verify and roll back
 

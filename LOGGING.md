@@ -24,4 +24,17 @@ streams (10 MiB each, three backups). Maddy emits envelope/IP/command metadata
 rather than the Go JSON format and discards helper stderr; protect these logs.
 Debug/wire logging remains disabled.
 
+Continuous Cloudflare receiving logs actions (`publish`, `pickup`, `delete`,
+`quarantine`, `refuse`, `fence`, `rotate`) with the R2 key or table revision as
+correlation; never addresses, message content, bearers or keys.
+
+Sender block changes log `receiving sender block change` with action
+`block_sender` or `unblock_sender`, the kind (`address` or `domain`) as target,
+the result and the block ID (a SHA-256 prefix) as correlation; never the blocked
+address or domain (an unblock logs only the ID). API changes go to the API stream, CLI changes to the terminal.
+An unreadable block list logs `cloudflare sender blocks unreadable` (error,
+result `previous-blocks-kept`) on every publish attempt until repaired; blocks
+left out of a full table log `cloudflare sender blocks truncated` (result
+`truncated`) with the count.
+
 The viewer is a transitional compatibility feature, not a new log platform.

@@ -1,0 +1,30 @@
+{
+ "comment": "Envelope senders: the Worker accepts exactly `accept` and rejects `reject`; KyPost's holding store must accept every `accept` entry.",
+ "accept": [
+  "a@x.test",
+  "Sender@example.test",
+  "ü@xn--bcher-kva.example",
+  "a/b=c'd{e}~f`g|h^i$j%k&l*m+n?o#p!q@x.test",
+  "a.b@x-y.test",
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@a.test",
+  "€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€@a.test"
+ ],
+ "reject": [
+  "\"a b\"@x.test",
+  "a..b@x.test",
+  ".a@x.test",
+  "a.@x.test",
+  "a@x..test",
+  "a(c)@x.test",
+  "a b@x.test",
+  "a@[1.2.3.4]",
+  "a@\u212A.test",
+  "a@b\u00fccher.test",
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@a.test",
+  "€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€@a.test",
+  "a@bücher.example",
+  "x\r\n@example.test",
+  "@x.test",
+  "a@"
+ ]
+}

@@ -220,3 +220,86 @@ func TestArchiveGainsDispositionColumn(t *testing.T) {
 		t.Fatal(disposition, err)
 	}
 }
+
+// A hosted gateway's frozen binding quarantines with its bytes, from nothing
+// or from staged, replays exactly and never takes a pending delivery.
+func TestQuarantineFrozenBinding(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "holding"), Limits{MessageBytes: 1 << 10, PayloadBytes: 1 << 10, Records: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	raw := []byte("Subject: frozen\r\n\r\nbytes\r\n")
+	frozen := Binding{Address: "alice@example.test", Issuer: "https://issuer.test", Subject: "alice", Mailbox: "alice", Generation: 1}
+	unresolved := Binding{Address: "alice@example.test", Generation: 4}
+	for _, b := range []Binding{{Address: "alice@example.test", Subject: "alice", Generation: 1}, {Address: "alice@example.test", Mailbox: "alice"}} {
+		if err := s.Quarantine(ctx, "hosted", "bad", "", b, raw); !errors.Is(err, ErrConflict) {
+			t.Fatal("partial owner accepted", b, err)
+		}
+	}
+	if err := s.Quarantine(ctx, "hosted", "new", "", unresolved, raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Quarantine(ctx, "hosted", "new", "", unresolved, raw); err != nil {
+		t.Fatal("exact replay", err)
+	}
+	if err := s.Quarantine(ctx, "hosted", "new", "", unresolved, []byte("other")); !errors.Is(err, ErrConflict) {
+		t.Fatal("changed bytes", err)
+	}
+	if err := s.SetRoute(ctx, Route{Address: frozen.Address, Issuer: frozen.Issuer, Subject: frozen.Subject, Mailbox: frozen.Mailbox, Generation: 1, Active: true, ValidUntil: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Bind(ctx, "hosted", "staged", "s@outside.test", frozen.Address); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Quarantine(ctx, "hosted", "staged", "s@outside.test", unresolved, raw); !errors.Is(err, ErrConflict) {
+		t.Fatal("staged binding replaced", err)
+	}
+	if err := s.Quarantine(ctx, "hosted", "staged", "s@outside.test", frozen, raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"new", "staged"} {
+		d, err := s.Get(ctx, "hosted", id)
+		if err != nil || d.State != "quarantined" || !bytes.Equal(d.Raw, raw) || len(d.Bindings) != 1 {
+			t.Fatal(id, d.State, err)
+		}
+	}
+	resolved := Binding{Address: unresolved.Address, Issuer: frozen.Issuer, Subject: frozen.Subject, Mailbox: frozen.Mailbox, Generation: 4}
+	if err := s.ResolveQuarantined(ctx, "hosted", "new", Binding{Address: "other@example.test", Issuer: frozen.Issuer, Subject: "x", Mailbox: "x", Generation: 1}); !errors.Is(err, ErrConflict) {
+		t.Fatal("resolved another address", err)
+	}
+	for range 2 {
+		if err := s.ResolveQuarantined(ctx, "hosted", "new", resolved); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ResolveQuarantined(ctx, "hosted", "new", frozen); !errors.Is(err, ErrConflict) {
+		t.Fatal("resolved binding rebound", err)
+	}
+	if err := s.ResolveQuarantined(ctx, "hosted", "staged", resolved); !errors.Is(err, ErrConflict) {
+		t.Fatal("frozen owner replaced", err)
+	}
+	if d, err := s.Get(ctx, "hosted", "new"); err != nil || d.State != "quarantined" || d.Bindings[0] != resolved {
+		t.Fatal("resolve", d.Bindings, err)
+	}
+	// Two records held: a third delivery is refused, never evicted.
+	if err := s.Quarantine(ctx, "hosted", "third", "", unresolved, raw); !errors.Is(err, ErrCapacity) {
+		t.Fatal("capacity", err)
+	}
+	if _, err := s.Discard(ctx, "hosted", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Quarantine(ctx, "hosted", "new", "", unresolved, raw); err != nil {
+		t.Fatal("discarded tombstone replay", err)
+	}
+	if err := s.Bind(ctx, "hosted", "pending", "", frozen.Address); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Accept(ctx, "hosted", "pending", "", bytes.NewReader(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Quarantine(ctx, "hosted", "pending", "", frozen, raw); !errors.Is(err, ErrConflict) {
+		t.Fatal("pending delivery taken without QuarantinePending", err)
+	}
+}

@@ -224,7 +224,7 @@ func (r *receivingRuntime) pickupCloudflare(ctx context.Context, m cloudflareMes
 	if r.gatewayID() != cloudflareGateway || !m.valid(raw, time.Now().Unix()) {
 		return ingress.ErrRoute
 	}
-	if err := r.bindExpected(ctx, m.ID, m.Sender, m.Route.Recipient, &m.Route); err != nil {
+	if err := r.bindExpected(ctx, m.ID, m.Sender, m.Route.Recipient, m.Route.matches); err != nil {
 		return err
 	}
 	if err := r.accept(ctx, m.ID, m.Sender, bytes.NewReader(raw)); err != nil {

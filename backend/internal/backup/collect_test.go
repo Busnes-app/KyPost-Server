@@ -1,13 +1,17 @@
 package backup
 
 import (
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
@@ -163,5 +167,68 @@ func TestCollectOptionalTuningOverride(t *testing.T) {
 				t.Fatalf("custom prompt included = %v, want %v", found, tc.present)
 			}
 		})
+	}
+}
+
+// Cloudflare credentials are sealed; the host record is not, so a restored
+// copy starts fenced. The ledger database is snapshotted, never copied raw.
+func TestCollectSealsCloudflareCredentialsNotHostRecord(t *testing.T) {
+	d := fixtureDirs(t)
+	for _, name := range []string{cfreceiving.CredentialsFile, cfreceiving.HostFile, cfreceiving.HostFile + ".tmp.123"} {
+		if err := os.WriteFile(filepath.Join(d.Secret, name), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := openService(t, d, config.BackupConfig{}).Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := map[string]bool{}
+	for _, f := range p.Files {
+		paths[f.Path] = true
+	}
+	if !paths["private/"+cfreceiving.CredentialsFile] || paths["private/"+cfreceiving.HostFile] || paths["private/"+cfreceiving.HostFile+".tmp.123"] {
+		t.Fatal("credentials must be sealed and the host record excluded", paths)
+	}
+	if !snapshotDatabase(cfreceiving.DBFile) {
+		t.Fatal("ledger database copied without a SQLite snapshot")
+	}
+}
+
+// The sender block list is sealed as written; its lock file is not.
+func TestCollectSealsSenderBlocks(t *testing.T) {
+	d := fixtureDirs(t)
+	dir := filepath.Join(d.State, "receiving")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ingress.NewBlocks(dir).Put(context.Background(), ingress.SenderBlock{Kind: "domain", Value: "evil.test", Source: "manual", Actor: "a", Reason: "spam"}, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	live, err := os.ReadFile(filepath.Join(dir, ingress.BlocksFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := openService(t, d, config.BackupConfig{}).Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range p.Files {
+		found = found || f.Path == "state/receiving/"+ingress.BlocksFile && string(f.Data) == string(live)
+		if strings.HasSuffix(f.Path, ".lock") {
+			t.Fatal("lock file collected", f.Path)
+		}
+	}
+	if !found {
+		t.Fatal("sender block list not sealed")
+	}
+	// A list load would refuse is refused at backup time too.
+	malformed := strings.Replace(string(live), `"evil.test"`, `"Evil.test"`, 1)
+	if err := os.WriteFile(filepath.Join(dir, ingress.BlocksFile), []byte(malformed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openService(t, d, config.BackupConfig{}).Collect(); err == nil || !strings.Contains(err.Error(), ingress.BlocksFile) {
+		t.Fatal("malformed block list sealed", err)
 	}
 }

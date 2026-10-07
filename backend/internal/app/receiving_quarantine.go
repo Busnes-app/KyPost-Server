@@ -17,7 +17,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
 
-const quarantineUsage = "usage: receiving quarantine list [<after-sequence>] | receiving quarantine release|discard <gateway> <id> --confirm <id>"
+const quarantineUsage = "usage: receiving quarantine list [<after-sequence>] | receiving quarantine release|discard <gateway> <id> --confirm <id> | receiving quarantine release-to-current-owner <gateway> <id> <current-mailbox-as-listed> --confirm <id>"
 
 // runReceivingQuarantine is the operator CLI for quarantined deliveries.
 // Shell access as the runtime user already holds every key the admin API's
@@ -38,7 +38,15 @@ func runReceivingQuarantine(args []string, output io.Writer) (result error) {
 		action = args[0]
 	}
 	var after int64
+	reviewed := ""
 	switch {
+	case len(args) == 6 && args[0] == "release-to-current-owner" && ingress.ValidIdentifier(args[1]) && ingress.ValidIdentifier(args[2]) && ingress.ValidIdentifier(args[3]):
+		// The mailbox is the currentMailbox the list showed: release refuses
+		// if today's owner changed since.
+		target, reviewed = args[1]+"/"+args[2], args[3]
+		if args[4] != "--confirm" || args[5] != args[2] {
+			return errors.New("refused: repeat the delivery ID after --confirm to " + args[0] + " it")
+		}
 	case len(args) == 5 && (args[0] == "release" || args[0] == "discard") && ingress.ValidIdentifier(args[1]) && ingress.ValidIdentifier(args[2]):
 		target = args[1] + "/" + args[2]
 		if args[3] != "--confirm" || args[4] != args[2] {
@@ -76,9 +84,11 @@ func runReceivingQuarantine(args []string, output io.Writer) (result error) {
 			return err
 		}
 		return json.NewEncoder(output).Encode(map[string]any{"deliveries": rows})
-	case "release":
+	case "release", "release-to-current-owner":
+		// The second form is for unresolved deliveries only: today's owner
+		// of the address, not proven to be the original.
 		status = "released"
-		return r.life.ReleaseQuarantined(ctx, r.stateDir, sso.NewStore(r.configDir).Load().IssuerURL, r.accounts, r.holding, args[1], args[2])
+		return r.life.ReleaseQuarantined(ctx, r.stateDir, sso.NewStore(r.configDir).Load().IssuerURL, r.accounts, r.holding, args[1], args[2], reviewed)
 	default:
 		status, err = r.holding.Discard(ctx, args[1], args[2])
 		if err == nil {

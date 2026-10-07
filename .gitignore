@@ -76,3 +76,4 @@ docs/superpowers/
 # Bash approvals, including wildcards that amount to unrestricted code execution.
 # Keep them in settings.local.json, which is gitignored.
 .claude/settings.json
+.wrangler/
