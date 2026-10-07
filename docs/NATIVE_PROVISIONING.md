@@ -517,7 +517,10 @@ same transaction: a compact tombstone (sender, digest, recipients) replaces the
 row and its bindings, answers exact replays and stops the receiver ID from being
 delivered again. The 10,000-record limit counts only staged, pending and
 quarantined deliveries; tombstones are never pruned and count only toward the
-physical budget (about 0.2 KiB each). Already
+physical budget. A typical tombstone is about 190-210 bytes (about 2 million in
+the budget below); an attacker flooding many aliases with 320-byte senders and
+100 recipients fits about 170,000. Backups refuse `ingress.db` above 64 MiB, at
+about 360,000 typical tombstones. Already
 accepted mail imports without fresh DNS, refreshing authorized route TTLs
 before claiming. Missing storage, restore holds or disabled authority retain
 pending mail. Local reactivation without a directory state change permits
@@ -555,7 +558,9 @@ reconciliation or an operator volume quota is needed. Never remove WAL or
 shared-memory files from an open database to make space.
 
 This profile is for controlled qualification. Before public MX, qualify bounded
-receiver concurrency/rates, safe abandoned-RCPT cleanup,
+receiver concurrency/rates, safe abandoned-RCPT cleanup, tombstone pruning and
+capacity recovery (durable limits cannot be raised, so a full budget stops
+reception for good),
 hard database/WAL/volume quotas and representative free-space reserves, TLS/spam policy, receiver provenance
 and licensing, and power-loss/restore behavior on the intended volumes. Logical
 payload limits do not bound physical disk growth. Successful RCPT followed by

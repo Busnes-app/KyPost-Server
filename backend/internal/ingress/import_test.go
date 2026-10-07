@@ -337,6 +337,11 @@ func TestArchivedReceiptsFreeRecordLimitAndDedupe(t *testing.T) {
 	if err != nil || len(list) != len(ids) {
 		t.Fatalf("replay duplicated or lost mail: %d %v", len(list), err)
 	}
+	var stamped int
+	now := time.Now().Unix()
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM archived WHERE archived_at BETWEEN ? AND ?", now-60, now+60).Scan(&stamped); err != nil || stamped != len(ids) {
+		t.Fatalf("archived_at not UTC unix seconds: %d %v", stamped, err)
+	}
 	if rows, err := s.List(ctx, "maddy", 0, 100); err != nil || len(rows) != 0 {
 		t.Fatalf("archived deliveries still listed: %+v %v", rows, err)
 	}
@@ -411,7 +416,7 @@ func TestArchiveMigratesOnlyImportedReceipts(t *testing.T) {
 	if err := s.SetRoute(ctx, proofRoute("alice@example.test", "alice", 1)); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"staged", "pending", "quarantined", "legacy"} {
+	for _, id := range []string{"staged", "pending", "quarantined", "legacy", "downgraded"} {
 		if err := s.Bind(ctx, "maddy", id, "sender@outside.test", "alice@example.test"); err != nil {
 			t.Fatal(err)
 		}
@@ -431,12 +436,16 @@ func TestArchiveMigratesOnlyImportedReceipts(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
+	for round := range 2 {
 		s, err = OpenExisting(dir, proofLimits)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for id, state := range map[string]string{"staged": "staged", "pending": "pending", "quarantined": "quarantined", "legacy": "archived"} {
+		downgraded := "pending"
+		if round == 1 {
+			downgraded = "archived"
+		}
+		for id, state := range map[string]string{"staged": "staged", "pending": "pending", "quarantined": "quarantined", "legacy": "archived", "downgraded": downgraded} {
 			d, err := s.Get(ctx, "maddy", id)
 			if err != nil || d.State != state || (state == "pending" || state == "quarantined") && !bytes.Equal(d.Raw, importRaw) || state != "archived" && len(d.Bindings) != 1 {
 				t.Fatalf("%s after migration: %+v %v", id, d, err)
@@ -445,8 +454,43 @@ func TestArchiveMigratesOnlyImportedReceipts(t *testing.T) {
 		if err := s.Bind(ctx, "maddy", "legacy", "sender@outside.test", "alice@example.test"); err != nil {
 			t.Fatalf("migrated receipt replay: %v", err)
 		}
+		// An older binary run after the table exists still leaves 'imported'.
+		if _, err := s.db.Exec("UPDATE deliveries SET state='imported',raw=NULL WHERE id='downgraded'"); err != nil {
+			t.Fatal(err)
+		}
 		if err := s.Close(); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// Every recipient of a multi-owner delivery replays after archival, and a lost
+// ACK replay needs the archived digest.
+func TestArchivedMultiRecipientReplay(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	s, err := Open(filepath.Join(root, "holding"), proofLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	createImport(t, s, "multi")
+	claimed, err := s.Get(ctx, "maddy", "multi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Import(ctx, "maddy", "multi", func(owner mailbox.Owner) (*mailbox.Store, error) { return openMailbox(t, root, owner), nil }); err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range []string{"alice@example.test", "alias@example.test", "hidden@example.test"} {
+		if err := s.Bind(ctx, "maddy", "multi", "sender@outside.test", address); err != nil {
+			t.Fatalf("archived recipient %s replay: %v", address, err)
+		}
+	}
+	if err := s.Acknowledge(ctx, "maddy", "multi", "lost", claimed.Digest); err != nil {
+		t.Fatalf("lost ACK replay: %v", err)
+	}
+	if err := s.Acknowledge(ctx, "maddy", "multi", "lost", strings.Repeat("0", 64)); !errors.Is(err, ErrLease) {
+		t.Fatalf("wrong-digest ACK replay: %v", err)
 	}
 }

@@ -56,7 +56,8 @@ synchronously. Both were approved on 2026-10-06; `TURNKEY_MAIL_STACK_PLAN.md` an
   waiting mail. Sending allows any address of the sending mailbox.
 - **Receipt archival** (done). Acknowledgment archives an imported delivery into a
   replay tombstone outside the ingress record limit; see `NATIVE_PROVISIONING.md`.
-  Tombstones are kept until the provider ledger's delete makes pruning safe.
+  Tombstones are not pruned yet; pruning and capacity recovery remain a
+  public-MX gate there.
 - **Quarantine release.** An operator tool to inspect, release to the current owner
   of the frozen mailbox, or discard quarantined deliveries. Without it, quarantine is
   a dead end.

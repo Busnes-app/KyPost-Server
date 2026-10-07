@@ -25,7 +25,7 @@ import (
 
 var (
 	ErrConflict     = errors.New("ingress identity conflict; preserve the receipt and investigate")
-	ErrCapacity     = errors.New("ingress capacity reached; import or archive receipts before accepting more mail")
+	ErrCapacity     = errors.New("ingress capacity reached; let waiting mail import or reconcile receiving storage before accepting more mail")
 	ErrRoute        = errors.New("recipient is unknown, disabled or routing is stale; reconcile the directory")
 	ErrRoutingStale = errors.New("routing snapshot expired; refresh it before accepting mail")
 	ErrLease        = errors.New("ingress claim expired or changed; reacquire before acknowledging")
@@ -87,37 +87,48 @@ CREATE TABLE IF NOT EXISTS bindings (gateway TEXT NOT NULL, id TEXT NOT NULL, ad
 `
 
 // Acknowledged deliveries become tombstones outside the record limit: enough
-// to recognise an exact replay, never enough to deliver again.
-const archivedSchema = `CREATE TABLE archived (gateway TEXT NOT NULL, id TEXT NOT NULL, sender TEXT NOT NULL, digest TEXT NOT NULL, recipients TEXT NOT NULL, PRIMARY KEY(gateway,id)) WITHOUT ROWID`
+// to recognise an exact replay, never enough to deliver again. archived_at (UTC
+// unix seconds) lets a future age pruner be one DELETE. The partial index keeps
+// the per-open legacy check off the payload pages.
+const archivedSchema = `CREATE TABLE IF NOT EXISTS archived (gateway TEXT NOT NULL, id TEXT NOT NULL, sender TEXT NOT NULL, digest TEXT NOT NULL, recipients TEXT NOT NULL, archived_at INTEGER NOT NULL, PRIMARY KEY(gateway,id)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS imported ON deliveries(gateway,id) WHERE state='imported';`
+
+// ArchivedColumns is the tombstone table shape restore validation expects.
+const ArchivedColumns = "gateway TEXT,id TEXT,sender TEXT,digest TEXT,recipients TEXT,archived_at INTEGER"
 
 // archive moves acknowledged deliveries matching where into tombstones inside
 // the caller's writer transaction; bindings cascade with the delivery row.
-func archive(ctx context.Context, tx *sql.Tx, where string, args ...any) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO archived SELECT gateway,id,sender,digest,(SELECT group_concat(b.address,char(10)) FROM bindings b WHERE b.gateway=d.gateway AND b.id=d.id) FROM deliveries d WHERE `+where, args...)
+// insert is "INSERT" (a duplicate is a bug) or "INSERT OR IGNORE" (legacy).
+func archive(ctx context.Context, tx *sql.Tx, insert, where string, args ...any) error {
+	_, err := tx.ExecContext(ctx, insert+` INTO archived(gateway,id,sender,digest,recipients,archived_at) SELECT gateway,id,sender,digest,(SELECT group_concat(b.address,char(10)) FROM bindings b WHERE b.gateway=d.gateway AND b.id=d.id),unixepoch() FROM deliveries d WHERE `+where, args...)
 	if err == nil {
 		_, err = tx.ExecContext(ctx, "DELETE FROM deliveries WHERE "+where, args...)
 	}
 	return err
 }
 
-// migrateArchive converts receipts acknowledged before tombstones existed. It
-// runs once, atomically with creating the table, so a crash leaves either state.
-// ponytail: a downgraded binary writing 'imported' rows after this would leave
-// them counted; downgrade is unsupported.
+// migrateArchive creates the tombstone table and archives 'imported' rows left
+// by an earlier (or downgraded) binary. A plain read skips the writer lock when
+// there is nothing to do; the write is one idempotent transaction.
 func migrateArchive(ctx context.Context, db *sql.DB) error {
+	var ready, legacy int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('archived','imported')").Scan(&ready); err != nil {
+		return err
+	}
+	if ready == 2 {
+		if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM deliveries INDEXED BY imported WHERE state='imported')").Scan(&legacy); err != nil || legacy == 0 {
+			return err
+		}
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var exists int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='archived'").Scan(&exists); err != nil || exists == 1 {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, archivedSchema); err != nil {
 		return err
 	}
-	if err := archive(ctx, tx, "state='imported'"); err != nil {
+	if err := archive(ctx, tx, "INSERT OR IGNORE", "state='imported'"); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -702,10 +713,11 @@ func (s *Store) Acknowledge(ctx context.Context, gateway, id, lease, digest stri
 		}
 		return ErrRoute
 	}
-	// ponytail: tombstones are never pruned; at about 0.2 KiB each the default
-	// physical budget holds roughly 1.5 million. Prune only once a gateway proves
-	// its source copy gone, e.g. the continuous Cloudflare ledger's delete.
-	if err := archive(ctx, tx, "gateway=? AND id=? AND state='pending'", gateway, id); err != nil {
+	// ponytail: tombstones are never pruned. Typically ~0.2 KiB (about 2 million
+	// in the default budget; ~170K attacker-shaped), and ingress.db hits the
+	// 64 MiB backup file cap near 360K. Pruning by archived_at, or after a
+	// gateway proves its source copy gone, is a public-MX gate.
+	if err := archive(ctx, tx, "INSERT", "gateway=? AND id=? AND state='pending'", gateway, id); err != nil {
 		return err
 	}
 	return tx.Commit()

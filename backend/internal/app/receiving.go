@@ -76,8 +76,14 @@ func runReceivingCommand(args []string, input io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	r, err := openReceivingRuntime(ctx, args[0] == "init")
+	replayed := false
 	if err == nil {
 		defer r.holding.Close()
+		// Archived is terminal, so checking first cannot mislabel new mail.
+		if args[0] != "init" {
+			d, errGet := r.holding.Get(ctx, r.gatewayID(), args[1])
+			replayed = errGet == nil && d.State == "archived"
+		}
 		switch args[0] {
 		case "bind":
 			err = r.bind(ctx, args[1], args[2], args[3])
@@ -88,6 +94,8 @@ func runReceivingCommand(args []string, input io.Reader) error {
 	result := "committed"
 	if err != nil {
 		result = "refused"
+	} else if replayed {
+		result = "replayed"
 	}
 	correlation := "initialization"
 	if len(args) > 1 {
