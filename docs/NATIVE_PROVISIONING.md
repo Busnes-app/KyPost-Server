@@ -528,8 +528,59 @@ delivery to that same owner. Routes and bindings carry the address generation;
 a binding whose address is no longer `active`, owned by the bound mailbox and at
 the bound generation quarantines with its bytes and frozen bindings intact; an
 active competing claim cannot be invalidated. Ordinary directory edits change no
-generation, so they fence nothing. Quarantine requires operator reconciliation;
-there is no reassignment or automatic release.
+generation, so they fence nothing. Quarantine is never reassigned or released
+automatically; an administrator releases or discards it (below).
+
+### Quarantine release
+
+Administrators list quarantined deliveries and release or discard each one,
+through the admin API or the CLI. Both show envelope metadata only: gateway,
+delivery ID, received time, envelope sender, size and, per recipient, the
+address, frozen mailbox ID, owning user ID (empty once the mailbox is gone) and
+frozen generation. Bodies, subjects and headers are never shown, and the reason
+a delivery was quarantined is not stored.
+
+- **Release** delivers to the mailboxes the delivery was frozen to, never to a
+  newly chosen target or an address's current owner. Each frozen mailbox must
+  still exist, be active, belong to the same issuer/subject, and its owner and
+  storage must pass the same admission import uses, checked under the
+  directory and users fences import holds. The address generation is not
+  checked: the mail was addressed to that mailbox at that time, and a
+  reassignment is the usual reason it was quarantined. A multi-owner delivery
+  releases to all owners or none. Otherwise release refuses with 409 and the
+  reason; discard stays available. Release reuses import: mailbox receipts
+  dedupe an interrupted attempt, and it ends in the same tombstone with
+  disposition `released`. Repeating a completed release succeeds.
+- **Discard** removes the bytes and bindings and leaves a tombstone with
+  disposition `discarded`, so an exact receiver replay or re-pickup is
+  answered without delivering. SQLite free pages, WAL and earlier backups may
+  hold the bytes until reused or rotated.
+- A release in progress holds a five-minute lease; discard refuses until it
+  ends. Both refuse under a restore hold.
+
+API (admin only; POSTs need CSRF and the account credential, or KySignOn
+step-up, as for `/api/admin/mailboxes`):
+
+- `GET /api/admin/receiving/quarantine[?after=<sequence>]` returns up to 100
+  `{deliveries:[{sequence,gateway,id,sender,receivedAt,size,recipients:[{address,mailbox,user,generation}]}]}`;
+  page with the last `sequence`.
+- `POST /api/admin/receiving/quarantine/{gateway}/{id}/release` and
+  `.../discard` return `{gateway,id,result}`; 404 unknown, 409 not quarantined,
+  release in progress, release refused or restore hold, 503 storage or mailbox
+  capacity (the holding copy is kept).
+
+CLI, as the runtime user with the receiving environment:
+
+```sh
+kypost-server receiving quarantine list [<after-sequence>]
+kypost-server receiving quarantine release <gateway> <id> --confirm <id>
+kypost-server receiving quarantine discard <gateway> <id> --confirm <id>
+```
+
+Shell access as that user already reaches every key the API's step-up
+protects, so the CLI asks for deliberate intent instead: the delivery ID typed
+again after `--confirm`. Every API and CLI action is audited with actor,
+action, gateway/ID and result, never correspondence.
 
 New route writes, RCPT bindings and MIME acceptance also check physical storage
 inside the immediate SQLite writer transaction. The admission budget is derived

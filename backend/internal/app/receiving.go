@@ -23,7 +23,7 @@ import (
 
 const receivingGateway = "maddy-local"
 
-var receivingLimits = ingress.Limits{MessageBytes: 4 << 20, PayloadBytes: 64 << 20, Records: 10000}
+var receivingLimits = ingress.ReceivingLimits
 
 type receivingRuntime struct {
 	gateway   string

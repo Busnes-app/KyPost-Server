@@ -58,9 +58,12 @@ synchronously. Both were approved on 2026-10-06; `TURNKEY_MAIL_STACK_PLAN.md` an
   replay tombstone outside the ingress record limit; see `NATIVE_PROVISIONING.md`.
   Tombstones are not pruned yet; pruning and capacity recovery remain a
   public-MX gate there.
-- **Quarantine release.** An operator tool to inspect, release to the current owner
-  of the frozen mailbox, or discard quarantined deliveries. Without it, quarantine is
-  a dead end.
+- **Quarantine release** (done). Administrators list quarantined deliveries (envelope
+  only) and release or discard them through the admin API or CLI, step-up confirmed
+  and audited. Release goes only to the frozen mailbox, and only while it exists, is
+  active and is still owned by the same issuer/subject; otherwise it refuses and
+  discard remains. See
+  [quarantine release](NATIVE_PROVISIONING.md#quarantine-release).
 
 ## Cloudflare side
 
