@@ -53,10 +53,13 @@ var cloudflareID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89
 
 func runCloudflareReceiving(args []string, output io.Writer) (result error) {
 	action, correlation := "cloudflare", "cloudflare-pilot"
+	replayed := false
 	defer func() {
 		status := "committed"
 		if result != nil {
 			status = "refused"
+		} else if replayed {
+			status = "replayed"
 		}
 		slog.Info("Cloudflare receiving operation", "actor", "operator", "task_id", "native-receiving", "action", action, "target", "holding-store", "result", status, "correlation_id", correlation)
 	}()
@@ -118,6 +121,8 @@ func runCloudflareReceiving(args []string, output io.Writer) (result error) {
 	if m.Route != claim {
 		return ingress.ErrRoute
 	}
+	d, err := r.holding.Get(ctx, cloudflareGateway, m.ID)
+	replayed = err == nil && d.State == "archived"
 	return r.pickupCloudflare(ctx, m, raw)
 }
 

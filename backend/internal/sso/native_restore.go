@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -283,6 +284,14 @@ func validateNativeReceiving(path string, f nativeAssignments, ledgerVersion int
 		return err
 	}
 	defer db.Close()
+	// Tombstones answer replays; a reshaped table could not. Absent predates archival.
+	var archived string
+	if err := db.QueryRow(`SELECT COALESCE(group_concat(name||' '||type,','),'') FROM pragma_table_info('archived')`).Scan(&archived); err != nil {
+		return err
+	}
+	if archived != "" && archived != ingress.ArchivedColumns {
+		return ErrNativeProvisioning
+	}
 	var orphaned int
 	if err := db.QueryRow(`SELECT count(*) FROM deliveries d WHERE d.state!='staged' AND NOT EXISTS(SELECT 1 FROM bindings b WHERE b.gateway=d.gateway AND b.id=d.id)`).Scan(&orphaned); err != nil {
 		return err

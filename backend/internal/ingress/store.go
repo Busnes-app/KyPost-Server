@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,7 +25,7 @@ import (
 
 var (
 	ErrConflict     = errors.New("ingress identity conflict; preserve the receipt and investigate")
-	ErrCapacity     = errors.New("ingress capacity reached; import or archive receipts before accepting more mail")
+	ErrCapacity     = errors.New("ingress capacity reached; let waiting mail import or reconcile receiving storage before accepting more mail")
 	ErrRoute        = errors.New("recipient is unknown, disabled or routing is stale; reconcile the directory")
 	ErrRoutingStale = errors.New("routing snapshot expired; refresh it before accepting mail")
 	ErrLease        = errors.New("ingress claim expired or changed; reacquire before acknowledging")
@@ -84,6 +85,67 @@ CREATE TABLE IF NOT EXISTS routes (address TEXT PRIMARY KEY, issuer TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS deliveries (gateway TEXT NOT NULL, id TEXT NOT NULL, sender TEXT NOT NULL, created INTEGER NOT NULL, digest TEXT NOT NULL DEFAULT '', raw BLOB, state TEXT NOT NULL DEFAULT 'staged', lease TEXT NOT NULL DEFAULT '', lease_until INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(gateway,id));
 CREATE TABLE IF NOT EXISTS bindings (gateway TEXT NOT NULL, id TEXT NOT NULL, address TEXT NOT NULL, issuer TEXT NOT NULL, subject TEXT NOT NULL, mailbox TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(gateway,id,address), FOREIGN KEY(gateway,id) REFERENCES deliveries(gateway,id) ON DELETE CASCADE);
 `
+
+// Acknowledged deliveries become tombstones outside the record limit: enough
+// to recognise an exact replay, never enough to deliver again. archived_at (UTC
+// unix seconds) lets a future age pruner be one DELETE. The partial index keeps
+// the per-open legacy check off the payload pages.
+const archivedSchema = `CREATE TABLE IF NOT EXISTS archived (gateway TEXT NOT NULL, id TEXT NOT NULL, sender TEXT NOT NULL, digest TEXT NOT NULL, recipients TEXT NOT NULL, archived_at INTEGER NOT NULL, PRIMARY KEY(gateway,id)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS imported ON deliveries(gateway,id) WHERE state='imported';`
+
+// ArchivedColumns is the tombstone table shape restore validation expects.
+const ArchivedColumns = "gateway TEXT,id TEXT,sender TEXT,digest TEXT,recipients TEXT,archived_at INTEGER"
+
+// archive moves acknowledged deliveries matching where into tombstones inside
+// the caller's writer transaction; bindings cascade with the delivery row.
+// insert is "INSERT" (a duplicate is a bug) or "INSERT OR IGNORE" (legacy).
+func archive(ctx context.Context, tx *sql.Tx, insert, where string, args ...any) error {
+	_, err := tx.ExecContext(ctx, insert+` INTO archived(gateway,id,sender,digest,recipients,archived_at) SELECT gateway,id,sender,digest,(SELECT group_concat(b.address,char(10)) FROM bindings b WHERE b.gateway=d.gateway AND b.id=d.id),unixepoch() FROM deliveries d WHERE `+where, args...)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, "DELETE FROM deliveries WHERE "+where, args...)
+	}
+	return err
+}
+
+// migrateArchive creates the tombstone table and archives 'imported' rows left
+// by an earlier (or downgraded) binary. A plain read skips the writer lock when
+// there is nothing to do; the write is one idempotent transaction.
+func migrateArchive(ctx context.Context, db *sql.DB) error {
+	var ready, legacy int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('archived','imported')").Scan(&ready); err != nil {
+		return err
+	}
+	if ready == 2 {
+		if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM deliveries INDEXED BY imported WHERE state='imported')").Scan(&legacy); err != nil || legacy == 0 {
+			return err
+		}
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, archivedSchema); err != nil {
+		return err
+	}
+	if err := archive(ctx, tx, "INSERT OR IGNORE", "state='imported'"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type tombstone struct {
+	sender, digest string
+	recipients     []string
+}
+
+func archivedDelivery(ctx context.Context, tx *sql.Tx, gateway, id string) (tombstone, error) {
+	var t tombstone
+	var recipients string
+	err := tx.QueryRowContext(ctx, "SELECT sender,digest,recipients FROM archived WHERE gateway=? AND id=?", gateway, id).Scan(&t.sender, &t.digest, &recipients)
+	t.recipients = strings.Split(recipients, "\n")
+	return t, err
+}
 
 func Open(dir string, limits Limits) (*Store, error) {
 	return open(dir, limits, false)
@@ -147,6 +209,9 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 		if err == nil {
 			_, err = db.Exec("PRAGMA journal_mode=WAL")
 		}
+		if err == nil {
+			err = migrateArchive(context.Background(), db)
+		}
 		if err != nil {
 			_ = db.Close()
 			return nil, err
@@ -170,6 +235,9 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 		if err == nil {
 			err = tx.Commit()
 		}
+	}
+	if err == nil {
+		err = migrateArchive(context.Background(), db)
 	}
 	if err == nil {
 		err = fsutil.SyncDir(dir)
@@ -329,6 +397,19 @@ func (s *Store) Bind(ctx context.Context, gateway, deliveryID, sender, recipient
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	if err != nil {
+		// An archived delivery is complete: replay its exact RCPT, never reopen it.
+		t, errArchived := archivedDelivery(ctx, tx, gateway, deliveryID)
+		if errArchived == nil {
+			if t.sender != sender || !slices.Contains(t.recipients, recipient) {
+				return ErrConflict
+			}
+			return tx.Commit()
+		}
+		if !errors.Is(errArchived, sql.ErrNoRows) {
+			return errArchived
+		}
+	}
 	if err == nil {
 		if oldSender != sender {
 			return ErrConflict
@@ -411,7 +492,11 @@ func (s *Store) Accept(ctx context.Context, gateway, id, sender string, raw io.R
 	var oldSender, oldDigest, state string
 	err = tx.QueryRowContext(ctx, "SELECT sender,digest,state FROM deliveries WHERE gateway=? AND id=?", gateway, id).Scan(&oldSender, &oldDigest, &state)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrConflict
+		t, err := archivedDelivery(ctx, tx, gateway, id)
+		if err != nil || t.sender != sender || t.digest != digest {
+			return ErrConflict
+		}
+		return tx.Commit()
 	}
 	if err != nil {
 		return err
@@ -447,6 +532,11 @@ func (s *Store) Accept(ctx context.Context, gateway, id, sender string, raw io.R
 func readDelivery(ctx context.Context, tx *sql.Tx, gateway, id string) (Delivery, error) {
 	d := Delivery{Gateway: gateway, ID: id}
 	err := tx.QueryRowContext(ctx, "SELECT sender,digest,raw,state,lease FROM deliveries WHERE gateway=? AND id=?", gateway, id).Scan(&d.Sender, &d.Digest, &d.Raw, &d.State, &d.Lease)
+	if errors.Is(err, sql.ErrNoRows) {
+		t, err := archivedDelivery(ctx, tx, gateway, id)
+		d.Sender, d.Digest, d.State = t.sender, t.digest, "archived"
+		return d, err
+	}
 	if err != nil {
 		return d, err
 	}
@@ -497,9 +587,9 @@ func (s *Store) QuarantinePending(ctx context.Context, gateway, id string) error
 	return nil
 }
 
-// List pages receipts, including staged/imported/quarantined records, without
-// loading MIME. Sequence is an enumeration position, not a change-sync cursor;
-// importers revisit unacknowledged receipts rather than advancing past them.
+// List pages staged, pending and quarantined receipts without loading MIME;
+// archived deliveries are not listed. Sequence is an enumeration position, not
+// a change-sync cursor; importers revisit unacknowledged receipts.
 func (s *Store) List(ctx context.Context, gateway string, after int64, limit int) ([]Summary, error) {
 	if !identifier(gateway) || after < 0 || limit < 1 || limit > 100 {
 		return nil, ErrConflict
@@ -592,14 +682,19 @@ func (s *Store) Acknowledge(ctx context.Context, gateway, id, lease, digest stri
 	var state, oldLease, oldDigest string
 	var until int64
 	err = tx.QueryRowContext(ctx, "SELECT state,lease,digest,lease_until FROM deliveries WHERE gateway=? AND id=?", gateway, id).Scan(&state, &oldLease, &oldDigest, &until)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Lost local ACK reply: the archived digest is all that remains.
+		t, err := archivedDelivery(ctx, tx, gateway, id)
+		if err != nil || t.digest != digest {
+			return ErrLease
+		}
+		return tx.Commit()
+	}
 	if err != nil {
 		return err
 	}
 	if oldDigest != digest || oldLease != lease {
 		return ErrLease
-	}
-	if state == "imported" {
-		return tx.Commit()
 	}
 	if state != "pending" || until <= time.Now().Unix() {
 		return ErrLease
@@ -618,8 +713,11 @@ func (s *Store) Acknowledge(ctx context.Context, gateway, id, lease, digest stri
 		}
 		return ErrRoute
 	}
-	_, err = tx.ExecContext(ctx, "UPDATE deliveries SET state='imported',raw=NULL WHERE gateway=? AND id=?", gateway, id)
-	if err != nil {
+	// ponytail: tombstones are never pruned. Typically ~0.2 KiB (about 2 million
+	// in the default budget; ~170K attacker-shaped), and ingress.db hits the
+	// 64 MiB backup file cap near 360K. Pruning by archived_at, or after a
+	// gateway proves its source copy gone, is a public-MX gate.
+	if err := archive(ctx, tx, "INSERT", "gateway=? AND id=? AND state='pending'", gateway, id); err != nil {
 		return err
 	}
 	return tx.Commit()

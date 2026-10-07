@@ -8,9 +8,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -41,6 +43,31 @@ func TestNativeBackupRestoresExtraMailbox(t *testing.T) {
 	_ = store.Close()
 	if err != nil {
 		t.Fatal(err)
+	}
+	holding, err := ingress.Open(filepath.Join(s.dirs.State, "receiving"), ingress.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = holding.Close()
+	// A tombstone must never be captured before the mailbox commit it vouches for.
+	payload, err := s.Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingressAt, mailboxes := -1, 0
+	for i, f := range payload.Files {
+		switch {
+		case f.Path == "state/receiving/ingress.db":
+			ingressAt = i
+		case strings.HasSuffix(f.Path, "/mailbox/mailbox.db"):
+			mailboxes++
+			if ingressAt < 0 {
+				t.Fatalf("%s snapshotted before ingress.db", f.Path)
+			}
+		}
+	}
+	if ingressAt < 0 || mailboxes < 2 {
+		t.Fatalf("ingress at %d, %d mailboxes", ingressAt, mailboxes)
 	}
 	key := pinTestKey(t, s)
 	result, err := s.Run(ctx)

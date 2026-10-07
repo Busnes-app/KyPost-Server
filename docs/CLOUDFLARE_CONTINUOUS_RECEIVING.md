@@ -54,10 +54,10 @@ synchronously. Both were approved on 2026-10-06; `TURNKEY_MAIL_STACK_PLAN.md` an
   aliases and reservation of released names. **Generation is per address**, bumped
   only on reassignment, disable, re-enable or release, so ordinary profile edits do not fence
   waiting mail. Sending allows any address of the sending mailbox.
-- **Receipt archival.** Imported receipts count toward the ingress record limit
-  (10,000) and are never deleted, so continuous reception would stop. Fenced
-  archival of imported receipts is required first (already a listed gate in
-  `NATIVE_PROVISIONING.md`).
+- **Receipt archival** (done). Acknowledgment archives an imported delivery into a
+  replay tombstone outside the ingress record limit; see `NATIVE_PROVISIONING.md`.
+  Tombstones are not pruned yet; pruning and capacity recovery remain a
+  public-MX gate there.
 - **Quarantine release.** An operator tool to inspect, release to the current owner
   of the frozen mailbox, or discard quarantined deliveries. Without it, quarantine is
   a dead end.
@@ -145,7 +145,7 @@ A daemon loop, outbound HTTPS only, every 30 seconds and on directory change:
    published revision locally (`revision → address, generation, owner`). A transient
    DNS failure never prunes a domain; only deliberate domain removal does.
 2. **List.** Page `GET /messages` oldest first. Check a local provider ledger
-   (`key → digest, state`) before fetching: keys already `imported`, `quarantined`
+   (`key → digest, state`) before fetching: keys already `archived`, `quarantined`
    or `refused` skip to step 6.
 3. **Fetch and verify** size and digest, then record the frozen binding (decision 2):
    staged if the generation matches current authority, quarantined otherwise.
