@@ -19,10 +19,10 @@ const exactKeys = (o, keys) => o !== null && typeof o === "object" && !Array.isA
 const response = (status, body = null, headers = {}) =>
   new Response(body, {status, headers: {"Cache-Control": "no-store", ...headers}});
 
-// Lowercase host part only; no whitespace, controls or second "@".
-const domainOk = d => typeof d === "string" && d.length > 0 && d.length <= 253 && d === d.toLowerCase() && /^[^\s\x00-\x1f\x7f@]+$/.test(d);
+// Lowercase printable ASCII; domains are A-labels, so a U-label cannot dodge a block.
+const domainOk = d => typeof d === "string" && d.length <= 253 && d === d.toLowerCase() && /^[\x21-\x3f\x41-\x7e]+$/.test(d);
 const addressOk = a => typeof a === "string" && a.length <= 254 && a === a.toLowerCase() &&
-  /^[^\s\x00-\x1f\x7f@]{1,64}@[^\s\x00-\x1f\x7f@]+$/.test(a);
+  /^[\x21-\x3f\x41-\x7e]{1,64}@[\x21-\x3f\x41-\x7e]+$/.test(a);
 
 function base64(text, length) {
   if (typeof text !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(text)) return null;
@@ -72,6 +72,50 @@ async function signed(bytes, field, maxText, context, publicKey) {
   try { return {doc, value: JSON.parse(doc[field])}; } catch { return {status: 400}; }
 }
 
+// Ed25519 public key check in BigInt: canonical encoding of a curve point that is not
+// the identity and lies in the prime-order subgroup. workerd's verify accepts
+// small-order keys (the identity key verifies anything), so this is not optional.
+const P = 2n ** 255n - 19n, L = 2n ** 252n + 27742317777372353535851937790883648493n;
+const mod = a => ((a % P) + P) % P;
+function pow(b, e) {
+  let r = 1n;
+  for (b = mod(b); e > 0n; e >>= 1n, b = b * b % P) if (e & 1n) r = r * b % P;
+  return r;
+}
+const D = mod(-121665n * pow(121666n, P - 2n)), SQRT_M1 = pow(2n, (P - 1n) / 4n);
+function add([X1, Y1, Z1, T1], [X2, Y2, Z2, T2]) {
+  const A = mod((Y1 - X1) * (Y2 - X2)), B = mod((Y1 + X1) * (Y2 + X2)), C = mod(2n * D * T1 * T2), Dz = mod(2n * Z1 * Z2);
+  const E = B - A, F = Dz - C, G = Dz + C, H = B + A;
+  return [mod(E * F), mod(G * H), mod(F * G), mod(E * H)];
+}
+export function primeOrderPoint(bytes) {
+  let y = 0n;
+  for (let i = 31; i >= 0; i--) y = (y << 8n) | BigInt(i === 31 ? bytes[i] & 0x7f : bytes[i]);
+  const sign = bytes[31] >> 7;
+  if (y >= P) return false;
+  const u = mod(y * y - 1n), v = mod(D * y * y + 1n);
+  let x = mod(u * pow(v, 3n) * pow(u * pow(v, 7n), (P - 5n) / 8n));
+  if (mod(v * x * x) !== u) {
+    if (mod(v * x * x) !== mod(-u)) return false;
+    x = x * SQRT_M1 % P;
+  }
+  if (x === 0n && sign) return false;
+  if (Number(x & 1n) !== sign) x = P - x;
+  if (x === 0n && y === 1n) return false; // identity
+  let acc = [0n, 1n, 1n, 0n], pt = [x, y, 1n, x * y % P];
+  for (let e = L; e > 0n; e >>= 1n, pt = add(pt, pt)) if (e & 1n) acc = add(acc, pt);
+  return acc[0] === 0n && acc[1] === acc[2]; // L·P is the identity
+}
+const keyChecks = new Map(); // Per-isolate memo; only bootstrap and signed rotations reach it.
+function publicKeyOk(text) {
+  if (!keyChecks.has(text)) {
+    if (keyChecks.size >= 16) keyChecks.clear();
+    const bytes = base64(text, 32);
+    keyChecks.set(text, bytes !== null && primeOrderPoint(bytes));
+  }
+  return keyChecks.get(text);
+}
+
 export function validTable(t) {
   if (!exactKeys(t, ["revision", "issuedAt", "routes", "blockedSenders"]) || !isInt(t.revision) || !isInt(t.issuedAt) ||
       !Array.isArray(t.routes) || t.routes.length > limits.routes ||
@@ -88,7 +132,7 @@ export function validTable(t) {
 
 function validCredentials(c) {
   return exactKeys(c, ["epoch", "tokenSha256", "publicKey"]) && isInt(c.epoch) &&
-    typeof c.tokenSha256 === "string" && HEX64.test(c.tokenSha256) && base64(c.publicKey, 32) !== null;
+    typeof c.tokenSha256 === "string" && HEX64.test(c.tokenSha256) && publicKeyOk(c.publicKey);
 }
 
 // The only read before authentication. Deployed secrets bootstrap epoch 1 only
@@ -101,10 +145,10 @@ async function credentials(env) {
   return {...c, etag: object?.httpEtag ?? null};
 }
 
-async function bearerOk(request, tokenSha256) {
-  const header = request.headers.get("Authorization");
-  if (!header || !/^Bearer [0-9a-f]{64}$/.test(header)) return false;
-  const got = await sha256(enc.encode(header.slice(7)));
+const bearerOf = request => /^Bearer [0-9a-f]{64}$/.exec(request.headers.get("Authorization") ?? "")?.[0].slice(7);
+
+async function bearerOk(bearer, tokenSha256) {
+  const got = await sha256(enc.encode(bearer));
   let diff = 0;
   for (let i = 0; i < 32; i++) diff |= got[i] ^ parseInt(tokenSha256.slice(i * 2, i * 2 + 2), 16);
   return diff === 0;
@@ -136,6 +180,8 @@ async function rotate(request, env, creds) {
   if (status) return response(status);
   if (!validCredentials(next)) return response(400);
   if (next.epoch !== creds.epoch + 1) return response(409);
+  // Both secrets must change, or rotation would not fence a holder of the old one.
+  if (next.tokenSha256 === creds.tokenSha256 || next.publicKey === creds.publicKey) return response(400);
   // Conditional on the record the bearer was just checked against: a concurrent
   // rotation, or one landing after authentication, loses here.
   const stored = await env.MAIL.put(CREDENTIALS, JSON.stringify(next), {onlyIf: replaceIf(creds.etag)});
@@ -153,9 +199,10 @@ async function listMessages(url, env) {
   if (!query(url, ["after", "limit"])) return response(404);
   const after = url.searchParams.get("after"), limitText = url.searchParams.get("limit") ?? String(limits.page);
   if (after !== null && !UUID.test(after) || !/^[1-9][0-9]{0,2}$/.test(limitText) || Number(limitText) > limits.page) return response(400);
-  const listed = await env.MAIL.list({
-    prefix: INBOX, limit: Number(limitText), include: ["customMetadata"], ...(after && {startAfter: INBOX + after}),
-  });
+  const options = {prefix: INBOX, limit: Number(limitText), include: ["customMetadata"], ...(after && {startAfter: INBOX + after})};
+  let listed = await env.MAIL.list(options);
+  // R2 may return an empty truncated page when metadata is included; follow its cursor.
+  while (listed.objects.length === 0 && listed.truncated) listed = await env.MAIL.list({...options, cursor: listed.cursor});
   const messages = listed.objects.map(o => ({key: o.key.slice(INBOX.length), size: o.size, digest: envelopeOf(o).digest}));
   return response(200, JSON.stringify({messages, truncated: listed.truncated}), {"Content-Type": "application/json"});
 }
@@ -193,6 +240,17 @@ async function route(request, env, url, creds) {
   return response(404);
 }
 
+// Per-isolate parsed table, revalidated against the stored etag on every message.
+let cachedTable = null;
+async function currentTable(env) {
+  const object = await env.MAIL.get(ROUTES, cachedTable ? {onlyIf: new Headers({"If-None-Match": cachedTable.etag})} : {});
+  if (!object) { cachedTable = null; return null; }
+  if (!("body" in object)) return cachedTable.table; // Not modified.
+  const table = JSON.parse(JSON.parse(await object.text()).table);
+  cachedTable = {etag: object.httpEtag, table};
+  return table;
+}
+
 function blocked(table, sender, now) {
   const domain = sender.slice(sender.lastIndexOf("@") + 1);
   return table.blockedSenders.some(b => (b.until === null || b.until > now) &&
@@ -204,16 +262,15 @@ export default {
     const recipient = typeof message.to === "string" ? message.to.toLowerCase() : "";
     const from = message.from;
     const at = typeof from === "string" ? from.lastIndexOf("@") : -1;
-    // Null sender (bounces) stays "". Local part keeps its case; the domain is lowercased.
-    const sender = from === "" ? "" : at > 0 ? from.slice(0, at + 1) + from.slice(at + 1).toLowerCase() : null;
-    if (!addressOk(recipient) || sender === null || sender.length > 512 || sender !== "" && !/^[^\s<>@\x00-\x1f\x7f]+@[^\s<>@\x00-\x1f\x7f]+$/.test(sender)) {
+    // Null sender ("" or "<>") is "". The local part keeps its case; the domain is lowercased ASCII.
+    const sender = from === "" || from === "<>" ? "" : at > 0 ? from.slice(0, at + 1) + from.slice(at + 1).toLowerCase() : null;
+    if (!addressOk(recipient) || sender === null || sender.length > 512 ||
+        sender !== "" && !(/^[^\s<>@\x00-\x1f\x7f]+@[^@]+$/.test(sender) && domainOk(sender.slice(sender.lastIndexOf("@") + 1)))) {
       message.setReject("Address refused");
       return;
     }
-    const object = await env.MAIL.get(ROUTES); // A storage error throws: temporary failure.
-    if (!object) { message.setReject("Address refused"); return; }
-    const {table: text} = JSON.parse(await object.text());
-    const table = JSON.parse(text);
+    const table = await currentTable(env); // A storage error throws: temporary failure.
+    if (!table) { message.setReject("Address refused"); return; }
     const now = Date.now();
     if (sender && blocked(table, sender, now)) { message.setReject("Sender blocked"); return; }
     if (now - table.issuedAt > limits.maxAgeMs) { message.setReject("Routing unavailable"); return; }
@@ -236,9 +293,11 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.protocol !== "https:") return response(403);
+    const bearer = bearerOf(request); // Malformed headers cost no storage read.
+    if (!bearer) return response(401);
     let creds;
     try { creds = await credentials(env); } catch { return response(503); }
-    if (!await bearerOk(request, creds.tokenSha256)) return response(401);
+    if (!await bearerOk(bearer, creds.tokenSha256)) return response(401);
     try { return await route(request, env, url, creds); } catch { return response(503); }
   },
 };

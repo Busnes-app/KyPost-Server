@@ -124,9 +124,22 @@ Worker's `main` (the pilot stays `worker.mjs` until continuous is qualified). Ti
 milliseconds since the Unix epoch. Every response carries `Cache-Control: no-store`;
 error bodies are empty. The Worker never redirects and never logs.
 
+**Plan.** Workers Paid is required. Free's 10 ms CPU per invocation cannot hash and
+store a message near the 25 MiB cap, and the email handler peaks near twice the message
+size in memory (about 50 MiB at the cap, within the 128 MiB isolate limit).
+
 **Bindings.** R2 bucket `MAIL`. Secrets `PICKUP_TOKEN_SHA256` (lowercase hex SHA-256 of
 the bearer string) and `ROUTING_PUBLIC_KEY` (standard base64 of the raw 32-byte Ed25519
 public key) define epoch 1 and are read **only while `credentials.json` is absent**.
+Generate a fresh key and bearer for each Worker and never share them between Workers:
+signed documents name no deployment, so a table or rotation signed for one Worker is
+valid on any other that trusts the same key.
+
+**Public keys** (bootstrap and rotation) must be the canonical encoding of an Ed25519
+point that is not the identity and lies in the prime-order subgroup; the Worker checks
+this in BigInt because workerd's `verify` accepts small-order keys (the identity key
+verifies the signature `01 00…00` on any message). An invalid bootstrap key makes every
+route answer 503; an invalid rotation key is refused with 400.
 
 **R2 objects.**
 
@@ -142,9 +155,9 @@ millisecond granularity.
 
 **Bearer.** `Authorization: Bearer <64 lowercase hex>`, a fresh 256-bit random value.
 The Worker hashes the 64 ASCII characters with SHA-256 and compares with
-`tokenSha256` in constant time. The only storage read before that check is
-`credentials.json`; a wrong bearer reads no mail or routes. Order: non-HTTPS → 403;
-unreadable or invalid credentials → 503; bad bearer → 401; then routing.
+`tokenSha256` in constant time. Order: non-HTTPS → 403; a malformed or missing
+header → 401 with no storage read; unreadable or invalid credentials → 503; wrong
+bearer → 401 (after reading only `credentials.json`); then routing.
 
 **Signed documents.** One Ed25519 key signs two document types, separated by a context
 prefix. The signature (standard base64, 64 bytes, canonical encoding) covers exactly
@@ -162,15 +175,22 @@ listed keys:
 - **table**: `{"revision", "issuedAt", "routes": [{"address", "generation", "maxBytes"}],
   "blockedSenders": [{"address", "until"} | {"domain", "until"}]}`. `revision`,
   `issuedAt`, `generation`: safe integers ≥ 1. `maxBytes`: 1 to 26214400. `until`:
-  safe integer or `null` (no expiry). Addresses and domains are lowercase, without
-  whitespace or controls; addresses are `local@domain`, at most 254 characters with a
-  local part of at most 64, unique within `routes`. At most 5000 routes and 5000 blocks.
-- **rotation**: `{"epoch", "tokenSha256", "publicKey"}` in the credentials format.
+  safe integer or `null` (no expiry). Addresses and domains are lowercase printable
+  ASCII without `@` in the domain: internationalized domains must be sent as A-labels
+  (`xn--…`) and non-ASCII local parts cannot be routed or blocked by address.
+  Addresses are `local@domain`, at most 254 characters with a local part of at most
+  64, unique within `routes`. A domain block matches the sender's domain exactly, not
+  its subdomains. At most 5000 routes and 5000 blocks.
+- **rotation**: `{"epoch", "tokenSha256", "publicKey"}` in the credentials format, with
+  a `tokenSha256` and a `publicKey` that both differ from the current ones.
 
 **Email handler.** One invocation per recipient. In order: lowercase `message.to`
-and the sender's domain (the local part keeps its case; the null sender stays `""`);
-malformed recipient or sender → reject. Read `routes.json` (absent → reject; storage
-error → throw). Sender address or domain blocked with `until` null or in the future →
+and the sender's domain (the local part keeps its case; a null sender, `""` or `<>`,
+becomes `""`); a malformed or non-ASCII recipient, a sender over 512 characters, or a
+sender domain that is not printable ASCII (a U-label could dodge an A-label block)
+→ reject. Read `routes.json` (absent → reject; storage error → throw); each isolate
+keeps the parsed table and revalidates it on every message with a conditional get on
+its etag, so a new table applies to the next message. Sender address or domain blocked with `until` null or in the future →
 reject. `now - issuedAt` over 14 days → reject. Recipient not in `routes` → reject.
 Announced or actual size over the route's `maxBytes`, or empty → reject. None of these
 reads the body except the actual-size check. Otherwise put `inbox/<uuid>` with
@@ -190,12 +210,15 @@ bytes, is exactly:
 | `GET /messages[?after=<uuid>][&limit=1..100]` | 200 `{"messages":[{"key","size","digest"}],"truncated":bool}` in key order, starting after `after` | 400 bad `after`/`limit`, 404 other or repeated parameters |
 | `GET /messages/<uuid>` | 200 raw bytes, `Content-Type: application/octet-stream`, `Content-Length`, `X-KyPost-Envelope: base64url(no padding) of the stored envelope's UTF-8 bytes` | 404 absent |
 | `DELETE /messages/<uuid>?digest=<64 hex>` | 204 deleted, or already absent | 409 digest differs (object kept) |
-| `GET /routes` | 200 the stored signed body | 404 none installed |
+| `GET /routes` | 200 the stored body, re-serialized as `{"table":…,"signature":…}` | 404 none installed |
 | `PUT /routes` | 204 installed | 413 body over 2 MiB + 4 KiB; 400 malformed; 403 signature; 422 `revision` or `issuedAt` more than 5 min ahead, or `issuedAt` over 14 days old; 409 `revision` not above the stored one, or a concurrent install won |
-| `POST /rotate` | 204 installed | 413, 400, 403 not signed by the **current** key; 409 `epoch` ≠ current + 1, or a concurrent rotation won |
+| `POST /rotate` | 204 installed | 413; 400 malformed, invalid key, or a bearer hash or key equal to the current one; 403 not signed by the **current** key; 409 `epoch` ≠ current + 1, or a concurrent rotation won |
 
 Any other method, path, trailing slash, upper-case UUID or query → 404. Paging:
-continue with `after` = last key while `truncated` is true. Listing is not a durable
+continue with `after` = last key while `truncated` is true; the Worker follows R2's
+cursor past an empty truncated page, so a page is empty only at the end. An `inbox/`
+object without envelope metadata (only a Cloudflare account administrator can create
+one) makes listing answer 503 until it is removed. Listing is not a durable
 cursor: a capture in the same millisecond, or on a Worker instance with a slower
 clock, can sort before a key already seen, so each pickup cycle lists from the start;
 deleted keys drop out.
@@ -204,7 +227,8 @@ deleted keys drop out.
 in the same request (`If-Match`, or `If-None-Match: *` when absent). For rotate this is
 the record the bearer was checked against, so of two concurrent rotations exactly one
 installs. After a rotation the previous bearer gets 401 on every route and the previous
-key gets 403 on `PUT /routes` and `POST /rotate`. KyPost confirms a rotation whose
+key gets 403 on `PUT /routes` and `POST /rotate`; requests already past authentication
+when the rotation lands still complete. KyPost confirms a rotation whose
 response it lost by any request with the pending bearer: 200 means it is installed,
 401 means it is not (or someone else rotated: stay fenced).
 
@@ -231,8 +255,13 @@ After a takeover the previous instance is refused on list, fetch, delete and
 retrying silently. A test or inspection restore that is never confirmed leaves
 production untouched. The same rotation is the scheduled and on-demand path for the
 live instance. If an attacker with a backup and its seal confirms a takeover, the
-operator recovers by redeploying the Worker's bootstrap secrets and clearing
-`credentials.json` through the Cloudflare account.
+operator recovers through the Cloudflare account, in this order: generate a **new**
+signing key and a **new** bearer secret, deploy them as the bootstrap secrets, and only
+then delete `credentials.json`. Deleting first, or redeploying the old secrets, resets
+the Worker to epoch 1 under the old key K1, and every rotation ever signed by K1 (the
+attacker's own epoch-2 rotation included) carries epoch 2 = 1 + 1 and replays
+successfully, handing receiving straight back to the attacker. Restore KyPost's signing
+key from the new secrets, not from the compromised backup.
 
 A daemon loop, outbound HTTPS only, every 30 seconds and on directory change:
 
@@ -301,7 +330,8 @@ storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
 - Cloudflare and its account administrators can read ordinary mail in transit and in
   R2, and `routes.json` exposes the full address directory to them. Setup says so
   before enabling this profile; Maddy and external IMAP are the alternatives.
-- A stolen bearer secret can read and delete waiting mail (listing reveals digests),
+- A stolen bearer secret can read and delete waiting mail (listing reveals digests)
+  and read `GET /routes`, which exposes the address directory and the block list,
   but cannot change routing. Both secret and signing key are runtime secrets in
   sealed backups and rotate together through `POST /rotate` (see KyPost side).
 - Origins: verified HTTPS `*.workers.dev` or the operator's custom domain; no
@@ -346,6 +376,14 @@ Live, on the test deployment, each with its own bounded plan and approval:
 4. Address reassignment while mail waits in R2: old-generation mail quarantines.
 5. Whether Email Routing gives the Worker a trustworthy SPF result (gates automatic
    sender blocks in this profile).
+6. A message near the 25 MiB cap on Workers Paid: CPU time and memory stay within
+   limits, and what the sender sees when the Worker exceeds its CPU limit
+   (`EXCEEDED_CPU`): temporary failure, bounce, or silent loss.
+7. Null-sender mail (a bounce): whether `message.from` is `""` or `<>`; both are
+   accepted as the null sender.
+8. Internationalized addresses: the form of `message.to` and `message.from` for an
+   SMTPUTF8 or IDN sender and recipient (A-label or U-label); the Worker accepts only
+   ASCII recipients and sender domains.
 
 ## Decisions (2026-10-06)
 

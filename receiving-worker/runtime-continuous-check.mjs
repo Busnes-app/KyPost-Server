@@ -20,27 +20,38 @@ async function signed(field, context, key, value) {
   const signature = b64(new Uint8Array(await crypto.subtle.sign({name: "Ed25519"}, key.privateKey, enc.encode(context + text))));
   return JSON.stringify({[field]: text, signature});
 }
+const next3 = key => ({epoch: 2, tokenSha256: sha("12".repeat(32)), publicKey: key});
 const table = revision => ({revision, issuedAt: revision, routes: [{address: "one@example.test", generation: 7, maxBytes: 1024}], blockedSenders: [{domain: "blocked.test", until: null}]});
 
 const dir = await mkdtemp(join(tmpdir(), "kypost-cf-continuous-"));
-let mf;
+const instances = [];
+const IDENTITY = b64(Buffer.from("01" + "00".repeat(31), "hex")); // The Ed25519 identity point.
+const FORGED = b64(Buffer.from("01" + "00".repeat(63), "hex")); // R = identity, S = 0: verifies any message under IDENTITY.
 try {
   await writeFile(join(dir, "continuous.mjs"), await readFile(new URL("./continuous.mjs", import.meta.url)));
   // The driver turns POST /capture?from=&to= into an email event; everything else is the real fetch handler.
   await writeFile(join(dir, "driver.mjs"), `import worker from './continuous.mjs';
 export default {async fetch(req, env) {
   const url = new URL(req.url);
+  if (url.pathname === '/probe') {
+    const key = await crypto.subtle.importKey('raw', Uint8Array.from(atob('${IDENTITY}'), c => c.charCodeAt(0)), {name: 'Ed25519'}, false, ['verify']);
+    return Response.json(await crypto.subtle.verify({name: 'Ed25519'}, key, Uint8Array.from(atob('${FORGED}'), c => c.charCodeAt(0)), new TextEncoder().encode('anything')));
+  }
   if (url.pathname !== '/capture') return worker.fetch(req, env);
   const rejected = [];
   try { await worker.email({from: url.searchParams.get('from'), to: url.searchParams.get('to'), raw: req.body, rawSize: Number(req.headers.get('x-size')), setReject(v) { rejected.push(v); }}, env); }
   catch { return Response.json({thrown: true}); }
   return Response.json({rejected});
 }}`);
-  mf = new Miniflare(convertV4MiniflareOptions({
-    modules: [{type: "ESModule", path: join(dir, "driver.mjs")}, {type: "ESModule", path: join(dir, "continuous.mjs")}],
-    modulesRoot: dir, compatibilityDate: "2026-09-18", r2Buckets: ["MAIL"], r2Persist: join(dir, "r2"),
-    bindings: {PICKUP_TOKEN_SHA256: sha(tokens[0]), ROUTING_PUBLIC_KEY: await publicKey(keys[0])}, host: "127.0.0.1", port: 0,
-  }));
+  const start = (name, bindings) => {
+    const instance = new Miniflare(convertV4MiniflareOptions({
+      modules: [{type: "ESModule", path: join(dir, "driver.mjs")}, {type: "ESModule", path: join(dir, "continuous.mjs")}],
+      modulesRoot: dir, compatibilityDate: "2026-09-18", r2Buckets: ["MAIL"], r2Persist: join(dir, name), bindings, host: "127.0.0.1", port: 0,
+    }));
+    instances.push(instance);
+    return instance;
+  };
+  let mf = start("r2", {PICKUP_TOKEN_SHA256: sha(tokens[0]), ROUTING_PUBLIC_KEY: await publicKey(keys[0])});
   const origin = "https://receiving.operator.workers.dev";
   const api = (method, path, token, body) => mf.dispatchFetch(origin + path, {method, body, headers: {Authorization: "Bearer " + token}});
   const capture = (to, body, from = "sender@example.test") =>
@@ -105,6 +116,16 @@ export default {async fetch(req, env) {
   assert.equal((await api("PUT", "/routes", tokens[w], await signed("table", "kypost-cf-routes/1\n", keys[0], table(Date.now() + 10)))).status, 403);
   assert.equal((await api("PUT", "/routes", tokens[w], await signed("table", "kypost-cf-routes/1\n", keys[w], table(Date.now() + 10)))).status, 204);
   assert.equal((await bucket.list({prefix: "inbox/"})).objects.length, 1, "old holder deleted nothing");
+  // The isolate's cached table is revalidated by etag: a new table takes effect at once.
+  assert.deepEqual(await capture("one@example.test", raw), {rejected: []});
+  assert.equal((await api("PUT", "/routes", tokens[w], await signed("table", "kypost-cf-routes/1\n", keys[w], {...table(Date.now() + 20), routes: []}))).status, 204);
+  assert.equal((await capture("one@example.test", raw)).rejected.length, 1);
+  // Degenerate keys: workerd's verify accepts FORGED under IDENTITY, so the Worker must refuse the key.
+  console.log("info: workerd verifies the identity-key forgery:", await (await mf.dispatchFetch(origin + "/probe")).json());
+  const rotateTo = async key => (await api("POST", "/rotate", tokens[w], await signed("rotation", "kypost-cf-rotate/1\n", keys[w], {epoch: 3, tokenSha256: sha(tokens[0]), publicKey: key}))).status;
+  for (const key of [IDENTITY, b64(new Uint8Array(32))]) assert.equal(await rotateTo(key), 400, "rotation to degenerate key " + key);
+  const forgedTable = JSON.stringify({table: JSON.stringify(table(Date.now() + 30)), signature: FORGED});
+  assert.equal((await api("PUT", "/routes", tokens[w], forgedTable)).status, 403);
   // The If-Match replace path the Worker relies on: a stale etag is refused, the current one succeeds.
   const current = await bucket.head("credentials.json");
   assert.equal(await bucket.put("credentials.json", "{}", {onlyIf: new Headers({"If-Match": '"0000"'})}), null);
@@ -112,8 +133,13 @@ export default {async fetch(req, env) {
   assert.equal((await api("POST", "/rotate", tokens[w], await signed("rotation", "kypost-cf-rotate/1\n", keys[w], third))).status, 204);
   assert.notEqual((await bucket.head("credentials.json")).httpEtag, current.httpEtag);
   assert.equal((await api("GET", "/messages", tokens[w])).status, 401);
-  console.log("PASS: workerd/R2 signed table install, conditional capture, list/get/digest delete and rotation fencing");
+
+  mf = start("r2-degenerate", {PICKUP_TOKEN_SHA256: sha(tokens[0]), ROUTING_PUBLIC_KEY: IDENTITY});
+  assert.equal((await api("PUT", "/routes", tokens[0], forgedTable)).status, 503, "identity bootstrap key refused");
+  assert.equal((await api("POST", "/rotate", tokens[0], JSON.stringify({rotation: JSON.stringify(next3(IDENTITY)), signature: FORGED}))).status, 503);
+  assert.equal(await (await mf.getR2Bucket("MAIL")).head("routes.json"), null);
+  console.log("PASS: workerd/R2 signed table install, conditional capture, table cache, list/get/digest delete, rotation fencing, degenerate keys refused");
 } finally {
-  if (mf) await mf.dispose();
+  for (const instance of instances) await instance.dispose();
   await rm(dir, {recursive: true, force: true});
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import worker, {contexts, limits} from "./continuous.mjs";
+import worker, {contexts, limits, primeOrderPoint} from "./continuous.mjs";
 
 const enc = new TextEncoder();
 const b64 = bytes => Buffer.from(bytes).toString("base64");
@@ -30,16 +30,22 @@ const table = (over = {}) => ({
   blockedSenders: [], ...over,
 });
 
-// In-memory R2: conditional put via Headers, ordered list, per-key read log.
+// In-memory R2: conditional get/put via Headers, ordered list, per-key read log.
+// Etags are unique across buckets because the Worker caches the table by etag per isolate.
+let etags = 0;
 function bucket() {
-  let n = 0;
   const objects = new Map(), log = [];
   const view = (key, o, body) => o && {key, size: o.bytes.byteLength, httpEtag: `"${o.etag}"`, customMetadata: {...o.meta},
     ...(body && {body: new Blob([o.bytes]).stream(), text: async () => new TextDecoder().decode(o.bytes)})};
   return {
-    objects, log, failPut: null,
+    objects, log, failPut: null, emptyPage: false,
+    touch(key) { objects.get(key).etag = `e${++etags}`; },
     reads(except = "credentials.json") { return log.filter(([op, key]) => op !== "put" && key !== except); },
-    async get(key) { log.push(["get", key]); return view(key, objects.get(key), true); },
+    async get(key, options = {}) {
+      const o = objects.get(key), unchanged = o && options.onlyIf?.get("If-None-Match") === `"${o.etag}"`;
+      log.push([unchanged ? "get-unchanged" : "get", key]);
+      return view(key, o, !unchanged);
+    },
     async head(key) { log.push(["head", key]); return view(key, objects.get(key), false); },
     async put(key, value, options = {}) {
       log.push(["put", key]);
@@ -50,12 +56,13 @@ function bucket() {
       if (cond?.get("If-Match") && (!current || cond.get("If-Match") !== `"${current.etag}"`)) return null;
       const bytes = typeof value === "string" ? enc.encode(value) : value.slice();
       if (options.sha256) assert.equal(options.sha256, sha(bytes));
-      objects.set(key, {bytes, etag: `e${++n}`, meta: options.customMetadata ?? {}});
+      objects.set(key, {bytes, etag: `e${++etags}`, meta: options.customMetadata ?? {}});
       return {key};
     },
     async delete(key) { log.push(["delete", key]); objects.delete(key); },
-    async list({prefix, startAfter, limit, include}) {
+    async list({prefix, startAfter, limit, include, cursor}) {
       log.push(["list", prefix]);
+      if (this.emptyPage && !cursor) return {objects: [], truncated: true, cursor: "next"};
       assert.deepEqual(include, ["customMetadata"]);
       const keys = [...objects.keys()].filter(k => k.startsWith(prefix) && (!startAfter || k > startAfter)).sort();
       return {objects: keys.slice(0, limit).map(k => view(k, objects.get(k), false)), truncated: keys.length > limit};
@@ -169,6 +176,7 @@ test("no table or a 14-day-old table refuses", async () => {
   const stored = JSON.parse(new TextDecoder().decode(f.env.MAIL.objects.get("routes.json").bytes));
   const old = {...JSON.parse(stored.table), issuedAt: Date.now() - 14 * DAY - 1};
   f.env.MAIL.objects.get("routes.json").bytes = enc.encode(await signedTable(f.key, old));
+  f.env.MAIL.touch("routes.json");
   const stale = mail();
   await worker.email(stale, f.env);
   assert.deepEqual(stale.rejected, ["Routing unavailable"]);
@@ -320,7 +328,10 @@ test("rotate: current signer, epoch+1, fences the old bearer, concurrent loser r
   if (winnerKey) {
     assert.equal((await call(f.env, "PUT", "/routes", {bearer: token(2), body: await signedTable(f.key, table())})).status, 403, "old key cannot sign tables");
     assert.equal((await call(f.env, "PUT", "/routes", {bearer: token(2), body: await signedTable(next, table({revision: Date.now() + 1000}))})).status, 204);
-    const third = {epoch: 3, tokenSha256: sha(token(4)), publicKey: next.public};
+    const same = {epoch: 3, tokenSha256: sha(token(2)), publicKey: (await keypair()).public};
+    assert.equal((await call(f.env, "POST", "/rotate", {bearer: token(2), body: await signedRotation(next, same)})).status, 400, "same bearer");
+    assert.equal((await call(f.env, "POST", "/rotate", {bearer: token(2), body: await signedRotation(next, {...same, tokenSha256: sha(token(4)), publicKey: next.public})})).status, 400, "same key");
+    const third = {epoch: 3, tokenSha256: sha(token(4)), publicKey: (await keypair()).public};
     assert.equal((await call(f.env, "POST", "/rotate", {bearer: token(2), body: await signedRotation(next, third)})).status, 204);
     assert.equal((await call(f.env, "GET", "/messages", {bearer: token(2)})).status, 401);
   }
@@ -337,4 +348,119 @@ test("invalid bootstrap secrets and storage errors fail closed without detail", 
   const r = await call(g.env, "GET", "/messages");
   assert.equal(r.status, 503);
   assert.equal(await r.text(), "");
+});
+
+const hexBytes = h => Uint8Array.from(Buffer.from(h, "hex"));
+// Identity, all-zero (order 4), order-8 and order-2 points, and y = p + 1 (non-canonical identity).
+const degenerate = ["01" + "00".repeat(31), "00".repeat(32), "00".repeat(31) + "80", "ec" + "ff".repeat(30) + "7f", "ee" + "ff".repeat(30) + "7f",
+  "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a", "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05"];
+
+test("public keys must be canonical prime-order points", async () => {
+  assert.equal(primeOrderPoint(hexBytes("5866666666666666666666666666666666666666666666666666666666666666")), true, "base point");
+  for (const h of degenerate) assert.equal(primeOrderPoint(hexBytes(h)), false, h);
+  for (const h of degenerate) {
+    const f = await fixture();
+    f.env.ROUTING_PUBLIC_KEY = b64(hexBytes(h));
+    assert.equal((await call(f.env, "GET", "/messages")).status, 503, "bootstrap " + h);
+    const g = await fixture();
+    const rotation = {epoch: 2, tokenSha256: sha(token(2)), publicKey: b64(hexBytes(h))};
+    assert.equal((await call(g.env, "POST", "/rotate", {body: await signedRotation(g.key, rotation)})).status, 400, "rotation " + h);
+  }
+});
+
+test("malformed authorization costs no read; comparison covers every byte", async () => {
+  const f = await fixture();
+  for (const bearer of [null, "abc", "A" + token(1).slice(1), token(1) + "0"]) assert.equal((await call(f.env, "GET", "/messages", {bearer})).status, 401);
+  assert.deepEqual(f.env.MAIL.log, []);
+  const flipped = sha(token(1)).slice(0, 62) + (sha(token(1)).slice(62) === "00" ? "01" : "00");
+  f.env.PICKUP_TOKEN_SHA256 = flipped;
+  assert.equal((await call(f.env, "GET", "/messages")).status, 401);
+});
+
+test("signature encoding, issuedAt bound and stored form", async () => {
+  const f = await fixture();
+  const now = Date.now();
+  assert.equal(await install(f, table({revision: now, issuedAt: now + 6 * 60_000})), 422);
+  const text = JSON.stringify(table({revision: now}));
+  const signature = await sign(f.key, contexts.routes, text);
+  assert.ok(signature.endsWith("=="));
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const loose = signature.slice(0, -3) + alphabet[alphabet.indexOf(signature[85]) ^ 1] + "==";
+  assert.deepEqual(Buffer.from(loose, "base64"), Buffer.from(signature, "base64"), "same bytes, non-canonical text");
+  assert.equal((await call(f.env, "PUT", "/routes", {body: JSON.stringify({table: text, signature: loose})})).status, 400);
+  const spaced = `{ "table" : ${JSON.stringify(text)} ,\n "signature" : "${signature}" }`;
+  assert.equal((await call(f.env, "PUT", "/routes", {body: spaced})).status, 204);
+  assert.equal(await (await call(f.env, "GET", "/routes")).text(), JSON.stringify({table: text, signature}));
+});
+
+test("sender, null sender, IDN, empty and envelope limits", async () => {
+  const f = await fixture();
+  const long = "l".repeat(64) + "@" + "d".repeat(184) + ".test";
+  assert.equal(long.length, 254);
+  assert.equal(await install(f, table({routes: [{address: "one@example.test", generation: 1, maxBytes: 1024}, {address: long, generation: 1, maxBytes: 1024}]})), 204);
+  const cases = [
+    [{from: "<>"}, []], [{from: ""}, []],
+    [{from: "x".repeat(506) + "@a.test"}, ["Address refused"]],
+    [{from: "x".repeat(505) + "@a.test"}, []],
+    [{from: "a@bücher.example"}, ["Address refused"]],
+    [{from: "ü@xn--bcher-kva.example"}, []],
+    [{to: "one@exämple.test"}, ["Address refused"]],
+    [{from: "€".repeat(505) + "@a.test", to: long}, ["Address refused"]],
+    [{from: "€".repeat(495) + "@a.test", to: long}, []],
+  ];
+  for (const [over, rejected] of cases) {
+    const m = mail(over);
+    await worker.email(m, f.env);
+    assert.deepEqual(m.rejected, rejected, JSON.stringify(over).slice(0, 60));
+  }
+  const empty = mail({}, new Uint8Array());
+  await worker.email(empty, f.env);
+  assert.deepEqual(empty.rejected, ["Empty message"]);
+  const senders = await Promise.all(inbox(f.env).map(async k => JSON.parse(f.env.MAIL.objects.get(k).meta.envelope).sender));
+  assert.equal(senders.filter(x => x === "").length, 2, "<> normalized to the null sender");
+  for (const bad of [{routes: [{address: "ü@x.test", generation: 1, maxBytes: 1}]}, {blockedSenders: [{domain: "bücher.example", until: null}]}]) {
+    assert.equal(await install(f, table({revision: Date.now() + 1000, ...bad})), 400);
+  }
+});
+
+test("a block expires exactly at until", async () => {
+  const f = await fixture();
+  const real = Date.now, at = real();
+  await install(f, table({revision: at, issuedAt: at, blockedSenders: [{address: "x@spam.test", until: at + 10}]}));
+  try {
+    Date.now = () => at + 9;
+    const before = mail({from: "x@spam.test"});
+    await worker.email(before, f.env);
+    assert.deepEqual(before.rejected, ["Sender blocked"]);
+    Date.now = () => at + 10;
+    const after = mail({from: "x@spam.test"});
+    await worker.email(after, f.env);
+    assert.deepEqual(after.rejected, []);
+  } finally { Date.now = real; }
+});
+
+test("the parsed table is reused only while the stored etag is unchanged", async () => {
+  const f = await fixture();
+  await install(f);
+  await worker.email(mail(), f.env);
+  f.env.MAIL.log.length = 0;
+  await worker.email(mail(), f.env);
+  assert.deepEqual(f.env.MAIL.log.filter(([, k]) => k === "routes.json"), [["get-unchanged", "routes.json"]]);
+  assert.equal(await install(f, table({revision: Date.now() + 1000, routes: []})), 204);
+  const after = mail();
+  await worker.email(after, f.env);
+  assert.deepEqual(after.rejected, ["Address refused"], "a new table takes effect at once");
+  f.env.MAIL.objects.delete("routes.json");
+  const gone = mail();
+  await worker.email(gone, f.env);
+  assert.deepEqual(gone.rejected, ["Address refused"]);
+});
+
+test("an empty truncated page follows the R2 cursor", async () => {
+  const f = await fixture();
+  await install(f);
+  await worker.email(mail(), f.env);
+  f.env.MAIL.emptyPage = true;
+  const page = await (await call(f.env, "GET", "/messages")).json();
+  assert.equal(page.messages.length, 1);
 });
