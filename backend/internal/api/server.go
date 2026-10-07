@@ -43,7 +43,7 @@ import (
 // Server holds the HTTP surface and its process-wide state.
 //
 // LOCK ORDER: cfgMu before sessMu before pairingMu before userMu before ollamaMu before serverMu before
-// pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu before exportMu. Never the reverse.
+// pinProbeMu before linuxClientMu before backupDrainMu before stepUpMu before exportMu before importMu. Never the reverse.
 // The sso-lifecycle file lock (sso.LifecycleStore) ranks before all of them and
 // is not modelled by lockRank or TestLockOrderIsRespected: hold no Server mutex
 // when calling LockDirectory, ApplyDirectory, RecordLogout or RecordSignOnJTI.
@@ -125,6 +125,12 @@ type Server struct {
 	exportMu  sync.Mutex
 	exports   map[string]exportGrant
 	exporting map[string]bool
+	// importGrants are the unspent mail-import upload links, keyed by token,
+	// and imports each user's latest import job. Innermost, taken alone,
+	// never while another Server mutex is held.
+	importMu     sync.Mutex
+	importGrants map[string]importGrant
+	imports      map[string]*importJob
 	// singleUse makes each one-shot token — PGP QR key exchange, native device
 	// pairing nonces — redeemable exactly once. See singleUseTokens.
 	singleUse            *singleUseTokens
@@ -612,6 +618,10 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/export/folders", s.withMailAuth(s.withMailbox(s.handleExportFolders)))
 	mux.HandleFunc("POST /api/export", s.withMailAuth(withActionDigest(s.handleExportStart)))
 	mux.HandleFunc("GET /api/export/{token}", s.withMailAuth(s.handleExportDownload))
+	mux.HandleFunc("GET /api/import", s.withMailAuth(s.handleImportStatus))
+	mux.HandleFunc("POST /api/import", s.withMailAuth(withActionDigest(s.handleImportStart)))
+	mux.HandleFunc("POST /api/import/cancel", s.withMailAuth(s.handleImportCancel))
+	mux.HandleFunc("POST /api/import/{token}", s.withMailAuth(s.handleImportUpload))
 	mux.HandleFunc("GET /api/inbox", s.withMailAuth(s.withMailbox(s.handleInbox)))
 	mux.HandleFunc("GET /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
 	mux.HandleFunc("POST /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
@@ -820,6 +830,10 @@ func (s *Server) routesFrontend(mux *http.ServeMux) {
 //
 // Serve and Run call Prepare automatically if it wasn't already called.
 func (s *Server) Prepare() {
+	// No import job survives a restart; its upload may have.
+	if err := os.RemoveAll(filepath.Join(s.stateDir, importDir)); err != nil {
+		s.logger.Error("leftover import uploads could not be removed", "error", err.Error())
+	}
 	port := config.EnvInt("WEB_PORT", 5866)
 	// Timeouts are set explicitly because net/http's zero values mean "no limit":
 	// without them a connection that dribbles one header line every few seconds is
@@ -917,6 +931,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	httpErr := s.httpServer.Shutdown(ctx)
+	s.cancelImports()
 	backupCtx, cancel := context.WithTimeout(context.Background(), depositBudget)
 	defer cancel()
 	return errors.Join(httpErr, s.waitForBackups(backupCtx))

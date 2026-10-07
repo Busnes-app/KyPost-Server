@@ -476,7 +476,7 @@ being converted to IMAP. Use a compatible binary, not an older metadata writer.
 ### Mail export
 
 Users export their own native mailbox, or one folder of it, from Settings →
-Mail → Export Mail. Import is not built yet.
+Mail → Export Mail; [mail import](#mail-import) is its mirror.
 
 - `GET /api/export/folders` lists every folder of the selected mailbox
   (`X-KyPost-Mailbox`).
@@ -534,6 +534,83 @@ Mail → Export Mail. Import is not built yet.
   folder, format, `messages` and `bytes` as integers, a random per-grant
   `correlation_id` (never the token) and result (`authorized`, `started`,
   `finished`, `failed`, `refused`); never subjects or addresses.
+
+### Mail import
+
+Users import mbox and EML files into their own native mailbox from Settings →
+Mail → Import Mail. Importing from an external IMAP account is not built yet.
+
+- `POST /api/import` with `{mailbox, folder, password|authSecret}`: `mailbox`
+  as for export, `folder` an existing folder or a new one under an existing
+  parent (empty is `Imported`; only `INBOX` is case-insensitive). Browser
+  session only (a paired device gets 403), CSRF, and `confirmActor` behind
+  `withActionDigest`, because a stolen session must not plant mail (a fake
+  bank message) in the user's history. Answers `{url:"/api/import/<64 hex>",
+  expiresInSeconds:300, folder, maxBytes}` after creating a missing folder. One
+  unspent link per user, held in memory and bound to user, session, mailbox
+  and folder. A foreign, unknown or disabled mailbox is 404, a missing parent
+  404, an invalid name 400, an external IMAP account 409, a busy user or server
+  409. Admission matches export: an administrator identity holding no mailbox
+  gets 409, a promoted KyIdentity administrator 403, and a `legacyMixedUse`
+  administrator imports into their own mailboxes until migrated. Nobody can
+  import into another user's mailbox.
+- `POST /api/import/{token}` spends the link and takes the raw file as the body
+  (`application/octet-stream`). It streams to a `0600` temp file in
+  `$STATE_DIR/imports/`, never to memory, refusing more than `maxBytes` (413)
+  and an empty body (400); the cap is the mailbox's whole storage quota
+  (32 MiB today), since nothing larger can fit. The read deadline moves before
+  every read, so an upload may take as long as it keeps sending; one idle for
+  a minute is cut off. It answers `202` with the job status and the job runs in
+  the background, past the end of the request. A busy refusal (409) keeps the
+  link.
+- `GET /api/import` is the caller's latest job: `{state, mailbox, folder,
+  imported, duplicates, skipped, bytes, error?, maxBytes, maxMessageBytes}`
+  with `state` `idle`, `uploading`, `running`, `finished`, `failed` or
+  `cancelled`. `POST /api/import/cancel` (CSRF) stops a running job before
+  its next message; 409 when none runs.
+- One import uploads or runs per user and two server-wide (`maxImports`).
+  Jobs live in memory: a restart or shutdown cancels them and the startup
+  removes `$STATE_DIR/imports/`; every other path removes the temp file when
+  the job or upload ends. The user re-imports, and duplicates make that safe.
+- Formats are detected by content: a zip (`PK`), an mbox (starts `From `),
+  otherwise one EML. mbox splits at a `From ` line at the start of the file or
+  after a blank line, drops that blank line, removes one `>` from every
+  `^>+From ` line (mboxrd; for mboxo it undoes the `>From ` quoting) and keeps
+  CRLF or LF line endings as they are, so a KyPost export round-trips exactly.
+  A zip passes every `*.eml` entry (any case) into the one target folder, in
+  directory order, read into memory one at a time; entry names are never used
+  as paths and folders inside the zip are not recreated. More than 10,000
+  entries, or more inflated bytes than `maxBytes`, refuses the archive; an
+  entry inflating past 100 times its compressed size (at least 1 MiB) is a
+  bomb and skipped, as are entries not named `*.eml` and unreadable or
+  corrupt ones.
+- Each message is stored as its exact bytes, seen, with the `Date` header as
+  its date (now when absent or invalid) and no flags or labels. A message that
+  is empty, has no RFC 5322 header, or exceeds the smaller of the 25 MiB
+  inbound cap and the mailbox's message limit (5 MiB today) is skipped and
+  counted; one bad message never stops the import. A folder already holding a
+  live copy of the same bytes (SHA-256, indexed per folder) counts a
+  duplicate instead; a deleted copy no longer blocks re-import. A full
+  mailbox, a mailbox no longer admitted or a zip refused as a whole stops the
+  job as `failed` with the reason.
+- Imported mail is not received mail: no delivery receipt (receiving dedupe
+  and quarantine are untouched), and because it is seen the poller never
+  takes it, so no rules, classification, sorter learning, notifications or
+  push run on it and it is not scanned for spam. The screen says so.
+- Incoming encryption sweeps only unread INBOX mail, so imported mail would
+  stay plaintext: import is refused (409) while the user has incoming
+  encryption on or a replacement pending, at the link, at upload and before
+  every message, which is stored under the owner's settings file lock (the
+  lock enabling encryption takes) with the setting re-read. Turning
+  encryption on mid-import fails the job before its next message.
+- Each import is audited as `mail import` with actor, target (the mailbox),
+  folder, `messages` (imported), `duplicates`, `skipped` and `bytes` as
+  integers, `reason` for a failure, a random per-link `correlation_id` (never
+  the token) and result (`authorized`, `started`, `finished`, `failed`,
+  `cancel_requested`, `cancelled`); never subjects or addresses.
+- `archive/zip` reads the whole central directory before the entry cap
+  applies, about four times the upload in memory at worst. That is bounded by
+  the quota cap; raising the per-mailbox quota raises it too.
 
 ## Direct receiving runtime (qualification profile)
 

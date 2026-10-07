@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS folders (name TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS labels (name TEXT PRIMARY KEY COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, folder TEXT NOT NULL REFERENCES folders(name), raw BLOB, digest TEXT NOT NULL, sender TEXT NOT NULL, subject TEXT NOT NULL, sent_to TEXT NOT NULL, cc TEXT NOT NULL, bcc TEXT NOT NULL, at_utc TEXT NOT NULL, seen INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0, draft INTEGER NOT NULL DEFAULT 0, labels TEXT NOT NULL DEFAULT '[]');
 CREATE INDEX IF NOT EXISTS message_folder_ids ON messages(folder,id) WHERE raw IS NOT NULL;
+CREATE INDEX IF NOT EXISTS message_folder_digests ON messages(folder,digest) WHERE raw IS NOT NULL;
 CREATE TABLE IF NOT EXISTS receipts (gateway TEXT NOT NULL, delivery TEXT NOT NULL, envelope TEXT NOT NULL, digest TEXT NOT NULL, message_id INTEGER NOT NULL REFERENCES messages(id), PRIMARY KEY(gateway,delivery));
 CREATE TABLE IF NOT EXISTS changes (revision INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL, folder TEXT NOT NULL, removed INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS usage (id INTEGER PRIMARY KEY CHECK(id=1), records INTEGER NOT NULL, payload_bytes INTEGER NOT NULL);
@@ -282,7 +283,7 @@ func (s *Store) Import(ctx context.Context, receipt Receipt, input io.Reader) (i
 	if err != nil {
 		return 0, err
 	}
-	return s.append(ctx, "INBOX", input, receipt.Gateway, receipt.Delivery, envelope, false)
+	return s.append(ctx, "INBOX", input, receipt.Gateway, receipt.Delivery, envelope, false, false)
 }
 
 // Append stores a local Drafts/Sent copy without an SMTP delivery receipt.
@@ -290,9 +291,13 @@ func (s *Store) Append(ctx context.Context, folder string, input io.Reader, draf
 	if !validFolder(folder) {
 		return 0, errors.New("invalid folder")
 	}
-	return s.append(ctx, folder, input, "", "", "", draft)
+	return s.append(ctx, folder, input, "", "", "", draft, false)
 }
-func (s *Store) append(ctx context.Context, folder string, input io.Reader, gateway, delivery, envelope string, draft bool) (int64, error) {
+
+// append stores one message. An imported message is stored seen and refused
+// with ErrDuplicate (and the holding ID) while the folder holds a live copy of
+// the same bytes.
+func (s *Store) append(ctx context.Context, folder string, input io.Reader, gateway, delivery, envelope string, draft, imported bool) (int64, error) {
 	raw, err := mailmsg.BoundedRead(input, s.limits.MessageBytes)
 	if err != nil {
 		return 0, err
@@ -318,6 +323,16 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 			return 0, err
 		}
 	}
+	if imported {
+		var id int64
+		err = tx.QueryRowContext(ctx, "SELECT id FROM messages WHERE folder=? AND digest=? AND raw IS NOT NULL LIMIT 1", folder, digest).Scan(&id)
+		if err == nil {
+			return id, ErrDuplicate
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+	}
 	var count, used int64
 	// SQLite triggers maintain counters in the message transaction across writers.
 	if err = tx.QueryRowContext(ctx, "SELECT records,payload_bytes FROM usage WHERE id=1").Scan(&count, &used); err != nil {
@@ -331,7 +346,7 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 	if err != nil {
 		return 0, err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, folder, raw, digest, headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339), folder != "INBOX" && !draft, draft)
+	result, err := tx.ExecContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, folder, raw, digest, headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339), imported || folder != "INBOX" && !draft, draft)
 	if err != nil {
 		return 0, err
 	}

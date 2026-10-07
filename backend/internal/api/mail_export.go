@@ -68,24 +68,31 @@ func (e *exportRefusal) write(w http.ResponseWriter) {
 
 // exporter admits the mailbox again; anything not native is 409.
 func (s *Server) exporter(ctx context.Context, userID, mailboxID string) (mailExporter, *exportRefusal) {
+	return nativeMail[mailExporter](s, ctx, userID, mailboxID, "export is available for native mailboxes; your provider offers its own export")
+}
+
+// nativeMail admits the mailbox again and returns its native client as T;
+// anything not native is 409 with notNative.
+func nativeMail[T any](s *Server, ctx context.Context, userID, mailboxID, notNative string) (T, *exportRefusal) {
+	var none T
 	_, native, err := s.nativeMailboxAssignment(ctx, userID, mailboxID)
 	switch {
 	case errors.Is(err, sso.ErrNativeAdministrator):
-		return nil, &exportRefusal{http.StatusForbidden, "administrator identities have no mailbox; use your everyday identity"}
+		return none, &exportRefusal{http.StatusForbidden, "administrator identities have no mailbox; use your everyday identity"}
 	case errors.Is(err, sso.ErrNativeMailboxUnknown):
-		return nil, &exportRefusal{http.StatusNotFound, "mailbox not found"}
+		return none, &exportRefusal{http.StatusNotFound, "mailbox not found"}
 	case err != nil:
-		return nil, &exportRefusal{http.StatusServiceUnavailable, "mailbox authority is unavailable"}
+		return none, &exportRefusal{http.StatusServiceUnavailable, "mailbox authority is unavailable"}
 	case native:
 		client, err := s.mailboxMailClient(userID, mailboxID)
 		if err != nil {
-			return nil, &exportRefusal{http.StatusServiceUnavailable, "mailbox is unavailable"}
+			return none, &exportRefusal{http.StatusServiceUnavailable, "mailbox is unavailable"}
 		}
-		if ex, ok := client.(mailExporter); ok {
-			return ex, nil
+		if c, ok := client.(T); ok {
+			return c, nil
 		}
 	}
-	return nil, &exportRefusal{http.StatusConflict, "export is available for native mailboxes; your provider offers its own export"}
+	return none, &exportRefusal{http.StatusConflict, notNative}
 }
 
 // exportFolders resolves the folders to export.

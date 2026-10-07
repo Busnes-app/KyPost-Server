@@ -177,3 +177,37 @@ export async function postBlob(path: string, body: unknown, headers: Record<stri
   });
   return response.blob();
 }
+
+// uploadWithProgress POSTs a raw file through XMLHttpRequest, the one browser
+// API that reports upload progress, with the same CSRF header, credentials,
+// 401 recovery and HttpError as requestJSON. Aborting `signal` aborts it.
+export function uploadWithProgress<T>(path: string, body: Blob, onProgress: (loaded: number, total: number) => void, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    xhr.withCredentials = true;
+    const csrfToken = readCsrfToken();
+    if (csrfToken) xhr.setRequestHeader("X-CSRF-Token", csrfToken);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = (e) => onProgress(e.loaded, e.lengthComputable ? e.total : body.size);
+    xhr.onerror = () => reject(new Error("The upload failed; check your connection and try again."));
+    xhr.onabort = () => reject(new DOMException("upload cancelled", "AbortError"));
+    xhr.onload = () => {
+      if (xhr.status === 401) {
+        window.location.reload();
+        reject(new SessionExpiredError());
+        return;
+      }
+      let data: unknown;
+      try { data = JSON.parse(xhr.responseText); } catch { data = undefined; }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const detail = typeof data === "object" && data !== null && typeof (data as { error?: unknown }).error === "string" ? (data as { error: string }).error : "";
+        reject(new HttpError(detail ? `request failed: ${xhr.status} - ${detail}` : `request failed: ${xhr.status}`, xhr.status, data));
+        return;
+      }
+      resolve(data as T);
+    };
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(body);
+  });
+}
