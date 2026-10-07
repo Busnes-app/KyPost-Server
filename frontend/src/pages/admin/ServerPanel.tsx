@@ -9,6 +9,7 @@ import { Users } from "../../admin/sections/Users";
 import { MailDomain } from "../../admin/sections/MailDomain";
 import { MailAddresses } from "../../admin/sections/MailAddresses";
 import { Quarantine } from "../../admin/sections/Quarantine";
+import { SenderBlocks } from "../../admin/sections/SenderBlocks";
 
 /**
  * Server-level settings: how the instance runs, what it can prove it owns,
@@ -39,6 +40,7 @@ export function ServerPanel() {
           { id: "mail-domain", label: "Mail domain", body: <MailDomain /> },
           { id: "mail-addresses", label: "Mail addresses", body: <MailAddresses /> },
           { id: "quarantine", label: "Quarantine", body: <Quarantine /> },
+          { id: "sender-blocks", label: "Sender blocks", body: <SenderBlocks /> },
           { id: "mail-defaults", label: "Default Mail Server", body: <MailDefaults /> },
           { id: "label-rules", label: "Default Labels", body: <LabelRules /> },
           { id: "wkd-domains", label: "WKD Domains", body: <WkdDomains /> },

@@ -236,3 +236,40 @@ export function readQuarantineChange(value: unknown, gateway: string, id: string
   if (result && data.gateway === gateway && data.id === id) return result;
   throw new Error("Quarantine answer does not match the request; reload before retrying.");
 }
+
+export type BlockKind = "address" | "domain";
+export const blockReasons = ["spam", "phishing", "abuse", "other"] as const;
+export type BlockReason = typeof blockReasons[number];
+// until: Unix ms, or null for no expiry. Values are sender-chosen text.
+export type SenderBlock = { id: string; kind: BlockKind; value: string; until: number | null; source: "manual" | "automatic"; level: number; createdAt: number; actor: string; reason: BlockReason };
+export type BlockEvidence = { damaged: boolean; resetAt: number | null; domainBlocksFrom: number | null; goodFull: boolean; automaticFull: boolean };
+const invalidBlocks = "Invalid sender block list; reload before changing blocks.";
+const optionalTime = (v: unknown) => v === null ? null : integer(v);
+function readSenderBlock(value: unknown): SenderBlock {
+  const b = object(value);
+  const { id, kind, value: v, source, level, actor, reason } = b;
+  if (typeof id !== "string" || !/^[0-9a-f]{16}$/.test(id) || (kind !== "address" && kind !== "domain") ||
+      typeof v !== "string" || !v || v.length > 320 || /[\r\n\0]/.test(v) || v.includes("@") !== (kind === "address") ||
+      !(source === "manual" && level === 0 || source === "automatic" && (level === 1 || level === 2 || level === 3)) ||
+      typeof actor !== "string" || !actor || actor.length > 128 || !blockReasons.some(r => r === reason)) throw new Error(invalidBlocks);
+  return { id, kind, value: v, until: optionalTime(b.until), source, level, createdAt: integer(b.createdAt), actor, reason: reason as BlockReason };
+}
+export function readSenderBlocks(value: unknown): { blocks: SenderBlock[]; evidence: BlockEvidence } {
+  const data = object(value), e = object(data.evidence);
+  if (!Array.isArray(data.blocks) || data.blocks.length > 5000 || typeof e.damaged !== "boolean" || typeof e.goodFull !== "boolean" || typeof e.automaticFull !== "boolean") throw new Error(invalidBlocks);
+  const blocks = data.blocks.map(readSenderBlock);
+  if (new Set(blocks.map(b => b.id)).size !== blocks.length) throw new Error(invalidBlocks);
+  return { blocks, evidence: { damaged: e.damaged, resetAt: optionalTime(e.resetAt), domainBlocksFrom: optionalTime(e.domainBlocksFrom), goodFull: e.goodFull, automaticFull: e.automaticFull } };
+}
+const blockMismatch = "Sender block answer does not match the request; reload before retrying.";
+// The server lowercases A-Z only and stores a manual block as requested.
+export function readSenderBlockAdded(value: unknown, want: { kind: BlockKind; value: string; until: number | null; reason: BlockReason }): SenderBlock {
+  const b = readSenderBlock(object(value).block);
+  if (b.kind !== want.kind || b.value !== want.value.replace(/[A-Z]/g, c => c.toLowerCase()) || b.until !== want.until || b.reason !== want.reason || b.source !== "manual") throw new Error(blockMismatch);
+  return b;
+}
+export function readSenderBlockRemoved(value: unknown, id: string): string {
+  const data = object(value);
+  if (data.id !== id || data.result !== "unblocked") throw new Error(blockMismatch);
+  return warningOf(value);
+}
