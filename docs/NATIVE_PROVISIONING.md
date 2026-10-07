@@ -270,7 +270,7 @@ recorded as `address_conflict`.
   reserved, delivery and sending stop immediately, delivered mail stays,
   reassignment is explicit) and, once reserved, Reassign to a chosen mailbox
   (confirmation names the target); primaries offer nothing. Add alias takes a
-  mailbox and an address. The list does not say which owners are
+  mailbox and an address and confirms that the address is held permanently. The list does not say which owners are
   administrators, so their refusal is the server's 409 text. A `warning` answer
   is shown as a committed change with pending routes, not an error.
 - **Switch-over safety.** Ledgers written before this change (no

@@ -38,14 +38,17 @@ function MailAddressesForm() {
   }
   async function refresh() {
     const generation = ++refreshGeneration.current;
-    const [list, users] = await Promise.all([getJSON<unknown>("/api/admin/mail-addresses"), listUsers()]);
-    const next = readMailAddresses(list);
+    const next = readMailAddresses(await getJSON<unknown>("/api/admin/mail-addresses"));
     if (!live.current || generation !== refreshGeneration.current) return;
-    setNames(new Map(users.filter(u => typeof u.id === "string" && typeof u.username === "string").map(u => [u.id, u.username])));
+    setOwner(o => next.some(m => m.user === o) ? o : "");
     setMailboxes(next);
   }
   useEffect(() => {
     live.current = true;
+    // Names are display only: without them the screen shows mailbox and user IDs.
+    listUsers().then(users => {
+      if (live.current) setNames(new Map(users.filter(u => typeof u.id === "string" && typeof u.username === "string").map(u => [u.id, u.username])));
+    }).catch(() => undefined);
     const generation = refreshGeneration.current + 1;
     void refresh().catch((e: unknown) => {
       if (live.current && generation === refreshGeneration.current) setError(toErrorMessage(e, "Unable to load mail addresses. Reload before changing them."));
@@ -69,6 +72,7 @@ function MailAddressesForm() {
     const path = `/api/admin/mail-addresses/${encodeURIComponent(change.address)}`;
     const accountPassword = password;
     setPassword("");
+    let committed = false;
     try {
       const credential = ssoSession ? {} : credentialFields(await deriveCredential("", accountPassword));
       requireLive();
@@ -84,6 +88,8 @@ function MailAddressesForm() {
       if (change.action === "release" ? record.state !== "reserved" : record.mailbox !== change.mailbox) {
         throw new Error("Address change answer does not match the request; reload before retrying.");
       }
+      committed = true;
+      setWarning(warning);
       // A committed change followed by an unreadable list must not leave stale controls enabled.
       setMailboxes(null);
       await refresh();
@@ -91,14 +97,14 @@ function MailAddressesForm() {
       if (change.action === "add") setAddress("");
       setNotice(change.action === "release" ? `${record.address} released and reserved (generation ${record.generation}). It receives and sends nothing until reassigned.`
         : `${record.address} is ${record.state} on ${label(record.mailbox)} (generation ${record.generation}).`);
-      setWarning(warning);
     } catch (e: unknown) {
       if (live.current) {
         setMailboxes(null);
-        setError(toErrorMessage(e, "Address change failed. Reload before retrying an uncertain change."));
+        const message = toErrorMessage(e, "Address change failed. Reload before retrying an uncertain change.");
+        setError(committed ? `Change saved; reload to see current addresses. ${message}` : message);
         // The server answered, so controls return only if a fresh list validates.
         // A request that never got an answer stays locked until reload.
-        if (e instanceof HttpError) await refresh().catch(() => undefined);
+        if (!committed && e instanceof HttpError) await refresh().catch(() => undefined);
       }
     } finally {
       inFlight.current = false;
@@ -119,10 +125,13 @@ function MailAddressesForm() {
     <fieldset className="config-card config-grid" disabled={busy || !mailboxes}>
       <legend>Confirm each action</legend>
       {ssoSession ? <p>Confirm each action with KySignOn.</p> : <label>Account password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label>}
-      <label>Show mailboxes of<select value={owner} onChange={e => setOwner(e.target.value)}>
-        <option value="">All users</option>
-        {owners.map(id => <option key={id} value={id}>{names.get(id) ?? id}</option>)}
-      </select></label>
+    </fieldset>
+    <label>Show mailboxes of<select value={owner} disabled={!mailboxes} onChange={e => setOwner(e.target.value)}>
+      <option value="">All users</option>
+      {owners.map(id => <option key={id} value={id}>{names.get(id) ?? id}</option>)}
+    </select></label>
+    <fieldset className="config-card config-grid" disabled={busy || !mailboxes}>
+      <legend>Mailboxes and aliases</legend>
       {mailboxes?.length === 0 && <p>No native mailboxes yet. KyPost creates one when KyIdentity assigns an everyday identity a primary address.</p>}
       {shown.map(m => <div key={m.mailbox} className="users-table-wrap"><table className="users-table">
         <caption>{label(m.mailbox)}</caption>
@@ -148,8 +157,9 @@ function MailAddressesForm() {
         {mailboxes?.map(m => <option key={m.mailbox} value={m.mailbox}>{label(m.mailbox)}</option>)}
       </select></label>
       <label>Alias address<input value={address} placeholder="sales@example.com" autoComplete="off" onChange={e => setAddress(e.target.value)} /></label>
-      <p>Use a lowercase ASCII address on a configured mail domain. An address KyPost has ever held, or any KyIdentity primary address, is refused; a released alias returns only through Reassign.</p>
-      <button className="button secondary" disabled={!unlocked || !addTo || !typed} onClick={() => void act({ action: "add", address: typed, mailbox: addTo })}>Add alias</button>
+      <p>ASCII address on a configured mail domain; stored in lowercase. An address KyPost has ever held, or any KyIdentity primary address, is refused; a released alias returns only through Reassign.</p>
+      <button className="button secondary" disabled={!unlocked || !addTo || !typed} onClick={() => void act({ action: "add", address: typed, mailbox: addTo },
+        `Add ${typed} to ${label(addTo)}? KyPost holds this address permanently: records are never deleted, and releasing it later only reserves it.`)}>Add alias</button>
     </fieldset>
     {busy && <p role="status">Working…</p>}
   </div>;

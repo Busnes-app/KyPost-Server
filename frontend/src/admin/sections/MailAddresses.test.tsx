@@ -25,13 +25,14 @@ const list = { mailboxes: [
 const users = { users: [{ id: "alice-id", username: "alice" }, { id: "bob-id", username: "bob" }] };
 let listResponse: unknown;
 let answer: () => Response;
-let failWrite = false;
+let failWrite = false, failUsers = false;
 const fetchMock = vi.fn<typeof fetch>();
 const admin: AuthState = { authenticated: true, userId: "admin-id", username: "admin", role: "admin" };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const writes = () => fetchMock.mock.calls.filter(([, init]) => init?.method && init.method !== "GET");
 const reads = () => fetchMock.mock.calls.filter(([url, init]) => url === "/api/admin/mail-addresses" && !init?.method);
 const fieldset = () => screen.getByRole("group", { name: "Confirm each action" }) as HTMLFieldSetElement;
+const actions = () => screen.getByRole("group", { name: "Mailboxes and aliases" }) as HTMLFieldSetElement;
 function view(auth = admin) {
   return <AuthContext.Provider value={auth}><MailAddresses /></AuthContext.Provider>;
 }
@@ -41,7 +42,7 @@ async function unlocked(auth = admin) {
   if (!auth.ssoSession) fireEvent.change(screen.getByLabelText("Account password"), { target: { value: "account-secret" } });
 }
 beforeEach(() => {
-  listResponse = list; failWrite = false;
+  listResponse = list; failWrite = false; failUsers = false;
   answer = () => json({ ...sales, address: "new@example.com" });
   vi.stubGlobal("fetch", fetchMock);
   fetchMock.mockImplementation(async (url, init) => {
@@ -50,6 +51,7 @@ beforeEach(() => {
       if (failWrite) throw new TypeError("network connection lost");
       return answer();
     }
+    if (url === "/api/users" && failUsers) return new Response("users unreadable", { status: 503 });
     return json(url === "/api/users" ? users : listResponse);
   });
   vi.mocked(deriveCredential).mockResolvedValue({ password: "must-not-transmit", authSecret: "derived-test-secret", loginSalt: "test-salt", loginIterations: 1, derivation: "pbkdf2" });
@@ -106,6 +108,12 @@ it("adds an alias with the derived credential and CSRF client", async () => {
   expect(add.hasAttribute("disabled")).toBe(true);
   fireEvent.change(screen.getByLabelText("Mailbox"), { target: { value: "alice-id" } });
   fireEvent.change(screen.getByLabelText("Alias address"), { target: { value: " new@example.com " } });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(add);
+  expect(confirm.mock.calls[0]?.[0]).toBe("Add new@example.com to alice@example.com (alice)? KyPost holds this address permanently: records are never deleted, and releasing it later only reserves it.");
+  expect(deriveCredential).not.toHaveBeenCalled();
+  expect(writes()).toHaveLength(0);
+  confirm.mockReturnValue(true);
   fireEvent.click(add);
   await screen.findByText("new@example.com is active on alice@example.com (alice) (generation 1).");
   const [write] = writes();
@@ -180,9 +188,11 @@ it("shows an answered refusal as returned, re-reads and restores controls", asyn
   answer = () => new Response("administrator identities own no aliases; use the everyday identity's mailbox", { status: 409 });
   fireEvent.change(screen.getByLabelText("Mailbox"), { target: { value: "alice-id" } });
   fireEvent.change(screen.getByLabelText("Alias address"), { target: { value: "new@example.com" } });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: "Add alias" }));
   expect((await screen.findByRole("alert")).textContent).toBe("request failed: 409 - administrator identities own no aliases; use the everyday identity's mailbox");
   await waitFor(() => expect(fieldset().disabled).toBe(false));
+  expect(actions().disabled).toBe(false);
   expect(reads().length).toBeGreaterThan(before);
   expect(screen.getByText("sales@example.com")).toBeDefined();
 });
@@ -208,6 +218,7 @@ it("locks changes until reload when no answer arrived", async () => {
   expect((await screen.findByRole("alert")).textContent).toContain("network connection lost");
   expect(screen.getByText("Address list unavailable. Reload this page before making changes.")).toBeDefined();
   expect(fieldset().disabled).toBe(true);
+  expect(actions().disabled).toBe(true);
   expect(reads().length).toBe(before);
 });
 
@@ -217,5 +228,37 @@ it("locks changes when a success answer does not match the request", async () =>
   answer = () => json({ ...sales, state: "active" });
   fireEvent.click(screen.getByRole("button", { name: "Release sales@example.com" }));
   expect((await screen.findByRole("alert")).textContent).toContain("does not match the request");
+  expect(fieldset().disabled).toBe(true);
+});
+
+it("keeps working with IDs when user names cannot be read", async () => {
+  failUsers = true;
+  render(view());
+  expect(await screen.findByRole("table", { name: "alice@example.com (alice-id)" })).toBeDefined();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(actions().disabled).toBe(false);
+});
+
+it("falls back to all users when the filtered owner disappears", async () => {
+  await unlocked();
+  fireEvent.change(screen.getByLabelText("Show mailboxes of"), { target: { value: "bob-id" } });
+  expect(screen.queryByText("sales@example.com")).toBeNull();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  listResponse = { mailboxes: [list.mailboxes[0]] };
+  fireEvent.change(screen.getByLabelText("Mailbox"), { target: { value: "alice-id" } });
+  fireEvent.change(screen.getByLabelText("Alias address"), { target: { value: "new@example.com" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add alias" }));
+  await screen.findByText(/new@example\.com is active/);
+  expect((screen.getByLabelText("Show mailboxes of") as HTMLSelectElement).value).toBe("");
+  expect(screen.getByText("sales@example.com")).toBeDefined();
+});
+
+it("says a committed change was saved when the follow-up read fails", async () => {
+  await unlocked();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  answer = () => json({ ...sales, state: "reserved", generation: 2 });
+  listResponse = { mailboxes: "unreadable" };
+  fireEvent.click(screen.getByRole("button", { name: "Release sales@example.com" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("Change saved; reload to see current addresses. Invalid mailbox list.");
   expect(fieldset().disabled).toBe(true);
 });

@@ -399,3 +399,12 @@ it("shows the storage migration remediation instead of falling back", async () =
   expect(fetchMock.mock.calls.some(([url]) => url === "/api/admin/mail-domain")).toBe(false);
   expect(screen.getByRole("button", { name: "Add domain" }).closest("fieldset")?.disabled).toBe(true);
 });
+
+it("says a committed change was saved when the follow-up status read fails", async () => {
+  render(view()); await screen.findByLabelText("TXT name");
+  fill("Account password", "account-secret");
+  domainResponse = { ...configuredDomain, recordValue: "foreign-token" };
+  fireEvent.click(screen.getByRole("button", { name: "Verify TXT record" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("Change saved; reload to see current mail setup. Invalid mail domain proof; reload before making changes.");
+  expect((screen.getByRole("group", { name: "Confirm each action" }) as HTMLFieldSetElement).disabled).toBe(true);
+});
