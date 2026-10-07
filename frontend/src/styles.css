@@ -1643,6 +1643,7 @@ pre {
 
 /* Only the sender may break anywhere: an unbroken hostile token wraps inside its own column. */
 .quarantine-table .quarantine-sender {
+  min-width: 16ch;
   max-width: 28ch;
   overflow-wrap: anywhere;
 }
