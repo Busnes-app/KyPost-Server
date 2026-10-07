@@ -453,7 +453,9 @@ an extra mailbox is 409 while the owner has incoming encryption on or a
 replacement pending, so is re-enabling one, enabling incoming encryption is 409
 while the user has an active, prepared extra mailbox (disabling every extra
 mailbox lifts it; an unfinished one finishes only through create), and the
-poller refuses to poll an extra mailbox whose owner has it on. Native pickup creation and system/own-address SMTP
+poller refuses to poll an extra mailbox whose owner has it on. Both sides decide
+under the owner's settings file lock, so concurrent requests cannot leave both
+on; the lock order is settings, then domains, then directory. Native pickup creation and system/own-address SMTP
 probes remain refused or skipped pending their authority/dependency integration. A leftover IMAP
 credential file cannot enable any native legacy SMTP path. Do not publish MX for this runtime alone. Roll back by
 disabling both native flags in both processes and keeping all

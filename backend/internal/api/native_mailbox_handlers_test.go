@@ -14,11 +14,13 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -491,4 +493,132 @@ func TestNativeExtraMailboxExcludesIncomingEncryption(t *testing.T) {
 	if w.Code != 403 || !strings.Contains(w.Body.String(), "administratorIdentity") {
 		t.Fatal("administrator selecting a mailbox", w.Code, w.Body)
 	}
+}
+
+// Enabling incoming encryption and creating or enabling an extra mailbox
+// race through the real handlers; at most one may win. Both decide under the
+// owner's settings lock, so neither interleaving leaves both on.
+func TestNativeExtraMailboxIncomingEncryptionRace(t *testing.T) {
+	ctx := context.Background()
+	srv := newNativeRuntimeServer(t)
+	directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.created", "race-one", 1, runtimeDirectoryUser(true)))
+	one, err := srv.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	userPassword := stepUpPassword(t, srv, one.ID)
+	identity, err := pgpmail.GenerateIdentity("One", "one@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedClientIdentity(t, srv, one.ID, identity.ArmoredPublicKey)
+	if one, err = srv.users.Get(one.ID); err != nil {
+		t.Fatal(err)
+	}
+	const adminPassword = "long-password-for-mailboxes"
+	admin, err := srv.users.Create(ctx, "race-admin", adminPassword, users.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, csrf := mintSessionForTest(srv, admin.ID)
+	routes := srv.routes()
+	adminPost := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", path, strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
+		req.Header.Set("X-CSRF-Token", csrf)
+		w := httptest.NewRecorder()
+		routes.ServeHTTP(w, req)
+		return w
+	}
+	encrypt := func() *httptest.ResponseRecorder {
+		body := `{"enabled":true,"acknowledgeReplacement":true,"expectedRevision":` + strconv.FormatUint(one.PGPRevision, 10) + `,"password":"` + userPassword + `"}`
+		req := httptest.NewRequest("PUT", "/api/pgp/incoming", strings.NewReader(body))
+		authRequestAs(srv, req, one.ID)
+		w := httptest.NewRecorder()
+		routes.ServeHTTP(w, req)
+		return w
+	}
+	// reset turns encryption off and disables every extra mailbox.
+	reset := func() {
+		t.Helper()
+		if err := config.UpdateUserSettings(srv.userSettingsPath(one.ID), func(s *config.UserSettings) error { s.EncryptIncoming = false; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		all, err := srv.ssoLifecycle.NativeMailboxes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range all {
+			if m.Kind == "extra" && m.State == "active" {
+				if _, err := srv.ssoLifecycle.SetNativeMailboxState(ctx, srv.stateDir, m.ID, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	// race starts the admin request delay after the encryption request, so the
+	// rounds sweep the window in which either can win, then checks the invariant.
+	race := func(delay time.Duration, admin func() *httptest.ResponseRecorder) (encrypted, extra bool) {
+		t.Helper()
+		var a, e *httptest.ResponseRecorder
+		start := make(chan struct{})
+		done := make(chan struct{})
+		go func() { <-start; time.Sleep(delay); a = admin(); close(done) }()
+		close(start)
+		e = encrypt()
+		<-done
+		if a.Code != 200 && a.Code != 409 || e.Code != 200 && e.Code != 409 {
+			t.Fatal("unexpected answer", a.Code, a.Body, e.Code, e.Body)
+		}
+		settings, err := config.LoadUserSettings(srv.userSettingsPath(one.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		active, err := srv.ownsActiveExtraMailbox(one.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if settings.EncryptIncoming && active {
+			t.Fatal("incoming encryption and an active extra mailbox both on", a.Body, e.Body)
+		}
+		return settings.EncryptIncoming, active
+	}
+	reset()
+	began := time.Now()
+	if w := encrypt(); w.Code != 200 {
+		t.Fatal("encryption cannot be enabled alone", w.Code, w.Body)
+	}
+	alone := time.Since(began)
+	const rounds = 12
+	// Delays sweep from 0 to twice the lone request's duration.
+	delay := func(i int) time.Duration { return alone * time.Duration(2*i) / rounds }
+	won := map[string]int{}
+	var last string
+	for i := range rounds {
+		reset()
+		address := "race" + strconv.Itoa(i) + "@example.test"
+		enc, extra := race(delay(i), func() *httptest.ResponseRecorder {
+			w := adminPost("/api/admin/mailboxes", `{"user":"`+one.ID+`","address":"`+address+`","password":"`+adminPassword+`"}`)
+			var m sso.NativeMailbox
+			if w.Code == 200 && json.Unmarshal(w.Body.Bytes(), &m) == nil {
+				last = m.ID
+			}
+			return w
+		})
+		won["create:"+strconv.FormatBool(enc)+strconv.FormatBool(extra)]++
+	}
+	if last == "" || won["create:truefalse"] == 0 {
+		t.Fatal("the rounds did not let both sides win", won)
+	}
+	for i := range rounds {
+		reset()
+		enc, extra := race(delay(i), func() *httptest.ResponseRecorder {
+			return adminPost("/api/admin/mailboxes/"+last+"/enable", `{"password":"`+adminPassword+`"}`)
+		})
+		won["enable:"+strconv.FormatBool(enc)+strconv.FormatBool(extra)]++
+	}
+	if won["enable:falsetrue"] == 0 || won["enable:truefalse"] == 0 {
+		t.Fatal("the rounds did not let both sides win", won)
+	}
+	t.Log("outcomes (encrypted, extra active):", won)
 }

@@ -9,6 +9,7 @@ import (
 	"regexp"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -159,12 +160,12 @@ func (s *Server) handleNativeMailboxes(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, users.ErrNotFound) || err == nil && u.NativeMailboxSource == "":
 		err = sso.ErrNativeAddressUnknown
 	}
-	if err == nil {
-		err = s.refuseExtraBesideIncomingEncryption(u)
-	}
 	m := sso.NativeMailbox{}
 	if err == nil {
-		m, err = s.ssoLifecycle.CreateNativeMailbox(r.Context(), s.stateDir, body.User, body.Address)
+		err = s.withIncomingEncryptionOff(u.ID, func() (err error) {
+			m, err = s.ssoLifecycle.CreateNativeMailbox(r.Context(), s.stateDir, body.User, body.Address)
+			return err
+		})
 	}
 	s.answerNativeMailbox(w, r, "create_mailbox", m, err)
 }
@@ -186,12 +187,21 @@ func (s *Server) setNativeMailboxState(w http.ResponseWriter, r *http.Request, a
 	id := r.PathValue("id")
 	m, err := sso.NativeMailbox{ID: id}, sso.ErrNativeAddressUnknown
 	if extraMailboxID.MatchString(id) {
-		err = nil
-		if active {
-			err = s.refuseEnableBesideIncomingEncryption(id)
-		}
-		if err == nil {
+		set := func() (err error) {
 			m, err = s.ssoLifecycle.SetNativeMailboxState(r.Context(), s.stateDir, id, active)
+			return err
+		}
+		err = nil
+		owner := ""
+		if active {
+			owner, err = s.extraMailboxOwner(id)
+		}
+		switch {
+		case err != nil:
+		case owner != "":
+			err = s.withIncomingEncryptionOff(owner, set)
+		default:
+			err = set()
 		}
 	}
 	if m.ID == "" {
@@ -203,30 +213,43 @@ func (s *Server) setNativeMailboxState(w http.ResponseWriter, r *http.Request, a
 // Incoming encryption keeps one journal per user and covers the primary
 // mailbox only, so it and an active extra mailbox are mutually exclusive: an
 // extra mailbox's mail would otherwise stay plaintext while the user believes
-// it is encrypted. Disabling every extra mailbox lifts the rule. The poller
-// refuses to poll past it as a backstop.
+// it is encrypted. Disabling every extra mailbox lifts the rule. Both sides
+// decide under the owner's settings file lock, the one EncryptIncoming is
+// written under; lock order is settings, then domains, then directory. The
+// poller refuses to poll past the rule as a backstop.
 var (
 	errExtraMailboxIncomingEncryption = errors.New("this user has incoming encryption on (or a replacement pending); they must turn it off before an additional mailbox can be created or enabled")
 	errIncomingEncryptionExtraMailbox = errors.New("incoming encryption covers only your primary mailbox, so it cannot be turned on while you have an active additional mailbox; an administrator can disable your additional mailboxes, and they must stay disabled while encryption is on")
 )
 
-// refuseEnableBesideIncomingEncryption applies the rule to the owner of the
-// extra mailbox id; an unknown id is left to the ledger's 404.
-func (s *Server) refuseEnableBesideIncomingEncryption(id string) error {
+// extraMailboxOwner returns the owning user ID, fixed for a mailbox's life;
+// "" for an unknown id, which is left to the ledger's 404.
+func (s *Server) extraMailboxOwner(id string) (string, error) {
 	all, err := s.ssoLifecycle.NativeMailboxes()
 	if err != nil {
-		return err
+		return "", err
 	}
 	for _, m := range all {
 		if m.ID == id {
-			u, err := s.users.Get(m.User)
-			if err != nil {
-				return err
-			}
-			return s.refuseExtraBesideIncomingEncryption(u)
+			return m.User, nil
 		}
 	}
-	return nil
+	return "", nil
+}
+
+// withIncomingEncryptionOff runs change under the owner's settings lock once
+// incoming encryption is off and no replacement is pending, both read fresh.
+func (s *Server) withIncomingEncryptionOff(userID string, change func() error) error {
+	return fsutil.WithFileLock(s.userSettingsPath(userID), func() error {
+		u, err := s.users.Get(userID)
+		if err != nil {
+			return err
+		}
+		if err := s.refuseExtraBesideIncomingEncryption(u); err != nil {
+			return err
+		}
+		return change()
+	})
 }
 
 func (s *Server) refuseExtraBesideIncomingEncryption(u users.User) error {
