@@ -33,6 +33,8 @@ Sender block changes log `receiving sender block change` with action
 the result and the block ID (a SHA-256 prefix) as correlation; never the blocked
 address or domain (an unblock logs only the ID). API changes go to the API stream, CLI changes to the terminal.
 An unreadable block list logs `cloudflare sender blocks unreadable` (error,
-result `previous-blocks-kept`) on every publish attempt until repaired.
+result `previous-blocks-kept`) on every publish attempt until repaired; blocks
+left out of a full table log `cloudflare sender blocks truncated` (result
+`truncated`) with the count.
 
 The viewer is a transitional compatibility feature, not a new log platform.

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,5 +193,51 @@ func TestKeysHostRecordAndPromotionWindow(t *testing.T) {
 	}
 	if s, err := CurrentStatus(t.Context(), keys, t.TempDir()); err != nil || s.State != "error" {
 		t.Fatal("corrupt credentials not reported", s, err)
+	}
+}
+
+// Blocks never stop routes: FitBlocks keeps the longest prefix that signs.
+func TestFitBlocksKeepsRoutesPublishable(t *testing.T) {
+	m, err := NewMaterial(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := []Route{}
+	for i := range 3000 {
+		routes = append(routes, Route{Address: fmt.Sprintf("user%04d@%s.test", i, strings.Repeat("r", 120)), Generation: 1, MaxBytes: 1})
+	}
+	worst := func(i int) Block {
+		return Block{Address: fmt.Sprintf("%05d", i) + strings.Repeat("&", 300) + "@x.test"}
+	}
+	for _, tc := range []struct {
+		name   string
+		blocks []Block
+	}{{"bytes", nil}, {"count", nil}} {
+		if tc.name == "bytes" {
+			for i := range 1000 {
+				tc.blocks = append(tc.blocks, worst(i))
+			}
+		} else {
+			for i := range maxBlocks + 10 {
+				tc.blocks = append(tc.blocks, Block{Domain: fmt.Sprintf("d%d.test", i)})
+			}
+			routes = routes[:1]
+		}
+		if _, err := SignTable(m, 1<<53-1, 1<<53-1, routes, tc.blocks); err == nil {
+			t.Fatal(tc.name, "over-limit table signed")
+		}
+		fitted, err := FitBlocks(routes, tc.blocks)
+		if err != nil || len(fitted) == 0 || len(fitted) >= len(tc.blocks) || fitted[0] != tc.blocks[0] {
+			t.Fatal(tc.name, len(fitted), err)
+		}
+		if _, err := SignTable(m, 1<<53-1, 1<<53-1, routes, fitted); err != nil {
+			t.Fatal(tc.name, "fitted table does not sign", err)
+		}
+		if _, err := SignTable(m, 1<<53-1, 1<<53-1, routes, tc.blocks[:len(fitted)+1]); err == nil {
+			t.Fatal(tc.name, "FitBlocks left room unused")
+		}
+	}
+	if fitted, err := FitBlocks(routes, nil); err != nil || len(fitted) != 0 {
+		t.Fatal(fitted, err)
 	}
 }

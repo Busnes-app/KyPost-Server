@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 )
 
 func TestSenderBlocks(t *testing.T) {
@@ -22,14 +25,9 @@ func TestSenderBlocks(t *testing.T) {
 		return SenderBlock{Kind: kind, Value: value, Source: "manual", Actor: "admin-1", Reason: "spam"}
 	}
 
-	// Normalisation: lowercase ASCII; non-ASCII, malformed and unknown kinds refused.
-	for in, want := range map[[2]string]string{{"address", "Bad.Guy@SPAM.Test"}: "bad.guy@spam.test", {"domain", "Evil.TEST"}: "evil.test", {"domain", "xn--bcher-kva.test"}: "xn--bcher-kva.test"} {
-		if got, err := NormalizeBlock(in[0], in[1]); err != nil || got != want {
-			t.Fatal("normalize", in, got, err)
-		}
-	}
-	for _, in := range [][2]string{{"domain", "bücher.test"}, {"domain", "\u212aevil.test"}, {"address", "ü@x.test"}, {"address", "a@bücher.test"}, {"domain", "localhost"}, {"domain", "-x.test"}, {"domain", "x_y.test"},
-		{"address", "Name <a@x.test>"}, {"address", `"a b"@x.test`}, {"address", "a@[127.0.0.1]"}, {"address", strings.Repeat("a", 65) + "@x.test"}, {"address", "x.test"}, {"user", "a@x.test"}, {"domain", ""}} {
+	// Normalisation is the shared fixture's (TestSenderBlocksMatchWorker);
+	// a few refusals beside it.
+	for _, in := range [][2]string{{"domain", "\u212aevil.test"}, {"address", "a@bücher.test"}, {"domain", "a b.test"}, {"address", strings.Repeat("a", 314) + "@x.test"}, {"domain", ""}} {
 		if _, err := s.Put(ctx, manual(in[0], in[1]), own, now); !errors.Is(err, ErrBlockInvalid) {
 			t.Fatal("invalid block accepted", in, err)
 		}
@@ -73,13 +71,6 @@ func TestSenderBlocks(t *testing.T) {
 		if got, err := s.Blocked(sender, now); err != nil || got != want {
 			t.Fatal("blocked", sender, got, err)
 		}
-	}
-	// A U-label sender matches its A-label block.
-	if _, err := s.Put(ctx, manual("domain", "xn--bcher-kva.test"), own, now); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := s.Blocked("a@bücher.test", now); !got {
-		t.Fatal("U-label sender dodged the A-label block")
 	}
 	// Expired blocks are ignored, and pruned at the next write.
 	later := now.Add(2 * time.Hour)
@@ -145,19 +136,53 @@ func TestSenderBlocks(t *testing.T) {
 		t.Fatal("replacing an existing block at the cap", err)
 	}
 
-	// Wire budget: long values fill half the Worker's table before the count cap.
+	// Wire budget, measured as SignTable encodes: '&' marshals to six
+	// bytes. A list filled to the budget with worst-case values still signs
+	// beside routes; the next block is refused.
 	long := NewBlocks(t.TempDir())
-	tail := "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61)
-	blocks = nil
-	for i := range 1839 {
-		v := fmt.Sprintf("%04d", i) + strings.Repeat("a", 59) + tail
-		blocks = append(blocks, SenderBlock{ID: BlockID("domain", v), Kind: "domain", Value: v, Source: "manual", CreatedAt: 1, Actor: "a", Reason: "spam"})
+	worst := func(i int) string { return fmt.Sprintf("%05d", i) + strings.Repeat("&", 300) + "@x.test" }
+	n, seed := 250, []SenderBlock{}
+	for i := range n {
+		seed = append(seed, SenderBlock{ID: BlockID("address", worst(i)), Kind: "address", Value: worst(i), Source: "manual", CreatedAt: 1, Actor: "a", Reason: "spam"})
 	}
-	if err := long.change(ctx, now, func([]SenderBlock) ([]SenderBlock, error) { return blocks, nil }); err != nil {
+	if err := long.change(ctx, now, func([]SenderBlock) ([]SenderBlock, error) { return seed, nil }); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := long.Put(ctx, manual("domain", "9999"+strings.Repeat("a", 59)+tail), own, now); !errors.Is(err, ErrBlockFull) {
-		t.Fatal("wire budget exceeded", err)
+	for ; ; n++ {
+		if _, err := long.Put(ctx, manual("address", worst(n)), own, now); errors.Is(err, ErrBlockFull) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed, _ := long.List(now)
+	wire, size := []cfreceiving.Block{}, 0
+	for _, b := range listed {
+		wire = append(wire, b.Wire())
+		size += cfreceiving.BlockWireBytes(b.Wire())
+	}
+	if n < 100 || size > maxBlockWire || size+cfreceiving.BlockWireBytes(SenderBlock{Kind: "address", Value: worst(n)}.Wire()) <= maxBlockWire {
+		t.Fatal("budget not filled exactly", n, size)
+	}
+	m, _ := cfreceiving.NewMaterial(1)
+	routes := []cfreceiving.Route{}
+	for i := range 2000 {
+		routes = append(routes, cfreceiving.Route{Address: fmt.Sprintf("user%04d@%s.example.test", i, strings.Repeat("d", 60)), Generation: 1, MaxBytes: 1})
+	}
+	if _, err := cfreceiving.SignTable(m, 1<<53-1, 1<<53-1, routes, wire); err != nil {
+		t.Fatal("full block budget does not sign beside 2000 routes", err)
+	}
+	// A list over the budget is malformed on read (backups refuse it too).
+	raw, _ = os.ReadFile(long.path())
+	extra := SenderBlock{Kind: "address", Value: worst(n), Source: "manual", CreatedAt: 1, Actor: "a", Reason: "spam"}
+	extra.ID = BlockID(extra.Kind, extra.Value)
+	entry, _ := json.Marshal(extra)
+	over := append(append(raw[:len(raw)-2:len(raw)-2], ','), append(entry, ']', '}')...)
+	if _, err := ParseBlocks(over); err == nil {
+		t.Fatal("over-budget list parsed")
+	}
+	if _, err := ParseBlocks(raw); err != nil {
+		t.Fatal(err)
 	}
 
 	// A missing receiving directory is never created; a corrupt list refuses.
@@ -176,5 +201,54 @@ func TestSenderBlocks(t *testing.T) {
 	}
 	if _, err := full.Blocked("a@evil.test", now); err == nil {
 		t.Fatal("malformed list accepted")
+	}
+}
+
+// The fixture shared with the Worker test: normalisation and matching agree.
+func TestSenderBlocksMatchWorker(t *testing.T) {
+	raw, err := os.ReadFile("../../../receiving-worker/blocks.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Values []struct {
+			Kind, Value string
+			Stored      *string
+		}
+		Matches []struct {
+			Sender string
+			Blocks []cfreceiving.Block
+			Result string
+		}
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil || len(fixture.Values) == 0 || len(fixture.Matches) == 0 {
+		t.Fatal(err)
+	}
+	for _, v := range fixture.Values {
+		got, err := NormalizeBlock(v.Kind, v.Value)
+		if v.Stored == nil && err == nil || v.Stored != nil && (err != nil || got != *v.Stored) {
+			t.Errorf("normalize %s %q = %q %v", v.Kind, v.Value, got, err)
+		}
+	}
+	ctx, now := context.Background(), time.Now()
+	for _, m := range fixture.Matches {
+		s := NewBlocks(t.TempDir())
+		for _, b := range m.Blocks {
+			kind, value := "address", b.Address
+			if b.Domain != "" {
+				kind, value = "domain", b.Domain
+			}
+			if _, err := s.Put(ctx, SenderBlock{Kind: kind, Value: value, Source: "manual", Actor: "t", Reason: "spam"}, nil, now); err != nil {
+				t.Fatal(m.Sender, value, err)
+			}
+		}
+		blocked, err := s.Blocked(m.Sender, now)
+		got := map[bool]string{true: "blocked", false: "allowed"}[blocked]
+		if !cfreceiving.ValidSender(m.Sender) {
+			got = "refused"
+		}
+		if err != nil || got != m.Result {
+			t.Errorf("sender %q: %s, want %s (%v)", m.Sender, got, m.Result, err)
+		}
 	}
 }

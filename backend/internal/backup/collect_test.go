@@ -223,4 +223,12 @@ func TestCollectSealsSenderBlocks(t *testing.T) {
 	if !found {
 		t.Fatal("sender block list not sealed")
 	}
+	// A list load would refuse is refused at backup time too.
+	malformed := strings.Replace(string(live), `"evil.test"`, `"Evil.test"`, 1)
+	if err := os.WriteFile(filepath.Join(dir, ingress.BlocksFile), []byte(malformed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openService(t, d, config.BackupConfig{}).Collect(); err == nil || !strings.Contains(err.Error(), ingress.BlocksFile) {
+		t.Fatal("malformed block list sealed", err)
+	}
 }

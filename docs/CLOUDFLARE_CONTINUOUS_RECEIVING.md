@@ -176,22 +176,28 @@ listed keys:
 - **table**: `{"revision", "issuedAt", "routes": [{"address", "generation", "maxBytes"}],
   "blockedSenders": [{"address", "until"} | {"domain", "until"}]}`. `revision`,
   `issuedAt`, `generation`: safe integers ≥ 1. `maxBytes`: 1 to 26214400. `until`:
-  safe integer or `null` (no expiry). Addresses and domains are lowercase printable
-  ASCII without `@` in the domain: internationalized domains must be sent as A-labels
-  (`xn--…`) and non-ASCII local parts cannot be routed or blocked by address.
-  Addresses are `local@domain`, at most 254 characters with a local part of at most
-  64, unique within `routes`. A domain block matches the sender's domain exactly, not
-  its subdomains. At most 5000 routes and 5000 blocks.
+  safe integer or `null` (no expiry). Route addresses are lowercase printable
+  ASCII `local@domain` (internationalized domains as A-labels, `xn--…`), at most 254
+  characters with a local part of at most 64, unique within `routes`. A blocked
+  `address` is any non-null sender the email handler accepts (below), with A-Z
+  lowercased and non-ASCII unchanged; a blocked `domain` is any such sender's
+  domain, A-Z lowercased. Both sides compare senders after lowercasing A-Z only,
+  so non-ASCII compares exactly (`receiving-worker/blocks.json` is the shared
+  fixture). A domain block matches the sender's domain exactly, not its
+  subdomains. At most 5000 routes and 5000 blocks; KyPost signs as many blocks
+  as fit beside the routes, manual before automatic and newest first, and
+  reports any it leaves out.
 - **rotation**: `{"epoch", "tokenSha256", "publicKey"}` in the credentials format, with
   a `tokenSha256` and a `publicKey` that both differ from the current ones.
 
 **Email handler.** One invocation per recipient. In order: lowercase `message.to`
-and the sender's domain (the local part keeps its case; a null sender, `""` or `<>`,
+and A-Z in the sender's domain (the local part keeps its case; a null sender, `""` or `<>`,
 becomes `""`); a malformed or non-ASCII recipient, or a sender KyPost's holding
 store could not hold → reject. A sender must be at most 320 UTF-8 bytes, well-formed
 UTF-16, with a dot-atom local part (ASCII atext or any non-ASCII character) and an
 ASCII dot-atom domain (a U-label could dodge an A-label block; domain literals and
-quoted local parts are refused). `receiving-worker/senders.json` is the shared
+quoted local parts are refused). KyPost's Maddy profile refuses exactly the same
+senders at RCPT, so every sender either profile accepts can be blocked. `receiving-worker/senders.json` is the shared
 fixture both sides test against. Read `routes.json` (absent → reject; storage error → throw); each isolate
 keeps the parsed table and revalidates it on every message with a conditional get on
 its etag, so a new table applies to the next message. Sender address or domain blocked with `until` null or in the future →

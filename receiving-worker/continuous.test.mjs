@@ -481,3 +481,17 @@ test("senders match KyPost's holding-store rule", async () => {
     }
   }
 });
+
+test("sender blocks match KyPost's Go matcher (blocks.json)", async () => {
+  const {values, matches} = JSON.parse(readFileSync(new URL("./blocks.json", import.meta.url), "utf8"));
+  const f = await fixture();
+  const stored = values.filter(v => v.stored !== null).map(v => ({[v.kind]: v.stored, until: null}));
+  assert.equal(await install(f, table({revision: Date.now(), blockedSenders: stored})), 204, "every stored block is valid on the wire");
+  let revision = Date.now();
+  for (const {sender, blocks, result} of matches) {
+    assert.equal(await install(f, table({revision: ++revision, blockedSenders: blocks.map(b => ({...b, until: null}))})), 204, sender);
+    const m = mail({from: sender});
+    await worker.email(m, f.env);
+    assert.deepEqual(m.rejected, {blocked: ["Sender blocked"], allowed: [], refused: ["Address refused"]}[result], sender);
+  }
+});

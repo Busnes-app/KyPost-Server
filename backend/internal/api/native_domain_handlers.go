@@ -51,6 +51,9 @@ func (s *Server) handleNativeMailDomain(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "configure KyIdentity before claiming a mail domain", http.StatusServiceUnavailable)
 		return
 	}
+	if s.refuseBlockedDomain(w, body.Domain) {
+		return
+	}
 	d, err := store.Configure(r.Context(), body.Domain, issuer)
 	if nativeMigrationRefused(w, err) {
 		return
@@ -130,6 +133,9 @@ func (s *Server) handleNativeMailDomains(w http.ResponseWriter, r *http.Request)
 	issuer := s.ssoStore.Load().IssuerURL
 	if issuer == "" {
 		http.Error(w, "configure KyIdentity before claiming a mail domain", http.StatusServiceUnavailable)
+		return
+	}
+	if s.refuseBlockedDomain(w, body.Domain) {
 		return
 	}
 	d, err := s.nativeDomains.ConfigureDomain(r.Context(), body.Domain, issuer)

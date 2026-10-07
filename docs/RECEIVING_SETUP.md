@@ -290,12 +290,16 @@ reception and provider cleanup are not implemented.
   through this bridge. Daemon import errors remain in KyPost's normal logs.
 - Manually blocked senders are refused at RCPT with `550 5.7.1 Sender blocked`
   (helper exit 6) before anything is stored; the Cloudflare profile enforces the
-  same list in the Worker. An address block matches that address, a domain
+  same list in the Worker. Sender shapes the Worker refuses (quoted local
+  parts, domain literals, internationalized sender domains) are refused here
+  too with `550 5.1.7` (exit 7), so every accepted sender can be blocked; an
+  unreadable block list answers `451 4.3.0 Sender blocks unreadable` (exit 8)
+  until repaired. An address block matches that address, a domain
   block exactly that domain (not subdomains); the null sender is never blocked
   and your own mail domains cannot be. Manage blocks with
   `receiving blocks list|add|remove` or the admin API; see
   [sender blocks](NATIVE_PROVISIONING.md#sender-blocks). Configurations
-  generated before this release lack the exit-6 mapping; `start-receiving.sh`
+  generated before this release lack the exit 6-8 mappings; `start-receiving.sh`
   regenerates it at every start, a hand-generated one must be regenerated.
 - Without the optional Rspamd profile, rate/size limits are not spam authentication or filtering. Sender-written
   authentication headers are untrusted. Hard volume quotas, safe reservation

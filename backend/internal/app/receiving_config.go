@@ -173,6 +173,8 @@ smtp tcp://%s {
             code 1 reject 451 4.3.0 "Receiving storage unavailable"
             code 3 reject 550 5.1.1 "Recipient unavailable"
             code 6 reject 550 5.7.1 "Sender blocked"
+            code 7 reject 550 5.1.7 "Sender address not accepted"
+            code 8 reject 451 4.3.0 "Sender blocks unreadable"
         }
         command "%s" receiving accept "{msg_id}" "{sender}"%s {
             run_on body

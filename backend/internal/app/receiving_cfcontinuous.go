@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -234,20 +235,23 @@ func (l *cfLoop) refused(ctx context.Context, used cfreceiving.Material) error {
 	return cfreceiving.ErrUnauthorized
 }
 
-// blockedSenders is the block list in force, in the Worker's form. An
-// unreadable list fails the publish: the Worker keeps its last table rather
-// than losing blocks.
+// blockedSenders is the block list in force in the Worker's form, by
+// priority: manual before automatic, then newest first, so truncation
+// (cfreceiving.FitBlocks) drops automatic and old blocks first.
 func (l *cfLoop) blockedSenders() ([]cfreceiving.Block, error) {
 	list, err := ingress.NewBlocks(filepath.Join(l.r.stateDir, "receiving")).List(l.now())
+	slices.SortStableFunc(list, func(a, b ingress.SenderBlock) int {
+		if am, bm := a.Source == "manual", b.Source == "manual"; am != bm {
+			if am {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Compare(b.CreatedAt, a.CreatedAt)
+	})
 	blocks := make([]cfreceiving.Block, 0, len(list))
 	for _, b := range list {
-		w := cfreceiving.Block{Until: b.Until}
-		if b.Kind == "domain" {
-			w.Domain = b.Value
-		} else {
-			w.Address = b.Value
-		}
-		blocks = append(blocks, w)
+		blocks = append(blocks, b.Wire())
 	}
 	return blocks, err
 }
@@ -277,6 +281,15 @@ func (l *cfLoop) publish(ctx context.Context, cur cfreceiving.Material) error {
 		}
 		blockErr = fmt.Errorf("%w; publishing routes with the last published blocks", blockErr)
 		slog.Error("cloudflare sender blocks unreadable", "actor", cfGateway, "task_id", "native-receiving", "action", "publish", "target", "sender-blocks", "result", "previous-blocks-kept", "correlation_id", "sender-blocks", "error", blockErr.Error())
+	}
+	// Blocks never stop routes: whatever does not fit the Worker's table is
+	// left out and reported.
+	if fitted, err := cfreceiving.FitBlocks(routes, blocks); err != nil {
+		return err
+	} else if len(fitted) < len(blocks) {
+		blockErr = errors.Join(blockErr, fmt.Errorf("%d sender blocks do not fit the Worker's table beside the routes and were left out (automatic and oldest first); remove blocks", len(blocks)-len(fitted)))
+		slog.Error("cloudflare sender blocks truncated", "actor", cfGateway, "task_id", "native-receiving", "action", "publish", "target", "sender-blocks", "result", "truncated", "correlation_id", "sender-blocks", "error", blockErr.Error())
+		blocks = fitted
 	}
 	digest := cfreceiving.Digest(routes, blocks)
 	installed, installedDigest, at, err := l.db.LastInstalled(ctx)

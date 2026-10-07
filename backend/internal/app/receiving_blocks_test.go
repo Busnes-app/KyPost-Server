@@ -6,12 +6,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 )
 
@@ -48,11 +52,41 @@ func TestNativeReceivingBlockedSender(t *testing.T) {
 			t.Fatal("unblocked sender refused", sender, err)
 		}
 	}
+	// Senders the Worker would refuse exit 7, so every accepted sender is
+	// blockable in both profiles; nothing is stored.
+	for i, sender := range []string{`"a b"@x.test`, "a@[1.2.3.4]", "a@bücher.test", "a@\u212a.test"} {
+		var commandError *receivingCommandError
+		if err := r.bind(ctx, "shape-"+string(rune('a'+i)), sender, "one@example.test"); !errors.As(err, &commandError) || commandError.ExitCode() != 7 {
+			t.Fatal("unblockable sender bound", sender, err)
+		}
+	}
+	// An unreadable list refuses temporarily (exit 8, 451), never binding unchecked.
+	path := filepath.Join(r.stateDir, "receiving", ingress.BlocksFile)
+	good, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var unreadable *receivingCommandError
+	if err := r.bind(ctx, "unreadable", "good@spam.test", "one@example.test"); !errors.As(err, &unreadable) || unreadable.ExitCode() != 8 || !strings.Contains(err.Error(), "sender blocks unreadable") {
+		t.Fatal("unreadable block list", err)
+	}
+	if err := os.WriteFile(path, good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := r.holding.List(ctx, receivingGateway, 0, 100); err != nil || len(rows) != 4 {
+		t.Fatal("refused senders stored", len(rows), err)
+	}
 	// The command maps the block to exit 6 before any DNS proof.
 	quarantineCLI(t, r)
 	var commandError *receivingCommandError
 	if err := runReceivingCommand([]string{"bind", "via-command", "bad@spam.test", "one@example.test"}, nil); !errors.As(err, &commandError) || commandError.ExitCode() != 6 {
 		t.Fatal("command exit", err)
+	}
+	if err := runReceivingCommand([]string{"bind", "via-command-shape", "Name <a@x.test>", "one@example.test"}, nil); !errors.As(err, &commandError) || commandError.ExitCode() != 7 {
+		t.Fatal("malformed sender exit", err)
 	}
 }
 
@@ -180,3 +214,57 @@ func TestCloudflareContinuousUnreadableBlocksFirstPublish(t *testing.T) {
 }
 
 func jsonInt(v int64) string { raw, _ := json.Marshal(v); return string(raw) }
+
+// Blocks that do not fit beside the routes are left out (automatic, then
+// oldest first) and reported; routes still publish.
+func TestCloudflareContinuousTruncatesBlocks(t *testing.T) {
+	e := cfFixture(t)
+	ctx := context.Background()
+	store := ingress.NewBlocks(e.receiving)
+	now := e.clock.now()
+	put := func(value, source string, level int, at time.Time) {
+		t.Helper()
+		if _, err := store.Put(ctx, ingress.SenderBlock{Kind: "domain", Value: value, Source: source, Level: level, Actor: "t", Reason: "spam"}, nil, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("auto.test", "automatic", 1, now.Add(time.Minute))
+	put("old-manual.test", "manual", 0, now)
+	put("new-manual.test", "manual", 0, now.Add(time.Second))
+	got, err := e.l.blockedSenders()
+	if err != nil || len(got) != 3 || got[0].Domain != "new-manual.test" || got[1].Domain != "old-manual.test" || got[2].Domain != "auto.test" {
+		t.Fatalf("priority order %+v %v", got, err)
+	}
+	// An over-limit list reaches the publisher through the last-installed
+	// fallback (the store itself refuses one): 6000 recorded blocks.
+	e.cycle(t)
+	rev, _, _, err := e.db.LastInstalled(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	many := []cfreceiving.Block{}
+	for i := range 6000 {
+		many = append(many, cfreceiving.Block{Domain: "d" + strconv.Itoa(i) + ".test"})
+	}
+	routes, _, err := e.db.Routes(ctx, rev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := slices.Collect(maps.Values(routes))
+	if err := e.db.Record(ctx, rev+1, rev+1, "over-limit", list, many); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.Installed(ctx, rev+1, rev+1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.receiving, ingress.BlocksFile), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	puts := e.w.putCount()
+	e.l = e.restart()
+	e.cycle(t)
+	table := e.w.lastPut()
+	if s := cfStatus(t, e); e.w.putCount() != puts+1 || len(table.Routes) != 2 || len(table.BlockedSenders) != 5000 || s.State != "error" || !strings.Contains(s.Detail, "1000 sender blocks do not fit") {
+		t.Fatalf("over-limit blocks: puts %d routes %d blocks %d status %+v", e.w.putCount()-puts, len(table.Routes), len(table.BlockedSenders), s)
+	}
+}

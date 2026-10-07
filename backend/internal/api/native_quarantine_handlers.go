@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
@@ -187,6 +188,10 @@ func (s *Server) handleSenderBlockAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	ac, _ := authFromContext(r)
 	result, id := "refused", ""
+	// Same correlation as the CLI: the ID whenever the value normalizes.
+	if value, err := ingress.NormalizeBlock(body.Kind, body.Value); err == nil {
+		id = ingress.BlockID(body.Kind, value)
+	}
 	defer func() { s.auditSenderBlock(ac.UserID, "block_sender", body.Kind, result, id) }()
 	if !s.nativeMail {
 		http.Error(w, "native mail is disabled", http.StatusNotFound)
@@ -201,7 +206,7 @@ func (s *Server) handleSenderBlockAdd(w http.ResponseWriter, r *http.Request) {
 		block, err = s.senderBlocks().Put(r.Context(), ingress.SenderBlock{Kind: body.Kind, Value: body.Value, Until: body.Until, Reason: body.Reason, Source: "manual", Actor: ac.UserID}, slices.Collect(maps.Keys(set.Domains)), time.Now())
 	}
 	if err == nil {
-		result, id = "blocked", block.ID
+		result = "blocked"
 		writeJSON(w, http.StatusOK, map[string]any{"block": block})
 		return
 	}
@@ -254,4 +259,22 @@ func senderBlockError(w http.ResponseWriter, err error) {
 	default:
 		http.Error(w, "sender block change refused; the list is unchanged. Check receiving storage, then retry", http.StatusServiceUnavailable)
 	}
+}
+
+// refuseBlockedDomain answers 409 when a sender block matches domain or an
+// address on it: adding it as a mail domain would refuse its own mail.
+func (s *Server) refuseBlockedDomain(w http.ResponseWriter, domain string) bool {
+	list, err := s.senderBlocks().List(time.Now())
+	if err != nil {
+		http.Error(w, "sender block list unreadable; preserve it and repair", http.StatusServiceUnavailable)
+		return true
+	}
+	domain = cfreceiving.LowerASCII(domain)
+	if slices.ContainsFunc(list, func(b ingress.SenderBlock) bool {
+		return b.Value == domain || b.Kind == "address" && strings.HasSuffix(b.Value, "@"+domain)
+	}) {
+		http.Error(w, "a sender block matches this domain or an address on it; unblock it first (receiving blocks remove, or DELETE /api/admin/receiving/blocks/{id}), then add the domain", http.StatusConflict)
+		return true
+	}
+	return false
 }

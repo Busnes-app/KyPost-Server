@@ -380,6 +380,18 @@ func TestSenderBlocksAdminAPI(t *testing.T) {
 	if w = call("POST", base, token, csrf, `{"kind":"domain","value":"evil.test",`+confirm+`}`); w.Code != 200 {
 		t.Fatal("block domain", w.Code, w.Body)
 	}
+	// Adding a blocked domain, or one with a blocked address, as a mail domain is refused.
+	if w = call("POST", base, token, csrf, `{"kind":"address","value":"someone@blocked-addr.test",`+confirm+`}`); w.Code != 200 {
+		t.Fatal("block address", w.Code, w.Body)
+	}
+	for _, c := range [][3]string{{"POST", "/api/admin/mail-domains", "Evil.test"}, {"POST", "/api/admin/mail-domains", "blocked-addr.test"}, {"PUT", "/api/admin/mail-domain", "evil.test"}} {
+		if w := call(c[0], c[1], token, csrf, `{"domain":"`+c[2]+`",`+confirm+`}`); w.Code != 409 || !strings.Contains(w.Body.String(), "unblock it first") {
+			t.Fatal("blocked domain added", c, w.Code, w.Body)
+		}
+	}
+	if w := call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"clean.test",`+confirm+`}`); strings.Contains(w.Body.String(), "unblock") {
+		t.Fatal("unblocked domain refused for a block", w.Code, w.Body)
+	}
 	w = call("GET", base, token, csrf, "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"value":"bad@spam.test"`) || !strings.Contains(w.Body.String(), `"value":"evil.test"`) {
 		t.Fatal("list", w.Code, w.Body)
@@ -404,12 +416,12 @@ func TestSenderBlocksAdminAPI(t *testing.T) {
 	}
 	// Audited with actor, action and block ID; never the address.
 	audit := logs.String()
-	for _, want := range []string{`"action":"block_sender"`, `"action":"unblock_sender"`, `"result":"blocked"`, `"result":"unblocked"`, `"result":"refused"`, `"actor":"` + admin.ID + `"`, `"correlation_id":"` + badID + `"`} {
+	for _, want := range []string{`"action":"block_sender"`, `"action":"unblock_sender"`, `"result":"blocked"`, `"result":"unblocked"`, `"result":"refused"`, `"actor":"` + admin.ID + `"`, `"correlation_id":"` + badID + `"`, `"result":"refused","correlation_id":"` + ingress.BlockID("domain", "example.test") + `"`} {
 		if !strings.Contains(audit, want) {
 			t.Fatal("audit missing", want, audit)
 		}
 	}
-	if strings.Contains(audit, "spam.test") || strings.Contains(audit, "evil.test") {
+	if strings.Contains(audit, "spam.test") || strings.Contains(audit, "evil.test") || strings.Contains(audit, "blocked-addr") {
 		t.Fatal("audit logged a sender", audit)
 	}
 }

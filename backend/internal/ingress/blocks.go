@@ -8,15 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net/mail"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
-	"golang.org/x/net/idna"
 )
 
 // BlocksFile sits beside ingress.db; backups collect it with the state root.
@@ -25,13 +24,14 @@ const BlocksFile = "sender-blocks.json"
 const (
 	// MaxBlocks is the Worker's blockedSenders limit.
 	MaxBlocks = 5000
-	// maxBlockWire keeps blocks within half the Worker's 1 MiB table, so
-	// they can never stop route publication on their own.
+	// maxBlockWire is the blocks' exact share of the Worker's 1 MiB table
+	// (half), leaving the rest for routes. The publisher still truncates by
+	// priority if routes grow into it (cfreceiving.FitBlocks).
 	maxBlockWire = 512 << 10
 )
 
 var (
-	ErrBlockInvalid = errors.New("invalid sender block: kind is address or domain; addresses are ASCII local@domain, domains ASCII hostnames (A-labels for internationalized names), until in the future")
+	ErrBlockInvalid = errors.New("invalid sender block: kind is address or domain; an address is a sender KyPost accepts (dot-atom local part, ASCII domain; no quoted local parts or domain literals), a domain is ASCII (A-labels for internationalized names); until must be in the future")
 	ErrBlockOwn     = errors.New("refused: that is one of this deployment's own mail domains; blocking it would refuse your own users' mail")
 	ErrBlockFull    = errors.New("sender block list is full; remove blocks before adding more")
 	ErrBlockStore   = errors.New("receiving is not initialized; run receiving init before managing sender blocks")
@@ -72,58 +72,26 @@ func BlockID(kind, value string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// NormalizeBlock returns the stored form: lowercase ASCII, an address as a
-// dot-atom local part at a hostname, a domain as a hostname with a dot.
-// Non-ASCII is refused first, since ToLower folds some of it to ASCII (the
-// Kelvin sign to k): the Worker matches only A-labels and ASCII.
+// NormalizeBlock returns the stored form, LowerASCII of the value. Every
+// sender either profile accepts (cfreceiving.ValidSender) can be blocked by
+// address, and its domain by domain; non-ASCII local parts are kept and
+// compared exactly, as the Worker does.
 func NormalizeBlock(kind, value string) (string, error) {
-	for _, c := range []byte(value) {
-		if c >= 0x80 {
-			return "", ErrBlockInvalid
-		}
-	}
-	v := strings.ToLower(value)
-	switch kind {
-	case "domain":
-		if hostname(v) {
-			return v, nil
-		}
-	case "address":
-		a, err := mail.ParseAddress(value)
-		at := strings.LastIndexByte(v, '@')
-		if err == nil && a.Name == "" && a.Address == value && len(v) <= 254 && at > 0 && at <= 64 && dotAtom(v[:at]) && hostname(v[at+1:]) {
-			return v, nil
-		}
+	v := cfreceiving.LowerASCII(value)
+	switch {
+	case kind == "address" && cfreceiving.ValidBlock(cfreceiving.Block{Address: v}),
+		kind == "domain" && cfreceiving.ValidBlock(cfreceiving.Block{Domain: v}):
+		return v, nil
 	}
 	return "", ErrBlockInvalid
 }
 
-func hostname(d string) bool {
-	if len(d) > 253 || !strings.Contains(d, ".") {
-		return false
+// Wire is the block in the signed table's form.
+func (b SenderBlock) Wire() cfreceiving.Block {
+	if b.Kind == "domain" {
+		return cfreceiving.Block{Domain: b.Value, Until: b.Until}
 	}
-	for label := range strings.SplitSeq(d, ".") {
-		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for _, c := range []byte(label) {
-			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func dotAtom(local string) bool {
-	for atom := range strings.SplitSeq(local, ".") {
-		if atom == "" || strings.ContainsFunc(atom, func(c rune) bool {
-			return (c < 'a' || c > 'z') && (c < '0' || c > '9') && !strings.ContainsRune("!#$%&'*+/=?^_`{|}~-", c)
-		}) {
-			return false
-		}
-	}
-	return true
+	return cfreceiving.Block{Address: b.Value, Until: b.Until}
 }
 
 // valid is the stored-entry rule; load refuses a file breaking it, so a
@@ -143,6 +111,12 @@ func (s Blocks) load() ([]SenderBlock, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ParseBlocks(raw)
+}
+
+// ParseBlocks is the file rule load enforces; backups validate collected
+// bytes with it.
+func ParseBlocks(raw []byte) ([]SenderBlock, error) {
 	var doc struct {
 		Version int           `json:"version"`
 		Blocks  []SenderBlock `json:"blocks"`
@@ -152,9 +126,10 @@ func (s Blocks) load() ([]SenderBlock, error) {
 	if d.Decode(&doc) != nil || d.Decode(new(any)) != io.EOF || doc.Version != 1 || len(doc.Blocks) > MaxBlocks {
 		return nil, errors.New("sender block list is malformed; restore it from backup or remove it")
 	}
-	seen := map[string]bool{}
+	seen, wire := map[string]bool{}, 0
 	for _, b := range doc.Blocks {
-		if !b.valid() || seen[b.ID] {
+		wire += cfreceiving.BlockWireBytes(b.Wire())
+		if !b.valid() || seen[b.ID] || wire > maxBlockWire {
 			return nil, errors.New("sender block list is malformed; restore it from backup or remove it")
 		}
 		seen[b.ID] = true
@@ -171,23 +146,21 @@ func (s Blocks) List(now time.Time) ([]SenderBlock, error) {
 }
 
 // Blocked reports whether an envelope sender is blocked now: its whole
-// address (case-insensitive), or exactly its domain, never a parent domain.
-// The null sender has no address or domain and is never blocked, so bounces
-// for mail this deployment sent still arrive.
+// address or exactly its domain (never a parent domain), compared after
+// LowerASCII as the Worker does. The null sender has no address or domain
+// and is never blocked, so bounces for mail this deployment sent arrive.
+// ponytail: re-reads and parses the list on every RCPT; fine up to the
+// 512 KiB cap at household volume. Past that, cache it by file inode and
+// mtime (the publish-by-rename already changes both).
 func (s Blocks) Blocked(sender string, now time.Time) (bool, error) {
 	at := strings.LastIndexByte(sender, '@')
 	if sender == "" || at < 0 {
 		return false, nil
 	}
-	domain := strings.ToLower(sender[at+1:])
-	// A U-label sender must not dodge its A-label block.
-	if ascii, err := idna.Lookup.ToASCII(domain); err == nil {
-		domain = ascii
-	}
-	address := strings.ToLower(sender[:at+1]) + domain
+	address := cfreceiving.LowerASCII(sender)
 	blocks, err := s.List(now)
 	return slices.ContainsFunc(blocks, func(b SenderBlock) bool {
-		return b.Kind == "address" && b.Value == address || b.Kind == "domain" && b.Value == domain
+		return b.Kind == "address" && b.Value == address || b.Kind == "domain" && b.Value == address[at+1:]
 	}), err
 }
 
@@ -215,7 +188,7 @@ func (s Blocks) Put(ctx context.Context, b SenderBlock, own []string, now time.T
 		blocks = append(blocks, b)
 		wire := 0
 		for _, x := range blocks {
-			wire += len(x.Value) + 32
+			wire += cfreceiving.BlockWireBytes(x.Wire())
 		}
 		if len(blocks) > MaxBlocks || wire > maxBlockWire {
 			return nil, ErrBlockFull

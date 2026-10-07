@@ -1282,8 +1282,14 @@ func TestCloudflareContinuousSendersMatchWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, sender := range fixture.Accept {
-		if !validEnvelopeSender(sender) {
+		if !validEnvelopeSender(sender) || !cfreceiving.ValidSender(sender) {
 			t.Error("Worker accepts a sender KyPost refuses", sender)
+		}
+	}
+	// Maddy bind refuses exactly what the Worker refuses.
+	for _, sender := range fixture.Reject {
+		if cfreceiving.ValidSender(sender) {
+			t.Error("Worker refuses a sender Maddy would accept", sender)
 		}
 	}
 }

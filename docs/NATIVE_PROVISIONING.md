@@ -746,7 +746,8 @@ passes its own transaction ID, SMTP envelope sender and recipient to
 `receiving bind <receiver-id> <sender> <recipient>` at RCPT. An empty reverse
 path is valid. Definite unknown addresses return exit 3 (map to SMTP 550);
 a [blocked sender](#sender-blocks) returns exit 6 (550 5.7.1, before DNS proof
-or any binding); storage/proof failures return exit 1 (map to 451). After every accepted recipient,
+or any binding), a sender shape the Cloudflare Worker would also refuse exit 7
+(550 5.1.7) and an unreadable block list exit 8 (451); storage/proof failures return exit 1 (map to 451). After every accepted recipient,
 `receiving accept <receiver-id> <sender>` reads exact raw MIME from stdin and
 commits it before exit success. Map DATA failures to 451. Run binding as the
 last RCPT authority check: a later recipient rejection would leave a phantom
@@ -915,23 +916,54 @@ admin UI are pending; see [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#a
   the automatic change), `createdAt`, `actor` and `reason` (a code: `spam`,
   `phishing`, `abuse` or `other`, the default; no free text). Expired entries
   are ignored and dropped at the next write. At most 5000 blocks (the Worker's
-  limit) and about 512 KiB of table space, half the Worker's 1 MiB table, so
-  blocks can never stop route publication.
-- **Values.** Lowercase ASCII only; non-ASCII is refused, so internationalized
-  domains are given as A-labels (`xn--…`). An address is a dot-atom local part
-  of at most 64 characters at a hostname, 254 characters overall (no display
-  names, quoted local parts or domain literals); a domain is a hostname with at
-  least one dot. The deployment's own configured mail domains, and any address
-  on them, are refused (409): a typo there would bounce your own users' mail.
-- **Matching.** An address block matches the whole sender address
-  case-insensitively; a domain block matches the sender's domain exactly, not
-  its subdomains (block `sub.example` separately), as the Worker does. Maddy
-  converts a U-label sender domain to its A-label before matching. The null
-  sender (bounces and other notifications) has no address or domain and is
-  never blocked, so delivery reports for mail your users sent still arrive.
+  limit) and 512 KiB of their exact signed-table encoding (measured with the
+  table's own encoder, where `&`, `<` and `>` take six bytes), half the
+  Worker's 1 MiB table; a list over either limit is refused when added, read
+  or backed up. Blocks never stop route publication: if routes grow into the
+  blocks' share, the publisher signs routes with as many blocks as fit,
+  keeping manual before automatic and newest first, and reports how many it
+  left out as `error` in Cloudflare status.
+- **Senders both profiles accept, and so can block.** One rule
+  (`cfreceiving.ValidSender`, the Worker's `senderOk`, fixture
+  `receiving-worker/senders.json`): the null sender, or at most 320 UTF-8
+  bytes with a dot-atom local part of ASCII atext or any non-ASCII character
+  and an ASCII dot-atom domain. Quoted local parts, domain literals and
+  internationalized (U-label) sender domains are refused at reception in both
+  profiles (Maddy: `550 5.1.7` at RCPT), because no block could match them the
+  same way on both sides. Every accepted sender can be blocked by address, and
+  its domain by domain (underscores and other atext included; internationalized
+  domains as A-labels).
+- **Values and matching.** Both matchers lowercase A-Z only and compare
+  non-ASCII exactly (`receiving-worker/blocks.json` is the fixture Go and the
+  Worker test against): Unicode case mapping differs between Go and
+  JavaScript (U+0130 `İ`) and folds some non-ASCII into ASCII (the Kelvin sign
+  to `k`), so `Ü@x.example` and `ü@x.example` are different blocks. An address
+  block matches the whole sender address; a domain block matches the sender's
+  domain exactly, not its subdomains (block `sub.example` separately). The
+  null sender (bounces and other notifications) has no address or domain and
+  is never blocked, so delivery reports for mail your users sent still arrive.
+- **Your own domains.** The deployment's configured mail domains, and any
+  address on them, cannot be blocked (409): a typo there would bounce your own
+  users' mail. Adding or re-adding a mail domain is refused (409, "unblock it
+  first") while a block matches it or an address on it. Blocking the envelope
+  domain of a relay provider your users send through also refuses your own
+  users' mail that comes back through it (forwards, list copies); block the
+  abusive address instead.
+- **IDs.** A block's `id` is an unsalted, truncated SHA-256 of `kind:value`:
+  it keeps addresses out of URLs and logs, but anyone holding an ID can confirm
+  a guessed address. Treat IDs as sensitive as the list.
 - **Enforcement.** Maddy: `receiving bind` exits 6 and the generated
   configuration answers `550 5.7.1 Sender blocked` at RCPT, before DNS proof
-  or any binding. Cloudflare: the publisher signs the blocks in force into the
+  or any binding. An unreadable list makes `receiving bind` exit 8, answered
+  `451 4.3.0 Sender blocks unreadable` for every RCPT until it is repaired or
+  restored from backup: senders retry, nothing is lost, and no unchecked mail
+  is bound. This differs from Cloudflare on purpose: a temporary refusal there
+  would not reach the sender (the Worker already accepted the mail), while a
+  table that stops publishing ages out and refuses everything permanently, so
+  Cloudflare keeps the last published blocks instead. Maddy has no published
+  copy to fall back to, and the list is written only by rename, so an
+  unreadable one means damaged storage worth stopping for; the refusal is in
+  the receiver log (`receiver.log`), since there is no Maddy status screen. Cloudflare: the publisher signs the blocks in force into the
   routing table's `blockedSenders`; a change to the list republishes within
   one loop tick (5 seconds), and the Worker rejects with "Sender blocked". An
   unreadable list never stops route publishing (the Worker refuses all mail
@@ -966,8 +998,8 @@ docker compose exec --user kypost kypost-server kypost-server receiving blocks r
 ```
 
 Both audit `block_sender`/`unblock_sender` with actor, kind, result and the
-block `id`, never the address or domain (API to `api.err.log`, CLI to the
-terminal). The value is attacker-chosen: render it as plain text.
+block `id` whenever the value is valid (refusals included; empty otherwise),
+never the address or domain (API to `api.err.log`, CLI to the terminal). The value is attacker-chosen: render it as plain text.
 
 New route writes, RCPT bindings and MIME acceptance also check physical storage
 inside the immediate SQLite writer transaction. The admission budget is derived

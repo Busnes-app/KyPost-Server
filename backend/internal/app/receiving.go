@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
@@ -68,7 +69,11 @@ func runReceivingCommand(args []string, input io.Reader) error {
 		if args[2] != "" {
 			a, err := mail.ParseAddress(args[2])
 			if err != nil || a.Name != "" || a.Address != args[2] {
-				return errors.New("invalid envelope sender")
+				code := 1
+				if args[0] == "bind" {
+					code = 7
+				}
+				return &receivingCommandError{err: errInvalidSender, code: code}
 			}
 		}
 		if args[0] == "bind" {
@@ -298,13 +303,21 @@ func (r *receivingRuntime) withAuthority(ctx context.Context, ids, addresses []s
 	return r.life.WithNativeMailAccess(ctx, r.stateDir, settings.IssuerURL, r.accounts, ids, action)
 }
 
-// bind is the Maddy RCPT check. A blocked sender is refused (exit 6, SMTP
-// 550) before any DNS proof or storage; hosted pickup binds mail the gateway
-// already accepted and never checks blocks.
+// errInvalidSender is a sender shape neither profile accepts.
+var errInvalidSender = errors.New("invalid envelope sender")
+
+// bind is the Maddy RCPT check, before any DNS proof or storage: a sender
+// the Worker would refuse exits 7 (550), so every accepted sender can be
+// blocked in both profiles; an unreadable block list exits 8 (451, mail
+// retried); a blocked sender exits 6 (550). Hosted pickup binds mail the
+// gateway already accepted and never checks either.
 func (r *receivingRuntime) bind(ctx context.Context, id, sender, recipient string) error {
+	if !cfreceiving.ValidSender(sender) {
+		return &receivingCommandError{err: errInvalidSender, code: 7}
+	}
 	blocked, err := ingress.NewBlocks(filepath.Join(r.stateDir, "receiving")).Blocked(sender, time.Now())
 	if err != nil {
-		return err
+		return &receivingCommandError{err: fmt.Errorf("sender blocks unreadable: %w", err), code: 8}
 	}
 	if blocked {
 		return &receivingCommandError{err: ingress.ErrSenderBlock, code: 6}
