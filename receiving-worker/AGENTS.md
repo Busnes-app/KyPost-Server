@@ -11,7 +11,7 @@ One-message Cloudflare Email Worker qualification pilot with private R2 retentio
 ## Local Contracts
 
 - Await conditional persistence of exact raw bytes and frozen envelope before handler success. An occupied slot rejects subsequent events; never overwrite or delete it through HTTP.
-- Only the operator-installed 15-minute exact-recipient route can capture mail. The claim is an expectation; KyPost separately rechecks current domain, identity, revision, source and restore authority.
+- Only the operator-installed 15-minute exact-recipient route can capture mail. The claim is an expectation; KyPost separately rechecks current domain, identity, address generation (the route's `revision` field), source and restore authority.
 - Dedicated 256-bit pickup secret; authenticate before storage reads, HTTPS only, no public bucket, correspondence logs or request-selected scanner policy.
 - Preserve retained bytes after expiry and failed pickup. Cleanup is a separate operator action after verified local delivery.
 

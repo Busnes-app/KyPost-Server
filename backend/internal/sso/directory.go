@@ -218,14 +218,12 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 			if err != nil {
 				return err
 			}
-			if resource != nil && directoryDemoted(*resource) {
-				if err := s.clearLegacyMixedUse(key); err != nil {
-					return err
-				}
-			}
 			state := DirectoryState{Resource: resource, Revision: revision, Digest: digest, Active: active, EventID: ev.ID, RevokedBefore: prior.RevokedBefore}
 			if fence {
 				state.RevokedBefore = max(prior.RevokedBefore, now)
+			}
+			if err := s.syncNativeDirectory(key, state); err != nil {
+				return err
 			}
 			f.Directory[key] = state
 			if f.RecoveryRepair != nil && f.RecoveryRepair.Issuer == issuer {
@@ -245,11 +243,12 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 	return status, err
 }
 
-// clearLegacyMixedUse runs under the directory lock before the revision is
-// recorded. Any load or write failure fails the event, so the sender retries
-// it and a demotion is never recorded over a flag that survived it. Only
-// active non-administrator revisions get here; deactivations never block.
-func (s *LifecycleStore) clearLegacyMixedUse(key string) error {
+// syncNativeDirectory runs under the directory lock before the revision is
+// recorded: a demotion clears legacyMixedUse, and every ledger address is set
+// to its desired state with a generation bump (commitNative), its route
+// written inactive. Any load or write failure fails the event, so the sender
+// retries it and the rule converges.
+func (s *LifecycleStore) syncNativeDirectory(key string, d DirectoryState) error {
 	// While version-1 domain data awaits migration, directory sync must keep
 	// working, IMAP deployments included: migration recomputes the flag from
 	// the directory resource recorded here, so the demotion still lands. Any
@@ -261,13 +260,14 @@ func (s *LifecycleStore) clearLegacyMixedUse(key string) error {
 	if err != nil {
 		return err
 	}
-	a := f.Accounts[key]
-	if !a.LegacyMixedUse {
+	if len(f.Accounts) == 0 {
 		return nil
 	}
-	a.LegacyMixedUse = false
-	f.Accounts[key] = a
-	return s.saveNative(f)
+	if a := f.Accounts[key]; a.LegacyMixedUse && d.Resource != nil && directoryDemoted(*d.Resource) {
+		a.LegacyMixedUse = false
+		f.Accounts[key] = a
+	}
+	return s.commitNative(f, map[string]DirectoryState{key: d})
 }
 
 // LockDirectory holds the lock ApplyDirectory applies under, so a caller can

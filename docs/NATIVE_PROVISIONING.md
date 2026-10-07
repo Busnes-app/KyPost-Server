@@ -184,8 +184,9 @@ administrator identity and owns no native mailbox, per the suite rule and
   refuses an administrator-role subject unless its ledger account has
   `legacyMixedUse`. Promotion of an everyday native subject is enforced by
   admission from the next request; mail, reservation and storage are retained and
-  demotion restores access. Phase 1 bumps no address generation on promotion.
-  The role change does bump `nativeSendEpoch`, so outbox jobs queued before
+  demotion restores access. The directory apply that grants the role also
+  disables all of the subject's addresses with a generation bump (see
+  [addresses](#addresses-aliases-and-generations)). The role change does bump `nativeSendEpoch`, so outbox jobs queued before
   promotion are quarantined and never resume after demotion.
 - The refusal is `sso.ErrNativeAdministrator` (it wraps `ErrNativeProvisioning`,
   so receiving and outbox keep their refusal handling). HTTP mail routes, device
@@ -206,8 +207,9 @@ administrator identity and owns no native mailbox, per the suite rule and
   alone does not clear it. A demotion that cannot read or write the ledger fails
   the webhook, so KyIdentity retries it and the revision is never recorded over a
   surviving flag. While an initialized ledger is missing or unreadable, every
-  active non-administrator revision therefore fails and is retried; deactivations
-  still apply, and deployments that never initialized a native ledger, or whose
+  applied revision therefore fails and is retried (the address state rule must
+  run); a deactivation's account revocation inside the apply still takes effect,
+  only its record waits. Deployments that never initialized a native ledger, or whose
   version-1 domain data still awaits storage migration, are unaffected:
   migration recomputes the flag from the directory recorded meanwhile. Nothing sets the flag again; restoring an older backup brings
   back flag and directory together, and the replayed demotion clears it. Snapshot
@@ -215,6 +217,54 @@ administrator identity and owns no native mailbox, per the suite rule and
   includes it.
   Exception owner: the deployment owner. Expiry: the mixed-use migration, which
   moves the content to an everyday identity and removes the flag.
+
+## Addresses, aliases and generations
+
+Every ledger address is `active` (routes, may be `From`), `disabled` or
+`reserved` (a released alias held until an administrator reassigns it).
+Addresses are unique across domains, lowercase dot-atom, and never deleted.
+Primary addresses come from KyIdentity and cannot be released or reassigned; a
+KyIdentity primary that equals any existing alias or reserved address is
+recorded as `address_conflict`.
+
+- **Generations change only on reassign, disable, re-enable and release**, each
+  to the previous value plus one, so ordinary directory edits never fence mail.
+  Reassignment appends `(mailbox, generation)` to `history`.
+- **Desired-state rule**, level-triggered on every applied directory revision
+  inside `ApplyDirectory` (directory lock, before the lifecycle record), on
+  every reconcile save and in the API worker's minute pass
+  (`ReconcileNativeAddresses`, which writes only on divergence, such as a
+  re-added domain): `active` iff the owner is active, has no
+  `kypost.admin` role (or is `legacyMixedUse`) and the address domain is
+  configured (not retired); otherwise `disabled`; `reserved` stays `reserved`.
+  Each change bumps the generation. The same write then writes the ingress route
+  of every non-`active` address inactive at its generation
+  (`ingress.DeactivateRoutes`; no receiving store is a no-op). A failed ledger or
+  route write fails the webhook; KyIdentity retries and the rule converges.
+- **Administrator actions** (`withAdmin`, CSRF, `withActionDigest` +
+  `confirmActor` step-up, audited with actor, action, mailbox and result; never
+  the address), under domain → directory locks and refused by a restore hold:
+  - `GET /api/admin/mail-addresses[?user=<id>]` lists mailboxes with `address`,
+    `kind`, `state`, `generation`.
+  - `POST /api/admin/mail-addresses` `{mailbox, address}` adds an alias on a
+    configured, non-retired domain to an everyday identity's mailbox.
+  - `DELETE /api/admin/mail-addresses/{address}` releases an alias (`reserved`,
+    generation + 1, route inactive).
+  - `POST /api/admin/mail-addresses/{address}/reassign` `{mailbox}` hands a
+    reserved alias to a mailbox, the original included, at generation + 1.
+  - 400 malformed address, 404 unknown mailbox/address, 409 taken, reserved,
+    primary, wrong state, administrator or `legacyMixedUse` owner, unconfigured
+    or retired domain, or a restore hold.
+- **Switch-over safety.** Ledgers written before this change (no
+  `addressGenerations` marker) carried the directory revision in routes and
+  bindings; loading raises each address generation to the owner's current
+  directory revision, and the first write records the marker and freezes the
+  result. Generations therefore never fall below any route or binding already
+  written, and the ingress store's monotonic rule holds without a route rewrite.
+  An older binary refuses a ledger holding aliases (native mail stops, IMAP is
+  unaffected); without aliases it resumes raising generations, which stays
+  monotonic. Roll back by restoring the pre-upgrade backup.
+- The recovery authority digest includes every address record.
 
 Allocation context is at most 30 seconds and never outlives the domain proof.
 Cancellable flock/mutex waits leave no abandoned waiter that acquires later.
@@ -229,10 +279,10 @@ updates; whole-file reservation rewrites/address scans require scale measurement
 `$CONFIG_DIR/native-provisioning.json` (version 2: `accounts`, `mailboxes`,
 `addresses`) retains immutable issuer/subject/local ID (the primary mailbox ID),
 primary address, absolute state root and limits; revision/digest/activity;
-pending/applied/failed status, failure code and acknowledged source. Each primary
-address keeps a `generation` that never decreases and is at least the subject's
-directory revision whenever the reservation is saved, plus its `history`; this
-profile has only primary mailboxes and addresses. Reserve
+pending/applied/failed status, failure code and acknowledged source. Every
+address keeps its state, a `generation` that never decreases and its `history`
+(see [addresses](#addresses-aliases-and-generations)); this profile has only
+primary mailboxes. Reserve
 pending before touching files. Keep reservations through failure/offboarding.
 Preparation uses no-replace publication; lost acknowledgement reuses the exact
 published namespace. Acknowledged sources validate existing files read-only,
@@ -316,9 +366,10 @@ native inbox refresh uses full snapshots. PGP bootstrap suggests the verified
 primary address; incoming encryption uses native INBOX rather than a leftover
 IMAP file. Existing key custody and WKD publication proofs are unchanged.
 
-Native primary compose/client-PGP sends use the configured relay and durable
-outbox. Native pickup creation, aliases and system/own-address SMTP probes remain
-refused or skipped pending their authority/dependency integration. A leftover IMAP
+Native compose/client-PGP sends use the configured relay and durable outbox,
+from the primary or any `active` alias of the sender's mailbox (an unowned or
+inactive `From` is 403). Native pickup creation and system/own-address SMTP
+probes remain refused or skipped pending their authority/dependency integration. A leftover IMAP
 credential file cannot enable any native legacy SMTP path. Do not publish MX for this runtime alone. Roll back by
 disabling both native flags in both processes and keeping all
 native storage/ownership files intact; native mail becomes unavailable without
@@ -365,11 +416,12 @@ deliveries every five seconds. Partial mailbox failure retains holding bytes;
 after lease expiry, exact receipts prevent duplicate local delivery. Already
 accepted mail imports without fresh DNS, refreshing authorized route TTLs
 before claiming. Missing storage, restore holds or disabled authority retain
-pending mail. Same-revision local reactivation permits delivery to that same
-owner. A proven owner/signed-generation conflict quarantines pending mail with
-its bytes and frozen bindings intact; an active competing claim cannot be
-invalidated. New signed revisions conservatively fence older bindings even
-when their owner is unchanged. Quarantine requires operator reconciliation;
+pending mail. Local reactivation without a directory state change permits
+delivery to that same owner. Routes and bindings carry the address generation;
+a binding whose address is no longer `active`, owned by the bound mailbox and at
+the bound generation quarantines with its bytes and frozen bindings intact; an
+active competing claim cannot be invalidated. Ordinary directory edits change no
+generation, so they fence nothing. Quarantine requires operator reconciliation;
 there is no reassignment or automatic release.
 
 New route writes, RCPT bindings and MIME acceptance also check physical storage
@@ -391,7 +443,7 @@ These are conservative admission estimates, not hard SQLite or filesystem quotas
 Other writers can consume shared free space; repeated recovery writes and pinned
 WAL can exceed the admission budget. The reserve does not guarantee space for
 all recipient mailbox commits. Import retains the source after any failure.
-The importer may renew only an existing unchanged route (owner, signed generation
+The importer may renew only an existing unchanged route (owner, address generation
 and activation), then claim/import/acknowledge accepted mail even when new
 admission is closed. It cannot use that path to create or reactivate a route.
 Free space, finish blocking readers/imports and retry; preserve receipts if
@@ -420,7 +472,7 @@ The actual runtime check runs Maddy against the production receiving command
 and daemon importer, with test-only loopback DNS. It checks native two-recipient
 delivery, hidden envelope recipients, raw MIME, unknown-recipient refusal and
 shutdown. Other checks cover local revocation, DNS outages, restore holds,
-missing spool, pipe deadline, signed-generation quarantine and partial quota
+missing spool, pipe deadline, address-generation quarantine and partial quota
 failure/retry. Tests do not prove public deployment readiness.
 
 ## Verification and next gates
@@ -455,6 +507,6 @@ Next qualify whole-stack backup/restore and allocator publication crashes, then
 qualify the opt-in runtime and its periodic repair at representative scale. Qualify storage waits, orphan cleanup, scale,
 representative receiver revocation/import load and runtime shutdown behavior
 before public transport activation; the local receiving/selector checks above
-are implemented. Durable scoped client deltas, aliases and relay readiness remain
+are implemented. Durable scoped client deltas and relay readiness remain
 separate work. This change adds system DNS TXT lookups, no dependency or secret,
 and no Android/Linux/iOS client wire change.

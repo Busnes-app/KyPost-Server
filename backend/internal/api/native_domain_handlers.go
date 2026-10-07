@@ -197,7 +197,7 @@ func (s *Server) handleNativeMailDomainsRetire(w http.ResponseWriter, r *http.Re
 func (s *Server) nativeDomainGate(w http.ResponseWriter, r *http.Request, into any) bool {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8192))
 	if err != nil || json.Unmarshal(raw, into) != nil {
-		http.Error(w, "invalid mail domain request", http.StatusBadRequest)
+		http.Error(w, "invalid mail administration request", http.StatusBadRequest)
 		return false
 	}
 	var credential struct {
@@ -205,7 +205,7 @@ func (s *Server) nativeDomainGate(w http.ResponseWriter, r *http.Request, into a
 		AuthSecret string `json:"authSecret"`
 	}
 	if json.Unmarshal(raw, &credential) != nil {
-		http.Error(w, "invalid mail domain request", http.StatusBadRequest)
+		http.Error(w, "invalid mail administration request", http.StatusBadRequest)
 		return false
 	}
 	ac, ok := authFromContext(r)

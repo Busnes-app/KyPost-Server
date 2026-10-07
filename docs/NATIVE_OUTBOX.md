@@ -1,26 +1,33 @@
 # Native outbox storage and qualification
 
-Native primary-address sending is available with `KYPOST_NATIVE_MAIL=true` and
+Native sending from the primary or an owned alias is available with `KYPOST_NATIVE_MAIL=true` and
 an admin-configured operator-owned relay. Ordinary compose, public-key encrypted
 compose and client-prepared PGP use the same durable admission/claim boundary.
 API and daemon processes recover due definite-refusal attempts and accepted Sent
 obligations; SQLite claims arbitrate competing processes. External IMAP behavior
-is unchanged. Native pickup notifications, alias proofs/sending, applicable
-system/probe mail, provider readiness UI and restore-hold release remain pending.
+is unchanged. Native pickup notifications, applicable system/probe mail, provider readiness UI and restore-hold release remain pending.
 The local TLS/PGP checks below are qualification, not live AWS/Cloudflare delivery.
 
 ## Current admission and client responses
 
-Before queueing or claiming, perform fresh issuer-bound domain DNS verification,
-then hold domain, settings, directory and users fences in that order. Admit the
-current signed subject, activity, role, primary address, nonrevoked link and
-acknowledged existing-only mailbox/source. A forced password change refuses sends.
-Relay credentials authenticate the operator; the mailbox primary supplies From.
+Before queueing or claiming, perform fresh issuer-bound DNS verification of the
+`From` domain, then hold domain, settings, directory and users fences in that
+order. Admit the current signed subject, activity, role, primary address,
+nonrevoked link and acknowledged existing-only mailbox/source. A forced password
+change refuses sends. Relay credentials authenticate the operator; `From` is the
+primary or any `active` ledger address of the sending mailbox on a relay domain
+(the API answers 403 for any other before queueing).
 Legacy IMAP credentials and verified send-as rows grant no native authority.
 
-Freeze directory revision, relay generation, local send-authority epoch, PGP
-revision/fingerprint and applicable material generation/device-credential witness
-into encrypted intent. Local deactivation/reactivation, credential/MFA/role/link
+Freeze directory revision, `From` address generation (`FromGeneration`), relay
+generation, local send-authority epoch, PGP revision/fingerprint and applicable
+material generation/device-credential witness into encrypted intent. On queue and
+every claim or retry the `From` address must still be `active`, owned by the
+sending mailbox and at that generation; release, reassignment, disable and
+re-enable change the generation without changing the directory revision, so
+such a job ends `ErrNativeOutboundStale` (quarantined) and is never submitted.
+Jobs queued before per-address generations carry 0 and pass only from the
+primary, still fenced on the directory revision. Local deactivation/reactivation, credential/MFA/role/link
 changes advance the epoch even within one second. Re-pairing the same device ID
 cannot inherit jobs made with its former secret. Converted client-PGP sends also
 require current confirmed device enrollment. Expiry bounds device/mailbox lock
@@ -190,8 +197,7 @@ recovery, shared quota, malformed/corrupt snapshots and sealed restore. Actual
 loopback TLS tests preserve exact bytes and hidden envelope recipients; these
 fixtures do not prove live PGP signature verification or provider delivery.
 
-Next integration must route pickup notifications, explicit native aliases and
-applicable system/probe mail through current admission and this durable boundary. Preserve existing external IMAP behavior,
+Next integration must route pickup notifications and applicable system/probe mail through current admission and this durable boundary. Preserve existing external IMAP behavior,
 all PGP/device gates and the send-success meaning. Live tests need an operator
 account, authorized sender and controlled recipient; use the
 [provider matrix](TURNKEY_MAIL_STACK_PLAN.md#operator-owned-relay-test-matrix).

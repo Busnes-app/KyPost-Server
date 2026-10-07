@@ -327,11 +327,14 @@ func TestNativeReceivingStalledPipeRefusesBeforeAuthority(t *testing.T) {
 	}
 }
 
-func TestNativeReceivingNewSignedRevisionQuarantinesAcceptedMail(t *testing.T) {
+// Routes carry the address generation, so a newer signed revision that
+// changes no address state (an ordinary profile edit) leaves accepted mail
+// deliverable. Phase 2 routed on the directory revision and quarantined here.
+func TestNativeReceivingDirectoryEditKeepsAcceptedMail(t *testing.T) {
 	r, created := receivingFixture(t)
 	ctx := context.Background()
-	const id = "accepted-at-signed-revision-one"
-	raw := []byte("From: test@outside.test\r\n\r\nold revision obligation\r\n")
+	const id = "accepted-before-profile-edit"
+	raw := []byte("From: test@outside.test\r\n\r\nstill owed\r\n")
 	if err := r.bind(ctx, id, "", "one@example.test"); err != nil {
 		t.Fatal(err)
 	}
@@ -353,12 +356,12 @@ func TestNativeReceivingNewSignedRevisionQuarantinesAcceptedMail(t *testing.T) {
 	if _, err := r.life.ApplyDirectoryUser(u.NativeMailboxIssuer, event, resource, sso.EventDigest(event.Type, encoded), func() (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.importDelivery(ctx, id); !errors.Is(err, ingress.ErrRoute) {
-		t.Fatalf("new signed generation did not fence old delivery: %v", err)
+	if err := r.importDelivery(ctx, id); err != nil {
+		t.Fatalf("profile edit fenced accepted mail: %v", err)
 	}
 	d, err := r.holding.Get(ctx, receivingGateway, id)
-	if err != nil || d.State != "quarantined" || !bytes.Equal(d.Raw, raw) || d.Bindings[0].Generation != 1 {
-		t.Fatalf("generation conflict was not durably quarantined: state=%s error=%v", d.State, err)
+	if err != nil || d.State != "imported" || d.Bindings[0].Generation != 1 {
+		t.Fatalf("delivery: state=%s error=%v", d.State, err)
 	}
 }
 

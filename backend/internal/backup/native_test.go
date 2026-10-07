@@ -154,7 +154,13 @@ func TestNativeStoreBackupPreservesIdentityAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer g.Close()
-	route := ingress.Route{Address: a.Address, Issuer: owner.Issuer, Subject: owner.Subject, Mailbox: owner.Mailbox, Generation: 7, Active: true, ValidUntil: time.Now().Add(time.Hour)}
+	// Routes carry the ledger address generation; restore validation refuses
+	// one the ledger never reached.
+	addresses, err := sso.NewLifecycleStore(s.dirs.Config).NativeAddresses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := ingress.Route{Address: a.Address, Issuer: owner.Issuer, Subject: owner.Subject, Mailbox: owner.Mailbox, Generation: addresses[a.Address].Generation, Active: true, ValidUntil: time.Now().Add(time.Hour)}
 	if err := g.SetRoute(ctx, route); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +171,7 @@ func TestNativeStoreBackupPreservesIdentityAndReplay(t *testing.T) {
 	if err := g.Accept(ctx, "gateway", "delivery", "sender@example.com", bytes.NewReader(raw)); err != nil {
 		t.Fatal(err)
 	}
-	receipt := mailbox.Receipt{Gateway: "gateway", Delivery: "delivery", Sender: "sender@example.com", Recipients: []mailbox.Recipient{{Address: route.Address, Generation: 7}}}
+	receipt := mailbox.Receipt{Gateway: "gateway", Delivery: "delivery", Sender: "sender@example.com", Recipients: []mailbox.Recipient{{Address: route.Address, Generation: route.Generation}}}
 	id, err := m.Import(ctx, receipt, bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
@@ -219,7 +225,7 @@ func TestNativeStoreBackupPreservesIdentityAndReplay(t *testing.T) {
 	}
 	defer receiver.Close()
 	delivery, err := receiver.Claim(ctx, "gateway", "delivery", time.Minute)
-	if err != nil || !bytes.Equal(delivery.Raw, raw) || len(delivery.Bindings) != 1 || delivery.Bindings[0].Issuer != owner.Issuer || delivery.Bindings[0].Subject != owner.Subject || delivery.Bindings[0].Mailbox != owner.Mailbox || delivery.Bindings[0].Generation != 7 {
+	if err != nil || !bytes.Equal(delivery.Raw, raw) || len(delivery.Bindings) != 1 || delivery.Bindings[0].Issuer != owner.Issuer || delivery.Bindings[0].Subject != owner.Subject || delivery.Bindings[0].Mailbox != owner.Mailbox || delivery.Bindings[0].Generation != route.Generation {
 		t.Fatalf("restore lost receiving bytes/route binding: %v", err)
 	}
 }

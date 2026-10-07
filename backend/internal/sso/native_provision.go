@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/mail"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
@@ -48,13 +51,18 @@ type nativeAssignments struct {
 
 const nativeProvisioningFile = "native-provisioning.json"
 
-// nativeLedger is native-provisioning.json version 2. Phase 1 has only primary
-// mailboxes (ID = user ID) and their primary addresses.
+// nativeLedger is native-provisioning.json version 2: primary mailboxes (ID =
+// user ID), their primary addresses and administrator-managed aliases.
 type nativeLedger struct {
 	Version   int                            `json:"version"`
 	Accounts  map[string]nativeLedgerAccount `json:"accounts"`
 	Mailboxes map[string]nativeLedgerMailbox `json:"mailboxes"`
 	Addresses map[string]nativeLedgerAddress `json:"addresses"`
+	// AddressGenerations marks generations as authoritative: from the first
+	// write with it set they change only on reassign, disable, re-enable and
+	// release. Files without it were written while routes carried the
+	// directory revision, so loading raises each generation to that revision.
+	AddressGenerations bool `json:"addressGenerations,omitempty"`
 }
 
 type nativeLedgerAccount struct {
@@ -92,6 +100,36 @@ type nativeAddressHistory struct {
 	Generation int64  `json:"generation"`
 }
 
+// validHistory: strictly increasing generations, the last entry is the
+// current mailbox and never above the current generation.
+func (x nativeLedgerAddress) validHistory() bool {
+	if len(x.History) == 0 || x.History[len(x.History)-1].Mailbox != x.Mailbox || x.History[len(x.History)-1].Generation > x.Generation {
+		return false
+	}
+	for i, h := range x.History {
+		if h.Generation < 1 || i > 0 && h.Generation <= x.History[i-1].Generation {
+			return false
+		}
+	}
+	return true
+}
+
+// heldBy reports whether mailbox held the address at generation: some
+// history entry i names it and history[i] <= generation < history[i+1], or
+// i is last and history[i] <= generation <= the current generation.
+func (x nativeLedgerAddress) heldBy(mailbox string, generation int64) bool {
+	for i, h := range x.History {
+		upper := x.Generation + 1
+		if i+1 < len(x.History) {
+			upper = x.History[i+1].Generation
+		}
+		if h.Mailbox == mailbox && h.Generation <= generation && generation < upper {
+			return true
+		}
+	}
+	return false
+}
+
 // parseNativeLedger returns the file's version. Version 1 is accepted only for
 // historical snapshots and migration; the runtime reads version 2 alone.
 func parseNativeLedger(raw []byte, historical bool) (nativeAssignments, int, error) {
@@ -111,10 +149,15 @@ func parseNativeLedger(raw []byte, historical bool) (nativeAssignments, int, err
 	}
 	addressOf := map[string]string{}
 	for address, x := range l.Addresses {
-		if _, ok := l.Mailboxes[x.Mailbox]; !ok || x.Kind != "primary" || addressOf[x.Mailbox] != "" || x.Generation < 1 || len(x.History) == 0 {
+		_, ok := l.Mailboxes[x.Mailbox]
+		primary := x.Kind == "primary" && (x.State == "active" || x.State == "disabled") && addressOf[x.Mailbox] == ""
+		alias := x.Kind == "alias" && (x.State == "active" || x.State == "disabled" || x.State == "reserved")
+		if !ok || !primary && !alias || x.Generation < 1 || !x.validHistory() || address != strings.ToLower(address) {
 			return nativeAssignments{}, 2, ErrNativeProvisioning
 		}
-		addressOf[x.Mailbox] = address
+		if primary {
+			addressOf[x.Mailbox] = address
+		}
 	}
 	f := nativeAssignments{Accounts: map[string]NativeAssignment{}, stored: l}
 	for key, a := range l.Accounts {
@@ -132,11 +175,28 @@ func parseNativeLedger(raw []byte, historical bool) (nativeAssignments, int, err
 	return f, 2, nil
 }
 
-// ledger renders version 2. Address generations never decrease and stay at
-// least the subject's directory revision, which is what phase-1 routes and
-// bindings carry; history starts at generation 1.
+// seedGenerations is the one-time switch to authoritative generations. Routes
+// and bindings written before it carry a directory revision no newer than the
+// subject's current one, so raising to it keeps every generation at least as
+// high as anything already written; the next save freezes the result.
+func (l *nativeLedger) seedGenerations(directory map[string]DirectoryState) {
+	if l.AddressGenerations {
+		return
+	}
+	for address, x := range l.Addresses {
+		if m, ok := l.Mailboxes[x.Mailbox]; ok {
+			x.Generation = max(x.Generation, directory[directoryKey(m.Owner.Issuer, m.Owner.Subject)].Revision)
+			l.Addresses[address] = x
+		}
+	}
+}
+
+// ledger renders version 2. Existing address records are kept as they are
+// (syncAddressStates owns their state); a new primary address starts at the
+// subject's directory revision, which is what version-1 routes and bindings
+// carry, with history from generation 1.
 func (f nativeAssignments) ledger(directory map[string]DirectoryState) nativeLedger {
-	l := nativeLedger{Version: 2, Accounts: map[string]nativeLedgerAccount{}, Mailboxes: map[string]nativeLedgerMailbox{}, Addresses: map[string]nativeLedgerAddress{}}
+	l := nativeLedger{Version: 2, AddressGenerations: true, Accounts: map[string]nativeLedgerAccount{}, Mailboxes: map[string]nativeLedgerMailbox{}, Addresses: map[string]nativeLedgerAddress{}}
 	for address, x := range f.stored.Addresses {
 		l.Addresses[address] = x
 	}
@@ -149,16 +209,10 @@ func (f nativeAssignments) ledger(directory map[string]DirectoryState) nativeLed
 		m := nativeLedgerMailbox{Kind: "primary", State: state, StateRoot: a.StateRoot, Limits: a.Limits, Source: a.Source}
 		m.Owner.Issuer, m.Owner.Subject = a.Owner.Issuer, a.Owner.Subject
 		l.Mailboxes[a.Owner.Mailbox] = m
-		if a.Address == "" {
+		if _, ok := l.Addresses[a.Address]; a.Address == "" || ok {
 			continue
 		}
-		x, ok := l.Addresses[a.Address]
-		if !ok {
-			x.History = []nativeAddressHistory{{Mailbox: a.Owner.Mailbox, Generation: 1}}
-		}
-		x.Mailbox, x.Kind, x.State = a.Owner.Mailbox, "primary", state
-		x.Generation = max(x.Generation, directory[key].Revision, 1)
-		l.Addresses[a.Address] = x
+		l.Addresses[a.Address] = nativeLedgerAddress{Mailbox: a.Owner.Mailbox, Kind: "primary", State: state, Generation: max(directory[key].Revision, 1), History: []nativeAddressHistory{{Mailbox: a.Owner.Mailbox, Generation: 1}}}
 	}
 	return l
 }
@@ -196,12 +250,25 @@ func (s *LifecycleStore) loadNativeLedger(historical bool) (nativeAssignments, i
 	if err == nil && (parseErr != nil || loaded && !lifecycle.NativeProvisioningInitialized) {
 		err = ErrNativeProvisioning
 	}
+	f.stored.seedGenerations(lifecycle.Directory)
 	return f, version, err
+}
+
+// saveNative is the format write (migration, empty ledger): no state rule.
+func (s *LifecycleStore) saveNative(f nativeAssignments) error {
+	return s.persistNative(f, nil, false)
+}
+
+// commitNative applies the desired-state rule, persists the ledger and then
+// writes every non-active address's route inactive. The caller holds the
+// directory lock; overlay carries a directory state not yet recorded.
+func (s *LifecycleStore) commitNative(f nativeAssignments, overlay map[string]DirectoryState) error {
+	return s.persistNative(f, overlay, true)
 }
 
 // Initialization fences missing-ledger repair. A crash after the fence but
 // before the first ledger requires explicit recovery; it never frees addresses.
-func (s *LifecycleStore) saveNative(f nativeAssignments) error {
+func (s *LifecycleStore) persistNative(f nativeAssignments, overlay map[string]DirectoryState, sync bool) error {
 	lifecycle, err := s.load()
 	if err != nil {
 		return err
@@ -212,7 +279,71 @@ func (s *LifecycleStore) saveNative(f nativeAssignments) error {
 			return err
 		}
 	}
-	return fsutil.PersistJSONFile(s.nativePath(), f.ledger(lifecycle.Directory))
+	directory := maps.Clone(lifecycle.Directory)
+	maps.Copy(directory, overlay)
+	l := f.ledger(directory)
+	if !sync {
+		return fsutil.PersistJSONFile(s.nativePath(), l)
+	}
+	inactive, err := s.syncAddressStates(&l, directory)
+	if err != nil {
+		return err
+	}
+	if err = fsutil.PersistJSONFile(s.nativePath(), l); err != nil {
+		return err
+	}
+	root := ""
+	for _, m := range l.Mailboxes {
+		root = m.StateRoot
+	}
+	if root == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return ingress.DeactivateRoutes(ctx, filepath.Join(root, "receiving"), inactive)
+}
+
+// syncAddressStates is the level-triggered desired-state rule: active iff the
+// owner is active, has no administrator role (or is legacyMixedUse) and the
+// domain is configured, not retired; reserved stays reserved. Every change
+// bumps the generation. It returns each non-active address's generation.
+// ponytail: every commit rewrites all non-active routes in one transaction;
+// track changed addresses instead if ledgers grow to many thousands.
+func (s *LifecycleStore) syncAddressStates(l *nativeLedger, directory map[string]DirectoryState) (map[string]int64, error) {
+	inactive := map[string]int64{}
+	if len(l.Addresses) == 0 {
+		return inactive, nil
+	}
+	domains, err := NewNativeDomainStore(filepath.Dir(s.path)).ReadSet()
+	if err != nil {
+		return nil, err
+	}
+	for address, x := range l.Addresses {
+		if x.State != "reserved" {
+			state := "disabled"
+			if l.desiredActive(address, x.Mailbox, directory, domains) {
+				state = "active"
+			}
+			if x.State != state {
+				x.State = state
+				x.Generation++
+				l.Addresses[address] = x
+			}
+		}
+		if x.State != "active" {
+			inactive[address] = x.Generation
+		}
+	}
+	return inactive, nil
+}
+
+func (l nativeLedger) desiredActive(address, mailboxID string, directory map[string]DirectoryState, domains NativeDomainSet) bool {
+	m := l.Mailboxes[mailboxID]
+	key := directoryKey(m.Owner.Issuer, m.Owner.Subject)
+	d := directory[key]
+	_, configured := domains.Domains[AddressDomain(address)]
+	return configured && d.Active && d.Resource != nil && (!HasAdminRole(d.Resource.Roles) || l.Accounts[key].LegacyMixedUse)
 }
 
 // ensureNativeLedger creates an empty version-2 ledger when none exists. A
@@ -247,15 +378,18 @@ func (s *LifecycleStore) NativeAssignment(issuer, subject string) (NativeAssignm
 	return a, ok, err
 }
 
-// NativeAssignmentForAddress locates immutable ownership, not permission.
-// Receiving callers must still admit the current account before binding mail.
+// NativeAssignmentForAddress locates the account whose mailbox currently
+// records address (primary or alias, any state): ownership, not permission.
+// Receiving callers must still admit the account and check the address under
+// the directory fence before binding mail.
 func (s *LifecycleStore) NativeAssignmentForAddress(issuer, address string) (NativeAssignment, bool, error) {
 	f, err := s.loadNative()
 	if err != nil {
 		return NativeAssignment{}, false, err
 	}
+	x, ok := f.stored.Addresses[address]
 	for _, a := range f.Accounts {
-		if a.Owner.Issuer == issuer && a.Address == address {
+		if ok && a.Owner.Issuer == issuer && a.Owner.Mailbox == x.Mailbox {
 			return a, true, nil
 		}
 	}
@@ -363,7 +497,7 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 			a.Failure = code
 			result = a
 			f.Accounts[key] = a
-			if err := s.saveNative(f); err != nil {
+			if err := s.commitNative(f, nil); err != nil {
 				return err
 			}
 			return ErrNativeProvisioning
@@ -388,6 +522,10 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 				return fail("address_conflict")
 			}
 		}
+		// An alias or reserved address of any mailbox is never a new primary.
+		if x, taken := f.stored.Addresses[address]; taken && (x.Mailbox != localID || x.Kind != "primary") {
+			return fail("address_conflict")
+		}
 		a.Address = address
 		a.Status = "pending"
 		a.Failure = ""
@@ -396,7 +534,7 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 			return e
 		}
 		// Reserve durably BEFORE touching account files; a killed writer is repairable.
-		if e = s.saveNative(f); e != nil {
+		if e = s.commitNative(f, nil); e != nil {
 			return e
 		}
 		if a.Source != "" {
@@ -418,7 +556,7 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 		}
 		result = a
 		f.Accounts[key] = a
-		if saveErr := s.saveNative(f); saveErr != nil {
+		if saveErr := s.commitNative(f, nil); saveErr != nil {
 			return saveErr
 		}
 		return e
@@ -454,15 +592,23 @@ func nativePrimary(u DirectoryUser, domain string) (string, error) {
 			address = email.Value
 		}
 	}
+	if count != 1 {
+		return "", ErrNativeProvisioning
+	}
+	return nativeAddress(address, domain)
+}
+
+// nativeAddress canonicalizes a bare ASCII dot-atom address on domain.
+func nativeAddress(address, domain string) (string, error) {
 	a, e := mail.ParseAddress(address)
 	local, host, ok := strings.Cut(address, "@")
-	if count != 1 || e != nil || a.Address != address || !ok || len(address) > 254 || len(local) == 0 || len(local) > 64 || strings.ToLower(host) != domain || strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") || strings.Contains(local, "..") {
+	if e != nil || a.Address != address || !ok || len(address) > 254 || len(local) == 0 || len(local) > 64 || strings.ToLower(host) != domain || strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") || strings.Contains(local, "..") {
 		return "", ErrNativeProvisioning
 	}
 	for _, r := range local {
 		valid := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("!#$%&'*+-/=?^_`{|}~.", r)
 		if !valid {
-			return "", fmt.Errorf("%w: unsupported primary address", ErrNativeProvisioning)
+			return "", fmt.Errorf("%w: unsupported address", ErrNativeProvisioning)
 		}
 	}
 	return strings.ToLower(address), nil

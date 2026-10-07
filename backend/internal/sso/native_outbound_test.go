@@ -46,7 +46,7 @@ func TestNativeOutboundExpiryDuringDeviceContention(t *testing.T) {
 	done := make(chan error, 1)
 	called := false
 	go func() {
-		done <- (NativeOutbound{StateRoot: root}).withJobAuthority(ctx, u, a, ds, relay, job, nil, func(context.Context) error { called = true; return nil })
+		done <- (NativeOutbound{StateRoot: root}).withJobAuthority(ctx, u, a, NativeAddress{Address: job.From, State: "active"}, ds, relay, job, nil, func(context.Context) error { called = true; return nil })
 	}()
 	time.Sleep(time.Until(time.Unix(job.ExpiresAt, 0)) + 100*time.Millisecond)
 	close(release)
@@ -306,7 +306,7 @@ func TestNativeOutboundConvertedDeviceKeyFence(t *testing.T) {
 				}
 			}
 			called := false
-			err := (NativeOutbound{StateRoot: root}).withJobAuthority(ctx, u, a, d, relay, prepared, nil, func(context.Context) error { called = true; return nil })
+			err := (NativeOutbound{StateRoot: root}).withJobAuthority(ctx, u, a, NativeAddress{Address: job.From, State: "active"}, d, relay, prepared, nil, func(context.Context) error { called = true; return nil })
 			if mode == "current" {
 				if err != nil || !called {
 					t.Fatal("current enrolled key refused", err)

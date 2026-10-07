@@ -504,8 +504,8 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	var smtpHost, addr, headerFrom, envelopeFrom string
 	var smtpPort int
 	if native {
-		if !nativeFromAllowed(a.Address, req.From) {
-			http.Error(w, "native aliases require explicit directory ownership and routing; use the primary address", http.StatusForbidden)
+		from, refused := s.refuseNativeFrom(w, a, req.From)
+		if refused {
 			return
 		}
 		nativeUser, err = s.users.Get(ac.UserID)
@@ -513,7 +513,7 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "account unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		headerFrom, envelopeFrom = a.Address, a.Address
+		headerFrom, envelopeFrom = from, from
 	} else {
 		var exists bool
 		payload, exists, err = s.outboundMailConfig(ac.UserID)

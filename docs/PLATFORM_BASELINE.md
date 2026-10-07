@@ -485,8 +485,12 @@ existing request/authentication contracts. Send responses add `outboxId` while
 primary submission, even if intent was persisted. Inspect the owner-scoped
 `GET /api/mail/outbox/{id}` before creating another intent. Sending twice cannot
 repair pending Sent filing. Converted PGP generation/device-enrollment gates and
-client custody remain unchanged. Native pickup/alias/system sends remain pending;
-see [NATIVE_OUTBOX.md](NATIVE_OUTBOX.md). Existing external IMAP is unchanged.
+client custody remain unchanged. Additively, the existing optional `from` field
+may name any `active` alias an administrator gave the caller's mailbox (case is
+ignored); omitted or empty still means the primary. Any other `from`, including
+a released or another mailbox's address, stays 403, and client-prepared PGP MIME
+must carry that same `From`. Native pickup/system sends remain pending; see
+[NATIVE_OUTBOX.md](NATIVE_OUTBOX.md). Existing external IMAP is unchanged.
 
 ## Native CardDAV recovery
 

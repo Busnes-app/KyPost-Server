@@ -4,14 +4,25 @@ Status: spec, 2026-10-06. Phase 1a is implemented: the version-2 storage formats
 `kypost-server migrate-native` at startup, the tombstone, fail-closed rollback and
 v1/v2 backup validation, still with one domain and one mailbox per user and routing
 keyed to the directory revision; until phase 3 each saved primary address generation
-is `max(stored, directory revision)`. Phase 1b is implemented: administrator
+was `max(stored, directory revision)` (phase 3a replaces this). Phase 1b is implemented: administrator
 subjects get mailbox-less accounts and are refused by native admission unless
 `legacyMixedUse`, which only demotion clears; promotion is enforced by admission
 without a generation bump until phase 3. Phase 2a is implemented: the backend
 for several verified domains (domain-set admin API, primary address on any
 configured domain, per-domain fences, retirement, relay domain set, Maddy
 destinations). Phase 2b is implemented: the Server → Mail domain admin screen
-for the domain set and relay sending domains. Phases 3–4 are not implemented.
+for the domain set and relay sending domains. Phase 3a is implemented: the
+backend for aliases and per-address generations (admin alias add, release and
+reassign API; the level-triggered `ApplyDirectory` state rule; routes and
+bindings by address generation; `From` any owned active address with the
+`FromGeneration` outbox fence; history-based restore validation; every address
+record in the recovery authority digest). Ledgers
+written before it carried the directory revision in routes, so loading one
+without the `addressGenerations` marker raises each generation to the owner's
+directory revision once and the next write freezes it. Phase 3b (admin UI) and
+phase 4 are not implemented; with no administrator mailbox disable yet, the
+"mailbox not administrator-disabled" term of the desired-state rule is always
+true.
 Prerequisite of
 [continuous Cloudflare receiving](CLOUDFLARE_CONTINUOUS_RECEIVING.md); applies to
 both native receiving profiles. External IMAP accounts are unaffected.

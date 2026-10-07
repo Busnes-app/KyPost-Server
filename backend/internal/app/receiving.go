@@ -308,30 +308,42 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 	}
 	return r.withAuthority(ctx, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
 		admitted := current[a.Owner.Mailbox]
-		if admitted.Owner != a.Owner || admitted.Address != recipient {
+		x, err := r.activeAddress(recipient)
+		if err != nil {
+			return err
+		}
+		if admitted.Owner != a.Owner || x.Mailbox != a.Owner.Mailbox {
 			return ingress.ErrRoute
 		}
-		if expected != nil {
-			d, known, err := r.life.Directory(admitted.Owner.Issuer, admitted.Owner.Subject)
-			if err != nil || !known || !expected.matches(admitted, d.Revision) {
-				return ingress.ErrRoute
-			}
+		if expected != nil && !expected.matches(admitted, x) {
+			return ingress.ErrRoute
 		}
-		if err := r.refreshRoute(ctx, admitted, false); err != nil {
+		if err := r.refreshRoute(ctx, admitted, x, false); err != nil {
 			return err
 		}
 		return r.holding.Bind(ctx, r.gatewayID(), id, sender, recipient)
 	})
 }
 
-// Current signed revision is deliberately conservative: newer directory
-// revisions fence older staged/accepted bindings even when ownership is equal.
-func (r *receivingRuntime) refreshRoute(ctx context.Context, a sso.NativeAssignment, recovery bool) error {
-	d, known, err := r.life.Directory(a.Owner.Issuer, a.Owner.Subject)
-	if err != nil || !known {
-		return sso.ErrNativeProvisioning
+// activeAddress reads the current ledger record under the caller's directory
+// fence; only an active address routes.
+func (r *receivingRuntime) activeAddress(address string) (sso.NativeAddress, error) {
+	addresses, err := r.life.NativeAddresses()
+	if err != nil {
+		return sso.NativeAddress{}, err
 	}
-	route := ingress.Route{Address: a.Address, Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox, Generation: d.Revision, Active: true, ValidUntil: time.Now().Add(time.Minute)}
+	x, ok := addresses[address]
+	if !ok || x.State != "active" {
+		return x, ingress.ErrRoute
+	}
+	return x, nil
+}
+
+// Routes carry the address generation, which changes only on reassign,
+// disable, re-enable and release, so ordinary directory edits never fence
+// staged or accepted bindings.
+func (r *receivingRuntime) refreshRoute(ctx context.Context, a sso.NativeAssignment, x sso.NativeAddress, recovery bool) error {
+	route := ingress.Route{Address: x.Address, Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox, Generation: x.Generation, Active: true, ValidUntil: time.Now().Add(time.Minute)}
 	if recovery {
 		return r.holding.RefreshRoute(ctx, route)
 	}
@@ -352,19 +364,16 @@ func (r *receivingRuntime) frozenAuthority(ctx context.Context, d ingress.Delive
 			}
 			return ingress.ErrRoute
 		}
+		addresses, err := r.life.NativeAddresses()
+		if err != nil {
+			return err
+		}
 		for _, b := range d.Bindings {
-			a := current[b.Mailbox]
-			if a.Owner != (mailbox.Owner{Issuer: b.Issuer, Subject: b.Subject, Mailbox: b.Mailbox}) || a.Address != b.Address {
+			a, x := current[b.Mailbox], addresses[b.Address]
+			if a.Owner != (mailbox.Owner{Issuer: b.Issuer, Subject: b.Subject, Mailbox: b.Mailbox}) || x.Mailbox != b.Mailbox || x.State != "active" || x.Generation != b.Generation {
 				return quarantine()
 			}
-			resource, known, err := r.life.Directory(b.Issuer, b.Subject)
-			if err != nil {
-				return err
-			}
-			if !known || resource.Revision != b.Generation {
-				return quarantine()
-			}
-			if err := r.refreshRoute(ctx, a, proofs == nil); err != nil {
+			if err := r.refreshRoute(ctx, a, x, proofs == nil); err != nil {
 				return err
 			}
 		}

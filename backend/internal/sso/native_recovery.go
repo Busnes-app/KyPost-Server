@@ -205,12 +205,14 @@ func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings,
 	}
 	slices.SortFunc(authority, func(a, b accountAuthority) int { return strings.Compare(a.ID, b.ID) })
 	fingerprint := sha256.Sum256(key)
+	// Address states and generations route and fence mail, so they are authority.
 	payload, err := json.Marshal(struct {
 		Settings     SSOSettings
 		Directory    map[string]DirectoryState
 		Reservations map[string]NativeAssignment
 		Accounts     []accountAuthority
-	}{settings, directory, reservations, authority})
+		Addresses    map[string]nativeLedgerAddress
+	}{settings, directory, reservations, authority, ledger.stored.Addresses})
 	if err != nil {
 		return NativeRecoveryChallenge{}, nil, nil, err
 	}

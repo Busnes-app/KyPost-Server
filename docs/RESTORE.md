@@ -84,6 +84,18 @@ against the relay's `domains ∪ retiredDomains`. Retired domains keep their
 address records, so a snapshot taken after retirement, and historical jobs and
 bindings on a retired domain, still validate.
 
+Version-2 receiving routes and bindings are checked against each address's
+`history`: a route or binding to mailbox `m` at generation `g` is valid only if
+some history entry `i` names `m` with `history[i].generation ≤ g <
+history[i+1].generation`, or `i` is the last entry and `history[i].generation ≤ g
+≤ generation`. A snapshot taken after an alias was released and reassigned
+therefore validates (its old route and bindings fall in the old owner's
+interval); one bound outside every interval is refused. Every alias and reserved
+address must be canonical and on a known domain. Version-1 snapshots keep the
+primary-address check. Ledgers written before per-address generations have their
+generations raised to the owner's directory revision when loaded, so their
+routes and bindings validate unchanged.
+
 The version-1 recipe remains compatible. Use this version of KyPost or newer to
 check all three database names and the additive relay credential/authority recipe; older drills do not attest the new relay checks. A new integrity
 check cannot recover WAL rows omitted from an older raw-copy native backup.
