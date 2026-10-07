@@ -319,10 +319,7 @@ func TestFoldHeaderValueNeverSplitsAttributeName(t *testing.T) {
 
 func TestBuildStampsDateAndMessageID(t *testing.T) {
 	fixed := time.Date(2026, 10, 6, 9, 30, 0, 0, time.FixedZone("CEST", 2*3600))
-	defer func(old func() time.Time) { now = old }(now)
-	now = func() time.Time { return fixed }
-
-	raw := Message{From: `"Alice" <Alice@Example.COM>`, To: []string{"bob@example.com"}, Subject: "hi", Body: "x"}.Build()
+	raw := Message{From: `"Alice" <Alice@Example.COM>`, To: []string{"bob@example.com"}, Subject: "hi", Body: "x", Date: fixed}.Build()
 	msg, err := mail.ReadMessage(bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)

@@ -52,15 +52,12 @@ type Message struct {
 	Date      time.Time
 }
 
-// now is replaced only by tests.
-var now = time.Now
-
 // Stamp fills an empty Date and Message-ID. The Message-ID domain is the From
 // address's domain; an unparseable From gets no Message-ID rather than an
 // invented domain.
 func (m Message) Stamp() Message {
 	if m.Date.IsZero() {
-		m.Date = now()
+		m.Date = time.Now()
 	}
 	if m.MessageID == "" {
 		if addr, err := mail.ParseAddress(m.From); err == nil {
