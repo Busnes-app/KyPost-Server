@@ -509,8 +509,9 @@ are unchanged: without the header below every route serves the primary mailbox.
   `/api/mail/outbox/{id}`, `/api/mail/body`, `/api/mail/pgp-payload`,
   `/api/mail/attachments`, `/api/mail/attachment`, `/api/rules/run`,
   `/api/decisions` and `/api/export/folders` (web export and import, which
-  name the mailbox in their `POST /api/export` and `POST /api/import`
-  bodies). An
+  name the mailbox in their `POST /api/export`, `POST /api/import` and
+  `POST /api/import/imap` bodies; the IMAP grant's folder and start routes
+  take the mailbox from the grant). An
   absent header or the primary's ID selects the primary. An unknown, foreign or
   disabled mailbox answers `404 {"error":"mailbox not found"}`, identical for
   all three: drop the mailbox from the local list and refresh

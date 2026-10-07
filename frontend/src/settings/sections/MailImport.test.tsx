@@ -157,3 +157,96 @@ it("stops polling after repeated failures and says so", async () => {
   await new Promise(r => setTimeout(r, 1500));
   expect(fetchMock.mock.calls.length).toBe(calls);
 }, 12000);
+
+const grant = "c".repeat(64);
+const remoteFolders = { target: "Imported/imap-example-com", folders: [
+  { name: "INBOX", path: ["INBOX"], attributes: ["\\hasnochildren"] },
+  { name: "[Gmail]/All Mail", path: ["[Gmail]", "All Mail"], attributes: ["\\all"] },
+  { name: "Sent", path: ["Sent"], attributes: [] },
+  { name: "Evil", path: ["Inv\u202Eoice"], attributes: [] },
+] };
+
+async function fillAccount(provider = "provider-secret") {
+  fireEvent.click(await screen.findByLabelText("From another mail account"));
+  fireEvent.change(screen.getByLabelText("Server"), { target: { value: "imap.example.com" } });
+  fireEvent.change(screen.getByLabelText("Username"), { target: { value: "alice@example.com" } });
+  fireEvent.change(screen.getByLabelText("Provider password"), { target: { value: provider } });
+}
+
+it("imports from another account: confirms without the provider password, lists, chooses, shows progress", async () => {
+  let folderAnswer = () => json({ error: "the provider refused the sign-in" }, 400);
+  fetchMock.mockImplementation(async (url, init) => {
+    if (url === "/api/import/imap") return json({ token: grant, expiresInSeconds: 600, target: "Imported/imap-example-com" });
+    if (url === `/api/import/imap/${grant}/folders`) return folderAnswer();
+    if (url === `/api/import/imap/${grant}/start`) return json({ ...running, folder: "Imported/imap-example-com", host: "imap.example.com", foldersTotal: 2, foldersDone: 0, current: "Imported/imap-example-com/INBOX" }, 202);
+    if (url === "/api/import" && !init?.method) return json(statuses.length > 1 ? statuses.shift() : statuses[0]);
+    if (url === "/api/mailboxes") return json(mailboxes);
+    return json({ folders: [] });
+  });
+  view();
+  fireEvent.click(await screen.findByLabelText("From another mail account"));
+  expect(screen.getByText(/used only for this import and is never stored/)).toBeTruthy();
+  expect(screen.getByText(/need an app password/)).toBeTruthy();
+  expect(screen.getByText(/Nothing is changed on the other account/)).toBeTruthy();
+  expect(screen.getByText(/signs in to your other mail provider/)).toBeTruthy();
+  await fillAccount("wrong");
+  fireEvent.change(screen.getByLabelText("Security"), { target: { value: "starttls" } });
+  expect((screen.getByLabelText("Port") as HTMLInputElement).value).toBe("143");
+  fireEvent.change(screen.getByLabelText("Security"), { target: { value: "tls" } });
+  fireEvent.change(screen.getByLabelText("Account password"), { target: { value: "account-secret" } });
+  fireEvent.click(screen.getByRole("button", { name: "List folders" }));
+  expect((await screen.findByRole("alert")).textContent).toMatch(/refused the sign-in/);
+  const [confirm, firstList] = posts();
+  expect(confirm![0]).toBe("/api/import/imap");
+  expect(JSON.parse(String(confirm![1]!.body))).toEqual({ mailbox: "user-1", host: "imap.example.com", port: 993, security: "tls", username: "alice@example.com", authSecret: "derived-test-secret" });
+  expect(String(confirm![1]!.body)).not.toContain("wrong");
+  expect(JSON.parse(String(firstList![1]!.body))).toEqual({ password: "wrong" });
+  expect((screen.getByLabelText("Provider password") as HTMLInputElement).value).toBe("");
+
+  // The grant is reused for another try: no second confirmation.
+  folderAnswer = () => json(remoteFolders);
+  expect(screen.queryByLabelText("Account password")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Provider password"), { target: { value: "right" } });
+  fireEvent.click(screen.getByRole("button", { name: "List folders" }));
+  const allMail = await screen.findByLabelText(/All Mail/) as HTMLInputElement;
+  expect(allMail.checked).toBe(false);
+  expect(screen.getByText(/repeats mail from your other folders/)).toBeTruthy();
+  expect((screen.getByLabelText(/INBOX/) as HTMLInputElement).checked).toBe(true);
+  expect(posts().filter(([url]) => url === "/api/import/imap")).toHaveLength(1);
+  expect((screen.getByLabelText("Into folder") as HTMLInputElement).value).toBe("Imported/imap-example-com");
+  expect(screen.getByLabelText(/Inv\[U\+202E\]oice/)).toBeTruthy();
+  fireEvent.click(screen.getByLabelText(/Inv\[U\+202E\]oice/));
+
+  fireEvent.click(screen.getByLabelText(/Sent/));
+  statuses = [{ ...running, host: "imap.example.com", folder: "Imported/imap-example-com", foldersTotal: 2, foldersDone: 1, current: "Imported/imap-example-com/Sent" },
+    { ...idle, state: "finished", host: "imap.example.com", folder: "Imported/imap-example-com", imported: 4 }];
+  fireEvent.click(screen.getByRole("button", { name: "Import folders" }));
+  const last = () => posts()[posts().length - 1]!;
+  await waitFor(() => expect(last()[0]).toBe(`/api/import/imap/${grant}/start`));
+  expect(JSON.parse(String(last()[1]!.body))).toEqual({ folders: ["INBOX"], target: "Imported/imap-example-com" });
+  expect(await screen.findByText(/Importing from imap.example.com into Imported\/imap-example-com \(folder 1 of 2, Imported\/imap-example-com\/INBOX\)/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Cancel import" })).toBeTruthy();
+  expect(await screen.findByText(/Import from imap.example.com finished into Imported\/imap-example-com: 4 messages imported/, {}, { timeout: 5000 })).toBeTruthy();
+});
+
+it("confirms an account import with KySignOn and starts over when the grant expired", async () => {
+  fetchMock.mockImplementation(async (url, init) => {
+    if (url === "/api/import/imap") return json({ token: grant });
+    if (url === `/api/import/imap/${grant}/folders`) return json({ error: "this import expired or was already started; start again" }, 404);
+    if (url === "/api/import" && !init?.method) return json(idle);
+    if (url === "/api/mailboxes") return json(mailboxes);
+    return json({ folders: [] });
+  });
+  view({ ...user, ssoSession: true });
+  await fillAccount();
+  expect(screen.queryByLabelText("Account password")).toBeNull();
+  expect(screen.getByText("You will confirm with KySignOn.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "List folders" }));
+  expect((await screen.findByRole("alert")).textContent).toMatch(/expired/);
+  expect(vi.mocked(withSSOStepUp)).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(deriveCredential)).not.toHaveBeenCalled();
+  expect(JSON.parse(String(posts()[0]![1]!.body))).not.toHaveProperty("password");
+  fireEvent.change(screen.getByLabelText("Provider password"), { target: { value: "again" } });
+  fireEvent.click(screen.getByRole("button", { name: "List folders" }));
+  await waitFor(() => expect(vi.mocked(withSSOStepUp)).toHaveBeenCalledTimes(2));
+});

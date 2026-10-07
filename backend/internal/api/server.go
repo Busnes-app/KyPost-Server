@@ -125,7 +125,7 @@ type Server struct {
 	exportMu  sync.Mutex
 	exports   map[string]exportGrant
 	exporting map[string]bool
-	// importGrants are the unspent mail-import upload links, keyed by token,
+	// importGrants are the unspent mail-import upload links and IMAP grants, keyed by token,
 	// and imports each user's latest import job. Innermost, taken alone,
 	// never while another Server mutex is held.
 	importMu     sync.Mutex
@@ -144,8 +144,13 @@ type Server struct {
 	// passwordChangeLockout bounds current-credential guessing on
 	// POST /api/auth/password, keyed on the acting user's ID.
 	passwordChangeLockout *failureLockout
-	deviceLockout         *failureLockout
-	wkdLimiter            *ipRateLimiter
+	// imapLoginLockout bounds failed provider sign-ins for mail import, keyed
+	// on the user across every grant; imapListSlots bounds listings dialling
+	// out at once.
+	imapLoginLockout *failureLockout
+	imapListSlots    chan struct{}
+	deviceLockout    *failureLockout
+	wkdLimiter       *ipRateLimiter
 	// accountWriteLimiter meters MUTATING withAuth requests per account. Every
 	// such request is at least one whole-file users.json marshal + fsync under
 	// a global cross-process lock that every authenticated request also reads
@@ -393,6 +398,8 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		davLockout:               newFailureLockout(davMaxFailures, davLockoutFor),
 		mfaLockout:               newFailureLockout(mfaMaxFailures, mfaLockoutFor),
 		passwordChangeLockout:    newFailureLockout(passwordChangeMaxFailures, passwordChangeLockoutFor),
+		imapLoginLockout:         newFailureLockout(imapLoginMaxFailures, imapLoginLockoutFor),
+		imapListSlots:            make(chan struct{}, maxIMAPListings),
 		deviceLockout:            newFailureLockout(deviceMaxFailures, deviceLockoutFor),
 		wkdLimiter:               newIPRateLimiter(wkdRateBurst, wkdRateRefillPerSec),
 		accountWriteLimiter:      newIPRateLimiter(accountWriteBurst, accountWriteRefillPerSec),
@@ -623,6 +630,9 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/import", s.withMailAuth(withActionDigest(s.handleImportStart)))
 	mux.HandleFunc("POST /api/import/cancel", s.withMailAuth(s.handleImportCancel))
 	mux.HandleFunc("POST /api/import/{token}", s.withMailAuth(s.handleImportUpload))
+	mux.HandleFunc("POST /api/import/imap", s.withMailAuth(withActionDigest(s.handleIMAPImportStart)))
+	mux.HandleFunc("POST /api/import/imap/{token}/folders", s.withMailAuth(s.handleIMAPImportFolders))
+	mux.HandleFunc("POST /api/import/imap/{token}/start", s.withMailAuth(s.handleIMAPImportRun))
 	mux.HandleFunc("GET /api/inbox", s.withMailAuth(s.withMailbox(s.handleInbox)))
 	mux.HandleFunc("GET /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
 	mux.HandleFunc("POST /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))

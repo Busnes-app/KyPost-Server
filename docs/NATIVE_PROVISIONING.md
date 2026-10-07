@@ -537,8 +537,10 @@ Mail → Export Mail; [mail import](#mail-import) is its mirror.
 
 ### Mail import
 
-Users import mbox and EML files into their own native mailbox from Settings →
-Mail → Import Mail. Importing from an external IMAP account is not built yet.
+Users import mbox and EML files, or the folders of another mail account over
+IMAP, into their own native mailbox from Settings → Mail → Import Mail ("From a
+file" or "From another mail account"). The file rules come first; [import from
+another account](#import-from-another-mail-account) adds its own below.
 
 - `POST /api/import` with `{mailbox, folder, password|authSecret}`: `mailbox`
   as for export, `folder` an existing folder or a new one under an existing
@@ -628,6 +630,103 @@ Mail → Import Mail. Importing from an external IMAP account is not built yet.
   applies: about 4.5 times the upload live and 6 times allocated at worst.
   That is bounded by the quota cap; raising the per-mailbox quota raises it
   too.
+
+#### Import from another mail account
+
+The server signs in to the user's other provider and copies the folders they
+choose. Admission, the per-user and server-wide job limits, status and cancel,
+the per-message cap, the job's message cap, dedupe per folder, the `imported`
+table, the incoming-encryption refusal (at the grant, at start and before every
+message, under the settings lock) and shutdown are the file import's.
+
+- `POST /api/import/imap` with `{mailbox, host, port, security, username,
+  password|authSecret}` (the KyPost step-up; never the provider password):
+  browser session, CSRF and `confirmActor` behind `withActionDigest`. `security`
+  is `tls` on port 993 or `starttls` on 143; nothing else, because no other port
+  is an IMAP server worth reaching and a free port would make the server a
+  scanner of other services. Plaintext and unverified certificates are not
+  offered. `host` is a DNS name or IP literal. Answers `{token: <64 hex>,
+  expiresInSeconds: 600, target: "Imported/<host with '.' as '-'>"}` (folder
+  names cannot contain `.`). The grant is in memory, one per user, bound to user,
+  session and mailbox like the upload link, and holds host, port, security and
+  username. Minting refuses (409) while the user's import runs or the server's
+  two import slots are taken, and (503) once shutdown began; it cancels the
+  user's previous grant, including a listing still in flight.
+- `POST /api/import/imap/{token}/folders` with `{password}` (the provider's)
+  connects, signs in and answers `{folders: [{name, path, attributes}], target}`.
+  It needs no step-up of its own: the grant is the proof. Sign-ins are bounded
+  per user, not per grant, so a fresh step-up does not reset them: six listings
+  that do not sign in (wrong password, unreachable or refused server) lock the
+  user out of listing for an hour (429 with `Retry-After`, before any dial); a
+  successful sign-in refunds only its own attempt. At most four listings dial
+  out at once server-wide (503 after waiting up to 3 s for a slot, spending no
+  attempt), one per user (a new grant cancels the old listing), and
+  none while the user's import runs (409) or after shutdown began (503). A
+  listing reads at most 4 MiB, which also bounds what the grant holds. The
+  provider password is kept out of the step-up request because the
+  KySignOn grant is bound to a SHA-256 of that request's body; an unsalted
+  digest over otherwise guessable fields would be an offline guessing target
+  wherever it was kept, and replaying the body after the KySignOn popup would
+  resend it. After a successful sign-in the grant keeps the password as a byte
+  slice; it is wiped when the job signs in, or when the grant is replaced or
+  expires (a timer at 10 minutes). The wipe is best effort: the JSON decoder's
+  string, the TLS buffers and the copies Go made along the way are only dropped
+  and left to the collector.
+- `POST /api/import/imap/{token}/start` with `{folders: [name], target}` spends
+  the grant and answers `202` with the job status. Folders must come from the
+  listing; `target` (default above) and each mapped folder must be valid folder
+  names, else 400 naming the folder. Missing folders are created as the job
+  reaches them.
+- SSRF: the host is resolved once (`netguard.IsPrivateOrReserved`, the guard the
+  CardDAV and UnifiedPush clients share). Any loopback, private, link-local,
+  CGNAT, multicast, unspecified or reserved answer, IPv4-mapped forms included,
+  refuses the name (400), so it cannot pair a public address with an internal
+  one. The connection goes to that validated IP and the job reuses it, while TLS
+  verifies the certificate for the host name (system roots, TLS 1.2 or newer).
+  Unlike the CardDAV guard, `SANDBOX_PRIVATE_HOSTS` does not apply.
+- The client is `imap.ImportSource`, not go-imap: that library dials the host
+  name itself, again on every automatic reconnect, keeps certificate checks in a
+  process-wide variable, has no STARTTLS and buffers whole responses. Its
+  vocabulary is `STARTTLS`, `LOGIN`, `LIST "" "*"`, `EXAMINE`, `FETCH lo:hi (UID
+  RFC822.SIZE FLAGS INTERNALDATE)`, `UID FETCH <uid> (BODY.PEEK[])` and
+  `LOGOUT`: read-only by construction, and EXAMINE plus BODY.PEEK leave `\Seen`
+  alone. A greeting other than `* OK` (PREAUTH would skip TLS) or bytes after the
+  STARTTLS answer are refused. Responses are bounded at 64 KiB outside literals
+  and a literal at the per-message cap (64 KiB outside a body fetch). Timeouts:
+  10 s to connect, 30 s per command, 2 minutes per message, 45 s for a listing (so a server that never answers holds a slot that long),
+  4 hours for a job.
+- Folders: `\Noselect` and `\NonExistent` are skipped, as are names over 255
+  bytes or with a control character, backslash or double quote (they cannot be
+  quoted back safely). Names are decoded from modified UTF-7 and split at the server's
+  delimiter; each level maps under the target with `/` and `.` replaced by `_`.
+  Two remote folders that map to the same local name (say `a.b` and `a_b`) are
+  merged into one folder. The screen leaves `\All` and `\Flagged` (Gmail's All
+  Mail and Starred) unchecked, since they hold every message again and dedupe is
+  per folder, and shows names with control, bidi and zero-width characters
+  escaped as code points.
+- Message counts and sequence numbers from the server are at most 2^31-1 and
+  sizes at most 2^32-1; a wider value is a protocol error, never wrapped. A
+  response line over its 64 KiB budget ends the session at once. Messages are paged 200 at a time by sequence number; a message deleted on the
+  server meanwhile is skipped. Every sequence number a folder's `EXISTS`
+  announces counts toward the job's message cap before any page is fetched, so
+  a huge `EXISTS` fails the job at once. One announcing more than the
+  per-message cap (`RFC822.SIZE`) is skipped without being downloaded; each
+  other is fetched with its announced size as the limit, so sending more than
+  announced stops the job. Each message is stored as its exact
+  bytes with `INTERNALDATE` as its date (the `Date` header when absent), `\Seen`
+  as read and `\Flagged` as starred; other flags are ignored. Unread imported
+  mail stays out of the poller through the `imported` table. The job's session
+  reads at most twice the mailbox's storage, counting every byte from the
+  server (duplicates, metadata and unsolicited responses included), then
+  stops.
+- Not resumable: a failed, cancelled or restarted job is imported again, and
+  duplicates are skipped. The status adds `host`, `current` (the local folder in
+  progress), `foldersDone` and `foldersTotal`; never the username.
+- Audit: the `mail import` record adds `source` (`file` or `imap`) and `host`,
+  never the username or password, with results `authorized`, `listed`,
+  `list_failed` (with the reason shown to the user), `started`, `finished`,
+  `failed`, `cancel_requested` and `cancelled`. The provider's own error text is
+  never shown or logged.
 
 ## Direct receiving runtime (qualification profile)
 

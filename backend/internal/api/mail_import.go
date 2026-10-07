@@ -54,12 +54,14 @@ var errImportIncomingEncryption = errors.New("import is unavailable while incomi
 
 type mailImporter interface {
 	ImportFolder(ctx context.Context, folder string, create bool) (string, error)
-	ImportMessage(ctx context.Context, folder string, raw []byte) error
+	ImportMessage(ctx context.Context, folder string, raw []byte, meta mailbox.ImportMeta) error
 }
 
+// importGrant is an unspent upload link, or with imap set an IMAP import.
 type importGrant struct {
 	user, session, mailbox, folder, correlation string
 	expires                                     time.Time
+	imap                                        *imapGrant
 }
 
 // importJob is a user's latest import; the JSON fields are its status.
@@ -72,6 +74,11 @@ type importJob struct {
 	Skipped    int    `json:"skipped"`
 	Bytes      int64  `json:"bytes"`
 	Error      string `json:"error,omitempty"`
+	// An IMAP import's provider host, local folder in progress and folders.
+	Host         string `json:"host,omitempty"`
+	Current      string `json:"current,omitempty"`
+	FoldersDone  int    `json:"foldersDone,omitempty"`
+	FoldersTotal int    `json:"foldersTotal,omitempty"`
 
 	user, correlation string
 	cancel            context.CancelFunc
@@ -198,7 +205,7 @@ func (s *Server) handleImportStart(w http.ResponseWriter, r *http.Request) {
 	// One unspent link per user, and nothing expired kept around.
 	for k, old := range s.importGrants {
 		if old.user == ac.UserID || !time.Now().Before(old.expires) {
-			delete(s.importGrants, k)
+			s.dropImportGrantLocked(k)
 		}
 	}
 	s.importGrants[token] = g
@@ -218,9 +225,9 @@ func (s *Server) handleImportUpload(w http.ResponseWriter, r *http.Request) {
 	s.importMu.Lock()
 	g, found := s.importGrants[token]
 	if found && !now.Before(g.expires) {
-		delete(s.importGrants, token)
+		s.dropImportGrantLocked(token)
 	}
-	if !ok || !found || g.user != ac.UserID || g.session != session || !now.Before(g.expires) {
+	if !ok || !found || g.imap != nil || g.user != ac.UserID || g.session != session || !now.Before(g.expires) {
 		s.importMu.Unlock()
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "this upload link expired or was already used; start the import again"})
 		return
@@ -372,21 +379,7 @@ func (s *Server) runImport(ctx context.Context, job *importJob, im mailImporter,
 		// either across a batch would block the user's settings writes, or keep
 		// storing into a mailbox already disabled, for the whole batch.
 		skipped, err = mailbox.ReadImport(f, size, importMessageBytes, importUploadCap, importMaxMessages, func(raw []byte) error {
-			err := s.withIncomingEncryptionOff(job.user, func() error { return im.ImportMessage(ctx, job.Folder, raw) })
-			s.importMu.Lock()
-			defer s.importMu.Unlock()
-			switch {
-			case err == nil:
-				job.Imported++
-				job.Bytes += int64(len(raw))
-			case errors.Is(err, mailbox.ErrDuplicate):
-				job.Duplicates++
-			case errors.Is(err, mailbox.ErrUnimportable):
-				job.Skipped++
-			default:
-				return err
-			}
-			return nil
+			return s.countImport(job, int64(len(raw)), s.importOne(ctx, job, im, job.Folder, raw, mailbox.ImportMeta{}))
 		})
 		s.importMu.Lock()
 		job.Skipped += skipped
@@ -402,6 +395,31 @@ func (s *Server) runImport(ctx context.Context, job *importJob, im mailImporter,
 	}
 }
 
+// importOne stores raw under the owner's settings lock with incoming
+// encryption re-read, so turning encryption on stops before the next message.
+func (s *Server) importOne(ctx context.Context, job *importJob, im mailImporter, folder string, raw []byte, meta mailbox.ImportMeta) error {
+	return s.withIncomingEncryptionOff(job.user, func() error { return im.ImportMessage(ctx, folder, raw, meta) })
+}
+
+// countImport counts one message's outcome; only an error that stops the job
+// is returned.
+func (s *Server) countImport(job *importJob, size int64, err error) error {
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	switch {
+	case err == nil:
+		job.Imported++
+		job.Bytes += size
+	case errors.Is(err, mailbox.ErrDuplicate):
+		job.Duplicates++
+	case errors.Is(err, mailbox.ErrUnimportable):
+		job.Skipped++
+	default:
+		return err
+	}
+	return nil
+}
+
 // importFailure is the user's explanation; it never carries mail content.
 func importFailure(err error) string {
 	switch {
@@ -412,7 +430,9 @@ func importFailure(err error) string {
 	case errors.Is(err, mailbox.ErrImportArchive):
 		return err.Error()
 	case errors.Is(err, mailbox.ErrImportTooMany):
-		return "the file holds more than " + strconv.Itoa(importMaxMessages) + " messages, counting duplicates and skipped ones (twice what your mailbox holds); split it and import the parts"
+		return "the import holds more than " + strconv.Itoa(importMaxMessages) + " messages, counting duplicates and skipped ones (twice what your mailbox holds); split the file, or choose fewer folders"
+	case errors.As(err, new(imapStop)):
+		return err.Error()
 	case errors.Is(err, sso.ErrNativeMailboxUnknown) || errors.Is(err, sso.ErrNativeAdministrator):
 		return "the mailbox is no longer available"
 	}
@@ -473,7 +493,12 @@ func writeImportRefusal(w http.ResponseWriter, err error) {
 }
 
 // auditImport records the import without correspondence: never subjects or
-// addresses. The correlation ID is random per upload link, never the token.
+// addresses, and for an IMAP import the provider host but never the username.
+// The correlation ID is random per grant, never the token.
 func (s *Server) auditImport(j importJob, result, reason string) {
-	slog.New(s.logger.Handler()).Info("mail import", "actor", j.user, "action", "mail_import", "target", cmp.Or(j.Mailbox, j.user), "folder", j.Folder, "messages", int64(j.Imported), "duplicates", int64(j.Duplicates), "skipped", int64(j.Skipped), "bytes", j.Bytes, "result", result, "reason", reason, "correlation_id", j.correlation)
+	source := "file"
+	if j.Host != "" {
+		source = "imap"
+	}
+	slog.New(s.logger.Handler()).Info("mail import", "actor", j.user, "action", "mail_import", "target", cmp.Or(j.Mailbox, j.user), "source", source, "host", j.Host, "folder", j.Folder, "messages", int64(j.Imported), "duplicates", int64(j.Duplicates), "skipped", int64(j.Skipped), "bytes", j.Bytes, "result", result, "reason", reason, "correlation_id", j.correlation)
 }

@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Self-service import of uploaded mail: an mbox (mboxrd or mboxo), one EML or
@@ -71,6 +72,23 @@ func (c *Client) ImportFolder(ctx context.Context, folder string, create bool) (
 	return folder, c.store.createFolder(ctx, parent, folder)
 }
 
+// ImportPath maps a remote folder, split at its hierarchy delimiter, under
+// parent: '/' and '.' inside a component become '_'. It refuses
+// (ErrUnsafeMailbox) a parent or component that is still not a folder name
+// ImportFolder could create.
+func ImportPath(parent string, remote []string) (string, error) {
+	parts := strings.Split(strings.TrimSpace(parent), "/")
+	for _, p := range remote {
+		parts = append(parts, strings.TrimSpace(strings.NewReplacer("/", "_", ".", "_").Replace(p)))
+	}
+	for _, p := range parts {
+		if err := leaf(p); err != nil {
+			return "", err
+		}
+	}
+	return normalizeFolder(strings.Join(parts, "/"))
+}
+
 // ImportValid refuses (ErrUnimportable) a message that is empty, over limit
 // bytes or has no RFC 5322 header. It takes no lock and touches no store.
 func ImportValid(raw []byte, limit int64) error {
@@ -83,12 +101,19 @@ func ImportValid(raw []byte, limit int64) error {
 	return nil
 }
 
-// ImportMessage stores raw in folder as seen mail: no receipt, so receiving
-// dedupe is untouched, and recorded as imported, so the poller (rules, sorter,
-// notifications, incoming encryption) never takes it, even marked unread.
-// ErrDuplicate and ErrUnimportable are per-message; anything else stops the
-// import.
-func (c *Client) ImportMessage(ctx context.Context, folder string, raw []byte) error {
+// ImportMeta is an imported message's state at its source. The zero value
+// (a file import) is seen, not starred and dated by its Date header.
+type ImportMeta struct {
+	Unseen, Starred bool
+	Received        time.Time
+}
+
+// ImportMessage stores raw in folder with meta's state: no receipt, so
+// receiving dedupe is untouched, and recorded as imported, so the poller
+// (rules, sorter, notifications, incoming encryption) never takes it, even
+// unread. ErrDuplicate and ErrUnimportable are per-message; anything else
+// stops the import.
+func (c *Client) ImportMessage(ctx context.Context, folder string, raw []byte, meta ImportMeta) error {
 	defer runtime.KeepAlive(c)
 	if err := ImportValid(raw, c.store.limits.MessageBytes); err != nil {
 		return err
@@ -96,7 +121,7 @@ func (c *Client) ImportMessage(ctx context.Context, folder string, raw []byte) e
 	if err := c.checkAccess(ctx); err != nil {
 		return err
 	}
-	_, err := c.store.append(ctx, folder, bytes.NewReader(raw), "", "", "", false, true)
+	_, err := c.store.append(ctx, folder, bytes.NewReader(raw), "", "", "", false, &meta)
 	return err
 }
 
