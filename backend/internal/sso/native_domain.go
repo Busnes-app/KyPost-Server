@@ -504,7 +504,7 @@ func nativeHeldRecipients(ctx context.Context, stateRoot string) ([]string, erro
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.QueryContext(ctx, `SELECT DISTINCT b.address FROM bindings b JOIN deliveries d ON d.gateway=b.gateway AND d.id=b.id WHERE d.state IN ('staged','pending')`)
+	rows, err := db.QueryContext(ctx, `SELECT DISTINCT b.address FROM bindings b JOIN deliveries d ON d.gateway=b.gateway AND d.id=b.id WHERE d.state='pending'`)
 	if err != nil {
 		return nil, err
 	}

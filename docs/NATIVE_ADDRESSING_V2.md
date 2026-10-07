@@ -56,8 +56,8 @@ of the same domain still fences, as today. A delivery to recipients on several
 domains is all-or-nothing, so one lapsed domain delays the others in that delivery.
 
 Removing a domain **retires** it, permanently: refused while any address on it is
-`active`, a `queued`/`retryable` outbox job sends from it, incoming mail bound to
-it is still staged or pending, the relay still sends for it, or a restore hold is
+`active`, a `queued`/`retryable` outbox job sends from it, accepted incoming mail
+bound to it is still pending (abandoned staged transactions never block it), the relay still sends for it, or a restore hold is
 in place; otherwise the domain moves to
 `retired` (no proof, no routing, no sending) and its address records stay, with
 their history, so generations are never reused and old bindings still validate.

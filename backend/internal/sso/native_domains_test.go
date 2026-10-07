@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -148,7 +149,17 @@ func TestNativeTwoDomainsAllocateLapseAndRetire(t *testing.T) {
 	if err = holding.SetRoute(ctx, ingress.Route{Address: "two@second.test", Issuer: nativeIssuer, Subject: "two", Mailbox: two.ID, Generation: 1, Active: true, ValidUntil: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
+	// An abandoned SMTP transaction (staged, never accepted) never blocks it.
+	if err = holding.Bind(ctx, "maddy-local", "abandoned", "", "two@second.test"); err != nil {
+		t.Fatal(err)
+	}
+	if held, err := nativeHeldRecipients(ctx, root); err != nil || len(held) != 0 {
+		t.Fatal("abandoned staged transaction counted as held mail", held, err)
+	}
 	if err = holding.Bind(ctx, "maddy-local", "held", "", "two@second.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err = holding.Accept(ctx, "maddy-local", "held", "", strings.NewReader("From: a@b.test\r\nTo: two@second.test\r\nSubject: held\r\n\r\nbody\r\n")); err != nil {
 		t.Fatal(err)
 	}
 	_ = holding.Close()

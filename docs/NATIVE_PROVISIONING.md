@@ -67,7 +67,7 @@ step-up, answer `no-store` and use the same status codes:
 - `POST /api/admin/mail-domains/{domain}/verify` proves that domain only.
 - `DELETE /api/admin/mail-domains/{domain}` retires it permanently: refused (409)
   while any address on it is `active`, a `queued`/`retryable` outbox job sends
-  from it, staged or pending incoming mail is bound to it, or the relay still
+  from it, accepted (pending) incoming mail is bound to it, or the relay still
   sends for it (remove it from the relay first); a restore hold also refuses.
   Retirement keeps its address records, so generations are never reused and old
   bindings and snapshots still validate. It is never automatic and cannot be
