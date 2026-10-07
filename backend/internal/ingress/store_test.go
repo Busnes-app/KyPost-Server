@@ -385,3 +385,38 @@ func TestHoldingQuotaAcrossProcesses(t *testing.T) {
 		t.Fatalf("cross-process quota admitted %d receivers", success)
 	}
 }
+
+func TestDeactivateRoutesNeverLowersOrReactivates(t *testing.T) {
+	ctx := context.Background()
+	if err := DeactivateRoutes(ctx, filepath.Join(t.TempDir(), "absent"), map[string]int64{"one@example.test": 2}); err != nil {
+		t.Fatal("missing store is not a no-op", err)
+	}
+	dir := filepath.Join(t.TempDir(), "holding")
+	s, err := Open(dir, proofLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SetRoute(ctx, proofRoute("one@example.test", "one", 3)); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeactivateRoutes(ctx, dir, map[string]int64{"one@example.test": 2}); !errors.Is(err, ErrConflict) {
+		t.Fatal("lower generation accepted", err)
+	}
+	if err := s.Bind(ctx, "maddy", "still-routed", "", "one@example.test"); err != nil {
+		t.Fatal("refused write changed the route", err)
+	}
+	if err := DeactivateRoutes(ctx, dir, map[string]int64{"one@example.test": 4, "unrouted@example.test": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Bind(ctx, "maddy", "after-release", "", "one@example.test"); !errors.Is(err, ErrRoute) {
+		t.Fatal("inactive route still binds", err)
+	}
+	// The same generation cannot come back active; only a newer one can.
+	if err := s.SetRoute(ctx, proofRoute("one@example.test", "one", 4)); !errors.Is(err, ErrConflict) {
+		t.Fatal("reactivated at the released generation", err)
+	}
+	if err := s.SetRoute(ctx, proofRoute("one@example.test", "one", 5)); err != nil {
+		t.Fatal(err)
+	}
+}

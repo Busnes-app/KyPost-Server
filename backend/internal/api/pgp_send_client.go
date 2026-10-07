@@ -143,8 +143,8 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if native {
-		if !nativeFromAllowed(a.Address, req.From) {
-			http.Error(w, "native aliases require explicit directory ownership and routing; use the primary address", http.StatusForbidden)
+		from, refused := s.refuseNativeFrom(w, a, req.From)
+		if refused {
 			return
 		}
 		deliveries := []mailbox.OutboundDelivery{}
@@ -154,7 +154,7 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 			if len(recipients) == 0 || raw == "" {
 				continue
 			}
-			if err := validateDeliveryFrom(raw, a.Address); err != nil {
+			if err := validateDeliveryFrom(raw, from); err != nil {
 				http.Error(w, fmt.Sprintf("delivery %d: %s", i, err), http.StatusForbidden)
 				return
 			}
@@ -167,7 +167,7 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		} else if strings.TrimSpace(req.SentCopy) != "" {
 			warning = "Sent copy was refused because it was not encrypted; reload this client before sending again"
 		}
-		s.finishNativeSend(w, r, ac, u, a.Address, deliveries, sent, true, req.MaterialGeneration, 0, warning)
+		s.finishNativeSend(w, r, ac, u, from, deliveries, sent, true, req.MaterialGeneration, 0, warning)
 		return
 	}
 	payload, exists, err := s.outboundMailConfig(ac.UserID)

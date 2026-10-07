@@ -82,8 +82,31 @@ func (s *Server) finishNativeSend(w http.ResponseWriter, r *http.Request, ac Aut
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sentSaved": first.SentSaved, "warning": warning, "outboxId": id})
 }
 
-func nativeFromAllowed(primary, requested string) bool {
-	return strings.TrimSpace(requested) == "" || strings.EqualFold(strings.TrimSpace(requested), primary)
+// nativeFrom resolves the requested From to an active ledger address of the
+// caller's mailbox (empty means the primary). Outbound rechecks it, with its
+// generation, under the authority fence.
+func (s *Server) nativeFrom(a sso.NativeAssignment, requested string) (string, bool, error) {
+	requested = strings.ToLower(strings.TrimSpace(requested))
+	if requested == "" || requested == a.Address {
+		return a.Address, true, nil
+	}
+	addresses, err := s.ssoLifecycle.NativeAddresses()
+	x := addresses[requested]
+	return requested, err == nil && x.Mailbox == a.Owner.Mailbox && x.State == "active", err
+}
+
+// refuseNativeFrom answers an unusable From; it reports whether it wrote.
+func (s *Server) refuseNativeFrom(w http.ResponseWriter, a sso.NativeAssignment, requested string) (string, bool) {
+	from, allowed, err := s.nativeFrom(a, requested)
+	if err != nil {
+		http.Error(w, "native mailbox unavailable; preserve mail and repair account authority", http.StatusServiceUnavailable)
+		return "", true
+	}
+	if !allowed {
+		http.Error(w, "From must be an active address of your mailbox", http.StatusForbidden)
+		return "", true
+	}
+	return from, false
 }
 
 // The diagnostics response contains state only, never decrypted intent or device credentials.

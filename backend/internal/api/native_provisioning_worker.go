@@ -95,6 +95,11 @@ func (s *Server) StartNativeProvisioning(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		settings := s.ssoStore.Load()
+		if sso.RequireNativeRestoreReleased(s.stateDir) == nil {
+			if err := s.ssoLifecycle.ReconcileNativeAddresses(ctx); err != nil {
+				s.logger.Error("native address reconcile pending", "error", err.Error())
+			}
+		}
 		if settings.Enabled {
 			subjects, err := s.ssoLifecycle.NativeDirectorySubjects(settings.IssuerURL)
 			if err != nil {

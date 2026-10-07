@@ -47,9 +47,10 @@ func (s NativeOutbound) keyPath() string { return filepath.Join(s.SecretDir, "na
 // -> users -> device SQLite -> mailbox SQLite. Network never runs in action.
 // A lapsed proof does not skip the staleness checks: action still runs with
 // unproven set, so a stale job is quarantined even while DNS is down, and
-// withJobAuthority refuses to commit (the job stays for retry).
-func (s NativeOutbound) withAuthority(ctx context.Context, userID string, action func(ctx context.Context, u users.User, a NativeAssignment, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error) error {
-	if s.Accounts == nil || s.Domains == nil || s.Settings == nil || s.ConfigDir == "" || s.StateRoot == "" || s.SecretDir == "" || !fsutil.SafePathComponent(userID) || action == nil {
+// withJobAuthority refuses to commit (the job stays for retry). x is the
+// current ledger record of from (zero when unknown), read under the fence.
+func (s NativeOutbound) withAuthority(ctx context.Context, userID, from string, action func(ctx context.Context, u users.User, a NativeAssignment, x NativeAddress, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error) error {
+	if s.Accounts == nil || s.Domains == nil || s.Settings == nil || s.ConfigDir == "" || s.StateRoot == "" || s.SecretDir == "" || !fsutil.SafePathComponent(userID) || !strings.Contains(from, "@") || action == nil {
 		return ErrNativeProvisioning
 	}
 	if err := RequireNativeRestoreReleased(s.StateRoot); err != nil {
@@ -57,7 +58,6 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID string, action
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	// The From domain is the primary address's; it is rechecked under the fence.
 	life := NewLifecycleStore(s.ConfigDir)
 	hint, err := s.Accounts.Get(userID)
 	if err != nil {
@@ -70,7 +70,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID string, action
 	if !known || sender.Address == "" {
 		return ErrNativeProvisioning
 	}
-	domain := AddressDomain(sender.Address)
+	domain := AddressDomain(from)
 	proof, unproven := s.Domains.VerifyDomain(ctx, domain)
 	if unproven == nil {
 		var expire context.CancelFunc
@@ -112,8 +112,9 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID string, action
 				if err != nil {
 					return err
 				}
-				if AddressDomain(a.Address) != domain {
-					return ErrNativeDomain
+				addresses, err := life.NativeAddresses()
+				if err != nil {
+					return err
 				}
 				if u.MustChangePassword {
 					return ErrNativeOutboundStale
@@ -141,7 +142,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID string, action
 				if err := RequireNativeRestoreReleased(s.StateRoot); err != nil {
 					return err
 				}
-				return action(ctx, u, a, d, relay, box, key, unproven)
+				return action(ctx, u, a, addresses[from], d, relay, box, key, unproven)
 			}
 			return ErrNativeProvisioning
 		})
@@ -150,7 +151,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, userID string, action
 
 // unproven, when set, is returned instead of committing once every staleness
 // check has passed.
-func (s NativeOutbound) withJobAuthority(ctx context.Context, u users.User, a NativeAssignment, d DirectoryState, relay mailmsg.DomainRelay, job mailbox.OutboundJob, unproven error, action func(context.Context) error) error {
+func (s NativeOutbound) withJobAuthority(ctx context.Context, u users.User, a NativeAssignment, from NativeAddress, d DirectoryState, relay mailmsg.DomainRelay, job mailbox.OutboundJob, unproven error, action func(context.Context) error) error {
 	if job.ExpiresAt != 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithDeadline(ctx, time.Unix(job.ExpiresAt, 0))
@@ -168,12 +169,17 @@ func (s NativeOutbound) withJobAuthority(ctx context.Context, u users.User, a Na
 		}
 		return action(ctx)
 	}
-	// Primary addresses only until explicit native alias ownership/routing exists.
-	// A verified legacy send-as row must never transfer native domain authority.
+	// From must be an active ledger address of this mailbox at the recorded
+	// generation. Jobs queued before generations existed carry 0 and the
+	// primary; the directory-revision fence below still covers them. A
+	// verified legacy send-as row never transfers native domain authority.
 	if job.ExpiresAt != 0 && job.ExpiresAt <= time.Now().Unix() {
 		return ErrNativeOutboundStale
 	}
-	if job.From != a.Address || job.RelayGeneration != relay.Generation || job.NativeSendEpoch != u.NativeSendEpoch || job.DirectoryRevision != d.Revision || job.PGPRevision != u.PGPRevision || job.PGPFingerprint != u.PGPFingerprint {
+	if job.From != from.Address || from.Mailbox != a.Owner.Mailbox || from.State != "active" || job.FromGeneration != from.Generation && (job.FromGeneration != 0 || job.From != a.Address) {
+		return ErrNativeOutboundStale
+	}
+	if job.RelayGeneration != relay.Generation || job.NativeSendEpoch != u.NativeSendEpoch || job.DirectoryRevision != d.Revision || job.PGPRevision != u.PGPRevision || job.PGPFingerprint != u.PGPFingerprint {
 		return ErrNativeOutboundStale
 	}
 	if u.PGPKeyring != nil {
@@ -209,7 +215,7 @@ func (s NativeOutbound) withJobAuthority(ctx context.Context, u users.User, a Na
 // a worker cannot win the first attempt between the foreground's transactions.
 func (s NativeOutbound) queue(ctx context.Context, userID, id string, job mailbox.OutboundJob, claimPrimary bool) (nativeOutboundClaim, error) {
 	var claim nativeOutboundClaim
-	err := s.withAuthority(ctx, userID, func(ctx context.Context, u users.User, a NativeAssignment, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error {
+	err := s.withAuthority(ctx, userID, job.From, func(ctx context.Context, u users.User, a NativeAssignment, x NativeAddress, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error {
 		if job.NativeSendEpoch != u.NativeSendEpoch || job.PGPRevision != u.PGPRevision {
 			return ErrNativeOutboundStale
 		}
@@ -218,8 +224,9 @@ func (s NativeOutbound) queue(ctx context.Context, userID, id string, job mailbo
 		}
 		job.RelayGeneration = relay.Generation
 		job.DirectoryRevision = d.Revision
+		job.FromGeneration = x.Generation
 		job.PGPFingerprint = u.PGPFingerprint
-		return s.withJobAuthority(ctx, u, a, d, relay, job, unproven, func(ctx context.Context) error {
+		return s.withJobAuthority(ctx, u, a, x, d, relay, job, unproven, func(ctx context.Context) error {
 			if err := box.QueueOutbound(ctx, key, id, job); err != nil {
 				return err
 			}
@@ -255,8 +262,18 @@ func (s NativeOutbound) Send(ctx context.Context, userID, id string, job mailbox
 
 // Submit rechecks current authority for a stored attempt, never a cached grant.
 func (s NativeOutbound) Submit(ctx context.Context, userID, id string, sequence int) (NativeOutboundResult, error) {
+	// The stored From selects the domain to prove; the job is reread under the fence.
+	box, key, err := s.openStorage(userID)
+	if err != nil {
+		return NativeOutboundResult{}, err
+	}
+	stored, _, _, err := box.ReadOutbound(ctx, key, id)
+	_ = box.Close()
+	if err != nil {
+		return NativeOutboundResult{}, err
+	}
 	var claim nativeOutboundClaim
-	err := s.withAuthority(ctx, userID, func(ctx context.Context, u users.User, a NativeAssignment, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error {
+	err = s.withAuthority(ctx, userID, stored.From, func(ctx context.Context, u users.User, a NativeAssignment, x NativeAddress, d DirectoryState, relay mailmsg.DomainRelay, box *mailbox.Store, key []byte, unproven error) error {
 		job, statuses, _, err := box.ReadOutbound(ctx, key, id)
 		if err != nil {
 			return err
@@ -264,7 +281,7 @@ func (s NativeOutbound) Submit(ctx context.Context, userID, id string, sequence 
 		if sequence > 0 && (len(statuses) == 0 || statuses[0].State != "accepted") {
 			return mailbox.ErrOutbound
 		}
-		return s.withJobAuthority(ctx, u, a, d, relay, job, unproven, func(ctx context.Context) error {
+		return s.withJobAuthority(ctx, u, a, x, d, relay, job, unproven, func(ctx context.Context) error {
 			delivery, token, err := box.ClaimOutbound(ctx, key, id, sequence, relay.Generation)
 			if err != nil {
 				return err

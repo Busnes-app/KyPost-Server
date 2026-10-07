@@ -168,6 +168,13 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 			return true, err
 		}
 	}
+	// Every ledger address, alias or reserved included, is canonical and on a
+	// domain in the set, retired or not.
+	for address := range f.stored.Addresses {
+		if canonical, err := nativeAddress(address, AddressDomain(address)); err != nil || canonical != address || !domains.Known(AddressDomain(address)) {
+			return true, ErrNativeProvisioning
+		}
+	}
 	// Find complete orphan preparations, including a missing ledger/lifecycle pair.
 	entries, err := os.ReadDir(filepath.Join(stateRoot, "users"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -215,7 +222,7 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 			if !lifecycle.NativeProvisioningInitialized {
 				return ErrNativeProvisioning
 			}
-			return validateNativeReceiving(path, f.Accounts)
+			return validateNativeReceiving(path, f, ledgerVersion)
 		}
 		return nil
 	})
@@ -227,7 +234,10 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 
 // Receiving routes and frozen envelopes remain historical ownership evidence.
 // Expired leases/routes are preserved; fresh authority is a hold-release gate.
-func validateNativeReceiving(path string, assignments map[string]NativeAssignment) error {
+// Version-2 routes and bindings are checked against the address history (a
+// route can lag a reassignment, so it is historical too); version 1 had only
+// primary addresses keyed to the directory revision.
+func validateNativeReceiving(path string, f nativeAssignments, ledgerVersion int) error {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return ErrNativeProvisioning
@@ -265,8 +275,11 @@ func validateNativeReceiving(path string, assignments map[string]NativeAssignmen
 		if err := rows.Scan(&issuer, &subject, &mailboxID, &address, &generation); err != nil {
 			return err
 		}
-		a, ok := assignments[directoryKey(issuer, subject)]
-		if !ok || a.Owner.Issuer != issuer || a.Owner.Subject != subject || a.Owner.Mailbox != mailboxID || a.Address != address || a.Source == "" || generation <= 0 {
+		a, ok := f.Accounts[directoryKey(issuer, subject)]
+		if !ok || a.Owner.Issuer != issuer || a.Owner.Subject != subject || a.Owner.Mailbox != mailboxID || a.Source == "" || generation <= 0 {
+			return ErrNativeProvisioning
+		}
+		if x, known := f.stored.Addresses[address]; ledgerVersion == 1 && a.Address != address || ledgerVersion != 1 && (!known || !x.heldBy(mailboxID, generation)) {
 			return ErrNativeProvisioning
 		}
 	}

@@ -37,6 +37,9 @@ type OutboundJob struct {
 	PGPRevision        uint64
 	PGPFingerprint     string
 	DirectoryRevision  int64
+	// FromGeneration is the From address's ledger generation at queue time;
+	// 0 only on jobs queued before per-address generations.
+	FromGeneration     int64
 	RequiresEnrollment bool
 	ExpiresAt          int64
 }
@@ -70,7 +73,7 @@ func (s *Store) outboundKey(master []byte, id string) ([]byte, error) {
 
 func (s *Store) validateOutbound(job OutboundJob) error {
 	from, err := mail.ParseAddress(job.From)
-	if err != nil || from.Address != job.From || strings.ContainsAny(job.From, "\r\n\x00") || !outboundID(job.RelayGeneration) || len(job.Deliveries) == 0 || len(job.Deliveries) > 100 || len(job.DeviceID) > 512 || len(job.DeviceWitness) > 64 || len(job.PGPFingerprint) > 128 || job.DirectoryRevision < 0 || job.ExpiresAt < 0 || !strings.Contains(job.From, "@") {
+	if err != nil || from.Address != job.From || strings.ContainsAny(job.From, "\r\n\x00") || !outboundID(job.RelayGeneration) || len(job.Deliveries) == 0 || len(job.Deliveries) > 100 || len(job.DeviceID) > 512 || len(job.DeviceWitness) > 64 || len(job.PGPFingerprint) > 128 || job.DirectoryRevision < 0 || job.FromGeneration < 0 || job.ExpiresAt < 0 || !strings.Contains(job.From, "@") {
 		return ErrOutbound
 	}
 	total := len(job.Sent)

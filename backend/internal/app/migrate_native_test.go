@@ -21,20 +21,26 @@ import (
 // Mail bound under v1 behaves identically after migration: a binding at an
 // older directory revision still quarantines, one at the current revision
 // still imports, and no address generation is below a route or binding.
+// v1 routed at the directory revision, so the fixture writes those routes and
+// accepts directly, as the v1 binary did.
 func TestNativeMigrationKeepsReceivingBindings(t *testing.T) {
 	r, created := receivingFixture(t)
 	ctx := context.Background()
-	accept := func(id, body string) {
+	u := created[0]
+	accept := func(id, body string, revision int64) {
 		t.Helper()
-		if err := r.bind(ctx, id, "", "one@example.test"); err != nil {
+		route := ingress.Route{Address: "one@example.test", Issuer: u.NativeMailboxIssuer, Subject: u.SSOSub, Mailbox: u.ID, Generation: revision, Active: true, ValidUntil: time.Now().Add(time.Minute)}
+		if err := r.holding.SetRoute(ctx, route); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.accept(ctx, id, "", strings.NewReader(body)); err != nil {
+		if err := r.holding.Bind(ctx, receivingGateway, id, "", route.Address); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.holding.Accept(ctx, receivingGateway, id, "", strings.NewReader(body)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	accept("bound-at-revision-one", "From: a@outside.test\r\n\r\nold\r\n")
-	u := created[0]
+	accept("bound-at-revision-one", "From: a@outside.test\r\n\r\nold\r\n", 1)
 	directory, _, err := r.life.Directory(u.NativeMailboxIssuer, u.SSOSub)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +55,7 @@ func TestNativeMigrationKeepsReceivingBindings(t *testing.T) {
 	if _, err := r.life.ApplyDirectoryUser(u.NativeMailboxIssuer, event, resource, sso.EventDigest(event.Type, encoded), func() (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
-	accept("bound-at-revision-two", "From: b@outside.test\r\n\r\ncurrent\r\n")
+	accept("bound-at-revision-two", "From: b@outside.test\r\n\r\ncurrent\r\n", 2)
 	keyPath := filepath.Join(t.TempDir(), "native-relay.key")
 	if err := sso.WriteNativeV1ForTest(r.configDir, keyPath); err != nil {
 		t.Fatal(err)

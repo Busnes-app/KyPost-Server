@@ -322,7 +322,7 @@ func TestNativeMigrationFreshInstallAndConfigure(t *testing.T) {
 	if got := string(mustRead(t, filepath.Join(config, legacyNativeDomainFile))); got != "{\n  \"migratedTo\": \"native-domains.json\"\n}" {
 		t.Fatal("tombstone", got)
 	}
-	if got := string(mustRead(t, filepath.Join(config, nativeProvisioningFile))); got != "{\n  \"version\": 2,\n  \"accounts\": {},\n  \"mailboxes\": {},\n  \"addresses\": {}\n}" {
+	if got := string(mustRead(t, filepath.Join(config, nativeProvisioningFile))); got != "{\n  \"version\": 2,\n  \"accounts\": {},\n  \"mailboxes\": {},\n  \"addresses\": {},\n  \"addressGenerations\": true\n}" {
 		t.Fatal("empty ledger", got)
 	}
 	var set nativeDomainSet

@@ -24,6 +24,8 @@ import (
 const cloudflareGateway = "cloudflare-worker"
 
 // A route is a historical expectation, never continuing access authority.
+// Revision carries the recipient's address generation; the wire name stays
+// for the Worker.
 type cloudflareRoute struct {
 	Recipient  string `json:"recipient"`
 	Issuer     string `json:"issuer"`
@@ -34,8 +36,8 @@ type cloudflareRoute struct {
 	ValidUntil int64  `json:"validUntil"`
 }
 
-func (c cloudflareRoute) matches(a sso.NativeAssignment, revision int64) bool {
-	return c.Recipient == a.Address && c.Issuer == a.Owner.Issuer && c.Subject == a.Owner.Subject && c.Mailbox == a.Owner.Mailbox && c.Source == a.Source && c.Revision == revision
+func (c cloudflareRoute) matches(a sso.NativeAssignment, x sso.NativeAddress) bool {
+	return c.Recipient == x.Address && c.Issuer == a.Owner.Issuer && c.Subject == a.Owner.Subject && c.Mailbox == a.Owner.Mailbox && x.Mailbox == a.Owner.Mailbox && c.Source == a.Source && c.Revision == x.Generation
 }
 
 type cloudflareMessage struct {
@@ -200,14 +202,14 @@ func (r *receivingRuntime) cloudflareRoute(ctx context.Context, recipient string
 	}
 	err = r.withAuthority(ctx, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
 		admitted := current[a.Owner.Mailbox]
-		if admitted.Owner != a.Owner || admitted.Address != recipient {
+		x, err := r.activeAddress(recipient)
+		if err != nil {
+			return err
+		}
+		if admitted.Owner != a.Owner || x.Mailbox != a.Owner.Mailbox {
 			return ingress.ErrRoute
 		}
-		d, known, err := r.life.Directory(a.Owner.Issuer, a.Owner.Subject)
-		if err != nil || !known {
-			return ingress.ErrRoute
-		}
-		claim = cloudflareRoute{Recipient: recipient, Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox, Source: admitted.Source, Revision: d.Revision, ValidUntil: time.Now().Add(15 * time.Minute).Unix()}
+		claim = cloudflareRoute{Recipient: recipient, Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox, Source: admitted.Source, Revision: x.Generation, ValidUntil: time.Now().Add(15 * time.Minute).Unix()}
 		return nil
 	})
 	return claim, err

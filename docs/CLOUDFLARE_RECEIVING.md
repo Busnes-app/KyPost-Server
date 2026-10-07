@@ -19,12 +19,15 @@ inbound port 25 is needed. AWS SES outgoing settings are independent.
   retain an object even if the Worker reports refusal. This pilot claims no
   Cloudflare retry guarantee or exactly-once upstream delivery. Inspect retained
   storage before attempting a new test.
-- A frozen route binds issuer, subject, mailbox, source and signed directory
-  revision. The local original route file must equal the stored route. Pickup
-  rechecks current DNS/domain and identity/access/restore authority inside the
-  existing admission fences. An expired capture window does not discard a
-  message captured in time. Changed ownership or revision refuses delivery;
-  preserve R2 bytes for explicit reconciliation.
+- A frozen route binds issuer, subject, mailbox, source and the recipient's
+  address generation (carried in the route's `revision` field; it changes only on
+  reassign, disable, re-enable or release, never on ordinary directory edits). The
+  recipient may be the primary or an active alias. The local original route file
+  must equal the stored route. Pickup rechecks current DNS/domain and
+  identity/access/restore authority inside the existing admission fences. An
+  expired capture window does not discard a message captured in time. Changed
+  ownership or generation refuses delivery; preserve R2 bytes for explicit
+  reconciliation.
 - A dedicated random 256-bit bearer secret protects read-only pickup. It is
   independent of administrator sessions, pairing keys and push relay credentials.
   Bucket public access and lifecycle deletion must remain disabled.
