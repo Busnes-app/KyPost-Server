@@ -1,7 +1,8 @@
 // Untrusted text (sender envelopes, remote folder names): control, format
-// (bidi, zero-width), line/paragraph separators, blank "letters" and every
-// stacked combining mark after the first are shown as code points, never applied.
-const hidden = /[\p{Cc}\p{Cf}\u2028\u2029\u034F\u115F\u1160\u17B4\u17B5\u180E\u2800\u3164\uFFA0]|(?<=[\p{Mn}\p{Me}])[\p{Mn}\p{Me}]/gu;
+// (bidi, zero-width), every separator but the ASCII space, blank "letters",
+// full-width and small "@" lookalikes and every stacked combining mark after
+// the first are shown as code points, never applied.
+const hidden = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\uFF20\uFE6B\u034F\u115F\u1160\u17B4\u17B5\u180E\u2800\u3164\uFFA0]|[^\P{Zs}\u0020]|(?<=[\p{Mn}\p{Me}])[\p{Mn}\p{Me}]/gu;
 
 /** visible escapes hidden code points; a run of one collapses to a single counted token. */
 export function visible(value: string): string {

@@ -428,7 +428,7 @@ storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
   manual one, and automatic blocks use at most half the list, give way to
   manual ones and never evict each other. Automatic blocks are implemented for Maddy
   ([automatic sender blocks](NATIVE_PROVISIONING.md#automatic-sender-blocks));
-  evidence display and the admin UI are pending.
+  Admin → Server → Sender blocks shows them with the evidence status.
 - Blocked mail is rejected, not stored; senders get a permanent 550 for the
   duration. Block state is durable, in sealed backups, and audited without message
   content.

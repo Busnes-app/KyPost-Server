@@ -904,8 +904,10 @@ a URL dot segment (`.` or `..`) is CLI-only.
 Administrators block an envelope sender address or domain manually, through
 the admin API or the CLI; with the Rspamd sidecar, the Maddy profile also
 blocks authenticated abusive senders automatically ([below](#automatic-sender-blocks)).
-Both receiving profiles enforce the same list before storing anything. An
-admin UI and evidence display are pending; see [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#abusive-senders).
+Both receiving profiles enforce the same list before storing anything.
+Admin → Server → Sender blocks lists the blocks in force with the evidence
+status below, adds manual blocks and removes either source; see also
+[abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#abusive-senders).
 
 - **Store.** `STATE_DIR/receiving/sender-blocks.json` (0600), written under its
   own lock file and published by rename; it exists only after `receiving init`
