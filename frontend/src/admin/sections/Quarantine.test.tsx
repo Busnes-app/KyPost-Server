@@ -264,9 +264,15 @@ it("offers no URL action for a dot-segment gateway", async () => {
 it("escapes stacked combining marks after the first", async () => {
   pages[base] = { deliveries: [{ ...first, sender: "a" + "\u0336".repeat(100) + "@sender.example" }] };
   render(view());
-  const cell = await screen.findByText((text) => text.startsWith("a\u0336[U+0336]"));
-  expect(cell.textContent).toBe("a\u0336" + "[U+0336]".repeat(99) + "@sender.example");
+  const cell = await screen.findByText("a\u0336[U+0336 \u00D799]@sender.example");
+  expect(cell.className).toBe("quarantine-sender");
   expect(cell.closest("table")?.className).toContain("quarantine-table");
+});
+
+it("collapses a run of two but keeps single escapes and distinct neighbours apart", async () => {
+  pages[base] = { deliveries: [{ ...first, sender: "x\u202E\u202E\u200By\u202E@sender.example" }] };
+  render(view());
+  expect(await screen.findByText("x[U+202E \u00D72][U+200B]y[U+202E]@sender.example")).toBeDefined();
 });
 
 it("shows blank letters as code points", async () => {

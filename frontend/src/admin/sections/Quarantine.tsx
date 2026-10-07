@@ -11,8 +11,10 @@ const PAGE = 100;
 // line/paragraph separators, blank "letters" and every stacked combining mark
 // after the first are shown as code points, never applied.
 const hidden = /[\p{Cc}\p{Cf}\u2028\u2029\u034F\u115F\u1160\u17B4\u17B5\u180E\u2800\u3164\uFFA0]|(?<=[\p{Mn}\p{Me}])[\p{Mn}\p{Me}]/gu;
+// A run of one escaped code point collapses to a single counted token.
 function visible(value: string): string {
-  return value.replace(hidden, c => `[U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}]`);
+  return value.replace(hidden, c => `[U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}]`)
+    .replace(/\[U\+([0-9A-F]+)\](?:\[U\+\1\])+/g, (run, hex: string) => `[U+${hex} \u00D7${run.length / (hex.length + 4)}]`);
 }
 const ownerChanged = "mailbox gone or owner changed; release will be refused";
 // "." and ".." are URL dot segments: fetch would resolve them to another route.
@@ -173,11 +175,11 @@ function QuarantineForm() {
         <thead><tr><th scope="col">Received</th><th scope="col">Sender</th><th scope="col">Recipients</th><th scope="col">Size</th><th scope="col">Gateway / ID</th><th scope="col">Actions</th></tr></thead>
         <tbody>{deliveries.map(d => <tr key={d.sequence}>
           <td>{new Date(d.receivedAt).toLocaleString(undefined, { timeZoneName: "short" })}</td>
-          <td>{d.sender ? visible(d.sender) : "(empty sender)"}</td>
+          <td className="quarantine-sender">{d.sender ? visible(d.sender) : "(empty sender)"}</td>
           <td>{d.recipients.length ? <ul>{d.recipients.map((r, i) => <li key={i}>{recipient(r)}</li>)}</ul> : "none"}</td>
-          <td>{size(d.size)}</td>
+          <td className="quarantine-nowrap">{size(d.size)}</td>
           <td>{`${visible(d.gateway)} / ${visible(d.id)}`}</td>
-          <td>{addressable(d) ? <>
+          <td className="quarantine-nowrap">{addressable(d) ? <>
             <button className="button secondary" aria-label={`Release ${visible(d.gateway)} / ${visible(d.id)}`} disabled={!unlocked} onClick={() => void act(d, "release")}>Release</button>
             <button className="button secondary" aria-label={`Discard ${visible(d.gateway)} / ${visible(d.id)}`} disabled={!unlocked} onClick={() => void act(d, "discard")}>Discard</button>
           </> : "Use the CLI: this ID cannot be sent in a URL."}</td>

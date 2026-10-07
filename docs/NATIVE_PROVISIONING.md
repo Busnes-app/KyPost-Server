@@ -608,7 +608,7 @@ other listed field, as plain text.
 Admin UI: Server → Quarantine lists the same envelope fields 100 at a time
 (Load more pages with `after`), as plain text with control, bidi,
 zero-width and blank-letter characters and stacked combining marks shown as
-`[U+XXXX]`. An empty user reads "mailbox gone or owner changed; release will
+`[U+XXXX]` (a run of one code point as `[U+XXXX ×N]`). An empty user reads "mailbox gone or owner changed; release will
 be refused". Release confirms first that the mail goes only to the frozen
 mailboxes, then names them; Discard confirms first that the deletion is
 permanent and may be recorded as partially released. A cancelled KySignOn or
