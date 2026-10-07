@@ -3,9 +3,10 @@ import { useAuth } from "../../auth";
 import { credentialFields, deriveCredential } from "../../api/auth";
 import { getJSON, postJSON, toErrorMessage, uploadWithProgress } from "../../api/client";
 import { withSSOStepUp } from "../../api/stepup";
+import { MailImportAccount } from "./MailImportAccount";
 
 type Mailbox = { id: string; addresses: { address: string }[] };
-type ImportStatus = {
+export type ImportStatus = {
   state: "idle" | "uploading" | "running" | "finished" | "failed" | "cancelled";
   folder?: string;
   imported: number;
@@ -15,6 +16,11 @@ type ImportStatus = {
   error?: string;
   maxBytes?: number;
   maxMessageBytes?: number;
+  // An import from another account: its server, the folder in progress, folders done of total.
+  host?: string;
+  current?: string;
+  foldersDone?: number;
+  foldersTotal?: number;
 };
 
 // The only URL the server mints; anything else is not followed.
@@ -25,9 +31,10 @@ const POLL_FAILURES = 5;
 const mib = (n: number) => `${Math.max(1, Math.round(n / (1 << 20)))} MiB`;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** Self-service upload of mbox and EML files into the user's own native mailbox. */
+/** Self-service import from mbox and EML files, or from another account over IMAP, into the user's own native mailbox. */
 export function MailImport() {
   const ssoSession = useAuth().ssoSession === true;
+  const [mode, setMode] = useState<"file" | "account">("file");
   const [mailboxes, setMailboxes] = useState<Mailbox[] | null>(null);
   const [mailbox, setMailbox] = useState("");
   const [folders, setFolders] = useState<string[]>([]);
@@ -123,20 +130,28 @@ export function MailImport() {
     ? ` The file can be up to ${mib(status.maxBytes)} (your mailbox's storage); a message over ${mib(status.maxMessageBytes)} is skipped.`
     : "";
   const counts = status && `${plural(status.imported, "message", "messages")} imported, ${plural(status.duplicates, "duplicate", "duplicates")} skipped, ${status.skipped} could not be imported`;
+  const source = status?.host ? ` from ${status.host}` : "";
+  const folderProgress = status?.host && status.foldersTotal ? ` (folder ${Math.min((status.foldersDone ?? 0) + 1, status.foldersTotal)} of ${status.foldersTotal}${status.current ? `, ${status.current}` : ""})` : "";
   return <div className="config-section">
     <h3>Import mail</h3>
     {error && <p className="notice notice-error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
     {mailboxes.length === 0 ? <p>Import is available for mailboxes KyPost hosts.</p> : <>
-      <p>Bring mail from another app: an mbox file (Thunderbird, Apple Mail, Google Takeout, or a KyPost export), a single .eml message, or a zip of .eml files. Messages are stored as parsed from the file, marked read, in the folder you choose. Importing the same file again skips the messages already there.{limits}</p>
-      <p className="notice notice-warning">Imported mail is not scanned for spam, not run through your rules, and sends no notifications. Only import files you trust. Import is unavailable while incoming encryption is on, because imported mail would be stored unencrypted.</p>
+      <p className="notice notice-warning">Imported mail is not scanned for spam, not run through your rules, and sends no notifications. Only import mail you trust. Import is unavailable while incoming encryption is on, because imported mail would be stored unencrypted.</p>
       <fieldset className="config-card config-grid" disabled={busy || running}>
-        <legend>What to import</legend>
+        <legend>Import from</legend>
+        <label><input type="radio" name="import-mode" checked={mode === "file"} onChange={() => setMode("file")} /> From a file</label>
+        <label><input type="radio" name="import-mode" checked={mode === "account"} onChange={() => setMode("account")} /> From another mail account</label>
         {mailboxes.length > 1 && <label>Mailbox
           <select aria-label="Mailbox" value={mailbox} onChange={e => setMailbox(e.target.value)}>
             {mailboxes.map(m => <option key={m.id} value={m.id}>{m.addresses[0]?.address ?? m.id}</option>)}
           </select>
         </label>}
+      </fieldset>
+      {mode === "account" ? <MailImportAccount mailbox={mailbox} ssoSession={ssoSession} disabled={running} onStarted={s => { setError(""); setNotice(""); setLost(false); setStatus(old => ({ ...old, ...s })); }} /> : <>
+      <p>Bring mail from another app: an mbox file (Thunderbird, Apple Mail, Google Takeout, or a KyPost export), a single .eml message, or a zip of .eml files. Messages are stored as parsed from the file, marked read, in the folder you choose. Importing the same file again skips the messages already there.{limits}</p>
+      <fieldset className="config-card config-grid" disabled={busy || running}>
+        <legend>What to import</legend>
         <label>Folder (existing or new)
           <input aria-label="Folder" list="import-folders" value={folder} onChange={e => setFolder(e.target.value)} />
           <datalist id="import-folders">{folders.map(f => <option key={f} value={f} />)}</datalist>
@@ -148,11 +163,12 @@ export function MailImport() {
         {ssoSession ? <p>You will confirm with KySignOn.</p> : <label>Account password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label>}
         <button className="button" disabled={!mailbox || !file || (!ssoSession && !password)} onClick={() => void start()}>Import mail</button>
       </fieldset>
+      </>}
     </>}
     {progress && <p role="status">Uploading… <progress aria-label="Upload progress" max={progress.total || 1} value={progress.loaded} /> {Math.floor(progress.loaded * 100 / (progress.total || 1))}%</p>}
-    {running && <p role="status">Importing into {status?.folder}: {counts}. <button className="button secondary" onClick={() => void cancel()}>Cancel import</button></p>}
+    {running && <p role="status">Importing{source} into {status?.folder}{folderProgress}: {counts}. <button className="button secondary" onClick={() => void cancel()}>Cancel import</button></p>}
     {progress && <button className="button secondary" onClick={() => void cancel()}>Cancel upload</button>}
-    {status?.state === "finished" && <p className="notice" role="status">Import finished into {status.folder}: {counts}.</p>}
+    {status?.state === "finished" && <p className="notice" role="status">Import{source} finished into {status.folder}: {counts}.</p>}
     {status?.state === "cancelled" && <p className="notice" role="status">Import cancelled: {counts}.</p>}
     {status?.state === "failed" && <p className="notice notice-error" role="alert">Import failed: {status.error ?? "unknown error"} ({counts}).</p>}
   </div>;

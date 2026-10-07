@@ -219,13 +219,13 @@ func TestNativeImportMessage(t *testing.T) {
 
 	// Stored seen, without a receipt; the same bytes again are a duplicate in
 	// that folder only.
-	must(t, c.ImportMessage(ctx, "INBOX", testRaw))
-	if err = c.ImportMessage(ctx, "INBOX", testRaw); !errors.Is(err, ErrDuplicate) {
+	must(t, c.ImportMessage(ctx, "INBOX", testRaw, ImportMeta{}))
+	if err = c.ImportMessage(ctx, "INBOX", testRaw, ImportMeta{}); !errors.Is(err, ErrDuplicate) {
 		t.Fatal("re-import duplicated", err)
 	}
-	must(t, c.ImportMessage(ctx, "Imported", testRaw))
+	must(t, c.ImportMessage(ctx, "Imported", testRaw, ImportMeta{}))
 	for _, bad := range [][]byte{nil, []byte("no header line\r\n"), append([]byte("Subject: big\r\n\r\n"), make([]byte, testLimits.MessageBytes)...)} {
-		if err = c.ImportMessage(ctx, "Imported", bad); !errors.Is(err, ErrUnimportable) {
+		if err = c.ImportMessage(ctx, "Imported", bad, ImportMeta{}); !errors.Is(err, ErrUnimportable) {
 			t.Fatalf("unimportable %.20q: %v", bad, err)
 		}
 	}
@@ -257,7 +257,7 @@ func TestNativeImportMessage(t *testing.T) {
 	}
 	// A deleted copy no longer blocks a re-import.
 	must(t, s.Delete(ctx, "INBOX", list[0].ID))
-	must(t, c.ImportMessage(ctx, "INBOX", testRaw))
+	must(t, c.ImportMessage(ctx, "INBOX", testRaw, ImportMeta{}))
 }
 
 func TestNativeImportCapacity(t *testing.T) {
@@ -265,9 +265,56 @@ func TestNativeImportCapacity(t *testing.T) {
 	s := openTest(t, filepath.Join(t.TempDir(), "mailbox"), testOwner, Limits{MessageBytes: 1 << 10, PayloadBytes: 1 << 10, Records: 10})
 	c, err := NewClient(s, "alice@example.test")
 	must(t, err)
-	must(t, c.ImportMessage(ctx, "INBOX", testRaw))
+	must(t, c.ImportMessage(ctx, "INBOX", testRaw, ImportMeta{}))
 	big := append([]byte("Subject: fills\r\n\r\n"), bytes.Repeat([]byte("x"), 1000-18)...)
-	if err = c.ImportMessage(ctx, "INBOX", big); !errors.Is(err, ErrCapacity) {
+	if err = c.ImportMessage(ctx, "INBOX", big, ImportMeta{}); !errors.Is(err, ErrCapacity) {
 		t.Fatal("capacity", err)
+	}
+}
+
+// An IMAP import carries the source's read and flagged state and INTERNALDATE.
+func TestNativeImportMeta(t *testing.T) {
+	ctx := context.Background()
+	s, c := newTestClient(t)
+	when := time.Date(2019, 5, 6, 7, 8, 9, 0, time.FixedZone("", -7*3600))
+	must(t, c.ImportMessage(ctx, "INBOX", testRaw, ImportMeta{Unseen: true, Starred: true, Received: when}))
+	list, err := s.List(ctx, "INBOX", 0, 10)
+	if err != nil || len(list) != 1 || list[0].Seen || !list[0].Starred || list[0].AtUTC != "2019-05-06T14:08:09Z" {
+		t.Fatalf("meta %+v %v", list, err)
+	}
+	if msgs, _, err := c.ListUnreadInbox(ctx, ""); err != nil || len(msgs) != 0 {
+		t.Fatal("unseen imported mail reached the poller", len(msgs), err)
+	}
+}
+
+func TestImportPath(t *testing.T) {
+	for _, c := range []struct {
+		parent string
+		remote []string
+		want   string
+	}{
+		{"Imported/imap-example-com", []string{"INBOX"}, "Imported/imap-example-com/INBOX"},
+		{"Imported", []string{"[Gmail]", "Sent Mail"}, "Imported/[Gmail]/Sent Mail"},
+		{"Imported", []string{"a/b", "Mr. Smith", " x "}, "Imported/a_b/Mr_ Smith/x"},
+		{"inbox/old", []string{"Archive"}, "INBOX/old/Archive"},
+	} {
+		if got, err := ImportPath(c.parent, c.remote); err != nil || got != c.want {
+			t.Errorf("ImportPath(%q, %q) = %q, %v; want %q", c.parent, c.remote, got, err, c.want)
+		}
+	}
+	for _, c := range []struct {
+		parent string
+		remote []string
+	}{
+		{"", []string{"INBOX"}},
+		{"Imported/imap.example.com", nil},
+		{"Imported", []string{""}},
+		{"Imported", []string{"bad\x01"}},
+		{"Imported", []string{`a"b`}},
+		{"Imported", []string{strings.Repeat("x", 250)}},
+	} {
+		if got, err := ImportPath(c.parent, c.remote); err == nil {
+			t.Errorf("ImportPath(%q, %q) = %q, want refusal", c.parent, c.remote, got)
+		}
 	}
 }

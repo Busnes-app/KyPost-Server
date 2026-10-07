@@ -284,7 +284,7 @@ func (s *Store) Import(ctx context.Context, receipt Receipt, input io.Reader) (i
 	if err != nil {
 		return 0, err
 	}
-	return s.append(ctx, "INBOX", input, receipt.Gateway, receipt.Delivery, envelope, false, false)
+	return s.append(ctx, "INBOX", input, receipt.Gateway, receipt.Delivery, envelope, false, nil)
 }
 
 // Append stores a local Drafts/Sent copy without an SMTP delivery receipt.
@@ -292,13 +292,14 @@ func (s *Store) Append(ctx context.Context, folder string, input io.Reader, draf
 	if !validFolder(folder) {
 		return 0, errors.New("invalid folder")
 	}
-	return s.append(ctx, folder, input, "", "", "", draft, false)
+	return s.append(ctx, folder, input, "", "", "", draft, nil)
 }
 
-// append stores one message. An imported message is stored seen and refused
-// with ErrDuplicate (and the holding ID) while the folder holds a live copy of
-// the same bytes; the imported table keeps it from the poller for good.
-func (s *Store) append(ctx context.Context, folder string, input io.Reader, gateway, delivery, envelope string, draft, imported bool) (int64, error) {
+// append stores one message. An imported message (imported set) takes its
+// state from meta and is refused with ErrDuplicate (and the holding ID) while
+// the folder holds a live copy of the same bytes; the imported table keeps it
+// from the poller for good.
+func (s *Store) append(ctx context.Context, folder string, input io.Reader, gateway, delivery, envelope string, draft bool, imported *ImportMeta) (int64, error) {
 	raw, err := mailmsg.BoundedRead(input, s.limits.MessageBytes)
 	if err != nil {
 		return 0, err
@@ -324,7 +325,7 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 			return 0, err
 		}
 	}
-	if imported {
+	if imported != nil {
 		var id int64
 		err = tx.QueryRowContext(ctx, "SELECT id FROM messages WHERE folder=? AND digest=? AND raw IS NOT NULL LIMIT 1", folder, digest).Scan(&id)
 		if err == nil {
@@ -347,7 +348,14 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 	if err != nil {
 		return 0, err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, folder, raw, digest, headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339), imported || folder != "INBOX" && !draft, draft)
+	seen, starred := folder != "INBOX" && !draft, false
+	if imported != nil {
+		seen, starred = !imported.Unseen, imported.Starred
+		if !imported.Received.IsZero() {
+			at = imported.Received.UTC()
+		}
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, folder, raw, digest, headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), at.Format(time.RFC3339), seen, starred, draft)
 	if err != nil {
 		return 0, err
 	}
@@ -360,7 +368,7 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 			return 0, err
 		}
 	}
-	if imported {
+	if imported != nil {
 		if _, err = tx.ExecContext(ctx, "INSERT INTO imported VALUES(?)", id); err != nil {
 			return 0, err
 		}

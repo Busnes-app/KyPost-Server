@@ -125,7 +125,7 @@ type Server struct {
 	exportMu  sync.Mutex
 	exports   map[string]exportGrant
 	exporting map[string]bool
-	// importGrants are the unspent mail-import upload links, keyed by token,
+	// importGrants are the unspent mail-import upload links and IMAP grants, keyed by token,
 	// and imports each user's latest import job. Innermost, taken alone,
 	// never while another Server mutex is held.
 	importMu     sync.Mutex
@@ -623,6 +623,9 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/import", s.withMailAuth(withActionDigest(s.handleImportStart)))
 	mux.HandleFunc("POST /api/import/cancel", s.withMailAuth(s.handleImportCancel))
 	mux.HandleFunc("POST /api/import/{token}", s.withMailAuth(s.handleImportUpload))
+	mux.HandleFunc("POST /api/import/imap", s.withMailAuth(withActionDigest(s.handleIMAPImportStart)))
+	mux.HandleFunc("POST /api/import/imap/{token}/folders", s.withMailAuth(s.handleIMAPImportFolders))
+	mux.HandleFunc("POST /api/import/imap/{token}/start", s.withMailAuth(s.handleIMAPImportRun))
 	mux.HandleFunc("GET /api/inbox", s.withMailAuth(s.withMailbox(s.handleInbox)))
 	mux.HandleFunc("GET /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
 	mux.HandleFunc("POST /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))

@@ -511,11 +511,11 @@ type onImport struct {
 	before, after func()
 }
 
-func (o *onImport) ImportMessage(ctx context.Context, folder string, raw []byte) error {
+func (o *onImport) ImportMessage(ctx context.Context, folder string, raw []byte, meta mailbox.ImportMeta) error {
 	if o.before != nil {
 		o.before()
 	}
-	err := o.mailImporter.ImportMessage(ctx, folder, raw)
+	err := o.mailImporter.ImportMessage(ctx, folder, raw, meta)
 	if o.after != nil {
 		o.after()
 	}
@@ -526,7 +526,7 @@ func (o *onImport) ImportMessage(ctx context.Context, folder string, raw []byte)
 type blocking struct{}
 
 func (blocking) ImportFolder(context.Context, string, bool) (string, error) { return "", nil }
-func (blocking) ImportMessage(ctx context.Context, _ string, _ []byte) error {
+func (blocking) ImportMessage(ctx context.Context, _ string, _ []byte, _ mailbox.ImportMeta) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
@@ -546,8 +546,9 @@ func tempUpload(t *testing.T, data []byte) string {
 func TestMailImportIdentities(t *testing.T) {
 	ctx := context.Background()
 	const password = "long-password-for-import"
-	start := func(s *Server, userID string, device ...string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "/api/import", strings.NewReader(`{"password":"`+password+`"}`))
+	const imapBody = `{"host":"imap.example.com","port":993,"security":"tls","username":"u","password":"` + password + `"}`
+	startAt := func(path, body string, s *Server, userID string, device ...string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		if device != nil {
 			setDeviceHeaders(r, device[0], device[1])
@@ -557,6 +558,12 @@ func TestMailImportIdentities(t *testing.T) {
 		w := httptest.NewRecorder()
 		s.routes().ServeHTTP(w, r)
 		return w
+	}
+	start := func(s *Server, userID string, device ...string) *httptest.ResponseRecorder {
+		return startAt("/api/import", `{"password":"`+password+`"}`, s, userID, device...)
+	}
+	startIMAP := func(s *Server, userID string, device ...string) *httptest.ResponseRecorder {
+		return startAt("/api/import/imap", imapBody, s, userID, device...)
 	}
 
 	s := newNativeRuntimeServer(t)
@@ -572,11 +579,18 @@ func TestMailImportIdentities(t *testing.T) {
 	if w := start(s, u.ID, deviceID, secret); w.Code != 403 || !strings.Contains(w.Body.String(), "browser session") || len(s.importGrants) != 0 {
 		t.Fatal("device started an import", w.Code, w.Body)
 	}
+	if w := startIMAP(s, u.ID, deviceID, secret); w.Code != 403 || !strings.Contains(w.Body.String(), "browser session") || len(s.importGrants) != 0 {
+		t.Fatal("device started an IMAP import", w.Code, w.Body)
+	}
+	if w := startIMAP(s, u.ID); w.Code != 200 {
+		t.Fatal("everyday IMAP import", w.Code, w.Body)
+	}
 	if w := start(s, u.ID); w.Code != 200 {
 		t.Fatal("everyday import", w.Code, w.Body)
 	}
 	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.updated", "everyday-promote", 2, adminRuntimeUser(true)))
 	assertAdministratorRefusal(t, "promoted import", start(s, u.ID))
+	assertAdministratorRefusal(t, "promoted IMAP import", startIMAP(s, u.ID))
 
 	legacy := newNativeRuntimeServer(t)
 	legacyMixedUseAdmin(t, legacy, runtimeDirectoryUser(true))
