@@ -508,8 +508,9 @@ are unchanged: without the header below every route serves the primary mailbox.
   `/api/mail/draft`, `/api/mail/send`, `/api/mail/send-pgp`,
   `/api/mail/outbox/{id}`, `/api/mail/body`, `/api/mail/pgp-payload`,
   `/api/mail/attachments`, `/api/mail/attachment`, `/api/rules/run`,
-  `/api/decisions` and `/api/export/folders` (web export, which names the
-  mailbox in its `POST /api/export` body). An
+  `/api/decisions` and `/api/export/folders` (web export and import, which
+  name the mailbox in their `POST /api/export` and `POST /api/import`
+  bodies). An
   absent header or the primary's ID selects the primary. An unknown, foreign or
   disabled mailbox answers `404 {"error":"mailbox not found"}`, identical for
   all three: drop the mailbox from the local list and refresh
@@ -517,7 +518,8 @@ are unchanged: without the header below every route serves the primary mailbox.
   send one to another mailbox. `from` names an active address of the selected
   mailbox (omitted means its primary address).
 - Every other route (devices, pairing, notifications, contacts, CardDAV, PGP
-  keys, settings, rule definitions, labels) is per user and ignores the header;
+  keys, settings, rule definitions, labels, import status and cancel) is per
+  user and ignores the header;
   `/api/labels` reports labels discovered in the primary mailbox only.
 - `PUT /api/pgp/incoming` with `enabled:true` answers 409 with an explanatory
   `error` while the user has any additional mailbox: incoming encryption covers

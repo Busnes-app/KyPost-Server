@@ -31,7 +31,7 @@ func (s *Store) metadata(ctx context.Context, folder string, id int64) (Message,
 	return m, err
 }
 func (s *Store) unreadAfter(ctx context.Context, after int64, limit int) ([]Message, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+metadataColumns+" FROM messages WHERE folder='INBOX' AND seen=0 AND raw IS NOT NULL AND id>? ORDER BY id LIMIT ?", after, limit)
+	rows, err := s.db.QueryContext(ctx, "SELECT "+metadataColumns+" FROM messages WHERE folder='INBOX' AND seen=0 AND raw IS NOT NULL AND id>? AND id NOT IN (SELECT message_id FROM imported) ORDER BY id LIMIT ?", after, limit)
 	if err != nil {
 		return nil, err
 	}
