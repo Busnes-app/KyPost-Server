@@ -133,18 +133,12 @@ func startCloudflareReceiving(ctx context.Context, d runDeps) (<-chan struct{}, 
 		defer close(done)
 		defer r.holding.Close()
 		defer db.Close()
-		// Directory changes publish within one tick; the domain file is
-		// rewritten by every proof, so only the address ledger is watched.
-		ledger := filepath.Join(r.configDir, "native-provisioning.json")
 		var last time.Time
 		var seen string
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
-			mark := ""
-			if info, err := os.Stat(ledger); err == nil {
-				mark = info.ModTime().String() + strconv.FormatInt(info.Size(), 10)
-			}
+			mark := cfChangeMark(r)
 			if time.Since(last) >= cfInterval || mark != seen {
 				last, seen = time.Now(), mark
 				if err := l.cycle(ctx); err != nil && ctx.Err() == nil {
@@ -159,6 +153,24 @@ func startCloudflareReceiving(ctx context.Context, d runDeps) (<-chan struct{}, 
 		}
 	}()
 	return done, nil
+}
+
+// cfChangeMark changes when the address ledger or the sender block list is
+// rewritten, so either publishes within one tick. The domain file is
+// rewritten by every proof, so it is not watched.
+func cfChangeMark(r *receivingRuntime) string {
+	mark := ""
+	for _, path := range []string{filepath.Join(r.configDir, "native-provisioning.json"), filepath.Join(r.stateDir, "receiving", ingress.BlocksFile)} {
+		if info, err := os.Stat(path); err == nil {
+			mark += info.ModTime().String() + strconv.FormatInt(info.Size(), 10)
+			// Both files publish by rename: a new inode even within one mtime tick.
+			if st, ok := info.Sys().(*syscall.Stat_t); ok {
+				mark += "/" + strconv.FormatUint(st.Ino, 10)
+			}
+		}
+		mark += "|"
+	}
+	return mark
 }
 
 // cycle publishes and picks up once, then saves status.
@@ -222,9 +234,23 @@ func (l *cfLoop) refused(ctx context.Context, used cfreceiving.Material) error {
 	return cfreceiving.ErrUnauthorized
 }
 
-// blockedSenders is the seam for abuse blocks (manual, and automatic once
-// qualification allows); empty until that change set.
-func (l *cfLoop) blockedSenders() []cfreceiving.Block { return nil }
+// blockedSenders is the block list in force, in the Worker's form. An
+// unreadable list fails the publish: the Worker keeps its last table rather
+// than losing blocks.
+func (l *cfLoop) blockedSenders() ([]cfreceiving.Block, error) {
+	list, err := ingress.NewBlocks(filepath.Join(l.r.stateDir, "receiving")).List(l.now())
+	blocks := make([]cfreceiving.Block, 0, len(list))
+	for _, b := range list {
+		w := cfreceiving.Block{Until: b.Until}
+		if b.Kind == "domain" {
+			w.Domain = b.Value
+		} else {
+			w.Address = b.Value
+		}
+		blocks = append(blocks, w)
+	}
+	return blocks, err
+}
 
 // publish signs and installs the table when it changed, when the Worker holds
 // a newer revision than ours, or hourly.
@@ -241,7 +267,10 @@ func (l *cfLoop) publish(ctx context.Context, cur cfreceiving.Material) error {
 	if err != nil {
 		return err
 	}
-	blocks := l.blockedSenders()
+	blocks, err := l.blockedSenders()
+	if err != nil {
+		return err
+	}
 	digest := cfreceiving.Digest(routes, blocks)
 	installed, installedDigest, at, err := l.db.LastInstalled(ctx)
 	if err != nil {

@@ -42,6 +42,9 @@ func Run(args []string) error {
 		if len(args) > 1 && args[1] == "quarantine" {
 			return runReceivingQuarantine(args[2:], os.Stdout)
 		}
+		if len(args) > 1 && args[1] == "blocks" {
+			return runReceivingBlocks(args[2:], os.Stdout)
+		}
 		if len(args) > 1 && args[1] == "config" {
 			return runReceivingConfig(args[2:], os.Stdout)
 		}

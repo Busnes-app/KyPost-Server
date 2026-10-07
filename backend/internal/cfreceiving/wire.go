@@ -121,6 +121,11 @@ func ValidAddress(a string) bool {
 	return true
 }
 
+// validDomain is the Worker's block domain rule.
+func validDomain(d string) bool {
+	return d != "" && len(d) <= 253 && d == strings.ToLower(d) && !strings.ContainsFunc(d, func(c rune) bool { return c < 0x21 || c > 0x7e || c == '@' })
+}
+
 // SignTable is the PUT /routes body for routes and blocks.
 func SignTable(m Material, revision, issuedAt int64, routes []Route, blocks []Block) ([]byte, error) {
 	type wireRoute struct {
@@ -141,6 +146,11 @@ func SignTable(m Material, revision, issuedAt int64, routes []Route, blocks []Bl
 		}
 		seen[r.Address] = true
 		table.Routes = append(table.Routes, wireRoute{r.Address, r.Generation, r.MaxBytes})
+	}
+	for _, b := range blocks {
+		if (b.Address == "") == (b.Domain == "") || b.Address != "" && !ValidAddress(b.Address) || b.Domain != "" && !validDomain(b.Domain) || b.Until != nil && *b.Until < 1 {
+			return nil, errors.New("invalid sender block for the Worker")
+		}
 	}
 	payload, err := json.Marshal(table)
 	if err != nil || revision < 1 || issuedAt < 1 || len(routes) > maxRoutes || len(blocks) > maxRoutes || len(payload) > maxTableBytes {

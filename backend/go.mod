@@ -15,6 +15,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/inbucket/html2text v1.0.0
 	github.com/jhillyerd/enmime/v2 v2.5.0
+	golang.org/x/net v0.58.0
 	golang.org/x/oauth2 v0.37.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.59.0
@@ -57,7 +58,6 @@ require (
 require (
 	github.com/pkg/errors v0.9.1 // indirect
 	golang.org/x/crypto v0.57.0
-	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
 )

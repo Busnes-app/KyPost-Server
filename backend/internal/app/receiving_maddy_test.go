@@ -343,6 +343,21 @@ with open(sys.argv[2], "w") as out:
 	}
 	_ = second.Close()
 	_ = third.Close()
+	// A blocked sender is refused permanently at RCPT, before any binding.
+	if _, err := ingress.NewBlocks(filepath.Join(r.stateDir, "receiving")).Put(context.Background(), ingress.SenderBlock{Kind: "domain", Value: "blocked.test", Source: "manual", Actor: "test", Reason: "spam"}, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	blockedClient := newTLSClient()
+	if err := blockedClient.Mail("bad@blocked.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := blockedClient.Rcpt("one@example.test"); !errors.As(err, &rejection) || rejection.Code != 550 || !strings.Contains(rejection.Msg, "Sender blocked") {
+		t.Fatalf("blocked sender must be permanently refused: %v", err)
+	}
+	_ = blockedClient.Close()
+	if rows, err := r.holding.List(context.Background(), receivingGateway, 0, 100); err != nil || len(rows) != 0 {
+		t.Fatal("blocked sender created a binding", rows, err)
+	}
 	if err := client.Rcpt("unknown@example.test"); !errors.As(err, &rejection) || rejection.Code != 550 {
 		t.Fatalf("unknown recipient must be permanently refused: %v", err)
 	}

@@ -369,8 +369,11 @@ Operator steps: [continuous Cloudflare profile](RECEIVING_SETUP.md#continuous-cl
 - **Warning.** `oldestUnpickedWarning` when the oldest waiting capture is over
   one hour old (decision 5): 120 missed cycles means an operator problem, still
   far inside the 14-day table age.
-- **Not built.** Abuse blocks (`blockedSenders` is empty; the seam is
-  `cfLoop.blockedSenders`), an admin takeover screen with step-up (CLI only),
+- **Blocks.** `blockedSenders` carries the manual [sender blocks](NATIVE_PROVISIONING.md#sender-blocks)
+  in force (`until` in Unix ms or null). A block change republishes within
+  one loop tick; an unreadable block list fails the publish and the Worker
+  keeps its last table.
+- **Not built.** Automatic abuse blocks, an admin takeover screen with step-up (CLI only),
   custom Worker domains, removing the pilot, live qualification.
 
 ## Abusive senders
@@ -403,7 +406,11 @@ storage: the Worker from the signed table, Maddy in its RCPT bind check (550).
   resets the level. Blocks expire automatically at `until`.
 - **Administrators** see blocks with their evidence and can block or unblock any
   address or domain manually; manual blocks have no automatic expiry unless one is
-  set.
+  set. Manual blocks are implemented in both profiles (API and CLI:
+  [sender blocks](NATIVE_PROVISIONING.md#sender-blocks)); the deployment's own
+  mail domains and addresses on them cannot be blocked, and the null sender is
+  never blocked. Automatic blocks, evidence display and the admin UI are pending;
+  the store's `source: automatic` entries with an escalation `level` are the seam.
 - Blocked mail is rejected, not stored; senders get a permanent 550 for the
   duration. Block state is durable, in sealed backups, and audited without message
   content.

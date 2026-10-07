@@ -95,6 +95,22 @@ func TestSignedDocumentsMatchContract(t *testing.T) {
 			t.Fatal("invalid route signed", bad)
 		}
 	}
+	// Blocks: {"address"|"domain", "until"} with until null or Unix ms.
+	until := int64(1790000000000)
+	body, err = SignTable(m, 2, 2, nil, []Block{{Address: "bad@spam.test", Until: &until}, {Domain: "evil.test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	table = verifyContract(t, body, "table", "kypost-cf-routes/1\n", public)
+	if string(table["blockedSenders"]) != `[{"address":"bad@spam.test","until":1790000000000},{"domain":"evil.test","until":null}]` {
+		t.Fatal("blocks wire", string(table["blockedSenders"]))
+	}
+	zero := int64(0)
+	for _, bad := range []Block{{}, {Address: "a@x.test", Domain: "x.test"}, {Address: "Bad@x.test"}, {Domain: "bücher.test"}, {Domain: "a@x.test"}, {Domain: "x.test", Until: &zero}} {
+		if _, err := SignTable(m, 1, 1, nil, []Block{bad}); err == nil {
+			t.Fatal("invalid block signed", bad)
+		}
+	}
 	if _, err := SignTable(m, 1, 1, []Route{routes[0], routes[0]}, nil); err == nil {
 		t.Fatal("duplicate address signed")
 	}

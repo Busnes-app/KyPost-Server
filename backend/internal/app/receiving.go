@@ -298,7 +298,17 @@ func (r *receivingRuntime) withAuthority(ctx context.Context, ids, addresses []s
 	return r.life.WithNativeMailAccess(ctx, r.stateDir, settings.IssuerURL, r.accounts, ids, action)
 }
 
+// bind is the Maddy RCPT check. A blocked sender is refused (exit 6, SMTP
+// 550) before any DNS proof or storage; hosted pickup binds mail the gateway
+// already accepted and never checks blocks.
 func (r *receivingRuntime) bind(ctx context.Context, id, sender, recipient string) error {
+	blocked, err := ingress.NewBlocks(filepath.Join(r.stateDir, "receiving")).Blocked(sender, time.Now())
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return &receivingCommandError{err: ingress.ErrSenderBlock, code: 6}
+	}
 	return r.bindExpected(ctx, id, sender, recipient, nil)
 }
 

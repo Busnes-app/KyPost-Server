@@ -745,7 +745,8 @@ The gateway identity is fixed to `maddy-local`. Trusted gateway configuration
 passes its own transaction ID, SMTP envelope sender and recipient to
 `receiving bind <receiver-id> <sender> <recipient>` at RCPT. An empty reverse
 path is valid. Definite unknown addresses return exit 3 (map to SMTP 550);
-storage/proof failures return exit 1 (map to 451). After every accepted recipient,
+a [blocked sender](#sender-blocks) returns exit 6 (550 5.7.1, before DNS proof
+or any binding); storage/proof failures return exit 1 (map to 451). After every accepted recipient,
 `receiving accept <receiver-id> <sender>` reads exact raw MIME from stdin and
 commits it before exit success. Map DATA failures to 451. Run binding as the
 last RCPT authority check: a later recipient rejection would leave a phantom
@@ -896,6 +897,71 @@ the account credential or KySignOn step-up. A 409 reason is shown as returned
 and the list re-read; an unanswered or mismatched answer locks until reload.
 With native mail off (404) the tab says so. A delivery whose gateway or ID is
 a URL dot segment (`.` or `..`) is CLI-only.
+
+### Sender blocks
+
+Administrators block an envelope sender address or domain manually, through
+the admin API or the CLI; both receiving profiles enforce the same list before
+storing anything. Automatic blocks (escalating cooldown, Maddy only) and an
+admin UI are pending; see [abusive senders](CLOUDFLARE_CONTINUOUS_RECEIVING.md#abusive-senders).
+
+- **Store.** `STATE_DIR/receiving/sender-blocks.json` (0600), written under its
+  own lock file and published by rename; it exists only after `receiving init`
+  (writes refuse before, and never create the receiving directory). Sealed
+  backups collect it. Each entry has `id` (first 16 hex of SHA-256 of
+  `kind:value`), `kind` (`address` or `domain`), `value`, `until` (Unix
+  milliseconds, or null: manual blocks never expire unless one is set),
+  `source` (`manual`; `automatic` with an escalation `level` is reserved for
+  the automatic change), `createdAt`, `actor` and `reason` (a code: `spam`,
+  `phishing`, `abuse` or `other`, the default; no free text). Expired entries
+  are ignored and dropped at the next write. At most 5000 blocks (the Worker's
+  limit) and about 512 KiB of table space, half the Worker's 1 MiB table, so
+  blocks can never stop route publication.
+- **Values.** Lowercase ASCII only; non-ASCII is refused, so internationalized
+  domains are given as A-labels (`xn--…`). An address is a dot-atom local part
+  of at most 64 characters at a hostname, 254 characters overall (no display
+  names, quoted local parts or domain literals); a domain is a hostname with at
+  least one dot. The deployment's own configured mail domains, and any address
+  on them, are refused (409): a typo there would bounce your own users' mail.
+- **Matching.** An address block matches the whole sender address
+  case-insensitively; a domain block matches the sender's domain exactly, not
+  its subdomains (block `sub.example` separately), as the Worker does. Maddy
+  converts a U-label sender domain to its A-label before matching. The null
+  sender (bounces and other notifications) has no address or domain and is
+  never blocked, so delivery reports for mail your users sent still arrive.
+- **Enforcement.** Maddy: `receiving bind` exits 6 and the generated
+  configuration answers `550 5.7.1 Sender blocked` at RCPT, before DNS proof
+  or any binding. Cloudflare: the publisher signs the blocks in force into the
+  routing table's `blockedSenders`; a change to the list republishes within
+  one loop tick (5 seconds), and the Worker rejects with "Sender blocked". An
+  unreadable list fails the publish, leaving the Worker's last table (and its
+  blocks) in place, and shows as `error` in status. Mail already accepted or
+  waiting in R2 is unaffected: blocks never delete mail retroactively.
+
+API (admin only; POST and DELETE need CSRF and the account credential, or
+KySignOn step-up, in the JSON body as for quarantine):
+
+- `GET /api/admin/receiving/blocks` returns `{blocks:[{id,kind,value,until,source,level,createdAt,actor,reason}]}`
+  for blocks in force (empty before `receiving init`).
+- `POST /api/admin/receiving/blocks` with `{kind, value, until?, reason?}`
+  returns `{block}`; adding an existing kind/value replaces it. 400 invalid
+  value, kind, reason or past `until`; 409 own domain, list full or receiving
+  not initialized; 503 storage.
+- `DELETE /api/admin/receiving/blocks/{kind}/{value}` returns `{id,result:"unblocked"}`;
+  404 when no such block is in force.
+
+CLI, as the runtime user that owns `STATE_DIR` (it refuses any other), with the
+value typed again after `--confirm`:
+
+```sh
+docker compose exec --user kypost kypost-server kypost-server receiving blocks list
+docker compose exec --user kypost kypost-server kypost-server receiving blocks add address|domain <value> [--until <RFC3339>] [--reason spam|phishing|abuse|other] --confirm <value>
+docker compose exec --user kypost kypost-server kypost-server receiving blocks remove address|domain <value> --confirm <value>
+```
+
+Both audit `block_sender`/`unblock_sender` with actor, kind, result and the
+block `id`, never the address or domain (API to `api.err.log`, CLI to the
+terminal). The value is attacker-chosen: render it as plain text.
 
 New route writes, RCPT bindings and MIME acceptance also check physical storage
 inside the immediate SQLite writer transaction. The admission budget is derived

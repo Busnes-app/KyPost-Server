@@ -172,6 +172,7 @@ smtp tcp://%s {
             run_on rcpt
             code 1 reject 451 4.3.0 "Receiving storage unavailable"
             code 3 reject 550 5.1.1 "Recipient unavailable"
+            code 6 reject 550 5.7.1 "Sender blocked"
         }
         command "%s" receiving accept "{msg_id}" "{sender}"%s {
             run_on body
