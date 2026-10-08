@@ -22,7 +22,7 @@ Offline quarantine also raises existing published native subjects’ directory `
 
 ## Recovery prerequisites implied by these facts
 
-A safe release needs fresh authenticated authority covering every restored issuer/subject, including current inactivity or authoritative absence for users already offboarded/deleted, current role projection and a new credential-revocation fence. Ordinary resync remains incomplete. KyIdentity now supplies an app-specific snapshot for an explicitly requested subject set; KyPost can record challenge-bound evidence and durable revision barriers through protected admin APIs. A separately confirmed repair API now reconciles published native activity/roles and revokes transport credentials while held. Restore-hold release remains unimplemented.
+A safe release needs fresh authenticated authority covering every restored issuer/subject, including current inactivity or authoritative absence for users already offboarded/deleted, current role projection and a new credential-revocation fence. Ordinary resync remains incomplete. KyIdentity now supplies an app-specific snapshot for an explicitly requested subject set; KyPost can record challenge-bound evidence and durable revision barriers through protected admin APIs. A separately confirmed repair API now reconciles published native activity/roles and revokes transport credentials while held. Restore-hold release remains unimplemented; its proposed design and the implemented release floors are in [NATIVE_RESTORE_RELEASE.md](NATIVE_RESTORE_RELEASE.md).
 
 ### Available exporter and the consumer boundary
 

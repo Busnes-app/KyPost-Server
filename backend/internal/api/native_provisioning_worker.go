@@ -43,6 +43,11 @@ func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject str
 		release()
 		return nil // existing IMAP and administrator accounts never migrate through directory repair
 	}
+	// Only the disable path may act on state the release evidence superseded.
+	if err := s.ssoLifecycle.CheckNativeReleaseFloor(issuer, subject, d); err != nil {
+		release()
+		return err
+	}
 	if lookupErr != nil && d.Active && sso.HasAdminRole(d.Resource.Roles) {
 		defer release()
 		return s.provisionDirectoryUser(*d.Resource, users.RoleAdmin)

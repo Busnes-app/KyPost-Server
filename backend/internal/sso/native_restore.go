@@ -85,6 +85,13 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 		return true, err
 	}
 	native := lifecycle.NativeProvisioningInitialized
+	// A malformed release floor would silently stop fencing its subject.
+	for k, floor := range lifecycle.ReleaseFloors {
+		issuer, subject, ok := strings.Cut(k, "\x00")
+		if !ok || !directoryIdentifier(issuer) || !nativeRecoveryIdentifier(subject) || floor.Revision <= 0 {
+			return true, ErrNativeProvisioning
+		}
+	}
 	byID := map[string]users.User{}
 	bySubject := map[string]users.User{}
 	for _, u := range accounts {
