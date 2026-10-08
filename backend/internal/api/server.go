@@ -226,6 +226,9 @@ type Server struct {
 	serverMu      sync.Mutex
 	serverStatus  serverVersionStatus
 
+	// releaseFloorLogged names subjects whose floor refusal was already logged.
+	releaseFloorLogged sync.Map
+
 	linuxClientMu     sync.Mutex
 	linuxClientStatus linuxClientStatus
 
