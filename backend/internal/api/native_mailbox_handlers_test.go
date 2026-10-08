@@ -67,7 +67,7 @@ func TestNativeMailboxesAdminAPIAndSelection(t *testing.T) {
 		for _, c := range []struct {
 			token, csrf string
 			want        int
-		}{{"", "", 401}, {mtoken, mcsrf, 403}, {token, "", 403}, {token, csrf, 401}} {
+		}{{"", "", 401}, {mtoken, mcsrf, 403}, {token, "", 403}, {token, csrf, 403}} {
 			if w := call("POST", route, c.token, c.csrf, "{}"); w.Code != c.want {
 				t.Fatalf("auth %s: got %d want %d: %s", route, w.Code, c.want, w.Body)
 			}

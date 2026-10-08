@@ -36,7 +36,7 @@ func TestBackupRoutesRequireAdminCSRFAndCredential(t *testing.T) {
 			for _, c := range []struct {
 				token, csrf, body string
 				want              int
-			}{{"", "", "{}", 401}, {userToken, userCSRF, "{}", 403}, {adminToken, "", "{}", 403}, {adminToken, csrf, "{}", 401}} {
+			}{{"", "", "{}", 401}, {userToken, userCSRF, "{}", 403}, {adminToken, "", "{}", 403}, {adminToken, csrf, "{}", 403}} {
 				req := httptest.NewRequest(method, "/api/admin/backup/"+path, bytes.NewBufferString(c.body))
 				if c.token != "" {
 					req.AddCookie(&http.Cookie{Name: "kypost_session", Value: c.token})

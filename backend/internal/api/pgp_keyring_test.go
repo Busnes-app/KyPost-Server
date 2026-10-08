@@ -113,7 +113,7 @@ func TestPGPKeyringHTTPCompatibilityAndReset(t *testing.T) {
 	}
 	restoreBody["keyringVersion"] = 1
 	restoreBody["authSecret"] = strings.Repeat("c", 64)
-	if rec := restore(); rec.Code != http.StatusUnauthorized {
+	if rec := restore(); rec.Code != http.StatusForbidden {
 		t.Fatalf("restore step-up: %d", rec.Code)
 	}
 	restoreBody["authSecret"] = authSecret

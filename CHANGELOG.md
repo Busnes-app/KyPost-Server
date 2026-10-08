@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- A wrong password or two-factor code when confirming a sensitive action (sender blocks, mail addresses, quarantine, mail domain, relay, backup, recovery, export/import, PGP, SSO link) is now refused with 403 and shown on the page. It was a 401, which the web app took for an expired session and silently reloaded the page. Sign-in and password change keep their statuses.
+
 - Native mail: parallel deliveries, sends and account allocations no longer fail with a spurious "mail domain proof missing, expired or changed" error when another request refreshed the same domain proof at the same moment. Only a changed DNS challenge is refused.
 
 - `POST /api/admin/native-recovery/release` releases a qualified, repaired native restore hold when `KYPOST_NATIVE_RESTORE_RELEASE=true` (default off). Only an unlinked local administrator on a password session with step-up may release; every precondition is rechecked under the fences with a fresh DNS proof, and the bundled receiver requires `"confirm": "original-host-decommissioned"`. The release deactivates non-native accounts the evidence shows inactive and demotes non-native administrators it shows without the administrator role, writes those directory rows inactive, records release floors and token fences, and renames the hold to `native-restore-released.json`. Status then reports `released` and the KyIdentity resync still needed. Do not downgrade below this version after a release.

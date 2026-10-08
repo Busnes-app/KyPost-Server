@@ -278,6 +278,20 @@ it("shows the 409 reason as returned, re-reads and restores controls", async () 
   expect(reads().length).toBeGreaterThan(before);
 });
 
+it("shows a wrong step-up password and stays usable without reloading", async () => {
+  const reload = vi.fn();
+  vi.stubGlobal("location", { ...window.location, reload });
+  await unlocked();
+  answer = () => new Response("invalid credentials\n", { status: 403 });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(removeManual());
+  expect((await screen.findByRole("alert")).textContent).toBe("request failed: 403 - invalid credentials");
+  await waitFor(() => expect(table().disabled).toBe(false));
+  expect(fieldset().disabled).toBe(false);
+  expect(screen.getByText("spammer@bad.example")).toBeTruthy();
+  expect(reload).not.toHaveBeenCalled();
+});
+
 it("locks until reload when no answer arrived", async () => {
   await unlocked();
   const before = reads().length;

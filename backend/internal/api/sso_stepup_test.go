@@ -167,7 +167,7 @@ func TestSSOStepUpIsBoundToTheActionAndTheSession(t *testing.T) {
 	clearMustChangePassword(t, srv, local.ID)
 	token, _ := mintSessionForTest(srv, local.ID)
 	rec := gatedCall(t, srv, &http.Cookie{Name: "kypost_session", Value: token}, http.MethodPost, "/api/auth/step-up", `{"password":"wrong"}`, "")
-	if rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "sso_step_up_required") {
+	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "sso_step_up_required") {
 		t.Fatalf("password session: status %d: %s", rec.Code, rec.Body.String())
 	}
 }
@@ -256,7 +256,7 @@ func TestStepUpKeepsThePasswordForGenericProviderSessions(t *testing.T) {
 	}
 
 	// The password gate answers, in both directions.
-	if rec := gatedCall(t, srv, cookie, http.MethodPost, "/api/auth/step-up", `{"password":"wrong"}`, ""); rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "sso_step_up_required") {
+	if rec := gatedCall(t, srv, cookie, http.MethodPost, "/api/auth/step-up", `{"password":"wrong"}`, ""); rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "sso_step_up_required") {
 		t.Fatalf("wrong password: status %d: %s", rec.Code, rec.Body.String())
 	}
 	if rec := gatedCall(t, srv, cookie, http.MethodPost, "/api/auth/step-up", `{"password":"kc-local-password-123"}`, ""); rec.Code != http.StatusOK {

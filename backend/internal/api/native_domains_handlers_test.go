@@ -49,7 +49,7 @@ func TestNativeMailDomainsAdminSetAndRelayDomains(t *testing.T) {
 		for _, c := range []struct {
 			token, csrf string
 			want        int
-		}{{"", "", 401}, {mtoken, mcsrf, 403}, {token, "", 403}, {token, csrf, 401}} {
+		}{{"", "", 401}, {mtoken, mcsrf, 403}, {token, "", 403}, {token, csrf, 403}} {
 			if w := call(route.method, route.path, c.token, c.csrf, "{}"); w.Code != c.want {
 				t.Fatalf("auth %s %s: got %d want %d: %s", route.method, route.path, w.Code, c.want, w.Body)
 			}
@@ -208,7 +208,7 @@ func TestNativeMailDomainsAdminSetAndRelayDomains(t *testing.T) {
 	}
 	// Re-adding a retired domain takes the same confirmation, starts unproven
 	// and returns to the relay with the generation kept once verified.
-	if w = call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"second.test"}`); w.Code != 401 {
+	if w = call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"second.test"}`); w.Code != 403 {
 		t.Fatal("re-add without confirmation", w.Code, w.Body)
 	}
 	if w = call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"second.test","password":"`+password+`"}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"established":false`) || !strings.Contains(w.Body.String(), `"retired":false`) {
