@@ -273,8 +273,9 @@ func TestNativeReceivingExtraMailbox(t *testing.T) {
 	if _, err := r.life.SetNativeMailboxState(ctx, r.stateDir, m.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.bind(ctx, "after-disable", "", "sales@example.test"); err == nil {
-		t.Fatal("disabled mailbox bound new mail")
+	// Refused permanently (550 5.1.1), not as a storage failure senders retry.
+	if err := r.bind(ctx, "after-disable", "", "sales@example.test"); receivingExit(err) != 3 {
+		t.Fatal("disabled mailbox not refused as an unknown recipient:", err)
 	}
 }
 
