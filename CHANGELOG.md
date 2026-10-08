@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Admin → Server → Mail domain lists domains as a compact table, one row each with status, DNS state and actions, domains needing action first. TXT records show only for domains awaiting verification, with copy buttons; established domains keep theirs under "TXT records to keep". On phones each domain is a short card.
+
 - Webmail: a user with additional native mailboxes now sees them under "Your mailboxes" in the sidebar and can read, search, file, draft and send from each, sending from that mailbox's addresses. The choice is kept for the browser tab; a mailbox that is disabled or removed falls back to the primary with a notice. An autosaved unsent message goes back to the mailbox it was written in, and is kept rather than restored elsewhere while that mailbox is unavailable. Settings → Filters says which mailbox Run rules now uses.
 
 - KySignOn confirmation of a sensitive action (export, import, PGP, backup and the rest) now works in real browsers. KyPost's Cross-Origin-Opener-Policy made the sign-in window look closed as soon as it opened KySignOn, so the confirmation was cancelled within a second and the finished sign-in was refused with "restart the action". The page now waits for the sign-in until it is confirmed, cancelled with Cancel, or five minutes pass.
