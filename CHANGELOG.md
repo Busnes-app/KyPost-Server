@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- KySignOn confirmation of a sensitive action (export, import, PGP, backup and the rest) now works in real browsers. KyPost's Cross-Origin-Opener-Policy made the sign-in window look closed as soon as it opened KySignOn, so the confirmation was cancelled within a second and the finished sign-in was refused with "restart the action". The page now waits for the sign-in until it is confirmed, cancelled with Cancel, or five minutes pass.
+
 - A wrong password or two-factor code when confirming a sensitive action (sender blocks, mail addresses, quarantine, mail domain, relay, backup, recovery, export/import, PGP, SSO link) is now refused with 403 and shown on the page. It was a 401, which the web app took for an expired session and silently reloaded the page. Sign-in and password change keep their statuses.
 
 - Native mail: parallel deliveries, sends and account allocations no longer fail with a spurious "mail domain proof missing, expired or changed" error when another request refreshed the same domain proof at the same moment. Only a changed DNS challenge is refused.

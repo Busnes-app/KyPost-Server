@@ -115,3 +115,59 @@ describe("withSSOStepUp", () => {
     expect(deleteJSON).toHaveBeenCalledWith("/api/auth/oidc/step-up/rea_1");
   });
 });
+
+// Under COOP the opener sees the popup as closed once it navigates cross-origin.
+// Real timers: each poll sleeps one second.
+describe("confirmation polling", () => {
+  const button = (label: string) =>
+    vi.waitFor(() => {
+      const found = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((b) => b.textContent === label);
+      if (!found) throw new Error(`${label} not shown`);
+      return found;
+    });
+  async function started() {
+    const popup = fakePopup();
+    Object.defineProperty(popup.location, "href", { set() { popup.closed = true; } });
+    vi.stubGlobal("open", vi.fn(() => popup));
+    postJSON.mockResolvedValue({ authorizeUrl: "https://idp.example/authorize" });
+    const run = vi.fn().mockRejectedValueOnce(refusal()).mockResolvedValueOnce("done");
+    const pending = withSSOStepUp(run);
+    pending.catch(() => undefined);
+    (await button("Continue to KySignOn")).click();
+    await vi.waitFor(() => expect(getJSON).toHaveBeenCalled());
+    // Wrapped: returning the promise itself would make `await started()` wait for it.
+    return { pending };
+  }
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps polling after the popup reads as closed until the server says verified", async () => {
+    getJSON.mockResolvedValueOnce({ verified: false }).mockResolvedValueOnce({ verified: false }).mockResolvedValueOnce({ verified: true });
+    const { pending } = await started();
+    expect(await pending).toBe("done");
+    expect(getJSON).toHaveBeenCalledTimes(3);
+    expect(deleteJSON).not.toHaveBeenCalled();
+  });
+
+  it("drops the challenge when the user cancels while waiting", async () => {
+    getJSON.mockResolvedValue({ verified: false });
+    const { pending } = await started();
+    (await button("Cancel")).click();
+    await expect(pending).rejects.toThrow("confirmation cancelled");
+    expect(deleteJSON).toHaveBeenCalledWith("/api/auth/oidc/step-up/rea_1");
+  });
+
+  it("drops the challenge at the deadline", async () => {
+    const realNow = Date.now.bind(Date);
+    getJSON.mockImplementation(async () => {
+      // The first poll ends past the five-minute window.
+      vi.spyOn(Date, "now").mockImplementation(() => realNow() + 5 * 60_000 + 1);
+      return { verified: false };
+    });
+    const { pending } = await started();
+    await expect(pending).rejects.toThrow("confirmation cancelled or expired");
+    expect(getJSON).toHaveBeenCalledTimes(1);
+    expect(deleteJSON).toHaveBeenCalledWith("/api/auth/oidc/step-up/rea_1");
+  });
+});
