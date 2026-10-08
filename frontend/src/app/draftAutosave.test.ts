@@ -41,7 +41,7 @@ async function load(userId: string): Promise<DraftSnapshot | null> {
 }
 
 function draft(over: Partial<DraftInput> = {}): DraftInput {
-  return { to: "", cc: "", bcc: "", subject: "", body: "", attachments: [], ...over };
+  return { to: "", cc: "", bcc: "", subject: "", body: "", attachments: [], mailbox: "", from: "", ...over };
 }
 
 const USER = "user-1";
@@ -80,6 +80,14 @@ describe("save/load round trip", () => {
     await saveDraftSnapshot(USER, draft({ to: "a@b.test", cc: "c@d.test", bcc: "e@f.test", subject: "Hi", body: "<p>body</p>" }));
     const got = await load(USER);
     expect(got).toMatchObject({ to: "a@b.test", cc: "c@d.test", bcc: "e@f.test", subject: "Hi", body: "<p>body</p>" });
+  });
+
+  it("keeps the mailbox and From it was written in; an older snapshot reads as the primary", async () => {
+    const team = "mbx-11111111-2222-4333-8444-555555555555";
+    await saveDraftSnapshot(USER, draft({ subject: "x", mailbox: team, from: "team@urlxl.us" }));
+    expect(await load(USER)).toMatchObject({ mailbox: team, from: "team@urlxl.us" });
+    window.sessionStorage.setItem(`kypost-compose-draft:${USER}`, JSON.stringify({ version: 2, savedAt: new Date().toISOString(), fields: { subject: "old" } }));
+    expect(await load(USER)).toMatchObject({ subject: "old", mailbox: "", from: "" });
   });
 
   it("stores attachment names but never their bytes", async () => {
@@ -326,13 +334,13 @@ describe("restoreNotice", () => {
   it("names attachments that could not be restored", async () => {
     const snap = (await load(USER)) ?? {
       version: 1, to: "", cc: "", bcc: "", subject: "", body: "",
-      attachmentNames: ["a.pdf", "b.png"], savedAt: ""
+      attachmentNames: ["a.pdf", "b.png"], mailbox: "", from: "", savedAt: ""
     };
     expect(restoreNotice({ ...snap, attachmentNames: ["a.pdf", "b.png"] })).toContain("a.pdf, b.png");
   });
 
   it("stays short when there were none", () => {
-    expect(restoreNotice({ version: 1, to: "", cc: "", bcc: "", subject: "", body: "", attachmentNames: [], savedAt: "" }))
+    expect(restoreNotice({ version: 1, to: "", cc: "", bcc: "", subject: "", body: "", attachmentNames: [], mailbox: "", from: "", savedAt: "" }))
       .toBe("Restored your unsent draft.");
   });
 });

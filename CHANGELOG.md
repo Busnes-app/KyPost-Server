@@ -14,7 +14,7 @@ non-prerelease version.
 
 ## Unreleased
 
-- Webmail: a user with additional native mailboxes now sees them under "Your mailboxes" in the sidebar and can read, search, file, draft and send from each, sending from that mailbox's addresses. The choice is kept for the browser tab; a mailbox that is disabled or removed falls back to the primary with a notice. Settings → Filters says which mailbox Run rules now uses.
+- Webmail: a user with additional native mailboxes now sees them under "Your mailboxes" in the sidebar and can read, search, file, draft and send from each, sending from that mailbox's addresses. The choice is kept for the browser tab; a mailbox that is disabled or removed falls back to the primary with a notice. An autosaved unsent message goes back to the mailbox it was written in, and is kept rather than restored elsewhere while that mailbox is unavailable. Settings → Filters says which mailbox Run rules now uses.
 
 - Native mail: parallel deliveries, sends and account allocations no longer fail with a spurious "mail domain proof missing, expired or changed" error when another request refreshed the same domain proof at the same moment. Only a changed DNS challenge is refused.
 

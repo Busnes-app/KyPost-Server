@@ -4375,6 +4375,10 @@ pre {
     display: none;
   }
 
+  .sidebar-section-label.mailbox-switcher-label {
+    display: block;
+  }
+
   .inbox-nav-row,
   .sidebar-folder-row[data-folder-kind="inbox"],
   .sidebar-folder-row[data-folder-kind="draft"],

@@ -91,6 +91,8 @@ export function App() {
   const [mailboxNotice, setMailboxNotice] = useState("");
   // Compose stays on the mailbox it was opened in, whatever happens to the selection.
   const [composeMailbox, setComposeMailbox] = useState("");
+  // Folder URLs name their mailbox, so one replayed after a switch is recognised (ReadPage).
+  const boxQuery = selectedMailbox ? `&box=${selectedMailbox}` : "";
   const [mailboxFolders, setMailboxFolders] = useState<InboxFolder[]>([]);
   const [mailboxFoldersLoading, setMailboxFoldersLoading] = useState(false);
   const [inboxCreateOpen, setInboxCreateOpen] = useState(false);
@@ -125,6 +127,8 @@ export function App() {
   const [composeUnlockOpen, setComposeUnlockOpen] = useState(false);
   /** A sealed snapshot was found while the vault was locked; restore on unlock. */
   const composeSnapshotPending = useRef(false);
+  // Set while this compose window leaves another mailbox's snapshot in place; autosave must not replace it.
+  const composeSnapshotKept = useRef(false);
   // Opt-in: send keyless recipients a one-time pickup link rather than
   // failing the send. Off by default because it is weaker than PGP. For
   // client-custody accounts this drives a browser-side sealed-pickup flow;
@@ -397,14 +401,15 @@ export function App() {
       return;
     }
     setMailboxFoldersLoading(true);
+    // An answer for a mailbox no longer selected changes nothing.
+    const box = selectedMailboxId();
     try {
-      const box = selectedMailboxId();
       const data = await getJSON<InboxFoldersResponse>("/api/inbox/folders");
       if (box === selectedMailboxId()) setMailboxFolders(data.folders ?? []);
     } catch {
-      setMailboxFolders([]);
+      if (box === selectedMailboxId()) setMailboxFolders([]);
     } finally {
-      setMailboxFoldersLoading(false);
+      if (box === selectedMailboxId()) setMailboxFoldersLoading(false);
     }
   }
 
@@ -439,14 +444,15 @@ export function App() {
       return;
     }
     setArchiveFoldersLoading(true);
+    // An answer for a mailbox no longer selected changes nothing.
+    const box = selectedMailboxId();
     try {
-      const box = selectedMailboxId();
       const data = await getJSON<InboxFoldersResponse>("/api/inbox/folders?parent=Archive");
       if (box === selectedMailboxId()) setArchiveFolders(data.folders ?? []);
     } catch {
-      setArchiveFolders([]);
+      if (box === selectedMailboxId()) setArchiveFolders([]);
     } finally {
-      setArchiveFoldersLoading(false);
+      if (box === selectedMailboxId()) setArchiveFoldersLoading(false);
     }
   }
 
@@ -495,7 +501,7 @@ export function App() {
       });
       const params = new URLSearchParams(location.search);
       if (location.pathname === "/read" && params.get("mailbox") === folder.path) {
-        navigate(`/read?mailbox=${encodeURIComponent(response.renamed)}`, { replace: true });
+        navigate(`/read?mailbox=${encodeURIComponent(response.renamed)}${boxQuery}`, { replace: true });
       }
       await loadMailboxFolders();
     } catch (e) {
@@ -680,7 +686,7 @@ export function App() {
   // the last keystrokes may not have reached React state yet — which is
   // precisely the moment this exists for.
   useEffect(() => {
-    if (!composeOpen || !auth?.userId) {
+    if (!composeOpen || !auth?.userId || composeSnapshotKept.current) {
       return;
     }
     const userId = auth.userId;
@@ -691,11 +697,13 @@ export function App() {
         bcc: serializeRecipientField(composeBcc),
         subject: composeSubject,
         body: quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody,
-        attachments: composeAttachments
+        attachments: composeAttachments,
+        mailbox: composeMailbox,
+        from: composeFrom
       });
     }, 1000);
     return () => clearTimeout(timer);
-  }, [composeOpen, auth?.userId, composeTo, composeCc, composeBcc, composeSubject, composeHtmlBody, composeAttachments]);
+  }, [composeOpen, auth?.userId, composeTo, composeCc, composeBcc, composeSubject, composeHtmlBody, composeAttachments, composeMailbox, composeFrom]);
 
   // discardComposeDraft clears both the form and the autosaved snapshot. Used
   // wherever the work is finished or deliberately abandoned; closing the
@@ -711,13 +719,18 @@ export function App() {
   const composeFromChoices = mailboxOf(composeMailbox)?.addresses ?? [];
 
   /** Pins compose to the selected mailbox, sending from its primary address. */
-  function pinComposeMailbox() {
-    const id = selectedMailboxId();
+  function pinComposeMailbox(id = selectedMailboxId()) {
     setComposeMailbox(id);
     setComposeFrom(mailboxOf(id)?.addresses[0] ?? "");
   }
 
+  // Compose opened before the list arrived has no From yet.
+  useEffect(() => {
+    if (composeOpen && !composeFrom) setComposeFrom(mailboxOf(composeMailbox)?.addresses[0] ?? "");
+  }, [mailboxes]);
+
   function openComposeWindow() {
+    composeSnapshotKept.current = false;
     resetComposeForm();
     pinComposeMailbox();
     setComposeError("");
@@ -734,6 +747,8 @@ export function App() {
   /** The From the browser-encrypted paths put on the wire: the chosen
    *  send-as alias, else the account address the bootstrap reported. */
   function clientSenderAddress(): string {
+    // The account address is the primary's; an extra mailbox must name its own.
+    if (composeMailbox && !composeFrom) throw new Error("Choose a From address for this mailbox.");
     return composeFrom || accountAddress();
   }
 
@@ -771,19 +786,29 @@ export function App() {
     }
     composeSnapshotPending.current = false;
     if (snapshot && composeIsBlank()) {
+      // A draft goes back to the mailbox it was written in, or stays stored until that mailbox is back.
+      const box = mailboxOf(snapshot.mailbox);
+      if (snapshot.mailbox && !box) {
+        composeSnapshotKept.current = true;
+        setComposeNotice(`An unsent draft from ${snapshot.from || "another mailbox"} is kept for when that mailbox is available again; this message is not saved automatically.`);
+        return;
+      }
+      pinComposeMailbox(snapshot.mailbox);
+      if (box) setComposeFrom(box.addresses.includes(snapshot.from) ? snapshot.from : box.addresses[0] ?? "");
       setComposeTo(parseRecipientField(snapshot.to));
       setComposeCc(parseRecipientField(snapshot.cc));
       setComposeBcc(parseRecipientField(snapshot.bcc));
       setComposeSubject(snapshot.subject);
       setComposeHtmlBody(snapshot.body);
-      setComposeNotice(restoreNotice(snapshot));
+      setComposeNotice(snapshot.mailbox === selectedMailboxId() || !box ? restoreNotice(snapshot) : `${restoreNotice(snapshot)} It was written in ${mailboxName(box)} and sends from there.`);
     }
   }
 
   function openDraftInCompose(payload: DraftComposePayload) {
+    composeSnapshotKept.current = false;
     composeSignOverridden.current = false;
     setComposeSign(isClientProtected() && isUnlocked());
-    pinComposeMailbox();
+    pinComposeMailbox(payload.mailbox);
     setComposeTo(parseRecipientField(payload.sentTo ?? ""));
     setComposeCc(parseRecipientField(payload.cc ?? ""));
     setComposeBcc(parseRecipientField(payload.bcc ?? ""));
@@ -1377,7 +1402,7 @@ export function App() {
           ) : null}
           {mailboxes.length > 1 ? (
             <div role="group" aria-labelledby="mailbox-switcher-label">
-              <p className="sidebar-section-label" id="mailbox-switcher-label">Your mailboxes</p>
+              <p className="sidebar-section-label mailbox-switcher-label" id="mailbox-switcher-label">Your mailboxes</p>
               {mailboxes.map((m) => {
                 const id = m.kind === "primary" ? "" : m.id;
                 const current = id === selectedMailbox;
@@ -1401,10 +1426,10 @@ export function App() {
           <p className="sidebar-section-label">Mailboxes</p>
           <div className="mobile-quick-nav" aria-label="Mobile mailboxes">
             <Link className={onReadPage && currentMailbox === "" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read">Inbox</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "drafts" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Drafts">Drafts</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "junk" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Junk">Junk</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "sent" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Sent">Sent</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "trash" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Trash">Trash</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "drafts" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Drafts${boxQuery}`}>Drafts</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "junk" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Junk${boxQuery}`}>Junk</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "sent" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Sent${boxQuery}`}>Sent</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "trash" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Trash${boxQuery}`}>Trash</Link>
             <button
               type="button"
               className="mobile-settings-toggle"
@@ -1470,7 +1495,7 @@ export function App() {
               ? mailboxFolders.map((folder) => (
                   <div key={folder.path} className="sidebar-folder-row" data-folder-kind={standardMailboxKey(folder.path)}>
                     <Link
-                      to={`/read?mailbox=${encodeURIComponent(folder.path)}`}
+                      to={`/read?mailbox=${encodeURIComponent(folder.path)}${boxQuery}`}
                       className={[
                         dragOverFolder === folder.path ? "drop-target-active" : "",
                         onReadPage && currentMailbox.toLowerCase() === folder.path.toLowerCase() ? "ky-nav-item sidebar-link-active" : "ky-nav-item"
@@ -1539,7 +1564,7 @@ export function App() {
                 ? archiveFolders.map((folder) => (
                     <Link
                       key={folder.path}
-                      to={`/read?mailbox=${encodeURIComponent(folder.path)}`}
+                      to={`/read?mailbox=${encodeURIComponent(folder.path)}${boxQuery}`}
                       className={[
                         dragOverFolder === folder.path ? "drop-target-active" : "",
                         onReadPage && currentMailbox.toLowerCase() === folder.path.toLowerCase() ? "ky-nav-item sidebar-link-active" : "ky-nav-item"
@@ -1615,7 +1640,12 @@ export function App() {
         {/* One boundary for every lazy page. The fallback is deliberately
             quiet: the chunks are same-origin and small, and a spinner that
             flashes for 30 ms is worse than nothing. */}
-        {mailboxNotice ? <p className="notice notice-warning" role="alert">{mailboxNotice}</p> : null}
+        {mailboxNotice && onReadPage ? (
+          <p className="notice notice-warning" role="alert">
+            {mailboxNotice}{" "}
+            <button type="button" className="nav-link-button" onClick={() => setMailboxNotice("")}>Dismiss</button>
+          </p>
+        ) : null}
         <Suspense fallback={<p>Loading&hellip;</p>}>
         <Routes>
             <Route path="/" element={<Navigate to={auth.authenticated ? "/read" : "/login"} replace />} />
