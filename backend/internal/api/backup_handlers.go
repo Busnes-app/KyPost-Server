@@ -14,10 +14,25 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/backup"
 )
 
-// depositBudget bounds one run: the library's upload budget is 15 minutes,
-// plus snapshotting. Runs on context.WithoutCancel so a closed browser tab
-// does not abandon a half-uploaded capsule.
+// depositBudget is how long shutdown drains detached backups: the library's
+// upload budget is 15 minutes, plus snapshotting. A run itself gets
+// backup.RunBudget, which grows with bulk mail; shutdown abandons a run still
+// going after the drain, and the next run sweeps its scratch.
 const depositBudget = 16 * time.Minute
+
+// detachedBackup runs one backup operation on context.WithoutCancel, so a closed
+// browser tab does not abandon a half-uploaded capsule or a long drill, bounded
+// by the run budget and tracked by the shutdown drain.
+func (s *Server) detachedBackup(w http.ResponseWriter, r *http.Request) (context.Context, func(), bool) {
+	if !s.beginBackupRun() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "server is shutting down; retry the backup after restart"})
+		return nil, nil, false
+	}
+	budget := s.backup.RunBudget()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), budget)
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(budget))
+	return ctx, func() { cancel(); s.backupRuns.Done() }, true
+}
 
 type backupCredential struct {
 	Password   string `json:"password"`
@@ -114,14 +129,11 @@ func (s *Server) handleBackupRun(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.beginBackupRun() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "server is shutting down; retry the backup after restart"})
+	ctx, done, ok := s.detachedBackup(w, r)
+	if !ok {
 		return
 	}
-	defer s.backupRuns.Done()
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), depositBudget)
-	defer cancel()
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(depositBudget))
+	defer done()
 	res, err := s.backup.Run(ctx)
 	action, outcome, details := recoveryclient.Outcome(res, err)
 	if !s.backupAudit(w, action, actor, res.Manifest.CapsuleID, outcome, details) {
@@ -147,7 +159,12 @@ func (s *Server) handleBackupDrill(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := s.backup.Drill(r.Context())
+	ctx, done, ok := s.detachedBackup(w, r)
+	if !ok {
+		return
+	}
+	defer done()
+	res, err := s.backup.Drill(ctx)
 	outcome := "success"
 	details := map[string]any{}
 	if err != nil {
@@ -173,7 +190,12 @@ func (s *Server) handleBackupExport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	raw, manifest, err := s.backup.Export(r.Context())
+	ctx, done, ok := s.detachedBackup(w, r)
+	if !ok {
+		return
+	}
+	defer done()
+	raw, manifest, err := s.backup.Export(ctx)
 	if err != nil {
 		if !s.backupAudit(w, "admin.backup_export", actor, "", "failure", map[string]any{"error": recoveryclient.AuditSafe(err.Error())}) {
 			return

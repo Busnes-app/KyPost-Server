@@ -23,6 +23,8 @@ type Status = {
   nextRun?: string;
   excluded: string;
   allowPrivateRecovery: boolean;
+  bulkRepository?: string;
+  lastBulk?: { snapshot: string; at: string; sizeBytes: number };
   lastReceipt?: { capsule_id: string; digest: string; deposited_at: string };
   localCopies: { name: string; size_bytes: number }[];
   recent: {
@@ -198,6 +200,15 @@ export function Backup() {
           {status?.intervalSec
             ? `Every ${status.intervalSec / 60} minutes`
             : "Off"}
+        </p>
+        <p>
+          <strong>Mail databases</strong>
+          <br />
+          {!status?.bulkRepository
+            ? "Inside the capsule (64 MiB per file, 256 MiB total)"
+            : status.lastBulk
+              ? `Restic snapshot ${status.lastBulk.snapshot.slice(0, 12)}, ${status.lastBulk.at}, ${status.lastBulk.sizeBytes} bytes`
+              : `Restic at ${status.bulkRepository}; no snapshot yet`}
         </p>
       </div>
       {status?.keyProblem && <p role="alert">{status.keyProblem}</p>}

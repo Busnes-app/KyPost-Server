@@ -62,9 +62,11 @@ LABEL org.opencontainers.image.source="https://github.com/Busnes-app/KyPost-Serv
 # deliberate exception: pinning package versions here would freeze the runtime
 # on the CVEs the digest above was built with, and this image parses hostile
 # MIME, vCards and OpenPGP packets for a living. The digest fixes the base; apt
-# is what keeps it patched. Rebuild to pick up fixes.
+# is what keeps it patched. Rebuild to pick up fixes. restic (mail bulk backups,
+# KYPOST_BULK_BACKUP_REPOSITORY) comes from the same step for the same reason:
+# it reads every mail database and should get Debian's security fixes.
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends supervisor tzdata curl ca-certificates zstd liblzma5 tar util-linux \
+	&& apt-get install -y --no-install-recommends supervisor tzdata curl ca-certificates zstd liblzma5 tar util-linux restic \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& useradd -m -s /bin/bash kypost
 

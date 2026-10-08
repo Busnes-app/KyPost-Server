@@ -59,6 +59,8 @@ type Service struct {
 	client   *recoveryclient.Client
 	version  string
 	logger   *kylog.Logger
+	// collectedBulk is the bulk snapshot of the payload being sealed, under the lock.
+	collectedBulk *BulkSnapshot
 }
 
 // New binds the data roots. Existing keys are loaded at operation time, so a
@@ -100,12 +102,54 @@ func New(d Dirs, bc config.BackupConfig, store *state.Store, appVersion string) 
 			}
 		}
 	}
+	if repo := bc.BulkRepository; repo != "" && !strings.HasPrefix(repo, "rest:") {
+		for _, other := range []string{d.Config, d.State, d.Secret, bc.Dir, bc.ScratchDir} {
+			if other != "" && overlaps(repo, other) {
+				return nil, errors.New("KYPOST_BULK_BACKUP_REPOSITORY must be outside every data root, the local backup directory and the scratch directory")
+			}
+		}
+	}
+	if dir := bc.ScratchDir; dir != "" {
+		for _, other := range []string{d.Config, d.State, d.Secret, bc.Dir} {
+			if other != "" && overlaps(dir, other) {
+				return nil, errors.New("KYPOST_BACKUP_SCRATCH_DIR must be outside every data root and the local backup directory")
+			}
+		}
+	}
 
 	return &Service{
 		dirs: d, cfg: bc, store: store, settings: settings{store}, logger: logger,
 		client:  recoveryclient.NewClient(recoveryclient.Options{AllowPrivate: bc.AllowPrivateRecovery}),
 		version: appVersion,
 	}, nil
+}
+
+// within reports whether path is root or below it.
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// overlaps reports whether either path is inside the other, by name or by file
+// identity, so symlinks and bind-mounted aliases of a data root count too.
+func overlaps(a, b string) bool {
+	return within(a, b) || within(b, a) || sameAncestor(a, b) || sameAncestor(b, a)
+}
+
+// sameAncestor reports whether p, or a directory above it, is the file root.
+func sameAncestor(p, root string) bool {
+	ri, err := os.Stat(root)
+	if err != nil {
+		return false
+	}
+	for ; ; p = filepath.Dir(p) {
+		if pi, err := os.Stat(p); err == nil && os.SameFile(pi, ri) {
+			return true
+		}
+		if p == filepath.Dir(p) {
+			return false
+		}
+	}
 }
 
 // AllowPrivate reports the KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY switch, for the
@@ -139,7 +183,11 @@ func (s *Service) Run(ctx context.Context) (recoveryclient.Result, error) {
 	if _, err = s.loadKey(); err != nil {
 		return recoveryclient.Result{}, err
 	}
-	return recoveryclient.Run(ctx, s.runConfig(sealer), s.settings, func() (recoveryclient.Payload, error) { return s.collect(ctx) }, s.client)
+	res, err := recoveryclient.Run(ctx, s.runConfig(sealer), s.settings, func() (recoveryclient.Payload, error) { return s.collect(ctx) }, s.client)
+	if res.LocalPath != "" || res.Receipt != nil {
+		s.recordBulk()
+	}
+	return res, err
 }
 
 // Export seals once for download; nothing is delivered and nothing is stamped.
@@ -258,6 +306,8 @@ type Status struct {
 	NextRun       string                     `json:"nextRun,omitempty"`
 	AllowPrivate  bool                       `json:"allowPrivateRecovery"`
 	Excluded      string                     `json:"excluded"`
+	BulkRepo      string                     `json:"bulkRepository,omitempty"`
+	LastBulk      *BulkSnapshot              `json:"lastBulk,omitempty"`
 	Recent        []state.BackupAudit        `json:"recent"`
 }
 
@@ -267,7 +317,10 @@ func (s *Service) Status() (Status, error) {
 		return Status{}, err
 	}
 	defer release()
-	st := Status{LocalDir: s.cfg.Dir, AllowPrivate: s.cfg.AllowPrivateRecovery, Excluded: ErrMailExcluded, LocalCopies: []recoveryclient.LocalCopy{}}
+	st := Status{LocalDir: s.cfg.Dir, AllowPrivate: s.cfg.AllowPrivateRecovery, Excluded: ErrMailExcluded, LocalCopies: []recoveryclient.LocalCopy{}, BulkRepo: redactRepository(s.cfg.BulkRepository)}
+	if st.LastBulk, err = s.lastBulk(); err != nil {
+		return st, err
+	}
 	key, err := s.loadKey()
 	switch {
 	case err == nil:

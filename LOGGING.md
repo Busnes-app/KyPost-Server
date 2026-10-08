@@ -41,7 +41,10 @@ when automatic blocks fill their share) with the delivery ID as correlation, and
 with result `suppression-failed`. A damaged evidence file logs an error,
 action `reset`, result `damaged-file-set-aside`. A backup that leaves out a bad
 evidence file logs `backup skipped sender evidence` (result `skipped-malformed`
-or `skipped-oversized`). None carries an address or message content.
+or `skipped-oversized`). A delivered bulk backup whose snapshot could not be
+recorded for the Backup screen logs `backup bulk status not recorded` (warning,
+action `record_bulk`, result `failure`). Restic failures in backup errors, audit
+rows and API responses carry only a fixed diagnostic, never restic's output. None carries an address or message content.
 An unreadable block list logs `cloudflare sender blocks unreadable` (error,
 result `previous-blocks-kept`) on every publish attempt until repaired; blocks
 left out of a full table log `cloudflare sender blocks truncated` (result

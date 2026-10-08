@@ -46,7 +46,8 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
 - Install-wide and per-user state.db snapshots including committed WAL rows,
   address books and other persistent state. Native-device secrets are in the
   per-user databases. Capsules retain historical device/subscription evidence, but native restore revokes those registrations before publication. Pending encrypted pickup messages are included.
-- Internal mailbox.db and ingress.db snapshots inside the collected roots,
+- Internal mailbox.db and ingress.db snapshots inside the collected roots (or,
+  with `KYPOST_BULK_BACKUP_REPOSITORY`, the [bulk manifest](#mail-bulk-backup) naming them),
   including committed WAL rows and exact stored MIME/receipt data. Mailbox snapshots also preserve encrypted outbox intent, claims and Sent receipts; nonempty queues require the matching relay profile/key and additive verification recipe. Native
   reception and provisioning are opt-in qualification paths; public reception remains unavailable.
 
@@ -76,8 +77,9 @@ orphan databases and foreign ownership fail closed. Outbox checks decrypt frozen
 collected/restored roots, never the original absolute ledger path. It does not
 prove current external authority or freshness; consistent old backups can pass.
 Native validation needs additional scratch space for the collected metadata and
-databases. The 64 MiB per-file and 256 MiB total limits remain activation gates
-for a domain-sized mail store; oversized backups fail rather than omit mail. The limit applies to the consistent snapshot, including committed WAL rows, not just the main database file size. A small main file is therefore insufficient to predict whether a backup will fit. Automated mailbox/receiving capacity checks verify refusal without a local capsule or scratch leftovers and preservation of original committed probe data; they do not qualify domain-sized mail throughput.
+databases. Without `KYPOST_BULK_BACKUP_REPOSITORY` the 64 MiB per-file and 256 MiB total
+limits apply to mail databases too; oversized backups fail, naming that variable,
+rather than omit mail. The limit applies to the consistent snapshot, including committed WAL rows, not just the main database file size. A small main file is therefore insufficient to predict whether a backup will fit. Automated mailbox/receiving capacity checks verify refusal without a local capsule or scratch leftovers and preservation of original committed probe data; they do not qualify domain-sized mail throughput.
 
 Capsules carry the native domain set `native-domains.json` and the
 `native-domain.json` tombstone, never the `*.v1-migrated` copies. Validation and
@@ -142,6 +144,103 @@ relay keys and CAPTCHA credentials), DNS/network settings, and TLS mounts are no
 captured. Restore them before startup. Client-protected PGP still requires its
 owner's password/recovery material; a capsule does not bypass that protection.
 
+## Mail bulk backup
+
+Set `KYPOST_BULK_BACKUP_REPOSITORY` and every `mailbox.db` and
+`receiving/ingress.db` goes to a restic repository (restic 0.16.0 or newer; the
+image ships Debian's) instead of the capsule; the rest is sealed as before. Two
+forms are accepted:
+
+- `rest:https://user:password@host/path`, an append-only
+  [rest-server](https://github.com/restic/rest-server) (`--append-only`, its own
+  credentials). **Recommended.** A local repository is writable by KyPost, so a
+  compromised container could delete snapshots; KyRecovery, by contrast, only
+  accepts deposits. HTTPS is required; a query or fragment is refused. The URL
+  reaches restic only in its environment; the Backup screen shows scheme, host
+  and path with credentials masked. Restic failures are reported as a fixed
+  diagnostic (wrong password, no repository, snapshot missing, unreachable…),
+  never restic's own text, which can repeat the address or name mail files; run
+  restic by hand for details.
+- An absolute container path outside CONFIG_DIR, SECRET_DIR, STATE_DIR,
+  `KYPOST_BACKUP_DIR` and `KYPOST_BACKUP_SCRATCH_DIR`, compared by path and by file
+  identity, so a symlink or bind-mount alias of a data root is refused. Compose:
+  mount a host directory at `/kypost-bulk`, owned by the container's `kypost`
+  user, ideally on another disk. A path that is not a mount lives in the
+  container's writable layer and disappears with the container; KyPost cannot
+  detect that, so check `docker inspect` mounts.
+
+- **Key and identity.** The first backup, with no key and an empty or absent
+  repository, creates `private/bulk-backup.key`, runs `restic init` and records
+  the repository ID in `private/bulk-backup.repo`. Both are sealed in every
+  capsule. The restic password is the hex of the key, given to restic only in a
+  minimal environment (PATH, HOME, TMPDIR, LANG). It is a dedicated key so the
+  repository never depends on keys with other jobs: rotating or losing
+  `totp-secret.key` must not strand mail. Refused, never re-keyed: an existing
+  repository without the key; a key beside an empty directory (an unmounted
+  mountpoint: a repository existed, mount it); a repository whose ID is not the
+  recorded one; a non-empty directory that is not a repository.
+- **Backup.** At the start of every run, under the backup lock, scratch left by a
+  killed backup, drill or restore is deleted: it holds plaintext mail. Free space
+  is checked first: the scratch filesystem must hold the mail databases and their
+  WAL files and still keep 10% or 5 GiB free, whichever is larger; the error
+  names the shortfall. `ingress.db` is snapshotted first, then each `mailbox.db`,
+  streamed to `STATE_DIR/backup-scratch/bulk`, or to
+  `KYPOST_BACKUP_SCRATCH_DIR/kypost-backup-scratch` (absolute, outside the data
+  roots, the backup directory and the repository) when STATE_DIR is short of
+  space. After the payload validates, one `restic backup --host kypost --tag
+  kypost-mail` stores them from that fixed path, so runs form one series and
+  restic reuses the previous snapshot. The capsule seals `state/mail-bulk.json`
+  with the full snapshot ID and each file's path, SHA-256 and size, and its
+  recipe declares the bulk snapshot. Any restic failure fails the whole backup.
+  Server → Backup shows the snapshot of the last capsule that reached a
+  destination; drills and exports do not change it.
+- **Time.** A run, drill or export may take 16 minutes plus 10 minutes and a
+  minute per 2 GiB of mail databases, at most 4 hours more. Shutdown still drains
+  backups for only 16 minutes (the supervisor budget below): a run still going
+  then is abandoned, leaves no capsule, and the next run sweeps its scratch. A
+  reverse proxy in front of the Backup screen needs a matching response timeout,
+  or use the CLI (`kypost-server deposit`, `backup-drill`).
+- **Drills** restore the snapshot into drill scratch, re-hash it and run the
+  usual database checks, so a drill reads all mail once.
+- **Retention.** Nothing is pruned automatically. A capsule's snapshot ID cannot
+  be read without opening it, so keep every snapshot newer than your oldest
+  retained capsule (KyRecovery and local copies) plus a day. With an append-only
+  rest-server, prune from the server side with its unrestricted credentials. For
+  a local repository, with services stopped:
+
+  ```sh
+  restic -r /srv/kypost-restic \
+    --password-command "sh -c 'base64 -d /path/to/private/bulk-backup.key | od -An -v -tx1 | tr -d \"[:space:]\"'" \
+    forget --host kypost --tag kypost-mail --keep-within 400d --prune
+  ```
+
+  where 400d exceeds that age. `--password-command` reads the key file on each
+  run; do not paste the derived password into a shell, history or
+  `RESTIC_PASSWORD`. `--keep-last` and similar policies work too;
+  automated tests check that `forget --keep-last 1` removes older runs.
+
+Restore needs the same repository: the restore command reads
+`KYPOST_BULK_BACKUP_REPOSITORY` (and `KYPOST_RESTIC_BINARY`, default `restic`). A
+capsule whose recipe declares a bulk snapshot is refused before shares are read
+when the variable is unset. After the capsule opens, restore checks the
+repository ID against the sealed one, restores exactly the sealed snapshot with
+`restic --no-lock restore --verify` into private scratch, re-hashes every file,
+refuses missing, extra or mismatched files, trailing manifest data and a capsule
+that already holds a mail database, and only then places them before ownership
+validation and quarantine. A capsule naming a snapshot the repository lacks
+fails; a capsule is never combined with another snapshot. `--no-lock` lets the
+repository be mounted read-only:
+
+```sh
+docker run --rm -i --user "$(id -u):$(id -g)" \
+  -v "$PWD:/restore" -v /srv/kypost-restic:/kypost-bulk:ro \
+  -e KYPOST_BULK_BACKUP_REPOSITORY=/kypost-bulk \
+  "${KYPOST_RESTORE_IMAGE:?set the recorded image digest reference}" \
+  /usr/local/bin/kypost-server restore /restore/backup.kycap /restore/recovered
+```
+
+Do not prune while a restore reads the repository.
+
 ## Offline restore and native quarantine
 
 1. Stop the deployment and retain its existing volumes. Take a separate copy before
@@ -157,7 +256,8 @@ owner's password/recovery material; a capsule does not bypass that protection.
    ```
 
    Enter at least k custodian shares on stdin, one per line, then EOF (Ctrl-D).
-   Never put shares in argv, chat or shared notes. Docker has no ENTRYPOINT; name
+   Never put shares in argv, chat or shared notes. A capsule with a
+   [mail bulk manifest](#mail-bulk-backup) also needs its restic repository. Docker has no ENTRYPOINT; name
    the executable explicitly, use `-i` for stdin and mount a writable staging root.
    Set `KYPOST_RESTORE_IMAGE` to the recorded compatible image digest reference
    (`ghcr.io/busnes-app/kypost-server@sha256:…`), then run:

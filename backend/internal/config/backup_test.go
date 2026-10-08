@@ -1,13 +1,14 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
 
 func clearBackupEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"KYPOST_BACKUP_DEPOSIT_INTERVAL", "KYPOST_BACKUP_DIR", "KYPOST_BACKUP_KEEP", "KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY"} {
+	for _, k := range []string{"KYPOST_BACKUP_DEPOSIT_INTERVAL", "KYPOST_BACKUP_DIR", "KYPOST_BACKUP_KEEP", "KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY", "KYPOST_BULK_BACKUP_REPOSITORY", "KYPOST_RESTIC_BINARY", "KYPOST_BACKUP_SCRATCH_DIR"} {
 		t.Setenv(k, "")
 	}
 }
@@ -18,7 +19,7 @@ func TestLoadBackupConfigDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.DepositInterval != 24*time.Hour || c.Dir != "" || c.Keep != 7 || c.AllowPrivateRecovery {
+	if c.DepositInterval != 24*time.Hour || c.Dir != "" || c.Keep != 7 || c.AllowPrivateRecovery || c.BulkRepository != "" || c.ResticBinary != "restic" {
 		t.Fatalf("defaults wrong: %+v", c)
 	}
 }
@@ -30,6 +31,12 @@ func TestLoadBackupConfigRejectsBadValues(t *testing.T) {
 		"interval not a duration": {"KYPOST_BACKUP_DEPOSIT_INTERVAL", "daily"},
 		"relative dir":            {"KYPOST_BACKUP_DIR", "backups"},
 		"keep zero":               {"KYPOST_BACKUP_KEEP", "0"},
+		"relative bulk repo":      {"KYPOST_BULK_BACKUP_REPOSITORY", "restic-repo"},
+		"plain-http rest repo":    {"KYPOST_BULK_BACKUP_REPOSITORY", "rest:http://user:pw@nas:8000/kypost"},
+		"relative scratch":        {"KYPOST_BACKUP_SCRATCH_DIR", "scratch"},
+		"rest repo query":         {"KYPOST_BULK_BACKUP_REPOSITORY", "rest:https://nas/kypost?token=secret"},
+		"rest repo fragment":      {"KYPOST_BULK_BACKUP_REPOSITORY", "rest:https://nas/kypost#secret"},
+		"unparseable rest repo":   {"KYPOST_BULK_BACKUP_REPOSITORY", "rest:https://u:p%zz@nas/kypost"},
 	}
 	for name, kv := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -54,5 +61,18 @@ func TestLoadBackupConfigAcceptsOffAndPrivate(t *testing.T) {
 	}
 	if c.DepositInterval != 0 || c.Keep != 3 || !c.AllowPrivateRecovery {
 		t.Fatalf("got %+v", c)
+	}
+}
+
+func TestLoadBackupConfigAcceptsRestRepository(t *testing.T) {
+	clearBackupEnv(t)
+	t.Setenv("KYPOST_BULK_BACKUP_REPOSITORY", "rest:https://kypost:secret@backup.example:8000/kypost")
+	c, err := LoadBackupConfig()
+	if err != nil || c.BulkRepository != "rest:https://kypost:secret@backup.example:8000/kypost" {
+		t.Fatal(c.BulkRepository, err)
+	}
+	t.Setenv("KYPOST_BULK_BACKUP_REPOSITORY", "rest:http://kypost:secret@backup.example/kypost")
+	if _, err := LoadBackupConfig(); err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatal("plain HTTP accepted or credentials echoed", err)
 	}
 }

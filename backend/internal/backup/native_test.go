@@ -290,7 +290,7 @@ func TestNativeBackupRefusesOversizedWALSnapshot(t *testing.T) {
 				t.Fatal("fixture requires oversized committed WAL", err)
 			}
 			result, err := s.Run(context.Background())
-			if err == nil || !strings.Contains(err.Error(), filepath.ToSlash(rel)) || !strings.Contains(err.Error(), "64 MiB") || result.LocalPath != "" {
+			if err == nil || !strings.Contains(err.Error(), filepath.ToSlash(rel)) || !strings.Contains(err.Error(), "64 MiB") || !strings.Contains(err.Error(), "KYPOST_BULK_BACKUP_REPOSITORY") || result.LocalPath != "" {
 				t.Fatalf("oversized snapshot must fail without a capsule: %+v %v", result, err)
 			}
 			for _, dir := range []string{s.cfg.Dir, filepath.Join(s.dirs.State, scratchDirName)} {
