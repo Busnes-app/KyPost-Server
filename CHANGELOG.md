@@ -16,6 +16,8 @@ non-prerelease version.
 
 - Import Mail and Export Mail moved from Settings → Mail to Security, behind its page re-authentication; each import and export still asks for its own confirmation. Export refusals now return to `/settings/security?tab=export`.
 
+- The KySignOn "Confirm it is you" dialog uses the app's modal frame instead of an unstyled browser dialog; it and the PGP unlock dialog stay a card on phones instead of filling the screen.
+
 - Webmail layout: "Your mailboxes" in the sidebar lists one mailbox per row like the folders below it (a scrolling row on phones), and the radio buttons and folder checkboxes in Export Mail and Import Mail sit beside their text instead of above it.
 
 - Webmail: a user with additional native mailboxes now sees them under "Your mailboxes" in the sidebar and can read, search, file, draft and send from each, sending from that mailbox's addresses. The choice is kept for the browser tab; a mailbox that is disabled or removed falls back to the primary with a notice. An autosaved unsent message goes back to the mailbox it was written in, and is kept rather than restored elsewhere while that mailbox is unavailable. Settings → Filters says which mailbox Run rules now uses.

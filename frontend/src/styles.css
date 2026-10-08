@@ -4138,6 +4138,11 @@ pre {
   display: none;
 }
 
+/* A short confirmation: narrower, and a floating card even on phones. */
+.rules-help-window.rules-help-compact {
+  width: min(460px, 94vw);
+}
+
 .rules-help-window {
   width: min(760px, 94vw);
   max-height: 88vh;
@@ -4607,6 +4612,18 @@ pre {
     border-radius: 0;
     border: 0;
     box-shadow: none;
+  }
+
+  .rules-help-backdrop:has(.rules-help-compact) {
+    padding: 12px;
+  }
+
+  .rules-help-window.rules-help-compact {
+    width: 100%;
+    height: auto;
+    max-height: calc(100dvh - 24px);
+    border: 1px solid var(--line);
+    border-radius: 14px;
   }
 
   .email-reader-head {
