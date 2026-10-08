@@ -226,7 +226,7 @@ func (s *LifecycleStore) CompleteNativeRecoveryRepairHeld(ctx context.Context, r
 	if err != nil {
 		return err
 	}
-	if journal, authority := s.nativeRecoveryRepairReasons(f, root, current, revisions, key, accounts, false, time.Now().UTC()); len(journal)+len(authority) != 0 {
+	if journal, authority := s.openRepairReasons(f, root, current, revisions, key, accounts, time.Now().UTC()); len(journal)+len(authority) != 0 {
 		return ErrNativeRecovery
 	}
 	repair := f.RecoveryRepair
@@ -242,10 +242,19 @@ func (s *LifecycleStore) CompleteNativeRecoveryRepairHeld(ctx context.Context, r
 	return fsutil.PersistJSONFile(s.path, f)
 }
 
-// nativeRecoveryRepairReasons is the one repair-journal check, shared by
-// completion (open journal) and release status (completed journal). journal
-// reasons are release precondition P1, authority reasons P2.
-func (s *LifecycleStore) nativeRecoveryRepairReasons(f lifecycleFile, root string, current NativeRecoveryChallenge, revisions map[string]int64, key []byte, accounts []users.User, completed bool, now time.Time) (journal, authority []string) {
+// openRepairReasons gates completion: the journal must not be completed yet.
+func (s *LifecycleStore) openRepairReasons(f lifecycleFile, root string, current NativeRecoveryChallenge, revisions map[string]int64, key []byte, accounts []users.User, now time.Time) (journal, authority []string) {
+	return s.repairReasons(f, root, current, revisions, key, accounts, false, now)
+}
+
+// completedRepairReasons is release precondition P1 (journal) and P2 (authority).
+func (s *LifecycleStore) completedRepairReasons(f lifecycleFile, root string, current NativeRecoveryChallenge, revisions map[string]int64, key []byte, accounts []users.User, now time.Time) (journal, authority []string) {
+	return s.repairReasons(f, root, current, revisions, key, accounts, true, now)
+}
+
+// repairReasons is the one repair-journal check. Call it only through
+// openRepairReasons or completedRepairReasons.
+func (s *LifecycleStore) repairReasons(f lifecycleFile, root string, current NativeRecoveryChallenge, revisions map[string]int64, key []byte, accounts []users.User, completed bool, now time.Time) (journal, authority []string) {
 	repair, receipt := f.RecoveryRepair, f.RecoveryReceipt
 	switch {
 	case receipt == nil:

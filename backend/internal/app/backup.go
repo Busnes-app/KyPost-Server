@@ -286,7 +286,9 @@ func startBackupLoop(ctx context.Context, d runDeps) (<-chan struct{}, error) {
 }
 
 // runRestoreStatus prints the native restore release preconditions, as
-// GET /api/admin/native-recovery/status does. It writes and locks nothing.
+// GET /api/admin/native-recovery/status does. It changes no state and takes no
+// locks; SQLite may create -shm/-wal companions beside mailbox databases, so
+// it runs as the STATE_DIR owner to leave them owned by the runtime account.
 func runRestoreStatus(stdout io.Writer) error {
 	stateDir, configDir := config.StateDir(), config.ConfigDir()
 	info, err := os.Stat(stateDir)
@@ -303,7 +305,7 @@ func runRestoreStatus(stdout io.Writer) error {
 	if err == nil {
 		err = json.Unmarshal(raw, &doc)
 	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err != nil {
 		return fmt.Errorf("account authority is unreadable: %w", err)
 	}
 	key := api.ReadPairingSecret(config.SecretFile("PAIRING_SECRET_FILE", "pairing.key"))

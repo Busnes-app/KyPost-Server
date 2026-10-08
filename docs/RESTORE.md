@@ -325,9 +325,11 @@ Do not prune while a restore reads the repository.
 
 `docker compose exec --user kypost kypost-server kypost-server restore status`
 (run as the `STATE_DIR` owner) and `GET /api/admin/native-recovery/status`
-(administrator) print the same JSON. Both are read-only snapshots: they write,
-lock and look up nothing (no DNS), and show reasons, never evidence, digests or
-nonces. `held:false` means there is nothing to release. Otherwise each
+(administrator) print the same JSON. Both change no state, take no locks and
+run no DNS lookups; SQLite may create -shm/-wal companions beside mailbox
+databases, which is why the CLI must run as the `STATE_DIR` owner. Reads are not
+fenced and can mix two moments, so status is advisory; the release re-checks
+under its locks. Status shows reasons, never evidence, digests or nonces. `held:false` means there is nothing to release. Otherwise each
 precondition of docs/NATIVE_RESTORE_RELEASE.md (#331) has `ok` and `reasons`:
 
 - `P1` stored evidence verifies and repair completed within its evidence window

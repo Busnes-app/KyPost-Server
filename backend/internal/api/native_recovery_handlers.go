@@ -132,8 +132,9 @@ func (s *Server) nativeRecoveryAdmin(w http.ResponseWriter, r *http.Request, cre
 	return true
 }
 
-// handleNativeRecoveryStatus is a read-only, lock-free snapshot: reasons only,
-// never evidence, digests or nonces. The release reverifies under its fences.
+// handleNativeRecoveryStatus changes no state and takes no locks (SQLite may
+// create -shm/-wal companions beside mailbox databases). It returns reasons
+// only, never evidence, digests or nonces; the release re-checks under fences.
 func (s *Server) handleNativeRecoveryStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	all, err := s.users.List()

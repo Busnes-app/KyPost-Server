@@ -3,6 +3,7 @@
 package sso
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"io/fs"
@@ -241,5 +242,108 @@ func TestNativeRestoreReleaseStatusZeroSubjectsAndFlag(t *testing.T) {
 		if p8 := precondition(t, st, "P8"); p8.OK || p8.CheckedAtRelease || !reflect.DeepEqual(p8.Reasons, []string{noNativeDomain}) {
 			t.Fatalf("P8 without a domain %+v", p8)
 		}
+	}
+}
+
+// Completion and release status share one journal check: every tamper must
+// refuse completion without mutation AND show in status.
+func TestNativeRecoveryRepairJournalTamper(t *testing.T) {
+	journalMismatch := "repair journal does not match the recorded evidence"
+	for _, c := range []struct {
+		name, p1, p2 string
+		tamper       func(t *testing.T, f *lifecycleFile, root string, u users.User)
+	}{
+		{"receipt-digest", journalMismatch, "", func(t *testing.T, f *lifecycleFile, _ string, _ users.User) {
+			f.RecoveryRepair.ReceiptDigest = strings.Repeat("0", 64)
+		}},
+		{"before-digest", journalMismatch, "", func(t *testing.T, f *lifecycleFile, _ string, _ users.User) {
+			f.RecoveryRepair.BeforeDigest = strings.Repeat("0", 64)
+		}},
+		{"nonce", journalMismatch, "", func(t *testing.T, f *lifecycleFile, _ string, _ users.User) {
+			f.RecoveryRepair.Nonce = strings.Repeat("0", 64)
+		}},
+		{"expires-at", journalMismatch, "", func(t *testing.T, f *lifecycleFile, _ string, _ users.User) {
+			f.RecoveryRepair.ExpiresAt = f.RecoveryRepair.ExpiresAt.Add(-time.Second)
+		}},
+		{"evidence-signature", "recorded evidence no longer verifies against the pairing key and pre-repair authority", "", func(t *testing.T, f *lifecycleFile, _ string, _ users.User) {
+			sig := []byte(f.RecoveryReceipt.Headers.Signature)
+			sig[len(sig)-1] ^= 1
+			f.RecoveryReceipt.Headers.Signature = string(sig)
+			var err error
+			if f.RecoveryRepair.ReceiptDigest, err = nativeRecoveryReceiptDigest(f.RecoveryReceipt); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"key-fingerprint", "", "repair belongs to another issuer, restore epoch or pairing key", func(t *testing.T, f *lifecycleFile, _ string, _ users.User) {
+			f.RecoveryRepair.KeyFingerprint = strings.Repeat("0", 64)
+		}},
+		{"issuer", "", "repair belongs to another issuer, restore epoch or pairing key", func(t *testing.T, f *lifecycleFile, _ string, _ users.User) {
+			f.RecoveryRepair.Issuer = "https://other.example"
+		}},
+		{"ownership", "", "native storage for account %s does not validate", func(t *testing.T, _ *lifecycleFile, root string, u users.User) {
+			if err := os.Rename(filepath.Join(root, "users", u.ID), filepath.Join(root, "moved")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			life, root, settings, key, accounts, u := publishedRecoveryFixture(t, false)
+			if err := applyPublishedRecoveryBatch(t, life, root, settings, key, accounts, false); err != nil {
+				t.Fatal(err)
+			}
+			f, err := life.load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.tamper(t, &f, root, u)
+			if err = fsutil.PersistJSONFile(life.path, f); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(life.path)
+			if err = completePublishedRecoveryBatch(t, life, root, settings, key, accounts); err == nil {
+				t.Fatal("tampered repair completed")
+			}
+			if after, _ := os.ReadFile(life.path); !bytes.Equal(before, after) {
+				t.Fatal("refused completion mutated the journal")
+			}
+			st := releaseStatus(t, life, root, settings, key, accounts, time.Now())
+			for id, want := range map[string]string{"P1": c.p1, "P2": strings.ReplaceAll(c.p2, "%s", u.ID)} {
+				if p := precondition(t, st, id); want != "" && (p.OK || !slices.Contains(p.Reasons, want)) {
+					t.Fatalf("%s %+v lacks %q", id, p, want)
+				}
+			}
+		})
+	}
+}
+
+func TestNativeRestoreReleaseStatusUnexpectedErrors(t *testing.T) {
+	life, root, settings, key, accounts, _ := publishedRecoveryFixture(t, false)
+	defer func(orig func(*LifecycleStore, string) (NativeRestoreQualification, error)) {
+		checkRestoreQualification = orig
+	}(checkRestoreQualification)
+	checkRestoreQualification = func(*LifecycleStore, string) (NativeRestoreQualification, error) {
+		return NativeRestoreQualification{}, os.ErrPermission
+	}
+	if p3 := precondition(t, releaseStatus(t, life, root, settings, key, accounts, time.Now()), "P3"); p3.OK || !reflect.DeepEqual(p3.Reasons, []string{"restore qualification cannot be checked"}) {
+		t.Fatalf("P3 with an unexpected error %+v", p3)
+	}
+	settings.Enabled = false
+	if p9 := precondition(t, releaseStatus(t, life, root, settings, key, accounts, time.Now()), "P9"); p9.OK || !reflect.DeepEqual(p9.Reasons, []string{uncomputedAuthority}) {
+		t.Fatalf("P9 without computable authority %+v", p9)
+	}
+}
+
+func TestNativeRestoreReleaseStatusForeignMarkerSkipsP7(t *testing.T) {
+	life, root, settings, key, accounts, _ := publishedRecoveryFixture(t, false)
+	marker := NativeRestoreQualification{Version: 1, Epoch: "12345678-1234-4123-8123-123456789abd", CreatedAt: time.Now().Add(-time.Hour), Mailboxes: map[string]string{}}
+	if err := fsutil.PersistJSONFile(filepath.Join(root, NativeRestoreQualificationFile), marker); err != nil {
+		t.Fatal(err)
+	}
+	st := releaseStatus(t, life, root, settings, key, accounts, time.Now())
+	if p3 := precondition(t, st, "P3"); p3.OK || !slices.Contains(p3.Reasons, "restore qualification marker belongs to another restore epoch") {
+		t.Fatalf("P3 %+v", p3)
+	}
+	if p7 := precondition(t, st, "P7"); p7.OK || !reflect.DeepEqual(p7.Reasons, []string{"not evaluated: the qualification marker belongs to another restore epoch (P3)"}) {
+		t.Fatalf("P7 %+v", p7)
 	}
 }

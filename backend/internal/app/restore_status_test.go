@@ -13,8 +13,8 @@ import (
 )
 
 func TestRestoreStatusCLI(t *testing.T) {
-	stateDir, secretDir := t.TempDir(), t.TempDir()
-	t.Setenv("CONFIG_DIR", t.TempDir())
+	stateDir, secretDir, configDir := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
 	t.Setenv("STATE_DIR", stateDir)
 	t.Setenv("SECRET_DIR", secretDir)
 	t.Setenv("PAIRING_SECRET", "")
@@ -30,6 +30,13 @@ func TestRestoreStatusCLI(t *testing.T) {
 			t.Fatal(err, out.String())
 		}
 		return st
+	}
+	// Like the API, missing account authority is an error, not zero accounts.
+	if err := runBackupCommand("restore", []string{"status"}, strings.NewReader(""), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "account authority is unreadable") {
+		t.Fatal("missing users.json accepted", err)
+	}
+	if err := fsutil.PersistJSONFile(filepath.Join(configDir, "users.json"), map[string]any{"version": 1, "users": []any{}}); err != nil {
+		t.Fatal(err)
 	}
 	if st := status(); st.Held || len(st.Preconditions) != 0 {
 		t.Fatalf("not held: %+v", st)

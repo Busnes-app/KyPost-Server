@@ -31,8 +31,10 @@ type NativeRestoreReleaseStatus struct {
 	NextSteps      []string                    `json:"nextSteps"`
 }
 
-// NativeRestoreReleaseStatus is read-only and lock-free: one snapshot of the
-// same checks the release reverifies under its fences. It never runs DNS.
+// NativeRestoreReleaseStatus changes no state and takes no locks; SQLite may
+// create -shm/-wal companions beside mailbox databases. Lock-free reads can
+// mix two moments, so status is advisory: the release re-checks the same
+// functions under its fences. It never runs DNS.
 func (s *LifecycleStore) NativeRestoreReleaseStatus(stateRoot, secretDir string, settings SSOSettings, key []byte, accounts []users.User, now time.Time) NativeRestoreReleaseStatus {
 	st := NativeRestoreReleaseStatus{Preconditions: []NativeRestoreReleaseCheck{}, NextSteps: []string{}}
 	enabled, flagErr := config.NativeRestoreReleaseEnabled()
@@ -69,7 +71,7 @@ func (s *LifecycleStore) NativeRestoreReleaseStatus(stateRoot, secretDir string,
 		journal, authority = []string{uncomputedAuthority}, []string{uncomputedAuthority}
 	default:
 		// Without a receipt or repair this reports their absence first.
-		journal, authority = s.nativeRecoveryRepairReasons(f, stateRoot, current, revisions, key, accounts, true, now)
+		journal, authority = s.completedRepairReasons(f, stateRoot, current, revisions, key, accounts, now)
 		if inputErr != nil {
 			authority = append(authority, uncomputedAuthority)
 		}
@@ -77,10 +79,12 @@ func (s *LifecycleStore) NativeRestoreReleaseStatus(stateRoot, secretDir string,
 	check("P1", journal)
 	check("P2", authority)
 
-	q, qualErr := s.CheckNativeRestoreQualification(stateRoot)
+	q, qualErr := checkRestoreQualification(s, stateRoot)
 	var unqualified *NativeRestoreUnqualifiedError
 	if errors.As(qualErr, &unqualified) {
 		check("P3", unqualified.Reasons)
+	} else if qualErr != nil {
+		check("P3", []string{"restore qualification cannot be checked"})
 	} else {
 		check("P3", nil)
 	}
@@ -92,7 +96,11 @@ func (s *LifecycleStore) NativeRestoreReleaseStatus(stateRoot, secretDir string,
 	if f.RecoveryReceipt != nil {
 		challenge = &f.RecoveryReceipt.Challenge
 	}
-	check("P7", s.nativeRestoreTokenFenceReasons(f, q, challenge))
+	if !q.CreatedAt.IsZero() && q.Epoch != st.Epoch {
+		check("P7", []string{"not evaluated: the qualification marker belongs to another restore epoch (P3)"})
+	} else {
+		check("P7", s.nativeRestoreTokenFenceReasons(f, q, challenge))
+	}
 	p8 := s.nativeRestoreDomainProofReasons(now)
 	if len(p8) == 1 && p8[0] == noNativeDomain {
 		check("P8", p8)
@@ -101,6 +109,8 @@ func (s *LifecycleStore) NativeRestoreReleaseStatus(stateRoot, secretDir string,
 	}
 	if errors.Is(inputErr, errNativeRecoveryNoSubjects) {
 		check("P9", []string{"zero-subject hold: its release path is not available yet"})
+	} else if inputErr != nil {
+		check("P9", []string{uncomputedAuthority})
 	} else {
 		check("P9", nil)
 	}
@@ -112,9 +122,9 @@ func (s *LifecycleStore) NativeRestoreReleaseStatus(stateRoot, secretDir string,
 	if failed("P3") {
 		st.NextSteps = append(st.NextSteps, "Resolve the P3 reasons; a missing or stale qualification marker needs a fresh restore with this version.")
 	}
-	if failed("P9") {
+	if errors.Is(inputErr, errNativeRecoveryNoSubjects) {
 		st.NextSteps = append(st.NextSteps, "This hold has no native subjects; wait for the zero-subject release path.")
-	} else if failed("P1") || failed("P2") || failed("P7") {
+	} else if failed("P1") || failed("P2") || failed("P7") || failed("P9") {
 		st.NextSteps = append(st.NextSteps, "Request a new recovery challenge, import fresh KyIdentity evidence and run repair within the evidence window (POST /api/admin/native-recovery/challenge, /evidence, /repair).")
 	}
 	if failed("P8") {
@@ -136,6 +146,9 @@ func (s *LifecycleStore) NativeRestoreReleaseStatus(stateRoot, secretDir string,
 	}
 	return st
 }
+
+// checkRestoreQualification is P3; a variable only so tests can inject an error.
+var checkRestoreQualification = (*LifecycleStore).CheckNativeRestoreQualification
 
 // nativeRestoreTokenFenceReasons is P7: the qualification precedes the
 // challenge, and every published native subject's token fence is at or
