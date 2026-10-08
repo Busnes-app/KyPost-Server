@@ -18,10 +18,13 @@ The response includes the exact `recordName` and `recordValue` to publish:
 Then `POST /api/admin/mail-domain/verify` with the same credential fields.
 Responses are `Cache-Control: no-store` and always `receivingEnabled:false`.
 The Server → Mail domain screen lists every domain of the set (see
-[Several domains](#several-domains)) with its status (established, awaiting
-verification with the exact TXT fields and expiry, lapsed, retired), marks the
-founding domain and offers Add, Verify, Replace challenge, Retire and Re-add
-through the same protected operations. Replacing a challenge and retiring ask
+[Several domains](#several-domains)) as one table row with its status
+(established, awaiting verification with expiry, lapsed, retired), founding and
+relay tags, domains awaiting action first, and offers Add, Verify (Recheck once
+established), Replace challenge (New challenge once lapsed), Retire and Re-add
+through the same protected operations. The exact TXT fields, with copy buttons,
+show for domains awaiting verification; established domains' records sit in a
+collapsed "TXT records to keep" section. Replacing a challenge and retiring ask
 for confirmation first; the retire prompt names the in-use refusals, that address
 records are kept and that re-adding needs fresh DNS proof. Against a server
 without the domain-set API it shows the single founding domain. It does not
@@ -579,8 +582,8 @@ being converted to IMAP. Use a compatible binary, not an older metadata writer.
 
 ### Mail export
 
-Users export their own native mailbox, or one folder of it, from Settings →
-Mail → Export Mail; [mail import](#mail-import) is its mirror.
+Users export their own native mailbox, or one folder of it, from Security →
+Export Mail; [mail import](#mail-import) is its mirror.
 
 - `GET /api/export/folders` lists every folder of the selected mailbox
   (`X-KyPost-Mailbox`).
@@ -602,7 +605,7 @@ Mail → Export Mail; [mail import](#mail-import) is its mirror.
   `Content-Disposition: attachment`; HEAD is 405 and spends nothing. The grant
   is held in memory and bound to user, session, mailbox, folder and format.
   The browser navigated here, so every refusal is `303 See Other` to
-  `/settings/mail?tab=export&export=<code>`, which explains it: `expired`
+  `/settings/security?tab=export&export=<code>`, which explains it: `expired`
   (another session or user, expired, spent or unknown), `busy` (the slot is
   taken; the grant is kept and `retry=<token>` lets the page retry it),
   `proxy` (mbox over HTTP/1.0; grant kept) or `unavailable` (the mailbox or
@@ -642,7 +645,7 @@ Mail → Export Mail; [mail import](#mail-import) is its mirror.
 ### Mail import
 
 Users import mbox and EML files, or the folders of another mail account over
-IMAP, into their own native mailbox from Settings → Mail → Import Mail ("From a
+IMAP, into their own native mailbox from Security → Import Mail ("From a
 file" or "From another mail account"). The file rules come first; [import from
 another account](#import-from-another-mail-account) adds its own below.
 

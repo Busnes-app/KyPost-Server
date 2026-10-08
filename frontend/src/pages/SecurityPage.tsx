@@ -17,6 +17,8 @@ import { SignIn } from "./security/sections/SignIn";
 import { Devices } from "./security/sections/Devices";
 import { MailKeys } from "./security/sections/MailKeys";
 import { CardDavAccess } from "../settings/sections/CardDavAccess";
+import { MailExport } from "../settings/sections/MailExport";
+import { MailImport } from "../settings/sections/MailImport";
 
 export function SecurityPage() {
   const [status, setStatus] = useState<MfaStatus | null>(null);
@@ -335,6 +337,10 @@ export function SecurityPage() {
             setRecoverySecret={setRecoverySecret}
           />
         ) : null}
+
+        {activeTab === "import" ? <MailImport /> : null}
+
+        {activeTab === "export" ? <MailExport /> : null}
       </div>
 
       {/* Page level, outside the tabs on purpose: the Devices tab's enrollment
