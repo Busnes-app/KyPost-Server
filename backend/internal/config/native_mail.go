@@ -17,6 +17,11 @@ func NativeReceivingEnabled() (bool, error) {
 	return nativeFlag("KYPOST_NATIVE_RECEIVING")
 }
 
+// NativeRestoreReleaseEnabled gates the future hold release; off by default.
+func NativeRestoreReleaseEnabled() (bool, error) {
+	return nativeFlag("KYPOST_NATIVE_RESTORE_RELEASE")
+}
+
 func nativeFlag(name string) (bool, error) {
 	switch strings.TrimSpace(os.Getenv(name)) {
 	case "", "false":

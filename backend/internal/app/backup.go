@@ -3,12 +3,14 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
@@ -19,7 +21,9 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 var backupSubcommands = map[string]bool{"backup-drill": true, "export-capsule": true, "deposit": true, "restore": true}
@@ -146,8 +150,11 @@ func outcomeWord(ok bool) string {
 // runRestore reads k custodian shares from stdin, one per line, and never from
 // argv: a share in argv is in shell history and /proc/<pid>/cmdline.
 func runRestore(rest []string, stdin io.Reader, stdout io.Writer) error {
+	if len(rest) == 1 && rest[0] == "status" {
+		return runRestoreStatus(stdout)
+	}
 	if len(rest) != 2 {
-		return errors.New("usage: kypost-server restore <capsule.kycap> <target-dir>  (shares on stdin, one per line; never in argv)")
+		return errors.New("usage: kypost-server restore <capsule.kycap> <target-dir>  (shares on stdin, one per line; never in argv)\n       kypost-server restore status")
 	}
 	bc, err := config.LoadBackupConfig()
 	if err != nil {
@@ -276,4 +283,34 @@ func startBackupLoop(ctx context.Context, d runDeps) (<-chan struct{}, error) {
 	done := make(chan struct{})
 	go func() { defer close(done); backupLoop(ctx, svc, d.logger) }()
 	return done, nil
+}
+
+// runRestoreStatus prints the native restore release preconditions, as
+// GET /api/admin/native-recovery/status does. It changes no state and takes no
+// locks; SQLite may create -shm/-wal companions beside mailbox databases, so
+// it runs as the STATE_DIR owner to leave them owned by the runtime account.
+func runRestoreStatus(stdout io.Writer) error {
+	stateDir, configDir := config.StateDir(), config.ConfigDir()
+	info, err := os.Stat(stateDir)
+	if err != nil {
+		return err
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || int(stat.Uid) != os.Geteuid() {
+		return fmt.Errorf("run as the owner of %s: docker compose exec --user kypost kypost-server kypost-server restore status", stateDir)
+	}
+	var doc struct {
+		Users []users.User `json:"users"`
+	}
+	raw, err := os.ReadFile(filepath.Join(configDir, "users.json"))
+	if err == nil {
+		err = json.Unmarshal(raw, &doc)
+	}
+	if err != nil {
+		return fmt.Errorf("account authority is unreadable: %w", err)
+	}
+	key := api.ReadPairingSecret(config.SecretFile("PAIRING_SECRET_FILE", "pairing.key"))
+	st := sso.NewLifecycleStore(configDir).NativeRestoreReleaseStatus(stateDir, config.SecretDir(), sso.NewStore(configDir).Load(), []byte(key), doc.Users, time.Now().UTC())
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(st)
 }

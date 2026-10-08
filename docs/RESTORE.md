@@ -329,6 +329,35 @@ Do not prune while a restore reads the repository.
    keys are not remotely erased. Push-only MFA may require the existing account
    recovery procedure before fresh pairing; restore does not disable MFA.
 
+### Reading release status
+
+`docker compose exec --user kypost kypost-server kypost-server restore status`
+(run as the `STATE_DIR` owner) and `GET /api/admin/native-recovery/status`
+(administrator) print the same JSON. Both change no state, take no locks and
+run no DNS lookups; SQLite may create -shm/-wal companions beside mailbox
+databases, which is why the CLI must run as the `STATE_DIR` owner. Reads are not
+fenced and can mix two moments, so status is advisory; the release re-checks
+under its locks. Status shows reasons, never evidence, digests or nonces. `held:false` means there is nothing to release. Otherwise each
+precondition of docs/NATIVE_RESTORE_RELEASE.md (#331) has `ok` and `reasons`:
+
+- `P1` stored evidence verifies and repair completed within its evidence window
+  (about five minutes after KyIdentity issued the export); `P2` the current
+  authority still equals the repair's result and its barriers. A failure, or a
+  window that ended, needs a new challenge, fresh evidence and repair.
+- `P3` the qualification marker matches the hold, mailbox generations and an
+  outbox with no queued/retryable rows; a missing marker needs a fresh restore.
+- `P7` the marker predates the recorded challenge and every published native
+  subject's token cutoff.
+- `P9` flags a hold with no native subjects; its release path comes later.
+- `checkedAtRelease:true` (`P4` floors, `P5` step-up, `P6` local-password
+  administrator, `P8` fresh domain proof) can only be decided by the release
+  itself; `P8` lists each domain's last recorded proof.
+
+`releaseEnabled` reports `KYPOST_NATIVE_RESTORE_RELEASE` (default off);
+`cloudflare` is `live`, `fenced` or `error` when Cloudflare receiving
+credentials exist. `nextSteps` lists what to do, in order. No release operation
+exists yet: status never removes the hold.
+
 Read the [pinned identity authority findings](NATIVE_RESTORE_AUTHORITY.md) before designing hold release: ordinary KyIdentity resync does not establish complete offboarding evidence.
 
 The protected [held repair procedure](NATIVE_RESTORE_AUTHORITY.md#protected-consumer-procedure) reconciles fresh KyIdentity activity/roles and revokes native transport credentials while preserving the hold and retained mail/PGP data. Partial cleanup failure remains incomplete and requires fresh evidence after remediation. Before native recovery can resume writes, remaining activation work must qualify domain proof, receiver generations, restored-credential cutoffs, worker fencing and provider credential/relay evidence. Do not remove the hold manually.

@@ -83,6 +83,9 @@ func Run(args []string) error {
 	if nativeReceiving && !nativeMail {
 		return errors.New("KYPOST_NATIVE_RECEIVING requires KYPOST_NATIVE_MAIL=true")
 	}
+	if _, err := config.NativeRestoreReleaseEnabled(); err != nil {
+		return err
+	}
 	// The quota is native-only configuration: a bad value never stops IMAP.
 	if nativeMail {
 		quota, err := config.MailboxQuotaBytes()

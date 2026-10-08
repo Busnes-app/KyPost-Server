@@ -321,3 +321,42 @@ func TestNativeRecoveryHTTPDecodedEvidenceBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeRecoveryStatusIsAdminOnlyAndLeaksNoEvidence(t *testing.T) {
+	srv, cookie, c := nativeRecoveryHTTPFixture(t)
+	if rec := gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/evidence", recoveryHTTPUpload(t, c, 64, testSyncKey), ""); rec.Code != 200 {
+		t.Fatalf("upload %d: %s", rec.Code, rec.Body.String())
+	}
+	before, _ := os.ReadFile(filepath.Join(srv.configDir, "sso-lifecycle.json"))
+	rec := gatedCall(t, srv, cookie, "GET", "/api/admin/native-recovery/status", "", "")
+	after, _ := os.ReadFile(filepath.Join(srv.configDir, "sso-lifecycle.json"))
+	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "no-store" || !bytes.Equal(before, after) {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var st sso.NativeRestoreReleaseStatus
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if !st.Held || st.Epoch != c.Epoch || len(st.Preconditions) != 9 || st.Preconditions[0].OK || st.Preconditions[0].Reasons[0] != "recovery evidence is recorded but repair has not run" {
+		t.Fatalf("status %+v", st)
+	}
+	for _, secret := range []string{c.Nonce, c.AuthorityDigest, c.KeyFingerprint, c.SystemID, "xxxxxxxx", "signature", testSyncKey} {
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Fatalf("status leaks %q: %s", secret, rec.Body.String())
+		}
+	}
+	plain, err := srv.users.Create(context.Background(), "plain_user", recoveryAdminPassword, users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = srv.users.ClearMustChangePassword(plain.ID); err != nil {
+		t.Fatal(err)
+	}
+	session := httptest.NewRecorder()
+	if err = srv.startSession(session, httptest.NewRequest("GET", "/", nil), plain.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := gatedCall(t, srv, sessionCookieFrom(session), "GET", "/api/admin/native-recovery/status", "", ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin status %d: %s", rec.Code, rec.Body.String())
+	}
+}
