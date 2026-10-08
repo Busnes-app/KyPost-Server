@@ -298,13 +298,14 @@ Do not prune while a restore reads the repository.
    writes `state/native-restore-qualification.json`: the hold epoch and each
    native mailbox's new reference generation. It exists only when every earlier
    step succeeded, is never collected into backups and grants nothing by
-   itself; a future release requires it to match the current hold, generations
+   itself; release requires it to match the current hold, generations
    and an outbox with no queued/retryable rows. Device, CardDAV and token fences
    are proven by the marker's existence, not re-checked. Holds from older versions lack it:
    restore again with this version before release. See
    docs/NATIVE_RESTORE_RELEASE.md (#331). Legacy restores also
    accept an existing empty target. Occupied targets/files are never overwritten.
-4. Native restores remain quarantined with **no supported release path yet**.
+4. Native restores remain quarantined until an explicit
+   [hold release](#releasing-the-hold), which is off by default.
    Preserve the hold file when copying volumes. Keep a separately provisioned legacy local recovery administrator: a restored native administrator cannot administer a held server. The authentication guard applies even with native feature flags disabled and either private native marker present. Refused MFA completion preserves TOTP/recovery material; held QR exchange preserves its nonce. Offline restore requires stopped services; admission checks do not cancel operations already admitted. Native password/derived login, pending MFA completion, SSO sign-in/step-up, existing session authority (including admin), QR key exchange, allocation, native runtime, native CardDAV (including cached Basic auth), local receiving and relay updates refuse a present
    or unreadable hold. Relay-only restores also persist this hold. Keep native workers stopped; manually deleting the hold
    does not qualify recovery. With services still stopped, copy `recovered/config/`, `recovered/private/` and
@@ -329,7 +330,7 @@ Do not prune while a restore reads the repository.
 run no DNS lookups; SQLite may create -shm/-wal companions beside mailbox
 databases, which is why the CLI must run as the `STATE_DIR` owner. Reads are not
 fenced and can mix two moments, so status is advisory; the release re-checks
-under its locks. Status shows reasons, never evidence, digests or nonces. `held:false` means there is nothing to release. Otherwise each
+under its locks. Status shows reasons, never evidence, digests or nonces. `held:false` with `released:true` means a release completed: `resyncSubjects` lists active subjects still at their release floor, and `nextSteps` names the KyIdentity resync they need. `held:false` and `released:false` means there is nothing to release. Otherwise each
 precondition of docs/NATIVE_RESTORE_RELEASE.md (#331) has `ok` and `reasons`:
 
 - `P1` stored evidence verifies and repair completed within its evidence window
@@ -347,18 +348,45 @@ precondition of docs/NATIVE_RESTORE_RELEASE.md (#331) has `ok` and `reasons`:
 
 `releaseEnabled` reports `KYPOST_NATIVE_RESTORE_RELEASE` (default off);
 `cloudflare` is `live`, `fenced` or `error` when Cloudflare receiving
-credentials exist. `nextSteps` lists what to do, in order. No release operation
-exists yet: status never removes the hold.
+credentials exist. `nextSteps` lists what to do, in order. Status never removes
+the hold.
 
-Read the [pinned identity authority findings](NATIVE_RESTORE_AUTHORITY.md) before designing hold release: ordinary KyIdentity resync does not establish complete offboarding evidence.
+### Releasing the hold
+
+Off unless `KYPOST_NATIVE_RESTORE_RELEASE=true`; while pending qualification,
+enable it only for a deliberate release. The signed evidence lives about five
+minutes, so script steps 2–5 and run them back to back:
+
+1. Sign in as an unlinked local administrator with a password session
+   (not native, not KySignOn). Verify a mail domain's DNS record is published.
+2. `POST /api/admin/native-recovery/challenge` (see the
+   [protected procedure](NATIVE_RESTORE_AUTHORITY.md#protected-consumer-procedure)).
+3. Export the evidence from KyIdentity for that nonce and subject list.
+4. `POST /api/admin/native-recovery/evidence`, then
+   `POST /api/admin/native-recovery/repair`.
+5. `POST /api/admin/native-recovery/release` with `{password}`; with the bundled
+   receiver (Maddy) first stop the original host's receiver and add
+   `"confirm": "original-host-decommissioned"`.
+
+`200 {released:true}` renames the hold to `state/native-restore-released.json`.
+The release deactivates and signs out non-native accounts whose subject the
+evidence shows inactive, writes those subjects' directory rows inactive, records
+release floors and raises every token fence. Then run a KyIdentity resync,
+restart the container to start receiving, and take over Cloudflare receiving
+explicitly if used. Quarantined mail stays quarantined; devices pair again.
+A `409` lists the failed preconditions and keeps the hold; one reading
+"interrupted" needs a new challenge, fresh evidence and repair. A repeated request
+after success answers `alreadyReleased:true`. Do not downgrade below this version
+afterwards ([rollback](NATIVE_RESTORE_RELEASE.md#rollback)).
+
+Read the [pinned identity authority findings](NATIVE_RESTORE_AUTHORITY.md) before changing hold release: ordinary KyIdentity resync does not establish complete offboarding evidence.
 
 The protected [held repair procedure](NATIVE_RESTORE_AUTHORITY.md#protected-consumer-procedure) reconciles fresh KyIdentity activity/roles and revokes native transport credentials while preserving the hold and retained mail/PGP data. Partial cleanup failure remains incomplete and requires fresh evidence after remediation. Before native recovery can resume writes, remaining activation work must qualify domain proof, receiver generations, restored-credential cutoffs, worker fencing and provider credential/relay evidence. Do not remove the hold manually.
 Replaying an already-applied directory revision is insufficient to repair
 restored user access. An older database also rewinds message IDs while retaining
 its namespace: the separate wire-reference generation rejects stale client
 references without changing cryptographic bindings. Outbox recovery preserves interrupted/uncertain claims and quarantines restored
-queued/retryable deliveries; native hold release and current admission
-remain unavailable. See [outbox qualification](NATIVE_OUTBOX.md).
+queued/retryable deliveries; a hold release never requeues them. See [outbox qualification](NATIVE_OUTBOX.md).
 
 Private staging establishes the process-crash publication boundary, not whole-tree
 power-loss durability: extraction does not fsync every restored file/directory.
