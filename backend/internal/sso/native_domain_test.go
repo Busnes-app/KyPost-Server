@@ -78,6 +78,30 @@ func TestNativeDomainProofAndFailure(t *testing.T) {
 	}
 }
 
+// A concurrent refresh of the same challenge is not a change: parallel
+// deliveries and sends each verify, and the later one must not be refused.
+func TestNativeDomainConcurrentRefreshOfSameChallenge(t *testing.T) {
+	s := provenNativeDomain(t, t.TempDir())
+	calls := 0
+	s.SetLookupForTest(func(ctx context.Context, _ string) ([]string, error) {
+		calls++
+		if calls == 1 {
+			if _, err := s.Verify(ctx); err != nil {
+				t.Error("inner refresh:", err)
+			}
+		}
+		d, err := s.Read()
+		return []string{d.RecordValue()}, err
+	})
+	d, err := s.Verify(context.Background())
+	if err != nil {
+		t.Fatal("refresh refused after a concurrent refresh of the same challenge:", err)
+	}
+	if !d.Established || d.VerifiedUntil <= time.Now().Unix() {
+		t.Fatal("proof not refreshed", d)
+	}
+}
+
 func TestNativeDomainRotationDuringLookup(t *testing.T) {
 	s := provenNativeDomain(t, t.TempDir())
 	old, _ := s.Read()

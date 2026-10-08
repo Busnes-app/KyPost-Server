@@ -395,9 +395,15 @@ func (s *NativeDomainStore) VerifyDomain(ctx context.Context, domain string) (Na
 	if err != nil {
 		return d, err
 	}
-	if current.Domains[domain] != d || !d.Established && d.ExpiresAt <= time.Now().Unix() {
-		return current.Domains[domain], ErrNativeDomain
+	// Only the challenge must be unchanged: a concurrent refresh of the same
+	// challenge (Established, VerifiedUntil) is not a change, and refusing it
+	// failed parallel deliveries and sends with a spurious domain error.
+	cur := current.Domains[domain]
+	if cur.Domain != d.Domain || cur.Issuer != d.Issuer || cur.Token != d.Token || cur.ExpiresAt != d.ExpiresAt ||
+		!cur.Established && cur.ExpiresAt <= time.Now().Unix() {
+		return cur, ErrNativeDomain
 	}
+	d = cur
 	d.VerifiedUntil = 0
 	if match {
 		d.VerifiedUntil = time.Now().Add(5 * time.Minute).Unix()
