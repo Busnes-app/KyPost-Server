@@ -408,7 +408,7 @@ Update it in the same change that breaks or adds a contract above.
 | `pull` delivery mode | 0.3.0 | n/a | 0.3.3 | ✅ | ✅ |
 | Contact sync, 500-change batching | 0.3.0 | n/a | ❌ sends one request | unverified | 0.4.0 |
 | `bodies=0` + `/api/mail/body` | 0.4.0 | 0.4.0 | not adopted | not adopted | not adopted |
-| Native mailbox selection (`/api/mailboxes`, `X-KyPost-Mailbox`) | unreleased | not adopted | not adopted | not adopted | not adopted |
+| Native mailbox selection (`/api/mailboxes`, `X-KyPost-Mailbox`) | unreleased | unreleased | not adopted | not adopted | not adopted |
 
 The Apple client is unreleased; `0.4.0` is the version it will first ship as,
 set in `MARKETING_VERSION`. It is one target building both macOS and iOS, so

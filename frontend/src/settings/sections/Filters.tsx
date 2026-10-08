@@ -15,6 +15,7 @@ import {
   runRulesNow,
   updateRule
 } from "../../api/rules";
+import { mailboxName, useMailboxes } from "../../app/mailboxes";
 import { RulesHelpModal } from "../../components/RulesHelpModal";
 import { ACTION_TYPES, ruleActionsError } from "../../lib/ruleActions";
 
@@ -94,6 +95,8 @@ export function Filters() {
   const [scriptBusy, setScriptBusy] = useState<Record<string, boolean>>({});
   const [availableKeywords, setAvailableKeywords] = useState<string[]>([]);
   const [runFolder, setRunFolder] = useState("INBOX");
+  const { mailboxes, selected } = useMailboxes();
+  const runMailbox = selected ? mailboxes.find((m) => m.id === selected) : undefined;
   const [runBusy, setRunBusy] = useState(false);
   const [runError, setRunError] = useState("");
   const [runResult, setRunResult] = useState<RunRulesResult | null>(null);
@@ -536,6 +539,7 @@ export function Filters() {
             <p className="security-muted">
               Apply every enabled rule to existing mail in a folder right now, independent of the automatic poller.
             </p>
+            {runMailbox ? <p className="security-muted">Runs in the mailbox you have open: {mailboxName(runMailbox)}</p> : null}
             <label>
               <div>Folder</div>
               <input type="text" value={runFolder} onChange={(e) => setRunFolder(e.target.value)} placeholder="INBOX" />

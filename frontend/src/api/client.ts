@@ -48,9 +48,42 @@ function readCsrfToken(): string {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+const MAILBOX_HEADER = "X-KyPost-Mailbox";
+// The webmail routes the server wraps with withMailbox (server.go routesMail,
+// routesRules). /api/decisions and /api/export/folders honour it too, but
+// their Settings screens choose a mailbox themselves or show the primary.
+const mailboxScoped = /^\/api\/(inbox(\/folders|\/actions)?|mail\/(search|draft|send|send-pgp|body|pgp-payload|attachments?|outbox\/[^/?]+)|rules\/run)(\?|$)/;
+// The webmail's selected extra mailbox; "" is the primary, which sends no header.
+let selectedMailbox = "";
+let mailboxGone: (id: string) => void = () => {};
+
+/** Selects the mailbox every scoped request follows; "" is the primary. */
+export function selectMailbox(id: string) {
+  selectedMailbox = id;
+}
+
+export function selectedMailboxId(): string {
+  return selectedMailbox;
+}
+
+/** Called with the mailbox ID a 404 "mailbox not found" refused. */
+export function onMailboxGone(handler: (id: string) => void) {
+  mailboxGone = handler;
+}
+
+/** Pins a request to a mailbox regardless of the selection; "" is the primary. */
+export function mailboxHeaders(id: string): Record<string, string> {
+  return { [MAILBOX_HEADER]: id };
+}
+
 async function requestResponse(path: string, init?: RequestInit): Promise<Response> {
   const method = (init?.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) };
+  const mailbox = MAILBOX_HEADER in headers ? headers[MAILBOX_HEADER] : mailboxScoped.test(path) ? selectedMailbox : "";
+  delete headers[MAILBOX_HEADER];
+  if (mailbox) {
+    headers[MAILBOX_HEADER] = mailbox;
+  }
   if (method !== "GET" && method !== "HEAD") {
     const csrfToken = readCsrfToken();
     if (csrfToken) {
@@ -105,6 +138,9 @@ async function requestResponse(path: string, init?: RequestInit): Promise<Respon
       }
     } catch {
       detail = "";
+    }
+    if (response.status === 404 && mailbox && detail === "mailbox not found") {
+      mailboxGone(mailbox);
     }
     const message = detail ? `request failed: ${response.status} - ${detail}` : `request failed: ${response.status}`;
     throw new HttpError(message, response.status, body);
@@ -176,6 +212,21 @@ export async function postBlob(path: string, body: unknown, headers: Record<stri
     body: JSON.stringify(body)
   });
   return response.blob();
+}
+
+// downloadFile saves a GET answer as a file. An <a href> download cannot carry
+// the mailbox header, so attachments of an extra mailbox come through here.
+// The octet-stream type keeps the same-origin blob from ever rendering.
+export async function downloadFile(path: string, name: string): Promise<void> {
+  const blob = await (await requestResponse(path)).blob();
+  const url = URL.createObjectURL(new Blob([blob], { type: "application/octet-stream" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  // ponytail: a fixed delay for the browser to take the blob; a download
+  // still starting after a minute would fail and need a retry.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 // uploadWithProgress POSTs a raw file through XMLHttpRequest, the one browser

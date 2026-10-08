@@ -19,7 +19,11 @@ vi.mock("./api/client", () => ({
     status = 0;
     body: unknown = null;
   },
-  toErrorMessage: (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback)
+  toErrorMessage: (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback),
+  selectMailbox: () => {},
+  selectedMailboxId: () => "",
+  onMailboxGone: () => {},
+  mailboxHeaders: () => ({})
 }));
 
 const vault = vi.hoisted(() => ({ locked: true, custody: "client" as "client" | "other" | "unknown" }));

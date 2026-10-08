@@ -410,8 +410,8 @@ export function sendClientEncryptedMail(payload: {
   mode: string;
   /** The keyring generation the message was encrypted and signed with. The server refuses a stale one on a converted account. */
   materialGeneration?: number;
-}): Promise<{ ok: boolean; sentSaved?: boolean; warning?: string }> {
-  return postJSON("/api/mail/send-pgp", payload);
+}, headers: Record<string, string> = {}): Promise<{ ok: boolean; sentSaved?: boolean; warning?: string }> {
+  return postJSON("/api/mail/send-pgp", payload, headers);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HttpError, SessionExpiredError, postFormData, postJSON } from "./client";
+import { HttpError, SessionExpiredError, getJSON, mailboxHeaders, onMailboxGone, postFormData, postJSON, selectMailbox } from "./client";
 
 function fakeJSONResponse(status: number, body: unknown) {
   return {
@@ -130,5 +130,74 @@ describe("postFormData", () => {
     expect(reload).toHaveBeenCalled();
     expect(settled).toBe(true);
     expect(caught).toBeInstanceOf(SessionExpiredError);
+  });
+});
+
+describe("mailbox selection", () => {
+  const TEAM = "mbx-11111111-2222-4333-8444-555555555555";
+  afterEach(() => {
+    selectMailbox("");
+    onMailboxGone(() => {});
+    vi.unstubAllGlobals();
+  });
+
+  async function headerFor(call: () => Promise<unknown>): Promise<string | null> {
+    const fetchMock = vi.fn().mockResolvedValue(fakeJSONResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    await call();
+    return (fetchMock.mock.calls[0][1].headers as Record<string, string>)["X-KyPost-Mailbox"] ?? null;
+  }
+
+  it("follows an extra mailbox on every withMailbox webmail route and omits it for the primary", async () => {
+    const scoped = [
+      () => getJSON("/api/inbox?limit=500"),
+      () => getJSON("/api/inbox/folders"),
+      () => postJSON("/api/inbox/actions", {}),
+      () => getJSON("/api/mail/search?q=x"),
+      () => getJSON("/api/mail/body?messageId=1"),
+      () => getJSON("/api/mail/attachments?messageId=1"),
+      () => getJSON("/api/mail/pgp-payload?messageId=1"),
+      () => getJSON("/api/mail/outbox/abc"),
+      () => postJSON("/api/mail/send", {}),
+      () => postJSON("/api/mail/send-pgp", {}),
+      () => postJSON("/api/mail/draft", {}),
+      () => postJSON("/api/rules/run", {})
+    ];
+    for (const call of scoped) {
+      selectMailbox("");
+      expect(await headerFor(call)).toBeNull();
+      selectMailbox(TEAM);
+      expect(await headerFor(call)).toBe(TEAM);
+    }
+  });
+
+  it("never sends it to per-user routes or Settings screens that choose their own", async () => {
+    selectMailbox(TEAM);
+    for (const path of ["/api/labels", "/api/mail/send-as", "/api/mailboxes", "/api/decisions?limit=10", "/api/export/folders", "/api/inboxes", "/api/mail/sender"]) {
+      expect(await headerFor(() => getJSON(path))).toBeNull();
+    }
+  });
+
+  it("lets a pinned request override the selection, including back to the primary", async () => {
+    selectMailbox(TEAM);
+    expect(await headerFor(() => postJSON("/api/mail/send", {}, mailboxHeaders("")))).toBeNull();
+    selectMailbox("");
+    expect(await headerFor(() => postJSON("/api/mail/send", {}, mailboxHeaders(TEAM)))).toBe(TEAM);
+  });
+
+  it("reports a refused mailbox, and only for mailbox not found", async () => {
+    const gone = vi.fn();
+    onMailboxGone(gone);
+    selectMailbox(TEAM);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeJSONResponse(404, { error: "message not found" })));
+    await expect(getJSON("/api/mail/body?messageId=1")).rejects.toBeInstanceOf(HttpError);
+    expect(gone).not.toHaveBeenCalled();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeJSONResponse(404, { error: "mailbox not found" })));
+    await expect(getJSON("/api/mail/body?messageId=1")).rejects.toBeInstanceOf(HttpError);
+    expect(gone).toHaveBeenCalledWith(TEAM);
+    selectMailbox("");
+    gone.mockClear();
+    await expect(getJSON("/api/mail/body?messageId=1")).rejects.toBeInstanceOf(HttpError);
+    expect(gone).not.toHaveBeenCalled();
   });
 });

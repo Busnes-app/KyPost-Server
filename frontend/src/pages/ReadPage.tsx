@@ -13,7 +13,7 @@ import { decryptMessage, verifySignedMessage } from "../lib/pgpClient";
 import { getPGPMessagePayload } from "../api/pgp";
 import { isClientProtected, needsUnlock, subscribePGPSession, type PGPSessionState } from "../lib/pgpSession";
 import { PgpUnlockDialog } from "../components/PgpUnlockDialog";
-import { getJSON, postJSON, toErrorMessage } from "../api/client";
+import { downloadFile, getJSON, postJSON, selectedMailboxId, toErrorMessage } from "../api/client";
 import { usePagination } from "../hooks/usePagination";
 import { useDialogOpen } from "../hooks/useDialogOpen";
 import { PageTabs } from "../components/PageTabs";
@@ -1944,6 +1944,13 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                         className="email-attachment-link"
                         href={`/api/mail/attachment?${attachmentQuery(selected)}&index=${attachment.index}`}
                         download={attachment.name}
+                        onClick={(event) => {
+                          // A link cannot carry the mailbox header an extra mailbox needs.
+                          if (!selectedMailboxId()) return;
+                          event.preventDefault();
+                          downloadFile(event.currentTarget.getAttribute("href") ?? "", attachment.name)
+                            .catch((e: unknown) => setAttachmentsError(toErrorMessage(e, "failed to download attachment")));
+                        }}
                       >
                         📎 {attachment.name} <span className="email-attachment-size">({formatBytes(attachment.size)})</span>
                       </a>
