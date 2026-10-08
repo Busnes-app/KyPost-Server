@@ -179,23 +179,6 @@ func preparedSource(dir string, owner Owner, address string, limits Limits) (str
 	if err = json.Unmarshal(raw, &p); err != nil || p.Owner != owner || p.Address != address || p.Limits != limits {
 		return "", ErrPreparation
 	}
-	openReadOnly := func(path string) (*sql.DB, error) {
-		info, err := os.Lstat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
-			return nil, ErrPreparation
-		}
-		abs, err := filepath.Abs(path)
-		if err != nil {
-			return nil, err
-		}
-		u := url.URL{Scheme: "file", Path: abs, RawQuery: "mode=ro"}
-		db, err := sql.Open("sqlite", u.String())
-		if err != nil {
-			return nil, err
-		}
-		db.SetMaxOpenConns(1)
-		return db, nil
-	}
 	db, err := openReadOnly(filepath.Join(dir, "state.db"))
 	if err != nil {
 		return "", err
@@ -240,4 +223,98 @@ func preparedSource(dir string, owner Owner, address string, limits Limits) (str
 		return "", err
 	}
 	return source, nil
+}
+
+// openSQLite opens an existing regular database file, never creating one.
+func openSQLite(path, query string) (*sql.DB, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return nil, ErrPreparation
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	u := url.URL{Scheme: "file", Path: abs, RawQuery: query}
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
+
+func openReadOnly(path string) (*sql.DB, error) { return openSQLite(path, "mode=ro") }
+
+// ReadUsage reads the usage counters of the mailbox database in dir without
+// a writer, for admission and display.
+func ReadUsage(dir string) (Usage, error) {
+	db, err := openReadOnly(filepath.Join(dir, "mailbox.db"))
+	if err != nil {
+		return Usage{}, err
+	}
+	defer func() { _ = db.Close() }()
+	var u Usage
+	err = db.QueryRow("SELECT payload_bytes,records FROM usage WHERE id=1").Scan(&u.Bytes, &u.Records)
+	return u, err
+}
+
+// convergeStep lets tests stop ConvergeLimits between its two writes, as a
+// crash would.
+var convergeStep = func() error { return nil }
+
+// ConvergeLimits sets the durable limits of the published mailbox at dir to
+// limits, which the caller's ledger already records: the mailbox.db identity
+// first, native-mailbox.json last, so a file at the target proves both are.
+// Any earlier value is replaced, so an interrupted run, or one for a quota
+// changed since, completes on the next. A directory never published (no
+// preparation file) has nothing to converge. Reports whether it wrote.
+func ConvergeLimits(ctx context.Context, dir string, owner Owner, limits Limits) (bool, error) {
+	if !limits.valid() || !fsutil.SafePathComponent(owner.Mailbox) || filepath.Base(dir) != owner.Mailbox {
+		return false, ErrPreparation
+	}
+	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	release, err := fsutil.LockFileContext(ctx, dir)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	path := filepath.Join(dir, preparationFile)
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 8192 {
+		return false, ErrPreparation
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	var p preparedAccount
+	if err = json.Unmarshal(raw, &p); err != nil || p.Owner != owner {
+		return false, ErrPreparation
+	}
+	if p.Limits == limits {
+		return false, nil
+	}
+	db, err := openSQLite(filepath.Join(dir, "mailbox", "mailbox.db"), "mode=rw&_txlock=immediate&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = db.Close() }()
+	result, err := db.ExecContext(ctx, "UPDATE identity SET message_bytes=?,payload_bytes=?,records=? WHERE id=1 AND issuer=? AND subject=? AND mailbox=?", limits.MessageBytes, limits.PayloadBytes, limits.Records, owner.Issuer, owner.Subject, owner.Mailbox)
+	if err != nil {
+		return false, err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return false, ErrPreparation
+	}
+	if err = convergeStep(); err != nil {
+		return false, err
+	}
+	p.Limits = limits
+	return true, fsutil.PersistJSONFile(path, p)
 }

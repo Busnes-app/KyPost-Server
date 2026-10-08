@@ -35,8 +35,10 @@ var (
 )
 
 // ReceivingLimits are the durable holding-store limits every opener of the
-// production spool must pass.
-var ReceivingLimits = Limits{MessageBytes: 4 << 20, PayloadBytes: 64 << 20, Records: 10000}
+// production spool must pass: a 25 MiB message (both receiving profiles), a
+// 512 MiB burst of held mail and 10,000 held deliveries. An opener raises
+// lower durable limits to these; it never lowers them.
+var ReceivingLimits = Limits{MessageBytes: 25 << 20, PayloadBytes: 512 << 20, Records: 10000}
 
 type Limits struct {
 	MessageBytes int64
@@ -226,8 +228,8 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 	if existing {
 		var persisted Limits
 		err := db.QueryRow("SELECT message_bytes,payload_bytes,records FROM limits WHERE id=1").Scan(&persisted.MessageBytes, &persisted.PayloadBytes, &persisted.Records)
-		if err == nil && persisted != limits {
-			err = errors.New("ingress limits differ from durable configuration")
+		if err == nil && !persisted.raisableTo(limits) {
+			err = errLimits
 		}
 		if err == nil {
 			var tables int
@@ -238,6 +240,9 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 		}
 		if err == nil {
 			_, err = db.Exec("PRAGMA journal_mode=WAL")
+		}
+		if err == nil && persisted != limits {
+			err = raiseLimits(db, limits)
 		}
 		if err == nil {
 			err = migrateArchive(context.Background(), db)
@@ -255,12 +260,8 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 		if err == nil {
 			_, err = tx.Exec("INSERT OR IGNORE INTO limits VALUES(1,?,?,?)", limits.MessageBytes, limits.PayloadBytes, limits.Records)
 		}
-		var persisted Limits
 		if err == nil {
-			err = tx.QueryRow("SELECT message_bytes,payload_bytes,records FROM limits WHERE id=1").Scan(&persisted.MessageBytes, &persisted.PayloadBytes, &persisted.Records)
-		}
-		if err == nil && persisted != limits {
-			err = errors.New("ingress limits differ from durable configuration")
+			err = adoptLimits(tx, limits)
 		}
 		if err == nil {
 			err = tx.Commit()
@@ -280,6 +281,43 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+var errLimits = errors.New("ingress limits differ from durable configuration and would lower them; run the newer release")
+
+// raisableTo reports whether every durable limit is at most the configured one.
+func (l Limits) raisableTo(c Limits) bool {
+	return l.MessageBytes <= c.MessageBytes && l.PayloadBytes <= c.PayloadBytes && l.Records <= c.Records
+}
+
+func raiseLimits(db *sql.DB, limits Limits) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = adoptLimits(tx, limits); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// adoptLimits raises the durable limits to limits inside the writer
+// transaction, one atomic row update, so a crash leaves old or new limits and
+// the next open completes it. Lowering is refused: held mail may exceed it.
+func adoptLimits(tx *sql.Tx, limits Limits) error {
+	var persisted Limits
+	if err := tx.QueryRow("SELECT message_bytes,payload_bytes,records FROM limits WHERE id=1").Scan(&persisted.MessageBytes, &persisted.PayloadBytes, &persisted.Records); err != nil {
+		return err
+	}
+	if persisted == limits {
+		return nil
+	}
+	if !persisted.raisableTo(limits) {
+		return errLimits
+	}
+	_, err := tx.Exec("UPDATE limits SET message_bytes=?,payload_bytes=?,records=? WHERE id=1", limits.MessageBytes, limits.PayloadBytes, limits.Records)
+	return err
+}
 
 func address(v string, allowEmpty bool) bool {
 	if allowEmpty && v == "" {

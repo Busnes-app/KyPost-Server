@@ -424,11 +424,12 @@ func ValidateOutboundSnapshot(ctx context.Context, path string, master []byte, r
 	if s.owner.Issuer != relay.Issuer || count > s.limits.Records || db.QueryRowContext(ctx, "SELECT token FROM namespace WHERE id=1").Scan(&s.namespace) != nil || s.namespace == "" {
 		return true, ErrOutbound
 	}
+	// Usage above a lowered quota is valid: the mailbox only refuses new mail.
 	var records, used, wantRecords, wantUsed int64
 	if err = db.QueryRowContext(ctx, `SELECT
  (SELECT records FROM usage WHERE id=1),(SELECT payload_bytes FROM usage WHERE id=1),
  (SELECT count(*) FROM messages)+(SELECT count(*)+coalesce(sum(sent_reserved),0) FROM outbox)+(SELECT count(*) FROM outbox_deliveries),
- (SELECT coalesce(sum(length(raw)),0) FROM messages)+(SELECT coalesce(sum(length(ciphertext)+sent_bytes),0) FROM outbox)`).Scan(&records, &used, &wantRecords, &wantUsed); err != nil || records != wantRecords || used != wantUsed || records > int64(s.limits.Records) || used > s.limits.PayloadBytes {
+ (SELECT coalesce(sum(length(raw)),0) FROM messages)+(SELECT coalesce(sum(length(ciphertext)+sent_bytes),0) FROM outbox)`).Scan(&records, &used, &wantRecords, &wantUsed); err != nil || records != wantRecords || used != wantUsed || records > int64(s.limits.Records) {
 		return true, ErrOutbound
 	}
 	rows, err := db.QueryContext(ctx, "SELECT id FROM outbox ORDER BY id")

@@ -10,9 +10,17 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-// Initial bounded profile: no automatic eviction. Mail-sized backup/capacity
-// qualification precedes raising these persisted per-account limits.
-var nativeMailboxLimits = mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000}
+// nativeMailboxLimits are new mailboxes' limits; existing ones carry theirs in
+// the ledger, which migrate-native keeps equal to these. No automatic eviction.
+var nativeMailboxLimits = mailbox.NativeLimits(mailbox.DefaultQuotaBytes)
+
+// SetMailboxQuota applies the deployment's quota to new mailboxes and to the
+// import caps derived from it. Startup-only, before any request goroutine.
+func SetMailboxQuota(quota int64) {
+	nativeMailboxLimits = mailbox.NativeLimits(quota)
+	importUploadCap = quota
+	imapImportBytes = 2 * quota
+}
 
 func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject string) error {
 	if err := sso.RequireNativeRestoreReleased(s.stateDir); err != nil {

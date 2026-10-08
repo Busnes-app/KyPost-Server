@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -38,7 +39,7 @@ func (s *Server) handleNativeMailAddresses(w http.ResponseWriter, r *http.Reques
 			}
 			mailboxes = owned
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"mailboxes": mailboxes})
+		writeJSON(w, http.StatusOK, s.mailboxStorage(mailboxes))
 		return
 	}
 	var body struct {
@@ -113,4 +114,45 @@ func (s *Server) answerNativeAddress(w http.ResponseWriter, r *http.Request, act
 	default:
 		http.Error(w, "mail address change refused; storage must be readable and the receiving store consistent", http.StatusServiceUnavailable)
 	}
+}
+
+type adminMailbox struct {
+	sso.NativeMailbox
+	UsedBytes *int64 `json:"usedBytes,omitempty"`
+}
+
+// storageSummary sets the quotas against the state filesystem. Quota
+// headroom (quotas not yet used) above 80% of the space free beyond the
+// drive reserve is a warning, never a refusal.
+type storageSummary struct {
+	QuotaBytes   int64  `json:"quotaBytes"`
+	UsedBytes    int64  `json:"usedBytes"`
+	FreeBytes    uint64 `json:"freeBytes"`
+	TotalBytes   uint64 `json:"totalBytes"`
+	ReserveBytes uint64 `json:"reserveBytes"`
+	Overcommit   bool   `json:"overcommitted"`
+}
+
+func (s *Server) mailboxStorage(mailboxes []sso.NativeMailbox) map[string]any {
+	out := make([]adminMailbox, 0, len(mailboxes))
+	var sum storageSummary
+	var headroom uint64
+	for _, m := range mailboxes {
+		used := usedBytes(m)
+		out = append(out, adminMailbox{m, used})
+		sum.QuotaBytes += m.QuotaBytes
+		if used != nil {
+			sum.UsedBytes += *used
+			headroom += uint64(max(m.QuotaBytes-*used, 0))
+		} else {
+			headroom += uint64(m.QuotaBytes)
+		}
+	}
+	answer := map[string]any{"mailboxes": out}
+	if free, total, err := fsutil.DiskSpace(s.stateDir); err == nil {
+		sum.FreeBytes, sum.TotalBytes, sum.ReserveBytes = free, total, fsutil.DriveReserve(total)
+		sum.Overcommit = headroom > (max(free, sum.ReserveBytes)-sum.ReserveBytes)/10*8
+		answer["storage"] = sum
+	}
+	return answer
 }

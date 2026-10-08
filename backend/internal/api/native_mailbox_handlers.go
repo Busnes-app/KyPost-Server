@@ -10,6 +10,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -95,6 +96,21 @@ type clientMailbox struct {
 	ID        string          `json:"id"`
 	Kind      string          `json:"kind"`
 	Addresses []clientAddress `json:"addresses"`
+	// UsedBytes is what the mailbox stores against QuotaBytes, absent when
+	// its database cannot be read.
+	UsedBytes  *int64 `json:"usedBytes,omitempty"`
+	QuotaBytes int64  `json:"quotaBytes"`
+}
+
+func usedBytes(m sso.NativeMailbox) *int64 {
+	if !m.Prepared || m.Dir == "" {
+		return nil
+	}
+	u, err := mailbox.ReadUsage(filepath.Join(m.Dir, "mailbox"))
+	if err != nil {
+		return nil
+	}
+	return &u.Bytes
 }
 
 type clientAddress struct {
@@ -128,7 +144,7 @@ func (s *Server) handleMailboxes(w http.ResponseWriter, r *http.Request) {
 		if m.User != ac.UserID || m.Kind == "extra" && (m.State != "active" || !m.Prepared) {
 			continue
 		}
-		box := clientMailbox{ID: m.ID, Kind: m.Kind, Addresses: []clientAddress{}}
+		box := clientMailbox{ID: m.ID, Kind: m.Kind, Addresses: []clientAddress{}, UsedBytes: usedBytes(m), QuotaBytes: m.QuotaBytes}
 		for _, x := range m.Addresses {
 			if x.State == "active" {
 				box.Addresses = append(box.Addresses, clientAddress{Address: x.Address, Kind: x.Kind})

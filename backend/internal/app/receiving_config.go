@@ -152,7 +152,7 @@ tls file "%s" "%s" {
 log stderr
 smtp tcp://%s {
     defer_sender_reject false
-    max_message_size 4M
+    max_message_size 25M
     max_header_size 128K
     max_recipients 100
     buffer ram
@@ -175,6 +175,8 @@ smtp tcp://%s {
             code 6 reject 550 5.7.1 "Sender blocked"
             code 7 reject 550 5.1.7 "Sender address not accepted"
             code 8 reject 451 4.3.0 "Sender blocks unreadable"
+            code 9 reject 452 4.2.2 "Mailbox full"
+            code 10 reject 452 4.3.1 "Insufficient system storage"
         }
         command "%s" receiving accept "{msg_id}" "{sender}"%s {
             run_on body
@@ -182,6 +184,8 @@ smtp tcp://%s {
             code 3 reject 451 4.3.0 "Routing unavailable"
             code 4 reject 550 5.7.1 "Message rejected by spam policy"
             code 5 reject 451 4.7.0 "Spam check temporarily deferred; retry later"
+            code 9 reject 452 4.2.2 "Mailbox full"
+            code 10 reject 452 4.3.1 "Insufficient system storage"
         }
     }
     destination %s { deliver_to dummy }

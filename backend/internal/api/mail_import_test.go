@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -143,7 +144,7 @@ func TestMailImport(t *testing.T) {
 		State                     string
 		MaxBytes, MaxMessageBytes int64
 	}
-	if w = call("GET", "/api/import", me, "", nil); json.Unmarshal(w.Body.Bytes(), &limits) != nil || limits.State != "idle" || limits.MaxBytes != 32<<20 || limits.MaxMessageBytes != 5<<20 {
+	if w = call("GET", "/api/import", me, "", nil); json.Unmarshal(w.Body.Bytes(), &limits) != nil || limits.State != "idle" || limits.MaxBytes != nativeMailboxLimits.PayloadBytes || limits.MaxMessageBytes != 25<<20 {
 		t.Fatal("fresh status", w.Body)
 	}
 	// Refusals before any link exists.
@@ -284,6 +285,30 @@ func TestMailImport(t *testing.T) {
 		t.Fatal("empty upload", w.Code, w.Body)
 	}
 	noTempFiles("empty upload")
+
+	// The drive reserve: an upload that would cross it is refused up front
+	// (507), and a running import stops before the message that would.
+	defer func(orig func(string) (uint64, uint64, error)) { fsutil.DiskSpace = orig }(fsutil.DiskSpace)
+	fsutil.DiskSpace = func(string) (uint64, uint64, error) { return 10<<30 + uint64(len(mbox)) - 1, 100 << 30, nil }
+	if w = upload(me, grant(me, ``), mbox); w.Code != 507 || !strings.Contains(w.Body.String(), "kept for incoming mail") {
+		t.Fatal("upload inside the reserve", w.Code, w.Body)
+	}
+	noTempFiles("reserve upload")
+	var checks atomic.Int32
+	fsutil.DiskSpace = func(string) (uint64, uint64, error) {
+		if checks.Add(1) == 1 {
+			return 1 << 50, 1 << 50, nil
+		}
+		return 10 << 30, 100 << 30, nil
+	}
+	if w = upload(me, grant(me, ``), mbox); w.Code != 202 {
+		t.Fatal("upload above the reserve", w.Code, w.Body)
+	}
+	if st := wait(me); st.State != "failed" || st.Imported != 0 || !strings.Contains(st.Error, "kept for incoming mail") {
+		t.Fatalf("import inside the reserve: %+v", st)
+	}
+	noTempFiles("reserve import")
+	fsutil.DiskSpace = func(string) (uint64, uint64, error) { return 1 << 50, 1 << 50, nil }
 
 	// Concurrency: one per user, maxImports overall; a busy refusal keeps the link.
 	url = grant(me, ``)

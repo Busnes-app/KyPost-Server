@@ -14,6 +14,7 @@ import (
 	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -40,9 +41,9 @@ const (
 var importUploadCap = nativeMailboxLimits.PayloadBytes
 
 var (
-	// importUploadWindow bounds a whole upload (32 MiB in 20 minutes is
-	// 27 KiB/s), so a trickling upload frees its slot.
-	importUploadWindow = 20 * time.Minute
+	// importUploadWindow bounds a whole upload (5 GiB in two hours is
+	// 0.7 MiB/s), so a trickling upload frees its slot.
+	importUploadWindow = 2 * time.Hour
 	// importMaxMessages bounds one job's work, counting duplicates and
 	// skipped messages: twice what the mailbox can hold.
 	importMaxMessages = 2 * nativeMailboxLimits.Records
@@ -302,6 +303,9 @@ func (s *Server) receiveImport(w http.ResponseWriter, r *http.Request) (string, 
 	if r.ContentLength > importUploadCap {
 		return "", 0, http.StatusRequestEntityTooLarge, tooLarge
 	}
+	if err := fsutil.CheckDriveReserve(s.stateDir, r.ContentLength); err != nil {
+		return "", 0, http.StatusInsufficientStorage, errors.New(importFailure(err))
+	}
 	dir := filepath.Join(s.stateDir, importDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", 0, http.StatusServiceUnavailable, errors.New("import storage is unavailable")
@@ -336,7 +340,7 @@ func (s *Server) receiveImport(w http.ResponseWriter, r *http.Request) (string, 
 	return f.Name(), n, 0, nil
 }
 
-var errUploadTooSlow = errors.New("the upload took too long (20 minutes at most); try again on a faster connection or with a smaller file")
+var errUploadTooSlow = errors.New("the upload took too long (two hours at most); try again on a faster connection or with a smaller file")
 
 // idleReader moves the read deadline before every read to importIdle from
 // now, never past the whole upload's deadline.
@@ -397,7 +401,11 @@ func (s *Server) runImport(ctx context.Context, job *importJob, im mailImporter,
 
 // importOne stores raw under the owner's settings lock with incoming
 // encryption re-read, so turning encryption on stops before the next message.
+// An import never eats into the drive reserve kept for incoming mail.
 func (s *Server) importOne(ctx context.Context, job *importJob, im mailImporter, folder string, raw []byte, meta mailbox.ImportMeta) error {
+	if err := fsutil.CheckDriveReserve(s.stateDir, int64(len(raw))); err != nil {
+		return err
+	}
 	return s.withIncomingEncryptionOff(job.user, func() error { return im.ImportMessage(ctx, folder, raw, meta) })
 }
 
@@ -425,6 +433,8 @@ func importFailure(err error) string {
 	switch {
 	case errors.Is(err, mailbox.ErrCapacity):
 		return "your mailbox is full; free space and import again (messages already imported are skipped as duplicates)"
+	case errors.Is(err, fsutil.ErrDriveReserve):
+		return "the server's disk is nearly full and the space left is kept for incoming mail; ask your administrator to free space, then import again (messages already imported are skipped as duplicates)"
 	case errors.Is(err, errExtraMailboxIncomingEncryption):
 		return "incoming encryption was turned on, so the import stopped rather than store mail unencrypted"
 	case errors.Is(err, mailbox.ErrImportArchive):

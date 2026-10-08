@@ -79,8 +79,13 @@ SPF policy becomes `~all` unless the operator merges further includes, and DMARC
 (observed 2026-10-06), so setup and rollback restore it. Up to 30 domains per zone.
 
 **Worker** (`receiving-worker/`). Size cap: 25 MiB (Cloudflare's maximum, about ten
-phone photos) for both receiving profiles; this raises the ingress 4 MiB message
-limit and its live payload budget through a store limit migration.
+phone photos) for both receiving profiles. The ingress limit migration is done:
+every opener raises a buffer created with the earlier 4 MiB / 64 MiB limits to
+25 MiB per message and 512 MiB held, and `migrate-native` raises every mailbox
+to the [native limits](NATIVE_PROVISIONING.md#mailbox-quotas), so each route's
+`maxBytes` (the smaller of the buffer's and the mailbox's message limit) is
+25 MiB. A full mailbox leaves its message in R2 while others' mail flows; the
+drive reserve stops pickup until space is freed.
 
 
 - `email`: lowercase `message.to` and the envelope sender domain. A sender address or
@@ -508,7 +513,7 @@ Live, on the test deployment, each with its own bounded plan and approval:
 1. Stale routing: option A, 14-day maximum age.
 2. Frozen binding at pickup for the hosted profile: approved.
 3. Spam after acceptance: delivered to Junk.
-4. Size cap: 25 MiB in both profiles, with the ingress limit migration.
+4. Size cap: 25 MiB in both profiles, with the ingress limit migration (done).
 5. Pickup interval 30 s; the oldest-unpicked warning threshold is one hour.
 6. Abusive senders: blocked with an escalating cooldown, per authenticated address
    automatically (Maddy now; Cloudflare after SPF qualification) and per domain only

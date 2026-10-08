@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -195,13 +196,55 @@ func TestNativeMailboxesAdminAPIAndSelection(t *testing.T) {
 	}
 	var mine struct {
 		Mailboxes []struct {
-			ID, Kind  string
-			Addresses []struct{ Address, Kind string }
+			ID, Kind   string
+			Addresses  []struct{ Address, Kind string }
+			UsedBytes  *int64
+			QuotaBytes int64
 		}
 	}
 	w = as(one.ID, "GET", "/api/mailboxes", "mbx-unknown")
 	if err = json.Unmarshal(w.Body.Bytes(), &mine); w.Code != 200 || err != nil || len(mine.Mailboxes) != 2 || mine.Mailboxes[0].ID != one.ID || mine.Mailboxes[1].ID != extra.ID || mine.Mailboxes[1].Addresses[0].Address != "sales@example.test" {
 		t.Fatal("caller mailboxes", w.Code, w.Body)
+	}
+	// Each mailbox reports what it stores against its quota.
+	for _, m := range mine.Mailboxes {
+		if m.UsedBytes == nil || *m.UsedBytes <= 0 || m.QuotaBytes != nativeMailboxLimits.PayloadBytes {
+			t.Fatal("caller usage", w.Body)
+		}
+	}
+	// Administrators see the same per mailbox, and the quotas against the
+	// state filesystem: unused quota above 80% of the space beyond the reserve warns.
+	var storage struct {
+		Mailboxes []struct {
+			Mailbox    string
+			UsedBytes  *int64
+			QuotaBytes int64
+		}
+		Storage struct {
+			QuotaBytes, UsedBytes               int64
+			FreeBytes, TotalBytes, ReserveBytes uint64
+			Overcommitted                       bool
+		}
+	}
+	defer func(orig func(string) (uint64, uint64, error)) { fsutil.DiskSpace = orig }(fsutil.DiskSpace)
+	for _, c := range []struct {
+		free uint64
+		over bool
+	}{{10<<30 + uint64(float64(3*nativeMailboxLimits.PayloadBytes)/0.75), false}, {10<<30 + uint64(float64(3*nativeMailboxLimits.PayloadBytes)/0.85), true}} {
+		fsutil.DiskSpace = func(string) (uint64, uint64, error) { return c.free, 100 << 30, nil }
+		w = call("GET", "/api/admin/mail-addresses", token, csrf, "")
+		if err = json.Unmarshal(w.Body.Bytes(), &storage); w.Code != 200 || err != nil {
+			t.Fatal("admin storage", w.Code, w.Body)
+		}
+		var used int64
+		for _, m := range storage.Mailboxes {
+			if m.UsedBytes != nil {
+				used += *m.UsedBytes
+			}
+		}
+		if len(storage.Mailboxes) != 3 || used <= 0 || storage.Storage.UsedBytes != used || storage.Storage.QuotaBytes != 3*nativeMailboxLimits.PayloadBytes || storage.Storage.ReserveBytes != 10<<30 || storage.Storage.FreeBytes != c.free || storage.Storage.Overcommitted != c.over {
+			t.Fatal("admin storage", c.free, w.Body)
+		}
 	}
 	if w = as(second.ID, "GET", "/api/mailboxes", ""); !strings.Contains(w.Body.String(), second.ID) || strings.Contains(w.Body.String(), extra.ID) {
 		t.Fatal("another user's mailboxes listed", w.Body)

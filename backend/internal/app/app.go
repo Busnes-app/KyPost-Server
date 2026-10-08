@@ -83,6 +83,11 @@ func Run(args []string) error {
 	if nativeReceiving && !nativeMail {
 		return errors.New("KYPOST_NATIVE_RECEIVING requires KYPOST_NATIVE_MAIL=true")
 	}
+	quota, err := config.MailboxQuotaBytes()
+	if err != nil {
+		return err
+	}
+	api.SetMailboxQuota(quota)
 	paths := config.Paths{
 		ConfigFile: filepath.Join(config.ConfigDir(), "config.yaml"),
 		StateDir:   config.StateDir(),

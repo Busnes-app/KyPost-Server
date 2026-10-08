@@ -408,7 +408,7 @@ func TestIMAPImport(t *testing.T) {
 		{name: "Slow", attrs: ``, msgs: []fakeMsg{{raw: seen, date: "06-May-2019 07:08:09 -0700"}}},
 		{name: "Lies", msgs: []fakeMsg{{raw: "Subject: lie\r\n\r\n" + strings.Repeat("x", 2<<10), size: 100, date: " 1-Jan-2020 00:00:00 +0000"}}},
 		{name: "Flood", msgs: []fakeMsg{{raw: "Subject: flood\r\n\r\nx\r\n", size: 10000, date: " 1-Jan-2020 00:00:00 +0000"}}},
-		{name: "Huge", exists: 1000000},
+		{name: "Huge", exists: 3000000},
 		{name: "Five", exists: 5},
 		{name: "Max31", exists: 2147483647},
 		{name: "Max32", exists: 4294967295},
@@ -806,8 +806,8 @@ func TestIMAPImport(t *testing.T) {
 	imapImportBytes = 64 << 10
 	// After a small folder, an EXISTS over 31 bits is refused rather than
 	// wrapped, and one within 31 bits past the cap is refused before any walk.
-	for folder, want := range map[string]string{"Lies": "larger than it announced", "Flood": "sent more than twice", "Huge": "more than 20000 messages",
-		`Five","Max31`: "more than 20000 messages", `Five","Max32`: "would not open Imported/imap-example-com/Max32", `Five","Wider`: "would not open Imported/imap-example-com/Wider", `Five","Widest`: "would not open Imported/imap-example-com/Widest"} {
+	for folder, want := range map[string]string{"Lies": "larger than it announced", "Flood": "sent more than twice", "Huge": "more than 2000000 messages",
+		`Five","Max31`: "more than 2000000 messages", `Five","Max32`: "would not open Imported/imap-example-com/Max32", `Five","Wider`: "would not open Imported/imap-example-com/Wider", `Five","Widest`: "would not open Imported/imap-example-com/Widest"} {
 		token = grant(account)
 		if w, _ = list(me, token, fake.pass); w.Code != 200 {
 			t.Fatal("list", w.Code)

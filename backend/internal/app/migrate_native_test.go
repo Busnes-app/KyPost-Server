@@ -15,6 +15,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
 
@@ -108,5 +109,40 @@ func TestMigrateNativeCommandReportsRemediation(t *testing.T) {
 	}
 	if err := Run([]string{"migrate-native"}); err == nil || !strings.Contains(err.Error(), "restore the pre-migration backup") {
 		t.Fatal("failure without remediation", err)
+	}
+}
+
+// migrate-native gives existing mailboxes the configured quota with the
+// native profile, and a bad quota stops it before any write.
+func TestMigrateNativeCommandAppliesMailboxQuota(t *testing.T) {
+	r, created := receivingFixture(t)
+	t.Setenv("CONFIG_DIR", r.configDir)
+	t.Setenv("SECRET_DIR", t.TempDir())
+	ledger := filepath.Join(r.configDir, "native-provisioning.json")
+	before, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KYPOST_MAILBOX_QUOTA_BYTES", "5GiB")
+	if err := Run([]string{"migrate-native"}); err == nil || !strings.Contains(err.Error(), "KYPOST_MAILBOX_QUOTA_BYTES") {
+		t.Fatal("bad quota accepted", err)
+	}
+	if after, _ := os.ReadFile(ledger); !bytes.Equal(before, after) {
+		t.Fatal("bad quota wrote the ledger")
+	}
+	t.Setenv("KYPOST_MAILBOX_QUOTA_BYTES", "10737418240")
+	if err := Run([]string{"migrate-native"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range created {
+		a, _, err := r.life.NativeAssignment(u.NativeMailboxIssuer, u.SSOSub)
+		if err != nil || a.Limits != mailbox.NativeLimits(10<<30) {
+			t.Fatalf("limits %+v %v", a.Limits, err)
+		}
+		s, err := mailbox.OpenExisting(filepath.Join(r.stateDir, "users", u.ID, "mailbox"), a.Owner, a.Limits, a.Source)
+		if err != nil {
+			t.Fatal("migrated mailbox refused", err)
+		}
+		_ = s.Close()
 	}
 }

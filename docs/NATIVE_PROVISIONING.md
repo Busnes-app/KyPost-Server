@@ -136,6 +136,63 @@ token), ledger version 2 and relay version 2, so domain setup, allocation,
 receiving, admission and sending all refuse. To roll back, restore the backup
 taken before the upgrade; see [restore](RESTORE.md#storage-format-migration).
 
+## Mailbox quotas
+
+Every native mailbox, primary and extra, has the same limits (owner decision
+2026-10-07): a 25 MiB message (both receiving profiles), a storage quota of
+`KYPOST_MAILBOX_QUOTA_BYTES` (default 5 GiB, 5 × 2^30 = 5368709120 bytes;
+256 MiB to 1 TiB, anything else refuses startup and `migrate-native`) and
+1,000,000 retained records (tombstones included). The quota counts live raw
+bytes plus queued outgoing mail. It is one deployment-wide setting: every
+process reads the same environment, and a change applies at the next start.
+
+Limits are persisted in four places that must agree: the ledger
+(`native-provisioning.json`, each mailbox's `limits`; extra mailboxes carry the
+owner's), each mailbox's `native-mailbox.json`, its `mailbox.db` `identity` row,
+and the comparisons that admission, preparation and restore validation make
+between them. After the format migration, `migrate-native` applies the
+configured limits under the same domain → directory → users locks:
+
+1. the ledger, in one atomic write, when any mailbox differs;
+2. each published mailbox (`mailbox.ConvergeLimits`, under its preparation
+   lock): the `mailbox.db` identity row first, `native-mailbox.json` last, so a
+   preparation file at the target proves both are.
+
+The ledger is the source of truth and every step is idempotent, so a crash
+anywhere, or a quota changed between two starts, completes on the next start;
+until then the half-converged mailbox is refused like any mismatch, never
+silently adopted. A second run writes nothing. A failed mailbox is reported and
+the others still converge. A restored backup with older limits is migrated the
+same way at the next start (the restore hold stays). New mailboxes are prepared
+with the configured limits.
+
+A quota lowered below what a mailbox holds does not lock it: it opens, reads,
+moves and deletes as before and backup validation accepts it; only new mail
+(delivery, import, outgoing queue) is refused until its usage is back under the
+quota. Receiving answers a full mailbox temporarily: `452 4.2.2 Mailbox full` at
+RCPT and at DATA (helper exit 9), so the sender's queue retries and nothing is
+lost; hosted pickup leaves that message in R2 while others' mail flows. Mail
+accepted before the mailbox filled stays pending in the receiving buffer and
+imports once space is freed.
+
+The drive reserve is separate from quotas: new mail is refused before the
+filesystem holding `STATE_DIR` fills, keeping 10% of it or 5 GiB free, whichever
+is larger (`fsutil.CheckDriveReserve`, one helper shared with the backup
+scratch check). Receiving refuses growth inside it with `452 4.3.1 Insufficient
+system storage` (exit 10) at RCPT and DATA; hosted pickup stops fetching and
+leaves mail in R2; imports refuse the upload (507) and stop before the message
+that would cross it. Exact retries of already accepted mail still answer.
+
+`GET /api/mailboxes` gives each of the caller's mailboxes `usedBytes` (absent
+when its database cannot be read) and `quotaBytes`; Settings → Mail → Storage
+shows them, warning at 80% and more strongly at 95%. `GET
+/api/admin/mail-addresses` (and `/api/admin/mailboxes`) adds the same per
+mailbox and a `storage` summary: `quotaBytes` (sum), `usedBytes` (sum),
+`freeBytes`, `totalBytes`, `reserveBytes` and `overcommitted`, which is true
+when quota not yet used exceeds 80% of the free space beyond the reserve.
+Server → Mail addresses shows it as a warning, never a refusal: quotas are
+promises the drive may not keep, and the reserve is what actually protects it.
+
 ## Account allocation
 
 `LifecycleStore.AllocateNativeAccount` is an internal new-account publication
@@ -423,8 +480,8 @@ state before attempting allocation outside the directory lock. A failed attempt
 returns the normal accepted-directory status with `mailboxStatus:pending`;
 the API worker retries retained subjects at startup and every minute. Signed newer
 revisions apply activity/roles before retention; storage retries leave local
-deactivation intact. Initial limits are 5 MiB per message, 32 MiB live payload,
-and 10,000 retained records per mailbox; existing reservations keep their limits.
+deactivation intact. Mailboxes get the [native limits](#mailbox-quotas); a
+reservation keeps its ledger limits, which `migrate-native` keeps current.
 
 Every mailbox operation and mail-authenticated cache read checks the configured
 active issuer, current user and retained directory activity/role, primary
@@ -561,9 +618,11 @@ another account](#import-from-another-mail-account) adds its own below.
   (`application/octet-stream`). It streams to a `0600` temp file in
   `$STATE_DIR/imports/`, never to memory, refusing more than `maxBytes` (413)
   and an empty body (400); the cap is the mailbox's whole storage quota
-  (32 MiB today), since nothing larger can fit. An upload idle for a minute,
-  or still sending after 20 minutes in total (at least 27 KiB/s for 32 MiB),
-  is cut off (408), so a trickling upload frees its slot. It answers `202`
+  (5 GiB by default), since nothing larger can fit. An upload that would cut
+  into the [drive reserve](#mailbox-quotas) is refused up front (507). An
+  upload idle for a minute, or still sending after two hours in total (at
+  least 0.7 MiB/s for 5 GiB), is cut off (408), so a trickling upload frees
+  its slot. It answers `202`
   with the job status and the job runs in the background, past the end of
   the request. A busy refusal (409) keeps the link. An upload that finishes
   after shutdown began starts no job (503).
@@ -595,10 +654,10 @@ another account](#import-from-another-mail-account) adds its own below.
 - Each message is stored as its parsed bytes, seen, with the `Date` header as
   its date (now when absent or invalid) and no flags or labels. A message that
   is empty, has no RFC 5322 header, or exceeds the smaller of the 25 MiB
-  inbound cap and the mailbox's message limit (5 MiB today) is skipped and
+  inbound cap and the mailbox's message limit (also 25 MiB) is skipped and
   counted, before any lock or admission is taken; one bad message never stops
-  the import. A job handles at most 20,000 messages (twice the mailbox's
-  10,000 records), counting duplicates and skipped ones, and fails beyond that
+  the import. A job handles at most 2,000,000 messages (twice the mailbox's
+  1,000,000 records), counting duplicates and skipped ones, and fails beyond that
   with a request to split the file, so a flood of empty separators or
   duplicates is bounded work. Each stored message takes the settings lock and
   mailbox admission on its own: holding them across a batch would block the
@@ -606,8 +665,8 @@ another account](#import-from-another-mail-account) adds its own below.
   the whole batch. A folder already holding a
   live copy of the same bytes (SHA-256, indexed per folder) counts a
   duplicate instead; a deleted copy no longer blocks re-import. A full
-  mailbox, a mailbox no longer admitted or a zip refused as a whole stops the
-  job as `failed` with the reason.
+  mailbox, the drive reserve reached, a mailbox no longer admitted or a zip
+  refused as a whole stops the job as `failed` with the reason.
 - Imported mail is not received mail: no delivery receipt (receiving dedupe
   and quarantine are untouched). It is stored seen and recorded in the
   mailbox's `imported` table, which the poller's unread-INBOX query excludes,
@@ -764,9 +823,12 @@ all prepared owners/sources before commits and holds the same authority fences
 through mailbox receipts and ingress acknowledgment; no network or stdin work
 runs inside these fences. Local deactivation waits for admitted commits.
 
-The buffer limits are 4 MiB per message, 64 MiB live payload and 10,000 records;
-each recipient's own message limit is checked before acceptance. SMTP headers
-added by the receiver count toward this limit. The daemon revisits pending
+The buffer limits are 25 MiB per message, 512 MiB live payload (a burst of
+held mail) and 10,000 records; each recipient's own message limit and remaining
+quota are checked at RCPT and again before acceptance. SMTP headers added by the
+receiver count toward this limit. Every opener raises a buffer created with
+lower limits (the earlier 4 MiB / 64 MiB) to these in one SQLite transaction
+and keeps its held mail; lower configured limits are refused, never applied. The daemon revisits pending
 deliveries every five seconds. Partial mailbox failure retains holding bytes;
 after lease expiry, exact receipts prevent duplicate local delivery. The
 acknowledgment that follows every owner's commit archives the delivery in the
@@ -774,10 +836,11 @@ same transaction: a compact tombstone (sender, digest, recipients) replaces the
 row and its bindings, answers exact replays and stops the receiver ID from being
 delivered again. The 10,000-record limit counts only staged, pending and
 quarantined deliveries; tombstones are never pruned and count only toward the
-physical budget. A typical tombstone is about 190-210 bytes (about 2 million in
-the budget below); an attacker flooding many aliases with 320-byte senders and
-100 recipients fits about 170,000. Backups refuse `ingress.db` above 64 MiB, at
-about 360,000 typical tombstones. Already
+physical budget. A typical tombstone is about 190-210 bytes (millions fit the
+budget below); an attacker flooding many aliases with 320-byte senders and
+100 recipients fits several hundred thousand. Sealed backups without
+`KYPOST_BULK_BACKUP_REPOSITORY` refuse `ingress.db` above 64 MiB, at about
+360,000 typical tombstones or 64 MiB of held mail; the bulk backup has no such cap. Already
 accepted mail imports without fresh DNS, refreshing authorized route TTLs
 before claiming. Missing storage, restore holds, directory lag, lock timeouts,
 missing sign-on settings and local deactivation retain pending mail. Local
@@ -786,7 +849,7 @@ owner. When admission refuses an import and the ledger durably records a frozen
 address as moved, inactive or at a newer generation (an administrator disabled
 the mailbox or released the address, or KyIdentity offboarded the owner or
 promoted it to administrator), the delivery is quarantined instead: it could
-never import again and would hold the 10,000-record and 64 MiB budgets for
+never import again and would hold the 10,000-record and 512 MiB budgets for
 good. A restore hold suppresses this. After re-enabling the mailbox an
 administrator can release it, since release goes to the frozen mailbox. Routes and bindings carry the address generation;
 a binding whose address is no longer `active`, owned by the bound mailbox and at
@@ -1104,10 +1167,11 @@ but automatic blocks in the shared list are published like manual ones.
 New route writes, RCPT bindings and MIME acceptance also check physical storage
 inside the immediate SQLite writer transaction. The admission budget is derived
 from the durable limits: `max(32 MiB, 4 × payload bytes + 32 KiB × records)`
-(about 568.5 MiB for this profile), counting `ingress.db`, WAL and shared-memory
+(about 2.3 GiB for this profile), counting `ingress.db`, WAL and shared-memory
 file lengths. Reserve 32 actual SQLite pages plus twice the incoming payload
 for the next write, and keep at least 16 MiB plus that allowance available to
-the process on the filesystem. Failure to measure storage refuses new growth;
+the process on the filesystem, and that allowance on top of the
+[drive reserve](#mailbox-quotas). Failure to measure storage refuses new growth;
 no mail is evicted. Exact binding/payload retries remain idempotent. Near the
 budget, reserve the whole WAL length plus 16 MiB before attempting a bounded
 truncation checkpoint: copying uncheckpointed pages can grow the main database
@@ -1162,7 +1226,17 @@ GOTOOLCHAIN=go1.26.6 go test -race ./internal/fsutil ./internal/users ./internal
 GOTOOLCHAIN=go1.26.6 go test -race ./internal/api ./internal/processor ./internal/mailbox ./internal/config -run '^TestNativeRuntime|^TestRuntimeClient|^TestExistingMailbox|^TestNativeMailRequiresExplicitBoolean' -count=1 -timeout=5m
 GOTOOLCHAIN=go1.26.6 go test -race ./internal/state ./internal/sso ./internal/api ./internal/processor -run '^TestOpenNative|^TestNativeState|^TestNativeUserStorage|^TestNativePollerState' -count=1 -timeout=5m
 GOTOOLCHAIN=go1.26.6 go test -race ./internal/sso ./internal/app ./internal/backup -run 'TestNativeMigration|TestMigrateNative|TestNativeBackupAcceptsV1AndV2Snapshots' -count=1 -timeout=5m
+GOTOOLCHAIN=go1.26.6 go test -race ./internal/config ./internal/mailbox ./internal/ingress ./internal/sso ./internal/app ./internal/api -run 'TestMailboxQuotaBytes|TestConvergeLimits|TestQuotaRefuses|TestNativeOutboxSnapshotAcceptsUsageAboveLoweredQuota|TestHoldingLimitsRaiseOnly|TestDriveReserve|TestMigrateNativeLimits|TestMigrateNativeCommandAppliesMailboxQuota|QuotaAndDriveReserve|^TestNativeMailboxesAdminAPIAndSelection$|^TestMailImport$' -count=1 -timeout=10m
 ```
+
+The quota checks raise a primary and an extra mailbox with a crash after the
+ledger write, a crash between mailboxes and a crash between `mailbox.db` and
+`native-mailbox.json`, re-target after a crash, a no-op second run, a restored
+copy with old limits, the command reading `KYPOST_MAILBOX_QUOTA_BYTES`, and a
+lowered quota that keeps mail readable and deletable while refusing new mail;
+the buffer raise and lowering refusal; RCPT/DATA refusals (exit 9 and 10),
+hosted pickup leaving mail in R2; the drive reserve with an injected `statfs`
+in both receiving paths and import; and the usage API and storage summary.
 
 The migration checks start from real version-1 files (allocated accounts, an
 administrator subject, a relay, receiving bindings at an older and the current

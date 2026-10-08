@@ -79,7 +79,10 @@ prove current external authority or freshness; consistent old backups can pass.
 Native validation needs additional scratch space for the collected metadata and
 databases. Without `KYPOST_BULK_BACKUP_REPOSITORY` the 64 MiB per-file and 256 MiB total
 limits apply to mail databases too; oversized backups fail, naming that variable,
-rather than omit mail. The limit applies to the consistent snapshot, including committed WAL rows, not just the main database file size. A small main file is therefore insufficient to predict whether a backup will fit. Automated mailbox/receiving capacity checks verify refusal without a local capsule or scratch leftovers and preservation of original committed probe data; they do not qualify domain-sized mail throughput.
+rather than omit mail. Native mailboxes have 5 GiB quotas by default, so set it
+before they grow. A restored backup taken with older mailbox limits is raised to
+the configured ones by `migrate-native` at the next start
+([mailbox quotas](NATIVE_PROVISIONING.md#mailbox-quotas)). The limit applies to the consistent snapshot, including committed WAL rows, not just the main database file size. A small main file is therefore insufficient to predict whether a backup will fit. Automated mailbox/receiving capacity checks verify refusal without a local capsule or scratch leftovers and preservation of original committed probe data; they do not qualify domain-sized mail throughput.
 
 Capsules carry the native domain set `native-domains.json` and the
 `native-domain.json` tombstone, never the `*.v1-migrated` copies. Validation and
