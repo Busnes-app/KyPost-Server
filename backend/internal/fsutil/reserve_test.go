@@ -2,6 +2,7 @@ package fsutil
 
 import (
 	"errors"
+	"syscall"
 	"testing"
 )
 
@@ -31,5 +32,20 @@ func TestDriveReserve(t *testing.T) {
 	DiskSpace = func(string) (uint64, uint64, error) { return 0, 0, errors.New("statfs failed") }
 	if err := CheckDriveReserve("/", 0); err == nil || errors.Is(err, ErrDriveReserve) {
 		t.Fatalf("unmeasurable disk: %v", err)
+	}
+}
+
+// Block counts are in fragment units when the filesystem reports them.
+func TestDiskSpaceUsesFragmentSize(t *testing.T) {
+	defer func(orig func(string, *syscall.Statfs_t) error) { statfs = orig }(statfs)
+	for _, c := range []struct{ bsize, frsize, want int64 }{{1 << 20, 4096, 4096}, {4096, 0, 4096}} {
+		statfs = func(_ string, st *syscall.Statfs_t) error {
+			st.Bsize, st.Frsize, st.Blocks, st.Bavail = c.bsize, c.frsize, 1000, 10
+			return nil
+		}
+		free, total, err := DiskSpace("/")
+		if err != nil || free != uint64(10*c.want) || total != uint64(1000*c.want) {
+			t.Fatalf("%+v: free %d total %d %v", c, free, total, err)
+		}
 	}
 }

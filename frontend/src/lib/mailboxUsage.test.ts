@@ -12,7 +12,11 @@ it("warns at 80% and is critical at 95% and beyond", () => {
 });
 
 it("formats binary units like the server", () => {
-  expect([0, 1023, 1024, 1536, 2 ** 20, 5 * 2 ** 30, 5.25 * 2 ** 30].map(formatStorage)).toEqual(["0 B", "1023 B", "1 KiB", "1.5 KiB", "1 MiB", "5 GiB", "5.3 GiB"]);
+  expect([0, 1023, 1024, 1536, 2 ** 20, 5 * 2 ** 30, 5.25 * 2 ** 30].map(b => formatStorage(b))).toEqual(["0 B", "1023 B", "1 KiB", "1.5 KiB", "1 MiB", "5 GiB", "5.3 GiB"]);
   expect(usageText(4 * 2 ** 30, 5 * 2 ** 30)).toBe("4 GiB of 5 GiB used (80%)");
   expect(usageText(6 * 2 ** 30, 5 * 2 ** 30)).toBe("6 GiB of 5 GiB used (120%)");
+  // Short of the quota never reads as full.
+  expect(usageText(Math.round(4.96 * 2 ** 30), 5 * 2 ** 30)).toBe("4.9 GiB of 5 GiB used (99%)");
+  expect(usageText(5 * 2 ** 30 - 1, 5 * 2 ** 30)).toBe("4.9 GiB of 5 GiB used (99%)");
+  expect(formatStorage(Math.round(4.96 * 2 ** 30), "down")).toBe("4.9 GiB");
 });

@@ -10,14 +10,23 @@ import (
 // Callers answer it as a temporary refusal: nothing is lost, senders retry.
 var ErrDriveReserve = errors.New("the drive reserve is reached; new mail waits until space is freed")
 
+// statfs is syscall.Statfs; tests replace it.
+var statfs = syscall.Statfs
+
 // DiskSpace reports the bytes an unprivileged writer may still use, and the
-// size, of the filesystem holding path. Tests replace it.
+// size, of the filesystem holding path. Block counts are in fragment-size
+// units (Frsize; Bsize is only the preferred I/O size when it is set). Tests
+// replace it.
 var DiskSpace = func(path string) (free, total uint64, err error) {
 	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
+	if err := statfs(path, &st); err != nil {
 		return 0, 0, err
 	}
-	return st.Bavail * uint64(st.Bsize), st.Blocks * uint64(st.Bsize), nil
+	unit := uint64(st.Frsize)
+	if unit == 0 {
+		unit = uint64(st.Bsize)
+	}
+	return st.Bavail * unit, st.Blocks * unit, nil
 }
 
 // DriveReserve is the free space mail writes leave untouched: 10% of the

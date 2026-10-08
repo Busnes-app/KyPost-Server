@@ -22,15 +22,15 @@ func runMigrateNative(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	quota, err := config.MailboxQuotaBytes()
-	if err != nil {
-		return err
-	}
 	migrated, err := sso.MigrateNative(ctx, config.ConfigDir(), filepath.Join(config.SecretDir(), "native-relay.key"))
 	if err == nil {
-		var raised bool
-		raised, err = sso.MigrateNativeLimits(ctx, config.ConfigDir(), mailbox.NativeLimits(quota))
-		migrated = migrated || raised
+		var quota int64
+		if quota, err = config.MailboxQuotaBytes(); err == nil {
+			var raised bool
+			// Its own deadline, scaled to the mailbox count.
+			raised, err = sso.MigrateNativeLimits(context.Background(), config.ConfigDir(), mailbox.NativeLimits(quota))
+			migrated = migrated || raised
+		}
 	}
 	result := "unchanged"
 	if err != nil {
@@ -39,7 +39,10 @@ func runMigrateNative(args []string) error {
 		result = "migrated"
 	}
 	slog.Info("native storage migration", "actor", "entrypoint", "task_id", "migrate-native", "action", "migrate", "target", "native-config", "result", result)
-	if err != nil {
+	switch {
+	case errors.Is(err, sso.ErrNativeMailboxLimits):
+		return fmt.Errorf("native mailbox limits: %w", err)
+	case err != nil:
 		return fmt.Errorf("native mail storage migration failed; native mail stays refused and external IMAP is unaffected. Keep the config volume and its *%s copies, fix the cause below and restart, or restore the pre-migration backup: %w", sso.NativeMigrationCopySuffix, err)
 	}
 	return nil

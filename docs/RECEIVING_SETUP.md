@@ -291,8 +291,13 @@ reception and provider cleanup are not implemented.
   recipients 100. RAM buffering avoids temporary payload spool files; up to
   four active messages can consume roughly 100 MiB in the receiver, and as
   much again in the helpers reading them, plus parsing/process overhead.
-- A recipient mailbox at its [quota](NATIVE_PROVISIONING.md#mailbox-quotas)
-  answers `452 4.2.2 Mailbox full` (helper exit 9) at RCPT and at DATA; growth
+- A recipient mailbox without room for one more 25 MiB message under its
+  [quota](NATIVE_PROVISIONING.md#mailbox-quotas) (mail waiting in the buffer
+  counted) answers `452 4.2.2 Mailbox full` (helper exit 9) at RCPT, for that
+  recipient alone, because Maddy passes the helper no message size. DATA
+  rechecks the real size and, if deliveries took the room since RCPT, refuses
+  the whole transaction temporarily; the sender's retry then refuses only that
+  recipient at RCPT. Growth
   that would cut into the drive reserve (10% of the state filesystem or 5 GiB,
   whichever is larger) answers `452 4.3.1 Insufficient system storage`
   (exit 10). Both are temporary, so senders retry; size the volume for

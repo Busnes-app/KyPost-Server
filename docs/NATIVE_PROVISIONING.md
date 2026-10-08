@@ -141,7 +141,9 @@ taken before the upgrade; see [restore](RESTORE.md#storage-format-migration).
 Every native mailbox, primary and extra, has the same limits (owner decision
 2026-10-07): a 25 MiB message (both receiving profiles), a storage quota of
 `KYPOST_MAILBOX_QUOTA_BYTES` (default 5 GiB, 5 × 2^30 = 5368709120 bytes;
-256 MiB to 1 TiB, anything else refuses startup and `migrate-native`) and
+256 MiB to 1 TiB; with `KYPOST_NATIVE_MAIL=true` anything else refuses
+startup, and `migrate-native` reports it and leaves native mail refused, while
+an IMAP-only deployment ignores the variable) and
 1,000,000 retained records (tombstones included). The quota counts live raw
 bytes plus queued outgoing mail. It is one deployment-wide setting: every
 process reads the same environment, and a change applies at the next start.
@@ -161,19 +163,29 @@ configured limits under the same domain → directory → users locks:
 The ledger is the source of truth and every step is idempotent, so a crash
 anywhere, or a quota changed between two starts, completes on the next start;
 until then the half-converged mailbox is refused like any mismatch, never
-silently adopted. A second run writes nothing. A failed mailbox is reported and
-the others still converge. A restored backup with older limits is migrated the
+silently adopted. A second run writes nothing. A mailbox that cannot take the
+limits is named in the error (`sso.ErrNativeMailboxLimits`); only it stays
+refused and the others converge. Locks wait at most a minute; the work gets a
+minute plus two seconds per mailbox, at most 30 minutes. A restored backup with older limits is migrated the
 same way at the next start (the restore hold stays). New mailboxes are prepared
 with the configured limits.
 
 A quota lowered below what a mailbox holds does not lock it: it opens, reads,
 moves and deletes as before and backup validation accepts it; only new mail
 (delivery, import, outgoing queue) is refused until its usage is back under the
-quota. Receiving answers a full mailbox temporarily: `452 4.2.2 Mailbox full` at
-RCPT and at DATA (helper exit 9), so the sender's queue retries and nothing is
-lost; hosted pickup leaves that message in R2 while others' mail flows. Mail
-accepted before the mailbox filled stays pending in the receiving buffer and
-imports once space is freed.
+quota. Receiving counts accepted mail still waiting in the receiving buffer
+for a mailbox as part of its usage, and acceptance runs under the directory
+fence, so parallel deliveries cannot together overfill a mailbox and sit stuck
+in the shared buffer. Maddy passes no message size to the RCPT helper, and a
+DATA refusal refuses every recipient of the transaction, so RCPT refuses a
+mailbox with less room than one largest (25 MiB) message: `452 4.2.2 Mailbox
+full` (helper exit 9) for that recipient alone, so the others are delivered
+and the sender retries the full one. DATA checks the actual size again; it
+refuses (the whole transaction, temporarily) only when other deliveries took
+the room since RCPT, and the sender's retry then refuses only that recipient at
+RCPT. Nothing is lost. Hosted pickup leaves a full mailbox's message in R2
+while others' mail flows. Mail accepted before a mailbox filled (an import or
+a lowered quota) stays pending and imports once space is freed.
 
 The drive reserve is separate from quotas: new mail is refused before the
 filesystem holding `STATE_DIR` fills, keeping 10% of it or 5 GiB free, whichever
@@ -190,8 +202,20 @@ shows them, warning at 80% and more strongly at 95%. `GET
 mailbox and a `storage` summary: `quotaBytes` (sum), `usedBytes` (sum),
 `freeBytes`, `totalBytes`, `reserveBytes` and `overcommitted`, which is true
 when quota not yet used exceeds 80% of the free space beyond the reserve.
-Server → Mail addresses shows it as a warning, never a refusal: quotas are
-promises the drive may not keep, and the reserve is what actually protects it.
+The summary always covers every mailbox, also with `?user=`, since the drive is
+shared. Server → Mail addresses shows it as a warning, never a refusal: quotas
+are promises the drive may not keep, and the reserve is what actually protects
+it.
+
+Mailbox limits are part of the native recovery authority digest, so a quota
+change (a restart with a different `KYPOST_MAILBOX_QUOTA_BYTES`) between
+recording recovery evidence and completing the repair voids that evidence:
+start a new challenge ([native restore authority](NATIVE_RESTORE_AUTHORITY.md)).
+
+Rollback: an older image refuses a receiving buffer whose limits were raised
+("ingress limits differ from durable configuration") and keeps native
+receiving stopped. To roll back, restore the backup taken before the upgrade
+([restore](RESTORE.md)); do not edit the limits back by hand.
 
 ## Account allocation
 
@@ -650,9 +674,12 @@ another account](#import-from-another-mail-account) adds its own below.
   A zip passes every `*.eml` entry (any case) into the one target folder, in
   directory order, read into memory one at a time; entry names are never used
   as paths and folders inside the zip are not recreated. More than 10,000
-  entries, a central directory over 8 MiB or not ending exactly at the (zip64)
-  end record (prepended data included; checked before the directory is
-  parsed, since the parser holds several times its size in memory), or more
+  entries, a central directory over 8 MiB, one whose headers (walked by their
+  own name, extra and comment lengths) do not end exactly at the (zip64) end
+  record or number other than recorded, a zip64 end record not directly before
+  its locator, or prepended data (all checked before the directory is parsed,
+  since the parser reads headers until one fails and holds several times their
+  size in memory), or more
   inflated bytes than `maxBytes`, refuses the archive; an
   entry inflating past 100 times its compressed size (at least 1 MiB) is a
   bomb and skipped, as are entries not named `*.eml` and unreadable or

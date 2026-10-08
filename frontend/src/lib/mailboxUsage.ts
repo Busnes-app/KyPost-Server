@@ -8,17 +8,20 @@ export function usageLevel(used: number, quota: number): UsageLevel {
   return used >= quota * 0.8 ? "warning" : "ok";
 }
 
-/** Binary units, matching the server's 5 GiB = 5 × 2^30 bytes. */
-export function formatStorage(bytes: number): string {
+/** Binary units, matching the server's 5 GiB = 5 × 2^30 bytes. Usage rounds
+ * down, so a mailbox short of its quota never reads as full. */
+export function formatStorage(bytes: number, round: "nearest" | "down" = "nearest"): string {
   for (const [unit, size] of [["GiB", 2 ** 30], ["MiB", 2 ** 20], ["KiB", 2 ** 10]] as const) {
-    if (bytes >= size) return `${(bytes / size).toFixed(1).replace(/\.0$/, "")} ${unit}`;
+    if (bytes < size) continue;
+    const tenths = round === "down" ? Math.floor((bytes * 10) / size) : Math.round((bytes * 10) / size);
+    return `${(tenths / 10).toFixed(1).replace(/\.0$/, "")} ${unit}`;
   }
   return `${bytes} B`;
 }
 
 export function usageText(used: number, quota: number): string {
   const percent = quota > 0 ? Math.floor((used * 100) / quota) : 100;
-  return `${formatStorage(used)} of ${formatStorage(quota)} used (${percent}%)`;
+  return `${formatStorage(used, "down")} of ${formatStorage(quota)} used (${percent}%)`;
 }
 
 /** The sentence a warning or critical level shows; empty when ok. */

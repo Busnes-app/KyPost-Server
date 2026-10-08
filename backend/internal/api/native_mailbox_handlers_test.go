@@ -246,6 +246,11 @@ func TestNativeMailboxesAdminAPIAndSelection(t *testing.T) {
 			t.Fatal("admin storage", c.free, w.Body)
 		}
 	}
+	// Filtered to one user, the summary still covers the shared drive.
+	w = call("GET", "/api/admin/mail-addresses?user="+second.ID, token, csrf, "")
+	if err = json.Unmarshal(w.Body.Bytes(), &storage); w.Code != 200 || err != nil || len(storage.Mailboxes) != 1 || storage.Storage.QuotaBytes != 3*nativeMailboxLimits.PayloadBytes || !storage.Storage.Overcommitted {
+		t.Fatal("filtered storage", w.Code, w.Body)
+	}
 	if w = as(second.ID, "GET", "/api/mailboxes", ""); !strings.Contains(w.Body.String(), second.ID) || strings.Contains(w.Body.String(), extra.ID) {
 		t.Fatal("another user's mailboxes listed", w.Body)
 	}

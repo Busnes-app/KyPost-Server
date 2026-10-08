@@ -293,13 +293,16 @@ func readImportZip(f io.ReaderAt, size, limit, maxExpanded int64, each func([]by
 	return nil
 }
 
-// zipDirectory bounds what archive/zip will parse, finding the end record
-// exactly as it does. archive/zip reads central-directory headers from the
-// directory offset until one fails to parse, ignoring the recorded size, so
-// it is safe only when the directory ends exactly where the (zip64) end
-// record starts: the next "header" is then that record and parsing stops
-// within the file's last 64 KiB. That also refuses prepended data. The
-// recorded size and entry count must fit the caps.
+// zipDirectory bounds what archive/zip will parse. It finds the end record
+// exactly as archive/zip does, then walks the central directory itself:
+// archive/zip reads headers from the directory offset until one fails to
+// parse, ignoring the recorded size and count, and a header's name, extra and
+// comment lengths decide where the next one starts. So the walk must reach the
+// end of the directory exactly, with exactly the recorded entries, and the
+// (zip64) end record must start right there: archive/zip then stops on it. A
+// zip64 end record must sit directly before its locator, so no gap can hide
+// headers. Prepended data, over 10,000 entries or a directory over 8 MiB are
+// refused.
 func zipDirectory(f io.ReaderAt, size int64) bool {
 	end, buf := int64(-1), []byte(nil)
 	for _, n := range []int64{1024, 65 * 1024} {
@@ -334,12 +337,31 @@ func zipDirectory(f io.ReaderAt, size int64) bool {
 		if p > uint64(end) {
 			return false
 		}
-		if _, err := f.ReadAt(rec, int64(p)); err != nil || le.Uint32(rec) != 0x06064b50 {
+		// The record's own size field counts what follows its first 12 bytes;
+		// allow at most 64 KiB of extensible data, ending at the locator.
+		if _, err := f.ReadAt(rec, int64(p)); err != nil || le.Uint32(rec) != 0x06064b50 || le.Uint64(rec[4:]) < 44 || le.Uint64(rec[4:]) > 44+64<<10 || p+12+le.Uint64(rec[4:]) != uint64(end-20) {
 			return false
 		}
 		end, records, dirSize, dirOffset = int64(p), le.Uint64(rec[32:]), le.Uint64(rec[40:]), le.Uint64(rec[48:])
 	}
-	return records <= maxImportZipEntries && dirSize <= maxImportZipDirectory && dirOffset <= uint64(end) && dirOffset+dirSize == uint64(end)
+	if records > maxImportZipEntries || dirSize > maxImportZipDirectory || dirOffset > uint64(end) || dirOffset+dirSize != uint64(end) {
+		return false
+	}
+	dir := make([]byte, dirSize)
+	if _, err := f.ReadAt(dir, int64(dirOffset)); err != nil {
+		return false
+	}
+	count := uint64(0)
+	for at := 0; at < len(dir); count++ {
+		if len(dir)-at < 46 || le.Uint32(dir[at:]) != 0x02014b50 {
+			return false
+		}
+		at += 46 + int(le.Uint16(dir[at+28:])) + int(le.Uint16(dir[at+30:])) + int(le.Uint16(dir[at+32:]))
+		if at > len(dir) {
+			return false
+		}
+	}
+	return count == records
 }
 
 // zipEndInBlock is archive/zip's findSignatureInBlock.

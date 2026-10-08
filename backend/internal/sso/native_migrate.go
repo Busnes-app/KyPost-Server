@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
@@ -139,6 +140,10 @@ func MigrateNative(ctx context.Context, configDir, relayKeyPath string) (bool, e
 // nativeLimitsStep lets tests stop MigrateNativeLimits after the ledger write.
 var nativeLimitsStep = func() error { return nil }
 
+// ErrNativeMailboxLimits: the ledger holds the configured limits but the
+// named mailboxes could not take them; only those stay refused.
+var ErrNativeMailboxLimits = errors.New("these mailboxes could not take the configured limits and stay refused until the cause is fixed and the service restarted; every other mailbox works")
+
 // MigrateNativeLimits gives every native mailbox, primary and extra, the
 // deployment's limits, under domain -> directory -> users locks. The ledger is
 // written first and is the source of truth; mailbox.ConvergeLimits then brings
@@ -146,12 +151,16 @@ var nativeLimitsStep = func() error { return nil }
 // step is idempotent, so a run that died anywhere, or a quota changed since,
 // completes on the next. A quota below a mailbox's usage refuses its new mail
 // and keeps what it holds. A failed mailbox is reported; the others converge.
+// Locks wait at most a minute; the work gets a minute plus two seconds per
+// mailbox, at most 30 minutes.
 func MigrateNativeLimits(ctx context.Context, configDir string, limits mailbox.Limits) (bool, error) {
 	if !anyExists(configDir, []string{nativeProvisioningFile}) {
 		return false, nil
 	}
+	lockCtx, cancelLocks := context.WithTimeout(ctx, time.Minute)
+	defer cancelLocks()
 	for _, lock := range []string{NativeDomainsFile, "sso-lifecycle.json", "users.json"} {
-		release, err := fsutil.LockFileContext(ctx, filepath.Join(configDir, lock))
+		release, err := fsutil.LockFileContext(lockCtx, filepath.Join(configDir, lock))
 		if err != nil {
 			return false, err
 		}
@@ -183,15 +192,21 @@ func MigrateNativeLimits(ctx context.Context, configDir string, limits mailbox.L
 	if err := nativeLimitsStep(); err != nil {
 		return changed, err
 	}
+	all := f.mailboxes()
+	ctx, cancel := context.WithTimeout(ctx, min(time.Minute+2*time.Second*time.Duration(len(all)), 30*time.Minute))
+	defer cancel()
 	var failed []error
-	for _, a := range f.mailboxes() {
+	for _, a := range all {
 		wrote, err := mailbox.ConvergeLimits(ctx, a.Dir(a.StateRoot), a.Owner, limits)
 		if err != nil {
 			failed = append(failed, fmt.Errorf("mailbox %s: %w", a.Owner.Mailbox, err))
 		}
 		changed = changed || wrote
 	}
-	return changed, errors.Join(failed...)
+	if len(failed) > 0 {
+		return changed, fmt.Errorf("%w: %w", ErrNativeMailboxLimits, errors.Join(failed...))
+	}
+	return changed, nil
 }
 
 func anyExists(dir string, names []string) bool {

@@ -217,7 +217,7 @@ function MailAddressesForm() {
 function StorageSummary({ storage }: { storage: MailStorage }) {
   const beyond = Math.max(storage.freeBytes - storage.reserveBytes, 0);
   return <div className="config-card">
-    <p>Mailbox quotas total {formatStorage(storage.quotaBytes)}, of which {formatStorage(storage.usedBytes)} is stored. The drive has {formatStorage(storage.freeBytes)} free; KyPost keeps {formatStorage(storage.reserveBytes)} of it in reserve and refuses new mail for now (senders retry) rather than fill it.</p>
+    <p>Mailbox quotas total {formatStorage(storage.quotaBytes)}, of which {formatStorage(storage.usedBytes, "down")} is stored. The drive has {formatStorage(storage.freeBytes)} free; KyPost keeps {formatStorage(storage.reserveBytes)} of it in reserve and refuses new mail for now (senders retry) rather than fill it.</p>
     {storage.overcommitted && <p className="notice notice-warning" role="note">Quotas not yet used exceed 80% of the {formatStorage(beyond)} free beyond the reserve: if mailboxes fill, the drive runs out first. Add storage, or lower KYPOST_MAILBOX_QUOTA_BYTES and restart. Nothing is refused until the reserve is reached.</p>}
   </div>;
 }

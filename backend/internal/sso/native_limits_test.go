@@ -143,3 +143,28 @@ func TestMigrateNativeLimitsRaisesConvergesAndLowers(t *testing.T) {
 		t.Fatalf("over-quota mailbox took mail: %v", err)
 	}
 }
+
+// One mailbox that cannot take the limits is named; the others converge.
+func TestMigrateNativeLimitsNamesTheFailedMailbox(t *testing.T) {
+	ctx := context.Background()
+	f := newAddressFixture(t, "one")
+	one := f.ids["one"]
+	extra, err := f.life.CreateNativeMailbox(ctx, f.root, one, "sales@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(f.root, nativeMailboxesDir, extra.ID, "native-mailbox.json")
+	if err := os.WriteFile(broken, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raised := mailbox.NativeLimits(8 << 20)
+	raised.MessageBytes = 2 << 20
+	_, err = MigrateNativeLimits(ctx, f.config, raised)
+	if !errors.Is(err, ErrNativeMailboxLimits) || !strings.Contains(err.Error(), extra.ID) || strings.Contains(err.Error(), "mailbox "+one) {
+		t.Fatalf("failure report: %v", err)
+	}
+	a, err := f.life.AdmitNativeMailbox(ctx, f.root, nativeIssuer, one, one, f.accounts)
+	if err != nil || a.Limits != raised {
+		t.Fatalf("the healthy primary was not migrated: %v", err)
+	}
+}

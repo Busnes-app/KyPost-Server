@@ -282,6 +282,16 @@ func open(dir string, limits Limits, existing bool) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// HeldBytes is the accepted mail still waiting to import into mailbox: what
+// it will store once imported, so admission counts it against the quota.
+// ponytail: no index on bindings(mailbox); the scan is bounded by the record
+// limit (10,000 held deliveries). Index it if that limit grows.
+func (s *Store) HeldBytes(ctx context.Context, mailbox string) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, "SELECT coalesce(sum(length(d.raw)),0) FROM deliveries d JOIN bindings b ON b.gateway=d.gateway AND b.id=d.id WHERE b.mailbox=? AND d.state='pending'", mailbox).Scan(&n)
+	return n, err
+}
+
 var errLimits = errors.New("ingress limits differ from durable configuration and would lower them; run the newer release")
 
 // raisableTo reports whether every durable limit is at most the configured one.

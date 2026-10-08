@@ -23,7 +23,8 @@ func (s *Server) handleNativeMailAddresses(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "mail address state unreadable; preserve configuration and restore it", http.StatusServiceUnavailable)
 			return
 		}
-		if user := r.URL.Query().Get("user"); user != "" {
+		user := r.URL.Query().Get("user")
+		if user != "" {
 			if _, err := s.users.Get(user); errors.Is(err, users.ErrNotFound) {
 				http.Error(w, "user not found", http.StatusNotFound)
 				return
@@ -31,15 +32,8 @@ func (s *Server) handleNativeMailAddresses(w http.ResponseWriter, r *http.Reques
 				writeUserStoreError(w, err)
 				return
 			}
-			owned := []sso.NativeMailbox{}
-			for _, m := range mailboxes {
-				if m.User == user {
-					owned = append(owned, m)
-				}
-			}
-			mailboxes = owned
 		}
-		writeJSON(w, http.StatusOK, s.mailboxStorage(mailboxes))
+		writeJSON(w, http.StatusOK, s.mailboxStorage(mailboxes, user))
 		return
 	}
 	var body struct {
@@ -133,13 +127,17 @@ type storageSummary struct {
 	Overcommit   bool   `json:"overcommitted"`
 }
 
-func (s *Server) mailboxStorage(mailboxes []sso.NativeMailbox) map[string]any {
-	out := make([]adminMailbox, 0, len(mailboxes))
+// mailboxStorage lists the mailboxes of user ("" for all); the summary always
+// covers the whole deployment, since the drive is shared.
+func (s *Server) mailboxStorage(mailboxes []sso.NativeMailbox, user string) map[string]any {
+	out := []adminMailbox{}
 	var sum storageSummary
 	var headroom uint64
 	for _, m := range mailboxes {
 		used := usedBytes(m)
-		out = append(out, adminMailbox{m, used})
+		if user == "" || m.User == user {
+			out = append(out, adminMailbox{m, used})
+		}
 		sum.QuotaBytes += m.QuotaBytes
 		if used != nil {
 			sum.UsedBytes += *used

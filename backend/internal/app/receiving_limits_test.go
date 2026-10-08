@@ -121,3 +121,63 @@ func TestCloudflareContinuousQuotaAndDriveReserve(t *testing.T) {
 		t.Fatal("mail taken inside the drive reserve")
 	}
 }
+
+// Accepted mail still waiting to import counts against the quota, so
+// parallel deliveries cannot overfill a mailbox and sit stuck in the shared
+// receiving buffer: past the quota they are refused at DATA, then at RCPT.
+func TestNativeReceivingQuotaCountsHeldMail(t *testing.T) {
+	r, created := receivingFixture(t)
+	ctx := context.Background()
+	a, _, err := r.life.NativeAssignment(created[0].NativeMailboxIssuer, created[0].SSOSub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := mailbox.OpenExisting(filepath.Join(r.stateDir, "users", created[0].ID, "mailbox"), a.Owner, a.Limits, a.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := []byte("From: test@outside.test\r\nSubject: filler\r\n\r\n")
+	message := func(size int) []byte {
+		return append(bytes.Clone(prefix), bytes.Repeat([]byte("x"), size-len(prefix))...)
+	}
+	for used := int64(0); used < a.Limits.PayloadBytes-7<<20; {
+		size := min(a.Limits.MessageBytes, a.Limits.PayloadBytes-7<<20-used)
+		if _, err := store.Append(ctx, "INBOX", bytes.NewReader(message(int(size))), false); err != nil {
+			t.Fatal(err)
+		}
+		used += size
+	}
+	_ = store.Close()
+	for _, id := range []string{"p1", "p2"} {
+		if err := r.bind(ctx, id, "", "one@example.test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 7 MiB left: two parallel 4 MiB messages, one fits.
+	results := make(chan error, 2)
+	for _, id := range []string{"p1", "p2"} {
+		go func() { results <- r.accept(ctx, id, "", bytes.NewReader(message(4<<20))) }()
+	}
+	accepted, refused := 0, 0
+	for range 2 {
+		switch err := <-results; {
+		case err == nil:
+			accepted++
+		case receivingExit(err) == 9:
+			refused++
+		default:
+			t.Fatal(err)
+		}
+	}
+	if accepted != 1 || refused != 1 {
+		t.Fatalf("accepted %d, refused %d", accepted, refused)
+	}
+	// 3 MiB left counting the held 4 MiB: less than one largest (5 MiB)
+	// message, so RCPT refuses this recipient alone.
+	if err := r.bind(ctx, "p3", "", "one@example.test"); receivingExit(err) != 9 {
+		t.Fatalf("RCPT without room for a largest message: %v", err)
+	}
+	if err := r.bind(ctx, "p3", "", "two@example.test"); err != nil {
+		t.Fatalf("another recipient of the same transaction: %v", err)
+	}
+}
