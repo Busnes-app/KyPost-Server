@@ -226,32 +226,10 @@ func (s *LifecycleStore) CompleteNativeRecoveryRepairHeld(ctx context.Context, r
 	if err != nil {
 		return err
 	}
-	repair, receipt := f.RecoveryRepair, f.RecoveryReceipt
-	if repair == nil || receipt == nil || repair.CompletedAt != nil || repair.Issuer != current.Issuer || repair.Epoch != current.Epoch || repair.KeyFingerprint != current.KeyFingerprint || repair.AfterDigest != current.AuthorityDigest || repair.BeforeDigest != receipt.Challenge.AuthorityDigest || repair.Nonce != receipt.Challenge.Nonce || !repair.ExpiresAt.Equal(minRecoveryExpiry(receipt)) || !time.Now().Before(repair.ExpiresAt) {
+	if journal, authority := s.nativeRecoveryRepairReasons(f, root, current, revisions, key, accounts, false, time.Now().UTC()); len(journal)+len(authority) != 0 {
 		return ErrNativeRecovery
 	}
-	digest, err := nativeRecoveryReceiptDigest(receipt)
-	if err != nil || digest != repair.ReceiptDigest {
-		return ErrNativeRecovery
-	}
-	// The explicit journal must prove EXACTLY the recorded resulting state.
-	// Only then verify the original signed pre-repair authority and current key.
-	before := current
-	before.AuthorityDigest = repair.BeforeDigest
-	evidence, err := validateNativeRecoveryEvidence(before, revisions, &receipt.Challenge, key, receipt.Body, receipt.Headers, time.Now().UTC())
-	if err != nil || !receipt.ExpiresAt.Equal(evidence.ExpiresAt) {
-		return ErrNativeRecovery
-	}
-	for _, u := range accounts {
-		if u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" {
-			continue
-		}
-		k := directoryKey(u.NativeMailboxIssuer, u.SSOSub)
-		barrier := f.RecoveryRepairBarriers[k]
-		if !barrier.matches(u, f.RecoveryFloors[k]) || barrier.Nonce != repair.Nonce || barrier.Epoch != repair.Epoch || s.ValidateNativeUserOwnership(root, u) != nil {
-			return ErrNativeRecovery
-		}
-	}
+	repair := f.RecoveryRepair
 	if err = ctx.Err(); err != nil {
 		return err
 	}
@@ -262,4 +240,56 @@ func (s *LifecycleStore) CompleteNativeRecoveryRepairHeld(ctx context.Context, r
 	now := time.Now().UTC()
 	repair.CompletedAt = &now
 	return fsutil.PersistJSONFile(s.path, f)
+}
+
+// nativeRecoveryRepairReasons is the one repair-journal check, shared by
+// completion (open journal) and release status (completed journal). journal
+// reasons are release precondition P1, authority reasons P2.
+func (s *LifecycleStore) nativeRecoveryRepairReasons(f lifecycleFile, root string, current NativeRecoveryChallenge, revisions map[string]int64, key []byte, accounts []users.User, completed bool, now time.Time) (journal, authority []string) {
+	repair, receipt := f.RecoveryRepair, f.RecoveryReceipt
+	switch {
+	case receipt == nil:
+		return []string{"no recovery evidence is recorded"}, []string{"no repair to compare with current authority"}
+	case repair == nil:
+		return []string{"recovery evidence is recorded but repair has not run"}, []string{"no repair to compare with current authority"}
+	case completed && repair.CompletedAt == nil:
+		journal = append(journal, "repair did not complete; credential cleanup must succeed")
+	case !completed && repair.CompletedAt != nil:
+		journal = append(journal, "repair already completed")
+	}
+	digest, err := nativeRecoveryReceiptDigest(receipt)
+	if err != nil || digest != repair.ReceiptDigest || repair.BeforeDigest != receipt.Challenge.AuthorityDigest || repair.Nonce != receipt.Challenge.Nonce || !repair.ExpiresAt.Equal(minRecoveryExpiry(receipt)) {
+		journal = append(journal, "repair journal does not match the recorded evidence")
+	}
+	if !now.Before(repair.ExpiresAt) {
+		journal = append(journal, "repair evidence window ended at "+repair.ExpiresAt.UTC().Format(time.RFC3339)+"; request fresh evidence and repair again")
+	} else {
+		// The journal must prove EXACTLY the recorded resulting state; only
+		// then verify the original signed pre-repair authority and current key.
+		before := current
+		before.AuthorityDigest = repair.BeforeDigest
+		evidence, err := validateNativeRecoveryEvidence(before, revisions, &receipt.Challenge, key, receipt.Body, receipt.Headers, now)
+		if err != nil || !receipt.ExpiresAt.Equal(evidence.ExpiresAt) {
+			journal = append(journal, "recorded evidence no longer verifies against the pairing key and pre-repair authority")
+		}
+	}
+	if repair.Issuer != current.Issuer || repair.Epoch != current.Epoch || repair.KeyFingerprint != current.KeyFingerprint {
+		authority = append(authority, "repair belongs to another issuer, restore epoch or pairing key")
+	}
+	if repair.AfterDigest != current.AuthorityDigest {
+		authority = append(authority, "authority changed since the repair")
+	}
+	for _, u := range accounts {
+		if u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" {
+			continue
+		}
+		k := directoryKey(u.NativeMailboxIssuer, u.SSOSub)
+		barrier := f.RecoveryRepairBarriers[k]
+		if !barrier.matches(u, f.RecoveryFloors[k]) || barrier.Nonce != repair.Nonce || barrier.Epoch != repair.Epoch {
+			authority = append(authority, "repair barrier for account "+u.ID+" does not match")
+		} else if s.ValidateNativeUserOwnership(root, u) != nil {
+			authority = append(authority, "native storage for account "+u.ID+" does not validate")
+		}
+	}
+	return journal, authority
 }

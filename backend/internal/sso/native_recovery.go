@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -23,6 +24,9 @@ import (
 const MaxNativeRecoveryEvidenceBytes = 256 << 10
 
 var ErrNativeRecovery = errors.New("native recovery evidence refused; preserve the hold and request fresh complete evidence for the current authority")
+
+// errNativeRecoveryNoSubjects is a zero-subject hold (release precondition P9).
+var errNativeRecoveryNoSubjects = fmt.Errorf("%w: the hold has no native subjects", ErrNativeRecovery)
 var recoveryIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 var recoveryEpochPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
@@ -200,7 +204,10 @@ func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings,
 		subjects = append(subjects, sub)
 	}
 	slices.Sort(subjects)
-	if len(subjects) == 0 || len(subjects) > 256 {
+	if len(subjects) == 0 {
+		return NativeRecoveryChallenge{}, nil, nil, errNativeRecoveryNoSubjects
+	}
+	if len(subjects) > 256 {
 		return NativeRecoveryChallenge{}, nil, nil, ErrNativeRecovery
 	}
 	slices.SortFunc(authority, func(a, b accountAuthority) int { return strings.Compare(a.ID, b.ID) })

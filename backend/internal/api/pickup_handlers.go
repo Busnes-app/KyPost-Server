@@ -393,6 +393,16 @@ const minPairingSecretLength = 32
 // to. Failing closed is the pre-existing behaviour and is the right one: a
 // weak-but-present secret would be worse than a disabled feature.
 func resolvePairingSecret(keyPath string, logger *logging.Logger) string {
+	return pairingSecret(keyPath, cryptutil.LoadOrCreateKey, logger)
+}
+
+// ReadPairingSecret resolves the same secret without ever creating a key file,
+// for read-only CLI commands. "" means not configured.
+func ReadPairingSecret(keyPath string) string {
+	return pairingSecret(keyPath, cryptutil.LoadKey, nil)
+}
+
+func pairingSecret(keyPath string, load func(string) ([]byte, error), logger *logging.Logger) string {
 	if fromEnv := strings.TrimSpace(os.Getenv("PAIRING_SECRET")); fromEnv != "" {
 		if len(fromEnv) < minPairingSecretLength {
 			if logger != nil {
@@ -407,7 +417,7 @@ func resolvePairingSecret(keyPath string, logger *logging.Logger) string {
 		return fromEnv
 	}
 
-	key, err := cryptutil.LoadOrCreateKey(keyPath)
+	key, err := load(keyPath)
 	if err != nil {
 		if logger != nil {
 			logger.Error("could not generate or read the pairing secret; pickup links and PGP QR key-exchange stay disabled")

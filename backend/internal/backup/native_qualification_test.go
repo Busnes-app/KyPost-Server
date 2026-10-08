@@ -7,8 +7,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 func TestNativeRestoreQualification(t *testing.T) {
@@ -111,6 +114,59 @@ func TestNativeRestoreQualification(t *testing.T) {
 		}
 		if !errors.Is(sso.RequireNativeRestoreReleased(filepath.Join(dir, "state")), sso.ErrNativeRestoreHold) {
 			t.Fatal("qualification released the hold")
+		}
+	})
+
+	t.Run("release-status", func(t *testing.T) {
+		dir := restore(t)
+		configDir, stateRoot := filepath.Join(dir, "config"), filepath.Join(dir, "state")
+		var doc struct {
+			Users []users.User `json:"users"`
+		}
+		raw, err := os.ReadFile(filepath.Join(configDir, "users.json"))
+		if err != nil || json.Unmarshal(raw, &doc) != nil {
+			t.Fatal(err)
+		}
+		snapshot := func() map[string]string {
+			out := map[string]string{}
+			if err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				info, err := d.Info()
+				if err != nil {
+					return err
+				}
+				// SQLite readers touch a WAL database's -shm index, never its content.
+				entry := info.Mode().String()
+				if !strings.HasSuffix(path, "-shm") {
+					entry += info.ModTime().String()
+				}
+				if info.Mode().IsRegular() {
+					body, err := os.ReadFile(path)
+					if err != nil {
+						return err
+					}
+					entry += string(body)
+				}
+				out[path] = entry
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			return out
+		}
+		before := snapshot()
+		st := sso.NewLifecycleStore(configDir).NativeRestoreReleaseStatus(stateRoot, t.TempDir(), sso.NewStore(configDir).Load(), []byte(strings.Repeat("k", 32)), doc.Users, time.Now())
+		if !reflect.DeepEqual(before, snapshot()) {
+			t.Fatal("status changed restored files")
+		}
+		byID := map[string]sso.NativeRestoreReleaseCheck{}
+		for _, c := range st.Preconditions {
+			byID[c.ID] = c
+		}
+		if !st.Held || !byID["P3"].OK || !reflect.DeepEqual(byID["P1"].Reasons, []string{"no recovery evidence is recorded"}) || !reflect.DeepEqual(byID["P7"].Reasons, []string{"no recovery challenge is recorded"}) {
+			t.Fatalf("status after a sealed restore %+v", st)
 		}
 	})
 

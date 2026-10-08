@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"io"
@@ -130,6 +131,19 @@ func (s *Server) nativeRecoveryAdmin(w http.ResponseWriter, r *http.Request, cre
 	}
 	return true
 }
+
+// handleNativeRecoveryStatus is a read-only, lock-free snapshot: reasons only,
+// never evidence, digests or nonces. The release reverifies under its fences.
+func (s *Server) handleNativeRecoveryStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	all, err := s.users.List()
+	if err != nil {
+		http.Error(w, "account authority is unreadable; preserve it and repair", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.ssoLifecycle.NativeRestoreReleaseStatus(s.stateDir, config.SecretDir(), s.ssoStore.Load(), []byte(s.pairingSecret), all, time.Now().UTC()))
+}
+
 func (s *Server) handleNativeRecoveryChallenge(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	var request struct {
