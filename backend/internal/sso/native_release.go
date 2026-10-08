@@ -107,8 +107,14 @@ type NativeRestoreReleaseRecord struct {
 	AfterDigest   string     `json:"afterDigest"`
 	Actor         string     `json:"actor"`
 	At            time.Time  `json:"at"`
+	Deactivated   []string   `json:"deactivated,omitempty"` // non-native accounts (a)
+	Demoted       []string   `json:"demoted,omitempty"`     // non-native administrators (a)
 	CompletedAt   *time.Time `json:"completedAt,omitempty"`
 }
+
+// ErrNativeReleaseUnconfirmed: the hold was renamed, so the host is released,
+// but a later step failed; repeating the request confirms and records it.
+var ErrNativeReleaseUnconfirmed = errors.New("native restore hold released, but its durability is unconfirmed; repeat the request to confirm")
 
 // NativeRestoreRefusedError names every release precondition that failed.
 type NativeRestoreRefusedError struct{ Reasons []string }
@@ -118,15 +124,15 @@ func (e *NativeRestoreRefusedError) Error() string {
 }
 
 // NativeRestoreReleasePlan is everything one release writes, computed and
-// validated before the first write.
+// validated before the first write. Record.Deactivated and Record.Demoted are
+// the account changes (a); the release never activates or promotes.
 type NativeRestoreReleasePlan struct {
-	Record     NativeRestoreReleaseRecord
-	Deactivate []string // active non-native accounts whose subject the evidence shows inactive
-	s          *LifecycleStore
-	root       string
-	issuer     string
-	floors     map[string]NativeReleaseFloor
-	rows       map[string]DirectoryState // evidence-inactive subjects whose row was active
+	Record NativeRestoreReleaseRecord
+	s      *LifecycleStore
+	root   string
+	issuer string
+	floors map[string]NativeReleaseFloor
+	rows   map[string]DirectoryState // evidence-inactive subjects whose row was active
 }
 
 // PlanNativeRestoreReleaseHeld checks P1, P2, P3, P7 and P9 with the functions
@@ -167,7 +173,8 @@ func (s *LifecycleStore) PlanNativeRestoreReleaseHeld(root string, settings SSOS
 	default:
 		add("P7", s.nativeRestoreTokenFenceReasons(f, q, &f.RecoveryReceipt.Challenge))
 	}
-	if f.RestoreRelease != nil {
+	// A record from another epoch belongs to an earlier, restored-over release.
+	if f.RestoreRelease != nil && f.RestoreRelease.Epoch == current.Epoch {
 		reasons = append(reasons, "an earlier release attempt for this hold was interrupted; request a new challenge and fresh evidence")
 	}
 	if len(reasons) != 0 {
@@ -185,7 +192,7 @@ func (s *LifecycleStore) PlanNativeRestoreReleaseHeld(root string, settings SSOS
 		s:      s, root: root, issuer: current.Issuer,
 		floors: map[string]NativeReleaseFloor{}, rows: map[string]DirectoryState{},
 	}
-	inactive := map[string]bool{}
+	inactive, notAdmin := map[string]bool{}, map[string]bool{}
 	for _, sub := range evidence.Subjects {
 		var profile DirectoryUser
 		if json.Unmarshal(sub.Profile, &profile) != nil {
@@ -194,6 +201,7 @@ func (s *LifecycleStore) PlanNativeRestoreReleaseHeld(root string, settings SSOS
 		revision := *sub.Revision
 		p.floors[sub.ID] = NativeReleaseFloor{Revision: revision, Active: *profile.Active}
 		if *profile.Active {
+			notAdmin[sub.ID] = !HasAdminRole(profile.Roles)
 			continue
 		}
 		inactive[sub.ID] = true
@@ -214,8 +222,12 @@ func (s *LifecycleStore) PlanNativeRestoreReleaseHeld(root string, settings SSOS
 		p.rows[k] = DirectoryState{Resource: &resource, Revision: revision, Digest: EventDigest("recovery.evidence", sub.Profile), EventID: nativeReleaseEventID, RevokedBefore: prior.RevokedBefore}
 	}
 	for _, u := range accounts {
-		if u.Active && u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" && inactive[u.SSOSub] {
-			p.Deactivate = append(p.Deactivate, u.ID)
+		switch {
+		case !u.Active || u.NativeMailboxIssuer != "" || u.NativeMailboxSource != "":
+		case inactive[u.SSOSub]:
+			p.Record.Deactivated = append(p.Record.Deactivated, u.ID)
+		case notAdmin[u.SSOSub] && u.Role == users.RoleAdmin:
+			p.Record.Demoted = append(p.Record.Demoted, u.ID)
 		}
 	}
 	if len(reasons) != 0 {
@@ -231,7 +243,7 @@ func (p *NativeRestoreReleasePlan) RecordIntent(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if f.RestoreRelease != nil {
+	if f.RestoreRelease != nil && f.RestoreRelease.Epoch == p.Record.Epoch {
 		return ErrNativeRecovery
 	}
 	if err = ctx.Err(); err != nil {
@@ -245,23 +257,57 @@ func (p *NativeRestoreReleasePlan) RecordIntent(ctx context.Context) error {
 	return fsutil.PersistJSONFile(p.s.path, f)
 }
 
-// Commit applies the evidence to directory rows and address states, writes the
-// release floors and token fences in one lifecycle write, then renames the
-// hold. The caller holds the plan's fences and has written the accounts. Every
-// step before the rename fails closed: the hold stays and the intent refuses a
-// retry. hit is a crash-injection point for tests (nil in production).
+// Commit runs after the intent and account writes, under the plan's fences.
+// Its writes, each a crash point:
+//   - "ledger": reservations and address states follow the evidence-inactive
+//     rows (fail closed: only deactivates; any later commit recomputes them);
+//   - "lifecycle": one write of rows, release floors and token fences;
+//   - "rename": the hold becomes the released marker, then SyncDir.
+//
+// Before the rename the hold stays and the intent refuses a retry until a new
+// challenge. After it the host is released: a later failure returns
+// ErrNativeReleaseUnconfirmed. hit injects crashes in tests (nil in production).
 func (p *NativeRestoreReleasePlan) Commit(ctx context.Context, hit func(string) error) error {
 	if hit == nil {
 		hit = func(string) error { return nil }
 	}
-	f, err := p.s.load()
+	load := func() (lifecycleFile, error) {
+		f, err := p.s.load()
+		if err == nil && (f.RestoreRelease == nil || !reflect.DeepEqual(*f.RestoreRelease, p.Record)) {
+			err = ErrNativeRecovery
+		}
+		return f, err
+	}
+	if _, err := load(); err != nil {
+		return err
+	}
+	ledger, err := p.s.loadNative()
 	if err != nil {
 		return err
 	}
-	if f.RestoreRelease == nil || !reflect.DeepEqual(*f.RestoreRelease, p.Record) {
-		return ErrNativeRecovery
+	// A reservation at the row's revision mirrors that row's desired state.
+	for k, d := range p.rows {
+		if a, ok := ledger.Accounts[k]; ok && a.Revision == d.Revision {
+			a.DesiredActive, a.Digest = false, d.Digest
+			ledger.Accounts[k] = a
+		}
 	}
-	ledger, err := p.s.loadNative()
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	// As applyDirectory: address states follow the rows before they are
+	// recorded. Pending routes are retried by every later commit and the worker;
+	// import already quarantines on the ledger generation.
+	if len(p.rows) != 0 && len(ledger.Accounts) != 0 {
+		if err = p.s.commitNative(ledger, p.rows); err != nil && !errors.Is(err, ErrNativeRoutesPending) {
+			return err
+		}
+	}
+	if err = hit("ledger"); err != nil {
+		return err
+	}
+	// Re-read: commitNative may have written the lifecycle (initialization).
+	f, err := load()
 	if err != nil {
 		return err
 	}
@@ -285,29 +331,12 @@ func (p *NativeRestoreReleasePlan) Commit(ctx context.Context, hit func(string) 
 			return ErrNativeProvisioning
 		}
 	}
-	next := f
-	next.Directory = directory
-	next.ReleaseFloors = maps.Clone(f.ReleaseFloors)
-	if err = next.raiseReleaseFloors(p.issuer, p.floors); err != nil {
+	f.Directory = directory
+	f.ReleaseFloors = maps.Clone(f.ReleaseFloors)
+	if err = f.raiseReleaseFloors(p.issuer, p.floors); err != nil {
 		return err
 	}
-	if err = ctx.Err(); err != nil {
-		return err
-	}
-	// A reservation at the row's revision mirrors that row's desired state.
-	for k, d := range p.rows {
-		if a, ok := ledger.Accounts[k]; ok && a.Revision == d.Revision {
-			a.DesiredActive, a.Digest = false, d.Digest
-			ledger.Accounts[k] = a
-		}
-	}
-	// As applyDirectory: address states follow the rows before they are recorded.
-	if len(p.rows) != 0 && len(ledger.Accounts) != 0 {
-		if err = p.s.commitNative(ledger, p.rows); err != nil {
-			return err
-		}
-	}
-	if err = fsutil.PersistJSONFile(p.s.path, next); err != nil {
+	if err = fsutil.PersistJSONFile(p.s.path, f); err != nil {
 		return err
 	}
 	if err = hit("lifecycle"); err != nil {
@@ -319,10 +348,10 @@ func (p *NativeRestoreReleasePlan) Commit(ctx context.Context, hit func(string) 
 	if err = os.Rename(filepath.Join(p.root, NativeRestoreHoldFile), filepath.Join(p.root, NativeRestoreReleasedFile)); err != nil {
 		return err
 	}
-	if err = fsutil.SyncDir(p.root); err != nil {
-		return err
+	if err = errors.Join(fsutil.SyncDir(p.root), hit("rename")); err != nil {
+		return fmt.Errorf("%w: %w", ErrNativeReleaseUnconfirmed, err)
 	}
-	return hit("rename")
+	return nil
 }
 
 // NativeRestoreReleased reports a completed release: no hold, and a released

@@ -42,25 +42,35 @@ Hold check, verified: `reconcileNativeSubject`, `AllocateNativeAccount` and the 
 
 ## Release decisions (implemented)
 
-- **Non-native accounts (a).** Active accounts without a native mailbox whose SSO subject the evidence shows inactive or deleted (directory-provisioned administrators, legacy SSO links) are deactivated and signed out. The release never activates anything.
+- **Non-native accounts (a).** Active accounts without a native mailbox whose SSO subject the evidence shows inactive or deleted (directory-provisioned administrators, legacy SSO links) are deactivated. Active administrators whose subject the evidence shows active without the `kypost.admin` role are demoted to user, local password included. Both are signed out. The release never activates or promotes anything.
 - **Directory rows (b).** An active row for an evidence-inactive subject, or a missing one, becomes inactive at the evidence revision, with the evidence profile as its resource (`eventId` `native-restore-release`). The same revision is allowed: live expiry need not allocate one. A reservation at that revision follows the row, and address states and inactive routes are recomputed, so `desiredActive`, address state and the Cloudflare route table cannot revive repair-deactivated subjects. The directory's own inactive event at that revision is then already applied; an active one there is refused. This is the one place KyPost writes a directory resource from recovery evidence.
 - **Resync step (c).** After release, status lists `resyncSubjects`, the active floored subjects without a newer revision, and the "run a KyIdentity resync" step until the list is empty.
-- **Validate before mutating.** Every input, floors included, is computed and validated before the first write; the lifecycle write is one `PersistJSONFile`.
+- **Validate before mutating.** Every input, floors and account changes included, is computed and validated before the first write.
 
 ## Release operation
 
-`POST /api/admin/native-recovery/release` with `{password}` or `{authSecret}`, plus `"confirm": "original-host-decommissioned"` on the Maddy profile (`KYPOST_NATIVE_RECEIVER=true` or `config/receiving.conf` present). Exact-action CSRF and step-up, API only. Off: `404`; an invalid flag value: `409`.
+`POST /api/admin/native-recovery/release` with `{password}` or `{authSecret}`, plus `"confirm": "original-host-decommissioned"` on the Maddy profile (`KYPOST_NATIVE_RECEIVER=true` or `config/receiving.conf` present; an unreadable config state refuses). Exact-action CSRF and step-up, API only. Off: `404`; an invalid flag value: `409`; no hold and no release: `409` "no native restore hold".
 
 1. Flag, P6 session check, step-up (P5), then P6 on the confirmed account.
 2. Maddy confirmation; a fresh `VerifyDomain` for every configured domain, outside the fences (P8).
-3. Fences: domain → settings → directory → users → session. At least one proof from step 2 is still current; P1, P2, P3, P7 and P9 are recomputed; no earlier release intent exists.
-4. Audit intent (`admin.native_restore_release`, `started`), then `restoreRelease {epoch, nonce, receiptDigest, afterDigest, actor, at}` in `sso-lifecycle.json`.
-5. Accounts (a) written deactivated.
-6. Directory rows (b) and their address states; then one lifecycle write: the rows, release floors for every evidence subject, and `RevokedBefore` raised to now + 31 s for every evidence subject with a row and every published native mailbox.
-7. Re-read the hold epoch; rename `native-restore-hold.json` → `native-restore-released.json` (epoch kept), `SyncDir`. `RequireNativeRestoreReleased` looks only for the hold, so this is release.
-8. Audit completion, then `restoreRelease.completedAt`.
+3. Fences: domain → settings → directory → users → session. At least one proof from step 2 is still current; P1, P2, P3, P7 and P9 are recomputed; no release intent for this epoch exists (a `restoreRelease` from another epoch, restored from a post-release backup, is replaced).
 
-Crash safety: before the rename the hold stays and the recorded intent refuses a retry (`409`, "interrupted") until a new challenge clears it, which needs fresh evidence and repair; accounts already deactivated stay so, and floors only go up. After the rename a retry answers `200 {alreadyReleased:true}` when the released marker's epoch matches `restoreRelease`, and records a missing completion. Backups never collect the released marker.
+The writes, in order, each a crash point:
+
+4. **Audit intent** (`admin.native_restore_release`, `started`, naming the accounts to deactivate and demote). If it fails nothing was written: `503`, retry.
+5. **Intent**: `restoreRelease {epoch, nonce, receiptDigest, afterDigest, actor, at, deactivated, demoted}` in `sso-lifecycle.json`.
+6. **Accounts** (a) in `users.json`.
+7. **Ledger**: reservations at a rewritten row's revision follow it, address states are recomputed and non-active routes written inactive. A route still pending (receiving database busy) is not a failure: every later commit and the worker retry it, and import already quarantines on the ledger generation.
+8. **Lifecycle**: one write of the rows (b), release floors for every evidence subject, and `RevokedBefore` raised to now + 31 s for every evidence subject with a directory row and every published native mailbox. An evidence-active subject with no row has no ID-token fence to raise; evidence-inactive ones get a row in this write.
+9. **Rename**: re-read the hold epoch; rename `native-restore-hold.json` → `native-restore-released.json` (epoch kept), `SyncDir`. `RequireNativeRestoreReleased` looks only for the hold, so this is release.
+10. Completion audit under the release's original actor and time, naming the changed accounts, then `restoreRelease.completedAt`.
+
+Crash safety:
+
+- Before the rename (steps 5–8) the hold stays and the intent refuses a retry (`409`, "interrupted") until a new challenge clears it; that needs fresh evidence and repair, then a release (tested end to end from each point). Every write so far only deactivates, demotes or raises: accounts stay changed and floors only go up.
+- After step 7 alone the ledger is ahead of the lifecycle for a subject deactivated at its own revision, so the snapshot check, and with it backups, refuse until that recovery completes. The hold covers the window; address states only got stricter.
+- After the rename the host is released. A later failure (`SyncDir`) answers `200 {released:true, confirmed:false}` without a failure audit; repeating the request answers `200 {alreadyReleased:true}` when the released marker's epoch matches `restoreRelease`, and writes the missing completion audit and `completedAt`.
+- Backups never collect the released marker.
 
 Still refused after release: Cloudflare takeover remains an explicit CLI step; receiving starts only on restart; quarantined outbound and inbound mail stay quarantined; devices re-pair.
 

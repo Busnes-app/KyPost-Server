@@ -168,6 +168,9 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 	var subjects []any
 	for _, subject := range c.Subjects {
 		profile := map[string]any{"id": subject, "externalId": subject, "active": false, "roles": []string{}}
+		if scenario == "release" && subject == "demoted-sub" {
+			profile["active"], profile["userName"] = true, "demoted"
+		}
 		if subject == u.SSOSub && (scenario == "demoted" || scenario == "active-admin" || scenario == "reactivated-admin") {
 			profile["active"] = true
 			profile["userName"] = u.SSOUsername

@@ -14,7 +14,7 @@ non-prerelease version.
 
 ## Unreleased
 
-- `POST /api/admin/native-recovery/release` releases a qualified, repaired native restore hold when `KYPOST_NATIVE_RESTORE_RELEASE=true` (default off). Only an unlinked local administrator on a password session with step-up may release; every precondition is rechecked under the fences with a fresh DNS proof, and the bundled receiver requires `"confirm": "original-host-decommissioned"`. The release deactivates non-native accounts the evidence shows inactive, writes those directory rows inactive, records release floors and token fences, and renames the hold to `native-restore-released.json`. Status then reports `released` and the KyIdentity resync still needed. Do not downgrade below this version after a release.
+- `POST /api/admin/native-recovery/release` releases a qualified, repaired native restore hold when `KYPOST_NATIVE_RESTORE_RELEASE=true` (default off). Only an unlinked local administrator on a password session with step-up may release; every precondition is rechecked under the fences with a fresh DNS proof, and the bundled receiver requires `"confirm": "original-host-decommissioned"`. The release deactivates non-native accounts the evidence shows inactive and demotes non-native administrators it shows without the administrator role, writes those directory rows inactive, records release floors and token fences, and renames the hold to `native-restore-released.json`. Status then reports `released` and the KyIdentity resync still needed. Do not downgrade below this version after a release.
 
 - `kypost-server restore status` and `GET /api/admin/native-recovery/status` report, read-only, whether a held native restore meets each release precondition and why not, with next steps.
 

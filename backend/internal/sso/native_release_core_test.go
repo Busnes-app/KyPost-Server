@@ -5,6 +5,7 @@ package sso
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -72,6 +74,17 @@ func releaseCoreFixture(t *testing.T, completeRepair bool) releaseFix {
 	if err = accounts.LinkSSO(fx.leg.ID, "legacy-sub", "legacy", ""); err != nil {
 		t.Fatal(err)
 	}
+	// Linked administrators: one KyIdentity demoted, one still administrator;
+	// and a linked user KyIdentity promoted (never promoted locally).
+	for name, role := range map[string]users.Role{"demoted": users.RoleAdmin, "kept": users.RoleAdmin, "user": users.RoleUser} {
+		u, err := accounts.Create(ctx, name+"-account", "linked-password-123456", role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = accounts.LinkSSO(u.ID, name+"-sub", name, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err = fsutil.PersistJSONFile(filepath.Join(root, NativeRestoreHoldFile), map[string]any{"version": 1, "epoch": releaseEpoch}); err != nil {
 		t.Fatal(err)
 	}
@@ -82,43 +95,59 @@ func releaseCoreFixture(t *testing.T, completeRepair bool) releaseFix {
 	if err = life.FenceRestoredNativeTokens(root, all); err != nil {
 		t.Fatal(err)
 	}
+	fx.freshRepair(t, completeRepair)
+	return fx
+}
+
+// releaseEvidence is KyIdentity's answer for the fixture's subjects.
+func releaseEvidence(subjects []string) []nativeRecoverySubject {
+	var out []nativeRecoverySubject
+	for _, sub := range subjects {
+		revision := max(map[string]int64{"gone": 2}[sub], 1)
+		profile := fmt.Sprintf(`{"id":%q,"externalId":%q,"active":false,"roles":[]}`, sub, sub)
+		switch sub {
+		case "two", "demoted-sub":
+			profile = fmt.Sprintf(`{"id":%q,"externalId":%q,"userName":%q,"active":true,"roles":[]}`, sub, sub, sub)
+		case "kept-sub", "user-sub":
+			profile = fmt.Sprintf(`{"id":%q,"externalId":%q,"userName":%q,"active":true,"roles":["kypost.admin"]}`, sub, sub, sub)
+		}
+		out = append(out, nativeRecoverySubject{ID: sub, Revision: &revision, Profile: json.RawMessage(profile)})
+	}
+	return out
+}
+
+const releaseSubjects = 7 // one, two, gone, legacy-sub, demoted-sub, kept-sub, user-sub
+
+// freshRepair is challenge -> signed evidence -> repair (-> completion) against
+// the current state: the documented recovery after an interrupted release.
+func (fx releaseFix) freshRepair(t *testing.T, complete bool) {
+	t.Helper()
+	ctx := context.Background()
 	fingerprint := sha256.Sum256(fx.key)
-	release, err := life.LockDirectory()
+	release, err := fx.life.LockDirectory()
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = accounts.WithCurrentUsers(ctx, func(all []users.User) error {
-		c, err := life.BeginNativeRecoveryHeld(ctx, root, fx.settings, fx.key, all, "paired-system", hex.EncodeToString(fingerprint[:]))
+	err = fx.accounts.WithCurrentUsers(ctx, func(all []users.User) error {
+		c, err := fx.life.BeginNativeRecoveryHeld(ctx, fx.root, fx.settings, fx.key, all, "paired-system", hex.EncodeToString(fingerprint[:]))
 		if err != nil {
 			return err
 		}
-		body, headers := recoveryPayload(t, c, fx.key, func(e *nativeRecoveryEvidence) {
-			e.Subjects = nil
-			for _, sub := range c.Subjects {
-				revision := map[string]int64{"gone": 2}[sub]
-				revision = max(revision, 1)
-				profile := fmt.Sprintf(`{"id":%q,"externalId":%q,"active":false,"roles":[]}`, sub, sub)
-				if sub == "two" {
-					profile = `{"id":"two","externalId":"two","userName":"two","active":true,"roles":[]}`
-				}
-				e.Subjects = append(e.Subjects, nativeRecoverySubject{ID: sub, Revision: &revision, Profile: json.RawMessage(profile)})
-			}
-		})
-		return life.AcceptNativeRecoveryHeld(ctx, root, fx.settings, fx.key, all, body, headers)
+		body, headers := recoveryPayload(t, c, fx.key, func(e *nativeRecoveryEvidence) { e.Subjects = releaseEvidence(c.Subjects) })
+		return fx.life.AcceptNativeRecoveryHeld(ctx, fx.root, fx.settings, fx.key, all, body, headers)
 	})
 	release()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = applyPublishedRecoveryBatch(t, life, root, fx.settings, fx.key, accounts, false); err != nil {
+	if err = applyPublishedRecoveryBatch(t, fx.life, fx.root, fx.settings, fx.key, fx.accounts, false); err != nil {
 		t.Fatal(err)
 	}
-	if completeRepair {
-		if err = completePublishedRecoveryBatch(t, life, root, fx.settings, fx.key, accounts); err != nil {
+	if complete {
+		if err = completePublishedRecoveryBatch(t, fx.life, fx.root, fx.settings, fx.key, fx.accounts); err != nil {
 			t.Fatal(err)
 		}
 	}
-	return fx
 }
 
 // runRelease is the API sequence without HTTP: fences, plan, intent, accounts, commit.
@@ -131,16 +160,16 @@ func (fx releaseFix) runRelease(t *testing.T, now time.Time, hit func(string) er
 	}
 	defer release()
 	var plan *NativeRestoreReleasePlan
-	err = fx.accounts.DeactivateForRestoreRelease(ctx, func(all []users.User) ([]string, func(), error) {
+	err = fx.accounts.DeactivateForRestoreRelease(ctx, func(all []users.User) ([]string, []string, func(), error) {
 		p, err := fx.life.PlanNativeRestoreReleaseHeld(fx.root, fx.settings, fx.key, all, "operator", now)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		plan = p
 		if err = p.RecordIntent(ctx); err == nil && hit != nil {
 			err = hit("intent")
 		}
-		return p.Deactivate, nil, err
+		return p.Record.Deactivated, p.Record.Demoted, nil, err
 	}, func() error { return plan.Commit(ctx, hit) })
 	return plan, err
 }
@@ -161,8 +190,15 @@ func TestNativeRestoreReleaseAppliesEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(plan.Deactivate, []string{fx.leg.ID}) {
-		t.Fatalf("deactivate %v", plan.Deactivate)
+	demoted, _ := fx.accounts.GetByUsername("demoted-account")
+	if !reflect.DeepEqual(plan.Record.Deactivated, []string{fx.leg.ID}) || !reflect.DeepEqual(plan.Record.Demoted, []string{demoted.ID}) {
+		t.Fatalf("account changes %+v", plan.Record)
+	}
+	// (a) roles: demote, never promote.
+	for name, role := range map[string]users.Role{"demoted-account": users.RoleUser, "kept-account": users.RoleAdmin, "user-account": users.RoleUser} {
+		if u, _ := fx.accounts.GetByUsername(name); !u.Active || u.Role != role {
+			t.Fatalf("%s: active=%v role=%s", name, u.Active, u.Role)
+		}
 	}
 	if RequireNativeRestoreReleased(fx.root) != nil {
 		t.Fatal("hold remains")
@@ -202,7 +238,7 @@ func TestNativeRestoreReleaseAppliesEvidence(t *testing.T) {
 			t.Fatalf("%s token fence %d", sub, row(sub).RevokedBefore)
 		}
 	}
-	want := map[string]NativeReleaseFloor{"one": {1, false}, "two": {1, true}, "gone": {2, false}, "legacy-sub": {1, false}}
+	want := map[string]NativeReleaseFloor{"one": {1, false}, "two": {1, true}, "gone": {2, false}, "legacy-sub": {1, false}, "demoted-sub": {1, true}, "kept-sub": {1, true}, "user-sub": {1, true}}
 	for sub, floor := range want {
 		if f.ReleaseFloors[directoryKey(nativeIssuer, sub)] != floor {
 			t.Fatalf("%s floor %+v", sub, f.ReleaseFloors[directoryKey(nativeIssuer, sub)])
@@ -239,7 +275,7 @@ func TestNativeRestoreReleaseAppliesEvidence(t *testing.T) {
 	}
 	// (c) status: released, resync required for the active floored subject.
 	st := fx.life.NativeRestoreReleaseStatus(fx.root, t.TempDir(), fx.settings, fx.key, all, time.Now())
-	if !st.Released || st.Held || !reflect.DeepEqual(st.ResyncSubjects, []string{"two"}) || !slices.ContainsFunc(st.NextSteps, func(s string) bool { return strings.HasPrefix(s, "Run a KyIdentity resync") }) {
+	if !st.Released || st.Held || !reflect.DeepEqual(st.ResyncSubjects, []string{"demoted-sub", "kept-sub", "two", "user-sub"}) || !slices.ContainsFunc(st.NextSteps, func(s string) bool { return strings.HasPrefix(s, "Run a KyIdentity resync") }) {
 		t.Fatalf("status %+v", st)
 	}
 	if err = fx.life.CompleteNativeRestoreRelease(fx.root); err != nil {
@@ -248,7 +284,9 @@ func TestNativeRestoreReleaseAppliesEvidence(t *testing.T) {
 	if record, _, _ = fx.life.NativeRestoreReleased(fx.root); record.CompletedAt == nil {
 		t.Fatal("completion not recorded")
 	}
-	nativeDesired(t, fx.life, "two", "two@example.test", 2, true)
+	for _, sub := range st.ResyncSubjects {
+		nativeDesired(t, fx.life, sub, sub+"@example.test", 2, true)
+	}
 	if st = fx.life.NativeRestoreReleaseStatus(fx.root, t.TempDir(), fx.settings, fx.key, all, time.Now()); len(st.ResyncSubjects) != 0 || slices.ContainsFunc(st.NextSteps, func(s string) bool { return strings.HasPrefix(s, "Run a KyIdentity resync") }) {
 		t.Fatalf("resync step after a newer revision %+v", st)
 	}
@@ -314,7 +352,7 @@ func TestNativeRestoreReleaseRefusesWithoutMutation(t *testing.T) {
 		"P2-wrong-issuer": {false, func(t *testing.T, fx *releaseFix) time.Time {
 			fx.settings.IssuerURL = "https://other.example"
 			return time.Now()
-		}, "P2: "},
+		}, "P2: " + uncomputedAuthority},
 		"P2-previous-epoch": {false, func(t *testing.T, fx *releaseFix) time.Time {
 			if err := fsutil.PersistJSONFile(filepath.Join(fx.root, NativeRestoreHoldFile), map[string]any{"version": 1, "epoch": "12345678-1234-4123-8123-123456789abd"}); err != nil {
 				t.Fatal(err)
@@ -388,54 +426,154 @@ func TestNativeRestoreReleaseZeroSubjects(t *testing.T) {
 	}
 }
 
-func TestNativeRestoreReleaseCrashPoints(t *testing.T) {
-	for _, point := range []string{"intent", "lifecycle", "rename"} {
+// Each crash point, then the documented recovery: before the rename the intent
+// refuses a retry; a new challenge, fresh evidence and repair release cleanly.
+func TestNativeRestoreReleaseCrashPointsAndRecovery(t *testing.T) {
+	for _, point := range []string{"intent", "ledger", "lifecycle", "rename"} {
 		t.Run(point, func(t *testing.T) {
 			fx := releaseCoreFixture(t, true)
-			if _, err := fx.runRelease(t, time.Now().UTC(), crashAt(point)); err == nil {
+			_, err := fx.runRelease(t, time.Now().UTC(), crashAt(point))
+			if err == nil {
 				t.Fatal("crash not reported")
 			}
-			_, released, err := fx.life.NativeRestoreReleased(fx.root)
+			_, released, rerr := fx.life.NativeRestoreReleased(fx.root)
 			if point == "rename" {
-				if !released || err != nil || RequireNativeRestoreReleased(fx.root) != nil {
-					t.Fatal("rename crash must read as released", released, err)
+				if !errors.Is(err, ErrNativeReleaseUnconfirmed) || !released || rerr != nil || RequireNativeRestoreReleased(fx.root) != nil {
+					t.Fatal("a crash after the rename must read as released", err, released, rerr)
 				}
 				return
 			}
-			if released || RequireNativeRestoreReleased(fx.root) == nil {
+			if errors.Is(err, ErrNativeReleaseUnconfirmed) || released || RequireNativeRestoreReleased(fx.root) == nil {
 				t.Fatal("crash before rename released the hold")
 			}
-			// The intent refuses a retry; only fresh evidence clears it.
 			_, err = fx.runRelease(t, time.Now().UTC(), nil)
 			var refused *NativeRestoreRefusedError
 			if !errors.As(err, &refused) || RequireNativeRestoreReleased(fx.root) == nil {
 				t.Fatal("retry without fresh evidence", err)
 			}
 			if u, _ := fx.accounts.Get(fx.leg.ID); u.Active != (point == "intent") {
-				t.Fatal("deactivation must precede the lifecycle write", point, u.Active)
+				t.Fatal("account changes must precede the ledger and lifecycle writes", point, u.Active)
 			}
-			if point == "lifecycle" {
-				f, _ := fx.life.load()
-				if len(f.ReleaseFloors) != 4 {
-					t.Fatal("floors not durable before the rename")
-				}
+			if f, _ := fx.life.load(); (point == "lifecycle") != (len(f.ReleaseFloors) == releaseSubjects) {
+				t.Fatal("floors and the lifecycle write are one", point, len(f.ReleaseFloors))
 			}
-			// A new challenge clears the intent; floors only go up.
-			fingerprint := sha256.Sum256(fx.key)
-			release, err := fx.life.LockDirectory()
-			if err != nil {
-				t.Fatal(err)
+			fx.freshRepair(t, true)
+			if f, _ := fx.life.load(); f.RestoreRelease != nil {
+				t.Fatal("new challenge kept the intent")
 			}
-			err = fx.accounts.WithCurrentUsers(context.Background(), func(all []users.User) error {
-				_, err := fx.life.BeginNativeRecoveryHeld(context.Background(), fx.root, fx.settings, fx.key, all, "paired-system", hex.EncodeToString(fingerprint[:]))
-				return err
-			})
-			release()
-			if f, _ := fx.life.load(); err != nil || f.RestoreRelease != nil || point == "lifecycle" && len(f.ReleaseFloors) != 4 {
-				t.Fatal("new challenge kept the intent or dropped floors", err)
+			if _, err = fx.runRelease(t, time.Now().UTC(), nil); err != nil {
+				t.Fatal("recovery release", err)
 			}
+			fx.assertReleased(t)
 		})
 	}
+}
+
+// assertReleased is the consistent end state of every successful release.
+func (fx releaseFix) assertReleased(t *testing.T) {
+	t.Helper()
+	if _, released, err := fx.life.NativeRestoreReleased(fx.root); !released || err != nil || RequireNativeRestoreReleased(fx.root) != nil {
+		t.Fatal("not released", err)
+	}
+	f, err := fx.life.load()
+	if err != nil || len(f.ReleaseFloors) != releaseSubjects {
+		t.Fatal("floors", len(f.ReleaseFloors), err)
+	}
+	for _, sub := range []string{"one", "gone", "legacy-sub"} {
+		if d := f.Directory[directoryKey(nativeIssuer, sub)]; d.Active {
+			t.Fatalf("%s row active", sub)
+		}
+	}
+	if u, _ := fx.accounts.Get(fx.leg.ID); u.Active {
+		t.Fatal("legacy administrator active")
+	}
+	if u, _ := fx.accounts.GetByUsername("demoted-account"); u.Role != users.RoleUser {
+		t.Fatal("demotion lost")
+	}
+	all, _ := fx.accounts.List()
+	if _, err = fx.life.ValidateNativeSnapshot(fx.root, all); err != nil {
+		t.Fatal("inconsistent", err)
+	}
+}
+
+// A real older receipt and repair replayed over a newer repair is refused.
+func TestNativeRestoreReleaseRefusesOlderReceipt(t *testing.T) {
+	fx := releaseCoreFixture(t, true)
+	old, err := fx.life.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx.freshRepair(t, true)
+	f, err := fx.life.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.RecoveryReceipt, f.RecoveryRepair = old.RecoveryReceipt, old.RecoveryRepair
+	if err = fsutil.PersistJSONFile(fx.life.path, f); err != nil {
+		t.Fatal(err)
+	}
+	_, err = fx.runRelease(t, time.Now().UTC(), nil)
+	var refused *NativeRestoreRefusedError
+	if !errors.As(err, &refused) || !slices.ContainsFunc(refused.Reasons, func(r string) bool { return strings.HasPrefix(r, "P2: repair barrier for account") }) || RequireNativeRestoreReleased(fx.root) == nil {
+		t.Fatal("older receipt accepted", err)
+	}
+}
+
+// A release record restored from a post-release backup belongs to an older
+// epoch; it neither refuses nor survives the new hold's release.
+func TestNativeRestoreReleaseIgnoresOtherEpochRecord(t *testing.T) {
+	fx := releaseCoreFixture(t, true)
+	f, err := fx.life.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.RestoreRelease = &NativeRestoreReleaseRecord{Epoch: "12345678-1234-4123-8123-123456789abd", Actor: "earlier"}
+	if err = fsutil.PersistJSONFile(fx.life.path, f); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := fx.runRelease(t, time.Now().UTC(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record, _, _ := fx.life.NativeRestoreReleased(fx.root); record.Epoch != releaseEpoch || record.Actor != plan.Record.Actor {
+		t.Fatalf("record %+v", record)
+	}
+	fx.assertReleased(t)
+}
+
+// With a receiving store present, the expired subject's route is written inactive.
+func TestNativeRestoreReleaseDeactivatesRoutes(t *testing.T) {
+	ctx := context.Background()
+	fx := releaseCoreFixture(t, true)
+	ledger, err := fx.life.loadNative()
+	if err != nil {
+		t.Fatal(err)
+	}
+	holding, err := ingress.Open(filepath.Join(fx.root, "receiving"), ingress.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := ledger.stored.Addresses["one@example.test"]
+	if err = holding.SetRoute(ctx, ingress.Route{Address: "one@example.test", Issuer: nativeIssuer, Subject: "one", Mailbox: fx.one.ID, Generation: x.Generation, Active: true, ValidUntil: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err = holding.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = fx.runRelease(t, time.Now().UTC(), nil); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(fx.root, "receiving", "ingress.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var active bool
+	var generation int64
+	if err = db.QueryRow("SELECT active,generation FROM routes WHERE address='one@example.test'").Scan(&active, &generation); err != nil || active || generation <= x.Generation {
+		t.Fatal("route still active", active, generation, err)
+	}
+	fx.assertReleased(t)
 }
 
 // A directory event racing release lands wholly before (release refused: the
@@ -462,7 +600,7 @@ func TestNativeRestoreReleaseRacesDirectoryEvent(t *testing.T) {
 			}
 			held := RequireNativeRestoreReleased(fx.root) != nil
 			switch {
-			case releaseErr == nil && !held && len(f.ReleaseFloors) == 4:
+			case releaseErr == nil && !held && len(f.ReleaseFloors) == releaseSubjects:
 			case releaseErr != nil && held && len(f.ReleaseFloors) == 0 && f.RestoreRelease == nil:
 			default:
 				t.Fatalf("inconsistent: err=%v held=%v floors=%d", releaseErr, held, len(f.ReleaseFloors))

@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -254,19 +253,29 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "audit log unavailable: the state store did not open; the hold stays", http.StatusServiceUnavailable)
 		return
 	}
+	// Reasons name preconditions, account/mailbox IDs, subjects and domains;
+	// never evidence, digests, nonces or credentials (LOGGING.md).
 	refuse := func(reasons ...string) {
-		s.logger.Info("native restore hold release refused; hold stays", "actor", actor.ID, "reasons", strings.Join(reasons, "; "))
+		s.logger.Info("native restore hold release refused; hold stays", "actor", actor.ID, "reason", strings.Join(reasons, "; "))
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "release refused; the hold stays", "reasons": reasons, "restoreHeld": true})
 	}
 	if record, released, err := s.ssoLifecycle.NativeRestoreReleased(s.stateDir); err != nil {
 		refuse("a released marker exists but does not match the recorded release")
 		return
 	} else if released {
-		s.completeNativeRelease(w, actor.ID, record, true, nil)
+		s.completeNativeRelease(w, actor.ID, record, true)
 		return
 	}
-	// Q3: detected as receiving does: the supervised flag or a rendered config.
-	if _, err := os.Lstat(filepath.Join(s.configDir, "receiving.conf")); (os.Getenv("KYPOST_NATIVE_RECEIVER") == "true" || err == nil) && request.Confirm != nativeReleaseConfirm {
+	if _, err := os.Lstat(filepath.Join(s.stateDir, sso.NativeRestoreHoldFile)); errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "no native restore hold: nothing to release", "restoreHeld": false})
+		return
+	}
+	maddy, err := maddyProfile(s.configDir)
+	if err != nil {
+		refuse("the receiver configuration cannot be checked; preserve it and retry")
+		return
+	}
+	if maddy && request.Confirm != nativeReleaseConfirm {
 		refuse(`the bundled receiver (Maddy) has no fence: stop the original host's receiver and send "confirm": "` + nativeReleaseConfirm + `"`)
 		return
 	}
@@ -284,6 +293,7 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 	}
 	var plan *sso.NativeRestoreReleasePlan
 	var refused *sso.NativeRestoreRefusedError
+	errAudit := errors.New("release audit unavailable")
 	err = func() error {
 		release, err := fsutil.LockFileContext(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
 		if err != nil {
@@ -303,21 +313,22 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 				return err
 			}
 			defer release()
-			return s.users.DeactivateForRestoreRelease(ctx, func(all []users.User) ([]string, func(), error) {
+			return s.users.DeactivateForRestoreRelease(ctx, func(all []users.User) ([]string, []string, func(), error) {
 				release, err := s.lockNativeRecoveryOperator(operator, settings, all)
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 				if plan, err = s.ssoLifecycle.PlanNativeRestoreReleaseHeld(s.stateDir, settings, []byte(s.pairingSecret), all, actor.ID, time.Now().UTC()); err != nil {
-					return nil, release, err
+					return nil, nil, release, err
 				}
-				if err = s.backup.Audit("admin.native_restore_release", actor.ID, plan.Record.Epoch, "started", map[string]any{"deactivate": len(plan.Deactivate)}); err != nil {
-					return nil, release, err
+				rec := plan.Record
+				if err = s.backup.Audit("admin.native_restore_release", actor.ID, rec.Epoch, "started", map[string]any{"deactivate": rec.Deactivated, "demote": rec.Demoted}); err != nil {
+					return nil, nil, release, errAudit
 				}
 				if err = plan.RecordIntent(ctx); err == nil {
 					err = s.releaseHit("intent")
 				}
-				return plan.Deactivate, release, err
+				return rec.Deactivated, rec.Demoted, release, err
 			}, func() error { return plan.Commit(ctx, s.nativeReleaseHit) })
 		})
 	}()
@@ -325,8 +336,19 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 	case errors.As(err, &refused):
 		refuse(refused.Reasons...)
 		return
+	case errors.Is(err, errAudit):
+		s.logger.Error("native restore hold release audit unavailable; nothing written", "actor", actor.ID)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "audit log unavailable; nothing was written and the hold stays. Retry", "restoreHeld": true})
+		return
 	case err != nil && plan == nil:
 		refuse("current authority changed or is unreadable; sign in again and retry")
+		return
+	case errors.Is(err, sso.ErrNativeReleaseUnconfirmed):
+		// The rename happened: the host is released. The retry confirms it
+		// and writes the completion audit.
+		s.revokeReleasedSessions(plan.Record)
+		s.logger.Error("native restore hold released; durability unconfirmed", "actor", actor.ID, "correlation_id", plan.Record.Epoch)
+		writeJSON(w, http.StatusOK, map[string]any{"released": true, "confirmed": false, "epoch": plan.Record.Epoch, "error": "the hold is released but its durability is unconfirmed; repeat the request to confirm"})
 		return
 	case err != nil:
 		s.logger.Error("native restore hold release failed after its intent; hold stays", "actor", actor.ID, "correlation_id", plan.Record.Epoch)
@@ -334,10 +356,17 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "release interrupted; the hold stays. Request a new challenge, import fresh evidence, repair and release again", "restoreHeld": true})
 		return
 	}
-	for _, id := range plan.Deactivate {
-		s.revokeUserSessions(id, "")
+	s.completeNativeRelease(w, actor.ID, plan.Record, false)
+}
+
+// maddyProfile detects the bundled receiver as receiving does: the supervised
+// flag or a rendered config (Q3). An unreadable config state fails closed.
+func maddyProfile(configDir string) (bool, error) {
+	_, err := os.Lstat(filepath.Join(configDir, "receiving.conf"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return true, err
 	}
-	s.completeNativeRelease(w, actor.ID, plan.Record, false, plan.Deactivate)
+	return os.Getenv("KYPOST_NATIVE_RECEIVER") == "true" || err == nil, nil
 }
 
 func (s *Server) releaseHit(point string) error {
@@ -347,11 +376,21 @@ func (s *Server) releaseHit(point string) error {
 	return s.nativeReleaseHit(point)
 }
 
-// completeNativeRelease audits completion, then records it; a retry after the
-// rename lands here too and only records what is missing.
-func (s *Server) completeNativeRelease(w http.ResponseWriter, actor string, record sso.NativeRestoreReleaseRecord, already bool, deactivated []string) {
+// revokeReleasedSessions signs out every account the release changed (a).
+func (s *Server) revokeReleasedSessions(record sso.NativeRestoreReleaseRecord) {
+	for _, id := range append(slices.Clone(record.Deactivated), record.Demoted...) {
+		s.revokeUserSessions(id, "")
+	}
+}
+
+// completeNativeRelease audits completion under the original release's actor
+// and time, then records it; a retry after the rename lands here too and only
+// records what is missing.
+func (s *Server) completeNativeRelease(w http.ResponseWriter, operator string, record sso.NativeRestoreReleaseRecord, already bool) {
+	s.revokeReleasedSessions(record)
 	if record.CompletedAt == nil {
-		if err := s.backup.Audit("admin.native_restore_release", actor, record.Epoch, "completed", map[string]any{"deactivated": len(deactivated)}); err != nil {
+		details := map[string]any{"deactivated": record.Deactivated, "demoted": record.Demoted, "releasedAt": record.At, "confirmedBy": operator}
+		if err := s.backup.Audit("admin.native_restore_release", record.Actor, record.Epoch, "completed", details); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "the hold is released but the completion audit failed; repeat the request to record it", "released": true})
 			return
 		}
@@ -360,7 +399,11 @@ func (s *Server) completeNativeRelease(w http.ResponseWriter, actor string, reco
 			return
 		}
 	}
-	s.logger.Info("native restore hold released", "actor", actor, "correlation_id", record.Epoch, "already_released", strconv.FormatBool(already))
-	writeJSON(w, http.StatusOK, map[string]any{"released": true, "alreadyReleased": already, "epoch": record.Epoch, "deactivatedAccounts": len(deactivated),
+	result := "released"
+	if already {
+		result = "already_released"
+	}
+	s.logger.Info("native restore hold released", "actor", operator, "correlation_id", record.Epoch, "result", result)
+	writeJSON(w, http.StatusOK, map[string]any{"released": true, "confirmed": true, "alreadyReleased": already, "epoch": record.Epoch, "deactivatedAccounts": len(record.Deactivated), "demotedAccounts": len(record.Demoted),
 		"nextSteps": []string{"Run a KyIdentity resync now.", "Restart the container to start receiving.", "Cloudflare receiving stays fenced until kypost-server receiving cloudflare takeover."}})
 }

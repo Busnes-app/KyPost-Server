@@ -369,19 +369,22 @@ minutes, so script steps 2–5 and run them back to back:
    `"confirm": "original-host-decommissioned"`.
 
 `200 {released:true}` renames the hold to `state/native-restore-released.json`.
-The release deactivates and signs out non-native accounts whose subject the
-evidence shows inactive, writes those subjects' directory rows inactive, records
-release floors and raises every token fence. Then run a KyIdentity resync,
+The release deactivates non-native accounts whose subject the evidence shows
+inactive, demotes non-native administrators the evidence shows without the
+administrator role, signs both out, writes inactive subjects' directory rows
+inactive, records release floors and raises the ID-token fences. Then run a KyIdentity resync,
 restart the container to start receiving, and take over Cloudflare receiving
 explicitly if used. Quarantined mail stays quarantined; devices pair again.
 A `409` lists the failed preconditions and keeps the hold; one reading
-"interrupted" needs a new challenge, fresh evidence and repair. A repeated request
-after success answers `alreadyReleased:true`. Do not downgrade below this version
+"interrupted" needs a new challenge, fresh evidence and repair; a `503` wrote
+nothing, so retry. `200` with `confirmed:false` means released but not yet
+confirmed durable: repeat the request. A repeated request after success answers
+`alreadyReleased:true`. Do not downgrade below this version
 afterwards ([rollback](NATIVE_RESTORE_RELEASE.md#rollback)).
 
 Read the [pinned identity authority findings](NATIVE_RESTORE_AUTHORITY.md) before changing hold release: ordinary KyIdentity resync does not establish complete offboarding evidence.
 
-The protected [held repair procedure](NATIVE_RESTORE_AUTHORITY.md#protected-consumer-procedure) reconciles fresh KyIdentity activity/roles and revokes native transport credentials while preserving the hold and retained mail/PGP data. Partial cleanup failure remains incomplete and requires fresh evidence after remediation. Before native recovery can resume writes, remaining activation work must qualify domain proof, receiver generations, restored-credential cutoffs, worker fencing and provider credential/relay evidence. Do not remove the hold manually.
+The protected [held repair procedure](NATIVE_RESTORE_AUTHORITY.md#protected-consumer-procedure) reconciles fresh KyIdentity activity/roles and revokes native transport credentials while preserving the hold and retained mail/PGP data. Partial cleanup failure remains incomplete and requires fresh evidence after remediation. The release checks domain proof, receiver generations and restored-credential cutoffs; worker fencing and provider credential/relay evidence remain unqualified, which is why release is off by default. Release only through the route above; never remove the hold manually.
 Replaying an already-applied directory revision is insufficient to repair
 restored user access. An older database also rewinds message IDs while retaining
 its namespace: the separate wire-reference generation rejects stale client
