@@ -294,9 +294,9 @@ func TestMailImport(t *testing.T) {
 		t.Fatal("upload inside the reserve", w.Code, w.Body)
 	}
 	noTempFiles("reserve upload")
-	var checks atomic.Int32
+	// Room while the upload is written (its bytes promised), none after.
 	fsutil.DiskSpace = func(string) (uint64, uint64, error) {
-		if checks.Add(1) == 1 {
+		if srv.importPending.Load() > 0 {
 			return 1 << 50, 1 << 50, nil
 		}
 		return 10 << 30, 100 << 30, nil

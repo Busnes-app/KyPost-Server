@@ -303,8 +303,14 @@ func (s *Server) receiveImport(w http.ResponseWriter, r *http.Request) (string, 
 	if r.ContentLength > importUploadCap {
 		return "", 0, http.StatusRequestEntityTooLarge, tooLarge
 	}
-	if err := fsutil.CheckDriveReserve(s.stateDir, r.ContentLength); err != nil {
-		return "", 0, http.StatusInsufficientStorage, errors.New(importFailure(err))
+	space := &uploadSpace{s: s, every: importReserveEvery}
+	defer space.release()
+	if r.ContentLength > 0 {
+		if err := space.reserve(r.ContentLength); err != nil {
+			return "", 0, http.StatusInsufficientStorage, errors.New(importFailure(err))
+		}
+	} else {
+		space.chunked = true
 	}
 	dir := filepath.Join(s.stateDir, importDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -315,7 +321,8 @@ func (s *Server) receiveImport(w http.ResponseWriter, r *http.Request) (string, 
 		return "", 0, http.StatusServiceUnavailable, errors.New("import storage is unavailable")
 	}
 	rc := http.NewResponseController(w)
-	n, err := io.Copy(f, &idleReader{http.MaxBytesReader(w, r.Body, importUploadCap), rc, time.Now().Add(importUploadWindow)})
+	space.f = f
+	n, err := io.Copy(space, &idleReader{http.MaxBytesReader(w, r.Body, importUploadCap), rc, time.Now().Add(importUploadWindow)})
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -326,6 +333,8 @@ func (s *Server) receiveImport(w http.ResponseWriter, r *http.Request) (string, 
 		err, status = tooLarge, http.StatusRequestEntityTooLarge
 	case errors.Is(err, errUploadTooSlow):
 		status = http.StatusRequestTimeout
+	case errors.Is(err, fsutil.ErrDriveReserve):
+		err, status = errors.New(importFailure(err)), http.StatusInsufficientStorage
 	case err != nil:
 		err = errors.New("the upload was interrupted; try again")
 	case n == 0:
@@ -339,6 +348,50 @@ func (s *Server) receiveImport(w http.ResponseWriter, r *http.Request) (string, 
 	_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	return f.Name(), n, 0, nil
 }
+
+// importReserveEvery is how many bytes an upload writes between drive
+// reserve checks.
+var importReserveEvery int64 = 4 << 20
+
+// uploadSpace writes an upload to its temp file without crossing the drive
+// reserve. Every upload's promised bytes (its declared length still unwritten,
+// or the next importReserveEvery of an upload without one) are held in
+// Server.importPending, added before checking, so concurrent uploads count
+// each other and at worst refuse together, never pass together.
+type uploadSpace struct {
+	s                          *Server
+	f                          *os.File
+	chunked                    bool
+	every, promised, unchecked int64
+}
+
+func (u *uploadSpace) reserve(n int64) error {
+	u.promised += n
+	return fsutil.CheckDriveReserve(u.s.stateDir, u.s.importPending.Add(n))
+}
+
+func (u *uploadSpace) Write(p []byte) (int, error) {
+	if u.unchecked <= 0 {
+		var err error
+		if u.chunked {
+			err = u.reserve(u.every - u.promised)
+		} else {
+			err = fsutil.CheckDriveReserve(u.s.stateDir, u.s.importPending.Load())
+		}
+		if err != nil {
+			return 0, err
+		}
+		u.unchecked = u.every
+	}
+	n, err := u.f.Write(p)
+	written := min(int64(n), u.promised)
+	u.promised -= written
+	u.s.importPending.Add(-written)
+	u.unchecked -= int64(n)
+	return n, err
+}
+
+func (u *uploadSpace) release() { u.s.importPending.Add(-u.promised); u.promised = 0 }
 
 var errUploadTooSlow = errors.New("the upload took too long (two hours at most); try again on a faster connection or with a smaller file")
 

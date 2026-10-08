@@ -619,7 +619,10 @@ another account](#import-from-another-mail-account) adds its own below.
   `$STATE_DIR/imports/`, never to memory, refusing more than `maxBytes` (413)
   and an empty body (400); the cap is the mailbox's whole storage quota
   (5 GiB by default), since nothing larger can fit. An upload that would cut
-  into the [drive reserve](#mailbox-quotas) is refused up front (507). An
+  into the [drive reserve](#mailbox-quotas) is refused (507, temp file
+  removed): up front for its declared length plus what other uploads still
+  promise, and again every 4 MiB written, so an upload without a length or
+  several at once cannot cross it. An
   upload idle for a minute, or still sending after two hours in total (at
   least 0.7 MiB/s for 5 GiB), is cut off (408), so a trickling upload frees
   its slot. It answers `202`
@@ -647,7 +650,10 @@ another account](#import-from-another-mail-account) adds its own below.
   A zip passes every `*.eml` entry (any case) into the one target folder, in
   directory order, read into memory one at a time; entry names are never used
   as paths and folders inside the zip are not recreated. More than 10,000
-  entries, or more inflated bytes than `maxBytes`, refuses the archive; an
+  entries, a central directory over 8 MiB or not ending exactly at the (zip64)
+  end record (prepended data included; checked before the directory is
+  parsed, since the parser holds several times its size in memory), or more
+  inflated bytes than `maxBytes`, refuses the archive; an
   entry inflating past 100 times its compressed size (at least 1 MiB) is a
   bomb and skipped, as are entries not named `*.eml` and unreadable or
   corrupt ones.
