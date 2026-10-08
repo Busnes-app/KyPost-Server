@@ -129,8 +129,11 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 	if _, err = s.users.ClearMustChangePassword(actor.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.users.LinkSSO(actor.ID, "operator", "operator", ""); err != nil {
-		t.Fatal(err)
+	// Release takes only an unlinked local administrator (P6).
+	if scenario != "release" {
+		if err = s.users.LinkSSO(actor.ID, "operator", "operator", ""); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if scenario == "reactivated-admin" {
 		if _, err = s.users.SetRole(u.ID, users.RoleUser); err != nil {
@@ -142,6 +145,9 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 	}
 	if err = fsutil.PersistJSONFile(filepath.Join(s.stateDir, sso.NativeRestoreHoldFile), map[string]any{"version": 1, "epoch": "12345678-1234-4123-8123-123456789abc"}); err != nil {
 		t.Fatal(err)
+	}
+	if scenario == "release" {
+		qualifyReleaseFixture(t, s, u)
 	}
 	w = httptest.NewRecorder()
 	if err = s.startSession(w, httptest.NewRequest("GET", "/", nil), actor.ID); err != nil {
@@ -162,6 +168,9 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 	var subjects []any
 	for _, subject := range c.Subjects {
 		profile := map[string]any{"id": subject, "externalId": subject, "active": false, "roles": []string{}}
+		if scenario == "release" && subject == "demoted-sub" {
+			profile["active"], profile["userName"] = true, "demoted"
+		}
 		if subject == u.SSOSub && (scenario == "demoted" || scenario == "active-admin" || scenario == "reactivated-admin") {
 			profile["active"] = true
 			profile["userName"] = u.SSOUsername

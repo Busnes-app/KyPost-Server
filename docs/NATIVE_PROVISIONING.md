@@ -478,7 +478,7 @@ refuses any present/unreadable hold and there is no release path. Follow
 access repair and stale-message-ID fencing, before runtime activation.
 Release floors in `sso-lifecycle.json` refuse provisioning, allocation and
 activating directory events from state older than, or contradicting, the
-evidence a future hold release consumed; deactivation always applies
+evidence the hold release consumed; deactivation always applies
 ([release design](NATIVE_RESTORE_RELEASE.md)).
 
 Rollback preserves all these files and mailbox bytes. Disable workers before

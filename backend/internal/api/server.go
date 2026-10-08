@@ -92,6 +92,8 @@ type Server struct {
 	nativeSignOnAfterAdmit  func()
 	nativeSignOnBeforeIssue func()
 	ssoCallbackAfterResolve func()
+	// nativeReleaseHit crashes a hold release at "intent", "lifecycle" or "rename".
+	nativeReleaseHit func(point string) error
 
 	logger            *logging.Logger
 	health            *health.Service
@@ -553,6 +555,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/backup/status", s.withAdmin(s.handleBackupStatus))
 	mux.HandleFunc("GET /api/admin/native-recovery/status", s.withAdmin(s.handleNativeRecoveryStatus))
 	mux.HandleFunc("POST /api/admin/native-recovery/repair", s.withAdmin(withActionDigest(s.handleNativeRecoveryRepair)))
+	mux.HandleFunc("POST /api/admin/native-recovery/release", s.withAdmin(withActionDigest(s.handleNativeRecoveryRelease)))
 	mux.HandleFunc("POST /api/admin/native-recovery/challenge", s.withAdmin(withActionDigest(s.handleNativeRecoveryChallenge)))
 	mux.HandleFunc("POST /api/admin/native-recovery/evidence", s.withAdmin(withActionDigestLimit(maxNativeRecoveryUploadBytes, s.handleNativeRecoveryEvidence)))
 	mux.HandleFunc("GET /api/admin/mail-domain", s.withAdmin(s.handleNativeMailDomain))

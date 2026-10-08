@@ -213,7 +213,10 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 			return nil
 		}
 		prior := f.Directory[key]
-		if revision < prior.Revision || (revision == prior.Revision && digest != prior.Digest) {
+		// A release wrote this row inactive from signed evidence; the
+		// directory's own inactive event at that revision is the same state.
+		releaseEcho := prior.EventID == nativeReleaseEventID && !prior.Active && !active
+		if revision < prior.Revision || (revision == prior.Revision && digest != prior.Digest && !releaseEcho) {
 			return ErrDirectoryConflict
 		}
 		if revision > prior.Revision {
