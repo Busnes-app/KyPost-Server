@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"path"
@@ -36,7 +37,15 @@ const (
 	// importZipRatio bounds an entry's inflation over its compressed size
 	// (but at least 1 MiB): a zip bomb is skipped after that much work.
 	importZipRatio = 100
+	// maxImportZipDirectory bounds the central directory archive/zip parses
+	// into memory (several times its size) before any entry cap applies; 10,000
+	// entries with long names fit well within it.
+	maxImportZipDirectory = 8 << 20
 )
+
+// newZipReader is zip.NewReader; tests check it is never reached for a
+// directory zipDirectory refuses.
+var newZipReader = zip.NewReader
 
 // ImportFolder normalizes an import target ("" is Imported), which must exist
 // or be creatable under an existing parent, and creates it when create is set.
@@ -239,11 +248,10 @@ func readMbox(r io.Reader, limit int64, each func([]byte, bool) error) error {
 // entry is skipped; too many entries or too many expanded bytes refuse the
 // whole archive.
 func readImportZip(f io.ReaderAt, size, limit, maxExpanded int64, each func([]byte, bool) error) error {
-	// ponytail: archive/zip reads the whole central directory before the entry
-	// cap applies: about 4.5x the upload live and 6x allocated at worst, with
-	// the upload capped at the mailbox quota. A streaming directory walk is the
-	// upgrade if that quota grows large.
-	zr, err := zip.NewReader(f, size)
+	if !zipDirectory(f, size) {
+		return ErrImportArchive
+	}
+	zr, err := newZipReader(f, size)
 	if err != nil && !errors.Is(err, zip.ErrInsecurePath) {
 		return ErrImportArchive
 	}
@@ -283,4 +291,88 @@ func readImportZip(f io.ReaderAt, size, limit, maxExpanded int64, each func([]by
 		}
 	}
 	return nil
+}
+
+// zipDirectory bounds what archive/zip will parse. It finds the end record
+// exactly as archive/zip does, then walks the central directory itself:
+// archive/zip reads headers from the directory offset until one fails to
+// parse, ignoring the recorded size and count, and a header's name, extra and
+// comment lengths decide where the next one starts. So the walk must reach the
+// end of the directory exactly, with exactly the recorded entries, and the
+// (zip64) end record must start right there: archive/zip then stops on it. A
+// zip64 end record must sit directly before its locator, so no gap can hide
+// headers. Prepended data, over 10,000 entries or a directory over 8 MiB are
+// refused.
+func zipDirectory(f io.ReaderAt, size int64) bool {
+	end, buf := int64(-1), []byte(nil)
+	for _, n := range []int64{1024, 65 * 1024} {
+		n = min(n, size)
+		buf = make([]byte, n)
+		if _, err := f.ReadAt(buf, size-n); err != nil && err != io.EOF {
+			return false
+		}
+		if p := zipEndInBlock(buf); p >= 0 {
+			end, buf = size-n+int64(p), buf[p:]
+			break
+		}
+		if n == size {
+			break
+		}
+	}
+	if end < 0 {
+		return false
+	}
+	le := binary.LittleEndian
+	records, dirSize, dirOffset := uint64(le.Uint16(buf[10:])), uint64(le.Uint32(buf[12:])), uint64(le.Uint32(buf[16:]))
+	if records == 0xffff || dirSize == 0xffff || dirOffset == 0xffffffff {
+		loc := make([]byte, 20)
+		if end < 20 {
+			return false
+		}
+		if _, err := f.ReadAt(loc, end-20); err != nil || le.Uint32(loc) != 0x07064b50 || le.Uint32(loc[4:]) != 0 || le.Uint32(loc[16:]) != 1 {
+			return false
+		}
+		p := le.Uint64(loc[8:])
+		rec := make([]byte, 56)
+		if p > uint64(end) {
+			return false
+		}
+		// The record's own size field counts what follows its first 12 bytes;
+		// allow at most 64 KiB of extensible data, ending at the locator.
+		if _, err := f.ReadAt(rec, int64(p)); err != nil || le.Uint32(rec) != 0x06064b50 || le.Uint64(rec[4:]) < 44 || le.Uint64(rec[4:]) > 44+64<<10 || p+12+le.Uint64(rec[4:]) != uint64(end-20) {
+			return false
+		}
+		end, records, dirSize, dirOffset = int64(p), le.Uint64(rec[32:]), le.Uint64(rec[40:]), le.Uint64(rec[48:])
+	}
+	if records > maxImportZipEntries || dirSize > maxImportZipDirectory || dirOffset > uint64(end) || dirOffset+dirSize != uint64(end) {
+		return false
+	}
+	dir := make([]byte, dirSize)
+	if _, err := f.ReadAt(dir, int64(dirOffset)); err != nil {
+		return false
+	}
+	count := uint64(0)
+	for at := 0; at < len(dir); count++ {
+		if len(dir)-at < 46 || le.Uint32(dir[at:]) != 0x02014b50 {
+			return false
+		}
+		at += 46 + int(le.Uint16(dir[at+28:])) + int(le.Uint16(dir[at+30:])) + int(le.Uint16(dir[at+32:]))
+		if at > len(dir) {
+			return false
+		}
+	}
+	return count == records
+}
+
+// zipEndInBlock is archive/zip's findSignatureInBlock.
+func zipEndInBlock(b []byte) int {
+	for i := len(b) - 22; i >= 0; i-- {
+		if b[i] == 'P' && b[i+1] == 'K' && b[i+2] == 0x05 && b[i+3] == 0x06 {
+			if int(b[i+20])|int(b[i+21])<<8+22+i > len(b) {
+				return -1
+			}
+			return i
+		}
+	}
+	return -1
 }

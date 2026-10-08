@@ -65,7 +65,7 @@ chown kypost:kypost /kypost/ollama-models 2>/dev/null \
 # external IMAP users keep working.
 setpriv --reuid=kypost --regid=kypost --init-groups \
 	/usr/local/bin/kypost-server migrate-native \
-	|| echo "native mail storage migration failed; native mail stays refused. Fix the error above and restart, or restore the pre-migration backup (docs/RESTORE.md)" >&2
+	|| echo "native mail storage migration failed; what the error above names (all native mail, or only the mailboxes it lists) stays refused. Fix it and restart, or restore the pre-migration backup (docs/RESTORE.md)" >&2
 
 # Drop to the unprivileged user for everything from here on, explicitly,
 # rather than relying on supervisord's own `user=` option to do it. Two

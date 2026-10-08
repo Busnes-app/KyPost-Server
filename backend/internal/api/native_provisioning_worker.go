@@ -10,9 +10,17 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-// Initial bounded profile: no automatic eviction. Mail-sized backup/capacity
-// qualification precedes raising these persisted per-account limits.
-var nativeMailboxLimits = mailbox.Limits{MessageBytes: 5 << 20, PayloadBytes: 32 << 20, Records: 10000}
+// nativeMailboxLimits are new mailboxes' limits; existing ones carry theirs in
+// the ledger, which migrate-native keeps equal to these. No automatic eviction.
+var nativeMailboxLimits = mailbox.NativeLimits(mailbox.DefaultQuotaBytes)
+
+// SetMailboxQuota applies the deployment's quota to new mailboxes and to the
+// import caps derived from it. Startup-only, before any request goroutine.
+func SetMailboxQuota(quota int64) {
+	nativeMailboxLimits = mailbox.NativeLimits(quota)
+	importUploadCap = quota
+	imapImportBytes = 2 * quota
+}
 
 func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject string) error {
 	if err := sso.RequireNativeRestoreReleased(s.stateDir); err != nil {
@@ -42,6 +50,19 @@ func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject str
 	if lookupErr == nil && u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" {
 		release()
 		return nil // existing IMAP and administrator accounts never migrate through directory repair
+	}
+	// Only the disable path may act on state the release evidence superseded.
+	// Allocation rechecks; this also covers administrator provisioning and
+	// keeps a floored subject a quiet no-op until a newer revision arrives.
+	if err := s.ssoLifecycle.CheckNativeReleaseFloor(issuer, subject, d); err != nil {
+		release()
+		if !errors.Is(err, sso.ErrNativeReleaseFloor) {
+			return err
+		}
+		if _, logged := s.releaseFloorLogged.LoadOrStore(issuer+"\x00"+subject, true); !logged {
+			s.logger.Info("native subject held below restore release floor; run a KyIdentity resync", "target", subject)
+		}
+		return nil
 	}
 	if lookupErr != nil && d.Active && sso.HasAdminRole(d.Resource.Roles) {
 		defer release()

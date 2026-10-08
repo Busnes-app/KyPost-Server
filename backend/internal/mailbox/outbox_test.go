@@ -345,3 +345,18 @@ func TestNativeOutboxDiscoveryRequiresAcceptedPrimary(t *testing.T) {
 		t.Fatal("accepted primary did not release follow-ons", pending)
 	}
 }
+
+// A quota lowered below what a mailbox holds must not fail its backups.
+func TestNativeOutboxSnapshotAcceptsUsageAboveLoweredQuota(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "mailbox")
+	s := openTest(t, dir, testOwner, testLimits)
+	must(t, s.QueueOutbound(ctx, outboxMaster, outboxTestID, outboxTestJob()))
+	_, err := s.db.Exec("UPDATE identity SET payload_bytes=1")
+	must(t, err)
+	must(t, s.Close())
+	relay := mailmsg.DomainRelay{Generation: outboxGeneration, Domains: []string{"example.test"}, Issuer: testOwner.Issuer, Host: "smtp.provider.test", Port: 465, Username: "operator", Password: "secret"}
+	if has, err := ValidateOutboundSnapshot(ctx, filepath.Join(dir, "mailbox.db"), outboxMaster, relay); err != nil || !has {
+		t.Fatalf("over-quota snapshot refused: %v %v", has, err)
+	}
+}

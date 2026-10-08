@@ -255,7 +255,7 @@ func TestCloudflareHTTPSPickupBoundsAndIntegrity(t *testing.T) {
 					return
 				}
 				if variant == "oversize" {
-					_, _ = w.Write(make([]byte, (4<<20)+1))
+					_, _ = w.Write(make([]byte, receivingLimits.MessageBytes+1))
 					return
 				}
 				_, _ = w.Write(raw)

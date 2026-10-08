@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -22,7 +23,8 @@ func (s *Server) handleNativeMailAddresses(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "mail address state unreadable; preserve configuration and restore it", http.StatusServiceUnavailable)
 			return
 		}
-		if user := r.URL.Query().Get("user"); user != "" {
+		user := r.URL.Query().Get("user")
+		if user != "" {
 			if _, err := s.users.Get(user); errors.Is(err, users.ErrNotFound) {
 				http.Error(w, "user not found", http.StatusNotFound)
 				return
@@ -30,15 +32,8 @@ func (s *Server) handleNativeMailAddresses(w http.ResponseWriter, r *http.Reques
 				writeUserStoreError(w, err)
 				return
 			}
-			owned := []sso.NativeMailbox{}
-			for _, m := range mailboxes {
-				if m.User == user {
-					owned = append(owned, m)
-				}
-			}
-			mailboxes = owned
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"mailboxes": mailboxes})
+		writeJSON(w, http.StatusOK, s.mailboxStorage(mailboxes, user))
 		return
 	}
 	var body struct {
@@ -113,4 +108,49 @@ func (s *Server) answerNativeAddress(w http.ResponseWriter, r *http.Request, act
 	default:
 		http.Error(w, "mail address change refused; storage must be readable and the receiving store consistent", http.StatusServiceUnavailable)
 	}
+}
+
+type adminMailbox struct {
+	sso.NativeMailbox
+	UsedBytes *int64 `json:"usedBytes,omitempty"`
+}
+
+// storageSummary sets the quotas against the state filesystem. Quota
+// headroom (quotas not yet used) above 80% of the space free beyond the
+// drive reserve is a warning, never a refusal.
+type storageSummary struct {
+	QuotaBytes   int64  `json:"quotaBytes"`
+	UsedBytes    int64  `json:"usedBytes"`
+	FreeBytes    uint64 `json:"freeBytes"`
+	TotalBytes   uint64 `json:"totalBytes"`
+	ReserveBytes uint64 `json:"reserveBytes"`
+	Overcommit   bool   `json:"overcommitted"`
+}
+
+// mailboxStorage lists the mailboxes of user ("" for all); the summary always
+// covers the whole deployment, since the drive is shared.
+func (s *Server) mailboxStorage(mailboxes []sso.NativeMailbox, user string) map[string]any {
+	out := []adminMailbox{}
+	var sum storageSummary
+	var headroom uint64
+	for _, m := range mailboxes {
+		used := usedBytes(m)
+		if user == "" || m.User == user {
+			out = append(out, adminMailbox{m, used})
+		}
+		sum.QuotaBytes += m.QuotaBytes
+		if used != nil {
+			sum.UsedBytes += *used
+			headroom += uint64(max(m.QuotaBytes-*used, 0))
+		} else {
+			headroom += uint64(m.QuotaBytes)
+		}
+	}
+	answer := map[string]any{"mailboxes": out}
+	if free, total, err := fsutil.DiskSpace(s.stateDir); err == nil {
+		sum.FreeBytes, sum.TotalBytes, sum.ReserveBytes = free, total, fsutil.DriveReserve(total)
+		sum.Overcommit = headroom > (max(free, sum.ReserveBytes)-sum.ReserveBytes)/10*8
+		answer["storage"] = sum
+	}
+	return answer
 }
