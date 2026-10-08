@@ -32,6 +32,12 @@ import (
 
 // Run dispatches the process mode and blocks until shutdown for long-running modes.
 func Run(args []string) error {
+	if len(args) > 0 && args[0] == "setup-status" {
+		return runSetupStatus(args[1:], os.Stdout)
+	}
+	if len(args) > 0 && args[0] == "apply-setup" {
+		return runApplySetup(args[1:], os.Stdin, os.Stdout)
+	}
 	if len(args) > 0 && args[0] == "receiving" {
 		if len(args) > 2 && args[1] == "cloudflare" && slices.Contains([]string{"init", "rotate", "takeover", "status"}, args[2]) {
 			return runCloudflareContinuous(args[2:], os.Stdout)

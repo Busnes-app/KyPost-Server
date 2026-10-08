@@ -330,7 +330,7 @@ stage 'Backups and rollback'
 open_url "$setup_url"
 step 'Open Server → Backup, configure sealed backups and check the deposit receipt and restore drill.'
 step 'Keep an independent copy/destination, previous DNS/settings and a compatible KyPost binary.'
-warn 'Native restores remain held; there is no supported hold release yet. Read docs/RESTORE.md.'
+warn 'Native restore release remains gated and off by default. Read docs/RESTORE.md before planning recovery.'
 warn 'This is a controlled test profile. Do not change production MX or erase mail/receipts as rollback.'
 require_confirmation 'Have you checked the backup result and recorded the test rollback route?'
 
@@ -367,4 +367,5 @@ say 'Repeat backup after test mail; retain the receipt. Record observations with
 say 'Rollback: stop reception first, restore prior test DNS, retain/reconcile accepted state; no IMAP migration.'
 # ponytail: human observes external reachability/delivery; automate only with a
 # separately qualified probe that cannot confuse relay acceptance with receipt.
-say 'Wizard steps prepared. External checks remain your responsibility; startup is not setup completion.'
+compose_receiving exec -T --user kypost kypost-server kypost-server setup-status
+say 'Resolve the configuration report above and record each external observation; startup is not setup completion.'

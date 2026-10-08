@@ -210,11 +210,34 @@ func (s *Service) Export(ctx context.Context) ([]byte, capsule.Manifest, error) 
 
 // Pair claims a pairing code, pins the key write-once and stores the sealed token.
 func (s *Service) Pair(ctx context.Context, rawURL, code string) (recoveryclient.RecoveryKey, error) {
+	return s.pair(ctx, rawURL, code, false)
+}
+
+// PairIfMissing is installer setup: under the ordinary backup fence, retain
+// the existing destination and key without spending a new pairing code.
+func (s *Service) PairIfMissing(ctx context.Context, rawURL, code string) (recoveryclient.RecoveryKey, error) {
+	return s.pair(ctx, rawURL, code, true)
+}
+
+func (s *Service) pair(ctx context.Context, rawURL, code string, onlyMissing bool) (recoveryclient.RecoveryKey, error) {
 	release, err := s.lock()
 	if err != nil {
 		return recoveryclient.RecoveryKey{}, err
 	}
 	defer release()
+	if onlyMissing {
+		paired, err := s.pairingConfigured()
+		if err != nil {
+			return recoveryclient.RecoveryKey{}, err
+		}
+		if paired {
+			existing, err := s.settings.Get("kyrecovery_url")
+			if err != nil || existing != rawURL {
+				return recoveryclient.RecoveryKey{}, errors.New("existing recovery destination differs; setup will not replace it")
+			}
+			return s.loadKey()
+		}
+	}
 	sealer, err := s.loadSealer()
 	if err != nil {
 		return recoveryclient.RecoveryKey{}, err

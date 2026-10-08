@@ -907,3 +907,7 @@ Notes:
 ## 0.1.0
 
 Initial development release.
+
+### Added
+
+- Container-local installer setup and explicit native-mail configuration status for repeatable KyQuickStart deployment. Existing credentials and DNS challenges are retained on reruns; external acceptance remains required.
