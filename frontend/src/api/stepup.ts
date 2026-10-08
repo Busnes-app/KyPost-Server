@@ -53,22 +53,36 @@ export async function confirmSSOAction(challenge: string): Promise<void> {
   let cancelled = false;
   let verified = false;
 
+  // Same frame as PgpUnlockDialog: backdrop, window, head, body, actions.
   const dialog = document.createElement("dialog");
-  dialog.className = "sec-card";
-  const title = document.createElement("h2");
+  dialog.className = "rules-help-backdrop";
+  const frame = document.createElement("div");
+  frame.className = "rules-help-window rules-help-compact";
+  const head = document.createElement("div");
+  head.className = "rules-help-head";
+  const title = document.createElement("h3");
   title.id = `sso-confirm-${challenge}`;
   title.textContent = "Confirm it is you";
   dialog.setAttribute("aria-labelledby", title.id);
+  head.append(title);
+  const body = document.createElement("div");
+  body.className = "rules-help-body";
   const explanation = document.createElement("p");
+  explanation.className = "contacts-muted";
   explanation.textContent = "Sign in again with KySignOn to authorize only the action you just requested.";
   const proceed = document.createElement("button");
   proceed.type = "button";
   proceed.textContent = "Continue to KySignOn";
   const cancel = document.createElement("button");
   cancel.type = "button";
-  cancel.className = "button secondary";
+  cancel.className = "contacts-action";
   cancel.textContent = "Cancel";
-  dialog.append(title, explanation, proceed, cancel);
+  const actions = document.createElement("div");
+  actions.style.cssText = "display:flex;gap:8px;margin-top:16px;justify-content:flex-end";
+  actions.append(cancel, proceed);
+  body.append(explanation, actions);
+  frame.append(head, body);
+  dialog.append(frame);
   document.body.append(dialog);
 
   try {

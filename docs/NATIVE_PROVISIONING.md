@@ -582,8 +582,8 @@ being converted to IMAP. Use a compatible binary, not an older metadata writer.
 
 ### Mail export
 
-Users export their own native mailbox, or one folder of it, from Settings →
-Mail → Export Mail; [mail import](#mail-import) is its mirror.
+Users export their own native mailbox, or one folder of it, from Security →
+Export Mail; [mail import](#mail-import) is its mirror.
 
 - `GET /api/export/folders` lists every folder of the selected mailbox
   (`X-KyPost-Mailbox`).
@@ -605,7 +605,7 @@ Mail → Export Mail; [mail import](#mail-import) is its mirror.
   `Content-Disposition: attachment`; HEAD is 405 and spends nothing. The grant
   is held in memory and bound to user, session, mailbox, folder and format.
   The browser navigated here, so every refusal is `303 See Other` to
-  `/settings/mail?tab=export&export=<code>`, which explains it: `expired`
+  `/settings/security?tab=export&export=<code>`, which explains it: `expired`
   (another session or user, expired, spent or unknown), `busy` (the slot is
   taken; the grant is kept and `retry=<token>` lets the page retry it),
   `proxy` (mbox over HTTP/1.0; grant kept) or `unavailable` (the mailbox or
@@ -645,7 +645,7 @@ Mail → Export Mail; [mail import](#mail-import) is its mirror.
 ### Mail import
 
 Users import mbox and EML files, or the folders of another mail account over
-IMAP, into their own native mailbox from Settings → Mail → Import Mail ("From a
+IMAP, into their own native mailbox from Security → Import Mail ("From a
 file" or "From another mail account"). The file rules come first; [import from
 another account](#import-from-another-mail-account) adds its own below.
 

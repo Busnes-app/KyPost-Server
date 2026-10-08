@@ -98,8 +98,8 @@ export function MailExport() {
             {folders.map(f => <option key={f} value={f}>{f}</option>)}
           </select>
         </label>
-        <label><input type="radio" name="export-format" checked={format === "mbox"} onChange={() => setFormat("mbox")} /> One mbox file (Thunderbird and most mail apps)</label>
-        <label><input type="radio" name="export-format" checked={format === "eml-zip"} onChange={() => setFormat("eml-zip")} /> A zip of .eml files, one per message</label>
+        <label className="config-checkbox"><input type="radio" name="export-format" checked={format === "mbox"} onChange={() => setFormat("mbox")} /><span>One mbox file (Thunderbird and most mail apps)</span></label>
+        <label className="config-checkbox"><input type="radio" name="export-format" checked={format === "eml-zip"} onChange={() => setFormat("eml-zip")} /><span>A zip of .eml files, one per message</span></label>
         {ssoSession ? <p>You will confirm with KySignOn.</p> : <label>Account password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label>}
         <button className="button" disabled={!mailbox || (!ssoSession && !password)} onClick={() => void start()}>Export mail</button>
       </fieldset>

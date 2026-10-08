@@ -12,7 +12,7 @@
  * one-time secret whose loss is unrecoverable — which is hard to notice
  * appended below a device list.
  */
-export const SECURITY_TABS = ["signin", "devices", "carddav", "mail"] as const;
+export const SECURITY_TABS = ["signin", "devices", "carddav", "mail", "import", "export"] as const;
 
 export type SecurityTab = (typeof SECURITY_TABS)[number];
 
@@ -24,7 +24,11 @@ export const SECURITY_TAB_LABELS: Record<SecurityTab, string> = {
   // can read with it, and "Mail" collided with the top-level Mail nav item
   // that goes somewhere else entirely. The `mail` slug stays — it is in
   // ?tab= links people already have.
-  mail: "Encryption"
+  mail: "Encryption",
+  // Here rather than under Mail: an export hands out every stored message, so
+  // it sits behind the same page re-authentication as the key backup.
+  import: "Import Mail",
+  export: "Export Mail"
 };
 
 /** Falls back to Sign-in for anything unrecognised, so a bad link still renders. */

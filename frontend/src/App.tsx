@@ -1401,27 +1401,30 @@ export function App() {
             </p>
           ) : null}
           {mailboxes.length > 1 ? (
-            <div role="group" aria-labelledby="mailbox-switcher-label">
+            <>
               <p className="sidebar-section-label mailbox-switcher-label" id="mailbox-switcher-label">Your mailboxes</p>
-              {mailboxes.map((m) => {
-                const id = m.kind === "primary" ? "" : m.id;
-                const current = id === selectedMailbox;
-                return (
-                  <Link
-                    key={m.id}
-                    className={current ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}
-                    aria-current={current ? "true" : undefined}
-                    to="/read"
-                    onClick={() => {
-                      chooseMailbox(id);
-                      setMailboxNotice("");
-                    }}
-                  >
-                    {mailboxName(m)}
-                  </Link>
-                );
-              })}
-            </div>
+              <div className="mailbox-switcher" role="group" aria-labelledby="mailbox-switcher-label">
+                {mailboxes.map((m) => {
+                  const id = m.kind === "primary" ? "" : m.id;
+                  const current = id === selectedMailbox;
+                  return (
+                    <Link
+                      key={m.id}
+                      className={current ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}
+                      aria-current={current ? "true" : undefined}
+                      title={mailboxName(m)}
+                      to="/read"
+                      onClick={() => {
+                        chooseMailbox(id);
+                        setMailboxNotice("");
+                      }}
+                    >
+                      {mailboxName(m)}
+                    </Link>
+                  );
+                })}
+              </div>
+            </>
           ) : null}
           <p className="sidebar-section-label">Mailboxes</p>
           <div className="mobile-quick-nav" aria-label="Mobile mailboxes">

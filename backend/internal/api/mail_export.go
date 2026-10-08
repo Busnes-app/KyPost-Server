@@ -29,7 +29,7 @@ const (
 	// maxExports bounds streaming downloads server-wide; each user has one.
 	maxExports = 2
 	// exportSettingsPage is where a failed download sends the browser back.
-	exportSettingsPage = "/settings/mail?tab=export&export="
+	exportSettingsPage = "/settings/security?tab=export&export="
 	// HTTP/1.0 has no chunking: without a Content-Length an aborted mbox
 	// ends like a complete one.
 	exportHTTP10 = "mbox export needs HTTP/1.1 between the proxy and KyPost (nginx: proxy_http_version 1.1), where a cut-off download is detectable; or choose EML zip"
