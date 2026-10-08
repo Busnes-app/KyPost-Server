@@ -153,8 +153,8 @@ func TestMailImport(t *testing.T) {
 		w    *httptest.ResponseRecorder
 		want int
 	}{
-		{"no step-up", call("POST", "/api/import", me, `{}`, nil), 401},
-		{"wrong password", call("POST", "/api/import", me, `{"password":"wrong-password-here"}`, nil), 401},
+		{"no step-up", call("POST", "/api/import", me, `{}`, nil), 403},
+		{"wrong password", call("POST", "/api/import", me, `{"password":"wrong-password-here"}`, nil), 403},
 		{"no csrf", call("POST", "/api/import", caller{me.token, ""}, `{"password":"`+password+`"}`, nil), 403},
 		{"unsafe folder", start(me, `"folder":"a\\b",`), 400},
 		{"missing parent", start(me, `"folder":"Nope/Child",`), 404},

@@ -30,10 +30,10 @@ func TestStepUpNeedsTheAccountPassword(t *testing.T) {
 
 	// A session alone proves nothing about who is at the keyboard, which is the
 	// entire subject of this endpoint.
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{}); resp.StatusCode != http.StatusUnauthorized {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("an empty body passed step-up: %d", resp.StatusCode)
 	}
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": "not-the-password"}); resp.StatusCode != http.StatusUnauthorized {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": "not-the-password"}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a wrong password passed step-up: %d", resp.StatusCode)
 	}
 	// No TOTP on this account, so the credential is the whole gate and a missing
@@ -54,10 +54,10 @@ func TestStepUpNeedsTheSecondFactorWhenTOTPIsOn(t *testing.T) {
 
 	// The password alone is what a shoulder-surfer or a password manager left
 	// unlocked already gives up; on an account with TOTP it is half the gate.
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password}); resp.StatusCode != http.StatusUnauthorized {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("the password alone passed step-up on a TOTP account: %d", resp.StatusCode)
 	}
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": "000000"}); resp.StatusCode != http.StatusUnauthorized {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": "000000"}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a wrong code passed step-up: %d", resp.StatusCode)
 	}
 
@@ -69,7 +69,7 @@ func TestStepUpNeedsTheSecondFactorWhenTOTPIsOn(t *testing.T) {
 	// The replay guard is per ACCOUNT, not per endpoint: a code spent here is
 	// spent everywhere, or a captured one is worth a second use at the login
 	// challenge inside the same window.
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": code}); resp.StatusCode != http.StatusUnauthorized {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": code}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a replayed code passed step-up: %d", resp.StatusCode)
 	}
 }
@@ -89,7 +89,7 @@ func TestStepUpAcceptsARecoveryCodeAndConsumesIt(t *testing.T) {
 	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": recoveryCodes[0]}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("a recovery code was refused at step-up: %d", resp.StatusCode)
 	}
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": recoveryCodes[0]}); resp.StatusCode != http.StatusUnauthorized {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": recoveryCodes[0]}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a recovery code was reusable at step-up: %d", resp.StatusCode)
 	}
 	after, err := srv.users.Get(u.ID)

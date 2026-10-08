@@ -168,8 +168,8 @@ func TestMailExport(t *testing.T) {
 		w    *httptest.ResponseRecorder
 		want int
 	}{
-		{"no step-up", call("POST", "/api/export", me, `{"format":"mbox"}`, nil), 401},
-		{"wrong password", call("POST", "/api/export", me, `{"format":"mbox","password":"wrong-password-here"}`, nil), 401},
+		{"no step-up", call("POST", "/api/export", me, `{"format":"mbox"}`, nil), 403},
+		{"wrong password", call("POST", "/api/export", me, `{"format":"mbox","password":"wrong-password-here"}`, nil), 403},
 		{"no csrf", call("POST", "/api/export", caller{me.token, ""}, `{"format":"mbox","password":"`+password+`"}`, nil), 403},
 		{"bad format", start(me, `"format":"pst",`), 400},
 		{"missing folder", start(me, `"format":"mbox","folder":"Nope",`), 404},

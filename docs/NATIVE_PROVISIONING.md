@@ -44,7 +44,7 @@ are refused at configuration. System DNS does not prove DNSSEC authenticity or i
 resolver caching remains a trust dependency. WKD challenges have a separate
 purpose and never authorize mail-domain ownership.
 
-Unauthenticated requests return 401, non-admin/CSRF refusal 403, malformed or
+Unauthenticated requests return 401, non-admin/CSRF refusal or a wrong step-up credential 403, malformed or
 oversized bodies 400, missing KyIdentity setup/unreadable GET state 503, and
 refused configuration/verification 409. KySignOn step-up returns the existing
 403 challenge response. A failed proof does not enable transport: correct the

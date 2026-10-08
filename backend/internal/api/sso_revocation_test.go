@@ -306,8 +306,8 @@ func TestSSOLinkRequiresTheAccountCredential(t *testing.T) {
 	if got := startSSOLink(t, srv, stolen, "", ""); got.Code == http.StatusOK {
 		t.Fatal("a session with no credential authorized an SSO link")
 	}
-	if got := startSSOLink(t, srv, stolen, "not-the-victims-password", ""); got.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong password status = %d, want 401: %s", got.Code, strings.TrimSpace(got.Body.String()))
+	if got := startSSOLink(t, srv, stolen, "not-the-victims-password", ""); got.Code != http.StatusForbidden {
+		t.Fatalf("wrong password status = %d, want 403: %s", got.Code, strings.TrimSpace(got.Body.String()))
 	}
 
 	// Nor can they skip the mint and drive the callback themselves. The state

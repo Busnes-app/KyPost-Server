@@ -92,7 +92,7 @@ func TestNativeMailRelayCheckRuntime(t *testing.T) {
 			for _, c := range []struct {
 				token, csrf, body string
 				want              int
-			}{{"", "", string(body), 401}, {memberToken, memberCSRF, string(body), 403}, {token, "", string(body), 403}, {token, csrf, `{}`, 401}, {token, csrf, `{"password":"wrong"}`, 401}, {token, csrf, `{"password":"` + password + `"}`, 400}, {token, csrf, `{"password":"` + password + `","expectedGeneration":"12345678-1234-4234-8234-123456789abc"}`, 409}} {
+			}{{"", "", string(body), 401}, {memberToken, memberCSRF, string(body), 403}, {token, "", string(body), 403}, {token, csrf, `{}`, 403}, {token, csrf, `{"password":"wrong"}`, 403}, {token, csrf, `{"password":"` + password + `"}`, 400}, {token, csrf, `{"password":"` + password + `","expectedGeneration":"12345678-1234-4234-8234-123456789abc"}`, 409}} {
 				if w := call(c.token, c.csrf, c.body); w.Code != c.want {
 					t.Fatal("pre-network gate", w.Code, c.want, w.Body)
 				}
