@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
@@ -132,6 +133,8 @@ type Server struct {
 	importGrants map[string]importGrant
 	imports      map[string]*importJob
 	importClosed bool // set at Shutdown: no new import job starts
+	// importPending is the upload bytes promised but not yet written; see uploadSpace.
+	importPending atomic.Int64
 	// singleUse makes each one-shot token — PGP QR key exchange, native device
 	// pairing nonces — redeemable exactly once. See singleUseTokens.
 	singleUse            *singleUseTokens

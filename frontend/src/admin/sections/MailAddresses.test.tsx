@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { AuthContext, type AuthState } from "../../auth";
 import { deriveCredential } from "../../api/auth";
 import { withSSOStepUp } from "../../api/stepup";
-import { readMailAddressChange, readMailAddresses, readMailboxChange } from "../../api/nativeMail";
+import { readMailAddressChange, readMailAddresses, readMailboxChange, readMailStorage } from "../../api/nativeMail";
 import { MailAddresses } from "./MailAddresses";
 
 vi.mock("../../api/auth", async (original) => ({
@@ -80,7 +80,17 @@ it("validates untrusted address lists and change answers", () => {
   expect(readMailAddressChange({ ...sales, warning: "routes pending" }, "Sales@Example.com").warning).toBe("routes pending");
   expect(() => readMailAddressChange(sales, "other@example.com")).toThrow();
   expect(() => readMailAddressChange({ ...sales, warning: 7 }, "sales@example.com")).toThrow();
-  expect(readMailboxChange({ ...team, warning: "routes pending" })).toEqual({ mailbox: team, warning: "routes pending" });
+  expect(readMailboxChange({ ...team, warning: "routes pending" })).toEqual({ mailbox: { ...team, usedBytes: null, quotaBytes: 0 }, warning: "routes pending" });
+  expect(readMailAddresses({ mailboxes: [{ ...team, usedBytes: 5, quotaBytes: 10 }] })[0]).toMatchObject({ usedBytes: 5, quotaBytes: 10 });
+  for (const bad of [{ usedBytes: -1 }, { usedBytes: "5" }, { quotaBytes: 1.5 }]) {
+    expect(() => readMailAddresses({ mailboxes: [{ ...team, ...bad }] })).toThrow();
+  }
+  const storage = { quotaBytes: 30, usedBytes: 5, freeBytes: 100, totalBytes: 200, reserveBytes: 20, overcommitted: false };
+  expect(readMailStorage({ mailboxes: [] })).toBeNull();
+  expect(readMailStorage({ storage })).toEqual(storage);
+  for (const bad of [{ ...storage, overcommitted: "no" }, { ...storage, freeBytes: -1 }, { ...storage, quotaBytes: undefined }, 7]) {
+    expect(() => readMailStorage({ storage: bad })).toThrow();
+  }
   const { prepared: _, ...unmarked } = team;
   expect(() => readMailboxChange(unmarked)).toThrow();
   expect(() => readMailboxChange({ ...team, state: "deleted" })).toThrow();
@@ -401,4 +411,23 @@ it("locks when a created mailbox holds the address only as an alias", async () =
   fireEvent.change(screen.getByLabelText("Mailbox address"), { target: { value: "desk@example.com" } });
   fireEvent.click(screen.getByRole("button", { name: "Create mailbox" }));
   expect((await screen.findByRole("alert")).textContent).toContain("Mailbox change answer does not match");
+});
+
+it("shows mailbox usage and warns, without refusing, when quotas could outgrow the drive", async () => {
+  const GiB = 2 ** 30;
+  const used = (m: typeof list.mailboxes[number], usedBytes: number) => ({ ...m, usedBytes, quotaBytes: 5 * GiB });
+  const storage = { quotaBytes: 15 * GiB, usedBytes: 9 * GiB, freeBytes: 100 * GiB, totalBytes: 200 * GiB, reserveBytes: 20 * GiB, overcommitted: false };
+  listResponse = { mailboxes: [used(list.mailboxes[0]!, 4 * GiB), used(list.mailboxes[1]!, Math.round(4.8 * GiB)), used(list.mailboxes[2]!, GiB / 2)], storage };
+  render(view());
+  await screen.findByRole("table", { name: "alice@example.com (alice): primary mailbox, active, 4 GiB of 5 GiB used (80%)" });
+  expect(screen.getByRole("table", { name: "team@example.com (alice): additional mailbox, active, 512 MiB of 5 GiB used (10%)" })).toBeTruthy();
+  const notes = screen.getAllByRole("note").map(n => n.textContent);
+  expect(notes).toEqual(["alice@example.com (alice) is over 80% of its quota.", "bob@example.com (bob) is at 95% of its quota or more: new mail is refused once it is full, and senders retry."]);
+  expect(screen.getByText(/Mailbox quotas total 15 GiB, of which 9 GiB is stored\. The drive has 100 GiB free; KyPost keeps 20 GiB/)).toBeTruthy();
+  cleanup();
+  listResponse = { mailboxes: list.mailboxes, storage: { ...storage, freeBytes: 25 * GiB, overcommitted: true } };
+  render(view());
+  expect((await screen.findByText(/Quotas not yet used exceed 80% of the 5 GiB free beyond the reserve/)).getAttribute("role")).toBe("note");
+  // A warning, not a lock: actions stay available.
+  expect(actions().disabled).toBe(false);
 });

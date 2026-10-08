@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
@@ -145,23 +144,14 @@ func (s *Service) liveMailBytes() (int64, error) {
 	return n, err
 }
 
-// diskSpace reports free and total bytes of the filesystem holding path.
-var diskSpace = func(path string) (free, total uint64, err error) {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
-		return 0, 0, err
-	}
-	return st.Bavail * uint64(st.Bsize), st.Blocks * uint64(st.Bsize), nil
-}
-
 // checkScratchSpace refuses staging that would leave the scratch filesystem
-// with less than 10% or 5 GiB free, whichever is larger.
+// with less than fsutil.DriveReserve free.
 func checkScratchSpace(dir string, need int64) error {
-	free, total, err := diskSpace(dir)
+	free, total, err := fsutil.DiskSpace(dir)
 	if err != nil {
 		return err
 	}
-	reserve := max(total/10, 5<<30)
+	reserve := fsutil.DriveReserve(total)
 	if want := uint64(max(need, 0)) + reserve; free < want {
 		return fmt.Errorf("backup scratch %s needs %d MiB free (%d MiB of mail databases plus a %d MiB reserve) but has %d MiB, %d MiB short; free space or set KYPOST_BACKUP_SCRATCH_DIR",
 			dir, want>>20, need>>20, reserve>>20, free>>20, (want-free)>>20)

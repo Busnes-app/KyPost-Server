@@ -474,7 +474,7 @@ func TestCloudflareContinuousPublishPickupDelete(t *testing.T) {
 	e := cfFixture(t)
 	e.cycle(t)
 	table := e.w.lastPut()
-	if len(table.Routes) != 2 || table.Routes[0] != (fakeRoute{"one@example.test", 1, 4 << 20}) || table.Routes[1].Address != "two@example.test" || len(table.BlockedSenders) != 0 {
+	if len(table.Routes) != 2 || table.Routes[0] != (fakeRoute{"one@example.test", 1, 5 << 20}) || table.Routes[1].Address != "two@example.test" || len(table.BlockedSenders) != 0 {
 		t.Fatalf("published table %+v", table)
 	}
 	// One recipient per item, two owners.

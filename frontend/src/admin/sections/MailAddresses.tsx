@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../../auth";
 import { credentialFields, deriveCredential } from "../../api/auth";
 import { deleteJSON, getJSON, HttpError, postJSON, toErrorMessage } from "../../api/client";
-import { readMailAddresses, readMailAddressChange, readMailboxChange, type NativeMailbox } from "../../api/nativeMail";
+import { readMailAddresses, readMailAddressChange, readMailboxChange, readMailStorage, type MailStorage, type NativeMailbox } from "../../api/nativeMail";
+import { formatStorage, usageLevel, usageText } from "../../lib/mailboxUsage";
 import { listUsers } from "../../api/users";
 import { withSSOStepUp } from "../../api/stepup";
 
@@ -26,6 +27,7 @@ function MailAddressesForm() {
   const refreshGeneration = useRef(0);
   const inFlight = useRef(false);
   const [mailboxes, setMailboxes] = useState<NativeMailbox[] | null>(null);
+  const [storage, setStorage] = useState<MailStorage | null>(null);
   const [names, setNames] = useState(new Map<string, string>());
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -43,10 +45,12 @@ function MailAddressesForm() {
   }
   async function refresh() {
     const generation = ++refreshGeneration.current;
-    const next = readMailAddresses(await getJSON<unknown>("/api/admin/mail-addresses"));
+    const answer = await getJSON<unknown>("/api/admin/mail-addresses");
+    const next = readMailAddresses(answer), summary = readMailStorage(answer);
     if (!live.current || generation !== refreshGeneration.current) return;
     setOwner(o => next.some(m => m.user === o) ? o : "");
     setMailboxes(next);
+    setStorage(summary);
   }
   useEffect(() => {
     live.current = true;
@@ -147,6 +151,7 @@ function MailAddressesForm() {
     {notice && <p className="notice" role="status">{notice}</p>}
     {warning && <p className="notice notice-warning" role="status">Change saved with a warning: {warning}</p>}
     {!mailboxes && <p>{error ? "Address list unavailable. Reload this page before making changes." : "Loading mail addresses…"}</p>}
+    {mailboxes && storage && <StorageSummary storage={storage} />}
     <fieldset className="config-card config-grid" disabled={busy || !mailboxes}>
       <legend>Confirm each action</legend>
       {ssoSession ? <p>Confirm each action with KySignOn.</p> : <label>Account password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label>}
@@ -159,7 +164,7 @@ function MailAddressesForm() {
       <legend>Mailboxes and aliases</legend>
       {mailboxes?.length === 0 && <p>No native mailboxes yet. KyPost creates one when KyIdentity assigns an everyday identity a primary address.</p>}
       {shown.map(m => <div key={m.mailbox} className="users-table-wrap"><table className="users-table">
-        <caption>{`${label(m.mailbox)}: ${m.kind === "extra" ? "additional" : "primary"} mailbox, ${m.kind === "extra" && !m.prepared ? "not in service" : m.state}`}</caption>
+        <caption>{`${label(m.mailbox)}: ${m.kind === "extra" ? "additional" : "primary"} mailbox, ${m.kind === "extra" && !m.prepared ? "not in service" : m.state}${m.usedBytes !== null && m.quotaBytes > 0 ? `, ${usageText(m.usedBytes, m.quotaBytes)}` : ""}`}</caption>
         <thead><tr><th scope="col">Address</th><th scope="col">Kind</th><th scope="col">State</th><th scope="col">Generation</th><th scope="col">Actions</th></tr></thead>
         <tbody>{m.addresses.map(a => <tr key={a.address}>
           <td>{a.address}</td><td>{a.kind}</td><td>{a.state}</td><td>{a.generation}</td>
@@ -176,6 +181,8 @@ function MailAddressesForm() {
             `Release ${a.address}? It becomes reserved: delivery to it and sending from it stop immediately. Mail already delivered stays in ${label(m.mailbox)}. It returns to service only when an administrator explicitly reassigns it.`)}>Release</button>)}</td>
         </tr>)}</tbody>
       </table>
+      {m.usedBytes !== null && m.quotaBytes > 0 && usageLevel(m.usedBytes, m.quotaBytes) !== "ok" &&
+        <p className="notice notice-warning" role="note">{`${label(m.mailbox)} is ${usageLevel(m.usedBytes, m.quotaBytes) === "critical" ? "at 95% of its quota or more: new mail is refused once it is full, and senders retry." : "over 80% of its quota."}`}</p>}
       {m.kind === "extra" && (!m.prepared ? <p>Not in service: creation unfinished, repeat New mailbox with the same user and address.</p>
         : <p>{m.state === "active" ? <button className="button secondary" aria-label={`Disable ${label(m.mailbox)}`} disabled={!unlocked} onClick={() => void act({ action: "disable", mailbox: m.mailbox },
           `Disable ${label(m.mailbox)}? Delivery to its addresses and sending from it stop at once; its mail is kept. ${names.get(m.user) ?? m.user} can no longer open it until it is enabled again. Outgoing mail still queued in it is quarantined permanently and is not resumed if it is enabled again.`)}>Disable</button>
@@ -202,5 +209,15 @@ function MailAddressesForm() {
         `Create mailbox ${typedMailbox} for ${ownerName}? KyPost holds this address permanently: records are never deleted, and additional mailboxes cannot be deleted. ${ownerName} selects the new mailbox in their mail client. Incoming encryption is unavailable to ${ownerName} while this mailbox is active; disabling it restores the option, and it cannot be re-enabled while their encryption is on.`)}>Create mailbox</button>
     </fieldset>
     {busy && <p role="status">Working…</p>}
+  </div>;
+}
+
+// Quotas are promises the drive may not keep: warn, never refuse, when
+// unused quota passes 80% of the space free beyond the reserve.
+function StorageSummary({ storage }: { storage: MailStorage }) {
+  const beyond = Math.max(storage.freeBytes - storage.reserveBytes, 0);
+  return <div className="config-card">
+    <p>Mailbox quotas total {formatStorage(storage.quotaBytes)}, of which {formatStorage(storage.usedBytes, "down")} is stored. The drive has {formatStorage(storage.freeBytes)} free; KyPost keeps {formatStorage(storage.reserveBytes)} of it in reserve and refuses new mail for now (senders retry) rather than fill it.</p>
+    {storage.overcommitted && <p className="notice notice-warning" role="note">Quotas not yet used exceed 80% of the {formatStorage(beyond)} free beyond the reserve: if mailboxes fill, the drive runs out first. Add storage, or lower KYPOST_MAILBOX_QUOTA_BYTES and restart. Nothing is refused until the reserve is reached.</p>}
   </div>;
 }
