@@ -375,6 +375,12 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 	if !found {
 		return ingress.ErrRoute
 	}
+	// A disabled or reserved address is an unknown recipient (550), decided
+	// before admission: a disabled extra mailbox otherwise fails admission as
+	// an unavailable mailbox, a temporary error senders retry for days.
+	if _, err := r.activeAddress(recipient); err != nil {
+		return err
+	}
 	return r.withAuthority(ctx, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
 		admitted := current[a.Owner.Mailbox]
 		x, err := r.activeAddress(recipient)
