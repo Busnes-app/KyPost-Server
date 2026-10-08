@@ -195,6 +195,22 @@ system storage` (exit 10) at RCPT and DATA; hosted pickup stops fetching and
 leaves mail in R2; imports refuse the upload (507) and stop before the message
 that would cross it. Exact retries of already accepted mail still answer.
 
+The mailbox store enforces the reserve itself at its two growth paths, for
+every caller: `append` (drafts and client appends through `Client.SaveDraft`,
+file and IMAP imports through `ImportMessage`) and `QueueOutbound` (outgoing
+jobs, counting the Sent copy). New growth of n bytes needs 2n + 1 MiB above the
+reserve (SQLite's WAL copy and pages) and is refused with an error wrapping both
+`ErrCapacity` and `fsutil.ErrDriveReserve`, writing nothing. Exempt, because
+refusing would lose or strand mail rather than protect the disk: delivered mail
+(`Import` with a gateway receipt, used by receiving import and quarantine
+release), whose bytes the receiving buffer already holds and checked at
+acceptance; exact replays (receipt, duplicate import and identical outgoing
+job), which return before any growth; filing the Sent copy after the relay
+accepted the mail (`FileOutboundSent`), whose bytes were counted when the job
+was queued; and incoming-encryption replacements, which rewrite mail already
+stored (refusing would keep plaintext). Flag, label, folder and move edits add
+only metadata and are not checked.
+
 `GET /api/mailboxes` gives each of the caller's mailboxes `usedBytes` (absent
 when its database cannot be read) and `quotaBytes`; Settings → Mail → Storage
 shows them, warning at 80% and more strongly at 95%. `GET

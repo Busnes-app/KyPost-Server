@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/mail"
 	"net/url"
@@ -38,6 +39,20 @@ type Owner struct{ Issuer, Subject, Mailbox string }
 type Limits struct {
 	MessageBytes, PayloadBytes int64
 	Records                    int
+}
+
+// checkReserve refuses growth of n bytes that would cut into the drive
+// reserve, allowing for SQLite's WAL copy, indexes and pages (twice the bytes
+// plus 1 MiB). Exempt paths pass exempt: their bytes are already accounted.
+// Exact replays and idempotent re-commits return before reaching it.
+func (s *Store) checkReserve(n int64, exempt bool) error {
+	if exempt {
+		return nil
+	}
+	if err := fsutil.CheckDriveReserve(s.dir, 2*n+1<<20); err != nil {
+		return fmt.Errorf("%w: %w", ErrCapacity, err)
+	}
+	return nil
 }
 
 // DefaultQuotaBytes is the native mailbox quota when the operator sets none.
@@ -90,6 +105,7 @@ type Store struct {
 	db                  *sql.DB
 	owner               Owner
 	limits              Limits
+	dir                 string
 	namespace           string
 	referenceGeneration string
 }
@@ -163,7 +179,7 @@ func open(dir string, owner Owner, limits Limits, source string) (*Store, error)
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, owner: owner, limits: limits}
+	s := &Store{db: db, owner: owner, limits: limits, dir: dir}
 	if source != "" {
 		var storedOwner Owner
 		var storedLimits Limits
@@ -375,6 +391,12 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 	// Tombstones/receipts consume the record budget too; never silently evict identity history.
 	if !(Usage{Bytes: used, Records: count}).Fits(s.limits, int64(len(raw))) {
 		return 0, ErrCapacity
+	}
+	// Delivered mail (a gateway receipt) was checked against the reserve when
+	// the receiving buffer accepted it and is already on disk there; refusing
+	// its move here would only strand it. Everything else is new growth.
+	if err := s.checkReserve(int64(len(raw)), gateway != ""); err != nil {
+		return 0, err
 	}
 	headers, at, err := rawMetadata(raw)
 	if err != nil {

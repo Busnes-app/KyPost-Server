@@ -484,10 +484,10 @@ func (s *Server) countImport(job *importJob, size int64, err error) error {
 // importFailure is the user's explanation; it never carries mail content.
 func importFailure(err error) string {
 	switch {
-	case errors.Is(err, mailbox.ErrCapacity):
-		return "your mailbox is full; free space and import again (messages already imported are skipped as duplicates)"
 	case errors.Is(err, fsutil.ErrDriveReserve):
 		return "the server's disk is nearly full and the space left is kept for incoming mail; ask your administrator to free space, then import again (messages already imported are skipped as duplicates)"
+	case errors.Is(err, mailbox.ErrCapacity):
+		return "your mailbox is full; free space and import again (messages already imported are skipped as duplicates)"
 	case errors.Is(err, errExtraMailboxIncomingEncryption):
 		return "incoming encryption was turned on, so the import stopped rather than store mail unencrypted"
 	case errors.Is(err, mailbox.ErrImportArchive):

@@ -179,6 +179,11 @@ func (s *Store) QueueOutbound(ctx context.Context, master []byte, id string, job
 	if count+int64(1+len(job.Deliveries)+reserved) > int64(s.limits.Records) || int64(len(sealed)+len(job.Sent)) > s.limits.PayloadBytes-used {
 		return ErrCapacity
 	}
+	// The Sent copy is counted here, before sending, so filing it after the
+	// relay accepted the mail (FileOutboundSent) never has to be refused.
+	if err := s.checkReserve(int64(len(sealed)+len(job.Sent)), false); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO outbox(id,ciphertext,sent_bytes,sent_reserved) VALUES(?,?,?,?)", id, sealed, len(job.Sent), reserved); err != nil {
 		return err
 	}
