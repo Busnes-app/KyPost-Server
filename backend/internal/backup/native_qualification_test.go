@@ -191,6 +191,26 @@ func TestNativeRestoreQualification(t *testing.T) {
 		})
 	}
 
+	// The marker write failing on its own must fail the restore.
+	t.Run("marker-write-fails", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "restored")
+		if _, _, err := capsule.Open(sealed, key, dir); err != nil {
+			t.Fatal(err)
+		}
+		real := recordQualification
+		defer func() { recordQualification = real }()
+		recordQualification = func(*sso.LifecycleStore, string) error { return errors.New("disk full") }
+		if native, err := QuarantineNativeRestore(dir); !native || err == nil || !strings.Contains(err.Error(), "cannot record native restore qualification") {
+			t.Fatalf("native=%v err=%v", native, err)
+		}
+		if _, err := os.Lstat(markerPath(dir)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("marker written: %v", err)
+		}
+		if !errors.Is(sso.RequireNativeRestoreReleased(filepath.Join(dir, "state")), sso.ErrNativeRestoreHold) {
+			t.Fatal("hold missing")
+		}
+	})
+
 	// A failed later run removes the earlier run's marker and writes none.
 	for _, stage := range []string{"validation", "credential-fence"} {
 		t.Run("failed-"+stage, func(t *testing.T) {
@@ -218,6 +238,78 @@ func TestNativeRestoreQualification(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+// A ledger mailbox whose owner users.json does not publish (a crash between
+// reservation and publication) is fenced like a published one, never skipped.
+func TestNativeRestoreFencesUnpublishedLedgerMailbox(t *testing.T) {
+	ctx := context.Background()
+	s, u := nativeService(t)
+	st, err := state.OpenNative(filepath.Join(s.dirs.State, "users", u.ID), u.NativeMailboxSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = st.UpsertNativeDevice(state.NativeDevice{DeviceID: "phone", Platform: "android", PushToken: "push", SecretHash: "credential"})
+	_ = st.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.dirs.Config, "users.json"), []byte(`{"users":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db := "state/users/" + u.ID + "/mailbox/mailbox.db"
+	before, _, err := mailbox.InspectRestored(filepath.Join(s.dirs.State, "users", u.ID, "mailbox/mailbox.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := pinTestKey(t, s)
+	result, err := s.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := os.ReadFile(result.LocalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "restored")
+	if _, _, err := capsule.Open(sealed, key, dir); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now().Unix()
+	if native, err := QuarantineNativeRestore(dir); !native || err != nil {
+		t.Fatalf("native=%v err=%v", native, err)
+	}
+	after, _, err := mailbox.InspectRestored(filepath.Join(dir, db))
+	if err != nil || after == "" || after == before {
+		t.Fatalf("unpublished mailbox not rotated: %q -> %q, %v", before, after, err)
+	}
+	life := sso.NewLifecycleStore(filepath.Join(dir, "config"))
+	q, err := life.CheckNativeRestoreQualification(filepath.Join(dir, "state"))
+	if err != nil || q.Mailboxes[u.ID] != after {
+		t.Fatalf("marker %v, current %q: %v", q.Mailboxes, after, err)
+	}
+	restored, err := state.OpenNative(filepath.Join(dir, "state/users", u.ID), u.NativeMailboxSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := restored.ListNativeDevicesStrict()
+	_ = restored.Close()
+	if err != nil || len(devices) != 0 {
+		t.Fatalf("unpublished mailbox devices kept: %v %v", devices, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "config/sso-lifecycle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle struct {
+		Directory map[string]sso.DirectoryState `json:"directory"`
+	}
+	if err := json.Unmarshal(raw, &lifecycle); err != nil {
+		t.Fatal(err)
+	}
+	if d := lifecycle.Directory[u.NativeMailboxIssuer+"\x00"+u.SSOSub]; d.RevokedBefore < start+31 {
+		t.Fatalf("unpublished subject token cutoff %d not raised", d.RevokedBefore)
 	}
 }
 

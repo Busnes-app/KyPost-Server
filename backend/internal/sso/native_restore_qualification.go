@@ -46,13 +46,13 @@ func (s *LifecycleStore) RecordNativeRestoreQualification(stateRoot string) erro
 	if err != nil {
 		return err
 	}
-	paths, err := s.nativeQualificationMailboxes(stateRoot)
+	all, err := s.NativeRestoreMailboxes(stateRoot)
 	if err != nil {
 		return err
 	}
 	q := NativeRestoreQualification{Version: 1, Epoch: epoch, CreatedAt: time.Now().UTC(), Mailboxes: map[string]string{}}
-	for id, path := range paths {
-		if q.Mailboxes[id], _, err = mailbox.InspectRestored(path); err != nil {
+	for id, m := range all {
+		if q.Mailboxes[id], _, err = mailbox.InspectRestored(filepath.Join(m.Dir, "mailbox/mailbox.db")); err != nil {
 			return err
 		}
 	}
@@ -81,17 +81,17 @@ func (s *LifecycleStore) CheckNativeRestoreQualification(stateRoot string) (Nati
 	case epoch != "" && q.Epoch != epoch:
 		reasons = append(reasons, "restore qualification marker belongs to another restore epoch")
 	}
-	paths, err := s.nativeQualificationMailboxes(stateRoot)
+	all, err := s.NativeRestoreMailboxes(stateRoot)
 	if err != nil {
 		reasons = append(reasons, "native mailbox ledger is unreadable")
 	}
-	ids := make([]string, 0, len(paths))
-	for id := range paths {
+	ids := make([]string, 0, len(all))
+	for id := range all {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
 	for _, id := range ids {
-		generation, _, err := mailbox.InspectRestored(paths[id])
+		generation, _, err := mailbox.InspectRestored(filepath.Join(all[id].Dir, "mailbox/mailbox.db"))
 		recorded, listed := q.Mailboxes[id]
 		switch {
 		case err != nil:
@@ -130,29 +130,38 @@ func (s *LifecycleStore) CheckNativeRestoreQualification(stateRoot string) (Nati
 	return q, nil
 }
 
-// nativeQualificationMailboxes maps published ledger mailboxes to their databases.
-func (s *LifecycleStore) nativeQualificationMailboxes(stateRoot string) (map[string]string, error) {
+// NativeRestoreMailbox is a published ledger mailbox in a current or restored state root.
+type NativeRestoreMailbox struct {
+	Dir     string // state/users/<id> or state/mailboxes/<id>
+	Source  string
+	Primary bool
+}
+
+// NativeRestoreMailboxes lists every published ledger mailbox, primary and
+// extra, whether or not users.json publishes its owner. Restore fences and the
+// qualification marker cover exactly this set.
+func (s *LifecycleStore) NativeRestoreMailboxes(stateRoot string) (map[string]NativeRestoreMailbox, error) {
 	f, _, err := s.loadNativeLedger(true)
 	if err != nil {
 		return nil, err
 	}
-	paths := map[string]string{}
+	all := map[string]NativeRestoreMailbox{}
 	for _, a := range f.Accounts {
 		if a.Source != "" {
-			paths[a.Owner.Mailbox] = filepath.Join(stateRoot, "users", a.Owner.Mailbox, "mailbox/mailbox.db")
+			all[a.Owner.Mailbox] = NativeRestoreMailbox{filepath.Join(stateRoot, "users", a.Owner.Mailbox), a.Source, true}
 		}
 	}
 	for id, m := range f.stored.Mailboxes {
 		if m.Kind == "extra" && m.Source != "" {
-			paths[id] = filepath.Join(stateRoot, nativeMailboxesDir, id, "mailbox/mailbox.db")
+			all[id] = NativeRestoreMailbox{filepath.Join(stateRoot, nativeMailboxesDir, id), m.Source, false}
 		}
 	}
-	for id := range paths {
+	for id := range all {
 		if !fsutil.SafePathComponent(id) {
 			return nil, ErrNativeProvisioning
 		}
 	}
-	return paths, nil
+	return all, nil
 }
 
 func readNativeRestoreQualification(path string) (NativeRestoreQualification, error) {

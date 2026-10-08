@@ -167,6 +167,9 @@ func validateNativePayload(ctx context.Context, files []recoveryclient.File, sta
 	return nil
 }
 
+// recordQualification is replaced only by tests that fail the last stage alone.
+var recordQualification = (*sso.LifecycleStore).RecordNativeRestoreQualification
+
 // QuarantineNativeRestore is post-decryption product validation. It never
 // opens a capsule or handles shares. Leave all restored data intact on failure.
 func QuarantineNativeRestore(dir string) (bool, error) {
@@ -219,7 +222,7 @@ func QuarantineNativeRestore(dir string) (bool, error) {
 	if err := fenceRestoredNativeAccounts(dir); err != nil {
 		return true, fmt.Errorf("cannot fence restored native references/credentials; keep workers stopped and preserve staging: %w", err)
 	}
-	if err := sso.NewLifecycleStore(filepath.Join(dir, "config")).RecordNativeRestoreQualification(filepath.Join(dir, "state")); err != nil {
+	if err := recordQualification(sso.NewLifecycleStore(filepath.Join(dir, "config")), filepath.Join(dir, "state")); err != nil {
 		return true, fmt.Errorf("cannot record native restore qualification; keep workers stopped and preserve staging: %w", err)
 	}
 	return true, nil
@@ -251,8 +254,8 @@ func quarantineRestoredOutbox(path string) (err error) {
 	return err
 }
 
-// fenceRestoredNativeAccounts selects only historically qualified native users.
-// The whole restore stays held and unpublished if any account mutation fails.
+// fenceRestoredNativeAccounts runs after historical qualification. The whole
+// restore stays held and unpublished if any mailbox mutation fails.
 func fenceRestoredNativeAccounts(dir string) error {
 	raw, err := os.ReadFile(filepath.Join(dir, "config/users.json"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -267,32 +270,25 @@ func fenceRestoredNativeAccounts(dir string) error {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return err
 	}
-	for _, u := range doc.Users {
-		if u.NativeMailboxSource == "" {
-			continue
-		}
-		if !fsutil.SafePathComponent(u.ID) {
-			return sso.ErrNativeProvisioning
-		}
-		if err := mailbox.RotateRestoredMessageReferences(filepath.Join(dir, "state/users", u.ID, "mailbox/mailbox.db"), u.NativeMailboxSource); err != nil {
-			return err
-		}
-		if err := revokeRestoredDeviceCredentials(filepath.Join(dir, "state/users", u.ID, "state.db"), u.NativeMailboxSource); err != nil {
-			return err
-		}
-		if err := os.Remove(filepath.Join(dir, "config/users", u.ID, "carddav-auth.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
 	life := sso.NewLifecycleStore(filepath.Join(dir, "config"))
-	// Extra mailboxes hold mail only: rotate their references; devices and
-	// CardDAV were revoked with their owner above.
-	extras, err := life.NativeExtraMailboxSources()
+	// Every published ledger mailbox, owner in users.json or not: allocation
+	// reuses a reserved ID, so an unpublished one must not keep old references.
+	mailboxes, err := life.NativeRestoreMailboxes(filepath.Join(dir, "state"))
 	if err != nil {
 		return err
 	}
-	for id, source := range extras {
-		if err := mailbox.RotateRestoredMessageReferences(filepath.Join(dir, "state/mailboxes", id, "mailbox/mailbox.db"), source); err != nil {
+	for id, m := range mailboxes {
+		if err := mailbox.RotateRestoredMessageReferences(filepath.Join(m.Dir, "mailbox/mailbox.db"), m.Source); err != nil {
+			return fmt.Errorf("mailbox %s: %w", id, err)
+		}
+		// Extra mailboxes hold mail only; devices and CardDAV belong to the primary.
+		if !m.Primary {
+			continue
+		}
+		if err := revokeRestoredDeviceCredentials(filepath.Join(m.Dir, "state.db"), m.Source); err != nil {
+			return fmt.Errorf("mailbox %s: %w", id, err)
+		}
+		if err := os.Remove(filepath.Join(dir, "config/users", id, "carddav-auth.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}

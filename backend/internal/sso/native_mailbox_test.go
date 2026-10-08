@@ -227,11 +227,11 @@ func TestNativeExtraMailboxSnapshotValidation(t *testing.T) {
 	if _, err := f.life.ValidateNativeSnapshot(f.root, list); err != nil {
 		t.Fatal("snapshot with an extra mailbox refused", err)
 	}
-	sources, err := f.life.NativeExtraMailboxSources()
-	if err != nil || len(sources) != 1 || sources[m.ID] == "" {
-		t.Fatal("extra sources", sources, err)
+	mailboxes, err := f.life.NativeRestoreMailboxes(f.root)
+	if err != nil || mailboxes[m.ID].Source == "" || mailboxes[m.ID].Primary || mailboxes[m.ID].Dir != filepath.Join(f.root, nativeMailboxesDir, m.ID) || !mailboxes[f.ids["one"]].Primary {
+		t.Fatal("restore mailboxes", mailboxes, err)
 	}
-	extraState, err := state.OpenNative(filepath.Join(f.root, nativeMailboxesDir, m.ID), sources[m.ID])
+	extraState, err := state.OpenNative(mailboxes[m.ID].Dir, mailboxes[m.ID].Source)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -188,22 +188,3 @@ func canonicalNativeAddress(address string) (string, error) {
 	}
 	return address, nil
 }
-
-// NativeExtraMailboxSources lists the prepared extra mailboxes of a current or
-// historical (restore staging) ledger: mailbox ID -> source.
-func (s *LifecycleStore) NativeExtraMailboxSources() (map[string]string, error) {
-	f, _, err := s.loadNativeLedger(true)
-	if err != nil {
-		return nil, err
-	}
-	sources := map[string]string{}
-	for id, m := range f.stored.Mailboxes {
-		if m.Kind == "extra" && m.Source != "" {
-			if !fsutil.SafePathComponent(id) {
-				return nil, ErrNativeProvisioning
-			}
-			sources[id] = m.Source
-		}
-	}
-	return sources, nil
-}

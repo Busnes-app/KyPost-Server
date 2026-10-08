@@ -282,7 +282,8 @@ Do not prune while a restore reads the repository.
    is persisted before random generation, so a fatal failure or returned error
    keeps staging held and unpublished. Future recovery
    evidence must bind a valid current epoch; retries invalidate earlier evidence.
-   For every native account, restore also atomically removes native device and
+   For every native ledger account with a source, including one whose user was
+   not yet published, restore also atomically removes native device and
    browser push registrations and rotates the subscriber ID. Old device secrets,
    push-MFA approvers, enrollment acknowledgements and outstanding pairing tokens
    do not regain authority. Mail, pull-notification history and opaque wrapped
