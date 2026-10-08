@@ -13,8 +13,10 @@ import { decryptMessage, verifySignedMessage } from "../lib/pgpClient";
 import { getPGPMessagePayload } from "../api/pgp";
 import { isClientProtected, needsUnlock, subscribePGPSession, type PGPSessionState } from "../lib/pgpSession";
 import { PgpUnlockDialog } from "../components/PgpUnlockDialog";
-import { getJSON, postJSON, toErrorMessage } from "../api/client";
+import { downloadFile, getJSON, postJSON, selectedMailboxId, toErrorMessage } from "../api/client";
 import { usePagination } from "../hooks/usePagination";
+import { mailboxName, useMailboxes } from "../app/mailboxes";
+import type { DraftComposePayload } from "../app/types";
 import { useDialogOpen } from "../hooks/useDialogOpen";
 import { PageTabs } from "../components/PageTabs";
 import { ArchiveIcon, CheckIcon, PrintIcon, TrashIcon, WarningIcon } from "./read/icons";
@@ -62,7 +64,25 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const mailbox = (searchParams.get("mailbox") || "").trim();
+  // App remounts this page on a switch, so the mailbox read here is fixed for its life.
+  const [box] = useState(selectedMailboxId);
+  const { mailboxes } = useMailboxes();
+  const boxName = mailboxes.length > 1 ? mailboxes.find((m) => (box ? m.id === box : m.kind === "primary")) : undefined;
+  // A folder URL names its mailbox (box=, absent for the primary); one from another
+  // mailbox, as Back can replay after a switch, falls back to that mailbox's Inbox.
+  const folder = (searchParams.get("mailbox") || "").trim();
+  const staleFolder = folder !== "" && (searchParams.get("box") ?? "") !== box;
+  const mailbox = staleFolder ? "" : folder;
+  useEffect(() => {
+    if (!staleFolder) return;
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("mailbox");
+      next.delete("box");
+      return next;
+    }, { replace: true });
+  }, [staleFolder, setSearchParams]);
+  const openDraft = (payload: DraftComposePayload) => onOpenDraft?.({ ...payload, mailbox: box });
   const isInboxMailbox = mailbox.length === 0;
   const [tabs, setTabs] = useState<string[]>([]);
   const [byTab, setByTabState] = useState<Record<string, InboxEmail[]>>({});
@@ -1129,7 +1149,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
           const payload = await getPGPMessagePayload(listedMailbox, item.messageId);
           const result = await decryptMessage(payload.encryptedPayload, payload.signerKeys ?? [], "");
           const h = result.protectedHeaders;
-          onOpenDraft({
+          openDraft({
             sentTo: h.to ?? item.sentTo,
             cc: h.cc ?? item.cc,
             bcc: h.bcc ?? item.bcc,
@@ -1157,7 +1177,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         }
       }
       const draft = displayBody(withBody, decrypted[decryptedKey(item.messageId)]);
-      onOpenDraft({
+      openDraft({
         sentTo: item.sentTo,
         cc: item.cc,
         bcc: item.bcc,
@@ -1222,7 +1242,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
 
   function replyToSelectedEmail() {
     if (!selected || !onOpenDraft) return;
-    onOpenDraft({
+    openDraft({
       sentTo: firstAddressFromText(selected.sender || ""),
       subject: ensureSubjectPrefix(selected.subject, "Re:"),
       body: buildReplyBody(selected, decrypted[decryptedKey(selected.messageId)])
@@ -1232,7 +1252,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
 
   function forwardSelectedEmail() {
     if (!selected || !onOpenDraft) return;
-    onOpenDraft({
+    openDraft({
       sentTo: "",
       subject: ensureSubjectPrefix(selected.subject, "Fwd:"),
       body: buildForwardBody(selected, decrypted[decryptedKey(selected.messageId)])
@@ -1243,7 +1263,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   function replyAllToSelectedEmail() {
     if (!selected || !onOpenDraft) return;
     const recipients = buildReplyAllRecipients(selected);
-    onOpenDraft({
+    openDraft({
       sentTo: recipients.to,
       cc: recipients.cc,
       subject: ensureSubjectPrefix(selected.subject, "Re:"),
@@ -1316,6 +1336,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ marginTop: 0, marginBottom: 6 }}>{mailbox ? mailbox : "Inbox"}</h2>
+          {boxName ? <p className="read-mailbox-name">{mailboxName(boxName)}</p> : null}
         </div>
         <div className="inbox-action-bar">
           {isTouchSwipeEnabled ? (
@@ -1939,14 +1960,29 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                   ) : null}
                   <div className="email-attachment-list">
                     {attachments.map((attachment) => (
-                      <a
-                        key={attachment.index}
-                        className="email-attachment-link"
-                        href={`/api/mail/attachment?${attachmentQuery(selected)}&index=${attachment.index}`}
-                        download={attachment.name}
-                      >
-                        📎 {attachment.name} <span className="email-attachment-size">({formatBytes(attachment.size)})</span>
-                      </a>
+                      box ? (
+                        // A link cannot carry the mailbox header; opened or saved directly it would fetch the primary's file.
+                        <button
+                          key={attachment.index}
+                          type="button"
+                          className="email-attachment-link"
+                          onClick={() => {
+                            downloadFile(`/api/mail/attachment?${attachmentQuery(selected)}&index=${attachment.index}`, attachment.name)
+                              .catch((e: unknown) => setAttachmentsError(toErrorMessage(e, "failed to download attachment")));
+                          }}
+                        >
+                          📎 {attachment.name} <span className="email-attachment-size">({formatBytes(attachment.size)})</span>
+                        </button>
+                      ) : (
+                        <a
+                          key={attachment.index}
+                          className="email-attachment-link"
+                          href={`/api/mail/attachment?${attachmentQuery(selected)}&index=${attachment.index}`}
+                          download={attachment.name}
+                        >
+                          📎 {attachment.name} <span className="email-attachment-size">({formatBytes(attachment.size)})</span>
+                        </a>
+                      )
                     ))}
                   </div>
                 </div>

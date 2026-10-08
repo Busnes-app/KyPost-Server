@@ -554,7 +554,10 @@ resolved through the ledger on every request after authentication; an unknown,
 foreign or disabled mailbox answers `404 {"error":"mailbox not found"}` before
 any storage is opened (an administrator subject gets the usual 403). Per-user
 endpoints (devices, pairing, contacts, CardDAV, PGP keys, settings, rule
-definitions) ignore it; `/api/labels` reports the primary mailbox's labels. The
+definitions) ignore it; `/api/labels` reports the primary mailbox's labels.
+The web client lists the mailboxes in its sidebar when there is more than one
+and sends the header for an extra one on its mail routes; compose sends from
+the selected mailbox's addresses. The
 manual `POST /api/rules/run` runs the user's rules in the selected mailbox. `GET /api/mailboxes` lists the caller's
 accessible mailboxes and their active addresses. Every mail cache is keyed by
 mailbox ID. The poller polls each active mailbox with the owner's settings,

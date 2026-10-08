@@ -13,6 +13,7 @@ const getJSON = vi.fn();
 const postJSON = vi.fn();
 vi.mock("../api/client", () => ({
   getJSON: (url: string) => getJSON(url),
+  selectedMailboxId: () => "",
   postJSON: (url: string, body: unknown) => postJSON(url, body),
   toErrorMessage: (_e: unknown, fallback: string) => fallback
 }));
@@ -98,6 +99,7 @@ describe("opening an encrypted draft", () => {
 
     await waitFor(() => expect(onOpenDraft).toHaveBeenCalledTimes(1));
     expect(onOpenDraft.mock.calls[0][0]).toEqual({
+      mailbox: "",
       sentTo: "a@example.com",
       cc: "c@example.com",
       bcc: "hidden@example.com",

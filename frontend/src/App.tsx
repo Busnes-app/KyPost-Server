@@ -4,7 +4,7 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-r
 // puts it in the entry chunk, so the login page pays for it too. loadQuill
 // below fetches it when compose first opens.
 import type Quill from "quill";
-import { deleteJSON, getJSON, HttpError, postJSON, putJSON, toErrorMessage } from "./api/client";
+import { deleteJSON, getJSON, HttpError, mailboxHeaders, onMailboxGone, postJSON, putJSON, selectedMailboxId, selectMailbox, toErrorMessage } from "./api/client";
 import { checkPGPRecipients, getPGPDiscoverySettings, type DiscoverySettings, type PGPRecipientTier } from "./api/pgp";
 import { listSendAsAliases, type SendAsAlias } from "./api/sendas";
 import { AuthContext, type AuthState } from "./auth";
@@ -24,6 +24,7 @@ import { ReauthGate, clearReauth } from "./components/ReauthGate";
 import mitLicenseText from "./mit.txt?raw";
 
 import { visibleSettingsGroups } from "./app/navigation";
+import { loadMailboxSelection, MailboxContext, mailboxName, readMailboxes, saveMailboxSelection, type UserMailbox } from "./app/mailboxes";
 import { LEGACY_SETTINGS_PATHS, legacySettingsRedirect } from "./app/routes";
 import { subscribeSecretHold } from "./lib/secretHold";
 import type {
@@ -83,6 +84,15 @@ export function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const [auth, setAuth] = useState<AuthState | null>(null);
+  // The caller's mailboxes and the selected one ("" is the primary); see app/mailboxes.ts.
+  const [mailboxes, setMailboxes] = useState<UserMailbox[]>([]);
+  const [selectedMailbox, setSelectedMailbox] = useState("");
+  const [mailboxesVersion, setMailboxesVersion] = useState(0);
+  const [mailboxNotice, setMailboxNotice] = useState("");
+  // Compose stays on the mailbox it was opened in, whatever happens to the selection.
+  const [composeMailbox, setComposeMailbox] = useState("");
+  // Folder URLs name their mailbox, so one replayed after a switch is recognised (ReadPage).
+  const boxQuery = selectedMailbox ? `&box=${selectedMailbox}` : "";
   const [mailboxFolders, setMailboxFolders] = useState<InboxFolder[]>([]);
   const [mailboxFoldersLoading, setMailboxFoldersLoading] = useState(false);
   const [inboxCreateOpen, setInboxCreateOpen] = useState(false);
@@ -117,6 +127,8 @@ export function App() {
   const [composeUnlockOpen, setComposeUnlockOpen] = useState(false);
   /** A sealed snapshot was found while the vault was locked; restore on unlock. */
   const composeSnapshotPending = useRef(false);
+  // Set while this compose window leaves another mailbox's snapshot in place; autosave must not replace it.
+  const composeSnapshotKept = useRef(false);
   // Opt-in: send keyless recipients a one-time pickup link rather than
   // failing the send. Off by default because it is weaker than PGP. For
   // client-custody accounts this drives a browser-side sealed-pickup flow;
@@ -181,6 +193,10 @@ export function App() {
   async function refreshAuth() {
     try {
       const next = await getJSON<AuthState>("/api/auth/me");
+      // Before the first render of a mail page, so its first request already follows the selection.
+      const restored = next.authenticated && next.userId ? loadMailboxSelection(next.userId) : "";
+      selectMailbox(restored);
+      setSelectedMailbox(restored);
       setAuth(next);
     } catch {
       setAuth({ authenticated: false });
@@ -190,6 +206,58 @@ export function App() {
   useEffect(() => {
     refreshAuth();
   }, []);
+
+  function chooseMailbox(id: string) {
+    selectMailbox(id);
+    setSelectedMailbox(id);
+    if (auth?.userId) saveMailboxSelection(auth.userId, id);
+    // Folder lists belong to the mailbox they were read from; ReadPage remounts on the key below.
+    setMailboxFolders([]);
+    setArchiveFolders([]);
+  }
+
+  // A non-native account gets an empty list, and no header is ever sent for it.
+  useEffect(() => {
+    const userId = auth?.authenticated ? auth.userId : undefined;
+    if (!userId) {
+      setMailboxes([]);
+      return;
+    }
+    let live = true;
+    getJSON<unknown>("/api/mailboxes")
+      .then((data) => readMailboxes(data, userId))
+      .then(
+        (list) => {
+          if (!live) return;
+          setMailboxes(list);
+          if (selectedMailboxId() && !list.some((m) => m.id === selectedMailboxId())) {
+            chooseMailbox("");
+            setMailboxNotice("This mailbox is no longer available. Showing your primary mailbox.");
+          }
+        },
+        () => {
+          if (!live) return;
+          setMailboxes([]);
+          if (selectedMailboxId()) {
+            chooseMailbox("");
+            setMailboxNotice("Your mailboxes could not be loaded. Showing your primary mailbox.");
+          }
+        }
+      );
+    return () => {
+      live = false;
+    };
+  }, [auth?.authenticated, auth?.userId, mailboxesVersion]);
+
+  // Any mail request refused with 404 "mailbox not found" lands here.
+  useEffect(() => {
+    onMailboxGone((id) => {
+      if (id !== selectedMailboxId()) return;
+      chooseMailbox("");
+      setMailboxNotice("This mailbox is no longer available. Showing your primary mailbox.");
+      setMailboxesVersion((v) => v + 1);
+    });
+  }, [auth?.userId]);
 
   // Enforce the compose autosave's 24-hour bound. The snapshot is unencrypted
   // plaintext of a message that may have been headed for PGP encryption, and
@@ -293,8 +361,8 @@ export function App() {
       await unsubscribeThisDevice();
       await postJSON<{ ok: boolean }>("/api/auth/logout", {});
     } finally {
-      setMailboxFolders([]);
-      setArchiveFolders([]);
+      chooseMailbox("");
+      setMailboxNotice("");
       // Drop the unwrapped private key with the session. Leaving it in memory
       // after logout would let the next person at this browser read mail.
       clearPGPSession();
@@ -333,13 +401,15 @@ export function App() {
       return;
     }
     setMailboxFoldersLoading(true);
+    // An answer for a mailbox no longer selected changes nothing.
+    const box = selectedMailboxId();
     try {
       const data = await getJSON<InboxFoldersResponse>("/api/inbox/folders");
-      setMailboxFolders(data.folders ?? []);
+      if (box === selectedMailboxId()) setMailboxFolders(data.folders ?? []);
     } catch {
-      setMailboxFolders([]);
+      if (box === selectedMailboxId()) setMailboxFolders([]);
     } finally {
-      setMailboxFoldersLoading(false);
+      if (box === selectedMailboxId()) setMailboxFoldersLoading(false);
     }
   }
 
@@ -374,13 +444,15 @@ export function App() {
       return;
     }
     setArchiveFoldersLoading(true);
+    // An answer for a mailbox no longer selected changes nothing.
+    const box = selectedMailboxId();
     try {
       const data = await getJSON<InboxFoldersResponse>("/api/inbox/folders?parent=Archive");
-      setArchiveFolders(data.folders ?? []);
+      if (box === selectedMailboxId()) setArchiveFolders(data.folders ?? []);
     } catch {
-      setArchiveFolders([]);
+      if (box === selectedMailboxId()) setArchiveFolders([]);
     } finally {
-      setArchiveFoldersLoading(false);
+      if (box === selectedMailboxId()) setArchiveFoldersLoading(false);
     }
   }
 
@@ -429,7 +501,7 @@ export function App() {
       });
       const params = new URLSearchParams(location.search);
       if (location.pathname === "/read" && params.get("mailbox") === folder.path) {
-        navigate(`/read?mailbox=${encodeURIComponent(response.renamed)}`, { replace: true });
+        navigate(`/read?mailbox=${encodeURIComponent(response.renamed)}${boxQuery}`, { replace: true });
       }
       await loadMailboxFolders();
     } catch (e) {
@@ -496,12 +568,12 @@ export function App() {
       return;
     }
     void loadMailboxFolders();
-  }, [auth?.authenticated]);
+  }, [auth?.authenticated, selectedMailbox]);
 
   useEffect(() => {
     if (!archiveOpen) return;
     void loadArchiveFolders();
-  }, [archiveOpen, auth?.authenticated]);
+  }, [archiveOpen, auth?.authenticated, selectedMailbox]);
 
   // Fetch the editor the first time compose opens. Landing it in state rather
   // than a ref is what re-runs the effect below, which is otherwise never
@@ -614,7 +686,7 @@ export function App() {
   // the last keystrokes may not have reached React state yet — which is
   // precisely the moment this exists for.
   useEffect(() => {
-    if (!composeOpen || !auth?.userId) {
+    if (!composeOpen || !auth?.userId || composeSnapshotKept.current) {
       return;
     }
     const userId = auth.userId;
@@ -625,11 +697,13 @@ export function App() {
         bcc: serializeRecipientField(composeBcc),
         subject: composeSubject,
         body: quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody,
-        attachments: composeAttachments
+        attachments: composeAttachments,
+        mailbox: composeMailbox,
+        from: composeFrom
       });
     }, 1000);
     return () => clearTimeout(timer);
-  }, [composeOpen, auth?.userId, composeTo, composeCc, composeBcc, composeSubject, composeHtmlBody, composeAttachments]);
+  }, [composeOpen, auth?.userId, composeTo, composeCc, composeBcc, composeSubject, composeHtmlBody, composeAttachments, composeMailbox, composeFrom]);
 
   // discardComposeDraft clears both the form and the autosaved snapshot. Used
   // wherever the work is finished or deliberately abandoned; closing the
@@ -641,8 +715,24 @@ export function App() {
     resetComposeForm();
   }
 
+  const mailboxOf = (id: string) => mailboxes.find((m) => (id ? m.id === id : m.kind === "primary"));
+  const composeFromChoices = mailboxOf(composeMailbox)?.addresses ?? [];
+
+  /** Pins compose to the selected mailbox, sending from its primary address. */
+  function pinComposeMailbox(id = selectedMailboxId()) {
+    setComposeMailbox(id);
+    setComposeFrom(mailboxOf(id)?.addresses[0] ?? "");
+  }
+
+  // Compose opened before the list arrived has no From yet.
+  useEffect(() => {
+    if (composeOpen && !composeFrom) setComposeFrom(mailboxOf(composeMailbox)?.addresses[0] ?? "");
+  }, [mailboxes]);
+
   function openComposeWindow() {
+    composeSnapshotKept.current = false;
     resetComposeForm();
+    pinComposeMailbox();
     setComposeError("");
     setComposeSuccess("");
     setComposeNotice("");
@@ -657,6 +747,8 @@ export function App() {
   /** The From the browser-encrypted paths put on the wire: the chosen
    *  send-as alias, else the account address the bootstrap reported. */
   function clientSenderAddress(): string {
+    // The account address is the primary's; an extra mailbox must name its own.
+    if (composeMailbox && !composeFrom) throw new Error("Choose a From address for this mailbox.");
     return composeFrom || accountAddress();
   }
 
@@ -694,19 +786,29 @@ export function App() {
     }
     composeSnapshotPending.current = false;
     if (snapshot && composeIsBlank()) {
+      // A draft goes back to the mailbox it was written in, or stays stored until that mailbox is back.
+      const box = mailboxOf(snapshot.mailbox);
+      if (snapshot.mailbox && !box) {
+        composeSnapshotKept.current = true;
+        setComposeNotice(`An unsent draft from ${snapshot.from || "another mailbox"} is kept for when that mailbox is available again; this message is not saved automatically.`);
+        return;
+      }
+      pinComposeMailbox(snapshot.mailbox);
+      if (box) setComposeFrom(box.addresses.includes(snapshot.from) ? snapshot.from : box.addresses[0] ?? "");
       setComposeTo(parseRecipientField(snapshot.to));
       setComposeCc(parseRecipientField(snapshot.cc));
       setComposeBcc(parseRecipientField(snapshot.bcc));
       setComposeSubject(snapshot.subject);
       setComposeHtmlBody(snapshot.body);
-      setComposeNotice(restoreNotice(snapshot));
+      setComposeNotice(snapshot.mailbox === selectedMailboxId() || !box ? restoreNotice(snapshot) : `${restoreNotice(snapshot)} It was written in ${mailboxName(box)} and sends from there.`);
     }
   }
 
   function openDraftInCompose(payload: DraftComposePayload) {
+    composeSnapshotKept.current = false;
     composeSignOverridden.current = false;
     setComposeSign(isClientProtected() && isUnlocked());
-    setComposeFrom("");
+    pinComposeMailbox(payload.mailbox);
     setComposeTo(parseRecipientField(payload.sentTo ?? ""));
     setComposeCc(parseRecipientField(payload.cc ?? ""));
     setComposeBcc(parseRecipientField(payload.bcc ?? ""));
@@ -875,7 +977,7 @@ export function App() {
       mode: "plain",
       encrypt: false,
       sign: false
-    });
+    }, mailboxHeaders(composeMailbox));
   }
 
   /**
@@ -926,7 +1028,7 @@ export function App() {
       sentCopyEncrypted: true,
       mode: "html",
       materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration
-    });
+    }, mailboxHeaders(composeMailbox));
     return result.warning ?? "";
   }
 
@@ -1039,7 +1141,7 @@ export function App() {
         sentCopyEncrypted: true,
         mode: "html",
         materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration
-      });
+      }, mailboxHeaders(composeMailbox));
       warning = result.warning ?? "";
     }
 
@@ -1099,7 +1201,7 @@ export function App() {
           encrypt: composeEncrypt,
           sign: composeSign,
           allowPickupFallback: pickupFallbackFlag(composeEncrypt, composeSendLinkForKeyless)
-        });
+        }, mailboxHeaders(composeMailbox));
         warning = result.warning ?? "";
       }
       // A 200 with a warning means the message went out but something after
@@ -1189,7 +1291,7 @@ export function App() {
           mode: "html",
           attachments: [],
           pgpDraft
-        });
+        }, mailboxHeaders(composeMailbox));
       } else {
         await postJSON<{ ok: boolean }>("/api/mail/draft", {
           to,
@@ -1199,7 +1301,7 @@ export function App() {
           body,
           mode: "html",
           attachments: composeAttachments.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 }))
-        });
+        }, mailboxHeaders(composeMailbox));
       }
       // The work is now a real IMAP draft, so the local safety net has
       // nothing left to protect. Clear it rather than leave a stale copy to
@@ -1282,6 +1384,7 @@ export function App() {
 
   return (
     <AuthContext.Provider value={auth}>
+    <MailboxContext.Provider value={{ mailboxes, selected: selectedMailbox }}>
     <div className="shell">
       <aside className="sidebar">
         <div className="sidebar-logo">
@@ -1297,13 +1400,36 @@ export function App() {
               {navBlockedNotice}
             </p>
           ) : null}
+          {mailboxes.length > 1 ? (
+            <div role="group" aria-labelledby="mailbox-switcher-label">
+              <p className="sidebar-section-label mailbox-switcher-label" id="mailbox-switcher-label">Your mailboxes</p>
+              {mailboxes.map((m) => {
+                const id = m.kind === "primary" ? "" : m.id;
+                const current = id === selectedMailbox;
+                return (
+                  <Link
+                    key={m.id}
+                    className={current ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}
+                    aria-current={current ? "true" : undefined}
+                    to="/read"
+                    onClick={() => {
+                      chooseMailbox(id);
+                      setMailboxNotice("");
+                    }}
+                  >
+                    {mailboxName(m)}
+                  </Link>
+                );
+              })}
+            </div>
+          ) : null}
           <p className="sidebar-section-label">Mailboxes</p>
           <div className="mobile-quick-nav" aria-label="Mobile mailboxes">
             <Link className={onReadPage && currentMailbox === "" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read">Inbox</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "drafts" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Drafts">Drafts</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "junk" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Junk">Junk</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "sent" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Sent">Sent</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "trash" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read?mailbox=Trash">Trash</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "drafts" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Drafts${boxQuery}`}>Drafts</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "junk" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Junk${boxQuery}`}>Junk</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "sent" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Sent${boxQuery}`}>Sent</Link>
+            <Link className={onReadPage && currentMailbox.toLowerCase() === "trash" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Trash${boxQuery}`}>Trash</Link>
             <button
               type="button"
               className="mobile-settings-toggle"
@@ -1369,7 +1495,7 @@ export function App() {
               ? mailboxFolders.map((folder) => (
                   <div key={folder.path} className="sidebar-folder-row" data-folder-kind={standardMailboxKey(folder.path)}>
                     <Link
-                      to={`/read?mailbox=${encodeURIComponent(folder.path)}`}
+                      to={`/read?mailbox=${encodeURIComponent(folder.path)}${boxQuery}`}
                       className={[
                         dragOverFolder === folder.path ? "drop-target-active" : "",
                         onReadPage && currentMailbox.toLowerCase() === folder.path.toLowerCase() ? "ky-nav-item sidebar-link-active" : "ky-nav-item"
@@ -1438,7 +1564,7 @@ export function App() {
                 ? archiveFolders.map((folder) => (
                     <Link
                       key={folder.path}
-                      to={`/read?mailbox=${encodeURIComponent(folder.path)}`}
+                      to={`/read?mailbox=${encodeURIComponent(folder.path)}${boxQuery}`}
                       className={[
                         dragOverFolder === folder.path ? "drop-target-active" : "",
                         onReadPage && currentMailbox.toLowerCase() === folder.path.toLowerCase() ? "ky-nav-item sidebar-link-active" : "ky-nav-item"
@@ -1514,12 +1640,18 @@ export function App() {
         {/* One boundary for every lazy page. The fallback is deliberately
             quiet: the chunks are same-origin and small, and a spinner that
             flashes for 30 ms is worse than nothing. */}
+        {mailboxNotice && onReadPage ? (
+          <p className="notice notice-warning" role="alert">
+            {mailboxNotice}{" "}
+            <button type="button" className="nav-link-button" onClick={() => setMailboxNotice("")}>Dismiss</button>
+          </p>
+        ) : null}
         <Suspense fallback={<p>Loading&hellip;</p>}>
         <Routes>
             <Route path="/" element={<Navigate to={auth.authenticated ? "/read" : "/login"} replace />} />
           <Route path="/login" element={<LoginPage auth={auth} onAuthChanged={refreshAuth} />} />
           <Route path="/password" element={protect(<LoginPage auth={auth} onAuthChanged={refreshAuth} mode="password" />)} />
-              <Route path="/read" element={protect(<ReadPage onOpenDraft={openDraftInCompose} onCompose={openComposeWindow} />)} />
+              <Route path="/read" element={protect(<ReadPage key={selectedMailbox} onOpenDraft={openDraftInCompose} onCompose={openComposeWindow} />)} />
           {/* Retired settings paths. They redirect rather than 404: they appear
               in docs and bookmarks, and in service workers cached inside
               installed PWAs, which can send a notification tap here long after
@@ -1696,7 +1828,20 @@ export function App() {
             {composeNotice ? <p className="notice notice-warning">{composeNotice}</p> : null}
 
             <div className="compose-form-grid">
-              {sendAsOptions.length > 0 ? (
+              {mailboxes.length > 1 || composeFromChoices.length > 1 ? (
+                <label className="compose-field-row">
+                  <span>FROM:</span>
+                  <select
+                    value={composeFrom}
+                    onChange={(event) => setComposeFrom(event.target.value)}
+                    disabled={composeSending || composeSavingDraft}
+                  >
+                    {composeFromChoices.map((address) => (
+                      <option key={address} value={address}>{address}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : sendAsOptions.length > 0 ? (
                 <label className="compose-field-row">
                   <span>FROM:</span>
                   <select
@@ -1795,6 +1940,7 @@ export function App() {
         }}
       />
     </div>
+    </MailboxContext.Provider>
     </AuthContext.Provider>
   );
 }

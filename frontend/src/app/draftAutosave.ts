@@ -173,6 +173,9 @@ export type DraftSnapshot = {
    * has to be re-attached instead of silently dropping them.
    */
   attachmentNames: string[];
+  /** The mailbox compose was pinned to ("" is the primary, and what older snapshots read as) and its From. */
+  mailbox: string;
+  from: string;
   savedAt: string;
 };
 
@@ -183,6 +186,8 @@ export type DraftInput = {
   subject: string;
   body: string;
   attachments: ComposeAttachment[];
+  mailbox: string;
+  from: string;
 };
 
 /**
@@ -192,7 +197,7 @@ export type DraftInput = {
  * markup before deciding — otherwise every freshly opened compose window looks
  * like unsaved work and stomps a real snapshot with an empty one.
  */
-export function hasContent(draft: DraftInput): boolean {
+export function hasContent(draft: Omit<DraftInput, "mailbox" | "from">): boolean {
   const bodyText = new DOMParser().parseFromString(draft.body, "text/html").body.textContent?.trim() ?? "";
   return Boolean(
     draft.to.trim() ||
@@ -239,7 +244,9 @@ export async function saveDraftSnapshot(userId: string, draft: DraftInput): Prom
       bcc: draft.bcc,
       subject: draft.subject,
       body: draft.body,
-      attachmentNames: draft.attachments.map((a) => a.name)
+      attachmentNames: draft.attachments.map((a) => a.name),
+      mailbox: draft.mailbox,
+      from: draft.from
     };
     const savedAt = new Date().toISOString();
     let stored: StoredSnapshot;
@@ -298,6 +305,8 @@ export async function loadDraftSnapshot(userId: string): Promise<DraftSnapshot |
       attachmentNames: Array.isArray(fields.attachmentNames)
         ? fields.attachmentNames.filter((n): n is string => typeof n === "string")
         : [],
+      mailbox: typeof fields.mailbox === "string" ? fields.mailbox : "",
+      from: typeof fields.from === "string" ? fields.from : "",
       savedAt: stored.savedAt ?? ""
     };
   } catch {

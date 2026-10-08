@@ -17,6 +17,7 @@ const postJSON = vi.fn();
 
 vi.mock("../api/client", () => ({
   getJSON: (url: string) => getJSON(url),
+  selectedMailboxId: () => "",
   postJSON: (url: string, body: unknown) => postJSON(url, body),
   toErrorMessage: (_e: unknown, fallback: string) => fallback
 }));
