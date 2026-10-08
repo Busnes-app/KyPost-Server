@@ -95,3 +95,30 @@ func RotateRestoredMessageReferences(path, source string) (err error) {
 	}
 	return tx.Commit()
 }
+
+// InspectRestored reads a mailbox read-only: its reference generation ("" for
+// older databases) and how many outbound deliveries are queued or retryable.
+func InspectRestored(path string) (generation string, pending int, err error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", 0, err
+	}
+	u := url.URL{Scheme: "file", Path: absolute}
+	db, err := sql.Open("sqlite", u.String()+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return "", 0, err
+	}
+	defer func() { err = errors.Join(err, db.Close()) }()
+	if generation, err = messageReferenceGeneration(db); err != nil {
+		return "", 0, err
+	}
+	var tables int
+	if err = db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('outbox','outbox_deliveries')").Scan(&tables); err != nil || tables == 0 {
+		return generation, 0, err
+	}
+	if tables != 2 {
+		return "", 0, ErrOutbound
+	}
+	err = db.QueryRow("SELECT count(*) FROM outbox_deliveries WHERE state IN ('queued','retryable')").Scan(&pending)
+	return generation, pending, err
+}

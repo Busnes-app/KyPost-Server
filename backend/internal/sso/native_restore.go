@@ -45,15 +45,20 @@ func (s *LifecycleStore) FenceRestoredNativeTokens(stateRoot string, accounts []
 		if err != nil {
 			return err
 		}
+		// Every published ledger account, including one users.json does not
+		// list: allocation can publish its reserved subject later.
+		ledger, _, err := s.loadNativeLedger(true)
+		if err != nil {
+			return err
+		}
 		// Include every timestamp the verifier could have admitted before this
 		// fence, including its 30-second future skew and the current second.
 		cutoff := time.Now().Unix() + 31
 		changed := false
-		for _, u := range accounts {
-			if u.NativeMailboxSource == "" {
+		for key, a := range ledger.Accounts {
+			if a.Source == "" {
 				continue
 			}
-			key := directoryKey(u.NativeMailboxIssuer, u.SSOSub)
 			d, ok := f.Directory[key]
 			if !ok {
 				return ErrNativeProvisioning

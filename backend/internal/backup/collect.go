@@ -20,6 +20,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"gopkg.in/yaml.v3"
 )
@@ -37,7 +38,8 @@ func snapshotDatabase(name string) bool {
 // in "-migrated", which the ".migrated" rule does not match.
 func skip(name string) bool {
 	// The Cloudflare host record is this host's live marker: a restore must start fenced.
-	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || name == bulkManifestName || strings.HasPrefix(name, cfreceiving.HostFile) || name == ingress.EvidenceDamagedFile || strings.HasSuffix(name, ".lock") ||
+	// A restore qualification proves one restore, never a later one.
+	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || name == bulkManifestName || name == sso.NativeRestoreQualificationFile || strings.HasPrefix(name, cfreceiving.HostFile) || name == ingress.EvidenceDamagedFile || strings.HasSuffix(name, ".lock") ||
 		strings.HasSuffix(name, ".migrated") || strings.HasSuffix(name, ".v1-migrated") || strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")
 }
 
