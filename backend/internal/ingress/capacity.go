@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // ponytail: admission reserves are conservative estimates, not a filesystem
@@ -77,7 +79,13 @@ func (s *Store) checkAdmission(ctx context.Context, tx *sql.Tx, payload int64) e
 			return err
 		}
 	}
-	return receivingFreeSpace(filepath.Dir(s.path), uint64((16<<20)+growth))
+	if err := receivingFreeSpace(filepath.Dir(s.path), uint64((16<<20)+growth)); err != nil {
+		return err
+	}
+	if err := fsutil.CheckDriveReserve(filepath.Dir(s.path), growth); err != nil {
+		return fmt.Errorf("%w: %w", ErrCapacity, err)
+	}
+	return nil
 }
 
 // Checkpoint copies pages to the main file before releasing WAL blocks. Reserve

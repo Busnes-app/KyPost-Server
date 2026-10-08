@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/password"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -37,6 +38,9 @@ func TestMain(m *testing.M) {
 	restore := users.SetHashCostForTest(users.MinVerifiableScryptN)
 	restoreParams := users.SetHashParamsForTest(password.Params{Memory: 8 * 1024, Time: 1, Threads: 1})
 	loginKDFBilledSeconds = func(time.Duration) float64 { return loginKDFReserveSeconds }
+	// The drive reserve (5 GiB or more) would tie imports to the host's free
+	// space; tests that check it set their own disk.
+	fsutil.DiskSpace = func(string) (uint64, uint64, error) { return 1 << 50, 1 << 50, nil }
 	code := m.Run()
 	restoreParams()
 	restore()

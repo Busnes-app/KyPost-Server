@@ -86,6 +86,14 @@ func Run(args []string) error {
 	if _, err := config.NativeRestoreReleaseEnabled(); err != nil {
 		return err
 	}
+	// The quota is native-only configuration: a bad value never stops IMAP.
+	if nativeMail {
+		quota, err := config.MailboxQuotaBytes()
+		if err != nil {
+			return err
+		}
+		api.SetMailboxQuota(quota)
+	}
 	paths := config.Paths{
 		ConfigFile: filepath.Join(config.ConfigDir(), "config.yaml"),
 		StateDir:   config.StateDir(),

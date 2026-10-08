@@ -42,6 +42,9 @@ type NativeMailbox struct {
 	// published its storage; nothing may poll, send from or open it.
 	Prepared  bool            `json:"prepared"`
 	Addresses []NativeAddress `json:"addresses"`
+	// QuotaBytes is the mailbox's storage quota; Dir its storage directory.
+	QuotaBytes int64  `json:"quotaBytes"`
+	Dir        string `json:"-"`
 }
 
 func (x nativeLedgerAddress) public(address string) NativeAddress {
@@ -71,7 +74,10 @@ func (s *LifecycleStore) NativeMailboxes() ([]NativeMailbox, error) {
 	mailboxes := []NativeMailbox{}
 	for _, id := range slices.Sorted(maps.Keys(f.stored.Mailboxes)) {
 		m := f.stored.Mailboxes[id]
-		box := NativeMailbox{ID: id, User: f.stored.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].PrimaryMailbox, Kind: m.Kind, State: m.State, Prepared: m.Source != "", Addresses: []NativeAddress{}}
+		box := NativeMailbox{ID: id, User: f.stored.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].PrimaryMailbox, Kind: m.Kind, State: m.State, Prepared: m.Source != "", Addresses: []NativeAddress{}, QuotaBytes: m.Limits.PayloadBytes}
+		if a, _, ok := f.mailbox(id); ok {
+			box.Dir = a.Dir(a.StateRoot)
+		}
 		for _, address := range slices.Sorted(maps.Keys(f.stored.Addresses)) {
 			if x := f.stored.Addresses[address]; x.Mailbox == id {
 				box.Addresses = append(box.Addresses, x.public(address))

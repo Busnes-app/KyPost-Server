@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/mail"
 	"net/url"
@@ -40,6 +41,43 @@ type Limits struct {
 	Records                    int
 }
 
+// checkReserve refuses growth of n bytes that would cut into the drive
+// reserve, allowing for SQLite's WAL copy, indexes and pages (twice the bytes
+// plus 1 MiB). Exempt paths pass exempt: their bytes are already accounted.
+// Exact replays and idempotent re-commits return before reaching it.
+func (s *Store) checkReserve(n int64, exempt bool) error {
+	if exempt {
+		return nil
+	}
+	if err := fsutil.CheckDriveReserve(s.dir, 2*n+1<<20); err != nil {
+		return fmt.Errorf("%w: %w", ErrCapacity, err)
+	}
+	return nil
+}
+
+// DefaultQuotaBytes is the native mailbox quota when the operator sets none.
+const DefaultQuotaBytes = 5 << 30
+
+// NativeLimits is every native mailbox's profile: a 25 MiB message, the
+// deployment's quota and 1,000,000 retained records (tombstones included).
+func NativeLimits(quota int64) Limits {
+	return Limits{MessageBytes: mailmsg.MaxInboundMessageBytes, PayloadBytes: quota, Records: 1_000_000}
+}
+
+func (l Limits) valid() bool {
+	return l.MessageBytes > 0 && l.MessageBytes <= mailmsg.MaxInboundMessageBytes && l.PayloadBytes >= l.MessageBytes && l.Records > 0
+}
+
+// Usage is a mailbox's live payload bytes and retained records, the two
+// counters its limits are checked against.
+type Usage struct{ Bytes, Records int64 }
+
+// Fits reports whether one more message of size bytes fits under limits.
+// A quota lowered below the usage refuses new mail and keeps what is stored.
+func (u Usage) Fits(limits Limits, size int64) bool {
+	return u.Records < int64(limits.Records) && size <= limits.PayloadBytes-u.Bytes
+}
+
 // Recipient records the frozen envelope binding, including its routing generation.
 type Recipient struct {
 	Address    string
@@ -67,6 +105,7 @@ type Store struct {
 	db                  *sql.DB
 	owner               Owner
 	limits              Limits
+	dir                 string
 	namespace           string
 	referenceGeneration string
 }
@@ -109,7 +148,7 @@ func OpenExisting(dir string, owner Owner, limits Limits, source string) (*Store
 }
 
 func open(dir string, owner Owner, limits Limits, source string) (*Store, error) {
-	if !validText(owner.Issuer, 2048) || !validText(owner.Subject, 512) || !fsutil.SafePathComponent(owner.Mailbox) || limits.MessageBytes <= 0 || limits.MessageBytes > mailmsg.MaxInboundMessageBytes || limits.PayloadBytes < limits.MessageBytes || limits.Records <= 0 {
+	if !validText(owner.Issuer, 2048) || !validText(owner.Subject, 512) || !fsutil.SafePathComponent(owner.Mailbox) || !limits.valid() {
 		return nil, errors.New("invalid mailbox identity or limits")
 	}
 	if source == "" {
@@ -140,7 +179,7 @@ func open(dir string, owner Owner, limits Limits, source string) (*Store, error)
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, owner: owner, limits: limits}
+	s := &Store{db: db, owner: owner, limits: limits, dir: dir}
 	if source != "" {
 		var storedOwner Owner
 		var storedLimits Limits
@@ -350,8 +389,14 @@ func (s *Store) append(ctx context.Context, folder string, input io.Reader, gate
 		return 0, err
 	}
 	// Tombstones/receipts consume the record budget too; never silently evict identity history.
-	if count >= int64(s.limits.Records) || int64(len(raw)) > s.limits.PayloadBytes-used {
+	if !(Usage{Bytes: used, Records: count}).Fits(s.limits, int64(len(raw))) {
 		return 0, ErrCapacity
+	}
+	// Delivered mail (a gateway receipt) was checked against the reserve when
+	// the receiving buffer accepted it and is already on disk there; refusing
+	// its move here would only strand it. Everything else is new growth.
+	if err := s.checkReserve(int64(len(raw)), gateway != ""); err != nil {
+		return 0, err
 	}
 	headers, at, err := rawMetadata(raw)
 	if err != nil {
