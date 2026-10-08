@@ -14,7 +14,10 @@ non-prerelease version.
 
 ## Unreleased
 
+- Native mail: the outbound worker no longer logs "native outbox discovery deferred" when the API and daemon check the same idle mailbox (typically a disabled extra mailbox) at the same moment, such as at startup. Mailbox validation now waits up to five seconds for the other process's lock instead of treating the mailbox as unprepared. Disabled mailboxes still refuse new mail and new sends.
+
 - Admin → Server → Mail domain lists domains as a compact table, one row each with status, DNS state and actions, domains needing action first. TXT records show only for domains awaiting verification, with copy buttons; established domains keep theirs under "TXT records to keep". On phones each domain is a short card.
+
 - Import Mail and Export Mail moved from Settings → Mail to Security, behind its page re-authentication; each import and export still asks for its own confirmation. Export refusals now return to `/settings/security?tab=export`.
 
 - The KySignOn "Confirm it is you" dialog uses the app's modal frame instead of an unstyled browser dialog; it and the PGP unlock dialog stay a card on phones instead of filling the screen.

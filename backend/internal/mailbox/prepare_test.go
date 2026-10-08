@@ -12,6 +12,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
@@ -55,6 +56,27 @@ func TestPrepareAccountReferenceGenerationReadOnly(t *testing.T) {
 	must(t, s.db.QueryRow("SELECT count(*) FROM reference_generation").Scan(&rows))
 	if rows != 0 {
 		t.Fatal("validation repaired corruption")
+	}
+}
+
+// Validation waits out another connection's lock instead of reporting the
+// mailbox unprepared: two processes' outbox loops open the same idle mailbox.
+func TestValidatePreparedWaitsForLock(t *testing.T) {
+	root := t.TempDir()
+	owner, limits := preparationOwner(), preparationLimits()
+	_, err := PrepareAccount(root, owner, "one@example.test", limits)
+	must(t, err)
+	holder, err := openSQLite(filepath.Join(root, "users", owner.Mailbox, "mailbox", "mailbox.db"), "_pragma=locking_mode(EXCLUSIVE)")
+	must(t, err)
+	defer holder.Close()
+	var n int
+	must(t, holder.QueryRow("SELECT count(*) FROM identity").Scan(&n))
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_ = holder.Close()
+	}()
+	if _, err = ValidatePreparedAccount(root, owner, "one@example.test", limits); err != nil {
+		t.Fatal("transient lock reported as unprepared storage:", err)
 	}
 }
 
