@@ -381,18 +381,6 @@ func TestNativeReceivingPartialQuotaFailureRetriesWithoutDuplicate(t *testing.T)
 		stores = append(stores, store)
 		t.Cleanup(func() { _ = store.Close() })
 	}
-	// Fill the second owner to its real persisted payload quota. The first
-	// owner sorts first in ingress.Import's deterministic commit order.
-	var fillers []int64
-	for _, size := range []int{5 << 20, 5 << 20, 5 << 20, 5 << 20, 5 << 20, 5 << 20, 2 << 20} {
-		prefix := []byte("From: test@outside.test\r\nSubject: quota filler\r\n\r\n")
-		payload := append(prefix, bytes.Repeat([]byte("x"), size-len(prefix))...)
-		id, err := stores[1].Append(ctx, "INBOX", bytes.NewReader(payload), false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		fillers = append(fillers, id)
-	}
 	const id = "two-owner-partial-quota"
 	for _, address := range []string{"one@example.test", "two@example.test"} {
 		if err := r.bind(ctx, id, "", address); err != nil {
@@ -402,6 +390,19 @@ func TestNativeReceivingPartialQuotaFailureRetriesWithoutDuplicate(t *testing.T)
 	raw := []byte("From: test@outside.test\r\n\r\npartial commit must recover\r\n")
 	if err := r.accept(ctx, id, "", bytes.NewReader(raw)); err != nil {
 		t.Fatal(err)
+	}
+	// Accepted while both had room, the second owner then fills to its real
+	// persisted payload quota before import. The first owner sorts first in
+	// ingress.Import's deterministic commit order.
+	var fillers []int64
+	for _, size := range []int{5 << 20, 5 << 20, 5 << 20, 5 << 20, 5 << 20, 5 << 20, 2 << 20} {
+		prefix := []byte("From: test@outside.test\r\nSubject: quota filler\r\n\r\n")
+		payload := append(prefix, bytes.Repeat([]byte("x"), size-len(prefix))...)
+		id, err := stores[1].Append(ctx, "INBOX", bytes.NewReader(payload), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fillers = append(fillers, id)
 	}
 	if err := r.importDelivery(ctx, id); !errors.Is(err, mailbox.ErrCapacity) {
 		t.Fatalf("second owner's full mailbox must defer acknowledgment: %v", err)

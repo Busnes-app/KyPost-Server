@@ -5,13 +5,14 @@ import { CardDavClient } from "../../settings/sections/CardDavClient";
 import { Filters } from "../../settings/sections/Filters";
 import { MailExport } from "../../settings/sections/MailExport";
 import { MailImport } from "../../settings/sections/MailImport";
+import { MailStorage } from "../../settings/sections/MailStorage";
 
 /**
  * Everything about getting mail in and out: the server it comes from, the
  * addresses it can go out as, the contacts that ride alongside it, and the
  * rules applied on arrival.
  *
- * Tabbed rather than stacked — six sections, each with its own save action,
+ * Tabbed rather than stacked — seven sections, each with its own save action,
  * is more than one scroll can present clearly.
  */
 export function MailPanel() {
@@ -19,12 +20,13 @@ export function MailPanel() {
     <section className="panel">
       <div className="config-header">
         <h2>Mail</h2>
-        <p>Your mail server, the addresses you send as, contact sync, mailbox rules, and mail import and export.</p>
+        <p>Your mail server, mailbox storage, the addresses you send as, contact sync, mailbox rules, and mail import and export.</p>
       </div>
       <PanelTabs
         ariaLabel="Mail sections"
         tabs={[
           { id: "email-server", label: "Email Settings", body: <EmailServer /> },
+          { id: "storage", label: "Storage", body: <MailStorage /> },
           { id: "send-as", label: "Send-As Addresses", body: <SendAs /> },
           { id: "carddav-client", label: "CardDAV Client", body: <CardDavClient /> },
           { id: "rules", label: "Mailbox Rules", body: <Filters /> },

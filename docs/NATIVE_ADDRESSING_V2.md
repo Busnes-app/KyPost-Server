@@ -116,6 +116,9 @@ domain; mail stays where it is.
 
 - Writes stay under the directory (lifecycle) lock; one file keeps mailbox and
   address changes atomic together.
+- `limits` is the source of truth for every mailbox's limits (an extra mailbox
+  carries its owner's); `migrate-native` sets them to the deployment's and then
+  converges each mailbox's own copies ([mailbox quotas](NATIVE_PROVISIONING.md#mailbox-quotas)).
 - **Primary mailbox ID equals the owning user's ID** for every primary mailbox,
   legacy or new. Recovery barriers, storage ownership and recovery inputs depend on
   it. Extra mailboxes get random IDs disjoint from user IDs.

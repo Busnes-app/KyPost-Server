@@ -31,6 +31,30 @@ var receivingLimits = ingress.ReceivingLimits
 // a full receiving store.
 var errMailboxMessageLimit = fmt.Errorf("%w: the message exceeds a recipient mailbox's per-message limit", ingress.ErrCapacity)
 
+// errMailboxFull is a recipient mailbox at its quota: a temporary refusal
+// (exit 9, 452 4.2.2), so the sender retries once its owner frees space. It
+// is not ErrCapacity: hosted pickup leaves only this message waiting in R2.
+var errMailboxFull = errors.New("recipient mailbox is full")
+
+// mailboxRoom refuses a message of size bytes that a's mailbox cannot hold,
+// counting accepted mail still waiting to import into it. Acceptance runs
+// under the directory fence, so concurrent deliveries see each other.
+func (r *receivingRuntime) mailboxRoom(ctx context.Context, a sso.NativeAssignment, size int64) error {
+	u, err := mailbox.ReadUsage(filepath.Join(a.Dir(r.stateDir), "mailbox"))
+	if err != nil {
+		return err
+	}
+	held, err := r.holding.HeldBytes(ctx, a.Owner.Mailbox)
+	if err != nil {
+		return err
+	}
+	u.Bytes += held
+	if !u.Fits(a.Limits, size) {
+		return &receivingCommandError{err: errMailboxFull, code: 9}
+	}
+	return nil
+}
+
 type receivingRuntime struct {
 	gateway   string
 	configDir string
@@ -113,17 +137,24 @@ func runReceivingCommand(args []string, input io.Reader) error {
 	}
 	slog.Info("receiving operation", "actor", receivingGateway, "task_id", "native-receiving", "action", args[0], "target", "holding-store", "result", result, "correlation_id", correlation)
 	if err != nil {
-		code := 1
-		var commandError *receivingCommandError
-		if errors.As(err, &commandError) {
-			code = commandError.code
-		}
-		if errors.Is(err, ingress.ErrRoute) {
-			code = 3
-		}
-		return &receivingCommandError{err: err, code: code}
+		return &receivingCommandError{err: err, code: receivingExit(err)}
 	}
 	return nil
+}
+
+// receivingExit is the helper's exit code for a refusal; receiving_config.go
+// maps each to an SMTP reply.
+func receivingExit(err error) int {
+	var commandError *receivingCommandError
+	switch {
+	case errors.Is(err, ingress.ErrRoute):
+		return 3
+	case errors.Is(err, fsutil.ErrDriveReserve):
+		return 10
+	case errors.As(err, &commandError):
+		return commandError.code
+	}
+	return 1
 }
 
 // startReceivingImport uses the daemon's cancellation/drain ownership. Missing
@@ -356,6 +387,12 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 		if expected != nil && !expected(admitted, x) {
 			return ingress.ErrRoute
 		}
+		// RCPT carries no size, and a DATA refusal refuses every recipient:
+		// a mailbox without room for one more largest message refuses here,
+		// alone, so a retry delivers to the others.
+		if err := r.mailboxRoom(ctx, admitted, admitted.Limits.MessageBytes); err != nil {
+			return err
+		}
 		if err := r.refreshRoute(ctx, admitted, x, false); err != nil {
 			return err
 		}
@@ -507,6 +544,9 @@ func (r *receivingRuntime) commitAccept(ctx context.Context, d ingress.Delivery,
 		for _, a := range current {
 			if int64(len(raw)) > a.Limits.MessageBytes {
 				return errMailboxMessageLimit
+			}
+			if err := r.mailboxRoom(ctx, a, int64(len(raw))); err != nil {
+				return err
 			}
 		}
 		return r.holding.Accept(ctx, r.gatewayID(), d.ID, sender, bytes.NewReader(raw))

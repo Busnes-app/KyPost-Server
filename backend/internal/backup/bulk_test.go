@@ -22,6 +22,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/recoverykey"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -492,15 +493,15 @@ func TestBulkSweepsStaleScratch(t *testing.T) {
 
 func TestBulkRefusesWithoutScratchSpace(t *testing.T) {
 	f := bulkService(t, 0)
-	defer func(orig func(string) (uint64, uint64, error)) { diskSpace = orig }(diskSpace)
+	defer func(orig func(string) (uint64, uint64, error)) { fsutil.DiskSpace = orig }(fsutil.DiskSpace)
 	// A 10 GiB reserve (10% of 100 GiB) plus the mail exceeds 6 GiB free.
-	diskSpace = func(string) (uint64, uint64, error) { return 6 << 30, 100 << 30, nil }
+	fsutil.DiskSpace = func(string) (uint64, uint64, error) { return 6 << 30, 100 << 30, nil }
 	_, err := f.s.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "MiB short") || !strings.Contains(err.Error(), "KYPOST_BACKUP_SCRATCH_DIR") {
 		t.Fatal("staging without space accepted", err)
 	}
 	emptyDir(t, f.s.scratchRoot())
-	diskSpace = func(string) (uint64, uint64, error) { return 20 << 30, 100 << 30, nil }
+	fsutil.DiskSpace = func(string) (uint64, uint64, error) { return 20 << 30, 100 << 30, nil }
 	if _, err := f.s.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}

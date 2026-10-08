@@ -568,6 +568,9 @@ func (s *LifecycleStore) reconcileNativeMailboxLocked(ctx context.Context, root,
 		if e != nil || revision != d.Revision || disableOnly && d.Active {
 			return ErrNativeProvisioning
 		}
+		if e = s.CheckNativeReleaseFloor(issuer, subject, d); e != nil {
+			return e
+		}
 		f, e := s.loadNative()
 		if e != nil {
 			return e
