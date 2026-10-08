@@ -544,6 +544,35 @@ func TestBulkRestRepositoryRedacted(t *testing.T) {
 	}
 }
 
+// Credentials never survive in restic's error, whatever form restic prints and
+// wherever the 512-byte cut falls.
+func TestBulkRestRepositoryRedactedInEveryForm(t *testing.T) {
+	repo := "rest:https://kypost:s3cr%2Fet!@backup.example:8000/kypost"
+	pw := "s3cr/et!"
+	url := strings.TrimPrefix(repo, "rest:")
+	// The cut lands two characters into the escaped password of the last copy.
+	cut := url[strings.Index(url, "s3cr")+2:]
+	stderr := "open " + url + " failed\npassword was " + pw + "\n" + url + strings.Repeat("x", 512-len(cut))
+	dir := t.TempDir()
+	msgFile := filepath.Join(dir, "stderr")
+	if err := os.WriteFile(msgFile, []byte(stderr), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(dir, "restic")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\ncat '"+msgFile+"' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	err := runRestic(context.Background(), fake, repo, make([]byte, 32), "", nil, "init")
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	for _, leak := range []string{pw, "s3cr", "cr%2Fet", "et!@"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Fatalf("restic error leaks %q: %v", leak, err)
+		}
+	}
+}
+
 // Only state/** mail databases go to restic, matching what restore accepts.
 func TestBulkStagesOnlyStateDatabases(t *testing.T) {
 	f := bulkService(t, 0)

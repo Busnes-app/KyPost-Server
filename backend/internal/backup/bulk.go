@@ -453,10 +453,7 @@ func runRestic(ctx context.Context, bin, repo string, key []byte, dir string, st
 	var stderr tailBuffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(string(stderr.b))
-		if repo != redactRepository(repo) {
-			msg = strings.ReplaceAll(msg, repo, redactRepository(repo))
-		}
+		msg := tail(redactSecrets(string(stderr.b), repo), 512)
 		verb := args[0]
 		if verb == "--no-lock" {
 			verb = args[1]
@@ -474,13 +471,44 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// tailBuffer keeps the last 512 bytes of stderr, where restic puts the fatal error.
+// tailBuffer keeps the last 64 KiB of stderr, where restic puts the fatal
+// error. Secrets are removed from that window before it is cut to the 512
+// bytes shown, so a cut can never leave part of a credential behind.
 type tailBuffer struct{ b []byte }
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
 	t.b = append(t.b, p...)
-	if len(t.b) > 512 {
-		t.b = append([]byte(nil), t.b[len(t.b)-512:]...)
+	if len(t.b) > 64<<10 {
+		t.b = append([]byte(nil), t.b[len(t.b)-64<<10:]...)
 	}
 	return len(p), nil
+}
+
+// redactSecrets removes a rest: repository's credentials in every form restic
+// may print them: the whole URL with or without the scheme prefix, and the
+// password raw or URL-escaped.
+func redactSecrets(msg, repo string) string {
+	rest, ok := strings.CutPrefix(repo, "rest:")
+	if !ok {
+		return msg
+	}
+	msg = strings.ReplaceAll(msg, repo, redactRepository(repo))
+	if u, err := url.Parse(rest); err == nil {
+		msg = strings.ReplaceAll(msg, rest, u.Redacted())
+		if pw, set := u.User.Password(); set && pw != "" {
+			for _, form := range []string{pw, url.PathEscape(pw), url.QueryEscape(pw)} {
+				msg = strings.ReplaceAll(msg, form, "xxxxx")
+			}
+		}
+	}
+	return msg
+}
+
+// tail returns the last n bytes of s, trimmed.
+func tail(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > n {
+		s = s[len(s)-n:]
+	}
+	return s
 }
