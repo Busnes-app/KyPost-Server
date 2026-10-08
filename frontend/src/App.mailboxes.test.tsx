@@ -1,11 +1,12 @@
 // The webmail mailbox switcher, driven through the real api/client so the
 // X-KyPost-Mailbox header is observed on the wire (a stubbed fetch).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { App } from "./App";
 import { getJSON } from "./api/client";
+import { holdForSecret, releaseSecretHold } from "./lib/secretHold";
 
 vi.mock("./lib/pgpSession", () => ({
   subscribePGPSession: () => () => {},
@@ -347,6 +348,23 @@ describe("webmail mailbox switcher", () => {
     expect(screen.queryByRole("combobox", { name: "Your mailboxes" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "FROM:" })).toBeNull();
     expect(calls.every((c) => c.mailbox === null)).toBe(true);
+  });
+
+  it("keeps the mailbox while a once-only secret is on screen", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText("Primary inbox");
+    act(() => holdForSecret("Copy the CardDAV password before leaving."));
+    calls = [];
+    try {
+      await user.selectOptions(await switcher(), "team-test@urlxl.us");
+      expect(await screen.findByText("Copy the CardDAV password before leaving.")).toBeTruthy();
+      expect((await switcher()).selectedOptions[0]?.textContent).toBe("me@urlxl.us");
+      expect(calls.some((c) => c.mailbox === TEAM)).toBe(false);
+      expect(screen.getByText("Primary inbox")).toBeTruthy();
+    } finally {
+      act(() => releaseSecretHold());
+    }
   });
 
   it("hides the switcher for a malformed list", async () => {

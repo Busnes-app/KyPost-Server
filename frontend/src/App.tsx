@@ -1406,6 +1406,12 @@ export function App() {
               <select
                 value={selectedMailbox}
                 onChange={(event) => {
+                  // Same hold as the links: switching opens /read and would
+                  // unmount a once-only secret.
+                  if (secretHold) {
+                    setNavBlockedNotice(secretHold);
+                    return;
+                  }
                   chooseMailbox(event.target.value);
                   setMailboxNotice("");
                   navigate("/read");
