@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
@@ -182,7 +183,7 @@ func QuarantineNativeRestore(dir string) (bool, error) {
 	hold := map[string]any{"version": 1, "epoch": "", "reason": "restore_requires_identity_domain_receiver_reconciliation"}
 	// The qualification marker exists only once this run's stages all succeed.
 	if err := os.Remove(filepath.Join(dir, "state", sso.NativeRestoreQualificationFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return true, err
+		return true, fmt.Errorf("cannot remove an earlier native restore qualification; keep workers stopped and preserve staging: %w", err)
 	}
 	holdErr := fsutil.PersistJSONFile(path, hold)
 	if holdErr != nil {
@@ -219,10 +220,12 @@ func QuarantineNativeRestore(dir string) (bool, error) {
 	}); err != nil {
 		return true, fmt.Errorf("cannot quarantine restored outgoing work; keep workers stopped and preserve staging: %w", err)
 	}
+	// Before the token fence: its cutoff is then later than createdAt by construction.
+	createdAt := time.Now()
 	if err := fenceRestoredNativeAccounts(dir); err != nil {
 		return true, fmt.Errorf("cannot fence restored native references/credentials; keep workers stopped and preserve staging: %w", err)
 	}
-	if err := recordQualification(sso.NewLifecycleStore(filepath.Join(dir, "config")), filepath.Join(dir, "state")); err != nil {
+	if err := recordQualification(sso.NewLifecycleStore(filepath.Join(dir, "config")), filepath.Join(dir, "state"), createdAt); err != nil {
 		return true, fmt.Errorf("cannot record native restore qualification; keep workers stopped and preserve staging: %w", err)
 	}
 	return true, nil
@@ -257,17 +260,15 @@ func quarantineRestoredOutbox(path string) (err error) {
 // fenceRestoredNativeAccounts runs after historical qualification. The whole
 // restore stays held and unpublished if any mailbox mutation fails.
 func fenceRestoredNativeAccounts(dir string) error {
-	raw, err := os.ReadFile(filepath.Join(dir, "config/users.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil // Whole-snapshot validation already refused missing native users.
-	}
-	if err != nil {
-		return err
-	}
 	var doc struct {
 		Users []users.User `json:"users"`
 	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
+	// A missing users.json publishes nobody; the ledger still drives the fences.
+	raw, err := os.ReadFile(filepath.Join(dir, "config/users.json"))
+	if err == nil {
+		err = json.Unmarshal(raw, &doc)
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	life := sso.NewLifecycleStore(filepath.Join(dir, "config"))

@@ -22,7 +22,8 @@ import (
 const NativeRestoreQualificationFile = "native-restore-qualification.json"
 
 // NativeRestoreQualification maps every published native mailbox, primary and
-// extra, to the reference generation the restore left it with.
+// extra, to the reference generation the restore left it with. CreatedAt
+// precedes the restore's token fence (release precondition P7).
 type NativeRestoreQualification struct {
 	Version   int               `json:"version"`
 	Epoch     string            `json:"epoch"`
@@ -40,8 +41,9 @@ func (e *NativeRestoreUnqualifiedError) Error() string {
 var errQualificationMalformed = errors.New("malformed native restore qualification")
 
 // RecordNativeRestoreQualification is the last QuarantineNativeRestore step, in
-// stopped staging after every earlier stage succeeded.
-func (s *LifecycleStore) RecordNativeRestoreQualification(stateRoot string) error {
+// stopped staging after every earlier stage succeeded. createdAt must be taken
+// before the token fence, so every fenced RevokedBefore is at least createdAt+31.
+func (s *LifecycleStore) RecordNativeRestoreQualification(stateRoot string, createdAt time.Time) error {
 	epoch, err := nativeRecoveryEpoch(stateRoot)
 	if err != nil {
 		return err
@@ -50,7 +52,7 @@ func (s *LifecycleStore) RecordNativeRestoreQualification(stateRoot string) erro
 	if err != nil {
 		return err
 	}
-	q := NativeRestoreQualification{Version: 1, Epoch: epoch, CreatedAt: time.Now().UTC(), Mailboxes: map[string]string{}}
+	q := NativeRestoreQualification{Version: 1, Epoch: epoch, CreatedAt: createdAt.UTC(), Mailboxes: map[string]string{}}
 	for id, m := range all {
 		if q.Mailboxes[id], _, err = mailbox.InspectRestored(filepath.Join(m.Dir, "mailbox/mailbox.db")); err != nil {
 			return err
@@ -81,8 +83,8 @@ func (s *LifecycleStore) CheckNativeRestoreQualification(stateRoot string) (Nati
 	case epoch != "" && q.Epoch != epoch:
 		reasons = append(reasons, "restore qualification marker belongs to another restore epoch")
 	}
-	all, err := s.NativeRestoreMailboxes(stateRoot)
-	if err != nil {
+	all, ledgerErr := s.NativeRestoreMailboxes(stateRoot)
+	if ledgerErr != nil {
 		reasons = append(reasons, "native mailbox ledger is unreadable")
 	}
 	ids := make([]string, 0, len(all))
@@ -105,24 +107,40 @@ func (s *LifecycleStore) CheckNativeRestoreQualification(stateRoot string) (Nati
 			reasons = append(reasons, fmt.Sprintf("mailbox %s reference generation changed since the restore", id))
 		}
 	}
+	if marker {
+		for id := range q.Mailboxes {
+			if _, ok := all[id]; !ok && ledgerErr == nil {
+				reasons = append(reasons, fmt.Sprintf("qualification marker lists mailbox %s, which the ledger does not publish", id))
+			}
+		}
+	}
 	// Every mailbox database, published or not, must hold no sendable work.
-	err = filepath.WalkDir(stateRoot, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || entry.Name() != "mailbox.db" {
+	// Only the mailbox trees: backup scratch holds unquarantined copies.
+	for _, tree := range []string{"users", nativeMailboxesDir} {
+		root := filepath.Join(stateRoot, tree)
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if errors.Is(err, os.ErrNotExist) && path == root {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || entry.Name() != "mailbox.db" {
+				return nil
+			}
+			rel, _ := filepath.Rel(stateRoot, path)
+			if !entry.Type().IsRegular() {
+				reasons = append(reasons, fmt.Sprintf("mailbox database %s is not a regular file", rel))
+			} else if _, pending, err := mailbox.InspectRestored(path); err != nil {
+				reasons = append(reasons, fmt.Sprintf("mailbox database %s cannot be read", rel))
+			} else if pending != 0 {
+				reasons = append(reasons, fmt.Sprintf("mailbox database %s has %d queued or retryable outbound deliveries", rel, pending))
+			}
 			return nil
+		})
+		if err != nil {
+			reasons = append(reasons, fmt.Sprintf("state/%s cannot be scanned", tree))
 		}
-		rel, _ := filepath.Rel(stateRoot, path)
-		if _, pending, err := mailbox.InspectRestored(path); err != nil {
-			reasons = append(reasons, fmt.Sprintf("mailbox database %s cannot be read", rel))
-		} else if pending != 0 {
-			reasons = append(reasons, fmt.Sprintf("mailbox database %s has %d queued or retryable outbound deliveries", rel, pending))
-		}
-		return nil
-	})
-	if err != nil {
-		reasons = append(reasons, "state directory cannot be scanned")
 	}
 	if len(reasons) != 0 {
 		return q, &NativeRestoreUnqualifiedError{Reasons: reasons}

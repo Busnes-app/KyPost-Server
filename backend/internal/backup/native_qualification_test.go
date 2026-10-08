@@ -149,6 +149,23 @@ func TestNativeRestoreQualification(t *testing.T) {
 		{"retryable-outbox", "mailboxes/" + extra.Owner.Mailbox + "/mailbox/mailbox.db has 1 queued or retryable", func(t *testing.T, dir string) {
 			execSQL(t, filepath.Join(dir, dbs[extra.Owner.Mailbox]), "INSERT INTO outbox(id,ciphertext,sent_bytes,sent_reserved) VALUES('job',x'00',0,0); INSERT INTO outbox_deliveries(job,sequence,state) VALUES('job',1,'retryable')")
 		}},
+		{"marker-extra-mailbox", "lists mailbox mbx-gone, which the ledger does not publish", func(t *testing.T, dir string) {
+			q := readJSON(t, markerPath(dir))
+			q["mailboxes"].(map[string]any)["mbx-gone"] = "00000000-0000-4000-8000-000000000000"
+			writeJSON(t, markerPath(dir), q)
+		}},
+		{"unpublished-mailbox-outbox", "mailboxes/mbx-unpublished/mailbox/mailbox.db has 1 queued or retryable", func(t *testing.T, dir string) {
+			copyQueued(t, filepath.Join(dir, dbs[extra.Owner.Mailbox]), filepath.Join(dir, "state/mailboxes/mbx-unpublished/mailbox/mailbox.db"))
+		}},
+		{"symlinked-database", "mailbox database users/linked/mailbox/mailbox.db is not a regular file", func(t *testing.T, dir string) {
+			link := filepath.Join(dir, "state/users/linked/mailbox/mailbox.db")
+			if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(dir, dbs[u.ID]), link); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{"unknown-field", "marker is malformed", func(t *testing.T, dir string) {
 			q := readJSON(t, markerPath(dir))
 			q["released"] = true
@@ -191,6 +208,49 @@ func TestNativeRestoreQualification(t *testing.T) {
 		})
 	}
 
+	// Drill and bulk copies in backup scratch are not mailboxes.
+	t.Run("scratch-copy-ignored", func(t *testing.T) {
+		dir := restore(t)
+		copyQueued(t, filepath.Join(dir, dbs[u.ID]), filepath.Join(dir, "state/backup-scratch/drill/state/users", u.ID, "mailbox/mailbox.db"))
+		if _, err := check(dir); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	// createdAt precedes the token fence however slow the marker step is (P7).
+	t.Run("created-before-token-fence", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "restored")
+		if _, _, err := capsule.Open(sealed, key, dir); err != nil {
+			t.Fatal(err)
+		}
+		real := recordQualification
+		defer func() { recordQualification = real }()
+		recordQualification = func(l *sso.LifecycleStore, root string, createdAt time.Time) error {
+			time.Sleep(1100 * time.Millisecond) // a slow step after the fence
+			return real(l, root, createdAt)
+		}
+		if native, err := QuarantineNativeRestore(dir); !native || err != nil {
+			t.Fatalf("native=%v err=%v", native, err)
+		}
+		q, err := check(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var lifecycle struct {
+			Directory map[string]sso.DirectoryState `json:"directory"`
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, "config/sso-lifecycle.json"))
+		if err == nil {
+			err = json.Unmarshal(raw, &lifecycle)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d := lifecycle.Directory[u.NativeMailboxIssuer+"\x00"+u.SSOSub]; q.CreatedAt.Unix()+31 > d.RevokedBefore {
+			t.Fatalf("createdAt %d not before the fence cutoff %d", q.CreatedAt.Unix(), d.RevokedBefore)
+		}
+	})
+
 	// The marker write failing on its own must fail the restore.
 	t.Run("marker-write-fails", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "restored")
@@ -199,7 +259,7 @@ func TestNativeRestoreQualification(t *testing.T) {
 		}
 		real := recordQualification
 		defer func() { recordQualification = real }()
-		recordQualification = func(*sso.LifecycleStore, string) error { return errors.New("disk full") }
+		recordQualification = func(*sso.LifecycleStore, string, time.Time) error { return errors.New("disk full") }
 		if native, err := QuarantineNativeRestore(dir); !native || err == nil || !strings.Contains(err.Error(), "cannot record native restore qualification") {
 			t.Fatalf("native=%v err=%v", native, err)
 		}
@@ -258,6 +318,13 @@ func TestNativeRestoreFencesUnpublishedLedgerMailbox(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(s.dirs.Config, "users.json"), []byte(`{"users":[]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
+	carddav := filepath.Join("config/users", u.ID, "carddav-auth.json")
+	if err := os.MkdirAll(filepath.Join(s.dirs.Config, "users", u.ID), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.dirs.Config, "users", u.ID, "carddav-auth.json"), []byte(`{"hash":"old"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	db := "state/users/" + u.ID + "/mailbox/mailbox.db"
 	before, _, err := mailbox.InspectRestored(filepath.Join(s.dirs.State, "users", u.ID, "mailbox/mailbox.db"))
 	if err != nil {
@@ -276,9 +343,15 @@ func TestNativeRestoreFencesUnpublishedLedgerMailbox(t *testing.T) {
 	if _, _, err := capsule.Open(sealed, key, dir); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Lstat(filepath.Join(dir, carddav)); err != nil {
+		t.Fatal("CardDAV hash not in the capsule", err)
+	}
 	start := time.Now().Unix()
 	if native, err := QuarantineNativeRestore(dir); !native || err != nil {
 		t.Fatalf("native=%v err=%v", native, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, carddav)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("unpublished owner's CardDAV hash kept", err)
 	}
 	after, _, err := mailbox.InspectRestored(filepath.Join(dir, db))
 	if err != nil || after == "" || after == before {
@@ -311,6 +384,22 @@ func TestNativeRestoreFencesUnpublishedLedgerMailbox(t *testing.T) {
 	if d := lifecycle.Directory[u.NativeMailboxIssuer+"\x00"+u.SSOSub]; d.RevokedBefore < start+31 {
 		t.Fatalf("unpublished subject token cutoff %d not raised", d.RevokedBefore)
 	}
+}
+
+// copyQueued copies a mailbox database to dst and queues one delivery in the copy.
+func copyQueued(t *testing.T, src, dst string) {
+	t.Helper()
+	raw, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	execSQL(t, dst, "INSERT INTO outbox(id,ciphertext,sent_bytes,sent_reserved) VALUES('job',x'00',0,0); INSERT INTO outbox_deliveries(job,sequence,state) VALUES('job',1,'queued')")
 }
 
 func execSQL(t *testing.T, path, query string) {

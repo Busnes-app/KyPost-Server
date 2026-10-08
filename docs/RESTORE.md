@@ -299,7 +299,8 @@ Do not prune while a restore reads the repository.
    native mailbox's new reference generation. It exists only when every earlier
    step succeeded, is never collected into backups and grants nothing by
    itself; a future release requires it to match the current hold, generations
-   and an outbox with no queued/retryable rows. Holds from older versions lack it:
+   and an outbox with no queued/retryable rows. Device, CardDAV and token fences
+   are proven by the marker's existence, not re-checked. Holds from older versions lack it:
    restore again with this version before release. See
    docs/NATIVE_RESTORE_RELEASE.md (#331). Legacy restores also
    accept an existing empty target. Occupied targets/files are never overwritten.
