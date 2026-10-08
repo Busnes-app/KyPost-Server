@@ -91,7 +91,7 @@ func runSetupStatus(args []string, out io.Writer) error {
 	add("backup-receipt", backup.LastReceipt != nil || len(backup.LocalCopies) > 0, "run and inspect the first backup; a local copy alone does not prove an independent destination")
 	latestOK := false
 	for _, audit := range backup.Recent {
-		if audit.Action == "admin.backup_run" || audit.Action == "admin.backup_local_fallback" || audit.Action == "admin.backup_intent" && (audit.Target == "run" || audit.Target == "deposit") {
+		if audit.Action == "admin.backup_run" || audit.Action == "admin.backup_local_fallback" || audit.Action == "admin.backup_intent" && (audit.Target == "run" || audit.Target == "deposit" || audit.Target == "/api/admin/backup/run") {
 			latestOK = audit.Action == "admin.backup_run" && audit.Outcome == "success"
 			break
 		}

@@ -266,6 +266,10 @@ func TestSetupStatusLatestBackupFailureOverridesHistory(t *testing.T) {
 		t.Fatal("missing backup result")
 	}
 	check(true)
+	if e = st.RecordBackupAudit("admin.backup_intent", "test", "/api/admin/backup/run", "started", nil); e != nil {
+		t.Fatal(e)
+	}
+	check(false)
 	if e = st.RecordBackupAudit("admin.backup_run", "test", "", "failure", map[string]any{"error": "private provider detail"}); e != nil {
 		t.Fatal(e)
 	}
