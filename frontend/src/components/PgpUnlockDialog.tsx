@@ -68,7 +68,7 @@ export function PgpUnlockDialog({ open, reason, onUnlocked, onCancel }: Props) {
         }
       }}
     >
-      <div className="rules-help-window" style={{ width: "min(460px, 94vw)" }} onClick={(event) => event.stopPropagation()}>
+      <div className="rules-help-window rules-help-compact" onClick={(event) => event.stopPropagation()}>
         <div className="rules-help-head">
           <h3>Unlock your PGP key</h3>
         </div>

@@ -106,9 +106,9 @@ export function MailImportAccount({ mailbox, ssoSession, disabled, onStarted }: 
     {folders && <fieldset className="config-card config-grid" disabled={busy || disabled}>
       <legend>Folders to import</legend>
       {folders.length === 0 && <p>The account has no folders that can be imported.</p>}
-      {folders.map(f => <label key={f.name}>
-        <input type="checkbox" checked={chosen.has(f.name)} onChange={() => toggle(f.name)} /> {visible(f.path.join(" / "))}
-        {repeats(f) && " (repeats mail from your other folders; usually left out)"}
+      {folders.map(f => <label key={f.name} className="config-checkbox">
+        <input type="checkbox" checked={chosen.has(f.name)} onChange={() => toggle(f.name)} />
+        <span>{visible(f.path.join(" / "))}{repeats(f) && " (repeats mail from your other folders; usually left out)"}</span>
       </label>)}
       <label>Into folder<input aria-label="Into folder" value={target} onChange={e => setTarget(e.target.value)} /></label>
       <button className="button" disabled={chosen.size === 0} onClick={() => void start()}>Import folders</button>

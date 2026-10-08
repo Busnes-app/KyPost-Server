@@ -140,8 +140,8 @@ export function MailImport() {
       <p className="notice notice-warning">Imported mail is not scanned for spam, not run through your rules, and sends no notifications. Only import mail you trust. Import is unavailable while incoming encryption is on, because imported mail would be stored unencrypted.</p>
       <fieldset className="config-card config-grid" disabled={busy || running}>
         <legend>Import from</legend>
-        <label><input type="radio" name="import-mode" checked={mode === "file"} onChange={() => setMode("file")} /> From a file</label>
-        <label><input type="radio" name="import-mode" checked={mode === "account"} onChange={() => setMode("account")} /> From another mail account</label>
+        <label className="config-checkbox"><input type="radio" name="import-mode" checked={mode === "file"} onChange={() => setMode("file")} /><span>From a file</span></label>
+        <label className="config-checkbox"><input type="radio" name="import-mode" checked={mode === "account"} onChange={() => setMode("account")} /><span>From another mail account</span></label>
         {mailboxes.length > 1 && <label>Mailbox
           <select aria-label="Mailbox" value={mailbox} onChange={e => setMailbox(e.target.value)}>
             {mailboxes.map(m => <option key={m.id} value={m.id}>{m.addresses[0]?.address ?? m.id}</option>)}
