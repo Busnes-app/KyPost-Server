@@ -1641,6 +1641,134 @@ pre {
   border-bottom: 0;
 }
 
+.mail-domain-add {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+
+.config-card .mail-domain-add label {
+  flex: 1;
+  border: 0;
+  padding: 0;
+  background: none;
+}
+
+.mail-domain-table th[scope="row"] {
+  font-size: inherit;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--ink-strong);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+/* One accented action per row; the rest stay quiet. */
+.mail-domain-actions .button.secondary,
+.mail-domain-record .button.secondary {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--ink-strong);
+}
+
+.mail-domain-actions .button.secondary:hover:not(:disabled),
+.mail-domain-record .button.secondary:hover {
+  border-color: var(--accent);
+}
+
+@media (max-width: 700px) {
+  .mail-domain-table {
+    min-width: 0;
+  }
+
+  .mail-domain-table thead {
+    display: none;
+  }
+
+  .mail-domain-table tr,
+  .mail-domain-table th,
+  .mail-domain-table td {
+    display: block;
+    border: 0;
+    padding: 4px 12px;
+  }
+
+  .mail-domain-table tr {
+    padding: 8px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  }
+
+  .mail-domain-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .mail-domain-actions {
+    white-space: normal;
+  }
+}
+
+.mail-domain-tag {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--ink) 80%, var(--ink-strong));
+}
+
+.mail-domain-actions {
+  white-space: nowrap;
+}
+
+.mail-domain-table button,
+.mail-domain-record button {
+  padding: 5px 10px;
+  font-size: 0.85rem;
+}
+
+.mail-domain-actions button + button {
+  margin-left: 6px;
+}
+
+.mail-domain-records h5,
+.mail-domain-records summary {
+  margin: 4px 0 8px;
+  font-weight: 650;
+  color: var(--ink-strong);
+  cursor: pointer;
+}
+
+.mail-domain-record {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.mail-domain-record dt {
+  font-weight: 650;
+}
+
+.mail-domain-record dd {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 4rem minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.mail-domain-record dd span {
+  font-size: 0.8rem;
+  color: color-mix(in srgb, var(--ink) 80%, var(--ink-strong));
+}
+
+.mail-domain-record code {
+  overflow-wrap: anywhere;
+}
+
 /* Sender-controlled text: stacked marks and long tokens stay inside their cell. */
 .quarantine-table td {
   overflow: hidden;

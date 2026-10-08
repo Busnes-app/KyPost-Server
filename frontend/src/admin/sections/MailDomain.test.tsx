@@ -231,7 +231,9 @@ const domainSet = { issuer, founding: "example.com", receivingEnabled: false, do
 ] };
 const setRelay = { ...configuredRelay, domains: ["example.com"], retiredDomains: ["gone.example"] };
 const writes = (method: string) => fetchMock.mock.calls.filter(([, init]) => init?.method === method);
-const region = (domain: string) => within(screen.getByRole("heading", { name: domain }).closest("li")!);
+// A domain's table row; the row header also holds its founding/relay tags.
+const region = (domain: string) => within(screen.getAllByRole("rowheader").find(h => h.firstChild?.textContent === domain)!.closest("tr")!);
+const record = (domain: string) => within(screen.getByLabelText(`TXT record for ${domain}`));
 
 it("validates the domain set and relay domains at the boundary", () => {
   expect(readMailDomains({ issuer: "", founding: "", domains: [], receivingEnabled: false })).toEqual({ issuer: "", founding: "", domains: [] });
@@ -249,17 +251,20 @@ it("validates the domain set and relay domains at the boundary", () => {
 
 it("lists every domain status with its record, founding mark and actions", async () => {
   setResponse = domainSet;
-  render(view()); await screen.findByRole("heading", { name: "example.com" });
-  expect(region("example.com").getByText("Founding domain.")).toBeDefined();
-  expect(screen.getByRole("list", { name: "Mail domains" }).children).toHaveLength(5);
+  render(view()); await screen.findByRole("table", { name: "Mail domains" });
+  expect(region("example.com").getByText("founding")).toBeDefined();
+  expect(screen.getAllByRole("rowheader")).toHaveLength(5);
   expect(region("example.com").getByText("Established")).toBeDefined();
   expect(region("pending.example").getByText("Awaiting verification")).toBeDefined();
-  expect(region("pending.example").getByLabelText("TXT name").getAttribute("value")).toBe("_kypost-mail.pending.example");
-  expect(region("pending.example").getByLabelText("TXT value").textContent).toBe(`kypost-mail-verify=${token}`);
-  expect(region("pending.example").getByText(/verify it before/)).toBeDefined();
+  expect(record("pending.example").getByText("_kypost-mail.pending.example")).toBeDefined();
+  expect(record("pending.example").getByText(`kypost-mail-verify=${token}`)).toBeDefined();
+  expect(within(screen.getByRole("region", { name: "TXT records to publish" })).getByLabelText("TXT record for pending.example")).toBeDefined();
+  expect(region("pending.example").getByText(/verify before/)).toBeDefined();
+  expect(region("lapsed.example").getByRole("button", { name: "New challenge for lapsed.example" })).toBeDefined();
+  expect(region("example.com").getByRole("button", { name: "Recheck example.com" })).toBeDefined();
   expect(region("lapsed.example").getByText("Lapsed")).toBeDefined();
   expect(region("old.example").getByText("Retired")).toBeDefined();
-  expect(region("old.example").queryByLabelText("TXT name")).toBeNull();
+  expect(screen.queryByLabelText("TXT record for old.example")).toBeNull();
   expect(region("old.example").getByRole("button", { name: "Re-add old.example" })).toBeDefined();
   expect(region("old.example").queryByRole("button", { name: /Retire/ })).toBeNull();
   expect(screen.getAllByText(issuer)).toHaveLength(1);
@@ -269,17 +274,17 @@ it("lists every domain status with its record, founding mark and actions", async
 
 it("adds, verifies, retires and re-adds domains through confirmed protected requests", async () => {
   setResponse = domainSet;
-  render(view()); await screen.findByRole("heading", { name: "example.com" });
+  render(view()); await screen.findByRole("table", { name: "Mail domains" });
   const step = async (click: () => void) => {
     fill("Account password", "account-secret");
     const before = fetchMock.mock.calls.length;
     click();
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(before + 1));
-    await screen.findByRole("heading", { name: "example.com" });
+    await screen.findByRole("table", { name: "Mail domains" });
     const [url, init] = fetchMock.mock.calls[before]!;
     return { url, method: init?.method, body: JSON.parse(String(init?.body)) };
   };
-  fill("Domain", "new.example");
+  fill("Add a domain", "new.example");
   expect(await step(() => fireEvent.click(screen.getByRole("button", { name: "Add domain" }))))
     .toEqual({ url: "/api/admin/mail-domains", method: "POST", body: { domain: "new.example", authSecret: "derived-test-secret" } });
   expect(await step(() => fireEvent.click(screen.getByRole("button", { name: "Verify pending.example" }))))
@@ -307,7 +312,7 @@ it("replays an identical retire request through KySignOn step-up", async () => {
   setResponse = domainSet;
   vi.spyOn(window, "confirm").mockReturnValue(true);
   vi.mocked(withSSOStepUp).mockImplementation(async run => { await run({}); return run({ "X-Kypost-Step-Up": "test-grant" }); });
-  render(view({ ...admin, ssoSession: true })); await screen.findByRole("heading", { name: "example.com" });
+  render(view({ ...admin, ssoSession: true })); await screen.findByRole("table", { name: "Mail domains" });
   fireEvent.click(screen.getByRole("button", { name: "Retire second.example" }));
   await screen.findByText(/second.example retired/);
   const deletes = writes("DELETE");
@@ -326,7 +331,7 @@ it("shows server refusals and returns controls once status re-reads", async () =
   fetchMock.mockImplementation(async (url, init) => init?.method === "DELETE" ? new Response(inUse, { status: 409 })
     : init?.method === "POST" ? new Response(verifyRefused, { status: 409 }) : read!(url, init));
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  render(view()); await screen.findByRole("heading", { name: "example.com" });
+  render(view()); await screen.findByRole("table", { name: "Mail domains" });
   const fieldset = () => screen.getByRole("button", { name: "Add domain" }).closest("fieldset");
   for (const [button, message] of [["Retire example.com", inUse], ["Verify pending.example", verifyRefused]] as const) {
     fill("Account password", "account-secret");
@@ -339,20 +344,20 @@ it("shows server refusals and returns controls once status re-reads", async () =
 
 it("refuses to add a domain that is already in service", async () => {
   setResponse = domainSet;
-  render(view()); await screen.findByRole("heading", { name: "example.com" });
-  fill("Account password", "account-secret"); fill("Domain", " Second.Example ");
+  render(view()); await screen.findByRole("table", { name: "Mail domains" });
+  fill("Account password", "account-secret"); fill("Add a domain", " Second.Example ");
   const add = screen.getByRole("button", { name: "Add domain" });
   expect(add.hasAttribute("disabled")).toBe(true);
   expect(screen.getByText(/second.example is already configured; use its Replace challenge/)).toBeDefined();
   fireEvent.click(add);
   expect(writes("POST")).toHaveLength(0);
-  fill("Domain", "old.example");
+  fill("Add a domain", "old.example");
   expect(add.hasAttribute("disabled")).toBe(false);
 });
 
 it("saves relay sending domains alone without relay credentials", async () => {
   setResponse = domainSet; relayResponse = setRelay;
-  render(view()); await screen.findByRole("heading", { name: "example.com" });
+  render(view()); await screen.findByRole("table", { name: "Mail domains" });
   const group = within(screen.getByRole("group", { name: "Relay sending domains" }));
   expect((group.getByLabelText("example.com") as HTMLInputElement).checked).toBe(true);
   expect((group.getByLabelText(/pending.example/) as HTMLInputElement).disabled).toBe(true);
@@ -363,7 +368,7 @@ it("saves relay sending domains alone without relay credentials", async () => {
   fill("Account password", "account-secret");
   expect(screen.getByRole("button", { name: "Retire second.example" }).hasAttribute("disabled")).toBe(false);
   expect(screen.getByRole("button", { name: "Retire example.com" }).hasAttribute("disabled")).toBe(true);
-  expect(region("example.com").getByText(/remove it from the relay first/)).toBeDefined();
+  expect(screen.getByText(/remove it from the relay first/)).toBeDefined();
   const save = group.getByRole("button", { name: "Save sending domains" });
   expect(save.hasAttribute("disabled")).toBe(true);
   fireEvent.click(group.getByLabelText("second.example"));

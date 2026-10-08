@@ -12,11 +12,28 @@ function retireWarning(domain: string) {
   return `Retire ${domain}? KyPost refuses while any address on it is active, queued or retryable mail sends from it, accepted incoming mail is waiting for it, or the relay still sends for it, or while a restore hold is in place. Existing address records are kept. You can re-add it later, but it then needs a new TXT challenge and fresh DNS proof before it carries mail.`;
 }
 
+const at = (seconds: number) => new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
 function domainStatus(d: MailDomainEntry, now: number) {
-  if (d.retired) return { label: "Retired", detail: "No mail is routed, sent or allocated on this domain. Its address records are kept; re-adding it starts a new TXT challenge." };
-  if (d.established) return { label: "Established", detail: `Ownership established. Keep this TXT record; KyPost rechecks DNS before native operations.${d.verifiedUntil > now ? ` Last DNS match holds until ${new Date(d.verifiedUntil * 1000).toLocaleString()}.` : ""}` };
-  if (d.expiresAt > now) return { label: "Awaiting verification", detail: `Publish this TXT record and verify it before ${new Date(d.expiresAt * 1000).toLocaleString()}.` };
-  return { label: "Lapsed", detail: "The challenge expired before verification. Replace the challenge, publish the new record and verify it." };
+  if (d.retired) return { label: "Retired", detail: "Nothing routed or sent; address records kept" };
+  if (d.established) return { label: "Established", detail: d.verifiedUntil > now ? `DNS matched; holds until ${at(d.verifiedUntil)}` : "Rechecked before each use" };
+  if (d.expiresAt > now) return { label: "Awaiting verification", detail: `Publish the TXT record, then verify before ${at(d.expiresAt)}` };
+  return { label: "Lapsed", detail: "Challenge expired; start a new one" };
+}
+
+// Domains waiting on the operator first, retired ones last.
+const rank = (d: MailDomainEntry, now: number) => d.retired ? 3 : d.established ? 2 : d.expiresAt > now ? 0 : 1;
+
+function copy(text: string) {
+  void navigator.clipboard?.writeText(text);
+}
+
+function TxtRecord({ d }: { d: MailDomainEntry }) {
+  return <dl className="mail-domain-record" aria-label={`TXT record for ${d.domain}`}>
+    <dt>{d.domain}</dt>
+    <dd><span>Name</span><code>{d.recordName}</code><button type="button" className="button secondary" aria-label={`Copy TXT name for ${d.domain}`} onClick={() => copy(d.recordName)}>Copy</button></dd>
+    <dd><span>Value</span><code>{d.recordValue}</code><button type="button" className="button secondary" aria-label={`Copy TXT value for ${d.domain}`} onClick={() => copy(d.recordValue)}>Copy</button></dd>
+  </dl>;
 }
 
 export function MailDomain() {
@@ -169,40 +186,53 @@ function MailDomainForm() {
         <button className="button secondary" disabled={!unlocked || !domain} onClick={() => void act("claim")}>Create TXT challenge</button>
       </> : <>
         {domainSet?.issuer && <p>Identity issuer: <code>{domainSet.issuer}</code>. Every domain is bound to this issuer.</p>}
+        <div className="mail-domain-add">
+          <label>Add a domain<input value={domain} placeholder="example.com" autoComplete="off" onChange={e => setDomain(e.target.value)} /></label>
+          <button className="button secondary" disabled={!unlocked || !domain || duplicate} onClick={() => void act("claim", domain)}>Add domain</button>
+        </div>
+        {duplicate ? <p>{typed} is already configured; use its Replace challenge to rotate the TXT record.</p>
+          : <p className="config-muted">Lowercase ASCII. Each domain gets its own TXT challenge under the same identity issuer.</p>}
         {domainSet && domainSet.domains.length === 0 && <p>No mail domains yet.</p>}
-        {domainSet && domainSet.domains.length > 0 && <ul className="config-status-card" aria-label="Mail domains" style={{ listStyle: "none" }}>
-          {domainSet.domains.map(d => {
+        {domainSet && domainSet.domains.length > 0 && <div className="users-table-wrap"><table className="users-table mail-domain-table" aria-label="Mail domains">
+          <thead><tr><th scope="col">Domain</th><th scope="col">Status</th><th scope="col">DNS</th><th scope="col">Actions</th></tr></thead>
+          <tbody>{[...domainSet.domains].sort((a, b) => rank(a, now) - rank(b, now) || a.domain.localeCompare(b.domain)).map(d => {
             const status = domainStatus(d, now);
             const relayed = relayDomains.includes(d.domain);
-            return <li key={d.domain} style={{ padding: "10px 0" }}>
-              <div className="security-card-head">
-                <h5>{d.domain}</h5>
-                <span className={`security-badge ${d.established ? "security-badge-on" : "security-badge-off"}`}><span className="security-dot" aria-hidden="true" />{status.label}</span>
-              </div>
-              {d.domain === domainSet.founding && <p>Founding domain.</p>}
-              <p>{status.detail}</p>
-              {!d.retired && <>
-                <label>TXT name<input readOnly value={d.recordName} /></label>
-                <label>TXT value<textarea readOnly value={d.recordValue} /></label>
-              </>}
-              {relayed && <p>The relay sends for this domain; remove it from the relay first to retire it.</p>}
-              <div className="config-actions">
+            const pending = !d.retired && !d.established;
+            const lapsed = pending && d.expiresAt <= now;
+            return <tr key={d.domain}>
+              <th scope="row">
+                {d.domain}
+                {d.domain === domainSet.founding && <span className="mail-domain-tag">founding</span>}
+                {relayed && <span className="mail-domain-tag">relay</span>}
+              </th>
+              <td><span className={`security-badge ${d.established ? "security-badge-on" : "security-badge-off"}`}><span className="security-dot" aria-hidden="true" />{status.label}</span></td>
+              <td className="config-muted">{status.detail}</td>
+              <td className="mail-domain-actions">
                 {d.retired
                   ? <button className="button secondary" aria-label={`Re-add ${d.domain}`} disabled={!unlocked} onClick={() => void act("claim", d.domain)}>Re-add</button>
                   : <>
-                    <button className="button secondary" aria-label={`Verify ${d.domain}`} disabled={!unlocked} onClick={() => void act("verify", d.domain)}>Verify</button>
-                    <button className="button secondary" aria-label={`Replace challenge for ${d.domain}`} disabled={!unlocked} onClick={() => void act("rotate", d.domain)}>Replace challenge</button>
-                    <button className="button secondary" aria-label={`Retire ${d.domain}`} disabled={!unlocked || relayed} onClick={() => void act("retire", d.domain)}>Retire</button>
+                    {lapsed
+                      ? <button className="button" aria-label={`New challenge for ${d.domain}`} disabled={!unlocked} onClick={() => void act("rotate", d.domain)}>New challenge</button>
+                      : <button className={pending ? "button" : "button secondary"} aria-label={`${pending ? "Verify" : "Recheck"} ${d.domain}`} disabled={!unlocked} onClick={() => void act("verify", d.domain)}>{pending ? "Verify" : "Recheck"}</button>}
+                    {!lapsed && <button className="button secondary" aria-label={`Replace challenge for ${d.domain}`} disabled={!unlocked} onClick={() => void act("rotate", d.domain)}>Replace…</button>}
+                    <button className="button secondary" aria-label={`Retire ${d.domain}`} title={relayed ? "The relay sends for this domain; remove it from the relay first." : undefined} disabled={!unlocked || relayed} onClick={() => void act("retire", d.domain)}>Retire…</button>
                   </>}
-              </div>
-            </li>;
-          })}
-        </ul>}
-        {domainSet?.founding && <p>Older clients and the single-domain API use the founding domain. Retiring it hands that role to the alphabetically first remaining domain.</p>}
-        <label>Domain<input value={domain} placeholder="example.com" autoComplete="off" onChange={e => setDomain(e.target.value)} /></label>
-        {duplicate ? <p>{typed} is already configured; use its Replace challenge to rotate the TXT record.</p>
-          : <p>Use a lowercase ASCII domain. Each domain gets its own TXT challenge under the same identity issuer.</p>}
-        <button className="button secondary" disabled={!unlocked || !domain || duplicate} onClick={() => void act("claim", domain)}>Add domain</button>
+              </td>
+            </tr>;
+          })}</tbody>
+        </table></div>}
+        {inService.some(d => relayDomains.includes(d.domain)) && <p className="config-muted">A domain tagged relay can&apos;t be retired; remove it from the relay first.</p>}
+        {inService.some(d => !d.established) && <section className="mail-domain-records" aria-label="TXT records to publish">
+          <h5>Publish these TXT records</h5>
+          {inService.filter(d => !d.established).map(d => <TxtRecord key={d.domain} d={d} />)}
+        </section>}
+        {inService.some(d => d.established) && <details className="mail-domain-records">
+          <summary>TXT records to keep ({inService.filter(d => d.established).length})</summary>
+          <p className="config-muted">Leave these published; KyPost rechecks them before native operations.</p>
+          {inService.filter(d => d.established).map(d => <TxtRecord key={d.domain} d={d} />)}
+        </details>}
+        {domainSet?.founding && <p className="config-muted">Older clients and the single-domain API use the founding domain. Retiring it hands that role to the alphabetically first remaining domain.</p>}
       </>}
       <h4>2. Configure outgoing delivery</h4>
       {relay?.kind === "configured" && <p>Saved relay: {relay.host}:{relay.port}. {relay.sendingEnabled ? "Native primary sending is enabled." : "Native sending is disabled; enable KYPOST_NATIVE_MAIL in deployment to use it."} Provider delivery remains untested.</p>}

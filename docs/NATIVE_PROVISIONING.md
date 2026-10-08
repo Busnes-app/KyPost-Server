@@ -18,10 +18,13 @@ The response includes the exact `recordName` and `recordValue` to publish:
 Then `POST /api/admin/mail-domain/verify` with the same credential fields.
 Responses are `Cache-Control: no-store` and always `receivingEnabled:false`.
 The Server → Mail domain screen lists every domain of the set (see
-[Several domains](#several-domains)) with its status (established, awaiting
-verification with the exact TXT fields and expiry, lapsed, retired), marks the
-founding domain and offers Add, Verify, Replace challenge, Retire and Re-add
-through the same protected operations. Replacing a challenge and retiring ask
+[Several domains](#several-domains)) as one table row with its status
+(established, awaiting verification with expiry, lapsed, retired), founding and
+relay tags, domains awaiting action first, and offers Add, Verify (Recheck once
+established), Replace challenge (New challenge once lapsed), Retire and Re-add
+through the same protected operations. The exact TXT fields, with copy buttons,
+show for domains awaiting verification; established domains' records sit in a
+collapsed "TXT records to keep" section. Replacing a challenge and retiring ask
 for confirmation first; the retire prompt names the in-use refusals, that address
 records are kept and that re-adding needs fresh DNS proof. Against a server
 without the domain-set API it shows the single founding domain. It does not
