@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Settings → Mail → Storage uses compact mailbox rows with usage beside the address and a full-width meter, replacing nested cards. Figures and quota warnings are unchanged.
+
 - Native mail: the outbound worker no longer logs "native outbox discovery deferred" when the API and daemon check the same idle mailbox (typically a disabled extra mailbox) at the same moment, such as at startup. Mailbox validation now waits up to five seconds for the other process's lock instead of treating the mailbox as unprepared. Disabled mailboxes still refuse new mail and new sends.
 
 - Admin → Server → Mail domain lists domains as a compact table, one row each with status, DNS state and actions, domains needing action first. TXT records show only for domains awaiting verification, with copy buttons; established domains keep theirs under "TXT records to keep". On phones each domain is a short card.

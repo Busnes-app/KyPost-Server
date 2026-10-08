@@ -29,11 +29,12 @@ export function MailStorage() {
       const used = bytes(m.usedBytes), quota = bytes(m.quotaBytes);
       if (used === null || !quota) return <p key={m.id}>{name}: usage unavailable right now.</p>;
       const notice = usageNotice(used, quota);
-      return <div key={m.id} className="config-card">
-        <label>{name}
-          <meter min={0} max={quota} low={quota * 0.8} high={quota * 0.95} optimum={0} value={Math.min(used, quota)} aria-describedby={`usage-${m.id}`} />
-        </label>
-        <p id={`usage-${m.id}`}>{usageText(used, quota)}</p>
+      return <div key={m.id} className="mail-storage-row">
+        <div className="mail-storage-heading">
+          <strong>{name}</strong>
+          <span id={`usage-${m.id}`}>{usageText(used, quota)}</span>
+        </div>
+        <meter min={0} max={quota} low={quota * 0.8} high={quota * 0.95} optimum={0} value={Math.min(used, quota)} aria-label={name} aria-describedby={`usage-${m.id}`} />
         {notice && <p className={`notice ${usageLevel(used, quota) === "critical" ? "notice-error" : "notice-warning"}`} role="note">{notice}</p>}
       </div>;
     })}

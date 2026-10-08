@@ -1227,6 +1227,29 @@ pre {
   font-size: 0.85rem;
 }
 
+.mail-storage-row {
+  padding: 16px 0;
+}
+
+.mail-storage-row + .mail-storage-row {
+  border-top: 1px solid var(--line);
+}
+
+.mail-storage-heading {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  overflow-wrap: anywhere;
+}
+
+.mail-storage-row meter {
+  display: block;
+  width: 100%;
+  height: 12px;
+  margin-top: 8px;
+}
+
 .config-card {
   margin-top: 14px;
   border: 1px solid color-mix(in srgb, var(--line) 86%, var(--accent));
