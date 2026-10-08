@@ -49,7 +49,7 @@ func TestNativeMailRelayAdminAuthorityRedactionAndRotation(t *testing.T) {
 		{"PUT", "", "", "{}", 401},
 		{"PUT", memberToken, memberCSRF, "{}", 403},
 		{"PUT", token, "", "{}", 403},
-		{"PUT", token, csrf, "{}", 401},
+		{"PUT", token, csrf, "{}", 403}, // missing step-up credential: refused, session kept
 	} {
 		w := call(c.method, c.token, c.csrf, c.body)
 		if w.Code != c.want {

@@ -76,7 +76,7 @@ func TestPGPIdentityDeleteRequiresTheAccountPassword(t *testing.T) {
 
 	// Session alone: refused.
 	rec := pgpRequest(t, srv, http.MethodDelete, "/api/pgp/identity", nil, srv.handlePGPIdentity)
-	if rec.Code != http.StatusUnauthorized {
+	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a session alone deleted the identity: %d %s", rec.Code, rec.Body.String())
 	}
 	if u, err := srv.users.Get(userID); err != nil || u.PGPFingerprint == "" {
@@ -86,7 +86,7 @@ func TestPGPIdentityDeleteRequiresTheAccountPassword(t *testing.T) {
 	// Wrong password: refused.
 	rec = pgpRequest(t, srv, http.MethodDelete, "/api/pgp/identity",
 		map[string]string{"password": "not-the-password"}, srv.handlePGPIdentity)
-	if rec.Code != http.StatusUnauthorized {
+	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a wrong password deleted the identity: %d", rec.Code)
 	}
 
@@ -122,7 +122,7 @@ func TestPGPClientIdentityReplacementRequiresTheAccountPassword(t *testing.T) {
 		"source":    "generated",
 	}
 	rec := pgpRequest(t, srv, http.MethodPost, "/api/pgp/identity/client", body, srv.handlePGPIdentityClient)
-	if rec.Code != http.StatusUnauthorized {
+	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a stolen session replaced the published key: %d %s", rec.Code, rec.Body.String())
 	}
 	after, err := srv.users.Get(userID)
@@ -161,7 +161,7 @@ func TestPGPRewrapRequiresTheAccountPassword(t *testing.T) {
 
 	rec := pgpRequest(t, srv, http.MethodPost, "/api/pgp/identity/rewrap",
 		map[string]string{"wrapped": `{"v":1,"blob":"rubbish"}`}, srv.handlePGPRewrapKey)
-	if rec.Code != http.StatusUnauthorized {
+	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a session alone rewrapped the private key: %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -207,7 +207,7 @@ func TestPGPPutEnvelopeSlotRequiresTheAccountPassword(t *testing.T) {
 
 	// Session alone: refused.
 	rec := putReq(map[string]string{"envelope": `{"v":1,"blob":"recovery"}`})
-	if rec.Code != http.StatusUnauthorized {
+	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a session alone installed a wrapped-envelope slot: %d %s", rec.Code, rec.Body.String())
 	}
 	if u, err := srv.users.Get(userID); err != nil {
@@ -218,7 +218,7 @@ func TestPGPPutEnvelopeSlotRequiresTheAccountPassword(t *testing.T) {
 
 	// Wrong password: refused.
 	rec = putReq(map[string]string{"envelope": `{"v":1,"blob":"recovery"}`, "password": "not-the-password"})
-	if rec.Code != http.StatusUnauthorized {
+	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a wrong password installed a wrapped-envelope slot: %d", rec.Code)
 	}
 
@@ -278,14 +278,14 @@ func TestPGPDeleteEnvelopeSlotRequiresTheAccountPassword(t *testing.T) {
 	// Session with an empty credential: refused.
 	raw, _ := json.Marshal(map[string]string{})
 	rec = delReq(bytes.NewReader(raw))
-	if rec.Code != http.StatusUnauthorized {
+	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a session alone destroyed a wrapped-envelope slot: %d %s", rec.Code, rec.Body.String())
 	}
 
 	// Wrong password: refused.
 	raw, _ = json.Marshal(map[string]string{"password": "not-the-password"})
 	rec = delReq(bytes.NewReader(raw))
-	if rec.Code != http.StatusUnauthorized {
+	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a wrong password destroyed a wrapped-envelope slot: %d", rec.Code)
 	}
 
@@ -334,7 +334,7 @@ func TestFirstPGPIdentityNeedsStepUp(t *testing.T) {
 		"wrapped":   `{"v":1,"blob":"opaque"}`,
 		"source":    "generated",
 	})
-	if rec.Code != http.StatusUnauthorized {
+	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a session alone published a PGP identity for this account: %d %s", rec.Code, rec.Body.String())
 	}
 	if u, err := srv.users.Get(userID); err != nil {
@@ -442,4 +442,42 @@ func changePasswordAs(t *testing.T, srv *Server, userID string, payload map[stri
 	rec := httptest.NewRecorder()
 	srv.handleChangePassword(rec, req)
 	return rec
+}
+
+// A wrong step-up credential refuses the action, not the session: 401 makes the
+// web client hard-reload as if signed out, hiding the error from the user.
+func TestWrongStepUpIsForbiddenNotASessionExpiry(t *testing.T) {
+	srv := newTestServer(t)
+	userID := srv.mustBootstrapUserID(t)
+	password := stepUpPassword(t, srv, userID)
+	giveUserAnIdentity(t, srv, userID)
+	token, csrf := mintSessionForTest(srv, userID)
+	call := func(method, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/api/pgp/identity", strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
+		req.Header.Set("X-CSRF-Token", csrf)
+		w := httptest.NewRecorder()
+		srv.routes().ServeHTTP(w, req)
+		return w
+	}
+	wrong, right := `{"password":"not-the-password"}`, `{"password":"`+password+`"}`
+
+	if w := call(http.MethodDelete, wrong); w.Code != http.StatusForbidden || strings.TrimSpace(w.Body.String()) != "invalid credentials" {
+		t.Fatalf("wrong step-up: %d %q, want 403 invalid credentials", w.Code, w.Body.String())
+	}
+	if w := call(http.MethodGet, ""); w.Code != http.StatusOK {
+		t.Fatalf("the session did not survive a wrong step-up: %d", w.Code)
+	}
+	if w := call(http.MethodDelete, right); w.Code != http.StatusOK {
+		t.Fatalf("right step-up: %d %s", w.Code, w.Body.String())
+	}
+	// Every 403 still spends a strike on the step-up throttle.
+	for i := 0; i < passwordChangeMaxFailures; i++ {
+		if w := call(http.MethodDelete, wrong); w.Code != http.StatusForbidden {
+			t.Fatalf("wrong attempt %d: %d", i, w.Code)
+		}
+	}
+	if w := call(http.MethodDelete, right); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("lockout did not count 403 refusals: %d %s", w.Code, w.Body.String())
+	}
 }

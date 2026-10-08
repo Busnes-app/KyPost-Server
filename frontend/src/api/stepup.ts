@@ -44,7 +44,7 @@ const CONFIRMATION_WINDOW_MS = 5 * 60_000;
  * Walks the user through proving one action to KySignOn. Opens the popup
  * synchronously from the click so popup blockers allow it, detaches it from
  * this window before navigating, then polls until the server marks the
- * challenge verified. Cancelling, closing the popup or timing out drops the
+ * challenge verified. Cancelling or timing out drops the
  * challenge on the server.
  */
 export async function confirmSSOAction(challenge: string): Promise<void> {
@@ -91,7 +91,7 @@ export async function confirmSSOAction(challenge: string): Promise<void> {
         // Detached: the sign-in window must not be able to reach this one.
         popup.opener = null;
         proceed.disabled = true;
-        explanation.textContent = "Complete the sign-in in the KySignOn window. You can cancel here at any time.";
+        explanation.textContent = "Complete the sign-in in the KySignOn window, then come back here; the action continues on its own. Cancel stops it.";
         resolve();
       };
       dialog.showModal();
@@ -109,6 +109,8 @@ export async function confirmSSOAction(challenge: string): Promise<void> {
     if (!signIn || cancelled) throw new Error("confirmation cancelled");
     signIn.location.href = target.href;
 
+    // Never read signIn.closed: our Cross-Origin-Opener-Policy severs the popup
+    // on the cross-origin navigation, so it reports closed while the user signs in.
     const deadline = Date.now() + CONFIRMATION_WINDOW_MS;
     while (!cancelled && Date.now() < deadline) {
       const status = await getJSON<{ verified: boolean }>(endpoint);
@@ -116,7 +118,6 @@ export async function confirmSSOAction(challenge: string): Promise<void> {
         verified = true;
         return;
       }
-      if (signIn.closed) break;
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
     throw new Error("confirmation cancelled or expired");

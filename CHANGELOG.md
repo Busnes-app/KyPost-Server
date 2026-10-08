@@ -16,6 +16,10 @@ non-prerelease version.
 
 - Webmail: a user with additional native mailboxes now sees them under "Your mailboxes" in the sidebar and can read, search, file, draft and send from each, sending from that mailbox's addresses. The choice is kept for the browser tab; a mailbox that is disabled or removed falls back to the primary with a notice. An autosaved unsent message goes back to the mailbox it was written in, and is kept rather than restored elsewhere while that mailbox is unavailable. Settings → Filters says which mailbox Run rules now uses.
 
+- KySignOn confirmation of a sensitive action (export, import, PGP, backup and the rest) now works in real browsers. KyPost's Cross-Origin-Opener-Policy made the sign-in window look closed as soon as it opened KySignOn, so the confirmation was cancelled within a second and the finished sign-in was refused with "restart the action". The page now waits for the sign-in until it is confirmed, cancelled with Cancel, or five minutes pass.
+
+- A wrong password or two-factor code when confirming a sensitive action (sender blocks, mail addresses, quarantine, mail domain, relay, backup, recovery, export/import, PGP, SSO link) is now refused with 403 and shown on the page. It was a 401, which the web app took for an expired session and silently reloaded the page. Sign-in and password change keep their statuses.
+
 - Native receiving: mail to a disabled extra mailbox is now refused as an unknown recipient (`550 5.1.1`), like a released or disabled address, instead of `451 4.3.0 Receiving storage unavailable`, which made senders retry for days. Hosted pickup quarantines such mail instead of leaving it waiting.
 
 - Native mail: parallel deliveries, sends and account allocations no longer fail with a spurious "mail domain proof missing, expired or changed" error when another request refreshed the same domain proof at the same moment. Only a changed DNS challenge is refused.

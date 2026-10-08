@@ -37,7 +37,7 @@ func TestIncomingPreferenceRequiresCredentialAndAcknowledgement(t *testing.T) {
 		body   map[string]any
 		status int
 	}{
-		{"missing credential", map[string]any{"enabled": true, "acknowledgeReplacement": true, "expectedRevision": user.PGPRevision}, http.StatusUnauthorized},
+		{"missing credential", map[string]any{"enabled": true, "acknowledgeReplacement": true, "expectedRevision": user.PGPRevision}, http.StatusForbidden},
 		{"missing acknowledgement", map[string]any{"enabled": true, "password": password, "expectedRevision": user.PGPRevision}, http.StatusBadRequest},
 		{"stale revision", map[string]any{"enabled": true, "password": password, "acknowledgeReplacement": true, "expectedRevision": user.PGPRevision + 1}, http.StatusConflict},
 		{"enable", map[string]any{"enabled": true, "password": password, "acknowledgeReplacement": true, "expectedRevision": user.PGPRevision}, http.StatusOK},

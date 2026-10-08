@@ -92,10 +92,10 @@ func TestQuarantineAdminAPI(t *testing.T) {
 		if w := call("POST", path, mtoken, mcsrf, `{"password":"x"}`); w.Code != 403 {
 			t.Fatal("member changed quarantine", path, w.Code)
 		}
-		if w := call("POST", path, token, csrf, `{}`); w.Code != 401 {
+		if w := call("POST", path, token, csrf, `{}`); w.Code != 403 || !strings.Contains(w.Body.String(), "invalid credentials") {
 			t.Fatal("no step-up accepted", path, w.Code)
 		}
-		if w := call("POST", path, token, csrf, `{"password":"wrong-password-for-quarantine"}`); w.Code != 401 {
+		if w := call("POST", path, token, csrf, `{"password":"wrong-password-for-quarantine"}`); w.Code != 403 || !strings.Contains(w.Body.String(), "invalid credentials") {
 			t.Fatal("wrong step-up accepted", path, w.Code)
 		}
 	}
@@ -351,10 +351,10 @@ func TestSenderBlocksAdminAPI(t *testing.T) {
 		if w := call(c[0], c[1], mtoken, mcsrf, `{"kind":"domain","value":"evil.test","password":"x"}`); w.Code != 403 {
 			t.Fatal("member changed blocks", c, w.Code)
 		}
-		if w := call(c[0], c[1], token, csrf, `{"kind":"domain","value":"evil.test"}`); w.Code != 401 {
+		if w := call(c[0], c[1], token, csrf, `{"kind":"domain","value":"evil.test"}`); w.Code != 403 || !strings.Contains(w.Body.String(), "invalid credentials") {
 			t.Fatal("no step-up accepted", c, w.Code)
 		}
-		if w := call(c[0], c[1], token, csrf, `{"kind":"domain","value":"evil.test","password":"wrong-password-for-blocks"}`); w.Code != 401 {
+		if w := call(c[0], c[1], token, csrf, `{"kind":"domain","value":"evil.test","password":"wrong-password-for-blocks"}`); w.Code != 403 || !strings.Contains(w.Body.String(), "invalid credentials") {
 			t.Fatal("wrong step-up accepted", c, w.Code)
 		}
 	}

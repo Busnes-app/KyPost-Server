@@ -101,7 +101,9 @@ func (s *Server) confirmAccountCredentialNoRecord(w http.ResponseWriter, r *http
 		return false
 	}
 	if !confirmed {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		// 403, not 401: the session is valid and only this action is refused.
+		// Clients treat 401 as an expired session and sign the user out.
+		http.Error(w, "invalid credentials", http.StatusForbidden)
 		return false
 	}
 	return true

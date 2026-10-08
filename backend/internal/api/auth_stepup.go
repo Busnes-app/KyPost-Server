@@ -113,9 +113,11 @@ func (s *Server) handleAuthStepUp(w http.ResponseWriter, r *http.Request) {
 // in the front door and lock the door they came for. The code is consumed, as
 // one-time codes are — the alternative is a second credential that survives
 // unlimited reuse.
+//
+// Refusals are 403 for the same reason as confirmAccountCredentialNoRecord's.
 func (s *Server) confirmSecondFactor(w http.ResponseWriter, r *http.Request, u users.User, code string) bool {
 	if code == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "a two-factor code is required", "totpRequired": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "a two-factor code is required", "totpRequired": true})
 		return false
 	}
 	if u.TOTPSecretEnc == "" {
@@ -139,7 +141,7 @@ func (s *Server) confirmSecondFactor(w http.ResponseWriter, r *http.Request, u u
 		}
 		step, valid := totp.Validate(secret, code, time.Now())
 		if !valid {
-			http.Error(w, "invalid code", http.StatusUnauthorized)
+			http.Error(w, "invalid code", http.StatusForbidden)
 			return false
 		}
 		// The per-account replay guard, shared with the login challenge
@@ -155,7 +157,7 @@ func (s *Server) confirmSecondFactor(w http.ResponseWriter, r *http.Request, u u
 		// still showing the same digits) that a bare "invalid code" would send
 		// people hunting for a problem that does not exist.
 		if _, err := s.users.SetLastUsedTOTPStep(u.ID, step); err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{
+			writeJSON(w, http.StatusForbidden, map[string]any{
 				"error": "that code was already used — wait for your authenticator to show the next one",
 			})
 			return false
@@ -182,7 +184,7 @@ func (s *Server) confirmSecondFactor(w http.ResponseWriter, r *http.Request, u u
 		return false
 	}
 	if !matched {
-		http.Error(w, "invalid code", http.StatusUnauthorized)
+		http.Error(w, "invalid code", http.StatusForbidden)
 		return false
 	}
 	s.mfaLockout.recordSuccess(u.ID)

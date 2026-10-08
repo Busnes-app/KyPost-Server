@@ -92,13 +92,13 @@ func TestNativeRestoreReleaseHTTPFlag(t *testing.T) {
 }
 
 func TestNativeRestoreReleaseHTTPRefusesOperators(t *testing.T) {
-	for name, code := range map[string]int{"bad-password": 401, "kysignon-session": 403, "generic-sso-session": 403, "expired-session": 401, "linked-admin": 403, "native-account": 401} {
+	for name, code := range map[string]int{"bad-password": 403, "kysignon-session": 403, "generic-sso-session": 403, "expired-session": 401, "linked-admin": 403, "native-account": 401} {
 		t.Run(name, func(t *testing.T) {
 			f := nativeReleaseFixture(t)
-			cookie, body := f.cookie, nativeRepairBody
+			cookie, body, refusal := f.cookie, nativeRepairBody, "P6:"
 			switch name {
 			case "bad-password":
-				body = `{"password":"wrong-password-for-release"}`
+				body, refusal = `{"password":"wrong-password-for-release"}`, "invalid credentials"
 			case "kysignon-session":
 				nativeRepairSSOSession(f)
 			case "generic-sso-session":
@@ -123,7 +123,7 @@ func TestNativeRestoreReleaseHTTPRefusesOperators(t *testing.T) {
 			case "native-account":
 				cookie = f.nativeCookie
 			}
-			if w := gatedCall(t, f.s, cookie, "POST", nativeReleasePath, body, ""); w.Code != code || code == 403 && !strings.Contains(w.Body.String(), "P6:") || !releaseHeld(t, f.s) {
+			if w := gatedCall(t, f.s, cookie, "POST", nativeReleasePath, body, ""); w.Code != code || code == 403 && !strings.Contains(w.Body.String(), refusal) || !releaseHeld(t, f.s) {
 				t.Fatalf("%d %s", w.Code, w.Body.String())
 			}
 		})
