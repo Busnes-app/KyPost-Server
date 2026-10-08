@@ -186,15 +186,16 @@ body {
 }
 
 .mailbox-switcher {
-  display: grid;
-  gap: 4px;
   margin-bottom: 14px;
 }
 
-.mailbox-switcher a {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.mailbox-switcher .sidebar-section-label {
+  margin: 0;
+}
+
+.mailbox-switcher select {
+  width: 100%;
+  min-width: 0;
 }
 
 .inbox-nav-row {
@@ -4488,8 +4489,7 @@ pre {
     font-size: 0.82rem;
   }
 
-  .mobile-quick-nav,
-  .mailbox-switcher {
+  .mobile-quick-nav {
     display: flex;
     flex-wrap: nowrap;
     gap: 6px;
@@ -4500,7 +4500,6 @@ pre {
   }
 
   .mobile-quick-nav a,
-  .mailbox-switcher a,
   .mobile-settings-toggle {
     flex: 0 0 auto;
     padding: 6px 8px;
