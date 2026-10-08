@@ -185,6 +185,18 @@ body {
   background: var(--accent-soft) !important;
 }
 
+.mailbox-switcher {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.mailbox-switcher a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .inbox-nav-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -4343,7 +4355,8 @@ pre {
     font-size: 0.82rem;
   }
 
-  .mobile-quick-nav {
+  .mobile-quick-nav,
+  .mailbox-switcher {
     display: flex;
     flex-wrap: nowrap;
     gap: 6px;
@@ -4354,6 +4367,7 @@ pre {
   }
 
   .mobile-quick-nav a,
+  .mailbox-switcher a,
   .mobile-settings-toggle {
     flex: 0 0 auto;
     padding: 6px 8px;
@@ -5199,6 +5213,11 @@ pre {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.config-checkbox input {
+  flex: none;
+  margin: 0;
 }
 
 /* Busnes.app fallback before the stored palette is applied. */
