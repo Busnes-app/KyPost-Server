@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
@@ -24,6 +25,8 @@ type NativeRestoreReleaseCheck struct {
 // NativeRestoreReleaseStatus reports why a held restore can or cannot be released.
 type NativeRestoreReleaseStatus struct {
 	Held           bool                        `json:"held"`
+	Released       bool                        `json:"released"`
+	ResyncSubjects []string                    `json:"resyncSubjects,omitempty"` // active floors no newer revision has passed yet
 	Epoch          string                      `json:"epoch,omitempty"`
 	Preconditions  []NativeRestoreReleaseCheck `json:"preconditions"`
 	ReleaseEnabled bool                        `json:"releaseEnabled"`
@@ -47,8 +50,7 @@ func (s *LifecycleStore) NativeRestoreReleaseStatus(stateRoot, secretDir string,
 		st.Cloudflare = "error"
 	}
 	if _, err := os.Lstat(filepath.Join(stateRoot, NativeRestoreHoldFile)); errors.Is(err, os.ErrNotExist) {
-		st.NextSteps = append(st.NextSteps, "No native restore hold: nothing to release.")
-		return st
+		return s.releasedStatus(st, stateRoot, settings)
 	}
 	st.Held = true
 	st.Epoch, _ = nativeRecoveryEpoch(stateRoot)
@@ -137,12 +139,52 @@ func (s *LifecycleStore) NativeRestoreReleaseStatus(stateRoot, secretDir string,
 	case flagErr != nil:
 		st.NextSteps = append(st.NextSteps, "KYPOST_NATIVE_RESTORE_RELEASE must be true or false.")
 	case !enabled:
-		st.NextSteps = append(st.NextSteps, "Hold release is off (KYPOST_NATIVE_RESTORE_RELEASE); this version has no release operation.")
+		st.NextSteps = append(st.NextSteps, "Hold release is off: set KYPOST_NATIVE_RESTORE_RELEASE=true to release.")
 	default:
-		st.NextSteps = append(st.NextSteps, "KYPOST_NATIVE_RESTORE_RELEASE is set, but this version has no release operation.")
+		st.NextSteps = append(st.NextSteps, "Release within the evidence window: POST /api/admin/native-recovery/release (with Maddy, add \"confirm\": \"original-host-decommissioned\").")
 	}
 	if st.Cloudflare == "fenced" {
 		st.NextSteps = append(st.NextSteps, "After release, Cloudflare receiving stays with the other host until an explicit takeover: kypost-server receiving cloudflare takeover.")
+	}
+	return st
+}
+
+// releasedStatus reports no hold: released or never held. After a release the
+// resync step stays until every active floor has a newer directory revision.
+func (s *LifecycleStore) releasedStatus(st NativeRestoreReleaseStatus, stateRoot string, settings SSOSettings) NativeRestoreReleaseStatus {
+	record, released, err := s.NativeRestoreReleased(stateRoot)
+	switch {
+	case err != nil:
+		st.NextSteps = append(st.NextSteps, "A released marker exists but does not match the recorded release; preserve state and investigate.")
+		return st
+	case !released:
+		st.NextSteps = append(st.NextSteps, "No native restore hold: nothing to release.")
+		return st
+	}
+	st.Released, st.Epoch = true, record.Epoch
+	f, err := s.load()
+	if err != nil {
+		st.NextSteps = append(st.NextSteps, "sso-lifecycle.json is unreadable; preserve it and repair.")
+		return st
+	}
+	for k, floor := range f.ReleaseFloors {
+		issuer, subject, _ := strings.Cut(k, "\x00")
+		if floor.Active && issuer == settings.IssuerURL && f.Directory[k].Revision <= floor.Revision {
+			st.ResyncSubjects = append(st.ResyncSubjects, subject)
+		}
+	}
+	slices.Sort(st.ResyncSubjects)
+	if record.CompletedAt == nil {
+		st.NextSteps = append(st.NextSteps, "The release completion was not recorded; repeat the release request to record it.")
+	}
+	if len(st.ResyncSubjects) != 0 {
+		st.NextSteps = append(st.NextSteps, "Run a KyIdentity resync now: the listed subjects cannot be provisioned or reactivated until KyIdentity sends a newer revision.")
+	}
+	st.NextSteps = append(st.NextSteps,
+		"Restart the container: receiving starts only on restart.",
+		"Quarantined inbound and outbound mail stays quarantined; devices must pair again.")
+	if st.Cloudflare == "fenced" {
+		st.NextSteps = append(st.NextSteps, "Cloudflare receiving stays with the other host until an explicit takeover: kypost-server receiving cloudflare takeover.")
 	}
 	return st
 }

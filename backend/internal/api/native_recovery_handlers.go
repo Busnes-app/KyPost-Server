@@ -4,13 +4,22 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
+	"maps"
+	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/Busnes-app/ky-primitives/syncauth"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
-	"io"
-	"net/http"
-	"time"
 )
 
 const maxNativeRecoveryUploadBytes = 384 << 10
@@ -194,4 +203,164 @@ func (s *Server) handleNativeRecoveryEvidence(w http.ResponseWriter, r *http.Req
 	ac, _ := authFromContext(r)
 	s.logger.Info("native recovery evidence recorded; restore remains held", "actor", ac.UserID)
 	writeJSON(w, 200, map[string]any{"evidenceRecorded": true, "restoreHeld": true, "accountsRepaired": false})
+}
+
+// nativeReleaseConfirm is the Maddy confirmation (owner decision Q3): Maddy has
+// no fence, so the operator states the original host can no longer receive.
+const nativeReleaseConfirm = "original-host-decommissioned"
+
+// handleNativeRecoveryRelease releases a native restore hold (P1-P9 in
+// docs/NATIVE_RESTORE_RELEASE.md). Fences: domain -> settings -> directory ->
+// users -> session, held from the precondition checks through the rename.
+func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	enabled, err := config.NativeRestoreReleaseEnabled()
+	if err != nil {
+		http.Error(w, "KYPOST_NATIVE_RESTORE_RELEASE must be true or false", http.StatusConflict)
+		return
+	}
+	if !enabled {
+		http.Error(w, "native restore hold release is off; set KYPOST_NATIVE_RESTORE_RELEASE=true to enable it", http.StatusNotFound)
+		return
+	}
+	var request struct {
+		nativeRecoveryCredential
+		Confirm string `json:"confirm"`
+	}
+	if !decodeNativeRecoveryRequest(w, r, 8192, &request) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
+	defer cancel()
+	r = r.WithContext(ctx)
+	// P6 (owner decision Q2): only a password session of an unlinked local
+	// administrator, checked before step-up so no SSO challenge is minted. A
+	// linked one could be deactivated by the release itself (decision a).
+	const p6 = "P6: hold release requires a password session of an active local administrator without an SSO link"
+	if sess, _, ok := s.sessionOf(r); ok && (sess.SSO.Issuer != "" || sess.SSOKySignOn) {
+		http.Error(w, p6, http.StatusForbidden)
+		return
+	}
+	operator, ok := s.confirmNativeRecoveryOperator(w, r, request.nativeRecoveryCredential)
+	if !ok {
+		return
+	}
+	actor := operator.actor
+	if operator.session.SSO.Issuer != "" || operator.session.SSOKySignOn || actor.SSOSub != "" || actor.PasswordHash == "" {
+		http.Error(w, p6, http.StatusForbidden)
+		return
+	}
+	if s.backup == nil {
+		http.Error(w, "audit log unavailable: the state store did not open; the hold stays", http.StatusServiceUnavailable)
+		return
+	}
+	refuse := func(reasons ...string) {
+		s.logger.Info("native restore hold release refused; hold stays", "actor", actor.ID, "reasons", strings.Join(reasons, "; "))
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "release refused; the hold stays", "reasons": reasons, "restoreHeld": true})
+	}
+	if record, released, err := s.ssoLifecycle.NativeRestoreReleased(s.stateDir); err != nil {
+		refuse("a released marker exists but does not match the recorded release")
+		return
+	} else if released {
+		s.completeNativeRelease(w, actor.ID, record, true, nil)
+		return
+	}
+	// Q3: detected as receiving does: the supervised flag or a rendered config.
+	if _, err := os.Lstat(filepath.Join(s.configDir, "receiving.conf")); (os.Getenv("KYPOST_NATIVE_RECEIVER") == "true" || err == nil) && request.Confirm != nativeReleaseConfirm {
+		refuse(`the bundled receiver (Maddy) has no fence: stop the original host's receiver and send "confirm": "` + nativeReleaseConfirm + `"`)
+		return
+	}
+	// P8: fresh DNS proof before any fence; DNS never runs under the directory lock.
+	set, err := s.nativeDomains.ReadSet()
+	if err != nil {
+		refuse("P8: mail domain set is unreadable")
+		return
+	}
+	var proofs []sso.NativeDomain
+	for _, name := range slices.Sorted(maps.Keys(set.Domains)) {
+		if proof, err := s.nativeDomains.VerifyDomain(ctx, name); err == nil {
+			proofs = append(proofs, proof)
+		}
+	}
+	var plan *sso.NativeRestoreReleasePlan
+	var refused *sso.NativeRestoreRefusedError
+	err = func() error {
+		release, err := fsutil.LockFileContext(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
+		if err != nil {
+			return err
+		}
+		defer release()
+		current, err := s.nativeDomains.ReadSet()
+		if err != nil || !slices.ContainsFunc(proofs, current.CurrentProof) {
+			return &sso.NativeRestoreRefusedError{Reasons: []string{"P8: no configured mail domain has a fresh DNS proof; publish the challenge record and retry"}}
+		}
+		return s.ssoStore.WithCurrentSettings(ctx, func(settings sso.SSOSettings) error {
+			if settings != operator.settings {
+				return sso.ErrNativeRecovery
+			}
+			release, err := s.ssoLifecycle.LockDirectoryContext(ctx)
+			if err != nil {
+				return err
+			}
+			defer release()
+			return s.users.DeactivateForRestoreRelease(ctx, func(all []users.User) ([]string, func(), error) {
+				release, err := s.lockNativeRecoveryOperator(operator, settings, all)
+				if err != nil {
+					return nil, nil, err
+				}
+				if plan, err = s.ssoLifecycle.PlanNativeRestoreReleaseHeld(s.stateDir, settings, []byte(s.pairingSecret), all, actor.ID, time.Now().UTC()); err != nil {
+					return nil, release, err
+				}
+				if err = s.backup.Audit("admin.native_restore_release", actor.ID, plan.Record.Epoch, "started", map[string]any{"deactivate": len(plan.Deactivate)}); err != nil {
+					return nil, release, err
+				}
+				if err = plan.RecordIntent(ctx); err == nil {
+					err = s.releaseHit("intent")
+				}
+				return plan.Deactivate, release, err
+			}, func() error { return plan.Commit(ctx, s.nativeReleaseHit) })
+		})
+	}()
+	switch {
+	case errors.As(err, &refused):
+		refuse(refused.Reasons...)
+		return
+	case err != nil && plan == nil:
+		refuse("current authority changed or is unreadable; sign in again and retry")
+		return
+	case err != nil:
+		s.logger.Error("native restore hold release failed after its intent; hold stays", "actor", actor.ID, "correlation_id", plan.Record.Epoch)
+		_ = s.backup.Audit("admin.native_restore_release", actor.ID, plan.Record.Epoch, "failed", nil)
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "release interrupted; the hold stays. Request a new challenge, import fresh evidence, repair and release again", "restoreHeld": true})
+		return
+	}
+	for _, id := range plan.Deactivate {
+		s.revokeUserSessions(id, "")
+	}
+	s.completeNativeRelease(w, actor.ID, plan.Record, false, plan.Deactivate)
+}
+
+func (s *Server) releaseHit(point string) error {
+	if s.nativeReleaseHit == nil {
+		return nil
+	}
+	return s.nativeReleaseHit(point)
+}
+
+// completeNativeRelease audits completion, then records it; a retry after the
+// rename lands here too and only records what is missing.
+func (s *Server) completeNativeRelease(w http.ResponseWriter, actor string, record sso.NativeRestoreReleaseRecord, already bool, deactivated []string) {
+	if record.CompletedAt == nil {
+		if err := s.backup.Audit("admin.native_restore_release", actor, record.Epoch, "completed", map[string]any{"deactivated": len(deactivated)}); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "the hold is released but the completion audit failed; repeat the request to record it", "released": true})
+			return
+		}
+		if err := s.ssoLifecycle.CompleteNativeRestoreRelease(s.stateDir); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "the hold is released but its completion was not recorded; repeat the request", "released": true})
+			return
+		}
+	}
+	s.logger.Info("native restore hold released", "actor", actor, "correlation_id", record.Epoch, "already_released", strconv.FormatBool(already))
+	writeJSON(w, http.StatusOK, map[string]any{"released": true, "alreadyReleased": already, "epoch": record.Epoch, "deactivatedAccounts": len(deactivated),
+		"nextSteps": []string{"Run a KyIdentity resync now.", "Restart the container to start receiving.", "Cloudflare receiving stays fenced until kypost-server receiving cloudflare takeover."}})
 }

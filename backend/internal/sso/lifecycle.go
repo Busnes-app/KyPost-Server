@@ -67,6 +67,7 @@ type lifecycleFile struct {
 	RecoveryReceipt               *nativeRecoveryReceipt                 `json:"recoveryReceipt,omitempty"`
 	RecoveryFloors                map[string]int64                       `json:"recoveryFloors,omitempty"`
 	ReleaseFloors                 map[string]NativeReleaseFloor          `json:"releaseFloors,omitempty"`
+	RestoreRelease                *NativeRestoreReleaseRecord            `json:"restoreRelease,omitempty"`
 	NativeProvisioningInitialized bool                                   `json:"nativeProvisioningInitialized,omitempty"`
 	Logouts                       map[string]LogoutEvent                 `json:"logouts"`
 	Directory                     map[string]DirectoryState              `json:"directory"`

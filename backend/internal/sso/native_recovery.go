@@ -66,7 +66,11 @@ type nativeRecoveryReceipt struct {
 
 func nativeRecoveryIdentifier(s string) bool { return recoveryIdentifierPattern.MatchString(s) }
 func nativeRecoveryEpoch(root string) (string, error) {
-	path := filepath.Join(root, NativeRestoreHoldFile)
+	return readRestoreEpoch(filepath.Join(root, NativeRestoreHoldFile))
+}
+
+// readRestoreEpoch reads a hold or released marker; both share one format.
+func readRestoreEpoch(path string) (string, error) {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 4096 {
 		return "", ErrNativeRecovery
@@ -260,6 +264,7 @@ func (s *LifecycleStore) BeginNativeRecoveryHeld(ctx context.Context, root strin
 	f.RecoveryChallenge = &c
 	f.RecoveryReceipt = nil
 	f.RecoveryRepair = nil
+	f.RestoreRelease = nil // an interrupted release needs this fresh evidence
 	if err = ctx.Err(); err != nil {
 		return NativeRecoveryChallenge{}, err
 	}

@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
@@ -103,4 +104,55 @@ func (s *Store) RepairNativeAccounts(ctx context.Context, issuer string, repairs
 		return err
 	}
 	return s.writeFileUnlocked(f)
+}
+
+// DeactivateForRestoreRelease runs one native restore release under the users
+// fences. prepare sees the current accounts, must durably record the release
+// intent and returns the non-native accounts to deactivate plus a release for
+// commit fences it holds. The deactivation is written before commit runs, so a
+// failed commit leaves them deactivated: it never activates anything.
+func (s *Store) DeactivateForRestoreRelease(ctx context.Context, prepare func(current []User) (ids []string, release func(), err error), commit func() error) error {
+	if err := s.lockContext(ctx); err != nil {
+		return err
+	}
+	defer s.mu.Unlock()
+	release, err := fsutil.LockFileContext(ctx, s.path)
+	if err != nil {
+		return err
+	}
+	defer release()
+	f, err := s.readFileUnlocked()
+	if err != nil {
+		return err
+	}
+	if f.Version != 1 {
+		return errors.New("unsupported account authority version")
+	}
+	ids, releaseCommit, err := prepare(append([]User(nil), f.Users...))
+	if releaseCommit != nil {
+		defer releaseCommit()
+	}
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, id := range ids {
+		i := slices.IndexFunc(f.Users, func(u User) bool { return u.ID == id })
+		if i < 0 || !f.Users[i].Active || f.Users[i].NativeMailboxIssuer != "" || f.Users[i].NativeMailboxSource != "" {
+			return ErrNativeAccountConflict
+		}
+		f.Users[i].Active, f.Users[i].DeactivatedAt, f.Users[i].UpdatedAt = false, now, now
+	}
+	if FirstAdminFrom(f.Users).ID == "" {
+		return ErrLastActiveAdmin
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if len(ids) != 0 {
+		if err = s.writeFileUnlocked(f); err != nil {
+			return err
+		}
+	}
+	return commit()
 }
