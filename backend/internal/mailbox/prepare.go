@@ -244,7 +244,11 @@ func openSQLite(path, query string) (*sql.DB, error) {
 	return db, nil
 }
 
-func openReadOnly(path string) (*sql.DB, error) { return openSQLite(path, "mode=ro") }
+// Another process's open or close of the same idle database holds its lock
+// briefly; wait as writers do instead of reporting the mailbox unprepared.
+func openReadOnly(path string) (*sql.DB, error) {
+	return openSQLite(path, "mode=ro&_pragma=busy_timeout(5000)")
+}
 
 // ReadUsage reads the usage counters of the mailbox database in dir without
 // a writer, for admission and display.
