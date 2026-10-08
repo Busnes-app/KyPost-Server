@@ -24,7 +24,7 @@ const user: AuthState = { authenticated: true, userId: "user-1", username: "me",
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const posts = () => fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
 
-function view(auth = user, entry = "/settings/mail?tab=export") {
+function view(auth = user, entry = "/settings/security?tab=export") {
   return render(<MemoryRouter initialEntries={[entry]}><AuthContext.Provider value={auth}><MailExport /></AuthContext.Provider></MemoryRouter>);
 }
 beforeEach(() => {
@@ -103,19 +103,19 @@ it("explains export is for KyPost-hosted mailboxes when there are none", async (
 });
 
 it("explains a refused download and retries a busy one with the kept link", async () => {
-  view(user, `/settings/mail?tab=export&export=busy&retry=${token}`);
+  view(user, `/settings/security?tab=export&export=busy&retry=${token}`);
   expect((await screen.findByRole("alert")).textContent).toMatch(/Another export is still running/);
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(assign).toHaveBeenCalledWith(`/api/export/${token}`);
   cleanup();
-  view(user, "/settings/mail?tab=export&export=busy&retry=../../admin");
+  view(user, "/settings/security?tab=export&export=busy&retry=../../admin");
   await screen.findByRole("alert");
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   cleanup();
-  view(user, "/settings/mail?tab=export&export=proxy");
+  view(user, "/settings/security?tab=export&export=proxy");
   expect((await screen.findByRole("alert")).textContent).toMatch(/proxy_http_version 1.1.*EML zip/);
   cleanup();
-  view(user, `/settings/mail?tab=export&export=expired&retry=${token}`);
+  view(user, `/settings/security?tab=export&export=expired&retry=${token}`);
   expect((await screen.findByRole("alert")).textContent).toMatch(/expired or was already used/);
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
 });

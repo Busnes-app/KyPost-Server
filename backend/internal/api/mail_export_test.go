@@ -112,7 +112,7 @@ func TestMailExport(t *testing.T) {
 	}
 	// A refused download sends the browser back to the export page.
 	bounced := func(w *httptest.ResponseRecorder, code string) bool {
-		return w.Code == http.StatusSeeOther && w.Header().Get("Location") == "/settings/mail?tab=export&export="+code
+		return w.Code == http.StatusSeeOther && w.Header().Get("Location") == "/settings/security?tab=export&export="+code
 	}
 	adminCall := func(body string) *httptest.ResponseRecorder {
 		return call("POST", "/api/admin/mailboxes", adm, body, nil)
@@ -379,7 +379,7 @@ func TestMailExport(t *testing.T) {
 	defer conn.Close()
 	fmt.Fprintf(conn, "GET %s HTTP/1.0\r\nHost: kypost.test\r\nCookie: kypost_session=%s\r\n\r\n", url, me.token)
 	resp, err = http.ReadResponse(bufio.NewReader(conn), nil)
-	if err != nil || resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/settings/mail?tab=export&export=proxy" || len(srv.exports) != 1 {
+	if err != nil || resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/settings/security?tab=export&export=proxy" || len(srv.exports) != 1 {
 		t.Fatal("HTTP/1.0 mbox download", err, resp, len(srv.exports))
 	}
 	if resp = get(url); resp.StatusCode != 200 {

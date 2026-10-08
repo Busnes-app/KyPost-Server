@@ -7,6 +7,8 @@ describe("resolveSecurityTab", () => {
     expect(resolveSecurityTab("devices")).toBe("devices");
     expect(resolveSecurityTab("carddav")).toBe("carddav");
     expect(resolveSecurityTab("mail")).toBe("mail");
+    expect(resolveSecurityTab("import")).toBe("import");
+    expect(resolveSecurityTab("export")).toBe("export");
   });
 
   it("falls back to sign-in for a missing or unrecognised tab", () => {
