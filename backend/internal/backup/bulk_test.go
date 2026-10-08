@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
@@ -193,6 +194,10 @@ func TestBulkBackupLargeMailboxRoundTrip(t *testing.T) {
 	if res.Checks[2].Name != "bulk:restore" || !res.Checks[2].Passed {
 		t.Fatalf("drill skipped the bulk restore: %+v", res.Checks)
 	}
+	// Only a delivered capsule's snapshot is shown; the drill's is not.
+	if after, err := f.s.Status(); err != nil || after.LastBulk.Snapshot != m.Snapshot {
+		t.Fatal("drill replaced the delivered snapshot in status", err)
+	}
 	emptyDir(t, filepath.Join(f.s.dirs.State, scratchDirName))
 }
 
@@ -245,10 +250,15 @@ func TestBulkRestoreRefusals(t *testing.T) {
 		setup func(dir string)
 		want  string
 	}{
-		"no repository":   {"", nil, "KYPOST_BULK_BACKUP_REPOSITORY"},
-		"absent snapshot": {otherRepo, nil, "restic restore failed"},
-		"tampered packs":  {tampered, nil, "restic restore failed"},
-		"wrong digest":    {repo, func(d string) { rewrite(d, func(m *BulkManifest) { m.Files[1].SHA256 = strings.Repeat("0", 64) }) }, "does not match"},
+		"no repository":    {"", nil, "KYPOST_BULK_BACKUP_REPOSITORY"},
+		"other repository": {otherRepo, nil, "is not the"},
+		"absent snapshot":  {otherRepo, func(d string) { _ = os.Remove(filepath.Join(d, "private", bulkRepoIDName)) }, "restic restore failed"},
+		"trailing data": {repo, func(d string) {
+			raw, _ := os.ReadFile(filepath.Join(d, bulkManifestPath))
+			_ = os.WriteFile(filepath.Join(d, bulkManifestPath), append(raw, []byte(" {}")...), 0600)
+		}, "trailing"},
+		"tampered packs": {tampered, nil, "restic restore failed"},
+		"wrong digest":   {repo, func(d string) { rewrite(d, func(m *BulkManifest) { m.Files[1].SHA256 = strings.Repeat("0", 64) }) }, "does not match"},
 		"missing file": {repo, func(d string) {
 			rewrite(d, func(m *BulkManifest) {
 				m.Files = append(m.Files, BulkFile{"state/mailboxes/x/mailbox/mailbox.db", m.Files[0].SHA256, 1})
@@ -303,11 +313,12 @@ func TestBulkPasswordNeverInArgv(t *testing.T) {
 	bin := resticForTest(t)
 	logPath := filepath.Join(t.TempDir(), "argv.log")
 	wrapper := filepath.Join(t.TempDir(), "restic")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + logPath + "'\nexec '" + bin + "' \"$@\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + logPath + "'\nenv | sed 's/=.*//; s/^/ENV /' >> '" + logPath + "'\nexec '" + bin + "' \"$@\"\n"
 	if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("RESTIC_PASSWORD", "operator-shell-password")
+	t.Setenv("KYPOST_PROBE_SECRET", "must-not-reach-restic")
 	t.Setenv("RESTIC_REPOSITORY", t.TempDir())
 	t.Setenv("PATH", filepath.Dir(wrapper)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	f := bulkService(t, 0)
@@ -323,8 +334,17 @@ func TestBulkPasswordNeverInArgv(t *testing.T) {
 	if err != nil || !bytes.Contains(argv, []byte(" init")) || !bytes.Contains(argv, []byte(" backup ")) || !bytes.Contains(argv, []byte(" restore ")) || !bytes.Contains(argv, []byte("--verify")) {
 		t.Fatalf("wrapper did not see every call: %s %v", argv, err)
 	}
-	if bytes.Contains(argv, []byte(hex.EncodeToString(key))) || bytes.Contains(argv, []byte(base64.StdEncoding.EncodeToString(key))) {
-		t.Fatal("restic password in argv")
+	if bytes.Contains(argv, []byte(hex.EncodeToString(key))) || bytes.Contains(argv, []byte(base64.StdEncoding.EncodeToString(key))) || bytes.Contains(argv, []byte(f.s.cfg.BulkRepository)) {
+		t.Fatal("restic password or repository in argv")
+	}
+	if !bytes.Contains(argv, []byte("--no-lock restore")) {
+		t.Fatal("restore takes a lock; a read-only repository mount would fail")
+	}
+	for _, line := range strings.Split(string(argv), "\n") {
+		name, ok := strings.CutPrefix(line, "ENV ")
+		if ok && (strings.HasPrefix(name, "KYPOST_") || strings.HasPrefix(name, "RESTIC_") && name != "RESTIC_PASSWORD" && name != "RESTIC_REPOSITORY") {
+			t.Fatalf("restic inherited %s", name)
+		}
 	}
 }
 
@@ -346,7 +366,11 @@ func TestBulkBackupFailures(t *testing.T) {
 	}
 	// A restic failure fails the whole backup.
 	bin := s.cfg.ResticBinary
-	s.cfg.ResticBinary = "/bin/false"
+	failing := filepath.Join(t.TempDir(), "restic")
+	if err := os.WriteFile(failing, []byte("#!/bin/sh\ncase \"$*\" in *backup*) exit 1;; esac\nexec '"+bin+"' \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.ResticBinary = failing
 	check("restic backup failed")
 	s.cfg.ResticBinary = bin
 	// An existing repository's key is never replaced.
@@ -362,6 +386,22 @@ func TestBulkBackupFailures(t *testing.T) {
 	if err := os.WriteFile(keyPath, keyBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
+	// A key means a repository existed: an empty mountpoint is never initialized.
+	repo := s.cfg.BulkRepository
+	s.cfg.BulkRepository = t.TempDir()
+	check("mount the repository")
+	if entries, _ := os.ReadDir(s.cfg.BulkRepository); len(entries) != 0 {
+		t.Fatal("empty mountpoint was initialized")
+	}
+	// Another repository the same key opens is not the recorded one.
+	other := filepath.Join(t.TempDir(), "other")
+	key, _ := cryptutil.LoadKey(keyPath)
+	if err := runRestic(ctx, bin, other, key, "", nil, "init"); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.BulkRepository = other
+	check("is not the recorded")
+	s.cfg.BulkRepository = repo
 	// A non-empty directory that is not a restic repository is refused.
 	s.cfg.BulkRepository = t.TempDir()
 	if err := os.WriteFile(filepath.Join(s.cfg.BulkRepository, "notes.txt"), []byte("x"), 0600); err != nil {
@@ -372,7 +412,11 @@ func TestBulkBackupFailures(t *testing.T) {
 
 func TestBulkRepositoryOutsideDataRoots(t *testing.T) {
 	d := fixtureDirs(t)
-	for _, repo := range []string{filepath.Join(d.State, "repo"), d.Secret, filepath.Dir(d.Config)} {
+	link := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(d.State, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, repo := range []string{filepath.Join(d.State, "repo"), d.Secret, filepath.Dir(d.Config), filepath.Join(link, "repo")} {
 		bc := config.BackupConfig{Keep: 1, BulkRepository: repo}
 		if _, err := New(d, bc, nil, "t"); err == nil {
 			t.Fatalf("repository %s overlapping data roots accepted", repo)
@@ -381,5 +425,170 @@ func TestBulkRepositoryOutsideDataRoots(t *testing.T) {
 	local := t.TempDir()
 	if _, err := New(d, config.BackupConfig{Keep: 1, Dir: local, BulkRepository: filepath.Join(local, "repo")}, nil, "t"); err == nil {
 		t.Fatal("repository inside the local capsule directory accepted")
+	}
+	if _, err := New(d, config.BackupConfig{Keep: 1, ScratchDir: filepath.Join(d.State, "scratch")}, nil, "t"); err == nil {
+		t.Fatal("scratch directory inside STATE_DIR accepted")
+	}
+}
+
+// Every run backs up from one path under one host, so restic retention groups
+// them as one series and --keep-last 1 really removes the older snapshot.
+func TestBulkRetentionGroupsRuns(t *testing.T) {
+	ctx := context.Background()
+	f := bulkService(t, 0)
+	if _, err := f.s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	key, err := cryptutil.LoadKey(filepath.Join(f.s.dirs.Secret, bulkKeyName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := func() int {
+		var out limitedBuffer
+		if err := runRestic(ctx, f.s.cfg.ResticBinary, f.s.cfg.BulkRepository, key, "", &out, "snapshots", "--json", "--tag", "kypost-mail"); err != nil {
+			t.Fatal(err)
+		}
+		var snaps []json.RawMessage
+		if err := json.Unmarshal(out.Bytes(), &snaps); err != nil {
+			t.Fatal(err)
+		}
+		return len(snaps)
+	}
+	if n := count(); n != 2 {
+		t.Fatalf("%d snapshots, want 2", n)
+	}
+	if err := runRestic(ctx, f.s.cfg.ResticBinary, f.s.cfg.BulkRepository, key, "", nil, "forget", "--tag", "kypost-mail", "--keep-last", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(); n != 1 {
+		t.Fatalf("forget --keep-last 1 left %d snapshots", n)
+	}
+}
+
+// A killed run's plaintext copies are swept at the next collection, inside the
+// dedicated child of a configured scratch directory only.
+func TestBulkSweepsStaleScratch(t *testing.T) {
+	f := bulkService(t, 0)
+	f.s.cfg.ScratchDir = t.TempDir()
+	root := f.s.scratchRoot()
+	stale := []string{"bulk/mail/state/receiving/ingress.db", "snapshot-1/x.db", "bulk-restore-2/state/users/u/mailbox/mailbox.db", "recoveryclient-drill-3/state/state.db"}
+	for _, rel := range append(stale, "../operator-file") {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("plaintext"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.s.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	emptyDir(t, root)
+	if _, err := os.Stat(filepath.Join(f.s.cfg.ScratchDir, "operator-file")); err != nil {
+		t.Fatal("sweep touched a file it does not own", err)
+	}
+}
+
+func TestBulkRefusesWithoutScratchSpace(t *testing.T) {
+	f := bulkService(t, 0)
+	defer func(orig func(string) (uint64, uint64, error)) { diskSpace = orig }(diskSpace)
+	// A 10 GiB reserve (10% of 100 GiB) plus the mail exceeds 6 GiB free.
+	diskSpace = func(string) (uint64, uint64, error) { return 6 << 30, 100 << 30, nil }
+	_, err := f.s.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "MiB short") || !strings.Contains(err.Error(), "KYPOST_BACKUP_SCRATCH_DIR") {
+		t.Fatal("staging without space accepted", err)
+	}
+	emptyDir(t, f.s.scratchRoot())
+	diskSpace = func(string) (uint64, uint64, error) { return 20 << 30, 100 << 30, nil }
+	if _, err := f.s.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBulkRunBudgetGrowsWithMail(t *testing.T) {
+	s := validService(t)
+	if s.RunBudget() != 16*time.Minute {
+		t.Fatal("budget without bulk", s.RunBudget())
+	}
+	s.cfg.BulkRepository = filepath.Join(t.TempDir(), "repo")
+	db := filepath.Join(s.dirs.State, "users", "u1", "mailbox", "mailbox.db")
+	if err := os.MkdirAll(filepath.Dir(db), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(db, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(db, 4<<30); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.RunBudget(); got != 28*time.Minute {
+		t.Fatalf("4 GiB budget %s, want 28m", got)
+	}
+}
+
+func TestBulkRestRepositoryRedacted(t *testing.T) {
+	repo := "rest:https://kypost:hunter2@backup.example:8000/kypost"
+	s := openService(t, fixtureDirs(t), config.BackupConfig{BulkRepository: repo})
+	st, err := s.Status()
+	if err != nil || strings.Contains(st.BulkRepo, "hunter2") || !strings.Contains(st.BulkRepo, "backup.example") {
+		t.Fatal(st.BulkRepo, err)
+	}
+	fake := filepath.Join(t.TempDir(), "restic")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho \"Fatal: unable to open $RESTIC_REPOSITORY\" >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	err = runRestic(context.Background(), fake, repo, make([]byte, 32), "", nil, "init")
+	if err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), "backup.example") {
+		t.Fatal("restic error not redacted", err)
+	}
+}
+
+// Only state/** mail databases go to restic, matching what restore accepts.
+func TestBulkStagesOnlyStateDatabases(t *testing.T) {
+	f := bulkService(t, 0)
+	db, err := sql.Open("sqlite", filepath.Join(f.s.dirs.Config, "mailbox.db"))
+	if err == nil {
+		_, err = db.Exec(`CREATE TABLE t (x)`)
+		_ = db.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := f.s.Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inCapsule := false
+	for _, file := range p.Files {
+		inCapsule = inCapsule || file.Path == "config/mailbox.db"
+		if file.Path == bulkManifestPath {
+			var m BulkManifest
+			if err := json.Unmarshal(file.Data, &m); err != nil {
+				t.Fatal(err)
+			}
+			for _, b := range m.Files {
+				if !strings.HasPrefix(b.Path, "state/") {
+					t.Fatal("staged outside state:", b.Path)
+				}
+			}
+		}
+	}
+	if !inCapsule {
+		t.Fatal("non-state database dropped")
+	}
+}
+
+// A key nobody's repository accepted is not left behind to block the next init.
+func TestBulkInitFailureLeavesNoKey(t *testing.T) {
+	s := validService(t)
+	s.cfg.BulkRepository = filepath.Join(t.TempDir(), "repo")
+	s.cfg.ResticBinary = "/bin/false"
+	pinTestKey(t, s)
+	if _, err := s.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "restic init failed") {
+		t.Fatal("failed init accepted", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.dirs.Secret, bulkKeyName)); !os.IsNotExist(err) {
+		t.Fatal("failed init left its key", err)
 	}
 }

@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,16 +24,20 @@ type BackupConfig struct {
 	Dir                  string
 	Keep                 int
 	AllowPrivateRecovery bool
-	// BulkRepository is the restic repository for mail databases; empty keeps them in the capsule.
+	// BulkRepository is the restic repository for mail databases: an absolute
+	// path or rest:https://. Empty keeps them in the capsule.
 	BulkRepository string
 	ResticBinary   string
+	// ScratchDir holds backup scratch instead of STATE_DIR/backup-scratch.
+	ScratchDir string
 }
 
 // LoadBackupConfig reads KYPOST_BACKUP_DEPOSIT_INTERVAL (default 24h; 0 off;
 // otherwise within the library's [MinInterval, MaxInterval]), KYPOST_BACKUP_DIR
 // (absolute, empty off), KYPOST_BACKUP_KEEP (default 7, at least 1) and
 // KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY (true/false), KYPOST_BULK_BACKUP_REPOSITORY
-// (absolute, empty off) and KYPOST_RESTIC_BINARY (default "restic").
+// (absolute path or rest:https:// URL, empty off), KYPOST_RESTIC_BINARY (default
+// "restic") and KYPOST_BACKUP_SCRATCH_DIR (absolute, empty for STATE_DIR).
 func LoadBackupConfig() (BackupConfig, error) {
 	c := BackupConfig{DepositInterval: 24 * time.Hour, Keep: DefaultBackupKeep, ResticBinary: "restic"}
 	if raw := strings.TrimSpace(os.Getenv("KYPOST_BACKUP_DEPOSIT_INTERVAL")); raw != "" {
@@ -65,10 +71,24 @@ func LoadBackupConfig() (BackupConfig, error) {
 		c.AllowPrivateRecovery = enabled
 	}
 	if repo := strings.TrimSpace(os.Getenv("KYPOST_BULK_BACKUP_REPOSITORY")); repo != "" {
-		if !filepath.IsAbs(repo) {
-			return c, fmt.Errorf("KYPOST_BULK_BACKUP_REPOSITORY %q must be an absolute path", repo)
+		// Never echo the value: a rest: URL may carry credentials.
+		if rest, ok := strings.CutPrefix(repo, "rest:"); ok {
+			u, err := url.Parse(rest)
+			if err != nil || u.Scheme != "https" || u.Host == "" {
+				return c, errors.New("KYPOST_BULK_BACKUP_REPOSITORY must be an absolute path or a rest:https:// URL")
+			}
+			c.BulkRepository = repo
+		} else if !filepath.IsAbs(repo) {
+			return c, errors.New("KYPOST_BULK_BACKUP_REPOSITORY must be an absolute path or a rest:https:// URL")
+		} else {
+			c.BulkRepository = filepath.Clean(repo)
 		}
-		c.BulkRepository = filepath.Clean(repo)
+	}
+	if dir := strings.TrimSpace(os.Getenv("KYPOST_BACKUP_SCRATCH_DIR")); dir != "" {
+		if !filepath.IsAbs(dir) {
+			return c, fmt.Errorf("KYPOST_BACKUP_SCRATCH_DIR %q must be an absolute path", dir)
+		}
+		c.ScratchDir = filepath.Clean(dir)
 	}
 	if bin := strings.TrimSpace(os.Getenv("KYPOST_RESTIC_BINARY")); bin != "" {
 		c.ResticBinary = bin

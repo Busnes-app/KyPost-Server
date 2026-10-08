@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,5 +123,32 @@ func TestRestoreCLIRefusesBulkWithoutRepository(t *testing.T) {
 	}
 	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("refused restore published destination", err)
+	}
+}
+
+type unreadable struct{ read bool }
+
+func (u *unreadable) Read([]byte) (int, error) { u.read = true; return 0, io.EOF }
+
+// The capsule's clear recipe lets a bulk restore without its repository fail
+// before custodians type any share.
+func TestRestoreCLIRefusesBulkBeforeShares(t *testing.T) {
+	t.Setenv("KYPOST_BULK_BACKUP_REPOSITORY", "")
+	key, err := recoverykey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _, err := recoveryclient.Seal(recoveryclient.Payload{ServiceName: backup.AppName, AppVersion: "test", Files: []recoveryclient.File{{Path: "config/x", Data: []byte("x"), Mode: 0600}}, VerificationRecipe: map[string]any{"bulk": "restic-mail-snapshot"}}, recoveryclient.RecoveryKey{Public: key.Public(), Threshold: 2, TotalShares: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "bulk.kycap")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	stdin := &unreadable{}
+	err = runRestore([]string{path, filepath.Join(t.TempDir(), "restore")}, stdin, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "before entering shares") || stdin.read {
+		t.Fatal("bulk restore read shares without a repository", err)
 	}
 }

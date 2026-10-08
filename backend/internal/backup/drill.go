@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/url"
 	"os"
@@ -26,11 +27,14 @@ func (s *Service) Drill(ctx context.Context) (*recoveryclient.DrillResult, error
 	if err != nil {
 		return nil, err
 	}
-	return recoveryclient.Drill(ctx, filepath.Join(s.dirs.State, scratchDirName), p, func(dir string, opened capsule.Manifest) []recoveryclient.Check {
+	return recoveryclient.Drill(ctx, s.scratchRoot(), p, func(dir string, opened capsule.Manifest) []recoveryclient.Check {
 		// The bulk snapshot round-trips through the same restore an operator runs.
 		bulk := []recoveryclient.Check{}
 		if _, err := os.Stat(filepath.Join(dir, bulkManifestPath)); err == nil {
 			err = RestoreBulk(ctx, dir, s.cfg.BulkRepository, s.cfg.ResticBinary)
+			if recipe, _ := opened.VerificationRecipe.(map[string]any); err == nil && recipe["bulk"] != bulkRecipe {
+				err = errors.New("recipe does not declare the bulk snapshot")
+			}
 			check := recoveryclient.Check{Name: "bulk:restore", Passed: err == nil, Message: "mail snapshot restored and every digest matched"}
 			if err != nil {
 				check.Message = recoveryclient.AuditSafe(err.Error())

@@ -55,9 +55,13 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	if _, err := cryptutil.LoadKey(filepath.Join(s.dirs.Secret, "totp-secret.key")); err != nil {
 		return empty, fmt.Errorf("required TOTP master key: %w", err)
 	}
-	scratchRoot := filepath.Join(s.dirs.State, scratchDirName)
+	s.collectedBulk = nil
+	scratchRoot := s.scratchRoot()
 	if err := os.MkdirAll(scratchRoot, 0700); err != nil {
 		return empty, err
+	}
+	if err := sweepScratch(scratchRoot); err != nil {
+		return empty, fmt.Errorf("sweep stale backup scratch: %w", err)
 	}
 	scratch, err := os.MkdirTemp(scratchRoot, "snapshot-")
 	if err != nil {
@@ -68,10 +72,21 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	var bulk *bulkStage
 	var bulkKey []byte
 	if s.cfg.BulkRepository != "" {
+		need, err := s.liveMailBytes()
+		if err == nil {
+			err = checkScratchSpace(scratchRoot, need)
+		}
+		if err != nil {
+			return empty, err
+		}
 		if bulkKey, err = s.bulkKey(ctx); err != nil {
 			return empty, fmt.Errorf("bulk backup repository: %w", err)
 		}
-		bulk = &bulkStage{dir: filepath.Join(scratch, "bulk")}
+		bulk = &bulkStage{dir: filepath.Join(scratchRoot, bulkDirName)}
+		if err := os.Mkdir(bulk.dir, 0700); err != nil {
+			return empty, err
+		}
+		defer os.RemoveAll(bulk.dir)
 	}
 	files := []recoveryclient.File{}
 	var total int64
@@ -168,7 +183,7 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 					slog.Warn("backup skipped sender evidence", "actor", "backup", "task_id", "backup", "action", "collect", "target", name, "result", "skipped-oversized")
 					return nil
 				}
-				if bulk != nil && bulkDatabase(d.Name()) {
+				if bulk != nil && r.prefix == "state" && bulkDatabase(d.Name()) {
 					if err := bulk.snapshot(ctx, full, name); err != nil {
 						return fmt.Errorf("collect %s: %w", name, err)
 					}
@@ -249,6 +264,7 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	if err := validateDependencies(files); err != nil {
 		return empty, err
 	}
+	recipe := map[string]any{"version": 1, "mail": ErrMailExcluded, "required": required, "sqlite": "all-state-databases", "imap": "all-stored-credentials", "relay": "domain-credentials-and-authority", "outbox": "encrypted-jobs-claims-and-sent"}
 	staged := map[string]string{}
 	if bulk != nil {
 		for _, rel := range bulk.files {
@@ -271,10 +287,11 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 		if err := add(bulkManifestPath, manifest); err != nil {
 			return empty, err
 		}
+		recipe["bulk"] = bulkRecipe
 	}
 	return recoveryclient.Payload{ServiceName: AppName, AppVersion: s.version, Files: files,
 		Dependencies:       map[string]any{"ollama": "model cache downloads again", "layout": "restore config, private and state to CONFIG_DIR, SECRET_DIR and STATE_DIR"},
-		VerificationRecipe: map[string]any{"version": 1, "mail": ErrMailExcluded, "required": required, "sqlite": "all-state-databases", "imap": "all-stored-credentials", "relay": "domain-credentials-and-authority", "outbox": "encrypted-jobs-claims-and-sent"}}, nil
+		VerificationRecipe: recipe}, nil
 }
 
 // validateDependencies refuses a capsule whose stored identities cannot be

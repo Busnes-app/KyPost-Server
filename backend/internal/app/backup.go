@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/capsule"
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/api"
@@ -62,7 +63,7 @@ func runBackupCommand(name string, rest []string, stdin io.Reader, stdout io.Wri
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 16*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), svc.RunBudget())
 	defer cancel()
 	if err := svc.Audit("admin.backup_intent", "cli", name, "started", nil); err != nil {
 		return err
@@ -148,6 +149,21 @@ func runRestore(rest []string, stdin io.Reader, stdout io.Writer) error {
 	if len(rest) != 2 {
 		return errors.New("usage: kypost-server restore <capsule.kycap> <target-dir>  (shares on stdin, one per line; never in argv)")
 	}
+	bc, err := config.LoadBackupConfig()
+	if err != nil {
+		return err
+	}
+	// The recipe is unauthenticated until the capsule opens; it only lets a
+	// restore that would fail anyway fail before custodians type shares.
+	raw, err := os.ReadFile(rest[0])
+	if err != nil {
+		return err
+	}
+	if peek, err := capsule.ReadUnverifiedManifest(raw); err == nil && bc.BulkRepository == "" {
+		if recipe, _ := peek.VerificationRecipe.(map[string]any); recipe["bulk"] != nil {
+			return errors.New("this capsule's mail is in a restic bulk snapshot; set KYPOST_BULK_BACKUP_REPOSITORY to its repository before entering shares")
+		}
+	}
 	shares, err := recoveryclient.ReadShares(stdin)
 	if err != nil {
 		return err
@@ -166,11 +182,7 @@ func runRestore(rest []string, stdin io.Reader, stdout io.Writer) error {
 		return fmt.Errorf("restore failed; preserve private staging %s for inspection: %w", stage, err)
 	}
 	// Mail databases from a bulk snapshot are placed before any validation runs.
-	bc, err := config.LoadBackupConfig()
-	if err == nil {
-		err = backup.RestoreBulk(context.Background(), staging, bc.BulkRepository, bc.ResticBinary)
-	}
-	if err != nil {
+	if err := backup.RestoreBulk(context.Background(), staging, bc.BulkRepository, bc.ResticBinary); err != nil {
 		return fmt.Errorf("bulk restore failed; preserve private staging %s for inspection: %w", stage, err)
 	}
 	native, err := backup.QuarantineNativeRestore(staging)
@@ -236,7 +248,7 @@ func backupLoop(ctx context.Context, svc *backup.Service, logger *logging.Logger
 		if !on || time.Now().Before(next) {
 			continue
 		}
-		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 16*time.Minute)
+		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), svc.RunBudget())
 		if err := svc.Audit("admin.backup_intent", "kypost-scheduler", "run", "started", nil); err != nil {
 			cancel()
 			logger.Error("backup intent audit unavailable")
