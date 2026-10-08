@@ -30,12 +30,20 @@ Status: proposed; PR 1 implemented (release floors). No release operation exists
 `sso-lifecycle.json` `releaseFloors` maps issuer/subject to `{revision, active}`: the signed evidence a release consumed. They are separate from `recoveryFloors`, which `nativeRecoveryInputs` treats as barriers that published accounts must clear, so writing release floors never refuses published legacy accounts in a later challenge.
 
 - `LifecycleStore.RecordNativeReleaseFloors` raises floors monotonically: a lower revision never replaces a higher one; disagreeing evidence at one revision keeps `active:false`. Only tests call it until PR 4.
-- `CheckNativeReleaseFloor` refuses active directory state whose revision is at or below the floor. The provisioning worker (`reconcileNativeSubject`) calls it before administrator provisioning, allocation and reallocation, after the legacy-account return. Inactive state passes, so the disable path stays open. `active` is reported, not trusted by the guard.
-- `applyDirectory` refuses directory events at or below a release floor (`ErrDirectoryConflict`, 422), so the webhook cannot provision or reactivate from a stale queued event either.
+- One rule (`NativeReleaseFloor.refuses`) refuses active state below the floor revision, or at it when the evidence said inactive. KyIdentity bumps the revision on every desired-state change, so equal revision and equal activity is the evidence's own state and passes: unchanged active subjects keep working without a resync. Inactive state always passes; it can only fail closed.
+- `reconcileNativeMailboxLocked` applies it to every allocation and preparation, so no caller bypasses it. The worker (`reconcileNativeSubject`) checks first, which also covers administrator provisioning, and treats a refusal as a quiet no-op logged once per subject per process.
+- `applyDirectory` refuses events the rule refuses (`ErrDirectoryConflict`, 422). A deactivation or deletion still queued upstream when the floor was written applies; resync re-sends only active users, so refusing it would leave the subject active for good.
 - Floors survive restart and are sealed in backups with `sso-lifecycle.json`; `ValidateNativeSnapshot` refuses malformed floors.
-- Lifting a floor needs a strictly newer KyIdentity revision. A resync allocates one for every active user; offboarded subjects stay floored.
+- A refused subject needs a strictly newer KyIdentity revision. A resync allocates one for every active user; offboarded subjects stay floored.
 
 Hold check, verified: `reconcileNativeSubject`, `AllocateNativeAccount` and the worker's address reconcile refuse while the hold exists. The webhook does not: newer ordinary events apply under the hold (fenced by `recoveryFloors`), and administrator accounts are provisioned (`TestNativeAdministratorProvisionedDuringRestoreHold`). Release floors therefore matter only after release, and are written by it.
+
+## Decisions required before floors go live (PR 4)
+
+- **Non-native accounts.** Directory-provisioned administrators and legacy SSO links restored active for subjects the evidence shows deleted or inactive. Either the release applies the evidence (deactivate, revoke sessions) or it refuses while any disagrees. Recommended: apply the evidence.
+- **Directory rows.** Apply the evidence's activity to directory rows at release, so `desiredActive`, address state and the Cloudflare route table do not resurrect addresses of repair-deactivated subjects. Account `Active` is the real receiving gate today.
+- **Resync step.** After release, status shows a mandatory "run a KyIdentity resync" step.
+- **Validate before mutating.** The combined release lifecycle write validates every input, floors included, before changing the loaded file.
 
 ## Release operation
 
@@ -48,6 +56,10 @@ Hold check, verified: `reconcileNativeSubject`, `AllocateNativeAccount` and the 
 5. Audit completion.
 
 A retry after the rename answers `alreadyReleased`. Still refused after release: Cloudflare takeover remains an explicit CLI step; receiving resumes only on restart; quarantined outbound and inbound mail stay quarantined; devices re-pair. With Maddy the request must carry the confirm token `original-host-decommissioned`.
+
+## Rollback
+
+An older binary that re-persists `sso-lifecycle.json` drops `releaseFloors` silently, reopening allocation from stale rows. After a release, do not downgrade below the version that introduced floors; if forced to, keep a copy of the file and treat the floors as lost.
 
 ## Mail during the hold
 

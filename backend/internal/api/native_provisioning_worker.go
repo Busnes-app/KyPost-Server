@@ -44,9 +44,17 @@ func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject str
 		return nil // existing IMAP and administrator accounts never migrate through directory repair
 	}
 	// Only the disable path may act on state the release evidence superseded.
+	// Allocation rechecks; this also covers administrator provisioning and
+	// keeps a floored subject a quiet no-op until a newer revision arrives.
 	if err := s.ssoLifecycle.CheckNativeReleaseFloor(issuer, subject, d); err != nil {
 		release()
-		return err
+		if !errors.Is(err, sso.ErrNativeReleaseFloor) {
+			return err
+		}
+		if _, logged := s.releaseFloorLogged.LoadOrStore(issuer+"\x00"+subject, true); !logged {
+			s.logger.Info("native subject held below restore release floor; run a KyIdentity resync", "target", subject)
+		}
+		return nil
 	}
 	if lookupErr != nil && d.Active && sso.HasAdminRole(d.Resource.Roles) {
 		defer release()

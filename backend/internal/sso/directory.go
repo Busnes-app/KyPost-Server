@@ -197,7 +197,7 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 		if floor, held := f.RecoveryFloors[key]; held && revision <= floor {
 			return ErrDirectoryConflict
 		}
-		if floor, held := f.ReleaseFloors[key]; held && revision <= floor.Revision {
+		if floor, held := f.ReleaseFloors[key]; held && floor.refuses(revision, active) {
 			return ErrDirectoryConflict
 		}
 		now := time.Now().Unix()

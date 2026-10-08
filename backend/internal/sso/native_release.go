@@ -7,10 +7,9 @@ import (
 )
 
 // NativeReleaseFloor is the signed evidence a restore hold release consumed
-// for one subject. Retained directory state at or below Revision predates that
-// evidence, so it can no longer provision, allocate or reactivate; only a
-// strictly newer signed directory event lifts the floor. Active is what the
-// evidence said, kept for status and audit; the guard does not trust it.
+// for one subject. Active directory state below Revision, or at it when the
+// evidence was inactive, predates or contradicts that evidence, so it cannot
+// provision, allocate or reactivate. Newer revisions and inactive state pass.
 type NativeReleaseFloor struct {
 	Revision int64 `json:"revision"`
 	Active   bool  `json:"active"`
@@ -57,15 +56,22 @@ func (f *lifecycleFile) raiseReleaseFloors(issuer string, floors map[string]Nati
 	return nil
 }
 
-// CheckNativeReleaseFloor refuses active retained directory state at or below
-// the subject's release floor: it predates the evidence the release consumed.
-// Inactive state passes, so the disable path stays open.
+// refuses reports whether active state at revision predates the evidence.
+// KyIdentity bumps the revision on every desired-state change, so the evidence
+// revision with the evidence's own activity is that state, not a stale one.
+// Inactive state always passes: it can only fail closed.
+func (floor NativeReleaseFloor) refuses(revision int64, active bool) bool {
+	return active && (revision < floor.Revision || revision == floor.Revision && !floor.Active)
+}
+
+// CheckNativeReleaseFloor refuses provisioning from retained directory state
+// the release evidence superseded; the disable path always passes.
 func (s *LifecycleStore) CheckNativeReleaseFloor(issuer, subject string, d DirectoryState) error {
 	f, err := s.load()
 	if err != nil {
 		return err
 	}
-	if floor, ok := f.ReleaseFloors[directoryKey(issuer, subject)]; ok && d.Active && d.Revision <= floor.Revision {
+	if floor, ok := f.ReleaseFloors[directoryKey(issuer, subject)]; ok && floor.refuses(d.Revision, d.Active) {
 		return ErrNativeReleaseFloor
 	}
 	return nil
