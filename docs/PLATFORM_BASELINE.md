@@ -502,7 +502,9 @@ are unchanged: without the header below every route serves the primary mailbox.
   `{"mailboxes":[{"id","kind":"primary"|"extra","addresses":[{"address","kind":"primary"|"alias"}]}]}`
   with the primary first and only `active` addresses. Disabled mailboxes are
   omitted; a non-native account gets an empty list. The primary's `id` is the
-  account's user ID.
+  account's user ID. Each mailbox also carries `quotaBytes` and `usedBytes`
+  (absent when the server cannot read it), additive; clients may show usage
+  and warn at 80% and 95%, as the web client does.
 - Mailbox-scoped routes accept `X-KyPost-Mailbox: <id>`: `/api/inbox` and
   `/api/inbox/folders`, `/api/inbox/actions`, `/api/mail/search`,
   `/api/mail/draft`, `/api/mail/send`, `/api/mail/send-pgp`,

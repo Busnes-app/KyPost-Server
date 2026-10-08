@@ -287,9 +287,22 @@ reception and provider cleanup are not implemented.
 - STARTTLS is mandatory before MAIL/RCPT; TLS versions 1.2 and 1.3 only. Senders
   unable to use TLS are refused. This is stricter than ordinary opportunistic
   SMTP and deliberately limits compatibility; there is no plaintext switch.
-- Maximum message 4 MiB (including receiver-added headers), headers 128 KiB,
+- Maximum message 25 MiB (including receiver-added headers), headers 128 KiB,
   recipients 100. RAM buffering avoids temporary payload spool files; up to
-  four active messages can consume roughly 16 MiB plus parsing/process overhead.
+  four active messages can consume roughly 100 MiB in the receiver, and as
+  much again in the helpers reading them, plus parsing/process overhead.
+- A recipient mailbox without room for one more 25 MiB message under its
+  [quota](NATIVE_PROVISIONING.md#mailbox-quotas) (mail waiting in the buffer
+  counted) answers `452 4.2.2 Mailbox full` (helper exit 9) at RCPT, for that
+  recipient alone, because Maddy passes the helper no message size. DATA
+  rechecks the real size and, if deliveries took the room since RCPT, refuses
+  the whole transaction temporarily; the sender's retry then refuses only that
+  recipient at RCPT. Growth
+  that would cut into the drive reserve (10% of the state filesystem or 5 GiB,
+  whichever is larger) answers `452 4.3.1 Insufficient system storage`
+  (exit 10). Both are temporary, so senders retry; size the volume for
+  `KYPOST_MAILBOX_QUOTA_BYTES` × mailboxes plus that reserve (Server → Mail
+  addresses warns above 80%).
 - Four active transactions overall, two per IP; bursts of 30/minute overall
   and 10/minute per IP. Limit waits are bounded by the engine's five-second
   acquisition timeout. Read/write/shutdown timeouts are 30 seconds. Active
@@ -313,7 +326,7 @@ reception and provider cleanup are not implemented.
   and your own mail domains cannot be. Manage blocks with
   `receiving blocks list|add|remove` or the admin API; see
   [sender blocks](NATIVE_PROVISIONING.md#sender-blocks). Configurations
-  generated before this release lack the exit 6-8 mappings; `start-receiving.sh`
+  generated before this release lack the exit 6-10 mappings; `start-receiving.sh`
   regenerates it at every start, a hand-generated one must be regenerated.
 - Without the optional Rspamd profile, rate/size limits are not spam authentication or filtering. Sender-written
   authentication headers are untrusted. Hard volume quotas, safe reservation

@@ -137,7 +137,10 @@ export function readMailRelayCheck(value: unknown, relay: MailRelay): void {
 }
 
 export type MailAddress = { address: string; mailbox: string; kind: "primary" | "alias"; state: "active" | "disabled" | "reserved"; generation: number };
-export type NativeMailbox = { mailbox: string; user: string; kind: "primary" | "extra"; state: "active" | "disabled"; prepared: boolean; addresses: MailAddress[] };
+// usedBytes is null when the server could not read the mailbox; quotaBytes is 0 from an older server.
+export type NativeMailbox = { mailbox: string; user: string; kind: "primary" | "extra"; state: "active" | "disabled"; prepared: boolean; addresses: MailAddress[]; usedBytes: number | null; quotaBytes: number };
+// Quotas against the state filesystem; overcommitted is the server's 80% warning.
+export type MailStorage = { quotaBytes: number; usedBytes: number; freeBytes: number; totalBytes: number; reserveBytes: number; overcommitted: boolean };
 // Lowercase bare dot-atom, the only form the ledger stores.
 const atom = "[a-z0-9!#$%&'*+/=?^_`{|}~-]+";
 const addressPattern = new RegExp(`^${atom}(\\.${atom})*@[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`);
@@ -158,7 +161,17 @@ function readMailbox(item: unknown): NativeMailbox {
       !Array.isArray(entry.addresses) || entry.addresses.length > 1000) throw new Error("Invalid mailbox list.");
   const addresses = entry.addresses.map(readAddress);
   if (addresses.some(a => a.mailbox !== mailbox)) throw new Error("Inconsistent mailbox list; reload before making changes.");
-  return { mailbox, user, kind, state, prepared, addresses };
+  const usedBytes = entry.usedBytes === undefined ? null : integer(entry.usedBytes);
+  const quotaBytes = entry.quotaBytes === undefined ? 0 : integer(entry.quotaBytes);
+  return { mailbox, user, kind, state, prepared, addresses, usedBytes, quotaBytes };
+}
+// Absent when the server could not measure its filesystem.
+export function readMailStorage(value: unknown): MailStorage | null {
+  const { storage } = object(value);
+  if (storage === undefined) return null;
+  const data = object(storage);
+  if (typeof data.overcommitted !== "boolean") throw new Error("Invalid mailbox storage summary.");
+  return { quotaBytes: integer(data.quotaBytes), usedBytes: integer(data.usedBytes), freeBytes: integer(data.freeBytes), totalBytes: integer(data.totalBytes), reserveBytes: integer(data.reserveBytes), overcommitted: data.overcommitted };
 }
 export function readMailAddresses(value: unknown): NativeMailbox[] {
   const data = object(value);
