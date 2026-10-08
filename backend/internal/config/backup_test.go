@@ -34,6 +34,9 @@ func TestLoadBackupConfigRejectsBadValues(t *testing.T) {
 		"relative bulk repo":      {"KYPOST_BULK_BACKUP_REPOSITORY", "restic-repo"},
 		"plain-http rest repo":    {"KYPOST_BULK_BACKUP_REPOSITORY", "rest:http://user:pw@nas:8000/kypost"},
 		"relative scratch":        {"KYPOST_BACKUP_SCRATCH_DIR", "scratch"},
+		"rest repo query":         {"KYPOST_BULK_BACKUP_REPOSITORY", "rest:https://nas/kypost?token=secret"},
+		"rest repo fragment":      {"KYPOST_BULK_BACKUP_REPOSITORY", "rest:https://nas/kypost#secret"},
+		"unparseable rest repo":   {"KYPOST_BULK_BACKUP_REPOSITORY", "rest:https://u:p%zz@nas/kypost"},
 	}
 	for name, kv := range cases {
 		t.Run(name, func(t *testing.T) {

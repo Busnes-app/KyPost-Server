@@ -155,8 +155,12 @@ forms are accepted:
   [rest-server](https://github.com/restic/rest-server) (`--append-only`, its own
   credentials). **Recommended.** A local repository is writable by KyPost, so a
   compromised container could delete snapshots; KyRecovery, by contrast, only
-  accepts deposits. HTTPS is required. The URL reaches restic only in its
-  environment and is shown and logged with the password redacted.
+  accepts deposits. HTTPS is required; a query or fragment is refused. The URL
+  reaches restic only in its environment; the Backup screen shows scheme, host
+  and path with credentials masked. Restic failures are reported as a fixed
+  diagnostic (wrong password, no repository, snapshot missing, unreachable…),
+  never restic's own text, which can repeat the address or name mail files; run
+  restic by hand for details.
 - An absolute container path outside CONFIG_DIR, SECRET_DIR, STATE_DIR,
   `KYPOST_BACKUP_DIR` and `KYPOST_BACKUP_SCRATCH_DIR`, compared by path and by file
   identity, so a symlink or bind-mount alias of a data root is refused. Compose:
@@ -210,7 +214,9 @@ forms are accepted:
     forget --host kypost --tag kypost-mail --keep-within 400d --prune
   ```
 
-  where 400d exceeds that age. `--keep-last` and similar policies work too;
+  where 400d exceeds that age. `--password-command` reads the key file on each
+  run; do not paste the derived password into a shell, history or
+  `RESTIC_PASSWORD`. `--keep-last` and similar policies work too;
   automated tests check that `forget --keep-last 1` removes older runs.
 
 Restore needs the same repository: the restore command reads

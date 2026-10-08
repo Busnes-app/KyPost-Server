@@ -539,7 +539,7 @@ func TestBulkRestRepositoryRedacted(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = runRestic(context.Background(), fake, repo, make([]byte, 32), "", nil, "init")
-	if err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), "backup.example") {
+	if err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), "details withheld") {
 		t.Fatal("restic error not redacted", err)
 	}
 }
@@ -619,5 +619,46 @@ func TestBulkInitFailureLeavesNoKey(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(s.dirs.Secret, bulkKeyName)); !os.IsNotExist(err) {
 		t.Fatal("failed init left its key", err)
+	}
+}
+
+// fakeRestic prints stderr and fails, like restic does on a fatal error.
+func fakeRestic(t *testing.T, stderr string) string {
+	t.Helper()
+	dir := t.TempDir()
+	msg := filepath.Join(dir, "stderr")
+	if err := os.WriteFile(msg, []byte(stderr), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(dir, "restic")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\ncat '"+msg+"' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return fake
+}
+
+// No repository form, parseable or not, lets restic's own text through: it may
+// carry credentials in forms no redaction enumerates, and mail file paths.
+func TestBulkResticErrorsFailClosed(t *testing.T) {
+	cases := []struct{ repo, stderr, secret string }{
+		{"rest:https://backup.example/kypost?token=q53cret", "Fatal: unable to open repository at rest:https://backup.example/kypost?token=q53cret", "q53cret"},
+		{"rest:https://t0kenuser@backup.example/kypost", "Fatal: rest:https://t0kenuser@backup.example/kypost: Unauthorized", "t0kenuser"},
+		{"rest:https://u:p%zz@backup.example/kypost", "Fatal: parse \"https://u:p%zz@backup.example\": invalid URL escape \"%zz\"", "p%zz"},
+		{"rest:https://u:pa;ss=w@[2001:db8::1]:8000/k", "Fatal: https://u:pa;ss=w@[2001:db8::1]:8000/k/config: connection refused", "pa;ss=w"},
+		{"/srv/kypost-restic", "error: open /srv/scratch/bulk/mail/state/users/alice-id/mailbox/mailbox.db: permission denied", "alice-id"},
+	}
+	for _, c := range cases {
+		err := runRestic(context.Background(), fakeRestic(t, c.stderr), c.repo, make([]byte, 32), "", nil, "backup")
+		if err == nil || strings.Contains(err.Error(), c.secret) {
+			t.Fatalf("restic error leaks %q: %v", c.secret, err)
+		}
+		if st := redactRepository(c.repo); strings.Contains(st, c.secret) && !strings.HasPrefix(c.repo, "/") {
+			t.Fatalf("status shows %q: %s", c.secret, st)
+		}
+	}
+	// Known failures keep a fixed, useful diagnostic.
+	err := runRestic(context.Background(), fakeRestic(t, "Fatal: wrong password or no key found\n"), "/srv/r", make([]byte, 32), "", nil, "cat")
+	if err == nil || !strings.Contains(err.Error(), "wrong password") {
+		t.Fatal("diagnostic lost", err)
 	}
 }

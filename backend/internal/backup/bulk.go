@@ -426,15 +426,60 @@ func hashFile(p string) (string, int64, error) {
 	return hex.EncodeToString(h.Sum(nil)), n, err
 }
 
-// redactRepository hides a rest: URL's password for the screen and errors.
+// redactRepository is how a repository appears on the screen. A rest: URL
+// shows only scheme, host and path; credentials and query are masked, and an
+// address that does not parse is withheld rather than shown raw.
 func redactRepository(repo string) string {
-	if rest, ok := strings.CutPrefix(repo, "rest:"); ok {
-		if u, err := url.Parse(rest); err == nil {
-			return "rest:" + u.Redacted()
-		}
-		return "rest:(unparseable)"
+	rest, ok := strings.CutPrefix(repo, "rest:")
+	if !ok {
+		return repo
 	}
-	return repo
+	u, err := url.Parse(rest)
+	if err != nil || u.Host == "" {
+		return "rest:(address withheld)"
+	}
+	shown := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
+	if u.User != nil {
+		shown.User = url.User("xxxxx")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "rest:" + shown.String() + "?xxxxx"
+	}
+	return "rest:" + shown.String()
+}
+
+// resticDiagnostics maps restic's fatal errors (as worded in restic's source)
+// to fixed text. Restic's own words are never passed on: they can carry a rest:
+// repository's credentials in forms no redaction can enumerate, and mail file
+// paths, and they end up in logs, audit rows and API responses.
+var resticDiagnostics = []struct{ needle, says string }{
+	{"wrong password or no key found", "wrong password or no key found for this repository"},
+	{"config file already exists", "a repository already exists at that location"},
+	{"repository does not exist", "no repository at that location"},
+	{"unable to open config file", "no repository at that location"},
+	{"no matching id found", "the snapshot is not in this repository"},
+	{"unable to create lock", "the repository could not be locked (read-only or in use)"},
+	{"already locked", "the repository could not be locked (read-only or in use)"},
+	{"ciphertext verification failed", "repository data failed verification"},
+	{"invalid data returned", "repository data failed verification"},
+	{"no space left on device", "no space left on device"},
+	{"permission denied", "permission denied"},
+	{"unauthorized", "the repository refused the credentials"},
+	{"forbidden", "the repository refused the operation"},
+	{"certificate", "the repository's TLS certificate was not accepted"},
+	{"connection refused", "the repository is unreachable"},
+	{"no such host", "the repository is unreachable"},
+	{"timeout", "the repository is unreachable"},
+}
+
+func resticDiagnostic(stderr []byte) string {
+	lower := strings.ToLower(string(stderr))
+	for _, d := range resticDiagnostics {
+		if strings.Contains(lower, d.needle) {
+			return d.says
+		}
+	}
+	return "details withheld; run restic by hand to see them"
 }
 
 // runRestic never uses a shell and gives restic a minimal environment. The
@@ -453,12 +498,11 @@ func runRestic(ctx context.Context, bin, repo string, key []byte, dir string, st
 	var stderr tailBuffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		msg := tail(redactSecrets(string(stderr.b), repo), 512)
 		verb := args[0]
 		if verb == "--no-lock" {
 			verb = args[1]
 		}
-		return fmt.Errorf("restic %s failed: %w: %s", verb, err, msg)
+		return fmt.Errorf("restic %s failed: %w: %s", verb, err, resticDiagnostic(stderr.b))
 	}
 	return nil
 }
@@ -472,8 +516,7 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 }
 
 // tailBuffer keeps the last 64 KiB of stderr, where restic puts the fatal
-// error. Secrets are removed from that window before it is cut to the 512
-// bytes shown, so a cut can never leave part of a credential behind.
+// error, for resticDiagnostic to classify; none of it is shown.
 type tailBuffer struct{ b []byte }
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
@@ -482,33 +525,4 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 		t.b = append([]byte(nil), t.b[len(t.b)-64<<10:]...)
 	}
 	return len(p), nil
-}
-
-// redactSecrets removes a rest: repository's credentials in every form restic
-// may print them: the whole URL with or without the scheme prefix, and the
-// password raw or URL-escaped.
-func redactSecrets(msg, repo string) string {
-	rest, ok := strings.CutPrefix(repo, "rest:")
-	if !ok {
-		return msg
-	}
-	msg = strings.ReplaceAll(msg, repo, redactRepository(repo))
-	if u, err := url.Parse(rest); err == nil {
-		msg = strings.ReplaceAll(msg, rest, u.Redacted())
-		if pw, set := u.User.Password(); set && pw != "" {
-			for _, form := range []string{pw, url.PathEscape(pw), url.QueryEscape(pw)} {
-				msg = strings.ReplaceAll(msg, form, "xxxxx")
-			}
-		}
-	}
-	return msg
-}
-
-// tail returns the last n bytes of s, trimmed.
-func tail(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if len(s) > n {
-		s = s[len(s)-n:]
-	}
-	return s
 }

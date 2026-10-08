@@ -74,8 +74,8 @@ func LoadBackupConfig() (BackupConfig, error) {
 		// Never echo the value: a rest: URL may carry credentials.
 		if rest, ok := strings.CutPrefix(repo, "rest:"); ok {
 			u, err := url.Parse(rest)
-			if err != nil || u.Scheme != "https" || u.Host == "" {
-				return c, errors.New("KYPOST_BULK_BACKUP_REPOSITORY must be an absolute path or a rest:https:// URL")
+			if err != nil || u.Scheme != "https" || u.Host == "" || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+				return c, errors.New("KYPOST_BULK_BACKUP_REPOSITORY must be an absolute path or a rest:https://[user:password@]host/path URL without a query")
 			}
 			c.BulkRepository = repo
 		} else if !filepath.IsAbs(repo) {
