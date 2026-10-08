@@ -1,0 +1,182 @@
+package sso
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+)
+
+// NativeRestoreQualificationFile records that every offline restore stage
+// completed. Backups never collect it; it binds to one hold epoch.
+const NativeRestoreQualificationFile = "native-restore-qualification.json"
+
+// NativeRestoreQualification maps every published native mailbox, primary and
+// extra, to the reference generation the restore left it with.
+type NativeRestoreQualification struct {
+	Version   int               `json:"version"`
+	Epoch     string            `json:"epoch"`
+	CreatedAt time.Time         `json:"createdAt"`
+	Mailboxes map[string]string `json:"mailboxes"`
+}
+
+// NativeRestoreUnqualifiedError lists every reason release must be refused.
+type NativeRestoreUnqualifiedError struct{ Reasons []string }
+
+func (e *NativeRestoreUnqualifiedError) Error() string {
+	return "native restore is not qualified for release: " + strings.Join(e.Reasons, "; ")
+}
+
+var errQualificationMalformed = errors.New("malformed native restore qualification")
+
+// RecordNativeRestoreQualification is the last QuarantineNativeRestore step, in
+// stopped staging after every earlier stage succeeded.
+func (s *LifecycleStore) RecordNativeRestoreQualification(stateRoot string) error {
+	epoch, err := nativeRecoveryEpoch(stateRoot)
+	if err != nil {
+		return err
+	}
+	paths, err := s.nativeQualificationMailboxes(stateRoot)
+	if err != nil {
+		return err
+	}
+	q := NativeRestoreQualification{Version: 1, Epoch: epoch, CreatedAt: time.Now().UTC(), Mailboxes: map[string]string{}}
+	for id, path := range paths {
+		if q.Mailboxes[id], _, err = mailbox.InspectRestored(path); err != nil {
+			return err
+		}
+	}
+	return fsutil.PersistJSONFile(filepath.Join(stateRoot, NativeRestoreQualificationFile), q)
+}
+
+// CheckNativeRestoreQualification is read-only. It returns a
+// *NativeRestoreUnqualifiedError naming every failed precondition.
+func (s *LifecycleStore) CheckNativeRestoreQualification(stateRoot string) (NativeRestoreQualification, error) {
+	var reasons []string
+	epoch, err := nativeRecoveryEpoch(stateRoot)
+	if err != nil {
+		if _, statErr := os.Lstat(filepath.Join(stateRoot, NativeRestoreHoldFile)); errors.Is(statErr, os.ErrNotExist) {
+			reasons = append(reasons, "no native restore hold")
+		} else {
+			reasons = append(reasons, "native restore hold has no usable epoch")
+		}
+	}
+	q, err := readNativeRestoreQualification(filepath.Join(stateRoot, NativeRestoreQualificationFile))
+	marker := err == nil
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		reasons = append(reasons, "no restore qualification marker: restore again with this version to qualify for release")
+	case err != nil:
+		reasons = append(reasons, "restore qualification marker is malformed")
+	case epoch != "" && q.Epoch != epoch:
+		reasons = append(reasons, "restore qualification marker belongs to another restore epoch")
+	}
+	paths, err := s.nativeQualificationMailboxes(stateRoot)
+	if err != nil {
+		reasons = append(reasons, "native mailbox ledger is unreadable")
+	}
+	ids := make([]string, 0, len(paths))
+	for id := range paths {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		generation, _, err := mailbox.InspectRestored(paths[id])
+		recorded, listed := q.Mailboxes[id]
+		switch {
+		case err != nil:
+			reasons = append(reasons, fmt.Sprintf("mailbox %s cannot be read", id))
+		case generation == "":
+			reasons = append(reasons, fmt.Sprintf("mailbox %s has no reference generation", id))
+		case !marker:
+		case !listed:
+			reasons = append(reasons, fmt.Sprintf("mailbox %s is missing from the qualification marker", id))
+		case recorded != generation:
+			reasons = append(reasons, fmt.Sprintf("mailbox %s reference generation changed since the restore", id))
+		}
+	}
+	// Every mailbox database, published or not, must hold no sendable work.
+	err = filepath.WalkDir(stateRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || entry.Name() != "mailbox.db" {
+			return nil
+		}
+		rel, _ := filepath.Rel(stateRoot, path)
+		if _, pending, err := mailbox.InspectRestored(path); err != nil {
+			reasons = append(reasons, fmt.Sprintf("mailbox database %s cannot be read", rel))
+		} else if pending != 0 {
+			reasons = append(reasons, fmt.Sprintf("mailbox database %s has %d queued or retryable outbound deliveries", rel, pending))
+		}
+		return nil
+	})
+	if err != nil {
+		reasons = append(reasons, "state directory cannot be scanned")
+	}
+	if len(reasons) != 0 {
+		return q, &NativeRestoreUnqualifiedError{Reasons: reasons}
+	}
+	return q, nil
+}
+
+// nativeQualificationMailboxes maps published ledger mailboxes to their databases.
+func (s *LifecycleStore) nativeQualificationMailboxes(stateRoot string) (map[string]string, error) {
+	f, _, err := s.loadNativeLedger(true)
+	if err != nil {
+		return nil, err
+	}
+	paths := map[string]string{}
+	for _, a := range f.Accounts {
+		if a.Source != "" {
+			paths[a.Owner.Mailbox] = filepath.Join(stateRoot, "users", a.Owner.Mailbox, "mailbox/mailbox.db")
+		}
+	}
+	for id, m := range f.stored.Mailboxes {
+		if m.Kind == "extra" && m.Source != "" {
+			paths[id] = filepath.Join(stateRoot, nativeMailboxesDir, id, "mailbox/mailbox.db")
+		}
+	}
+	for id := range paths {
+		if !fsutil.SafePathComponent(id) {
+			return nil, ErrNativeProvisioning
+		}
+	}
+	return paths, nil
+}
+
+func readNativeRestoreQualification(path string) (NativeRestoreQualification, error) {
+	var q NativeRestoreQualification
+	info, err := os.Lstat(path)
+	if err != nil {
+		return q, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 1<<20 {
+		return q, errQualificationMalformed
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return q, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&q) != nil || dec.Decode(&struct{}{}) != io.EOF || q.Version != 1 || !recoveryEpochPattern.MatchString(q.Epoch) || q.CreatedAt.IsZero() || q.Mailboxes == nil {
+		return NativeRestoreQualification{}, errQualificationMalformed
+	}
+	for id := range q.Mailboxes {
+		if !fsutil.SafePathComponent(id) {
+			return NativeRestoreQualification{}, errQualificationMalformed
+		}
+	}
+	return q, nil
+}

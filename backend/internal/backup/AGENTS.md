@@ -38,6 +38,7 @@ This package owns payload selection and verification. API/CLI callers own creden
 - Restore is CLI-only, shares on stdin. No running service holds the suite recovery private key. Extract privately; preserve failed staging. Native publication requires an absent Linux target, validated ownership and a persisted state/native-restore-hold.json. Allocation enforces the hold; no release path exists. Future native workers must enforce it.
 
 - After qualified native account/reference/device/CardDAV cleanup, call the lifecycle token fence once before quarantine success. It requires a usable epoch, revalidates exact historical native ownership, atomically raises existing published native directory cutoffs beyond 30-second issuance skew and preserves higher floors and all other authority. Any refusal keeps staging held/unpublished; no hold release or fresh-primary-authentication claim.
+- The last quarantine step writes `state/native-restore-qualification.json` (`sso.RecordNativeRestoreQualification`: version 1, hold epoch, createdAt, ledger mailbox → reference generation). Quarantine removes any earlier marker before the hold write, so a failed run leaves none. The collector skips it by name; the hold itself is still collected and replaced by every restore. `sso.CheckNativeRestoreQualification` is the read-only checker; it grants no release.
 
 ## Work Guidance
 
@@ -54,6 +55,7 @@ This package owns payload selection and verification. API/CLI callers own creden
 
 - `TestNativeBackupRestoresExtraMailbox` checks a sealed extra mailbox round trip (mail kept, references rotated, hold), refusal of a device row in its mail-only state, and that ingress.db is collected before every mailbox.db.
 
+- `TestNativeRestoreQualification` checks a sealed restore's marker (epoch, primary/extra generations), its exclusion from collection, one precise checker reason per failure (missing marker, epoch, missing mailbox, changed or dropped generation, queued/retryable outbox, unknown field, version, mailboxes, trailing data, permissions) and no marker after a validation or credential-fence failure.
 - `TestNativeOutboxSealedClaimsSentAndDependencies` checks sealed committed claims/Sent, restore queue quarantine with no resubmission, retained holds, required recipe/key/config and wrong-key rejection.
 
 - `TestDomainRelay` checks sealed credential/key/generation preservation, missing dependencies, corrupt restored keys and relay-only quarantine.

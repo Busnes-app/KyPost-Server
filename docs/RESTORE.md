@@ -293,7 +293,14 @@ Do not prune while a restore reads the repository.
    this generation; old-generation or bare numeric references are refused.
    Corrupt generation metadata refuses publication; older snapshots without the
    table gain a fresh generation. See [reference qualification](NATIVE_RESTORE_REFERENCES.md).
-   A failure leaves staging held and unpublished. Legacy restores also
+   A failure leaves staging held and unpublished. As the last step, restore
+   writes `state/native-restore-qualification.json`: the hold epoch and each
+   native mailbox's new reference generation. It exists only when every earlier
+   step succeeded, is never collected into backups and grants nothing by
+   itself; a future release requires it to match the current hold, generations
+   and an outbox with no queued/retryable rows. Holds from older versions lack it:
+   restore again with this version before release. See
+   docs/NATIVE_RESTORE_RELEASE.md (#331). Legacy restores also
    accept an existing empty target. Occupied targets/files are never overwritten.
 4. Native restores remain quarantined with **no supported release path yet**.
    Preserve the hold file when copying volumes. Keep a separately provisioned legacy local recovery administrator: a restored native administrator cannot administer a held server. The authentication guard applies even with native feature flags disabled and either private native marker present. Refused MFA completion preserves TOTP/recovery material; held QR exchange preserves its nonce. Offline restore requires stopped services; admission checks do not cancel operations already admitted. Native password/derived login, pending MFA completion, SSO sign-in/step-up, existing session authority (including admin), QR key exchange, allocation, native runtime, native CardDAV (including cached Basic auth), local receiving and relay updates refuse a present

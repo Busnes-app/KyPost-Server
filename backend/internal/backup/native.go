@@ -177,6 +177,10 @@ func QuarantineNativeRestore(dir string) (bool, error) {
 	// Persist an unusable epoch first: crypto/rand may terminate the process.
 	// No outstanding reconciliation survives a failed generation attempt.
 	hold := map[string]any{"version": 1, "epoch": "", "reason": "restore_requires_identity_domain_receiver_reconciliation"}
+	// The qualification marker exists only once this run's stages all succeed.
+	if err := os.Remove(filepath.Join(dir, "state", sso.NativeRestoreQualificationFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return true, err
+	}
 	holdErr := fsutil.PersistJSONFile(path, hold)
 	if holdErr != nil {
 		return true, fmt.Errorf("cannot persist native restore hold; keep workers stopped: %w", holdErr)
@@ -214,6 +218,9 @@ func QuarantineNativeRestore(dir string) (bool, error) {
 	}
 	if err := fenceRestoredNativeAccounts(dir); err != nil {
 		return true, fmt.Errorf("cannot fence restored native references/credentials; keep workers stopped and preserve staging: %w", err)
+	}
+	if err := sso.NewLifecycleStore(filepath.Join(dir, "config")).RecordNativeRestoreQualification(filepath.Join(dir, "state")); err != nil {
+		return true, fmt.Errorf("cannot record native restore qualification; keep workers stopped and preserve staging: %w", err)
 	}
 	return true, nil
 }
