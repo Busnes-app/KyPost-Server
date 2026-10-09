@@ -10,7 +10,7 @@ Run:
 
 ```bash
 cd backend
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/api -run '^TestNativeMailboxProof$' -count=1 -v
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/api -run '^TestNativeMailboxProof$' -count=1 -v
 ```
 
 Verified: exact raw MIME survives database close/reopen; a rolled-back insert remains invisible; numeric IDs remain unchanged across reopen; owner and folder predicates prevent body retrieval across those boundaries. Browser sessions and paired-device headers both exercise classic inbox, `since=0&bodies=0`, unchanged cursor polling, lazy body, attachment metadata and byte-identical attachment download through existing routes. Unauthenticated body reads return 401. The proof does not test changed-message deltas, moves, labels, PGP verification/encryption, offboarding or source switches.
@@ -103,7 +103,7 @@ Runnable checks:
 
 ```sh
 cd backend
-GOTOOLCHAIN=go1.26.6 go test -race -count=1 -timeout=20m ./internal/mailbox ./internal/ingress
+GOTOOLCHAIN=go1.26.9 go test -race -count=1 -timeout=20m ./internal/mailbox ./internal/ingress
 ```
 
 Storage checks cover reopen/raw preservation, owner refusal, conflicting receipts, retry after deletion, flags/labels, Drafts/Sent copies, subtree rename, stale-folder rejection, concurrent receipt/quota writers, counter backfill/rollback and complete 11,001-message metadata/change pagination. Import checks include aliases plus an envelope-only recipient, partial recipient failure with store restart, wrong-owner refusal, reassignment before/during import, and a real killed subprocess after its first mailbox commit. The subprocess does not simulate power loss or prove hardware fsync behavior.
@@ -124,9 +124,9 @@ Malformed MIME fails only its own body read: metadata/raw bytes remain available
 
 ```sh
 cd backend
-GOTOOLCHAIN=go1.26.6 go test -race -count=1 -timeout=20m ./internal/mailbox ./internal/ingress ./internal/adapters/imap
-GOTOOLCHAIN=go1.26.6 go test -race -count=1 -timeout=20m ./internal/api -run 'TestNativeMailbox(ClientAPI|Proof)|TestServeInbox|TestMailBody|TestEncryptedAttachment|TestPGPPayload'
-GOTOOLCHAIN=go1.26.6 go test -race -count=1 -timeout=20m ./internal/processor -run 'TestTickUser|Test.*Incoming'
+GOTOOLCHAIN=go1.26.9 go test -race -count=1 -timeout=20m ./internal/mailbox ./internal/ingress ./internal/adapters/imap
+GOTOOLCHAIN=go1.26.9 go test -race -count=1 -timeout=20m ./internal/api -run 'TestNativeMailbox(ClientAPI|Proof)|TestServeInbox|TestMailBody|TestEncryptedAttachment|TestPGPPayload'
+GOTOOLCHAIN=go1.26.9 go test -race -count=1 -timeout=20m ./internal/processor -run 'TestTickUser|Test.*Incoming'
 ```
 
 Validation: package race checks, the authenticated API regression subset, focused poller regressions, changed-package vet and pinned lint pass; the backend builds. Required reviewer cleared internal use. Full CI, live clients, representative disks/search/backup and release checks remain outstanding. Production still selects external IMAP: source/cursor fences, verified provisioning and deployment are unfinished; native incoming-encryption recovery is covered by the next follow-up. No new route, environment setting or container behavior enables native mailboxes.
@@ -145,8 +145,8 @@ Runnable checks:
 
 ```sh
 cd backend
-GOTOOLCHAIN=go1.26.6 go test -race -count=1 -timeout=20m ./internal/mailbox -run '^TestNativeIncoming'
-GOTOOLCHAIN=go1.26.6 go test -race -count=1 -timeout=20m ./internal/processor -run '^TestNativeIncomingPollerJournalRecovery$'
+GOTOOLCHAIN=go1.26.9 go test -race -count=1 -timeout=20m ./internal/mailbox -run '^TestNativeIncoming'
+GOTOOLCHAIN=go1.26.9 go test -race -count=1 -timeout=20m ./internal/processor -run '^TestNativeIncomingPollerJournalRecovery$'
 ```
 
 Mailbox checks cover exact full original MIME inside protected ciphertext, current flags/date, receipt retry after replacement/deletion, same-owner database recreation, moved/changed sources, altered ciphertext, record refusal/net-byte quota, forced SQL rollback and quota counters, two competing writers, restart replay, and actual killed subprocesses after replacement and move commits. Killing a process does not prove power-loss/hardware fsync durability.
@@ -192,8 +192,8 @@ Runnable checks:
 
 ```sh
 cd backend
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/state ./internal/mailcache ./internal/adapters/imap ./internal/mailbox -count=1 -timeout=20m
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/api ./internal/processor -run 'Test.*Inbox|Test.*MailBody|TestNativeMailbox|Test.*Incoming|TestTickUser' -count=1 -timeout=20m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/state ./internal/mailcache ./internal/adapters/imap ./internal/mailbox -count=1 -timeout=20m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/api ./internal/processor -run 'Test.*Inbox|Test.*MailBody|TestNativeMailbox|Test.*Incoming|TestTickUser' -count=1 -timeout=20m
 ```
 
 Validation: complete state/cache/IMAP/mailbox race suites passed (31.418s,
@@ -275,8 +275,8 @@ Runnable checks:
 
 ```sh
 cd backend
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailbox ./internal/sso -count=1 -timeout=20m
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/api -run 'TestDirectory|TestSSO|TestNativeSign|TestNativeMailboxClientAPI' -count=1 -timeout=20m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/mailbox ./internal/sso -count=1 -timeout=20m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/api -run 'TestDirectory|TestSSO|TestNativeSign|TestNativeMailboxClientAPI' -count=1 -timeout=20m
 ```
 
 Tests cover retained desired data across reopen/retry, stale events, failed
@@ -356,7 +356,7 @@ debug APKs from an Android checkout containing `NativeMailboxRoundtripTest`, the
 
 ```bash
 cd backend
-KYPOST_NATIVE_ANDROID_TEST_SERIAL=emulator-5580 GOTOOLCHAIN=go1.26.6 \
+KYPOST_NATIVE_ANDROID_TEST_SERIAL=emulator-5580 GOTOOLCHAIN=go1.26.9 \
   go test -race ./internal/api \
   -run '^TestNativeOutboundAPIActualTLSAndPGP$/device-android$' \
   -count=1 -timeout=4m -v

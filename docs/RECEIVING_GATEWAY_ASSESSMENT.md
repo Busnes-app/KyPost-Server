@@ -70,7 +70,7 @@ Run after obtaining the pinned executable above:
 
 ```bash
 cd backend
-MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy GOTOOLCHAIN=go1.26.6 go test -race ./internal/ingress -count=1 -v
+MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy GOTOOLCHAIN=go1.26.9 go test -race ./internal/ingress -count=1 -v
 ```
 
 With the executable unset, the gateway test explicitly skips; store unit/concurrency checks still run. The gateway check validates the binary hash before executing it. Its temporary listener and processes are isolated from live mail.
@@ -85,7 +85,7 @@ Verified on 2026-10-03:
 
 Remaining public deployment gates: safe explicit fenced cleanup of abandoned reservations; tombstone pruning and capacity recovery; hard filesystem/database/WAL quotas and representative reserve qualification; intended-volume power-loss/backup/restore drills; stalled-helper/final-ack shutdown extremes and remaining rate-limit qualification; TLS, spam/rate policy and packaging provenance/licensing. Physical/free-space admission estimates now refuse new growth inside writer transactions and allow unchanged-route accepted-mail recovery; pinned-reader tests prove refusal and checkpoint recovery. These estimates do not replace hard shared-volume quotas. Logical quotas do not bound SQLite/WAL physical bytes, and removing a live BLOB does not erase old pages/backups. An upstream retry after a lost SMTP acknowledgment normally receives a **new** transaction ID and may create a second receipt; inbound SMTP is not exactly-once across those transactions.
 
-Permanent mailbox receipts and the all-recipient-before-ack bridge have [storage/recovery checks](TURNKEY_MAIL_PHASE1.md#permanent-storage-and-import-follow-up). The [direct receiving runtime](NATIVE_PROVISIONING.md#direct-receiving-runtime-qualification-profile) adds separate explicit flags, existing-only store admission, current directory/local-user fences, inherited-pipe deadlines and conservative signed-generation quarantine. `TestNativeReceivingMaddyRuntime` runs this production command through the same pinned Maddy executable and actual daemon importer using test-only DNS. Run `MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy GOTOOLCHAIN=go1.26.6 go test -race ./internal/app ./internal/ingress -run '^TestNativeReceiving|^TestMaddyHoldingBoundary|^TestMailboxImporter' -count=1 -timeout=5m` from backend. This does not install the tested SMTP configuration or authorize public MX.
+Permanent mailbox receipts and the all-recipient-before-ack bridge have [storage/recovery checks](TURNKEY_MAIL_PHASE1.md#permanent-storage-and-import-follow-up). The [direct receiving runtime](NATIVE_PROVISIONING.md#direct-receiving-runtime-qualification-profile) adds separate explicit flags, existing-only store admission, current directory/local-user fences, inherited-pipe deadlines and conservative signed-generation quarantine. `TestNativeReceivingMaddyRuntime` runs this production command through the same pinned Maddy executable and actual daemon importer using test-only DNS. Run `MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy GOTOOLCHAIN=go1.26.9 go test -race ./internal/app ./internal/ingress -run '^TestNativeReceiving|^TestMaddyHoldingBoundary|^TestMailboxImporter' -count=1 -timeout=5m` from backend. This does not install the tested SMTP configuration or authorize public MX.
 
 ## Generated TLS qualification profile
 

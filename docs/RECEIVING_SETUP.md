@@ -41,8 +41,7 @@ engine/TLS paths protected; the receiver has instance mail-storage authority.
 Receiver status and fresh configuration admission are checked after launch.
 The final stage gives external TLS/port/DNS, ordinary/PGP/Bcc, outbox/Sent/provider
 receipt and repeat-backup checks; it does not claim those observations were made.
-TLS/AUTH and process startup do not prove delivery. Native restore remains held
-without a release path; full public deployment gates still apply. Stop at any
+TLS/AUTH and process startup do not prove delivery. Native restore release remains gated and off by default; full public deployment gates still apply. The final `setup-status` report lists local configuration prerequisites; see [repeatable installer setup](INSTALLER_SETUP.md). Stop at any
 stage with Ctrl-C: validated settings and completed actions remain, so use the
 rollback procedure below instead of deleting data.
 
@@ -261,7 +260,7 @@ state. From `backend/`, run the actual receiving proof:
 
 ```sh
 RSPAMD_PROOF=true MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy \
-  GOTOOLCHAIN=go1.26.6 go test -race ./internal/app \
+  GOTOOLCHAIN=go1.26.9 go test -race ./internal/app \
   -run '^TestNativeReceivingMaddyRuntime/rspamd$|^TestReceivingRspamdProtocol$|^TestNativeReceivingRspamdRetentionAndAuthority$|^TestReceivingRspamdAuthenticationProof$' \
   -count=1 -timeout=3m
 ```
@@ -478,7 +477,7 @@ without credentials.
 Before the live test, run this from `backend/`:
 
 ```sh
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/api \
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/api \
   -run '^TestNativeOutboundAPIActualTLSAndPGP$' -count=1 -timeout=2m
 ```
 

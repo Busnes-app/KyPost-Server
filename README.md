@@ -8,6 +8,8 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 
 ## Features
 
+- Repeatable installer setup: runtime-owned `apply-setup --file` preserves existing SSO/webhook/domain/recovery configuration and returns a secret-free JSON report. `setup-status` lists configuration blockers and external acceptance checks. See [clean installation](docs/INSTALLER_SETUP.md).
+
 - Guided dedicated-domain qualification: `bash scripts/setup-mail.sh <public-KyPost-origin>` walks through native deployment, KyIdentity/DNS proof, operator relay, protected engine/TLS inputs, backups and receiving launch. It requires Docker-operator authority and explicit configuration/start confirmations; live delivery remains an operator check. See [guided setup](docs/RECEIVING_SETUP.md#guided-operator-setup).
 
 - Optional local Rspamd sidecar rejects messages meeting the configured spam threshold before native SMTP acceptance. False positives can reject legitimate mail; scanner outages defer new mail, and enabling it gives the scanner message access. Accepted mail remains unchanged. See [spam setup](docs/RECEIVING_SETUP.md#optional-rspamd-sidecar).

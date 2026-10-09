@@ -175,13 +175,13 @@ qualification and current authority remain separate [restore gates](RESTORE.md).
 From `backend/`:
 
 ```sh
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailbox ./internal/backup ./internal/cryptutil -run 'TestNativeOutbox|TestOpenRefusesMalformedNonce' -count=1 -timeout=5m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/mailbox ./internal/backup ./internal/cryptutil -run 'TestNativeOutbox|TestOpenRefusesMalformedNonce' -count=1 -timeout=5m
 ```
 
 Add the runtime check:
 
 ```sh
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/api ./internal/sso ./internal/mailbox ./internal/app -run '^TestNativeOutbound|TestNativeOutboxDiscovery' -count=1 -timeout=5m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/api ./internal/sso ./internal/mailbox ./internal/app -run '^TestNativeOutbound|TestNativeOutboxDiscovery' -count=1 -timeout=5m
 ```
 
 Runtime checks exercise authenticated native HTTP over actual trusted loopback

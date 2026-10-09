@@ -21,8 +21,8 @@ All files in this package. The contract is [continuous receiving](../../../docs/
 
 ## Verification
 
-- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/cfreceiving -count=1` checks contract bytes with Go's ed25519, route/key rules, file modes, the restored (host-record-less) copy starting fenced and the interrupted-promotion window.
-- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/app -run TestCloudflareContinuous -count=1` drives the loop against a Go fake of the Worker.
+- `GOTOOLCHAIN=go1.26.9 go test -race ./internal/cfreceiving -count=1` checks contract bytes with Go's ed25519, route/key rules, file modes, the restored (host-record-less) copy starting fenced and the interrupted-promotion window.
+- `GOTOOLCHAIN=go1.26.9 go test -race ./internal/app -run TestCloudflareContinuous -count=1` drives the loop against a Go fake of the Worker.
 
 ## Child DOX Index
 

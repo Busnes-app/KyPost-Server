@@ -298,21 +298,35 @@ func writeNativeDomainTombstone(configDir string) error {
 // Configure is the single-domain API: it claims the founding domain or
 // rotates its challenge, and refuses any other domain.
 func (s *NativeDomainStore) Configure(ctx context.Context, domain, issuer string) (NativeDomain, error) {
-	return s.configure(ctx, domain, issuer, true)
+	return s.configure(ctx, domain, issuer, true, false)
 }
 
 // ConfigureDomain adds a domain to the set, or rotates the challenge of one
 // already configured. Re-adding a retired domain configures it afresh: nothing
 // routes, sends or allocates on it until VerifyDomain proves the new challenge.
 func (s *NativeDomainStore) ConfigureDomain(ctx context.Context, domain, issuer string) (NativeDomain, error) {
-	return s.configure(ctx, domain, issuer, false)
+	return s.configure(ctx, domain, issuer, false, false)
 }
 
-func (s *NativeDomainStore) configure(ctx context.Context, domain, issuer string, foundingOnly bool) (NativeDomain, error) {
+// EnsureDomain is installer setup: retain an existing challenge, never rotate
+// it or reactivate a retired domain. ConfigureDomain remains the rotation API.
+func (s *NativeDomainStore) EnsureDomain(ctx context.Context, domain, issuer string) (NativeDomain, error) {
+	return s.configure(ctx, domain, issuer, false, true)
+}
+
+// ValidateNativeDomainSetup checks the same inputs used by domain publication.
+func ValidateNativeDomainSetup(domain, issuer string) error {
+	if !nativeDomain(domain) || len("_kypost-mail."+domain) > 253 || !directoryIdentifier(issuer) || strings.HasSuffix(issuer, "/") {
+		return ErrNativeDomain
+	}
+	return nil
+}
+
+func (s *NativeDomainStore) configure(ctx context.Context, domain, issuer string, foundingOnly, ensure bool) (NativeDomain, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if !nativeDomain(domain) || len("_kypost-mail."+domain) > 253 || !directoryIdentifier(issuer) || strings.HasSuffix(issuer, "/") {
-		return NativeDomain{}, ErrNativeDomain
+	if err := ValidateNativeDomainSetup(domain, issuer); err != nil {
+		return NativeDomain{}, err
 	}
 	release, err := fsutil.LockFileContext(ctx, s.path)
 	if err != nil {
@@ -325,6 +339,14 @@ func (s *NativeDomainStore) configure(ctx context.Context, domain, issuer string
 	}
 	if set.Issuer != "" && set.Issuer != issuer || foundingOnly && set.Founding != "" && set.Founding != domain {
 		return NativeDomain{}, ErrNativeDomain
+	}
+	if ensure {
+		if slices.Contains(set.Retired, domain) {
+			return NativeDomain{}, ErrNativeDomain
+		}
+		if prior, ok := set.Domains[domain]; ok {
+			return prior, nil
+		}
 	}
 	var b [32]byte
 	if _, err = rand.Read(b[:]); err != nil {

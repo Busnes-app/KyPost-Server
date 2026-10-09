@@ -128,7 +128,7 @@ bash scripts/test-relays.sh
 node receiving-worker/runtime-check.mjs
 python3 scripts/check-rspamd.py
 cd backend
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/app \
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/app \
   -run 'TestCloudflare|TestNativeReceiving|TestReceivingRspamd' -count=1
 ```
 

@@ -39,7 +39,7 @@ All files under `scripts/`.
 
 ## Work Guidance
 
-- `setup-mail.sh` is host-only and interactive on Linux x86_64. Keep its wizard-template library unchanged. Validate public dotenv values and owned regular private env files before writes; never source dotenv or collect account/provider credentials. Confirm base rebuild (which pauses reception), new-spool initialization and profile launch. Reuse existing UI and production receiving admission; leave external TLS/DNS/delivery observations explicit.
+- `setup-mail.sh` is host-only and interactive on Linux x86_64. Keep its wizard-template library unchanged. Validate public dotenv values and owned regular private env files before writes; never source dotenv or collect account/provider credentials. Confirm base rebuild (which pauses reception), new-spool initialization and profile launch. Reuse existing UI and production receiving admission; leave external TLS/DNS/delivery observations explicit. Final `setup-status` reports local configuration blockers; its successful exit is not deployment acceptance.
 
 - `bootstrap.sh` must keep running before the scoped recursive data-directory ownership handoff in `entrypoint.sh` — it writes as root, and that chown is what hands the resulting files (`admin.env` and `first-run-password.txt` included) to `kypost`
 - No runtime script may depend on `node`. The runtime image is `debian:stable-slim` and has no JavaScript interpreter; the frontend is static files built in an earlier stage

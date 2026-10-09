@@ -1,6 +1,6 @@
 module github.com/Busnes-app/kypost-server/backend
 
-go 1.26.6
+go 1.26.9
 
 require (
 	github.com/BrianLeishman/go-imap v0.1.28

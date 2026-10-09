@@ -478,7 +478,7 @@ multi-owner deliveries, restore reconciliation; a restore started without takeov
 confirmation makes no `POST /rotate` call and the original's list, fetch, delete
 and `PUT /routes` keep succeeding; after a confirmed takeover the original is
 refused on all four, reports that it is fenced, and no R2 item is deleted unless
-the new owner has committed it — done: `GOTOOLCHAIN=go1.26.6 go test -race
+the new owner has committed it — done: `GOTOOLCHAIN=go1.26.9 go test -race
 ./internal/app -run TestCloudflareContinuous` and `./internal/cfreceiving`. Boundaries
 are simulated by aborting the cycle and restarting the loop over the same durable
 state, not by killing a process.
