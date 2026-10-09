@@ -14,7 +14,7 @@ vi.mock("../../api/stepup", () => ({ withSSOStepUp: vi.fn() }));
 
 const base = "/api/admin/receiving/blocks";
 const manual = { id: "0123456789abcdef", kind: "address", value: "spammer@bad.example", until: null, source: "manual", level: 0, createdAt: Date.UTC(2026, 9, 1), actor: "admin-id", reason: "spam" };
-const auto = { id: "fedcba9876543210", kind: "domain", value: "provider.example", until: Date.UTC(2026, 9, 9), source: "automatic", level: 2, createdAt: Date.UTC(2026, 9, 6), actor: "automatic", reason: "abuse" };
+const auto = { id: "fedcba9876543210", kind: "domain", value: "provider.example", until: Date.now() + 86_400_000, source: "automatic", level: 2, createdAt: Date.UTC(2026, 9, 6), actor: "automatic", reason: "abuse" };
 const quiet = { damaged: false, resetAt: null, domainBlocksFrom: Date.UTC(2026, 0, 1), goodFull: false, automaticFull: false };
 let list: unknown;
 let answer: () => Response;

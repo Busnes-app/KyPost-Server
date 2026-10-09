@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Update the pinned Go compiler and matching builder digest to 1.26.9 for standard-library security fixes; keep Sender Blocks test expiries relative to the test run.
+
 - Settings → Mail → Storage uses compact mailbox rows with usage beside the address and a full-width meter, replacing nested cards. Figures and quota warnings are unchanged.
 
 - Native mail: the outbound worker no longer logs "native outbox discovery deferred" when the API and daemon check the same idle mailbox (typically a disabled extra mailbox) at the same moment, such as at startup. Mailbox validation now waits up to five seconds for the other process's lock instead of treating the mailbox as unprepared. Disabled mailboxes still refuse new mail and new sends.

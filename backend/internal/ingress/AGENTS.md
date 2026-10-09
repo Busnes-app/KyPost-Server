@@ -34,13 +34,13 @@ All files in this package. Opt-in app receiving commands and daemon import selec
 
 ## Verification
 
-- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/ingress -count=1` checks retention, archival (record limit, replay, atomicity, legacy migration), release/discard (frozen owners, interrupted release, discard tombstone replay, envelope-only listing), fencing, immutable ownership, quotas, physical admission/recovery, pinned-reader WAL reclamation, competing-process refusal and transaction replay.
+- `GOTOOLCHAIN=go1.26.9 go test -race ./internal/ingress -count=1` checks retention, archival (record limit, replay, atomicity, legacy migration), release/discard (frozen owners, interrupted release, discard tombstone replay, envelope-only listing), fencing, immutable ownership, quotas, physical admission/recovery, pinned-reader WAL reclamation, competing-process refusal and transaction replay.
 - `TestHoldingLimitsRaiseOnly` raises a spool created with the old limits through every opener, keeping held mail, and refuses lowering; `TestDriveReserveRefusesGrowth` refuses Bind/Accept growth inside an injected reserve while exact replays answer. `main_test.go` stubs `fsutil.DiskSpace` for the rest.
 - `TestSenderBlocks` checks block normalisation, refusals, matching, expiry, cap, wire budget, concurrent writers and the never-create-the-directory rule.
 - `TestAutomatic` and `TestEvidenceWorstCaseSize` check each evidence condition, shared-domain spoofing, thresholds and windows, escalation (only when a block was made) and clean reset, the domain rule with authenticated good domains, eviction and warm-up, own-domain/manual/unblock exclusions, the automatic budget and eviction for manual blocks, eviction priority, byte bound, damaged-file recovery and unblock without evidence.
 - Linux `TestHoldingCheckpointHeadroom` mounts a disposable 48 MiB tmpfs in a private user/mount namespace to check real checkpoint-growth refusal; it explicitly skips when `unshare` or mounting is unavailable. It never fills a shared host filesystem.
 - Set `MADDY_PROOF_BINARY` to the pinned binary in `docs/RECEIVING_GATEWAY_ASSESSMENT.md` to run the real receiving integration test; absence skips that test explicitly.
-- `GOTOOLCHAIN=go1.26.6 go test -race ./internal/app -run '^TestNativeReceiving|^TestNativeQuarantine' -count=1` checks actual receiving commands/import, deadline, revocation, quarantine, quarantine release/discard through the CLI and quota recovery. Supply the same pinned binary to exercise actual Maddy command dispatch.
+- `GOTOOLCHAIN=go1.26.9 go test -race ./internal/app -run '^TestNativeReceiving|^TestNativeQuarantine' -count=1` checks actual receiving commands/import, deadline, revocation, quarantine, quarantine release/discard through the CLI and quota recovery. Supply the same pinned binary to exercise actual Maddy command dispatch.
 
 ## Child DOX Index
 

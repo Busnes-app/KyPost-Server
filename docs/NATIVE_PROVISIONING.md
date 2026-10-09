@@ -1267,7 +1267,7 @@ Qualification uses the pinned Maddy binary from
 
 ```sh
 cd backend
-MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy GOTOOLCHAIN=go1.26.6 go test -race ./internal/app ./internal/ingress -run '^TestNativeReceiving|^TestMaddyHoldingBoundary|^TestMailboxImporter' -count=1 -timeout=5m
+MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy GOTOOLCHAIN=go1.26.9 go test -race ./internal/app ./internal/ingress -run '^TestNativeReceiving|^TestMaddyHoldingBoundary|^TestMailboxImporter' -count=1 -timeout=5m
 ```
 
 The actual runtime check runs Maddy against the production receiving command
@@ -1281,11 +1281,11 @@ failure/retry. Tests do not prove public deployment readiness.
 
 ```sh
 cd backend
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/fsutil ./internal/users ./internal/sso ./internal/mailbox ./internal/api -run '^TestNativeAllocation|^TestNativeDomain|^TestNativeMailDomain|^TestNativeAccountIssuer|^TestNativePublication|^TestLockFileContext|^TestPrepareAccount|^TestDirectory' -count=1 -timeout=20m
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/api ./internal/processor ./internal/mailbox ./internal/config -run '^TestNativeRuntime|^TestRuntimeClient|^TestExistingMailbox|^TestNativeMailRequiresExplicitBoolean' -count=1 -timeout=5m
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/state ./internal/sso ./internal/api ./internal/processor -run '^TestOpenNative|^TestNativeState|^TestNativeUserStorage|^TestNativePollerState' -count=1 -timeout=5m
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/sso ./internal/app ./internal/backup -run 'TestNativeMigration|TestMigrateNative|TestNativeBackupAcceptsV1AndV2Snapshots' -count=1 -timeout=5m
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/config ./internal/mailbox ./internal/ingress ./internal/sso ./internal/app ./internal/api -run 'TestMailboxQuotaBytes|TestConvergeLimits|TestQuotaRefuses|TestNativeOutboxSnapshotAcceptsUsageAboveLoweredQuota|TestHoldingLimitsRaiseOnly|TestDriveReserve|TestMigrateNativeLimits|TestMigrateNativeCommandAppliesMailboxQuota|QuotaAndDriveReserve|^TestNativeMailboxesAdminAPIAndSelection$|^TestMailImport$' -count=1 -timeout=10m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/fsutil ./internal/users ./internal/sso ./internal/mailbox ./internal/api -run '^TestNativeAllocation|^TestNativeDomain|^TestNativeMailDomain|^TestNativeAccountIssuer|^TestNativePublication|^TestLockFileContext|^TestPrepareAccount|^TestDirectory' -count=1 -timeout=20m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/api ./internal/processor ./internal/mailbox ./internal/config -run '^TestNativeRuntime|^TestRuntimeClient|^TestExistingMailbox|^TestNativeMailRequiresExplicitBoolean' -count=1 -timeout=5m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/state ./internal/sso ./internal/api ./internal/processor -run '^TestOpenNative|^TestNativeState|^TestNativeUserStorage|^TestNativePollerState' -count=1 -timeout=5m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/sso ./internal/app ./internal/backup -run 'TestNativeMigration|TestMigrateNative|TestNativeBackupAcceptsV1AndV2Snapshots' -count=1 -timeout=5m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/config ./internal/mailbox ./internal/ingress ./internal/sso ./internal/app ./internal/api -run 'TestMailboxQuotaBytes|TestConvergeLimits|TestQuotaRefuses|TestNativeOutboxSnapshotAcceptsUsageAboveLoweredQuota|TestHoldingLimitsRaiseOnly|TestDriveReserve|TestMigrateNativeLimits|TestMigrateNativeCommandAppliesMailboxQuota|QuotaAndDriveReserve|^TestNativeMailboxesAdminAPIAndSelection$|^TestMailImport$' -count=1 -timeout=10m
 ```
 
 The quota checks raise a primary and an extra mailbox with a crash after the

@@ -161,6 +161,7 @@ reading its handler first.
 ## Verification
 
 - `npm run build` must succeed with zero TypeScript errors
+- Time-sensitive test fixtures use relative expiries or a controlled clock, so real calendar dates cannot silently change their intended state.
 - `npm test` (vitest) must pass. `pages/read/readability.test.tsx` covers the reading surface across every theme × both body modes and is the check a new theme preset or a sanitizer allowlist change has to clear
 - Playwright E2E tests live in `scripts/tests/`; run via `scripts/`
 

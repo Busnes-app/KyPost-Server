@@ -199,7 +199,7 @@ controlled recipient; see the [test matrix](TURNKEY_MAIL_STACK_PLAN.md#operator-
 From `backend/`:
 
 ```sh
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/mailmsg ./internal/api ./internal/backup -run 'TestDomainRelay|TestNativeMailRelay|TestNativeMailDomains|TestNativeRetiredRelayDomain' -count=1 -timeout=20m
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/mailmsg ./internal/api ./internal/backup -run 'TestDomainRelay|TestNativeMailRelay|TestNativeMailDomains|TestNativeRetiredRelayDomain' -count=1 -timeout=20m
 ```
 
 These tests use encrypted files, sealed capsules, actual authenticated HTTP

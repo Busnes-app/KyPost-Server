@@ -260,7 +260,7 @@ state. From `backend/`, run the actual receiving proof:
 
 ```sh
 RSPAMD_PROOF=true MADDY_PROOF_BINARY=/absolute/path/to/pinned/maddy \
-  GOTOOLCHAIN=go1.26.6 go test -race ./internal/app \
+  GOTOOLCHAIN=go1.26.9 go test -race ./internal/app \
   -run '^TestNativeReceivingMaddyRuntime/rspamd$|^TestReceivingRspamdProtocol$|^TestNativeReceivingRspamdRetentionAndAuthority$|^TestReceivingRspamdAuthenticationProof$' \
   -count=1 -timeout=3m
 ```
@@ -477,7 +477,7 @@ without credentials.
 Before the live test, run this from `backend/`:
 
 ```sh
-GOTOOLCHAIN=go1.26.6 go test -race ./internal/api \
+GOTOOLCHAIN=go1.26.9 go test -race ./internal/api \
   -run '^TestNativeOutboundAPIActualTLSAndPGP$' -count=1 -timeout=2m
 ```
 

@@ -243,7 +243,7 @@ checks both directions and every intermediate in backend CI:
 
 ```sh
 cd backend
-GOTOOLCHAIN=go1.26.6 go test -v -run DeviceEnvelope ./internal/cryptutil
+GOTOOLCHAIN=go1.26.9 go test -v -run DeviceEnvelope ./internal/cryptutil
 ```
 
 Passing these vectors proves crypto framing compatibility, not native durable
