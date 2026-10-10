@@ -284,7 +284,10 @@ as issue #137. Until then, a mode change requires the device to re-check.
   (`contacts_handlers.go:510`); over that the server answers 413 with
   `{"error", "maxChanges"}`. **A client MUST batch** rather than assume its
   local set fits.
-- Request bodies are read under a 1 MiB limit.
+- Request bodies are read under a 1 MiB limit; a larger body also answers 413,
+  with `{"error", "maxChanges", "maxBytes"}`. Split the batch on any 413; a
+  single change that alone exceeds `maxBytes` cannot be pushed. Malformed
+  JSON stays 400.
 
 ---
 
