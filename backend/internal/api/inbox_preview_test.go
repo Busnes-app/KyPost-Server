@@ -62,3 +62,26 @@ func TestServeInboxPreviewOptIn(t *testing.T) {
 		t.Fatalf("preview sent without opt-in: %q", got.Preview)
 	}
 }
+
+// A row for encrypted mail never carries a preview, whichever path produced
+// its body: here the live path hands back a server-decrypted body.
+func TestServeInboxPreviewOmittedForEncryptedMail(t *testing.T) {
+	srv := newTestServer(t)
+	all, _ := srv.users.List()
+	fake := &fakeMailClient{unread: []imapadapter.UnreadMessage{
+		{MessageID: "1", Subject: "s", Sender: "a@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z",
+			Body: "decrypted text", BodyMode: "plain", PGPEncrypted: true},
+		{MessageID: "2", Subject: "s", Sender: "a@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z",
+			Body: "plain text", BodyMode: "plain"},
+	}}
+	rec := httptest.NewRecorder()
+	srv.serveInbox(rec, context.Background(), all[0].ID, fake, testInboxCache(t), config.Default(), "", 10, 0, false, false, true)
+	for _, e := range allEmails(decodeInboxResponse(t, rec)) {
+		if e.MessageID == "1" && e.Preview != "" {
+			t.Fatalf("encrypted row has a preview: %q", e.Preview)
+		}
+		if e.MessageID == "2" && e.Preview != "plain text" {
+			t.Fatalf("plain row preview = %q", e.Preview)
+		}
+	}
+}
