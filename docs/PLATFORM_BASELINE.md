@@ -374,6 +374,13 @@ Responses from `writeJSON` are gzipped when the client sends `Accept-Encoding:
 gzip` and the payload is at least 1 KiB (`backend/internal/api/gzip.go`). A
 client that does not send the header gets identical bytes to before.
 
+**Preview.** Add `preview=1` to get `preview`: at most 200 characters of
+single-line plain text (HTML flattened, control characters and line breaks
+turned into spaces), taken from the first 32 KiB of a body the server already
+has for that row. It works with `bodies=0`. It is absent on rows the server has
+no body for: `changeType:"updated"` delta rows (keep your stored preview),
+`before=` pages, search results, encrypted mail. Render it as text, never markup.
+
 **Older mail.** `GET /api/inbox?mailbox=<path>&limit=N&before=<messageId>`
 returns the next `limit` messages older than `messageId` (exactly as a list row
 gave it), newest first, as `{tabs, byTab, hasMore, nextBefore}`. Rows are

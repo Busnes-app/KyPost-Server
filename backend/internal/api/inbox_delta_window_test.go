@@ -39,7 +39,7 @@ func TestServeInboxDeltaWindows(t *testing.T) {
 		t.Helper()
 		fake.overviews = overviewsFor(ids...)
 		rec := httptest.NewRecorder()
-		srv.serveInbox(rec, context.Background(), userID, fake, cache, config.Default(), "", limit, since, true, false)
+		srv.serveInbox(rec, context.Background(), userID, fake, cache, config.Default(), "", limit, since, true, false, false)
 		var out deltaWire
 		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
 			t.Fatalf("status %d body %s", rec.Code, rec.Body.String())

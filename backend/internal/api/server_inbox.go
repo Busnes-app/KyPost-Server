@@ -15,6 +15,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+
+	"github.com/inbucket/html2text"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -29,6 +32,9 @@ type inboxEmail struct {
 	BCC       string `json:"bcc,omitempty"`
 	Subject   string `json:"subject"`
 	Body      string `json:"body,omitempty"`
+	// Preview is a short plain-text excerpt of Body, sent only with preview=1
+	// and only on rows whose body this response already had in hand.
+	Preview string `json:"preview,omitempty"`
 	// BodyMode is "html" or "plain": which MIME part Body was taken from.
 	// Absent means the server does not know (a cache entry written before this
 	// field existed, or a body only the client can decrypt), and the client
@@ -240,6 +246,41 @@ func inboxSubject(envelopeSubject, protectedSubject string) string {
 	return envelopeSubject
 }
 
+// maxPreviewRunes bounds a list preview; previewInputBytes bounds the work of
+// producing one from a large body.
+const (
+	maxPreviewRunes   = 200
+	previewInputBytes = 32 << 10
+)
+
+// inboxPreview flattens a body to one line of plain text. HTML goes through
+// html2text, which drops style/script/head; a plain body is never parsed as
+// markup, so an address in angle brackets survives. Control characters,
+// including line breaks, become spaces.
+func inboxPreview(body, mode string) string {
+	if len(body) > previewInputBytes {
+		body = body[:previewInputBytes]
+	}
+	if strings.EqualFold(strings.TrimSpace(mode), "html") {
+		text, err := html2text.FromString(body, html2text.Options{TextOnly: true, OmitLinks: true})
+		if err != nil {
+			return ""
+		}
+		body = text
+	}
+	body = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(body, ""))
+	runes := []rune(strings.Join(strings.Fields(body), " "))
+	if len(runes) > maxPreviewRunes {
+		runes = runes[:maxPreviewRunes]
+	}
+	return string(runes)
+}
+
 // inboxUncategorizedTab is the fallback tab for messages matching none of
 // the configured label keywords.
 const inboxUncategorizedTab = "Uncategorized"
@@ -314,6 +355,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	// wire contract that shipped desktop clients still read. They keep the
 	// old payload until they ask for the new one.
 	withBodies := strings.TrimSpace(r.URL.Query().Get("bodies")) != "0"
+	withPreview := strings.TrimSpace(r.URL.Query().Get("preview")) == "1"
 
 	s.cfgMu.RLock()
 	cfg := s.cfg
@@ -353,7 +395,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.serveInbox(w, r.Context(), ac.UserID, mailClient, cache, cfg, mailbox, limit, since, cursorSync, withBodies)
+	s.serveInbox(w, r.Context(), ac.UserID, mailClient, cache, cfg, mailbox, limit, since, cursorSync, withBodies, withPreview)
 }
 
 // serveInboxBefore answers `before=<messageId>`: the next page of mail older
@@ -411,7 +453,7 @@ func (s *Server) serveInboxBefore(w http.ResponseWriter, ctx context.Context, us
 // store are resolved — split out from handleInbox (which only does
 // param/auth/store resolution) so it can be exercised directly in tests
 // against a fake imapadapter.Client, without a real IMAP connection.
-func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID string, mailClient imapadapter.Client, cache *mailcache.Store, cfg config.Config, mailbox string, limit int, since int64, cursorSync, withBodies bool) {
+func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID string, mailClient imapadapter.Client, cache *mailcache.Store, cfg config.Config, mailbox string, limit int, since int64, cursorSync, withBodies, withPreview bool) {
 	native := imapadapter.MailSourceIdentity(mailClient) != "imap"
 	// ponytail: fresh full snapshots avoid unscoped numeric cursor collisions.
 	// Durable scoped deltas must be qualified before enabling native runtime.
@@ -432,6 +474,9 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		// bodies=0 is one guard rather than four, and cannot drift out of sync
 		// with a path added later. The cache warms are built from their own
 		// source data, not from this entry, so they still store bodies.
+		if withPreview && entry.Body != "" {
+			entry.Preview = inboxPreview(entry.Body, entry.BodyMode)
+		}
 		if !withBodies {
 			entry.Body, entry.BodyMode = "", ""
 		}
