@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -115,5 +116,56 @@ func TestContactsSyncOversizedBatchCommitsNothing(t *testing.T) {
 	}
 	if after := len(must1(store.List())); after != before {
 		t.Fatalf("contact count went %d -> %d on a rejected batch; a 413 must commit nothing", before, after)
+	}
+}
+
+// A push under maxContactsSyncChanges can still exceed the body cap (large
+// notes or photos). That was a 400 "invalid request", which a client cannot
+// tell from a malformed body; it must be the same 413 it already splits on.
+func TestContactsSyncOversizedBodyIs413WithMaxChanges(t *testing.T) {
+	srv := newTestServer(t)
+	all, err := srv.users.List()
+	if err != nil || len(all) == 0 {
+		t.Fatalf("no test user available: %v", err)
+	}
+	deviceID, deviceSecret := pairNativeDevice(t, srv, all[0].ID, "sync-body-cap")
+
+	push := contactsSyncPushRequest{Changes: make([]contactSyncChange, 2)}
+	for i := range push.Changes {
+		push.Changes[i].UID = fmt.Sprintf("big-%d", i)
+		push.Changes[i].FormattedName = strings.Repeat("x", maxContactsSyncBodyBytes/2)
+	}
+	raw, _ := json.Marshal(push)
+	if len(raw) <= maxContactsSyncBodyBytes {
+		t.Fatalf("fixture is %d bytes, must exceed %d", len(raw), maxContactsSyncBodyBytes)
+	}
+
+	post := func(body []byte) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/contacts/sync", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		setDeviceHeaders(req, deviceID, deviceSecret)
+		srv.routes().ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := post(raw)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body: status = %d, want 413; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error      string `json:"error"`
+		MaxChanges int    `json:"maxChanges"`
+		MaxBytes   int    `json:"maxBytes"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp.Error == "" ||
+		resp.MaxChanges != maxContactsSyncChanges || resp.MaxBytes != maxContactsSyncBodyBytes {
+		t.Fatalf("oversized body response = %s (err %v), want {error, maxChanges:%d, maxBytes:%d}",
+			rec.Body.String(), err, maxContactsSyncChanges, maxContactsSyncBodyBytes)
+	}
+
+	// Malformed but small stays a 400: 413 means "split", not "anything wrong".
+	if rec := post([]byte(`{"changes":[`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed body: status = %d, want 400", rec.Code)
 	}
 }
