@@ -104,18 +104,37 @@ func nativeOverview(m Message) imapadapter.Overview {
 	return o
 }
 func (c *Client) ListOverviews(ctx context.Context, folder string, limit int) ([]imapadapter.Overview, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	return c.listOverviews(ctx, folder, 0, limit)
+}
+
+// ListOverviewsBefore pages older mail below the internal ID before.
+func (c *Client) ListOverviewsBefore(ctx context.Context, folder string, before, limit int) ([]imapadapter.Overview, bool, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	if before <= 1 {
+		return []imapadapter.Overview{}, false, nil
+	}
+	out, err := c.listOverviews(ctx, folder, int64(before), limit+1)
+	if err != nil || len(out) <= limit {
+		return out, false, err
+	}
+	return out[:limit], true, nil
+}
+
+func (c *Client) listOverviews(ctx context.Context, folder string, before int64, limit int) ([]imapadapter.Overview, error) {
 	defer runtime.KeepAlive(c)
 	if err := c.checkAccess(ctx); err != nil {
 		return nil, err
-	}
-	if limit <= 0 {
-		limit = 500
 	}
 	folder, err := normalizeFolder(folder)
 	if err != nil {
 		return nil, err
 	}
-	messages, err := c.store.List(ctx, folder, 0, limit)
+	messages, err := c.store.List(ctx, folder, before, limit)
 	if err != nil {
 		return nil, err
 	}

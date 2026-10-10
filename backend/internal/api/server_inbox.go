@@ -348,7 +348,63 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if before := strings.TrimSpace(r.URL.Query().Get("before")); before != "" {
+		s.serveInboxBefore(w, r.Context(), ac.UserID, mailClient, mailbox, before, limit)
+		return
+	}
+
 	s.serveInbox(w, r.Context(), ac.UserID, mailClient, cache, cfg, mailbox, limit, since, cursorSync, withBodies)
+}
+
+// serveInboxBefore answers `before=<messageId>`: the next page of mail older
+// than that message, newest first. It never touches the cache window or the
+// cursor, and carries metadata only (like search): bodies, attachment and PGP
+// flags come from /api/mail/body when the message is opened.
+func (s *Server) serveInboxBefore(w http.ResponseWriter, ctx context.Context, userID string, mailClient imapadapter.Client, mailbox, before string, limit int) {
+	internalID, err := imapadapter.ResolveMessageReference(mailClient, before)
+	uid, convErr := strconv.Atoi(internalID)
+	if err != nil || convErr != nil || uid <= 0 || strconv.Itoa(uid) != internalID {
+		http.Error(w, "invalid before message reference; refresh the mailbox", http.StatusBadRequest)
+		return
+	}
+	overviews, hasMore, err := mailClient.ListOverviewsBefore(ctx, mailbox, uid, limit)
+	if err != nil {
+		if errors.Is(err, imapadapter.ErrUnsafeMailbox) {
+			writeMailboxError(w, err)
+			return
+		}
+		http.Error(w, "failed to fetch inbox", http.StatusBadGateway)
+		return
+	}
+	allowedKeywords := collectAllowedKeywords(s.userLabels(userID))
+	tabs, byTab := buildInboxTabScaffold(allowedKeywords)
+	for _, ov := range overviews {
+		tab := firstMatchingKeyword(ov.Keywords, allowedKeywords)
+		if tab == "" {
+			tab = inboxUncategorizedTab
+		}
+		if _, ok := byTab[tab]; !ok {
+			byTab[tab] = []inboxEmail{}
+			tabs = append(tabs, tab)
+		}
+		byTab[tab] = append(byTab[tab], inboxEmail{
+			MessageID: imapadapter.MessageReference(mailClient, ov.MessageID),
+			Sender:    ov.Sender,
+			SentTo:    ov.SentTo,
+			CC:        ov.CC,
+			BCC:       ov.BCC,
+			Subject:   ov.Subject,
+			Label:     tab,
+			Keywords:  ov.Keywords,
+			Status:    ov.Status,
+			AtUTC:     ov.AtUTC,
+		})
+	}
+	resp := map[string]any{"tabs": append(tabs, inboxUncategorizedTab), "byTab": byTab, "hasMore": hasMore}
+	if len(overviews) > 0 {
+		resp["nextBefore"] = imapadapter.MessageReference(mailClient, overviews[len(overviews)-1].MessageID)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // serveInbox contains handleInbox's core logic once a mail client and cache
