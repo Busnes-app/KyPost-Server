@@ -169,6 +169,14 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 			t.Fatal("from search alias missing")
 		}
 		requireOK(request("GET", "/api/inbox/folders?parent=INBOX", nil, native, owner))
+		older := request("GET", "/api/inbox?mailbox=INBOX&before="+id, nil, native, owner)
+		requireOK(older)
+		if got := allEmails(decodeInboxResponse(t, older)); len(got) != 0 || !bytes.Contains(older.Body.Bytes(), []byte(`"hasMore":false`)) {
+			t.Fatalf("nothing is older than the only message: %s", older.Body.String())
+		}
+		if rec := request("GET", "/api/inbox?mailbox=INBOX&before="+strconv.FormatInt(uid, 10), nil, native, owner); rec.Code != 400 {
+			t.Fatalf("bare numeric before reference: status %d, want 400", rec.Code)
+		}
 	}
 	// A classic caller must also receive a live snapshot, even with a warmed cache.
 	classic := request("GET", "/api/inbox?mailbox=INBOX&bodies=0", nil, false, owner)
@@ -225,6 +233,12 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 		t.Fatalf("malformed body: %d %s", malformed.Code, malformed.Body.String())
 	}
 	requireOK(request("GET", "/api/inbox?mailbox=INBOX&since=0", nil, true, owner))
+	page := request("GET", "/api/inbox?mailbox=INBOX&limit=1&before="+ref(store, bad), nil, true, owner)
+	requireOK(page)
+	if got := allEmails(decodeInboxResponse(t, page)); len(got) != 1 || got[0].MessageID != id || got[0].Body != "" ||
+		!bytes.Contains(page.Body.Bytes(), []byte(`"nextBefore":"`+id+`"`)) {
+		t.Fatalf("before page: %s", page.Body.String())
+	}
 
 	sender, err := pgpmail.GenerateIdentity("Sender", "sender@outside.test")
 	if err != nil {

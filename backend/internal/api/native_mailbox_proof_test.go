@@ -97,6 +97,10 @@ func (p *nativeMailboxProof) ListOverviews(ctx context.Context, mailbox string, 
 	return result, nil
 }
 
+func (p *nativeMailboxProof) ListOverviewsBefore(context.Context, string, int, int) ([]imapadapter.Overview, bool, error) {
+	return nil, false, nil
+}
+
 func (p *nativeMailboxProof) ListAttachments(ctx context.Context, mailbox string, uid int) ([]imapadapter.AttachmentInfo, error) {
 	raw, err := p.FetchRawMessage(ctx, mailbox, uid)
 	if err != nil {
