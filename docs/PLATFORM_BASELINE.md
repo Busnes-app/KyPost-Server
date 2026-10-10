@@ -303,6 +303,18 @@ A client that handles mail must, at minimum:
 See [`docs/E2E_PGP.md`](E2E_PGP.md) for the full model, and
 [`docs/WKD_Publishing.md`](WKD_Publishing.md) for key discovery.
 
+**Calendar invites.** `GET /api/mail/attachments` lists every `text/calendar`
+part. An iMIP invite carried as an undisposed `multipart/alternative` part
+(Google, Outlook) is listed after the real attachments as
+`{"name":"invite.ics","mimeType":"text/calendar","calendarMethod":"REQUEST"}`
+— existing indexes do not move. `calendarMethod` is the object's uppercase
+`METHOD` (`REQUEST`, `CANCEL`, `REPLY`, ...), absent when missing or not a
+plain token; attached `.ics` files with `mimeType` `text/calendar` carry it too.
+Downloads serve `Content-Type: text/calendar` with `Content-Disposition:
+attachment` and `nosniff`. Parse the bytes as untrusted input. Inbox rows'
+`hasAttachments` may stay false for an invite-only IMAP message (the list
+uses go-imap's parser); ask the attachments endpoint when in doubt.
+
 ---
 
 ## 7. Inbox listing and message bodies

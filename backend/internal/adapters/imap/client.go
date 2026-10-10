@@ -457,6 +457,19 @@ type AttachmentInfo struct {
 	Name     string `json:"name"`
 	MimeType string `json:"mimeType"`
 	Size     int    `json:"size"`
+	// CalendarMethod is the iTIP METHOD (REQUEST, CANCEL, REPLY, ...) of a
+	// text/calendar part; absent otherwise.
+	CalendarMethod string `json:"calendarMethod,omitempty"`
+}
+
+// NewAttachmentInfo describes attachment a at index for the listing APIs of
+// both mail backends.
+func NewAttachmentInfo(index int, a mailmsg.Attachment) AttachmentInfo {
+	info := AttachmentInfo{Index: index, Name: a.Name, MimeType: a.MimeType, Size: len(a.Content)}
+	if strings.EqualFold(a.MimeType, "text/calendar") {
+		info.CalendarMethod = CalendarMethod(a.Content)
+	}
+	return info
 }
 
 // ErrAttachmentNotFound reports an attachment index that doesn't exist on

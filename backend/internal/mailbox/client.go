@@ -278,7 +278,7 @@ func (c *Client) ListAttachments(ctx context.Context, folder string, uid int) ([
 	}
 	out := make([]imapadapter.AttachmentInfo, len(p.Attachments))
 	for i, a := range p.Attachments {
-		out[i] = imapadapter.AttachmentInfo{Index: i, Name: a.Name, MimeType: a.MimeType, Size: len(a.Content)}
+		out[i] = imapadapter.NewAttachmentInfo(i, a)
 	}
 	return out, nil
 }
@@ -294,8 +294,7 @@ func (c *Client) GetAttachment(ctx context.Context, folder string, uid, index in
 	if index < 0 || index >= len(p.Attachments) {
 		return imapadapter.AttachmentInfo{}, nil, imapadapter.ErrAttachmentNotFound
 	}
-	a := p.Attachments[index]
-	return imapadapter.AttachmentInfo{Index: index, Name: a.Name, MimeType: a.MimeType, Size: len(a.Content)}, a.Content, nil
+	return imapadapter.NewAttachmentInfo(index, p.Attachments[index]), p.Attachments[index].Content, nil
 }
 func (c *Client) FetchHeaderFields(ctx context.Context, folder string, uids []int, fields ...string) (map[int][]string, error) {
 	defer runtime.KeepAlive(c)
