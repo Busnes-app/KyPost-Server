@@ -327,7 +327,11 @@ exactly one `VEVENT`; line endings are normalised to CRLF. The server does
 not check UID/SEQUENCE/ATTENDEE — copy them from the invite. A refusal is 400
 with the reason; `encrypt` or `sign` with `calendarReply` is 400 (an
 organizer's calendar cannot read a PGP-wrapped reply). Address it to the
-invite's ORGANIZER; drafts ignore the field.
+invite's ORGANIZER; drafts ignore the field. A successful send that carried
+the part answers `"calendarReply": true` beside `ok`/`sentSaved`/`warning`.
+A server without RSVP support ignores the field and sends a plain email with
+no `calendarReply` in the response: treat a 200 without it as "RSVP not
+delivered" and tell the user.
 
 ---
 

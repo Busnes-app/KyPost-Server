@@ -494,6 +494,20 @@ func composeSend(m mailmsg.Message, bcc []string) (wire, sent []byte, recipients
 	return wire, m.Build(), append(append(append([]string{}, m.To...), m.CC...), bcc...)
 }
 
+// calendarReplySentKey marks a request whose message carries a built
+// calendarReply part, for the success response.
+type calendarReplySentKey struct{}
+
+// withCalendarReplyAck adds "calendarReply": true to a successful send
+// response whose message carried the iTIP part. A server that predates the
+// field never writes it, which is how a client tells it was ignored.
+func withCalendarReplyAck(r *http.Request, resp map[string]any) map[string]any {
+	if sent, _ := r.Context().Value(calendarReplySentKey{}).(bool); sent {
+		resp["calendarReply"] = true
+	}
+	return resp
+}
+
 func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	req, errMsg, err := decodeMailRequest(r)
 	if err != nil {
@@ -627,6 +641,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !req.Encrypt {
+		if req.CalendarReply != nil {
+			r = r.WithContext(context.WithValue(r.Context(), calendarReplySentKey{}, true))
+		}
 		if native {
 			s.finishNativeSend(w, r, ac, nativeUser, envelopeFrom, []mailbox.OutboundDelivery{{Recipients: recipients, Raw: msg}}, sentCopySource, false, nil, 0, "")
 			return
@@ -923,7 +940,7 @@ func (s *Server) finishMailSend(w http.ResponseWriter, r *http.Request, userID, 
 	}
 	s.logger.Info("mail send completed", "sent_saved", strconv.FormatBool(sentSaved))
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sentSaved": sentSaved, "warning": warning})
+	writeJSON(w, http.StatusOK, withCalendarReplyAck(r, map[string]any{"ok": true, "sentSaved": sentSaved, "warning": warning}))
 	return true
 }
 

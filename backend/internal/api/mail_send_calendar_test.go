@@ -83,8 +83,11 @@ func TestMailSendCalendarReply(t *testing.T) {
 	}
 
 	rec, got := send(t, map[string]any{"to": "organizer@x.test", "subject": "Accepted", "body": "Accepted", "calendarReply": map[string]string{"ics": ics}})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	var ack struct {
+		CalendarReply *bool `json:"calendarReply"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &ack) != nil || ack.CalendarReply == nil || !*ack.CalendarReply {
+		t.Fatalf("status %d, want 200 with calendarReply:true: %s", rec.Code, rec.Body.String())
 	}
 	var raw string
 	select {
@@ -94,6 +97,13 @@ func TestMailSendCalendarReply(t *testing.T) {
 	}
 	if !strings.Contains(raw, "Content-Type: multipart/alternative;") || !strings.Contains(raw, "Content-Type: text/calendar; method=REPLY; charset=UTF-8") {
 		t.Fatalf("delivered message lacks the iTIP part:\n%s", raw)
+	}
+
+	// An ordinary send says nothing about calendar replies.
+	plain, plainGot := send(t, map[string]any{"to": "organizer@x.test", "body": "b"})
+	<-plainGot
+	if plain.Code != http.StatusOK || strings.Contains(plain.Body.String(), "calendarReply") {
+		t.Fatalf("plain send: %d %s", plain.Code, plain.Body.String())
 	}
 
 	for name, payload := range map[string]map[string]any{
