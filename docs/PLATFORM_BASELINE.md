@@ -311,9 +311,12 @@ part. An iMIP invite carried as an undisposed `multipart/alternative` part
 `METHOD` (`REQUEST`, `CANCEL`, `REPLY`, ...), absent when missing or not a
 plain token; attached `.ics` files with `mimeType` `text/calendar` carry it too.
 Downloads serve `Content-Type: text/calendar` with `Content-Disposition:
-attachment` and `nosniff`. Parse the bytes as untrusted input. Inbox rows'
-`hasAttachments` may stay false for an invite-only IMAP message (the list
-uses go-imap's parser); ask the attachments endpoint when in doubt.
+attachment` and `nosniff`. Parse the bytes as untrusted input. Inbox rows set
+`hasAttachments: true` for a message with such a part (IMAP: from one batched
+`BODYSTRUCTURE` fetch per list request, only for messages with no other
+attachment), so a client may fetch attachments only when it is true. Rows
+cached before the server had this keep their old value until re-warmed; a
+server without it reports `false` for invite-only mail.
 
 **RSVP.** `POST /api/mail/send` accepts `calendarReply: {"ics": "<iCalendar>"}`
 and sends it as a `text/calendar; method=REPLY; charset=UTF-8` part in
