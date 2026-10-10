@@ -458,6 +458,19 @@ type AttachmentInfo struct {
 	Name     string `json:"name"`
 	MimeType string `json:"mimeType"`
 	Size     int    `json:"size"`
+	// CalendarMethod is the iTIP METHOD (REQUEST, CANCEL, REPLY, ...) of a
+	// text/calendar part; absent otherwise.
+	CalendarMethod string `json:"calendarMethod,omitempty"`
+}
+
+// NewAttachmentInfo describes attachment a at index for the listing APIs of
+// both mail backends.
+func NewAttachmentInfo(index int, a mailmsg.Attachment) AttachmentInfo {
+	info := AttachmentInfo{Index: index, Name: a.Name, MimeType: a.MimeType, Size: len(a.Content)}
+	if strings.EqualFold(a.MimeType, "text/calendar") {
+		info.CalendarMethod = CalendarMethod(a.Content)
+	}
+	return info
 }
 
 // ErrAttachmentNotFound reports an attachment index that doesn't exist on
@@ -942,6 +955,7 @@ func (c *APIClient) fetchUnreadPage(ctx context.Context, d *goimap.Dialer, uids 
 		}
 	}
 	envelopes := collectPGPEnvelopes(d, emails, inboxBodyText)
+	invites := calendarInviteUIDs(d, emails)
 
 	for _, uid := range toFetch {
 		if err := ctx.Err(); err != nil {
@@ -992,7 +1006,7 @@ func (c *APIClient) fetchUnreadPage(ctx context.Context, d *goimap.Dialer, uids 
 			AtUTC:          ov.AtUTC,
 			Body:           body,
 			BodyHTML:       bodyHTML,
-			HasAttachments: len(e.Attachments) > 0,
+			HasAttachments: len(e.Attachments) > 0 || invites[uid],
 			// Confirmed against the root Content-Type, not inferred from the
 			// attachments: a bodyless message carrying one armored .pgp file is
 			// indistinguishable from a real envelope by parts alone, and this
@@ -1059,6 +1073,7 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, mailbox string, limi
 		}
 	}
 	envelopes := collectPGPEnvelopes(d, emails, clientBodyText)
+	invites := calendarInviteUIDs(d, emails)
 
 	out := make([]UnreadMessage, 0, len(uids))
 	for i := len(uids) - 1; i >= 0; i-- {
@@ -1090,7 +1105,7 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, mailbox string, limi
 			AtUTC:                ov.AtUTC,
 			Body:                 body,
 			Status:               ov.Status,
-			HasAttachments:       len(e.Attachments) > 0,
+			HasAttachments:       len(e.Attachments) > 0 || invites[uid],
 		}
 		if body == "" {
 			if payload := envelopes[uid].Payload; payload != "" {
@@ -1364,6 +1379,7 @@ func (c *APIClient) GetMessageBodies(ctx context.Context, mailbox string, uids [
 		}
 	}
 	envelopes := collectPGPEnvelopes(d, emails, bodyText)
+	invites := calendarInviteUIDs(d, emails)
 
 	for _, uid := range toFetch {
 		if err := ctx.Err(); err != nil {
@@ -1384,7 +1400,7 @@ func (c *APIClient) GetMessageBodies(ctx context.Context, mailbox string, uids [
 		content := MessageContent{
 			Body:           body,
 			BodyMode:       bodyMode,
-			HasAttachments: len(e.Attachments) > 0,
+			HasAttachments: len(e.Attachments) > 0 || invites[uid],
 			Sender:         singleMailboxSender(e),
 		}
 		if body == "" {

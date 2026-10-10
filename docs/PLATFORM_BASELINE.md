@@ -284,7 +284,10 @@ as issue #137. Until then, a mode change requires the device to re-check.
   (`contacts_handlers.go:510`); over that the server answers 413 with
   `{"error", "maxChanges"}`. **A client MUST batch** rather than assume its
   local set fits.
-- Request bodies are read under a 1 MiB limit.
+- Request bodies are read under a 1 MiB limit; a larger body also answers 413,
+  with `{"error", "maxChanges", "maxBytes"}`. Split the batch on any 413; a
+  single change that alone exceeds `maxBytes` cannot be pushed. Malformed
+  JSON stays 400.
 
 ---
 
@@ -313,6 +316,21 @@ message 404, a mailbox read failure 502 — all before anything is sent; drop
 the field to send unthreaded. An original with no usable `Message-ID` is sent
 unthreaded. Client-encrypted sends (`/api/mail/send-pgp`) build their own MIME
 and are not covered.
+
+**Calendar invites.** `GET /api/mail/attachments` lists every `text/calendar`
+part. An iMIP invite carried as an undisposed `multipart/alternative` part
+(Google, Outlook) is listed after the real attachments as
+`{"name":"invite.ics","mimeType":"text/calendar","calendarMethod":"REQUEST"}`
+— existing indexes do not move. `calendarMethod` is the object's uppercase
+`METHOD` (`REQUEST`, `CANCEL`, `REPLY`, ...), absent when missing or not a
+plain token; attached `.ics` files with `mimeType` `text/calendar` carry it too.
+Downloads serve `Content-Type: text/calendar` with `Content-Disposition:
+attachment` and `nosniff`. Parse the bytes as untrusted input. Inbox rows set
+`hasAttachments: true` for a message with such a part (IMAP: from one batched
+`BODYSTRUCTURE` fetch per list request, only for messages with no other
+attachment), so a client may fetch attachments only when it is true. Rows
+cached before the server had this keep their old value until re-warmed; a
+server without it reports `false` for invite-only mail.
 
 ---
 

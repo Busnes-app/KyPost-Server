@@ -282,7 +282,7 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 | `GET /api/contacts/search` | yes | Compose-autocomplete search (`?q=&limit=`) over the caller's address book; `limit` defaults to 5, capped at 25 |
 | `GET\|PUT\|DELETE /api/contacts/{id}` | yes | Read / update / tombstone-delete a single contact by `uid` |
 | `GET\|POST\|DELETE /api/contacts/dav-password` | yes | Manage the caller's app-specific CardDAV Basic Auth password (separate from their login password); `POST` returns the raw secret exactly once |
-| `GET\|POST /api/contacts/sync` | device | Mobile two-way sync (`?since=` / body `{baseCursor, changes[]}`), authenticated with the caller's own `X-Kypost-Device-Id`/`X-Kypost-Device-Secret` headers like `native/pull` — not a web session. Conflict policy is last-write-wins |
+| `GET\|POST /api/contacts/sync` | device | Mobile two-way sync (`?since=` / body `{baseCursor, changes[]}`), authenticated with the caller's own `X-Kypost-Device-Id`/`X-Kypost-Device-Secret` headers like `native/pull` — not a web session. Conflict policy is last-write-wins. POST over 500 changes or a 1 MiB body answers 413 `{error, maxChanges, maxBytes}` (split the batch); malformed JSON 400 |
 | `PROPFIND\|REPORT\|GET\|PUT\|DELETE /dav/{username}/contacts/...` | CardDAV Basic Auth | Real CardDAV surface (`emersion/go-webdav`) for native OS/CardDAV clients; authenticated with the app-specific password above, not session cookies or the login password. `/.well-known/carddav` is also mounted here for client auto-discovery |
 
 ### Environment Variables
