@@ -88,6 +88,11 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		// PGPDraft is a complete PGP/MIME message the browser encrypted to
 		// the sender's own key. Drafts only; see handleMailDraft.
 		PGPDraft string `json:"pgpDraft"`
+		// CalendarReply is an iTIP REPLY (an RSVP) sent as a text/calendar
+		// alternative to the body. Send only; drafts ignore it.
+		CalendarReply *struct {
+			ICS string `json:"ics"`
+		} `json:"calendarReply"`
 	}
 	// Check the declared size before reading, so an oversized send says so.
 	// Without this the LimitReader below just truncates the JSON mid-value and
@@ -151,7 +156,15 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		return mailRequest{}, "invalid BCC recipients", err
 	}
 
+	var calendarReply []byte
+	if raw.CalendarReply != nil {
+		if calendarReply, err = mailmsg.CalendarReply(raw.CalendarReply.ICS); err != nil {
+			return mailRequest{}, err.Error(), err
+		}
+	}
+
 	return mailRequest{
+		CalendarReply:       calendarReply,
 		Subject:             raw.Subject,
 		Body:                raw.Body,
 		EncodedBody:         base64.StdEncoding.EncodeToString([]byte(raw.Body)),
@@ -549,16 +562,23 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 
 	}
 	autocryptHeader := s.outboundAutocryptHeader(ac.UserID, envelopeFrom)
+	// An organizer's calendar server cannot open a PGP-wrapped REPLY, so the
+	// RSVP would silently never land.
+	if req.CalendarReply != nil && (req.Encrypt || req.Sign) {
+		http.Error(w, "calendar replies are sent unencrypted and unsigned; turn off encrypt/sign for this reply", http.StatusBadRequest)
+		return
+	}
 
 	msg, sentCopySource, recipients := composeSend(mailmsg.Message{
-		From:        headerFrom,
-		To:          toList,
-		CC:          ccList,
-		Subject:     req.Subject,
-		EncodedBody: req.EncodedBody,
-		Mode:        req.Mode,
-		Attachments: req.Attachments,
-		Autocrypt:   autocryptHeader,
+		From:          headerFrom,
+		To:            toList,
+		CC:            ccList,
+		Subject:       req.Subject,
+		EncodedBody:   req.EncodedBody,
+		Mode:          req.Mode,
+		Attachments:   req.Attachments,
+		Autocrypt:     autocryptHeader,
+		CalendarReply: req.CalendarReply,
 	}, bccList)
 
 	// Signing on the user's behalf needs a private key this server can open, and
