@@ -741,7 +741,8 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			}
 		}
 		if len(warmEntries) > 0 {
-			if err := cache.Upsert(windowKey, stampKeyGen(warmEntries)); err != nil {
+			// Bodies are kept once per mailbox, in the base window.
+			if err := cache.Upsert(cacheKey, stampKeyGen(warmEntries)); err != nil {
 				s.logger.Error("failed to warm mail cache from delta fetch", "error", err.Error())
 			}
 		}

@@ -38,8 +38,11 @@ All code under `backend/internal/mailcache/`. Consumed by both `api/`
 - A `Store` holds one independent window per mailbox key (`map[string]*mailboxWindow`)
   — a user can poll several folders, each with its own cursor. `Sync` callers at a
   non-default limit use `WindowKey(mailbox, limit)` (NUL-separated), so limits do not
-  reset each other (native snapshots keep the base window); a new limit-window entry inherits
-  warm state from the base window's same message (`baseWindowEntry`, sender/time guarded);
+  reset each other (native snapshots keep the base window). At most `maxLimitWindows` (3)
+  limit windows per mailbox, LRU by `LastUsed`; a cursor at or below a window's `Base` resets.
+  Limit windows never persist bodies (`persistLocked` strips them); `withBaseWarmth` lends the
+  base window's body/classification to returned entries (sender/time guarded), and the API warms
+  the base window;
   `Remove` and `warmBody`'s Sent check strip the suffix. A new
   window starts its `Seq` at the store's highest and a `since` above `Seq` sets
   `Reset` (full window), so no cursor is ever trusted by a window that did not issue it.
