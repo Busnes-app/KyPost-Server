@@ -5,7 +5,6 @@ package imap
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -21,68 +20,24 @@ func emailContentSize(e *goimap.Email) int64 {
 	return total
 }
 
-// fetchAttachments pulls one message and returns its parsed attachments
-// (go-imap's GetEmails decodes MIME parts into Email.Attachments).
-//
-// The "UID <uid> LARGER <cap>" SEARCH runs BEFORE the fetch, the same
-// protocol-level bound ListUnreadInbox and FetchRawMessage use. This used to
-// be a post-fetch check only, on the argument that both callers serve one
-// explicit, user-clicked UID and so "the one-message blast radius is the same
-// whether the size check runs before or after the fetch". That last part was
-// simply false: before the fetch the blast radius is zero bytes, and after it
-// the entire message has already been requested, buffered, MIME-parsed and
-// base64-decoded into memory by go-imap — emailContentSize can then only
-// describe the allocation, not prevent it. Which UID is fetched is the user's
-// choice; how big the message at that UID is belongs to whoever sent it, and
-// the recipient merely opening a message with attachments is enough to spend
-// it (ReadPage loads the attachment list automatically).
-//
-// LARGER is evaluated against the server's own RFC822.SIZE, so an oversized
-// message's literal is never sent to us at all. The post-fetch
-// emailContentSize check is kept as defense-in-depth for what SEARCH cannot
-// bound: RFC822.SIZE is the stored size, while Email.Attachments holds decoded
-// content, and a server that reports the size wrongly is still a server.
-func (c *APIClient) fetchAttachments(ctx context.Context, mailbox string, uid int) ([]goimap.Attachment, error) {
-	c.opMu.Lock()
-	defer c.opMu.Unlock()
-
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+// fetchAttachments returns one message's attachments through the same
+// enmime parse native mail uses (ParseRawContent), so both backends list the
+// same parts, including undisposed calendar invites go-imap's parser drops.
+// FetchRawMessage refuses an oversized message with a UID LARGER search before
+// any byte of it is fetched; ParseRawContent re-checks the decoded size.
+func (c *APIClient) fetchAttachments(ctx context.Context, mailbox string, uid int) ([]mailmsg.Attachment, error) {
 	if uid <= 0 {
 		return nil, fmt.Errorf("invalid message id %d", uid)
 	}
-
-	d, err := c.ensureConnectedLocked()
+	raw, err := c.FetchRawMessage(ctx, strings.TrimSpace(mailbox), uid)
 	if err != nil {
 		return nil, err
 	}
-	mailbox = strings.TrimSpace(mailbox)
-	if err := c.selectMailboxLocked(d, mailbox); err != nil {
+	parsed, err := ParseRawContent(raw)
+	if err != nil {
 		return nil, err
 	}
-
-	sb := goimap.Search().UID(strconv.Itoa(uid)).Larger(int(mailmsg.MaxInboundMessageBytes))
-	oversizedUIDs, err := d.SearchUIDs(sb)
-	if err != nil {
-		return nil, fmt.Errorf("imap search oversized: %w", err)
-	}
-	if len(oversizedUIDs) > 0 {
-		return nil, mailmsg.ErrMessageTooLarge
-	}
-
-	emails, err := d.GetEmails(uid)
-	if err != nil {
-		return nil, fmt.Errorf("imap fetch emails: %w", err)
-	}
-	e := emails[uid]
-	if e == nil {
-		return nil, fmt.Errorf("message %d not found in %q", uid, mailbox)
-	}
-	if emailContentSize(e) > mailmsg.MaxInboundMessageBytes {
-		return nil, mailmsg.ErrMessageTooLarge
-	}
-	return e.Attachments, nil
+	return parsed.Attachments, nil
 }
 
 func (c *APIClient) ListAttachments(ctx context.Context, mailbox string, uid int) ([]AttachmentInfo, error) {
@@ -92,12 +47,7 @@ func (c *APIClient) ListAttachments(ctx context.Context, mailbox string, uid int
 	}
 	infos := make([]AttachmentInfo, 0, len(attachments))
 	for i, a := range attachments {
-		infos = append(infos, AttachmentInfo{
-			Index:    i,
-			Name:     a.Name,
-			MimeType: a.MimeType,
-			Size:     len(a.Content),
-		})
+		infos = append(infos, NewAttachmentInfo(i, a))
 	}
 	return infos, nil
 }
@@ -115,12 +65,5 @@ func (c *APIClient) GetAttachment(ctx context.Context, mailbox string, uid int, 
 	if index < 0 || index >= len(attachments) {
 		return AttachmentInfo{}, nil, ErrAttachmentNotFound
 	}
-	a := attachments[index]
-	info := AttachmentInfo{
-		Index:    index,
-		Name:     a.Name,
-		MimeType: a.MimeType,
-		Size:     len(a.Content),
-	}
-	return info, a.Content, nil
+	return NewAttachmentInfo(index, attachments[index]), attachments[index].Content, nil
 }

@@ -327,6 +327,23 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 	if bytes.Contains(encryptedBody.Body.Bytes(), []byte("owner body")) {
 		t.Fatal("encrypted lazy body exposed plaintext")
 	}
+	// An iMIP invite as an undisposed multipart/alternative part is listed as
+	// invite.ics and downloads as text/calendar, still as an attachment.
+	invite := importRaw(store, "invite", []byte("From: organizer@outside.test\r\nTo: tester@example.com\r\nSubject: Invitation\r\nMIME-Version: 1.0\r\n"+
+		"Content-Type: multipart/alternative; boundary=A\r\n\r\n--A\r\nContent-Type: text/plain\r\n\r\ninvited\r\n"+
+		"--A\r\nContent-Type: text/calendar; method=REQUEST\r\n\r\nBEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:e1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n--A--\r\n"))
+	inviteQuery := "?mailbox=INBOX&messageId=" + ref(store, invite)
+	inviteList := request("GET", "/api/mail/attachments"+inviteQuery, nil, true, owner)
+	requireOK(inviteList)
+	if !bytes.Contains(inviteList.Body.Bytes(), []byte(`"name":"invite.ics","mimeType":"text/calendar"`)) || !bytes.Contains(inviteList.Body.Bytes(), []byte(`"calendarMethod":"REQUEST"`)) {
+		t.Fatalf("invite not listed: %s", inviteList.Body.String())
+	}
+	ics := request("GET", "/api/mail/attachment"+inviteQuery+"&index=0", nil, true, owner)
+	requireOK(ics)
+	if ics.Header().Get("Content-Type") != "text/calendar" || !strings.HasPrefix(ics.Header().Get("Content-Disposition"), "attachment") ||
+		ics.Header().Get("X-Content-Type-Options") != "nosniff" || !bytes.HasPrefix(ics.Body.Bytes(), []byte("BEGIN:VCALENDAR")) {
+		t.Fatalf("invite download headers %v body %q", ics.Header(), ics.Body.String())
+	}
 	requireOK(request("POST", "/api/mail/draft", map[string]any{"to": "tester@example.com", "pgpDraft": string(encrypted)}, false, owner))
 	copies, err := store.List(ctx, "Drafts", 0, 10)
 	if err != nil {
