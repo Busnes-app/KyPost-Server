@@ -272,6 +272,9 @@ func (c *noopMailClient) ListUnreadMessages(context.Context, string, int) ([]ima
 func (c *noopMailClient) ListOverviews(context.Context, string, int) ([]imapadapter.Overview, error) {
 	return nil, nil
 }
+func (c *noopMailClient) ListOverviewsBefore(context.Context, string, int, int) ([]imapadapter.Overview, bool, error) {
+	return nil, false, nil
+}
 func (c *noopMailClient) SearchMessages(context.Context, string, string, string, int) ([]imapadapter.Overview, error) {
 	return nil, nil
 }

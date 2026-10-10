@@ -284,7 +284,10 @@ as issue #137. Until then, a mode change requires the device to re-check.
   (`contacts_handlers.go:510`); over that the server answers 413 with
   `{"error", "maxChanges"}`. **A client MUST batch** rather than assume its
   local set fits.
-- Request bodies are read under a 1 MiB limit.
+- Request bodies are read under a 1 MiB limit; a larger body also answers 413,
+  with `{"error", "maxChanges", "maxBytes"}`. Split the batch on any 413; a
+  single change that alone exceeds `maxBytes` cannot be pushed. Malformed
+  JSON stays 400.
 
 ---
 
@@ -388,6 +391,16 @@ Two things a client must keep in mind when it opts out:
 Responses from `writeJSON` are gzipped when the client sends `Accept-Encoding:
 gzip` and the payload is at least 1 KiB (`backend/internal/api/gzip.go`). A
 client that does not send the header gets identical bytes to before.
+
+**Older mail.** `GET /api/inbox?mailbox=<path>&limit=N&before=<messageId>`
+returns the next `limit` messages older than `messageId` (exactly as a list row
+gave it), newest first, as `{tabs, byTab, hasMore, nextBefore}`. Rows are
+metadata only — no `body`, `bodyMode`, `hasAttachments` or PGP flags, and an
+encrypted message shows its outer subject — like `/api/mail/search`; open a
+message through `/api/mail/body`. `hasMore` says older mail remains;
+`nextBefore` (absent on an empty page) is the `before` for the next page. The
+page has no `cursor`/`delta`/`removed`, ignores `since`, and never changes the
+cursor window. A malformed or stale reference answers 400; refresh the window.
 
 [`docs/INBOX_PAYLOAD_HANDOFF.md`](INBOX_PAYLOAD_HANDOFF.md) is the porting
 guide: what each client has to change, and the three things that break if you

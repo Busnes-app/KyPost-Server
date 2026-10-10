@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"mime"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -483,6 +484,9 @@ type Client interface {
 	// in mailbox, without a body fetch — the selective, cheap counterpart
 	// to ListUnreadMessages used by the mail cache's live-diff path.
 	ListOverviews(ctx context.Context, mailbox string, limit int) ([]Overview, error)
+	// ListOverviewsBefore is ListOverviews for the page of messages with a UID
+	// below before (newest first), plus whether older messages remain.
+	ListOverviewsBefore(ctx context.Context, mailbox string, before, limit int) ([]Overview, bool, error)
 	// SearchMessages searches messages in mailbox by field (sender/subject/body/all)
 	// and returns the newest N matching messages as Overview objects.
 	SearchMessages(ctx context.Context, mailbox, field, query string, limit int) ([]Overview, error)
@@ -1150,7 +1154,52 @@ func (c *APIClient) ListOverviews(ctx context.Context, mailbox string, limit int
 	}
 
 	sort.Ints(uids)
+	return overviewsNewestFirst(ctx, d, uids)
+}
 
+// ListOverviewsBefore pages older mail: the newest limit UIDs below before,
+// found by a server-side UID SEARCH rather than listing the whole mailbox.
+func (c *APIClient) ListOverviewsBefore(ctx context.Context, mailbox string, before, limit int) ([]Overview, bool, error) {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if limit <= 0 {
+		limit = 500
+	}
+	if before <= 1 {
+		return []Overview{}, false, nil
+	}
+	d, err := c.ensureConnectedLocked()
+	if err != nil {
+		return nil, false, err
+	}
+	if err := c.selectMailboxLocked(d, strings.TrimSpace(mailbox)); err != nil {
+		return nil, false, err
+	}
+	uids, err := d.GetUIDs("UID 1:" + strconv.Itoa(before-1))
+	if err != nil {
+		return nil, false, fmt.Errorf("imap list older messages: %w", err)
+	}
+	// Filter rather than trust the server's range handling with our cursor.
+	uids = slices.DeleteFunc(uids, func(uid int) bool { return uid <= 0 || uid >= before })
+	sort.Ints(uids)
+	hasMore := len(uids) > limit
+	if hasMore {
+		uids = uids[len(uids)-limit:]
+	}
+	if len(uids) == 0 {
+		return []Overview{}, false, nil
+	}
+	out, err := overviewsNewestFirst(ctx, d, uids)
+	return out, hasMore, err
+}
+
+// overviewsNewestFirst fetches envelopes for ascending uids and returns them
+// newest first.
+func overviewsNewestFirst(ctx context.Context, d *goimap.Dialer, uids []int) ([]Overview, error) {
 	overviews, err := d.GetOverviews(uids...)
 	if err != nil {
 		return nil, fmt.Errorf("imap fetch overviews: %w", err)

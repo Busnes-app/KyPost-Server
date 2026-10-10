@@ -56,10 +56,14 @@ type fakeMailClient struct {
 	// rawMessages feeds FetchRawMessage — the signed-only read path fetches the
 	// message raw, because a detached signature covers bytes no MIME-parsed copy
 	// preserves. See handlePGPPayload.
-	rawMessages  map[int][]byte
-	bodiesErr    error
-	bodiesCalls  int
-	lastBodyUIDs []int
+	rawMessages map[int][]byte
+	bodiesErr   error
+
+	olderOverviews []imapadapter.Overview
+	olderHasMore   bool
+	beforeCalls    []int
+	bodiesCalls    int
+	lastBodyUIDs   []int
 
 	attachments    map[int][]mailmsg.Attachment
 	attachmentsErr error
@@ -88,6 +92,11 @@ func (f *fakeMailClient) ListUnreadMessages(_ context.Context, _ string, _ int) 
 func (f *fakeMailClient) ListOverviews(_ context.Context, _ string, _ int) ([]imapadapter.Overview, error) {
 	f.overviewCalls++
 	return f.overviews, f.overviewsErr
+}
+
+func (f *fakeMailClient) ListOverviewsBefore(_ context.Context, _ string, before, limit int) ([]imapadapter.Overview, bool, error) {
+	f.beforeCalls = append(f.beforeCalls, before)
+	return f.olderOverviews, f.olderHasMore, f.overviewsErr
 }
 
 func (f *fakeMailClient) SearchMessages(_ context.Context, _ string, _ string, _ string, _ int) ([]imapadapter.Overview, error) {
