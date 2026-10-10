@@ -303,6 +303,17 @@ A client that handles mail must, at minimum:
 See [`docs/E2E_PGP.md`](E2E_PGP.md) for the full model, and
 [`docs/WKD_Publishing.md`](WKD_Publishing.md) for key discovery.
 
+**Reply threading.** `POST /api/mail/send` accepts optional
+`replyToMessageId` (the list `messageId` of the message being answered) and
+`replyToMailbox` (its folder; default the account's inbox). The server reads
+that message's `Message-ID`, `References` and `In-Reply-To` and writes
+`In-Reply-To` and `References` (root plus newest, at most 20) itself; clients
+cannot supply header text. A malformed/stale reference answers 400, a missing
+message 404, a mailbox read failure 502 — all before anything is sent; drop
+the field to send unthreaded. An original with no usable `Message-ID` is sent
+unthreaded. Client-encrypted sends (`/api/mail/send-pgp`) build their own MIME
+and are not covered.
+
 ---
 
 ## 7. Inbox listing and message bodies
