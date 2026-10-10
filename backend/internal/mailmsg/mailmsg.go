@@ -99,9 +99,23 @@ var msgIDPattern = regexp.MustCompile(`<[\x21-\x3b\x3d\x3f-\x7e]{1,250}@[\x21-\x
 const maxReferences = 20
 
 // MessageIDs extracts the well-formed msg-ids from a header value, dropping
-// everything else (comments, whitespace, CR/LF, garbage).
+// everything else (comments, whitespace, CR/LF, garbage). The whole value is
+// scanned, but only the first id (a thread's root) and the newest
+// maxReferences are kept, so memory stays bounded and the newest end of a
+// long chain is never lost.
 func MessageIDs(value string) []string {
-	return msgIDPattern.FindAllString(value, maxReferences*4)
+	var out []string
+	for {
+		loc := msgIDPattern.FindStringIndex(value)
+		if loc == nil {
+			return out
+		}
+		out = append(out, value[loc[0]:loc[1]])
+		value = value[loc[1]:]
+		if len(out) > maxReferences+1 {
+			out = append(out[:1], out[2:]...)
+		}
+	}
 }
 
 // capReferences keeps the thread root and the newest ids.

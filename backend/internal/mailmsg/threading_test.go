@@ -62,3 +62,17 @@ func TestBuildWritesThreadingHeadersSafely(t *testing.T) {
 		t.Fatal("threading headers on a message that is not a reply")
 	}
 }
+
+// A long References chain keeps its root and its newest ids; the scan must not
+// stop early and drop the newest end.
+func TestReplyThreadingLongChainKeepsNewest(t *testing.T) {
+	refs := make([]string, 100)
+	for i := range refs {
+		refs[i] = fmt.Sprintf("<r%d@x.test>", i)
+	}
+	_, got := ReplyThreading("<orig@x.test>", strings.Join(refs, " "), "")
+	want := append(append([]string{"<r0@x.test>"}, refs[82:]...), "<orig@x.test>")
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+}
