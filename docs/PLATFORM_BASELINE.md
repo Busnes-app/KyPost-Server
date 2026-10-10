@@ -384,6 +384,21 @@ message through `/api/mail/body`. `hasMore` says older mail remains;
 page has no `cursor`/`delta`/`removed`, ignores `since`, and never changes the
 cursor window. A malformed or stale reference answers 400; refresh the window.
 
+**Cursor deltas (`since=<cursor>`, external IMAP).** Each `limit` keeps its own
+window and cursor, so clients asking for different limits do not reset each
+other; a client must keep using the limit its cursor came from. Delta fields:
+
+- `removed` — the message left the mailbox; delete it.
+- `agedOut` — newer mail pushed it below a full window; it still exists. Keep
+  it (or drop it from a view that shows only the window). A message deleted in
+  the same poll that pushes it out is reported here, not in `removed`.
+- `hasMore: true` + `nextBefore` — more mail arrived than the window holds.
+  Page `before=nextBefore` (then each page's `nextBefore`) until a page
+  contains a message you already hold or `hasMore` is false; commit the
+  response `cursor` only after that, or the skipped mail is lost.
+- `delta: false` on a request with `since > 0` — the cursor was not issued by
+  this window (new limit, lost cache); the response is a full window: replace.
+
 [`docs/INBOX_PAYLOAD_HANDOFF.md`](INBOX_PAYLOAD_HANDOFF.md) is the porting
 guide: what each client has to change, and the three things that break if you
 only do the obvious half.

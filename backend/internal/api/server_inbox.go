@@ -602,7 +602,14 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		live = append(live, mailCacheEntryFromOverview(ov))
 	}
 
-	result, err := cache.Sync(cacheKey, limit, live, since)
+	// The default limit keeps the window the poller warms; any other limit gets
+	// its own, so cursor clients asking for different limits do not reset each
+	// other. Native answers full snapshots without cursors and keeps one window.
+	windowKey := cacheKey
+	if limit != maxInboxLimit && !native {
+		windowKey = mailcache.WindowKey(cacheKey, limit)
+	}
+	result, err := cache.Sync(windowKey, limit, live, since)
 	if err != nil {
 		http.Error(w, "failed to sync mail cache", http.StatusInternalServerError)
 		return
@@ -688,7 +695,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			}
 		}
 		if len(warmEntries) > 0 {
-			if err := cache.Upsert(cacheKey, stampKeyGen(warmEntries)); err != nil {
+			if err := cache.Upsert(windowKey, stampKeyGen(warmEntries)); err != nil {
 				s.logger.Error("failed to warm mail cache from delta fetch", "error", err.Error())
 			}
 		}
@@ -754,9 +761,12 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		})
 	}
 
-	removed := make([]string, 0, len(result.Removed))
-	for _, e := range result.Removed {
-		removed = append(removed, imapadapter.MessageReference(mailClient, e.MessageID))
+	references := func(rs []mailcache.Removal) []string {
+		out := make([]string, 0, len(rs))
+		for _, e := range rs {
+			out = append(out, imapadapter.MessageReference(mailClient, e.MessageID))
+		}
+		return out
 	}
 
 	cursor := result.Cursor
@@ -764,7 +774,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		cursor = 0
 	}
 	tabs = append(tabs, inboxUncategorizedTab)
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"tabs":  tabs,
 		"byTab": byTab,
 		// What this response IS, not which path built it. A since=0 caller has
@@ -773,10 +783,26 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		// snapshot, and saying otherwise denied the client the one thing only a
 		// snapshot can express — which messages are NOT there any more. Pruning
 		// against it is how a client recovers a removal it never received.
-		"delta":   since > 0,
-		"cursor":  cursor,
-		"removed": removed,
-	})
+		"delta":  since > 0 && !result.Reset,
+		"cursor": cursor,
+		// removed: left the mailbox (delete it). agedOut: fell below a full
+		// window and still exists (keep it). Old clients ignore agedOut.
+		"removed": references(result.Removed),
+		"agedOut": references(result.AgedOut),
+		// hasMore: new mail may lie below this window; page it with
+		// before=nextBefore until reaching a message the client holds.
+		"hasMore": result.HasMore,
+	}
+	if result.HasMore {
+		oldest := overviews[0]
+		for _, ov := range overviews {
+			if ov.UID < oldest.UID {
+				oldest = ov
+			}
+		}
+		resp["nextBefore"] = imapadapter.MessageReference(mailClient, oldest.MessageID)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // writeMailboxError distinguishes a folder name this server refused to send

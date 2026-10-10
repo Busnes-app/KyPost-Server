@@ -262,6 +262,15 @@ func (s *Store) Snapshot(mailboxKey string, limit int) ([]Entry, bool, error) {
 // at maxRemovals), and Removed is every retained removal with Rev > since. A UID
 // that returns to the window drops its retained removal.
 //
+// A departure below the oldest live UID of a full window aged out (AgedOut);
+// any other departure left the mailbox (Removed). A message deleted in the same
+// poll that pushes it out of a full window is reported as aged out.
+//
+// A since above the window's Seq was not issued by it (a new WindowKey, a lost
+// cache file): Reset is set and the result is computed as for since=0. A new
+// window starts its Seq at the store's highest, so a cursor from another
+// window can never look current to it.
+//
 // If limit differs from the window's stored Limit, the prior window is discarded
 // without computing Removed (a limit change invalidates window comparability)
 // and every live entry is reported as New.
@@ -280,7 +289,16 @@ func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64)
 	win := s.mailboxes[mailboxKey]
 	if win == nil {
 		win = &mailboxWindow{}
+		for _, other := range s.mailboxes {
+			if other != nil && other.Seq > win.Seq {
+				win.Seq = other.Seq
+			}
+		}
 		s.mailboxes[mailboxKey] = win
+	}
+	reset := since > win.Seq
+	if reset {
+		since = 0
 	}
 
 	resetWindow := win.Limit != 0 && win.Limit != limit
@@ -295,14 +313,25 @@ func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64)
 
 	next := make([]Entry, 0, len(live))
 	liveUIDs := make(map[int]bool, len(live))
+	full := len(live) >= limit
+	minLive := 0
 
 	for _, ov := range live {
 		liveUIDs[ov.UID] = true
+		if minLive == 0 || ov.UID < minLive {
+			minLive = ov.UID
+		}
 		prev, existed := prevByUID[ov.UID]
 		switch {
 		case !existed:
 			win.Seq++
 			e := entryFromOverview(ov)
+			if warm, ok := baseWindowEntry(s.mailboxes, mailboxKey, ov); ok {
+				// Warm state only; revisions are this window's own.
+				warm.Subject, warm.Sender, warm.SentTo, warm.CC, warm.BCC = e.Subject, e.Sender, e.SentTo, e.CC, e.BCC
+				warm.Keywords, warm.Status = e.Keywords, e.Status
+				e = warm
+			}
 			e.Rev = win.Seq
 			e.FirstRev = win.Seq
 			next = append(next, e)
@@ -377,7 +406,7 @@ func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64)
 			// Stamped with its own Rev so it can be compared against a caller's
 			// cursor. Identity only: see Removal.
 			win.Seq++
-			win.Removals = append(win.Removals, Removal{UID: e.UID, MessageID: e.MessageID, Rev: win.Seq})
+			win.Removals = append(win.Removals, Removal{UID: e.UID, MessageID: e.MessageID, Rev: win.Seq, AgedOut: full && e.UID < minLive})
 		}
 	}
 	if len(win.Removals) > maxRemovals {
@@ -390,14 +419,18 @@ func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64)
 		return SyncResult{}, err
 	}
 
-	var removed []Removal
+	result := SyncResult{Cursor: win.Seq, Reset: reset}
 	for _, r := range win.Removals {
-		if r.Rev > since {
-			removed = append(removed, r)
+		switch {
+		case r.Rev <= since:
+		case r.AgedOut:
+			result.AgedOut = append(result.AgedOut, r)
+		default:
+			result.Removed = append(result.Removed, r)
 		}
 	}
-
-	result := SyncResult{Cursor: win.Seq, Removed: removed}
+	// next is UID-ascending, so next[0] is the oldest live message.
+	result.HasMore = since > 0 && full && len(next) > 0 && next[0].FirstRev > since
 	for _, e := range next {
 		if e.Rev <= since {
 			continue
@@ -409,6 +442,22 @@ func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64)
 		}
 	}
 	return result, nil
+}
+
+// baseWindowEntry finds ov's message in the base window of a WindowKey, which
+// the poller and the default-limit caller warm, so a limit window does not
+// re-fetch a body the cache already holds. The same sender/timestamp guard as
+// Sync's carry-forward keeps a reused UID from inheriting another message.
+func baseWindowEntry(mailboxes map[string]*mailboxWindow, key string, ov Overview) (Entry, bool) {
+	base := mailboxes[windowMailbox(key)]
+	if windowMailbox(key) == key || base == nil {
+		return Entry{}, false
+	}
+	i, found := slices.BinarySearchFunc(base.Entries, ov.UID, func(e Entry, uid int) int { return e.UID - uid })
+	if !found || base.Entries[i].Sender != ov.Sender || base.Entries[i].AtUTC != ov.AtUTC {
+		return Entry{}, false
+	}
+	return base.Entries[i], true
 }
 
 // warmBody is the Body to persist for in.
@@ -440,7 +489,7 @@ func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64)
 // caller cannot bypass it, and so the caller's own response entry keeps the body
 // it just fetched.
 func warmBody(mailboxKey string, in Entry) string {
-	if in.PGPEncrypted || isSentMailbox(mailboxKey) {
+	if in.PGPEncrypted || isSentMailbox(windowMailbox(mailboxKey)) {
 		return ""
 	}
 	return redactPickupLinkFragments(in.Body)
@@ -666,7 +715,8 @@ func (s *Store) OmitBodies() error {
 	return s.persistLocked()
 }
 
-// Remove drops a replaced UID and retains its removal for delta clients.
+// Remove drops a replaced UID from every limit window of mailbox and retains
+// its removal for delta clients.
 func (s *Store) Remove(mailbox string, uid int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -678,22 +728,28 @@ func (s *Store) Remove(mailbox string, uid int) error {
 	if err := s.refreshFromDiskLocked(); err != nil {
 		return err
 	}
-	win := s.mailboxes[mailbox]
-	if win == nil {
-		return nil
-	}
-	for i, e := range win.Entries {
-		if e.UID == uid {
-			win.Seq++
-			win.Removals = append(win.Removals, Removal{UID: uid, MessageID: strconv.Itoa(uid), Rev: win.Seq})
-			if len(win.Removals) > maxRemovals {
-				win.Removals = win.Removals[len(win.Removals)-maxRemovals:]
+	changed := false
+	for key, win := range s.mailboxes {
+		if win == nil || windowMailbox(key) != mailbox {
+			continue
+		}
+		for i, e := range win.Entries {
+			if e.UID == uid {
+				win.Seq++
+				win.Removals = append(win.Removals, Removal{UID: uid, MessageID: strconv.Itoa(uid), Rev: win.Seq})
+				if len(win.Removals) > maxRemovals {
+					win.Removals = win.Removals[len(win.Removals)-maxRemovals:]
+				}
+				win.Entries = append(win.Entries[:i], win.Entries[i+1:]...)
+				changed = true
+				break
 			}
-			win.Entries = append(win.Entries[:i], win.Entries[i+1:]...)
-			return s.persistLocked()
 		}
 	}
-	return nil
+	if !changed {
+		return nil
+	}
+	return s.persistLocked()
 }
 
 // ErrMailSource refuses cache reuse across mail source identities. The binding
