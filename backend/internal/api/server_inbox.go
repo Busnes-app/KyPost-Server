@@ -977,7 +977,7 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 	targetMailbox := strings.TrimSpace(req.TargetMailbox)
 	keyword := strings.TrimSpace(req.Keyword)
 	switch action {
-	case "delete", "archive", "spam", "read", "move", "label", "unlabel":
+	case "delete", "archive", "spam", "read", "unread", "move", "label", "unlabel":
 	default:
 		http.Error(w, "unsupported action", http.StatusBadRequest)
 		return
