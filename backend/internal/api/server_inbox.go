@@ -474,7 +474,8 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		// bodies=0 is one guard rather than four, and cannot drift out of sync
 		// with a path added later. The cache warms are built from their own
 		// source data, not from this entry, so they still store bodies.
-		if withPreview && entry.Body != "" {
+		// Never for encrypted mail, whatever decrypted the body.
+		if withPreview && entry.Body != "" && !entry.PGPEncrypted && entry.PGPDecryptError == "" {
 			entry.Preview = inboxPreview(entry.Body, entry.BodyMode)
 		}
 		if !withBodies {

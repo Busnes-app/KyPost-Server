@@ -390,7 +390,7 @@ single-line plain text (HTML flattened, control characters and line breaks
 turned into spaces), taken from the first 32 KiB of a body the server already
 has for that row. It works with `bodies=0`. It is absent on rows the server has
 no body for: `changeType:"updated"` delta rows (keep your stored preview),
-`before=` pages, search results, encrypted mail. Render it as text, never markup.
+`before=` pages, search results, and any encrypted message (including one the server decrypted). Render it as text, never markup.
 
 **Older mail.** `GET /api/inbox?mailbox=<path>&limit=N&before=<messageId>`
 returns the next `limit` messages older than `messageId` (exactly as a list row
