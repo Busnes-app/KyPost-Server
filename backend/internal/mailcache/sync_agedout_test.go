@@ -1,6 +1,9 @@
 package mailcache
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func uids(rs []Removal) []int {
 	out := []int{}
@@ -151,5 +154,79 @@ func TestSync_LimitWindowInheritsBaseWarmth(t *testing.T) {
 	res, _ = s.Sync(WindowKey("INBOX", 6), 6, []Overview{other}, 0)
 	if len(res.New) != 1 || res.New[0].Body != "" {
 		t.Fatalf("a different message under a reused UID inherited %+v", res.New)
+	}
+}
+
+// Limit windows are bounded: at most maxLimitWindows per mailbox survive, and
+// they hold no bodies of their own (the base window holds each body once), so
+// a client cycling through limits cannot grow the cache without bound.
+func TestSync_LimitWindowsAreBounded(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Repeat("b", 4096)
+	live := []Overview{}
+	base := []Entry{}
+	for uid := 1; uid <= 20; uid++ {
+		live = append(live, ov(uid, "s", "unread"))
+		base = append(base, entry(uid, "s", "unread", body))
+	}
+	if err := s.Upsert("INBOX", base); err != nil {
+		t.Fatal(err)
+	}
+	for limit := 1; limit <= 20; limit++ {
+		if _, err := s.Sync(WindowKey("INBOX", limit), limit, live[20-limit:], 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Upsert(WindowKey("INBOX", limit), base[20-limit:]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reopened, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	windows, bodyBytes := 0, 0
+	for key, win := range reopened.mailboxes {
+		if key != "INBOX" {
+			windows++
+		}
+		for _, e := range win.Entries {
+			bodyBytes += len(e.Body)
+		}
+	}
+	if windows > maxLimitWindows {
+		t.Fatalf("%d limit windows retained, cap %d", windows, maxLimitWindows)
+	}
+	if want := 20 * len(body); bodyBytes > want {
+		t.Fatalf("%d body bytes stored, want at most %d (each body once)", bodyBytes, want)
+	}
+	// The newest limits survived; the evicted ones are gone.
+	if reopened.mailboxes[WindowKey("INBOX", 20)] == nil || reopened.mailboxes[WindowKey("INBOX", 1)] != nil {
+		t.Fatal("eviction kept the wrong windows")
+	}
+}
+
+// A cursor from an evicted window must not be trusted by the window that
+// replaces it: the client gets a full window (Reset), never a partial delta.
+func TestSync_EvictedWindowCursorResets(t *testing.T) {
+	s := newTestStore(t)
+	live := []Overview{ov(1, "a", "unread"), ov(2, "b", "unread")}
+	first, _ := s.Sync(WindowKey("INBOX", 2), 2, live, 0)
+	for limit := 3; limit < 3+maxLimitWindows; limit++ {
+		s.Sync(WindowKey("INBOX", limit), limit, live, 0)
+	}
+	if s.mailboxes[WindowKey("INBOX", 2)] != nil {
+		t.Fatal("window 2 should have been evicted")
+	}
+	again, err := s.Sync(WindowKey("INBOX", 2), 2, live, first.Cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again.Reset || len(again.New) != 2 {
+		t.Fatalf("evicted cursor: reset=%v new=%d, want a full window", again.Reset, len(again.New))
 	}
 }

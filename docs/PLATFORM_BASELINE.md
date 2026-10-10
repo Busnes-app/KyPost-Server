@@ -404,7 +404,9 @@ other; a client must keep using the limit its cursor came from. Delta fields:
   contains a message you already hold or `hasMore` is false; commit the
   response `cursor` only after that, or the skipped mail is lost.
 - `delta: false` on a request with `since > 0` — the cursor was not issued by
-  this window (new limit, lost cache); the response is a full window: replace.
+  this window (new limit, lost cache, or a window the server evicted: it keeps
+  at most 3 non-500 limits per mailbox, least recently used first out); the
+  response is a full window: replace.
 
 [`docs/INBOX_PAYLOAD_HANDOFF.md`](INBOX_PAYLOAD_HANDOFF.md) is the porting
 guide: what each client has to change, and the three things that break if you
