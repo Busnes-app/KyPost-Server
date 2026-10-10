@@ -3,6 +3,7 @@ package mailcache
 import (
 	"encoding/hex"
 	"errors"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -48,6 +49,15 @@ type mailboxWindow struct {
 	// windows for eviction.
 	Base     int64 `json:"base,omitempty"`
 	LastUsed int64 `json:"lastUsed,omitempty"`
+}
+
+// windowEpoch is a new window's starting sequence. Random, so a cursor issued
+// by any other window — another limit, an evicted one, or one in a cache file
+// that was lost — is at or below Base or above Seq of this one, and resets,
+// except with negligible probability. Below 2^52 so cursors stay exact as
+// JavaScript numbers with room to grow.
+func windowEpoch() int64 {
+	return 1<<40 + rand.Int64N(1<<52-1<<41)
 }
 
 // maxLimitWindows caps the WindowKey windows kept per mailbox; the least
@@ -277,10 +287,10 @@ func (s *Store) Snapshot(mailboxKey string, limit int) ([]Entry, bool, error) {
 // any other departure left the mailbox (Removed). A message deleted in the same
 // poll that pushes it out of a full window is reported as aged out.
 //
-// A since above the window's Seq was not issued by it (a new WindowKey, a lost
-// cache file): Reset is set and the result is computed as for since=0. A new
-// window starts its Seq at the store's highest, so a cursor from another
-// window can never look current to it.
+// A since above the window's Seq or at/below its Base was not issued by it (a
+// new WindowKey, an evicted window, a lost cache file): Reset is set and the
+// result is computed as for since=0. A new window starts at a random
+// windowEpoch, so a cursor from any other window cannot look current to it.
 //
 // If limit differs from the window's stored Limit, the prior window is discarded
 // without computing Removed (a limit change invalidates window comparability)
@@ -300,12 +310,7 @@ func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64)
 	win := s.mailboxes[mailboxKey]
 	limitWindow := windowMailbox(mailboxKey) != mailboxKey
 	if win == nil {
-		win = &mailboxWindow{}
-		for _, other := range s.mailboxes {
-			if other != nil && other.Seq > win.Seq {
-				win.Seq = other.Seq
-			}
-		}
+		win = &mailboxWindow{Seq: windowEpoch()}
 		win.Base = win.Seq
 		if limitWindow {
 			s.evictLimitWindowLocked(windowMailbox(mailboxKey))

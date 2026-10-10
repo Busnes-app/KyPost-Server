@@ -436,6 +436,9 @@ other; a client must keep using the limit its cursor came from. Delta fields:
   this window (new limit, lost cache, or a window the server evicted: it keeps
   at most 3 non-500 limits per mailbox, least recently used first out); the
   response is a full window: replace.
+- Cursors are opaque non-negative integers below 2^53 (new windows start at a
+  random value around 2^40–2^52). Store and send them back exactly; never do
+  arithmetic on them or assume they start small.
 
 [`docs/INBOX_PAYLOAD_HANDOFF.md`](INBOX_PAYLOAD_HANDOFF.md) is the porting
 guide: what each client has to change, and the three things that break if you

@@ -1,6 +1,7 @@
 package mailcache
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -228,5 +229,32 @@ func TestSync_EvictedWindowCursorResets(t *testing.T) {
 	}
 	if !again.Reset || len(again.New) != 2 {
 		t.Fatalf("evicted cursor: reset=%v new=%d, want a full window", again.Reset, len(again.New))
+	}
+}
+
+// A cursor issued before the cache was lost must not become valid again when
+// a rebuilt window's sequence reaches the same number.
+func TestSync_CursorFromLostCacheResets(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, _ := s.Sync("INBOX", 10, []Overview{ov(1, "a", "unread"), ov(2, "b", "unread")}, 0)
+	if err := os.Remove(s.path()); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := []Overview{ov(2, "b", "unread"), ov(3, "c", "unread")}
+	rebuilt.Sync("INBOX", 10, live, 0)
+	res, err := rebuilt.Sync("INBOX", 10, live, old.Cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Reset || len(res.New) != 2 {
+		t.Fatalf("old cursor %d after cache loss: reset=%v new=%d, want a full window of both rows", old.Cursor, res.Reset, len(res.New))
 	}
 }

@@ -44,8 +44,9 @@ All code under `backend/internal/mailcache/`. Consumed by both `api/`
   base window's body/classification to returned entries (sender/time guarded), and the API warms
   the base window;
   `Remove` and `warmBody`'s Sent check strip the suffix. A new
-  window starts its `Seq` at the store's highest and a `since` above `Seq` sets
-  `Reset` (full window), so no cursor is ever trusted by a window that did not issue it.
+  window starts at a random `windowEpoch` (2^40..2^52, kept as `Base`) and a `since` above
+  `Seq` or at/below `Base` sets `Reset` (full window), so a cursor from another, evicted or
+  lost window is never trusted.
 - A departure below the oldest live UID of a full window is retained as
   `Removal{AgedOut: true}` and returned in `SyncResult.AgedOut`, never `Removed`.
   `HasMore` is set when a full window's oldest entry is new to the caller.
