@@ -58,6 +58,13 @@ func TestClampCheckpointKeepsNamespace(t *testing.T) {
 	if got := ClampCheckpoint("10", "A:20", []string{"14"}); got != "A:13" {
 		t.Fatalf("ClampCheckpoint = %q, want A:13", got)
 	}
+	// ...also when the clamp holds the checkpoint at prev.
+	if got := ClampCheckpoint("500", "A:501", []string{"501"}); got != "A:500" {
+		t.Fatalf("ClampCheckpoint = %q, want A:500", got)
+	}
+	if got := ClampCheckpoint("500", "A:501", []string{"x"}); got != "A:500" {
+		t.Fatalf("ClampCheckpoint = %q, want A:500", got)
+	}
 	// prev from another namespace is no floor for next's UIDs.
 	if got := ClampCheckpoint("A:500", "B:20", []string{"14"}); got != "B:13" {
 		t.Fatalf("ClampCheckpoint = %q, want B:13", got)
@@ -123,6 +130,45 @@ func TestListUnreadInboxUIDValidity(t *testing.T) {
 	}
 	if _, changed := UIDNamespaceReset(next, otherCP); !changed {
 		t.Fatalf("another account kept namespace: %q -> %q", next, otherCP)
+	}
+}
+
+// UIDVALIDITY is read from the STATUS attribute list, not from a mailbox name
+// that happens to contain it.
+func TestListUnreadInboxUIDValidityIgnoresMailboxName(t *testing.T) {
+	quietRetries(t, 0)
+	const folder = "UIDVALIDITY 42"
+	server := newFakeIMAPServer(t, "/", false, []fakeFolder{{name: folder}})
+	var validity atomic.Int64
+	validity.Store(7)
+	server.mu.Lock()
+	server.commandHook = func(tag, command string) (string, bool) {
+		switch {
+		case strings.HasPrefix(command, "STATUS"):
+			return fmt.Sprintf("* STATUS %q (UIDVALIDITY %d)\r\n%s OK done\r\n", folder, validity.Load(), tag), true
+		case command == "UID SEARCH UNSEEN":
+			return "* SEARCH\r\n" + tag + " OK done\r\n", true
+		}
+		return "", false
+	}
+	server.mu.Unlock()
+	client := server.client(folder)
+	ctx := context.Background()
+
+	_, prev, err := client.ListUnreadInbox(ctx, "500")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ns, _ := parseCheckpoint(prev); !strings.HasPrefix(ns, "7.") {
+		t.Fatalf("checkpoint %q, want namespace 7.<account>", prev)
+	}
+	validity.Store(8)
+	_, next, err := client.ListUnreadInbox(ctx, prev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ns, uid := parseCheckpoint(next); !strings.HasPrefix(ns, "8.") || uid != 0 {
+		t.Fatalf("changed UIDVALIDITY: checkpoint %q, want 8.<account>:0", next)
 	}
 }
 

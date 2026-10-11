@@ -2,6 +2,7 @@ package processor
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +70,35 @@ func TestTickUser_UIDValidityChangeProcessesReusedUIDs(t *testing.T) {
 	}
 	if got := checkpointOf(t, store); got != "B:3" {
 		t.Fatalf("checkpoint = %q, want B:3", got)
+	}
+}
+
+// A legacy checkpoint held back by a deferral must still be upgraded, or a
+// later UIDVALIDITY change goes unnoticed and restarted UIDs stay skipped.
+func TestTickUser_DeferredLegacyCheckpointDetectsLaterUIDValidityChange(t *testing.T) {
+	mail := &namespacedMailbox{ns: "A", scriptedMailbox: scriptedMailbox{
+		msgs:          []imapadapter.Message{{ID: "501", Subject: "held", Sender: "a@example.com"}},
+		applyLabelErr: map[string]error{"501": errors.New("imap: connection reset by peer")},
+	}}
+	p, u := newTickTestPoller(t, mail)
+	store := tickStore(t, p, u)
+	if err := store.SetCheckpoint("500"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.tickUser(u, time.Now()); err != nil {
+		t.Fatalf("tickUser: %v", err)
+	}
+	if got := checkpointOf(t, store); got != "A:500" {
+		t.Fatalf("checkpoint = %q, want A:500", got)
+	}
+
+	mail.ns = "B"
+	mail.msgs = []imapadapter.Message{{ID: "3", Subject: "new", Sender: "a@example.com"}}
+	if err := p.tickUser(u, time.Now()); err != nil {
+		t.Fatalf("second tickUser: %v", err)
+	}
+	if len(mail.labelled) != 1 || mail.labelled[0] != "3:Primary" {
+		t.Fatalf("labelled = %v, want [3:Primary]", mail.labelled)
 	}
 }
 

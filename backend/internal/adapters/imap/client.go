@@ -1776,8 +1776,13 @@ func ClampCheckpoint(prev, next string, deferredIDs []string) string {
 	if len(deferredIDs) == 0 {
 		return next
 	}
-	if reset, changed := UIDNamespaceReset(prev, next); changed {
-		prev = reset
+	prevNS, prevUID := parseCheckpoint(prev)
+	nextNS, nextUID := parseCheckpoint(next)
+	if nextNS != "" && prevNS != nextNS {
+		if prevNS != "" {
+			prevUID = 0 // another namespace's UIDs are no floor
+		}
+		prev = formatCheckpoint(nextNS, prevUID) // legacy prev adopts next's namespace
 	}
 	lowest := 0
 	for _, id := range deferredIDs {
@@ -1790,11 +1795,10 @@ func ClampCheckpoint(prev, next string, deferredIDs []string) string {
 		}
 	}
 	candidate := lowest - 1
-	nextNS, nextUID := parseCheckpoint(next)
 	if candidate > nextUID {
 		candidate = nextUID
 	}
-	if candidate <= parseCheckpointUID(prev) {
+	if candidate <= prevUID {
 		return prev
 	}
 	return formatCheckpoint(nextNS, candidate)
