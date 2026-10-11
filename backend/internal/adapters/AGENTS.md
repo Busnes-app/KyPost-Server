@@ -44,6 +44,7 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 - `http_client.go` — low-level transport: request construction, admission control, retry loop, `Stats()` for queue depth
 
 - Classifier diagnostics use the process slog handler (shared JSON stderr). Never log model output, prompts or response snippets; report byte counts, operation names, transport failures and HTTP status. Warmup/retry/failure events survive the default info level. Never embed upstream HTTP bodies, JSON error text or the model response in returned errors: callers also log them. The adapter owns no log files.
+- Failures callers act on are typed — `ErrCreditsExhausted`, `*StatusError` (HTTP status), `*NoAllowedLabelError` — and are matched with `errors.Is`/`errors.As`, never by message text.
 
 ### Shared Rules
 

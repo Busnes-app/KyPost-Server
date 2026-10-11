@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -2113,29 +2114,12 @@ func isPermanentClassifierError(err error) bool {
 	if errors.As(err, &noLabel) {
 		return true
 	}
-	msg := strings.ToLower(strings.TrimSpace(err.Error()))
-	if strings.Contains(msg, "422") {
-		return true
-	}
-	if strings.Contains(msg, "invalid input") || strings.Contains(msg, "unprocessable") {
+	var status *classifier.StatusError
+	if errors.As(err, &status) && status.StatusCode == http.StatusUnprocessableEntity {
 		return true
 	}
 	// Out of AI credits will not recover on retry; stop hammering the classifier.
-	if isAICreditsExhaustedError(err) {
-		return true
-	}
-	return false
-}
-
-// isAICreditsExhaustedError reports whether a classify error is the classifier signalling
-// that the weekly chat limit / AI credits have been exhausted.
-func isAICreditsExhaustedError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "out of ai credits") ||
-		strings.Contains(msg, "weekly chat limit")
+	return errors.Is(err, classifier.ErrCreditsExhausted)
 }
 
 // flagAICreditsExhausted persists the AI-credits flag, mirrors it onto the
@@ -2391,7 +2375,7 @@ func (p *Poller) classifyMessage(ctx context.Context, uc userCtx, msg imapadapte
 		label, err = noLabel.Output, nil
 	}
 	if err != nil {
-		if isAICreditsExhaustedError(err) {
+		if errors.Is(err, classifier.ErrCreditsExhausted) {
 			p.flagAICreditsExhausted()
 		}
 		// Surfaced in /api/health without touching Healthy: a model that never

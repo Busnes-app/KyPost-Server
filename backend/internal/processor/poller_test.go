@@ -16,6 +16,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
@@ -321,9 +322,14 @@ func (c *noopMailClient) FetchRawMessage(context.Context, string, int) ([]byte, 
 // the loop NOT to mark the message processed, so it is retried on the next
 // poll tick instead of being silently and permanently skipped.
 func TestShouldMarkProcessedOnError_TransientClassifierErrorLeavesUnmarked(t *testing.T) {
-	err := &classifierErr{err: errors.New("dial tcp 127.0.0.1:11434: connect: connection refused")}
-	if shouldMarkProcessedOnError(err) {
-		t.Fatal("expected a transient classifier error to NOT mark the message processed")
+	for _, err := range []error{
+		&classifierErr{err: errors.New("dial tcp 127.0.0.1:11434: connect: connection refused")},
+		&classifierErr{err: errors.New("dial tcp 127.0.0.1:54221: connect: connection refused")}, // "422" in a port
+		&classifierErr{err: &classifier.StatusError{StatusCode: 503}},
+	} {
+		if shouldMarkProcessedOnError(err) {
+			t.Fatalf("%v: expected a transient classifier error to NOT mark the message processed", err)
+		}
 	}
 }
 
@@ -336,8 +342,9 @@ func TestShouldMarkProcessedOnError_PermanentClassifierErrorMarksProcessed(t *te
 		name string
 		err  error
 	}{
-		{"bad input / 422", &classifierErr{err: errors.New("classifier: 422 Unprocessable Entity")}},
-		{"ai credits exhausted", &classifierErr{err: errors.New("out of ai credits")}},
+		{"bad input / 422", &classifierErr{err: &classifier.StatusError{StatusCode: 422}}},
+		{"ai credits exhausted", &classifierErr{err: fmt.Errorf("classify: %w", classifier.ErrCreditsExhausted)}},
+		{"no allowed label", &classifierErr{err: &classifier.NoAllowedLabelError{}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -446,7 +453,7 @@ func TestRecordMessageFailure_PermanentClassifierErrorMarksProcessed(t *testing.
 	uc := userCtx{id: "user-1", store: store, mail: &noopMailClient{}}
 	msg := imapadapter.Message{ID: "51", Subject: "Hello", Sender: "a@example.com"}
 
-	classifyErr := &classifierErr{err: errors.New("out of ai credits")}
+	classifyErr := &classifierErr{err: fmt.Errorf("classify: %w", classifier.ErrCreditsExhausted)}
 	p.recordMessageFailure(store, uc.id, uc, msg, classifyErr, shouldMarkProcessedOnError(classifyErr))
 
 	if !seenForTest(t, store, msg.ID) {
@@ -1036,7 +1043,7 @@ func TestDeferredMessageStaysInRangeOfTheNextFetch(t *testing.T) {
 
 	// A permanent failure is retired, so it must NOT hold the checkpoint back —
 	// otherwise one poison message refetches the batch forever.
-	permanent := &classifierErr{err: errors.New("classifier: 422 Unprocessable Entity")}
+	permanent := &classifierErr{err: &classifier.StatusError{StatusCode: 422}}
 	if !shouldMarkProcessedOnError(permanent) {
 		t.Fatal("expected a permanent classifier error to mark the message processed")
 	}
@@ -1113,7 +1120,7 @@ func TestRecordMessageFailure_RetiredFailureStillRecordsUnconditionally(t *testi
 	// the permanent one retires it and must be recorded even though a "failed"
 	// row already exists.
 	transient := &classifierErr{err: errors.New("connection refused")}
-	permanent := &classifierErr{err: errors.New("out of ai credits")}
+	permanent := &classifierErr{err: fmt.Errorf("classify: %w", classifier.ErrCreditsExhausted)}
 	p.recordMessageFailure(store, uc.id, uc, msg, transient, shouldMarkProcessedOnError(transient))
 	p.recordMessageFailure(store, uc.id, uc, msg, permanent, shouldMarkProcessedOnError(permanent))
 
