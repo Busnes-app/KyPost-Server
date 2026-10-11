@@ -2226,17 +2226,21 @@ func DummyVerifyCost(ctx context.Context) (time.Duration, error) {
 	return cost, err
 }
 
+// loadDummy derives outside the mutex so a cold cache leaves every caller
+// under the KDF slot's cancellation and queue-wait bounds. Concurrent cold
+// callers may each derive; the slots bound that, and the last one wins.
 func loadDummy(ctx context.Context) (string, time.Duration, error) {
+	params := hashParams
 	dummy.Lock()
-	defer dummy.Unlock()
-	if dummy.hash != "" && dummy.params == hashParams {
-		return dummy.hash, dummy.cost, nil
+	h, cost, cached := dummy.hash, dummy.cost, dummy.params
+	dummy.Unlock()
+	if h != "" && cached == params {
+		return h, cost, nil
 	}
 	h, err := HashPassword(ctx, "kypost-timing-equalization-dummy")
 	if err != nil {
 		return "", 0, err
 	}
-	var cost time.Duration
 	if slotErr := withKDFSlot(ctx, func() {
 		start := time.Now()
 		_, err = password.Verify("probe", h)
@@ -2247,7 +2251,9 @@ func loadDummy(ctx context.Context) (string, time.Duration, error) {
 	if err != nil {
 		return "", 0, mapBusy(err)
 	}
-	dummy.hash, dummy.cost, dummy.params = h, cost, hashParams
+	dummy.Lock()
+	dummy.hash, dummy.cost, dummy.params = h, cost, params
+	dummy.Unlock()
 	return h, cost, nil
 }
 

@@ -335,3 +335,41 @@ func TestWithKDFSlotIsReentrant(t *testing.T) {
 		t.Fatalf("completed %d nested derivations, want 2", got)
 	}
 }
+
+// TestColdDummyCacheHonoursCancellation: a caller deriving the cold dummy must
+// not hold the cache mutex while queued for a slot, or every other caller
+// waits behind it with its cancellation ignored.
+func TestColdDummyCacheHonoursCancellation(t *testing.T) {
+	dummy.Lock()
+	dummy.hash = ""
+	dummy.Unlock()
+	withShortKDFQueueWait(t, 5*time.Second)
+	release := withSaturatedKDF(t)
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := VerifySecretHash(context.Background(), "", "anything")
+		first <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // let the first caller start the cold derivation
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	second := make(chan error, 1)
+	go func() {
+		_, err := VerifySecretHash(ctx, "", "anything")
+		second <- err
+	}()
+	select {
+	case err := <-second:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled verify: got %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled verify blocked behind the cold dummy derivation")
+	}
+	release()
+	if err := <-first; err != nil {
+		t.Fatalf("first verify: %v", err)
+	}
+}
