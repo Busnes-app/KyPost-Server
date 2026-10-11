@@ -74,6 +74,20 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # Relay Workers: build tooling only (wrangler, typescript, workers-types).
+  # receiving-worker/ and push-relay-shared/ have no package.json.
+  - package-ecosystem: npm
+    directories: ["/worker", "/worker-apns"]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      relay:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
