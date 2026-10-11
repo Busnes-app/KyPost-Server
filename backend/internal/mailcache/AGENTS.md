@@ -31,7 +31,9 @@ All code under `backend/internal/mailcache/`. Consumed by both `api/`
   (`refreshFromDiskLocked`), then writes atomically via
   `fsutil.AtomicWriteFile` — required because `api` and `processor` run as
   separate processes sharing no memory (see root `backend/AGENTS.md`), and
-  here it's not hypothetical: both actually call into this package.
+  here it's not hypothetical: both actually call into this package. Every
+  writer holds `fsutil.LockFile(s.path())` across that cycle; `s.mu` only
+  covers this process.
 - **`Snapshot` returns that re-read's error.** Entries carry warm bodies and
   cached signature verdicts, so a window served after a failed re-read is a
   stale body and a badge this process cannot check, presented as current.
