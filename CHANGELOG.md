@@ -14,6 +14,12 @@ non-prerelease version.
 
 ## Unreleased
 
+- `docker-compose.yml` now passes the variables `.env.example` documents but compose dropped, so setting them in `.env` takes effect: `POW_SECRET`, `POW_SECRET_FILE`, `POW_MAX_NUMBER`, `MFA_CLEAR_ALL`, `ALLOW_INSECURE_SMTP`, `PAIRING_SECRET_FILE`, `SANDBOX_PRIVATE_HOSTS`, `CLASSIFY_CONCURRENCY`, `CLASSIFY_PACE_MS`, `CLASSIFIER_ENGINE`, `EMBED_MIN_CONFIDENCE`, `EMBED_MODEL_DIR`, plus `SMTP_HOST`, `SMTP_PORT`, `OLLAMA_API_KEY`, `OLLAMA_GENERATE_PATH`, `KYPOST_RESTIC_BINARY` and `UNHEALTHY_RESTART_SECONDS`. Check your `.env` before upgrading: a value that used to be ignored now applies.
+
+- FCM push relay: a send whose network request fails now keeps its daily-budget charge, as APNs already did.
+
+- README: the environment-variable reference, endpoint list and full feature list moved to `docs/CONFIGURATION.md`, `docs/API.md` and `docs/FEATURES.md`.
+
 - Update the pinned Go compiler and matching builder digest to 1.26.9 for standard-library security fixes; keep Sender Blocks test expiries relative to the test run.
 
 - Settings → Mail → Storage uses compact mailbox rows with usage beside the address and a full-width meter, replacing nested cards. Figures and quota warnings are unchanged.

@@ -92,7 +92,7 @@ What an attacker can achieve: steer the label on **their own message** into a di
 
 **Encrypted mail also stays out of mobile push payloads.** Native push travels to the relay Worker and on to FCM/APNs in cleartext at every hop. For an encrypted message the sender and subject are withheld from that payload regardless of your Content Preview setting, because a third-party PGP/MIME message that does not use protected headers carries its real subject in the clear. Web push is unaffected—those payloads are encrypted to your browser's own subscription keys (RFC 8291), so Content Preview remains your choice there.
 
-See [Classification flow](README.md#classification-flow) for details.
+See [Classification flow](README.md#architecture) for details.
 
 ### Email HTML Rendering
 
