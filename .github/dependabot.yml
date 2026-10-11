@@ -9,61 +9,52 @@ version: 2
 # needs — Settings > Actions > General > "Allow GitHub Actions to create and
 # approve pull requests" — or they are silently never opened.
 #
-# Every ecosystem is grouped into a single PR. The first run of this file
-# without grouping opened ten at once (the whole accumulated backlog of a repo
-# that had never run Dependabot), each triggering a full matrix including a
-# `docker build`. Grouping caps that at three PRs per interval no matter how
-# far behind the tree has drifted.
+# Every ecosystem is grouped. The first run of this file without grouping
+# opened ten at once (the whole accumulated backlog of a repo that had never
+# run Dependabot), each triggering a full matrix including a `docker build`.
 #
 # Majors are deliberately grouped in alongside minors rather than ignored.
 # Every update in that first batch was a major — vite 5->8, react-router 6->7,
 # @vitejs/plugin-react 4->6, jsdom 29->30, checkout 4->7 — so a config that
 # skipped majors would have filtered out all of the actual work while still
 # claiming coverage. They arrive together and get reviewed on purpose.
+#
+# Three days of cooldown on every ecosystem: a version that has been out for
+# three days has had three days for someone else to find the yanked release.
+# Cooldown applies to version updates only — a security update still arrives
+# the day it is published.
 updates:
-  - package-ecosystem: github-actions
-    directory: "/"
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
-    groups:
-      github-actions:
-        patterns:
-          - "*"
-    commit-message:
-      prefix: "chore(deps)"
-
   - package-ecosystem: gomod
-    directory: "/backend"
+    directory: /backend
     schedule:
       interval: weekly
-    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
     groups:
-      go-modules:
-        patterns:
-          - "*"
+      ky-primitives:
+        patterns: ["github.com/Busnes-app/ky-primitives*"]
+      go:
+        patterns: ["*"]
+        exclude-patterns: ["github.com/Busnes-app/ky-primitives*"]
     commit-message:
       prefix: "chore(deps)"
 
   - package-ecosystem: npm
-    directory: "/frontend"
+    directory: /frontend
     schedule:
       interval: weekly
-    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
     groups:
       # Split by what a break would mean. A runtime bump (dompurify, openpgp,
       # quill, react) can ship a vulnerability to a browser parsing hostile
       # mail; a build-tooling bump can only break the build, which CI catches
       # before anyone sees it. Separating them means the urgent one is never
       # stuck behind a vite major that needs a migration.
-      frontend-runtime:
-        dependency-type: production
-        patterns:
-          - "*"
-      frontend-tooling:
+      npm-build:
         dependency-type: development
-        patterns:
-          - "*"
+      npm-runtime:
+        dependency-type: production
     # quill 2.0.3 is the whole affected range of GHSA-v3m3-f69x-jf25 (XSS via
     # the HTML export feature) and the advisory has no first_patched_version --
     # 2.0.3 is the newest release, so "upgrade to the fix" is not yet an option
@@ -80,5 +71,26 @@ updates:
     ignore:
       - dependency-name: "quill"
         versions: ["2.0.3"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(ci)"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: "chore(deps)"
