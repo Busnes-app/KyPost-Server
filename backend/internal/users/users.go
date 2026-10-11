@@ -416,10 +416,6 @@ var (
 	// identity would silently discard a browser-wrapped private key. There is
 	// deliberately no downgrade path (docs/E2E_PGP.md); this enforces it.
 	ErrWouldDowngradeCustody = errors.New("account uses a client-held key: delete the existing identity first")
-	// ErrPGPFingerprintChanged means the caller read one key and tried to write
-	// back after a different key replaced it. The copy is stale, not wrong;
-	// retrying against the current key is the correct response.
-	ErrPGPFingerprintChanged = errors.New("the account's pgp key changed while this update was in flight")
 	// ErrTOTPEnrollmentRestarted is the same shape for TOTP: the secret staged
 	// when the caller validated a code is no longer the one stored, so the
 	// enrolment it was proving is gone. Committing anyway would enable a secret
@@ -1649,8 +1645,7 @@ func (s *Store) SetPendingTOTPSecret(id, secretEnc string) (User, error) {
 // EnableTOTP marks TOTP confirmed and stores the recovery codes' digests.
 // It errors if no pending secret has been staged.
 // expectSecretEnc is the secret the caller actually VALIDATED a code against,
-// compared here inside mutate — the same compare-and-swap shape
-// UpdatePGPKeyMaterial uses for a fingerprint.
+// compared here inside mutate (compare-and-swap).
 //
 // Without it this was a TOCTOU with a window measured in seconds, not
 // instructions: handleMFAConfirm validates against a snapshot and then spends
@@ -1730,9 +1725,8 @@ func (s *Store) SetLastUsedTOTPStep(id string, step int64) (User, error) {
 // SetPGPIdentity stores a legacy, SERVER-READABLE PGP identity: the armored
 // public key plus a private key sealed with the server's own master key.
 //
-// New identities must not use this. It exists for the send-as User ID reconcile,
-// which can only run against a key the server can already open, and which skips
-// client-protected identities entirely.
+// Server custody is retired: production never calls this. It seeds the legacy
+// state that the client-custody migration (OpenPrivateKey) still reads.
 func (s *Store) SetPGPIdentity(id, fingerprint, keyID, armoredPublicKey, privateKeyEnc, source, createdAt string) (User, error) {
 	return s.mutate(id, func(u *User) error {
 		// Refuse to overwrite a client-held identity with a server-readable one:
@@ -1757,40 +1751,6 @@ func (s *Store) SetPGPIdentity(id, fingerprint, keyID, armoredPublicKey, private
 		// future writer of this method cannot reintroduce the gap by relying on
 		// that invariant instead of restating it.
 		u.PGPWrappedEnvelopes = nil
-		return nil
-	})
-}
-
-// UpdatePGPKeyMaterial replaces only the public key and its sealed private half
-// for an identity whose fingerprint is still expectFingerprint, leaving key ID,
-// source, creation time and protection untouched.
-//
-// This is the narrow write the daemon's send-as reconcile needs: adding User IDs
-// changes the key's bytes but not its identity. Do not substitute
-// SetPGPIdentity, which rewrites everything — the caller snapshots the user,
-// spends hundreds of microseconds re-signing, and only then writes, so a key
-// replaced during that window is silently reverted.
-//
-// expectFingerprint closes that window. An empty expectation is rejected rather
-// than treated as "any": a vacuous precondition is worst exactly when the
-// account has no key and a stale write would install one.
-func (s *Store) UpdatePGPKeyMaterial(id, expectFingerprint, armoredPublicKey, privateKeyEnc string) (User, error) {
-	if strings.TrimSpace(expectFingerprint) == "" {
-		return User{}, errors.New("expected fingerprint is required to update key material")
-	}
-	return s.mutate(id, func(u *User) error {
-		// Same refusal as SetPGPIdentity, restated rather than inherited so the two
-		// preconditions cannot drift apart: writing privateKeyEnc onto a client-held
-		// identity would hand the server back a readable copy of a key it is not
-		// supposed to have, and destroy the browser envelope.
-		if u.PGPProtection() == PGPProtectionClient {
-			return ErrWouldDowngradeCustody
-		}
-		if u.PGPFingerprint != expectFingerprint {
-			return ErrPGPFingerprintChanged
-		}
-		u.PGPPublicKey = armoredPublicKey
-		u.PGPPrivateKeyEnc = privateKeyEnc
 		return nil
 	})
 }
@@ -1830,7 +1790,7 @@ func (s *Store) SetPGPIdentityClientProtected(id, fingerprint, keyID, armoredPub
 		// a client that re-runs setup, a rewrap that routes through here —
 		// destroyed a live recovery sealing that was still perfectly valid, with a
 		// 200 and no log line. The fingerprint needed to tell the two apart is the
-		// argument right here, and UpdatePGPKeyMaterial already shows the pattern.
+		// argument right here.
 		if !strings.EqualFold(strings.TrimSpace(previousFingerprint), strings.TrimSpace(fingerprint)) {
 			u.PGPWrappedEnvelopes = nil
 		}

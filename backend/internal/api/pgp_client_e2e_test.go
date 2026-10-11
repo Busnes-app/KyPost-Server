@@ -13,6 +13,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 
 // These tests cover the end-to-end PGP contract at the HTTP boundary rather
@@ -83,12 +84,12 @@ func TestLegacyKeyMigrationRoundTrip(t *testing.T) {
 	}
 	// The key must come back usable, not merely non-empty: a truncated or
 	// re-armored blob would satisfy a length check and still be unopenable.
-	reopened, err := pgpmail.ImportIdentity(exported.PrivateKey, "")
+	reopened, err := crypto.NewPrivateKeyFromArmored(exported.PrivateKey, nil)
 	if err != nil {
 		t.Fatalf("the exported key does not import: %v", err)
 	}
-	if reopened.Fingerprint != identity.Fingerprint {
-		t.Fatalf("exported key fingerprint = %s, want %s", reopened.Fingerprint, identity.Fingerprint)
+	if reopened.GetFingerprint() != identity.Fingerprint {
+		t.Fatalf("exported key fingerprint = %s, want %s", reopened.GetFingerprint(), identity.Fingerprint)
 	}
 
 	// The browser wraps it and hands back the opaque envelope.
