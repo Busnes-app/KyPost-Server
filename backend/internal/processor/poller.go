@@ -951,6 +951,14 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 		p.log.Error("fetch unread inbox failed", "user_id", u.ID, "error", err.Error())
 		return err
 	}
+	if reset, changed := imapadapter.UIDNamespaceReset(checkpoint, nextCheckpoint); changed {
+		p.log.Info("mailbox UIDVALIDITY or account changed; forgetting processed UIDs", "user_id", u.ID)
+		if err := store.ResetUIDNamespace(reset); err != nil {
+			p.log.Error("cannot reset processed set for new UID namespace", "user_id", u.ID, "error", err.Error())
+			return err
+		}
+		checkpoint = reset
+	}
 
 	// Opportunistically warm the mail cache with what was just fetched for
 	// classification below — same IMAP round trip and bodies, no extra calls. Run
