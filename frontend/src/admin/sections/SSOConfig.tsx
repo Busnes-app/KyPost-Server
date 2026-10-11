@@ -1,11 +1,16 @@
 import { FormEvent, useEffect, useState } from "react";
 import { getJSON, putJSON, toErrorMessage } from "../../api/client";
+import { confirmedAdmin } from "../../api/users";
+import { useAuth } from "../../auth";
 
 type SSOSettings = {
   enabled: boolean;
   issuerUrl: string;
   clientId: string;
+  // Write-only: the server reports only clientSecretSet, and a blank one keeps
+  // the stored secret for the same issuer and client.
   clientSecret?: string;
+  clientSecretSet?: boolean;
   autoProvision: boolean;
   allowInsecureIssuer: boolean;
 };
@@ -25,6 +30,8 @@ function isCleartextIssuer(url: string): boolean {
 }
 
 export function SSOConfig() {
+  const ssoSession = useAuth().ssoSession === true;
+  const [password, setPassword] = useState("");
   const [settings, setSettings] = useState<SSOSettings>({
     enabled: false,
     issuerUrl: "",
@@ -41,7 +48,7 @@ export function SSOConfig() {
   useEffect(() => {
     getJSON<SSOSettings>("/api/admin/sso")
       .then((data) => {
-        setSettings(data);
+        setSettings({ ...data, clientSecret: "" });
         setLoading(false);
       })
       .catch((err) => {
@@ -66,8 +73,13 @@ export function SSOConfig() {
     setMessage("");
     setError("");
 
+    const accountPassword = password;
+    setPassword("");
     try {
-      await putJSON("/api/admin/sso", settings);
+      const saved = await confirmedAdmin({ ssoSession, password: accountPassword }, settings, (b, h) =>
+        putJSON<{ settings: SSOSettings }>("/api/admin/sso", b, h)
+      );
+      setSettings({ ...saved.settings, clientSecret: "" });
       setMessage("SSO settings saved successfully.");
     } catch (err) {
       setError(toErrorMessage(err, "Failed to save SSO settings"));
@@ -145,7 +157,7 @@ export function SSOConfig() {
           id="sso_client_secret"
           type="password"
           className="input font-mono"
-          placeholder="••••••••"
+          placeholder={settings.clientSecretSet ? "Stored; blank keeps it for this issuer and client" : "Not set"}
           value={settings.clientSecret || ""}
           onChange={(e) => setSettings({ ...settings, clientSecret: e.target.value })}
         />
@@ -185,8 +197,26 @@ export function SSOConfig() {
       {message ? <p className="status-success" style={{ color: "#4deeea" }}>{message}</p> : null}
       {error ? <p className="status-error" style={{ color: "#ef4444" }}>{error}</p> : null}
 
+      <div className="field-group">
+        {ssoSession ? (
+          <p className="muted">Saving asks you to confirm with KySignOn.</p>
+        ) : (
+          <>
+            <label htmlFor="sso_confirm_password">Your account password</label>
+            <input
+              id="sso_confirm_password"
+              type="password"
+              className="input"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </>
+        )}
+      </div>
+
       <div className="actions" style={{ marginTop: "1rem" }}>
-        <button type="submit" className="button" disabled={saving}>
+        <button type="submit" className="button" disabled={saving || (!ssoSession && !password)}>
           {saving ? "Saving…" : "Save SSO Settings"}
         </button>
       </div>
