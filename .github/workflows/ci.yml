@@ -266,19 +266,28 @@ jobs:
       # These scripts have no runtime dependency to install: the updater test
       # fakes docker and gh with shell stubs on PATH.
       #
-      # Syntax only, not shellcheck. A lint gate whose current result is unknown
-      # is a gate that goes red on the commit that adds it, and the job's value
-      # here is the updater test rather than style enforcement. Adding
-      # shellcheck is a separate change that starts by fixing what it reports.
+      # Parse each script with the shell its shebang names: `bash -n` accepts
+      # bashisms that dash (the image's /bin/sh) rejects.
       - name: shell syntax
         run: |
           shopt -s nullglob
           for f in scripts/*.sh; do
-            bash -n "$f"
+            if head -n1 "$f" | grep -q '^#!/bin/sh'; then sh -n "$f"; else bash -n "$f"; fi
           done
+
+      # shellcheck ships on the ubuntu runner image.
+      - name: shellcheck
+        run: shellcheck scripts/*.sh
 
       - name: update-host self-check
         run: scripts/update-host.test.sh
+
+      - name: supervisord.conf self-check
+        run: scripts/supervisord.test.sh
+
+      # A variable .env.example offers but compose never passes does nothing.
+      - name: env example reaches compose
+        run: scripts/check-env-example.sh
 
       # release-image.yml is the one workflow nothing exercises until a release
       # is published, and its failure mode is silence: a refactor once deleted

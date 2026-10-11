@@ -29,5 +29,6 @@ kypost-server receiving config "${KYPOST_RECEIVING_LISTEN:-0.0.0.0:2525}" \
     "${KYPOST_RECEIVING_KEY:-/opt/kypost/receiving/tls/privkey.pem}" > "$receiver_config_tmp"
 mv "$receiver_config_tmp" "$CONFIG_DIR/receiving.conf"
 trap - EXIT HUP INT TERM
+# shellcheck disable=SC3045 # the image's /bin/sh is dash, which supports -n
 ulimit -n 256
 exec /proc/self/fd/9 --config "$CONFIG_DIR/receiving.conf" run

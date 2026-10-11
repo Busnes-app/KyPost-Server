@@ -1014,8 +1014,9 @@ Push relays (only if you touch `worker/`, `worker-apns/` or `push-relay-shared/`
 Install and update scripts:
 
 ```bash
-for f in scripts/*.sh; do bash -n "$f"; done
+shellcheck scripts/*.sh
 scripts/update-host.test.sh
+scripts/check-env-example.sh
 ```
 
 ## Operations
