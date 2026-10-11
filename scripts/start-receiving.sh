@@ -5,11 +5,11 @@ umask 077
 refuse() { echo "native receiver refused: $1" >&2; exit 1; }
 [ "$(id -u)" != 0 ] || refuse 'run as the KyPost unprivileged user'
 [ "$(uname -s):$(uname -m)" = 'Linux:x86_64' ] || refuse 'only the qualified Linux x86_64 engine is supported'
-[ "${KYPOST_NATIVE_RECEIVER:-}" = true ] && [ "${KYPOST_NATIVE_MAIL:-}" = true ] && [ "${KYPOST_NATIVE_RECEIVING:-}" = true ] \
+{ [ "${KYPOST_NATIVE_RECEIVER:-}" = true ] && [ "${KYPOST_NATIVE_MAIL:-}" = true ] && [ "${KYPOST_NATIVE_RECEIVING:-}" = true ]; } \
     || refuse 'enable all three native receiver flags after domain setup and receiving init'
 
 binary=${KYPOST_RECEIVER_BINARY:-/opt/kypost/receiving/maddy}
-[ -f "$binary" ] && [ ! -L "$binary" ] && [ -x "$binary" ] && [ ! -w "$binary" ] \
+{ [ -f "$binary" ] && [ ! -L "$binary" ] && [ -x "$binary" ] && [ ! -w "$binary" ]; } \
     || refuse 'mount the qualified executable read-only as a regular nonsymlink file'
 # Hash and execute the same open file; trusted host writes to that inode remain
 # operator authority. A read-only mount is required in the container profile.
