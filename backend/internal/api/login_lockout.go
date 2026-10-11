@@ -197,7 +197,9 @@ func newLoginLockout() *failureLockout {
 // The caller settles the reservation:
 //
 //   - recordSuccess on a correct credential, clearing the whole entry
-//   - cancelAttempt on a path that never became a credential check
+//   - cancelAttempt on a path that never became a credential check, or on a
+//     success against an IP-only key, whose other strikes were spent on other
+//     accounts
 //   - nothing at all on a failure — the strike is already counted
 func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.Duration) {
 	l.mu.Lock()

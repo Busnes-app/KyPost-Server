@@ -132,11 +132,11 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		}
 
 		if ac, cached := s.davCredentials.get(username, password); cached {
-			// A cache hit is a successful authentication and must settle the
-			// strike tryAttempt just reserved. Without this, a CardDAV client
-			// polling with correct credentials would spend a strike per
-			// request and lock itself out within seconds.
-			s.davLockout.recordSuccess(lockKey)
+			// A cache hit is a successful authentication and must refund the
+			// strike tryAttempt just reserved, or a polling client locks itself
+			// out. Refund, not clear: the key is the IP alone, and one valid
+			// app password must not reset failures spent on other accounts.
+			s.davLockout.cancelAttempt(lockKey)
 			// Re-check the account live even on a hit. revokeAllUserCredentials
 			// clears this cache on deactivate/reset, but a request that read
 			// Active==true just before the deactivation can still `put` just
@@ -223,7 +223,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		s.davLockout.recordSuccess(lockKey)
+		s.davLockout.cancelAttempt(lockKey)
 		ac := AuthContext{UserID: u.ID, Username: u.Username, Role: u.Role}
 		// Cache BEFORE the rehash. A native client opens several connections
 		// and re-authenticates per PROPFIND/REPORT — the whole reason this

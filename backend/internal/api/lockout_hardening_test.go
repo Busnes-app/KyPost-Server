@@ -85,7 +85,9 @@ func TestDAVAuthLockoutAfterRepeatedFailures(t *testing.T) {
 	}
 }
 
-func TestDAVAuthSuccessClearsLockoutHistory(t *testing.T) {
+// The DAV lockout is keyed on the IP alone, so a valid app password must refund
+// only its own strike, never failures spent on other accounts.
+func TestDAVAuthSuccessKeepsLockoutHistory(t *testing.T) {
 	srv := newTestServer(t)
 	all, err := srv.users.List()
 	if err != nil || len(all) == 0 {
@@ -109,10 +111,12 @@ func TestDAVAuthSuccessClearsLockoutHistory(t *testing.T) {
 	if rec := davRequest(srv, u.Username, "dav-app-password", ip); rec.Code == http.StatusUnauthorized || rec.Code == http.StatusTooManyRequests {
 		t.Fatalf("correct password below threshold: status = %d, want an authenticated response", rec.Code)
 	}
-	// The success must have reset the strike count: a single further failure
-	// alone must not trip the lockout.
 	if rec := davRequest(srv, u.Username, "wrong", ip); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("failure after success: status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		t.Fatalf("last budgeted failure: status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if rec := davRequest(srv, "someone-else", "wrong", ip); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("failure past the budget: status = %d, want %d; the success refunded earlier failures",
+			rec.Code, http.StatusTooManyRequests)
 	}
 }
 

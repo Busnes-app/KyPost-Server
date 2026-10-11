@@ -354,10 +354,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.loginLockout.recordSuccess(lockoutKey)
-	// A correct credential clears this address's accumulated failures too. The
-	// per-IP budget exists to stop a caller with no valid credential from
-	// spending unbounded CPU; someone who just proved one is not that caller.
-	s.loginIPLockout.recordSuccess(ipLockoutKey)
+	// Refund only this attempt's strike: clearing the address's budget let one
+	// valid account reset failures spent guessing other accounts' passwords.
+	s.loginIPLockout.cancelAttempt(ipLockoutKey)
 
 	// Transparently upgrade a password hash written at an older, cheaper scrypt
 	// cost. This is the only moment the plaintext is legitimately in hand, so it is
