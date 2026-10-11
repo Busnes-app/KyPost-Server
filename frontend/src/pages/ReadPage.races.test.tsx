@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useNavigate } from "react-router";
 
 const getJSON = vi.fn();
 const postJSON = vi.fn();
@@ -54,9 +54,15 @@ beforeEach(() => {
   postJSON.mockResolvedValue({ ok: true, failed: [] });
 });
 
+function GoToArchive() {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate("/read?mailbox=Archive")}>Go to Archive</button>;
+}
+
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={["/read"]}>
+      <GoToArchive />
       <ReadPage />
     </MemoryRouter>
   );
@@ -105,6 +111,21 @@ describe("ReadPage request ordering", () => {
     await user.type(input, "late{Enter}");
     await user.click(screen.getByRole("button", { name: "Clear" }));
     await act(async () => pending.late.resolve({ results: [msgA] }));
+    expect(screen.queryByText(/^Found/)).toBeNull();
+  });
+
+  it("drops a search response for the folder the user left", async () => {
+    const inboxSearch = deferred<unknown>();
+    routes["/api/mail/search"] = () => inboxSearch.promise;
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Message A");
+
+    await user.type(screen.getByRole("textbox", { name: "Search mail" }), "q{Enter}");
+    await user.click(screen.getByRole("button", { name: "Go to Archive" }));
+    await waitFor(() => expect(getJSON).toHaveBeenCalledWith(expect.stringMatching(/^\/api\/inbox.*Archive/)));
+    await act(async () => inboxSearch.resolve({ results: [msgA] }));
+
     expect(screen.queryByText(/^Found/)).toBeNull();
   });
 

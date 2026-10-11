@@ -502,6 +502,8 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     setSwipeRows({});
     setSwipeRemovedIds([]);
     setError("");
+    // Results, and any search still in flight, belong to the folder we left.
+    clearSearch();
     // A cursor describes one mailbox's window. Carrying it across a mailbox
     // switch would ask the server to diff the new folder against the old
     // folder's state, so the first load in any mailbox is a full snapshot.
