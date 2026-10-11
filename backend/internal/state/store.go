@@ -629,20 +629,11 @@ func (s *Store) HasDecisionWithStatus(messageID, status string) (bool, error) {
 	return n > 0, nil
 }
 
-// Decisions returns the most recent decisions, newest first.
+// DecisionsStrict returns the most recent decisions, newest first.
 //
 // Ordered by id, not at_utc: the previous implementation returned the tail of
 // an append-ordered slice, so a row written later carrying an earlier
 // timestamp still came first. Preserved deliberately.
-func (s *Store) Decisions(limit int) []Decision {
-	decisions, err := s.DecisionsStrict(limit)
-	if err != nil {
-		slog.Error("state read failed", "field", "decisions", "dir", s.baseDir, "error", err.Error())
-		return []Decision{}
-	}
-	return decisions
-}
-
 func (s *Store) DecisionsStrict(limit int) ([]Decision, error) {
 	query := `SELECT message_id, sender, sent_to, subject, label, status, detail, at_utc
 	          FROM decisions ORDER BY id DESC`
@@ -804,15 +795,6 @@ func (s *Store) EnqueuePullNotification(n PullNotification) error {
 	})
 }
 
-func (s *Store) PullNotificationsAfter(deviceID string, after int64) ([]PullNotification, int64) {
-	notifications, cursor, err := s.PullNotificationsAfterStrict(deviceID, after)
-	if err != nil {
-		slog.Error("state read failed", "field", "pullNotifications", "dir", s.baseDir, "error", err.Error())
-		return []PullNotification{}, cursor
-	}
-	return notifications, cursor
-}
-
 // PullNotificationsAfterStrict returns the notifications after cursor that
 // were addressed to deviceID, or to every device. The cursor is the global
 // sequence, so a device skipping rows meant for others still advances past
@@ -861,15 +843,6 @@ func (s *Store) PullNotificationsAfterStrict(deviceID string, after int64) ([]Pu
 }
 
 // ---- web push subscriptions ------------------------------------------------
-
-func (s *Store) ListNotificationSubscriptions() []NotificationSubscription {
-	subs, err := s.ListNotificationSubscriptionsStrict()
-	if err != nil {
-		slog.Error("state read failed", "field", "notifications", "dir", s.baseDir, "error", err.Error())
-		return []NotificationSubscription{}
-	}
-	return subs
-}
 
 func (s *Store) ListNotificationSubscriptionsStrict() ([]NotificationSubscription, error) {
 	rows, err := s.db.Query(
@@ -1020,15 +993,6 @@ func insertDevice(e execer, d NativeDevice, seq int) error {
 		d.EnrollmentPublicKey, d.EnrollmentKeyAt, boolToInt(d.EncryptionEnrolled),
 		d.P256DH, d.Auth, versions, d.EnrolledVersion, d.EnrolledGeneration, d.EnrolledFingerprint, seq)
 	return err
-}
-
-func (s *Store) ListNativeDevices() []NativeDevice {
-	devices, err := s.ListNativeDevicesStrict()
-	if err != nil {
-		slog.Error("state read failed", "field", "nativeDevices", "dir", s.baseDir, "error", err.Error())
-		return []NativeDevice{}
-	}
-	return devices
 }
 
 // ListNativeDevicesStrict distinguishes an empty device set from a failed read.

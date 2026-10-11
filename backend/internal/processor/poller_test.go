@@ -422,7 +422,7 @@ func TestRecordMessageFailure_TransientClassifierErrorLeavesMessageUnprocessed(t
 	if seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the message to remain unmarked after a transient classifier outage, so it is retried next poll tick")
 	}
-	decisions := store.Decisions(10)
+	decisions := mustDecisions(t, store, 10)
 	if len(decisions) != 1 || decisions[0].Status != "failed" {
 		t.Fatalf("expected a failed decision to still be recorded, got %+v", decisions)
 	}
@@ -530,7 +530,7 @@ func TestHandleMessage_StopRuleShortCircuitsClassification(t *testing.T) {
 	if !seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the message to be marked processed")
 	}
-	decisions := store.Decisions(10)
+	decisions := mustDecisions(t, store, 10)
 	if len(decisions) != 1 {
 		t.Fatalf("expected 1 decision recorded, got %d: %+v", len(decisions), decisions)
 	}
@@ -611,7 +611,7 @@ func TestHandleMessage_StopRuleActionFailureDefersInsteadOfClaimingSuccess(t *te
 	if seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the message NOT to be retired when the archive it promised never happened")
 	}
-	if decisions := store.Decisions(10); len(decisions) != 0 {
+	if decisions := mustDecisions(t, store, 10); len(decisions) != 0 {
 		t.Fatalf("expected no decision claiming the rule was applied, got %+v", decisions)
 	}
 
@@ -896,7 +896,7 @@ func TestHandleMessage_TooLargeMessageRejectsAndNotifies(t *testing.T) {
 	if !seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the rejected message to be marked processed so it isn't retried every poll tick")
 	}
-	decisions := store.Decisions(10)
+	decisions := mustDecisions(t, store, 10)
 	if len(decisions) != 1 {
 		t.Fatalf("expected exactly 1 decision recorded, got %d: %+v", len(decisions), decisions)
 	}
@@ -941,7 +941,7 @@ func TestHandleMessage_TooLargeMessageStillRecordsDecisionWhenNotifyFails(t *tes
 	if !seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the message to still be marked processed even when the notice couldn't be sent")
 	}
-	decisions := store.Decisions(10)
+	decisions := mustDecisions(t, store, 10)
 	if len(decisions) != 1 || decisions[0].Status != "rejected_too_large" {
 		t.Fatalf("expected a rejected_too_large decision to still be recorded, got %+v", decisions)
 	}
@@ -1074,7 +1074,7 @@ func TestRecordMessageFailure_TransientErrorIsRecordedOncePerMessage(t *testing.
 		p.recordMessageFailure(store, uc.id, uc, msg, classifyErr, shouldMarkProcessedOnError(classifyErr))
 	}
 
-	decisions := store.Decisions(50)
+	decisions := mustDecisions(t, store, 50)
 	if len(decisions) != 1 {
 		t.Fatalf("recorded %d decisions for one message across five ticks, want 1", len(decisions))
 	}
@@ -1086,7 +1086,7 @@ func TestRecordMessageFailure_TransientErrorIsRecordedOncePerMessage(t *testing.
 	// A different message during the same outage is its own report.
 	other := imapadapter.Message{ID: "51", Subject: "Other", Sender: "b@example.com"}
 	p.recordMessageFailure(store, uc.id, uc, other, classifyErr, shouldMarkProcessedOnError(classifyErr))
-	if got := len(store.Decisions(50)); got != 2 {
+	if got := len(mustDecisions(t, store, 50)); got != 2 {
 		t.Fatalf("got %d decisions, want 2 — one per affected message", got)
 	}
 }
@@ -1117,10 +1117,19 @@ func TestRecordMessageFailure_RetiredFailureStillRecordsUnconditionally(t *testi
 	p.recordMessageFailure(store, uc.id, uc, msg, transient, shouldMarkProcessedOnError(transient))
 	p.recordMessageFailure(store, uc.id, uc, msg, permanent, shouldMarkProcessedOnError(permanent))
 
-	if got := len(store.Decisions(50)); got != 2 {
+	if got := len(mustDecisions(t, store, 50)); got != 2 {
 		t.Fatalf("got %d decisions, want 2 (the deferral and the retirement)", got)
 	}
 	if !seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the permanent failure to retire the message")
 	}
+}
+
+func mustDecisions(t testing.TB, s *state.Store, limit int) []state.Decision {
+	t.Helper()
+	d, err := s.DecisionsStrict(limit)
+	if err != nil {
+		t.Fatalf("DecisionsStrict: %v", err)
+	}
+	return d
 }

@@ -219,7 +219,7 @@ func TestNativeRegisterStoresDevice(t *testing.T) {
 		t.Fatalf("response deviceSecret is empty, want a minted secret")
 	}
 
-	devices := store.ListNativeDevices()
+	devices := mustNativeDevices(t, store)
 	if len(devices) != 1 {
 		t.Fatalf("len(devices) = %d, want 1", len(devices))
 	}
@@ -286,7 +286,7 @@ func TestNativeRegisterRejectsReplayedPairingToken(t *testing.T) {
 		t.Fatalf("replayed registration: status = %d, want 409; body=%s", replayRec.Code, replayRec.Body.String())
 	}
 
-	devices := store.ListNativeDevices()
+	devices := mustNativeDevices(t, store)
 	if len(devices) != 1 {
 		t.Fatalf("len(devices) = %d, want 1 (replay must not have registered a second device)", len(devices))
 	}
@@ -384,7 +384,7 @@ func TestNativeDevicesListAndDelete(t *testing.T) {
 		t.Fatalf("DELETE status = %d, want %d", delRec.Code, http.StatusOK)
 	}
 
-	devices := store.ListNativeDevices()
+	devices := mustNativeDevices(t, store)
 	if len(devices) != 0 {
 		t.Fatalf("len(devices) = %d, want 0", len(devices))
 	}
@@ -553,4 +553,13 @@ func clearMustChangePassword(t *testing.T, srv *Server, userID string) {
 	if _, err := srv.users.ClearMustChangePassword(userID); err != nil {
 		t.Fatalf("clear MustChangePassword: %v", err)
 	}
+}
+
+func mustNativeDevices(t testing.TB, s *state.Store) []state.NativeDevice {
+	t.Helper()
+	d, err := s.ListNativeDevicesStrict()
+	if err != nil {
+		t.Fatalf("ListNativeDevicesStrict: %v", err)
+	}
+	return d
 }

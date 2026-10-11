@@ -77,7 +77,7 @@ func TestNativeRuntimePollsWithoutIMAP(t *testing.T) {
 	p.tickSem <- struct{}{}
 	p.tick()
 	state := tickStore(t, p, u)
-	if decisions := state.Decisions(10); len(decisions) != 1 || decisions[0].MessageID != strconv.FormatInt(id, 10) || decisions[0].Status != "applied" {
+	if decisions := mustDecisions(t, state, 10); len(decisions) != 1 || decisions[0].MessageID != strconv.FormatInt(id, 10) || decisions[0].Status != "applied" {
 		t.Fatalf("native poll did not process message: %+v", decisions)
 	}
 	// Leftover credentials and a publishable key must not start a legacy
