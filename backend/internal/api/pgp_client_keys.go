@@ -284,7 +284,7 @@ func (s *Server) handlePGPExportLegacyKey(w http.ResponseWriter, r *http.Request
 
 // Envelope slots are the additional sealings of a client-protected private key
 // — a recovery code today, enrolled devices later. See
-// docs/superpowers/specs/2026-08-04-multi-wrapped-key-custody-design.md.
+// docs/DEVICE_ENROLLMENT.md (custody design: git show 5d38c48:docs/superpowers/specs/2026-08-04-multi-wrapped-key-custody-design.md).
 //
 // All three are withAuth (session only), never withMailAuth. A paired device
 // must not be able to mint a sealing of the account key: that is the property

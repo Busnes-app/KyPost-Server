@@ -28,8 +28,9 @@ import {
  * panel derives the same code from the key the server handed over. If they
  * differ, the server substituted, and the ceremony refuses to seal.
  *
- * See docs/superpowers/specs/2026-08-05-device-enrollment-2b-design.md and
- * docs/superpowers/specs/2026-08-06-device-mail-access-in-rows-design.md.
+ * See docs/DEVICE_ENROLLMENT.md; design notes in git history
+ * (git show 5d38c48:docs/superpowers/specs/2026-08-05-device-enrollment-2b-design.md and
+ * 2026-08-06-device-mail-access-in-rows-design.md).
  */
 
 export type MailPanel = "none" | "enroll" | "remove";

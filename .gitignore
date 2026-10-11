@@ -64,6 +64,7 @@ share/ollama/models/
 # Claude Code / superpowers session artifacts
 .superpowers/
 docs/superpowers/
+.audit-output/
 
 # Understand-Anything analysis workspace (incl. its .trash/ scratch output)
 .ua/
