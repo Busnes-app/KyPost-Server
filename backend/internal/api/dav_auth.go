@@ -167,6 +167,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		// davCredentialCache).
 		gen := s.davCredentials.currentGeneration()
 
+		credentialStart := time.Now() // failures padded from here; see settleCredentialTiming
 		u, err := s.users.GetByUsername(username)
 		if err != nil || !s.davAccountActive(u) {
 			// Do the same derivation work a real password check would, so slot
@@ -179,6 +180,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 				writeKDFBusy(w)
 				return
 			}
+			s.settleCredentialTiming(r.Context(), credentialStart)
 			s.requireDAVAuth(w)
 			return
 		}
@@ -192,6 +194,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 				writeKDFBusy(w)
 				return
 			}
+			s.settleCredentialTiming(r.Context(), credentialStart)
 			s.requireDAVAuth(w)
 			return
 		}
@@ -207,6 +210,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 			return
 		}
 		if !verified {
+			s.settleCredentialTiming(r.Context(), credentialStart)
 			s.requireDAVAuth(w)
 			return
 		}

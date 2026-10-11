@@ -277,6 +277,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// and lookup all agree on what "the same account" means.
 	powAccount := clampLockoutKeyComponent(users.NormalizeUsername(req.Username))
 
+	// Failures are padded from here (settleCredentialTiming); before the lookup,
+	// whose own cost differs between a hit and a miss.
+	credentialStart := time.Now()
 	u, err := s.users.GetByUsername(req.Username)
 	if err != nil || !u.Active || s.requireAccountRestoreReleased(u) != nil {
 		// Do the same derivation work a real check would, so neither timing nor
@@ -301,6 +304,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			writeKDFBusy(w)
 			return
 		}
+		s.settleCredentialTiming(r.Context(), credentialStart)
 		// Make the next challenge from this address more expensive. Recorded
 		// for the unknown-username case too: spraying a list of guessed
 		// usernames is exactly the pattern this is here to price.
@@ -340,6 +344,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !verified {
+		s.settleCredentialTiming(r.Context(), credentialStart)
 		s.powDifficulty.recordFailure(lockoutKeyForIP(clientIP(r)), powAccount, time.Now())
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return

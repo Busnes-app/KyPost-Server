@@ -462,6 +462,26 @@ func (s *Server) equalizeLoginTiming(ctx context.Context, candidate string) erro
 	return err
 }
 
+// settleCredentialTiming pads a FAILED credential check, measured from start,
+// to one current-cost Argon2id verify (users.DummyVerifyCost). Matched work
+// alone cannot hide an account whose stored hash predates a cost raise: it
+// verifies cheaper than the dummy until it next signs in. Not for successes or
+// 503 (KDF busy) answers; returns early if ctx ends. A failed measurement skips
+// padding rather than refusing the answer.
+func (s *Server) settleCredentialTiming(ctx context.Context, start time.Time) {
+	floor, err := users.DummyVerifyCost(ctx)
+	if err != nil {
+		s.logger.Error("credential timing floor unavailable; this failure is not padded", "error", err.Error())
+		return
+	}
+	timer := time.NewTimer(floor - time.Since(start))
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+}
+
 // Instance-wide login throttle and the per-IP lockout, both added because the
 // username+IP lockout above bounds the wrong thing: the username comes from the
 // request body, so a caller who never repeats one never trips it, while every

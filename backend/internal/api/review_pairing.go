@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -35,6 +36,7 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 		return
 	}
+	credentialStart := time.Now() // failures padded from here; see settleCredentialTiming
 	u, err := s.users.GetByUsername(requestedUsername)
 	if err != nil || !u.Active || !reviewUsernameMatches(reviewPattern, requestedUsername) {
 		// Keep the configured-account failure indistinguishable from a bad password.
@@ -43,6 +45,7 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 			writeKDFBusy(w)
 			return
 		}
+		s.settleCredentialTiming(r.Context(), credentialStart)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -62,6 +65,7 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !verified {
+		s.settleCredentialTiming(r.Context(), credentialStart)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}

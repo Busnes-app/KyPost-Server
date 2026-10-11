@@ -2203,27 +2203,52 @@ func verifyHash(ctx context.Context, encoded, candidate string) (bool, error) {
 	return known && ok, mapBusy(err)
 }
 
-// dummy caches a throwaway Argon2id hash at the current hashParams; nothing
-// verifies against it. Re-derived when hashParams changes, so it always costs
-// what a real account's hash does.
+// dummy caches a throwaway Argon2id hash at the current hashParams (nothing
+// verifies against it) and how long one verify of it took. Re-derived when
+// hashParams changes, so it always costs what a current-cost hash does.
 var dummy struct {
 	sync.Mutex
 	hash   string
+	cost   time.Duration
 	params password.Params
 }
 
 func dummyHash(ctx context.Context) (string, error) {
+	h, _, err := loadDummy(ctx)
+	return h, err
+}
+
+// DummyVerifyCost is the measured duration of one Argon2id verify at the
+// current cost: the floor a failed credential check is padded to, so an
+// account holding a cheaper (older-cost) hash cannot be told apart by timing.
+func DummyVerifyCost(ctx context.Context) (time.Duration, error) {
+	_, cost, err := loadDummy(ctx)
+	return cost, err
+}
+
+func loadDummy(ctx context.Context) (string, time.Duration, error) {
 	dummy.Lock()
 	defer dummy.Unlock()
 	if dummy.hash != "" && dummy.params == hashParams {
-		return dummy.hash, nil
+		return dummy.hash, dummy.cost, nil
 	}
 	h, err := HashPassword(ctx, "kypost-timing-equalization-dummy")
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	dummy.hash, dummy.params = h, hashParams
-	return h, nil
+	var cost time.Duration
+	if slotErr := withKDFSlot(ctx, func() {
+		start := time.Now()
+		_, err = password.Verify("probe", h)
+		cost = time.Since(start)
+	}); slotErr != nil {
+		return "", 0, slotErr
+	}
+	if err != nil {
+		return "", 0, mapBusy(err)
+	}
+	dummy.hash, dummy.cost, dummy.params = h, cost, hashParams
+	return h, cost, nil
 }
 
 // HashPassword derives an Argon2id PHC hash for a human-chosen secret. Holds

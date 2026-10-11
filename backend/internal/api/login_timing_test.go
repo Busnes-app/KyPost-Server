@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/password"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -149,6 +150,11 @@ func TestLoginTimingDoesNotRevealUnknownUsernames(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	plantPasswordHash(t, srv, legacy.ID, retiredScryptHash)
+	older, err := srv.users.Create(context.Background(), "timing-older-cost", pw, users.RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	plantPasswordHash(t, srv, older.ID, olderCostArgon2Hash(t, pw))
 
 	wrongPassword := func(username string) func(string) {
 		return func(addr string) {
@@ -160,8 +166,24 @@ func TestLoginTimingDoesNotRevealUnknownUsernames(t *testing.T) {
 	assertTimingSpread(t, map[string]time.Duration{
 		"argon2id account":       fastest(t, "argon2id account", wrongPassword(modern.Username)),
 		"retired scrypt account": fastest(t, "retired scrypt account", wrongPassword(legacy.Username)),
+		"older-cost argon2id":    fastest(t, "older-cost argon2id", wrongPassword(older.Username)),
 		"unknown username":       fastest(t, "unknown username", wrongPassword("no-such-user-anywhere")),
 	})
+}
+
+// olderCostArgon2Hash mints a still-supported Argon2id hash at the library's
+// minimum cost — what an account written before a cost raise holds until it
+// next signs in.
+func olderCostArgon2Hash(t *testing.T, secret string) string {
+	t.Helper()
+	h, err := password.HashWith(secret, password.Params{Memory: 8 * 1024, Time: 1, Threads: 1})
+	if err != nil {
+		t.Fatalf("HashWith: %v", err)
+	}
+	if !users.NeedsRehash(h) {
+		t.Fatal("fixture is not below the current cost")
+	}
+	return h
 }
 
 // TestReviewPairingTimingDoesNotRevealTheConfiguredAccount is the third
@@ -229,6 +251,13 @@ func TestDAVAuthTimingDoesNotRevealUsernames(t *testing.T) {
 	if err := srv.writeDAVPassword(legacy.ID, davPasswordFile{Hash: retiredScryptHash}); err != nil {
 		t.Fatalf("writeDAVPassword: %v", err)
 	}
+	older, err := srv.users.Create(context.Background(), "dav-timing-older", "pw-dav-timing-older-testpassword", users.RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := srv.writeDAVPassword(older.ID, davPasswordFile{Hash: olderCostArgon2Hash(t, "app-password-older")}); err != nil {
+		t.Fatalf("writeDAVPassword: %v", err)
+	}
 
 	handler := srv.withDAVBasicAuth(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Error("a wrong app password reached the handler")
@@ -246,9 +275,28 @@ func TestDAVAuthTimingDoesNotRevealUsernames(t *testing.T) {
 		}
 	}
 	assertTimingSpread(t, map[string]time.Duration{
-		"argon2id app password": fastest(t, "argon2id app password", wrongPassword(modern.Username)),
-		"retired app password":  fastest(t, "retired app password", wrongPassword(legacy.Username)),
-		"unknown username":      fastest(t, "unknown username", wrongPassword("no-such-user-anywhere")),
-		"no app password":       fastest(t, "no app password", wrongPassword("admin")),
+		"argon2id app password":   fastest(t, "argon2id app password", wrongPassword(modern.Username)),
+		"retired app password":    fastest(t, "retired app password", wrongPassword(legacy.Username)),
+		"older-cost app password": fastest(t, "older-cost app password", wrongPassword(older.Username)),
+		"unknown username":        fastest(t, "unknown username", wrongPassword("no-such-user-anywhere")),
+		"no app password":         fastest(t, "no app password", wrongPassword("admin")),
 	})
+}
+
+// TestSettleCredentialTimingStopsWhenTheClientLeaves: the floor must not hold a
+// handler goroutine for a caller that has gone away.
+func TestSettleCredentialTimingStopsWhenTheClientLeaves(t *testing.T) {
+	withProductionHashCost(t)
+	srv := newTestServer(t)
+	floor, err := users.DummyVerifyCost(context.Background())
+	if err != nil {
+		t.Fatalf("DummyVerifyCost: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	srv.settleCredentialTiming(ctx, start)
+	if elapsed := time.Since(start); elapsed >= floor/2 {
+		t.Fatalf("settled for %v after cancellation; floor is %v", elapsed, floor)
+	}
 }
