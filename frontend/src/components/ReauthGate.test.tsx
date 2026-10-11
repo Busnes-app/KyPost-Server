@@ -103,6 +103,13 @@ describe("ReauthGate", () => {
     expect(await screen.findByLabelText("Two-factor code")).toBeTruthy();
   });
 
+  it("keeps a typed recovery code out of browser spellcheck", async () => {
+    renderGate();
+    const code = await screen.findByLabelText("Two-factor code");
+    expect(code.getAttribute("spellcheck")).toBe("false");
+    expect(code.getAttribute("autocorrect")).toBe("off");
+  });
+
   it("sends a KySignOn session back to KySignOn instead of asking for a password", async () => {
     render(
       <AuthContext.Provider value={{ authenticated: true, userId: "u1", username: "sam", ssoSession: true }}>

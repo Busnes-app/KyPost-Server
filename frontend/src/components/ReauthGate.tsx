@@ -186,6 +186,9 @@ export function ReauthGate({ what, children }: Props) {
                 type="text"
                 inputMode="text"
                 autoComplete="one-time-code"
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
                 placeholder="123456 or a recovery code"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
