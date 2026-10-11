@@ -44,7 +44,7 @@ type mailboxWindow struct {
 	// maxRemovals. Retained so a removal can be reported to every caller whose
 	// cursor predates it — see Store.Sync.
 	Removals []Removal `json:"removals,omitempty"`
-	// Base is Seq when a limit window was created; a cursor at or below it
+	// Base is Seq when the window was created; a cursor at or below it
 	// was issued by another (possibly evicted) window. LastUsed orders limit
 	// windows for eviction.
 	Base     int64 `json:"base,omitempty"`
@@ -307,16 +307,8 @@ func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64)
 		return SyncResult{}, err
 	}
 
-	win := s.mailboxes[mailboxKey]
+	win := s.windowLocked(mailboxKey)
 	limitWindow := windowMailbox(mailboxKey) != mailboxKey
-	if win == nil {
-		win = &mailboxWindow{Seq: windowEpoch()}
-		win.Base = win.Seq
-		if limitWindow {
-			s.evictLimitWindowLocked(windowMailbox(mailboxKey))
-		}
-		s.mailboxes[mailboxKey] = win
-	}
 	if limitWindow {
 		win.LastUsed = time.Now().UnixNano()
 	}
@@ -485,6 +477,21 @@ func withBaseWarmth(mailboxes map[string]*mailboxWindow, key string, e Entry) En
 	return e
 }
 
+// windowLocked returns mailboxKey's window, creating it at a fresh windowEpoch
+// (evicting an old limit window if needed) so no prior cursor looks current.
+func (s *Store) windowLocked(mailboxKey string) *mailboxWindow {
+	if win := s.mailboxes[mailboxKey]; win != nil {
+		return win
+	}
+	win := &mailboxWindow{Seq: windowEpoch()}
+	win.Base = win.Seq
+	if mailbox := windowMailbox(mailboxKey); mailbox != mailboxKey {
+		s.evictLimitWindowLocked(mailbox)
+	}
+	s.mailboxes[mailboxKey] = win
+	return win
+}
+
 // evictLimitWindowLocked drops the least recently synced limit window of
 // mailbox once it holds maxLimitWindows, to make room for a new one.
 func (s *Store) evictLimitWindowLocked(mailbox string) {
@@ -619,11 +626,7 @@ func (s *Store) Upsert(mailboxKey string, entries []Entry) error {
 		return err
 	}
 
-	win := s.mailboxes[mailboxKey]
-	if win == nil {
-		win = &mailboxWindow{}
-		s.mailboxes[mailboxKey] = win
-	}
+	win := s.windowLocked(mailboxKey)
 
 	byUID := make(map[int]int, len(win.Entries))
 	for i, e := range win.Entries {

@@ -258,3 +258,37 @@ func TestSync_CursorFromLostCacheResets(t *testing.T) {
 		t.Fatalf("old cursor %d after cache loss: reset=%v new=%d, want a full window of both rows", old.Cursor, res.Reset, len(res.New))
 	}
 }
+
+// The poller and classic inbox path build windows through Upsert; those must
+// start at a fresh epoch too, or a rebuilt window replays the old cursor.
+func TestUpsert_CursorFromLostCacheResets(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Upsert("INBOX", []Entry{entry(1, "a", "unread", ""), entry(2, "b", "unread", "")}); err != nil {
+		t.Fatal(err)
+	}
+	old, err := s.Sync("INBOX", 10, []Overview{ov(1, "a", "unread"), ov(2, "b", "unread")}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(s.path()); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rebuilt.Upsert("INBOX", []Entry{entry(2, "b", "unread", ""), entry(3, "c", "unread", "")}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := rebuilt.Sync("INBOX", 10, []Overview{ov(2, "b", "unread"), ov(3, "c", "unread")}, old.Cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Reset || len(res.New) != 2 {
+		t.Fatalf("old cursor %d after cache loss: reset=%v new=%d, want a full window of both rows", old.Cursor, res.Reset, len(res.New))
+	}
+}
