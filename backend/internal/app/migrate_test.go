@@ -3,7 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -334,20 +336,60 @@ func TestOpenStoresWarnsAboutRetiredPasswordHashes(t *testing.T) {
 	if admin.PasswordHash != retired {
 		t.Fatal("startup rewrote the stored hash")
 	}
-	if !strings.Contains(logs.String(), `"user_ids":"`+admin.ID+`"`) {
+	if !strings.Contains(logs.String(), admin.ID) {
 		t.Fatalf("openStores did not warn: %q", logs.String())
 	}
-	if _, err := usersStore.Create(context.Background(), "fresh", "a-long-enough-password", users.RoleUser); err != nil {
+	fresh, err := usersStore.Create(context.Background(), "fresh", "a-long-enough-password", users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Seven retired accounts: their joined IDs exceed one log value's 256-byte cap.
+	retiredIDs := []string{admin.ID}
+	for i := range 6 {
+		u, err := usersStore.Create(context.Background(), fmt.Sprintf("old%d", i), "a-long-enough-password", users.RoleUser)
+		if err != nil {
+			t.Fatal(err)
+		}
+		retiredIDs = append(retiredIDs, u.ID)
+	}
+	path := filepath.Join(configDir, "users.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range doc["users"].([]any) {
+		if m := u.(map[string]any); m["id"] != fresh.ID {
+			m["passwordHash"] = retired
+		}
+	}
+	if raw, err = json.Marshal(doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := users.LoadOrMigrate(context.Background(), configDir, filepath.Join(configDir, "admin.env"))
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	logs.Reset()
-	warnRetiredPasswordHashes(logger, usersStore)
+	warnRetiredPasswordHashes(logger, reloaded)
 	out := logs.String()
-	if strings.Count(out, "\n") != 1 || !strings.Contains(out, `"user_ids":"`+admin.ID+`"`) || !strings.Contains(out, `"count":`) {
-		t.Fatalf("want one warning listing only %s with a count, got %q", admin.ID, out)
+	for _, id := range retiredIDs {
+		if !strings.Contains(out, `"user_id":"`+id+`"`) {
+			t.Errorf("warning lost account %s: %q", id, out)
+		}
 	}
-	if strings.Contains(out, "scrypt$") {
-		t.Fatalf("warning leaked the stored hash: %q", out)
+	if strings.Contains(out, fresh.ID) || !strings.Contains(out, `"count":"7"`) {
+		t.Fatalf("want a count of 7 and no Argon2id account, got %q", out)
+	}
+	if strings.Contains(out, "scrypt$") || strings.Contains(out, "truncated_fields") {
+		t.Fatalf("warning leaked the stored hash or was truncated: %q", out)
 	}
 }

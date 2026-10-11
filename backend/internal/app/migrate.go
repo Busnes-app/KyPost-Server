@@ -180,8 +180,13 @@ func warnRetiredPasswordHashes(logger *logging.Logger, usersStore *users.Store) 
 			ids = append(ids, u.ID)
 		}
 	}
-	if len(ids) > 0 {
-		logger.Warn("accounts hold a retired (pre-Argon2id) password hash and cannot sign in with a password; reset each in Admin → Users (POST /api/users/{id}/reset-password)",
-			"count", strconv.Itoa(len(ids)), "user_ids", strings.Join(ids, ","))
+	if len(ids) == 0 {
+		return
+	}
+	logger.Warn("accounts hold a retired (pre-Argon2id) password hash and cannot sign in with a password; reset each in Admin → Users (POST /api/users/{id}/reset-password)",
+		"count", strconv.Itoa(len(ids)))
+	// One line per account: a joined list outgrows the logger's 256-byte value cap.
+	for _, id := range ids {
+		logger.Warn("account holds a retired password hash", "user_id", id)
 	}
 }

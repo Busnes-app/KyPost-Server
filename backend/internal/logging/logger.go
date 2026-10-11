@@ -144,7 +144,6 @@ var (
 	_ = kylog.DeclareString("unhealthy_for_seconds")
 	_ = kylog.DeclareString("username")
 	_ = kylog.DeclareString("users_cleared_this_boot")
-	_ = kylog.DeclareString("user_ids")
 )
 
 func (l *Logger) Info(msg string, kv ...string) {
