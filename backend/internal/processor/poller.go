@@ -369,7 +369,7 @@ func (p *Poller) SetConfigPath(path string) {
 func (p *Poller) Run() {
 	p.initCtx()
 	ctx := p.ctx
-	interval := time.Duration(p.cfg.Scan.IntervalSeconds) * time.Second
+	interval := time.Duration(p.currentConfig().Scan.IntervalSeconds) * time.Second
 	if interval <= 0 {
 		interval = 90 * time.Second
 	}
@@ -799,67 +799,88 @@ func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
 // user's settings, rules and labels. Incoming encryption keeps one journal per
 // user, so it runs on the primary mailbox only.
 func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime time.Time) error {
+	uc, a, err := p.mailboxTickContext(u, mailboxID, imapConfigModTime)
+	if err != nil {
+		return err
+	}
+
+	// Derived from lifetimeCtx, not context.Background(), so Stop() cancels the
+	// IMAP fetch, classifier call and state writes that Wait() blocks on.
+	ctx, cancel := context.WithTimeout(p.lifetimeCtx(), tickTimeout)
+	defer cancel()
+
+	// Resume a durable replacement even when the user disabled future encryption,
+	// or another mail client has marked the original read.
+	if mailboxID == "" {
+		if err := p.resumeIncomingEncryption(ctx, uc); err != nil {
+			p.log.Error("incoming encryption paused; original or verified encrypted copy retained", "user_id", u.ID, "error", err.Error())
+			return err
+		}
+	}
+
+	checkpoint, messages, nextCheckpoint, err := p.fetchUnread(ctx, uc)
+	if err != nil {
+		return err
+	}
+	mailCache := p.warmMailCache(u.ID, a, messages)
+	headersNeeded, headersErr := p.loadBatchHeaders(ctx, &uc, messages)
+	res := p.processBatch(ctx, uc, messages, mailCache, headersNeeded, headersErr)
+	checkpointHeld := p.commitCheckpoint(uc, checkpoint, nextCheckpoint, res.deferredIDs)
+
+	p.checkPendingSendAsAliases(ctx, u.ID, uc.mail)
+	// After the check above, so it sees the freshest verdict for the account's
+	// own address and doesn't probe an address just proven.
+	p.ensureOwnAddressProven(u.ID)
+	// Verified aliases are no longer added to the key as User IDs: that needed
+	// server custody, now retired, and nothing replaces it. WKD still serves the
+	// key for such an alias while recipients reject it for missing the address
+	// (see pgpmail.ArmoredKeyCertifiesAddress, which has no callers yet).
+
+	p.recordTick(uc, len(messages), res, checkpointHeld)
+	// Returned last: the work this tick did is persisted; the error only changes
+	// the tick's reported outcome (see tick's usersFailed accounting).
+	return res.ledgerErr
+}
+
+// mailboxTickContext admits the mailbox and loads what one tick needs: its
+// state stores, the user's settings, tuning and runnable rules, and the
+// mail-source binding of its state and cache.
+func (p *Poller) mailboxTickContext(u users.User, mailboxID string, imapConfigModTime time.Time) (userCtx, sso.NativeAssignment, error) {
 	mail, a, err := p.mailClientForMailbox(u.ID, mailboxID, imapConfigModTime)
 	if err != nil {
 		p.log.Error("mailbox admission refused", "user_id", u.ID, "error", err.Error())
-		return err
+		return userCtx{}, a, err
 	}
 	primary, err := p.userStore(u.ID)
 	if err != nil {
 		p.log.Error("failed to open user state store", "user_id", u.ID, "error", err.Error())
-		return err
+		return userCtx{}, a, err
 	}
 	store := primary
 	if mailboxID != "" {
 		if store, err = p.mailboxStore(a); err != nil {
 			p.log.Error("failed to open mailbox state store", "user_id", u.ID, "error", err.Error())
-			return err
+			return userCtx{}, a, err
 		}
 	}
-	// Cleanup runs on its own ticker (cleanupAllUsers), NOT here: it is two
-	// DELETEs in one transaction against a 30-day retention window, and there
-	// is no reason to pay them on the poll path.
+	// Cleanup runs on its own ticker (cleanupAllUsers), not on the poll path.
 
 	settings, err := config.LoadUserLabelSettings(p.userSettingsPath(u.ID), p.currentConfig())
 	if err != nil {
 		p.log.Error("cannot read or seed user settings; skipping tick", "user_id", u.ID, "error", err.Error())
-		return err
+		return userCtx{}, a, err
 	}
 	// Incoming encryption has one journal per user, kept for the primary.
 	// The API refuses enabling it beside an active extra mailbox and creating
 	// or enabling one while it is on; never poll an extra mailbox past that rule.
 	if mailboxID != "" && (settings.EncryptIncoming || u.IncomingEncryptionPending) {
 		p.log.Error("extra mailbox not polled: incoming encryption is on for its owner", "user_id", u.ID)
-		return errIncomingEncryptionExtraMailbox
+		return userCtx{}, a, errIncomingEncryptionExtraMailbox
 	}
 
 	tuning := ""
 	if b, err := os.ReadFile(p.userTuningPath(u.ID)); err == nil {
 		tuning = strings.TrimSpace(string(b))
-	}
-
-	rulesStore, err := p.userRulesStore(u.ID)
-	var activeRules []rules.Rule
-	if err != nil {
-		p.log.Error("failed to open user rules store, skipping rule evaluation", "user_id", u.ID, "error", err.Error())
-	} else if activeRules, err = rulesStore.List(); err != nil {
-		// Same answer as a store that won't open: rules move, mark as spam and
-		// delete, so a list this cycle cannot confirm is not one to act on.
-		p.log.Error("failed to read user rules, skipping rule evaluation", "user_id", u.ID, "error", err.Error())
-		activeRules = nil
-	} else {
-		// rules.json predates ValidateRule and is a plain file in the user's
-		// state directory, so the API's write boundaries cannot be the only
-		// gate — see rules.FilterRunnable. An unexecutable rule skipped here
-		// with one log line per tick is the alternative to it failing on every
-		// matching message, which the error taxonomy below treats as retryable
-		// and therefore defers each of them for the full maxDeferralAttempts
-		// window before retiring them unlabelled.
-		var rejected []string
-		activeRules, rejected = rules.FilterRunnable(activeRules)
-		for _, why := range rejected {
-			p.log.Error("skipping unexecutable rule", "user_id", u.ID, "reason", why)
-		}
 	}
 
 	uc := userCtx{
@@ -876,177 +897,188 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 		incomingPending:  u.IncomingEncryptionPending && mailboxID == "",
 		allowlist:        settings.Labels.Allowlist,
 		keywordMappings:  settings.Labels.KeywordMappings,
-		rules:            activeRules,
+		rules:            p.runnableRules(u.ID),
 		guesses:          map[string]sortGuess{},
 	}
 
 	boundCache, err := p.mailboxCacheStore(u.ID, a)
 	if err != nil {
-		return err
+		return userCtx{}, a, err
 	}
 	source := imapadapter.MailSourceIdentity(uc.mail)
 	if err = boundCache.CheckMailSource(source); err != nil {
-		return err
+		return userCtx{}, a, err
 	}
 	if err = store.BindMailSource(source); err != nil {
-		return err
+		return userCtx{}, a, err
 	}
 	if err = boundCache.BindMailSource(source); err != nil {
-		return err
+		return userCtx{}, a, err
 	}
 	if source != "imap" {
 		if err = boundCache.BindMessageReferencePrefix(imapadapter.MessageReference(uc.mail, "")); err != nil {
-			return err
+			return userCtx{}, a, err
 		}
 	}
 	uc.head = p.userHead(u.ID, primary, settings.Labels)
+	return uc, a, nil
+}
 
-	// Derived from lifetimeCtx, not context.Background(): Stop() cancels the
-	// poller's context, and a tick rooted at Background did not observe it. The
-	// tick loop returned immediately while the IMAP fetch, the classifier call
-	// and the state writes underneath kept running for up to the full timeout —
-	// and Wait(), which shutdown blocks on, waited for exactly those. Eight
-	// minutes of it, against Docker's 10-second default grace period, meant
-	// routine restarts reached SIGKILL mid-write.
-	ctx, cancel := context.WithTimeout(p.lifetimeCtx(), tickTimeout)
-	defer cancel()
-
-	// Resume a durable replacement even when the user disabled future encryption,
-	// or another mail client has marked the original read.
-	// The one incoming-encryption journal belongs to the primary mailbox.
-	if mailboxID == "" {
-		if err := p.resumeIncomingEncryption(ctx, uc); err != nil {
-			p.log.Error("incoming encryption paused; original or verified encrypted copy retained", "user_id", u.ID, "error", err.Error())
-			return err
-		}
-	}
-
-	checkpoint, err := store.Checkpoint()
+// runnableRules loads the user's filter rules, or none when they cannot be
+// read: rules move, mark as spam and delete, so a list this tick cannot
+// confirm is not one to act on.
+func (p *Poller) runnableRules(userID string) []rules.Rule {
+	rulesStore, err := p.userRulesStore(userID)
 	if err != nil {
-		// Refuse the tick rather than proceeding with an empty checkpoint. An
-		// unreadable checkpoint used to look identical to "never polled", and
-		// the response to that is to re-scan the whole mailbox — on every tick,
-		// for as long as the read keeps failing.
-		p.log.Error("cannot read poll checkpoint; skipping this tick", "user_id", u.ID, "error", err.Error())
-		return err
+		p.log.Error("failed to open user rules store, skipping rule evaluation", "user_id", userID, "error", err.Error())
+		return nil
 	}
-	messages, nextCheckpoint, err := uc.mail.ListUnreadInbox(ctx, checkpoint)
+	activeRules, err := rulesStore.List()
 	if err != nil {
-		p.log.Error("fetch unread inbox failed", "user_id", u.ID, "error", err.Error())
-		return err
+		p.log.Error("failed to read user rules, skipping rule evaluation", "user_id", userID, "error", err.Error())
+		return nil
 	}
-	if reset, changed := imapadapter.UIDNamespaceReset(checkpoint, nextCheckpoint); changed {
-		p.log.Info("mailbox UIDVALIDITY or account changed; forgetting processed UIDs", "user_id", u.ID)
-		if err := store.ResetUIDNamespace(reset); err != nil {
-			p.log.Error("cannot reset processed set for new UID namespace", "user_id", u.ID, "error", err.Error())
-			return err
+	// rules.json is a plain file that predates ValidateRule, so the API's write
+	// boundaries cannot be the only gate. An unexecutable rule would otherwise
+	// fail as retryable on every matching message and defer each one for the
+	// full maxDeferralAttempts window.
+	activeRules, rejected := rules.FilterRunnable(activeRules)
+	for _, why := range rejected {
+		p.log.Error("skipping unexecutable rule", "user_id", userID, "reason", why)
+	}
+	return activeRules
+}
+
+// fetchUnread reads the checkpoint and fetches the unread batch above it.
+func (p *Poller) fetchUnread(ctx context.Context, uc userCtx) (checkpoint string, messages []imapadapter.Message, next string, err error) {
+	checkpoint, err = uc.store.Checkpoint()
+	if err != nil {
+		// An unreadable checkpoint must not look like "never polled", which
+		// re-scans the whole mailbox on every tick the read keeps failing.
+		p.log.Error("cannot read poll checkpoint; skipping this tick", "user_id", uc.id, "error", err.Error())
+		return "", nil, "", err
+	}
+	messages, next, err = uc.mail.ListUnreadInbox(ctx, checkpoint)
+	if err != nil {
+		p.log.Error("fetch unread inbox failed", "user_id", uc.id, "error", err.Error())
+		return "", nil, "", err
+	}
+	if reset, changed := imapadapter.UIDNamespaceReset(checkpoint, next); changed {
+		p.log.Info("mailbox UIDVALIDITY or account changed; forgetting processed UIDs", "user_id", uc.id)
+		if err := uc.store.ResetUIDNamespace(reset); err != nil {
+			p.log.Error("cannot reset processed set for new UID namespace", "user_id", uc.id, "error", err.Error())
+			return "", nil, "", err
 		}
 		checkpoint = reset
 	}
+	return checkpoint, messages, next, nil
+}
 
-	// Opportunistically warm the mail cache with what was just fetched for
-	// classification below — same IMAP round trip and bodies, no extra calls. Run
-	// before classification and independent of its outcome, so a slow or
-	// rate-limited classification never delays cache freshness. INBOX only, matching
-	// ListUnreadInbox's scope; see mailcache/AGENTS.md for why other folders are
-	// warmed lazily.
-	//
-	// Hoisted above the per-message loop so that loop can mirror an anti-phishing
-	// flag into the cache. Stays nil when the store won't open, which
-	// mirrorPhishKeyword tolerates.
-	var mailCache *mailcache.Store
-	if len(messages) > 0 {
-		var err error
-		if mailCache, err = p.mailboxCacheStore(u.ID, a); err != nil {
-			p.log.Error("failed to open mail cache store", "user_id", u.ID, "error", err.Error())
-			mailCache = nil
-		} else if err := mailCache.Upsert("INBOX", mailCacheEntriesFromMessages(messages)); err != nil {
-			p.log.Error("failed to warm mail cache", "user_id", u.ID, "error", err.Error())
+// warmMailCache upserts the fetched batch into the INBOX mail cache (same IMAP
+// round trip, no extra calls) before classification, so a slow tick never
+// delays cache freshness; see mailcache/AGENTS.md for why other folders are
+// warmed lazily. nil when the store won't open, which mirrorPhishKeyword
+// tolerates.
+func (p *Poller) warmMailCache(userID string, a sso.NativeAssignment, messages []imapadapter.Message) *mailcache.Store {
+	if len(messages) == 0 {
+		return nil
+	}
+	mailCache, err := p.mailboxCacheStore(userID, a)
+	if err != nil {
+		p.log.Error("failed to open mail cache store", "user_id", userID, "error", err.Error())
+		return nil
+	}
+	if err := mailCache.Upsert("INBOX", mailCacheEntriesFromMessages(messages)); err != nil {
+		p.log.Error("failed to warm mail cache", "user_id", userID, "error", err.Error())
+	}
+	return mailCache
+}
+
+// loadBatchHeaders makes one header-only FETCH for the batch, feeding both
+// pre-sort and header rules, and loads the known senders. TooLarge messages
+// are left out: their size is the reason nothing of them is downloaded. If the
+// fetch fails while a rule tests a header, headersErr holds the batch rather
+// than letting the rule run blind; pre-sort alone just loses its bulk check.
+func (p *Poller) loadBatchHeaders(ctx context.Context, uc *userCtx, messages []imapadapter.Message) (headersNeeded bool, headersErr error) {
+	ruleHeaders := rules.HeaderNames(uc.rules)
+	headersNeeded = len(ruleHeaders) > 0
+	if len(messages) == 0 {
+		return headersNeeded, nil
+	}
+	uids := make([]int, 0, len(messages))
+	for _, m := range messages {
+		if uid, err := strconv.Atoi(strings.TrimSpace(m.ID)); err == nil && !m.TooLarge {
+			uids = append(uids, uid)
 		}
 	}
-
-	// One header-only FETCH for the batch feeds both pre-sort and header rules.
-	// TooLarge messages are left out: their size is the reason nothing of them
-	// is downloaded. If the fetch fails and a rule tests a header, messages are
-	// held below (after the phishing scan) rather than letting the rule run
-	// blind; pre-sort alone just goes without its bulk check.
-	var headersErr error
-	headersNeeded := len(rules.HeaderNames(activeRules)) > 0
-	if len(messages) > 0 {
-		uids := make([]int, 0, len(messages))
-		for _, m := range messages {
-			if uid, err := strconv.Atoi(strings.TrimSpace(m.ID)); err == nil && !m.TooLarge {
-				uids = append(uids, uid)
-			}
-		}
-		ruleHeaders := rules.HeaderNames(activeRules)
-		headerNames := append(slices.Clone(ruleHeaders), presortHeaderNames...)
-		slices.Sort(headerNames)
-		headerLines, err := uc.mail.FetchHeaderFields(ctx, "", uids, slices.Compact(headerNames)...)
-		switch {
-		case err == nil:
-			uc.headers = headersByUID(headerLines)
-		case headersNeeded:
-			p.log.Error("fetch message headers failed; holding messages for header rules", "user_id", u.ID, "error", err.Error())
-			headersErr = fmt.Errorf("fetch message headers: %w", err)
-		default:
-			p.log.Error("fetch message headers failed; pre-sort bulk check off this tick", "user_id", u.ID, "error", err.Error())
-		}
-		if cs, err := p.userContactsStore(u.ID); err != nil {
-			p.log.Error("failed to open contacts store; known-sender pre-sort off this tick", "user_id", u.ID, "error", err.Error())
-		} else if uc.knownSenders, err = knownSenders(cs); err != nil {
-			p.log.Error("failed to read contacts; known-sender pre-sort off this tick", "user_id", u.ID, "error", err.Error())
-		}
+	headerNames := append(slices.Clone(ruleHeaders), presortHeaderNames...)
+	slices.Sort(headerNames)
+	headerLines, err := uc.mail.FetchHeaderFields(ctx, "", uids, slices.Compact(headerNames)...)
+	switch {
+	case err == nil:
+		uc.headers = headersByUID(headerLines)
+	case headersNeeded:
+		p.log.Error("fetch message headers failed; holding messages for header rules", "user_id", uc.id, "error", err.Error())
+		headersErr = fmt.Errorf("fetch message headers: %w", err)
+	default:
+		p.log.Error("fetch message headers failed; pre-sort bulk check off this tick", "user_id", uc.id, "error", err.Error())
 	}
+	if cs, err := p.userContactsStore(uc.id); err != nil {
+		p.log.Error("failed to open contacts store; known-sender pre-sort off this tick", "user_id", uc.id, "error", err.Error())
+	} else if uc.knownSenders, err = knownSenders(cs); err != nil {
+		p.log.Error("failed to read contacts; known-sender pre-sort off this tick", "user_id", uc.id, "error", err.Error())
+	}
+	return headersNeeded, headersErr
+}
 
-	harvestEnabled, harvestSuppressed := p.autocryptHarvestConfig(u.ID)
+// tickResult is what one tick did with its batch.
+type tickResult struct {
+	processed, skippedSeen, failed, rateLimited int
+	// deferredIDs are the messages left for a later tick. "The next tick
+	// retries it" only holds while the checkpoint stays below them; see
+	// imapadapter.ClampCheckpoint.
+	deferredIDs []string
+	// ledgerErr fails the tick once its work is persisted, so a state-store
+	// outage reaches health instead of showing up only as mail that quietly
+	// stopped being processed.
+	ledgerErr error
+}
 
-	// Resolved once per tick rather than per message: it reads and decrypts the
-	// sealed IMAP config, and every message in this batch belongs to the same
-	// account. Empty is a valid answer — see flagAppImpersonation.
-	ownAddress := p.accountAddress(u.ID)
+// deferFrom defers msgs, all of them untouched.
+func (r *tickResult) deferFrom(msgs []imapadapter.Message) {
+	for _, m := range msgs {
+		r.deferredIDs = append(r.deferredIDs, m.ID)
+	}
+}
 
-	processedCount := 0
-	skippedSeenCount := 0
-	failedCount := 0
-	rateLimitedCount := 0
-	// deferredIDs are the messages this tick is leaving for a later one. Every
-	// "the next tick retries it" below is only true if the checkpoint stays
-	// below them — ListUnreadInbox filters on UID > checkpoint and advances its
-	// returned value to the highest UID it fetched regardless of outcome, so an
-	// unclamped write here retires exactly the messages these branches meant to
-	// keep. See imapadapter.ClampCheckpoint.
-	var deferredIDs []string
-	// ledgerErr records that the deferral counter could not be written for at
-	// least one message this tick. The tick's own work still completes — the
-	// checkpoint clamp below is the part that matters — but the tick is
-	// reported as failed so a state-store outage reaches health instead of
-	// showing up only as mail that quietly stopped being processed.
-	var ledgerErr error
+// processBatch runs each unprocessed message through handleMessage, deferring
+// what this tick cannot finish.
+func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapadapter.Message, mailCache *mailcache.Store, headersNeeded bool, headersErr error) tickResult {
+	harvestEnabled, harvestSuppressed := p.autocryptHarvestConfig(uc.id)
+	// Once per tick: it reads and decrypts the sealed IMAP config. Empty is a
+	// valid answer — see flagAppImpersonation.
+	ownAddress := p.accountAddress(uc.id)
+
+	var res tickResult
 	for i, msg := range messages {
-		seen, err := store.Seen(msg.ID)
+		seen, err := uc.store.Seen(msg.ID)
 		if err != nil {
 			// Unknown is not unprocessed. Reprocessing re-labels the message and
-			// re-notifies every paired device; skipping costs one poll interval
-			// and the next tick retries.
+			// re-notifies every paired device; skipping costs one poll interval.
 			p.log.Error("cannot determine processed state; skipping message this tick",
-				"user_id", u.ID, "message_id", msg.ID, "error", err.Error())
-			deferredIDs = append(deferredIDs, msg.ID)
-			skippedSeenCount++
+				"user_id", uc.id, "message_id", msg.ID, "error", err.Error())
+			res.deferredIDs = append(res.deferredIDs, msg.ID)
+			res.skippedSeen++
 			continue
 		}
 		if seen {
-			skippedSeenCount++
+			res.skippedSeen++
 			continue
 		}
-		// Anti-phishing runs ahead of everything below, and the ordering is the point:
-		//   - before allowByRate, which breaks this loop once the classifier budget is
-		//     spent. A security verdict must not be rationed by an LLM quota.
-		//   - before handleMessage, whose rules engine can move or delete the message,
-		//     whose "stop" action returns early, and whose classifier failure returns
-		//     before any keyword is applied.
-		// Flagging first also means the keyword travels with the message if a user rule
-		// subsequently moves it.
+		// Anti-phishing runs ahead of everything below: a security verdict must
+		// not be rationed by the rate limit, nor skipped by a rule that moves,
+		// deletes or stops, or by a classifier failure. Flagging first also means
+		// the keyword travels with the message if a rule moves it.
 		if p.flagAppImpersonation(ctx, uc, msg, ownAddress) {
 			p.mirrorPhishKeyword(mailCache, msg)
 		}
@@ -1054,16 +1086,16 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 			p.harvestAutocrypt(ctx, uc, msg, harvestSuppressed)
 		}
 		if headersErr != nil {
-			deferredIDs = append(deferredIDs, msg.ID)
-			if ledgerErr == nil {
-				ledgerErr = headersErr
+			res.deferredIDs = append(res.deferredIDs, msg.ID)
+			if res.ledgerErr == nil {
+				res.ledgerErr = headersErr
 			}
 			continue
 		}
 		uid, _ := strconv.Atoi(strings.TrimSpace(msg.ID))
 		// Past the header byte budget: a later, smaller batch fetches it.
 		if headersNeeded && !msg.TooLarge && !msg.ParseError && uc.headers[uid] == nil {
-			deferredIDs = append(deferredIDs, msg.ID)
+			res.deferredIDs = append(res.deferredIDs, msg.ID)
 			continue
 		}
 		// The rate limit rations LLM calls; mail pre-sort labels, or that the
@@ -1073,185 +1105,135 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 		// the retry. Incoming encryption defers all mutations, so it admits quota
 		// after feasibility checks, immediately before the LLM call instead.
 		if label, allow, _ := presort(uc, msg, uid); !msg.ParseError && !uc.encryptIncoming && label == "" &&
-			!p.guess(uc, msg, allow).confident(p.embedMin) && !p.allowByRate(u.ID) {
-			p.log.Info("rate limit reached, deferring remaining emails", "user_id", u.ID)
-			rateLimitedCount = len(messages) - processedCount - skippedSeenCount - failedCount
-			// "Deferring" is the whole point of the break: this message and
-			// everything after it are untouched, so the checkpoint must not
-			// advance past them. Any already-processed message swept up here is
-			// filtered by the Seen gate above on the next tick.
-			for _, deferred := range messages[i:] {
-				deferredIDs = append(deferredIDs, deferred.ID)
-			}
+			!p.guess(uc, msg, allow).confident(p.embedMin) && !p.allowByRate(uc.id) {
+			p.log.Info("rate limit reached, deferring remaining emails", "user_id", uc.id)
+			res.rateLimited = len(messages) - res.processed - res.skippedSeen - res.failed
+			// Already-processed messages swept up here are filtered by Seen next tick.
+			res.deferFrom(messages[i:])
 			break
 		}
-		// Stop admitting new work once shutdown has begun. Without this, a tick
-		// that started with 300 messages kept starting message #4, #5, #6 after
-		// Stop() — each with its own fresh timeout — so cancellation only ever
-		// took effect at the end of the batch.
-		//
-		// Deferred exactly like the rate-limit break above: this message and
-		// everything after it are untouched, so the checkpoint must not advance
-		// past them, and the next tick re-fetches them.
+		// Stop admitting new work once shutdown has begun, deferring like the
+		// rate-limit break, so cancellation is not delayed to the end of the batch.
 		if err := ctx.Err(); err != nil {
-			p.log.Info("shutdown requested, deferring remaining emails", "user_id", u.ID)
-			for _, deferred := range messages[i:] {
-				deferredIDs = append(deferredIDs, deferred.ID)
-			}
+			p.log.Info("shutdown requested, deferring remaining emails", "user_id", uc.id)
+			res.deferFrom(messages[i:])
 			break
 		}
 		messageCtx, messageCancel := context.WithTimeout(ctx, perMessageTimeout)
 		err = p.handleMessage(messageCtx, uc, msg)
 		messageCancel()
-		if errors.Is(err, errIncomingRateLimited) {
-			rateLimitedCount++
-			deferredIDs = append(deferredIDs, msg.ID)
-			continue
-		}
-		if err != nil {
-			failedCount++
-			// Decided ONCE, here, and handed to recordMessageFailure rather than
-			// re-derived there: retiring the message and advancing the checkpoint
-			// past it are the same decision, and two copies of the predicate are
-			// how they drift apart.
-			var encryptionErr *incomingEncryptionErr
-			if errors.As(err, &encryptionErr) && !errors.Is(err, errIncomingPermanent) {
-				// Recoverable key/mailbox failures and durable jobs must remain retryable.
-				deferredIDs = append(deferredIDs, msg.ID)
-				ledgerErr = err
-				p.log.Error("incoming encryption deferred; restore the key or IMAP connection to retry", "user_id", u.ID, "message_id", msg.ID, "error", err.Error())
-				continue
-			}
-			retire := shouldMarkProcessedOnError(err)
-			if encryptionErr != nil {
-				// Permanent per-message rejection uses the existing bounded ledger.
-				// Preserve plaintext in IMAP, but never retain it in failure previews.
-				retire = false
-				msg.Subject = pgpmail.OuterPlaceholderSubject
-				msg.PGPEncrypted = true
-			}
-			if !retire {
-				// A deferral holds the checkpoint below this message, so every
-				// later message is re-fetched next tick too. That is affordable
-				// while the failure is genuinely transient and ruinous if it
-				// never clears, which is what the attempt cap decides.
-				attempts, cerr := store.RecordDeferral(msg.ID)
-				switch {
-				case cerr != nil:
-					// Fail CLOSED: the message stays deferred and the checkpoint
-					// stays below it, exactly as if the counter had been written.
-					//
-					// This used to retire the message, reasoning that a counter
-					// which cannot be written cannot enforce the cap, and an
-					// uncappable deferral holds the checkpoint forever. The
-					// premise is right and the conclusion does not follow:
-					// retiring is RecordProcessedDecision, another write to the
-					// same state.Store that just failed, and the Seen() read at
-					// the top of this loop fails too. A state store broken enough
-					// to lose RecordDeferral cannot retire the message either —
-					// it advances the checkpoint past unfinished mail with
-					// neither the label nor the audit row. So retiring bought no
-					// progress and paid for it in lost mail.
-					//
-					// Held below alongside the rest of this tick's deferrals, and
-					// surfaced by failing the tick (see ledgerErr) so an operator
-					// sees a state-store outage rather than a quiet backlog.
-					p.log.Error("cannot count deferral attempts; holding message for retry and failing the tick",
-						"user_id", u.ID, "message_id", msg.ID, "error", cerr.Error())
-					deferredIDs = append(deferredIDs, msg.ID)
-					if ledgerErr == nil {
-						ledgerErr = fmt.Errorf("deferral ledger unwritable: %w", cerr)
-					}
-				case attempts >= maxDeferralAttempts:
-					p.log.Error("deferral limit reached; retiring message",
-						"user_id", u.ID, "message_id", msg.ID,
-						"attempts", strconv.Itoa(attempts),
-						"limit", strconv.Itoa(maxDeferralAttempts),
-						"error", err.Error())
-					retire = true
-					// Wrapped so the recorded Decision says the message was given
-					// up on, not merely that it failed once — the audit log is
-					// the only place an operator learns mail was abandoned.
-					err = fmt.Errorf("gave up after %d deferred attempts: %w", attempts, err)
-				default:
-					deferredIDs = append(deferredIDs, msg.ID)
-				}
-			}
-			p.recordMessageFailure(store, u.ID, uc, msg, err, retire)
-			continue
-		}
-		// No ClearDeferral here on purpose: every success path in handleMessage
-		// ends in RecordProcessedDecision, which drops the deferral row in the
-		// same transaction that retires the message. Clearing it again from the
-		// caller would be a second copy of an invariant the store already owns.
-		processedCount++
-	}
-
-	checkpointHeld := false
-	if nextCheckpoint != "" {
-		clamped := imapadapter.ClampCheckpoint(checkpoint, nextCheckpoint, deferredIDs)
-		checkpointHeld = clamped != nextCheckpoint
-		if checkpointHeld {
-			p.log.Info("holding poll checkpoint below deferred messages so they are retried",
-				"user_id", u.ID, "deferred", strconv.Itoa(len(deferredIDs)),
-				"checkpoint", clamped, "fetched_through", nextCheckpoint)
-		}
-		if err := store.SetCheckpoint(clamped); err != nil {
-			p.log.Error("failed to persist checkpoint", "user_id", u.ID, "error", err.Error())
+		switch {
+		case errors.Is(err, errIncomingRateLimited):
+			res.rateLimited++
+			res.deferredIDs = append(res.deferredIDs, msg.ID)
+		case err != nil:
+			res.failed++
+			p.settleFailure(uc, msg, err, &res)
+		default:
+			// RecordProcessedDecision already dropped any deferral row.
+			res.processed++
 		}
 	}
+	return res
+}
 
-	p.checkPendingSendAsAliases(ctx, u.ID, uc.mail)
-	// Must follow the check above, so it sees the freshest verdict for the
-	// account's own address and doesn't probe an address just proven.
-	p.ensureOwnAddressProven(u.ID)
-	// A verified alias used to get self-signed onto the key as a User ID here.
-	// That needed the private half, so it only ever worked for server-custody
-	// keys, and server custody is retired.
-	//
-	// NOTHING REPLACES IT. The browser sets User IDs only at key generation
-	// (suggestedUserIDs -> generateIdentity), and no path adds one to an
-	// existing key, so an alias verified after the key was made is never
-	// carried onto it. Client-custody accounts have always had this gap; it is
-	// now universal. WKD still SERVES the key for such an alias while the
-	// recipient's validateDiscoveredKey rejects it for missing the address —
-	// see pgpmail.ArmoredKeyCertifiesAddress, which exists for this and has no
-	// callers yet.
+// settleFailure decides, once, whether a failed message is retired or deferred
+// and records it. Retiring the message and advancing the checkpoint past it are
+// the same decision, so recordMessageFailure is handed it, never re-derives it.
+func (p *Poller) settleFailure(uc userCtx, msg imapadapter.Message, err error, res *tickResult) {
+	var encryptionErr *incomingEncryptionErr
+	if errors.As(err, &encryptionErr) && !errors.Is(err, errIncomingPermanent) {
+		// Recoverable key/mailbox failures and durable jobs must remain retryable.
+		res.deferredIDs = append(res.deferredIDs, msg.ID)
+		res.ledgerErr = err
+		p.log.Error("incoming encryption deferred; restore the key or IMAP connection to retry", "user_id", uc.id, "message_id", msg.ID, "error", err.Error())
+		return
+	}
+	retire := shouldMarkProcessedOnError(err)
+	if encryptionErr != nil {
+		// Permanent per-message rejection uses the existing bounded ledger.
+		// Preserve plaintext in IMAP, but never retain it in failure previews.
+		retire = false
+		msg.Subject = pgpmail.OuterPlaceholderSubject
+		msg.PGPEncrypted = true
+	}
+	if !retire {
+		// A deferral re-fetches every later message too: affordable while the
+		// failure is transient, ruinous if it never clears — the attempt cap decides.
+		attempts, cerr := uc.store.RecordDeferral(msg.ID)
+		switch {
+		case cerr != nil:
+			// Fail closed: retiring would be another write to the store that just
+			// failed, advancing the checkpoint past mail with neither label nor
+			// audit row. Hold it and fail the tick so the outage is visible.
+			p.log.Error("cannot count deferral attempts; holding message for retry and failing the tick",
+				"user_id", uc.id, "message_id", msg.ID, "error", cerr.Error())
+			res.deferredIDs = append(res.deferredIDs, msg.ID)
+			if res.ledgerErr == nil {
+				res.ledgerErr = fmt.Errorf("deferral ledger unwritable: %w", cerr)
+			}
+		case attempts >= maxDeferralAttempts:
+			p.log.Error("deferral limit reached; retiring message",
+				"user_id", uc.id, "message_id", msg.ID,
+				"attempts", strconv.Itoa(attempts),
+				"limit", strconv.Itoa(maxDeferralAttempts),
+				"error", err.Error())
+			retire = true
+			// The audit log is the only place an operator learns mail was abandoned.
+			err = fmt.Errorf("gave up after %d deferred attempts: %w", attempts, err)
+		default:
+			res.deferredIDs = append(res.deferredIDs, msg.ID)
+		}
+	}
+	p.recordMessageFailure(uc.store, uc.id, uc, msg, err, retire)
+}
 
+// commitCheckpoint persists the fetched checkpoint clamped below every deferred
+// message, and reports whether it was held back.
+func (p *Poller) commitCheckpoint(uc userCtx, checkpoint, next string, deferredIDs []string) bool {
+	if next == "" {
+		return false
+	}
+	clamped := imapadapter.ClampCheckpoint(checkpoint, next, deferredIDs)
+	held := clamped != next
+	if held {
+		p.log.Info("holding poll checkpoint below deferred messages so they are retried",
+			"user_id", uc.id, "deferred", strconv.Itoa(len(deferredIDs)),
+			"checkpoint", clamped, "fetched_through", next)
+	}
+	if err := uc.store.SetCheckpoint(clamped); err != nil {
+		p.log.Error("failed to persist checkpoint", "user_id", uc.id, "error", err.Error())
+	}
+	return held
+}
+
+// recordTick logs the tick summary and persists it for the health page. Only
+// completed ticks reach here: every early return leaves the previous record so
+// its age keeps growing, which is the outage signal. A failed write is logged,
+// not returned — the tick's work is already done.
+func (p *Poller) recordTick(uc userCtx, fetched int, res tickResult, checkpointHeld bool) {
 	p.log.Info(
 		"user poll tick summary",
-		"user_id", u.ID,
-		"username", u.Username,
-		"fetched", strconv.Itoa(len(messages)),
-		"processed", strconv.Itoa(processedCount),
-		"skipped_seen", strconv.Itoa(skippedSeenCount),
-		"failed", strconv.Itoa(failedCount),
-		"deferred_rate_limited", strconv.Itoa(rateLimitedCount),
+		"user_id", uc.id,
+		"username", uc.username,
+		"fetched", strconv.Itoa(fetched),
+		"processed", strconv.Itoa(res.processed),
+		"skipped_seen", strconv.Itoa(res.skippedSeen),
+		"failed", strconv.Itoa(res.failed),
+		"deferred_rate_limited", strconv.Itoa(res.rateLimited),
 	)
-
-	// The same summary, persisted, because the log line above answers "is mail
-	// being polled?" only for someone already reading logs. Recorded at the END
-	// of a completed tick: every early return above leaves the previous record
-	// alone so its age keeps growing, which is the outage signal.
-	//
-	// A failure here is logged and not returned — the tick genuinely succeeded,
-	// and failing it would restart work that is already done.
-	if err := store.RecordPollTick(state.PollTick{
+	if err := uc.store.RecordPollTick(state.PollTick{
 		AtUTC:          time.Now().UTC().Format(time.RFC3339),
-		Fetched:        len(messages),
-		Processed:      processedCount,
-		SkippedSeen:    skippedSeenCount,
-		Failed:         failedCount,
-		Deferred:       len(deferredIDs),
-		RateLimited:    rateLimitedCount > 0,
+		Fetched:        fetched,
+		Processed:      res.processed,
+		SkippedSeen:    res.skippedSeen,
+		Failed:         res.failed,
+		Deferred:       len(res.deferredIDs),
+		RateLimited:    res.rateLimited > 0,
 		CheckpointHeld: checkpointHeld,
 	}); err != nil {
-		p.log.Error("failed to record poll tick", "user_id", u.ID, "error", err.Error())
+		p.log.Error("failed to record poll tick", "user_id", uc.id, "error", err.Error())
 	}
-	// Returned last, after the checkpoint clamp and the tick record: the work
-	// this tick did do is real and must be persisted. What the error changes is
-	// only the tick's reported outcome — see tick's usersFailed accounting.
-	return ledgerErr
 }
 
 // classifierErr marks an error returned by classifyWithRetry so tickUser's
@@ -1333,9 +1315,9 @@ const maxDeferralAttempts = 120
 // maxLoggedLabelBytes bounds a raw model output before it reaches the log.
 //
 // A well-behaved model answers with one label from the allowlist. A misbehaving
-// one can echo back attacker-controlled email content, and app.log is served to
-// any admin by GET /api/logs — so truncating keeps a diagnostic from becoming a
-// channel for message content to escape the owning user's state.db.
+// one can echo back attacker-controlled email content, and the captured stderr
+// log is served to any admin by GET /api/logs — so truncating keeps a diagnostic
+// from becoming a channel for message content to escape the owning user's state.db.
 const maxLoggedLabelBytes = 64
 
 // maxDecisionDetailBytes bounds the Detail of a recorded Decision.
@@ -1368,7 +1350,7 @@ func clipDetail(s string) string {
 
 // clipForLog trims and bounds a model-produced string for logging, and strips
 // the newlines that would otherwise let attacker-influenced text forge whole
-// log records for anything parsing app.log line by line.
+// log records for anything parsing the log line by line.
 func clipForLog(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.NewReplacer("\n", " ", "\r", " ").Replace(s)
@@ -1557,96 +1539,9 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 
 	cfg := p.currentConfig()
 
-	// Filter rules run first, before classification, and skip it entirely when a
-	// matched rule's actions include "stop" — mirroring Sieve's delivery-time
-	// semantics and avoiding a rate-limited Ollama call on mail a rule will delete.
-	// Rule matching is local and never leaves the system, so the raw (unredacted)
-	// message is used here, unlike the redacted body handed to classifyWithRetry.
 	uid, _ := strconv.Atoi(strings.TrimSpace(msg.ID))
-	ruleInput := rules.EvalInput{
-		UID:       uid,
-		MessageID: msg.ID,
-		From:      msg.Sender,
-		To:        msg.SentTo,
-		CC:        msg.CC,
-		BCC:       msg.BCC,
-		Subject:   msg.Subject,
-		Body:      msg.Body,
-		Keywords:  msg.Keywords,
-		Folder:    "INBOX",
-		Headers:   uc.headers[uid],
-	}
-	outcome := rules.Evaluate(ctx, ruleInput, uc.rules)
-	if len(outcome.Matched) > 0 {
-		results := rules.ApplyOutcome(ctx, uc.mail, "INBOX", ruleInput, outcome)
-		detail := "rule(s) applied: " + strings.Join(outcome.Matched, ", ")
-		var failures []string
-		for _, r := range results {
-			if r.Err == nil {
-				continue
-			}
-			p.log.Error(
-				"rule action failed",
-				"user_id", uc.id,
-				"message_id", msg.ID,
-				"rules_matched", strings.Join(outcome.Matched, ", "),
-				"action", r.Action.Type,
-				"error", r.Err.Error(),
-			)
-			failures = append(failures, fmt.Sprintf("%s: %s", r.Action.Type, r.Err.Error()))
-		}
-		// An action that failed did not happen, so the message has not been
-		// handled and must not be recorded as if it had.
-		//
-		// This used to append the failures to the Detail of an "applied"
-		// decision and carry on — which, for the "stop" rule below, retired the
-		// message in the same breath. An IMAP reset during "archive and stop"
-		// therefore left the mail sitting in the inbox, an audit row claiming it
-		// was archived, and no tick that would ever look at it again.
-		//
-		// Retryable rather than fatal because the overwhelmingly common cause is
-		// an outage: a dropped connection, a timeout, a server that went away
-		// mid-command. A rule that fails for a permanent reason — moving to a
-		// folder that does not exist — fails identically on every retry and is
-		// retired by tickUser's deferral cap instead of holding the checkpoint
-		// forever.
-		//
-		// Retrying is safe because the action set is idempotent in effect
-		// (keyword/unkeyword/read set state; move/archive/spam/delete are
-		// terminal on a UID, and a message whose move DID succeed is no longer
-		// in INBOX for the next ListUnreadInbox to return). There is no forward
-		// or reply action that a retry could duplicate.
-		if len(failures) > 0 {
-			return &retryableErr{err: fmt.Errorf(
-				"%s; %d action(s) failed: %s", detail, len(failures), strings.Join(failures, "; "))}
-		}
-		decision := state.Decision{
-			MessageID: msg.ID,
-			Sender:    msg.Sender,
-			SentTo:    msg.SentTo,
-			Subject:   msg.Subject,
-			Status:    "applied",
-			Detail:    detail,
-		}
-		// A "stop" rule is a terminal path — the decision and the processed
-		// marker are one state change and are written as one. Without "stop"
-		// the message carries on to classification, which will retire it, so
-		// only the decision is recorded here.
-		if outcome.Stopped {
-			// Retryable: the actions succeeded and only the bookkeeping failed,
-			// which under api/daemon contention means SQLITE_BUSY past the busy
-			// timeout. Retiring the message on a failed write would lose the
-			// audit row for work that really happened.
-			if err := uc.store.RecordProcessedDecision(decision); err != nil {
-				return &retryableErr{err: err}
-			}
-			p.maybeSendPushNotification(uc, msg, "", nil)
-			p.maybeSendNativePushNotification(uc, msg, "", nil)
-			return nil
-		}
-		if err := uc.store.AddDecision(decision); err != nil {
-			return &retryableErr{err: err}
-		}
+	if stopped, err := p.applyFilterRules(ctx, uc, msg, uid); stopped || err != nil {
+		return err
 	}
 
 	if !uc.autoLabelEnabled {
@@ -1710,8 +1605,8 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 		if err != nil {
 			return err
 		}
-		// No sender and no subject. This logger writes to the instance-wide app.log that
-		// GET /api/logs serves to ANY admin, so anything here leaves one user's
+		// No sender and no subject. This logger writes to the instance-wide stderr log
+		// that GET /api/logs serves to ANY admin, so anything here leaves one user's
 		// correspondence metadata readable by an account that is not theirs. Sender and
 		// subject are recorded in the state.Decision row below, which lives in the
 		// user's own state.db; the message id joins the two when debugging.
@@ -1767,6 +1662,78 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 	p.maybeSendPushNotification(uc, msg, selected, keywords)
 	p.maybeSendNativePushNotification(uc, msg, selected, keywords)
 	return nil
+}
+
+// applyFilterRules runs the user's filter rules before classification and
+// reports whether a "stop" rule retired the message, mirroring Sieve's
+// delivery-time semantics and avoiding an Ollama call on mail a rule deletes.
+// Rule matching never leaves the system, so it sees the unredacted message.
+func (p *Poller) applyFilterRules(ctx context.Context, uc userCtx, msg imapadapter.Message, uid int) (stopped bool, err error) {
+	ruleInput := rules.EvalInput{
+		UID:       uid,
+		MessageID: msg.ID,
+		From:      msg.Sender,
+		To:        msg.SentTo,
+		CC:        msg.CC,
+		BCC:       msg.BCC,
+		Subject:   msg.Subject,
+		Body:      msg.Body,
+		Keywords:  msg.Keywords,
+		Folder:    "INBOX",
+		Headers:   uc.headers[uid],
+	}
+	outcome := rules.Evaluate(ctx, ruleInput, uc.rules)
+	if len(outcome.Matched) == 0 {
+		return false, nil
+	}
+	results := rules.ApplyOutcome(ctx, uc.mail, "INBOX", ruleInput, outcome)
+	detail := "rule(s) applied: " + strings.Join(outcome.Matched, ", ")
+	var failures []string
+	for _, r := range results {
+		if r.Err == nil {
+			continue
+		}
+		p.log.Error(
+			"rule action failed",
+			"user_id", uc.id,
+			"message_id", msg.ID,
+			"rules_matched", strings.Join(outcome.Matched, ", "),
+			"action", r.Action.Type,
+			"error", r.Err.Error(),
+		)
+		failures = append(failures, fmt.Sprintf("%s: %s", r.Action.Type, r.Err.Error()))
+	}
+	// A failed action did not happen, so nothing is recorded. Retryable: the
+	// common cause is an outage, a permanent one (a missing folder) is retired
+	// by the deferral cap, and retrying is safe because every action is
+	// idempotent in effect or terminal on the UID.
+	if len(failures) > 0 {
+		return false, &retryableErr{err: fmt.Errorf(
+			"%s; %d action(s) failed: %s", detail, len(failures), strings.Join(failures, "; "))}
+	}
+	decision := state.Decision{
+		MessageID: msg.ID,
+		Sender:    msg.Sender,
+		SentTo:    msg.SentTo,
+		Subject:   msg.Subject,
+		Status:    "applied",
+		Detail:    detail,
+	}
+	// Without "stop" the message carries on to classification, which retires
+	// it, so only the decision is recorded here. A failed write is retryable:
+	// the actions happened and only the bookkeeping lost a lock race.
+	if !outcome.Stopped {
+		if err := uc.store.AddDecision(decision); err != nil {
+			return false, &retryableErr{err: err}
+		}
+		return false, nil
+	}
+	if err := uc.store.RecordProcessedDecision(decision); err != nil {
+		return false, &retryableErr{err: err}
+	}
+	p.maybeSendPushNotification(uc, msg, "", nil)
+	p.maybeSendNativePushNotification(uc, msg, "", nil)
+	return true, nil
 }
 
 func (p *Poller) maybeSendPushNotification(uc userCtx, msg imapadapter.Message, selectedLabel string, messageKeywords []string) {
