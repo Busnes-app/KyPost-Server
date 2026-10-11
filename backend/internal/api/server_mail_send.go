@@ -156,15 +156,13 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		return mailRequest{}, "invalid BCC recipients", err
 	}
 
-	var calendarReply []byte
+	var calendarReplyICS *string
 	if raw.CalendarReply != nil {
-		if calendarReply, err = mailmsg.CalendarReply(raw.CalendarReply.ICS); err != nil {
-			return mailRequest{}, err.Error(), err
-		}
+		calendarReplyICS = &raw.CalendarReply.ICS
 	}
 
 	return mailRequest{
-		CalendarReply:       calendarReply,
+		CalendarReplyICS:    calendarReplyICS,
 		Subject:             raw.Subject,
 		Body:                raw.Body,
 		EncodedBody:         base64.StdEncoding.EncodeToString([]byte(raw.Body)),
@@ -513,6 +511,13 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, errMsg, http.StatusBadRequest)
 		return
+	}
+	// Send only: drafts ignore calendarReply.
+	if req.CalendarReplyICS != nil {
+		if req.CalendarReply, err = mailmsg.CalendarReply(*req.CalendarReplyICS); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	toList, ccList, bccList := req.To, req.CC, req.BCC
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -128,4 +129,19 @@ func doJSONAuthRaw(srv *Server, body []byte, userID string) *httptest.ResponseRe
 	rec := httptest.NewRecorder()
 	srv.withAuth(srv.handleMailSend)(rec, req)
 	return rec
+}
+
+// Drafts ignore calendarReply, so an empty or invalid one must not stop the
+// draft from being saved.
+func TestDraftSaveIgnoresCalendarReply(t *testing.T) {
+	srv := newTestServer(t)
+	userID := srv.mustBootstrapUserID(t)
+	fake := &fakeMailClient{}
+	req := httptest.NewRequest(http.MethodPost, "/api/mail/draft", strings.NewReader(`{"to":"a@example.com","subject":"s","body":"b","calendarReply":{"ics":""}}`))
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, AuthContext{UserID: userID}))
+	rec := httptest.NewRecorder()
+	srv.serveDraftSave(rec, req, fake)
+	if rec.Code != http.StatusOK || len(fake.savedDrafts) != 1 {
+		t.Fatalf("status %d, %d drafts saved, want 200 and 1: %s", rec.Code, len(fake.savedDrafts), rec.Body.String())
+	}
 }
