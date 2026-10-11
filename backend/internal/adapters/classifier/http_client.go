@@ -291,7 +291,7 @@ func (c *HTTPClient) Classify(ctx context.Context, allowedLabels []string, sende
 			return "", fmt.Errorf("user has run out of ai credits"), false
 		}
 
-		if isToolsOnlyResponse(normalized) {
+		if IsToolsOnlyResponse(normalized) {
 			c.logServer(fmt.Sprintf("[CLASSIFY RETRY] tools-only response on attempt %d/%d, waiting before retry", attempt+1, 3))
 			retrySubsequentBackoff = 15 * time.Second
 			if attempt < 2 {
@@ -301,7 +301,7 @@ func (c *HTTPClient) Classify(ctx context.Context, allowedLabels []string, sende
 			return "", fmt.Errorf("model returned tools-only response after %d attempts", attempt+1), false
 		}
 
-		if hasEmptyMessageNoise(normalized) || normalized == "" {
+		if HasEmptyMessageNoise(normalized) || normalized == "" {
 			c.logServer(fmt.Sprintf("[CLASSIFY RETRY] empty-message noise on attempt %d/%d, waiting before retry", attempt+1, 3))
 			retrySubsequentBackoff = classifyRetryBackoff
 			if attempt < 2 {
@@ -753,18 +753,9 @@ func rewriteStaleFenceReferences(tuningTemplate string) string {
 // number it produced would describe a prompt no user ever sends.
 //
 // The fence token is random per call, so two calls with identical arguments
-// differ in exactly those 16 hex characters. Tests and golden-file comparisons
-// want BuildRuntimePromptNonced with a fixed token instead.
+// differ in exactly those 16 hex characters; tests call buildRuntimePromptNonced.
 func BuildRuntimePrompt(tuningTemplate string, allowedLabels []string, sender, subject, body string) string {
 	return buildRuntimePrompt(tuningTemplate, allowedLabels, sender, subject, body)
-}
-
-// BuildRuntimePromptNonced is BuildRuntimePrompt with the fence token supplied
-// by the caller, for deterministic tests and for the eval harness. Production
-// must use BuildRuntimePrompt: a token the caller chooses is a token an
-// attacker can eventually learn.
-func BuildRuntimePromptNonced(tuningTemplate string, allowedLabels []string, sender, subject, body, nonce string) string {
-	return buildRuntimePromptNonced(tuningTemplate, allowedLabels, sender, subject, body, nonce)
 }
 
 func buildRuntimePrompt(tuningTemplate string, allowedLabels []string, sender, subject, body string) string {
@@ -857,7 +848,9 @@ func ParseAllowedLabels(text string) []string {
 	return labels
 }
 
-func isToolsOnlyResponse(raw string) bool {
+// IsToolsOnlyResponse and HasEmptyMessageNoise are the model outputs that burn
+// a retry; exported so cmd/modeleval counts the same ones.
+func IsToolsOnlyResponse(raw string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(raw))
 	if normalized == "" {
 		return false
@@ -877,7 +870,7 @@ func isToolsOnlyResponse(raw string) bool {
 	return strings.EqualFold(normalized, "tools")
 }
 
-func hasEmptyMessageNoise(s string) bool {
+func HasEmptyMessageNoise(s string) bool {
 	return strings.Contains(strings.ToLower(s), "this message is empty. sorry about that")
 }
 
