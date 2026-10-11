@@ -34,9 +34,7 @@ func CalendarReply(ics string) ([]byte, error) {
 	}
 	text := strings.ReplaceAll(strings.ReplaceAll(ics, "\r\n", "\n"), "\r", "\n")
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	var stack []string
-	methods, events := 0, 0
-	for i, line := range lines {
+	for _, line := range lines {
 		for _, r := range line {
 			if (r < 0x20 && r != '\t') || r == 0x7f {
 				return nil, calendarError("calendar reply contains a control character")
@@ -45,12 +43,23 @@ func CalendarReply(ics string) ([]byte, error) {
 		if line == "" {
 			return nil, calendarError("calendar reply contains an empty line")
 		}
+	}
+	if lines[0][0] == ' ' || lines[0][0] == '\t' {
+		return nil, calendarError("calendar reply starts with a continuation line")
+	}
+	// RFC 5545 §3.1: unfold (drop one leading space or tab, join to the
+	// previous line) before checking; the folded lines are what is sent.
+	var logical []string
+	for _, line := range lines {
 		if line[0] == ' ' || line[0] == '\t' {
-			if i == 0 {
-				return nil, calendarError("calendar reply starts with a continuation line")
-			}
-			continue // folded continuation of the previous property
+			logical[len(logical)-1] += line[1:]
+			continue
 		}
+		logical = append(logical, line)
+	}
+	var stack []string
+	methods, events := 0, 0
+	for i, line := range logical {
 		name, value, ok := strings.Cut(line, ":")
 		if !ok {
 			return nil, calendarError("calendar reply has a line without a value")

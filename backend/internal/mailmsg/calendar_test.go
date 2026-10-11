@@ -22,6 +22,30 @@ func TestCalendarReplyNormalisesAValidReply(t *testing.T) {
 	}
 }
 
+// RFC 5545 §3.1 folding: a property may be split anywhere, including inside
+// METHOD's value or a BEGIN/END line, and must be unfolded before checking.
+func TestCalendarReplyUnfoldsFoldedLines(t *testing.T) {
+	for name, ics := range map[string]string{
+		"folded METHOD": strings.Replace(validReply, "METHOD:REPLY", "METHOD:REPL\n Y", 1),
+		"folded BEGIN":  strings.Replace(validReply, "BEGIN:VEVENT", "BEGIN:VEV\n\tENT", 1),
+		"folded END":    strings.Replace(validReply, "END:VEVENT", "END:VE\r\n VENT", 1),
+	} {
+		got, err := CalendarReply(ics)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if !strings.Contains(string(got), "\r\n ") && !strings.Contains(string(got), "\r\n\t") {
+			t.Errorf("%s: folding not preserved in the sent bytes: %q", name, got)
+		}
+	}
+	// A fold that hides a second VEVENT is still counted.
+	hidden := strings.Replace(validReply, "END:VEVENT", "END:VEVENT\nBEGIN:VEV\n ENT\nUID:x\nEND:VEVENT", 1)
+	if _, err := CalendarReply(hidden); !errors.Is(err, ErrCalendarReply) {
+		t.Fatalf("folded second VEVENT accepted: %v", err)
+	}
+}
+
 func TestCalendarReplyRefusals(t *testing.T) {
 	swap := func(old, new string) string { return strings.Replace(validReply, old, new, 1) }
 	for name, ics := range map[string]string{
