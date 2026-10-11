@@ -165,7 +165,8 @@ reading its handler first.
 
 ## Verification
 
-- `npm run build` must succeed with zero TypeScript errors
+- `npm run build` must succeed with zero TypeScript errors; `npm run typecheck` runs `tsc --noEmit` alone
+- `npm run lint` (after `npm ci --prefix lint`) must report 0 errors. `lint/` is its own package and lockfile because typescript-eslint needs the TypeScript 6 compiler API and the app builds with TypeScript 7; config is `lint/eslint.config.js` (rules-of-hooks error, exhaustive-deps warn). Do not move these deps into the app's `package.json`
 - Time-sensitive test fixtures use relative expiries or a controlled clock, so real calendar dates cannot silently change their intended state.
 - `npm test` (vitest) must pass. `pages/read/readability.test.tsx` covers the reading surface across every theme × both body modes and is the check a new theme preset or a sanitizer allowlist change has to clear
 - Playwright E2E tests live in `scripts/tests/`; run via `scripts/`

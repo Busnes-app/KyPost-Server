@@ -20,6 +20,7 @@ pnpm-debug.log*
 
 # Node / frontend
 frontend/node_modules/
+frontend/lint/node_modules/
 frontend/dist/
 
 # Root-level too, not just frontend/. Running npm or npx from the repo root

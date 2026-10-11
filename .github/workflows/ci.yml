@@ -210,7 +210,13 @@ jobs:
         run: npm audit --audit-level=high
 
       - name: typecheck
-        run: npx tsc --noEmit
+        run: npm run typecheck
+
+      # Separate lockfile: typescript-eslint needs the TypeScript 6 API.
+      - name: lint
+        run: |
+          npm ci --prefix lint
+          npm run lint
 
       - name: test
         run: npm test -- --run
