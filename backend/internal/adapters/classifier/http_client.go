@@ -233,9 +233,6 @@ func (c *HTTPClient) Warmup(ctx context.Context) error {
 	return c.ensureWarm(ctx)
 }
 
-// Close preserves the client lifecycle API; the process owns the slog handler.
-func (c *HTTPClient) Close() error { return nil }
-
 func (c *HTTPClient) Classify(ctx context.Context, allowedLabels []string, sender, subject, body, tuning string) (string, error) {
 	if err := c.ensureWarm(ctx); err != nil {
 		c.logError("warmup: " + err.Error())
