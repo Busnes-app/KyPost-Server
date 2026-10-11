@@ -119,7 +119,7 @@ type Challenge struct {
 // push is never answered — pinned an entry for the process lifetime, and an
 // attacker holding a stolen password but not the second factor (precisely the
 // case MFA exists for) could mint them at will, since every correct password
-// clears the login lockout and Create runs before any second factor. scrypt's
+// clears the login lockout and Create runs before any second factor. The KDF's
 // cost on the login path bounds the rate, so it is a slow leak rather than a
 // fast OOM, but nothing bounded the total.
 //

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -151,6 +152,7 @@ func openStores(logger *logging.Logger, configDir, stateDir string, legacyPrefs 
 	if err != nil {
 		return nil, nil, fmt.Errorf("load users store: %w", err)
 	}
+	warnRetiredPasswordHashes(logger, usersStore)
 
 	if err := migrateLegacySingleUserData(logger, usersStore, configDir, stateDir, legacyPrefs, legacyPrefsOK); err != nil {
 		logger.Error("legacy single-user data migration failed", "error", err.Error())
@@ -161,4 +163,25 @@ func openStores(logger *logging.Logger, configDir, stateDir string, legacyPrefs 
 		return nil, nil, fmt.Errorf("create state store: %w", err)
 	}
 	return usersStore, store, nil
+}
+
+// warnRetiredPasswordHashes names accounts whose password hash is not Argon2id
+// (pre-Argon2id scrypt): they can no longer sign in with a password until an
+// admin resets it. Never blocks startup and never rewrites a hash.
+func warnRetiredPasswordHashes(logger *logging.Logger, usersStore *users.Store) {
+	all, err := usersStore.List()
+	if err != nil {
+		logger.Error("could not check for retired password hashes", "error", err.Error())
+		return
+	}
+	var ids []string
+	for _, u := range all {
+		if u.PasswordHash != "" && !users.IsArgon2idHash(u.PasswordHash) {
+			ids = append(ids, u.ID)
+		}
+	}
+	if len(ids) > 0 {
+		logger.Warn("accounts hold a retired (pre-Argon2id) password hash and cannot sign in with a password; reset each in Admin → Users (POST /api/users/{id}/reset-password)",
+			"count", strconv.Itoa(len(ids)), "user_ids", strings.Join(ids, ","))
+	}
 }

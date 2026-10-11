@@ -307,3 +307,47 @@ func TestOpenStoresMigratesBeforeStateNewConsumesTheSource(t *testing.T) {
 		t.Fatal("state.New did not consume the legacy root state.json")
 	}
 }
+
+// TestOpenStoresWarnsAboutRetiredPasswordHashes: an admin migrated from a
+// pre-Argon2id admin.env carries a scrypt hash that no longer verifies. Startup
+// must name it once, not block, and leave the hash alone.
+func TestOpenStoresWarnsAboutRetiredPasswordHashes(t *testing.T) {
+	configDir, stateDir := t.TempDir(), t.TempDir()
+	const retired = "scrypt$131072$8$1$c2FsdHNhbHRzYWx0c2FsdA==$aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g="
+	if err := os.WriteFile(filepath.Join(configDir, "admin.env"), []byte("ADMIN_USER=old\nADMIN_PASS_HASH="+retired+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	logger, err := logging.NewWithOutput(&logs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usersStore, store, err := openStores(logger, configDir, stateDir, config.UserNotificationSettings{}, false)
+	if err != nil {
+		t.Fatalf("openStores must not block on a retired hash: %v", err)
+	}
+	defer store.Close()
+	admin, err := usersStore.FirstAdmin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admin.PasswordHash != retired {
+		t.Fatal("startup rewrote the stored hash")
+	}
+	if !strings.Contains(logs.String(), `"user_ids":"`+admin.ID+`"`) {
+		t.Fatalf("openStores did not warn: %q", logs.String())
+	}
+	if _, err := usersStore.Create(context.Background(), "fresh", "a-long-enough-password", users.RoleUser); err != nil {
+		t.Fatal(err)
+	}
+
+	logs.Reset()
+	warnRetiredPasswordHashes(logger, usersStore)
+	out := logs.String()
+	if strings.Count(out, "\n") != 1 || !strings.Contains(out, `"user_ids":"`+admin.ID+`"`) || !strings.Contains(out, `"count":`) {
+		t.Fatalf("want one warning listing only %s with a count, got %q", admin.ID, out)
+	}
+	if strings.Contains(out, "scrypt$") {
+		t.Fatalf("warning leaked the stored hash: %q", out)
+	}
+}

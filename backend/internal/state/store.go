@@ -112,10 +112,10 @@ type NativeDevice struct {
 	EnrolledGeneration  uint64 `json:"enrolledGeneration,omitempty"`
 	EnrolledFingerprint string `json:"enrolledFingerprint,omitempty"`
 	// SecretHash is the hash of this device's own pairing secret, minted once
-	// at registration — users.HashDeviceSecret format, or the legacy scrypt
-	// format users.HashPassword used to write, for devices paired before
-	// HashDeviceSecret existed.
-	// Verify only through users.VerifyDeviceSecret, which accepts both. The raw
+	// at registration — users.HashDeviceSecret format; an untagged legacy scrypt
+	// hash (devices paired before HashDeviceSecret) never verifies and
+	// the device must re-pair.
+	// Verify only through users.VerifyDeviceSecret, which rejects the legacy form. The raw
 	// secret is never stored, and this must never reach an API response — see
 	// Redacted().
 	SecretHash string `json:"secretHash,omitempty"`

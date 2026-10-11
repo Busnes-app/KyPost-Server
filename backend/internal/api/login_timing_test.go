@@ -15,16 +15,15 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-// plantLegacyPasswordHash writes a scrypt hash straight into users.json, the
-// way an install that has not signed in since the Argon2id migration actually
-// looks. There is no exported Store method for writing an arbitrary hash, on
-// purpose.
-func plantLegacyPasswordHash(t *testing.T, srv *Server, userID, password string) {
+// retiredScryptHash has the shape of a pre-Argon2id hash at the last
+// production cost. Nothing verifies it any more.
+const retiredScryptHash = "scrypt$131072$8$1$c2FsdHNhbHRzYWx0c2FsdA==$aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g="
+
+// plantPasswordHash writes hash straight into users.json, the way an account
+// written by an older install looks. There is no exported Store method for
+// writing an arbitrary hash, on purpose.
+func plantPasswordHash(t *testing.T, srv *Server, userID, hash string) {
 	t.Helper()
-	legacy, err := users.LegacyScryptHashForTest(context.Background(), password)
-	if err != nil {
-		t.Fatalf("LegacyScryptHashForTest: %v", err)
-	}
 	usersPath := filepath.Join(srv.configDir, "users.json")
 	raw, err := os.ReadFile(usersPath)
 	if err != nil {
@@ -40,7 +39,7 @@ func plantLegacyPasswordHash(t *testing.T, srv *Server, userID, password string)
 	planted := false
 	for _, entry := range file.Users {
 		if entry["id"] == userID {
-			entry["passwordHash"] = legacy
+			entry["passwordHash"] = hash
 			planted = true
 		}
 	}
@@ -58,8 +57,31 @@ func plantLegacyPasswordHash(t *testing.T, srv *Server, userID, password string)
 	if err != nil {
 		t.Fatalf("Get after planting: %v", err)
 	}
-	if !users.NeedsRehash(stored.PasswordHash) {
-		t.Fatal("planted hash does not report as needing a rehash")
+	if stored.PasswordHash != hash {
+		t.Fatal("planted hash did not stick")
+	}
+}
+
+// TestRetiredScryptAccountFailsLikeAWrongPassword: the right password against a
+// pre-Argon2id hash is answered exactly as a wrong one, and the hash is left
+// for an admin to reset rather than rewritten.
+func TestRetiredScryptAccountFailsLikeAWrongPassword(t *testing.T) {
+	srv := newTestServer(t)
+	const pw = "correct-horse-battery-staple"
+	u, err := srv.users.Create(context.Background(), "retired-scrypt", pw, users.RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	plantPasswordHash(t, srv, u.ID, retiredScryptHash)
+
+	right := loginAttempt(srv, u.Username, pw, "203.0.113.50:40000")
+	wrong := loginAttempt(srv, u.Username, "wrong-password", "203.0.113.51:40000")
+	if right.Code != http.StatusUnauthorized || right.Code != wrong.Code || right.Body.String() != wrong.Body.String() {
+		t.Fatalf("right password: %d %q; wrong password: %d %q — want identical 401s",
+			right.Code, right.Body.String(), wrong.Code, wrong.Body.String())
+	}
+	if stored, _ := srv.users.Get(u.ID); stored.PasswordHash != retiredScryptHash {
+		t.Fatal("login rewrote a retired hash; only an admin reset may replace it")
 	}
 }
 
@@ -87,8 +109,7 @@ func fastest(t *testing.T, name string, attempt func(remoteAddr string)) time.Du
 }
 
 // assertTimingSpread fails when the slowest case is more than a small multiple
-// of the fastest. A RATIO rather than an absolute band, because the floor is
-// measured from this machine's own scrypt cost and an absolute millisecond
+// of the fastest. A RATIO rather than an absolute band: an absolute millisecond
 // figure would be a statement about the CI runner instead of about the code.
 func assertTimingSpread(t *testing.T, timings map[string]time.Duration) {
 	t.Helper()
@@ -111,17 +132,12 @@ func assertTimingSpread(t *testing.T, timings map[string]time.Duration) {
 }
 
 // TestLoginTimingDoesNotRevealUnknownUsernames is the account-enumeration
-// regression, and it plants a LEGACY hash on purpose.
-//
-// The old version compared an unknown username against an account the test had
-// just created — Argon2id on both sides, so it could not fail on the bug it was
-// named for. Once two hash formats coexist, the expensive side is the account
-// that has NOT signed in since the migration: a legacy scrypt verify costs
-// several times the always-Argon2id equalization dummy, and that gap is
-// permanent for exactly the dormant accounts an attacker wants to find.
-// settleCredentialTiming pads all three outcomes to one floor; without it this
-// test sees the raw ratio between the two KDFs.
+// regression. It plants a RETIRED hash on purpose: an account that never
+// verifies must still cost one Argon2id verify (users' dummy), or it answers
+// instantly and marks exactly the dormant accounts an attacker wants to find.
+// Production cost, so the ratio measures the KDF rather than scheduler noise.
 func TestLoginTimingDoesNotRevealUnknownUsernames(t *testing.T) {
+	withProductionHashCost(t)
 	srv := newTestServer(t)
 	const pw = "correct-horse-battery-staple"
 	modern, err := srv.users.Create(context.Background(), "timing-argon2id", pw, users.RoleUser)
@@ -132,7 +148,7 @@ func TestLoginTimingDoesNotRevealUnknownUsernames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	plantLegacyPasswordHash(t, srv, legacy.ID, pw)
+	plantPasswordHash(t, srv, legacy.ID, retiredScryptHash)
 
 	wrongPassword := func(username string) func(string) {
 		return func(addr string) {
@@ -142,18 +158,18 @@ func TestLoginTimingDoesNotRevealUnknownUsernames(t *testing.T) {
 		}
 	}
 	assertTimingSpread(t, map[string]time.Duration{
-		"argon2id account":      fastest(t, "argon2id account", wrongPassword(modern.Username)),
-		"legacy scrypt account": fastest(t, "legacy scrypt account", wrongPassword(legacy.Username)),
-		"unknown username":      fastest(t, "unknown username", wrongPassword("no-such-user-anywhere")),
+		"argon2id account":       fastest(t, "argon2id account", wrongPassword(modern.Username)),
+		"retired scrypt account": fastest(t, "retired scrypt account", wrongPassword(legacy.Username)),
+		"unknown username":       fastest(t, "unknown username", wrongPassword("no-such-user-anywhere")),
 	})
 }
 
 // TestReviewPairingTimingDoesNotRevealTheConfiguredAccount is the third
 // unauthenticated credential check in the tree. It is bounded — the endpoint
 // 404s unless an operator sets REVIEW_PAIRING_USERNAME — but on an install that
-// does set it, the same always-Argon2id dummy against a possibly-scrypt account
-// says which name was configured.
+// does set it, a cheaper miss says which name was configured.
 func TestReviewPairingTimingDoesNotRevealTheConfiguredAccount(t *testing.T) {
+	withProductionHashCost(t)
 	t.Setenv("REVIEW_PAIRING_USERNAME", "review-*")
 	srv := newTestServer(t)
 	const pw = "correct-horse-battery-staple"
@@ -165,7 +181,7 @@ func TestReviewPairingTimingDoesNotRevealTheConfiguredAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	plantLegacyPasswordHash(t, srv, legacy.ID, pw)
+	plantPasswordHash(t, srv, legacy.ID, retiredScryptHash)
 
 	wrongPassword := func(username string) func(string) {
 		return func(addr string) {
@@ -181,17 +197,17 @@ func TestReviewPairingTimingDoesNotRevealTheConfiguredAccount(t *testing.T) {
 	}
 	assertTimingSpread(t, map[string]time.Duration{
 		"argon2id review account": fastest(t, "argon2id review account", wrongPassword(modern.Username)),
-		"legacy review account":   fastest(t, "legacy review account", wrongPassword(legacy.Username)),
+		"retired review account":  fastest(t, "retired review account", wrongPassword(legacy.Username)),
 		"unmatched username":      fastest(t, "unmatched username", wrongPassword("no-such-user-anywhere")),
 	})
 }
 
 // TestDAVAuthTimingDoesNotRevealUsernames is the same oracle on the CardDAV
-// surface, where the comment used to claim the always-Argon2id dummy was what
-// kept the skew out of the comparison — it was the mechanism by which the skew
-// leaked. A wrong password against an account whose app-password file still
-// holds a scrypt hash must not be distinguishable from an unknown username.
+// surface. A wrong password against an account whose app-password file still
+// holds a retired scrypt hash must not be distinguishable from an unknown
+// username.
 func TestDAVAuthTimingDoesNotRevealUsernames(t *testing.T) {
+	withProductionHashCost(t)
 	srv := newTestServer(t)
 
 	modern, err := srv.users.Create(context.Background(), "dav-timing-argon2id", "pw-dav-timing-argon2id-testpassword", users.RoleUser)
@@ -210,11 +226,7 @@ func TestDAVAuthTimingDoesNotRevealUsernames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	legacyHash, err := users.LegacyScryptHashForTest(context.Background(), "app-password-legacy")
-	if err != nil {
-		t.Fatalf("LegacyScryptHashForTest: %v", err)
-	}
-	if err := srv.writeDAVPassword(legacy.ID, davPasswordFile{Hash: legacyHash}); err != nil {
+	if err := srv.writeDAVPassword(legacy.ID, davPasswordFile{Hash: retiredScryptHash}); err != nil {
 		t.Fatalf("writeDAVPassword: %v", err)
 	}
 
@@ -235,7 +247,7 @@ func TestDAVAuthTimingDoesNotRevealUsernames(t *testing.T) {
 	}
 	assertTimingSpread(t, map[string]time.Duration{
 		"argon2id app password": fastest(t, "argon2id app password", wrongPassword(modern.Username)),
-		"legacy app password":   fastest(t, "legacy app password", wrongPassword(legacy.Username)),
+		"retired app password":  fastest(t, "retired app password", wrongPassword(legacy.Username)),
 		"unknown username":      fastest(t, "unknown username", wrongPassword("no-such-user-anywhere")),
 		"no app password":       fastest(t, "no app password", wrongPassword("admin")),
 	})

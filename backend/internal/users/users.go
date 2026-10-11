@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,9 +23,8 @@ import (
 	"strings"
 	"sync"
 
-	// testing, in a non-test file, solely for testing.Testing() in
-	// SetHashCostForTest. It reports whether this build is `go test` and pulls
-	// no test framework into the binary.
+	// testing.Testing() keeps SetHashParamsForTest from weakening hashes in a
+	// shipped binary (same guard as sso.SetTransport).
 	"testing"
 	"time"
 
@@ -33,7 +33,6 @@ import (
 	"github.com/Busnes-app/ky-primitives/password"
 	"github.com/Busnes-app/ky-primitives/recoverycode"
 	"golang.org/x/crypto/argon2"
-	"golang.org/x/crypto/scrypt"
 )
 
 type Role string
@@ -857,7 +856,7 @@ func (s *Store) createInitial(f usersFile) (won bool, err error) {
 	}
 	// 0o700, matching fsutil.AtomicWriteFile's 0o700 for this same class of
 	// data. This directory holds users.json — every account record, the sealed
-	// TOTP secrets, the scrypt password hashes and the wrapped PGP envelopes —
+	// TOTP secrets, the password hashes and the wrapped PGP envelopes —
 	// and was created world-readable while the file written into it was not.
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -1654,7 +1653,7 @@ func (s *Store) SetPendingTOTPSecret(id, secretEnc string) (User, error) {
 //
 // Without it this was a TOCTOU with a window measured in seconds, not
 // instructions: handleMFAConfirm validates against a snapshot and then spends
-// eleven scrypt derivations (one re-auth plus ten recovery-code hashes) before
+// eleven KDF derivations (one re-auth plus ten recovery-code hashes) before
 // committing, while POST /api/mfa/totp/setup is session-only and re-stages the
 // secret with no lockout. A stolen session that fires setup inside that window
 // gets its own secret committed by the victim's confirm — the victim is told
@@ -2044,61 +2043,16 @@ var errRecoveryCodeNoMatch = errors.New("recovery code no match")
 // CONFIG_DIR: reading that key here would put the pepper and the peppered
 // value on one volume, which is the whole thing the key is for.
 //
-// Digest matching is a hash compare; the legacy scrypt comparisons run OUTSIDE
-// the store lock, against a snapshot: holding s.mu and the file lock across up
-// to ten 128 MiB derivations (~3s) stalls every authenticated request, which
-// takes s.mu.RLock via currentUser -> Get. Matching on the hash string rather
-// than an index keeps the removal correct if the list changed while we were
-// deriving.
-//
-// Each comparison takes and releases a derivation slot INDIVIDUALLY, which is
-// why ctx is passed straight through to verifyScryptHash rather than the whole
-// loop running inside one WithKDFSlot. A check is up to ten derivations; one
-// slot held across all ten owns it for seconds, and with MaxConcurrentKDF
-// slots process-wide, that many such checks stall every login. Per-comparison
-// admission lets other work interleave while never exceeding one derivation's
-// memory per caller. Do NOT wrap a call to this in WithKDFSlot: it would
-// collapse the ten acquisitions back into one and reintroduce exactly that.
-//
-// A slot error abandons the remaining comparisons and surfaces unchanged, so an
-// overloaded server sheds rather than queues.
-func (s *Store) ConsumeRecoveryCode(ctx context.Context, id, candidate string, digest func(string) string) (User, bool, error) {
-	snapshot, err := s.Get(id)
-	if err != nil {
-		return User{}, false, err
-	}
-	matched := ""
-	if i, ok := recoverycode.MatchCode(candidate, snapshot.RecoveryCodesHash, digest); ok {
-		matched = snapshot.RecoveryCodesHash[i]
-	}
-	// Codes stored before digests existed are scrypt hashes; they drain as
-	// users regenerate. Each comparison takes its own derivation slot (see the
-	// comment above) and a busy slot is "not checked", never "wrong".
-	for _, h := range snapshot.RecoveryCodesHash {
-		if matched != "" || !strings.HasPrefix(h, "scrypt$") {
-			continue
-		}
-		hit, err := verifyScryptHash(ctx, h, candidate)
-		if err != nil {
-			return User{}, false, err
-		}
-		if hit {
-			matched = h
-		}
-	}
-	if matched == "" {
-		return User{}, false, nil
-	}
-
+// Matching is one keyed HMAC per stored code, so it runs inside the write lock
+// and needs no derivation slot. Pre-digest (scrypt) codes never match.
+func (s *Store) ConsumeRecoveryCode(_ context.Context, id, candidate string, digest func(string) string) (User, bool, error) {
 	u, err := s.mutate(id, func(u *User) error {
-		for i, h := range u.RecoveryCodesHash {
-			if h == matched {
-				u.RecoveryCodesHash = append(u.RecoveryCodesHash[:i], u.RecoveryCodesHash[i+1:]...)
-				return nil
-			}
+		i, ok := recoverycode.MatchCode(candidate, u.RecoveryCodesHash, digest)
+		if !ok {
+			return errRecoveryCodeNoMatch
 		}
-		// Consumed concurrently between the snapshot and here.
-		return errRecoveryCodeNoMatch
+		u.RecoveryCodesHash = slices.Delete(u.RecoveryCodesHash, i, i+1)
+		return nil
 	})
 	if errors.Is(err, errRecoveryCodeNoMatch) {
 		return User{}, false, nil
@@ -2124,8 +2078,24 @@ func VerifyPassword(ctx context.Context, u User, candidate string) (bool, error)
 	if u.UsesDerivedAuth() {
 		return false, nil
 	}
+	return verifyAccountHash(ctx, u, candidate)
+}
+
+// verifyAccountHash verifies u's stored credential, warning (by id, never the
+// hash) when it is in a retired format and so can never verify. An empty hash
+// is an account with no password (SSO-only), not a retired one.
+func verifyAccountHash(ctx context.Context, u User, candidate string) (bool, error) {
+	if u.PasswordHash != "" && !IsArgon2idHash(u.PasswordHash) {
+		slog.Warn("password check refused: stored hash is not Argon2id; an admin must reset this password in Admin → Users", "user_id", u.ID)
+	}
 	return verifyHash(ctx, u.PasswordHash, candidate)
 }
+
+// IsArgon2idHash reports whether encoded is in the only format verifyHash
+// accepts. Anything else (pre-Argon2id scrypt$ hashes included) never verifies.
+func IsArgon2idHash(encoded string) bool { return strings.HasPrefix(encoded, argon2idPrefix) }
+
+const argon2idPrefix = "$argon2id$"
 
 // VerifySecretHash checks a candidate secret against a hash produced by
 // HashPassword — the generic counterpart to VerifyPassword, for secrets other
@@ -2134,18 +2104,15 @@ func VerifySecretHash(ctx context.Context, encoded, candidate string) (bool, err
 	return verifyHash(ctx, encoded, candidate)
 }
 
-// deviceSecretPrefix tags the SHA-256 device-secret format so
-// VerifyDeviceSecret can tell it apart from the scrypt hashes minted before
-// this format existed.
+// deviceSecretPrefix tags the SHA-256 device-secret format.
 const deviceSecretPrefix = "sha256:"
 
 // HashDeviceSecret hashes a native device's pairing secret.
 //
-// Plain SHA-256 where the rest of this file uses scrypt. A password KDF exists
-// to price guesses at a low-entropy human-chosen secret; a device secret is 24
-// bytes from crypto/rand (api.randomToken), unguessable by construction. So
-// scrypt bought nothing and cost ~16 MB and ~50 ms on every request a paired
-// device makes — App Pull polls, mail sync, contacts sync, push-MFA.
+// Plain SHA-256, not a password KDF. A KDF exists to price guesses at a
+// low-entropy human-chosen secret; a device secret is 24 bytes from
+// crypto/rand (api.randomToken), unguessable by construction, and is checked on
+// every request a paired device makes.
 //
 // Do NOT use this for anything a human types or chooses; that needs
 // HashPassword.
@@ -2155,13 +2122,9 @@ func HashDeviceSecret(secret string) string {
 }
 
 // VerifyDeviceSecret checks a candidate device secret against a stored hash in
-// constant time. Untagged values fall through to scrypt: devices paired before
-// HashDeviceSecret existed hold one, and rejecting them would silently unpair
-// every phone on every existing install. New registrations write the tagged
-// form, so that branch drains as devices re-pair.
-// The legacy branch derives scrypt and so takes a slot; the tagged branch is a
-// single SHA-256 and takes none. ctx is therefore only consulted on the legacy
-// path, and a busy-slot error there means "not checked", exactly as elsewhere.
+// constant time. Untagged values go through verifyHash, so a pre-HashDeviceSecret
+// scrypt hash never verifies (that device must re-pair). The untagged branch
+// derives and so takes a slot; a busy-slot error there means "not checked".
 func VerifyDeviceSecret(ctx context.Context, stored, candidate string) (bool, error) {
 	encoded, ok := strings.CutPrefix(stored, deviceSecretPrefix)
 	if !ok {
@@ -2175,47 +2138,24 @@ func VerifyDeviceSecret(ctx context.Context, stored, candidate string) (bool, er
 	return subtle.ConstantTimeCompare(got[:], want) == 1, nil
 }
 
-// Current scrypt cost parameters for newly written password hashes.
-//
-// 2^17 is 128 MiB and roughly 200 ms of a core — the standard recommendation for
-// an interactive login, and about 8x the work per guess of the previous 16 MiB
-// setting for anyone who steals users.json.
-//
-// The cost is paid on every login attempt, including attempts against usernames
-// that do not exist (equalizeLoginTiming, so timing cannot enumerate accounts).
-// That is only safe because the login endpoint is throttled instance-wide AND
-// per-IP AND per-account, and proof-of-work is on by default — see
-// api.handleLogin. Do NOT raise this further without checking those bounds
-// again: this constant and loginRateRefillPerSec multiply together into the CPU
-// an anonymous caller can spend.
-//
-// Stored hashes carry their own parameters (see verifyScryptHash), so raising
-// this does not invalidate anything. NeedsRehash reports which stored hashes are
-// below the current cost, and the login path upgrades them on the next
-// successful sign-in.
-const (
-	scryptN      = 1 << 17
-	scryptR      = 8
-	scryptP      = 1
-	scryptKeyLen = 32
-)
-
 // hashParams are the Argon2id cost parameters for every new hash. RFC 9106's
 // second option (64 MiB, t=3, p=4); the library's budget bounds how many run
 // at once and kdfSlots bounds it again inside this process.
+//
+// The cost is paid on every login attempt, including unknown usernames
+// (timing equalization). That is only safe because login is throttled
+// instance-wide, per-IP and per-account — see api.handleLogin. Do not raise it
+// without rechecking those bounds.
 var hashParams = password.DefaultParams()
 
-// HashParams reports the Argon2id cost parameters new hashes are currently
-// written with. Callers that cache a derived value whose cost has to match a
-// real account's — see api.timingDummyHash — key that cache on this, not on
-// HashCostN: that reports the unrelated legacy-scrypt fixture cost.
+// HashParams reports the Argon2id cost parameters new hashes are written with.
 func HashParams() password.Params { return hashParams }
 
 // SetHashParamsForTest lowers the Argon2id cost so a test suite that mints
 // hundreds of hashes finishes. Refuses outside a test binary and refuses
 // parameters the library would not verify.
 func SetHashParamsForTest(p password.Params) (restore func()) {
-	if !testing.Testing() { // same guard SetHashCostForTest uses
+	if !testing.Testing() {
 		panic("users.SetHashParamsForTest called outside a test binary")
 	}
 	if err := p.Validate(); err != nil {
@@ -2235,88 +2175,55 @@ func mapBusy(err error) error {
 	return err
 }
 
-// verifyHash checks candidate against whichever format encoded is in. Argon2id
-// is what this package writes now; scrypt$ is what it wrote before and stays
-// verifiable until the account rehashes on its next login. Anything else is
-// false, never an error: an unreadable stored hash is a wrong credential, not
-// an unchecked one.
+// verifyHash checks candidate against an Argon2id PHC hash. Any other value
+// (empty, or a retired scrypt$ hash) is checked against dummyHash and reported
+// false, so it costs exactly what a wrong password does: timing must not reveal
+// whether an account exists or what format it holds. An unreadable hash is a
+// wrong credential, never an error; an error means "not checked".
 func verifyHash(ctx context.Context, encoded, candidate string) (bool, error) {
-	switch {
-	case strings.HasPrefix(encoded, "$argon2id$"):
-		var (
-			ok  bool
-			err error
-		)
-		if slotErr := withKDFSlot(ctx, func() {
-			ok, err = password.Verify(candidate, encoded)
-		}); slotErr != nil {
-			return false, slotErr
+	known := IsArgon2idHash(encoded)
+	if !known {
+		var err error
+		if encoded, err = dummyHash(ctx); err != nil {
+			return false, err
 		}
-		if errors.Is(err, password.ErrMalformed) {
-			return false, nil
-		}
-		return ok, mapBusy(err)
-	case strings.HasPrefix(encoded, "scrypt$"):
-		return verifyScryptHash(ctx, encoded, candidate)
 	}
-	return false, nil
+	var (
+		ok  bool
+		err error
+	)
+	if slotErr := withKDFSlot(ctx, func() {
+		ok, err = password.Verify(candidate, encoded)
+	}); slotErr != nil {
+		return false, slotErr
+	}
+	if errors.Is(err, password.ErrMalformed) {
+		return false, nil
+	}
+	return known && ok, mapBusy(err)
 }
 
-// hashCostN is the N that LegacyScryptHashForTest mints scrypt fixtures at
-// (via hashScrypt). It is scryptN everywhere except under SetHashCostForTest.
-// New hashes are written by HashPassword, which uses hashParams (Argon2id),
-// not this, and NeedsRehash no longer reads it either: every scrypt hash now
-// reports true unconditionally, since the format itself is retired rather
-// than compared against a live cost floor.
-var hashCostN = scryptN
+// dummy caches a throwaway Argon2id hash at the current hashParams; nothing
+// verifies against it. Re-derived when hashParams changes, so it always costs
+// what a real account's hash does.
+var dummy struct {
+	sync.Mutex
+	hash   string
+	params password.Params
+}
 
-// HashCostN reports the N LegacyScryptHashForTest currently mints scrypt
-// fixtures at. It has nothing to do with the cost of a real account's hash —
-// see HashParams for that.
-func HashCostN() int { return hashCostN }
-
-// MinVerifiableScryptN is the weakest N verifyScryptHash will accept. A hash
-// written below it can never be verified again, so nothing may mint one,
-// including tests. Exported so SetHashCostForTest can refuse such a cost.
-const MinVerifiableScryptN = 1 << 14
-
-// ProductionScryptN is the cost real password hashes are written at. Exported so
-// tests whose subject is the cost can restore it by name: a hardcoded 1<<17 in a
-// test helper stops meaning "production" the moment scryptN is raised.
-const ProductionScryptN = scryptN
-
-// SetHashCostForTest lowers the cost of the legacy scrypt hashes tests mint
-// through LegacyScryptHashForTest, and returns a function that restores it:
-// 128 MiB and ~200 ms per derivation is ruinous for a test suite that mints
-// one to prove the old format still verifies.
-//
-// It panics outside a test binary. hashCostN only ever feeds hashScrypt, which
-// only LegacyScryptHashForTest calls — HashPassword does not touch it, so this
-// no longer weakens a real account's hash the way it once did. It is exported
-// from a package production code imports regardless, so a stray call from
-// non-test code cannot mint a legacy-format fixture weaker than
-// MinVerifiableScryptN allows.
-//
-// It panics below MinVerifiableScryptN, which verifyScryptHash rejects — a lower
-// setting mints hashes that can never verify.
-//
-// Call it from TestMain, before any test starts: it writes a package-level
-// variable with no synchronization. Tests that assert production strength, or
-// measure the CPU the login budget meters, must run in a package that does not
-// apply the override.
-func SetHashCostForTest(n int) (restore func()) {
-	if !testing.Testing() {
-		panic("users.SetHashCostForTest called outside a test binary: this weakens password hashing and must never run in production")
+func dummyHash(ctx context.Context) (string, error) {
+	dummy.Lock()
+	defer dummy.Unlock()
+	if dummy.hash != "" && dummy.params == hashParams {
+		return dummy.hash, nil
 	}
-	if n < MinVerifiableScryptN || n&(n-1) != 0 {
-		panic(fmt.Sprintf(
-			"users.SetHashCostForTest(%d): must be a power of two >= %d, or the hashes it writes can never verify",
-			n, MinVerifiableScryptN,
-		))
+	h, err := HashPassword(ctx, "kypost-timing-equalization-dummy")
+	if err != nil {
+		return "", err
 	}
-	previous := hashCostN
-	hashCostN = n
-	return func() { hashCostN = previous }
+	dummy.hash, dummy.params = h, hashParams
+	return h, nil
 }
 
 // HashPassword derives an Argon2id PHC hash for a human-chosen secret. Holds
@@ -2335,148 +2242,6 @@ func HashPassword(ctx context.Context, secret string) (string, error) {
 	return hash, mapBusy(err)
 }
 
-// MeasureLegacyVerifyCost times ONE legacy scrypt verification at the cost
-// this process mints legacy hashes at — ProductionScryptN in production, and
-// whatever SetHashCostForTest lowered it to in a test binary.
-//
-// It exists so the api layer can floor every credential check at the most
-// expensive stored format instead of trying to match its work: an account that
-// has not signed in since the Argon2id migration still verifies through
-// verifyScryptHash, which costs several times what an Argon2id dummy does, and
-// that difference is an account-enumeration oracle on an unauthenticated
-// endpoint. Measured rather than declared, because the figure is a property of
-// the machine and a constant that reads low on a slow host closes nothing.
-//
-// The mint and the verify share ONE slot, so the returned duration is the
-// derivation and not the queue in front of it. Callers memoize; this is a
-// startup cost, not a per-request one.
-func MeasureLegacyVerifyCost(ctx context.Context) (time.Duration, error) {
-	const probe = "kypost-timing-floor-probe"
-	var (
-		measured time.Duration
-		err      error
-	)
-	slotErr := WithKDFSlot(ctx, func(ctx context.Context) {
-		var hash string
-		if hash, err = hashScrypt(ctx, probe); err != nil {
-			return
-		}
-		start := time.Now()
-		_, err = verifyScryptHash(ctx, hash, probe)
-		measured = time.Since(start)
-	})
-	if slotErr != nil {
-		return 0, slotErr
-	}
-	return measured, err
-}
-
-// LegacyScryptHashForTest mints a scrypt hash so tests can prove the legacy
-// verify path still redeems what older installs stored.
-func LegacyScryptHashForTest(ctx context.Context, secret string) (string, error) {
-	if !testing.Testing() {
-		panic("users.LegacyScryptHashForTest called outside a test binary")
-	}
-	return hashScrypt(ctx, secret)
-}
-
-// hashScrypt produces a scrypt-encoded hash string in the same format used
-// historically by admin.env's ADMIN_PASS_HASH field.
-//
-// Holds one of the process-wide derivation slots for the duration, and returns
-// ErrKDFBusy if none comes free (see kdf.go). ctx is honoured while queueing,
-// so a caller whose client has gone away stops occupying the queue.
-func hashScrypt(ctx context.Context, password string) (string, error) {
-	var (
-		n      = hashCostN
-		r      = scryptR
-		p      = scryptP
-		keyLen = scryptKeyLen
-	)
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return "", err
-	}
-	var (
-		hash []byte
-		err  error
-	)
-	if slotErr := withKDFSlot(ctx, func() {
-		hash, err = scrypt.Key([]byte(password), salt, n, r, p, keyLen)
-	}); slotErr != nil {
-		return "", slotErr
-	}
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf(
-		"scrypt$%d$%d$%d$%s$%s",
-		n, r, p,
-		base64.StdEncoding.EncodeToString(salt),
-		base64.StdEncoding.EncodeToString(hash),
-	), nil
-}
-
-// verifyScryptHash reports whether candidate derives to encoded.
-//
-// The (bool, error) split is load-bearing: false means "wrong credential" and
-// an error means "not checked". Collapsing the second into the first is what
-// turns an overloaded server into a wrong-password answer, and then into a
-// lockout for whoever was trying to sign in through the spike.
-func verifyScryptHash(ctx context.Context, encoded, candidate string) (bool, error) {
-	parts := strings.Split(encoded, "$")
-	if len(parts) != 6 || parts[0] != "scrypt" {
-		return false, nil
-	}
-	n, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return false, nil
-	}
-	r, err := strconv.Atoi(parts[2])
-	if err != nil {
-		return false, nil
-	}
-	p, err := strconv.Atoi(parts[3])
-	if err != nil {
-		return false, nil
-	}
-	// Bound the cost parameters: scrypt.Key allocates 128*r*N bytes of whatever it
-	// is told, and these come out of a file (users.json, per-user state.json, an
-	// operator's ADMIN_PASS_HASH). One bad value asks for terabytes on the next
-	// login and OOM-kills the process into a supervisord restart loop; x/crypto's
-	// own check only rejects values far above this. The floor is
-	// MinVerifiableScryptN so hashes written before the cost was raised still
-	// verify; the ceiling is ~1 GB.
-	//
-	// This bound and the slot below answer different questions and both are
-	// needed: this one caps what ONE derivation may allocate, the slot caps how
-	// many may allocate at once.
-	if n < MinVerifiableScryptN || n > 1<<20 || n&(n-1) != 0 || r < 1 || r > 32 || p < 1 || p > 16 {
-		return false, nil
-	}
-	salt, err := base64.StdEncoding.DecodeString(parts[4])
-	if err != nil {
-		return false, nil
-	}
-	expected, err := base64.StdEncoding.DecodeString(parts[5])
-	if err != nil {
-		return false, nil
-	}
-	if len(expected) == 0 {
-		return false, nil
-	}
-	var derived []byte
-	if slotErr := withKDFSlot(ctx, func() {
-		derived, err = scrypt.Key([]byte(candidate), salt, n, r, p, len(expected))
-	}); slotErr != nil {
-		return false, slotErr
-	}
-	if err != nil {
-		return false, nil
-	}
-	return subtle.ConstantTimeCompare(derived, expected) == 1, nil
-}
-
 // argon2VersionSegment is the version segment a hash this package's Argon2id
 // dependency actually produced must carry — built from the same
 // golang.org/x/crypto/argon2 constant ky-primitives derives with, rather than
@@ -2484,8 +2249,8 @@ func verifyScryptHash(ctx context.Context, encoded, candidate string) (bool, err
 var argon2VersionSegment = fmt.Sprintf("v=%d", argon2.Version)
 
 // NeedsRehash reports whether a stored hash should be re-derived from the
-// verified plaintext: every scrypt hash (the format is retired), and an
-// Argon2id hash WEAKER THAN hashParams ON ANY AXIS — memory, time, or threads.
+// verified plaintext: an Argon2id hash WEAKER THAN hashParams ON ANY AXIS —
+// memory, time, or threads.
 // A hash stronger on EVERY axis is left alone. Read the two together: a hash at
 // four times the configured memory but one pass instead of three is weaker on
 // an axis and is re-derived at the current parameters, which is deliberate and
@@ -2507,9 +2272,6 @@ var argon2VersionSegment = fmt.Sprintf("v=%d", argon2.Version)
 // password.NeedsRehash even though it exactly matches the cost this process
 // currently writes.
 func NeedsRehash(encoded string) bool {
-	if strings.HasPrefix(encoded, "scrypt$") {
-		return true
-	}
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" || parts[2] != argon2VersionSegment {
 		return false
@@ -2583,7 +2345,7 @@ func parseArgon2Params(segment string) (mem, t uint32, threads uint8, ok bool) {
 // so everything in that closure stalls api.currentUser — i.e. every
 // authenticated request in both processes. Two derivations in there was ~330 ms
 // of whole-store stall per rehash, and this path now fires for every account on
-// its first sign-in after the Argon2id migration, which is a herd. One
+// its first sign-in after a cost change, which is a herd. One
 // derivation still runs under the lock, because the fail-closed re-verify has
 // to read the hash it is about to replace.
 //
@@ -2688,7 +2450,7 @@ func VerifyAuthSecret(ctx context.Context, u User, candidate string) (bool, erro
 	if !u.UsesDerivedAuth() {
 		return false, nil
 	}
-	return verifyHash(ctx, u.PasswordHash, candidate)
+	return verifyAccountHash(ctx, u, candidate)
 }
 
 // SetDerivedAuth replaces id's credential with a client-derived auth secret,

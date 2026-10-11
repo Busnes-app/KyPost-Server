@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- **BREAKING: scrypt credential hashes are retired; Argon2id is the only supported password hash.** An account whose password hash predates Argon2id (it never signed in after the Argon2id release, so it was never upgraded) can no longer sign in with a password: the correct password is refused exactly like a wrong one. Nothing is deleted or rewritten automatically. An administrator must reset each such password in Admin → Users (`POST /api/users/{id}/reset-password`); as with any admin reset, a browser-held PGP key wrapped under the old password becomes inaccessible. To find them: startup logs one WARN, "accounts hold a retired (pre-Argon2id) password hash…", with `count` and `user_ids`, and each refused attempt logs a WARN with its `user_id`; or search `$CONFIG_DIR/users.json` for `"passwordHash": "scrypt$`. The same retirement applies to other credentials still stored in the `scrypt$` format: CardDAV app passwords (`$CONFIG_DIR/users/<id>/carddav-auth.json`; regenerate in Settings), recovery codes issued before keyed digests (regenerate), and native devices paired before the SHA-256 device-secret format (re-pair). Argon2id hashes written at an older cost are still upgraded on the next successful sign-in.
+
 - Update the pinned Go compiler and matching builder digest to 1.26.9 for standard-library security fixes; keep Sender Blocks test expiries relative to the test run.
 
 - Settings → Mail → Storage uses compact mailbox rows with usage beside the address and a full-width meter, replacing nested cards. Figures and quota warnings are unchanged.
