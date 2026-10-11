@@ -45,11 +45,10 @@ func (c *phishStubClient) ApplyLabel(_ context.Context, _, label string) error {
 
 func newPhishTestPoller(t *testing.T) *Poller {
 	t.Helper()
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	return &Poller{log: logger, stateDir: t.TempDir()}
 }
 

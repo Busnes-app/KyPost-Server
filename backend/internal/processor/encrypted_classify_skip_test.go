@@ -23,11 +23,10 @@ import (
 // Returning normally is therefore proof the classifier was never called, not
 // just that nothing went wrong.
 func TestHandleMessage_EncryptedMessageSkipsTheClassifier(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	store, err := state.New(t.TempDir())
 	if err != nil {
@@ -66,11 +65,10 @@ func TestHandleMessage_EncryptedMessageSkipsTheClassifier(t *testing.T) {
 // isn't in the allowlist strands mail in the Uncategorized tab, which reads as
 // mail vanishing rather than being sorted.
 func TestHandleMessage_EncryptedMessageTagsAConfiguredLabel(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	store, err := state.New(t.TempDir())
 	if err != nil {
@@ -109,11 +107,10 @@ func TestHandleMessage_EncryptedMessageTagsAConfiguredLabel(t *testing.T) {
 // messages are worth attacking, while the published contract (README.md,
 // SECURITY.md) says keywords are a sorting hint and never a security boundary.
 func TestHandleMessage_EncryptedMessageIsNotTaggedAsEncrypted(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	store, err := state.New(t.TempDir())
 	if err != nil {

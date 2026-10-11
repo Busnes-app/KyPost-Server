@@ -97,11 +97,10 @@ func (m *scriptedMailbox) ApplyLabel(_ context.Context, id string, label string)
 func newTickTestPoller(t *testing.T, mail imapadapter.Client) (*Poller, users.User) {
 	t.Helper()
 
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	// These tests fail keyword writes on purpose, and the production delay is
 	// 30s per retry. Nothing here is testing the backoff itself.

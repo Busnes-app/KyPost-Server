@@ -402,11 +402,10 @@ func TestShouldMarkProcessedOnError_RetryableErrorLeavesUnmarked(t *testing.T) {
 // transient classifier error leaves the message unmarked end-to-end while
 // still recording the failure as a Decision.
 func TestRecordMessageFailure_TransientClassifierErrorLeavesMessageUnprocessed(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	p := &Poller{log: logger}
 
 	store, err := state.New(t.TempDir())
@@ -432,11 +431,10 @@ func TestRecordMessageFailure_TransientClassifierErrorLeavesMessageUnprocessed(t
 // permanent classifier error (bad input/credits exhausted) still marks the
 // message processed, unchanged from today's behavior.
 func TestRecordMessageFailure_PermanentClassifierErrorMarksProcessed(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	p := &Poller{log: logger}
 
 	store, err := state.New(t.TempDir())
@@ -459,11 +457,10 @@ func TestRecordMessageFailure_PermanentClassifierErrorMarksProcessed(t *testing.
 // error (not a classifierErr) must still mark the message processed exactly
 // as before this task's change.
 func TestRecordMessageFailure_NonClassifierErrorMarksProcessed(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	p := &Poller{log: logger}
 
 	store, err := state.New(t.TempDir())
@@ -488,11 +485,10 @@ func TestRecordMessageFailure_NonClassifierErrorMarksProcessed(t *testing.T) {
 // receiver dereference (c.baseURL inside ensureWarm) and fail this test.
 // The message must still be marked processed and recorded as a Decision.
 func TestHandleMessage_StopRuleShortCircuitsClassification(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	p := &Poller{log: logger} // classifier intentionally left nil
 
@@ -555,7 +551,6 @@ func TestHandleMessage_StopRuleActionFailureDefersInsteadOfClaimingSuccess(t *te
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	p := &Poller{log: logger} // classifier intentionally left nil
 
@@ -635,11 +630,10 @@ func TestHandleMessage_StopRuleActionFailureDefersInsteadOfClaimingSuccess(t *te
 // no-panic result above was actually caused by the stop short-circuit and
 // not by some unrelated reason classifyWithRetry never runs.
 func TestHandleMessage_NonMatchingRuleStillClassifies(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	p := &Poller{log: logger} // classifier intentionally left nil
 
@@ -684,11 +678,10 @@ func TestHandleMessage_NonMatchingRuleStillClassifies(t *testing.T) {
 // unsorted from the frontend's perspective (ReadPage.tsx always defaults
 // activeTab to tabs[0], never to Uncategorized).
 func TestHandleMessage_AutoLabelDisabledUsesConfiguredLabel(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	store, err := state.New(t.TempDir())
 	if err != nil {
@@ -836,11 +829,10 @@ func decodeNoticeBody(t *testing.T, raw []byte) string {
 // than "applied"/"skipped" — proving handleMessage's TooLarge branch, not
 // just notifyMessageTooLarge in isolation.
 func TestHandleMessage_TooLargeMessageRejectsAndNotifies(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	store, err := state.New(t.TempDir())
 	if err != nil {
@@ -911,11 +903,10 @@ func TestHandleMessage_TooLargeMessageRejectsAndNotifies(t *testing.T) {
 // all), the message is still recorded as rejected and marked processed —
 // never left to be retried forever just because notification failed.
 func TestHandleMessage_TooLargeMessageStillRecordsDecisionWhenNotifyFails(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	store, err := state.New(t.TempDir())
 	if err != nil {
@@ -1054,11 +1045,10 @@ func TestDeferredMessageStaysInRangeOfTheNextFetch(t *testing.T) {
 // row and fire one notification per message per tick — a mailbox's worth of
 // them every ~90 seconds, retained for 30 days — for a single outage.
 func TestRecordMessageFailure_TransientErrorIsRecordedOncePerMessage(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	p := &Poller{log: logger}
 
 	store, err := state.New(t.TempDir())
@@ -1095,11 +1085,10 @@ func TestRecordMessageFailure_TransientErrorIsRecordedOncePerMessage(t *testing.
 // other half: a message that IS retired reaches recordMessageFailure once, so
 // gating it on a prior report must not swallow its audit row.
 func TestRecordMessageFailure_RetiredFailureStillRecordsUnconditionally(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	p := &Poller{log: logger}
 
 	store, err := state.New(t.TempDir())

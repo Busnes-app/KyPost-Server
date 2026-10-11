@@ -33,17 +33,12 @@ func newTestServer(t *testing.T) *Server {
 	// TestLoginRequiresProofOfWorkByDefault, which build servers without this.
 	t.Setenv("CAPTCHA_PROVIDER", "none")
 
-	logDir := t.TempDir()
 	stateDir := t.TempDir()
 
-	logger, err := logging.New(logDir)
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() {
-		_ = logger.Close()
-	})
-
 	configDir := t.TempDir()
 	// Every key NewServer resolves through config.SecretFile lands here rather
 	// than in the process default /kypost/private, which this binary cannot
