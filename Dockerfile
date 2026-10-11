@@ -26,7 +26,7 @@ COPY backend ./backend
 # silently acquiring a link against the builder stage's glibc.
 RUN cd backend && CGO_ENABLED=0 go build -trimpath -o /app/bin/kypost-server ./cmd/main.go
 
-FROM node:26.5.0-slim@sha256:715e55e4b84e4bb0ff48e49b398a848f08e55daed8eb6a0ea1839ae53bc57583 AS frontend-builder
+FROM node:26.10.0-slim@sha256:930557a230abacbc3f4fd9b8648abf8f4bee1e17cb72195dcdfb2f709bc85b33 AS frontend-builder
 WORKDIR /frontend
 # `npm ci` and a required, non-globbed lockfile. `npm install` re-resolves
 # every caret range at build time, so two builds of the same commit can ship
