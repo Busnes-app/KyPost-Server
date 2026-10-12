@@ -315,7 +315,7 @@ func (p *Poller) flagAppImpersonation(ctx context.Context, uc userCtx, msg imapa
 	}
 	// No sender: see the note at poller.go's "classification result" line. The
 	// flagged sender is on the Decision row this function just wrote, which is
-	// scoped to the owning user; app.log is not.
+	// scoped to the owning user; the shared log is not.
 	p.log.Info("app-impersonation scan: message flagged", "user_id", uc.id, "message_id", msg.ID, "reason", finding.Reason)
 	return true
 }

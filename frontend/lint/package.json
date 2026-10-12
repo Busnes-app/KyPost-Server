@@ -1,0 +1,12 @@
+{
+  "name": "kypost-frontend-lint",
+  "private": true,
+  "type": "module",
+  "description": "ESLint for ../src. Separate because typescript-eslint needs the TypeScript 6 compiler API; the app builds with TypeScript 7.",
+  "devDependencies": {
+    "eslint": "10.12.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1"
+  }
+}

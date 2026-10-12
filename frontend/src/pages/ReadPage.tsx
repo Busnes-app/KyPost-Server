@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { escapeHtmlText, processEmailHtml, resolveBodyMode } from "../lib/emailHtml";
-import { EmailBodyFrame } from "./read/EmailBodyFrame";
+import { EmailBodyFrame, FRAME_SANDBOX } from "./read/EmailBodyFrame";
 import { DecryptedAttachments, inlineImageMap } from "./read/DecryptedAttachments";
 import { EncryptionCell } from "./read/EncryptionCell";
 import { SignatureBadge } from "./read/SignatureBadge";
@@ -119,6 +119,8 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [attachmentsError, setAttachmentsError] = useState("");
+  // Bumped per opened message, so a late list cannot land on another message.
+  const attachmentsLoadRef = useRef(0);
   const [keywordDraft, setKeywordDraft] = useState("");
   const [availableKeywords, setAvailableKeywords] = useState<string[]>([]);
   const emailReaderDialogRef = useRef<HTMLDialogElement | null>(null);
@@ -500,6 +502,8 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     setSwipeRows({});
     setSwipeRemovedIds([]);
     setError("");
+    // Results, and any search still in flight, belong to the folder we left.
+    clearSearch();
     // A cursor describes one mailbox's window. Carrying it across a mailbox
     // switch would ask the server to diff the new folder against the old
     // folder's state, so the first load in any mailbox is a full snapshot.
@@ -772,13 +776,16 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   // that if the user opens a different email while an add/remove request
   // for the first one is still in flight, the late-arriving response can't
   // stamp its keyword update onto the now-selected message.
-  function updateSelectedKeywords(messageId: string, next: string[]) {
-    setSelected((current) => (current && current.messageId === messageId ? { ...current, keywords: next } : current));
+  // `update` runs against current state, so two quick edits both survive.
+  function updateSelectedKeywords(messageId: string, update: (keywords: string[]) => string[]) {
+    setSelected((current) =>
+      current && current.messageId === messageId ? { ...current, keywords: update(current.keywords ?? []) } : current
+    );
     setByTab((current) => {
       const updated: Record<string, InboxEmail[]> = {};
       Object.entries(current).forEach(([tab, items]) => {
         updated[tab] = items.map((item) =>
-          item.messageId === messageId ? { ...item, keywords: next } : item
+          item.messageId === messageId ? { ...item, keywords: update(item.keywords ?? []) } : item
         );
       });
       return updated;
@@ -793,7 +800,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       return;
     }
     const messageId = selected.messageId;
-    const nextKeywords = [...(selected.keywords ?? []), keyword];
+    const sameKeyword = (k: string) => k.toLowerCase() === keyword.toLowerCase();
     try {
       const response = await postJSON<KeywordActionResponse>("/api/inbox/actions", {
         action: "label",
@@ -806,7 +813,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         throw new Error(first?.error || "failed to add keyword");
       }
       setKeywordDraft("");
-      updateSelectedKeywords(messageId, nextKeywords);
+      updateSelectedKeywords(messageId, (current) => (current.some(sameKeyword) ? current : [...current, keyword]));
     } catch (e) {
       setActionError(toErrorMessage(e, "failed to add keyword"));
     }
@@ -815,7 +822,6 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   async function removeKeywordFromSelected(keyword: string) {
     if (!selected) return;
     const messageId = selected.messageId;
-    const nextKeywords = (selected.keywords ?? []).filter((k) => k !== keyword);
     try {
       const response = await postJSON<KeywordActionResponse>("/api/inbox/actions", {
         action: "unlabel",
@@ -827,14 +833,18 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         const first = response.failed[0];
         throw new Error(first?.error || "failed to remove keyword");
       }
-      updateSelectedKeywords(messageId, nextKeywords);
+      updateSelectedKeywords(messageId, (current) => current.filter((k) => k !== keyword));
     } catch (e) {
       setActionError(toErrorMessage(e, "failed to remove keyword"));
     }
   }
 
+  // Only the newest search (or clear) may write results.
+  const searchIdRef = useRef(0);
   async function performSearch() {
+    const searchId = ++searchIdRef.current;
     if (!searchQuery.trim()) {
+      setSearching(false);
       setSearchMode(false);
       setSearchResults([]);
       return;
@@ -845,17 +855,21 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       const response = await getJSON<{ results: InboxEmail[] }>(
         `/api/mail/search?q=${encodeURIComponent(searchQuery)}&field=${encodeURIComponent(searchField)}&mailbox=${encodeURIComponent(mailbox || "INBOX")}&limit=100`
       );
+      if (searchId !== searchIdRef.current) return;
       setSearchResults(response.results ?? []);
       setSearchMode(true);
     } catch (e) {
+      if (searchId !== searchIdRef.current) return;
       const message = toErrorMessage(e, "search failed");
       setActionError(message);
     } finally {
-      setSearching(false);
+      if (searchId === searchIdRef.current) setSearching(false);
     }
   }
 
   function clearSearch() {
+    searchIdRef.current++;
+    setSearching(false);
     setSearchMode(false);
     setSearchQuery("");
     setSearchResults([]);
@@ -1212,8 +1226,10 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     setBodyStatus("");
     setAttachments([]);
     setAttachmentsError("");
+    setAttachmentsLoading(false);
+    const attachmentsLoad = ++attachmentsLoadRef.current;
     if (item.hasAttachments) {
-      void loadAttachments(item);
+      void loadAttachments(item, attachmentsLoad);
     }
     if (item.status !== "read") {
       await applyInboxAction("read", [item.messageId]);
@@ -1225,18 +1241,20 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     return `messageId=${encodeURIComponent(item.messageId)}${mailboxParam}`;
   }
 
-  async function loadAttachments(item: InboxEmail) {
+  async function loadAttachments(item: InboxEmail, loadId: number) {
     setAttachmentsLoading(true);
     setAttachmentsError("");
     try {
       const data = await getJSON<{ ok: boolean; attachments: AttachmentInfo[] }>(
         `/api/mail/attachments?${attachmentQuery(item)}`
       );
+      if (loadId !== attachmentsLoadRef.current) return;
       setAttachments(data.attachments ?? []);
     } catch (e) {
+      if (loadId !== attachmentsLoadRef.current) return;
       setAttachmentsError(toErrorMessage(e, "failed to load attachments"));
     } finally {
-      setAttachmentsLoading(false);
+      if (loadId === attachmentsLoadRef.current) setAttachmentsLoading(false);
     }
   }
 
@@ -1282,9 +1300,8 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         const body = resolved.body || "No message body available.";
         const isHtml = resolved.mode === "html" && Boolean(resolved.body);
         // Sender-controlled HTML must pass through the sanitizer here just like
-        // every other render path (see sanitizeEmailHtml's invariant): the
-        // print document is a same-origin window that inherits the app CSP, so
-        // an unsanitized body would be a script-injection sink.
+        // every other render path (see sanitizeEmailHtml's invariant); the
+        // sandboxed print frame is a second boundary, not a substitute.
         //
         // Remote content is blocked unconditionally rather than following the
         // reader's per-message "Show Images" opt-in: printing acts on a whole
@@ -1305,30 +1322,25 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       })
       .join("\n");
 
-    const printWindow = window.open("", "_blank", "width=900,height=700");
-    if (!printWindow) {
-      setActionError("Popup blocked by browser; allow popups to print selected emails.");
-      return;
-    }
-    printWindow.document.open();
-    printWindow.document.write(`
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Inbox Print</title>
-          <style>
-            body { font-family: Arial, sans-serif; color: #111; margin: 24px; }
-          </style>
-        </head>
-        <body>
-          ${sections}
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
+    // The reader's sandbox (no scripts); allow-modals only lets our own print() through.
+    document.querySelector("iframe.print-frame")?.remove();
+    const frame = document.createElement("iframe");
+    frame.className = "print-frame";
+    frame.title = "Print";
+    frame.setAttribute("aria-hidden", "true");
+    frame.setAttribute("sandbox", `${FRAME_SANDBOX} allow-modals`);
+    frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+    frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Inbox Print</title><style>body { font-family: Arial, sans-serif; color: #111; margin: 24px; }</style></head><body>${sections}</body></html>`;
+    frame.addEventListener(
+      "load",
+      () => {
+        const win = frame.contentWindow;
+        win?.addEventListener("afterprint", () => frame.remove(), { once: true });
+        win?.print();
+      },
+      { once: true }
+    );
+    document.body.appendChild(frame);
   }
 
   return (

@@ -15,6 +15,11 @@ non-prerelease version.
 ## Unreleased
 
 - Security: push sign-in approval over UnifiedPush (the Linux client) is never sent in cleartext. A device that registered WebPush keys receives it RFC 8291-encrypted; if the server cannot encrypt (VAPID key unreadable) the challenge is not sent to that device and sign-in falls back to the authenticator app. The device-list and enable-push messages now say a keyless UnifiedPush device must update and re-pair, instead of claiming UnifiedPush cannot carry approvals.
+- `docker-compose.yml` now passes the variables `.env.example` documents but compose dropped, so setting them in `.env` takes effect: `POW_SECRET`, `POW_SECRET_FILE`, `POW_MAX_NUMBER`, `MFA_CLEAR_ALL`, `ALLOW_INSECURE_SMTP`, `PAIRING_SECRET_FILE`, `SANDBOX_PRIVATE_HOSTS`, `CLASSIFY_CONCURRENCY`, `CLASSIFY_PACE_MS`, `CLASSIFIER_ENGINE`, `EMBED_MIN_CONFIDENCE`, `EMBED_MODEL_DIR`, plus `SMTP_HOST`, `SMTP_PORT`, `OLLAMA_API_KEY`, `OLLAMA_GENERATE_PATH`, `KYPOST_RESTIC_BINARY` and `UNHEALTHY_RESTART_SECONDS`. Check your `.env` before upgrading: a value that used to be ignored now applies.
+
+- FCM push relay: a send whose network request fails now keeps its daily-budget charge, as APNs already did.
+
+- README: the environment-variable reference, endpoint list and full feature list moved to `docs/CONFIGURATION.md`, `docs/API.md` and `docs/FEATURES.md`.
 
 - Security: a successful sign-in (or CardDAV authentication) no longer resets its address's per-IP failure budget, so one valid account can no longer be used to keep guessing other accounts' passwords from the same address.
 

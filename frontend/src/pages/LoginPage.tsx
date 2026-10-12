@@ -349,6 +349,9 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
               value={mfaCode}
               onChange={(e) => setMfaCode(e.target.value)}
               autoComplete="one-time-code"
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
               placeholder="xxxx-xxxx-xxxx"
               autoFocus
             />

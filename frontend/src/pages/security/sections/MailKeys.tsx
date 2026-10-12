@@ -1000,6 +1000,11 @@ export function MailKeys({
                     onChange={(e) => setPgpImportKey(e.target.value)}
                     rows={4}
                     placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----"
+                    // Enhanced (cloud) spellcheck would send the key off-device.
+                    spellCheck={false}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
                     required
                   />
                 </label>

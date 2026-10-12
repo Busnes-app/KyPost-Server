@@ -13,11 +13,11 @@ import mitLicenseText from "./mit.txt?raw";
 import { visibleSettingsGroups } from "./app/navigation";
 import { loadMailboxSelection, MailboxContext, mailboxName, readMailboxes, saveMailboxSelection, type UserMailbox } from "./app/mailboxes";
 import { LEGACY_SETTINGS_PATHS, legacySettingsRedirect } from "./app/routes";
+import { useFolderList } from "./hooks/useFolderList";
 import { subscribeSecretHold } from "./lib/secretHold";
 import type {
   BeforeInstallPromptEvent,
   InboxFolder,
-  InboxFoldersResponse,
   CreateFolderResponse,
   DeleteFolderResponse,
   RenameFolderResponse,
@@ -53,15 +53,15 @@ export function App() {
   const compose = useCompose({ userId: auth?.userId, mailboxes });
   // Folder URLs name their mailbox, so one replayed after a switch is recognised (ReadPage).
   const boxQuery = selectedMailbox ? `&box=${selectedMailbox}` : "";
-  const [mailboxFolders, setMailboxFolders] = useState<InboxFolder[]>([]);
-  const [mailboxFoldersLoading, setMailboxFoldersLoading] = useState(false);
+  const mailboxFolderList = useFolderList("/api/inbox/folders");
+  const { folders: mailboxFolders, loading: mailboxFoldersLoading } = mailboxFolderList;
   const [inboxCreateOpen, setInboxCreateOpen] = useState(false);
   const [createFolderName, setCreateFolderName] = useState("");
   const [createFolderLoading, setCreateFolderLoading] = useState(false);
   const [createFolderError, setCreateFolderError] = useState("");
   const [archiveOpen, setArchiveOpen] = useState(false);
-  const [archiveFolders, setArchiveFolders] = useState<InboxFolder[]>([]);
-  const [archiveFoldersLoading, setArchiveFoldersLoading] = useState(false);
+  const archiveFolderList = useFolderList("/api/inbox/folders?parent=Archive");
+  const { folders: archiveFolders, loading: archiveFoldersLoading } = archiveFolderList;
   const [folderMenuPath, setFolderMenuPath] = useState("");
   const [deleteFolderLoading, setDeleteFolderLoading] = useState("");
   const [renameFolderLoading, setRenameFolderLoading] = useState("");
@@ -131,8 +131,8 @@ export function App() {
     setSelectedMailbox(id);
     if (auth?.userId) saveMailboxSelection(auth.userId, id);
     // Folder lists belong to the mailbox they were read from; ReadPage remounts on the key below.
-    setMailboxFolders([]);
-    setArchiveFolders([]);
+    mailboxFolderList.reset();
+    archiveFolderList.reset();
   }
 
   // A non-native account gets an empty list, and no header is ever sent for it.
@@ -294,20 +294,10 @@ export function App() {
 
   async function loadMailboxFolders() {
     if (!auth?.authenticated) {
-      setMailboxFolders([]);
+      mailboxFolderList.reset();
       return;
     }
-    setMailboxFoldersLoading(true);
-    // An answer for a mailbox no longer selected changes nothing.
-    const box = selectedMailboxId();
-    try {
-      const data = await getJSON<InboxFoldersResponse>("/api/inbox/folders");
-      if (box === selectedMailboxId()) setMailboxFolders(data.folders ?? []);
-    } catch {
-      if (box === selectedMailboxId()) setMailboxFolders([]);
-    } finally {
-      if (box === selectedMailboxId()) setMailboxFoldersLoading(false);
-    }
+    await mailboxFolderList.load();
   }
 
   async function createInboxFolder() {
@@ -337,20 +327,10 @@ export function App() {
 
   async function loadArchiveFolders() {
     if (!auth?.authenticated) {
-      setArchiveFolders([]);
+      archiveFolderList.reset();
       return;
     }
-    setArchiveFoldersLoading(true);
-    // An answer for a mailbox no longer selected changes nothing.
-    const box = selectedMailboxId();
-    try {
-      const data = await getJSON<InboxFoldersResponse>("/api/inbox/folders?parent=Archive");
-      if (box === selectedMailboxId()) setArchiveFolders(data.folders ?? []);
-    } catch {
-      if (box === selectedMailboxId()) setArchiveFolders([]);
-    } finally {
-      if (box === selectedMailboxId()) setArchiveFoldersLoading(false);
-    }
+    await archiveFolderList.load();
   }
 
   async function deleteInboxFolder(folder: InboxFolder) {
@@ -455,7 +435,7 @@ export function App() {
 
   useEffect(() => {
     if (!auth?.authenticated) {
-      setMailboxFolders([]);
+      mailboxFolderList.reset();
       setInboxCreateOpen(false);
       setCreateFolderError("");
       setCreateFolderName("");

@@ -74,6 +74,20 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # Relay Workers: build tooling only (wrangler, typescript, workers-types).
+  # receiving-worker/ and push-relay-shared/ have no package.json.
+  - package-ecosystem: npm
+    directories: ["/worker", "/worker-apns"]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      relay:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
   # CI tools, pinned in their own module so their dependency tree never moves the
   # app's. Go records a tool directive's module as `// indirect`, which Dependabot
   # skips by default, so each tool is allowed by name.
@@ -93,6 +107,19 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: "chore(ci)"
+
+  # ESLint toolchain, separate because typescript-eslint needs TypeScript 6.
+  - package-ecosystem: npm
+    directory: /frontend/lint
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      npm-lint:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
 
   - package-ecosystem: github-actions
     directory: /

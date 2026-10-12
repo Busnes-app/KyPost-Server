@@ -7,6 +7,7 @@
  */
 
 import { base64UrlEncode, base64UrlEncodeString, pemToDer } from "../../push-relay-shared/base64url";
+import { errorMessage } from "../../push-relay-shared/push-relay-common";
 
 const FCM_OAUTH_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -277,22 +278,28 @@ export async function sendFcmMessage(
   };
 
   const sendURL = `https://fcm.googleapis.com/v1/projects/${config.projectId}/messages:send`;
-  const resp = await fetch(sendURL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  try {
+    const resp = await fetch(sendURL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
 
-  if (resp.ok) {
-    return { ok: true };
-  }
+    if (resp.ok) {
+      return { ok: true };
+    }
 
-  const detail = (await resp.text()).trim();
-  if (isStaleResponse(resp.status, detail)) {
-    return { ok: false, stale: true, reachedProvider: true, status: resp.status, detail };
+    const detail = (await resp.text()).trim();
+    if (isStaleResponse(resp.status, detail)) {
+      return { ok: false, stale: true, reachedProvider: true, status: resp.status, detail };
+    }
+    return { ok: false, stale: false, reachedProvider: true, status: resp.status, detail };
+  } catch (err) {
+    // Cannot be told apart from a failure reading a response FCM did send.
+    // Unproven means not refunded, as in worker-apns.
+    return { ok: false, stale: false, reachedProvider: true, status: 502, detail: `fcm fetch error: ${errorMessage(err)}` };
   }
-  return { ok: false, stale: false, reachedProvider: true, status: resp.status, detail };
 }

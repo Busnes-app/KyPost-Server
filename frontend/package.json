@@ -8,6 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "node lint/node_modules/eslint/bin/eslint.js --config lint/eslint.config.js src",
     "prebuild": "node src/ky-ui/check-vendor.mjs",
     "pretest": "node src/ky-ui/check-vendor.mjs"
   },

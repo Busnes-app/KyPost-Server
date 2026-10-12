@@ -20,7 +20,7 @@
 //
 // Every constant and layout below is normative and shared with the Android and
 // Qt clients. See the NORMATIVE sections of
-// docs/superpowers/specs/2026-08-04-device-enrollment-design.md. Changing any of
+// docs/DEVICE_ENROLLMENT.md. Changing any of
 // it is a wire-format break and must move the version tag with it.
 
 import { validateKeyringSnapshot } from "./pgpKeyring";
