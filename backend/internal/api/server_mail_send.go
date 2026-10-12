@@ -92,6 +92,11 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		// answered; the server reads its threading headers itself.
 		ReplyToMessageID string `json:"replyToMessageId"`
 		ReplyToMailbox   string `json:"replyToMailbox"`
+		// CalendarReply is an iTIP REPLY (an RSVP) sent as a text/calendar
+		// alternative to the body. Send only; drafts ignore it.
+		CalendarReply *struct {
+			ICS string `json:"ics"`
+		} `json:"calendarReply"`
 	}
 	// Check the declared size before reading, so an oversized send says so.
 	// Without this the LimitReader below just truncates the JSON mid-value and
@@ -155,7 +160,13 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		return mailRequest{}, "invalid BCC recipients", err
 	}
 
+	var calendarReplyICS *string
+	if raw.CalendarReply != nil {
+		calendarReplyICS = &raw.CalendarReply.ICS
+	}
+
 	return mailRequest{
+		CalendarReplyICS:    calendarReplyICS,
 		Subject:             raw.Subject,
 		Body:                raw.Body,
 		EncodedBody:         base64.StdEncoding.EncodeToString([]byte(raw.Body)),
@@ -487,6 +498,20 @@ func composeSend(m mailmsg.Message, bcc []string) (wire, sent []byte, recipients
 	return wire, m.Build(), append(append(append([]string{}, m.To...), m.CC...), bcc...)
 }
 
+// calendarReplySentKey marks a request whose message carries a built
+// calendarReply part, for the success response.
+type calendarReplySentKey struct{}
+
+// withCalendarReplyAck adds "calendarReply": true to a successful send
+// response whose message carried the iTIP part. A server that predates the
+// field never writes it, which is how a client tells it was ignored.
+func withCalendarReplyAck(r *http.Request, resp map[string]any) map[string]any {
+	if sent, _ := r.Context().Value(calendarReplySentKey{}).(bool); sent {
+		resp["calendarReply"] = true
+	}
+	return resp
+}
+
 // replyThreading reads the threading headers of the message being answered,
 // so a client names the message rather than supplying header text. A message
 // without a usable Message-ID threads nothing; a reference the mailbox cannot
@@ -521,6 +546,13 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, errMsg, http.StatusBadRequest)
 		return
+	}
+	// Send only: drafts ignore calendarReply.
+	if req.CalendarReplyICS != nil {
+		if req.CalendarReply, err = mailmsg.CalendarReply(*req.CalendarReplyICS); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	toList, ccList, bccList := req.To, req.CC, req.BCC
 
@@ -584,6 +616,12 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 
 	}
 	autocryptHeader := s.outboundAutocryptHeader(ac.UserID, envelopeFrom)
+	// An organizer's calendar server cannot open a PGP-wrapped REPLY, so the
+	// RSVP would silently never land.
+	if req.CalendarReply != nil && (req.Encrypt || req.Sign) {
+		http.Error(w, "calendar replies are sent unencrypted and unsigned; turn off encrypt/sign for this reply", http.StatusBadRequest)
+		return
+	}
 
 	var inReplyTo string
 	var references []string
@@ -602,16 +640,17 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg, sentCopySource, recipients := composeSend(mailmsg.Message{
-		From:        headerFrom,
-		To:          toList,
-		CC:          ccList,
-		Subject:     req.Subject,
-		EncodedBody: req.EncodedBody,
-		Mode:        req.Mode,
-		Attachments: req.Attachments,
-		Autocrypt:   autocryptHeader,
-		InReplyTo:   inReplyTo,
-		References:  references,
+		From:          headerFrom,
+		To:            toList,
+		CC:            ccList,
+		Subject:       req.Subject,
+		EncodedBody:   req.EncodedBody,
+		Mode:          req.Mode,
+		Attachments:   req.Attachments,
+		Autocrypt:     autocryptHeader,
+		InReplyTo:     inReplyTo,
+		References:    references,
+		CalendarReply: req.CalendarReply,
 	}, bccList)
 
 	// Signing on the user's behalf needs a private key this server can open, and
@@ -660,6 +699,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !req.Encrypt {
+		if req.CalendarReply != nil {
+			r = r.WithContext(context.WithValue(r.Context(), calendarReplySentKey{}, true))
+		}
 		if native {
 			s.finishNativeSend(w, r, ac, nativeUser, envelopeFrom, []mailbox.OutboundDelivery{{Recipients: recipients, Raw: msg}}, sentCopySource, false, nil, 0, "")
 			return
@@ -956,7 +998,7 @@ func (s *Server) finishMailSend(w http.ResponseWriter, r *http.Request, userID, 
 	}
 	s.logger.Info("mail send completed", "sent_saved", strconv.FormatBool(sentSaved))
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sentSaved": sentSaved, "warning": warning})
+	writeJSON(w, http.StatusOK, withCalendarReplyAck(r, map[string]any{"ok": true, "sentSaved": sentSaved, "warning": warning}))
 	return true
 }
 
