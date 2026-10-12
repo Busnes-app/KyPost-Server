@@ -70,21 +70,6 @@ func exprString(e ast.Expr) string {
 	return "?"
 }
 
-// TestSetHashCostForTestRefusesBelowVerifiableFloor pins the panic that stops a
-// test cost from minting hashes verifyScryptHash will never accept.
-func TestSetHashCostForTestRefusesBelowVerifiableFloor(t *testing.T) {
-	for _, n := range []int{1 << 13, 1000, 0, -1} {
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Errorf("SetHashCostForTest(%d) did not panic; it would mint unverifiable hashes", n)
-				}
-			}()
-			users.SetHashCostForTest(n)
-		}()
-	}
-}
-
 // TestSetHashParamsForTestRefusesOutsideBand pins the panic that stops a test
 // cost from minting Argon2id hashes the library itself would refuse to verify.
 func TestSetHashParamsForTestRefusesOutsideBand(t *testing.T) {
@@ -98,13 +83,8 @@ func TestSetHashParamsForTestRefusesOutsideBand(t *testing.T) {
 
 // TestProductionHashCostHelperRestoresTheTestCost proves withProductionHashCost
 // cleans up after itself without the caller writing a defer, so a forgotten
-// restore cannot leak the 128 MiB cost into every subsequent test.
+// restore cannot leak the production cost into every subsequent test.
 func TestProductionHashCostHelperRestoresTheTestCost(t *testing.T) {
-	lowered := users.HashCostN()
-	if lowered != users.MinVerifiableScryptN {
-		t.Fatalf("TestMain should have lowered the cost to %d, got %d", users.MinVerifiableScryptN, lowered)
-	}
-
 	loweredParams := users.HashParams()
 	if loweredParams != (password.Params{Memory: 8 * 1024, Time: 1, Threads: 1}) {
 		t.Fatalf("TestMain should have lowered hashParams to {8192,1,1}, got %+v", loweredParams)
@@ -112,28 +92,21 @@ func TestProductionHashCostHelperRestoresTheTestCost(t *testing.T) {
 
 	t.Run("raised inside", func(t *testing.T) {
 		withProductionHashCost(t)
-		if got := users.HashCostN(); got != users.ProductionScryptN {
-			t.Fatalf("inside the helper's scope: got cost %d, want %d", got, users.ProductionScryptN)
-		}
 		if got := users.HashParams(); got != password.DefaultParams() {
 			t.Fatalf("inside the helper's scope: got Argon2id params %+v, want the production default %+v", got, password.DefaultParams())
 		}
 	})
 
-	if got := users.HashCostN(); got != lowered {
-		t.Fatalf("after the subtest returned: got cost %d, want the lowered %d — the helper leaked", got, lowered)
-	}
 	if got := users.HashParams(); got != loweredParams {
 		t.Fatalf("after the subtest returned: got Argon2id params %+v, want the lowered %+v — the helper leaked", got, loweredParams)
 	}
 }
 
 // TestMainTestAppliesTheLoweredCost guards the other direction: that TestMain is
-// in effect. Without it the suite still passes, twenty times slower.
+// in effect. Without it the suite still passes, many times slower.
 func TestMainTestAppliesTheLoweredCost(t *testing.T) {
-	if users.HashCostN() >= users.ProductionScryptN {
-		t.Fatalf("hash cost is %d: TestMain's override is not in effect and this suite will take minutes",
-			users.HashCostN())
+	if users.HashParams() == password.DefaultParams() {
+		t.Fatal("hashParams is the production default: TestMain's override is not in effect and this suite will take minutes")
 	}
 	if _, err := os.Stat(filepath.Join(".", "main_test.go")); err != nil {
 		t.Fatalf("main_test.go is missing; the cost override lives there: %v", err)

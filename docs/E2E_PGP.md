@@ -53,8 +53,8 @@ revisited without touching stored data.
 
 ### Why the server can't cheat
 
-The server holds an Argon2id hash of the password (scrypt for accounts not yet
-rehashed), never the password. It therefore cannot derive the wrapping key,
+The server holds an Argon2id hash of the password, never the password. It
+therefore cannot derive the wrapping key,
 and there is no code path that tries. `cryptutil.OpenString` uses `LoadKey`, not `LoadOrCreateKey`, so a
 missing master key is a loud error rather than a silently-minted new one.
 

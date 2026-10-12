@@ -167,8 +167,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// username+IP and the username comes out of the request body, so a caller who
 	// never repeats one never trips it — while every attempt against an unknown
 	// account runs a full Argon2id derivation on purpose (see
-	// equalizeLoginTiming) and is padded to the cost of a legacy scrypt one
-	// (see credentialTimingFloor).
+	// equalizeLoginTiming).
 	//
 	// The bucket holds seconds of derivation work: this reserves one attempt's worth
 	// and chargeLoginKDF settles up with what the attempt really cost, so a slower
@@ -278,15 +277,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// and lookup all agree on what "the same account" means.
 	powAccount := clampLockoutKeyComponent(users.NormalizeUsername(req.Username))
 
-	// Every outcome from here to the verdict is padded to the same wall clock
-	// (settleCredentialTiming). Started before the lookup, because
-	// GetByUsername's own cost differs between a hit and a miss.
+	// Failures are padded from here (settleCredentialTiming); before the lookup,
+	// whose own cost differs between a hit and a miss.
 	credentialStart := time.Now()
 	u, err := s.users.GetByUsername(req.Username)
 	if err != nil || !u.Active || s.requireAccountRestoreReleased(u) != nil {
-		// Do the same derivation work a real check would, so slot contention
-		// does not reveal whether the username exists (or is inactive); the
-		// floor below covers the clock. Equalize against whichever credential
+		// Do the same derivation work a real check would, so neither timing nor
+		// slot contention reveals whether the username exists (or is inactive).
+		// Equalize against whichever credential
 		// was offered: a converted client sends only AuthSecret, so equalizing
 		// on the empty Password would make the unknown-account path cheap again
 		// for exactly the callers that matter.
@@ -345,10 +343,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeKDFBusy(w)
 		return
 	}
-	// Both the known-account outcomes, and both hash formats, leave here at the
-	// same moment as the unknown-account branch above.
-	s.settleCredentialTiming(r.Context(), credentialStart)
 	if !verified {
+		s.settleCredentialTiming(r.Context(), credentialStart)
 		s.powDifficulty.recordFailure(lockoutKeyForIP(clientIP(r)), powAccount, time.Now())
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
@@ -709,27 +705,9 @@ func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A KDF slot per comparison, not one slot around the whole call.
-	// ConsumeRecoveryCode compares the candidate against every stored hash until one
-	// matches. For an account whose codes predate digests that is up to ten scrypt
-	// derivations at 128 MiB each — a digest account costs one keyed HMAC and no
-	// slot — and this endpoint takes no session, a challenge id is the whole
-	// credential. A single slot held across all ten would park a quarter of the
-	// instance's derivation capacity for ~2s per request. Per-comparison admission keeps peak
-	// memory per caller at one derivation and lets logins interleave — which is why
-	// the request context is passed straight through rather than wrapped in
-	// users.WithKDFSlot, and why it must stay that way.
 	var matched bool
 	_, matched, err = s.users.ConsumeRecoveryCode(r.Context(), u.ID, strings.TrimSpace(req.Code), s.recoveryCodeDigest)
-	switch {
-	case errors.Is(err, errKDFBusy), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		// Shed mid-check. No verdict was reached on this code, so refund the
-		// strike: otherwise a load spike burns an MFA budget the user needs to
-		// get back into their account.
-		s.mfaLockout.cancelAttempt(ch.UserID)
-		writeKDFBusy(w)
-		return
-	case err != nil:
+	if err != nil {
 		s.mfaLockout.cancelAttempt(ch.UserID)
 		http.Error(w, "failed to verify recovery code", http.StatusInternalServerError)
 		return

@@ -491,7 +491,7 @@ func TestNativeRegisterRejectsStaleSubscriberIndex(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("stale subscriber registration: status %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
-	if got := len(store.ListNativeDevices()); got != 0 {
+	if got := len(mustNativeDevices(t, store)); got != 0 {
 		t.Fatalf("stale subscriber registration created %d device(s)", got)
 	}
 }

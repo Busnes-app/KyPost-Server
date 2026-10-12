@@ -3,6 +3,7 @@ package classifier
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -25,8 +26,8 @@ func TestClassifierLogsFailureContextAtDefaultLevel(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewHTTPClient(srv.URL, "", "/api/generate", "", 0)
-	if _, err := c.Classify(context.Background(), []string{"work"}, "", "", "", ""); err == nil {
-		t.Fatal("credits exhaustion accepted")
+	if _, err := c.Classify(context.Background(), []string{"work"}, "", "", "", ""); !errors.Is(err, ErrCreditsExhausted) {
+		t.Fatalf("credits exhaustion: err = %v, want ErrCreditsExhausted", err)
 	}
 	for _, want := range []string{"AI credits exhausted", "OLLAMA WARMUP", "CLASSIFY FAILED"} {
 		if !strings.Contains(out.String(), want) {
@@ -75,6 +76,10 @@ func TestClassifierErrorResponsesNeverReachLogs(t *testing.T) {
 			}
 			if (kind == "classify-http" || kind == "pull-http") && !strings.Contains(out.String(), "status 503") {
 				t.Fatal("lost safe HTTP status")
+			}
+			var status *StatusError
+			if kind == "classify-http" && (!errors.As(err, &status) || status.StatusCode != 503) {
+				t.Fatalf("classify-http: err = %v, want StatusError 503", err)
 			}
 		})
 	}

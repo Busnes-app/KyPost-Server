@@ -53,7 +53,6 @@ func TestClassifyDoesNotLaunderOffAllowlistOutput(t *testing.T) {
 	defer srv.Close()
 
 	c := NewHTTPClient(srv.URL, "", "/api/generate", "", 5*time.Second)
-	defer c.Close()
 
 	got, err := c.Classify(context.Background(), []string{"Important", "Questionable"}, "s@example.com", "subj", "body", "")
 	var noLabel *NoAllowedLabelError
@@ -77,7 +76,6 @@ func TestClassifyAcceptsLenientAllowlistMatch(t *testing.T) {
 	defer srv.Close()
 
 	c := NewHTTPClient(srv.URL, "", "/api/generate", "", 5*time.Second)
-	defer c.Close()
 
 	got, err := c.Classify(context.Background(), []string{"Important", "Questionable"}, "", "", "body", "")
 	if err != nil {

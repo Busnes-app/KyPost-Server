@@ -10,19 +10,35 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/password"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-// TestDAVAppPasswordRehashesOnSuccessfulVerify plants a legacy scrypt hash in
-// the CardDAV app-password file, exactly as an account created before the
-// Argon2id migration still has on disk, and proves a successful Basic Auth
-// verify upgrades it in place: the account's next sync attempt should not pay
-// scrypt forever just because this file's format predates the switch.
+// staleArgon2Hash mints an Argon2id hash of secret below the current cost, and
+// raises hashParams for this test so it reads as stale: TestMain already runs
+// at the library's minimum, so nothing cheaper can be minted.
+func staleArgon2Hash(t *testing.T, secret string) string {
+	t.Helper()
+	stale := users.HashParams()
+	t.Cleanup(users.SetHashParamsForTest(password.Params{Memory: stale.Memory * 2, Time: stale.Time, Threads: stale.Threads}))
+	h, err := password.HashWith(secret, stale)
+	if err != nil {
+		t.Fatalf("HashWith: %v", err)
+	}
+	if !users.NeedsRehash(h) {
+		t.Fatal("fixture hash does not read as stale")
+	}
+	return h
+}
+
+// TestDAVAppPasswordRehashesOnSuccessfulVerify plants an Argon2id hash below
+// the current cost in the CardDAV app-password file and proves a successful
+// Basic Auth verify upgrades it in place.
 //
-// No t.Parallel(): this package writes users.hashCostN/hashParams from
-// TestMain and withProductionHashCost, both unsynchronized package variables —
-// see TestNoTestInThisPackageCallsParallel.
+// No t.Parallel(): this package writes users.hashParams from TestMain and
+// withProductionHashCost, an unsynchronized package variable — see
+// TestNoTestInThisPackageCallsParallel.
 func TestDAVAppPasswordRehashesOnSuccessfulVerify(t *testing.T) {
 	srv := newTestServer(t)
 	u, err := srv.users.Create(context.Background(), "dav-rehash", "dav-rehash-user-password", users.RoleUser)
@@ -31,13 +47,7 @@ func TestDAVAppPasswordRehashesOnSuccessfulVerify(t *testing.T) {
 	}
 
 	const appPassword = "app-specific-password-1234"
-	legacy, err := users.LegacyScryptHashForTest(context.Background(), appPassword)
-	if err != nil {
-		t.Fatalf("LegacyScryptHashForTest: %v", err)
-	}
-	if !strings.HasPrefix(legacy, "scrypt$") {
-		t.Fatalf("fixture hash = %q, want a scrypt$ prefix", legacy)
-	}
+	legacy := staleArgon2Hash(t, appPassword)
 	if err := srv.writeDAVPassword(u.ID, davPasswordFile{
 		Hash:      legacy,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -64,8 +74,8 @@ func TestDAVAppPasswordRehashesOnSuccessfulVerify(t *testing.T) {
 	if !exists {
 		t.Fatal("carddav password file disappeared after a successful verify")
 	}
-	if !strings.HasPrefix(f.Hash, "$argon2id$") {
-		t.Fatalf("stored hash = %q, want it upgraded to $argon2id$ after a successful verify", f.Hash)
+	if f.Hash == legacy {
+		t.Fatal("stored hash was not upgraded after a successful verify")
 	}
 	if users.NeedsRehash(f.Hash) {
 		t.Error("the upgraded hash still reports as needing a rehash")
@@ -100,10 +110,7 @@ func TestDAVAppPasswordRehashSkipsWhenRevocationRacesIt(t *testing.T) {
 	}
 
 	const appPassword = "app-specific-password-5678"
-	legacy, err := users.LegacyScryptHashForTest(context.Background(), appPassword)
-	if err != nil {
-		t.Fatalf("LegacyScryptHashForTest: %v", err)
-	}
+	legacy := staleArgon2Hash(t, appPassword)
 	if err := srv.writeDAVPassword(u.ID, davPasswordFile{
 		Hash:      legacy,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -152,10 +159,7 @@ func TestDAVAppPasswordWritersSerializeOnTheFileLock(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	const appPassword = "app-specific-password-9012"
-	legacy, err := users.LegacyScryptHashForTest(context.Background(), appPassword)
-	if err != nil {
-		t.Fatalf("LegacyScryptHashForTest: %v", err)
-	}
+	legacy := staleArgon2Hash(t, appPassword)
 	if err := srv.writeDAVPassword(u.ID, davPasswordFile{
 		Hash:      legacy,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -234,10 +238,7 @@ func TestDAVAppPasswordRehashSkipsWhenRegenerateRacesIt(t *testing.T) {
 	}
 
 	const oldAppPassword = "old-app-specific-password-111"
-	oldLegacy, err := users.LegacyScryptHashForTest(context.Background(), oldAppPassword)
-	if err != nil {
-		t.Fatalf("LegacyScryptHashForTest: %v", err)
-	}
+	oldLegacy := staleArgon2Hash(t, oldAppPassword)
 	if err := srv.writeDAVPassword(u.ID, davPasswordFile{
 		Hash:      oldLegacy,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),

@@ -23,7 +23,6 @@ import (
 type Paths struct {
 	ConfigFile string
 	StateDir   string
-	LogDir     string
 }
 
 // The container's data directories. These literals used to be copy-pasted as

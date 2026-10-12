@@ -45,11 +45,10 @@ func (c *phishStubClient) ApplyLabel(_ context.Context, _, label string) error {
 
 func newPhishTestPoller(t *testing.T) *Poller {
 	t.Helper()
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	return &Poller{log: logger, stateDir: t.TempDir()}
 }
 
@@ -125,7 +124,7 @@ func TestFlagAppImpersonationFlagsUnauthenticatedForgery(t *testing.T) {
 	if len(client.appliedLabels) != 1 || client.appliedLabels[0] != phishKeyword {
 		t.Fatalf("appliedLabels = %v, want exactly [%s]", client.appliedLabels, phishKeyword)
 	}
-	decisions := store.Decisions(10)
+	decisions := mustDecisions(t, store, 10)
 	if len(decisions) != 1 {
 		t.Fatalf("got %d decisions, want 1", len(decisions))
 	}
@@ -163,7 +162,7 @@ func TestFlagAppImpersonationDoesNotFlagMailAuthenticatedToTheOwnAddress(t *test
 	if len(client.appliedLabels) != 0 {
 		t.Fatalf("appliedLabels = %v, want none", client.appliedLabels)
 	}
-	if got := len(store.Decisions(10)); got != 0 {
+	if got := len(mustDecisions(t, store, 10)); got != 0 {
 		t.Fatalf("got %d decisions, want 0", got)
 	}
 }
@@ -250,7 +249,7 @@ func TestFlagAppImpersonationIsIdempotent(t *testing.T) {
 	if client.rawFetches != 0 {
 		t.Fatalf("rawFetches = %d, want 0", client.rawFetches)
 	}
-	if got := len(store.Decisions(10)); got != 0 {
+	if got := len(mustDecisions(t, store, 10)); got != 0 {
 		t.Fatalf("got %d decisions, want 0 -- the flag was already recorded", got)
 	}
 }
@@ -272,7 +271,7 @@ func TestFlagAppImpersonationRecordsTheDecisionWhenTheKeywordCannotBeApplied(t *
 	if !p.flagAppImpersonation(context.Background(), uc, msg, ownAccountAddress) {
 		t.Fatal("expected the message to still count as flagged")
 	}
-	decisions := store.Decisions(10)
+	decisions := mustDecisions(t, store, 10)
 	if len(decisions) != 1 {
 		t.Fatalf("got %d decisions, want 1 even though the keyword apply failed", len(decisions))
 	}
@@ -486,7 +485,7 @@ func TestFlagAppImpersonationClearsOwnAddressWithDisplayName(t *testing.T) {
 	if p.flagAppImpersonation(context.Background(), uc, msg, ownAccountAddress) {
 		t.Fatal("expected the account's own notice to clear the gate regardless of display name or case")
 	}
-	if got := len(store.Decisions(10)); got != 0 {
+	if got := len(mustDecisions(t, store, 10)); got != 0 {
 		t.Fatalf("got %d decisions, want 0", got)
 	}
 }
