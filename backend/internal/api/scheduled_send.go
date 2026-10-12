@@ -343,7 +343,9 @@ func (s *Server) sweepScheduledSends(ctx context.Context, now func() time.Time) 
 				if err != nil || !ok {
 					return
 				}
-				rowCtx, cancel := context.WithTimeout(ctx, scheduledRowTimeout)
+				// Shutdown stops new claims; a claimed row finishes under its own
+				// deadline, so a restart does not leave it uncertain.
+				rowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), scheduledRowTimeout)
 				s.runScheduled(rowCtx, key, row, now)
 				cancel()
 			}
