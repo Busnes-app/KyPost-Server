@@ -10,18 +10,12 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-// This package's tests are dominated by scrypt. At the production cost
-// (N=1<<17, 128 MiB and ~200 ms a derivation) they took over four minutes, and
-// again in CI under -race. Nothing here asserts how expensive a hash is, only
-// what the handlers do with one.
-//
-// The cost is lowered here, in TestMain, and nowhere else. hashCostN is a plain
-// package variable in internal/users, so writing it once before any test starts
-// is safe and writing it from inside a test is a data race.
-//
-// Argon2id gets the same treatment for the same reason: the library's minimum
-// band (8 MiB, t=1) is still real work, and this package mints one on nearly
-// every request that touches auth.
+// This package's tests are dominated by Argon2id: it mints or verifies one on
+// nearly every request that touches auth. Nothing here asserts how expensive a
+// hash is, only what the handlers do with one, so the cost is lowered to the
+// library's minimum band (8 MiB, t=1) here, in TestMain. hashParams is a plain
+// package variable in internal/users, so writing it with tests running
+// concurrently would be a data race — see TestNoTestInThisPackageCallsParallel.
 //
 // Production strength is pinned elsewhere: users' TestHashPasswordUsesCurrentCost
 // asserts the actual Argon2id cost parameters the written hash carries, in a
@@ -35,7 +29,6 @@ import (
 // exactly loginRateBurst sign-ins everywhere. See loginKDFBilledSeconds; the
 // bucket itself stays entirely real, so a test that drains it still gets a 429.
 func TestMain(m *testing.M) {
-	restore := users.SetHashCostForTest(users.MinVerifiableScryptN)
 	restoreParams := users.SetHashParamsForTest(password.Params{Memory: 8 * 1024, Time: 1, Threads: 1})
 	loginKDFBilledSeconds = func(time.Duration) float64 { return loginKDFReserveSeconds }
 	// The drive reserve (5 GiB or more) would tie imports to the host's free
@@ -43,12 +36,11 @@ func TestMain(m *testing.M) {
 	fsutil.DiskSpace = func(string) (uint64, uint64, error) { return 1 << 50, 1 << 50, nil }
 	code := m.Run()
 	restoreParams()
-	restore()
 	os.Exit(code)
 }
 
-// withProductionHashCost restores the real scrypt cost for one test. Use it for
-// the tests whose subject is the cost itself.
+// withProductionHashCost restores the real Argon2id cost for one test. Use it
+// for the tests whose subject is the cost itself.
 //
 // It is NOT how a budget-sensitive test buys headroom any more. That was the old
 // reason to reach for it — the budget billed measured time, so a cheap hash
@@ -60,15 +52,11 @@ func TestMain(m *testing.M) {
 // forgot to invoke the restore would leak the production cost into every test
 // that ran afterwards, with nothing failing to say so.
 //
-// users.ProductionScryptN rather than a literal 1<<17, so raising the real cost
-// cannot leave this helper restoring the old one.
-//
 // Safe only because no test in this package calls t.Parallel(), so nothing else
-// reads hashCostN while this writes it. TestNoTestInThisPackageCallsParallel
+// reads hashParams while this writes it. TestNoTestInThisPackageCallsParallel
 // enforces that.
 func withProductionHashCost(t *testing.T) {
 	t.Helper()
-	t.Cleanup(users.SetHashCostForTest(users.ProductionScryptN))
 	t.Cleanup(users.SetHashParamsForTest(password.DefaultParams()))
 }
 
@@ -100,7 +88,7 @@ func TestTestBinaryBillsExactlyOneReserve(t *testing.T) {
 	if got := loginKDFBilledSeconds(37 * time.Millisecond); got != loginKDFReserveSeconds {
 		t.Fatalf("the test binary billed %v for a derivation, want a flat %v; "+
 			"TestMain's stub is missing or wrong and every budget-sensitive test in this "+
-			"package is back to depending on how fast this machine runs scrypt",
+			"package is back to depending on how fast this machine runs the KDF",
 			got, loginKDFReserveSeconds)
 	}
 }

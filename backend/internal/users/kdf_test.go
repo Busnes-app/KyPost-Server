@@ -90,19 +90,12 @@ func withShortKDFQueueWait(t *testing.T, d time.Duration) {
 // So this does not test the semaphore. It tests the ENTRY POINTS: with every
 // slot held, each way this package can be asked to derive a key must report
 // ErrKDFBusy rather than proceeding. A new one that forgets the limit — which
-// is now only possible by calling scrypt.Key directly — fails here.
+// is now only possible by calling the KDF directly — fails here.
 func TestEveryDerivationEntryPointSharesTheOneLimit(t *testing.T) {
 	// A real hash to verify against, derived before the slots are taken.
 	hash, err := HashPassword(context.Background(), "correct-horse-battery-staple")
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
-	}
-	// ConsumeRecoveryCode's legacy branch only recognizes scrypt$ hashes (the
-	// format recovery codes were stored in before digests existed); it needs
-	// its own fixture in that exact format, not the Argon2id hash above.
-	legacyRecoveryHash, err := LegacyScryptHashForTest(context.Background(), "correct-horse-battery-staple")
-	if err != nil {
-		t.Fatalf("LegacyScryptHashForTest: %v", err)
 	}
 	legacyUser := User{ID: "u1", Username: "legacy", PasswordHash: hash}
 	derivedUser := User{
@@ -119,10 +112,6 @@ func TestEveryDerivationEntryPointSharesTheOneLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FirstAdmin: %v", err)
 	}
-	if _, err := store.ReplaceRecoveryCodes(bootstrap.ID, []string{legacyRecoveryHash}); err != nil {
-		t.Fatalf("ReplaceRecoveryCodes: %v", err)
-	}
-
 	withShortKDFQueueWait(t, 30*time.Millisecond)
 	release := withSaturatedKDF(t)
 	defer release()
@@ -148,10 +137,19 @@ func TestEveryDerivationEntryPointSharesTheOneLimit(t *testing.T) {
 			_, err := VerifySecretHash(ctx, hash, "anything")
 			return err
 		}},
-		// The tagged SHA-256 form takes no slot by design; a device paired
-		// before that format existed still holds a scrypt hash, and that
-		// branch must be admitted like any other derivation.
-		{"VerifyDeviceSecret (legacy scrypt hash)", func() error {
+		// A retired or missing hash still costs a dummy derivation (the
+		// unknown-user timing equalization), so it sheds too.
+		{"VerifySecretHash (retired scrypt hash)", func() error {
+			_, err := VerifySecretHash(ctx, retiredScryptHash, "anything")
+			return err
+		}},
+		{"VerifySecretHash (no hash)", func() error {
+			_, err := VerifySecretHash(ctx, "", "anything")
+			return err
+		}},
+		// The tagged SHA-256 form takes no slot by design; an untagged one
+		// goes through verifyHash and is admitted like any other derivation.
+		{"VerifyDeviceSecret (untagged hash)", func() error {
 			_, err := VerifyDeviceSecret(ctx, hash, "anything")
 			return err
 		}},
@@ -169,10 +167,6 @@ func TestEveryDerivationEntryPointSharesTheOneLimit(t *testing.T) {
 			// return that error instead of ever reaching the limit this test
 			// is about.
 			_, err := store.SetDerivedAuth(ctx, bootstrap.ID, strings.Repeat("ab", 32), "YWFhYWFhYWFhYWFhYWFhYQ==", MinLoginIterations, false)
-			return err
-		}},
-		{"Store.ConsumeRecoveryCode", func() error {
-			_, _, err := store.ConsumeRecoveryCode(ctx, bootstrap.ID, "correct-horse-battery-staple", testRecoveryDigest(t))
 			return err
 		}},
 		{"Store.RehashPassword", func() error {
@@ -339,5 +333,43 @@ func TestWithKDFSlotIsReentrant(t *testing.T) {
 	}
 	if got := derivations.Load(); got != 2 {
 		t.Fatalf("completed %d nested derivations, want 2", got)
+	}
+}
+
+// TestColdDummyCacheHonoursCancellation: a caller deriving the cold dummy must
+// not hold the cache mutex while queued for a slot, or every other caller
+// waits behind it with its cancellation ignored.
+func TestColdDummyCacheHonoursCancellation(t *testing.T) {
+	dummy.Lock()
+	dummy.hash = ""
+	dummy.Unlock()
+	withShortKDFQueueWait(t, 5*time.Second)
+	release := withSaturatedKDF(t)
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := VerifySecretHash(context.Background(), "", "anything")
+		first <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // let the first caller start the cold derivation
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	second := make(chan error, 1)
+	go func() {
+		_, err := VerifySecretHash(ctx, "", "anything")
+		second <- err
+	}()
+	select {
+	case err := <-second:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled verify: got %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled verify blocked behind the cold dummy derivation")
+	}
+	release()
+	if err := <-first; err != nil {
+		t.Fatalf("first verify: %v", err)
 	}
 }

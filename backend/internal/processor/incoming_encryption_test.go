@@ -179,7 +179,7 @@ func TestIncomingClassificationRunsOnceBeforeRecoverableReplacement(t *testing.T
 	if err != nil || len(entries) != 0 {
 		t.Fatal("plaintext original retained in cache")
 	}
-	decisions := uc.store.Decisions(10)
+	decisions := mustDecisions(t, uc.store, 10)
 	if len(decisions) != 1 || decisions[0].Label != "Bills" || decisions[0].Subject != pgpmail.OuterPlaceholderSubject {
 		t.Fatalf("decisions: %v", decisions)
 	}
@@ -205,7 +205,7 @@ func TestIncomingEncryptionPhishingAuditOmitsSubject(t *testing.T) {
 	if !p.flagAppImpersonation(context.Background(), uc, msg, "alice@example.com") {
 		t.Fatal("message not flagged")
 	}
-	decisions := uc.store.Decisions(10)
+	decisions := mustDecisions(t, uc.store, 10)
 	if len(decisions) != 1 || decisions[0].Subject != pgpmail.OuterPlaceholderSubject {
 		t.Fatalf("audit retained plaintext: %v", decisions)
 	}
@@ -310,7 +310,7 @@ func TestIncomingPermanentSizeFailureIsBoundedWithoutClassification(t *testing.T
 		t.Fatal("poison used quota or valid sibling was not classified exactly once")
 	}
 	found := false
-	for _, d := range uc.store.Decisions(10) {
+	for _, d := range mustDecisions(t, uc.store, 10) {
 		if d.MessageID == "7" {
 			if d.Subject != pgpmail.OuterPlaceholderSubject {
 				t.Fatal("failure audit leaked subject")
@@ -432,7 +432,7 @@ func TestIncomingLegacyUnsafeJobFinishesWithoutExecutingUnsafeActions(t *testing
 	if err != nil || u.IncomingEncryptionPending {
 		t.Fatal("unsafe old job kept key locked")
 	}
-	decisions := uc.store.Decisions(10)
+	decisions := mustDecisions(t, uc.store, 10)
 	if len(decisions) != 1 || decisions[0].Status != "failed" || !strings.Contains(decisions[0].Detail, "invalid saved rule") {
 		t.Fatalf("recovery not reported: %v", decisions)
 	}

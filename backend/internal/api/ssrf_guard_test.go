@@ -2,11 +2,14 @@ package api
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestSameOriginRejectsCrossOriginCardDAVRedirects(t *testing.T) {
@@ -68,6 +71,31 @@ func TestSSRFSafeHTTPClientRefusesLoopbackAtDialTime(t *testing.T) {
 	}
 	if _, err := client.Do(req); err == nil {
 		t.Fatal("Do() to a loopback address should be refused by ssrfSafeDialContext")
+	}
+}
+
+// Callers build a fresh client per request; a pooled idle conn per call would
+// leak its read/write goroutines forever.
+func TestSSRFSafeHTTPClientLeaksNoConnections(t *testing.T) {
+	allowLoopbackOutboundForTest(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+
+	base := runtime.NumGoroutine()
+	for range 30 {
+		resp, err := newSSRFSafeHTTPClient(2 * time.Second).Get(srv.URL)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.NumGoroutine() > base+10 {
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutines grew from %d to %d over 30 requests", base, runtime.NumGoroutine())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

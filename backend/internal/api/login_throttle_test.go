@@ -57,17 +57,15 @@ func newTestServerDefaultCaptcha(t *testing.T) *Server {
 	t.Helper()
 	t.Setenv("CAPTCHA_PROVIDER", "")
 
-	logDir := t.TempDir()
 	stateDir := t.TempDir()
 	configDir := t.TempDir()
 	// Keep the generated PoW HMAC key inside the test's own tempdir.
 	t.Setenv("SECRET_DIR", t.TempDir())
 
-	logger, err := logging.New(logDir)
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	usersStore, err := users.LoadOrMigrate(context.Background(), configDir, filepath.Join(configDir, "admin.env"))
 	if err != nil {

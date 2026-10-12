@@ -25,7 +25,7 @@ import (
 )
 
 // MaxConcurrentKDF bounds simultaneous memory-hard derivations process-wide.
-// Each Argon2id derivation holds 64 MiB (legacy scrypt verifies hold 128 MiB),
+// Each Argon2id derivation holds 64 MiB,
 // so this caps peak KDF memory at roughly MaxConcurrentKDF times that,
 // regardless of how many callers arrive at once. The per-IP lockouts bound
 // how many attempts an address may make; nothing bounded how many could be in
@@ -57,7 +57,7 @@ var ErrKDFBusy = errors.New("users: no key-derivation slot available")
 // KDFMaxQueueWait bounds how long a caller may wait for a derivation slot. A
 // var so tests can shrink it; production always uses the value below.
 //
-// Capping concurrent derivations caps scrypt's memory, but an unbounded queue
+// Capping concurrent derivations caps KDF memory, but an unbounded queue
 // replaces that with a backlog of goroutines and a drain time set by the
 // attacker: four slots at ~200 ms makes two thousand queued logins a hundred
 // seconds in which nobody can sign in, change a password, or reach CardDAV,

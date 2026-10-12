@@ -1,5 +1,7 @@
 package mailcache
 
+import "github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+
 // SyncContactKeyGeneration discards every cached signature verdict that was
 // computed under a different contacts-store key generation.
 //
@@ -18,6 +20,11 @@ package mailcache
 func (s *Store) SyncContactKeyGeneration(gen int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	release, err := fsutil.LockFile(s.path())
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := s.refreshFromDiskLocked(); err != nil {
 		return err
 	}

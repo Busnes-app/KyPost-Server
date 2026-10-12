@@ -1,9 +1,7 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"regexp"
@@ -36,11 +34,9 @@ import (
 // boundary without being one.
 
 // totpCodeShape distinguishes a TOTP code from a recovery code by shape, so a
-// mistyped six-digit code is never run through ConsumeRecoveryCode. That call
-// still derives scrypt for every legacy-format code an account holds (digests
-// cost one keyed HMAC), and an authenticated caller should not be able to spend
-// that by fat-fingering a digit. Recovery codes are xxxx-xxxx-xxxx (see mfa.GenerateRecoveryCodes) and
-// can never collide with this.
+// mistyped six-digit code is never run through ConsumeRecoveryCode and never
+// spends a recovery-code attempt. Recovery codes are xxxx-xxxx-xxxx (see
+// mfa.GenerateRecoveryCodes) and can never collide with this.
 var totpCodeShape = regexp.MustCompile(`^[0-9]{6}$`)
 
 func (s *Server) handleAuthStepUp(w http.ResponseWriter, r *http.Request) {
@@ -167,19 +163,8 @@ func (s *Server) confirmSecondFactor(w http.ResponseWriter, r *http.Request, u u
 		return true
 	}
 
-	// A KDF slot per comparison rather than one around the whole call, for the
-	// reason spelled out on handleMFARecoveryCode: against an account whose
-	// codes predate digests, a miss is up to recoveryCodeCount scrypt derivations
-	// at 128 MiB each, and holding one slot across all of them parks a large
-	// share of the instance's derivation capacity. The request context passes straight through.
 	_, matched, err := s.users.ConsumeRecoveryCode(r.Context(), u.ID, code, s.recoveryCodeDigest)
-	switch {
-	case errors.Is(err, errKDFBusy), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		// Shed mid-check: no verdict was reached, so the strike goes back.
-		s.mfaLockout.cancelAttempt(strike)
-		writeKDFBusy(w)
-		return false
-	case err != nil:
+	if err != nil {
 		s.mfaLockout.cancelAttempt(strike)
 		http.Error(w, "failed to verify recovery code", http.StatusInternalServerError)
 		return false

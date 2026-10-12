@@ -30,7 +30,9 @@ type IncomingSource struct {
 	Date        time.Time
 }
 
-var uidValidityResponse = regexp.MustCompile(`(?i)UIDVALIDITY\s+(\d+)`)
+// Matches UIDVALIDITY inside the STATUS attribute list, which ends the line, so
+// a mailbox name containing "UIDVALIDITY n" cannot supply the value.
+var uidValidityResponse = regexp.MustCompile(`(?im)\([^()]*\bUIDVALIDITY\s+(\d+)[^()]*\)\s*$`)
 
 func incomingMailbox(d *goimap.Dialer) (uint64, error) {
 	// No reconnect/retry: a changed UID namespace must never reuse a saved UID.

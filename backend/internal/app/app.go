@@ -103,7 +103,6 @@ func Run(args []string) error {
 	paths := config.Paths{
 		ConfigFile: filepath.Join(config.ConfigDir(), "config.yaml"),
 		StateDir:   config.StateDir(),
-		LogDir:     config.LogDir(),
 	}
 
 	// Capture legacy notification prefs before LoadOrInit rewrites
@@ -130,11 +129,10 @@ func Run(args []string) error {
 		}
 	}
 
-	logger, err := logging.New(paths.LogDir)
+	logger, err := logging.New()
 	if err != nil {
 		return fmt.Errorf("create logger: %w", err)
 	}
-	defer logger.Close()
 
 	configDir := config.ConfigDir()
 	usersStore, store, err := openStores(logger, configDir, paths.StateDir, legacyPrefs, legacyPrefsOK)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/pbkdf2"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -11,8 +12,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"golang.org/x/crypto/pbkdf2"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -312,7 +311,10 @@ func deriveAuthSecretForTest(t *testing.T, password, saltB64 string, iterations 
 	if err != nil {
 		t.Fatalf("decode salt: %v", err)
 	}
-	stretch := pbkdf2.Key([]byte(password), salt, iterations, 32, sha256.New)
+	stretch, err := pbkdf2.Key(sha256.New, password, salt, iterations, 32)
+	if err != nil {
+		t.Fatalf("pbkdf2: %v", err)
+	}
 	// HKDF-Expand with an empty salt and the auth label, one 32-byte block.
 	mac := hmac.New(sha256.New, hkdfExtract(nil, stretch))
 	mac.Write([]byte("kypost/auth/v1"))

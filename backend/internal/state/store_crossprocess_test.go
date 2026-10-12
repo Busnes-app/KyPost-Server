@@ -30,7 +30,7 @@ func TestDecisionsSeesAnotherProcessesAppend(t *testing.T) {
 	}
 
 	// The API reads once first, which is what populated (and froze) its slice.
-	if got := len(api.Decisions(50)); got != 0 {
+	if got := len(mustDecisions(t, api, 50)); got != 0 {
 		t.Fatalf("setup: Decisions() = %d entries, want 0", got)
 	}
 
@@ -38,7 +38,7 @@ func TestDecisionsSeesAnotherProcessesAppend(t *testing.T) {
 		t.Fatalf("AddDecision: %v", err)
 	}
 
-	got := api.Decisions(50)
+	got := mustDecisions(t, api, 50)
 	if len(got) != 1 {
 		t.Fatalf("Decisions() = %d entries, want 1 — the API is serving a stale in-memory snapshot", len(got))
 	}
@@ -87,7 +87,7 @@ func TestDecisionsReturnsNewestFirst(t *testing.T) {
 		}
 	}
 
-	all := s.Decisions(0)
+	all := mustDecisions(t, s, 0)
 	if len(all) != 3 {
 		t.Fatalf("Decisions(0) = %d, want 3", len(all))
 	}
@@ -97,7 +97,7 @@ func TestDecisionsReturnsNewestFirst(t *testing.T) {
 		}
 	}
 
-	limited := s.Decisions(2)
+	limited := mustDecisions(t, s, 2)
 	if len(limited) != 2 || limited[0].MessageID != "newest" || limited[1].MessageID != "middle" {
 		t.Fatalf("Decisions(2) = %+v, want the two newest, newest first", limited)
 	}
@@ -182,7 +182,7 @@ func TestConcurrentAddDecisionLosesNothing(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := len(api.Decisions(0)); got != 2*perWriter {
+	if got := len(mustDecisions(t, api, 0)); got != 2*perWriter {
 		t.Fatalf("Decisions() = %d, want %d — concurrent appends were lost", got, 2*perWriter)
 	}
 }

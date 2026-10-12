@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	logger, err := logging.New("")
+	logger, err := logging.New()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, `{"app":"kypost","level":"ERROR","message":"invalid KY_LOG_LEVEL; use debug, info, warn or error"}`)
 		os.Exit(1)

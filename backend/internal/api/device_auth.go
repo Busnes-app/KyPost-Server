@@ -132,8 +132,8 @@ func (s *Server) deviceAuthSnapshot(r *http.Request) (userID string, device stat
 	if !allowed {
 		return "", state.NativeDevice{}, 0, false, wait
 	}
-	// A legacy (pre-HashDeviceSecret) device secret still verifies through
-	// scrypt, so this can shed. An error means the secret was never COMPARED —
+	// An untagged (pre-HashDeviceSecret) device secret still costs a derivation
+	// (see users.verifyHash), so this can shed. An error means the secret was never COMPARED —
 	// users.ErrKDFBusy, or this request's context going away — while a stored
 	// hash that is malformed rather than merely wrong comes back (false, nil)
 	// and is an ordinary credential failure. So a shed refunds its strike and

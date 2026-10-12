@@ -57,7 +57,7 @@ func TestSuiteJSONLogger(t *testing.T) {
 		t.Fatalf("%v", line)
 	}
 	t.Setenv("KY_LOG_LEVEL", "invalid")
-	if _, err := New(""); err == nil {
+	if _, err := New(); err == nil {
 		t.Fatal("invalid level accepted")
 	}
 }

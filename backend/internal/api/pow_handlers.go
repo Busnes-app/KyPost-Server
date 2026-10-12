@@ -163,7 +163,7 @@ func (s *Server) StartPoWSweeper(ctx context.Context) {
 // provider, defaulting to the self-hosted proof-of-work.
 //
 // UNSET NOW MEANS pow, NOT off. The login endpoint is unauthenticated and runs
-// scrypt on every attempt by design (equalizeLoginTiming), so leaving it
+// Argon2id on every attempt by design (equalizeLoginTiming), so leaving it
 // entirely ungated by default made the default deployment an unauthenticated
 // CPU amplifier. Proof-of-work is the only provider that can be on by default:
 // it is self-hosted, needs no account with anyone, no site key, no secret key,
