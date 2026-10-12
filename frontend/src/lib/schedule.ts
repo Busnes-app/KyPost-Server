@@ -2,11 +2,6 @@
 const MIN_LEAD_MS = 60_000;
 const MAX_LEAD_MS = 366 * 24 * 60 * 60_000;
 
-/** A Date as a datetime-local value, in local time to the minute. */
-export function localDateTimeValue(d: Date): string {
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-}
-
 /** Whether the server will accept at as a send time, given now. */
 export function validSendAt(at: Date, now: Date): boolean {
   const lead = at.getTime() - now.getTime();

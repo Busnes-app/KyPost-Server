@@ -1,8 +1,5 @@
 // Snooze wake-time presets and the list's sort key for mail back from snooze.
 
-/** The datetime-local form of now, for an input's min. */
-export const localNow = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-
 const localDay = (from: Date, days: number, hour: number) =>
   new Date(from.getFullYear(), from.getMonth(), from.getDate() + days, hour);
 

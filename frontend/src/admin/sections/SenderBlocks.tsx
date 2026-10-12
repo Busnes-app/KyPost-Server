@@ -5,7 +5,7 @@ import { deleteJSON, getJSON, HttpError, postJSON, toErrorMessage } from "../../
 import { blockReasons, readSenderBlockAdded, readSenderBlockRemoved, readSenderBlocks, type BlockEvidence, type BlockKind, type BlockReason, type SenderBlock } from "../../api/nativeMail";
 import { withSSOStepUp } from "../../api/stepup";
 import { visible } from "../../lib/visibleText";
-import { localNow } from "../../lib/snooze";
+import { localDateTimeValue } from "../../lib/localDateTime";
 
 const time = (ms: number) => new Date(ms).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
 const domainOf = (address: string) => address.slice(address.lastIndexOf("@") + 1);
@@ -215,7 +215,7 @@ function SenderBlocksForm() {
         <option value="address">address</option><option value="domain">domain</option>
       </select></label>
       <label>Sender {kind}<input value={value} onChange={e => setValue(e.target.value)} autoComplete="off" spellCheck={false} /></label>
-      <label>Expires (optional; empty means no expiry)<input type="datetime-local" min={localNow()} value={expiry} onChange={e => setExpiry(e.target.value)} /></label>
+      <label>Expires (optional; empty means no expiry)<input type="datetime-local" min={localDateTimeValue(new Date())} value={expiry} onChange={e => setExpiry(e.target.value)} /></label>
       <label>Reason<select value={reason} onChange={e => setReason(blockReasons.find(r => r === e.target.value) ?? "other")}>
         {blockReasons.map(r => <option key={r} value={r}>{r}</option>)}
       </select></label>
