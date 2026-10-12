@@ -325,6 +325,11 @@ func (s *Server) StartScheduledSendSweeper(ctx context.Context) {
 // are read when each row is worked, never from the sweep's start, so a long
 // sweep cannot send past a row's deadline.
 func (s *Server) sweepScheduledSends(ctx context.Context, now func() time.Time) {
+	// An idle server never touches the key: only scheduling creates it.
+	if pending, err := s.globalStore.HasScheduledWork(ctx); err != nil || !pending {
+		_ = s.globalStore.PruneScheduledSends(ctx, now().Add(-scheduledRetention).Unix())
+		return
+	}
 	key, err := s.scheduledSendKey()
 	if err != nil {
 		s.logger.Error("scheduled send key unavailable", "error", err.Error())

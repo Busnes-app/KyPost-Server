@@ -92,6 +92,13 @@ func (s *Store) InterruptScheduledSends(ctx context.Context) error {
 
 const ScheduledInterrupted = "the server stopped while sending; check with your recipients before sending again"
 
+// HasScheduledWork reports whether any row is waiting to send or to return.
+func (s *Store) HasScheduledWork(ctx context.Context) (bool, error) {
+	var pending bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM scheduled_sends WHERE status IN ('scheduled','returning'))`).Scan(&pending)
+	return pending, err
+}
+
 // ScheduledReturns lists returning rows whose draft is due to be saved, the
 // earliest per user, so one account's unreachable mailbox cannot fill a sweep.
 func (s *Store) ScheduledReturns(ctx context.Context, now int64) ([]ScheduledSend, error) {

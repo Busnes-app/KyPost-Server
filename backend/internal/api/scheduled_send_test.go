@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -583,5 +585,21 @@ func TestScheduledReturnGivesUpAfterAWeek(t *testing.T) {
 	}
 	if dials, _ := f.smtp.counts(); dials != 0 {
 		t.Fatalf("%d SMTP connections for canceled mail", dials)
+	}
+}
+
+// An idle server never creates or reads the key; only scheduling creates it.
+// (The sweeper goroutine is not awaited on shutdown, so a write here raced
+// test cleanup.)
+func TestScheduledSweepIdleLeavesKeyAlone(t *testing.T) {
+	f := newScheduledFixture(t, "250 OK")
+	keyPath := filepath.Join(config.SecretDir(), "scheduled-send.key")
+	f.srv.sweepScheduledSends(context.Background(), time.Now)
+	if _, err := os.Stat(keyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("idle sweep touched %s: %v", keyPath, err)
+	}
+	f.schedule(t, sendTime(), nil)
+	if _, err := os.Stat(keyPath); err != nil {
+		t.Fatalf("scheduling did not create the key: %v", err)
 	}
 }
