@@ -67,6 +67,10 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 		qualifyNativeFollowOnRecovery(t, s, u.ID)
 		return
 	}
+	if mode == "scheduled" {
+		qualifyScheduledNativeDelivery(t, s, u.ID, root)
+		return
+	}
 	path := "/api/mail/send"
 	body := []byte(`{"to":"visible@outside.test","bcc":"hidden@outside.test","subject":"native — café ✉","body":"native compose"}`)
 	var sender, recipient *pgpmail.Identity
@@ -300,7 +304,7 @@ func TestNativeOutboundAPIActualTLSAndPGP(t *testing.T) {
 	certServer := httptest.NewTLSServer(nil)
 	certificate := certServer.TLS.Certificates[0]
 	certServer.Close()
-	modes := []string{"plain", "pgp", "device-plain", "device-pgp", "lost-ack", "refused", "recovery"}
+	modes := []string{"plain", "pgp", "device-plain", "device-pgp", "lost-ack", "refused", "recovery", "scheduled"}
 	if os.Getenv("KYPOST_NATIVE_ANDROID_TEST_SERIAL") != "" {
 		modes = append(modes, "device-android")
 	}
