@@ -502,16 +502,20 @@ func importFailure(err error) string {
 	return "the import failed; try again (messages already imported are skipped as duplicates)"
 }
 
+// finishImport audits before the final state is visible, so whoever sees the
+// job finished also sees its record.
 func (s *Server) finishImport(job *importJob, state, reason string) {
+	s.importMu.Lock()
+	done := *job
+	s.importMu.Unlock()
+	s.auditImport(done, state, reason)
 	s.importMu.Lock()
 	job.State, job.Error = state, reason
 	if job.cancel != nil {
 		job.cancel()
 		job.cancel = nil
 	}
-	done := *job
 	s.importMu.Unlock()
-	s.auditImport(done, state, reason)
 }
 
 func (s *Server) handleImportCancel(w http.ResponseWriter, r *http.Request) {
