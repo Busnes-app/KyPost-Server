@@ -77,6 +77,11 @@ func (p *Poller) notifyWoken(ctx context.Context, uc userCtx, uid int) {
 		return
 	}
 	msg := imapadapter.Message{ID: ov.MessageID, Subject: ov.Subject, Sender: ov.Sender, SentTo: ov.SentTo, AtUTC: ov.AtUTC, Keywords: ov.Keywords}
+	// Encrypted mail keeps its metadata out of cleartext push. Fail closed:
+	// content we could not inspect is treated as encrypted.
+	contents, err := uc.mail.GetMessageBodies(ctx, "INBOX", []int{uid})
+	c, ok := contents[uid]
+	msg.PGPEncrypted = err != nil || !ok || c.TooLarge || c.ParseError || c.PGPEncrypted || c.PGPEncryptedPayload != ""
 	p.maybeSendPushNotification(uc, msg, "", ov.Keywords)
 	p.maybeSendNativePushNotification(uc, msg, "", ov.Keywords)
 }

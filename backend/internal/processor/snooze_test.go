@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,17 +65,22 @@ func newSnoozeFixture(t *testing.T) snoozeFixture {
 func (f snoozeFixture) snooze(t *testing.T, subject string, wakeAt int64) (string, int) {
 	t.Helper()
 	msg := mailmsg.Message{From: "sender@outside.test", To: []string{"one@example.test"}, Subject: subject, Body: "b"}.Stamp()
-	id, err := f.box.Import(context.Background(), mailbox.Receipt{Gateway: "test", Delivery: subject, Sender: "sender@outside.test", Recipients: []mailbox.Recipient{{Address: "one@example.test", Generation: 1}}}, bytes.NewReader(msg.Build()))
+	return msg.MessageID, f.snoozeRaw(t, subject, msg.MessageID, msg.Build(), wakeAt)
+}
+
+func (f snoozeFixture) snoozeRaw(t *testing.T, delivery, messageID string, raw []byte, wakeAt int64) int {
+	t.Helper()
+	id, err := f.box.Import(context.Background(), mailbox.Receipt{Gateway: "test", Delivery: delivery, Sender: "sender@outside.test", Recipients: []mailbox.Recipient{{Address: "one@example.test", Generation: 1}}}, bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.st.Snooze(msg.MessageID, wakeAt); err != nil {
+	if err := f.st.Snooze(messageID, wakeAt); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.uc.mail.ApplyInboxAction(context.Background(), strconv.FormatInt(id, 10), "move", "INBOX", imapadapter.SnoozedFolder); err != nil {
 		t.Fatal(err)
 	}
-	return msg.MessageID, int(id)
+	return int(id)
 }
 
 func TestWakeSnoozedReturnsDueMailPinnedAndNotified(t *testing.T) {
@@ -129,4 +135,46 @@ func mustSnoozes(t *testing.T, st *state.Store) []state.Snooze {
 		t.Fatal(err)
 	}
 	return z
+}
+
+// A wake push goes backend -> relay -> FCM/APNs in cleartext, so encrypted
+// mail must stay generic even with content previews on, as on arrival.
+func TestWakeSnoozedKeepsEncryptedMailOutOfPush(t *testing.T) {
+	f := newSnoozeFixture(t)
+	f.uc.settings.ContentPreview = true
+	raw := []byte("From: sender@outside.test\r\nTo: one@example.test\r\nSubject: secret-outer-subject\r\n" +
+		"Message-ID: <enc@outside.test>\r\nDate: Mon, 12 Oct 2026 09:00:00 +0000\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: application/pgp-encrypted\r\n\r\nVersion: 1\r\n" +
+		"--b\r\nContent-Type: application/octet-stream\r\n\r\n-----BEGIN PGP MESSAGE-----\r\n\r\nwcBMA0Zx\r\n=AAAA\r\n-----END PGP MESSAGE-----\r\n" +
+		"--b--\r\n")
+	f.snoozeRaw(t, "enc", "<enc@outside.test>", raw, time.Now().Unix()-1)
+
+	f.p.wakeSnoozed(context.Background(), f.uc)
+
+	queued, _, err := f.st.PullNotificationsAfterStrict("one", 0)
+	if err != nil || len(queued) != 1 {
+		t.Fatalf("notifications = %d, %v; want 1", len(queued), err)
+	}
+	n := queued[0]
+	if n.Title != "KyPost" || n.Body != "You have a new email." {
+		t.Fatalf("encrypted wake push = %q / %q; want the generic text", n.Title, n.Body)
+	}
+	for k, v := range n.Data {
+		if strings.Contains(v, "secret-outer-subject") || strings.Contains(v, "sender@outside.test") || k == "Keywords" {
+			t.Fatalf("encrypted wake push leaked %s=%q", k, v)
+		}
+	}
+}
+
+// The privacy check must not turn every wake generic: plain mail still previews.
+func TestWakeSnoozedPreviewsPlainMail(t *testing.T) {
+	f := newSnoozeFixture(t)
+	f.uc.settings.ContentPreview = true
+	f.snooze(t, "plain-subject", time.Now().Unix()-1)
+	f.p.wakeSnoozed(context.Background(), f.uc)
+	queued, _, err := f.st.PullNotificationsAfterStrict("one", 0)
+	if err != nil || len(queued) != 1 || queued[0].Body != "plain-subject" {
+		t.Fatalf("plain wake push = %+v, %v; want the subject as body", queued, err)
+	}
 }
