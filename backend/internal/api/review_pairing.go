@@ -31,7 +31,8 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 
 	requestedUsername := strings.TrimSpace(req.Username)
 	lockKey := clampLockoutKeyComponent(users.NormalizeUsername(requestedUsername)) + "\x00" + lockoutKeyForIP(clientIP(r))
-	if allowed, retryAfter := s.loginLockout.tryAttempt(lockKey); !allowed {
+	allowed, retryAfter, strike := s.loginLockout.tryAttempt(lockKey)
+	if !allowed {
 		w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
 		http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 		return
@@ -48,7 +49,7 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !u.Active || !reviewUsernameMatches(reviewPattern, requestedUsername) {
 		// Keep the configured-account failure indistinguishable from a bad password.
 		if err := s.equalizeLoginTiming(r.Context(), req.Password); err != nil {
-			s.loginLockout.cancelAttempt(lockKey)
+			s.loginLockout.cancelAttempt(strike)
 			writeKDFBusy(w)
 			return
 		}
@@ -60,7 +61,7 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 	if u.UsesDerivedAuth() {
 		credential, err = users.DeriveAuthSecret(req.Password, u.LoginSalt, u.LoginIterations)
 		if err != nil {
-			s.loginLockout.cancelAttempt(lockKey)
+			s.loginLockout.cancelAttempt(strike)
 			s.settleCredentialTiming(r.Context(), credentialStart)
 			http.Error(w, "review account is not configured correctly", http.StatusServiceUnavailable)
 			return
@@ -68,7 +69,7 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 	}
 	verified, verifyErr := verifyAccountCredential(r.Context(), u, req.Password, credential)
 	if verifyErr != nil {
-		s.loginLockout.cancelAttempt(lockKey)
+		s.loginLockout.cancelAttempt(strike)
 		writeKDFBusy(w)
 		return
 	}
@@ -80,7 +81,7 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u.MustChangePassword || u.TOTPEnabled || u.PushMFAEnabled {
-		s.loginLockout.cancelAttempt(lockKey)
+		s.loginLockout.cancelAttempt(strike)
 		http.Error(w, "review account requires an interactive sign-in", http.StatusForbidden)
 		return
 	}

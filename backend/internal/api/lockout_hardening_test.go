@@ -43,11 +43,11 @@ func TestLoginLockoutScopedToClientIP(t *testing.T) {
 
 func TestFailureLockoutCustomThreshold(t *testing.T) {
 	l := newFailureLockout(2, time.Minute)
-	_, _ = l.tryAttempt("key")
+	_, _, _ = l.tryAttempt("key")
 	if ok, _ := l.lockedNow("key"); !ok {
 		t.Fatal("one failure below a threshold of two must not lock")
 	}
-	_, _ = l.tryAttempt("key")
+	_, _, _ = l.tryAttempt("key")
 	ok, retryAfter := l.lockedNow("key")
 	if ok {
 		t.Fatal("expected lockout after reaching the custom threshold")
@@ -183,11 +183,11 @@ func TestSaturatedTableStillServesKnownKeys(t *testing.T) {
 		l.tryAttempt(fmt.Sprintf("filler-%d", i))
 	}
 
-	if ok, _ := l.tryAttempt(known); !ok {
+	if ok, _, _ := l.tryAttempt(known); !ok {
 		t.Error("a saturated table refused a key it was already tracking; a flood would " +
 			"lock out every user mid-accumulation")
 	}
-	if ok, _ := l.tryAttempt("brand-new-key"); ok {
+	if ok, _, _ := l.tryAttempt("brand-new-key"); ok {
 		t.Error("a saturated table admitted a brand-new key, so the cap does not hold")
 	}
 }
@@ -223,11 +223,11 @@ func TestCrowdedTableDoesNotErasePartialStrikes(t *testing.T) {
 	// with the table crowded the whole time.
 	const victim = "real-victim\x00198.51.100.7"
 	for i := range 3 {
-		if ok, _ := l.tryAttempt(victim); !ok {
+		if ok, _, _ := l.tryAttempt(victim); !ok {
 			t.Fatalf("attempt %d was refused before the budget was spent", i+1)
 		}
 	}
-	ok, retryAfter := l.tryAttempt(victim)
+	ok, retryAfter, _ := l.tryAttempt(victim)
 	if ok {
 		t.Fatal("the 4th attempt was allowed: a crowded table erased the victim's partial " +
 			"strikes, so the lockout never engaged — this is a lockout bypass by table flooding")
@@ -244,7 +244,7 @@ func TestStalePartialStrikesAreForgiven(t *testing.T) {
 	l := newFailureLockout(3, 15*time.Minute)
 	const key = "occasional-typo\x00198.51.100.9"
 
-	if ok, _ := l.tryAttempt(key); !ok {
+	if ok, _, _ := l.tryAttempt(key); !ok {
 		t.Fatal("first attempt refused")
 	}
 	// Backdate the entry past the cooldown window.
@@ -255,11 +255,11 @@ func TestStalePartialStrikesAreForgiven(t *testing.T) {
 	// Three more attempts must all be allowed: the stale strike is forgiven, so
 	// this is a fresh budget of 3, not 2.
 	for i := range 3 {
-		if ok, _ := l.tryAttempt(key); !ok {
+		if ok, _, _ := l.tryAttempt(key); !ok {
 			t.Fatalf("attempt %d refused; a stale partial strike was carried forward", i+1)
 		}
 	}
-	if ok, _ := l.tryAttempt(key); ok {
+	if ok, _, _ := l.tryAttempt(key); ok {
 		t.Error("the budget did not apply after the reset")
 	}
 }

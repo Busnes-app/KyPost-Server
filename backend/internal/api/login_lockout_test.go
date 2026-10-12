@@ -13,7 +13,7 @@ func TestLoginLockoutLocksAfterThreeFailures(t *testing.T) {
 		if ok, _ := l.lockedNow(user); !ok {
 			t.Fatalf("attempt %d: expected allowed before lockout threshold", i+1)
 		}
-		_, _ = l.tryAttempt(user)
+		_, _, _ = l.tryAttempt(user)
 	}
 
 	ok, retryAfter := l.lockedNow(user)
@@ -28,7 +28,7 @@ func TestLoginLockoutLocksAfterThreeFailures(t *testing.T) {
 func TestLoginLockoutIsPerUsername(t *testing.T) {
 	l := newLoginLockout()
 	for i := 0; i < loginMaxFailures; i++ {
-		_, _ = l.tryAttempt("alice")
+		_, _, _ = l.tryAttempt("alice")
 	}
 	if ok, _ := l.lockedNow("alice"); ok {
 		t.Fatal("alice should be locked out")
@@ -41,14 +41,14 @@ func TestLoginLockoutIsPerUsername(t *testing.T) {
 func TestLoginLockoutSuccessClearsHistory(t *testing.T) {
 	l := newLoginLockout()
 	const user = "carol"
-	_, _ = l.tryAttempt(user)
-	_, _ = l.tryAttempt(user)
+	_, _, _ = l.tryAttempt(user)
+	_, _, _ = l.tryAttempt(user)
 	l.recordSuccess(user)
 
 	// A prior success must reset the strike count: two more failures alone
 	// (not three) must not trip the lockout.
-	_, _ = l.tryAttempt(user)
-	_, _ = l.tryAttempt(user)
+	_, _, _ = l.tryAttempt(user)
+	_, _, _ = l.tryAttempt(user)
 	if ok, _ := l.lockedNow(user); !ok {
 		t.Fatal("strike count should have been reset by recordSuccess")
 	}
@@ -58,7 +58,7 @@ func TestLoginLockoutExpiresAndResets(t *testing.T) {
 	l := newLoginLockout()
 	const user = "dave"
 	for i := 0; i < loginMaxFailures; i++ {
-		_, _ = l.tryAttempt(user)
+		_, _, _ = l.tryAttempt(user)
 	}
 	if ok, _ := l.lockedNow(user); ok {
 		t.Fatal("expected lockout")
@@ -76,7 +76,7 @@ func TestLoginLockoutExpiresAndResets(t *testing.T) {
 
 	// And the strike count must have reset, not just the lockout: one more
 	// failure alone must not immediately relock it.
-	_, _ = l.tryAttempt(user)
+	_, _, _ = l.tryAttempt(user)
 	if ok, _ := l.lockedNow(user); !ok {
 		t.Fatal("a single failure after an expired lockout must not relock immediately")
 	}

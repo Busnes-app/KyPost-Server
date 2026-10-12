@@ -128,3 +128,52 @@ func TestLoginIPLockoutWindowRunsFromFailures(t *testing.T) {
 	fail(http.StatusUnauthorized)
 	fail(http.StatusTooManyRequests)
 }
+
+// A success reserved before the window lapsed must not bridge it: failure at 0,
+// success reserved at 14:59, failure at 15:01 while the success is in flight,
+// then the success settles. One unexpired failure remains, so after one more
+// a correct login still succeeds.
+func TestPendingSuccessDoesNotBridgeExpiredWindow(t *testing.T) {
+	srv := newTestServer(t)
+	srv.loginRateLimiter = nil
+	const maxFailures = 3
+	l := newFailureLockout(maxFailures, loginIPLockoutFor)
+	srv.loginIPLockout = l
+	srv.loginLockout = newFailureLockout(100, loginIPLockoutFor)
+	advance := fakeLockoutClock(l)
+	if _, err := srv.users.Create(context.Background(), "bridge-a", "correct-horse-battery-staple", users.RoleUser); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	const ip = "198.51.100.92:4000"
+	ipReq := httptest.NewRequest(http.MethodPost, "/", nil)
+	ipReq.RemoteAddr = ip
+	key := lockoutKeyForIP(clientIP(ipReq))
+
+	if ok, _, _ := l.tryAttempt(key); !ok {
+		t.Fatal("failure at 0 refused")
+	}
+	advance(loginIPLockoutFor - time.Second)
+	ok, _, success := l.tryAttempt(key) // still in flight
+	if !ok {
+		t.Fatal("success at 14:59 refused")
+	}
+	advance(2 * time.Second)
+	if ok, _, _ := l.tryAttempt(key); !ok {
+		t.Fatal("failure at 15:01 refused")
+	}
+	l.cancelAttempt(success)
+
+	login := func(password string, want int) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]string{"username": "bridge-a", "password": password})
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+		req.RemoteAddr = ip
+		rec := httptest.NewRecorder()
+		srv.handleLogin(rec, req)
+		if rec.Code != want {
+			t.Fatalf("login: status = %d, want %d", rec.Code, want)
+		}
+	}
+	login("wrong-password-entirely", http.StatusUnauthorized)
+	login("correct-horse-battery-staple", http.StatusOK)
+}

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -211,7 +212,7 @@ func newLoginLockout() *failureLockout {
 //     success against an IP-only key, whose other strikes were spent on other
 //     accounts
 //   - nothing at all on a failure — the strike is already counted
-func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.Duration) {
+func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.Duration, res lockoutReservation) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -226,12 +227,12 @@ func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.D
 		// known to the table proceed normally.
 		if len(l.entries) >= l.hardCap {
 			l.saturated = true
-			return false, l.lockoutFor
+			return false, l.lockoutFor, lockoutReservation{}
 		}
 		e = &loginLockoutEntry{}
 		l.entries[username] = e
 	} else if remaining := e.lockedUntil.Sub(now); remaining > 0 {
-		return false, remaining
+		return false, remaining, lockoutReservation{}
 	} else if !e.lockedUntil.IsZero() {
 		// The lockout ran its course; start a fresh set of strikes rather than
 		// leaving the old ones to trip the very next attempt.
@@ -248,7 +249,14 @@ func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.D
 	if len(e.strikes) >= l.maxFailures {
 		e.lockedUntil = now.Add(l.lockoutFor)
 	}
-	return true, 0
+	return true, 0, lockoutReservation{key: username, at: now}
+}
+
+// lockoutReservation identifies one strike spent by tryAttempt, so
+// cancelAttempt refunds exactly that strike and not a concurrent request's.
+type lockoutReservation struct {
+	key string
+	at  time.Time
 }
 
 // cancelAttempt returns a strike reserved by tryAttempt, for a path that turned
@@ -257,26 +265,34 @@ func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.D
 // lock out every user of the instance for the duration.
 //
 // A FAILED captcha is deliberately not cancelled; that is an attempt.
-func (l *failureLockout) cancelAttempt(username string) {
+//
+// A reservation whose strike is already gone (the window reset under it) is a
+// no-op, so a refund can never become credit for extra attempts.
+func (l *failureLockout) cancelAttempt(res lockoutReservation) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	e, exists := l.entries[username]
+	e, exists := l.entries[res.key]
 	if !exists {
 		return
 	}
-	// ponytail: drops the newest strike, which under concurrency may be another
-	// in-flight request's, ending the window early by at most that overlap. The
-	// count stays exact. Upgrade: have tryAttempt return a reservation to refund.
-	if n := len(e.strikes); n > 0 {
-		e.strikes = e.strikes[:n-1]
+	i := slices.IndexFunc(e.strikes, res.at.Equal)
+	if i < 0 {
+		return
+	}
+	e.strikes = slices.Delete(e.strikes, i, i+1)
+	// The refunded strike may have been all that kept two failures within the
+	// window of each other; drop everything before the newest expired gap.
+	for j := len(e.strikes) - 1; j > 0; j-- {
+		if e.strikes[j].Sub(e.strikes[j-1]) >= l.lockoutFor {
+			e.strikes = e.strikes[j:]
+			break
+		}
 	}
 	if len(e.strikes) < l.maxFailures {
 		e.lockedUntil = time.Time{}
 	}
-	// Never let cancels accumulate into credit for extra attempts: an entry
-	// back at zero is simply gone.
 	if len(e.strikes) == 0 {
-		delete(l.entries, username)
+		delete(l.entries, res.key)
 	}
 }
 

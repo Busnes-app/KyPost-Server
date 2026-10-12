@@ -199,7 +199,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// misconfiguration announces itself.
 	s.warnOnUnusedProxyHeaders(r)
 	ipLockoutKey := lockoutKeyForIP(clientIP(r))
-	if allowed, retryAfter := s.loginIPLockout.tryAttempt(ipLockoutKey); !allowed {
+	allowed, retryAfter, ipStrike := s.loginIPLockout.tryAttempt(ipLockoutKey)
+	if !allowed {
 		retrySeconds := int(retryAfter.Seconds()) + 1
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
@@ -222,7 +223,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// the body allows 64 KiB, so without this the caller sizes the lockout
 	// table's memory as well as populating it.
 	lockoutKey := clampLockoutKeyComponent(users.NormalizeUsername(req.Username)) + "\x00" + lockoutKeyForIP(clientIP(r))
-	if allowed, retryAfter := s.loginLockout.tryAttempt(lockoutKey); !allowed {
+	allowed, retryAfter, strike := s.loginLockout.tryAttempt(lockoutKey)
+	if !allowed {
 		retrySeconds := int(retryAfter.Seconds()) + 1
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
@@ -244,8 +246,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			// three stale tabs cannot lock anyone out. 401, not the 503 below, which means
 			// "the provider is down" and there is no provider here. No password is checked
 			// on this path, so the refund buys an attacker no guesses.
-			s.loginLockout.cancelAttempt(lockoutKey)
-			s.loginIPLockout.cancelAttempt(ipLockoutKey)
+			s.loginLockout.cancelAttempt(strike)
+			s.loginIPLockout.cancelAttempt(ipStrike)
 			http.Error(w, "security check expired, please try again", http.StatusUnauthorized)
 			return
 		case errors.Is(err, captcha.ErrChallengeWrongClient):
@@ -254,16 +256,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			// challenges from a clean address and spending them from an escalated one, but
 			// a phone handing off wifi to cellular mid-solve looks identical. A changed
 			// address is a network event, not a wrong credential, so refund the strike.
-			s.loginLockout.cancelAttempt(lockoutKey)
-			s.loginIPLockout.cancelAttempt(ipLockoutKey)
+			s.loginLockout.cancelAttempt(strike)
+			s.loginIPLockout.cancelAttempt(ipStrike)
 			http.Error(w, "your network address changed during the security check, please try again", http.StatusUnauthorized)
 			return
 		case err != nil:
 			// The operator's CAPTCHA provider is down; the user never got as
 			// far as offering a password. Give the strike back, or an outage
 			// would lock out every user of the instance.
-			s.loginLockout.cancelAttempt(lockoutKey)
-			s.loginIPLockout.cancelAttempt(ipLockoutKey)
+			s.loginLockout.cancelAttempt(strike)
+			s.loginIPLockout.cancelAttempt(ipStrike)
 			s.logger.Error("captcha verification failed", "error", err.Error())
 			http.Error(w, "captcha verification unavailable", http.StatusServiceUnavailable)
 			return
@@ -301,8 +303,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			// courtesy: answering 401 instantly on the unknown-username path
 			// while a real account still waits for a slot is the timing
 			// disclosure equalizeLoginTiming exists to erase.
-			s.loginLockout.cancelAttempt(lockoutKey)
-			s.loginIPLockout.cancelAttempt(ipLockoutKey)
+			s.loginLockout.cancelAttempt(strike)
+			s.loginIPLockout.cancelAttempt(ipStrike)
 			writeKDFBusy(w)
 			return
 		}
@@ -340,8 +342,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// spend a third of this account's budget on a credential nobody looked at, so
 		// three unlucky arrivals during a burst would lock out a user who typed
 		// everything correctly. recordFailure is skipped for the same reason.
-		s.loginLockout.cancelAttempt(lockoutKey)
-		s.loginIPLockout.cancelAttempt(ipLockoutKey)
+		s.loginLockout.cancelAttempt(strike)
+		s.loginIPLockout.cancelAttempt(ipStrike)
 		writeKDFBusy(w)
 		return
 	}
@@ -356,7 +358,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.loginLockout.recordSuccess(lockoutKey)
 	// Refund only this attempt's strike: clearing the address's budget let one
 	// valid account reset failures spent guessing other accounts' passwords.
-	s.loginIPLockout.cancelAttempt(ipLockoutKey)
+	s.loginIPLockout.cancelAttempt(ipStrike)
 
 	// Transparently upgrade a password hash written at an older, cheaper scrypt
 	// cost. This is the only moment the plaintext is legitimately in hand, so it is
@@ -612,7 +614,8 @@ func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
 	// Per-account throttle spanning challenges: the per-challenge attempt cap
 	// alone can be reset by minting a new challenge, so a password-holding
 	// attacker could otherwise brute force TOTP online.
-	if allowed, _ := s.mfaLockout.tryAttempt(ch.UserID); !allowed {
+	allowed, _, strike := s.mfaLockout.tryAttempt(ch.UserID)
+	if !allowed {
 		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
 		return
 	}
@@ -621,13 +624,13 @@ func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !u.Active || s.requireAccountRestoreReleased(u) != nil || !u.TOTPEnabled || u.TOTPSecretEnc == "" {
 		// The account changed underneath the challenge; no code was offered,
 		// so the strike tryAttempt reserved goes back.
-		s.mfaLockout.cancelAttempt(ch.UserID)
+		s.mfaLockout.cancelAttempt(strike)
 		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
 		return
 	}
 	secret, err := mfa.OpenTOTPSecret(u.TOTPSecretEnc, s.totpSecretKeyPath)
 	if err != nil {
-		s.mfaLockout.cancelAttempt(ch.UserID)
+		s.mfaLockout.cancelAttempt(strike)
 		http.Error(w, "failed to load second factor", http.StatusInternalServerError)
 		return
 	}
@@ -697,13 +700,14 @@ func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
 		return
 	}
-	if allowed, _ := s.mfaLockout.tryAttempt(ch.UserID); !allowed {
+	allowed, _, strike := s.mfaLockout.tryAttempt(ch.UserID)
+	if !allowed {
 		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
 		return
 	}
 	u, err := s.users.Get(ch.UserID)
 	if err != nil || !u.Active || s.requireAccountRestoreReleased(u) != nil || !u.TOTPEnabled {
-		s.mfaLockout.cancelAttempt(ch.UserID)
+		s.mfaLockout.cancelAttempt(strike)
 		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
 		return
 	}
@@ -725,11 +729,11 @@ func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
 		// Shed mid-check. No verdict was reached on this code, so refund the
 		// strike: otherwise a load spike burns an MFA budget the user needs to
 		// get back into their account.
-		s.mfaLockout.cancelAttempt(ch.UserID)
+		s.mfaLockout.cancelAttempt(strike)
 		writeKDFBusy(w)
 		return
 	case err != nil:
-		s.mfaLockout.cancelAttempt(ch.UserID)
+		s.mfaLockout.cancelAttempt(strike)
 		http.Error(w, "failed to verify recovery code", http.StatusInternalServerError)
 		return
 	}
@@ -945,7 +949,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// password — during the incident where changing it is the remedy. Keyed on the
 	// pair, a thief locks out only themselves.
 	lockKey := ac.UserID + "\x00" + lockoutKeyForIP(clientIP(r))
-	if allowed, retryAfter := s.passwordChangeLockout.tryAttempt(lockKey); !allowed {
+	allowed, retryAfter, strike := s.passwordChangeLockout.tryAttempt(lockKey)
+	if !allowed {
 		w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
 			"error":             "too many failed attempts, try again later",
@@ -957,7 +962,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Shed before the derivation ran. Refund: no credential was
 		// examined, so this attempt must not count against the budget.
-		s.passwordChangeLockout.cancelAttempt(lockKey)
+		s.passwordChangeLockout.cancelAttempt(strike)
 		writeKDFBusy(w)
 		return
 	}
