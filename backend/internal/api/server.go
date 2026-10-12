@@ -101,7 +101,6 @@ type Server struct {
 	configDir         string
 	stateDir          string
 	configPath        string
-	logPath           string
 	imapConfigKeyPath string
 	totpSecretKeyPath string
 	pgpPrivateKeyPath string
@@ -298,7 +297,6 @@ type Server struct {
 func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Service, usersStore *users.Store, onConfigUpdated func(config.Config), wkdStore *wkdpublish.Store) *Server {
 	configDir := config.ConfigDir()
 	stateDir := config.StateDir()
-	logPath := filepath.Join(config.LogDir(), "app.log")
 	imapConfigKeyPath := config.SecretFile("IMAP_CONFIG_KEY_FILE", "imap-config.key")
 	totpSecretKeyPath := config.SecretFile("TOTP_SECRET_KEY_FILE", "totp-secret.key")
 	pgpPrivateKeyPath := config.SecretFile("PGP_PRIVATE_KEY_FILE", "pgp-private-key.key")
@@ -377,7 +375,6 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		configDir:                configDir,
 		stateDir:                 stateDir,
 		configPath:               filepath.Join(configDir, "config.yaml"),
-		logPath:                  logPath,
 		imapConfigKeyPath:        imapConfigKeyPath,
 		totpSecretKeyPath:        totpSecretKeyPath,
 		pgpPrivateKeyPath:        pgpPrivateKeyPath,

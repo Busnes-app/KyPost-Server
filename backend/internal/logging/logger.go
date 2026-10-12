@@ -13,9 +13,8 @@ type Logger struct {
 	suite  *kylog.Logger
 }
 
-// New retains its directory argument for existing callers; the process writes
-// only JSON to stderr. The supervisor owns capture and rotation.
-func New(_ string) (*Logger, error) { return NewWithOutput(nil) }
+// New writes JSON to stderr; the supervisor owns capture and rotation.
+func New() (*Logger, error) { return NewWithOutput(nil) }
 func NewWithOutput(out io.Writer) (*Logger, error) {
 	cfg, err := kylog.FromEnv()
 	if err != nil {
@@ -31,7 +30,6 @@ func NewWithOutput(out io.Writer) (*Logger, error) {
 }
 func (l *Logger) Handler() slog.Handler { return l.logger.Handler() }
 func (l *Logger) Suite() *kylog.Logger  { return l.suite }
-func (l *Logger) Close() error          { return nil }
 
 // Explicit product vocabulary. Unknown keys are dropped and counted by the
 // library; declarations never come from a request or a call site's key string.

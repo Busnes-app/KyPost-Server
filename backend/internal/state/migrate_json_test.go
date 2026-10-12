@@ -59,10 +59,10 @@ func TestMigrationImportsEveryFieldFromJSON(t *testing.T) {
 	if got := s.NativeDeliveryMode(); got != DeliveryModePull {
 		t.Errorf("NativeDeliveryMode = %q, want pull", got)
 	}
-	if subs := s.ListNotificationSubscriptions(); len(subs) != 1 || subs[0].Endpoint != "https://push.example/a" || subs[0].Auth != "au" {
+	if subs := mustSubscriptions(t, s); len(subs) != 1 || subs[0].Endpoint != "https://push.example/a" || subs[0].Auth != "au" {
 		t.Errorf("notification subscriptions = %+v", subs)
 	}
-	devices := s.ListNativeDevices()
+	devices := mustNativeDevices(t, s)
 	if len(devices) != 1 {
 		t.Fatalf("devices = %d, want 1", len(devices))
 	}
@@ -71,8 +71,8 @@ func TestMigrationImportsEveryFieldFromJSON(t *testing.T) {
 		d.AppVersion != "1.2" || d.UserID != "u1" || !d.MFAApprover || d.Transport != "fcm" || d.SecretHash != "sha256:abc" {
 		t.Errorf("device lost fields in migration: %+v", d)
 	}
-	notes, cursor := s.PullNotificationsAfter("", 0)
-	if len(notes) != 1 || notes[0].Title != "T" || notes[0].Data["k"] != "v" {
+	notes, cursor, err := s.PullNotificationsAfterStrict("", 0)
+	if err != nil || len(notes) != 1 || notes[0].Title != "T" || notes[0].Data["k"] != "v" {
 		t.Errorf("pull notifications = %+v", notes)
 	}
 	if cursor != 7 {
@@ -84,7 +84,7 @@ func TestMigrationImportsEveryFieldFromJSON(t *testing.T) {
 	if notify, _ := s.SetOllamaUpdateNotified("0.32.3"); notify {
 		t.Error("SetOllamaUpdateNotified re-notified for a version already recorded before migration")
 	}
-	if ds := s.Decisions(0); len(ds) != 2 {
+	if ds := mustDecisions(t, s, 0); len(ds) != 2 {
 		t.Errorf("decisions = %d, want 2", len(ds))
 	}
 }
@@ -121,7 +121,7 @@ func TestMigrationRunsExactlyOnce(t *testing.T) {
 	if err := s1.Cleanup(0); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
-	if got := len(s1.Decisions(0)); got != 0 {
+	if got := len(mustDecisions(t, s1, 0)); got != 0 {
 		t.Fatalf("setup: %d decisions after cleanup, want 0", got)
 	}
 	s1.Close()
@@ -131,7 +131,7 @@ func TestMigrationRunsExactlyOnce(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer s2.Close()
-	if got := len(s2.Decisions(0)); got != 0 {
+	if got := len(mustDecisions(t, s2, 0)); got != 0 {
 		t.Fatalf("reopen re-imported %d decisions that had been deleted", got)
 	}
 }

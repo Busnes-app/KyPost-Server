@@ -97,11 +97,10 @@ func (m *scriptedMailbox) ApplyLabel(_ context.Context, id string, label string)
 func newTickTestPoller(t *testing.T, mail imapadapter.Client) (*Poller, users.User) {
 	t.Helper()
 
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	// These tests fail keyword writes on purpose, and the production delay is
 	// 30s per retry. Nothing here is testing the backoff itself.
@@ -216,7 +215,7 @@ func TestTickUser_TransientLabelFailureIsRetriedOnTheNextTick(t *testing.T) {
 	}
 
 	// The failure is in the audit log, once, and not as a success.
-	decisions := store.Decisions(50)
+	decisions := mustDecisions(t, store, 50)
 	var failed int
 	for _, d := range decisions {
 		if d.MessageID == "11" {
@@ -319,7 +318,7 @@ func TestTickUser_PermanentlyFailingMessageIsRetiredAtTheCap(t *testing.T) {
 	// Giving up has to be visible in the audit log, not just in the fact that
 	// the message stopped coming back.
 	var gaveUp bool
-	for _, d := range store.Decisions(50) {
+	for _, d := range mustDecisions(t, store, 50) {
 		if d.MessageID == "11" && d.Status == "failed" {
 			if strings.Contains(d.Detail, "gave up after") {
 				gaveUp = true
@@ -327,7 +326,7 @@ func TestTickUser_PermanentlyFailingMessageIsRetiredAtTheCap(t *testing.T) {
 		}
 	}
 	if !gaveUp {
-		t.Fatalf("expected a decision recording that the message was given up on, got %+v", store.Decisions(50))
+		t.Fatalf("expected a decision recording that the message was given up on, got %+v", mustDecisions(t, store, 50))
 	}
 }
 
@@ -369,7 +368,7 @@ func TestTickUser_FailedRuleActionDefersInsteadOfRetiring(t *testing.T) {
 	if got := checkpointOf(t, store); got != "" && got != "6" {
 		t.Fatalf("checkpoint = %q, want it held below the deferred message", got)
 	}
-	for _, d := range store.Decisions(50) {
+	for _, d := range mustDecisions(t, store, 50) {
 		if d.Status == "applied" {
 			t.Fatalf("recorded the rule as applied even though its action failed: %+v", d)
 		}
@@ -455,7 +454,7 @@ func TestTickUser_KeywordAppliedThenFailedArchiveStaysRetryable(t *testing.T) {
 	if got := checkpointOf(t, store); got != "" && got != "6" {
 		t.Fatalf("checkpoint = %q, want it held below the deferred message", got)
 	}
-	for _, d := range store.Decisions(50) {
+	for _, d := range mustDecisions(t, store, 50) {
 		if d.Status == "applied" {
 			t.Fatalf("recorded the rule as applied even though its archive failed: %+v", d)
 		}
@@ -553,7 +552,7 @@ func TestTickUserMalformedMIMEFailsOneMessageAndContinues(t *testing.T) {
 		t.Fatal("malformed MIME held later mail or lost failure ledger")
 	}
 	failed := false
-	for _, d := range store.Decisions(10) {
+	for _, d := range mustDecisions(t, store, 10) {
 		if d.MessageID == "10" {
 			failed = d.Status == "failed"
 		}

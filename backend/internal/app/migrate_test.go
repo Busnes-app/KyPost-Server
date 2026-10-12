@@ -19,13 +19,11 @@ import (
 func TestMigrateLegacySingleUserData(t *testing.T) {
 	configDir := t.TempDir()
 	stateDir := t.TempDir()
-	logDir := t.TempDir()
 
-	logger, err := logging.New(logDir)
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	defer logger.Close()
 
 	// Legacy global files.
 	if err := os.WriteFile(filepath.Join(stateDir, "state.json"), []byte(`{"lastCheckpoint":"42","processed":{}}`), 0o600); err != nil {
@@ -104,7 +102,6 @@ func TestCopyIfMissing_MissingSourceStaysSilent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	defer logger.Close()
 
 	dstDir := t.TempDir()
 	dst := filepath.Join(dstDir, "nonexistent.txt")
@@ -136,7 +133,6 @@ func TestCopyIfMissing_ReadErrorLogged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	defer logger.Close()
 
 	srcDir := t.TempDir()
 	dstDir := t.TempDir()
@@ -175,11 +171,10 @@ func TestCopyIfMissing_ReadErrorLogged(t *testing.T) {
 func legacyMigrationEnv(t *testing.T) (logger *logging.Logger, usersStore *users.Store, configDir, stateDir, adminID string) {
 	t.Helper()
 	configDir, stateDir = t.TempDir(), t.TempDir()
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { logger.Close() })
 
 	// config.SecretFile reads IMAP_CONFIG_FILE, which is how a real legacy
 	// install points at this file.

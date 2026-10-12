@@ -68,7 +68,7 @@ func TestNativeRegisterPersistsUnifiedPushWebPushKeys(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
-	devices := store.ListNativeDevices()
+	devices := mustNativeDevices(t, store)
 	if len(devices) != 1 {
 		t.Fatalf("len(devices) = %d, want 1", len(devices))
 	}
@@ -109,7 +109,7 @@ func TestNativeRegisterRejectsMalformedWebPushKeys(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 			}
-			if devices := store.ListNativeDevices(); len(devices) != 0 {
+			if devices := mustNativeDevices(t, store); len(devices) != 0 {
 				t.Fatalf("len(devices) = %d, want 0 — a rejected registration must not persist", len(devices))
 			}
 		})
@@ -132,7 +132,7 @@ func TestNativeRegisterIgnoresWebPushKeysOnNonUnifiedPushTransports(t *testing.T
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
-	devices := store.ListNativeDevices()
+	devices := mustNativeDevices(t, store)
 	if len(devices) != 1 {
 		t.Fatalf("len(devices) = %d, want 1", len(devices))
 	}
@@ -155,7 +155,7 @@ func TestNativeRegisterAcceptsUnifiedPushWithoutKeys(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	devices := store.ListNativeDevices()
+	devices := mustNativeDevices(t, store)
 	if len(devices) != 1 || devices[0].P256DH != "" || devices[0].Auth != "" {
 		t.Fatalf("unexpected device state: %+v", devices)
 	}

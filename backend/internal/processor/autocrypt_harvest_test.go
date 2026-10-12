@@ -220,11 +220,10 @@ func (c *harvestStubClient) FetchRawMessage(_ context.Context, mailbox string, u
 // work), and an initialized contactsStores map.
 func newTestPollerForHarvest(t *testing.T) *Poller {
 	t.Helper()
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	return &Poller{
 		log:            logger,
 		stateDir:       t.TempDir(),

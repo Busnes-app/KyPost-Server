@@ -30,7 +30,6 @@ func TestLiveOllamaClassify(t *testing.T) {
 
 	labels := []string{"Primary", "Promotions", "Social", "Updates"}
 	c := NewHTTPClient(base, "", "", LoadTuningText(), 5*time.Minute)
-	defer c.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()

@@ -106,10 +106,10 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer extra.Close()
-	if d := primary.Decisions(10); len(d) != 1 || d[0].MessageID != strconv.FormatInt(primaryID, 10) {
+	if d := mustDecisions(t, primary, 10); len(d) != 1 || d[0].MessageID != strconv.FormatInt(primaryID, 10) {
 		t.Fatalf("primary decisions %+v", d)
 	}
-	if d := extra.Decisions(10); len(d) != 1 || d[0].MessageID != strconv.FormatInt(extraID, 10) || d[0].Subject != "extra" {
+	if d := mustDecisions(t, extra, 10); len(d) != 1 || d[0].MessageID != strconv.FormatInt(extraID, 10) || d[0].Subject != "extra" {
 		t.Fatalf("extra decisions %+v", d)
 	}
 	queued, _, err := primary.PullNotificationsAfterStrict("phone", 0)
@@ -140,7 +140,7 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 	setEncrypt(true)
 	logs.Reset()
 	p.tick()
-	if d := extra.Decisions(10); len(d) != 1 || !bytes.Contains(logs.Bytes(), []byte("extra mailbox not polled")) {
+	if d := mustDecisions(t, extra, 10); len(d) != 1 || !bytes.Contains(logs.Bytes(), []byte("extra mailbox not polled")) {
 		t.Fatalf("extra mailbox polled beside incoming encryption %+v", d)
 	}
 	setEncrypt(false)
@@ -170,7 +170,7 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 	write()
 	logs.Reset()
 	p.tick()
-	if d := extra.Decisions(10); len(d) != 1 || bytes.Contains(logs.Bytes(), []byte("mailbox admission refused")) {
+	if d := mustDecisions(t, extra, 10); len(d) != 1 || bytes.Contains(logs.Bytes(), []byte("mailbox admission refused")) {
 		t.Fatalf("unprepared mailbox polled %+v %s", d, logs.Bytes())
 	}
 	record["source"] = source
@@ -182,7 +182,7 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 	}
 	logs.Reset()
 	p.tick()
-	if d := extra.Decisions(10); len(d) != 1 || bytes.Contains(logs.Bytes(), []byte("mailbox admission refused")) {
+	if d := mustDecisions(t, extra, 10); len(d) != 1 || bytes.Contains(logs.Bytes(), []byte("mailbox admission refused")) {
 		t.Fatalf("disabled mailbox polled %+v", d)
 	}
 }

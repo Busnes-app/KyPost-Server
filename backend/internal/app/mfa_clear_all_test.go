@@ -37,11 +37,10 @@ func newTestUsersStore(t *testing.T) *users.Store {
 
 func newTestLogger(t *testing.T) *logging.Logger {
 	t.Helper()
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { logger.Close() })
 	return logger
 }
 
