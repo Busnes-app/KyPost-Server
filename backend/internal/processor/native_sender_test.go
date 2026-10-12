@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -361,7 +362,9 @@ func TestUnifiedPushSenderSendRejectsNonHTTPS(t *testing.T) {
 // production dial path (safeDialContext) is actually wired in and not just
 // bypassed by tests that swap in ts.Client().
 func TestUnifiedPushSenderRefusesPrivateAddressAtDialTime(t *testing.T) {
-	sender := NewUnifiedPushSender(nil, "", "")
+	// Real keys, or Send refuses as unencrypted before it ever dials.
+	keyPath, publicKey := writeVAPIDKeyFile(t)
+	sender := NewUnifiedPushSender(nil, publicKey, keyPath)
 	// A loopback listener the sender must refuse to connect to via its real
 	// (non-test-overridden) transport, proving safeDialContext is active.
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -373,8 +376,10 @@ func TestUnifiedPushSenderRefusesPrivateAddressAtDialTime(t *testing.T) {
 	// otherwise succeed if the dial were allowed through.
 	sender.client.Transport.(*http.Transport).TLSClientConfig = ts.Client().Transport.(*http.Transport).TLSClientConfig
 
-	err := sender.Send(context.Background(), state.NativeDevice{PushToken: ts.URL + "/topic"}, NativePushMessage{Title: "Test"})
-	if err == nil {
-		t.Fatal("Send() to a loopback address should be refused by safeDialContext")
+	device := keyedUnifiedPushDevice(t)
+	device.PushToken = ts.URL + "/topic"
+	err := sender.Send(context.Background(), device, NativePushMessage{Title: "Test"})
+	if err == nil || !strings.Contains(err.Error(), "no public address available") {
+		t.Fatalf("Send() error = %v, want safeDialContext's refusal", err)
 	}
 }

@@ -236,7 +236,7 @@ Server-side notes a client should know:
 
 ### UnifiedPush: the WebPush key exchange is REQUIRED
 
-A device registering with `transport: "unifiedpush"` SHOULD send the WebPush
+A device registering with `transport: "unifiedpush"` MUST send the WebPush
 (RFC 8291) subscription keys its connector generated for the endpoint, as two
 extra fields on the registration request:
 
@@ -245,21 +245,24 @@ extra fields on the registration request:
 | `p256dh` | the uncompressed P-256 public point, 65 bytes, base64 |
 | `auth` | the 16-byte auth secret, base64 |
 
-Both or neither. A partial pair is rejected with `400`
+Both are required. A registration missing either is rejected with `400`
 (`processor.ValidateWebPushKeys`), as is a `p256dh` that is not a point on the
 curve. Padded and unpadded, standard and URL alphabets are all accepted — the
 check mirrors what the sender would later accept, so validation can never refuse
 material that would have worked.
 
-Two things follow from sending them, and neither is optional in practice:
+What follows from the keys:
 
-1. **The payload is encrypted.** With keys stored, the server sends aes128gcm
-   ciphertext (`processor.UnifiedPushSender`). Without them it falls back to the
-   plaintext JSON POST it has always sent, so an older client keeps working —
-   but the notification's title and body then cross the distributor's broker in
-   the clear. A public broker is a third party; treat the fallback as a
-   compatibility shim, not a supported configuration.
-2. **Push-MFA depends on it.** `api.MFATransportEligible` allows an MFA
+1. **The payload is always encrypted, or not sent.** The server sends only
+   aes128gcm ciphertext (`processor.UnifiedPushSender`); there is no plaintext
+   fallback, because the distributor's broker is a third party. If the device
+   has no stored keys, or the server's VAPID private key failed to load, the
+   send is refused, nothing reaches the endpoint, and device health records
+   `unencrypted`. Notifications still reach the pull queue.
+2. **Legacy registrations must pair again.** A device registered by an older
+   build without keys receives no UnifiedPush at all until it registers again
+   with keys. Clients SHOULD drop any push that does not decrypt.
+3. **Push-MFA depends on it.** `api.MFATransportEligible` allows an MFA
    challenge over UnifiedPush only for a device that supplied keys. A challenge
    carries the sign-in IP, the user agent and the match digits, so a keyless
    UnifiedPush device is excluded and its user cannot approve logins from it.
