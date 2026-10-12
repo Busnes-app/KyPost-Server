@@ -61,6 +61,11 @@ func (s *Store) Woken() ([]Snooze, error) {
 	return s.snoozes(`WHERE woken_at > 0 AND inbox_id <> '' ORDER BY woken_at DESC`)
 }
 
+// Unpinned lists woken messages whose INBOX id is not known yet.
+func (s *Store) Unpinned() ([]Snooze, error) {
+	return s.snoozes(`WHERE woken_at > 0 AND inbox_id = ''`)
+}
+
 // MarkWoken records that messageID is back in INBOX as inboxID. An empty
 // inboxID records the wake without pinning.
 func (s *Store) MarkWoken(messageID, inboxID string, at int64) error {

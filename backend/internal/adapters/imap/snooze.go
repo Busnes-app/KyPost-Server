@@ -31,30 +31,42 @@ func MessageIDOf(ctx context.Context, c Client, folder string, uid int) (string,
 }
 
 // MessageIDRefs maps Message-ID to UID for the newest n messages in folder.
-// A Message-ID shared by several messages maps to the newest.
-func MessageIDRefs(ctx context.Context, c Client, folder string, n int) (map[string]int, error) {
+// A Message-ID shared by several messages maps to the newest. complete is
+// false when some listed message's headers could not be fetched: a Message-ID
+// missing from refs is then unknown, not absent.
+func MessageIDRefs(ctx context.Context, c Client, folder string, n int) (refs map[string]int, complete bool, err error) {
 	overviews, err := c.ListOverviews(ctx, folder, n)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	uids := make([]int, 0, len(overviews))
+	pending := make([]int, 0, len(overviews))
 	for _, ov := range overviews {
-		uids = append(uids, ov.UID)
+		pending = append(pending, ov.UID)
 	}
-	refs := map[string]int{}
-	if len(uids) == 0 {
-		return refs, nil
-	}
-	got, err := c.FetchHeaderFields(ctx, folder, uids, "Message-ID")
-	if err != nil {
-		return nil, err
-	}
-	for uid, lines := range got {
-		if id := singleMessageID(lines); id != "" && uid > refs[id] {
-			refs[id] = uid
+	refs = map[string]int{}
+	// A batch stops at its byte budget; fetch the rest until a call makes no progress.
+	for len(pending) > 0 {
+		got, err := c.FetchHeaderFields(ctx, folder, pending, "Message-ID")
+		if err != nil {
+			return nil, false, err
 		}
+		if len(got) == 0 {
+			return refs, false, nil
+		}
+		for uid, lines := range got {
+			if id := singleMessageID(lines); id != "" && uid > refs[id] {
+				refs[id] = uid
+			}
+		}
+		rest := pending[:0]
+		for _, uid := range pending {
+			if _, ok := got[uid]; !ok {
+				rest = append(rest, uid)
+			}
+		}
+		pending = rest
 	}
-	return refs, nil
+	return refs, true, nil
 }
 
 // OverviewByID returns the overview of uid in folder, or false when it is gone.

@@ -3,6 +3,7 @@ package processor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"strconv"
@@ -176,5 +177,129 @@ func TestWakeSnoozedPreviewsPlainMail(t *testing.T) {
 	queued, _, err := f.st.PullNotificationsAfterStrict("one", 0)
 	if err != nil || len(queued) != 1 || queued[0].Body != "plain-subject" {
 		t.Fatalf("plain wake push = %+v, %v; want the subject as body", queued, err)
+	}
+}
+
+// flakyMail wraps the native client as an IMAP-identified client (the embedded
+// interface hides MailSourceIdentity) and injects lookup faults.
+type flakyMail struct {
+	imapadapter.Client
+	failList   map[string]int // folder -> remaining ListOverviews failures
+	hideHeader int            // UID whose headers are never returned
+}
+
+func (f *flakyMail) ListOverviews(ctx context.Context, folder string, n int) ([]imapadapter.Overview, error) {
+	if f.failList[folder] > 0 {
+		f.failList[folder]--
+		return nil, errors.New("injected lookup failure")
+	}
+	return f.Client.ListOverviews(ctx, folder, n)
+}
+
+func (f *flakyMail) FetchHeaderFields(ctx context.Context, folder string, uids []int, fields ...string) (map[int][]string, error) {
+	got, err := f.Client.FetchHeaderFields(ctx, folder, uids, fields...)
+	delete(got, f.hideHeader)
+	return got, err
+}
+
+func inFolder(t *testing.T, c imapadapter.Client, folder string, uid int) bool {
+	t.Helper()
+	_, ok, err := imapadapter.OverviewByID(context.Background(), c, folder, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ok
+}
+
+// Headers a batch did not return are unknown, not absent: the snooze stays.
+func TestWakeSnoozedKeepsRowWhenHeadersAreIncomplete(t *testing.T) {
+	f := newSnoozeFixture(t)
+	id, uid := f.snooze(t, "budget", time.Now().Unix()-1)
+	f.uc.mail = &flakyMail{Client: f.uc.mail, hideHeader: uid}
+
+	f.p.wakeSnoozed(context.Background(), f.uc)
+
+	if rows := mustSnoozes(t, f.st); len(rows) != 1 || rows[0].MessageID != id {
+		t.Fatalf("snoozes = %+v; an unread header must not drop the row", rows)
+	}
+	if !inFolder(t, f.uc.mail, imapadapter.SnoozedFolder, uid) {
+		t.Fatal("message left Snoozed without a wake")
+	}
+}
+
+// A failed lookup, however overdue the snooze, is retried on the next tick.
+func TestWakeSnoozedRecoversOverdueAfterFailure(t *testing.T) {
+	f := newSnoozeFixture(t)
+	_, uid := f.snooze(t, "overdue", time.Now().Add(-8*24*time.Hour).Unix())
+	flaky := &flakyMail{Client: f.uc.mail, failList: map[string]int{imapadapter.SnoozedFolder: 1}}
+	f.uc.mail = flaky
+
+	f.p.wakeSnoozed(context.Background(), f.uc)
+	if len(mustSnoozes(t, f.st)) != 1 {
+		t.Fatal("a failed lookup dropped the overdue snooze")
+	}
+	f.p.wakeSnoozed(context.Background(), f.uc)
+	if !inFolder(t, f.uc.mail, "INBOX", uid) {
+		t.Fatal("the overdue message did not return to INBOX after recovery")
+	}
+}
+
+// IMAP pins resolve on a later tick when the post-move lookup fails, keeping
+// the original wake time.
+func TestWakeSnoozedResolvesPinOnLaterTick(t *testing.T) {
+	f := newSnoozeFixture(t)
+	id, uid := f.snooze(t, "pin", time.Now().Unix()-1)
+	f.uc.mail = &flakyMail{Client: f.uc.mail, failList: map[string]int{"INBOX": 1}}
+
+	f.p.wakeSnoozed(context.Background(), f.uc)
+	if w, _ := f.st.Woken(); len(w) != 0 {
+		t.Fatalf("pinned despite a failed lookup: %+v", w)
+	}
+	pending, _ := f.st.Unpinned()
+	if len(pending) != 1 {
+		t.Fatalf("Unpinned = %+v; want the woken message awaiting its UID", pending)
+	}
+	wokeAt := pending[0].WokenAt
+
+	f.p.wakeSnoozed(context.Background(), f.uc)
+	w, _ := f.st.Woken()
+	if len(w) != 1 || w[0].MessageID != id || w[0].InboxID != strconv.Itoa(uid) || w[0].WokenAt != wokeAt {
+		t.Fatalf("Woken = %+v; want %s pinned at %d with the first wake time %d", w, id, uid, wokeAt)
+	}
+}
+
+// Native mail woken before the poller processed it is notified once, by
+// arrival processing; mail it already processed is notified by the wake.
+func TestWakeSnoozedLeavesUnprocessedNativeMailToArrival(t *testing.T) {
+	f := newSnoozeFixture(t)
+	if err := f.st.SetCheckpoint("0"); err != nil {
+		t.Fatal(err)
+	}
+	_, fresh := f.snooze(t, "unprocessed", time.Now().Unix()-1)
+	_, old := f.snooze(t, "processed", time.Now().Unix()-1)
+	if err := f.st.MarkProcessed(strconv.Itoa(old)); err != nil {
+		t.Fatal(err)
+	}
+
+	f.p.wakeSnoozed(context.Background(), f.uc)
+
+	queued, _, err := f.st.PullNotificationsAfterStrict("one", 0)
+	if err != nil || len(queued) != 1 || !strings.HasSuffix(queued[0].Data["messageId"], ":"+strconv.Itoa(old)) {
+		t.Fatalf("wake notifications = %+v, %v; want only the processed one", queued, err)
+	}
+	if !inFolder(t, f.uc.mail, "INBOX", fresh) {
+		t.Fatal("unprocessed message did not wake")
+	}
+	// Arrival still sees it: above the checkpoint and unread.
+	unread, _, err := f.uc.mail.ListUnreadInbox(context.Background(), "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range unread {
+		found = found || m.ID == strconv.Itoa(fresh)
+	}
+	if !found {
+		t.Fatalf("arrival poll does not see the unprocessed woken message: %+v", unread)
 	}
 }

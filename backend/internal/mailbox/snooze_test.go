@@ -26,9 +26,9 @@ func TestNativeSnoozeRoundTrip(t *testing.T) {
 
 	// Moving to a missing top-level folder creates it, as IMAP does.
 	must(t, c.ApplyInboxAction(ctx, id, "move", "INBOX", imapadapter.SnoozedFolder))
-	refs, err := imapadapter.MessageIDRefs(ctx, c, imapadapter.SnoozedFolder, 100)
+	refs, complete, err := imapadapter.MessageIDRefs(ctx, c, imapadapter.SnoozedFolder, 100)
 	must(t, err)
-	if refs[msg.MessageID] != uid {
+	if !complete || refs[msg.MessageID] != uid {
 		t.Fatalf("MessageIDRefs = %+v, want %s -> %d", refs, msg.MessageID, uid)
 	}
 

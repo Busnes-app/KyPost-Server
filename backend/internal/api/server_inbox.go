@@ -553,6 +553,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		return entries
 	}
 
+	pins, pinStore := s.wokenPins(ctx, userID, mailbox)
 	if !cursorSync {
 		// Cache-first: if the background poller (or an earlier request)
 		// has already warmed a full window of `limit` messages with
@@ -575,7 +576,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 					BodyMode:             e.BodyMode,
 					Status:               e.Status,
 					AtUTC:                e.AtUTC,
-					WokenAt:              e.WokenAt,
+					WokenAt:              pinnedAt(pins, e.UID),
 					HasAttachments:       e.HasAttachments,
 					PGPEncrypted:         e.PGPEncrypted,
 					PGPSigned:            e.PGPSigned,
@@ -623,6 +624,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 				BodyMode:             msg.BodyMode,
 				Status:               status,
 				AtUTC:                msg.AtUTC,
+				WokenAt:              pinnedAt(pins, msgUID(msg.MessageID)),
 				HasAttachments:       msg.HasAttachments,
 				PGPEncrypted:         msg.PGPEncrypted,
 				PGPSigned:            msg.PGPSigned,
@@ -654,7 +656,6 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 	// The pin rides in the cache's metadata, so gaining or losing it reaches
 	// cursor clients as an update. Only in-window messages: adding older ones
 	// would move the window's floor and misreport aged-out mail as removed.
-	pins, pinStore := s.wokenPins(ctx, userID, mailbox)
 	live := make([]mailcache.Overview, 0, len(overviews))
 	for _, ov := range overviews {
 		entry := mailCacheEntryFromOverview(ov)

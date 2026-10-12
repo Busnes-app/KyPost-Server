@@ -127,3 +127,61 @@ func TestServeInboxCarriesWokenPinThroughDeltas(t *testing.T) {
 		t.Fatalf("delta after unpin = %+v; want message 2 updated without wokenAt", unpinned)
 	}
 }
+
+// Requests without since read the pin from state on both the cold and the
+// cache-warmed path, so a new pin shows and an expired one goes.
+func TestServeInboxClassicPathsReadPinsFromState(t *testing.T) {
+	srv := newTestServer(t)
+	all, _ := srv.users.List()
+	userID := all[0].ID
+	st, err := srv.userStore(userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := testInboxCache(t)
+	fake := &fakeMailClient{unread: []imapadapter.UnreadMessage{
+		{MessageID: "1", Subject: "s", Sender: "a@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", Body: "b"},
+		{MessageID: "2", Subject: "s", Sender: "a@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", Body: "b"},
+	}}
+	wokenOf2 := func() string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		srv.serveInbox(rec, context.Background(), userID, fake, cache, config.Default(), "", 2, 0, false, true, false)
+		var out struct {
+			ByTab map[string][]inboxEmail `json:"byTab"`
+		}
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+		}
+		for _, rows := range out.ByTab {
+			for _, r := range rows {
+				if r.MessageID == "2" {
+					return r.WokenAt
+				}
+			}
+		}
+		t.Fatal("message 2 missing")
+		return ""
+	}
+
+	woke := time.Now().Unix()
+	if err := st.Snooze("<two@x>", 1); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.MarkWoken("<two@x>", "2", woke)
+	want := time.Unix(woke, 0).UTC().Format(time.RFC3339)
+
+	if got := wokenOf2(); got != want {
+		t.Fatalf("cold path wokenAt = %q, want %q", got, want)
+	}
+	calls := fake.unreadCalls
+	if got := wokenOf2(); got != want || fake.unreadCalls != calls {
+		t.Fatalf("warmed path wokenAt = %q (live fetches %d->%d), want %q from cache", got, calls, fake.unreadCalls, want)
+	}
+	if err := st.DropSnooze("<two@x>"); err != nil {
+		t.Fatal(err)
+	}
+	if got := wokenOf2(); got != "" {
+		t.Fatalf("warmed path kept an expired pin: %q", got)
+	}
+}

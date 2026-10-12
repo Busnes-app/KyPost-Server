@@ -87,7 +87,7 @@ func (s *Server) handleSnoozes(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []snoozed{}
 	if len(rows) > 0 {
-		refs, err := imapadapter.MessageIDRefs(r.Context(), mailClient, imapadapter.SnoozedFolder, state.MaxSnoozes)
+		refs, _, err := imapadapter.MessageIDRefs(r.Context(), mailClient, imapadapter.SnoozedFolder, state.MaxSnoozes)
 		if err != nil {
 			http.Error(w, "failed to fetch snoozed mail", http.StatusBadGateway)
 			return
@@ -136,4 +136,10 @@ func pinnedAt(pins map[int]state.Snooze, uid int) string {
 		return wokenAt(z)
 	}
 	return ""
+}
+
+// msgUID reads an adapter message id; 0 (never pinned) when it is not one.
+func msgUID(id string) int {
+	uid, _ := strconv.Atoi(id)
+	return uid
 }
