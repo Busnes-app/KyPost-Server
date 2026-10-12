@@ -40,6 +40,10 @@ type NativePushMessage struct {
 	Title string
 	Body  string
 	Data  map[string]string
+	// NoPlaintextFallback makes UnifiedPushSender refuse rather than POST in
+	// the clear when it cannot encrypt. Set for MFA challenges, whose
+	// eligibility on UnifiedPush rests on the payload being encrypted.
+	NoPlaintextFallback bool
 }
 
 // RelaySender forwards native push requests to the central Cloudflare Worker
@@ -224,6 +228,10 @@ func registerWithRelay(relayURL string, client *http.Client) (string, error) {
 	return key, nil
 }
 
+// ErrUnifiedPushCannotEncrypt is returned for a NoPlaintextFallback message
+// when the device has no WebPush keys or the server's VAPID key did not load.
+var ErrUnifiedPushCannotEncrypt = errors.New("unifiedpush: payload requires encryption but device keys or the VAPID key are unavailable")
+
 // UnifiedPushSender directly POSTs to UnifiedPush endpoints (e.g., ntfy.sh topics).
 // Unlike FCM/APNs relays, there is no shared credential—the endpoint URL itself
 // is public, and anyone who knows it can POST. See: https://unifiedpush.org/
@@ -376,6 +384,9 @@ func (s *UnifiedPushSender) Send(ctx context.Context, device state.NativeDevice,
 	// older client keeps receiving notifications instead of silently none.
 	if device.P256DH != "" && device.Auth != "" && s.vapidPrivateKey != "" {
 		return s.sendEncrypted(ctx, endpointURL, device, body)
+	}
+	if message.NoPlaintextFallback {
+		return ErrUnifiedPushCannotEncrypt
 	}
 	return s.sendPlaintext(ctx, endpointURL, body)
 }
