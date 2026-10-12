@@ -151,9 +151,11 @@ export function contactDisplayLine(contact: Contact): string {
 
 // Websites are freeform user input rendered as a clickable <a href>. Restrict
 // to http/https so a value like "javascript:..." can't execute when clicked.
+// Scheme-less input is a host ("example.com"), never a path on our own origin.
 export function safeWebsiteHref(url: string): string | undefined {
+  const value = url.trim();
   try {
-    const parsed = new URL(url, window.location.origin);
+    const parsed = new URL(/^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`);
     return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : undefined;
   } catch {
     return undefined;

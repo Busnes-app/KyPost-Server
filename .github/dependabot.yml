@@ -94,6 +94,19 @@ updates:
     commit-message:
       prefix: "chore(ci)"
 
+  # ESLint toolchain, separate because typescript-eslint needs TypeScript 6.
+  - package-ecosystem: npm
+    directory: /frontend/lint
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      npm-lint:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

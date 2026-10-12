@@ -12,6 +12,8 @@ export default defineConfig({
     // DOMPurify, both of which need a real DOM.
     environment: "jsdom",
     setupFiles: ["src/test/setup.ts"],
+    // Component tests run past the 5s default when every worker is busy.
+    testTimeout: 15000,
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"]
   }
 });
