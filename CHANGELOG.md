@@ -14,6 +14,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Security: push sign-in approval over UnifiedPush (the Linux client) is never sent in cleartext. A device that registered WebPush keys receives it RFC 8291-encrypted; if the server cannot encrypt (VAPID key unreadable) the challenge is not sent to that device and sign-in falls back to the authenticator app. The device-list and enable-push messages now say a keyless UnifiedPush device must update and re-pair, instead of claiming UnifiedPush cannot carry approvals.
+
 - Security: a successful sign-in (or CardDAV authentication) no longer resets its address's per-IP failure budget, so one valid account can no longer be used to keep guessing other accounts' passwords from the same address.
 
 - Security: user-management changes (create, role, reset password, deactivate/reactivate, clear MFA, assigned IMAP and CardDAV credentials) and SSO settings now need the acting admin's account password, or a KySignOn confirmation, for each change. API clients send it as `adminPassword`/`adminAuthSecret`. The SSO client secret is no longer returned by `GET|PUT /api/admin/sso` (`clientSecretSet` instead); leaving it blank keeps the stored secret only for the same issuer and client ID.
