@@ -218,6 +218,17 @@ CREATE TABLE IF NOT EXISTS sorter_corrections (
 	at_unix    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sorter_corrections_label ON sorter_corrections(label, at_unix);
+
+-- Snoozed mail, keyed by RFC 5322 Message-ID because a move renumbers an IMAP
+-- UID. woken_at=0 means still snoozed; once woken, inbox_id is the message's
+-- id in INBOX and the row pins it to the top of the inbox. See snoozes.go.
+CREATE TABLE IF NOT EXISTS snoozes (
+	message_id TEXT PRIMARY KEY,
+	wake_at    INTEGER NOT NULL,
+	inbox_id   TEXT NOT NULL DEFAULT '',
+	woken_at   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS snoozes_wake ON snoozes(woken_at, wake_at);
 `
 
 func openDB(path, existingSource string) (*sql.DB, error) {
