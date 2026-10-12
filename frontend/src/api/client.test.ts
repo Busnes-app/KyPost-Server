@@ -153,6 +153,7 @@ describe("mailbox selection", () => {
       () => getJSON("/api/inbox?limit=500"),
       () => getJSON("/api/inbox/folders"),
       () => postJSON("/api/inbox/actions", {}),
+      () => getJSON("/api/snoozes"),
       () => getJSON("/api/mail/search?q=x"),
       () => getJSON("/api/mail/body?messageId=1"),
       () => getJSON("/api/mail/attachments?messageId=1"),

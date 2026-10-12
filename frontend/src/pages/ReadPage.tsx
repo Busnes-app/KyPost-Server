@@ -19,7 +19,9 @@ import { mailboxName, useMailboxes } from "../app/mailboxes";
 import type { DraftComposePayload } from "../app/types";
 import { useDialogOpen } from "../hooks/useDialogOpen";
 import { PageTabs } from "../components/PageTabs";
-import { ArchiveIcon, CheckIcon, PrintIcon, TrashIcon, WarningIcon } from "./read/icons";
+import { ArchiveIcon, CheckIcon, ClockIcon, PrintIcon, TrashIcon, WarningIcon } from "./read/icons";
+import { SnoozeDialog } from "./read/SnoozeDialog";
+import { sortTime } from "../lib/snooze";
 
 import type {
   InboxEmail,
@@ -163,6 +165,11 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   });
   const [refillAnimationTick, setRefillAnimationTick] = useState(0);
   const isDraftMailbox = mailbox.toLowerCase().includes("drafts");
+  // The server's fixed snooze folder (adapters/imap/snooze.go).
+  const isSnoozedMailbox = mailbox === "Snoozed";
+  const [snoozeTarget, setSnoozeTarget] = useState<{ ids: string[]; fromReader: boolean } | null>(null);
+  // Wake time per row of the Snoozed folder, for its "until" label.
+  const [snoozeUntil, setSnoozeUntil] = useState<Record<string, string>>({});
   // The mailbox the inbox listing actually used. loadInbox omits the parameter
   // entirely when this is empty and lets the server resolve the account's
   // configured folder, so anything that must describe the SAME message has to
@@ -443,6 +450,10 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       // at least `limit` entries — so at limit=500 every mailbox under 500
       // messages missed the cache on every single load, including the one this
       // page fires after each delete and every 15 seconds besides.
+      // Alongside the list; failing costs only the "until" labels.
+      const snoozes = isSnoozedMailbox
+        ? getJSON<{ snoozes: Array<{ messageId: string; wakeAt: string }> }>("/api/snoozes").catch(() => null)
+        : null;
       const data = await getJSON<InboxDeltaResponse>(
         `/api/inbox?limit=500&bodies=0&since=${cursorRef.current}${mailboxQuery}`
       );
@@ -472,6 +483,11 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         if (current.length === 0) return current;
         return current.filter((id) => surviving.has(id));
       });
+      if (snoozes) {
+        const listed = await snoozes;
+        if (loadId !== loadIdRef.current) return;
+        setSnoozeUntil(Object.fromEntries((listed?.snoozes ?? []).map((z) => [z.messageId, z.wakeAt])));
+      }
     } catch (e) {
       if (loadId !== loadIdRef.current) return;
       const message = toErrorMessage(e, "failed to load inbox");
@@ -501,6 +517,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     setActiveTab("");
     setSwipeRows({});
     setSwipeRemovedIds([]);
+    setSnoozeUntil({});
     setError("");
     // Results, and any search still in flight, belong to the folder we left.
     clearSearch();
@@ -621,7 +638,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
           ? compareText(left.subject, right.subject)
           : sortKey === "sender"
             ? compareText(left.sender, right.sender)
-            : compareTime(left.atUtc, right.atUtc);
+            : compareTime(sortTime(left), sortTime(right));
       return sortDirection === "asc" ? base : -base;
     });
 
@@ -675,6 +692,13 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       disabled: selectedMessageIds.length === 0 || actionLoading
     },
     {
+      key: "snooze",
+      label: "Snooze",
+      icon: <ClockIcon />,
+      onClick: () => setSnoozeTarget({ ids: selectedMessageIds, fromReader: false }),
+      disabled: selectedMessageIds.length === 0 || actionLoading
+    },
+    {
       key: "read",
       label: "Read",
       icon: <CheckIcon />,
@@ -693,6 +717,23 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   useEffect(() => {
     setCurrentPage(1);
   }, [mailbox, activeTab, sortKey, sortDirection]);
+
+  // Woken mail is marked; the Snoozed folder shows when each row wakes.
+  function snoozeBadge(item: InboxEmail) {
+    const until = snoozeUntil[item.messageId];
+    const text = item.wokenAt
+      ? "Snoozed"
+      : until
+        ? `until ${new Date(until).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+        : "";
+    return text ? <span className="inbox-keyword-chip" style={{ marginLeft: 6 }}>{text}</span> : null;
+  }
+
+  function snooze(wakeAt: string) {
+    if (!snoozeTarget) return;
+    setSnoozeTarget(null);
+    void applyInboxAction("snooze", snoozeTarget.ids, { closeModal: snoozeTarget.fromReader, wakeAt });
+  }
 
   function updateSort(nextKey: SortKey) {
     if (sortKey === nextKey) {
@@ -716,7 +757,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     });
   }
 
-  async function applyInboxAction(action: InboxAction, messageIds: string[], options?: { closeModal?: boolean }): Promise<boolean> {
+  async function applyInboxAction(action: InboxAction, messageIds: string[], options?: { closeModal?: boolean; wakeAt?: string }): Promise<boolean> {
     if (messageIds.length === 0 || actionLoading) return false;
     setActionLoading(true);
     setActionError("");
@@ -724,13 +765,17 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       const response = await postJSON<InboxActionResponse>("/api/inbox/actions", {
         action,
         messageIds,
-        mailbox
+        mailbox,
+        wakeAt: options?.wakeAt
       });
       if (response.failed.length > 0) {
         const first = response.failed[0];
         throw new Error(first?.error || "some messages could not be updated");
       }
-      if (action === "read") {
+      if (action === "snooze" && isSnoozedMailbox) {
+        // Re-snoozed in place: the rows stay, only their wake times moved.
+        void loadInbox();
+      } else if (action === "read") {
         const updated = new Set(messageIds);
         setByTab((current) => {
           const next: Record<string, InboxEmail[]> = {};
@@ -1705,14 +1750,14 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                         </button>
                         <div className="inbox-row-meta">
                           <span>{item.sender || "-"}</span>
-                          <span>{displayTime}</span>
+                          <span>{displayTime}{snoozeBadge(item)}</span>
                           {(item.keywords ?? []).map((kw) => (
                             <span key={kw} className="inbox-keyword-chip">{kw}</span>
                           ))}
                         </div>
                       </td>
                       <td className="inbox-cell inbox-sender-cell inbox-desktop-col">{item.sender || "-"}</td>
-                      <td className="inbox-cell inbox-time-cell inbox-desktop-col">{displayTime}</td>
+                      <td className="inbox-cell inbox-time-cell inbox-desktop-col">{displayTime}{snoozeBadge(item)}</td>
                     </tr>
                   )})}
                 </tbody>
@@ -1763,6 +1808,13 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                     disabled={actionLoading}
                   >
                     Archive
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSnoozeTarget({ ids: [selected.messageId], fromReader: true })}
+                    disabled={actionLoading}
+                  >
+                    Snooze
                   </button>
                   <button
                     type="button"
@@ -2077,6 +2129,12 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
           </div>
         ) : null}
       </dialog>
+      <SnoozeDialog
+        open={snoozeTarget !== null}
+        busy={actionLoading}
+        onSnooze={snooze}
+        onCancel={() => setSnoozeTarget(null)}
+      />
       {/* Outside the detail pane: an encrypted draft asks for an unlock
           without ever selecting a message, so the prompt must not depend on
           one being open. */}

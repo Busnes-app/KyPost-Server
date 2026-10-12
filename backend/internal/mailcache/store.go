@@ -677,6 +677,7 @@ func (s *Store) Upsert(mailboxKey string, entries []Entry) error {
 		// overwritten below) so an Upsert call that only refreshes body
 		// content, or only some fields, never regresses the rest.
 		updated := win.Entries[idx]
+		in.WokenAt = updated.WokenAt // the inbox handler owns the pin
 		changed := !entryMetaEqual(updated, in)
 		updated.Subject, updated.Sender, updated.SentTo = in.Subject, in.Sender, in.SentTo
 		updated.CC, updated.BCC = in.CC, in.BCC

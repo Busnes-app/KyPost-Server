@@ -236,6 +236,17 @@ CREATE TABLE IF NOT EXISTS scheduled_sends (
 );
 CREATE INDEX IF NOT EXISTS scheduled_sends_due ON scheduled_sends(status, send_at);
 CREATE INDEX IF NOT EXISTS scheduled_sends_user ON scheduled_sends(user_id, status);
+
+-- Snoozed mail, keyed by RFC 5322 Message-ID because a move renumbers an IMAP
+-- UID. woken_at=0 means still snoozed; once woken, inbox_id is the message's
+-- id in INBOX and the row pins it to the top of the inbox. See snoozes.go.
+CREATE TABLE IF NOT EXISTS snoozes (
+	message_id TEXT PRIMARY KEY,
+	wake_at    INTEGER NOT NULL,
+	inbox_id   TEXT NOT NULL DEFAULT '',
+	woken_at   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS snoozes_wake ON snoozes(woken_at, wake_at);
 `
 
 func openDB(path, existingSource string) (*sql.DB, error) {

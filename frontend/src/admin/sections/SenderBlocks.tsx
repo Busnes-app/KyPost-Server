@@ -5,13 +5,12 @@ import { deleteJSON, getJSON, HttpError, postJSON, toErrorMessage } from "../../
 import { blockReasons, readSenderBlockAdded, readSenderBlockRemoved, readSenderBlocks, type BlockEvidence, type BlockKind, type BlockReason, type SenderBlock } from "../../api/nativeMail";
 import { withSSOStepUp } from "../../api/stepup";
 import { visible } from "../../lib/visibleText";
+import { localNow } from "../../lib/snooze";
 
 const time = (ms: number) => new Date(ms).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
 const domainOf = (address: string) => address.slice(address.lastIndexOf("@") + 1);
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const describe = (b: SenderBlock) => `${b.source} block${b.source === "automatic" ? ` (level ${b.level})` : ""} ${b.until === null ? "with no expiry" : `until ${time(b.until)}`}`;
-// The datetime-local form of now, for the input's min.
-const localNow = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 
 /** expiryMs reads a datetime-local value as local time; empty means no expiry. */
 const asciiTrim = (v: string) => v.replace(/^[ \t]+|[ \t]+$/g, "");

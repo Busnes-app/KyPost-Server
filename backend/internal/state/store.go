@@ -275,12 +275,12 @@ func (s *Store) SetCheckpoint(value string) error {
 	return setMeta(s.db, metaCheckpoint, value)
 }
 
-// ResetUIDNamespace forgets the processed set and deferrals, whose UIDs now
-// name other messages, and restarts the checkpoint in one transaction, so a
+// ResetUIDNamespace forgets the processed set, deferrals and woken-message pins,
+// whose UIDs now name other messages, and restarts the checkpoint in one transaction, so a
 // tick that dies afterwards does not forget the messages it went on to retire.
 func (s *Store) ResetUIDNamespace(checkpoint string) error {
 	return s.tx(func(tx *sql.Tx) error {
-		for _, q := range []string{`DELETE FROM processed`, `DELETE FROM deferrals`} {
+		for _, q := range []string{`DELETE FROM processed`, `DELETE FROM deferrals`, `UPDATE snoozes SET inbox_id = '' WHERE woken_at > 0`} {
 			if _, err := tx.Exec(q); err != nil {
 				return err
 			}
@@ -515,6 +515,9 @@ func (s *Store) Cleanup(keepDays int) error {
 		// A prediction older than the decision log can no longer be corrected
 		// from the reader in any way the user would connect to it.
 		if _, err := tx.Exec(`DELETE FROM sorter_predictions WHERE at_unix < ?`, cutoff.Unix()); err != nil {
+			return err
+		}
+		if err := pruneWoken(tx, time.Now()); err != nil {
 			return err
 		}
 		// Recorded in the same transaction as the deletes it describes, so the

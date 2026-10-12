@@ -650,6 +650,7 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
 	mux.HandleFunc("DELETE /api/inbox/folders", s.withMailAuth(s.withMailbox(s.handleInboxFolders)))
 	mux.HandleFunc("POST /api/inbox/actions", s.withMailAuth(s.withMailbox(s.handleInboxActions)))
+	mux.HandleFunc("GET /api/snoozes", s.withMailAuth(s.withMailbox(s.handleSnoozes)))
 	mux.HandleFunc("GET /api/mail/search", s.withMailAuth(s.withMailbox(s.handleMailSearch)))
 	mux.HandleFunc("GET /api/imap/config", s.withAuth(s.handleIMAPConfig))
 	mux.HandleFunc("POST /api/imap/config", s.withAuth(s.handleIMAPConfig))

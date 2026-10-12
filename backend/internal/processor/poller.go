@@ -818,6 +818,9 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 		}
 	}
 
+	// Before fetchUnread, so a woken IMAP message is processed as new this tick.
+	p.wakeSnoozed(ctx, uc)
+
 	checkpoint, messages, nextCheckpoint, err := p.fetchUnread(ctx, uc)
 	if err != nil {
 		return err
