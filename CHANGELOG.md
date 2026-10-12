@@ -14,6 +14,10 @@ non-prerelease version.
 
 ## Unreleased
 
+- Security: a successful sign-in (or CardDAV authentication) no longer resets its address's per-IP failure budget, so one valid account can no longer be used to keep guessing other accounts' passwords from the same address.
+
+- Security: user-management changes (create, role, reset password, deactivate/reactivate, clear MFA, assigned IMAP and CardDAV credentials) and SSO settings now need the acting admin's account password, or a KySignOn confirmation, for each change. API clients send it as `adminPassword`/`adminAuthSecret`. The SSO client secret is no longer returned by `GET|PUT /api/admin/sso` (`clientSecretSet` instead); leaving it blank keeps the stored secret only for the same issuer and client ID.
+
 - **BREAKING: scrypt credential hashes are retired; Argon2id is the only supported password hash.** An account whose password hash predates Argon2id (it never signed in after the Argon2id release, so it was never upgraded) can no longer sign in with a password: the correct password is refused exactly like a wrong one. Nothing is deleted or rewritten automatically. An administrator must reset each such password in Admin → Users (`POST /api/users/{id}/reset-password`); as with any admin reset, a browser-held PGP key wrapped under the old password becomes inaccessible. To find them: startup logs a WARN, "accounts hold a retired (pre-Argon2id) password hash…", with `count`, then one WARN per account with its `user_id`; each refused attempt logs a WARN with its `user_id`; or search `$CONFIG_DIR/users.json` for `"passwordHash": "scrypt$`. The same retirement applies to other credentials still stored in the `scrypt$` format: CardDAV app passwords (`$CONFIG_DIR/users/<id>/carddav-auth.json`; regenerate in Settings), recovery codes issued before keyed digests (regenerate), and native devices paired before the SHA-256 device-secret format (re-pair). Argon2id hashes written at an older cost are still upgraded on the next successful sign-in.
 
 - Update the pinned Go compiler and matching builder digest to 1.26.9 for standard-library security fixes; keep Sender Blocks test expiries relative to the test run.

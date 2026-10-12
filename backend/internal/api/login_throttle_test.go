@@ -217,39 +217,45 @@ func TestLoginIPLockoutCatchesRotatingUsernames(t *testing.T) {
 	}
 }
 
-// TestSuccessfulLoginClearsTheIPBudget makes sure the per-IP lockout does not
-// accumulate against a legitimate shared egress (a NAT, an office) that
-// occasionally mistypes.
-func TestSuccessfulLoginClearsTheIPBudget(t *testing.T) {
+// TestSuccessfulLoginDoesNotRefundTheIPBudget: one valid account must not reset
+// failures spent guessing other accounts' passwords from the same address.
+func TestSuccessfulLoginDoesNotRefundTheIPBudget(t *testing.T) {
 	srv := newTestServer(t)
-	u, err := srv.users.Create(context.Background(), "ip-budget-user", "correct-horse-battery-staple", users.RoleUser)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
+	srv.loginRateLimiter = nil
+	const maxFailures = 4
+	srv.loginIPLockout = newFailureLockout(maxFailures, loginIPLockoutFor)
+	// Keep the per-account lockout out of the way so every 429 is the IP's.
+	srv.loginLockout = newFailureLockout(100, loginIPLockoutFor)
+	for _, name := range []string{"spray-a", "spray-b"} {
+		if _, err := srv.users.Create(context.Background(), name, "correct-horse-battery-staple", users.RoleUser); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
 	}
 
-	const ip = "198.51.100.90"
-	login := func(password string) int {
-		body, _ := json.Marshal(map[string]string{"username": u.Username, "password": password})
+	login := func(username, password string) int {
+		body, _ := json.Marshal(map[string]string{"username": username, "password": password})
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
-		req.RemoteAddr = ip + ":4000"
+		req.RemoteAddr = "198.51.100.90:4000"
 		rec := httptest.NewRecorder()
 		srv.handleLogin(rec, req)
 		return rec.Code
 	}
 
-	// A couple of typos, then the real password.
-	login("wrong-password-entirely")
-	login("wrong-password-entirely")
-	if code := login("correct-horse-battery-staple"); code != http.StatusOK {
-		t.Fatalf("login with the correct password returned %d, want 200", code)
+	for range maxFailures - 1 {
+		if code := login("spray-b", "wrong-password-entirely"); code != http.StatusUnauthorized {
+			t.Fatalf("failed login returned %d, want 401", code)
+		}
 	}
-
-	srv.loginIPLockout.mu.Lock()
-	_, stillTracked := srv.loginIPLockout.entries[ip]
-	srv.loginIPLockout.mu.Unlock()
-	if stillTracked {
-		t.Error("the address still carries failure state after a successful login; a shared " +
-			"egress would accumulate its way to a lockout")
+	if code := login("spray-a", "correct-horse-battery-staple"); code != http.StatusOK {
+		t.Fatalf("own-account login returned %d, want 200", code)
+	}
+	// The success neither spent nor refunded: one strike left, then the address is cut off.
+	if code := login("spray-b", "wrong-password-entirely"); code != http.StatusUnauthorized {
+		t.Fatalf("last budgeted failure returned %d, want 401", code)
+	}
+	if code := login("spray-b", "wrong-password-entirely"); code != http.StatusTooManyRequests {
+		t.Fatalf("failure past the IP budget returned %d, want 429; a valid login refunded "+
+			"failures spent on another account", code)
 	}
 }
 

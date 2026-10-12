@@ -165,7 +165,7 @@ func TestStepUpFailuresDoNotDenyTheOwnersSecondFactor(t *testing.T) {
 	}
 
 	// The owner's second factor must still be reachable.
-	if allowed, _ := srv.mfaLockout.tryAttempt(u.ID); !allowed {
+	if allowed, _, _ := srv.mfaLockout.tryAttempt(u.ID); !allowed {
 		t.Fatal("a session thief's wrong-password attempts locked the owner out of " +
 			"their own sign-in second factor and recovery codes")
 	}

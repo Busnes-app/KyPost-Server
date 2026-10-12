@@ -169,7 +169,7 @@ Three ways to get TLS:
 When a reverse proxy sits in front of KyPost, the server sees the proxy's address as the client IP. This address is used as the key for:
 
 - Login rate limiting (3 strikes, 15-minute lockout)
-- Per-IP account lockout (looser, across all accounts)
+- Per-IP account lockout (looser, across all accounts; a successful sign-in does not reset it)
 - Instance-wide login rate limit
 - MFA push approval notifications (the push names the address)
 
@@ -222,7 +222,7 @@ All of these live in `/kypost/private`. **Back up this volume separately and sto
 - CAPTCHA challenge on login (optional, configurable: `pow`, `turnstile`, `friendly`, or `none`).
 - Proof-of-work CAPTCHA (`pow`) uses `crypto.subtle` and requires HTTPS (except localhost). Difficulty adapts per address; escalation is counted per IP and decays after 15 minutes or on successful login.
 - 3-strikes account lockout (15 minutes).
-- Per-IP lockout (looser, across all accounts).
+- Per-IP lockout (looser, across all accounts; a successful sign-in does not reset it).
 - Instance-wide login rate limit.
 
 ### Multi-Factor Authentication
@@ -335,7 +335,7 @@ Email HTML is sanitized with DOMPurify before rendering in a sandboxed iframe. T
 
 - **CAPTCHA:** Optional on login. Proof-of-work (`pow`) is self-hosted and requires HTTPS. Turnstile and Friendly Captcha use third-party verification.
 - **Account lockout:** 3 failed login attempts = 15-minute lockout per account.
-- **Per-IP lockout:** Looser, across all accounts.
+- **Per-IP lockout:** Looser, across all accounts. A successful sign-in refunds only its own attempt, so one valid account cannot reset failures spent guessing other accounts.
 - **Instance-wide limit:** Meters login attempts across the instance.
 - **Proof-of-work escalation:** Difficulty increases with each recent failed login from the same IP (up to a ceiling), decaying after 15 minutes or on success.
 

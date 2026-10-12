@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -108,14 +109,21 @@ func clampLockoutKeyComponent(s string) string {
 }
 
 type loginLockoutEntry struct {
-	failures    int
+	// strikes holds when each unrefunded strike was reserved, oldest first. The
+	// window runs from the newest, so refunded (successful) attempts never extend
+	// it. It also lets the sweep tell stale strikes from ones mid-accumulation;
+	// with only "is it locked right now?" to go on, a crowded-table sweep deleted
+	// every PARTIAL record and the lockout never engaged for anyone.
+	strikes     []time.Time
 	lockedUntil time.Time
-	// lastSeen is when this key last attempted, so the sweep can tell an entry whose
-	// strikes have gone stale from one mid-accumulation. With only "is it locked
-	// right now?" to go on, the sweep deleted every PARTIAL strike record whenever
-	// the table was crowded — flood it past the threshold and no key ever reaches
-	// the third strike, so the lockout never engages for anyone.
-	lastSeen time.Time
+}
+
+// lastStrike is when the newest unrefunded strike was reserved.
+func (e *loginLockoutEntry) lastStrike() time.Time {
+	if len(e.strikes) == 0 {
+		return time.Time{}
+	}
+	return e.strikes[len(e.strikes)-1]
 }
 
 // failureLockout is small in-memory, keyed strike/cooldown state: after
@@ -156,6 +164,8 @@ type failureLockout struct {
 	// exercises a different machine from the one that ships.
 	sweepThreshold int
 	hardCap        int
+	// now is time.Now; a field so tests can drive the window.
+	now func() time.Time
 }
 
 // sweepMinInterval is the shortest gap between two crowded-table sweeps, so a
@@ -178,6 +188,7 @@ func newFailureLockoutSized(maxFailures int, lockoutFor time.Duration, sweepThre
 		entries:        map[string]*loginLockoutEntry{},
 		sweepThreshold: sweepThreshold,
 		hardCap:        hardCap,
+		now:            time.Now,
 	}
 }
 
@@ -196,13 +207,15 @@ func newLoginLockout() *failureLockout {
 // The caller settles the reservation:
 //
 //   - recordSuccess on a correct credential, clearing the whole entry
-//   - cancelAttempt on a path that never became a credential check
+//   - cancelAttempt on a path that never became a credential check, or on a
+//     success against an IP-only key, whose other strikes were spent on other
+//     accounts
 //   - nothing at all on a failure — the strike is already counted
-func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.Duration) {
+func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.Duration, res lockoutReservation) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	now := time.Now()
+	now := l.now()
 	l.sweepIfCrowdedLocked(now)
 
 	e, exists := l.entries[username]
@@ -213,31 +226,36 @@ func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.D
 		// known to the table proceed normally.
 		if len(l.entries) >= l.hardCap {
 			l.saturated = true
-			return false, l.lockoutFor
+			return false, l.lockoutFor, lockoutReservation{}
 		}
 		e = &loginLockoutEntry{}
 		l.entries[username] = e
 	} else if remaining := e.lockedUntil.Sub(now); remaining > 0 {
-		e.lastSeen = now
-		return false, remaining
+		return false, remaining, lockoutReservation{}
 	} else if !e.lockedUntil.IsZero() {
 		// The lockout ran its course; start a fresh set of strikes rather than
 		// leaving the old ones to trip the very next attempt.
-		e.failures = 0
+		e.strikes = e.strikes[:0]
 		e.lockedUntil = time.Time{}
-	} else if now.Sub(e.lastSeen) >= l.lockoutFor {
+	} else if now.Sub(e.lastStrike()) >= l.lockoutFor {
 		// Partial strikes gone stale. Forgiving them here rather than only in
 		// the sweep means the budget behaves the same whether or not the table
 		// happened to be crowded enough to sweep.
-		e.failures = 0
+		e.strikes = e.strikes[:0]
 	}
 
-	e.lastSeen = now
-	e.failures++
-	if e.failures >= l.maxFailures {
+	e.strikes = append(e.strikes, now)
+	if len(e.strikes) >= l.maxFailures {
 		e.lockedUntil = now.Add(l.lockoutFor)
 	}
-	return true, 0
+	return true, 0, lockoutReservation{key: username, at: now}
+}
+
+// lockoutReservation identifies one strike spent by tryAttempt, so
+// cancelAttempt refunds exactly that strike and not a concurrent request's.
+type lockoutReservation struct {
+	key string
+	at  time.Time
 }
 
 // cancelAttempt returns a strike reserved by tryAttempt, for a path that turned
@@ -246,23 +264,34 @@ func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.D
 // lock out every user of the instance for the duration.
 //
 // A FAILED captcha is deliberately not cancelled; that is an attempt.
-func (l *failureLockout) cancelAttempt(username string) {
+//
+// A reservation whose strike is already gone (the window reset under it) is a
+// no-op, so a refund can never become credit for extra attempts.
+func (l *failureLockout) cancelAttempt(res lockoutReservation) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	e, exists := l.entries[username]
+	e, exists := l.entries[res.key]
 	if !exists {
 		return
 	}
-	if e.failures > 0 {
-		e.failures--
+	i := slices.IndexFunc(e.strikes, res.at.Equal)
+	if i < 0 {
+		return
 	}
-	if e.failures < l.maxFailures {
+	e.strikes = slices.Delete(e.strikes, i, i+1)
+	// The refunded strike may have been all that kept two failures within the
+	// window of each other; drop everything before the newest expired gap.
+	for j := len(e.strikes) - 1; j > 0; j-- {
+		if e.strikes[j].Sub(e.strikes[j-1]) >= l.lockoutFor {
+			e.strikes = e.strikes[j:]
+			break
+		}
+	}
+	if len(e.strikes) < l.maxFailures {
 		e.lockedUntil = time.Time{}
 	}
-	// Never let cancels accumulate into credit for extra attempts: an entry
-	// back at zero is simply gone.
-	if e.failures == 0 {
-		delete(l.entries, username)
+	if len(e.strikes) == 0 {
+		delete(l.entries, res.key)
 	}
 }
 
@@ -270,7 +299,7 @@ func (l *failureLockout) cancelAttempt(username string) {
 // must hold l.mu.
 //
 // It reclaims entries that are neither locked nor mid-accumulation, keying off
-// lastSeen and NOT off "is this locked right now" — the latter deleted partial
+// lastStrike and NOT off "is this locked right now" — the latter deleted partial
 // strike records, so flooding the table past the threshold erased every real
 // key's 1-of-3 and 2-of-3 progress and the lockout stopped engaging at all. An
 // entry idle for longer than lockoutFor is safe to drop because its strikes
@@ -295,7 +324,7 @@ func (l *failureLockout) sweepIfCrowdedLocked(now time.Time) {
 		if locked {
 			continue
 		}
-		if now.Sub(e.lastSeen) >= l.lockoutFor {
+		if now.Sub(e.lastStrike()) >= l.lockoutFor {
 			delete(l.entries, k)
 		}
 	}

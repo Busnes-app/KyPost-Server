@@ -128,7 +128,8 @@ func (s *Server) deviceAuthSnapshot(r *http.Request) (userID string, device stat
 		return "", state.NativeDevice{}, 0, false, 0
 	}
 	lockoutKey := s.deviceLockoutKey(deviceID, r)
-	if allowed, wait := s.deviceLockout.tryAttempt(lockoutKey); !allowed {
+	allowed, wait, strike := s.deviceLockout.tryAttempt(lockoutKey)
+	if !allowed {
 		return "", state.NativeDevice{}, 0, false, wait
 	}
 	// An untagged (pre-HashDeviceSecret) device secret still costs a derivation
@@ -140,7 +141,7 @@ func (s *Server) deviceAuthSnapshot(r *http.Request) (userID string, device stat
 	// counting it would lock a phone out of mail sync over a load spike.
 	okSecret, err := users.VerifyDeviceSecret(r.Context(), dev.SecretHash, deviceSecret)
 	if err != nil {
-		s.deviceLockout.cancelAttempt(lockoutKey)
+		s.deviceLockout.cancelAttempt(strike)
 		return "", state.NativeDevice{}, 0, false, retryAfterKDFBusy
 	}
 	if !okSecret {
@@ -157,7 +158,7 @@ func (s *Server) deviceAuthSnapshot(r *http.Request) (userID string, device stat
 	// telling its user to re-pair.
 	u, err := s.users.Get(ownerID)
 	if err != nil || !u.Active {
-		s.deviceLockout.cancelAttempt(lockoutKey)
+		s.deviceLockout.cancelAttempt(strike)
 		return "", state.NativeDevice{}, 0, false, 0
 	}
 	// MustChangePassword confines a SESSION to the password-change and logout
@@ -176,7 +177,7 @@ func (s *Server) deviceAuthSnapshot(r *http.Request) (userID string, device stat
 	// secret was correct, so the strike goes back rather than backing the client
 	// off forever.
 	if u.MustChangePassword {
-		s.deviceLockout.cancelAttempt(lockoutKey)
+		s.deviceLockout.cancelAttempt(strike)
 		return "", state.NativeDevice{}, 0, false, 0
 	}
 	s.deviceLockout.recordSuccess(lockoutKey)

@@ -140,7 +140,8 @@ func (s *Server) handleMFAConfirm(w http.ResponseWriter, r *http.Request) {
 	// and a password change clears no MFA state, so it survived the victim's
 	// own remediation. Checked here rather than at setup because handing out a
 	// secret is harmless; committing it is not.
-	if allowed, retryAfter := s.loginLockout.tryAttempt(mfaConfirmLockoutKey(ac, r)); !allowed {
+	allowed, retryAfter, strike := s.loginLockout.tryAttempt(mfaConfirmLockoutKey(ac, r))
+	if !allowed {
 		retrySeconds := int(retryAfter.Seconds()) + 1
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
@@ -154,7 +155,7 @@ func (s *Server) handleMFAConfirm(w http.ResponseWriter, r *http.Request) {
 		// Shed before the derivation ran: nothing was examined, so the strike
 		// tryAttempt just spent goes back. Charging it would let a load spike
 		// lock an account out of enrolling a second factor.
-		s.loginLockout.cancelAttempt(mfaConfirmLockoutKey(ac, r))
+		s.loginLockout.cancelAttempt(strike)
 		writeKDFBusy(w)
 		return
 	}
@@ -262,7 +263,8 @@ func (s *Server) requirePasswordConfirm(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return users.User{}, false
 	}
-	if allowed, retryAfter := s.loginLockout.tryAttempt(mfaConfirmLockoutKey(ac, r)); !allowed {
+	allowed, retryAfter, strike := s.loginLockout.tryAttempt(mfaConfirmLockoutKey(ac, r))
+	if !allowed {
 		retrySeconds := int(retryAfter.Seconds()) + 1
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
@@ -279,13 +281,13 @@ func (s *Server) requirePasswordConfirm(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		// Never reached a credential check, so give the strike back.
-		s.loginLockout.cancelAttempt(mfaConfirmLockoutKey(ac, r))
+		s.loginLockout.cancelAttempt(strike)
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return users.User{}, false
 	}
 	u, err := s.users.Get(ac.UserID)
 	if err != nil {
-		s.loginLockout.cancelAttempt(mfaConfirmLockoutKey(ac, r))
+		s.loginLockout.cancelAttempt(strike)
 		http.Error(w, "user unavailable", http.StatusInternalServerError)
 		return users.User{}, false
 	}
@@ -293,7 +295,7 @@ func (s *Server) requirePasswordConfirm(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		// Never reached a credential check, so the strike goes back — same
 		// reasoning as the decode and load failures above.
-		s.loginLockout.cancelAttempt(mfaConfirmLockoutKey(ac, r))
+		s.loginLockout.cancelAttempt(strike)
 		writeKDFBusy(w)
 		return users.User{}, false
 	}

@@ -123,7 +123,8 @@ func (s *Server) confirmSecondFactor(w http.ResponseWriter, r *http.Request, u u
 	// Per-account throttle, the same one the login MFA path uses. An endpoint
 	// that says "wrong code" without limit is a brute-force target whatever
 	// else it is for, and six digits do not survive one.
-	if allowed, _ := s.mfaLockout.tryAttempt(u.ID); !allowed {
+	allowed, _, strike := s.mfaLockout.tryAttempt(u.ID)
+	if !allowed {
 		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
 		return false
 	}
@@ -131,7 +132,7 @@ func (s *Server) confirmSecondFactor(w http.ResponseWriter, r *http.Request, u u
 	if totpCodeShape.MatchString(code) {
 		secret, err := mfa.OpenTOTPSecret(u.TOTPSecretEnc, s.totpSecretKeyPath)
 		if err != nil {
-			s.mfaLockout.cancelAttempt(u.ID)
+			s.mfaLockout.cancelAttempt(strike)
 			http.Error(w, "failed to load second factor", http.StatusInternalServerError)
 			return false
 		}
@@ -164,7 +165,7 @@ func (s *Server) confirmSecondFactor(w http.ResponseWriter, r *http.Request, u u
 
 	_, matched, err := s.users.ConsumeRecoveryCode(r.Context(), u.ID, code, s.recoveryCodeDigest)
 	if err != nil {
-		s.mfaLockout.cancelAttempt(u.ID)
+		s.mfaLockout.cancelAttempt(strike)
 		http.Error(w, "failed to verify recovery code", http.StatusInternalServerError)
 		return false
 	}
