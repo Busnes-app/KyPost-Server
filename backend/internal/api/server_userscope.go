@@ -208,34 +208,16 @@ func (e *mailLockedOutError) Error() string {
 	return "device locked out"
 }
 
-func (s *Server) userConfigDir(userID string) string {
-	return filepath.Join(s.configDir, "users", safeUserPathComponent(userID))
-}
-
-func (s *Server) userStateDir(userID string) string {
-	return filepath.Join(s.stateDir, "users", safeUserPathComponent(userID))
-}
-
-// safeUserPathComponent keeps malformed or legacy user records inside the
-// users directory. Valid IDs are opaque UUIDs, but path construction must not
-// rely on that invariant surviving hand-edited or migrated users.json files.
-func safeUserPathComponent(userID string) string {
-	if fsutil.SafePathComponent(userID) {
-		return userID
-	}
-	return "__invalid-user-id__"
-}
-
+func (s *Server) userConfigDir(userID string) string { return config.UserDir(s.configDir, userID) }
+func (s *Server) userStateDir(userID string) string  { return config.UserDir(s.stateDir, userID) }
 func (s *Server) userIMAPConfigPath(userID string) string {
-	return filepath.Join(s.userConfigDir(userID), "imap-config.json")
+	return config.UserIMAPConfigPath(s.configDir, userID)
 }
-
 func (s *Server) userTuningPath(userID string) string {
-	return filepath.Join(s.userConfigDir(userID), "tuning.md")
+	return config.UserTuningPath(s.configDir, userID)
 }
-
 func (s *Server) userSettingsPath(userID string) string {
-	return filepath.Join(s.userConfigDir(userID), "config.yaml")
+	return config.UserSettingsPath(s.configDir, userID)
 }
 
 // userLabels reads one account's label set, seeding it from the house list the
@@ -462,7 +444,7 @@ func (s *Server) mailboxStateDir(userID, mailboxID string) string {
 	if mailboxID == "" {
 		return s.userStateDir(userID)
 	}
-	return filepath.Join(s.stateDir, "mailboxes", safeUserPathComponent(mailboxID))
+	return filepath.Join(s.stateDir, "mailboxes", config.SafeUserPathComponent(mailboxID))
 }
 
 // mailboxStore is the selected mailbox's state (processed, decisions,
