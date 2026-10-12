@@ -12,3 +12,4 @@ export const ArchiveIcon = icon("M3 4h18v5H3zM5 9v11h14V9M10 13h4");
 export const WarningIcon = icon("M12 3 2 21h20L12 3zM12 10v5M12 18h.01");
 export const CheckIcon = icon("M4 12l5 5L20 6");
 export const PrintIcon = icon("M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6z");
+export const ClockIcon = icon("M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM12 7v5l3 3");

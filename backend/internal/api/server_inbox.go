@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/inbucket/html2text"
@@ -22,6 +23,7 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 type inboxEmail struct {
@@ -49,6 +51,9 @@ type inboxEmail struct {
 	Status   string   `json:"status"`
 	Detail   string   `json:"detail,omitempty"`
 	AtUTC    string   `json:"atUtc"`
+	// WokenAt is when a snoozed message returned to INBOX; clients sort by it
+	// in place of AtUTC so the message sits at the top. Absent when not woken.
+	WokenAt string `json:"wokenAt,omitempty"`
 	// HasAttachments is a warm-path hint for the inbox paperclip badge; see
 	// mailcache.Entry.HasAttachments. Absent when false.
 	HasAttachments bool `json:"hasAttachments,omitempty"`
@@ -420,6 +425,7 @@ func (s *Server) serveInboxBefore(w http.ResponseWriter, ctx context.Context, us
 	}
 	allowedKeywords := collectAllowedKeywords(s.userLabels(userID))
 	tabs, byTab := buildInboxTabScaffold(allowedKeywords)
+	pins, _ := s.wokenPins(ctx, userID, mailbox)
 	for _, ov := range overviews {
 		tab := firstMatchingKeyword(ov.Keywords, allowedKeywords)
 		if tab == "" {
@@ -440,6 +446,7 @@ func (s *Server) serveInboxBefore(w http.ResponseWriter, ctx context.Context, us
 			Keywords:  ov.Keywords,
 			Status:    ov.Status,
 			AtUTC:     ov.AtUTC,
+			WokenAt:   pinnedAt(pins, ov.UID),
 		})
 	}
 	resp := map[string]any{"tabs": append(tabs, inboxUncategorizedTab), "byTab": byTab, "hasMore": hasMore}
@@ -568,6 +575,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 					BodyMode:             e.BodyMode,
 					Status:               e.Status,
 					AtUTC:                e.AtUTC,
+					WokenAt:              e.WokenAt,
 					HasAttachments:       e.HasAttachments,
 					PGPEncrypted:         e.PGPEncrypted,
 					PGPSigned:            e.PGPSigned,
@@ -643,9 +651,18 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		http.Error(w, "failed to fetch inbox", http.StatusBadGateway)
 		return
 	}
+	// The pin rides in the cache's metadata, so gaining or losing it reaches
+	// cursor clients as an update. Only in-window messages: adding older ones
+	// would move the window's floor and misreport aged-out mail as removed.
+	pins, pinStore := s.wokenPins(ctx, userID, mailbox)
 	live := make([]mailcache.Overview, 0, len(overviews))
 	for _, ov := range overviews {
-		live = append(live, mailCacheEntryFromOverview(ov))
+		entry := mailCacheEntryFromOverview(ov)
+		if z, ok := pins[ov.UID]; ok {
+			entry.WokenAt = wokenAt(z)
+			delete(pins, ov.UID)
+		}
+		live = append(live, entry)
 	}
 
 	// The default limit keeps the window the poller warms; any other limit gets
@@ -780,6 +797,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			BodyMode:             bodyMode,
 			Status:               e.Status,
 			AtUTC:                e.AtUTC,
+			WokenAt:              e.WokenAt,
 			HasAttachments:       hasAttachments,
 			PGPEncrypted:         pgpEncrypted,
 			PGPSigned:            pgpSigned,
@@ -799,12 +817,43 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			Subject:              inboxSubject(e.Subject, e.PGPProtectedSubject),
 			Status:               e.Status,
 			AtUTC:                e.AtUTC,
+			WokenAt:              e.WokenAt,
 			HasAttachments:       e.HasAttachments,
 			PGPEncrypted:         e.PGPEncrypted,
 			PGPSigned:            e.PGPSigned,
 			PGPVerified:          e.PGPVerified,
 			PGPSignerFingerprint: e.PGPSignerFingerprint,
 			ChangeType:           "updated",
+		})
+	}
+	// pins now holds only out-of-window messages.
+	for uid, z := range pins {
+		var ov imapadapter.Overview
+		found := false
+		if len(overviews) >= limit {
+			if !native {
+				continue // IMAP renumbers on wake; an older pin is just old now
+			}
+			if ov, found, err = imapadapter.OverviewByID(ctx, mailClient, mailbox, uid); err != nil {
+				continue
+			}
+		}
+		if !found {
+			_ = pinStore.DropSnooze(z.MessageID) // left INBOX
+			continue
+		}
+		// Native answers full snapshots, so this is listed afresh every time.
+		bucket(ov.Keywords, inboxEmail{
+			MessageID:  imapadapter.MessageReference(mailClient, ov.MessageID),
+			Sender:     ov.Sender,
+			SentTo:     ov.SentTo,
+			CC:         ov.CC,
+			BCC:        ov.BCC,
+			Subject:    ov.Subject,
+			Status:     ov.Status,
+			AtUTC:      ov.AtUTC,
+			WokenAt:    wokenAt(z),
+			ChangeType: "new",
 		})
 	}
 
@@ -1013,6 +1062,7 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 		Mailbox       string   `json:"mailbox"`
 		TargetMailbox string   `json:"targetMailbox"`
 		Keyword       string   `json:"keyword"`
+		WakeAt        string   `json:"wakeAt"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -1024,10 +1074,22 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 	targetMailbox := strings.TrimSpace(req.TargetMailbox)
 	keyword := strings.TrimSpace(req.Keyword)
 	switch action {
-	case "delete", "archive", "spam", "read", "unread", "move", "label", "unlabel":
+	case "delete", "archive", "spam", "read", "unread", "move", "label", "unlabel", "snooze":
 	default:
 		http.Error(w, "unsupported action", http.StatusBadRequest)
 		return
+	}
+	var wakeAt int64
+	var snoozeStore *state.Store
+	if action == "snooze" {
+		if wakeAt, err = parseWakeAt(strings.TrimSpace(req.WakeAt), time.Now()); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if snoozeStore, err = s.mailStateFor(r); err != nil {
+			http.Error(w, "failed to open user state", http.StatusInternalServerError)
+			return
+		}
 	}
 	if action == "move" && targetMailbox == "" {
 		http.Error(w, "targetMailbox is required for move action", http.StatusBadRequest)
@@ -1113,6 +1175,8 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 			err = mailClient.ApplyLabel(r.Context(), internalID, keyword)
 		case "unlabel":
 			err = mailClient.RemoveLabel(r.Context(), internalID, keyword)
+		case "snooze":
+			err = snoozeMessage(r.Context(), mailClient, snoozeStore, internalID, mailbox, wakeAt)
 		default:
 			err = mailClient.ApplyInboxAction(r.Context(), internalID, action, mailbox, targetMailbox)
 		}

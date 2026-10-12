@@ -25,6 +25,8 @@ export type InboxEmail = {
   status: string;
   detail?: string;
   atUtc: string;
+  /** When this email came back from snooze; the list sorts by it. */
+  wokenAt?: string;
   hasAttachments?: boolean;
   pgpEncrypted?: boolean;
   pgpSigned?: boolean;
@@ -108,7 +110,7 @@ export type InboxResponse = {
   byTab: Record<string, InboxEmail[]>;
 };
 
-export type InboxAction = "delete" | "archive" | "spam" | "read";
+export type InboxAction = "delete" | "archive" | "spam" | "read" | "snooze";
 
 export type InboxActionResponse = {
   ok: boolean;

@@ -52,7 +52,7 @@ const MAILBOX_HEADER = "X-KyPost-Mailbox";
 // The webmail routes the server wraps with withMailbox (server.go routesMail,
 // routesRules). /api/decisions and /api/export/folders honour it too, but
 // their Settings screens choose a mailbox themselves or show the primary.
-const mailboxScoped = /^\/api\/(inbox(\/folders|\/actions)?|mail\/(search|draft|send|send-pgp|body|pgp-payload|attachments?|outbox\/[^/?]+)|rules\/run)(\?|$)/;
+const mailboxScoped = /^\/api\/(inbox(\/folders|\/actions)?|snoozes|mail\/(search|draft|send|send-pgp|body|pgp-payload|attachments?|outbox\/[^/?]+)|rules\/run)(\?|$)/;
 // The webmail's selected extra mailbox; "" is the primary, which sends no header.
 let selectedMailbox = "";
 let mailboxGone: (id: string) => void = () => {};

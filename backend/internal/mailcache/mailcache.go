@@ -77,6 +77,9 @@ type Entry struct {
 	Keywords  []string `json:"keywords,omitempty"`
 	Status    string   `json:"status"`
 	AtUTC     string   `json:"atUtc"`
+	// WokenAt is when a snoozed message came back to INBOX (RFC3339), which
+	// pins it to the top. Set by the inbox handler, never by the poller.
+	WokenAt string `json:"wokenAt,omitempty"`
 
 	// Rev is the window's monotonic sequence value as of this entry's most
 	// recent metadata change (creation or a flag/label/subject change).
@@ -202,6 +205,7 @@ type Overview struct {
 	Keywords []string
 	Status   string
 	AtUTC    string
+	WokenAt  string
 }
 
 // SyncResult is what changed for a caller whose last known cursor was
@@ -283,6 +287,7 @@ type entryMeta struct {
 	BCC      string
 	Status   string
 	AtUTC    string
+	WokenAt  string
 	Keywords []string
 }
 
@@ -294,6 +299,7 @@ func (m entryMeta) equal(o entryMeta) bool {
 		m.BCC == o.BCC &&
 		m.Status == o.Status &&
 		m.AtUTC == o.AtUTC &&
+		m.WokenAt == o.WokenAt &&
 		slices.Equal(m.Keywords, o.Keywords)
 }
 
@@ -306,6 +312,7 @@ func (e Entry) meta() entryMeta {
 		BCC:      e.BCC,
 		Status:   e.Status,
 		AtUTC:    e.AtUTC,
+		WokenAt:  e.WokenAt,
 		Keywords: e.Keywords,
 	}
 }
@@ -319,6 +326,7 @@ func (o Overview) meta() entryMeta {
 		BCC:      o.BCC,
 		Status:   o.Status,
 		AtUTC:    o.AtUTC,
+		WokenAt:  o.WokenAt,
 		Keywords: o.Keywords,
 	}
 }
@@ -343,5 +351,6 @@ func entryFromOverview(ov Overview) Entry {
 		Keywords:  append([]string{}, ov.Keywords...),
 		Status:    ov.Status,
 		AtUTC:     ov.AtUTC,
+		WokenAt:   ov.WokenAt,
 	}
 }

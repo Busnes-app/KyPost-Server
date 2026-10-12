@@ -592,6 +592,14 @@ func (c *Client) ApplyInboxAction(ctx context.Context, id, action, folder, targe
 		if err != nil {
 			return err
 		}
+		// Create a missing target, as IMAP's move does; its parent must exist.
+		parent := ""
+		if i := strings.LastIndex(target, "/"); i > 0 {
+			parent = target[:i]
+		}
+		if err = c.store.createFolder(ctx, parent, target); err != nil {
+			return err
+		}
 	default:
 		return errors.New("unsupported inbox action")
 	}
