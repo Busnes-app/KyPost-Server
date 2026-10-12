@@ -22,56 +22,10 @@ func TestDeviceSecretRoundTrips(t *testing.T) {
 	}
 }
 
-func TestVerifyDeviceSecretStillAcceptsLegacyScryptHashes(t *testing.T) {
-	// Devices paired before HashDeviceSecret existed hold a scrypt hash.
-	// Rejecting those would silently unpair every phone on every existing
-	// install on upgrade.
-	const secret = "legacy-device-secret"
-	legacy, err := LegacyScryptHashForTest(context.Background(), secret)
-	if err != nil {
-		t.Fatalf("LegacyScryptHashForTest: %v", err)
-	}
-	if ok, _ := VerifyDeviceSecret(context.Background(), legacy, secret); !ok {
-		t.Fatal("VerifyDeviceSecret rejected a legacy scrypt hash; every already-paired device would be unpaired by the upgrade")
-	}
-	if ok, _ := VerifyDeviceSecret(context.Background(), legacy, "wrong"); ok {
-		t.Fatal("VerifyDeviceSecret accepted a wrong secret against a legacy hash")
-	}
-}
-
-func TestVerifyDeviceSecretRejectsMalformedTaggedHash(t *testing.T) {
-	for _, stored := range []string{"sha256:", "sha256:zzzz", "sha256:abcd"} {
-		if ok, _ := VerifyDeviceSecret(context.Background(), stored, "anything"); ok {
-			t.Errorf("VerifyDeviceSecret(context.Background(), %q) accepted a malformed hash", stored)
+func TestVerifyDeviceSecretRejectsUntaggedAndMalformedHashes(t *testing.T) {
+	for _, stored := range []string{"sha256:", "sha256:zzzz", "sha256:abcd", retiredScryptHash, ""} {
+		if ok, err := VerifyDeviceSecret(context.Background(), stored, "anything"); ok || err != nil {
+			t.Errorf("VerifyDeviceSecret(%q): ok=%v err=%v, want false,nil", stored, ok, err)
 		}
-	}
-}
-
-func TestVerifyScryptHashRejectsAbsurdCostParameters(t *testing.T) {
-	// n/r/p are parsed out of a file. Unbounded, scrypt.Key allocates
-	// 128*r*N bytes of whatever it is told to, so one bad value OOM-kills the
-	// process on the next login attempt — and supervisord restarts it into
-	// the same crash on the retry.
-	cases := map[string]string{
-		"absurd n":             "scrypt$1099511627776$8$1$c2FsdHNhbHQ=$aGFzaGhhc2g=",
-		"absurd r":             "scrypt$16384$1000000$1$c2FsdHNhbHQ=$aGFzaGhhc2g=",
-		"absurd p":             "scrypt$16384$8$1000000$c2FsdHNhbHQ=$aGFzaGhhc2g=",
-		"n below floor":        "scrypt$2$8$1$c2FsdHNhbHQ=$aGFzaGhhc2g=",
-		"n not a power of two": "scrypt$16385$8$1$c2FsdHNhbHQ=$aGFzaGhhc2g=",
-	}
-	for name, encoded := range cases {
-		if ok, _ := verifyScryptHash(context.Background(), encoded, "anything"); ok {
-			t.Errorf("%s: verifyScryptHash accepted it", name)
-		}
-	}
-}
-
-func TestVerifyScryptHashStillAcceptsTheHashesWeMint(t *testing.T) {
-	h, err := LegacyScryptHashForTest(context.Background(), "correct horse battery staple")
-	if err != nil {
-		t.Fatalf("LegacyScryptHashForTest: %v", err)
-	}
-	if ok, _ := verifyScryptHash(context.Background(), h, "correct horse battery staple"); !ok {
-		t.Fatal("the cost bounds rejected a hash LegacyScryptHashForTest just produced")
 	}
 }

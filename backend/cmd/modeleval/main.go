@@ -431,8 +431,7 @@ func renderFewshot(entries []fewshotEntry) string {
 // package — classifier.BuildRuntimePrompt now emits a token-bearing fence for
 // every prompt. This copy survives only so the configs in results/ that were
 // measured against it still reproduce; new work belongs in the classifier
-// package, where classifier.BuildRuntimePromptNonced takes a fixed token for
-// deterministic comparison.
+// package.
 func buildNoncePrompt(tuningTemplate string, sender, subject, body, nonce string) string {
 	begin := "<<<UNTRUSTED_EMAIL " + nonce + ">>>"
 	end := "<<<END_UNTRUSTED_EMAIL " + nonce + ">>>"
@@ -649,26 +648,10 @@ func resolveLabel(raw string, labels []string) string {
 	return classifier.SelectLabelFromText(labels, strings.Join(lines, "\n"))
 }
 
-// looksLikeRetryNoise reproduces isToolsOnlyResponse / hasEmptyMessageNoise from
-// http_client.go:547-569 — the two shapes that burn a production retry.
+// looksLikeRetryNoise reports the shapes that burn a production retry.
 func looksLikeRetryNoise(raw string) bool {
-	s := strings.ToLower(strings.TrimSpace(unquote(raw)))
-	if strings.Contains(s, "this message is empty. sorry about that") {
-		return true
-	}
-	for {
-		lines := strings.Split(s, "\n")
-		if len(lines) == 0 {
-			break
-		}
-		first := strings.TrimSpace(lines[0])
-		if strings.HasPrefix(first, "[") && strings.HasSuffix(first, "]") {
-			s = strings.TrimSpace(strings.Join(lines[1:], "\n"))
-			continue
-		}
-		break
-	}
-	return s == "tools" || s == ""
+	s := unquote(raw)
+	return s == "" || classifier.IsToolsOnlyResponse(s) || classifier.HasEmptyMessageNoise(s)
 }
 
 func pullModel(ctx context.Context, client *http.Client, base, model string) error {

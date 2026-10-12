@@ -3,7 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,13 +19,11 @@ import (
 func TestMigrateLegacySingleUserData(t *testing.T) {
 	configDir := t.TempDir()
 	stateDir := t.TempDir()
-	logDir := t.TempDir()
 
-	logger, err := logging.New(logDir)
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	defer logger.Close()
 
 	// Legacy global files.
 	if err := os.WriteFile(filepath.Join(stateDir, "state.json"), []byte(`{"lastCheckpoint":"42","processed":{}}`), 0o600); err != nil {
@@ -102,7 +102,6 @@ func TestCopyIfMissing_MissingSourceStaysSilent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	defer logger.Close()
 
 	dstDir := t.TempDir()
 	dst := filepath.Join(dstDir, "nonexistent.txt")
@@ -134,7 +133,6 @@ func TestCopyIfMissing_ReadErrorLogged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	defer logger.Close()
 
 	srcDir := t.TempDir()
 	dstDir := t.TempDir()
@@ -173,11 +171,10 @@ func TestCopyIfMissing_ReadErrorLogged(t *testing.T) {
 func legacyMigrationEnv(t *testing.T) (logger *logging.Logger, usersStore *users.Store, configDir, stateDir, adminID string) {
 	t.Helper()
 	configDir, stateDir = t.TempDir(), t.TempDir()
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { logger.Close() })
 
 	// config.SecretFile reads IMAP_CONFIG_FILE, which is how a real legacy
 	// install points at this file.
@@ -305,5 +302,89 @@ func TestOpenStoresMigratesBeforeStateNewConsumesTheSource(t *testing.T) {
 	// And state.New still did its own job: the legacy sources are retired.
 	if _, err := os.Stat(filepath.Join(stateDir, "state.json")); err == nil {
 		t.Fatal("state.New did not consume the legacy root state.json")
+	}
+}
+
+// TestOpenStoresWarnsAboutRetiredPasswordHashes: an admin migrated from a
+// pre-Argon2id admin.env carries a scrypt hash that no longer verifies. Startup
+// must name it once, not block, and leave the hash alone.
+func TestOpenStoresWarnsAboutRetiredPasswordHashes(t *testing.T) {
+	configDir, stateDir := t.TempDir(), t.TempDir()
+	const retired = "scrypt$131072$8$1$c2FsdHNhbHRzYWx0c2FsdA==$aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g="
+	if err := os.WriteFile(filepath.Join(configDir, "admin.env"), []byte("ADMIN_USER=old\nADMIN_PASS_HASH="+retired+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	logger, err := logging.NewWithOutput(&logs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usersStore, store, err := openStores(logger, configDir, stateDir, config.UserNotificationSettings{}, false)
+	if err != nil {
+		t.Fatalf("openStores must not block on a retired hash: %v", err)
+	}
+	defer store.Close()
+	admin, err := usersStore.FirstAdmin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admin.PasswordHash != retired {
+		t.Fatal("startup rewrote the stored hash")
+	}
+	if !strings.Contains(logs.String(), admin.ID) {
+		t.Fatalf("openStores did not warn: %q", logs.String())
+	}
+	fresh, err := usersStore.Create(context.Background(), "fresh", "a-long-enough-password", users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Seven retired accounts: their joined IDs exceed one log value's 256-byte cap.
+	retiredIDs := []string{admin.ID}
+	for i := range 6 {
+		u, err := usersStore.Create(context.Background(), fmt.Sprintf("old%d", i), "a-long-enough-password", users.RoleUser)
+		if err != nil {
+			t.Fatal(err)
+		}
+		retiredIDs = append(retiredIDs, u.ID)
+	}
+	path := filepath.Join(configDir, "users.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range doc["users"].([]any) {
+		if m := u.(map[string]any); m["id"] != fresh.ID {
+			m["passwordHash"] = retired
+		}
+	}
+	if raw, err = json.Marshal(doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := users.LoadOrMigrate(context.Background(), configDir, filepath.Join(configDir, "admin.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	logs.Reset()
+	warnRetiredPasswordHashes(logger, reloaded)
+	out := logs.String()
+	for _, id := range retiredIDs {
+		if !strings.Contains(out, `"user_id":"`+id+`"`) {
+			t.Errorf("warning lost account %s: %q", id, out)
+		}
+	}
+	if strings.Contains(out, fresh.ID) || !strings.Contains(out, `"count":"7"`) {
+		t.Fatalf("want a count of 7 and no Argon2id account, got %q", out)
+	}
+	if strings.Contains(out, "scrypt$") || strings.Contains(out, "truncated_fields") {
+		t.Fatalf("warning leaked the stored hash or was truncated: %q", out)
 	}
 }

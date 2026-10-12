@@ -43,11 +43,11 @@ func TestLoginLockoutScopedToClientIP(t *testing.T) {
 
 func TestFailureLockoutCustomThreshold(t *testing.T) {
 	l := newFailureLockout(2, time.Minute)
-	_, _ = l.tryAttempt("key")
+	_, _, _ = l.tryAttempt("key")
 	if ok, _ := l.lockedNow("key"); !ok {
 		t.Fatal("one failure below a threshold of two must not lock")
 	}
-	_, _ = l.tryAttempt("key")
+	_, _, _ = l.tryAttempt("key")
 	ok, retryAfter := l.lockedNow("key")
 	if ok {
 		t.Fatal("expected lockout after reaching the custom threshold")
@@ -85,7 +85,9 @@ func TestDAVAuthLockoutAfterRepeatedFailures(t *testing.T) {
 	}
 }
 
-func TestDAVAuthSuccessClearsLockoutHistory(t *testing.T) {
+// The DAV lockout is keyed on the IP alone, so a valid app password must refund
+// only its own strike, never failures spent on other accounts.
+func TestDAVAuthSuccessKeepsLockoutHistory(t *testing.T) {
 	srv := newTestServer(t)
 	all, err := srv.users.List()
 	if err != nil || len(all) == 0 {
@@ -109,10 +111,12 @@ func TestDAVAuthSuccessClearsLockoutHistory(t *testing.T) {
 	if rec := davRequest(srv, u.Username, "dav-app-password", ip); rec.Code == http.StatusUnauthorized || rec.Code == http.StatusTooManyRequests {
 		t.Fatalf("correct password below threshold: status = %d, want an authenticated response", rec.Code)
 	}
-	// The success must have reset the strike count: a single further failure
-	// alone must not trip the lockout.
 	if rec := davRequest(srv, u.Username, "wrong", ip); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("failure after success: status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		t.Fatalf("last budgeted failure: status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if rec := davRequest(srv, "someone-else", "wrong", ip); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("failure past the budget: status = %d, want %d; the success refunded earlier failures",
+			rec.Code, http.StatusTooManyRequests)
 	}
 }
 
@@ -179,11 +183,11 @@ func TestSaturatedTableStillServesKnownKeys(t *testing.T) {
 		l.tryAttempt(fmt.Sprintf("filler-%d", i))
 	}
 
-	if ok, _ := l.tryAttempt(known); !ok {
+	if ok, _, _ := l.tryAttempt(known); !ok {
 		t.Error("a saturated table refused a key it was already tracking; a flood would " +
 			"lock out every user mid-accumulation")
 	}
-	if ok, _ := l.tryAttempt("brand-new-key"); ok {
+	if ok, _, _ := l.tryAttempt("brand-new-key"); ok {
 		t.Error("a saturated table admitted a brand-new key, so the cap does not hold")
 	}
 }
@@ -219,11 +223,11 @@ func TestCrowdedTableDoesNotErasePartialStrikes(t *testing.T) {
 	// with the table crowded the whole time.
 	const victim = "real-victim\x00198.51.100.7"
 	for i := range 3 {
-		if ok, _ := l.tryAttempt(victim); !ok {
+		if ok, _, _ := l.tryAttempt(victim); !ok {
 			t.Fatalf("attempt %d was refused before the budget was spent", i+1)
 		}
 	}
-	ok, retryAfter := l.tryAttempt(victim)
+	ok, retryAfter, _ := l.tryAttempt(victim)
 	if ok {
 		t.Fatal("the 4th attempt was allowed: a crowded table erased the victim's partial " +
 			"strikes, so the lockout never engaged — this is a lockout bypass by table flooding")
@@ -234,28 +238,28 @@ func TestCrowdedTableDoesNotErasePartialStrikes(t *testing.T) {
 }
 
 // TestStalePartialStrikesAreForgiven pins the other half of keying the sweep on
-// lastSeen: an entry that has been idle longer than the cooldown starts fresh,
+// lastStrike: an entry that has been idle longer than the cooldown starts fresh,
 // so a single failed attempt today plus two tomorrow is not a lockout.
 func TestStalePartialStrikesAreForgiven(t *testing.T) {
 	l := newFailureLockout(3, 15*time.Minute)
 	const key = "occasional-typo\x00198.51.100.9"
 
-	if ok, _ := l.tryAttempt(key); !ok {
+	if ok, _, _ := l.tryAttempt(key); !ok {
 		t.Fatal("first attempt refused")
 	}
 	// Backdate the entry past the cooldown window.
 	l.mu.Lock()
-	l.entries[key].lastSeen = time.Now().Add(-16 * time.Minute)
+	l.entries[key].strikes[0] = time.Now().Add(-16 * time.Minute)
 	l.mu.Unlock()
 
 	// Three more attempts must all be allowed: the stale strike is forgiven, so
 	// this is a fresh budget of 3, not 2.
 	for i := range 3 {
-		if ok, _ := l.tryAttempt(key); !ok {
+		if ok, _, _ := l.tryAttempt(key); !ok {
 			t.Fatalf("attempt %d refused; a stale partial strike was carried forward", i+1)
 		}
 	}
-	if ok, _ := l.tryAttempt(key); ok {
+	if ok, _, _ := l.tryAttempt(key); ok {
 		t.Error("the budget did not apply after the reset")
 	}
 }

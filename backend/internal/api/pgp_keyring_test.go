@@ -213,7 +213,7 @@ func TestPGPKeyringHTTPCompatibilityAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/users/"+u.ID+"/reset-password", strings.NewReader(`{"password":"temporary-ring-password"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/users/"+u.ID+"/reset-password", strings.NewReader(`{"password":"temporary-ring-password","adminPassword":"admin-test-password"}`))
 	authRequestAs(srv, req, admin.ID)
 	rec := httptest.NewRecorder()
 	srv.routes().ServeHTTP(rec, req)

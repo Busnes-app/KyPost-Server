@@ -136,7 +136,7 @@ func TestNativeRegisterRejectsTokenMintedForOtherPurpose(t *testing.T) {
 		t.Fatalf("status = %d, want %d (cross-purpose token must be rejected); body=%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
 
-	devices := store.ListNativeDevices()
+	devices := mustNativeDevices(t, store)
 	if len(devices) != 0 {
 		t.Fatalf("len(devices) = %d, want 0 (cross-purpose token must not register a device)", len(devices))
 	}

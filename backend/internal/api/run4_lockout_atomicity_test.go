@@ -28,7 +28,7 @@ func TestTryAttemptBoundsAConcurrentBurst(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if ok, _ := lockout.tryAttempt("victim"); ok {
+			if ok, _, _ := lockout.tryAttempt("victim"); ok {
 				mu.Lock()
 				admitted++
 				mu.Unlock()
@@ -49,11 +49,11 @@ func TestTryAttemptLocksOutAfterTheBudget(t *testing.T) {
 	lockout := newFailureLockout(3, time.Minute)
 
 	for i := 0; i < 3; i++ {
-		if ok, _ := lockout.tryAttempt("victim"); !ok {
+		if ok, _, _ := lockout.tryAttempt("victim"); !ok {
 			t.Fatalf("attempt %d was refused inside the budget", i)
 		}
 	}
-	ok, retryAfter := lockout.tryAttempt("victim")
+	ok, retryAfter, _ := lockout.tryAttempt("victim")
 	if ok {
 		t.Fatal("a fourth attempt was admitted past a budget of three")
 	}
@@ -72,7 +72,7 @@ func TestRecordSuccessClearsReservedStrikes(t *testing.T) {
 	lockout.recordSuccess("user")
 
 	for i := 0; i < 3; i++ {
-		if ok, _ := lockout.tryAttempt("user"); !ok {
+		if ok, _, _ := lockout.tryAttempt("user"); !ok {
 			t.Fatalf("attempt %d refused after a success cleared the history", i)
 		}
 	}
@@ -87,11 +87,11 @@ func TestCancelAttemptGivesTheStrikeBack(t *testing.T) {
 	lockout := newFailureLockout(3, time.Minute)
 
 	for i := 0; i < 10; i++ {
-		ok, _ := lockout.tryAttempt("user")
+		ok, _, strike := lockout.tryAttempt("user")
 		if !ok {
 			t.Fatalf("attempt %d was refused even though every prior one was cancelled", i)
 		}
-		lockout.cancelAttempt("user")
+		lockout.cancelAttempt(strike)
 	}
 }
 
@@ -100,19 +100,18 @@ func TestCancelAttemptNeverGoesNegative(t *testing.T) {
 
 	// Cancelling more than was ever reserved must not create credit that
 	// buys extra attempts later.
-	lockout.cancelAttempt("user")
-	lockout.cancelAttempt("user")
-	lockout.tryAttempt("user")
-	lockout.cancelAttempt("user")
-	lockout.cancelAttempt("user")
-	lockout.cancelAttempt("user")
+	lockout.cancelAttempt(lockoutReservation{})
+	_, _, strike := lockout.tryAttempt("user")
+	lockout.cancelAttempt(strike)
+	lockout.cancelAttempt(strike)
+	lockout.cancelAttempt(strike)
 
 	for i := 0; i < 3; i++ {
-		if ok, _ := lockout.tryAttempt("user"); !ok {
+		if ok, _, _ := lockout.tryAttempt("user"); !ok {
 			t.Fatalf("attempt %d refused", i)
 		}
 	}
-	if ok, _ := lockout.tryAttempt("user"); ok {
+	if ok, _, _ := lockout.tryAttempt("user"); ok {
 		t.Fatal("over-cancelling bought an extra attempt")
 	}
 }
@@ -123,12 +122,12 @@ func TestTryAttemptResetsAfterTheLockoutExpires(t *testing.T) {
 
 	lockout.tryAttempt("user")
 	lockout.tryAttempt("user")
-	if ok, _ := lockout.tryAttempt("user"); ok {
+	if ok, _, _ := lockout.tryAttempt("user"); ok {
 		t.Fatal("admitted past the budget")
 	}
 
 	time.Sleep(20 * time.Millisecond)
-	if ok, _ := lockout.tryAttempt("user"); !ok {
+	if ok, _, _ := lockout.tryAttempt("user"); !ok {
 		t.Fatal("still locked out after the window expired")
 	}
 }

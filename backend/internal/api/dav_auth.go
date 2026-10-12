@@ -125,18 +125,19 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		// password is hopeless. Checked before the credential cache so a
 		// locked-out IP is refused outright.
 		lockKey := lockoutKeyForIP(clientIP(r))
-		if allowed, retryAfter := s.davLockout.tryAttempt(lockKey); !allowed {
+		allowed, retryAfter, strike := s.davLockout.tryAttempt(lockKey)
+		if !allowed {
 			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
 			http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 			return
 		}
 
 		if ac, cached := s.davCredentials.get(username, password); cached {
-			// A cache hit is a successful authentication and must settle the
-			// strike tryAttempt just reserved. Without this, a CardDAV client
-			// polling with correct credentials would spend a strike per
-			// request and lock itself out within seconds.
-			s.davLockout.recordSuccess(lockKey)
+			// A cache hit is a successful authentication and must refund the
+			// strike tryAttempt just reserved, or a polling client locks itself
+			// out. Refund, not clear: the key is the IP alone, and one valid
+			// app password must not reset failures spent on other accounts.
+			s.davLockout.cancelAttempt(strike)
 			// Re-check the account live even on a hit. revokeAllUserCredentials
 			// clears this cache on deactivate/reset, but a request that read
 			// Active==true just before the deactivation can still `put` just
@@ -167,15 +168,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		// davCredentialCache).
 		gen := s.davCredentials.currentGeneration()
 
-		// Every outcome below is padded to the same wall clock. The dummy is
-		// always Argon2id while a real check may still reach scrypt, so
-		// matching the WORK cannot equalize the CLOCK here — that skew is the
-		// enumeration oracle, not a defence against it. See
-		// credentialTimingFloor. Only the cache MISS is floored: a hit runs no
-		// credential check at all, and it is reachable only with a password
-		// this server already verified.
-		credentialStart := time.Now()
-
+		credentialStart := time.Now() // failures padded from here; see settleCredentialTiming
 		u, err := s.users.GetByUsername(username)
 		if err != nil || !s.davAccountActive(u) {
 			// Do the same derivation work a real password check would, so slot
@@ -184,7 +177,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 			// KDF slot: this is unauthenticated, and 64 MiB per concurrent
 			// attempt is otherwise an OOM primitive.
 			if err := s.equalizeLoginTiming(r.Context(), password); err != nil {
-				s.davLockout.cancelAttempt(lockKey)
+				s.davLockout.cancelAttempt(strike)
 				writeKDFBusy(w)
 				return
 			}
@@ -198,7 +191,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 			// the password KDF cost so this path isn't distinguishable by timing
 			// from a wrong-password attempt against a configured account.
 			if err := s.equalizeLoginTiming(r.Context(), password); err != nil {
-				s.davLockout.cancelAttempt(lockKey)
+				s.davLockout.cancelAttempt(strike)
 				writeKDFBusy(w)
 				return
 			}
@@ -213,29 +206,29 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		// load spike.
 		verified, err := users.VerifySecretHash(r.Context(), passFile.Hash, password)
 		if err != nil {
-			s.davLockout.cancelAttempt(lockKey)
+			s.davLockout.cancelAttempt(strike)
 			writeKDFBusy(w)
 			return
 		}
-		s.settleCredentialTiming(r.Context(), credentialStart)
 		if !verified {
+			s.settleCredentialTiming(r.Context(), credentialStart)
 			s.requireDAVAuth(w)
 			return
 		}
 
-		s.davLockout.recordSuccess(lockKey)
+		s.davLockout.cancelAttempt(strike)
 		ac := AuthContext{UserID: u.ID, Username: u.Username, Role: u.Role}
 		// Cache BEFORE the rehash. A native client opens several connections
 		// and re-authenticates per PROPFIND/REPORT — the whole reason this
 		// cache exists — so on the first sync after an upgrade every one of
-		// those parallel requests would otherwise miss the cache, pay a scrypt
+		// those parallel requests would otherwise miss the cache, pay a
 		// verify AND an Argon2id derivation, and only then publish the result.
 		// A rehash that fails to persist must still leave the credential
 		// cached: the write is an optimisation, the verification is the answer.
 		s.davCredentials.put(gen, username, password, ac)
 
-		// The credential just verified, so a stale hash format (legacy scrypt,
-		// or an Argon2id hash below the current cost) is upgraded now — the
+		// The credential just verified, so a stale hash
+		// (Argon2id below the current cost) is upgraded now — the
 		// only moment the plaintext is legitimately in hand. See
 		// rehashDAVAppPassword for why this is guarded rather than an
 		// unconditional write.

@@ -26,7 +26,7 @@ Single Sign-On (OpenID Connect):
 - `POST /api/auth/oidc/step-up`, `GET|DELETE /api/auth/oidc/step-up/{id}` — action-bound re-authentication for a session signed in through KySignOn. A sensitive request (the Security page gate, backup actions) answers `403 {"error":"sso_step_up_required","challenge":…}`; the browser opens a KySignOn sign-in popup for that one action (`prompt=login`), and repeats the request with `X-Kypost-Step-Up: <challenge>` once it is verified. The grant is spent once, for that request only.
 - `POST /api/auth/oidc/backchannel-logout` — OpenID Connect back-channel logout receiver. Register it at the provider (KySignOn: the client's *back-channel logout URI*). The `logout_token` is verified against the issuer's JWKS, admitted once durably, and ends the session it names, or every session of the subject when it names none. Needs an `https` issuer.
 - `POST /api/settings/sso/unlink`
-- `GET|PUT /api/admin/sso` (admin only. The provider configuration.)
+- `GET|PUT /api/admin/sso` (admin only. The provider configuration. The client secret is write-only: responses carry `clientSecretSet`, and a blank secret on `PUT` keeps the stored one only for the same issuer and client ID. `PUT` needs the step-up below.)
 - `POST /api/sync/webhook` — KySignOn directory push. Pair KyPost in KySignOn as a webhook system with this URL and either the pairing secret or the SSO client secret as the sync secret. Each event is a signed, versioned SCIM User; stale or reordered deliveries are refused, a disabled or deleted user keeps their mailbox and loses access, and a rehire brings the same account back. Supported SCIM fields are retained durably alongside the revision fence for later repair; acknowledgment does not mean a domain mailbox or receiver route is ready.
 
 Multi-factor authentication:
@@ -40,7 +40,7 @@ Multi-factor authentication:
 - `POST /api/auth/mfa/totp` and `POST /api/auth/mfa/recovery-code` (login-time verification)
 - `POST /api/auth/mfa/push/poll`, `POST /api/auth/mfa/push/finish`, and `POST /api/mfa/push/respond` (push-approval sign-in)
 
-User management (admin only):
+User management (admin only). Every non-GET route needs a step-up bound to the exact request: the acting admin's credential as `adminPassword`/`adminAuthSecret` in the body, or a KySignOn confirmation for a KySignOn session.
 
 - `GET|POST /api/users`
 - `PUT /api/users/{id}` (change role)
@@ -104,7 +104,7 @@ IMAP and inbox:
 
 Mail:
 
-- `POST /api/mail/send`. Optional `attachments: [{name, mimeType, dataBase64}]`, 25 MB in total. Optional `encrypt` and `sign`. If `encrypt` is true and a recipient has no usable key, the call fails with 409. To allow the pickup-link fallback instead, set `allowPickupFallback`. See [Where your PGP private key lives](../README.md#where-your-pgp-private-key-lives). Optional `replyToMessageId` (and `replyToMailbox`) makes it a threaded reply: the server reads the original and sets `In-Reply-To`/`References` itself.
+- `POST /api/mail/send`. Optional `attachments: [{name, mimeType, dataBase64}]`, 25 MB in total. Optional `encrypt` and `sign`. If `encrypt` is true and a recipient has no usable key, the call fails with 409. To allow the pickup-link fallback instead, set `allowPickupFallback`. See [Where your PGP private key lives](../README.md#where-your-pgp-private-key-lives). Optional `replyToMessageId` (and `replyToMailbox`) makes it a threaded reply: the server reads the original and sets `In-Reply-To`/`References` itself. Optional `calendarReply: {ics}` sends a calendar RSVP (iTIP REPLY) alongside the body.
 - `POST /api/mail/draft` (the same optional `attachments` shape)
 - `GET /api/mail/body?mailbox=&messageId=` (one message's body and its `bodyMode`, for clients that list with `bodies=0`; 422 if an adapter reports malformed MIME, preserving original mail)
 - `GET /api/mail/attachments?mailbox=&messageId=` (lists the attachment metadata of a message; a calendar invite sent as a message body part appears as `invite.ics` with `calendarMethod`)

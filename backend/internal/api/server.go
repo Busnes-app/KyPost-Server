@@ -101,7 +101,6 @@ type Server struct {
 	configDir         string
 	stateDir          string
 	configPath        string
-	logPath           string
 	imapConfigKeyPath string
 	totpSecretKeyPath string
 	pgpPrivateKeyPath string
@@ -298,7 +297,6 @@ type Server struct {
 func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Service, usersStore *users.Store, onConfigUpdated func(config.Config), wkdStore *wkdpublish.Store) *Server {
 	configDir := config.ConfigDir()
 	stateDir := config.StateDir()
-	logPath := filepath.Join(config.LogDir(), "app.log")
 	imapConfigKeyPath := config.SecretFile("IMAP_CONFIG_KEY_FILE", "imap-config.key")
 	totpSecretKeyPath := config.SecretFile("TOTP_SECRET_KEY_FILE", "totp-secret.key")
 	pgpPrivateKeyPath := config.SecretFile("PGP_PRIVATE_KEY_FILE", "pgp-private-key.key")
@@ -377,7 +375,6 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		configDir:                configDir,
 		stateDir:                 stateDir,
 		configPath:               filepath.Join(configDir, "config.yaml"),
-		logPath:                  logPath,
 		imapConfigKeyPath:        imapConfigKeyPath,
 		totpSecretKeyPath:        totpSecretKeyPath,
 		pgpPrivateKeyPath:        pgpPrivateKeyPath,
@@ -601,25 +598,25 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mail-defaults", s.withAuth(s.handleMailDefaults))
 	mux.HandleFunc("PUT /api/mail-defaults", s.withAdmin(s.handleMailDefaults))
 	mux.HandleFunc("GET /api/admin/sso", s.withAdmin(s.handleAdminSSOGet))
-	mux.HandleFunc("PUT /api/admin/sso", s.withAdmin(s.handleAdminSSOPut))
+	mux.HandleFunc("PUT /api/admin/sso", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleAdminSSOPut))))
 	mux.HandleFunc("POST /api/sync/webhook", withPublicRoute(s.handleSyncWebhook))
 	mux.HandleFunc("GET /api/labels", s.withAuth(s.handleLabels))
 	mux.HandleFunc("GET /api/decisions", s.withAuth(s.withMailbox(s.handleDecisions)))
 	mux.HandleFunc("GET /api/logs", s.withAdmin(s.handleLogs))
 	mux.HandleFunc("GET /api/logs/list", s.withAdmin(s.handleLogsList))
 	mux.HandleFunc("GET /api/users", s.withAdmin(s.handleUsersList))
-	mux.HandleFunc("POST /api/users", s.withAdmin(s.handleUsersCreate))
-	mux.HandleFunc("PUT /api/users/{id}", s.withAdmin(s.handleUsersUpdate))
-	mux.HandleFunc("POST /api/users/{id}/reset-password", s.withAdmin(s.handleUsersResetPassword))
-	mux.HandleFunc("POST /api/users/{id}/deactivate", s.withAdmin(s.handleUsersDeactivate))
-	mux.HandleFunc("POST /api/users/{id}/reactivate", s.withAdmin(s.handleUsersReactivate))
-	mux.HandleFunc("POST /api/users/{id}/clear-mfa", s.withAdmin(s.handleUsersClearMFA))
+	mux.HandleFunc("POST /api/users", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersCreate))))
+	mux.HandleFunc("PUT /api/users/{id}", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersUpdate))))
+	mux.HandleFunc("POST /api/users/{id}/reset-password", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersResetPassword))))
+	mux.HandleFunc("POST /api/users/{id}/deactivate", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersDeactivate))))
+	mux.HandleFunc("POST /api/users/{id}/reactivate", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersReactivate))))
+	mux.HandleFunc("POST /api/users/{id}/clear-mfa", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersClearMFA))))
 	mux.HandleFunc("GET /api/users/{id}/imap-config", s.withAdmin(s.handleAdminUserIMAPConfig))
-	mux.HandleFunc("PUT /api/users/{id}/imap-config", s.withAdmin(s.handleAdminUserIMAPConfig))
-	mux.HandleFunc("DELETE /api/users/{id}/imap-config", s.withAdmin(s.handleAdminUserIMAPConfig))
+	mux.HandleFunc("PUT /api/users/{id}/imap-config", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleAdminUserIMAPConfig))))
+	mux.HandleFunc("DELETE /api/users/{id}/imap-config", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleAdminUserIMAPConfig))))
 	mux.HandleFunc("GET /api/users/{id}/carddav-client", s.withAdmin(s.handleAdminUserCardDAVClient))
-	mux.HandleFunc("PUT /api/users/{id}/carddav-client", s.withAdmin(s.handleAdminUserCardDAVClient))
-	mux.HandleFunc("DELETE /api/users/{id}/carddav-client", s.withAdmin(s.handleAdminUserCardDAVClient))
+	mux.HandleFunc("PUT /api/users/{id}/carddav-client", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleAdminUserCardDAVClient))))
+	mux.HandleFunc("DELETE /api/users/{id}/carddav-client", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleAdminUserCardDAVClient))))
 	mux.HandleFunc("GET /api/ollama/version", s.withAuth(s.handleOllamaVersion))
 	mux.HandleFunc("GET /api/server/version", s.withAdmin(s.handleServerVersion))
 	mux.HandleFunc("GET /api/tuning", s.withAuth(s.handleTuning))
@@ -1364,6 +1361,10 @@ type mailRequest struct {
 	From                string
 	ReplyToMessageID    string
 	ReplyToMailbox      string
+	// CalendarReplyICS is the request's raw calendarReply.ics; send validates
+	// it into CalendarReply (validated, CRLF-normalised), drafts ignore it.
+	CalendarReplyICS *string
+	CalendarReply    []byte
 }
 
 // Size limits for one outgoing message.

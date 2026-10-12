@@ -269,10 +269,10 @@ func TestCrowdedTableEvictsLockedBeforePartialStrikes(t *testing.T) {
 	}
 
 	// And the record is intact, not merely present: the third strike must lock.
-	if ok, _ := l.tryAttempt(victim); !ok {
+	if ok, _, _ := l.tryAttempt(victim); !ok {
 		t.Fatal("the victim's 3rd attempt was refused; it should be the one that locks")
 	}
-	if ok, _ := l.tryAttempt(victim); ok {
+	if ok, _, _ := l.tryAttempt(victim); ok {
 		t.Fatal("the victim's 4th attempt was allowed: the strike record survived eviction " +
 			"but its accumulated failures did not")
 	}

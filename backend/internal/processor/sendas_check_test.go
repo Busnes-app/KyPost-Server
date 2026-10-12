@@ -55,11 +55,10 @@ func (c *stubSendAsMailClient) FetchRawMessage(_ context.Context, _ string, uid 
 // userSendAsStore work, with sendAsStores initialized as New() would do.
 func newTestPollerForSendAs(t *testing.T) *Poller {
 	t.Helper()
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	return &Poller{
 		log:          logger,

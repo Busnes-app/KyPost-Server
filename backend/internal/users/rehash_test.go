@@ -2,15 +2,12 @@ package users
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Busnes-app/ky-primitives/password"
-	"golang.org/x/crypto/scrypt"
 )
 
 // TestHashPasswordUsesCurrentCost pins the format AND the cost new hashes are
@@ -61,8 +58,8 @@ func withSegment(hash string, index int, replacement string) string {
 	return strings.Join(parts, "$")
 }
 
-// TestNeedsRehashOnlyUpgrades is the safety property: every scrypt hash is
-// retired regardless of the cost it was stored at, but an Argon2id hash that
+// TestNeedsRehashOnlyUpgrades is the safety property: a retired scrypt hash
+// never verifies, so it is never "due for a rehash", and an Argon2id hash that
 // is not strictly weaker than the current cost on some axis must never report
 // true. That must hold per axis — memory, time, AND thread count — or an
 // operator who deliberately raised only one of them would have it silently
@@ -74,10 +71,7 @@ func TestNeedsRehashOnlyUpgrades(t *testing.T) {
 		encoded string
 		want    bool
 	}{
-		// Every scrypt hash is retired, regardless of the cost it carries.
-		{"scrypt old N", "scrypt$16384$8$1$c2FsdA==$aGFzaA==", true},
-		{"scrypt current cost", "scrypt$131072$8$1$c2FsdA==$aGFzaA==", true},
-		{"scrypt stronger than default", "scrypt$1048576$8$1$c2FsdA==$aGFzaA==", true},
+		{"retired scrypt", retiredScryptHash, false},
 		// Argon2id follows the currently configured cost (production default:
 		// 64 MiB, t=3, p=4).
 		{"argon2id below current", mintArgon2(t, password.Params{Memory: 8 * 1024, Time: 1, Threads: 1}), true},
@@ -139,10 +133,10 @@ func TestRehashPasswordUpgradesInPlace(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Plant a legacy-cost hash, the way an existing install's file looks.
-	legacy, err := hashPasswordAtCost(pw, 16384, 8, 1)
+	// Plant an Argon2id hash written at an older, cheaper cost.
+	legacy, err := password.HashWith(pw, password.Params{Memory: 8 * 1024, Time: 1, Threads: 1})
 	if err != nil {
-		t.Fatalf("hashPasswordAtCost: %v", err)
+		t.Fatalf("HashWith: %v", err)
 	}
 	if _, err := store.mutate(u.ID, func(x *User) error {
 		x.PasswordHash = legacy
@@ -215,20 +209,4 @@ func TestRehashPasswordRefusesAWrongCandidate(t *testing.T) {
 	if ok, _ := VerifyPassword(context.Background(), after, pw); !ok {
 		t.Error("the original password stopped working")
 	}
-}
-
-// hashPasswordAtCost mints a hash at explicit cost parameters, so a test can
-// plant what an older install's users.json actually contains.
-func hashPasswordAtCost(password string, n, r, p int) (string, error) {
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return "", err
-	}
-	hash, err := scrypt.Key([]byte(password), salt, n, r, p, scryptKeyLen)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("scrypt$%d$%d$%d$%s$%s", n, r, p,
-		base64.StdEncoding.EncodeToString(salt),
-		base64.StdEncoding.EncodeToString(hash)), nil
 }

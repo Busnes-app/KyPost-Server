@@ -89,14 +89,15 @@ func (s *Server) confirmAccountCredentialNoRecord(w http.ResponseWriter, r *http
 		return false
 	}
 	lockKey := stepUpLockoutKey(userID, r)
-	if allowed, _ := s.passwordChangeLockout.tryAttempt(lockKey); !allowed {
+	allowed, _, strike := s.passwordChangeLockout.tryAttempt(lockKey)
+	if !allowed {
 		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
 		return false
 	}
 	confirmed, err := verifyAccountCredential(r.Context(), u, password, authSecret)
 	if err != nil {
 		// Nothing was checked, so the throttle strike goes back with it.
-		s.passwordChangeLockout.cancelAttempt(lockKey)
+		s.passwordChangeLockout.cancelAttempt(strike)
 		writeKDFBusy(w)
 		return false
 	}

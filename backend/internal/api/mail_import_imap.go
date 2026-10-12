@@ -439,14 +439,15 @@ func (s *Server) listIMAP(ctx context.Context, user string, account *imapAccount
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	if ok, retry := s.imapLoginLockout.tryAttempt(user); !ok {
+	ok, retry, strike := s.imapLoginLockout.tryAttempt(user)
+	if !ok {
 		return imapRefusal{http.StatusTooManyRequests, "too many failed attempts to sign in to other mail accounts; try again in an hour", retry}
 	}
 	src, err := account.open(ctx, password, imapListBytes)
 	if err != nil {
 		return err
 	}
-	s.imapLoginLockout.cancelAttempt(user)
+	s.imapLoginLockout.cancelAttempt(strike)
 	*folders, err = src.Folders()
 	_ = src.Close()
 	return err

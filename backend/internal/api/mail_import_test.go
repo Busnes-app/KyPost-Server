@@ -154,6 +154,7 @@ func TestMailImport(t *testing.T) {
 		want int
 	}{
 		{"no step-up", call("POST", "/api/import", me, `{}`, nil), 403},
+		{"oversized body", start(me, `"pad":"`+strings.Repeat("x", maxActionBytes)+`",`), 413},
 		{"wrong password", call("POST", "/api/import", me, `{"password":"wrong-password-here"}`, nil), 403},
 		{"no csrf", call("POST", "/api/import", caller{me.token, ""}, `{"password":"`+password+`"}`, nil), 403},
 		{"unsafe folder", start(me, `"folder":"a\\b",`), 400},

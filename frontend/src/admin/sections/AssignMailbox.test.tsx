@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AssignMailbox } from "./AssignMailbox";
-import type { ManagedUser } from "../../api/users";
+import type { AdminConfirm, ManagedUser } from "../../api/users";
 
 const api = {
   getUserIMAPConfig: vi.fn(),
@@ -14,16 +14,19 @@ const api = {
 };
 vi.mock("../../api/users", () => ({
   getUserIMAPConfig: (id: string) => api.getUserIMAPConfig(id),
-  putUserIMAPConfig: (id: string, i: unknown) => api.putUserIMAPConfig(id, i),
-  deleteUserIMAPConfig: (id: string) => api.deleteUserIMAPConfig(id),
+  putUserIMAPConfig: (c: AdminConfirm, id: string, i: unknown) => api.putUserIMAPConfig(c, id, i),
+  deleteUserIMAPConfig: (c: AdminConfirm, id: string) => api.deleteUserIMAPConfig(c, id),
   getUserCardDAVClient: (id: string) => api.getUserCardDAVClient(id),
-  putUserCardDAVClient: (id: string, i: unknown) => api.putUserCardDAVClient(id, i),
-  deleteUserCardDAVClient: (id: string) => api.deleteUserCardDAVClient(id)
+  putUserCardDAVClient: (c: AdminConfirm, id: string, i: unknown) => api.putUserCardDAVClient(c, id, i),
+  deleteUserCardDAVClient: (c: AdminConfirm, id: string) => api.deleteUserCardDAVClient(c, id)
 }));
 
 const user: ManagedUser = {
   id: "u1", username: "gwen", role: "user", active: true, mustChangePassword: false, createdAt: "", updatedAt: ""
 };
+
+const confirm: AdminConfirm = { ssoSession: false, password: "admin-pw" };
+const view = <AssignMailbox user={user} unlocked takeConfirm={() => confirm} onClose={() => undefined} />;
 
 afterEach(cleanup);
 beforeEach(() => {
@@ -36,20 +39,27 @@ beforeEach(() => {
 
 describe("AssignMailbox", () => {
   it("loads the user's current mailbox and saves with the lock flag", async () => {
-    render(<AssignMailbox user={user} onClose={() => undefined} />);
+    render(view);
     await waitFor(() => expect(screen.getByDisplayValue("imap.example.test")).toBeTruthy());
     await userEvent.click(screen.getByLabelText(/lock mail settings/i));
     await userEvent.click(screen.getByRole("button", { name: /save mailbox/i }));
     await waitFor(() =>
       expect(api.putUserIMAPConfig).toHaveBeenCalledWith(
+        confirm,
         "u1",
         expect.objectContaining({ host: "imap.example.test", username: "gwen", password: "", managed: true })
       )
     );
   });
 
+  it("disables changes until the admin can confirm them", async () => {
+    render(<AssignMailbox user={user} unlocked={false} takeConfirm={() => confirm} onClose={() => undefined} />);
+    await waitFor(() => expect(screen.getByDisplayValue("imap.example.test")).toBeTruthy());
+    expect((screen.getByRole("button", { name: /save mailbox/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("does not wipe unsaved CardDAV edits when saving the mailbox form", async () => {
-    render(<AssignMailbox user={user} onClose={() => undefined} />);
+    render(view);
     await waitFor(() => expect(screen.getByDisplayValue("imap.example.test")).toBeTruthy());
     await userEvent.type(screen.getByLabelText(/carddav server url/i), "https://c.example.test/dav/");
     await userEvent.click(screen.getByRole("button", { name: /save mailbox/i }));
@@ -58,7 +68,7 @@ describe("AssignMailbox", () => {
   });
 
   it("saves a CardDAV client for the user", async () => {
-    render(<AssignMailbox user={user} onClose={() => undefined} />);
+    render(view);
     await waitFor(() => expect(screen.getByDisplayValue("imap.example.test")).toBeTruthy());
     await userEvent.type(screen.getByLabelText(/carddav server url/i), "https://c.example.test/dav/");
     await userEvent.type(screen.getByLabelText(/carddav username/i), "gwen");
@@ -66,6 +76,7 @@ describe("AssignMailbox", () => {
     await userEvent.click(screen.getByRole("button", { name: /save contacts sync/i }));
     await waitFor(() =>
       expect(api.putUserCardDAVClient).toHaveBeenCalledWith(
+        confirm,
         "u1",
         expect.objectContaining({ serverUrl: "https://c.example.test/dav/", username: "gwen", password: "pw", managed: false })
       )

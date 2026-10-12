@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,12 +14,14 @@ import (
 
 // adminAndMember comes from server_mail_defaults_test.go (Task 3).
 
-func doJSONAs(t *testing.T, srv *Server, asUser, method, path string, body any) *httptest.ResponseRecorder {
+// doJSONAs sends body as asUser, adding the step-up credential of
+// newTestServerWithUser's account (the admin of adminAndMember).
+func doJSONAs(t *testing.T, srv *Server, asUser, method, path string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	var buf bytes.Buffer
-	if body != nil {
-		_ = json.NewEncoder(&buf).Encode(body)
-	}
+	fields := map[string]any{"adminPassword": "session-tester-testpassword"}
+	maps.Copy(fields, body)
+	_ = json.NewEncoder(&buf).Encode(fields)
 	req := httptest.NewRequest(method, path, &buf)
 	authRequestAs(srv, req, asUser)
 	rec := httptest.NewRecorder()

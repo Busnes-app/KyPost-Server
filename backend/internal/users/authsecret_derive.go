@@ -1,15 +1,14 @@
 package users
 
 import (
+	"crypto/hkdf"
+	"crypto/pbkdf2"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
-
-	"golang.org/x/crypto/hkdf"
-	"golang.org/x/crypto/pbkdf2"
 )
 
 // authSecretInfo is the HKDF label the browser uses, and is what
@@ -51,12 +50,14 @@ func DeriveAuthSecret(password, loginSalt string, iterations int) (string, error
 		return "", fmt.Errorf("decode login salt: %w", err)
 	}
 
-	stretch := pbkdf2.Key([]byte(password), salt, iterations, authSecretStretchBytes, sha256.New)
-
-	out := make([]byte, authSecretBytes)
+	stretch, err := pbkdf2.Key(sha256.New, password, salt, iterations, authSecretStretchBytes)
+	if err != nil {
+		return "", fmt.Errorf("stretch password: %w", err)
+	}
 	// Empty HKDF salt, matching the browser: the stretch is already
 	// salted by PBKDF2, and the label is what provides separation.
-	if _, err := hkdf.New(sha256.New, stretch, nil, []byte(authSecretInfo)).Read(out); err != nil {
+	out, err := hkdf.Key(sha256.New, stretch, nil, authSecretInfo, authSecretBytes)
+	if err != nil {
 		return "", fmt.Errorf("derive auth secret: %w", err)
 	}
 	return hex.EncodeToString(out), nil

@@ -7,6 +7,7 @@ import {
   getUserIMAPConfig,
   putUserCardDAVClient,
   putUserIMAPConfig,
+  type AdminConfirm,
   type ManagedUser,
   type UserCardDAVInput,
   type UserIMAPInput
@@ -22,7 +23,12 @@ const EMPTY_CARDDAV: UserCardDAVInput = { serverUrl: "", username: "", password:
  * password keeps whatever is stored, so an admin can flip the lock without
  * knowing the secret. Lives inline under the user's row in Manage Users.
  */
-export function AssignMailbox({ user, onClose }: { user: ManagedUser; onClose: () => void }) {
+export function AssignMailbox({ user, unlocked, takeConfirm, onClose }: {
+  user: ManagedUser;
+  unlocked: boolean;
+  takeConfirm: () => AdminConfirm;
+  onClose: () => void;
+}) {
   const [imap, setImap] = useState<UserIMAPInput>(EMPTY_IMAP);
   const [imapConfigured, setImapConfigured] = useState(false);
   const [dav, setDav] = useState<UserCardDAVInput>(EMPTY_CARDDAV);
@@ -59,11 +65,12 @@ export function AssignMailbox({ user, onClose }: { user: ManagedUser; onClose: (
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.id]);
 
-  async function run(label: string, action: () => Promise<unknown>, after: () => Promise<void>) {
+  async function run(label: string, action: (confirm: AdminConfirm) => Promise<unknown>, after: () => Promise<void>) {
+    const confirm = takeConfirm();
     setBusy(true);
     setMessage("");
     try {
-      await action();
+      await action(confirm);
       await after();
       setMessage(label);
     } catch (e: unknown) {
@@ -79,7 +86,7 @@ export function AssignMailbox({ user, onClose }: { user: ManagedUser; onClose: (
     <div className="config-card">
       <h3>Mailbox for {user.username}</h3>
       <p className="config-muted">
-        Leave the password blank to keep the stored one. Locking makes the user&apos;s tab read-only; they can still see
+        Leave the password blank to keep the stored one. Each change needs your account password above. Locking makes the user&apos;s tab read-only; they can still see
         the host and username.
       </p>
 
@@ -97,11 +104,11 @@ export function AssignMailbox({ user, onClose }: { user: ManagedUser; onClose: (
         </label>
       </div>
       <div className="config-actions">
-        <button type="button" disabled={busy} onClick={() => void run("Mailbox saved.", () => putUserIMAPConfig(user.id, imap), refreshImap)}>Save Mailbox</button>
+        <button type="button" disabled={busy || !unlocked} onClick={() => void run("Mailbox saved.", (c) => putUserIMAPConfig(c, user.id, imap), refreshImap)}>Save Mailbox</button>
         {imapConfigured ? (
-          <button type="button" disabled={busy} onClick={() => {
+          <button type="button" disabled={busy || !unlocked} onClick={() => {
             if (window.confirm(`Remove ${user.username}'s stored mailbox credentials?`)) {
-              void run("Mailbox removed.", () => deleteUserIMAPConfig(user.id), refreshImap);
+              void run("Mailbox removed.", (c) => deleteUserIMAPConfig(c, user.id), refreshImap);
             }
           }}>Remove Mailbox</button>
         ) : null}
@@ -119,11 +126,11 @@ export function AssignMailbox({ user, onClose }: { user: ManagedUser; onClose: (
         </label>
       </div>
       <div className="config-actions">
-        <button type="button" disabled={busy} onClick={() => void run("Contacts sync saved.", () => putUserCardDAVClient(user.id, dav), refreshDav)}>Save Contacts Sync</button>
+        <button type="button" disabled={busy || !unlocked} onClick={() => void run("Contacts sync saved.", (c) => putUserCardDAVClient(c, user.id, dav), refreshDav)}>Save Contacts Sync</button>
         {davConfigured ? (
-          <button type="button" disabled={busy} onClick={() => {
+          <button type="button" disabled={busy || !unlocked} onClick={() => {
             if (window.confirm(`Remove ${user.username}'s stored CardDAV client credentials?`)) {
-              void run("Contacts sync removed.", () => deleteUserCardDAVClient(user.id), refreshDav);
+              void run("Contacts sync removed.", (c) => deleteUserCardDAVClient(c, user.id), refreshDav);
             }
           }}>Remove Contacts Sync</button>
         ) : null}
