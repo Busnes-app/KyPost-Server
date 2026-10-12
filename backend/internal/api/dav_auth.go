@@ -167,15 +167,7 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		// davCredentialCache).
 		gen := s.davCredentials.currentGeneration()
 
-		// Every outcome below is padded to the same wall clock. The dummy is
-		// always Argon2id while a real check may still reach scrypt, so
-		// matching the WORK cannot equalize the CLOCK here — that skew is the
-		// enumeration oracle, not a defence against it. See
-		// credentialTimingFloor. Only the cache MISS is floored: a hit runs no
-		// credential check at all, and it is reachable only with a password
-		// this server already verified.
-		credentialStart := time.Now()
-
+		credentialStart := time.Now() // failures padded from here; see settleCredentialTiming
 		u, err := s.users.GetByUsername(username)
 		if err != nil || !s.davAccountActive(u) {
 			// Do the same derivation work a real password check would, so slot
@@ -217,8 +209,8 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 			writeKDFBusy(w)
 			return
 		}
-		s.settleCredentialTiming(r.Context(), credentialStart)
 		if !verified {
+			s.settleCredentialTiming(r.Context(), credentialStart)
 			s.requireDAVAuth(w)
 			return
 		}
@@ -228,14 +220,14 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 		// Cache BEFORE the rehash. A native client opens several connections
 		// and re-authenticates per PROPFIND/REPORT — the whole reason this
 		// cache exists — so on the first sync after an upgrade every one of
-		// those parallel requests would otherwise miss the cache, pay a scrypt
+		// those parallel requests would otherwise miss the cache, pay a
 		// verify AND an Argon2id derivation, and only then publish the result.
 		// A rehash that fails to persist must still leave the credential
 		// cached: the write is an optimisation, the verification is the answer.
 		s.davCredentials.put(gen, username, password, ac)
 
-		// The credential just verified, so a stale hash format (legacy scrypt,
-		// or an Argon2id hash below the current cost) is upgraded now — the
+		// The credential just verified, so a stale hash
+		// (Argon2id below the current cost) is upgraded now — the
 		// only moment the plaintext is legitimately in hand. See
 		// rehashDAVAppPassword for why this is guarded rather than an
 		// unconditional write.

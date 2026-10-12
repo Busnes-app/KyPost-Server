@@ -36,14 +36,7 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 		return
 	}
-	// This endpoint is unauthenticated and reaches the same two hash formats
-	// handleLogin does, so it gets the same wall-clock floor: an account still
-	// holding a scrypt$ hash costs several times the always-Argon2id
-	// equalization dummy, and that gap says which name the operator configured.
-	// The writeKDFBusy paths are the exception, as on handleLogin — both
-	// branches shed identically, and delaying a 503 under load is the wrong
-	// trade.
-	credentialStart := time.Now()
+	credentialStart := time.Now() // failures padded from here; see settleCredentialTiming
 	u, err := s.users.GetByUsername(requestedUsername)
 	if err != nil || !u.Active || !reviewUsernameMatches(reviewPattern, requestedUsername) {
 		// Keep the configured-account failure indistinguishable from a bad password.
@@ -61,7 +54,6 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 		credential, err = users.DeriveAuthSecret(req.Password, u.LoginSalt, u.LoginIterations)
 		if err != nil {
 			s.loginLockout.cancelAttempt(lockKey)
-			s.settleCredentialTiming(r.Context(), credentialStart)
 			http.Error(w, "review account is not configured correctly", http.StatusServiceUnavailable)
 			return
 		}
@@ -72,10 +64,8 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 		writeKDFBusy(w)
 		return
 	}
-	// Both hash formats and both verdicts leave here at the same moment as the
-	// no-such-review-account branch above.
-	s.settleCredentialTiming(r.Context(), credentialStart)
 	if !verified {
+		s.settleCredentialTiming(r.Context(), credentialStart)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}

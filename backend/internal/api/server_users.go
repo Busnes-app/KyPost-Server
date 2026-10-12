@@ -268,7 +268,7 @@ func parseRole(raw string) (users.Role, error) {
 }
 
 func writeUserStoreError(w http.ResponseWriter, err error) {
-	// Create and SetPassword both derive scrypt, so both can be shed. 503, not
+	// Create and SetPassword both derive Argon2id, so both can be shed. 503, not
 	// "user store error": nothing was written and the caller should retry, which
 	// a 500 does not say. These are admin-only endpoints, but the derivation
 	// slots are shared with every login on the instance — an admin creating an

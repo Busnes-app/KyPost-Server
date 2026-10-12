@@ -74,9 +74,9 @@ jobs:
       - name: govulncheck
         run: go tool -modfile=../tools/go.mod govulncheck ./...
 
-      # internal/api package tests run serially due to global hashCostN state
+      # internal/api package tests run serially due to global hashParams state
       # managed by TestMain. This job runs only the api package tests, which
-      # take 7-8 minutes dominated by scrypt derivations at production cost.
+      # are dominated by Argon2id derivations.
       - name: go test -race (api package only)
         run: go test -race -count=1 -timeout=20m ./internal/api/...
 

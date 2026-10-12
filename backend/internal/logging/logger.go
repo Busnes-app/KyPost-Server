@@ -150,6 +150,10 @@ func (l *Logger) Info(msg string, kv ...string) {
 	l.logger.Info(msg, stringsToArgs(kv)...)
 }
 
+func (l *Logger) Warn(msg string, kv ...string) {
+	l.logger.Warn(msg, stringsToArgs(kv)...)
+}
+
 func (l *Logger) Error(msg string, kv ...string) {
 	l.logger.Error(msg, stringsToArgs(kv)...)
 }
