@@ -20,7 +20,7 @@ import (
 // These are deliberately not withAuth and not withMailAuth. withMailAuth would
 // admit a session, which has no device to scope to; withAuth would exclude the
 // device entirely. See
-// docs/superpowers/specs/2026-08-04-device-enrollment-design.md.
+// docs/DEVICE_ENROLLMENT.md.
 
 // maxEnrollmentPublicKeyBytes bounds the published key. An uncompressed P-256
 // point is 65 bytes raw and a few hundred base64-wrapped in any sane encoding;

@@ -14,6 +14,12 @@ non-prerelease version.
 
 ## Unreleased
 
+- `docker-compose.yml` now passes the variables `.env.example` documents but compose dropped, so setting them in `.env` takes effect: `POW_SECRET`, `POW_SECRET_FILE`, `POW_MAX_NUMBER`, `MFA_CLEAR_ALL`, `ALLOW_INSECURE_SMTP`, `PAIRING_SECRET_FILE`, `SANDBOX_PRIVATE_HOSTS`, `CLASSIFY_CONCURRENCY`, `CLASSIFY_PACE_MS`, `CLASSIFIER_ENGINE`, `EMBED_MIN_CONFIDENCE`, `EMBED_MODEL_DIR`, plus `SMTP_HOST`, `SMTP_PORT`, `OLLAMA_API_KEY`, `OLLAMA_GENERATE_PATH`, `KYPOST_RESTIC_BINARY` and `UNHEALTHY_RESTART_SECONDS`. Check your `.env` before upgrading: a value that used to be ignored now applies.
+
+- FCM push relay: a send whose network request fails now keeps its daily-budget charge, as APNs already did.
+
+- README: the environment-variable reference, endpoint list and full feature list moved to `docs/CONFIGURATION.md`, `docs/API.md` and `docs/FEATURES.md`.
+
 - Security: a successful sign-in (or CardDAV authentication) no longer resets its address's per-IP failure budget, so one valid account can no longer be used to keep guessing other accounts' passwords from the same address.
 
 - Security: user-management changes (create, role, reset password, deactivate/reactivate, clear MFA, assigned IMAP and CardDAV credentials) and SSO settings now need the acting admin's account password, or a KySignOn confirmation, for each change. API clients send it as `adminPassword`/`adminAuthSecret`. The SSO client secret is no longer returned by `GET|PUT /api/admin/sso` (`clientSecretSet` instead); leaving it blank keeps the stored secret only for the same issuer and client ID.

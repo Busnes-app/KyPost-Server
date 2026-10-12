@@ -95,7 +95,7 @@ The response carries `subscriberId`, `serverBaseUrl`, `registerEndpoint`,
 
 Enrollment seals the account's PGP private key to a paired device. The full
 normative spec is
-[`docs/superpowers/specs/2026-08-04-device-enrollment-design.md`](superpowers/specs/2026-08-04-device-enrollment-design.md);
+[`docs/DEVICE_ENROLLMENT.md`](DEVICE_ENROLLMENT.md);
 the reference implementation is `frontend/src/lib/deviceEnrollment.ts`, and the
 Android side is `EnrollmentCodeFormat.kt` in the Android repo.
 
