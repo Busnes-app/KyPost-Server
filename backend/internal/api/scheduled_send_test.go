@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -178,11 +180,11 @@ func TestScheduledSendIsDatedAndSentAtSendTime(t *testing.T) {
 	f := newScheduledFixture(t, "250 queued")
 	at := sendTime()
 	id := f.schedule(t, at, nil)
-	f.srv.sweepScheduledSends(context.Background(), at.Add(-time.Second))
+	f.srv.sweepScheduledSends(context.Background(), clockAt(at.Add(-time.Second)))
 	if dials, _ := f.smtp.counts(); dials != 0 || f.row(t, id).Status != state.ScheduledWaiting {
 		t.Fatal("sent before its time")
 	}
-	f.srv.sweepScheduledSends(context.Background(), at)
+	f.srv.sweepScheduledSends(context.Background(), clockAt(at))
 	if row := f.row(t, id); row.Status != "sent" || row.Sealed != nil {
 		t.Fatalf("row after send: %+v", row)
 	}
@@ -332,7 +334,7 @@ func TestScheduledSendReturnsToDraftsWhenSecurityChanges(t *testing.T) {
 			at := sendTime()
 			id := f.schedule(t, at, extra)
 			tc.change(t, f)
-			f.srv.sweepScheduledSends(ctx, at)
+			f.srv.sweepScheduledSends(ctx, clockAt(at))
 			assertReturned(t, f, id, tc.reason)
 		})
 	}
@@ -373,7 +375,7 @@ func TestScheduledSendReturnsWhenDeviceRevoked(t *testing.T) {
 	if _, err := store.RemoveNativeDevice(device.DeviceID); err != nil {
 		t.Fatal(err)
 	}
-	f.srv.sweepScheduledSends(context.Background(), at)
+	f.srv.sweepScheduledSends(context.Background(), clockAt(at))
 	assertReturned(t, f, id, reasonDevice)
 }
 
@@ -405,7 +407,7 @@ func TestScheduledSendReturnsWhenMaterialGenerationChanges(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	f.srv.sweepScheduledSends(context.Background(), at)
+	f.srv.sweepScheduledSends(context.Background(), clockAt(at))
 	assertReturned(t, f, id, reasonKeys)
 	if string(f.fake.savedDrafts[0].Raw) != strings.TrimSpace(delivery) {
 		t.Fatal("returned draft is not the browser's encrypted draftCopy")
@@ -417,19 +419,19 @@ func TestScheduledSendRetriesDefiniteFailureThenReturns(t *testing.T) {
 	at := sendTime()
 	id := f.schedule(t, at, nil)
 	ctx := context.Background()
-	f.srv.sweepScheduledSends(ctx, at)
+	f.srv.sweepScheduledSends(ctx, clockAt(at))
 	if row := f.row(t, id); row.Status != state.ScheduledWaiting {
 		t.Fatalf("definite failure not retried: %+v", row)
 	}
-	f.srv.sweepScheduledSends(ctx, at.Add(time.Minute))
+	f.srv.sweepScheduledSends(ctx, clockAt(at.Add(time.Minute)))
 	if _, data := f.smtp.counts(); data != 1 {
 		t.Fatal("retried before its delay", data)
 	}
-	f.srv.sweepScheduledSends(ctx, at.Add(scheduledRetryDelay))
+	f.srv.sweepScheduledSends(ctx, clockAt(at.Add(scheduledRetryDelay)))
 	if _, data := f.smtp.counts(); data != 2 {
 		t.Fatal("not retried after its delay", data)
 	}
-	f.srv.sweepScheduledSends(ctx, at.Add(scheduledRetryWindow+time.Minute))
+	f.srv.sweepScheduledSends(ctx, clockAt(at.Add(scheduledRetryWindow+time.Minute)))
 	row := f.row(t, id)
 	if row.Status != "returned" || row.Reason != reasonLate || len(f.fake.savedDrafts) != 1 {
 		t.Fatalf("past the retry window: %+v, %d drafts", row, len(f.fake.savedDrafts))
@@ -444,12 +446,12 @@ func TestScheduledSendUncertainIsNeverRetried(t *testing.T) {
 	at := sendTime()
 	id := f.schedule(t, at, nil)
 	ctx := context.Background()
-	f.srv.sweepScheduledSends(ctx, at)
+	f.srv.sweepScheduledSends(ctx, clockAt(at))
 	if row := f.row(t, id); row.Status != "uncertain" || row.Sealed != nil {
 		t.Fatalf("lost acknowledgement: %+v", row)
 	}
-	f.srv.sweepScheduledSends(ctx, at.Add(scheduledRetryDelay))
-	f.srv.sweepScheduledSends(ctx, at.Add(scheduledRetryWindow))
+	f.srv.sweepScheduledSends(ctx, clockAt(at.Add(scheduledRetryDelay)))
+	f.srv.sweepScheduledSends(ctx, clockAt(at.Add(scheduledRetryWindow)))
 	if dials, _ := f.smtp.counts(); dials != 1 || len(f.fake.savedDrafts) != 0 {
 		t.Fatalf("uncertain send retried or returned: %d dials, %d drafts", dials, len(f.fake.savedDrafts))
 	}
@@ -541,8 +543,45 @@ func TestScheduledListAndCancel(t *testing.T) {
 	if rec := f.post("/api/scheduled/"+id+"/cancel", nil); rec.Code != http.StatusConflict {
 		t.Fatalf("second cancel: %d", rec.Code)
 	}
-	f.srv.sweepScheduledSends(context.Background(), at)
+	f.srv.sweepScheduledSends(context.Background(), clockAt(at))
 	if len(f.fake.savedDrafts) != 1 {
 		t.Fatal("canceled draft saved twice")
+	}
+}
+
+func clockAt(at time.Time) func() time.Time { return func() time.Time { return at } }
+
+type failingDraftClient struct{ *fakeMailClient }
+
+func (failingDraftClient) SaveDraft(context.Context, imapadapter.DraftMessage) error {
+	return errors.New("injected: mailbox unreachable")
+}
+
+// A draft that can never be saved is retried for a week, then given up, so a
+// dead mailbox cannot keep a sweep busy forever.
+func TestScheduledReturnGivesUpAfterAWeek(t *testing.T) {
+	f := newScheduledFixture(t, "250 OK")
+	id := f.schedule(t, sendTime(), nil)
+	f.srv.userMu.Lock()
+	f.srv.userMail[f.userID] = &serverMailEntry{client: failingDraftClient{f.fake}, updatedAt: "test"}
+	f.srv.userMu.Unlock()
+	if rec := f.post("/api/scheduled/"+id+"/cancel", map[string]any{}); rec.Code != 202 {
+		t.Fatalf("cancel with a failing mailbox: %d %s", rec.Code, rec.Body.String())
+	}
+	if row := f.row(t, id); row.Status != state.ScheduledReturning || row.ReturningSince == 0 || row.Sealed == nil {
+		t.Fatalf("after failed save: %+v; want returning, stamped, job kept", row)
+	}
+	since := time.Unix(f.row(t, id).ReturningSince, 0)
+
+	f.srv.sweepScheduledSends(context.Background(), clockAt(since.Add(time.Hour)))
+	if row := f.row(t, id); row.Status != state.ScheduledReturning {
+		t.Fatalf("gave up after an hour: %+v", row)
+	}
+	f.srv.sweepScheduledSends(context.Background(), clockAt(since.Add(scheduledReturnFor+time.Hour)))
+	if row := f.row(t, id); row.Status != "failed" || row.Reason != reasonNoDraft || row.Sealed != nil {
+		t.Fatalf("after a week: %+v; want failed, %q, job cleared", row, reasonNoDraft)
+	}
+	if dials, _ := f.smtp.counts(); dials != 0 {
+		t.Fatalf("%d SMTP connections for canceled mail", dials)
 	}
 }

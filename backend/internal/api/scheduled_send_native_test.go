@@ -82,7 +82,7 @@ func TestScheduledNativeSendQueuesWithCurrentRelay(t *testing.T) {
 	if current.Generation == scheduledRelay.Generation {
 		t.Fatal("relay generation did not rotate")
 	}
-	s.sweepScheduledSends(context.Background(), at)
+	s.sweepScheduledSends(context.Background(), clockAt(at))
 	row, _, _ := s.globalStore.GetScheduledSend(context.Background(), id)
 	if row.Status != "queued" {
 		t.Fatalf("native scheduled send: %+v", row)

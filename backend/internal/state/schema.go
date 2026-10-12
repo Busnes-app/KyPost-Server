@@ -232,7 +232,9 @@ CREATE TABLE IF NOT EXISTS scheduled_sends (
 	sealed       BLOB,
 	summary      BLOB NOT NULL,
 	next_attempt INTEGER NOT NULL DEFAULT 0,
-	created_at   INTEGER NOT NULL
+	created_at   INTEGER NOT NULL,
+	-- When the row last entered returning; bounds draft-save retries.
+	returning_since INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS scheduled_sends_due ON scheduled_sends(status, send_at);
 CREATE INDEX IF NOT EXISTS scheduled_sends_user ON scheduled_sends(user_id, status);

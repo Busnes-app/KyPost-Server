@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
@@ -34,6 +35,18 @@ const (
 	scheduledRetryDelay    = 5 * time.Minute
 	scheduledSweepInterval = 30 * time.Second
 	scheduledRetention     = 30 * 24 * time.Hour
+	// One sealed job, and one user's pending total. The row cap matches the
+	// native outbox's job limit; the total keeps scheduled mail from becoming
+	// unbounded storage outside every quota.
+	scheduledMaxRowBytes  = 128 << 20
+	scheduledMaxUserBytes = 256 << 20
+	// Rows are worked by a small pool, at most one per user at a time, each
+	// under its own deadline, so one account's unreachable server cannot hold
+	// up everyone else's mail.
+	scheduledWorkers    = 4
+	scheduledRowTimeout = 3 * time.Minute
+	// A draft that cannot be saved for this long is given up as failed.
+	scheduledReturnFor = 7 * 24 * time.Hour
 )
 
 // Reasons shown with a message that was not sent.
@@ -49,6 +62,7 @@ const (
 	reasonLate     = "it could not be sent within an hour of its send time"
 	reasonLost     = "the scheduled message could not be opened; nothing was sent"
 	reasonGone     = "the account was removed; nothing was sent"
+	reasonNoDraft  = "it could not be saved to Drafts for a week; nothing was sent"
 )
 
 // scheduledJob is the frozen send, sealed at rest. Job holds the deliveries,
@@ -191,11 +205,15 @@ func (s *Server) scheduleSend(w http.ResponseWriter, r *http.Request, ac AuthCon
 		http.Error(w, "scheduled send unavailable; send now or retry later", http.StatusServiceUnavailable)
 		return
 	}
+	if len(sealed) > scheduledMaxRowBytes {
+		http.Error(w, "this message is too large to schedule; send it now instead", http.StatusRequestEntityTooLarge)
+		return
+	}
 	if err := fsutil.CheckDriveReserve(s.stateDir, int64(len(sealed))); err != nil {
 		http.Error(w, "the server is low on disk space; send now or retry later", http.StatusInsufficientStorage)
 		return
 	}
-	err = s.globalStore.AddScheduledSend(r.Context(), state.ScheduledSend{ID: id, UserID: j.UserID, Mailbox: j.Mailbox, SendAt: sendAt.Unix(), CreatedAt: time.Now().Unix(), Sealed: sealed, Summary: summary}, maxScheduledPending)
+	err = s.globalStore.AddScheduledSend(r.Context(), state.ScheduledSend{ID: id, UserID: j.UserID, Mailbox: j.Mailbox, SendAt: sendAt.Unix(), CreatedAt: time.Now().Unix(), Sealed: sealed, Summary: summary}, maxScheduledPending, scheduledMaxUserBytes)
 	if errors.Is(err, state.ErrScheduledFull) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -267,7 +285,7 @@ func (s *Server) handleScheduledCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	key, err := s.scheduledSendKey()
 	row.Reason = reasonCanceled
-	if err != nil || !s.saveScheduledDraft(r.Context(), key, row) {
+	if err != nil || !s.saveScheduledDraft(r.Context(), key, row, time.Now) {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": state.ScheduledReturning, "warning": "canceled; it will be saved to Drafts shortly"})
 		return
 	}
@@ -294,7 +312,7 @@ func (s *Server) StartScheduledSendSweeper(ctx context.Context) {
 	ticker := time.NewTicker(scheduledSweepInterval)
 	defer ticker.Stop()
 	for {
-		s.sweepScheduledSends(ctx, time.Now())
+		s.sweepScheduledSends(ctx, time.Now)
 		select {
 		case <-ctx.Done():
 			return
@@ -303,33 +321,53 @@ func (s *Server) StartScheduledSendSweeper(ctx context.Context) {
 	}
 }
 
-// sweepScheduledSends sends every due row, then saves returning drafts.
-// ponytail: one row at a time; a slow relay delays later rows by its 45 s
-// timeout each. Fan out per user if that ever matters.
-func (s *Server) sweepScheduledSends(ctx context.Context, now time.Time) {
+// sweepScheduledSends sends every due row, then saves returning drafts. Times
+// are read when each row is worked, never from the sweep's start, so a long
+// sweep cannot send past a row's deadline.
+func (s *Server) sweepScheduledSends(ctx context.Context, now func() time.Time) {
 	key, err := s.scheduledSendKey()
 	if err != nil {
 		s.logger.Error("scheduled send key unavailable", "error", err.Error())
 		return
 	}
-	for ctx.Err() == nil {
-		row, ok, err := s.globalStore.ClaimScheduledSend(ctx, now.Unix())
-		if err != nil || !ok {
-			break
-		}
-		s.runScheduled(ctx, key, row, now)
+	var wg sync.WaitGroup
+	for range scheduledWorkers {
+		wg.Go(func() {
+			for ctx.Err() == nil {
+				row, ok, err := s.globalStore.ClaimScheduledSend(ctx, now().Unix())
+				if err != nil || !ok {
+					return
+				}
+				rowCtx, cancel := context.WithTimeout(ctx, scheduledRowTimeout)
+				s.runScheduled(rowCtx, key, row, now)
+				cancel()
+			}
+		})
 	}
-	returns, err := s.globalStore.ScheduledReturns(ctx, now.Unix())
+	wg.Wait()
+	returns, err := s.globalStore.ScheduledReturns(ctx, now().Unix())
 	if err == nil {
-		for _, row := range returns {
-			s.saveScheduledDraft(ctx, key, row)
+		work := make(chan state.ScheduledSend)
+		for range scheduledWorkers {
+			wg.Go(func() {
+				for row := range work {
+					rowCtx, cancel := context.WithTimeout(ctx, scheduledRowTimeout)
+					s.saveScheduledDraft(rowCtx, key, row, now)
+					cancel()
+				}
+			})
 		}
+		for _, row := range returns {
+			work <- row
+		}
+		close(work)
+		wg.Wait()
 	}
-	_ = s.globalStore.PruneScheduledSends(ctx, now.Add(-scheduledRetention).Unix())
+	_ = s.globalStore.PruneScheduledSends(ctx, now().Add(-scheduledRetention).Unix())
 }
 
 // runScheduled finishes one claimed row; it never leaves it in sending.
-func (s *Server) runScheduled(ctx context.Context, key []byte, row state.ScheduledSend, now time.Time) {
+func (s *Server) runScheduled(ctx context.Context, key []byte, row state.ScheduledSend, now func() time.Time) {
 	move := func(to, reason string, next int64) {
 		if _, err := s.globalStore.MoveScheduledSend(context.WithoutCancel(ctx), row.ID, state.ScheduledSending, to, reason, next); err != nil {
 			s.logger.Error("scheduled send state update failed", "correlation_id", row.ID, "error", err.Error())
@@ -342,11 +380,11 @@ func (s *Server) runScheduled(ctx context.Context, key []byte, row state.Schedul
 	}
 	deadline := time.Unix(row.SendAt, 0).Add(scheduledRetryWindow)
 	next, reason := state.ScheduledReturning, reasonLate
-	if !now.After(deadline) {
+	if !now().After(deadline) {
 		next, reason = s.dispatchScheduled(ctx, j)
 	}
 	if next == state.ScheduledWaiting {
-		if retry := now.Add(scheduledRetryDelay); retry.Before(deadline) {
+		if retry := now().Add(scheduledRetryDelay); retry.Before(deadline) {
 			move(state.ScheduledWaiting, "", retry.Unix())
 			return
 		}
@@ -355,7 +393,7 @@ func (s *Server) runScheduled(ctx context.Context, key []byte, row state.Schedul
 	move(next, reason, 0)
 	if next == state.ScheduledReturning {
 		row.Reason = reason
-		s.saveScheduledDraft(ctx, key, row)
+		s.saveScheduledDraft(ctx, key, row, now)
 	}
 }
 
@@ -476,7 +514,7 @@ func (s *Server) scheduledSMTPAccount(j scheduledJob) (smtpAccount, string, erro
 
 // saveScheduledDraft files a returning row's draft and marks it returned. A
 // failed save keeps it returning for a later sweep; it reports success.
-func (s *Server) saveScheduledDraft(ctx context.Context, key []byte, row state.ScheduledSend) bool {
+func (s *Server) saveScheduledDraft(ctx context.Context, key []byte, row state.ScheduledSend, now func() time.Time) bool {
 	move := func(to, reason string, next int64) {
 		if _, err := s.globalStore.MoveScheduledSend(context.WithoutCancel(ctx), row.ID, state.ScheduledReturning, to, reason, next); err != nil {
 			s.logger.Error("scheduled send state update failed", "correlation_id", row.ID, "error", err.Error())
@@ -501,9 +539,12 @@ func (s *Server) saveScheduledDraft(ctx context.Context, key []byte, row state.S
 		err = client.SaveDraft(ctx, j.Draft)
 	}
 	if err != nil {
-		// ponytail: retried every 5 minutes for as long as the account exists.
 		s.logger.Error("scheduled send draft not saved", "correlation_id", row.ID, "error", err.Error())
-		move(state.ScheduledReturning, row.Reason, time.Now().Add(scheduledRetryDelay).Unix())
+		if row.ReturningSince > 0 && now().Sub(time.Unix(row.ReturningSince, 0)) > scheduledReturnFor {
+			move("failed", reasonNoDraft, 0)
+			return false
+		}
+		move(state.ScheduledReturning, row.Reason, now().Add(scheduledRetryDelay).Unix())
 		return false
 	}
 	move("returned", row.Reason, 0)
