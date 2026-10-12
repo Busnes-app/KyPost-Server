@@ -35,10 +35,8 @@ const (
 	scheduledRetryDelay    = 5 * time.Minute
 	scheduledSweepInterval = 30 * time.Second
 	scheduledRetention     = 30 * 24 * time.Hour
-	// One sealed job, and one user's pending total. The row cap matches the
-	// native outbox's job limit; the total keeps scheduled mail from becoming
+	// One user's pending sealed total, so scheduled mail cannot become
 	// unbounded storage outside every quota.
-	scheduledMaxRowBytes  = 128 << 20
 	scheduledMaxUserBytes = 256 << 20
 	// Rows are worked by a small pool, at most one per user at a time, each
 	// under its own deadline, so one account's unreachable server cannot hold
@@ -48,6 +46,10 @@ const (
 	// A draft that cannot be saved for this long is given up as failed.
 	scheduledReturnFor = 7 * 24 * time.Hour
 )
+
+// scheduledMaxRowBytes caps one sealed job at the native outbox's job limit.
+// A var only so a test can lower it.
+var scheduledMaxRowBytes = 128 << 20
 
 // Reasons shown with a message that was not sent.
 const (

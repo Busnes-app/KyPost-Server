@@ -38,7 +38,12 @@ func sealedEnvelopeFilled(version int, fill byte) string {
 // generation 1 and derived auth, so the step-up takes deliveryAuth.
 func convertedUser(t *testing.T, srv *Server) users.User {
 	t.Helper()
-	u := clientProtectedUser(t, srv)
+	return convertUser(t, srv, clientProtectedUser(t, srv))
+}
+
+// convertUser gives u a fresh client-protected keyring at generation 1.
+func convertUser(t *testing.T, srv *Server, u users.User) users.User {
+	t.Helper()
 	identity, err := pgpmail.GenerateIdentity("Ring", "ring@example.invalid")
 	if err != nil {
 		t.Fatal(err)

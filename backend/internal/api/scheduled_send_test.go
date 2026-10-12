@@ -603,3 +603,51 @@ func TestScheduledSweepIdleLeavesKeyAlone(t *testing.T) {
 		t.Fatalf("scheduling did not create the key: %v", err)
 	}
 }
+
+// A sealed job over the row cap is refused with 413 and nothing is stored.
+func TestScheduledSendRefusesOversizedRow(t *testing.T) {
+	f := newScheduledFixture(t, "250 queued")
+	previous := scheduledMaxRowBytes
+	scheduledMaxRowBytes = 64 << 10
+	t.Cleanup(func() { scheduledMaxRowBytes = previous })
+	f.schedule(t, sendTime(), nil)
+	rec := f.post("/api/mail/send", map[string]any{"to": "bob@example.com", "body": strings.Repeat("x", scheduledMaxRowBytes), "sendAt": sendTime().Format(time.RFC3339)})
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "too large to schedule") {
+		t.Fatalf("oversized schedule: %d %s", rec.Code, rec.Body.String())
+	}
+	rows, err := f.srv.globalStore.ListScheduledSends(context.Background(), f.userID, f.userID)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("oversized schedule stored a row: %d rows, %v", len(rows), err)
+	}
+	if dials, _ := f.smtp.counts(); dials != 0 {
+		t.Fatal("oversized schedule sent mail")
+	}
+}
+
+// The deadline is checked against the clock when each row is worked: a row
+// reached only after its deadline passed mid-sweep returns late, unsent.
+func TestScheduledSweepReadsClockPerRow(t *testing.T) {
+	f := newScheduledFixture(t, "250 queued")
+	at := sendTime()
+	ids := []string{f.schedule(t, at, nil), f.schedule(t, at, nil)}
+	// One user's rows are worked one at a time, so the second is claimed
+	// only after the first was delivered; by then its deadline has passed.
+	late := at.Add(scheduledRetryWindow + time.Minute)
+	f.srv.sweepScheduledSends(context.Background(), func() time.Time {
+		if _, data := f.smtp.counts(); data > 0 {
+			return late
+		}
+		return at
+	})
+	statuses := map[string]string{}
+	for _, id := range ids {
+		row := f.row(t, id)
+		statuses[row.Status] = row.Reason
+	}
+	if _, sent := statuses["sent"]; !sent || statuses["returned"] != reasonLate || len(statuses) != 2 {
+		t.Fatalf("rows ended %v; want one sent and one returned late", statuses)
+	}
+	if _, data := f.smtp.counts(); data != 1 || len(f.fake.savedDrafts) != 1 {
+		t.Fatalf("%d messages delivered, %d drafts; want 1 and 1", data, len(f.fake.savedDrafts))
+	}
+}
