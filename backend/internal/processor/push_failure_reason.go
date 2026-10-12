@@ -35,6 +35,7 @@ var nativePushFailureReasons = map[string]bool{
 	"rate_limited": true, // 429
 	"server_error": true, // 5xx at the far end
 	"rejected":     true, // any other non-2xx
+	"unencrypted":  true, // UnifiedPush payload could not be encrypted, so was not sent
 	"failed":       true, // recognised as a failure, but not as any of the above
 }
 
@@ -85,6 +86,9 @@ func classifyNativePushFailure(platform string, err error) string {
 func nativePushFailureReason(err error) string {
 	if err == nil {
 		return "failed"
+	}
+	if errors.Is(err, errUnifiedPushNotEncrypted) {
+		return "unencrypted"
 	}
 
 	// Timeouts first: a deadline exceeded on the way to connecting is still

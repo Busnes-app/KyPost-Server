@@ -48,8 +48,8 @@ func approverDevices(store *state.Store) ([]state.NativeDevice, error) {
 // through the relay. UnifiedPush crosses a public broker such as ntfy.sh, so it
 // qualifies only when the device supplied WebPush keys and the payload is
 // therefore encrypted under RFC 8291 (see processor.UnifiedPushSender). A
-// UnifiedPush device with no key material still receives cleartext and stays
-// excluded, while remaining fully usable for mail notifications.
+// UnifiedPush device with no key material (registered by an older build) is
+// sent nothing at all, so it stays excluded.
 //
 // This catches more than it looks like: normalizeNativeTransport maps platform
 // "linux" to the unifiedpush transport, so a Linux client that does not name a
@@ -131,7 +131,7 @@ func (s *Server) handleMFAPushEnabled(w http.ResponseWriter, r *http.Request) {
 			if len(paired) > 0 {
 				// They have devices; every one is on an excluded transport.
 				// Saying so beats "pair a device" when they already did.
-				msg = "your paired devices cannot receive sign-in approvals: they use UnifiedPush without encryption keys, so an approval request would cross a public broker in the clear. Update the app and re-pair it, or pair an Android or iOS device."
+				msg = "your paired devices cannot receive sign-in approvals: their UnifiedPush registrations have no encryption keys. Pair them again to use push approval."
 			}
 			http.Error(w, msg, http.StatusBadRequest)
 			return
@@ -226,8 +226,8 @@ func (s *Server) contentPreviewEnabled(userID string) bool {
 // mfaApproverDevices device of userID. Best-effort and asynchronous so relay
 // latency never blocks login; failures are logged and the user falls back to
 // TOTP. UnifiedPush devices receive it only RFC 8291-encrypted: eligibility
-// requires their WebPush keys, and NoPlaintextFallback refuses the send if the
-// server cannot encrypt.
+// requires their WebPush keys, and UnifiedPushSender refuses any send it
+// cannot encrypt.
 func (s *Server) dispatchPushChallenge(userID, challengeID string, ctx loginContext, issuedAt time.Time, matchDigits string, decoyDigits []string) {
 	store, err := s.userStore(userID)
 	if err != nil {
@@ -303,9 +303,6 @@ func (s *Server) dispatchPushChallenge(userID, challengeID string, ctx loginCont
 		Title: "Approve sign-in",
 		Body:  "Tap to approve or deny a sign-in to your account.",
 		Data:  data,
-		// Eligibility on UnifiedPush assumed encryption; never fall back to
-		// cleartext on the broker if the VAPID key failed to load.
-		NoPlaintextFallback: true,
 	}
 	_, err = processor.SendNativePushToDevices(context.Background(), s.nativePushDispatcher, s.health, store, filteredDevices, message,
 		func(device state.NativeDevice, platform string, sendErr error) {

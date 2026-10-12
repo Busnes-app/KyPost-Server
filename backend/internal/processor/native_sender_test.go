@@ -212,48 +212,6 @@ func TestNewRelaySenderFromEnvExplicitKeyWins(t *testing.T) {
 	}
 }
 
-// UnifiedPushSender must POST to the endpoint URL with JSON payload.
-func TestUnifiedPushSenderSendSuccess(t *testing.T) {
-	var seenBody map[string]any
-	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(raw, &seenBody)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`OK`))
-	}))
-	defer ts.Close()
-
-	sender := NewUnifiedPushSender(nil, "", "")
-	sender.client = ts.Client()
-
-	err := sender.Send(context.Background(), state.NativeDevice{PushToken: ts.URL + "/topic"}, NativePushMessage{Title: "Title", Body: "Body", Data: map[string]string{"type": "mail"}})
-	if err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
-	if seenBody["title"] != "Title" || seenBody["body"] != "Body" {
-		t.Fatalf("unexpected body: %+v", seenBody)
-	}
-	if d, ok := seenBody["data"].(map[string]any); !ok || d["type"] != "mail" {
-		t.Fatalf("data mismatch: %+v", seenBody["data"])
-	}
-}
-
-// UnifiedPushSender must treat 404/410 as stale.
-func TestUnifiedPushSenderReturnsStaleError(t *testing.T) {
-	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	sender := NewUnifiedPushSender(nil, "", "")
-	sender.client = ts.Client()
-
-	err := sender.Send(context.Background(), state.NativeDevice{PushToken: ts.URL + "/topic"}, NativePushMessage{Title: "Title", Body: "Body"})
-	if !errors.Is(err, ErrNativeDeviceStale) {
-		t.Fatalf("Send() error = %v, want ErrNativeDeviceStale", err)
-	}
-}
-
 // Dispatcher must route by Transport field (explicit > platform-derived).
 func TestDispatcherSelectSenderByTransport(t *testing.T) {
 	fcm := &RelaySender{}
@@ -300,16 +258,19 @@ func TestDispatcherSendRoutesCorrectly(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer upTS.Close()
+	keyPath, publicKey := writeVAPIDKeyFile(t)
 
 	d := &NativePushDispatcher{
 		fcmSender:         nil, // Not configured; will error if used
 		apnsSender:        nil,
-		unifiedPushSender: NewUnifiedPushSender(nil, "", ""),
+		unifiedPushSender: NewUnifiedPushSender(nil, publicKey, keyPath),
 	}
 	d.unifiedPushSender.client = upTS.Client()
 
 	// UnifiedPush device should route to the UP sender (which succeeds).
-	err := d.Send(context.Background(), state.NativeDevice{Transport: "unifiedpush", PushToken: upTS.URL}, NativePushMessage{Title: "Test"})
+	device := keyedUnifiedPushDevice(t)
+	device.PushToken = upTS.URL
+	err := d.Send(context.Background(), device, NativePushMessage{Title: "Test"})
 	if err != nil {
 		t.Fatalf("Send() with unifiedpush transport error = %v", err)
 	}

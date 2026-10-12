@@ -32,18 +32,14 @@ func decodeWebPushKey(key string) ([]byte, error) {
 
 // ValidateWebPushKeys checks that p256dh and auth are well-formed WebPush
 // (RFC 8291) subscription keys: p256dh must decode to an uncompressed P-256
-// point on the curve, auth to a 16-byte secret. Both must be present together
-// or both absent — partial key material cannot encrypt anything, so accepting
-// it would store a device that silently never receives a notification.
+// point on the curve, auth to a 16-byte secret. Both are required: UnifiedPush
+// crosses a third-party distributor, and the sender never posts plaintext.
 func ValidateWebPushKeys(p256dh, auth string) error {
 	p256dh = strings.TrimSpace(p256dh)
 	auth = strings.TrimSpace(auth)
 
-	if p256dh == "" && auth == "" {
-		return nil
-	}
 	if p256dh == "" || auth == "" {
-		return errors.New("p256dh and auth must both be present or both absent")
+		return errors.New("p256dh and auth are both required")
 	}
 
 	rawKey, err := decodeWebPushKey(p256dh)
