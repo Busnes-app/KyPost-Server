@@ -168,6 +168,11 @@ func clearPGPVerdict(e *Entry) {
 func (s *Store) InvalidatePGPVerdicts() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	release, err := fsutil.LockFile(s.path())
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := s.refreshFromDiskLocked(); err != nil {
 		return err
 	}
