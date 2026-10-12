@@ -12,7 +12,9 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 
 - `imap.MessageReference` / `ResolveMessageReference` translate only at wire boundaries through the native generation capability. Keep canonical numeric internal IDs; reject stale/foreign/bare native references before lookup/mutation. Missing native capability fails closed; legacy IMAP behavior stays unchanged.
 
-- `imap.MailSourceIdentity` identifies external IMAP mode or native immutable owner/database namespace. Account state/cache admission precedes API/daemon mail operations; it does not detect changes between external IMAP endpoints or UIDVALIDITY.
+- `imap.MailSourceIdentity` identifies external IMAP mode or native immutable owner/database namespace. Account state/cache admission precedes API/daemon mail operations; it does not detect changes between external IMAP endpoints or UIDVALIDITY — the poll checkpoint does.
+
+- Poll checkpoints are `<namespace>:<uid>`; the namespace is the polled mailbox's UIDVALIDITY (read from the `STATUS` attribute list each `ListUnreadInbox`, never the mailbox name) plus a hash of host, port, username and mailbox. A bare `<uid>` is the pre-namespace format: it is trusted, and adopts the next namespace on every save, `ClampCheckpoint` included. A different namespace restarts the fetch at UID 0 and `UIDNamespaceReset` tells the poller to clear the processed set and deferrals (`state.Store.ResetUIDNamespace`); only unread mail is refetched. A server omitting UIDVALIDITY keeps bare checkpoints. Native checkpoints stay bare IDs.
 
 ### `imap/` — IMAP Client
 
@@ -42,6 +44,7 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 - `http_client.go` — low-level transport: request construction, admission control, retry loop, `Stats()` for queue depth
 
 - Classifier diagnostics use the process slog handler (shared JSON stderr). Never log model output, prompts or response snippets; report byte counts, operation names, transport failures and HTTP status. Warmup/retry/failure events survive the default info level. Never embed upstream HTTP bodies, JSON error text or the model response in returned errors: callers also log them. The adapter owns no log files.
+- Failures callers act on are typed — `ErrCreditsExhausted`, `*StatusError` (HTTP status), `*NoAllowedLabelError` — and are matched with `errors.Is`/`errors.As`, never by message text.
 
 ### Shared Rules
 

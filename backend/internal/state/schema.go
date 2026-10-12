@@ -193,7 +193,7 @@ CREATE INDEX IF NOT EXISTS deferrals_first_at ON deferrals(first_at);
 -- message, so that a later keyword change can be recognised as a correction.
 -- check_hash is sha256(sender NUL subject) of the message as the IMAP adapter
 -- formats it; a correction must present the same hash, which keeps a reused UID
--- (UIDVALIDITY is not tracked) from teaching the sorter about the wrong mail.
+-- (these rows are not scoped by UIDVALIDITY) from teaching the sorter about the wrong mail.
 -- Pruned by Cleanup with the decisions.
 CREATE TABLE IF NOT EXISTS sorter_predictions (
 	message_id TEXT PRIMARY KEY,

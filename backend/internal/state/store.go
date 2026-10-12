@@ -275,6 +275,20 @@ func (s *Store) SetCheckpoint(value string) error {
 	return setMeta(s.db, metaCheckpoint, value)
 }
 
+// ResetUIDNamespace forgets the processed set and deferrals, whose UIDs now
+// name other messages, and restarts the checkpoint in one transaction, so a
+// tick that dies afterwards does not forget the messages it went on to retire.
+func (s *Store) ResetUIDNamespace(checkpoint string) error {
+	return s.tx(func(tx *sql.Tx) error {
+		for _, q := range []string{`DELETE FROM processed`, `DELETE FROM deferrals`} {
+			if _, err := tx.Exec(q); err != nil {
+				return err
+			}
+		}
+		return setMeta(tx, metaCheckpoint, checkpoint)
+	})
+}
+
 // PollTick is the outcome of one completed poll tick, persisted so the health
 // page can answer "is mail actually being polled?".
 //

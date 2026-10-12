@@ -774,15 +774,27 @@ func (c *APIClient) ListUnreadInbox(ctx context.Context, sinceCheckpoint string)
 		return nil, "", err
 	}
 
+	ns, err := pollNamespace(d)
+	if err != nil {
+		return nil, "", err
+	}
+	prevNS, minUID := parseCheckpoint(sinceCheckpoint)
+	switch {
+	case ns == "":
+		ns = prevNS
+	case prevNS != "" && ns != prevNS:
+		minUID = 0 // UIDs restarted or name another mailbox
+	}
+	base := formatCheckpoint(ns, minUID)
+
 	uids, err := d.GetUIDs("UNSEEN")
 	if err != nil {
 		return nil, "", fmt.Errorf("imap search unseen: %w", err)
 	}
 	if len(uids) == 0 {
-		return []Message{}, sinceCheckpoint, nil
+		return []Message{}, base, nil
 	}
 
-	minUID := parseCheckpointUID(sinceCheckpoint)
 	filtered := make([]int, 0, len(uids))
 	for _, uid := range uids {
 		if uid > minUID {
@@ -790,7 +802,7 @@ func (c *APIClient) ListUnreadInbox(ctx context.Context, sinceCheckpoint string)
 		}
 	}
 	if len(filtered) == 0 {
-		return []Message{}, sinceCheckpoint, nil
+		return []Message{}, base, nil
 	}
 	sort.Ints(filtered)
 
@@ -813,9 +825,9 @@ func (c *APIClient) ListUnreadInbox(ctx context.Context, sinceCheckpoint string)
 		return nil, "", err
 	}
 
-	next := sinceCheckpoint
+	next := base
 	if maxUID > minUID {
-		next = strconv.Itoa(maxUID)
+		next = formatCheckpoint(ns, maxUID)
 	}
 	return out, next, nil
 }
@@ -1682,16 +1694,63 @@ func (c *APIClient) ensureConnectedLocked() (*goimap.Dialer, error) {
 	return c.dialer, nil
 }
 
-func parseCheckpointUID(checkpoint string) int {
-	v := strings.TrimSpace(checkpoint)
-	if v == "" {
-		return 0
+// A poll checkpoint is "<namespace>:<uid>". The namespace names the UID space
+// (account, mailbox, UIDVALIDITY); a bare "<uid>" predates it and is accepted
+// as matching whatever the server reports next.
+func parseCheckpoint(checkpoint string) (namespace string, uid int) {
+	namespace, v, found := strings.Cut(strings.TrimSpace(checkpoint), ":")
+	if !found {
+		namespace, v = "", namespace
 	}
 	uid, err := strconv.Atoi(v)
 	if err != nil || uid < 0 {
-		return 0
+		return namespace, 0
 	}
+	return namespace, uid
+}
+
+func formatCheckpoint(namespace string, uid int) string {
+	switch {
+	case namespace != "":
+		return namespace + ":" + strconv.Itoa(uid)
+	case uid > 0:
+		return strconv.Itoa(uid)
+	}
+	return ""
+}
+
+func parseCheckpointUID(checkpoint string) int {
+	_, uid := parseCheckpoint(checkpoint)
 	return uid
+}
+
+// pollNamespace identifies the selected mailbox's UID space. A new UIDVALIDITY
+// (mailbox recreated or migrated) or a different account/mailbox reuses UIDs
+// for other messages, so a checkpoint from another namespace means nothing.
+// "" when the server omits UIDVALIDITY.
+func pollNamespace(d *goimap.Dialer) (string, error) {
+	resp, err := d.Exec(`STATUS "`+goimap.AddSlashes.Replace(d.Folder)+`" (UIDVALIDITY)`, true, goimap.RetryCount, nil)
+	if err != nil {
+		return "", fmt.Errorf("imap status uidvalidity: %w", err)
+	}
+	m := uidValidityResponse.FindStringSubmatch(resp)
+	if len(m) != 2 {
+		return "", nil
+	}
+	account, _ := json.Marshal([]any{strings.ToLower(d.Host), d.Port, d.Username, d.Folder})
+	return m[1] + "." + incomingHash(account)[:12], nil
+}
+
+// UIDNamespaceReset reports whether next belongs to a different UID namespace
+// than prev. If so, every UID recorded under prev names some other message, and
+// reset is the checkpoint to restart from.
+func UIDNamespaceReset(prev, next string) (reset string, changed bool) {
+	prevNS, _ := parseCheckpoint(prev)
+	nextNS, _ := parseCheckpoint(next)
+	if prevNS == "" || nextNS == "" || prevNS == nextNS {
+		return "", false
+	}
+	return formatCheckpoint(nextNS, 0), true
 }
 
 // ClampCheckpoint holds the checkpoint below every message the caller is
@@ -1722,6 +1781,14 @@ func ClampCheckpoint(prev, next string, deferredIDs []string) string {
 	if len(deferredIDs) == 0 {
 		return next
 	}
+	prevNS, prevUID := parseCheckpoint(prev)
+	nextNS, nextUID := parseCheckpoint(next)
+	if nextNS != "" && prevNS != nextNS {
+		if prevNS != "" {
+			prevUID = 0 // another namespace's UIDs are no floor
+		}
+		prev = formatCheckpoint(nextNS, prevUID) // legacy prev adopts next's namespace
+	}
 	lowest := 0
 	for _, id := range deferredIDs {
 		uid, err := strconv.Atoi(strings.TrimSpace(id))
@@ -1733,11 +1800,11 @@ func ClampCheckpoint(prev, next string, deferredIDs []string) string {
 		}
 	}
 	candidate := lowest - 1
-	if nextUID := parseCheckpointUID(next); candidate > nextUID {
+	if candidate > nextUID {
 		candidate = nextUID
 	}
-	if candidate <= parseCheckpointUID(prev) {
+	if candidate <= prevUID {
 		return prev
 	}
-	return strconv.Itoa(candidate)
+	return formatCheckpoint(nextNS, candidate)
 }

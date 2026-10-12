@@ -288,7 +288,7 @@ func (c *HTTPClient) Classify(ctx context.Context, allowedLabels []string, sende
 		if strings.Contains(strings.ToLower(normalized), "you've reached your weekly chat limit") {
 			c.logError("AI credits exhausted: weekly chat limit response from model")
 			c.logServer("[CLASSIFY FAILED] AI credits exhausted (weekly chat limit reached)")
-			return "", fmt.Errorf("user has run out of ai credits"), false
+			return "", ErrCreditsExhausted, false
 		}
 
 		if isToolsOnlyResponse(normalized) {
@@ -389,7 +389,7 @@ func (c *HTTPClient) classifyOnce(ctx context.Context, prompt string, allowedLab
 		return "", fmt.Errorf("ollama classify: read response: %w", err)
 	}
 	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("ollama classify failed: status %d", resp.StatusCode)
+		return "", &StatusError{StatusCode: resp.StatusCode}
 	}
 
 	var out struct {
