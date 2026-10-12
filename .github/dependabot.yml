@@ -118,6 +118,12 @@ updates:
     groups:
       npm-lint:
         patterns: ["*"]
+    # typescript-eslint peers on typescript <6.1.0, so any newer typescript
+    # here fails `npm ci` (#383). Delete once a typescript-eslint bump here
+    # widens that peer range.
+    ignore:
+      - dependency-name: "typescript"
+        versions: [">=6.1.0"]
     commit-message:
       prefix: "chore(deps)"
 
