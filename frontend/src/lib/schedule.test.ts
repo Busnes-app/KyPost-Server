@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { localDateTimeValue, schedulePresets, validSendAt } from "./schedule";
+import { schedulePresets, validSendAt } from "./schedule";
 
 describe("schedulePresets", () => {
   it("offers an hour from now, tomorrow 08:00 and next Monday 08:00", () => {
@@ -30,10 +30,4 @@ describe("validSendAt", () => {
     expect(validSendAt(new Date(now.getTime() + 366 * 86_400_000 + 1), now)).toBe(false);
     expect(validSendAt(new Date("not a date"), now)).toBe(false);
   });
-});
-
-it("localDateTimeValue round-trips through a datetime-local input", () => {
-  const at = new Date(2026, 4, 6, 7, 8, 0);
-  expect(localDateTimeValue(at)).toBe("2026-05-06T07:08");
-  expect(new Date(localDateTimeValue(at))).toEqual(at);
 });

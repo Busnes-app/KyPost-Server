@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useDialogOpen } from "../../hooks/useDialogOpen";
-import { localNow, snoozePresets } from "../../lib/snooze";
+import { localDateTimeValue } from "../../lib/localDateTime";
+import { snoozePresets } from "../../lib/snooze";
 
 type Props = {
   open: boolean;
@@ -49,7 +50,7 @@ export function SnoozeDialog({ open, busy, onSnooze, onCancel }: Props) {
             </div>
             <label style={{ display: "block", marginTop: 16 }}>
               Pick a date and time
-              <input type="datetime-local" min={localNow()} value={custom} onChange={(event) => setCustom(event.target.value)} />
+              <input type="datetime-local" min={localDateTimeValue(new Date())} value={custom} onChange={(event) => setCustom(event.target.value)} />
             </label>
             <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
               <button type="button" className="contacts-action" onClick={() => finish()}>

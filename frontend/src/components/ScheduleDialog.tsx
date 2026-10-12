@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useDialogOpen } from "../hooks/useDialogOpen";
-import { localDateTimeValue, schedulePresets, validSendAt } from "../lib/schedule";
+import { localDateTimeValue } from "../lib/localDateTime";
+import { schedulePresets, validSendAt } from "../lib/schedule";
 
 const formatTime = (d: Date) => d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
