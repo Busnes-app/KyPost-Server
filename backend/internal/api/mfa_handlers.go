@@ -57,7 +57,7 @@ func (s *Server) handleMFAStatus(w http.ResponseWriter, r *http.Request) {
 				"canApprove": MFATransportEligible(d),
 			}
 			if !MFATransportEligible(d) {
-				entry["cannotApproveReason"] = "This device registered UnifiedPush without encryption keys, so sign-in approvals would cross a public broker in the clear. Update the app and re-pair it. Mail notifications still work."
+				entry["cannotApproveReason"] = "This UnifiedPush registration has no encryption keys, so it receives nothing. Pair the device again."
 			}
 			deviceStatuses = append(deviceStatuses, entry)
 		}

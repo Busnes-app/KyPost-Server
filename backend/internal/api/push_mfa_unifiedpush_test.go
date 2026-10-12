@@ -54,7 +54,7 @@ func pairLinuxDevice(t *testing.T, srv *Server, userID, deviceID string, withKey
 // addressed by the challenge with the documented payload, and can approve with
 // the number match. A keyless Linux device on the same account is never sent
 // the challenge. Pull mode keeps the test off the network; the UnifiedPush
-// encryption itself is TestUnifiedPushSenderNoPlaintextFallback.
+// encryption itself is TestUnifiedPushSenderMFAChallengeEncryptedOrRefused.
 func TestPushMFAReachesEncryptedUnifiedPushDevice(t *testing.T) {
 	srv := newTestServer(t)
 	const username, password = "linus", "pw-linus-testpassword"

@@ -40,10 +40,6 @@ type NativePushMessage struct {
 	Title string
 	Body  string
 	Data  map[string]string
-	// NoPlaintextFallback makes UnifiedPushSender refuse rather than POST in
-	// the clear when it cannot encrypt. Set for MFA challenges, whose
-	// eligibility on UnifiedPush rests on the payload being encrypted.
-	NoPlaintextFallback bool
 }
 
 // RelaySender forwards native push requests to the central Cloudflare Worker
@@ -228,9 +224,9 @@ func registerWithRelay(relayURL string, client *http.Client) (string, error) {
 	return key, nil
 }
 
-// ErrUnifiedPushCannotEncrypt is returned for a NoPlaintextFallback message
-// when the device has no WebPush keys or the server's VAPID key did not load.
-var ErrUnifiedPushCannotEncrypt = errors.New("unifiedpush: payload requires encryption but device keys or the VAPID key are unavailable")
+// errUnifiedPushNotEncrypted: the device has no WebPush keys or the server has
+// no VAPID key, so the payload cannot be encrypted and is not sent.
+var errUnifiedPushNotEncrypted = errors.New("unifiedpush: payload cannot be encrypted; not sent")
 
 // UnifiedPushSender directly POSTs to UnifiedPush endpoints (e.g., ntfy.sh topics).
 // Unlike FCM/APNs relays, there is no shared credential—the endpoint URL itself
@@ -248,8 +244,7 @@ type UnifiedPushSender struct {
 	client *http.Client
 	// VAPID identity, shared with browser Web Push. Here it only signs the
 	// Authorization JWT; most distributors do not check it. Empty
-	// vapidPrivateKey means the key could not be loaded, and Send falls back to
-	// the unencrypted POST rather than dropping the notification.
+	// vapidPrivateKey means the key could not be loaded, and Send refuses.
 	vapidPublicKey  string
 	vapidPrivateKey string
 }
@@ -328,14 +323,13 @@ func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error
 // with dial-time SSRF protection (see safeDialContext) and redirects disabled
 // (a redirect target bypasses the pre-dial check otherwise).
 func NewUnifiedPushSender(log *logging.Logger, vapidPublicKey, vapidPrivateKeyPath string) *UnifiedPushSender {
-	// Never fail construction: a server that cannot read its VAPID key must
-	// still deliver notifications, unencrypted, rather than deliver none.
+	// Never fail construction: FCM and APNs still work without a VAPID key.
 	privateKey := ""
 	if strings.TrimSpace(vapidPrivateKeyPath) != "" {
 		loaded, err := config.LoadVAPIDPrivateKey(vapidPrivateKeyPath)
 		if err != nil {
 			if log != nil {
-				log.Error("unifiedpush: VAPID private key unreadable, payloads will be sent unencrypted", "path", vapidPrivateKeyPath, "error", err.Error())
+				log.Error("unifiedpush: VAPID private key unreadable, UnifiedPush delivery disabled", "path", vapidPrivateKeyPath, "error", err.Error())
 			}
 		} else {
 			privateKey = loaded
@@ -354,7 +348,7 @@ func NewUnifiedPushSender(log *logging.Logger, vapidPublicKey, vapidPrivateKeyPa
 	}
 }
 
-// Send POSTs a JSON payload to the UnifiedPush endpoint. The endpoint URL
+// Send POSTs an encrypted JSON payload to the UnifiedPush endpoint. The endpoint URL
 // (stored in device.PushToken) is a public URL like https://ntfy.sh/<topic>.
 func (s *UnifiedPushSender) Send(ctx context.Context, device state.NativeDevice, message NativePushMessage) error {
 	endpointURL := strings.TrimSpace(device.PushToken)
@@ -363,6 +357,11 @@ func (s *UnifiedPushSender) Send(ctx context.Context, device state.NativeDevice,
 	}
 	if !strings.HasPrefix(endpointURL, "https://") {
 		return errors.New("UnifiedPush endpoint must use https")
+	}
+	// Never plaintext: the distributor is a third party, and clients drop
+	// anything that does not decrypt.
+	if device.P256DH == "" || device.Auth == "" || s.vapidPrivateKey == "" {
+		return errUnifiedPushNotEncrypted
 	}
 
 	// Mirror the shape of pull-mode payloads for consistency on the client side.
@@ -379,16 +378,7 @@ func (s *UnifiedPushSender) Send(ctx context.Context, device state.NativeDevice,
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	// RFC 8291 when the device gave us key material and we hold a VAPID key;
-	// otherwise the historical cleartext POST, so a device registered by an
-	// older client keeps receiving notifications instead of silently none.
-	if device.P256DH != "" && device.Auth != "" && s.vapidPrivateKey != "" {
-		return s.sendEncrypted(ctx, endpointURL, device, body)
-	}
-	if message.NoPlaintextFallback {
-		return ErrUnifiedPushCannotEncrypt
-	}
-	return s.sendPlaintext(ctx, endpointURL, body)
+	return s.sendEncrypted(ctx, endpointURL, device, body)
 }
 
 // sendEncrypted POSTs an RFC 8291 (aes128gcm) payload the connector can open.
@@ -414,25 +404,8 @@ func (s *UnifiedPushSender) sendEncrypted(ctx context.Context, endpointURL strin
 	return interpretUnifiedPushResponse(resp)
 }
 
-func (s *UnifiedPushSender) sendPlaintext(ctx context.Context, endpointURL string, body []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("POST failed: %w", err)
-	}
-	defer resp.Body.Close()
-	return interpretUnifiedPushResponse(resp)
-}
-
 // interpretUnifiedPushResponse maps the endpoint's status to this package's
-// error vocabulary. Shared by both paths on purpose: stale detection that
-// differed between them would leave dead endpoints on the encrypted path
-// being retried forever.
+// error vocabulary; 404/410 mark the endpoint stale.
 func interpretUnifiedPushResponse(resp *http.Response) error {
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 	trimmed := strings.TrimSpace(string(respBody))
