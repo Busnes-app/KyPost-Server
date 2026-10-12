@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { ContactPickerModal } from "./ContactPickerModal";
 import { PgpUnlockDialog } from "./PgpUnlockDialog";
 import { RecipientField } from "./RecipientField";
+import { ScheduleDialog } from "./ScheduleDialog";
 import { useDialogOpen } from "../hooks/useDialogOpen";
 import type { Compose } from "../hooks/useCompose";
 import { contactToToken } from "../lib/recipients";
@@ -23,6 +24,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
     closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft
   } = compose;
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const composeDialogRef = useRef<HTMLDialogElement | null>(null);
   useDialogOpen(composeDialogRef, composeOpen);
 
@@ -51,6 +53,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
             <div className="compose-topbar">
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <button type="button" className="compose-send" onClick={() => void sendComposeEmail()} disabled={composeSending || composeSavingDraft}>{composeSending ? "Sending..." : "Send"}</button>
+                <button type="button" className="compose-save-draft" onClick={() => setScheduleOpen(true)} disabled={composeSending || composeSavingDraft}>Schedule…</button>
                 <button type="button" className="compose-save-draft" onClick={() => void saveComposeDraft()} disabled={composeSending || composeSavingDraft}>Save Draft</button>
                 <button type="button" className="compose-attach" onClick={() => attachmentInputRef.current?.click()} disabled={composeSending || composeSavingDraft}>📎 Attach</button>
                 <button type="button" className="compose-attach" onClick={() => setContactPickerOpen(true)} disabled={composeSending || composeSavingDraft}>📇 Contacts</button>
@@ -123,6 +126,14 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                 setComposeUnlockOpen(false);
                 composeSnapshotPending.current = false;
               }}
+            />
+            <ScheduleDialog
+              open={scheduleOpen}
+              onSchedule={(at) => {
+                setScheduleOpen(false);
+                void sendComposeEmail(at);
+              }}
+              onCancel={() => setScheduleOpen(false)}
             />
             {composeSuccess ? <p className="notice notice-success" style={{ margin: 0 }}>{composeSuccess}</p> : null}
             {composeNotice ? <p className="notice notice-warning">{composeNotice}</p> : null}

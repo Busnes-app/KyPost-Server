@@ -46,6 +46,10 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
 - Install-wide and per-user state.db snapshots including committed WAL rows,
   address books and other persistent state. Native-device secrets are in the
   per-user databases. Capsules retain historical device/subscription evidence, but native restore revokes those registrations before publication. Pending encrypted pickup messages are included.
+- Scheduled mail (install-wide state.db, sealed under `SECRET_DIR/scheduled-send.key`;
+  without that key it cannot be opened). Restore returns every waiting message to
+  Drafts with the reason "restored from a backup" and marks interrupted ones
+  uncertain, because the original server may already have sent them.
 - Internal mailbox.db and ingress.db snapshots inside the collected roots (or,
   with `KYPOST_BULK_BACKUP_REPOSITORY`, the [bulk manifest](#mail-bulk-backup) naming them),
   including committed WAL rows and exact stored MIME/receipt data. Mailbox snapshots also preserve encrypted outbox intent, claims and Sent receipts; nonempty queues require the matching relay profile/key and additive verification recipe. Native

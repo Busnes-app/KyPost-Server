@@ -316,6 +316,7 @@ func startBackgroundSweepers(ctx context.Context, srv *api.Server) {
 		srv.StartPoWSweeper,
 		srv.StartUserStoreSweeper,
 		srv.StartVersionMonitor,
+		srv.StartScheduledSendSweeper,
 	} {
 		go sweep(ctx)
 	}

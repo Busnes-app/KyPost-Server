@@ -219,6 +219,26 @@ CREATE TABLE IF NOT EXISTS sorter_corrections (
 );
 CREATE INDEX IF NOT EXISTS sorter_corrections_label ON sorter_corrections(label, at_unix);
 
+-- Mail frozen for a later send; used only in the install-wide state.db. sealed
+-- (the job) and summary (subject, To) are AES-GCM under scheduled-send.key;
+-- sealed is NULL once a row is final. See scheduled_sends.go.
+CREATE TABLE IF NOT EXISTS scheduled_sends (
+	id           TEXT PRIMARY KEY,
+	user_id      TEXT NOT NULL,
+	mailbox      TEXT NOT NULL,
+	send_at      INTEGER NOT NULL,
+	status       TEXT NOT NULL,
+	reason       TEXT NOT NULL DEFAULT '',
+	sealed       BLOB,
+	summary      BLOB NOT NULL,
+	next_attempt INTEGER NOT NULL DEFAULT 0,
+	created_at   INTEGER NOT NULL,
+	-- When the row last entered returning; bounds draft-save retries.
+	returning_since INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS scheduled_sends_due ON scheduled_sends(status, send_at);
+CREATE INDEX IF NOT EXISTS scheduled_sends_user ON scheduled_sends(user_id, status);
+
 -- Snoozed mail, keyed by RFC 5322 Message-ID because a move renumbers an IMAP
 -- UID. woken_at=0 means still snoozed; once woken, inbox_id is the message's
 -- id in INBOX and the row pins it to the top of the inbox. See snoozes.go.
