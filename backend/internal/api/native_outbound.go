@@ -23,23 +23,9 @@ func (s *Server) nativeOutbound() sso.NativeOutbound {
 // The existing OK response still means confirmed primary SMTP acceptance. A
 // durable queue entry alone cannot tell older clients that mail was sent.
 func (s *Server) finishNativeSend(w http.ResponseWriter, r *http.Request, ac AuthContext, u users.User, from string, deliveries []mailbox.OutboundDelivery, sent []byte, enrollment bool, generation *uint64, expiresAt int64, warning string) {
-	if len(deliveries) == 0 {
-		http.Error(w, "no native deliveries supplied", http.StatusBadRequest)
+	job, ok := outboundJob(w, ac, u, from, deliveries, sent, enrollment, generation, expiresAt)
+	if !ok {
 		return
-	}
-	for i := range deliveries {
-		raw, err := mailmsg.NormalizeSMTPMessage(deliveries[i].Raw)
-		if err != nil {
-			http.Error(w, "native message cannot be submitted; correct the MIME size or line formatting", http.StatusBadRequest)
-			return
-		}
-		deliveries[i].Raw = raw
-	}
-	job := mailbox.OutboundJob{From: from, Deliveries: deliveries, Sent: sent, DeviceID: ac.DeviceID, DeviceWitness: ac.DeviceWitness, NativeSendEpoch: ac.NativeSendEpoch, PGPRevision: u.PGPRevision, RequiresEnrollment: enrollment, ExpiresAt: expiresAt}
-	if generation != nil {
-		job.MaterialGeneration = *generation
-	} else if u.PGPKeyring != nil && !enrollment {
-		job.MaterialGeneration = u.PGPKeyring.MaterialGeneration
 	}
 	id, err := fsutil.NewUUIDv4()
 	if err != nil {
@@ -83,6 +69,30 @@ func (s *Server) finishNativeSend(w http.ResponseWriter, r *http.Request, ac Aut
 		warning = joinWarnings(warning, "email accepted but Sent filing remains pending; sending it again will not repair Sent")
 	}
 	writeJSON(w, http.StatusOK, withCalendarReplyAck(r, map[string]any{"ok": true, "sentSaved": first.SentSaved, "warning": warning, "outboxId": id}))
+}
+
+// outboundJob normalizes deliveries and freezes the request's sender authority
+// beside them; it answers and reports false when a delivery cannot be sent.
+func outboundJob(w http.ResponseWriter, ac AuthContext, u users.User, from string, deliveries []mailbox.OutboundDelivery, sent []byte, enrollment bool, generation *uint64, expiresAt int64) (mailbox.OutboundJob, bool) {
+	if len(deliveries) == 0 {
+		http.Error(w, "no native deliveries supplied", http.StatusBadRequest)
+		return mailbox.OutboundJob{}, false
+	}
+	for i := range deliveries {
+		raw, err := mailmsg.NormalizeSMTPMessage(deliveries[i].Raw)
+		if err != nil {
+			http.Error(w, "native message cannot be submitted; correct the MIME size or line formatting", http.StatusBadRequest)
+			return mailbox.OutboundJob{}, false
+		}
+		deliveries[i].Raw = raw
+	}
+	job := mailbox.OutboundJob{From: from, Deliveries: deliveries, Sent: sent, DeviceID: ac.DeviceID, DeviceWitness: ac.DeviceWitness, NativeSendEpoch: ac.NativeSendEpoch, PGPRevision: u.PGPRevision, RequiresEnrollment: enrollment, ExpiresAt: expiresAt}
+	if generation != nil {
+		job.MaterialGeneration = *generation
+	} else if u.PGPKeyring != nil && !enrollment {
+		job.MaterialGeneration = u.PGPKeyring.MaterialGeneration
+	}
+	return job, true
 }
 
 // nativeFrom resolves the requested From to an active ledger address of the

@@ -519,7 +519,32 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
    * encrypted to our own key: the server stores only ciphertext for this
    * account, whatever went out on the wire.
    */
-  async function sendComposeSignedLocally(to: string, body: string): Promise<string> {
+  /** The whole compose state encrypted to the sender's own key, as a draft. */
+  function encryptedDraft(to: string, body: string, date?: Date): Promise<string> {
+    return buildEncryptedDraft(
+      {
+        from: clientSenderAddress(),
+        to: splitAddressList(to),
+        cc: splitAddressList(serializeRecipientField(composeCc)),
+        bcc: splitAddressList(serializeRecipientField(composeBcc)),
+        subject: composeSubject,
+        date
+      },
+      "text/html; charset=UTF-8",
+      body,
+      composeAttachments
+    );
+  }
+
+  /** What a scheduled send adds to its request: the time, and the encrypted
+   *  draft it returns to Drafts as when it cannot go out. */
+  async function scheduleFields(to: string, body: string, sendAt: Date | undefined, encrypted: boolean) {
+    if (!sendAt) return {};
+    const fields = { sendAt: sendAt.toISOString() };
+    return encrypted ? { ...fields, draftCopy: await encryptedDraft(to, body, sendAt) } : fields;
+  }
+
+  async function sendComposeSignedLocally(to: string, body: string, sendAt?: Date): Promise<string> {
     if (needsUnlock()) {
       setComposeUnlockOpen(true);
       throw new Error("Your PGP key is locked — unlock it, then press Send again.");
@@ -531,13 +556,13 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     if (recipients.length === 0) {
       throw new Error("Nothing to send: no recipients.");
     }
-    // One delivery plus the Sent copy carry the attachments.
-    const budget = encryptedAttachmentBudget(2);
+    // One delivery plus the Sent copy (and a scheduled draft) carry the attachments.
+    const budget = encryptedAttachmentBudget(sendAt ? 3 : 2);
     const attached = composeAttachments.reduce((sum, a) => sum + a.size, 0);
     if (composeAttachments.length > 0 && attached > budget) {
       throw new Error(`Attachments too large for a signed message: ${formatBytes(attached)} attached, ${formatBytes(budget)} allowed.`);
     }
-    const envelope = { from: clientSenderAddress(), to: toList, cc: ccList, subject: composeSubject };
+    const envelope = { from: clientSenderAddress(), to: toList, cc: ccList, subject: composeSubject, date: sendAt };
     const delivery = await buildSignedDelivery(envelope, "text/html; charset=UTF-8", body, recipients, composeAttachments);
     const sentCopy = await buildEncryptedSentCopy(envelope, "text/html; charset=UTF-8", body, true, composeAttachments);
     const result = await sendClientEncryptedMail({
@@ -550,12 +575,13 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       sentCopy,
       sentCopyEncrypted: true,
       mode: "html",
-      materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration
+      materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration,
+      ...(await scheduleFields(to, body, sendAt, true))
     }, mailboxHeaders(composeMailbox));
     return result.warning ?? "";
   }
 
-  async function sendComposeEncryptedLocally(to: string, body: string) {
+  async function sendComposeEncryptedLocally(to: string, body: string, sendAt?: Date) {
     if (needsUnlock()) {
       // Open the prompt and stop. The composed body is deliberately not
       // stashed across the unlock: holding it would mean sending whatever was
@@ -597,6 +623,10 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     // so the server stores ciphertext it cannot read. This is weaker than
     // PGP — whoever can read their mail has the key — so it is an explicit
     // choice, never a silent fallback.
+    // A secure link is mailed when the message is sent; a frozen job cannot do that.
+    if (missing.length > 0 && sendAt) {
+      throw new Error(`Scheduled mail cannot use secure links. Add a PGP key for ${missing.join(", ")} in Contacts, or send it now.`);
+    }
     if (missing.length > 0 && !composeSendLinkForKeyless) {
       throw new Error(
         `No usable PGP key for: ${missing.join(", ")}. Add their key in Contacts, tick "send a secure link" to send those recipients a one-time encrypted link instead, or turn off encryption.`
@@ -609,7 +639,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       from: clientSenderAddress(),
       to: keyedTo,
       cc: keyedCc,
-      subject: composeSubject
+      subject: composeSubject,
+      date: sendAt
     };
     // To/Cc share one ciphertext; each Bcc gets its own so they never appear
     // in one another's encryption headers.
@@ -635,7 +666,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // Every group and the Sent copy carries the attachments in full, so the
       // budget shrinks with each Bcc recipient. Checked before any encryption
       // so the refusal names the limit rather than arriving as a 413.
-      const budget = encryptedAttachmentBudget(groups.length + 1);
+      const budget = encryptedAttachmentBudget(groups.length + (sendAt ? 2 : 1));
       const attached = composeAttachments.reduce((sum, a) => sum + a.size, 0);
       // Only a send that carries files is measured against the budget.
       if (composeAttachments.length > 0 && attached > budget) {
@@ -663,7 +694,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         sentCopy,
         sentCopyEncrypted: true,
         mode: "html",
-        materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration
+        materialGeneration: pgpSessionState().bootstrap?.keyring?.materialGeneration,
+        ...(await scheduleFields(to, body, sendAt, true))
       }, mailboxHeaders(composeMailbox));
       warning = result.warning ?? "";
     }
@@ -692,7 +724,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     return combineWarnings(warning, secureLinkWarning(failedLinks, missing.length));
   }
 
-  async function sendComposeEmail() {
+  /** Sends now, or at sendAt when given. */
+  async function sendComposeEmail(sendAt?: Date) {
     if (composeSending) return;
     const to = serializeRecipientField(composeTo);
     if (!to) {
@@ -710,8 +743,20 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // (the server refuses rather than silently sending in the clear).
       let warning = "";
       if ((composeEncrypt || composeSign) && isClientProtected()) {
-        warning = composeEncrypt ? await sendComposeEncryptedLocally(to, body) : await sendComposeSignedLocally(to, body);
+        warning = composeEncrypt ? await sendComposeEncryptedLocally(to, body, sendAt) : await sendComposeSignedLocally(to, body, sendAt);
       } else {
+        // A client-custody account's drafts are encrypted, so a scheduled
+        // plain send carries its returnable draft encrypted too.
+        const custody = pgpCustody();
+        if (sendAt && custody === "unknown") {
+          throw new Error("Your PGP state could not be confirmed, so the message was not scheduled. Reload and try again.");
+        }
+        if (sendAt && custody === "client" && needsUnlock()) {
+          setComposeUnlockOpen(true);
+          throw new Error("Your PGP key is locked — unlock it, then schedule again.");
+        }
+        const scheduled = await scheduleFields(to, body, sendAt, false);
+        const pgpDraft = sendAt && custody === "client" ? { pgpDraft: await encryptedDraft(to, body) } : {};
         const result = await postJSON<{ ok: boolean; sentSaved?: boolean; warning?: string }>("/api/mail/send", {
           from: composeFrom,
           to,
@@ -723,7 +768,9 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
           attachments: composeAttachments.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 })),
           encrypt: composeEncrypt,
           sign: composeSign,
-          allowPickupFallback: pickupFallbackFlag(composeEncrypt, composeSendLinkForKeyless)
+          allowPickupFallback: pickupFallbackFlag(composeEncrypt, composeSendLinkForKeyless),
+          ...scheduled,
+          ...pgpDraft
         }, mailboxHeaders(composeMailbox));
         warning = result.warning ?? "";
       }
@@ -734,7 +781,9 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // window cannot be used to send the same message twice) and keep it
       // open carrying the warning; a clean send still closes as before.
       discardComposeDraft();
-      if (warning) {
+      if (sendAt) {
+        setComposeSuccess(`Scheduled for ${sendAt.toLocaleString()}. It is listed under Scheduled until it goes out.`);
+      } else if (warning) {
         setComposeNotice(`Sent — ${warning}`);
       } else {
         setComposeOpen(false);
@@ -791,18 +840,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         if (composeAttachments.length > 0 && attached > budget) {
           throw new Error(`Attachments too large for an encrypted draft: ${formatBytes(attached)} attached, ${formatBytes(budget)} allowed.`);
         }
-        const pgpDraft = await buildEncryptedDraft(
-          {
-            from: clientSenderAddress(),
-            to: splitAddressList(to),
-            cc: splitAddressList(cc),
-            bcc: splitAddressList(bcc),
-            subject: composeSubject
-          },
-          "text/html; charset=UTF-8",
-          body,
-          composeAttachments
-        );
+        const pgpDraft = await encryptedDraft(to, body);
         // The plaintext fields carry the placeholder and nothing else; the
         // server ignores them for an encrypted draft but must not be handed
         // the real text anyway. To is already in the wrapper's outer headers;

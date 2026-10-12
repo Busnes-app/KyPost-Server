@@ -218,6 +218,24 @@ CREATE TABLE IF NOT EXISTS sorter_corrections (
 	at_unix    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sorter_corrections_label ON sorter_corrections(label, at_unix);
+
+-- Mail frozen for a later send; used only in the install-wide state.db. sealed
+-- (the job) and summary (subject, To) are AES-GCM under scheduled-send.key;
+-- sealed is NULL once a row is final. See scheduled_sends.go.
+CREATE TABLE IF NOT EXISTS scheduled_sends (
+	id           TEXT PRIMARY KEY,
+	user_id      TEXT NOT NULL,
+	mailbox      TEXT NOT NULL,
+	send_at      INTEGER NOT NULL,
+	status       TEXT NOT NULL,
+	reason       TEXT NOT NULL DEFAULT '',
+	sealed       BLOB,
+	summary      BLOB NOT NULL,
+	next_attempt INTEGER NOT NULL DEFAULT 0,
+	created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS scheduled_sends_due ON scheduled_sends(status, send_at);
+CREATE INDEX IF NOT EXISTS scheduled_sends_user ON scheduled_sends(user_id, status);
 `
 
 func openDB(path, existingSource string) (*sql.DB, error) {

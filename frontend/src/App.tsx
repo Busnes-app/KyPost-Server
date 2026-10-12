@@ -29,6 +29,7 @@ import { clearDraftSnapshot } from "./app/draftAutosave";
 // Every page below is a separate chunk. Only LoginPage is eager: it is what an
 // unauthenticated visitor lands on, so putting it behind a second round trip
 // would slow down the one route that has to be fast.
+const ScheduledPage = lazy(() => import("./pages/ScheduledPage").then((m) => ({ default: m.ScheduledPage })));
 const AppsPage = lazy(() => import("./pages/AppsPage").then((m) => ({ default: m.AppsPage })));
 const ContactsPage = lazy(() => import("./pages/ContactsPage").then((m) => ({ default: m.ContactsPage })));
 const ReadPage = lazy(() => import("./pages/ReadPage").then((m) => ({ default: m.ReadPage })));
@@ -564,6 +565,7 @@ export function App() {
             <Link className={onReadPage && currentMailbox.toLowerCase() === "junk" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Junk${boxQuery}`}>Junk</Link>
             <Link className={onReadPage && currentMailbox.toLowerCase() === "sent" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Sent${boxQuery}`}>Sent</Link>
             <Link className={onReadPage && currentMailbox.toLowerCase() === "trash" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Trash${boxQuery}`}>Trash</Link>
+            <Link className={location.pathname === "/scheduled" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/scheduled">Scheduled</Link>
             <button
               type="button"
               className="mobile-settings-toggle"
@@ -720,6 +722,12 @@ export function App() {
           ) : null}
 
           <Link
+            to="/scheduled"
+            className={["nav-heading", location.pathname === "/scheduled" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"].join(" ")}
+          >
+            Scheduled
+          </Link>
+          <Link
             to="/contacts"
             className={["nav-heading", location.pathname === "/contacts" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"].filter(Boolean).join(" ")}
           >
@@ -820,6 +828,7 @@ export function App() {
             )}
           />
           <Route path="/contacts" element={protect(<ContactsPage />)} />
+          <Route path="/scheduled" element={protect(<ScheduledPage key={selectedMailbox} />)} />
           <Route
             path="/apps"
             element={protect(

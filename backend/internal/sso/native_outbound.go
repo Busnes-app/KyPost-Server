@@ -177,15 +177,11 @@ func (s NativeOutbound) withJobAuthority(ctx context.Context, u users.User, a Na
 	if job.From != from.Address || from.Mailbox != a.Owner.Mailbox || from.State != "active" || job.FromGeneration != from.Generation && (job.FromGeneration != 0 || job.From != a.Address) {
 		return ErrNativeOutboundStale
 	}
-	if job.RelayGeneration != relay.Generation || job.NativeSendEpoch != u.NativeSendEpoch || job.DirectoryRevision != d.Revision || job.PGPRevision != u.PGPRevision || job.PGPFingerprint != u.PGPFingerprint {
+	if job.RelayGeneration != relay.Generation || job.DirectoryRevision != d.Revision {
 		return ErrNativeOutboundStale
 	}
-	if u.PGPKeyring != nil {
-		if job.MaterialGeneration != u.PGPKeyring.MaterialGeneration {
-			return ErrNativeOutboundStale
-		}
-	} else if job.MaterialGeneration != 0 {
-		return ErrNativeOutboundStale
+	if err := SenderAuthorityCurrent(u, job); err != nil {
+		return err
 	}
 	if job.DeviceID == "" {
 		if job.DeviceWitness != "" {
@@ -200,14 +196,40 @@ func (s NativeOutbound) withJobAuthority(ctx context.Context, u users.User, a Na
 	}
 	defer devices.Close()
 	return devices.WithNativeSendDevice(ctx, job.DeviceID, func(device state.NativeDevice) error {
-		if job.DeviceWitness == "" || job.DeviceWitness != state.NativeDeviceWitness(device) || device.UserID != "" && device.UserID != u.ID {
-			return ErrNativeOutboundStale
-		}
-		if job.RequiresEnrollment && u.PGPKeyring != nil && (!device.EncryptionEnrolled || device.EnrolledGeneration != job.MaterialGeneration || !strings.EqualFold(device.EnrolledFingerprint, u.PGPFingerprint)) {
-			return ErrNativeOutboundStale
+		if err := DeviceAuthorityCurrent(u, job, device); err != nil {
+			return err
 		}
 		return commit()
 	})
+}
+
+// SenderAuthorityCurrent reports whether u still holds the account authority
+// frozen into job: send epoch, PGP revision and fingerprint, keyring generation.
+// Scheduled IMAP sends reuse it; they have no relay or directory to fence.
+func SenderAuthorityCurrent(u users.User, job mailbox.OutboundJob) error {
+	if job.NativeSendEpoch != u.NativeSendEpoch || job.PGPRevision != u.PGPRevision || job.PGPFingerprint != u.PGPFingerprint {
+		return ErrNativeOutboundStale
+	}
+	if u.PGPKeyring != nil {
+		if job.MaterialGeneration != u.PGPKeyring.MaterialGeneration {
+			return ErrNativeOutboundStale
+		}
+	} else if job.MaterialGeneration != 0 {
+		return ErrNativeOutboundStale
+	}
+	return nil
+}
+
+// DeviceAuthorityCurrent checks the sending device, read under its fence,
+// against the credential and enrollment frozen into job.
+func DeviceAuthorityCurrent(u users.User, job mailbox.OutboundJob, device state.NativeDevice) error {
+	if job.DeviceWitness == "" || job.DeviceWitness != state.NativeDeviceWitness(device) || device.UserID != "" && device.UserID != u.ID {
+		return ErrNativeOutboundStale
+	}
+	if job.RequiresEnrollment && u.PGPKeyring != nil && (!device.EncryptionEnrolled || device.EnrolledGeneration != job.MaterialGeneration || !strings.EqualFold(device.EnrolledFingerprint, u.PGPFingerprint)) {
+		return ErrNativeOutboundStale
+	}
+	return nil
 }
 
 // queue holds current authority through both enqueue and the primary claim so
@@ -218,7 +240,9 @@ func (s NativeOutbound) queue(ctx context.Context, mailboxID, id string, job mai
 		if job.NativeSendEpoch != u.NativeSendEpoch || job.PGPRevision != u.PGPRevision {
 			return ErrNativeOutboundStale
 		}
-		if job.RelayGeneration != "" && job.RelayGeneration != relay.Generation {
+		// A scheduled job arrives with its From generation and fingerprint
+		// frozen at schedule time; foreground sends leave them unset.
+		if job.RelayGeneration != "" && job.RelayGeneration != relay.Generation || job.FromGeneration != 0 && job.FromGeneration != x.Generation || job.PGPFingerprint != "" && job.PGPFingerprint != u.PGPFingerprint {
 			return ErrNativeOutboundStale
 		}
 		job.RelayGeneration = relay.Generation

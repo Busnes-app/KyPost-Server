@@ -410,7 +410,11 @@ export function sendClientEncryptedMail(payload: {
   mode: string;
   /** The keyring generation the message was encrypted and signed with. The server refuses a stale one on a converted account. */
   materialGeneration?: number;
-}, headers: Record<string, string> = {}): Promise<{ ok: boolean; sentSaved?: boolean; warning?: string }> {
+  /** Schedules the send (RFC 3339); every delivery must already be dated then. */
+  sendAt?: string;
+  /** The encrypted draft a scheduled send returns to Drafts if it cannot go out. */
+  draftCopy?: string;
+}, headers: Record<string, string> = {}): Promise<{ ok?: boolean; scheduled?: boolean; sentSaved?: boolean; warning?: string }> {
   return postJSON("/api/mail/send-pgp", payload, headers);
 }
 

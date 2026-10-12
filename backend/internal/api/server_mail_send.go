@@ -13,6 +13,7 @@ import (
 	"net/mail"
 	"strconv"
 	"strings"
+	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
@@ -97,6 +98,7 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		CalendarReply *struct {
 			ICS string `json:"ics"`
 		} `json:"calendarReply"`
+		SendAt string `json:"sendAt"`
 	}
 	// Check the declared size before reading, so an oversized send says so.
 	// Without this the LimitReader below just truncates the JSON mid-value and
@@ -160,6 +162,11 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		return mailRequest{}, "invalid BCC recipients", err
 	}
 
+	sendAt, err := parseSendAt(raw.SendAt, time.Now())
+	if err != nil {
+		return mailRequest{}, err.Error(), err
+	}
+
 	var calendarReplyICS *string
 	if raw.CalendarReply != nil {
 		calendarReplyICS = &raw.CalendarReply.ICS
@@ -182,6 +189,7 @@ func decodeMailRequest(r *http.Request) (mailRequest, string, error) {
 		From:                raw.From,
 		ReplyToMessageID:    strings.TrimSpace(raw.ReplyToMessageID),
 		ReplyToMailbox:      strings.TrimSpace(raw.ReplyToMailbox),
+		SendAt:              sendAt,
 	}, "", nil
 }
 
@@ -549,6 +557,11 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	}
 	// Send only: drafts ignore calendarReply.
 	if req.CalendarReplyICS != nil {
+		// An RSVP answers now; the organizer's calendar reads a late one as current.
+		if !req.SendAt.IsZero() {
+			http.Error(w, "calendar replies cannot be scheduled; send them now", http.StatusBadRequest)
+			return
+		}
 		if req.CalendarReply, err = mailmsg.CalendarReply(*req.CalendarReplyICS); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -568,7 +581,7 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	}
 	var nativeUser users.User
 	var payload mailmsg.IMAPConfigPayload
-	var smtpHost, addr, headerFrom, envelopeFrom string
+	var smtpHost, addr, accountAddr, headerFrom, envelopeFrom string
 	var smtpPort int
 	if native {
 		from, refused := s.refuseNativeFrom(w, a, req.From)
@@ -599,7 +612,7 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		accountAddr := sanitizeHeaderValue(payload.Username)
+		accountAddr = sanitizeHeaderValue(payload.Username)
 		if accountAddr == "" {
 			http.Error(w, "imap username is required for sender", http.StatusBadRequest)
 			return
@@ -639,7 +652,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A scheduled message is dated when it goes out; Stamp keeps a set Date.
 	msg, sentCopySource, recipients := composeSend(mailmsg.Message{
+		Date:          req.SendAt,
 		From:          headerFrom,
 		To:            toList,
 		CC:            ccList,
@@ -698,7 +713,37 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// schedule freezes this send instead of delivering it. encryptedCopy is the
+	// self-encrypted Sent copy, the draft fallback for an encrypted send.
+	schedule := func(deliveries []mailbox.OutboundDelivery, nativeSent []byte, sentCopy []byte, encryptedCopy []byte) {
+		u, err := s.users.Get(ac.UserID)
+		if err != nil {
+			http.Error(w, "account unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		draft, ok := scheduledDraft(w, req, u, encryptedCopy)
+		if !ok {
+			return
+		}
+		job, ok := outboundJob(w, ac, u, envelopeFrom, deliveries, nativeSent, false, nil, 0)
+		if !ok {
+			return
+		}
+		j := scheduledJob{Native: native, Job: job, Username: accountAddr, RequestedFrom: req.From, Draft: draft}
+		if sent, save := sentCopyDraftForSend(toList, ccList, bccList, sentCopy); save {
+			j.Sent = &sent
+		}
+		s.scheduleSend(w, r, ac, u, req.SendAt, j, req.Subject, toList)
+	}
 	if !req.Encrypt {
+		if !req.SendAt.IsZero() {
+			if native {
+				schedule([]mailbox.OutboundDelivery{{Recipients: recipients, Raw: msg}}, sentCopySource, nil, nil)
+			} else {
+				schedule([]mailbox.OutboundDelivery{{Recipients: recipients, Raw: msg}}, nil, sentCopySource, nil)
+			}
+			return
+		}
 		if req.CalendarReply != nil {
 			r = r.WithContext(context.WithValue(r.Context(), calendarReplySentKey{}, true))
 		}
@@ -761,6 +806,12 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			"keyChangedRecipients":    plan.keyChangedEmails,
 			"pickupFallbackAvailable": false,
 		})
+		return
+	}
+	// The pickup fallback stores plaintext and mails a link at send time;
+	// neither belongs in a frozen job.
+	if !req.SendAt.IsZero() && len(plan.withoutKeyEmails) > 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "scheduled mail cannot use one-time links; add recipient PGP keys or send it now", "pickupFallbackAvailable": false})
 		return
 	}
 	if native && len(plan.withoutKeyEmails) > 0 {
@@ -839,6 +890,10 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			warning = "No encrypted Sent copy could be prepared; no plaintext copy will be saved."
 			sent = nil
 		}
+		if !req.SendAt.IsZero() {
+			schedule(groups, sent, nil, sent)
+			return
+		}
 		s.finishNativeSend(w, r, ac, nativeUser, envelopeFrom, groups, sent, false, nil, 0, warning)
 		return
 	}
@@ -855,6 +910,14 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	// recipient without touching it — so this wraps the same content the
 	// recipients got, to the sender's own key.
 	sentCopy, copyWarning := s.sentCopyForSend(ac.UserID, sentCopySource, req, nil)
+	if !req.SendAt.IsZero() {
+		groups := make([]mailbox.OutboundDelivery, 0, len(deliveries))
+		for _, delivery := range deliveries {
+			groups = append(groups, mailbox.OutboundDelivery{Recipients: delivery.Recipients, Raw: delivery.Ciphertext})
+		}
+		schedule(groups, nil, sentCopy, sentCopy)
+		return
+	}
 
 	// copyWarning rides in as extraWarning; finishMailSend appends whatever the
 	// follow-on deliveries report, so the sender gets both.

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"net/textproto"
 	"strconv"
 	"strings"
+	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -70,6 +72,12 @@ type clientEncryptedSendRequest struct {
 	// MaterialGeneration is the keyring generation the client encrypted and
 	// signed with. Required on a converted account; see requireCurrentGeneration.
 	MaterialGeneration *uint64 `json:"materialGeneration,omitempty"`
+	// SendAt (RFC 3339) schedules the send. Every delivery must already be
+	// dated then, and DraftCopy (buildEncryptedDraft) is what returns to Drafts
+	// if it cannot go out.
+	SendAt    string `json:"sendAt,omitempty"`
+	DraftCopy string `json:"draftCopy,omitempty"`
+	sendAt    time.Time
 }
 
 type clientEncryptedDelivery struct {
@@ -127,6 +135,12 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		}
 		prepared[i] = normalized
 	}
+	if req.SendAt != "" {
+		if msg := validateScheduledPGP(&req, time.Now()); msg != "" {
+			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
+	}
 
 	u, userErr := s.users.Get(ac.UserID)
 	if userErr != nil {
@@ -166,6 +180,10 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 			sent = draft.Raw
 		} else if strings.TrimSpace(req.SentCopy) != "" {
 			warning = "Sent copy was refused because it was not encrypted; reload this client before sending again"
+		}
+		if !req.sendAt.IsZero() {
+			s.scheduleClientPGP(w, r, ac, u, req, true, from, "", deliveries, sent, nil)
+			return
 		}
 		s.finishNativeSend(w, r, ac, u, from, deliveries, sent, true, req.MaterialGeneration, 0, warning)
 		return
@@ -209,34 +227,37 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Deliver each ciphertext to its own recipient set. The first is the
-	// hard-error send (so the caller learns the account/SMTP is broken); the
-	// rest are per-BCC and best-effort, mirroring the server-side path.
-	failed := 0
+	groups := make([]smtpGroup, 0, len(req.Deliveries))
+	raw := make([]mailbox.OutboundDelivery, 0, len(req.Deliveries))
 	for i, delivery := range req.Deliveries {
 		recipients, _ := parseDeliveryRecipients(delivery.Recipients)
 		ciphertext := strings.TrimSpace(delivery.Ciphertext)
 		if len(recipients) == 0 || ciphertext == "" {
 			continue
 		}
-		sendErr := mailmsg.SMTPDeliverPrepared(smtpHost, smtpPort, addr, payload.Username, payload.Password,
-			envelopeFrom, recipients, prepared[i])
-		if sendErr == nil {
-			continue
-		}
-		if i == 0 {
-			s.logger.Error("client-encrypted mail send failed", "error", sendErr.Error())
-			http.Error(w, "failed to send email: "+sendErr.Error(), http.StatusBadGateway)
-			return
-		}
-		failed++
-		s.logger.Error("client-encrypted bcc send failed", "recipient_count", strconv.Itoa(len(recipients)), "error", sendErr.Error())
+		groups = append(groups, smtpGroup{recipients: recipients, msg: prepared[i]})
+		raw = append(raw, mailbox.OutboundDelivery{Recipients: recipients, Raw: []byte(ciphertext)})
+	}
+	// Only an encrypted Sent copy is stored; see sentCopyDraft.
+	draft, wantSent := sentCopyDraft(req)
+	var sentCopy *imapadapter.DraftMessage
+	if wantSent {
+		sentCopy = &draft
+	}
+	if !req.sendAt.IsZero() {
+		s.scheduleClientPGP(w, r, ac, u, req, false, envelopeFrom, sanitizeHeaderValue(payload.Username), raw, nil, sentCopy)
+		return
+	}
+	account := smtpAccount{host: smtpHost, port: smtpPort, addr: addr, username: payload.Username, password: payload.Password}
+	failed, saved, sendErr := s.deliverIMAP(r.Context(), ac.UserID, account, envelopeFrom, groups, sentCopy)
+	if sendErr != nil {
+		s.logger.Error("client-encrypted mail send failed", "error", sendErr.Error())
+		http.Error(w, "failed to send email: "+sendErr.Error(), http.StatusBadGateway)
+		return
 	}
 
-	// Best-effort Sent copy. Only an encrypted one is stored; see sentCopyDraft.
 	sentSaved := true
 	warning := ""
-	draft, wantSent := sentCopyDraft(req)
 	if !wantSent && strings.TrimSpace(req.SentCopy) != "" {
 		// The client sent something, and it was not ciphertext. Delivery
 		// already succeeded, so this is not worth failing the request over —
@@ -245,19 +266,90 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		warning = "email sent, but the Sent copy was not saved: reload the page to update this client"
 		s.logger.Error("client-encrypted send: refused an unencrypted sent copy", "user_id", ac.UserID)
 	}
-	if wantSent {
-		if mailClient, mailErr := s.userMailClient(ac.UserID); mailErr == nil {
-			if err := mailClient.SaveSent(r.Context(), draft); err != nil {
-				sentSaved = false
-				warning = "email sent but could not be saved to Sent folder"
-				s.logger.Error("client-encrypted send: save-sent failed", "error", err.Error())
-			}
-		}
+	if wantSent && !saved {
+		sentSaved = false
+		warning = "email sent but could not be saved to Sent folder"
 	}
 	warning = joinWarnings(warning, partialDeliveryWarning(failed, len(req.Deliveries)-1, 0, 0))
 	s.logger.Info("client-encrypted mail send completed",
 		"user_id", ac.UserID, "deliveries", strconv.Itoa(len(req.Deliveries)), "failed", strconv.Itoa(failed))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sentSaved": sentSaved, "warning": warning})
+}
+
+// smtpAccount is the caller's own SMTP submission target and credentials.
+type smtpAccount struct {
+	host               string
+	port               int
+	addr               string
+	username, password string
+}
+
+type smtpGroup struct {
+	recipients []string
+	msg        mailmsg.PreparedSMTPMessage
+}
+
+// deliverIMAP relays each group over the account's own SMTP, then appends sent
+// (when given) to Sent. The first group is the hard-error send, so the caller
+// learns the account or relay is broken before anything else goes out; later
+// ones are per-Bcc and best effort, counted in failed. Shared by send-pgp and
+// the scheduled-send sweeper.
+func (s *Server) deliverIMAP(ctx context.Context, userID string, a smtpAccount, from string, groups []smtpGroup, sent *imapadapter.DraftMessage) (failed int, sentSaved bool, err error) {
+	for i, g := range groups {
+		sendErr := mailmsg.SMTPDeliverPrepared(a.host, a.port, a.addr, a.username, a.password, from, g.recipients, g.msg)
+		if sendErr == nil {
+			continue
+		}
+		if i == 0 {
+			return 0, false, sendErr
+		}
+		failed++
+		s.logger.Error("client-encrypted bcc send failed", "recipient_count", strconv.Itoa(len(g.recipients)), "error", sendErr.Error())
+	}
+	if sent == nil {
+		return failed, false, nil
+	}
+	mailClient, err := s.userMailClient(userID)
+	if err == nil {
+		err = mailClient.SaveSent(ctx, *sent)
+	}
+	if err != nil {
+		s.logger.Error("client-encrypted send: save-sent failed", "error", err.Error())
+		return failed, false, nil
+	}
+	return failed, true, nil
+}
+
+// validateScheduledPGP checks a scheduled client-encrypted send and records its
+// time; it returns the refusal, or "" when the request can be scheduled.
+func validateScheduledPGP(req *clientEncryptedSendRequest, now time.Time) string {
+	at, err := parseSendAt(req.SendAt, now)
+	if err != nil {
+		return err.Error()
+	}
+	// A draft needs a To; Bcc-only mail could not be returned to Drafts.
+	if len(req.To) == 0 {
+		return "scheduled mail needs a To recipient"
+	}
+	if validatePGPMimeDeliveryShape(strings.TrimSpace(req.DraftCopy)) != nil {
+		return "scheduled mail needs an encrypted draftCopy; reload this client"
+	}
+	for i, delivery := range req.Deliveries {
+		ciphertext := strings.TrimSpace(delivery.Ciphertext)
+		if ciphertext == "" {
+			continue
+		}
+		hdr, err := deliveryHeaders(ciphertext)
+		if err != nil {
+			return fmt.Sprintf("delivery %d: %s", i, err)
+		}
+		date, err := mail.ParseDate(hdr.Get("Date"))
+		if err != nil || date.Sub(at).Abs() > time.Minute {
+			return fmt.Sprintf("delivery %d: Date must be the scheduled send time", i)
+		}
+	}
+	req.sendAt = at
+	return ""
 }
 
 // parseDeliveryRecipients trims, de-duplicates and *validates* each envelope

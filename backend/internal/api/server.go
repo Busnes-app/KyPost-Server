@@ -657,6 +657,8 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/imap/test", s.withAuth(s.handleIMAPTest))
 	mux.HandleFunc("POST /api/mail/draft", withUploadDeadline(s.withMailAuth(s.withMailbox(s.handleMailDraft))))
 	mux.HandleFunc("GET /api/mail/outbox/{id}", s.withMailAuth(s.withMailbox(s.handleNativeOutboxStatus)))
+	mux.HandleFunc("GET /api/scheduled", s.withMailAuth(s.withMailbox(s.handleScheduledList)))
+	mux.HandleFunc("POST /api/scheduled/{id}/cancel", s.withMailAuth(s.withMailbox(s.handleScheduledCancel)))
 	mux.HandleFunc("POST /api/mail/send", withUploadDeadline(s.withMailAuth(s.withMailbox(s.handleMailSend))))
 	// Send path for end-to-end keys: the browser has already encrypted and
 	// signed, the server only relays over SMTP. See pgp_send_client.go.
@@ -1365,6 +1367,8 @@ type mailRequest struct {
 	// it into CalendarReply (validated, CRLF-normalised), drafts ignore it.
 	CalendarReplyICS *string
 	CalendarReply    []byte
+	// SendAt, when set, schedules the send instead (send only; drafts ignore it).
+	SendAt time.Time
 }
 
 // Size limits for one outgoing message.
