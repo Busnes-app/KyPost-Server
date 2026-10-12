@@ -88,7 +88,7 @@ func TestLoginLockoutExpiresAndResets(t *testing.T) {
 // A test helper, not production code. It lived on failureLockout as `allowed`
 // with ten call sites, every one of them in a _test.go file — a method whose own
 // doc comment told production callers to use tryAttempt instead. It had also
-// drifted: unlike tryAttempt it never touched lastSeen and never cleared an
+// drifted: unlike tryAttempt it never reset stale strikes and never cleared an
 // expired lockout, so assertions written against it were assertions about a code
 // path nothing in production takes. Keeping the observation and dropping the
 // pretence that it is part of the type's contract.

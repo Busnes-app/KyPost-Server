@@ -238,7 +238,7 @@ func TestCrowdedTableDoesNotErasePartialStrikes(t *testing.T) {
 }
 
 // TestStalePartialStrikesAreForgiven pins the other half of keying the sweep on
-// lastSeen: an entry that has been idle longer than the cooldown starts fresh,
+// lastStrike: an entry that has been idle longer than the cooldown starts fresh,
 // so a single failed attempt today plus two tomorrow is not a lockout.
 func TestStalePartialStrikesAreForgiven(t *testing.T) {
 	l := newFailureLockout(3, 15*time.Minute)
@@ -249,7 +249,7 @@ func TestStalePartialStrikesAreForgiven(t *testing.T) {
 	}
 	// Backdate the entry past the cooldown window.
 	l.mu.Lock()
-	l.entries[key].lastSeen = time.Now().Add(-16 * time.Minute)
+	l.entries[key].strikes[0] = time.Now().Add(-16 * time.Minute)
 	l.mu.Unlock()
 
 	// Three more attempts must all be allowed: the stale strike is forgiven, so
