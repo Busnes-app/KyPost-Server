@@ -88,6 +88,26 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # CI tools, pinned in their own module so their dependency tree never moves the
+  # app's. Go records a tool directive's module as `// indirect`, which Dependabot
+  # skips by default, so each tool is allowed by name.
+  - package-ecosystem: gomod
+    directory: /tools
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    allow:
+      - dependency-name: "github.com/golangci/golangci-lint/v2"
+        dependency-type: "all"
+      - dependency-name: "golang.org/x/vuln"
+        dependency-type: "all"
+    groups:
+      tools:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(ci)"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

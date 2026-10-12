@@ -604,8 +604,9 @@ func TestNativeExtraMailboxIncomingEncryptionRace(t *testing.T) {
 			}
 		}
 	}
-	// race starts the admin request delay after the encryption request, so the
-	// rounds sweep the window in which either can win, then checks the invariant.
+	// race starts the admin request delay after the encryption request (before
+	// it, when negative), so the rounds sweep the window in which either can
+	// win, then checks the invariant.
 	race := func(delay time.Duration, admin func() *httptest.ResponseRecorder) (encrypted, extra bool) {
 		t.Helper()
 		var a, e *httptest.ResponseRecorder
@@ -613,6 +614,7 @@ func TestNativeExtraMailboxIncomingEncryptionRace(t *testing.T) {
 		done := make(chan struct{})
 		go func() { <-start; time.Sleep(delay); a = admin(); close(done) }()
 		close(start)
+		time.Sleep(-delay)
 		e = encrypt()
 		<-done
 		if a.Code != 200 && a.Code != 409 || e.Code != 200 && e.Code != 409 {
@@ -638,8 +640,9 @@ func TestNativeExtraMailboxIncomingEncryptionRace(t *testing.T) {
 	}
 	alone := time.Since(began)
 	const rounds = 12
-	// Delays sweep from 0 to twice the lone request's duration.
-	delay := func(i int) time.Duration { return alone * time.Duration(2*i) / rounds }
+	// Delays sweep from the admin request leading by the lone request's duration
+	// to trailing by nearly twice it, so each side gets rounds with a head start.
+	delay := func(i int) time.Duration { return alone * time.Duration(3*i-rounds) / rounds }
 	won := map[string]int{}
 	var last string
 	for i := range rounds {

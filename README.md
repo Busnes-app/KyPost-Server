@@ -869,6 +869,7 @@ inside the container. On systems without systemd, schedule
 - `receiving-worker/`: independent Email Workers with private R2 retention and authenticated pickup: the one-message pilot (`docs/CLOUDFLARE_RECEIVING.md`) and the continuous protocol Worker, whose KyPost side is `backend/internal/cfreceiving/` (`docs/CLOUDFLARE_CONTINUOUS_RECEIVING.md`); built-in Node tests
 - `docs/`: the contracts the client repos implement against — [PLATFORM_BASELINE.md](docs/PLATFORM_BASELINE.md) (what a client must implement to call itself a KyPost client), [E2E_PGP.md](docs/E2E_PGP.md), [WKD_Publishing.md](docs/WKD_Publishing.md), [WEBMAIL_HANDOFF.md](docs/WEBMAIL_HANDOFF.md), [INBOX_PAYLOAD_HANDOFF.md](docs/INBOX_PAYLOAD_HANDOFF.md), [DEVICE_ENROLLMENT.md](docs/DEVICE_ENROLLMENT.md) — plus the operator guide [Reverse_Proxy_Networking.md](docs/Reverse_Proxy_Networking.md) and the README overflow: [FEATURES.md](docs/FEATURES.md), [CONFIGURATION.md](docs/CONFIGURATION.md), [API.md](docs/API.md)
 - `share/`: host-side Ollama model blob cache, bind-mounted into the container. Never committed
+- `tools/`: separate Go module pinning the CI tools (golangci-lint, govulncheck), run as `go tool -modfile=../tools/go.mod <tool>` from `backend/`; Dependabot bumps them
 - `testdata/`, `fonts/`: test fixtures and the bundled webfonts
 - `Dockerfile`: single image build (backend, frontend, Ollama runtime, pinned embedding model)
 - `docker-compose.yml`: local orchestration
