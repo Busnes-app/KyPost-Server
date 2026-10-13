@@ -24,6 +24,5 @@ frontend/dist/
 .ua/
 
 # Not referenced by any build stage (TUNING.md is COPY'd, so it stays).
-ky50p.png
 fonts/
 docs/

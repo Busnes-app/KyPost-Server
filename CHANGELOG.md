@@ -1,7 +1,5 @@
 # Changelog
 
-- Web appearance now defaults to Busnes light/dark according to the OS; existing theme choices remain available.
-
 Versions are dotted-numeric (`MAJOR.MINOR.PATCH`) and published as GitHub
 releases tagged `v<version>`. The tag, `serverVersion` in
 `backend/internal/api/server_version.go`, and `frontend/package.json` must all
@@ -12,8 +10,19 @@ image. `:stable` is moved to that image only after its build attestation has
 been published *and* verified, and only when the release is the newest published
 non-prerelease version.
 
-## Unreleased
+## 0.4.0 — 2026-10-13
 
+**Before upgrading:** find accounts and credentials still on retired scrypt hashes (they stop signing in; see the BREAKING entry below), read your `.env` (variables compose used to drop now apply), and back up the new `$SECRET_DIR/scheduled-send.key`. UnifiedPush devices without WebPush keys must pair again.
+
+- **Folder roles.** `GET /api/inbox/folders` reports a folder's RFC 6154 role as `special` (`sent`, `drafts`, `trash`, `junk`, `archive`) when the IMAP server publishes one for exactly that path, so clients find a localized Sent or Drafts folder (#392). A folder with a role lists as `deletable: false`, and rename and delete refuse it; before, a localized Sent folder under INBOX could be deleted. Native mailboxes report no roles.
+- **Inbox paging.** `GET /api/inbox` takes `before=<messageId>` for the next page of older mail, and answers with `hasMore` and `nextBefore` (#348).
+- **Cursor deltas keep mail.** A message pushed below a full window by newer mail is reported in the new `agedOut` array instead of `removed`, so the Android app no longer deletes it locally; a delta with more new mail than the window carries `hasMore`/`nextBefore`; and the web (500) and app (50) windows no longer reset each other (#349).
+- `POST /api/inbox/actions` accepts `unread`, the inverse of `read` (#350).
+- **Inbox previews.** Opt-in `preview=1` on `GET /api/inbox` adds up to 200 characters of plain text for rows whose body is already in hand. No extra IMAP work, and never for an encrypted message (#351).
+- **Reply threading.** `POST /api/mail/send` takes `replyToMessageId` and `replyToMailbox` and sets `In-Reply-To`/`References`, so replies stay in the recipient's conversation (#352).
+- **Calendar invites.** An undisposed `text/calendar` part (Google and Outlook invites) is listed as an `invite.ics` attachment with `calendarMethod`, after the real attachments; invite-only mail lists `hasAttachments: true`; `text/calendar` is downloadable (#353). IMAP attachments now go through the same MIME parser as native mail, so malformed MIME now returns an error instead of a partial attachment list.
+- **Calendar RSVPs.** `POST /api/mail/send` takes `calendarReply` (an iTIP `METHOD:REPLY` calendar, structurally checked) and sends it as a proper iMIP reply part; the response reports it, so clients know an organizer's calendar will process it (#354).
+- Web appearance now defaults to Busnes light/dark according to the OS; existing theme choices remain available.
 - **Scheduled send** (#380). Compose has **Schedule…**; `POST /api/mail/send` and `/api/mail/send-pgp` take `sendAt`, and `GET /api/scheduled` / `POST /api/scheduled/{id}/cancel` list and cancel. The message is frozen when scheduled and goes back to Drafts, unsent and with a reason, if account security, PGP keys, the sending device or the From address change before its time. Pending mail is sealed under the new `$SECRET_DIR/scheduled-send.key`: back it up with the rest of `SECRET_DIR` (sealed backups already include it), because losing it makes pending scheduled mail unrecoverable. A restore returns waiting scheduled mail to Drafts instead of sending it, since the original server may already have sent it.
 - **Snooze.** Snooze an email until a chosen time; it moves to a `Snoozed` folder and comes back to the inbox unread, with a notification, at the top of the list for 30 days. Works for IMAP accounts and native mailboxes. The top-of-list placement is KyPost-only: other mail apps sort it by its original date. Wake time is accurate to within one poll interval (90 seconds by default).
 - **UnifiedPush never sends plaintext.** A device without WebPush keys, or a server whose VAPID key fails to load, is sent nothing; the failure shows as `unencrypted` in health. Registration now requires `p256dh` and `auth`. Current Android and Linux clients already send keys and drop unencrypted pushes; devices registered by older builds must pair again.
@@ -897,6 +906,7 @@ non-prerelease version.
 
 | From | To | Path | Rollback |
 |---|---|---|---|
+| 0.3.0 | 0.4.0 | `./scripts/update-host.sh`, after the "Before upgrading" checks in 0.4.0 | Automatic on failed health check; otherwise pin the previous digest |
 | 0.1.x | 0.3.0 | `./scripts/update-host.sh`, or `docker compose pull && docker compose up -d` | Automatic on failed health check; otherwise pin the previous digest |
 | Locally built | published images (one-time) | `git pull --ff-only && docker compose pull && docker compose up -d` | `KYPOST_VERSION=<older>`, or rebuild at the previous commit |
 | Locally built | a newer local build | `git pull --ff-only && docker compose up --build -d` | Rebuild at the previous commit |
