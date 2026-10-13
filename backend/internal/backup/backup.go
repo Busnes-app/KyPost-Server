@@ -5,6 +5,7 @@ package backup
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	kylog "github.com/Busnes-app/ky-primitives/logging"
@@ -340,6 +341,12 @@ func (s *Service) Status() (Status, error) {
 		return Status{}, err
 	}
 	defer release()
+	return s.InspectStatus()
+}
+
+// InspectStatus is an advisory snapshot: no operation lock is created and no pairing, pin or audit is written.
+func (s *Service) InspectStatus() (Status, error) {
+	var err error
 	st := Status{LocalDir: s.cfg.Dir, AllowPrivate: s.cfg.AllowPrivateRecovery, Excluded: ErrMailExcluded, LocalCopies: []recoveryclient.LocalCopy{}, BulkRepo: redactRepository(s.cfg.BulkRepository)}
 	if st.LastBulk, err = s.lastBulk(); err != nil {
 		return st, err
@@ -483,4 +490,24 @@ func (s *Service) PinnedKeyID() (string, error) {
 		return "", err
 	}
 	return key.Public.ID(), nil
+}
+
+// InspectPairing verifies retained credentials and topology without a provider call,
+// mutation or creating an operation lock. Mutation rechecks under its normal fence.
+func (s *Service) InspectPairing() (recoveryclient.Pairing, error) {
+	sealer, err := s.loadSealer()
+	if err != nil {
+		return recoveryclient.Pairing{}, err
+	}
+	p, err := recoveryclient.LoadPairing(s.dirs.State, s.settings, sealer)
+	if err != nil {
+		return p, err
+	}
+	if _, err := recoveryclient.ParsePinRequest(base64.StdEncoding.EncodeToString(p.Key.Public.Bytes()), p.Key.Threshold, p.Key.TotalShares); err != nil {
+		return p, err
+	}
+	if p.Token == "" || recoveryclient.ValidateURL(p.URL, s.cfg.AllowPrivateRecovery) != nil {
+		return p, errors.New("retained recovery pairing invalid")
+	}
+	return p, nil
 }

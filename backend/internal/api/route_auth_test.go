@@ -136,6 +136,7 @@ var markerRequiresCall = map[string][]string{
 // or the caller cannot have a session yet because obtaining one is what the
 // route is for.
 var publicRoutes = map[string]string{
+	"GET /api/installer/network":             "anonymous edge self-check; only this request client IP, proxy trust and effective security scheme, no settings or account data",
 	"POST /api/auth/login":                   "issues the session; by definition has none yet",
 	"POST /api/notifications/review-pairing": "Play reviewer has no session; handler is disabled by default and verifies only the operator-named demo account or prefix",
 	"GET /api/auth/captcha-config":           "tells an anonymous browser which CAPTCHA widget to render",

@@ -305,6 +305,8 @@ func TestValidateIssuerURL(t *testing.T) {
 		allowInsecure bool
 		wantErr       bool
 	}{
+		{"trailing slash is refused", "https://auth.urlxl.com/", false, true},
+		{"whitespace is refused", " https://auth.urlxl.com", false, true},
 		{"https is always fine", "https://auth.urlxl.com", false, false},
 		{"loopback http is fine for development", "http://127.0.0.1:9000", false, false},
 		{"localhost http is fine for development", "http://localhost:9000", false, false},

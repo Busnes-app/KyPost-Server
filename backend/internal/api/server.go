@@ -592,6 +592,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", withPublicRoute(s.suiteHealthHandler().ServeHTTP))
 	mux.HandleFunc("POST /api/health/repair", s.withAdmin(s.handleRepair))
 	mux.HandleFunc("POST /api/admin/mail/poll-now", s.withAdmin(s.handlePollNow))
+	mux.HandleFunc("GET /api/installer/network", withPublicRoute(s.handleInstallerNetwork))
 	mux.HandleFunc("/api/status", s.withAuth(s.handleStatus))
 	mux.HandleFunc("GET /api/config", s.withAuth(s.handleConfig))
 	mux.HandleFunc("PUT /api/config", s.withAdmin(s.handleConfig))
@@ -1541,4 +1542,13 @@ func randomToken(size int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func (s *Server) handleInstallerNetwork(w http.ResponseWriter, r *http.Request) {
+	scheme := "http"
+	if isRequestSecure(r) {
+		scheme = "https"
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"clientIp": clientIP(r), "proxyHeadersTrusted": proxyHeadersTrusted(r), "scheme": scheme})
 }

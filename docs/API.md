@@ -1,5 +1,7 @@
 # API Highlights
 
+- Public `GET /api/installer/network` returns only client IP, proxy trust and the effective security scheme for edge verification. It uses the product’s configured-origin security fallback; see [installer setup](INSTALLER_SETUP.md).
+
 - Admin backup routes: `GET /api/admin/backup/status`; `POST` to `run`, `export-capsule`, `drill`, `pair-remote`, `pin-key`; `DELETE pairing`; `PUT schedule` under `/api/admin/backup/`. Mutations require the current account credential and CSRF protection, or, for a session signed in through KySignOn, a fresh KySignOn confirmation of that exact action.
 
 Auth:

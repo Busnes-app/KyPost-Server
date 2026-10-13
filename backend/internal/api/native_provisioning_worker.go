@@ -66,7 +66,7 @@ func (s *Server) reconcileNativeSubject(ctx context.Context, issuer, subject str
 	}
 	if lookupErr != nil && d.Active && sso.HasAdminRole(d.Resource.Roles) {
 		defer release()
-		return s.provisionDirectoryUser(*d.Resource, users.RoleAdmin)
+		return s.provisionDirectoryUser(issuer, *d.Resource, users.RoleAdmin)
 	}
 	a, reserved, err := s.ssoLifecycle.NativeAssignment(issuer, subject)
 	if err != nil {
