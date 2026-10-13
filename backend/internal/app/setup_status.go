@@ -73,7 +73,7 @@ func runSetupStatus(args []string, out io.Writer) error {
 	if e != nil || !info.Mode().IsRegular() {
 		return errors.New("instance state unavailable; start the base server before setup-status")
 	}
-	st, e := state.New(config.StateDir())
+	st, e := state.OpenReadOnly(config.StateDir())
 	if e != nil {
 		return errors.New("instance state unavailable")
 	}
@@ -82,7 +82,7 @@ func runSetupStatus(args []string, out io.Writer) error {
 	if e != nil {
 		return errors.New("backup configuration invalid; correct deployment backup settings")
 	}
-	backup, e := svc.Status()
+	backup, e := svc.InspectStatus()
 	if e != nil {
 		return errors.New("backup status unavailable; preserve recovery state and resolve the backup error")
 	}

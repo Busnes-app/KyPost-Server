@@ -138,7 +138,7 @@ func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, e
 		if s.nativeMail && role != users.RoleAdmin {
 			return false, nil // retain desired state; allocate after the directory unlock
 		}
-		return false, s.provisionDirectoryUser(u, role)
+		return false, s.provisionDirectoryUser(issuer, u, role)
 	}
 	if err != nil {
 		return false, errors.New("failed to look up user")
@@ -174,11 +174,11 @@ func (s *Server) applyDirectoryUser(issuer string, u sso.DirectoryUser) (bool, e
 // provisionDirectoryUser creates a non-native account, the only kind an
 // administrator subject gets even in native mode, under a distinct name when
 // a local account already owns the directory's userName.
-func (s *Server) provisionDirectoryUser(u sso.DirectoryUser, role users.Role) error {
+func (s *Server) provisionDirectoryUser(issuer string, u sso.DirectoryUser, role users.Role) error {
 	username := ssoUsername(u.UserName, u.ID)
-	_, err := s.users.CreateSSOUser(username, role, u.ID, u.UserName, u.Email())
+	_, err := s.users.CreateSSOUserIssuer(issuer, username, role, u.ID, u.UserName, u.Email())
 	if errors.Is(err, users.ErrUsernameTaken) {
-		_, err = s.users.CreateSSOUser(ssoUsernameWithSuffix(username, u.ID), role, u.ID, u.UserName, u.Email())
+		_, err = s.users.CreateSSOUserIssuer(issuer, ssoUsernameWithSuffix(username, u.ID), role, u.ID, u.UserName, u.Email())
 	}
 	if err != nil {
 		status, err := syncErrStatus(err, "failed to create user")

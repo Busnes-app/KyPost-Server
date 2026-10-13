@@ -495,7 +495,7 @@ func (s *Server) linkSSOIdentity(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
-	if err := s.users.LinkSSO(userID, claims.Sub, claims.PreferredUsername, claims.Email); err != nil {
+	if err := s.users.LinkSSOIssuer(claims.Issuer, userID, claims.Sub, claims.PreferredUsername, claims.Email); err != nil {
 		http.Error(w, "failed to link account: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -553,11 +553,11 @@ func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings,
 	}
 
 	username := ssoUsername(claims.PreferredUsername, claims.Sub)
-	created, errCreate := s.users.CreateSSOUser(username, role, claims.Sub, claims.PreferredUsername, claims.Email)
+	created, errCreate := s.users.CreateSSOUserIssuer(claims.Issuer, username, role, claims.Sub, claims.PreferredUsername, claims.Email)
 	if errors.Is(errCreate, users.ErrUsernameTaken) {
 		// A local account already owns that name and this identity is not it.
 		// Provision under a distinct name rather than touching theirs.
-		created, errCreate = s.users.CreateSSOUser(
+		created, errCreate = s.users.CreateSSOUserIssuer(claims.Issuer,
 			ssoUsernameWithSuffix(username, claims.Sub), role, claims.Sub, claims.PreferredUsername, claims.Email)
 	}
 	if errCreate != nil {

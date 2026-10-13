@@ -2,8 +2,10 @@ package state
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -392,3 +394,33 @@ const (
 	// actually recorded something new.
 	metaSorterGeneration = "sorter_generation"
 )
+
+// OpenReadOnly inspects an existing bootstrapped database without migrations,
+// imports, metadata writes or creating instance storage. SQLite may maintain
+// existing live WAL shared-memory companions, as for other advisory inspectors.
+func OpenReadOnly(baseDir string) (*Store, error) {
+	path := filepath.Join(baseDir, "state.db")
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, errors.New("existing instance state unavailable")
+	}
+	uri := (&url.URL{Scheme: "file", Path: path}).String() + "?mode=ro&_pragma=query_only(ON)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", uri)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	var source string
+	if err = db.QueryRow("SELECT value FROM meta WHERE key='mail_source'").Scan(&source); err == nil {
+		rows, e := db.Query("SELECT id,action FROM backup_audit LIMIT 0")
+		err = e
+		if rows != nil {
+			_ = rows.Close()
+		}
+	}
+	if err != nil || source == "" {
+		_ = db.Close()
+		return nil, errors.New("existing bootstrapped state schema unavailable")
+	}
+	return &Store{baseDir: baseDir, db: db}, nil
+}

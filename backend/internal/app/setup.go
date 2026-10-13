@@ -27,15 +27,18 @@ import (
 const setupLimit = 64 << 10
 
 type setupBundle struct {
-	Version       int              `json:"version"`
-	SSO           *sso.SSOSettings `json:"sso,omitempty"`
-	PairingSecret string           `json:"pairingSecret,omitempty"`
-	Domains       []string         `json:"domains,omitempty"`
-	Recovery      *setupRecovery   `json:"recovery,omitempty"`
+	Version           int              `json:"version"`
+	SSO               *sso.SSOSettings `json:"sso,omitempty"`
+	PairingSecret     string           `json:"pairingSecret,omitempty"`
+	ClientSecretFile  string           `json:"clientSecretFile,omitempty"`
+	PairingSecretFile string           `json:"pairingSecretFile,omitempty"`
+	Domains           []string         `json:"domains,omitempty"`
+	Recovery          *setupRecovery   `json:"recovery,omitempty"`
 }
 type setupRecovery struct {
-	URL  string `json:"url"`
-	Code string `json:"code"`
+	URL      string `json:"url"`
+	Code     string `json:"code,omitempty"`
+	CodeFile string `json:"codeFile,omitempty"`
 }
 type setupDNS struct {
 	Domain      string `json:"domain"`
@@ -53,8 +56,12 @@ type setupReport struct {
 }
 
 func runApplySetup(args []string, stdin io.Reader, stdout io.Writer) error {
-	if len(args) != 2 || args[0] != "--file" || args[1] == "" {
-		return errors.New("usage: kypost-server apply-setup --file <private-json-file|->")
+	if len(args) == 1 && args[0] == "--capabilities" {
+		return json.NewEncoder(stdout).Encode(map[string]any{"schema": "ky.setup-capabilities/1", "service": "kypost", "bundleSchema": "kypost.setup/1", "features": []string{"sso", "retained-pairing-key", "domains", "recovery-pairing", "secret-files", "check"}})
+	}
+	check := len(args) == 3 && args[2] == "--check"
+	if (!check && len(args) != 2) || args[0] != "--file" || args[1] == "" {
+		return errors.New("usage: kypost-server apply-setup --file <private-json-file|-> [--check], or --capabilities")
 	}
 	if err := setupRoots(); err != nil {
 		return err
@@ -73,16 +80,21 @@ func runApplySetup(args []string, stdin io.Reader, stdout io.Writer) error {
 	if setupDecode(raw, &b) != nil {
 		return errors.New("invalid setup JSON; use documented version-1 fields without trailing JSON")
 	}
+	if err = resolveSetupSecrets(&b); err != nil {
+		return err
+	}
 	if err = validateSetup(b); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(config.ConfigDir(), "installer-setup"))
-	if err != nil {
-		return errors.New("setup busy; retry without deleting locks")
+	if !check {
+		release, e := fsutil.LockFileContext(ctx, filepath.Join(config.ConfigDir(), "installer-setup"))
+		if e != nil {
+			return errors.New("setup busy; retry without deleting locks")
+		}
+		defer release()
 	}
-	defer release()
 	if err = sso.RequireNativeRestoreReleased(config.StateDir()); err != nil {
 		return err
 	}
@@ -91,7 +103,12 @@ func runApplySetup(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil || !info.Mode().IsRegular() {
 		return errors.New("existing instance state unavailable; start the base server before setup")
 	}
-	st, err := state.New(config.StateDir())
+	var st *state.Store
+	if check {
+		st, err = state.OpenReadOnly(config.StateDir())
+	} else {
+		st, err = state.New(config.StateDir())
+	}
 	if err != nil {
 		return errors.New("existing instance state unavailable")
 	}
@@ -146,7 +163,7 @@ func runApplySetup(args []string, stdin io.Reader, stdout io.Writer) error {
 		if e != nil || recoveryclient.ValidateURL(b.Recovery.URL, bc.AllowPrivateRecovery) != nil {
 			return errors.New("recovery URL refused; require HTTPS and explicit private-recovery opt-in if needed")
 		}
-		status, e := svc.Status()
+		status, e := svc.InspectStatus()
 		if e != nil || status.KeyProblem != "" {
 			return errors.New("recovery state unavailable; preserve its pin and repair before setup")
 		}
@@ -154,6 +171,11 @@ func runApplySetup(args []string, stdin io.Reader, stdout io.Writer) error {
 			return errors.New("existing recovery destination differs; setup preserves pairing")
 		}
 		paired = status.Paired
+		if paired {
+			if _, e := svc.InspectPairing(); e != nil {
+				return errors.New("retained recovery token or key cannot be verified; preserve pairing and repair before setup")
+			}
+		}
 		if !paired {
 			if b.Recovery.Code == "" {
 				return errors.New("unpaired recovery requires a fresh six-digit code")
@@ -166,6 +188,9 @@ func runApplySetup(args []string, stdin io.Reader, stdout io.Writer) error {
 	report := setupReport{Version: 1, Applied: []string{}, Unchanged: []string{}, DNS: []setupDNS{}, Pending: []string{}}
 	actor := "cli:" + strconv.Itoa(os.Geteuid())
 	change := func(name string, needed bool, apply func() error) error {
+		if check && needed {
+			return fmt.Errorf("setup %s is missing; run apply-setup before checking", name)
+		}
 		if !needed {
 			report.Unchanged = append(report.Unchanged, name)
 			return nil
@@ -322,4 +347,43 @@ func setupPairingSecret() (string, error) {
 		}
 	}
 	return api.ReadPairingSecret(path), nil
+}
+
+// Resolve only target-held references, before any mutation. Native inline fields remain supported.
+func resolveSetupSecrets(b *setupBundle) error {
+	read := func(path, inline string) (string, error) {
+		if path == "" {
+			return inline, nil
+		}
+		if inline != "" || !filepath.IsAbs(path) {
+			return "", errors.New("setup secret reference requires an absolute path and no inline value")
+		}
+		raw, exists, err := setupExisting(path)
+		if err != nil || !exists || len(raw) > 4096 {
+			return "", errors.New("setup secret file unavailable; require a private runtime-owned regular file of at most 4096 bytes")
+		}
+		value := strings.TrimSuffix(string(raw), "\n")
+		if value == "" || strings.ContainsAny(value, "\r\n\x00") {
+			return "", errors.New("setup secret file has invalid content")
+		}
+		return value, nil
+	}
+	var err error
+	if b.ClientSecretFile != "" {
+		if b.SSO == nil {
+			return errors.New("clientSecretFile requires sso")
+		}
+		b.SSO.ClientSecret, err = read(b.ClientSecretFile, b.SSO.ClientSecret)
+		if err != nil {
+			return err
+		}
+	}
+	b.PairingSecret, err = read(b.PairingSecretFile, b.PairingSecret)
+	if err != nil {
+		return err
+	}
+	if b.Recovery != nil {
+		b.Recovery.Code, err = read(b.Recovery.CodeFile, b.Recovery.Code)
+	}
+	return err
 }

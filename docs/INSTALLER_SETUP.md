@@ -142,8 +142,8 @@ configuration observations pass, not that external acceptance passed.
 `externalChecks` always lists the remaining independent observations.
 
 Status is advisory and does not refresh DNS, submit mail, test credentials or
-change settings. It opens existing SQLite state and the ordinary backup status
-fence, which can create SQLite companions/lock files. Domain established state,
+change settings. It opens existing SQLite state read-only and uses lock-free backup inspection,
+which may maintain SQLite WAL companions but creates no application lock files. Domain established state,
 receiving-profile configuration and an old backup receipt are not live runtime,
 fresh delivery or restore proof. Through the UI also inspect Health, outbox
 uncertainty, receiving/spool diagnostics and the latest backup result.
@@ -153,3 +153,39 @@ then every status check and external acceptance separately; it must not use a
 successful command exit alone as an install-complete marker. This product gate
 opens only after the feature is merged, released/tagged and included in the
 installer's verified pinned release set.
+
+## Installer discovery and inspection
+
+`apply-setup --capabilities` advertises `ky.setup-capabilities/1`, service `kypost`
+and native bundle `kypost.setup/1` (the JSON retains `version: 1`).
+`apply-setup --file <private-file|-> --check` observes the requested settings;
+it fails if anything is absent or differs, without publishing configuration, auditing,
+creating application locks, migrating state or claiming a recovery code. `setup-status`
+uses the same existing read-only database and lock-free backup inspection. SQLite may
+maintain live WAL shared-memory companions; checks are advisory across independent files.
+
+Use top-level `clientSecretFile` beside `sso`, `pairingSecretFile` beside the retained
+pairing-secret witness, and `recovery.codeFile` instead of the corresponding inline
+values. References must be absolute runtime-owned private regular files without final
+symlinks, at most 4096 bytes. One final newline is removed. Inline and file values
+cannot both be present. Native protected inline/stdin bundles remain supported.
+Generated `pairing.key` bytes are not the effective base64 pairing witness: register
+the retained effective secret through the existing product contract.
+
+Docker execution must use `--user kypost`, including capabilities and checks. This
+interface does not provision identity grants: KyIdentity app role `kypost.admin` and
+signed directory replication remain the authority. New directory/browser identities
+and authorized links now retain a separate issuer binding; legacy unbound identities
+are preserved, require explicit migration and cannot be claimed as installer-owned.
+External-IMAP administrator separation and full signed suite qualification remain gates.
+
+The public `GET /api/installer/network` returns exactly `clientIp`,
+`proxyHeadersTrusted` and `scheme`, with no-store. It reuses normal product trust and
+security decisions; `scheme` includes the configured `SERVER_BASE_URL` HTTPS fallback,
+so it is an effective-security observation rather than independent backend TLS proof.
+Successful configuration still reports pending DNS, relay, receiving and independent
+recovery acceptance; those prerequisites are not erased by a successful `--check`.
+
+Enabled issuer URLs must be canonical, without surrounding whitespace or trailing slash,
+so directory bindings and the OIDC discovery issuer remain identical. Existing noncanonical
+settings require an explicit protected configuration correction; setup never rewrites them.

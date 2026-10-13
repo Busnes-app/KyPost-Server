@@ -241,6 +241,9 @@ func requireSafeURL(what, raw string, allowInsecure bool) error {
 // used, so a bad value is refused at the admin panel rather than at 3am.
 func ValidateIssuerURL(raw string, allowInsecure bool) error {
 	trimmed := strings.TrimSpace(raw)
+	if trimmed != raw || strings.HasSuffix(trimmed, "/") {
+		return errors.New("issuer URL must use its canonical form without whitespace or a trailing slash")
+	}
 	if trimmed == "" {
 		return errors.New("issuer URL is required")
 	}

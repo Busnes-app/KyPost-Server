@@ -85,6 +85,7 @@ type User struct {
 	NativeMailboxIssuer string `json:"nativeMailboxIssuer,omitempty"`
 	NativeMailboxSource string `json:"nativeMailboxSource,omitempty"`
 	SSOSub              string `json:"ssoSub,omitempty"`
+	SSOIssuer           string `json:"ssoIssuer,omitempty"`
 	SSOUsername         string `json:"ssoUsername,omitempty"`
 	SSOEmail            string `json:"ssoEmail,omitempty"`
 	SSOLinkedAt         int64  `json:"ssoLinkedAt,omitempty"`
@@ -1123,10 +1124,11 @@ func (s *Store) GetBySSOSub(ssoSub string) (User, error) {
 	return out, nil
 }
 
-// GetBySSOSubIssuer preserves legacy lookup while fencing native ownership.
+// GetBySSOSubIssuer fences all new issuer-bound identities; historical unbound
+// records retain legacy behavior until an explicit owner-approved migration.
 func (s *Store) GetBySSOSubIssuer(issuer, sub string) (User, error) {
 	u, err := s.GetBySSOSub(sub)
-	if err == nil && u.NativeMailboxSource != "" && (issuer == "" || u.NativeMailboxIssuer != issuer) {
+	if err == nil && ((u.SSOIssuer != "" && u.SSOIssuer != issuer) || (u.NativeMailboxSource != "" && (issuer == "" || u.NativeMailboxIssuer != issuer))) {
 		return User{}, ErrNativeAccountConflict
 	}
 	return u, err
@@ -1134,6 +1136,17 @@ func (s *Store) GetBySSOSubIssuer(issuer, sub string) (User, error) {
 
 // LinkSSO connects a user's account to an SSO identity.
 func (s *Store) LinkSSO(userID, ssoSub, ssoUsername, ssoEmail string) error {
+	return s.linkSSO("", userID, ssoSub, ssoUsername, ssoEmail)
+}
+
+func (s *Store) LinkSSOIssuer(issuer, userID, sub, username, email string) error {
+	if issuer == "" {
+		return ErrNativeAccountConflict
+	}
+	return s.linkSSO(issuer, userID, sub, username, email)
+}
+
+func (s *Store) linkSSO(issuer, userID, ssoSub, ssoUsername, ssoEmail string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1150,10 +1163,11 @@ func (s *Store) LinkSSO(userID, ssoSub, ssoUsername, ssoEmail string) error {
 		found := false
 		for i := range f.Users {
 			if f.Users[i].ID == userID {
-				if f.Users[i].NativeMailboxSource != "" {
+				if f.Users[i].NativeMailboxSource != "" || (f.Users[i].SSOIssuer != "" && f.Users[i].SSOIssuer != issuer) {
 					return ErrNativeAccountConflict
 				}
 
+				f.Users[i].SSOIssuer = issuer
 				f.Users[i].SSOSub = strings.TrimSpace(ssoSub)
 				f.Users[i].SSOUsername = strings.TrimSpace(ssoUsername)
 				f.Users[i].SSOEmail = strings.TrimSpace(ssoEmail)
@@ -1222,6 +1236,7 @@ func (s *Store) UnlinkSSO(userID string) error {
 					return s.writeFileUnlocked(f)
 				}
 
+				f.Users[i].SSOIssuer = ""
 				f.Users[i].SSOSub = ""
 				f.Users[i].SSOUsername = ""
 				f.Users[i].SSOEmail = ""
@@ -1242,6 +1257,14 @@ func (s *Store) UnlinkSSO(userID string) error {
 // CreateSSOUser adds a new user provisioned via SSO.
 func (s *Store) CreateSSOUser(username string, role Role, ssoSub, ssoUsername, ssoEmail string) (User, error) {
 	return s.createSSOUser(context.Background(), "", username, role, ssoSub, ssoUsername, ssoEmail, "", nil)
+}
+
+// CreateSSOUserIssuer binds a newly provisioned identity to verified issuer evidence.
+func (s *Store) CreateSSOUserIssuer(issuer, username string, role Role, sub, ssoUsername, email string) (User, error) {
+	if issuer == "" {
+		return User{}, ErrNativeAccountConflict
+	}
+	return s.createSSOUser(context.Background(), "", username, role, sub, ssoUsername, email, issuer, nil)
 }
 
 // PublishPreparedSSOUser is internal allocation: prepare runs while users.json
@@ -1319,7 +1342,10 @@ func (s *Store) createSSOUser(ctx context.Context, id, username string, role Rol
 		return User{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	created := User{ID: id, Username: username, Role: role, Active: true, SSOSub: ssoSub, SSOUsername: strings.TrimSpace(ssoUsername), SSOEmail: strings.TrimSpace(ssoEmail), SSOLinkedAt: time.Now().UTC().Unix(), CreatedAt: now, UpdatedAt: now, NativeMailboxSource: source, NativeMailboxIssuer: nativeIssuer}
+	created := User{ID: id, Username: username, Role: role, Active: true, SSOSub: ssoSub, SSOUsername: strings.TrimSpace(ssoUsername), SSOEmail: strings.TrimSpace(ssoEmail), SSOLinkedAt: time.Now().UTC().Unix(), CreatedAt: now, UpdatedAt: now, NativeMailboxSource: source, SSOIssuer: nativeIssuer}
+	if source != "" {
+		created.NativeMailboxIssuer = nativeIssuer
+	}
 	f.Users = append(f.Users, created)
 	if err = s.writeFileUnlocked(f); err != nil {
 		return User{}, err

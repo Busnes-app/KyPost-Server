@@ -8,7 +8,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 
 ## Features
 
-- Repeatable installer setup: runtime-owned `apply-setup --file` preserves existing SSO/webhook/domain/recovery configuration and returns a secret-free JSON report. `setup-status` lists configuration blockers and external acceptance checks. See [clean installation](docs/INSTALLER_SETUP.md).
+- Repeatable installer setup: runtime-owned `apply-setup --file [--check]` and capability discovery preserves existing SSO/webhook/domain/recovery configuration and returns a secret-free JSON report. Target-held credential file references avoid installer secret copies. `setup-status` lists configuration blockers and external acceptance checks. See [clean installation](docs/INSTALLER_SETUP.md).
 
 - Guided dedicated-domain qualification: `bash scripts/setup-mail.sh <public-KyPost-origin>` walks through native deployment, KyIdentity/DNS proof, operator relay, protected engine/TLS inputs, backups and receiving launch. It requires Docker-operator authority and explicit configuration/start confirmations; live delivery remains an operator check. See [guided setup](docs/RECEIVING_SETUP.md#guided-operator-setup).
 
@@ -779,6 +779,8 @@ silent until someone needs them:
 Only once that passes should you upgrade to a newer version, as a separate step.
 
 ## API Highlights
+
+- Public `GET /api/installer/network` returns only client IP, proxy trust and the effective security scheme for edge verification. It uses the product’s configured-origin security fallback; see [installer setup](docs/INSTALLER_SETUP.md).
 
 - Admin backup routes: `GET /api/admin/backup/status`; `POST` to `run`, `export-capsule`, `drill`, `pair-remote`, `pin-key`; `DELETE pairing`; `PUT schedule` under `/api/admin/backup/`. Mutations require the current account credential and CSRF protection, or, for a session signed in through KySignOn, a fresh KySignOn confirmation of that exact action.
 
