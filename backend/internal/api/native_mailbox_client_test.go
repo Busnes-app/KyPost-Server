@@ -169,6 +169,14 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 			t.Fatal("from search alias missing")
 		}
 		requireOK(request("GET", "/api/inbox/folders?parent=INBOX", nil, native, owner))
+		older := request("GET", "/api/inbox?mailbox=INBOX&before="+id, nil, native, owner)
+		requireOK(older)
+		if got := allEmails(decodeInboxResponse(t, older)); len(got) != 0 || !bytes.Contains(older.Body.Bytes(), []byte(`"hasMore":false`)) {
+			t.Fatalf("nothing is older than the only message: %s", older.Body.String())
+		}
+		if rec := request("GET", "/api/inbox?mailbox=INBOX&before="+strconv.FormatInt(uid, 10), nil, native, owner); rec.Code != 400 {
+			t.Fatalf("bare numeric before reference: status %d, want 400", rec.Code)
+		}
 	}
 	// A classic caller must also receive a live snapshot, even with a warmed cache.
 	classic := request("GET", "/api/inbox?mailbox=INBOX&bodies=0", nil, false, owner)
@@ -200,6 +208,11 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 	if len(emails) != 1 || emails[0].Status != "read" || !strings.Contains(emails[0].Body, "owner body") {
 		t.Fatalf("changed body/flags: %+v", emails)
 	}
+	requireOK(request("POST", "/api/inbox/actions", map[string]any{"action": "unread", "mailbox": "INBOX", "messageIds": []string{id}}, true, owner))
+	if got := allEmails(decodeInboxResponse(t, request("GET", "/api/inbox?mailbox=INBOX&since=0&bodies=0", nil, false, owner))); len(got) != 1 || got[0].Status != "unread" {
+		t.Fatalf("unread action: %+v", got)
+	}
+	requireOK(request("POST", "/api/inbox/actions", map[string]any{"action": "read", "mailbox": "INBOX", "messageIds": []string{id}}, true, owner))
 	requireOK(request("POST", "/api/inbox/folders", map[string]string{"parent": "INBOX", "name": "Work"}, true, owner))
 	requireOK(request("POST", "/api/inbox/actions", map[string]any{"action": "move", "mailbox": "INBOX", "targetMailbox": "INBOX/Work", "messageIds": []string{id}}, true, owner))
 	if rec := request("GET", "/api/mail/body"+query, nil, true, owner); rec.Code != 404 {
@@ -225,6 +238,12 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 		t.Fatalf("malformed body: %d %s", malformed.Code, malformed.Body.String())
 	}
 	requireOK(request("GET", "/api/inbox?mailbox=INBOX&since=0", nil, true, owner))
+	page := request("GET", "/api/inbox?mailbox=INBOX&limit=1&before="+ref(store, bad), nil, true, owner)
+	requireOK(page)
+	if got := allEmails(decodeInboxResponse(t, page)); len(got) != 1 || got[0].MessageID != id || got[0].Body != "" ||
+		!bytes.Contains(page.Body.Bytes(), []byte(`"nextBefore":"`+id+`"`)) {
+		t.Fatalf("before page: %s", page.Body.String())
+	}
 
 	sender, err := pgpmail.GenerateIdentity("Sender", "sender@outside.test")
 	if err != nil {
@@ -312,6 +331,23 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 	requireOK(encryptedBody)
 	if bytes.Contains(encryptedBody.Body.Bytes(), []byte("owner body")) {
 		t.Fatal("encrypted lazy body exposed plaintext")
+	}
+	// An iMIP invite as an undisposed multipart/alternative part is listed as
+	// invite.ics and downloads as text/calendar, still as an attachment.
+	invite := importRaw(store, "invite", []byte("From: organizer@outside.test\r\nTo: tester@example.com\r\nSubject: Invitation\r\nMIME-Version: 1.0\r\n"+
+		"Content-Type: multipart/alternative; boundary=A\r\n\r\n--A\r\nContent-Type: text/plain\r\n\r\ninvited\r\n"+
+		"--A\r\nContent-Type: text/calendar; method=REQUEST\r\n\r\nBEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:e1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n--A--\r\n"))
+	inviteQuery := "?mailbox=INBOX&messageId=" + ref(store, invite)
+	inviteList := request("GET", "/api/mail/attachments"+inviteQuery, nil, true, owner)
+	requireOK(inviteList)
+	if !bytes.Contains(inviteList.Body.Bytes(), []byte(`"name":"invite.ics","mimeType":"text/calendar"`)) || !bytes.Contains(inviteList.Body.Bytes(), []byte(`"calendarMethod":"REQUEST"`)) {
+		t.Fatalf("invite not listed: %s", inviteList.Body.String())
+	}
+	ics := request("GET", "/api/mail/attachment"+inviteQuery+"&index=0", nil, true, owner)
+	requireOK(ics)
+	if ics.Header().Get("Content-Type") != "text/calendar" || !strings.HasPrefix(ics.Header().Get("Content-Disposition"), "attachment") ||
+		ics.Header().Get("X-Content-Type-Options") != "nosniff" || !bytes.HasPrefix(ics.Body.Bytes(), []byte("BEGIN:VCALENDAR")) {
+		t.Fatalf("invite download headers %v body %q", ics.Header(), ics.Body.String())
 	}
 	requireOK(request("POST", "/api/mail/draft", map[string]any{"to": "tester@example.com", "pgpDraft": string(encrypted)}, false, owner))
 	copies, err := store.List(ctx, "Drafts", 0, 10)

@@ -112,10 +112,10 @@ type NativeDevice struct {
 	EnrolledGeneration  uint64 `json:"enrolledGeneration,omitempty"`
 	EnrolledFingerprint string `json:"enrolledFingerprint,omitempty"`
 	// SecretHash is the hash of this device's own pairing secret, minted once
-	// at registration — users.HashDeviceSecret format, or the legacy scrypt
-	// format users.HashPassword used to write, for devices paired before
-	// HashDeviceSecret existed.
-	// Verify only through users.VerifyDeviceSecret, which accepts both. The raw
+	// at registration — users.HashDeviceSecret format; an untagged legacy scrypt
+	// hash (devices paired before HashDeviceSecret) never verifies and
+	// the device must re-pair.
+	// Verify only through users.VerifyDeviceSecret, which rejects the legacy form. The raw
 	// secret is never stored, and this must never reach an API response — see
 	// Redacted().
 	SecretHash string `json:"secretHash,omitempty"`
@@ -273,6 +273,20 @@ func (s *Store) Checkpoint() (string, error) {
 
 func (s *Store) SetCheckpoint(value string) error {
 	return setMeta(s.db, metaCheckpoint, value)
+}
+
+// ResetUIDNamespace forgets the processed set, deferrals and woken-message pins,
+// whose UIDs now name other messages, and restarts the checkpoint in one transaction, so a
+// tick that dies afterwards does not forget the messages it went on to retire.
+func (s *Store) ResetUIDNamespace(checkpoint string) error {
+	return s.tx(func(tx *sql.Tx) error {
+		for _, q := range []string{`DELETE FROM processed`, `DELETE FROM deferrals`, `UPDATE snoozes SET inbox_id = '' WHERE woken_at > 0`} {
+			if _, err := tx.Exec(q); err != nil {
+				return err
+			}
+		}
+		return setMeta(tx, metaCheckpoint, checkpoint)
+	})
 }
 
 // PollTick is the outcome of one completed poll tick, persisted so the health
@@ -503,6 +517,9 @@ func (s *Store) Cleanup(keepDays int) error {
 		if _, err := tx.Exec(`DELETE FROM sorter_predictions WHERE at_unix < ?`, cutoff.Unix()); err != nil {
 			return err
 		}
+		if err := pruneWoken(tx, time.Now()); err != nil {
+			return err
+		}
 		// Recorded in the same transaction as the deletes it describes, so the
 		// timestamp can never claim a cleanup that rolled back.
 		return setMeta(tx, metaLastCleanup, time.Now().UTC().Format(time.RFC3339))
@@ -629,20 +646,11 @@ func (s *Store) HasDecisionWithStatus(messageID, status string) (bool, error) {
 	return n > 0, nil
 }
 
-// Decisions returns the most recent decisions, newest first.
+// DecisionsStrict returns the most recent decisions, newest first.
 //
 // Ordered by id, not at_utc: the previous implementation returned the tail of
 // an append-ordered slice, so a row written later carrying an earlier
 // timestamp still came first. Preserved deliberately.
-func (s *Store) Decisions(limit int) []Decision {
-	decisions, err := s.DecisionsStrict(limit)
-	if err != nil {
-		slog.Error("state read failed", "field", "decisions", "dir", s.baseDir, "error", err.Error())
-		return []Decision{}
-	}
-	return decisions
-}
-
 func (s *Store) DecisionsStrict(limit int) ([]Decision, error) {
 	query := `SELECT message_id, sender, sent_to, subject, label, status, detail, at_utc
 	          FROM decisions ORDER BY id DESC`
@@ -804,15 +812,6 @@ func (s *Store) EnqueuePullNotification(n PullNotification) error {
 	})
 }
 
-func (s *Store) PullNotificationsAfter(deviceID string, after int64) ([]PullNotification, int64) {
-	notifications, cursor, err := s.PullNotificationsAfterStrict(deviceID, after)
-	if err != nil {
-		slog.Error("state read failed", "field", "pullNotifications", "dir", s.baseDir, "error", err.Error())
-		return []PullNotification{}, cursor
-	}
-	return notifications, cursor
-}
-
 // PullNotificationsAfterStrict returns the notifications after cursor that
 // were addressed to deviceID, or to every device. The cursor is the global
 // sequence, so a device skipping rows meant for others still advances past
@@ -861,15 +860,6 @@ func (s *Store) PullNotificationsAfterStrict(deviceID string, after int64) ([]Pu
 }
 
 // ---- web push subscriptions ------------------------------------------------
-
-func (s *Store) ListNotificationSubscriptions() []NotificationSubscription {
-	subs, err := s.ListNotificationSubscriptionsStrict()
-	if err != nil {
-		slog.Error("state read failed", "field", "notifications", "dir", s.baseDir, "error", err.Error())
-		return []NotificationSubscription{}
-	}
-	return subs
-}
 
 func (s *Store) ListNotificationSubscriptionsStrict() ([]NotificationSubscription, error) {
 	rows, err := s.db.Query(
@@ -1020,15 +1010,6 @@ func insertDevice(e execer, d NativeDevice, seq int) error {
 		d.EnrollmentPublicKey, d.EnrollmentKeyAt, boolToInt(d.EncryptionEnrolled),
 		d.P256DH, d.Auth, versions, d.EnrolledVersion, d.EnrolledGeneration, d.EnrolledFingerprint, seq)
 	return err
-}
-
-func (s *Store) ListNativeDevices() []NativeDevice {
-	devices, err := s.ListNativeDevicesStrict()
-	if err != nil {
-		slog.Error("state read failed", "field", "nativeDevices", "dir", s.baseDir, "error", err.Error())
-		return []NativeDevice{}
-	}
-	return devices
 }
 
 // ListNativeDevicesStrict distinguishes an empty device set from a failed read.

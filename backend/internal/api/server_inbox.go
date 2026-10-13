@@ -15,10 +15,15 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
+
+	"github.com/inbucket/html2text"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 type inboxEmail struct {
@@ -29,6 +34,9 @@ type inboxEmail struct {
 	BCC       string `json:"bcc,omitempty"`
 	Subject   string `json:"subject"`
 	Body      string `json:"body,omitempty"`
+	// Preview is a short plain-text excerpt of Body, sent only with preview=1
+	// and only on rows whose body this response already had in hand.
+	Preview string `json:"preview,omitempty"`
 	// BodyMode is "html" or "plain": which MIME part Body was taken from.
 	// Absent means the server does not know (a cache entry written before this
 	// field existed, or a body only the client can decrypt), and the client
@@ -43,6 +51,9 @@ type inboxEmail struct {
 	Status   string   `json:"status"`
 	Detail   string   `json:"detail,omitempty"`
 	AtUTC    string   `json:"atUtc"`
+	// WokenAt is when a snoozed message returned to INBOX; clients sort by it
+	// in place of AtUTC so the message sits at the top. Absent when not woken.
+	WokenAt string `json:"wokenAt,omitempty"`
 	// HasAttachments is a warm-path hint for the inbox paperclip badge; see
 	// mailcache.Entry.HasAttachments. Absent when false.
 	HasAttachments bool `json:"hasAttachments,omitempty"`
@@ -64,6 +75,28 @@ type inboxEmail struct {
 type inboxFolder struct {
 	Path      string `json:"path"`
 	Deletable bool   `json:"deletable"`
+	// Special is the folder's RFC 6154 role ("sent", "drafts", ...) when the
+	// server published one, so clients find a localized Sent folder.
+	Special string `json:"special,omitempty"`
+}
+
+// specialUseLister is implemented by the IMAP client; other sources omit roles.
+type specialUseLister interface {
+	SpecialUseFolders(ctx context.Context) (map[string]string, error)
+}
+
+// specialUseOf returns the client's special-use roles by path, or nil. A failure
+// costs only the roles, never the folder list.
+func specialUseOf(ctx context.Context, client imapadapter.Client) map[string]string {
+	lister, ok := client.(specialUseLister)
+	if !ok {
+		return nil
+	}
+	uses, err := lister.SpecialUseFolders(ctx)
+	if err != nil {
+		return nil
+	}
+	return uses
 }
 
 func mailboxLeaf(path string) string {
@@ -96,7 +129,13 @@ func isBuiltinMailbox(path string) bool {
 	}
 }
 
-func toInboxFolders(paths []string) []inboxFolder {
+// isProtectedMailbox is a folder the user may not rename or delete: built-in by
+// name, or carrying a special-use role. A failed role lookup protects by name only.
+func isProtectedMailbox(ctx context.Context, client imapadapter.Client, path string) bool {
+	return isBuiltinMailbox(path) || specialUseOf(ctx, client)[path] != ""
+}
+
+func toInboxFolders(paths []string, special map[string]string) []inboxFolder {
 	folders := make([]inboxFolder, 0, len(paths))
 	for _, folder := range paths {
 		clean := strings.TrimSpace(folder)
@@ -105,7 +144,8 @@ func toInboxFolders(paths []string) []inboxFolder {
 		}
 		folders = append(folders, inboxFolder{
 			Path:      clean,
-			Deletable: mailboxParentPath(clean) != "" && !isBuiltinMailbox(clean),
+			Deletable: mailboxParentPath(clean) != "" && !isBuiltinMailbox(clean) && special[clean] == "",
+			Special:   special[clean],
 		})
 	}
 	return folders
@@ -240,6 +280,41 @@ func inboxSubject(envelopeSubject, protectedSubject string) string {
 	return envelopeSubject
 }
 
+// maxPreviewRunes bounds a list preview; previewInputBytes bounds the work of
+// producing one from a large body.
+const (
+	maxPreviewRunes   = 200
+	previewInputBytes = 32 << 10
+)
+
+// inboxPreview flattens a body to one line of plain text. HTML goes through
+// html2text, which drops style/script/head; a plain body is never parsed as
+// markup, so an address in angle brackets survives. Control characters,
+// including line breaks, become spaces.
+func inboxPreview(body, mode string) string {
+	if len(body) > previewInputBytes {
+		body = body[:previewInputBytes]
+	}
+	if strings.EqualFold(strings.TrimSpace(mode), "html") {
+		text, err := html2text.FromString(body, html2text.Options{TextOnly: true, OmitLinks: true})
+		if err != nil {
+			return ""
+		}
+		body = text
+	}
+	body = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(body, ""))
+	runes := []rune(strings.Join(strings.Fields(body), " "))
+	if len(runes) > maxPreviewRunes {
+		runes = runes[:maxPreviewRunes]
+	}
+	return string(runes)
+}
+
 // inboxUncategorizedTab is the fallback tab for messages matching none of
 // the configured label keywords.
 const inboxUncategorizedTab = "Uncategorized"
@@ -314,6 +389,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 	// wire contract that shipped desktop clients still read. They keep the
 	// old payload until they ask for the new one.
 	withBodies := strings.TrimSpace(r.URL.Query().Get("bodies")) != "0"
+	withPreview := strings.TrimSpace(r.URL.Query().Get("preview")) == "1"
 
 	s.cfgMu.RLock()
 	cfg := s.cfg
@@ -348,14 +424,72 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.serveInbox(w, r.Context(), ac.UserID, mailClient, cache, cfg, mailbox, limit, since, cursorSync, withBodies)
+	if before := strings.TrimSpace(r.URL.Query().Get("before")); before != "" {
+		s.serveInboxBefore(w, r.Context(), ac.UserID, mailClient, mailbox, before, limit)
+		return
+	}
+
+	s.serveInbox(w, r.Context(), ac.UserID, mailClient, cache, cfg, mailbox, limit, since, cursorSync, withBodies, withPreview)
+}
+
+// serveInboxBefore answers `before=<messageId>`: the next page of mail older
+// than that message, newest first. It never touches the cache window or the
+// cursor, and carries metadata only (like search): bodies, attachment and PGP
+// flags come from /api/mail/body when the message is opened.
+func (s *Server) serveInboxBefore(w http.ResponseWriter, ctx context.Context, userID string, mailClient imapadapter.Client, mailbox, before string, limit int) {
+	internalID, err := imapadapter.ResolveMessageReference(mailClient, before)
+	uid, convErr := strconv.Atoi(internalID)
+	if err != nil || convErr != nil || uid <= 0 || strconv.Itoa(uid) != internalID {
+		http.Error(w, "invalid before message reference; refresh the mailbox", http.StatusBadRequest)
+		return
+	}
+	overviews, hasMore, err := mailClient.ListOverviewsBefore(ctx, mailbox, uid, limit)
+	if err != nil {
+		if errors.Is(err, imapadapter.ErrUnsafeMailbox) {
+			writeMailboxError(w, err)
+			return
+		}
+		http.Error(w, "failed to fetch inbox", http.StatusBadGateway)
+		return
+	}
+	allowedKeywords := collectAllowedKeywords(s.userLabels(userID))
+	tabs, byTab := buildInboxTabScaffold(allowedKeywords)
+	pins, _ := s.wokenPins(ctx, userID, mailbox)
+	for _, ov := range overviews {
+		tab := firstMatchingKeyword(ov.Keywords, allowedKeywords)
+		if tab == "" {
+			tab = inboxUncategorizedTab
+		}
+		if _, ok := byTab[tab]; !ok {
+			byTab[tab] = []inboxEmail{}
+			tabs = append(tabs, tab)
+		}
+		byTab[tab] = append(byTab[tab], inboxEmail{
+			MessageID: imapadapter.MessageReference(mailClient, ov.MessageID),
+			Sender:    ov.Sender,
+			SentTo:    ov.SentTo,
+			CC:        ov.CC,
+			BCC:       ov.BCC,
+			Subject:   ov.Subject,
+			Label:     tab,
+			Keywords:  ov.Keywords,
+			Status:    ov.Status,
+			AtUTC:     ov.AtUTC,
+			WokenAt:   pinnedAt(pins, ov.UID),
+		})
+	}
+	resp := map[string]any{"tabs": append(tabs, inboxUncategorizedTab), "byTab": byTab, "hasMore": hasMore}
+	if len(overviews) > 0 {
+		resp["nextBefore"] = imapadapter.MessageReference(mailClient, overviews[len(overviews)-1].MessageID)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // serveInbox contains handleInbox's core logic once a mail client and cache
 // store are resolved — split out from handleInbox (which only does
 // param/auth/store resolution) so it can be exercised directly in tests
 // against a fake imapadapter.Client, without a real IMAP connection.
-func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID string, mailClient imapadapter.Client, cache *mailcache.Store, cfg config.Config, mailbox string, limit int, since int64, cursorSync, withBodies bool) {
+func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID string, mailClient imapadapter.Client, cache *mailcache.Store, cfg config.Config, mailbox string, limit int, since int64, cursorSync, withBodies, withPreview bool) {
 	native := imapadapter.MailSourceIdentity(mailClient) != "imap"
 	// ponytail: fresh full snapshots avoid unscoped numeric cursor collisions.
 	// Durable scoped deltas must be qualified before enabling native runtime.
@@ -376,6 +510,10 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		// bodies=0 is one guard rather than four, and cannot drift out of sync
 		// with a path added later. The cache warms are built from their own
 		// source data, not from this entry, so they still store bodies.
+		// Never for encrypted mail, whatever decrypted the body.
+		if withPreview && entry.Body != "" && !entry.PGPEncrypted && entry.PGPDecryptError == "" {
+			entry.Preview = inboxPreview(entry.Body, entry.BodyMode)
+		}
 		if !withBodies {
 			entry.Body, entry.BodyMode = "", ""
 		}
@@ -444,6 +582,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		return entries
 	}
 
+	pins, pinStore := s.wokenPins(ctx, userID, mailbox)
 	if !cursorSync {
 		// Cache-first: if the background poller (or an earlier request)
 		// has already warmed a full window of `limit` messages with
@@ -466,6 +605,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 					BodyMode:             e.BodyMode,
 					Status:               e.Status,
 					AtUTC:                e.AtUTC,
+					WokenAt:              pinnedAt(pins, e.UID),
 					HasAttachments:       e.HasAttachments,
 					PGPEncrypted:         e.PGPEncrypted,
 					PGPSigned:            e.PGPSigned,
@@ -513,6 +653,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 				BodyMode:             msg.BodyMode,
 				Status:               status,
 				AtUTC:                msg.AtUTC,
+				WokenAt:              pinnedAt(pins, msgUID(msg.MessageID)),
 				HasAttachments:       msg.HasAttachments,
 				PGPEncrypted:         msg.PGPEncrypted,
 				PGPSigned:            msg.PGPSigned,
@@ -541,12 +682,27 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		http.Error(w, "failed to fetch inbox", http.StatusBadGateway)
 		return
 	}
+	// The pin rides in the cache's metadata, so gaining or losing it reaches
+	// cursor clients as an update. Only in-window messages: adding older ones
+	// would move the window's floor and misreport aged-out mail as removed.
 	live := make([]mailcache.Overview, 0, len(overviews))
 	for _, ov := range overviews {
-		live = append(live, mailCacheEntryFromOverview(ov))
+		entry := mailCacheEntryFromOverview(ov)
+		if z, ok := pins[ov.UID]; ok {
+			entry.WokenAt = wokenAt(z)
+			delete(pins, ov.UID)
+		}
+		live = append(live, entry)
 	}
 
-	result, err := cache.Sync(cacheKey, limit, live, since)
+	// The default limit keeps the window the poller warms; any other limit gets
+	// its own, so cursor clients asking for different limits do not reset each
+	// other. Native answers full snapshots without cursors and keeps one window.
+	windowKey := cacheKey
+	if limit != maxInboxLimit && !native {
+		windowKey = mailcache.WindowKey(cacheKey, limit)
+	}
+	result, err := cache.Sync(windowKey, limit, live, since)
 	if err != nil {
 		http.Error(w, "failed to sync mail cache", http.StatusInternalServerError)
 		return
@@ -632,6 +788,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			}
 		}
 		if len(warmEntries) > 0 {
+			// Bodies are kept once per mailbox, in the base window.
 			if err := cache.Upsert(cacheKey, stampKeyGen(warmEntries)); err != nil {
 				s.logger.Error("failed to warm mail cache from delta fetch", "error", err.Error())
 			}
@@ -670,6 +827,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			BodyMode:             bodyMode,
 			Status:               e.Status,
 			AtUTC:                e.AtUTC,
+			WokenAt:              e.WokenAt,
 			HasAttachments:       hasAttachments,
 			PGPEncrypted:         pgpEncrypted,
 			PGPSigned:            pgpSigned,
@@ -689,6 +847,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			Subject:              inboxSubject(e.Subject, e.PGPProtectedSubject),
 			Status:               e.Status,
 			AtUTC:                e.AtUTC,
+			WokenAt:              e.WokenAt,
 			HasAttachments:       e.HasAttachments,
 			PGPEncrypted:         e.PGPEncrypted,
 			PGPSigned:            e.PGPSigned,
@@ -697,10 +856,43 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			ChangeType:           "updated",
 		})
 	}
+	// pins now holds only out-of-window messages.
+	for uid, z := range pins {
+		var ov imapadapter.Overview
+		found := false
+		if len(overviews) >= limit {
+			if !native {
+				continue // IMAP renumbers on wake; an older pin is just old now
+			}
+			if ov, found, err = imapadapter.OverviewByID(ctx, mailClient, mailbox, uid); err != nil {
+				continue
+			}
+		}
+		if !found {
+			_ = pinStore.DropSnooze(z.MessageID) // left INBOX
+			continue
+		}
+		// Native answers full snapshots, so this is listed afresh every time.
+		bucket(ov.Keywords, inboxEmail{
+			MessageID:  imapadapter.MessageReference(mailClient, ov.MessageID),
+			Sender:     ov.Sender,
+			SentTo:     ov.SentTo,
+			CC:         ov.CC,
+			BCC:        ov.BCC,
+			Subject:    ov.Subject,
+			Status:     ov.Status,
+			AtUTC:      ov.AtUTC,
+			WokenAt:    wokenAt(z),
+			ChangeType: "new",
+		})
+	}
 
-	removed := make([]string, 0, len(result.Removed))
-	for _, e := range result.Removed {
-		removed = append(removed, imapadapter.MessageReference(mailClient, e.MessageID))
+	references := func(rs []mailcache.Removal) []string {
+		out := make([]string, 0, len(rs))
+		for _, e := range rs {
+			out = append(out, imapadapter.MessageReference(mailClient, e.MessageID))
+		}
+		return out
 	}
 
 	cursor := result.Cursor
@@ -708,7 +900,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		cursor = 0
 	}
 	tabs = append(tabs, inboxUncategorizedTab)
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"tabs":  tabs,
 		"byTab": byTab,
 		// What this response IS, not which path built it. A since=0 caller has
@@ -717,10 +909,26 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		// snapshot, and saying otherwise denied the client the one thing only a
 		// snapshot can express — which messages are NOT there any more. Pruning
 		// against it is how a client recovers a removal it never received.
-		"delta":   since > 0,
-		"cursor":  cursor,
-		"removed": removed,
-	})
+		"delta":  since > 0 && !result.Reset,
+		"cursor": cursor,
+		// removed: left the mailbox (delete it). agedOut: fell below a full
+		// window and still exists (keep it). Old clients ignore agedOut.
+		"removed": references(result.Removed),
+		"agedOut": references(result.AgedOut),
+		// hasMore: new mail may lie below this window; page it with
+		// before=nextBefore until reaching a message the client holds.
+		"hasMore": result.HasMore,
+	}
+	if result.HasMore {
+		oldest := overviews[0]
+		for _, ov := range overviews {
+			if ov.UID < oldest.UID {
+				oldest = ov
+			}
+		}
+		resp["nextBefore"] = imapadapter.MessageReference(mailClient, oldest.MessageID)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // writeMailboxError distinguishes a folder name this server refused to send
@@ -749,7 +957,10 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "imap client is not configured", http.StatusServiceUnavailable)
 		return
 	}
+	serveInboxFolders(w, r, mailClient)
+}
 
+func serveInboxFolders(w http.ResponseWriter, r *http.Request, mailClient imapadapter.Client) {
 	switch r.Method {
 	case http.MethodGet:
 		parent := strings.TrimSpace(r.URL.Query().Get("parent"))
@@ -762,7 +973,7 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 
 		writeJSON(w, http.StatusOK, map[string]any{
 			"parent":  parent,
-			"folders": toInboxFolders(folders),
+			"folders": toInboxFolders(folders, specialUseOf(r.Context(), mailClient)),
 		})
 	case http.MethodPost:
 		var req struct {
@@ -807,7 +1018,7 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "folder and name are required", http.StatusBadRequest)
 			return
 		}
-		if isBuiltinMailbox(folder) {
+		if isProtectedMailbox(r.Context(), mailClient, folder) {
 			http.Error(w, "built-in folders cannot be renamed", http.StatusBadRequest)
 			return
 		}
@@ -834,7 +1045,7 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "folder is required", http.StatusBadRequest)
 			return
 		}
-		if isBuiltinMailbox(folder) {
+		if isProtectedMailbox(r.Context(), mailClient, folder) {
 			http.Error(w, "built-in folders cannot be deleted", http.StatusBadRequest)
 			return
 		}
@@ -884,6 +1095,7 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 		Mailbox       string   `json:"mailbox"`
 		TargetMailbox string   `json:"targetMailbox"`
 		Keyword       string   `json:"keyword"`
+		WakeAt        string   `json:"wakeAt"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -895,10 +1107,22 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 	targetMailbox := strings.TrimSpace(req.TargetMailbox)
 	keyword := strings.TrimSpace(req.Keyword)
 	switch action {
-	case "delete", "archive", "spam", "read", "move", "label", "unlabel":
+	case "delete", "archive", "spam", "read", "unread", "move", "label", "unlabel", "snooze":
 	default:
 		http.Error(w, "unsupported action", http.StatusBadRequest)
 		return
+	}
+	var wakeAt int64
+	var snoozeStore *state.Store
+	if action == "snooze" {
+		if wakeAt, err = parseWakeAt(strings.TrimSpace(req.WakeAt), time.Now()); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if snoozeStore, err = s.mailStateFor(r); err != nil {
+			http.Error(w, "failed to open user state", http.StatusInternalServerError)
+			return
+		}
 	}
 	if action == "move" && targetMailbox == "" {
 		http.Error(w, "targetMailbox is required for move action", http.StatusBadRequest)
@@ -984,6 +1208,8 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 			err = mailClient.ApplyLabel(r.Context(), internalID, keyword)
 		case "unlabel":
 			err = mailClient.RemoveLabel(r.Context(), internalID, keyword)
+		case "snooze":
+			err = snoozeMessage(r.Context(), mailClient, snoozeStore, internalID, mailbox, wakeAt)
 		default:
 			err = mailClient.ApplyInboxAction(r.Context(), internalID, action, mailbox, targetMailbox)
 		}

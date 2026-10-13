@@ -122,6 +122,25 @@ services:
       APNS_RELAY_URL: ${APNS_RELAY_URL:-}
       APNS_RELAY_KEY: ${APNS_RELAY_KEY:-}
       APNS_RELAY_KEY_FILE: ${APNS_RELAY_KEY_FILE:-}
+      # Empty means "use the default" for every variable below; see .env.example.
+      PAIRING_SECRET_FILE: ${PAIRING_SECRET_FILE:-}
+      POW_SECRET: ${POW_SECRET:-}
+      POW_SECRET_FILE: ${POW_SECRET_FILE:-}
+      POW_MAX_NUMBER: ${POW_MAX_NUMBER:-}
+      MFA_CLEAR_ALL: ${MFA_CLEAR_ALL:-}
+      ALLOW_INSECURE_SMTP: ${ALLOW_INSECURE_SMTP:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SANDBOX_PRIVATE_HOSTS: ${SANDBOX_PRIVATE_HOSTS:-}
+      CLASSIFY_CONCURRENCY: ${CLASSIFY_CONCURRENCY:-}
+      CLASSIFY_PACE_MS: ${CLASSIFY_PACE_MS:-}
+      CLASSIFIER_ENGINE: ${CLASSIFIER_ENGINE:-}
+      EMBED_MIN_CONFIDENCE: ${EMBED_MIN_CONFIDENCE:-}
+      EMBED_MODEL_DIR: ${EMBED_MODEL_DIR:-}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      OLLAMA_GENERATE_PATH: ${OLLAMA_GENERATE_PATH:-}
+      KYPOST_RESTIC_BINARY: ${KYPOST_RESTIC_BINARY:-}
+      UNHEALTHY_RESTART_SECONDS: ${UNHEALTHY_RESTART_SECONDS:-}
     # Do not add a `dns:` override. Every lookup this server makes — each
     # user's IMAP and SMTP host, every WKD probe, every recipient domain —
     # would go to it, reconstructing the correspondence graph of a product

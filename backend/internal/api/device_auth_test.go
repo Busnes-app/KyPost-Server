@@ -513,7 +513,7 @@ func TestDeviceAuthKDFBusyIsBusyNotBadCredentials(t *testing.T) {
 	entry, tracked := srv.deviceLockout.entries[lockKey]
 	failures := 0
 	if tracked {
-		failures = entry.failures
+		failures = len(entry.strikes)
 	}
 	srv.deviceLockout.mu.Unlock()
 	if failures != 0 {

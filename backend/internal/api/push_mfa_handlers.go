@@ -48,8 +48,8 @@ func approverDevices(store *state.Store) ([]state.NativeDevice, error) {
 // through the relay. UnifiedPush crosses a public broker such as ntfy.sh, so it
 // qualifies only when the device supplied WebPush keys and the payload is
 // therefore encrypted under RFC 8291 (see processor.UnifiedPushSender). A
-// UnifiedPush device with no key material still receives cleartext and stays
-// excluded, while remaining fully usable for mail notifications.
+// UnifiedPush device with no key material (registered by an older build) is
+// sent nothing at all, so it stays excluded.
 //
 // This catches more than it looks like: normalizeNativeTransport maps platform
 // "linux" to the unifiedpush transport, so a Linux client that does not name a
@@ -131,7 +131,7 @@ func (s *Server) handleMFAPushEnabled(w http.ResponseWriter, r *http.Request) {
 			if len(paired) > 0 {
 				// They have devices; every one is on an excluded transport.
 				// Saying so beats "pair a device" when they already did.
-				msg = "your paired devices cannot receive sign-in approvals: UnifiedPush delivery (used by the Linux client by default) is excluded because approval requests carry sign-in details and would cross an unencrypted public broker. Pair an Android or iOS device to use push approval."
+				msg = "your paired devices cannot receive sign-in approvals: their UnifiedPush registrations have no encryption keys. Pair them again to use push approval."
 			}
 			http.Error(w, msg, http.StatusBadRequest)
 			return
@@ -212,18 +212,6 @@ func truncateContext(v string) string {
 	return v
 }
 
-// dispatchPushChallenge fans an MFA-challenge push out to every approver-eligible
-// device of userID. Best-effort and asynchronous: it runs in its own goroutine so
-// relay latency never blocks login, and dispatch failures are logged only (the
-// user can still fall back to TOTP). Delivery goes through
-// processor.SendNativePushToDevices — the same pull-mode fallback, stale-device
-// cleanup, and health recording every other native push in this app gets —
-// scoped to the approver-filtered device list rather than every paired device.
-// The data payload is the contract a future kypost-android build must recognize.
-//
-// UnifiedPush devices are excluded from MFA challenges pending end-to-end encryption
-// support; MFA metadata is sensitive and should not traverse unencrypted public
-// UnifiedPush brokers (e.g., ntfy.sh). Devices remain usable for mail notifications.
 // contentPreviewEnabled reports whether userID opted into sending message
 // metadata through the push relay. Defaults false on any read error.
 func (s *Server) contentPreviewEnabled(userID string) bool {
@@ -234,6 +222,12 @@ func (s *Server) contentPreviewEnabled(userID string) bool {
 	return settings.Notifications.ContentPreview
 }
 
+// dispatchPushChallenge fans an MFA-challenge push out to every
+// mfaApproverDevices device of userID. Best-effort and asynchronous so relay
+// latency never blocks login; failures are logged and the user falls back to
+// TOTP. UnifiedPush devices receive it only RFC 8291-encrypted: eligibility
+// requires their WebPush keys, and UnifiedPushSender refuses any send it
+// cannot encrypt.
 func (s *Server) dispatchPushChallenge(userID, challengeID string, ctx loginContext, issuedAt time.Time, matchDigits string, decoyDigits []string) {
 	store, err := s.userStore(userID)
 	if err != nil {
@@ -261,7 +255,7 @@ func (s *Server) dispatchPushChallenge(userID, challengeID string, ctx loginCont
 			"user_id", userID,
 			"challenge_id", challengeID,
 			"paired_approver_devices", strconv.Itoa(len(paired)),
-			"reason", "all paired devices are on transports excluded from MFA challenges (UnifiedPush)")
+			"reason", "every paired device is UnifiedPush without WebPush encryption keys")
 		return
 	}
 

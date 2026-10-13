@@ -37,6 +37,7 @@ Audited production callers of every `imap.Client` operation (excluding tests and
 | `ListUnreadInbox` | `processor/poller.go` classification/checkpoint path |
 | `ListUnreadMessages` | `api/server_inbox.go` cold/classic inbox |
 | `ListOverviews` | `api/server_inbox.go` cursor/cache path; `api/rules_handlers.go` rule preview |
+| `ListOverviewsBefore` | `api/server_inbox.go` `before=` older-mail paging |
 | `SearchMessages` | `api/server_inbox.go` search; `processor/sendas_check.go` alias proof lookup |
 | `GetMessageBodies` | `api/server_inbox.go`, `api/mail_body.go`, `api/pgp_client_read.go`, `api/rules_handlers.go` |
 | `ListLabels` | `api/server_settings.go` |

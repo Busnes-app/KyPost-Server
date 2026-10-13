@@ -9,6 +9,7 @@ name = "kypost-receiving-pilot"
 # its own key and bearer: never share them with another Worker.
 main = "worker.mjs"
 compatibility_date = "2026-09-18"
+# Required: KyPost pickup accepts only https://*.workers.dev origins, not custom routes.
 workers_dev = true
 
 [[r2_buckets]]

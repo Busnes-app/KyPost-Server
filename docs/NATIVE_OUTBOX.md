@@ -48,6 +48,13 @@ release every authority lock before contacting SMTP. A committed claim may finis
 after later revocation; its real outcome and historical Sent obligation remain
 owed to its frozen owner, even when that user becomes inactive.
 
+Scheduled sends (`sendAt`) are not queued until due: a waiting outbox job would
+block restore qualification, pin its domain and be quarantined by any relay or
+directory change. When due, the API sweeper calls `Queue` with the job ID of
+the scheduled row and the authority frozen at schedule time; `Queue` refuses
+a frozen From generation or PGP fingerprint that no longer matches, and binds
+the then-current relay generation. Its existing workers deliver it.
+
 Successful HTTP send responses keep `ok:true` meaning confirmed primary SMTP
 acceptance, with existing `sentSaved`/`warning` and additive `outboxId`. Merely
 queued, refused or uncertain primary attempts return 503 with `ok:false` and an

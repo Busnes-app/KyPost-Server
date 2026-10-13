@@ -8,102 +8,17 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 
 ## Features
 
-- Repeatable installer setup: runtime-owned `apply-setup --file [--check]` and capability discovery preserves existing SSO/webhook/domain/recovery configuration and returns a secret-free JSON report. Target-held credential file references avoid installer secret copies. `setup-status` lists configuration blockers and external acceptance checks. See [clean installation](docs/INSTALLER_SETUP.md).
+- IMAP web client: inbox reader, folders, compose with SMTP send, scheduled send and draft save, filter rules (GUI and Sieve).
+- Automatic keyword labels from an on-device embedding sorter backed by a local Ollama model; each account keeps its own labels. Labels are a hint, not a security boundary — see [Architecture](#architecture).
+- PGP encryption and signing, recipient key discovery, Web Key Directory publishing and opt-in incoming encryption. Read [Where your PGP private key lives](#where-your-pgp-private-key-lives) before relying on it.
+- Contacts with CardDAV server and client, groups, and CSV/vCard import and export.
+- Multi-user with admin and user roles; TOTP, recovery codes and push-approval MFA; OpenID Connect single sign-on; self-hosted proof-of-work login CAPTCHA by default.
+- Browser push, and native push for the mobile apps through the [push relays](#push-relays-cloudflare-workers).
+- Opt-in native mailboxes: KyIdentity provisioning across several domains, quotas, receiving through Cloudflare Email Routing or an operator-supplied receiver (both still in qualification), operator-owned relay sending, sender blocks, quarantine, and mail import and export.
+- Sealed configuration and state backups to KyRecovery or a local directory, with restic for mail databases.
+- Single Docker container managed by supervisord, with shared JSON logs.
 
-- Guided dedicated-domain qualification: `bash scripts/setup-mail.sh <public-KyPost-origin>` walks through native deployment, KyIdentity/DNS proof, operator relay, protected engine/TLS inputs, backups and receiving launch. It requires Docker-operator authority and explicit configuration/start confirmations; live delivery remains an operator check. See [guided setup](docs/RECEIVING_SETUP.md#guided-operator-setup).
-
-- Optional local Rspamd sidecar rejects messages meeting the configured spam threshold before native SMTP acceptance. False positives can reject legitimate mail; scanner outages defer new mail, and enabling it gives the scanner message access. Accepted mail remains unchanged. See [spam setup](docs/RECEIVING_SETUP.md#optional-rspamd-sidecar).
-- Continuous Cloudflare receiving (offline-qualified, not yet qualified live): with `KYPOST_CLOUDFLARE_RECEIVING_ORIGIN` set, the daemon publishes a signed routing table of every admitted address to the operator's Email Worker and picks mail up from its private R2 queue over outbound HTTPS every 30 seconds. Each message is checked against the owner and address generation frozen when Cloudflare accepted it, scanned by the local Rspamd sidecar (a reject verdict files it to Junk, since accepted mail cannot bounce) and committed to the mailbox before the provider copy is deleted. A restored copy starts fenced; `kypost-server receiving cloudflare takeover` moves receiving to it and locks the previous host out. See [continuous receiving](docs/CLOUDFLARE_CONTINUOUS_RECEIVING.md) and [operator commands](docs/RECEIVING_SETUP.md#continuous-cloudflare-profile).
-- One-message Cloudflare receiving pilot: an operator-owned Email Worker retains exact mail in a private R2 slot for manual authenticated HTTPS pickup into a native mailbox. Local scanning follows provider capture; refusal retains the provider copy. This finite-window test is not continuous reception. See [setup, trust and rollback](docs/CLOUDFLARE_RECEIVING.md).
-- Controlled direct receiving profile generation from verified domain and existing native storage; mandatory STARTTLS refuses plaintext senders. An optional Compose profile supervises the operator-supplied pinned receiver, which shares the instance’s mail-storage authority; public deployment remains gated. See [receiver setup](docs/RECEIVING_SETUP.md).
-
-- Opt-in native primary-address sending through the operator-owned relay: ordinary compose and client PGP record encrypted outbox intent before SMTP; recovery retains interrupted claims, retries definite temporary refusals and files Sent independently. Failed relay attempts log a bounded SMTP code and outbox correlation ID without provider text or correspondence. Included in sealed backups; see [outbox contract](docs/NATIVE_OUTBOX.md).
-
-- Admin → Server → Mail domain lists every configured mail domain (add, verify, retire, re-add; per-domain TXT proof and status), chooses the relay's sending domains and guides DNS proof, encrypted operator-owned relay configuration and a no-mail TLS/authentication check, protected by account confirmation and fresh DNS proof. KyPost holds the domain-wide relay credential on the server. Primary-address sending requires explicit native mode and fresh sender admission; saving credentials does not prove delivery or public receiving readiness; see [setup and controlled tests](docs/DOMAIN_RELAY.md).
-
-- Admin → Server → Mail addresses lists native mailboxes and their addresses (kind, state, generation; filter by user), adds aliases to an everyday identity's mailbox, releases them (kept reserved; delivery and sending stop at once, existing mail stays) and reassigns reserved ones to a chosen mailbox, and creates, disables and re-enables additional mailboxes for an everyday identity, each with account or KySignOn confirmation. Primary mailboxes and addresses come from KyIdentity and offer no actions; see [addresses](docs/NATIVE_PROVISIONING.md#addresses-aliases-and-generations).
-- Administrators block abusive senders by address or domain (Admin → Server → Sender blocks, `receiving blocks` CLI or admin API); both receiving profiles refuse them before storing anything. With the Rspamd sidecar, Maddy also blocks a sender automatically after 5 spam rejections in an hour, but only when SPF and aligned DKIM prove the sender address (1 hour, then 24 hours, then 7 days), and a whole domain only after 5 such addresses on a domain you never received authenticated mail from (after 30 days of collecting that history). Automatic blocks use at most half the list and always give way to administrator blocks. The Sender blocks tab shows every block in force (automatic domain blocks called out in words, since one can cover a whole provider) and the automatic-evidence status: damaged or reset evidence, when automatic domain blocks start, and when automatic blocking or the protected-domain record is full. Removing any block suppresses automatic re-blocking of that exact address or domain for 30 days. See [sender blocks](docs/NATIVE_PROVISIONING.md#sender-blocks).
-- Admin → Server → Quarantine lists quarantined native deliveries by envelope only (received time, sender, recipients with their frozen mailbox and user, size, gateway/ID; never body or subject), shown as plain text with hidden characters made visible, and releases each to its original mailboxes or discards it permanently, with account or KySignOn confirmation; see [quarantine release](docs/NATIVE_PROVISIONING.md#quarantine-release).
-
-- Per-user opt-in incoming encryption under Security → Encryption: classify unread, unprocessed inbox mail, then replace it with a verified public-key-encrypted copy. Requires a client-protected key, saved-key-backup acknowledgment and fresh account confirmation. The provider sees plaintext before processing; losing the private key makes replaced mail unreadable. Unreplaceable messages remain plaintext with explicit failure decisions; [read the replacement and recovery contract](docs/E2E_PGP.md#incoming-mail-encryption-opt-in).
-
-- Sealed configuration/state backups to KyRecovery or a local directory, with admin scheduling and restore drills. Internal native mailbox/receiving databases use SQLite snapshots including committed WAL rows; historical ownership is checked, restored queued/retryable outgoing mail is quarantined against replay, native device/browser push registrations and pairing tokens are revoked (fresh pairing/enrollment required), offline restore raises native ID-token revocation cutoffs beyond the accepted 30-second future skew, and native restores remain held with no release path yet. Held native accounts cannot sign in or exercise existing session/admin authority; retain a separate legacy recovery administrator. Offline restore also rotates a separate reference generation without changing encryption namespaces; native reads/actions reject stale-generation or bare numeric references before access. Protected admin APIs can record fresh signed KyIdentity evidence and revision barriers for unpublished reservations; published accounts retain ordinary offboarding and demotion. A separate protected repair API reconciles published native activity/roles and revokes stale transport credentials while preserving mail, labels, passwords, PGP material and the restore hold. Hold release remains pending. Custodian shares are used only by the offline restore command; see [sealed backup and restore](docs/RESTORE.md). With `KYPOST_BULK_BACKUP_REPOSITORY` set, mailbox and receiving databases go to an encrypted restic repository instead of the capsule, which seals the snapshot ID and every file digest, so mailboxes are no longer limited to 64 MiB; native mail with real quotas (5 GiB per mailbox by default) needs it, since a capsule-only backup fails once a mailbox passes 64 MiB, with an error naming the variable. Prefer an append-only rest-server: a local repository is writable by KyPost, unlike deposit-only KyRecovery; see [mail bulk backup](docs/RESTORE.md#mail-bulk-backup).
-- Self-service mail import under Security → Import Mail: an mbox file, one EML or a zip of EML files into a native mailbox folder, after account or KySignOn confirmation, as a background job with progress and cancel. Messages are stored as parsed from the file and marked read; duplicates are skipped; imported mail is not scanned for spam or run through rules, even if later marked unread. A job handles at most 20,000 messages and an upload at most 20 minutes. Refused while incoming encryption is on, since imported mail would be stored unencrypted. Or import from another mail account over IMAP: the server signs in with a password or app password used only for that import and never stored, lists the folders to choose from, and copies them read-only, keeping each message's read and flagged state and received date; it connects only to public servers over verified TLS.
-- Users with additional native mailboxes switch between them in the webmail sidebar and read, search, file and send from each; compose offers the open mailbox's addresses as From. The choice lasts for the browser tab.
-- Self-service mail export under Security → Export Mail: a native mailbox, or one folder, as an mbox file or a zip of EML files holding the exact stored bytes, after account or KySignOn confirmation. Encrypted messages stay encrypted; flags and labels are not included.
-- Shared JSON application logs on stderr, controlled by `KY_LOG_LEVEL`; see [logging](LOGGING.md).
-
-- Single-container Docker runtime. supervisord manages the processes.
-- Multi-user with two roles. Admins manage users and system settings. Each user connects their own IMAP mailbox. Signed KySignOn directory events retain desired account data; admins can configure and verify mail-specific DNS domain claims for several domains under one issuer (each with its own proof, retirable once unused), and a primary address may sit on any of them. Internal allocation prepares reserved native mailboxes before exposing new accounts; administrator identities get mailbox-less accounts. Native state access refuses held or unqualified storage before cache returns and uses an existing-only state opener. `KYPOST_NATIVE_MAIL=true` opts into new domain-account provisioning, native mailbox access and primary-address relay sending in API/daemon; separate `KYPOST_NATIVE_RECEIVING=true` enables local receiving commands and daemon import for controlled qualification. Every native mailbox has a storage quota (`KYPOST_MAILBOX_QUOTA_BYTES`, default 5 GiB), a 25 MiB message limit and 1,000,000 records; `migrate-native` applies a changed quota to existing mailboxes at the next start, and a lowered one never locks a mailbox, it only refuses new mail. Users see their usage under Settings → Mail → Storage, with warnings at 80% and 95%; Server → Mail addresses shows each mailbox's usage and warns when the quotas could outgrow the drive. Receiving answers a full mailbox and a nearly full drive (the reserve: 10% of the state filesystem or 5 GiB, whichever is larger) with temporary 452 replies so senders retry, and imports stop at the same reserve; see [mailbox quotas](docs/NATIVE_PROVISIONING.md#mailbox-quotas). Bundled public receiving remains unavailable; see [the provisioning contract](docs/NATIVE_PROVISIONING.md).
-- IMAP inbox reader with background body preloading, folder management, and drag-and-drop move actions
-- Verification-code card: a code in INBOX mail under 15 minutes old is shown with a Copy button and a never-share warning. It makes no claim about the sender and makes no network request; phishing-flagged mail gets no card
-- Automatic keyword labels for unread mail. KyPost polls each active user's mailbox separately, and each account has its OWN label list — copied from the instance defaults when the account is created, then theirs to change. Labels are a sorting hint a determined sender can influence — see [Classification flow](#architecture).
-- On-device embedding sorter in front of the LLM: a ~30 MB embedding model baked into the image labels mail in well under a millisecond and sends only what it is unsure of to Ollama. It learns per account from you — change a message's label in the reader (or in another IMAP client; noticed when the KyPost inbox syncs) and similar mail follows; give a new label an optional description and it is recognised straight away. It stores vectors, never message text, and never trains on the LLM's own answers. `CLASSIFIER_ENGINE=llm` turns it off.
-- Pre-sort before the model: mail from a contact you added is labelled `Primary` without an LLM call, and mail with mailing-list or automated headers (`List-Id`, `List-Unsubscribe`, `Precedence: bulk/list/junk`, `Auto-Submitted`) can never be labelled `Primary`. Same input, same answer; edit your contacts or add a rule to change it.
-- Filter Rules: a GUI condition and action builder plus a raw Sieve script editor. A run-now panel applies the rules on demand. Rules can test any header, so a provider's spam verdict (for example `X-Spam-Flag: YES`) can move mail to Junk.
-- Compose flow with SMTP send and IMAP draft save
-- PGP mail encryption and signing. Signing defaults on with an unlocked browser key; compose labels unsigned mail, and the reader distinguishes encrypted but unsigned mail from a verified signature. Generate or import a key, search for recipient keys on keys.openpgp.org, and check recipient key status before you send. KyPost has two key-protection modes. Read [Where your PGP private key lives](#where-your-pgp-private-key-lives) before you rely on this.
-- Contacts address book with groups, dedupe, bulk delete, CSV and vCard import and export, and photo support
-- CardDAV server (`/dav`, `/.well-known/carddav`) to sync contacts to phones and desktop apps. An optional CardDAV client syncs against an external address book. Native restore revokes historical CardDAV app passwords and blocks CardDAV while recovery is held.
-- Browser PGP writes reject stale snapshots, including same-key edits concurrent with password changes or recovery uploads. Existing complete keyrings support atomic password changes that preserve all history and recovery material.
-- PGP recovery copies stored as ciphertext, downloadable backups checked before creation completes, and browser-local recovery drills. Complete-ring export, drills and matching-backup restore preserve historical keys; restoration confirms the stored result before unlocking. Verified complete-ring server copies require saved-secret acknowledgement and confirm the stored result. Conversion and older-backup merging remain gated.
-- Multi-factor authentication: TOTP authenticator apps, one-time recovery codes, and push-approval sign-in
-- Single Sign-On against any standard OpenID Connect provider — KySignOn (one-click preset; the `kypost.admin` app role is the only thing that makes an administrator, and an SSO session never holds admin without it), Authentik and Keycloak have their admin-group claims mapped. Authorization code + PKCE, ID tokens verified against the issuer's JWKS. Issuance timestamps must be positive and within 30 seconds of future server-clock skew; keep issuer/server clocks synchronized. Accounts are claimed by the provider's `sub` and never by username or email. Admin-configured under Admin > Server > SSO; **requires `SERVER_BASE_URL`**.
-- Send-as aliases, each verified before use: a code is mailed as the alias to the alias through your own outgoing server. Typing it back unlocks the From address; the same message looping back DKIM-signed by the alias's domain is the proof that also publishes your key for it over WKD
-- Web Key Directory publishing: serve your users' public keys at `/.well-known/openpgpkey/` for verified domains, so correspondents discover them without a keyserver
-- CAPTCHA on login, **self-hosted proof-of-work by default** (also Turnstile or Friendly Captcha; `CAPTCHA_PROVIDER=none` turns it off). It works alongside a 3-strikes/15-minute account lockout, a looser per-IP lockout, and an instance-wide login rate limit. Note that proof-of-work needs a secure context in the browser — read the CAPTCHA notes in `.env.example` if you serve over plain HTTP on a LAN.
-- Browser push notifications for each user, for all mail or for keyword matches only. KyPost also supports native push pairing for mobile apps. Encrypted-mail setup checks the device’s supported envelope formats before sealing.
-- Settings grouped into panels: Appearance, Mail (IMAP/SMTP, send-as, contact sync, filters, mail import and export), Security, Notifications and Status — plus Email Labels for each user's own prompt tuning and classification decisions — and an Admin group for server runtime and diagnostics
-- Busnes light/dark defaults follow the OS, with seventeen theme presets and a saved browser-local choice
-
-## Architecture
-
-The container runs these processes:
-
-- API server: `kypost-server --mode server`
-- Polling daemon: `kypost-server --mode daemon`
-- Ollama service: `ollama serve`
-- One-shot startup pull: `ollama pull <configured model>`
-
-Classification flow:
-
-1. Fetch unread messages from IMAP (`INBOX` by default), plus their list/automation headers and any header a filter rule tests.
-2. Run filter rules.
-3. Pre-sort: a contact's mail gets `Primary` and skips steps 5-8 (and the rate limit); list or automated mail has `Primary` removed from the labels the model may choose. Only accounts whose label set includes `Primary` are affected.
-4. Redact sensitive patterns, then embed the redacted sender, subject and body with the on-device sorter. If it is at least `EMBED_MIN_CONFIDENCE` sure, apply its label and skip steps 5-7 (and the rate limit).
-5. Build the prompt from sender, subject, body, and tuning context.
-6. Call Ollama `/api/generate`.
-7. Match the output against the allowed labels.
-8. Apply the IMAP keywords, and remember what was applied (as a vector and a hash) so a later relabel by the user can be learned.
-9. Save the checkpoint and the decision history.
-
-> **Labels are a hint, not a security boundary.** The classifier reads
-> attacker-supplied text, so a sender can write instructions into their message
-> and influence which keyword it gets. No small local model resists this
-> reliably. Running `backend/cmd/modeleval` against the injection bucket of its
-> corpus puts the shipped default at roughly 50–87% resistance depending on
-> prompt config, and every model measured let some through. Treat it as a known
-> property of the feature rather than a bug with a fix pending.
->
-> The embedding sorter follows no instructions, so "file this under Primary"
-> is just more words to it (it resisted all 8 of the corpus's injection probes),
-> but a sender still chooses the words it reads and can make a message look
-> like whatever label they prefer. Its training data is only your own relabels,
-> never the LLM's answers or anything a sender controls on its own.
->
-> What that buys an attacker is small and bounded: they can steer the label on
-> **their own message** — typically into `Primary` instead of `Promotions`. The
-> keyword allowlist is enforced in Go after the model answers (step 7), so
-> output that is not an allowed label is discarded; a message cannot be labelled
-> as something you never configured, cannot be moved, deleted, or marked read,
-> and cannot affect any other message. The worst case is a promotional email
-> that sorts itself into your main tab — the same thing a sender achieves by
-> writing a more convincing subject line.
->
-> Do not build a security control on top of these keywords: no filter rule that
-> grants trust based on a label, and no "auto-archive anything labelled X."
-> Every decision is recorded, so you can audit what the model actually did on
-> the Decisions page.
+The full list, with the trade-offs each feature carries, is in [docs/FEATURES.md](docs/FEATURES.md).
 
 ## Requirements
 
@@ -241,6 +156,55 @@ Optional for local development (outside Docker):
    account can reach only the password-change screen.
 7. In Config, save the IMAP and SMTP settings. Then run IMAP Test.
 8. In Tuning, change the labels and the prompt. Then save.
+
+## Architecture
+
+The container runs these processes:
+
+- API server: `kypost-server --mode server`
+- Polling daemon: `kypost-server --mode daemon`
+- Ollama service: `ollama serve`
+- One-shot startup pull: `ollama pull <configured model>`
+
+Classification flow:
+
+1. Fetch unread messages from IMAP (`INBOX` by default), plus their list/automation headers and any header a filter rule tests.
+2. Run filter rules.
+3. Pre-sort: a contact's mail gets `Primary` and skips steps 5-8 (and the rate limit); list or automated mail has `Primary` removed from the labels the model may choose. Only accounts whose label set includes `Primary` are affected.
+4. Redact sensitive patterns, then embed the redacted sender, subject and body with the on-device sorter. If it is at least `EMBED_MIN_CONFIDENCE` sure, apply its label and skip steps 5-7 (and the rate limit).
+5. Build the prompt from sender, subject, body, and tuning context.
+6. Call Ollama `/api/generate`.
+7. Match the output against the allowed labels.
+8. Apply the IMAP keywords, and remember what was applied (as a vector and a hash) so a later relabel by the user can be learned.
+9. Save the checkpoint and the decision history.
+
+> **Labels are a hint, not a security boundary.** The classifier reads
+> attacker-supplied text, so a sender can write instructions into their message
+> and influence which keyword it gets. No small local model resists this
+> reliably. Running `backend/cmd/modeleval` against the injection bucket of its
+> corpus puts the shipped default at roughly 50–87% resistance depending on
+> prompt config, and every model measured let some through. Treat it as a known
+> property of the feature rather than a bug with a fix pending.
+>
+> The embedding sorter follows no instructions, so "file this under Primary"
+> is just more words to it (it resisted all 8 of the corpus's injection probes),
+> but a sender still chooses the words it reads and can make a message look
+> like whatever label they prefer. Its training data is only your own relabels,
+> never the LLM's answers or anything a sender controls on its own.
+>
+> What that buys an attacker is small and bounded: they can steer the label on
+> **their own message** — typically into `Primary` instead of `Promotions`. The
+> keyword allowlist is enforced in Go after the model answers (step 7), so
+> output that is not an allowed label is discarded; a message cannot be labelled
+> as something you never configured, cannot be moved, deleted, or marked read,
+> and cannot affect any other message. The worst case is a promotional email
+> that sorts itself into your main tab — the same thing a sender achieves by
+> writing a more convincing subject line.
+>
+> Do not build a security control on top of these keywords: no filter rule that
+> grants trust based on a label, and no "auto-archive anything labelled X."
+> Every decision is recorded, so you can audit what the model actually did on
+> the Decisions page.
 
 ## Where your PGP private key lives
 
@@ -401,91 +365,7 @@ Mail-domain setup adds no environment variables. Its public challenge and issuer
 
 ## Environment Variables
 
-- `KY_LOG_LEVEL`: `info` by default (`debug`, `warn`, `error` supported).
-- `KYPOST_BACKUP_DEPOSIT_INTERVAL`: `24h`; `0` disables, otherwise 15 minutes–366 days.
-- `KYPOST_BACKUP_DIR`: empty disables local copies; `/kypost/state/backups` or outside the data roots.
-- `KYPOST_BACKUP_KEEP`: `7` local copies.
-- `KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY`: `false`; explicit private-network opt-in.
-- `KYPOST_BULK_BACKUP_REPOSITORY`: empty keeps mail databases in the capsule; `rest:https://…` (an append-only rest-server, recommended) or an absolute path outside the data roots and backup directory sends them to a restic repository. A local repository is writable by KyPost, so a compromised container could delete its snapshots.
-- `KYPOST_RESTIC_BINARY`: `restic`; the restic executable (0.16.0 or newer).
-- `KYPOST_BACKUP_SCRATCH_DIR`: empty uses `STATE_DIR/backup-scratch`; an absolute path outside the data roots for backup scratch when STATE_DIR lacks space for a copy of the mail plus a 10%/5 GiB reserve.
-
-Common variables:
-
-- The host-side setup wizard accepts `ENV_FILE` (default repository `.env`) for an owned regular mode-`0600` file. It saves public setup inputs only; provider/account credentials stay in the protected admin UI. This is a wizard input, not a backend setting.
-
-- `KYPOST_NATIVE_MAIL` (default `false`): opt-in KyIdentity native provisioning and local mailbox API/polling. Requires domain proof; preserves existing IMAP accounts. Direct receiving qualification additionally requires `KYPOST_NATIVE_RECEIVING=true`; compose/client-PGP sending from the primary or an administrator-assigned alias requires the configured operator relay; pickup/system sending remains pending. See [native runtime setup and rollback](docs/NATIVE_PROVISIONING.md#opt-in-native-runtime).
-- `KYPOST_MAILBOX_QUOTA_BYTES` (default 5 GiB, `5368709120`): every native mailbox's storage quota in bytes, 256 MiB to 1 TiB; other values refuse startup when `KYPOST_NATIVE_MAIL=true` (IMAP-only deployments ignore it). Applied to existing mailboxes by `migrate-native` at the next start; lowering it below a mailbox's usage refuses only that mailbox's new mail. Pair a real quota with `KYPOST_BULK_BACKUP_REPOSITORY`. See [mailbox quotas](docs/NATIVE_PROVISIONING.md#mailbox-quotas).
-- `KYPOST_NATIVE_RECEIVING` (default `false`): controlled receiving commands and daemon import; requires native mail, domain proof, prepared users and explicit spool initialization. `receiving config` generates a bounded TLS-only receiver profile; STARTTLS-only reception refuses plaintext senders. `receiving cloudflare route|pickup` supports the separate [one-message hosted pilot](docs/CLOUDFLARE_RECEIVING.md). `receiving quarantine list|release|release-to-current-owner|discard` lists quarantined deliveries (envelope only) and releases one to its frozen mailbox (or, if unresolved, to its address's current owner) or discards it, with the delivery ID repeated after `--confirm`; run it as the state owner (`docker compose exec --user kypost kypost-server kypost-server receiving quarantine list`). Mail waiting for a disabled mailbox or an offboarded or promoted owner is quarantined rather than retried forever ([quarantine release](docs/NATIVE_PROVISIONING.md#quarantine-release)). `receiving blocks list|add|remove` manages manual sender blocks (address or exact domain, optional `--until`, the value repeated after `--confirm`), enforced by both receiving profiles before storage ([sender blocks](docs/NATIVE_PROVISIONING.md#sender-blocks)). No bundled receiver starts. Read [controlled setup and gates](docs/RECEIVING_SETUP.md).
-- `KYPOST_RECEIVING_RSPAMD` (default `false`): strict opt-in local spam scanning before new native SMTP acceptance; scanner failure returns a temporary refusal. The Rspamd overlay enables it and Cloudflare pickup requires it; the hosted path uses content/DKIM checks without unavailable peer authentication and retains provider copies on refusal. Existing accepted obligations remain recoverable without rescanning.
-- `KYPOST_CLOUDFLARE_RECEIVING_ORIGIN` (default empty, off): the continuous Cloudflare profile's Worker origin, `https://<worker>.<account>.workers.dev`. Requires `KYPOST_NATIVE_RECEIVING=true` and `KYPOST_RECEIVING_RSPAMD=true`, and refuses startup beside the bundled receiver (`KYPOST_NATIVE_RECEIVER=true`). `receiving cloudflare init` creates the credentials and prints the two Worker secrets; `receiving cloudflare rotate`, `takeover --confirm move-receiving-here` and `status` manage them. See [continuous Cloudflare profile](docs/RECEIVING_SETUP.md#continuous-cloudflare-profile).
-- `KYPOST_NATIVE_RESTORE_RELEASE` (default `false`): enables `POST /api/admin/native-recovery/release`, which releases a qualified, repaired native restore hold; other values refuse startup. Off, the route answers 404. Enable it only for a deliberate release until the pending qualifications are done ([releasing the hold](docs/RESTORE.md#releasing-the-hold)).
-- `KYPOST_NATIVE_RECEIVER` (image default `false`): optional Supervisor receiver startup; requires both native flags above, prepared storage, current proof and operator-owned engine/TLS files. The receiving overlay enables it explicitly.
-- Receiver launcher inputs: `KYPOST_RECEIVER_BINARY` (default `/opt/kypost/receiving/maddy`), `KYPOST_RECEIVING_LISTEN` (`0.0.0.0:2525`), required `KYPOST_RECEIVING_HOSTNAME`, `KYPOST_RECEIVING_CERT` (`/opt/kypost/receiving/tls/fullchain.pem`) and `KYPOST_RECEIVING_KEY` (`/opt/kypost/receiving/tls/privkey.pem`). Compose overlay inputs `KYPOST_MADDY_BINARY`, `KYPOST_RECEIVING_TLS_DIR`, `KYPOST_SMTP_BIND` and `KYPOST_SMTP_PORT` are required with no defaults. Follow [setup order and rollback](docs/RECEIVING_SETUP.md#optional-supervised-container-profile).
-- `WEB_PORT` (default `5866`)
-- `TZ` (default `America/New_York`)
-- `SECRET_DIR` (default `/kypost/private`. Every `*_KEY_FILE` / `*_SECRET_FILE` default below is derived from this, so moving it moves all of them together.)
-- Domain relay configuration uses `$CONFIG_DIR/native-relay.json` and `$SECRET_DIR/native-relay.key`, with no individual path overrides or environment credentials. Its retained key also derives owner/job-bound outbox encryption keys. Configure through the protected admin API; primary native compose/client-PGP sending uses fresh authority and the durable outbox.
-- `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
-- `OLLAMA_MODEL` (default `nemotron-3-nano:4b`; see the model note below)
-- `CLASSIFIER_ENGINE` (default `hybrid`: the embedding sorter answers when sure, the LLM otherwise; `llm` sends everything to the LLM. Any other value refuses to start.)
-- `EMBED_MIN_CONFIDENCE` (default `0.6`; how sure the embedding sorter must be, 0–1, to label without the LLM)
-- `EMBED_MODEL_DIR` (default `/opt/kypost/models/potion-base-8M`, installed by the Dockerfile. A missing or unreadable model is logged as an error and the daemon runs LLM-only.)
-- `TUNING_FILE` (default `/kypost/config/TUNING.md`)
-- `OLLAMA_MODELS_HOST_DIR` (default `./share/ollama/models`)
-- `IMAP_CONFIG_FILE` (default `$SECRET_DIR/imap-config.json`)
-- `IMAP_CONFIG_KEY_FILE` (default `$SECRET_DIR/imap-config.key`)
-- `TOTP_SECRET_KEY_FILE` (default `$SECRET_DIR/totp-secret.key`)
-- `SERVER_BASE_URL` (**required for mobile pairing, desktop pairing and Single Sign-On**; recommended always. KyPost embeds this public URL as `srv` in the QR code and uses it to build `reg`, and it is the OIDC `redirect_uri`. Every one of those URLs is where a credential gets sent, so it is never derived from the request's `Host` header — leave it unset and those three features refuse with an error naming it. Pickup links and PGP QR key-exchange URLs fall back to `http://localhost:5866`, which works only on the server itself.)
-- `PAIRING_SECRET` (optional. HMAC secret for pickup links, PGP QR key exchange and mobile pairing tokens. Generated automatically on first start and persisted at `PAIRING_SECRET_FILE` — set it only if several replicas must share one secret, and use `openssl rand -base64 32` if you do. A value shorter than 32 bytes is refused and those three features stay disabled, with the reason logged. Bytes, not characters, because the value is used as the HMAC key verbatim; for the ASCII `openssl rand -base64 32` produces they are the same number.)
-- `PAIRING_SECRET_FILE` (default `$SECRET_DIR/pairing.key`)
-- `REVIEW_PAIRING_USERNAME` (optional, default empty. Enables password-based fast pairing for a disposable Google Play review account at `POST /api/notifications/review-pairing`. A trailing `*`, such as `your-demo-username*`, admits usernames with that prefix; bare `*` is refused. Leave unset on normal servers; MFA and forced-password-change accounts are refused.)
-- `PUSH_RELAY_URL` (optional. Base URL of the central push relay Worker that delivers Android native push to FCM. Must be `https://` — the relay key travels on every request — except for loopback.)
-- `PUSH_RELAY_KEY` (optional override. Setting `PUSH_RELAY_URL` alone is enough: the server self-registers with the relay on first start and persists the key it is issued at `$SECRET_DIR/push_relay_key`. Set this only to pin a key the operator issued you, or when several servers share one public IP — the relay keeps one active key per address, so the newest registration displaces the previous one.)
-- `APNS_RELAY_URL` (optional. Base URL of the central APNs relay Worker that delivers iOS native push. Must be `https://` — the relay key travels on every request — except for loopback.)
-- `APNS_RELAY_KEY` (optional override, exactly as `PUSH_RELAY_KEY` above, persisted at `$SECRET_DIR/apns_relay_key`.)
-- `ALLOW_INSECURE_SMTP` (optional, default off. KyPost **requires** STARTTLS on SMTP submission and refuses to send if the server does not offer it. Opportunistic STARTTLS is not enough: the capability is advertised by the server, so an on-path attacker strips it from the EHLO response and the session continues in cleartext with the full message and the password. Set this to `true` only for a genuinely plaintext relay on a trusted LAN. There is deliberately no per-request or per-account way to set it — a downgrade has to be a deployment decision, not something a caller or a remote server can trigger.)
-- `CAPTCHA_PROVIDER` (optional. Set `pow`, `turnstile`, or `friendly` to require a CAPTCHA solution on login. It works together with the built-in lockout of 3 strikes and 15 minutes.)
-  - `pow` is self-hosted proof-of-work: the only provider that makes no third-party network call and adds no third-party origin to the CSP. It requires no account with anyone and no keys to obtain — the signing key is generated on first use at `POW_SECRET_FILE`. **It requires HTTPS**: the browser half uses `crypto.subtle`, which browsers expose only in a secure context, so on a plain-`http://` deployment (anything but `localhost`) the check cannot run and nobody can sign in — put TLS in front of the server, as the note in Quick start says to anyway, or pick another provider. Its difficulty adapts per client IP: an honest first login solves the cheap base challenge in a blink, and each recent failed login from the same address multiplies the next challenge's difficulty, up to a ceiling, decaying after 15 minutes or on a successful login. Each challenge is bound to the address that requested it — the address is signed into the challenge and re-checked when the solution arrives — so the escalation cannot be sidestepped by fetching cheap challenges from a clean address and spending them from an escalated one. (If your own address changes mid-check, say a phone moving from wifi to cellular, the sign-in page tells you to try again and costs you no lockout strike.) Escalation is still counted per address, so an attacker spraying from many addresses gets the base difficulty at each: it prices repetition, not a distributed attacker. An attacker running native code is also one to two orders of magnitude faster than a browser, so this deters casual scripted spraying, not a determined campaign. It does **not** replace the three-strikes lockout, which remains the real brute-force defence. Multi-replica deployments must set `POW_SECRET` so every replica agrees on one signing key — generate it with `openssl rand -base64 32`; anything shorter than 16 characters is refused and the login CAPTCHA then rejects every attempt.
-  - `turnstile` and `friendly` verify a token against a third-party siteverify endpoint and need a site key + secret key.
-- `CAPTCHA_SITE_KEY` and `CAPTCHA_SECRET_KEY` (required together with `CAPTCHA_PROVIDER=turnstile` or `friendly`; not used by `pow`. The site key is public. The server verifies solutions with the secret key.)
-- `POW_MAX_NUMBER`, `POW_SECRET_FILE`, `POW_SECRET` (optional, `CAPTCHA_PROVIDER=pow` only — see `.env.example` for tuning notes)
-
-Less common variables:
-
-- `SMTP_HOST`, `SMTP_PORT` (instance-wide fallbacks used only when an account's
-  own IMAP config names no SMTP host or port. Resolution order is: the account's
-  saved SMTP settings, then these, then the IMAP host with a leading `imap.` (or
-  an embedded `.imap.`) rewritten to `smtp.` — and the IMAP host unchanged if it
-  matches neither. The port falls back to `587`.)
-- `CLASSIFIER_BASE_URL`, `OLLAMA_API_KEY`, `OLLAMA_GENERATE_PATH` (point the
-  classifier at something other than the bundled Ollama — a shared instance, or
-  any endpoint that speaks the same generate API. `OLLAMA_BASE_URL` wins if both
-  it and `CLASSIFIER_BASE_URL` are set; `OLLAMA_GENERATE_PATH` defaults to
-  `/api/generate`; `OLLAMA_API_KEY` is sent as a bearer token when set.
-  **A remote classifier receives your mail.** Every message body goes to it after
-  redaction, so a non-loopback plaintext endpoint puts that mail — and the API
-  key — on the wire in the clear. The server logs an error once per boot when the
-  endpoint fails that transport policy, but classification continues, because
-  refusing to start a mail server over a variable the operator set deliberately
-  is the worse outcome. Use `https://` for anything off-host.)
-- `UNHEALTHY_RESTART_SECONDS` (default `300`. How long health may stay red before
-  the process exits and lets supervisord and the Docker restart policy bring it
-  back.)
-- `PGP_PRIVATE_KEY_FILE` (default `$SECRET_DIR/pgp-private-key.key`) and
-  `PICKUP_STORE_KEY_FILE` (default `$SECRET_DIR/pickup-store.key`) — the two
-  remaining `SECRET_DIR`-derived secret paths.
-- `FRONTEND_DIR` (default `/opt/kypost/frontend`. Where the API server reads the
-  built SPA from; there is no reason to change it inside the shipped image.)
-- `MFA_CLEAR_ALL` (recovery only. Clears two-factor enrollment for **every**
-  account on the next boot, then writes a marker so it never runs twice — see
-  `.env.example` before using it.)
-
-Notes:
-
-- The classifier model defaults to `nemotron-3-nano:4b` everywhere — `Dockerfile`,
-  `docker-compose.yml`, `.env.example`, and the backend's own fallback.
-- The image sets `OLLAMA_MODELS=/kypost/ollama-models`.
+The full reference is [docs/CONFIGURATION.md](docs/CONFIGURATION.md); `.env.example` documents each variable it offers.
 
 ### Choosing a classifier model
 
@@ -780,202 +660,7 @@ Only once that passes should you upgrade to a newer version, as a separate step.
 
 ## API Highlights
 
-- Public `GET /api/installer/network` returns only client IP, proxy trust and the effective security scheme for edge verification. It uses the product’s configured-origin security fallback; see [installer setup](docs/INSTALLER_SETUP.md).
-
-- Admin backup routes: `GET /api/admin/backup/status`; `POST` to `run`, `export-capsule`, `drill`, `pair-remote`, `pin-key`; `DELETE pairing`; `PUT schedule` under `/api/admin/backup/`. Mutations require the current account credential and CSRF protection, or, for a session signed in through KySignOn, a fresh KySignOn confirmation of that exact action.
-
-Auth:
-
-- `POST /api/auth/login`
-- `GET /api/auth/login-params` — the per-account salt and work factor a client
-  needs to derive its auth secret, so the password is never transmitted. Public,
-  and deliberately answers identically for a username that does not exist.
-- `GET /api/auth/captcha-config`
-- `GET /api/auth/pow-challenge` (`CAPTCHA_PROVIDER=pow` only)
-- `GET /api/auth/csrf`
-- `GET /api/auth/me`
-- `POST /api/auth/logout`
-- `GET|POST /api/auth/password` (read a private password-change snapshot, then atomically commit credential and optional PGP rewrap; forced resets preserve the previous sealed key for recovery)
-- `POST /api/auth/step-up` (re-confirms the password, and a second factor when one is enrolled, before the Security page renders; a session signed in through KySignOn confirms with KySignOn instead, see below)
-
-Single Sign-On (OpenID Connect):
-
-- `GET /api/auth/sso-config` — public `{enabled, issuerUrl, clientId}` that gates the sign-in button and native sign-on. Never returns the client secret.
-- `POST /api/auth/native/signon` — body `{idToken}`: a KyIdentity device-grant ID token, refused unless its `origin` claim matches `SERVER_BASE_URL`. Requires SSO plus `PAIRING_SECRET` and `SERVER_BASE_URL`, otherwise 503. Answers the same single-use 90-second pairing deep link as review-pairing.
-- `GET /api/auth/oidc/login` (alias `/auth/sso/login`) — starts the authorization-code flow for signing in.
-- `POST /api/settings/sso/link` — links the provider identity to the *caller's own* account. Requires the account password (and the two-factor code, when one is enrolled) re-entered now, because a linked identity is a way to sign in.
-- `GET /api/auth/oidc/callback` (alias `/auth/sso/callback`) — verifies the ID token, including a positive issuance timestamp no more than 30 seconds ahead of the server, then signs in, auto-provisions, or links by `sub`. Keep issuer/server clocks synchronized. The session remembers the provider's `sid`, so the provider can end it.
-- `POST /api/auth/oidc/step-up`, `GET|DELETE /api/auth/oidc/step-up/{id}` — action-bound re-authentication for a session signed in through KySignOn. A sensitive request (the Security page gate, backup actions) answers `403 {"error":"sso_step_up_required","challenge":…}`; the browser opens a KySignOn sign-in popup for that one action (`prompt=login`), and repeats the request with `X-Kypost-Step-Up: <challenge>` once it is verified. The grant is spent once, for that request only.
-- `POST /api/auth/oidc/backchannel-logout` — OpenID Connect back-channel logout receiver. Register it at the provider (KySignOn: the client's *back-channel logout URI*). The `logout_token` is verified against the issuer's JWKS, admitted once durably, and ends the session it names, or every session of the subject when it names none. Needs an `https` issuer.
-- `POST /api/settings/sso/unlink`
-- `GET|PUT /api/admin/sso` (admin only. The provider configuration.)
-- `POST /api/sync/webhook` — KySignOn directory push. Pair KyPost in KySignOn as a webhook system with this URL and either the pairing secret or the SSO client secret as the sync secret. Each event is a signed, versioned SCIM User; stale or reordered deliveries are refused, a disabled or deleted user keeps their mailbox and loses access, and a rehire brings the same account back. Supported SCIM fields are retained durably alongside the revision fence for later repair; acknowledgment does not mean a domain mailbox or receiver route is ready.
-
-Multi-factor authentication:
-
-- `GET /api/mfa/status`
-- `POST /api/mfa/totp/setup`
-- `POST /api/mfa/totp/confirm`
-- `POST /api/mfa/totp/disable`
-- `POST /api/mfa/recovery-codes/regenerate`
-- `PUT /api/mfa/push/enabled`
-- `POST /api/auth/mfa/totp` and `POST /api/auth/mfa/recovery-code` (login-time verification)
-- `POST /api/auth/mfa/push/poll`, `POST /api/auth/mfa/push/finish`, and `POST /api/mfa/push/respond` (push-approval sign-in)
-
-User management (admin only):
-
-- `GET|POST /api/users`
-- `PUT /api/users/{id}` (change role)
-- `POST /api/users/{id}/reset-password`
-- `POST /api/users/{id}/deactivate`
-- `POST /api/users/{id}/reactivate`
-- `POST /api/users/{id}/clear-mfa`
-- `GET|PUT|DELETE /api/users/{id}/imap-config` (assign a user's IMAP/SMTP credentials; `managed: true` locks the user's own route)
-- `GET|PUT|DELETE /api/users/{id}/carddav-client` (same for the outbound CardDAV client)
-
-Runtime:
-
-- `GET /api/status`
-- `GET /api/health`
-- `GET /healthz` (public `ky.health/1` status for KyPulse: 200 `ok` or 503 `down`; one cached `service` check covers the API and daemon without exposing mailbox, version, or failure details. `/api/health` keeps its existing detailed response.)
-- `POST /api/health/repair` (admin only)
-- `POST /api/admin/mail/poll-now` (admin only. Starts an immediate poll.)
-- `GET /api/setup` (reports whether the initial admin setup completed)
-- `GET /api/server/version` (the running version and whether a newer release exists)
-- `GET /api/ollama/version` (the classifier runtime's version)
-- `GET /pickup/{id}?t=<token>` (single-use mobile pickup link), plus `POST /pickup/{id}/open` and `POST /pickup/{id}/blob` for a client-sealed pickup
-
-Config and data:
-
-- `GET /api/mail/outbox/{id}` — session/device-authenticated native delivery state for the acting owner, with attempts/retry timing and Sent status; no MIME or credentials. Native send replies add `outboxId`; success still requires confirmed primary SMTP acceptance. Inspect uncertain jobs before resubmitting. See [outbox contract](docs/NATIVE_OUTBOX.md).
-- `GET|PUT /api/admin/mail-relay` — admin-only encrypted domain relay settings. PUT accepts `{host,port,smtpUsername,smtpPassword,domains?,password}` (or `authSecret` for account confirmation), requires CSRF/request-bound step-up and fresh issuer-bound DNS proof of every newly added relay domain and of at least one domain overall, and defaults port to 465. Omitted `domains` keeps the saved set (the founding domain for a new relay); a body with only `domains` changes the set and keeps the generation; removing a domain with queued or retryable jobs is refused and moves it to `retiredDomains`. Responses redact both relay credentials and report configured native capability in `sendingEnabled` (not provider readiness); this native profile requires verified implicit TLS and AUTH. See [relay contract](docs/DOMAIN_RELAY.md).
-- `POST /api/admin/mail-relay/test` — admin-confirmed no-mail check of the saved `expectedGeneration`, using the same strict TLS/AUTH policy as delivery. Fresh domain/issuer and restore gates run before and after connection; one check per instance per 30 seconds. No MAIL/RCPT/DATA or outbox writes; success reports `deliveryTested:false` and proves neither From authorization nor inbox placement. See [check contract](docs/DOMAIN_RELAY.md#check-the-saved-relay-without-sending-mail).
-
-- `GET|PUT /api/config` (GET omits `redaction.patterns` for non-admins; PUT is admin only)
-- `GET /api/labels`
-- `GET|PUT /api/labels/preferences` (the caller's own label list, auto-apply preference and optional label descriptions for the embedding sorter. `PUT` replaces the whole block.)
-- `GET /api/decisions` (the caller's own decisions)
-- `GET|PUT /api/tuning` (the caller's own tuning prompt)
-- `GET /api/mail-defaults` (any user) / `PUT /api/mail-defaults` (admin): instance-wide host and port defaults, no credentials
-
-IMAP and inbox:
-
-- `GET|POST|DELETE /api/imap/config`, returns 403 while `managed`
-- `POST /api/imap/test`
-- `GET /api/inbox?limit=500&mailbox=<name>`. Add `bodies=0` to get the list without message bodies — 13.3 MiB against 3.1 KiB for a 500-message window, since the rows render no body. The web UI then preloads the current 20-message page one body at a time from `GET /api/mail/body`, so the list renders first and opening a displayed message normally needs no wait. See [docs/INBOX_PAYLOAD_HANDOFF.md](docs/INBOX_PAYLOAD_HANDOFF.md).
-- `POST /api/admin/native-recovery/challenge` and `/api/admin/native-recovery/evidence` — administrator CSRF and exact-action confirmation bind one signed KyIdentity export to a usable restore epoch and complete retained subjects. Import preserves the hold and account state while installing durable revision barriers only for unpublished native reservations; published accounts retain ordinary offboarding/demotion. It grants no recovery readiness. See [protected recovery procedure](docs/NATIVE_RESTORE_AUTHORITY.md#protected-consumer-procedure).
-- `GET /api/admin/native-recovery/status` — administrator, read-only: each native restore hold release precondition with its reasons, the `KYPOST_NATIVE_RESTORE_RELEASE` flag, Cloudflare fence state and ordered next steps; never evidence contents. `kypost-server restore status`, run as the `STATE_DIR` owner, prints the same. See [reading release status](docs/RESTORE.md#reading-release-status).
-- `POST /api/admin/native-recovery/repair` — separately confirmed administrator repair using the current stored signed evidence. Reconciles existing native activity/roles, persists replay barriers before account writes, and revokes sessions, device/push, pairing and CardDAV credentials before recording completion. Legacy accounts and retained mail/PGP data are preserved. Partial failures keep the restore held and require fresh evidence; success also preserves the hold. See [protected recovery procedure](docs/NATIVE_RESTORE_AUTHORITY.md#protected-consumer-procedure).
-- `POST /api/admin/native-recovery/release` — off unless `KYPOST_NATIVE_RESTORE_RELEASE=true`. An unlinked local administrator on a password session confirms the credential; the server rechecks every release precondition under its fences and a fresh DNS proof, and on the bundled-receiver profile requires `"confirm": "original-host-decommissioned"`. It deactivates non-native accounts the evidence shows inactive, demotes non-native administrators it shows without the administrator role, writes release floors and ID-token fences, then renames the hold to `native-restore-released.json`. A repeat answers `alreadyReleased`. See [releasing the hold](docs/RESTORE.md#releasing-the-hold).
-- `GET|PUT /api/admin/mail-domain` and `POST /api/admin/mail-domain/verify` — admin-only mail-domain diagnostics/setup. Writes require CSRF and the current account credential (KySignOn uses request-bound step-up). Configure `{domain,password}` or `{domain,authSecret}` after KyIdentity pairing, publish the returned exact TXT record, then verify with the same credential fields. These routes serve the founding domain. DNS proof binds one immutable domain/issuer, initial verification expires after 24 hours, and configuring again rotates the challenge. Once established, the same TXT record is rechecked automatically without daily DNS changes. System DNS is not DNSSEC; every allocation rechecks it. Explicit KYPOST_NATIVE_MAIL=true enables provisioning and local mailbox access after verified directory assignment; verification alone enables no reception or sending. See [setup and failure responses](docs/NATIVE_PROVISIONING.md).
-- `GET|POST /api/admin/mail-domains`, `POST /api/admin/mail-domains/{domain}/verify` and `DELETE /api/admin/mail-domains/{domain}` — admin-only domain set: list per-domain status (`configured`, `retired`, `recordName`, `recordValue`, `established`, `expiresAt`, `verifiedUntil`), add a domain or rotate its challenge with `{domain}`, verify one domain, and retire one (409 while an address on it is active, a queued/retryable outbox job sends from it, accepted (pending) incoming mail is bound to it or the relay still sends for it; address records are kept; re-adding a retired domain configures it afresh, and its addresses resume for their recorded mailboxes once it verifies again). Same CSRF, credential and step-up rules as the single-domain routes; each proof fences only its own domain. See [several domains](docs/NATIVE_PROVISIONING.md#several-domains).
-- `GET|POST /api/admin/mail-addresses`, `DELETE /api/admin/mail-addresses/{address}` and `POST /api/admin/mail-addresses/{address}/reassign` — admin-only native aliases: list mailboxes and their addresses (`address`, `kind`, `state`, `generation`; `?user=<id>` filters) with each mailbox's `usedBytes`/`quotaBytes` and a `storage` summary of quotas against the drive (`overcommitted` above 80%), add an alias with `{mailbox,address}` to an everyday identity's mailbox on a configured domain, release one (kept as `reserved`, never deleted) and reassign a reserved one with `{mailbox}`. Each change of owner or state moves the address to a new generation, so mail or outbox jobs frozen against an older one are quarantined, never delivered; ordinary KyIdentity edits change no generation. 400 malformed, 404 unknown, 409 taken/reserved/primary/a KyIdentity primary/administrator owner/unconfigured domain/restore hold; a committed change whose receiving-route update is still pending answers 200 with a `warning`. Same CSRF, credential and step-up rules as the domain routes. Users send from an active alias by naming it in `from`. See [addresses](docs/NATIVE_PROVISIONING.md#addresses-aliases-and-generations).
-- `GET|POST /api/admin/mailboxes`, `POST /api/admin/mailboxes/{id}/disable` and `POST /api/admin/mailboxes/{id}/enable` — admin-only extra native mailboxes: list mailboxes with `kind` and `state` (`?user=<id>` filters), create one for an everyday identity with `{user,address}` (its primary address on an established domain, unique and not any KyIdentity primary; stored under `$STATE_DIR/mailboxes/`), and disable or re-enable it (mail is kept; its addresses stop routing and sending; jobs still queued in its outbox are quarantined). Listings carry `prepared`. Creation is 409 while the owner has incoming encryption on, and enabling incoming encryption is 409 while the user has an extra mailbox: it covers the primary only. Same gates and error mapping as the alias routes. See [extra mailboxes](docs/NATIVE_PROVISIONING.md#extra-mailboxes).
-- `GET /api/admin/receiving/cloudflare` — admin-only continuous Cloudflare receiving status: `running`, `fenced`, `error`, `uninitialized` or `not-started`, last published revision, last publish and pickup times, oldest waiting capture and its one-hour warning, waiting and ledger counts. Never addresses, envelopes or credentials.
-- `GET /api/admin/receiving/quarantine[?after=<sequence>]`, `POST /api/admin/receiving/quarantine/{gateway}/{id}/release` and `POST /api/admin/receiving/quarantine/{gateway}/{id}/discard` — admin-only quarantined native deliveries: list up to 100 envelopes (gateway, ID, received time, envelope sender, size, and per recipient the address, frozen mailbox, owning user and generation; never body, subject or headers), release one to the mailboxes it was frozen to (refused with 409 and the reason when a frozen mailbox was deleted or disabled, changed owner or is no longer admitted; never to an address's current owner), or discard it (bytes removed, a tombstone blocks redelivery; `partially_released` when an interrupted release may already have reached some mailboxes). Release refusals say whether the cause is durable (discard remains) or transient (resync and retry). An `unresolved` delivery (continuous Cloudflare mail captured under a routing table this server does not know, typically after a restore) lists its address's owner today (`currentMailbox`, `currentUser`) and is released only with `{"toCurrentOwner": true, "currentMailbox": "<as listed>"}` to that owner (refused if the address moved since it was listed), not proven to be the original, while the address is active; that action is audited separately. POSTs need CSRF and the account credential or KySignOn step-up; every action is audited without content. See [quarantine release](docs/NATIVE_PROVISIONING.md#quarantine-release).
-- `GET|POST /api/admin/receiving/blocks` and `DELETE /api/admin/receiving/blocks/{id}` — admin-only sender blocks for both receiving profiles: list blocks in force (`id`, `kind`, `value`, `until` in Unix ms or null, `source` `manual` or `automatic`, `level`, `createdAt`, `actor`, `reason`) plus automatic-block `evidence` status (`damaged`, `resetAt`, `domainBlocksFrom`, `goodFull`, `automaticFull`), block an `address` or `domain` with `{kind,value,until?,reason?}` (reason `spam`, `phishing`, `abuse` or `other`; any sender either profile accepts, A-Z lowercased and non-ASCII compared exactly, A-labels for internationalized domains; domains match exactly, not subdomains; your own mail domains and addresses on them are refused with 409, and adding a mail domain a block matches is refused until you unblock it; at most 5000), or unblock one by its listed `id` (so proxy logs never record a blocked address; this also stops automatic re-blocking of it for 30 days; if that cannot be recorded the block is still removed and the answer carries a `warning`). Maddy answers blocked senders `550 5.7.1` at RCPT; the Cloudflare Worker rejects them from the signed table, republished within seconds. Already accepted mail is unaffected and the null sender is never blocked. POST and DELETE need CSRF and the account credential or KySignOn step-up; audited with the block ID, never the address. See [sender blocks](docs/NATIVE_PROVISIONING.md#sender-blocks).
-- `GET /api/mailboxes` — the caller's accessible native mailboxes (primary first) and their active addresses, with `usedBytes` (absent when unreadable) and `quotaBytes`; disabled ones are omitted. Mail routes accept an optional `X-KyPost-Mailbox` header naming one of them (absent means the primary, so older clients are unchanged); unknown, foreign and disabled mailboxes all answer the same 404. Per-user routes ignore the header, and native notifications carry the mailbox ID. See [mailbox selection](docs/PLATFORM_BASELINE.md#native-mailbox-selection-additive).
-- `GET /api/export/folders`, `POST /api/export` and `GET /api/export/{token}` — self-service export of the caller's own native mailbox or one folder as mboxrd or a zip of EML files, exact stored bytes (encrypted mail stays encrypted). The POST needs a browser session, CSRF and account or KySignOn confirmation and returns a single-use download link valid for five minutes, bound to that session, with the message count; the GET streams it as an attachment, or redirects back to Security → Export Mail with a reason. mbox needs HTTP/1.1 to the server. External IMAP accounts get 409. See [mail export](docs/NATIVE_PROVISIONING.md#mail-export)
-- `POST /api/import`, `POST /api/import/{token}`, `GET /api/import` and `POST /api/import/cancel` — self-service import of mbox, EML or a zip of EML files into the caller's own native mailbox. The first POST needs a browser session, CSRF and account or KySignOn confirmation, creates the target folder (default `Imported`) and returns a single-use upload link valid for five minutes in that session; the upload streams the raw file (at most the mailbox's storage quota) to a temp file and starts a background job answering 202. `GET` reports `{state, imported, duplicates, skipped, bytes, error}` and the size limits. One import per user and two per server; 409 for external IMAP accounts and while incoming encryption is on. See [mail import](docs/NATIVE_PROVISIONING.md#mail-import)
-- `POST /api/import/imap`, `POST /api/import/imap/{token}/folders` and `POST /api/import/imap/{token}/start` — self-service import from another mail account over IMAP into the caller's own native mailbox. The first POST takes `{mailbox, host, port, security, username}` plus the account or KySignOn confirmation (never the provider password) and mints a 10-minute grant for that session; `.../folders` takes `{password}`, signs in (TLS on 993 or STARTTLS on 143, certificate always verified; private, loopback, link-local and CGNAT addresses refused) and lists the folders; `.../start` takes `{folders, target}` (default `Imported/<host>`) and answers 202. Read-only on the provider (EXAMINE, BODY.PEEK); the password is held in memory only until the job signs in. Failed sign-ins are limited per user (six an hour, then 429), at most four listings connect at once (503), and a job's connection reads at most twice the mailbox's storage. Status and cancel are `GET /api/import` and `POST /api/import/cancel`. See [import from another mail account](docs/NATIVE_PROVISIONING.md#import-from-another-mail-account)
-- Internal native provisioning records durable reservations and pending/applied/failed preparation status from verified directory state. Admin domain challenge/verification routes are available; KYPOST_NATIVE_MAIL=true enables new-account allocation, retained-work retries and API/daemon local mailbox selection. Direct receiving commands/import and TLS-only profile generation additionally require KYPOST_NATIVE_RECEIVING=true; mandatory STARTTLS refuses plaintext senders and no bundled public receiver starts. See [controlled receiver setup](docs/RECEIVING_SETUP.md). Native sending (primary or an owned active alias) additionally requires the configured relay; pickup/system sending remains pending and restore-hold release is off by default (`KYPOST_NATIVE_RESTORE_RELEASE`). See [provisioning contract](docs/NATIVE_PROVISIONING.md).
-- Mail state/configuration failures return an explicit error instead of an empty inbox. Internal native-mailbox qualification rejects source mismatches with 409; switching remains disabled, and native inbox responses are full snapshots (`delta:false`, `cursor:0`). External IMAP remains the default; native runtime is opt-in.
-- `POST /api/inbox/actions`
-- `GET|POST|PUT|DELETE /api/inbox/folders`
-- `GET /api/mail/search`
-
-Mail:
-
-- `POST /api/mail/send`. Optional `attachments: [{name, mimeType, dataBase64}]`, 25 MB in total. Optional `encrypt` and `sign`. If `encrypt` is true and a recipient has no usable key, the call fails with 409. To allow the pickup-link fallback instead, set `allowPickupFallback`. See [Where your PGP private key lives](#where-your-pgp-private-key-lives).
-- `POST /api/mail/draft` (the same optional `attachments` shape)
-- `GET /api/mail/body?mailbox=&messageId=` (one message's body and its `bodyMode`, for clients that list with `bodies=0`; 422 if an adapter reports malformed MIME, preserving original mail)
-- `GET /api/mail/attachments?mailbox=&messageId=` (lists the attachment metadata of a message)
-- `GET /api/mail/attachment?mailbox=&messageId=&index=` (downloads one attachment)
-- `GET|POST /api/mail/send-as`, `POST /api/mail/send-as/{id}/confirm` and `DELETE /api/mail/send-as/{id}` (alias addresses. A new alias is unusable until the user confirms the mailed code or a DKIM-signed copy from its own domain reaches the inbox; only the DKIM proof makes it publishable. The list never returns the code.)
-
-Filter Rules (the caller's own rules):
-
-- `GET|POST /api/rules`
-- `PUT|DELETE /api/rules/{id}`
-- `POST /api/rules/reorder`
-- `GET|PUT /api/rules/{id}/sieve` (view and edit the raw Sieve script)
-- `POST /api/rules/run` (runs the rules on demand)
-
-PGP:
-
-- PGP snapshots expose `pgpRevision`; identity, envelope and password writes accept optional `expectedRevision` and reject stale updates with 409. Clients must use the revision from the snapshot that produced their ciphertext. The browser requires revision support for these writes; older clients may still omit it on unconverted accounts. Versioned keyring snapshots and internal atomic storage are prepared; converted records reject legacy single-key writes. Multi-key conversion is not enabled. See [the revision contract](docs/E2E_PGP.md#pgp-revision-preconditions).
-
-- `POST /api/pgp/identity/generate` and `POST /api/pgp/identity/import`
-- `GET|DELETE /api/pgp/identity`
-- `POST /api/pgp/identity/client` (store a client-protected identity — the server never sees the private key)
-- `GET /api/pgp/identity/wrapped` and `POST /api/pgp/identity/rewrap` (fetch and repair the account-password-wrapped envelope; optional `expectedFingerprint` refuses a changed identity with 409)
-- `GET|PUT|DELETE /api/pgp/identity/envelope/{slot}` (session-only wrapped recovery/device copies; PUT and DELETE require the current account credential. PUT accepts `expectedFingerprint`; GET includes the identity fingerprint and public key from the same snapshot.)
-- `POST /api/pgp/identity/export-legacy` (one-time export of a server-held key, so it can be migrated or backed up)
-- `GET|PUT|DELETE /api/pgp/identity/envelope/{slot}` (per-slot key envelopes)
-- `GET /api/pgp/bootstrap` (everything the browser needs to unlock a client-protected identity in one call)
-- `GET /api/pgp/keyserver/lookup` (queries keys.openpgp.org)
-- `POST /api/pgp/recipients/check` (key status for a set of recipients before you send)
-- `POST /api/pgp/recipients/resolve` (resolves the key actually used for each recipient)
-- `GET /api/pgp/qr/token` and `GET /api/pgp/qr/key` (public key exchange through a QR code)
-- `POST /api/pgp/pickup` (creates a sealed pickup for a recipient with no usable key, so a client-protected sender can still use the secure-link fallback)
-- `GET /api/mail/pgp-payload` and `POST /api/mail/send-pgp` (fetch a ciphertext for local decryption; submit a locally encrypted message. On a converted account the send carries `materialGeneration` and is refused with 409 when it is stale, and a paired device must be enrolled at that generation)
-
-PGP key discovery and device enrollment:
-
-- `GET|PUT /api/pgp/incoming` — caller-only incoming-encryption preference; PUT requires fresh account confirmation and enabling requires backup acknowledgment and current `expectedRevision`.
-- `GET|PUT /api/pgp/discovery/settings`
-- `GET /api/pgp/discovery/suppressions` and `DELETE /api/pgp/discovery/suppressions/{email}`
-- `POST /api/pgp/discovery/suppress-contact`
-- `GET /api/pgp/device/envelope` (a paired device fetches the envelope sealed to its own secure-element key), `POST /api/pgp/device/enrollment-key` (a device publishes its public sealing key and optional `envelopeVersions` under its pairing credential), `POST /api/pgp/device/enrollment-state` (a device reports whether it can actually read the identity and, on a converted account, which envelope version, material generation and fingerprint it holds; a stale or bare report is refused with 409). A browser delivers a sealing with `PUT /api/pgp/identity/envelope/device:<id>`, bound to the device's published key, the snapshot revision and the material generation; v3 for a converted account, v2 for a legacy one
-
-Web Key Directory (admin only, plus the public serving path):
-
-- `GET|POST /api/pgp/wkd/domains` and `DELETE /api/pgp/wkd/domains/{domain}`
-- `POST /api/pgp/wkd/domains/{domain}/verify`
-- `GET /.well-known/openpgpkey/...` (public. Serves verified users' keys — see [docs/WKD_Publishing.md](docs/WKD_Publishing.md).)
-
-Contacts:
-
-- `GET|POST /api/contacts`
-- `GET|PUT|DELETE /api/contacts/{id}`
-- `POST /api/contacts/dedupe`
-- `GET /api/contacts/search`
-- `POST /api/contacts/bulk-delete`
-- `GET /api/contacts/export` and `POST /api/contacts/import`
-- `GET|POST|DELETE /api/contacts/dav-password` (app-specific CardDAV password)
-- `GET|POST|DELETE /api/contacts/carddav-client/config` and `POST /api/contacts/carddav-client/sync` (sync from an external CardDAV server), returns 403 while `managed`
-- `POST|GET|DELETE /api/contacts/{id}/photo`
-- `POST /api/contacts/{id}/self`
-- `GET|POST /api/contacts/sync` (mobile two-way sync. A pairing token authenticates the call.)
-
-Groups:
-
-- `GET|POST /api/groups`
-- `PUT|DELETE /api/groups/{id}`
-
-CardDAV server (address book sync for phones and desktop apps. A per-user DAV password authenticates the call.):
-
-- `/.well-known/carddav`
-- `/dav/...`
-
-Notifications (all scoped to the signed-in user):
-
-- `GET|PUT /api/notifications/preferences`
-- `GET /api/notifications/vapid-public-key`
-- `POST|DELETE /api/notifications/subscriptions`
-- `POST /api/notifications/test`
-- `GET /api/notifications/pairing`
-- `POST /api/notifications/native/register` and `POST /api/notifications/native/deregister`
-- `GET|DELETE /api/notifications/native/devices`
-- `PUT /api/notifications/native/mode` (relay push vs. app pull)
-- `PUT /api/notifications/native/devices/{deviceId}/mfa` (allow a device to approve sign-ins)
-- `GET /api/notifications/native/pull` (every notification is queued here in both modes, addressed to the devices it was sent to, so a device that stops hearing from the relay can poll and catch up)
-- `POST /api/notifications/native/unpair`
-
-Logs (admin only):
-
-- `GET /api/logs?file=<name>.log&lines=<n>`
-- `GET /api/logs/list`
+The endpoint reference is [docs/API.md](docs/API.md).
 
 ## Build and Dev Checks
 
@@ -1016,8 +701,9 @@ Push relays (only if you touch `worker/`, `worker-apns/` or `push-relay-shared/`
 Install and update scripts:
 
 ```bash
-for f in scripts/*.sh; do bash -n "$f"; done
+shellcheck scripts/*.sh
 scripts/update-host.test.sh
+scripts/check-env-example.sh
 ```
 
 ## Operations
@@ -1181,8 +867,9 @@ inside the container. On systems without systemd, schedule
 - `push-relay-shared/`: shared Cloudflare Worker logic for the push relays — API-key issuance, rate limiting, device-token ownership, and the `RelayCoordinator` Durable Object
 - `worker/`, `worker-apns/`: the FCM and APNs deployments of that relay. Each holds only its provider's `handleSend` plus its wrangler config; everything else is imported from `push-relay-shared/`
 - `receiving-worker/`: independent Email Workers with private R2 retention and authenticated pickup: the one-message pilot (`docs/CLOUDFLARE_RECEIVING.md`) and the continuous protocol Worker, whose KyPost side is `backend/internal/cfreceiving/` (`docs/CLOUDFLARE_CONTINUOUS_RECEIVING.md`); built-in Node tests
-- `docs/`: the contracts the client repos implement against — [PLATFORM_BASELINE.md](docs/PLATFORM_BASELINE.md) (what a client must implement to call itself a KyPost client), [E2E_PGP.md](docs/E2E_PGP.md), [WKD_Publishing.md](docs/WKD_Publishing.md), [WEBMAIL_HANDOFF.md](docs/WEBMAIL_HANDOFF.md), [INBOX_PAYLOAD_HANDOFF.md](docs/INBOX_PAYLOAD_HANDOFF.md) — plus the operator guide [Reverse_Proxy_Networking.md](docs/Reverse_Proxy_Networking.md)
+- `docs/`: the contracts the client repos implement against — [PLATFORM_BASELINE.md](docs/PLATFORM_BASELINE.md) (what a client must implement to call itself a KyPost client), [E2E_PGP.md](docs/E2E_PGP.md), [WKD_Publishing.md](docs/WKD_Publishing.md), [WEBMAIL_HANDOFF.md](docs/WEBMAIL_HANDOFF.md), [INBOX_PAYLOAD_HANDOFF.md](docs/INBOX_PAYLOAD_HANDOFF.md), [DEVICE_ENROLLMENT.md](docs/DEVICE_ENROLLMENT.md) — plus the operator guide [Reverse_Proxy_Networking.md](docs/Reverse_Proxy_Networking.md) and the README overflow: [FEATURES.md](docs/FEATURES.md), [CONFIGURATION.md](docs/CONFIGURATION.md), [API.md](docs/API.md)
 - `share/`: host-side Ollama model blob cache, bind-mounted into the container. Never committed
+- `tools/`: separate Go module pinning the CI tools (golangci-lint, govulncheck), run as `go tool -modfile=../tools/go.mod <tool>` from `backend/`; Dependabot bumps them
 - `testdata/`, `fonts/`: test fixtures and the bundled webfonts
 - `Dockerfile`: single image build (backend, frontend, Ollama runtime, pinned embedding model)
 - `docker-compose.yml`: local orchestration

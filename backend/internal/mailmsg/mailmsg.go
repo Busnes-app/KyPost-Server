@@ -13,6 +13,7 @@ import (
 	"mime/multipart"
 	"net/mail"
 	"net/textproto"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -50,6 +51,13 @@ type Message struct {
 	// they share one identity.
 	MessageID string
 	Date      time.Time
+	// InReplyTo and References thread a reply (RFC 5322 §3.6.4). Build emits
+	// only well-formed msg-ids from them; see MessageIDs.
+	InReplyTo  string
+	References []string
+	// CalendarReply, when set, is an iTIP REPLY from CalendarReply. Build
+	// sends it as a text/calendar; method=REPLY alternative to the body.
+	CalendarReply []byte
 }
 
 // Stamp fills an empty Date and Message-ID. The Message-ID domain is the From
@@ -84,6 +92,58 @@ func (m Message) ContentType() string {
 // SanitizeHeaderValue flattens CR/LF so user input can't inject headers.
 func SanitizeHeaderValue(value string) string {
 	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "\r", " "), "\n", " "))
+}
+
+// msgIDPattern is an RFC 5322 msg-id: "<" left "@" right ">" in printable
+// ASCII with no angle brackets. Nothing else in a header value survives.
+var msgIDPattern = regexp.MustCompile(`<[\x21-\x3b\x3d\x3f-\x7e]{1,250}@[\x21-\x3b\x3d\x3f-\x7e]{1,250}>`)
+
+// maxReferences bounds a References header; RFC 5322 §3.6.4 allows trimming.
+const maxReferences = 20
+
+// MessageIDs extracts the well-formed msg-ids from a header value, dropping
+// everything else (comments, whitespace, CR/LF, garbage). The whole value is
+// scanned, but only the first id (a thread's root) and the newest
+// maxReferences are kept, so memory stays bounded and the newest end of a
+// long chain is never lost.
+func MessageIDs(value string) []string {
+	var out []string
+	for {
+		loc := msgIDPattern.FindStringIndex(value)
+		if loc == nil {
+			return out
+		}
+		out = append(out, value[loc[0]:loc[1]])
+		value = value[loc[1]:]
+		if len(out) > maxReferences+1 {
+			out = append(out[:1], out[2:]...)
+		}
+	}
+}
+
+// capReferences keeps the thread root and the newest ids.
+func capReferences(refs []string) []string {
+	if len(refs) <= maxReferences {
+		return refs
+	}
+	return append(refs[:1:1], refs[len(refs)-(maxReferences-1):]...)
+}
+
+// ReplyThreading derives a reply's In-Reply-To and References from the
+// original's Message-ID, References and In-Reply-To header values. It returns
+// "" when the original has no single well-formed Message-ID to reply to.
+func ReplyThreading(messageID, references, inReplyTo string) (string, []string) {
+	ids := MessageIDs(messageID)
+	if len(ids) != 1 {
+		return "", nil
+	}
+	refs := MessageIDs(references)
+	if len(refs) == 0 {
+		if parent := MessageIDs(inReplyTo); len(parent) == 1 {
+			refs = parent
+		}
+	}
+	return ids[0], capReferences(append(refs, ids[0]))
 }
 
 // sanitizeHeaderValues sanitizes each element of a string slice.
@@ -187,12 +247,19 @@ func (m Message) Build() []byte {
 	if id := SanitizeHeaderValue(m.MessageID); id != "" {
 		msg.WriteString("Message-ID: " + id + "\r\n")
 	}
+	if ids := MessageIDs(m.InReplyTo); len(ids) == 1 {
+		msg.WriteString("In-Reply-To: " + ids[0] + "\r\n")
+	}
+	if refs := capReferences(MessageIDs(strings.Join(m.References, " "))); len(refs) > 0 {
+		// One msg-id per folded line keeps every line far under 998 octets.
+		msg.WriteString("References: " + strings.Join(refs, "\r\n ") + "\r\n")
+	}
 	msg.WriteString("MIME-Version: 1.0\r\n")
 	if m.Autocrypt != "" {
 		msg.WriteString("Autocrypt: " + FoldHeaderValue(SanitizeHeaderValue(m.Autocrypt)) + "\r\n")
 	}
 
-	if len(m.Attachments) == 0 {
+	if len(m.Attachments) == 0 && len(m.CalendarReply) == 0 {
 		msg.WriteString("Content-Type: " + m.ContentType() + "\r\n")
 		msg.WriteString("Content-Transfer-Encoding: base64\r\n")
 		msg.WriteString("\r\n")
@@ -201,14 +268,25 @@ func (m Message) Build() []byte {
 	}
 
 	w := multipart.NewWriter(&msg)
+	if len(m.Attachments) == 0 {
+		msg.WriteString("Content-Type: multipart/alternative; boundary=" + w.Boundary() + "\r\n\r\n")
+		m.writeBodyParts(w, bodyEncoded)
+		_ = w.Close()
+		return msg.Bytes()
+	}
 	msg.WriteString("Content-Type: multipart/mixed; boundary=" + w.Boundary() + "\r\n")
 	msg.WriteString("\r\n")
 
-	text, _ := w.CreatePart(textproto.MIMEHeader{
-		"Content-Type":              {m.ContentType()},
-		"Content-Transfer-Encoding": {"base64"},
-	})
-	writeWrappedBase64(text, bodyEncoded)
+	if len(m.CalendarReply) == 0 {
+		m.writeBodyParts(w, bodyEncoded)
+	} else {
+		boundary := multipart.NewWriter(io.Discard).Boundary()
+		alt, _ := w.CreatePart(textproto.MIMEHeader{"Content-Type": {"multipart/alternative; boundary=" + boundary}})
+		inner := multipart.NewWriter(alt)
+		_ = inner.SetBoundary(boundary)
+		m.writeBodyParts(inner, bodyEncoded)
+		_ = inner.Close()
+	}
 
 	for _, a := range m.Attachments {
 		// Sanitized like every other header value here. mime/multipart writes
@@ -241,6 +319,24 @@ func (m Message) Build() []byte {
 	}
 	_ = w.Close()
 	return msg.Bytes()
+}
+
+// writeBodyParts writes the text body and, for an iTIP reply, its
+// text/calendar alternative (RFC 6047 §2.4: method parameter required).
+func (m Message) writeBodyParts(w *multipart.Writer, bodyEncoded string) {
+	text, _ := w.CreatePart(textproto.MIMEHeader{
+		"Content-Type":              {m.ContentType()},
+		"Content-Transfer-Encoding": {"base64"},
+	})
+	writeWrappedBase64(text, bodyEncoded)
+	if len(m.CalendarReply) == 0 {
+		return
+	}
+	cal, _ := w.CreatePart(textproto.MIMEHeader{
+		"Content-Type":              {"text/calendar; method=REPLY; charset=UTF-8"},
+		"Content-Transfer-Encoding": {"base64"},
+	})
+	writeBase64Wrapped(cal, m.CalendarReply)
 }
 
 // writeBase64Wrapped writes base64 content in RFC 2045 76-character lines.

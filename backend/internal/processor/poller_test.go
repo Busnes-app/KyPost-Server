@@ -16,6 +16,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
@@ -272,6 +273,9 @@ func (c *noopMailClient) ListUnreadMessages(context.Context, string, int) ([]ima
 func (c *noopMailClient) ListOverviews(context.Context, string, int) ([]imapadapter.Overview, error) {
 	return nil, nil
 }
+func (c *noopMailClient) ListOverviewsBefore(context.Context, string, int, int) ([]imapadapter.Overview, bool, error) {
+	return nil, false, nil
+}
 func (c *noopMailClient) SearchMessages(context.Context, string, string, string, int) ([]imapadapter.Overview, error) {
 	return nil, nil
 }
@@ -318,9 +322,14 @@ func (c *noopMailClient) FetchRawMessage(context.Context, string, int) ([]byte, 
 // the loop NOT to mark the message processed, so it is retried on the next
 // poll tick instead of being silently and permanently skipped.
 func TestShouldMarkProcessedOnError_TransientClassifierErrorLeavesUnmarked(t *testing.T) {
-	err := &classifierErr{err: errors.New("dial tcp 127.0.0.1:11434: connect: connection refused")}
-	if shouldMarkProcessedOnError(err) {
-		t.Fatal("expected a transient classifier error to NOT mark the message processed")
+	for _, err := range []error{
+		&classifierErr{err: errors.New("dial tcp 127.0.0.1:11434: connect: connection refused")},
+		&classifierErr{err: errors.New("dial tcp 127.0.0.1:54221: connect: connection refused")}, // "422" in a port
+		&classifierErr{err: &classifier.StatusError{StatusCode: 503}},
+	} {
+		if shouldMarkProcessedOnError(err) {
+			t.Fatalf("%v: expected a transient classifier error to NOT mark the message processed", err)
+		}
 	}
 }
 
@@ -333,8 +342,9 @@ func TestShouldMarkProcessedOnError_PermanentClassifierErrorMarksProcessed(t *te
 		name string
 		err  error
 	}{
-		{"bad input / 422", &classifierErr{err: errors.New("classifier: 422 Unprocessable Entity")}},
-		{"ai credits exhausted", &classifierErr{err: errors.New("out of ai credits")}},
+		{"bad input / 422", &classifierErr{err: &classifier.StatusError{StatusCode: 422}}},
+		{"ai credits exhausted", &classifierErr{err: fmt.Errorf("classify: %w", classifier.ErrCreditsExhausted)}},
+		{"no allowed label", &classifierErr{err: &classifier.NoAllowedLabelError{}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -399,11 +409,10 @@ func TestShouldMarkProcessedOnError_RetryableErrorLeavesUnmarked(t *testing.T) {
 // transient classifier error leaves the message unmarked end-to-end while
 // still recording the failure as a Decision.
 func TestRecordMessageFailure_TransientClassifierErrorLeavesMessageUnprocessed(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	p := &Poller{log: logger}
 
 	store, err := state.New(t.TempDir())
@@ -419,7 +428,7 @@ func TestRecordMessageFailure_TransientClassifierErrorLeavesMessageUnprocessed(t
 	if seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the message to remain unmarked after a transient classifier outage, so it is retried next poll tick")
 	}
-	decisions := store.Decisions(10)
+	decisions := mustDecisions(t, store, 10)
 	if len(decisions) != 1 || decisions[0].Status != "failed" {
 		t.Fatalf("expected a failed decision to still be recorded, got %+v", decisions)
 	}
@@ -429,11 +438,10 @@ func TestRecordMessageFailure_TransientClassifierErrorLeavesMessageUnprocessed(t
 // permanent classifier error (bad input/credits exhausted) still marks the
 // message processed, unchanged from today's behavior.
 func TestRecordMessageFailure_PermanentClassifierErrorMarksProcessed(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	p := &Poller{log: logger}
 
 	store, err := state.New(t.TempDir())
@@ -443,7 +451,7 @@ func TestRecordMessageFailure_PermanentClassifierErrorMarksProcessed(t *testing.
 	uc := userCtx{id: "user-1", store: store, mail: &noopMailClient{}}
 	msg := imapadapter.Message{ID: "51", Subject: "Hello", Sender: "a@example.com"}
 
-	classifyErr := &classifierErr{err: errors.New("out of ai credits")}
+	classifyErr := &classifierErr{err: fmt.Errorf("classify: %w", classifier.ErrCreditsExhausted)}
 	p.recordMessageFailure(store, uc.id, uc, msg, classifyErr, shouldMarkProcessedOnError(classifyErr))
 
 	if !seenForTest(t, store, msg.ID) {
@@ -456,11 +464,10 @@ func TestRecordMessageFailure_PermanentClassifierErrorMarksProcessed(t *testing.
 // error (not a classifierErr) must still mark the message processed exactly
 // as before this task's change.
 func TestRecordMessageFailure_NonClassifierErrorMarksProcessed(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	p := &Poller{log: logger}
 
 	store, err := state.New(t.TempDir())
@@ -485,11 +492,10 @@ func TestRecordMessageFailure_NonClassifierErrorMarksProcessed(t *testing.T) {
 // receiver dereference (c.baseURL inside ensureWarm) and fail this test.
 // The message must still be marked processed and recorded as a Decision.
 func TestHandleMessage_StopRuleShortCircuitsClassification(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	p := &Poller{log: logger} // classifier intentionally left nil
 
@@ -527,7 +533,7 @@ func TestHandleMessage_StopRuleShortCircuitsClassification(t *testing.T) {
 	if !seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the message to be marked processed")
 	}
-	decisions := store.Decisions(10)
+	decisions := mustDecisions(t, store, 10)
 	if len(decisions) != 1 {
 		t.Fatalf("expected 1 decision recorded, got %d: %+v", len(decisions), decisions)
 	}
@@ -552,7 +558,6 @@ func TestHandleMessage_StopRuleActionFailureDefersInsteadOfClaimingSuccess(t *te
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	p := &Poller{log: logger} // classifier intentionally left nil
 
@@ -608,7 +613,7 @@ func TestHandleMessage_StopRuleActionFailureDefersInsteadOfClaimingSuccess(t *te
 	if seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the message NOT to be retired when the archive it promised never happened")
 	}
-	if decisions := store.Decisions(10); len(decisions) != 0 {
+	if decisions := mustDecisions(t, store, 10); len(decisions) != 0 {
 		t.Fatalf("expected no decision claiming the rule was applied, got %+v", decisions)
 	}
 
@@ -632,11 +637,10 @@ func TestHandleMessage_StopRuleActionFailureDefersInsteadOfClaimingSuccess(t *te
 // no-panic result above was actually caused by the stop short-circuit and
 // not by some unrelated reason classifyWithRetry never runs.
 func TestHandleMessage_NonMatchingRuleStillClassifies(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	p := &Poller{log: logger} // classifier intentionally left nil
 
@@ -681,11 +685,10 @@ func TestHandleMessage_NonMatchingRuleStillClassifies(t *testing.T) {
 // unsorted from the frontend's perspective (ReadPage.tsx always defaults
 // activeTab to tabs[0], never to Uncategorized).
 func TestHandleMessage_AutoLabelDisabledUsesConfiguredLabel(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	store, err := state.New(t.TempDir())
 	if err != nil {
@@ -833,11 +836,10 @@ func decodeNoticeBody(t *testing.T, raw []byte) string {
 // than "applied"/"skipped" — proving handleMessage's TooLarge branch, not
 // just notifyMessageTooLarge in isolation.
 func TestHandleMessage_TooLargeMessageRejectsAndNotifies(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	store, err := state.New(t.TempDir())
 	if err != nil {
@@ -893,7 +895,7 @@ func TestHandleMessage_TooLargeMessageRejectsAndNotifies(t *testing.T) {
 	if !seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the rejected message to be marked processed so it isn't retried every poll tick")
 	}
-	decisions := store.Decisions(10)
+	decisions := mustDecisions(t, store, 10)
 	if len(decisions) != 1 {
 		t.Fatalf("expected exactly 1 decision recorded, got %d: %+v", len(decisions), decisions)
 	}
@@ -908,11 +910,10 @@ func TestHandleMessage_TooLargeMessageRejectsAndNotifies(t *testing.T) {
 // all), the message is still recorded as rejected and marked processed —
 // never left to be retried forever just because notification failed.
 func TestHandleMessage_TooLargeMessageStillRecordsDecisionWhenNotifyFails(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	store, err := state.New(t.TempDir())
 	if err != nil {
@@ -938,7 +939,7 @@ func TestHandleMessage_TooLargeMessageStillRecordsDecisionWhenNotifyFails(t *tes
 	if !seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the message to still be marked processed even when the notice couldn't be sent")
 	}
-	decisions := store.Decisions(10)
+	decisions := mustDecisions(t, store, 10)
 	if len(decisions) != 1 || decisions[0].Status != "rejected_too_large" {
 		t.Fatalf("expected a rejected_too_large decision to still be recorded, got %+v", decisions)
 	}
@@ -1033,7 +1034,7 @@ func TestDeferredMessageStaysInRangeOfTheNextFetch(t *testing.T) {
 
 	// A permanent failure is retired, so it must NOT hold the checkpoint back —
 	// otherwise one poison message refetches the batch forever.
-	permanent := &classifierErr{err: errors.New("classifier: 422 Unprocessable Entity")}
+	permanent := &classifierErr{err: &classifier.StatusError{StatusCode: 422}}
 	if !shouldMarkProcessedOnError(permanent) {
 		t.Fatal("expected a permanent classifier error to mark the message processed")
 	}
@@ -1051,11 +1052,10 @@ func TestDeferredMessageStaysInRangeOfTheNextFetch(t *testing.T) {
 // row and fire one notification per message per tick — a mailbox's worth of
 // them every ~90 seconds, retained for 30 days — for a single outage.
 func TestRecordMessageFailure_TransientErrorIsRecordedOncePerMessage(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	p := &Poller{log: logger}
 
 	store, err := state.New(t.TempDir())
@@ -1071,7 +1071,7 @@ func TestRecordMessageFailure_TransientErrorIsRecordedOncePerMessage(t *testing.
 		p.recordMessageFailure(store, uc.id, uc, msg, classifyErr, shouldMarkProcessedOnError(classifyErr))
 	}
 
-	decisions := store.Decisions(50)
+	decisions := mustDecisions(t, store, 50)
 	if len(decisions) != 1 {
 		t.Fatalf("recorded %d decisions for one message across five ticks, want 1", len(decisions))
 	}
@@ -1083,7 +1083,7 @@ func TestRecordMessageFailure_TransientErrorIsRecordedOncePerMessage(t *testing.
 	// A different message during the same outage is its own report.
 	other := imapadapter.Message{ID: "51", Subject: "Other", Sender: "b@example.com"}
 	p.recordMessageFailure(store, uc.id, uc, other, classifyErr, shouldMarkProcessedOnError(classifyErr))
-	if got := len(store.Decisions(50)); got != 2 {
+	if got := len(mustDecisions(t, store, 50)); got != 2 {
 		t.Fatalf("got %d decisions, want 2 — one per affected message", got)
 	}
 }
@@ -1092,11 +1092,10 @@ func TestRecordMessageFailure_TransientErrorIsRecordedOncePerMessage(t *testing.
 // other half: a message that IS retired reaches recordMessageFailure once, so
 // gating it on a prior report must not swallow its audit row.
 func TestRecordMessageFailure_RetiredFailureStillRecordsUnconditionally(t *testing.T) {
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 	p := &Poller{log: logger}
 
 	store, err := state.New(t.TempDir())
@@ -1110,14 +1109,23 @@ func TestRecordMessageFailure_RetiredFailureStillRecordsUnconditionally(t *testi
 	// the permanent one retires it and must be recorded even though a "failed"
 	// row already exists.
 	transient := &classifierErr{err: errors.New("connection refused")}
-	permanent := &classifierErr{err: errors.New("out of ai credits")}
+	permanent := &classifierErr{err: fmt.Errorf("classify: %w", classifier.ErrCreditsExhausted)}
 	p.recordMessageFailure(store, uc.id, uc, msg, transient, shouldMarkProcessedOnError(transient))
 	p.recordMessageFailure(store, uc.id, uc, msg, permanent, shouldMarkProcessedOnError(permanent))
 
-	if got := len(store.Decisions(50)); got != 2 {
+	if got := len(mustDecisions(t, store, 50)); got != 2 {
 		t.Fatalf("got %d decisions, want 2 (the deferral and the retirement)", got)
 	}
 	if !seenForTest(t, store, msg.ID) {
 		t.Fatal("expected the permanent failure to retire the message")
 	}
+}
+
+func mustDecisions(t testing.TB, s *state.Store, limit int) []state.Decision {
+	t.Helper()
+	d, err := s.DecisionsStrict(limit)
+	if err != nil {
+		t.Fatalf("DecisionsStrict: %v", err)
+	}
+	return d
 }

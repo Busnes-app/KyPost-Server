@@ -56,10 +56,14 @@ type fakeMailClient struct {
 	// rawMessages feeds FetchRawMessage — the signed-only read path fetches the
 	// message raw, because a detached signature covers bytes no MIME-parsed copy
 	// preserves. See handlePGPPayload.
-	rawMessages  map[int][]byte
-	bodiesErr    error
-	bodiesCalls  int
-	lastBodyUIDs []int
+	rawMessages map[int][]byte
+	bodiesErr   error
+
+	olderOverviews []imapadapter.Overview
+	olderHasMore   bool
+	beforeCalls    []int
+	bodiesCalls    int
+	lastBodyUIDs   []int
 
 	attachments    map[int][]mailmsg.Attachment
 	attachmentsErr error
@@ -88,6 +92,11 @@ func (f *fakeMailClient) ListUnreadMessages(_ context.Context, _ string, _ int) 
 func (f *fakeMailClient) ListOverviews(_ context.Context, _ string, _ int) ([]imapadapter.Overview, error) {
 	f.overviewCalls++
 	return f.overviews, f.overviewsErr
+}
+
+func (f *fakeMailClient) ListOverviewsBefore(_ context.Context, _ string, before, limit int) ([]imapadapter.Overview, bool, error) {
+	f.beforeCalls = append(f.beforeCalls, before)
+	return f.olderOverviews, f.olderHasMore, f.overviewsErr
 }
 
 func (f *fakeMailClient) SearchMessages(_ context.Context, _ string, _ string, _ string, _ int) ([]imapadapter.Overview, error) {
@@ -245,7 +254,7 @@ func TestServeInbox_ClassicServedFromWarmCache(t *testing.T) {
 
 	fake := &fakeMailClient{}
 	rec := httptest.NewRecorder()
-	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 2, 0, false, true)
+	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 2, 0, false, true, false)
 
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
@@ -293,7 +302,7 @@ func TestServeInbox_ClassicServedFromWarmCacheWithEncryptedRow(t *testing.T) {
 
 	fake := &fakeMailClient{}
 	rec := httptest.NewRecorder()
-	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 2, 0, false, true)
+	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 2, 0, false, true, false)
 
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
@@ -328,7 +337,7 @@ func TestServeInbox_ClassicFallsBackAndSelfWarms(t *testing.T) {
 	}}
 
 	rec1 := httptest.NewRecorder()
-	srv.serveInbox(rec1, context.Background(), userID, fake, cache, cfg, "", 1, 0, false, true)
+	srv.serveInbox(rec1, context.Background(), userID, fake, cache, cfg, "", 1, 0, false, true, false)
 	if rec1.Code != 200 {
 		t.Fatalf("status = %d, body=%s", rec1.Code, rec1.Body.String())
 	}
@@ -339,7 +348,7 @@ func TestServeInbox_ClassicFallsBackAndSelfWarms(t *testing.T) {
 	// Second call for the same mailbox+limit should now be servable from
 	// the self-warmed cache, with no further live fetch.
 	rec2 := httptest.NewRecorder()
-	srv.serveInbox(rec2, context.Background(), userID, fake, cache, cfg, "", 1, 0, false, true)
+	srv.serveInbox(rec2, context.Background(), userID, fake, cache, cfg, "", 1, 0, false, true, false)
 	if fake.unreadCalls != 1 {
 		t.Fatalf("expected no additional live fetch after self-warming, got %d total calls", fake.unreadCalls)
 	}
@@ -381,7 +390,7 @@ func TestServeInbox_ClassicLiveFallbackReportsDecryptError(t *testing.T) {
 	}}
 
 	rec := httptest.NewRecorder()
-	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, false, true)
+	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, false, true, false)
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -417,7 +426,7 @@ func TestServeInbox_DeltaFirstCallAllNew(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true)
+	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true, false)
 
 	if fake.overviewCalls != 1 {
 		t.Fatalf("expected exactly one overview fetch, got %d", fake.overviewCalls)
@@ -514,7 +523,7 @@ func TestServeInboxDeltaUsesSenderBindingAddressForVerification(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true)
+	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true, false)
 
 	resp := decodeInboxResponse(t, rec)
 	emails := allEmails(resp)
@@ -544,7 +553,7 @@ func TestServeInbox_DeltaFlagChangeIsUpdatedWithoutRefetchingBody(t *testing.T) 
 		bodies: map[int]string{1: "body-1"},
 	}
 	rec1 := httptest.NewRecorder()
-	srv.serveInbox(rec1, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true)
+	srv.serveInbox(rec1, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true, false)
 	first := decodeInboxResponse(t, rec1)
 
 	// Second poll: the message's status flipped to read. The client's
@@ -553,7 +562,7 @@ func TestServeInbox_DeltaFlagChangeIsUpdatedWithoutRefetchingBody(t *testing.T) 
 		{UID: 1, MessageID: "1", Subject: "a", Sender: "a@example.com", Status: "read", AtUTC: "2026-01-01T00:00:00Z"},
 	}
 	rec2 := httptest.NewRecorder()
-	srv.serveInbox(rec2, context.Background(), userID, fake, cache, cfg, "", 10, first.Cursor, true, true)
+	srv.serveInbox(rec2, context.Background(), userID, fake, cache, cfg, "", 10, first.Cursor, true, true, false)
 
 	if fake.bodiesCalls != 1 {
 		t.Fatalf("expected no additional body fetch for an already-known message, got %d total body fetch calls", fake.bodiesCalls)
@@ -591,7 +600,7 @@ func TestServeInbox_DeltaUpdatedCarriesPGPFields(t *testing.T) {
 		bodyPGPEncrypted: map[int]bool{1: true},
 	}
 	rec1 := httptest.NewRecorder()
-	srv.serveInbox(rec1, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true)
+	srv.serveInbox(rec1, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true, false)
 	first := decodeInboxResponse(t, rec1)
 	firstEmails := allEmails(first)
 	if len(firstEmails) != 1 || !firstEmails[0].PGPEncrypted {
@@ -605,7 +614,7 @@ func TestServeInbox_DeltaUpdatedCarriesPGPFields(t *testing.T) {
 		{UID: 1, MessageID: "1", Subject: "a", Sender: "a@example.com", Status: "read", AtUTC: "2026-01-01T00:00:00Z"},
 	}
 	rec2 := httptest.NewRecorder()
-	srv.serveInbox(rec2, context.Background(), userID, fake, cache, cfg, "", 10, first.Cursor, true, true)
+	srv.serveInbox(rec2, context.Background(), userID, fake, cache, cfg, "", 10, first.Cursor, true, true, false)
 
 	resp := decodeInboxResponse(t, rec2)
 	emails := allEmails(resp)
@@ -644,7 +653,7 @@ func TestServeInbox_DeltaSkipsBodyFetchWhenAlreadyWarmed(t *testing.T) {
 		},
 	}
 	rec := httptest.NewRecorder()
-	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true)
+	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true, false)
 
 	if fake.bodiesCalls != 0 {
 		t.Fatalf("expected no body fetch when the body is warm AND classified, got %d calls, uids=%v", fake.bodiesCalls, fake.lastBodyUIDs)
@@ -688,7 +697,7 @@ func TestServeInbox_DeltaFetchesBodiesForPollerWarmedEntries(t *testing.T) {
 		bodyPGPSignaturePayload: map[int]string{1: "-----BEGIN PGP SIGNATURE-----\nx\n-----END PGP SIGNATURE-----"},
 	}
 	rec := httptest.NewRecorder()
-	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true)
+	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true, false)
 
 	if fake.bodiesCalls == 0 {
 		t.Fatal("an unclassified entry must be fetched, or its signature is never detected")
@@ -720,7 +729,7 @@ func TestServeInbox_DeltaWindowFalloutReportedAsRemoved(t *testing.T) {
 		bodies: map[int]string{1: "body-1", 2: "body-2"},
 	}
 	rec1 := httptest.NewRecorder()
-	srv.serveInbox(rec1, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true)
+	srv.serveInbox(rec1, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true, false)
 	first := decodeInboxResponse(t, rec1)
 
 	// uid 1 ages out of the window.
@@ -728,7 +737,7 @@ func TestServeInbox_DeltaWindowFalloutReportedAsRemoved(t *testing.T) {
 		{UID: 2, MessageID: "2", Subject: "b", Sender: "b@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z"},
 	}
 	rec2 := httptest.NewRecorder()
-	srv.serveInbox(rec2, context.Background(), userID, fake, cache, cfg, "", 10, first.Cursor, true, true)
+	srv.serveInbox(rec2, context.Background(), userID, fake, cache, cfg, "", 10, first.Cursor, true, true, false)
 
 	resp := decodeInboxResponse(t, rec2)
 	if len(resp.Removed) != 1 || resp.Removed[0] != "1" {
@@ -763,7 +772,7 @@ func TestServeInbox_TabBucketingByKeyword(t *testing.T) {
 	}}
 
 	rec := httptest.NewRecorder()
-	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, false, true)
+	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, false, true, false)
 	resp := decodeInboxResponse(t, rec)
 
 	if len(resp.ByTab["Work"]) != 1 || resp.ByTab["Work"][0].MessageID != "1" {
@@ -814,7 +823,7 @@ func TestServeInbox_KeywordsPopulatedOnAllPaths(t *testing.T) {
 		// `limit` cached entries, so limit must match the 1 entry seeded
 		// above for this to exercise the cache-warm path rather than
 		// falling through to live-fallback.
-		srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 1, 0, false, true)
+		srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 1, 0, false, true, false)
 		resp := decodeInboxResponse(t, rec)
 		e, ok := findByMessageID(resp, "1")
 		if !ok || len(e.Keywords) != 1 || e.Keywords[0] != "Work" {
@@ -831,7 +840,7 @@ func TestServeInbox_KeywordsPopulatedOnAllPaths(t *testing.T) {
 			{MessageID: "2", Subject: "b", Sender: "b@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", Body: "b2", Keywords: []string{"Work"}},
 		}}
 		rec := httptest.NewRecorder()
-		srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, false, true)
+		srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, false, true, false)
 		resp := decodeInboxResponse(t, rec)
 		e, ok := findByMessageID(resp, "2")
 		if !ok || len(e.Keywords) != 1 || e.Keywords[0] != "Work" {
@@ -845,7 +854,7 @@ func TestServeInbox_KeywordsPopulatedOnAllPaths(t *testing.T) {
 			{UID: 3, MessageID: "3", Subject: "c", Sender: "c@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", Keywords: []string{"Work"}},
 		}, bodies: map[int]string{3: "b3"}}
 		rec := httptest.NewRecorder()
-		srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true)
+		srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true, false)
 		resp := decodeInboxResponse(t, rec)
 		e, ok := findByMessageID(resp, "3")
 		if !ok || len(e.Keywords) != 1 || e.Keywords[0] != "Work" {
@@ -862,7 +871,7 @@ func TestServeInbox_KeywordsPopulatedOnAllPaths(t *testing.T) {
 			{UID: 4, MessageID: "4", Subject: "d", Sender: "d@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z"},
 		}, bodies: map[int]string{4: "b4"}}
 		first := httptest.NewRecorder()
-		srv.serveInbox(first, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true)
+		srv.serveInbox(first, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true, false)
 		firstResp := decodeInboxResponse(t, first)
 
 		// Second delta call with the same UID now carrying a keyword flags
@@ -871,7 +880,7 @@ func TestServeInbox_KeywordsPopulatedOnAllPaths(t *testing.T) {
 			{UID: 4, MessageID: "4", Subject: "d", Sender: "d@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", Keywords: []string{"Work"}},
 		}
 		second := httptest.NewRecorder()
-		srv.serveInbox(second, context.Background(), userID, fake, cache, cfg, "", 10, firstResp.Cursor, true, true)
+		srv.serveInbox(second, context.Background(), userID, fake, cache, cfg, "", 10, firstResp.Cursor, true, true, false)
 		resp := decodeInboxResponse(t, second)
 		e, ok := findByMessageID(resp, "4")
 		if !ok || len(e.Keywords) != 1 || e.Keywords[0] != "Work" {
@@ -1020,7 +1029,7 @@ func TestServeInbox_SinceZeroIsLabelledAFullSnapshotNotADelta(t *testing.T) {
 		bodies: map[int]string{1: "body-1"},
 	}
 	rec := httptest.NewRecorder()
-	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true)
+	srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true, false)
 
 	resp := decodeInboxResponse(t, rec)
 	if resp.Delta {
@@ -1051,11 +1060,11 @@ func TestServeInbox_CursorPollIsStillLabelledADelta(t *testing.T) {
 		bodies: map[int]string{1: "body-1"},
 	}
 	rec1 := httptest.NewRecorder()
-	srv.serveInbox(rec1, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true)
+	srv.serveInbox(rec1, context.Background(), userID, fake, cache, cfg, "", 10, 0, true, true, false)
 	first := decodeInboxResponse(t, rec1)
 
 	rec2 := httptest.NewRecorder()
-	srv.serveInbox(rec2, context.Background(), userID, fake, cache, cfg, "", 10, first.Cursor, true, true)
+	srv.serveInbox(rec2, context.Background(), userID, fake, cache, cfg, "", 10, first.Cursor, true, true, false)
 
 	if resp := decodeInboxResponse(t, rec2); !resp.Delta {
 		t.Fatalf("a cursor poll describes only what changed and must stay a delta: %+v", resp)

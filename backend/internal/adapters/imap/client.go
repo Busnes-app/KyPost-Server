@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"mime"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -457,6 +458,19 @@ type AttachmentInfo struct {
 	Name     string `json:"name"`
 	MimeType string `json:"mimeType"`
 	Size     int    `json:"size"`
+	// CalendarMethod is the iTIP METHOD (REQUEST, CANCEL, REPLY, ...) of a
+	// text/calendar part; absent otherwise.
+	CalendarMethod string `json:"calendarMethod,omitempty"`
+}
+
+// NewAttachmentInfo describes attachment a at index for the listing APIs of
+// both mail backends.
+func NewAttachmentInfo(index int, a mailmsg.Attachment) AttachmentInfo {
+	info := AttachmentInfo{Index: index, Name: a.Name, MimeType: a.MimeType, Size: len(a.Content)}
+	if strings.EqualFold(a.MimeType, "text/calendar") {
+		info.CalendarMethod = CalendarMethod(a.Content)
+	}
+	return info
 }
 
 // ErrAttachmentNotFound reports an attachment index that doesn't exist on
@@ -470,6 +484,9 @@ type Client interface {
 	// in mailbox, without a body fetch — the selective, cheap counterpart
 	// to ListUnreadMessages used by the mail cache's live-diff path.
 	ListOverviews(ctx context.Context, mailbox string, limit int) ([]Overview, error)
+	// ListOverviewsBefore is ListOverviews for the page of messages with a UID
+	// below before (newest first), plus whether older messages remain.
+	ListOverviewsBefore(ctx context.Context, mailbox string, before, limit int) ([]Overview, bool, error)
 	// SearchMessages searches messages in mailbox by field (sender/subject/body/all)
 	// and returns the newest N matching messages as Overview objects.
 	SearchMessages(ctx context.Context, mailbox, field, query string, limit int) ([]Overview, error)
@@ -757,15 +774,27 @@ func (c *APIClient) ListUnreadInbox(ctx context.Context, sinceCheckpoint string)
 		return nil, "", err
 	}
 
+	ns, err := pollNamespace(d)
+	if err != nil {
+		return nil, "", err
+	}
+	prevNS, minUID := parseCheckpoint(sinceCheckpoint)
+	switch {
+	case ns == "":
+		ns = prevNS
+	case prevNS != "" && ns != prevNS:
+		minUID = 0 // UIDs restarted or name another mailbox
+	}
+	base := formatCheckpoint(ns, minUID)
+
 	uids, err := d.GetUIDs("UNSEEN")
 	if err != nil {
 		return nil, "", fmt.Errorf("imap search unseen: %w", err)
 	}
 	if len(uids) == 0 {
-		return []Message{}, sinceCheckpoint, nil
+		return []Message{}, base, nil
 	}
 
-	minUID := parseCheckpointUID(sinceCheckpoint)
 	filtered := make([]int, 0, len(uids))
 	for _, uid := range uids {
 		if uid > minUID {
@@ -773,7 +802,7 @@ func (c *APIClient) ListUnreadInbox(ctx context.Context, sinceCheckpoint string)
 		}
 	}
 	if len(filtered) == 0 {
-		return []Message{}, sinceCheckpoint, nil
+		return []Message{}, base, nil
 	}
 	sort.Ints(filtered)
 
@@ -796,9 +825,9 @@ func (c *APIClient) ListUnreadInbox(ctx context.Context, sinceCheckpoint string)
 		return nil, "", err
 	}
 
-	next := sinceCheckpoint
+	next := base
 	if maxUID > minUID {
-		next = strconv.Itoa(maxUID)
+		next = formatCheckpoint(ns, maxUID)
 	}
 	return out, next, nil
 }
@@ -938,6 +967,7 @@ func (c *APIClient) fetchUnreadPage(ctx context.Context, d *goimap.Dialer, uids 
 		}
 	}
 	envelopes := collectPGPEnvelopes(d, emails, inboxBodyText)
+	invites := calendarInviteUIDs(d, emails)
 
 	for _, uid := range toFetch {
 		if err := ctx.Err(); err != nil {
@@ -988,7 +1018,7 @@ func (c *APIClient) fetchUnreadPage(ctx context.Context, d *goimap.Dialer, uids 
 			AtUTC:          ov.AtUTC,
 			Body:           body,
 			BodyHTML:       bodyHTML,
-			HasAttachments: len(e.Attachments) > 0,
+			HasAttachments: len(e.Attachments) > 0 || invites[uid],
 			// Confirmed against the root Content-Type, not inferred from the
 			// attachments: a bodyless message carrying one armored .pgp file is
 			// indistinguishable from a real envelope by parts alone, and this
@@ -1055,6 +1085,7 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, mailbox string, limi
 		}
 	}
 	envelopes := collectPGPEnvelopes(d, emails, clientBodyText)
+	invites := calendarInviteUIDs(d, emails)
 
 	out := make([]UnreadMessage, 0, len(uids))
 	for i := len(uids) - 1; i >= 0; i-- {
@@ -1086,7 +1117,7 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, mailbox string, limi
 			AtUTC:                ov.AtUTC,
 			Body:                 body,
 			Status:               ov.Status,
-			HasAttachments:       len(e.Attachments) > 0,
+			HasAttachments:       len(e.Attachments) > 0 || invites[uid],
 		}
 		if body == "" {
 			if payload := envelopes[uid].Payload; payload != "" {
@@ -1135,7 +1166,52 @@ func (c *APIClient) ListOverviews(ctx context.Context, mailbox string, limit int
 	}
 
 	sort.Ints(uids)
+	return overviewsNewestFirst(ctx, d, uids)
+}
 
+// ListOverviewsBefore pages older mail: the newest limit UIDs below before,
+// found by a server-side UID SEARCH rather than listing the whole mailbox.
+func (c *APIClient) ListOverviewsBefore(ctx context.Context, mailbox string, before, limit int) ([]Overview, bool, error) {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if limit <= 0 {
+		limit = 500
+	}
+	if before <= 1 {
+		return []Overview{}, false, nil
+	}
+	d, err := c.ensureConnectedLocked()
+	if err != nil {
+		return nil, false, err
+	}
+	if err := c.selectMailboxLocked(d, strings.TrimSpace(mailbox)); err != nil {
+		return nil, false, err
+	}
+	uids, err := d.GetUIDs("UID 1:" + strconv.Itoa(before-1))
+	if err != nil {
+		return nil, false, fmt.Errorf("imap list older messages: %w", err)
+	}
+	// Filter rather than trust the server's range handling with our cursor.
+	uids = slices.DeleteFunc(uids, func(uid int) bool { return uid <= 0 || uid >= before })
+	sort.Ints(uids)
+	hasMore := len(uids) > limit
+	if hasMore {
+		uids = uids[len(uids)-limit:]
+	}
+	if len(uids) == 0 {
+		return []Overview{}, false, nil
+	}
+	out, err := overviewsNewestFirst(ctx, d, uids)
+	return out, hasMore, err
+}
+
+// overviewsNewestFirst fetches envelopes for ascending uids and returns them
+// newest first.
+func overviewsNewestFirst(ctx context.Context, d *goimap.Dialer, uids []int) ([]Overview, error) {
 	overviews, err := d.GetOverviews(uids...)
 	if err != nil {
 		return nil, fmt.Errorf("imap fetch overviews: %w", err)
@@ -1315,6 +1391,7 @@ func (c *APIClient) GetMessageBodies(ctx context.Context, mailbox string, uids [
 		}
 	}
 	envelopes := collectPGPEnvelopes(d, emails, bodyText)
+	invites := calendarInviteUIDs(d, emails)
 
 	for _, uid := range toFetch {
 		if err := ctx.Err(); err != nil {
@@ -1335,7 +1412,7 @@ func (c *APIClient) GetMessageBodies(ctx context.Context, mailbox string, uids [
 		content := MessageContent{
 			Body:           body,
 			BodyMode:       bodyMode,
-			HasAttachments: len(e.Attachments) > 0,
+			HasAttachments: len(e.Attachments) > 0 || invites[uid],
 			Sender:         singleMailboxSender(e),
 		}
 		if body == "" {
@@ -1419,6 +1496,11 @@ func (c *APIClient) ApplyInboxAction(ctx context.Context, messageID, action, mai
 	case "read":
 		if err := d.MarkSeen(uid); err != nil {
 			return fmt.Errorf("imap mark seen uid %d: %w", uid, err)
+		}
+		return nil
+	case "unread":
+		if err := d.SetFlags(uid, goimap.Flags{Seen: goimap.FlagRemove}); err != nil {
+			return fmt.Errorf("imap mark unseen uid %d: %w", uid, err)
 		}
 		return nil
 	case "archive":
@@ -1612,16 +1694,63 @@ func (c *APIClient) ensureConnectedLocked() (*goimap.Dialer, error) {
 	return c.dialer, nil
 }
 
-func parseCheckpointUID(checkpoint string) int {
-	v := strings.TrimSpace(checkpoint)
-	if v == "" {
-		return 0
+// A poll checkpoint is "<namespace>:<uid>". The namespace names the UID space
+// (account, mailbox, UIDVALIDITY); a bare "<uid>" predates it and is accepted
+// as matching whatever the server reports next.
+func parseCheckpoint(checkpoint string) (namespace string, uid int) {
+	namespace, v, found := strings.Cut(strings.TrimSpace(checkpoint), ":")
+	if !found {
+		namespace, v = "", namespace
 	}
 	uid, err := strconv.Atoi(v)
 	if err != nil || uid < 0 {
-		return 0
+		return namespace, 0
 	}
+	return namespace, uid
+}
+
+func formatCheckpoint(namespace string, uid int) string {
+	switch {
+	case namespace != "":
+		return namespace + ":" + strconv.Itoa(uid)
+	case uid > 0:
+		return strconv.Itoa(uid)
+	}
+	return ""
+}
+
+func parseCheckpointUID(checkpoint string) int {
+	_, uid := parseCheckpoint(checkpoint)
 	return uid
+}
+
+// pollNamespace identifies the selected mailbox's UID space. A new UIDVALIDITY
+// (mailbox recreated or migrated) or a different account/mailbox reuses UIDs
+// for other messages, so a checkpoint from another namespace means nothing.
+// "" when the server omits UIDVALIDITY.
+func pollNamespace(d *goimap.Dialer) (string, error) {
+	resp, err := d.Exec(`STATUS "`+goimap.AddSlashes.Replace(d.Folder)+`" (UIDVALIDITY)`, true, goimap.RetryCount, nil)
+	if err != nil {
+		return "", fmt.Errorf("imap status uidvalidity: %w", err)
+	}
+	m := uidValidityResponse.FindStringSubmatch(resp)
+	if len(m) != 2 {
+		return "", nil
+	}
+	account, _ := json.Marshal([]any{strings.ToLower(d.Host), d.Port, d.Username, d.Folder})
+	return m[1] + "." + incomingHash(account)[:12], nil
+}
+
+// UIDNamespaceReset reports whether next belongs to a different UID namespace
+// than prev. If so, every UID recorded under prev names some other message, and
+// reset is the checkpoint to restart from.
+func UIDNamespaceReset(prev, next string) (reset string, changed bool) {
+	prevNS, _ := parseCheckpoint(prev)
+	nextNS, _ := parseCheckpoint(next)
+	if prevNS == "" || nextNS == "" || prevNS == nextNS {
+		return "", false
+	}
+	return formatCheckpoint(nextNS, 0), true
 }
 
 // ClampCheckpoint holds the checkpoint below every message the caller is
@@ -1652,6 +1781,14 @@ func ClampCheckpoint(prev, next string, deferredIDs []string) string {
 	if len(deferredIDs) == 0 {
 		return next
 	}
+	prevNS, prevUID := parseCheckpoint(prev)
+	nextNS, nextUID := parseCheckpoint(next)
+	if nextNS != "" && prevNS != nextNS {
+		if prevNS != "" {
+			prevUID = 0 // another namespace's UIDs are no floor
+		}
+		prev = formatCheckpoint(nextNS, prevUID) // legacy prev adopts next's namespace
+	}
 	lowest := 0
 	for _, id := range deferredIDs {
 		uid, err := strconv.Atoi(strings.TrimSpace(id))
@@ -1663,11 +1800,11 @@ func ClampCheckpoint(prev, next string, deferredIDs []string) string {
 		}
 	}
 	candidate := lowest - 1
-	if nextUID := parseCheckpointUID(next); candidate > nextUID {
+	if candidate > nextUID {
 		candidate = nextUID
 	}
-	if candidate <= parseCheckpointUID(prev) {
+	if candidate <= prevUID {
 		return prev
 	}
-	return strconv.Itoa(candidate)
+	return formatCheckpoint(nextNS, candidate)
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -21,6 +22,29 @@ func (s *Server) withAdmin(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	})
+}
+
+// withAdminStepUp confirms the acting admin (confirmActor) before next runs.
+// Register inside withAdmin(withActionDigest(...)). The credential travels as
+// adminPassword/adminAuthSecret because these bodies carry passwords of their own.
+func (s *Server) withAdminStepUp(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body) // bounded by withActionDigest
+		var cred struct {
+			Password   string `json:"adminPassword"`
+			AuthSecret string `json:"adminAuthSecret"`
+		}
+		if err != nil || len(raw) > 0 && json.Unmarshal(raw, &cred) != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		ac, _ := authFromContext(r)
+		if !s.confirmActor(w, r, ac.UserID, cred.Password, cred.AuthSecret) {
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		next(w, r)
+	}
 }
 
 func (s *Server) handleUsersList(w http.ResponseWriter, r *http.Request) {
@@ -268,7 +292,7 @@ func parseRole(raw string) (users.Role, error) {
 }
 
 func writeUserStoreError(w http.ResponseWriter, err error) {
-	// Create and SetPassword both derive scrypt, so both can be shed. 503, not
+	// Create and SetPassword both derive Argon2id, so both can be shed. 503, not
 	// "user store error": nothing was written and the caller should retry, which
 	// a 500 does not say. These are admin-only endpoints, but the derivation
 	// slots are shared with every login on the instance — an admin creating an

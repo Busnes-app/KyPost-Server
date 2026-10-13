@@ -13,11 +13,10 @@ import (
 // a compiled redaction engine and a logger.
 func newRedactionPoller(t *testing.T) *Poller {
 	t.Helper()
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	base := config.Default()
 	engine, err := redaction.New(base.Redaction.Patterns)

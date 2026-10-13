@@ -223,7 +223,8 @@ func newSSRFSafeHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &boundedBodyTransport{
-			base:  &http.Transport{DialContext: ssrfSafeDialContext},
+			// One transport per call: pooled conns would never be reused, only leaked.
+			base:  &http.Transport{DialContext: ssrfSafeDialContext, DisableKeepAlives: true},
 			limit: maxOutboundResponseBytes,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {

@@ -55,7 +55,7 @@ export function CardDavClient() {
     }
   }
 
-  function useDiscoveredAddressBook(path: string) {
+  function selectDiscoveredAddressBook(path: string) {
     setClientForm((prev) => ({ ...prev, addressBookPath: path }));
     setClientMessage(`Address book pinned to ${path} — click "Save CardDAV Client" then "Sync Now" to apply.`);
   }
@@ -194,7 +194,7 @@ export function CardDavClient() {
                       {book.contactCount === 1 ? "" : "s"}
                     </span>
                     {book.path !== clientForm.addressBookPath && !managed ? (
-                      <button type="button" onClick={() => useDiscoveredAddressBook(book.path)}>
+                      <button type="button" onClick={() => selectDiscoveredAddressBook(book.path)}>
                         Use This
                       </button>
                     ) : null}

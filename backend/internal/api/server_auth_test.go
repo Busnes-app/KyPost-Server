@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -129,13 +128,12 @@ func TestLoginMeLogoutFlow(t *testing.T) {
 	}
 }
 
-// TestHandleLoginRehashesLegacyScryptPassword covers the upgrade path wired
+// TestHandleLoginRehashesStaleArgon2idPassword covers the upgrade path wired
 // into the login handler (server_auth_session.go, around the
-// users.NeedsRehash / RehashPassword call): a stored scrypt hash must still
-// authenticate, and the successful login must be the trigger that rewrites it
-// as Argon2id — the one moment the plaintext is legitimately in hand to
-// re-derive from.
-func TestHandleLoginRehashesLegacyScryptPassword(t *testing.T) {
+// users.NeedsRehash / RehashPassword call): an Argon2id hash below the current
+// cost still authenticates, and the successful login rewrites it at the
+// current cost — the one moment the plaintext is in hand to re-derive from.
+func TestHandleLoginRehashesStaleArgon2idPassword(t *testing.T) {
 	srv := newTestServer(t)
 	const pw = "correct-horse-battery-staple"
 	u, err := srv.users.Create(context.Background(), "legacy-login", pw, users.RoleUser)
@@ -143,22 +141,23 @@ func TestHandleLoginRehashesLegacyScryptPassword(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	plantLegacyPasswordHash(t, srv, u.ID, pw)
+	stale := staleArgon2Hash(t, pw)
+	plantPasswordHash(t, srv, u.ID, stale)
 
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login", map[string]string{
 		"username": u.Username,
 		"password": pw,
 	})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("login with legacy scrypt hash: status = %d, body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("login with stale Argon2id hash: status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 
 	after, err := srv.users.Get(u.ID)
 	if err != nil {
 		t.Fatalf("Get after login: %v", err)
 	}
-	if !strings.HasPrefix(after.PasswordHash, "$argon2id$") {
-		t.Fatalf("PasswordHash after login = %q, want an Argon2id hash", after.PasswordHash)
+	if after.PasswordHash == stale {
+		t.Fatal("login did not rehash the stale hash")
 	}
 	if users.NeedsRehash(after.PasswordHash) {
 		t.Error("hash still reports needing a rehash after login upgraded it")

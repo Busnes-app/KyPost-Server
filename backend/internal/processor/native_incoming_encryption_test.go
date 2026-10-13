@@ -199,7 +199,7 @@ func TestNativeIncomingPollerJournalRecovery(t *testing.T) {
 			if err != nil || u.IncomingEncryptionPending {
 				t.Fatal("key reservation retained", err)
 			}
-			decisions := uc.store.Decisions(10)
+			decisions := mustDecisions(t, uc.store, 10)
 			if len(decisions) != 1 || decisions[0].MessageID != strconv.FormatInt(replacement, 10) || strings.Contains(decisions[0].Subject, "private") {
 				t.Fatal("replacement decision invalid")
 			}
@@ -215,7 +215,7 @@ func TestNativeIncomingPollerJournalRecovery(t *testing.T) {
 			if err = p.resumeIncomingEncryption(ctx, uc); err != nil {
 				t.Fatal(err)
 			}
-			if len(uc.store.Decisions(10)) != 1 {
+			if len(mustDecisions(t, uc.store, 10)) != 1 {
 				t.Fatal("completed recovery duplicated audit")
 			}
 

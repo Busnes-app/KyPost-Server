@@ -68,7 +68,7 @@ func TestNativeRegisterPersistsUnifiedPushWebPushKeys(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
-	devices := store.ListNativeDevices()
+	devices := mustNativeDevices(t, store)
 	if len(devices) != 1 {
 		t.Fatalf("len(devices) = %d, want 1", len(devices))
 	}
@@ -109,7 +109,7 @@ func TestNativeRegisterRejectsMalformedWebPushKeys(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 			}
-			if devices := store.ListNativeDevices(); len(devices) != 0 {
+			if devices := mustNativeDevices(t, store); len(devices) != 0 {
 				t.Fatalf("len(devices) = %d, want 0 — a rejected registration must not persist", len(devices))
 			}
 		})
@@ -132,7 +132,7 @@ func TestNativeRegisterIgnoresWebPushKeysOnNonUnifiedPushTransports(t *testing.T
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
-	devices := store.ListNativeDevices()
+	devices := mustNativeDevices(t, store)
 	if len(devices) != 1 {
 		t.Fatalf("len(devices) = %d, want 1", len(devices))
 	}
@@ -141,9 +141,9 @@ func TestNativeRegisterIgnoresWebPushKeysOnNonUnifiedPushTransports(t *testing.T
 	}
 }
 
-// A UnifiedPush device from a client that predates the key exchange keeps
-// registering, and keeps receiving the unencrypted payload it can read.
-func TestNativeRegisterAcceptsUnifiedPushWithoutKeys(t *testing.T) {
+// UnifiedPush without keys is refused: the sender never posts plaintext, so
+// the device would be stored and then never receive anything.
+func TestNativeRegisterRefusesUnifiedPushWithoutKeys(t *testing.T) {
 	srv := newTestServer(t)
 	store := testUserStore(t, srv)
 	subscriberID, err := store.GetOrCreateSubscriberID()
@@ -152,11 +152,10 @@ func TestNativeRegisterAcceptsUnifiedPushWithoutKeys(t *testing.T) {
 	}
 
 	rec := registerWithKeys(t, srv, subscriberID, "device-legacy", "unifiedpush", "", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	devices := store.ListNativeDevices()
-	if len(devices) != 1 || devices[0].P256DH != "" || devices[0].Auth != "" {
-		t.Fatalf("unexpected device state: %+v", devices)
+	if devices := mustNativeDevices(t, store); len(devices) != 0 {
+		t.Fatalf("keyless device was stored: %+v", devices)
 	}
 }

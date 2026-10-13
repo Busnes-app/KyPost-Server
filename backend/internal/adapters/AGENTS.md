@@ -12,7 +12,9 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 
 - `imap.MessageReference` / `ResolveMessageReference` translate only at wire boundaries through the native generation capability. Keep canonical numeric internal IDs; reject stale/foreign/bare native references before lookup/mutation. Missing native capability fails closed; legacy IMAP behavior stays unchanged.
 
-- `imap.MailSourceIdentity` identifies external IMAP mode or native immutable owner/database namespace. Account state/cache admission precedes API/daemon mail operations; it does not detect changes between external IMAP endpoints or UIDVALIDITY.
+- `imap.MailSourceIdentity` identifies external IMAP mode or native immutable owner/database namespace. Account state/cache admission precedes API/daemon mail operations; it does not detect changes between external IMAP endpoints or UIDVALIDITY — the poll checkpoint does.
+
+- Poll checkpoints are `<namespace>:<uid>`; the namespace is the polled mailbox's UIDVALIDITY (read from the `STATUS` attribute list each `ListUnreadInbox`, never the mailbox name) plus a hash of host, port, username and mailbox. A bare `<uid>` is the pre-namespace format: it is trusted, and adopts the next namespace on every save, `ClampCheckpoint` included. A different namespace restarts the fetch at UID 0 and `UIDNamespaceReset` tells the poller to clear the processed set and deferrals (`state.Store.ResetUIDNamespace`); only unread mail is refetched. A server omitting UIDVALIDITY keeps bare checkpoints. Native checkpoints stay bare IDs.
 
 ### `imap/` — IMAP Client
 
@@ -20,7 +22,7 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 
 - `incoming_encryption.go` owns safe incoming replacements and subsequent rule actions. Reject non-INBOX polling configurations before capturing a source UID. Bind UIDs to the authenticated endpoint/account, UIDVALIDITY and exact content; APPEND must be byte-verified before targeted UID EXPUNGE. Require UIDPLUS/rev2 and preflight MOVE for terminal rules. Perform any folder discovery/create before the final identity guards, then use commands with automatic retries disabled. Reconcile uncertain APPEND/MOVE by marker plus exact ciphertext, never marker alone or global EXPUNGE.
 
-- Split by concern: `client.go` (connection lifecycle, credentials, message fetch/search), `client_folders.go` (mailbox list/create/delete/rename, keyword apply/remove), `client_attachments.go` (attachment enumeration and fetch), `client_append.go` (draft and Sent APPEND), `protocol_safety.go` (the keyword/mailbox validators below)
+- Split by concern: `client.go` (connection lifecycle, credentials, message fetch/search), `client_folders.go` (mailbox list/create/delete/rename, keyword apply/remove), `client_attachments.go` (attachment enumeration and fetch: `FetchRawMessage`, whose `UID LARGER` search refuses oversize before fetching, then `ParseRawContent`, the parser native mail uses, so both backends list the same parts; undisposed `text/calendar` parts are appended as `invite.ics` after real attachments and `NewAttachmentInfo` adds `calendarMethod`; the go-imap list paths — `ListUnreadInbox`, `ListUnreadMessages`, `GetMessageBodies` — set `HasAttachments` for such parts through `calendarInviteUIDs`, one best-effort `BODYSTRUCTURE` fetch for attachment-less messages, matching only part positions), `client_append.go` (draft and Sent APPEND), `protocol_safety.go` (the keyword/mailbox validators below)
 - Wraps `go-imap` to fetch unread emails by UID range from a configured mailbox
 - Reads IMAP credentials from an encrypted file at rest (decrypted at connection time via `SECRET_DIR`)
 - Does not cache or buffer messages; callers receive a slice of messages and are responsible for processing
@@ -42,6 +44,7 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 - `http_client.go` — low-level transport: request construction, admission control, retry loop, `Stats()` for queue depth
 
 - Classifier diagnostics use the process slog handler (shared JSON stderr). Never log model output, prompts or response snippets; report byte counts, operation names, transport failures and HTTP status. Warmup/retry/failure events survive the default info level. Never embed upstream HTTP bodies, JSON error text or the model response in returned errors: callers also log them. The adapter owns no log files.
+- Failures callers act on are typed — `ErrCreditsExhausted`, `*StatusError` (HTTP status), `*NoAllowedLabelError` — and are matched with `errors.Is`/`errors.As`, never by message text.
 
 ### Shared Rules
 

@@ -1,8 +1,23 @@
 package classifier
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 )
+
+// ErrCreditsExhausted reports the model answering with its out-of-credits
+// notice. Retrying will not help until the credits reset.
+var ErrCreditsExhausted = errors.New("user has run out of ai credits")
+
+// StatusError is a non-2xx answer from the classifier endpoint.
+type StatusError struct {
+	StatusCode int
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("ollama classify failed: status %d", e.StatusCode)
+}
 
 // NoAllowedLabelError reports that the model answered, but nothing in its
 // answer resolved to a label on the configured allowlist. It carries the raw

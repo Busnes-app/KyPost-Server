@@ -208,34 +208,16 @@ func (e *mailLockedOutError) Error() string {
 	return "device locked out"
 }
 
-func (s *Server) userConfigDir(userID string) string {
-	return filepath.Join(s.configDir, "users", safeUserPathComponent(userID))
-}
-
-func (s *Server) userStateDir(userID string) string {
-	return filepath.Join(s.stateDir, "users", safeUserPathComponent(userID))
-}
-
-// safeUserPathComponent keeps malformed or legacy user records inside the
-// users directory. Valid IDs are opaque UUIDs, but path construction must not
-// rely on that invariant surviving hand-edited or migrated users.json files.
-func safeUserPathComponent(userID string) string {
-	if fsutil.SafePathComponent(userID) {
-		return userID
-	}
-	return "__invalid-user-id__"
-}
-
+func (s *Server) userConfigDir(userID string) string { return config.UserDir(s.configDir, userID) }
+func (s *Server) userStateDir(userID string) string  { return config.UserDir(s.stateDir, userID) }
 func (s *Server) userIMAPConfigPath(userID string) string {
-	return filepath.Join(s.userConfigDir(userID), "imap-config.json")
+	return config.UserIMAPConfigPath(s.configDir, userID)
 }
-
 func (s *Server) userTuningPath(userID string) string {
-	return filepath.Join(s.userConfigDir(userID), "tuning.md")
+	return config.UserTuningPath(s.configDir, userID)
 }
-
 func (s *Server) userSettingsPath(userID string) string {
-	return filepath.Join(s.userConfigDir(userID), "config.yaml")
+	return config.UserSettingsPath(s.configDir, userID)
 }
 
 // userLabels reads one account's label set, seeding it from the house list the
@@ -260,7 +242,7 @@ func (s *Server) userLabels(userID string) config.UserLabelSettings {
 }
 
 // userCardDAVAuthPath is where the user's app-specific CardDAV password hash
-// is stored — separate from imap-config.json since it's a plain scrypt hash
+// is stored — separate from imap-config.json since it is a one-way Argon2id hash
 // (not reversible credentials), so it needs no encryption-at-rest key.
 func (s *Server) userCardDAVAuthPath(userID string) string {
 	return filepath.Join(s.userConfigDir(userID), "carddav-auth.json")
@@ -462,7 +444,7 @@ func (s *Server) mailboxStateDir(userID, mailboxID string) string {
 	if mailboxID == "" {
 		return s.userStateDir(userID)
 	}
-	return filepath.Join(s.stateDir, "mailboxes", safeUserPathComponent(mailboxID))
+	return filepath.Join(s.stateDir, "mailboxes", config.SafeUserPathComponent(mailboxID))
 }
 
 // mailboxStore is the selected mailbox's state (processed, decisions,
@@ -945,7 +927,7 @@ func (s *Server) sweepDeviceIndex() int {
 // deactivate/reset-password/clear-MFA, so a fourth credential type is added only
 // here. The DAV cache has no per-user index (its keys are salted hashes of
 // username+password), so invalidation clears the whole map; that costs other
-// users at most one extra scrypt verification on their next sync.
+// users at most one extra verification on their next sync.
 func (s *Server) revokeAllUserCredentials(u users.User) error {
 	return s.revokeAllUserCredentialsExcept(u, "")
 }
@@ -980,7 +962,7 @@ func (s *Server) revokeUserCredentials(u users.User, keepSessionToken string, pr
 		errs = append(errs, err)
 	}
 	// Delete the credential, not just the cache entry. invalidateUser clears an
-	// in-memory verification cache, but the scrypt hash lives in carddav-auth.json,
+	// in-memory verification cache, but the hash lives in carddav-auth.json,
 	// so readDAVPassword loaded it again on the next request and minted a fresh
 	// AuthContext. A stolen app password therefore survived admin reset-password,
 	// admin clear-MFA and the self-service password change.

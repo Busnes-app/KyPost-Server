@@ -195,7 +195,7 @@ CREATE INDEX IF NOT EXISTS deferrals_first_at ON deferrals(first_at);
 -- message, so that a later keyword change can be recognised as a correction.
 -- check_hash is sha256(sender NUL subject) of the message as the IMAP adapter
 -- formats it; a correction must present the same hash, which keeps a reused UID
--- (UIDVALIDITY is not tracked) from teaching the sorter about the wrong mail.
+-- (these rows are not scoped by UIDVALIDITY) from teaching the sorter about the wrong mail.
 -- Pruned by Cleanup with the decisions.
 CREATE TABLE IF NOT EXISTS sorter_predictions (
 	message_id TEXT PRIMARY KEY,
@@ -220,6 +220,37 @@ CREATE TABLE IF NOT EXISTS sorter_corrections (
 	at_unix    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sorter_corrections_label ON sorter_corrections(label, at_unix);
+
+-- Mail frozen for a later send; used only in the install-wide state.db. sealed
+-- (the job) and summary (subject, To) are AES-GCM under scheduled-send.key;
+-- sealed is NULL once a row is final. See scheduled_sends.go.
+CREATE TABLE IF NOT EXISTS scheduled_sends (
+	id           TEXT PRIMARY KEY,
+	user_id      TEXT NOT NULL,
+	mailbox      TEXT NOT NULL,
+	send_at      INTEGER NOT NULL,
+	status       TEXT NOT NULL,
+	reason       TEXT NOT NULL DEFAULT '',
+	sealed       BLOB,
+	summary      BLOB NOT NULL,
+	next_attempt INTEGER NOT NULL DEFAULT 0,
+	created_at   INTEGER NOT NULL,
+	-- When the row last entered returning; bounds draft-save retries.
+	returning_since INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS scheduled_sends_due ON scheduled_sends(status, send_at);
+CREATE INDEX IF NOT EXISTS scheduled_sends_user ON scheduled_sends(user_id, status);
+
+-- Snoozed mail, keyed by RFC 5322 Message-ID because a move renumbers an IMAP
+-- UID. woken_at=0 means still snoozed; once woken, inbox_id is the message's
+-- id in INBOX and the row pins it to the top of the inbox. See snoozes.go.
+CREATE TABLE IF NOT EXISTS snoozes (
+	message_id TEXT PRIMARY KEY,
+	wake_at    INTEGER NOT NULL,
+	inbox_id   TEXT NOT NULL DEFAULT '',
+	woken_at   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS snoozes_wake ON snoozes(woken_at, wake_at);
 `
 
 func openDB(path, existingSource string) (*sql.DB, error) {

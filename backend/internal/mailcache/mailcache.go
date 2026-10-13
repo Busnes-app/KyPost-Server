@@ -22,6 +22,7 @@ package mailcache
 import (
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // Entry is one cached message's metadata (and, opportunistically, body) for
@@ -76,6 +77,9 @@ type Entry struct {
 	Keywords  []string `json:"keywords,omitempty"`
 	Status    string   `json:"status"`
 	AtUTC     string   `json:"atUtc"`
+	// WokenAt is when a snoozed message came back to INBOX (RFC3339), which
+	// pins it to the top. Set by the inbox handler, never by the poller.
+	WokenAt string `json:"wokenAt,omitempty"`
 
 	// Rev is the window's monotonic sequence value as of this entry's most
 	// recent metadata change (creation or a flag/label/subject change).
@@ -201,6 +205,7 @@ type Overview struct {
 	Keywords []string
 	Status   string
 	AtUTC    string
+	WokenAt  string
 }
 
 // SyncResult is what changed for a caller whose last known cursor was
@@ -219,10 +224,21 @@ type SyncResult struct {
 	// Removed is messages that left the window, filtered by the caller's
 	// cursor exactly like New/Updated: every removal stamped with a Rev
 	// greater than `since`, not merely the ones this particular call
-	// observed. See Removal and Store.Sync.
+	// observed. See Removal and Store.Sync. Messages that only aged out of
+	// the bottom of a full window are in AgedOut instead.
 	Removed []Removal
+	// AgedOut is messages pushed below a full window by newer mail. They
+	// still exist; a client keeps them. Same cursor filtering as Removed.
+	AgedOut []Removal
 	// Cursor is the window's new high-water Rev.
 	Cursor int64
+	// Reset means `since` was not a cursor this window issued, so the result
+	// was computed as for since=0: a full window, not a delta.
+	Reset bool
+	// HasMore means the oldest message in a full window is new to the caller,
+	// so newer-than-cursor mail may lie below the window: page it with
+	// before= from the oldest live message.
+	HasMore bool
 }
 
 // Removal is a message that left the window, retained so it can be reported to
@@ -239,6 +255,24 @@ type Removal struct {
 	// Rev is the window sequence value at which the removal was observed,
 	// which is what makes it comparable against a caller's cursor.
 	Rev int64 `json:"rev"`
+	// AgedOut marks a message that fell below a full window rather than one
+	// that left the mailbox.
+	AgedOut bool `json:"agedOut,omitempty"`
+}
+
+// WindowKey is the Sync window for mailboxKey at a non-default limit. Each
+// limit keeps its own window and cursor, so a 50-message client and a
+// 500-message client no longer reset each other's comparison state. The NUL
+// separator cannot occur in a mailbox name (ValidateMailboxName refuses
+// control characters).
+func WindowKey(mailboxKey string, limit int) string {
+	return mailboxKey + "\x00" + strconv.Itoa(limit)
+}
+
+// windowMailbox strips a WindowKey suffix.
+func windowMailbox(key string) string {
+	mailbox, _, _ := strings.Cut(key, "\x00")
+	return mailbox
 }
 
 // entryMeta is the subset of fields Entry and Overview share, used to
@@ -253,6 +287,7 @@ type entryMeta struct {
 	BCC      string
 	Status   string
 	AtUTC    string
+	WokenAt  string
 	Keywords []string
 }
 
@@ -264,6 +299,7 @@ func (m entryMeta) equal(o entryMeta) bool {
 		m.BCC == o.BCC &&
 		m.Status == o.Status &&
 		m.AtUTC == o.AtUTC &&
+		m.WokenAt == o.WokenAt &&
 		slices.Equal(m.Keywords, o.Keywords)
 }
 
@@ -276,6 +312,7 @@ func (e Entry) meta() entryMeta {
 		BCC:      e.BCC,
 		Status:   e.Status,
 		AtUTC:    e.AtUTC,
+		WokenAt:  e.WokenAt,
 		Keywords: e.Keywords,
 	}
 }
@@ -289,6 +326,7 @@ func (o Overview) meta() entryMeta {
 		BCC:      o.BCC,
 		Status:   o.Status,
 		AtUTC:    o.AtUTC,
+		WokenAt:  o.WokenAt,
 		Keywords: o.Keywords,
 	}
 }
@@ -313,5 +351,6 @@ func entryFromOverview(ov Overview) Entry {
 		Keywords:  append([]string{}, ov.Keywords...),
 		Status:    ov.Status,
 		AtUTC:     ov.AtUTC,
+		WokenAt:   ov.WokenAt,
 	}
 }

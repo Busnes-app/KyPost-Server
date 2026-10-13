@@ -144,6 +144,9 @@ var safeAttachmentContentTypes = map[string]bool{
 	"application/pdf": true,
 	"text/plain":      true,
 	"text/csv":        true,
+	// Invites: data only, never rendered or executed by a browser, and the
+	// download still carries Content-Disposition: attachment and nosniff.
+	"text/calendar": true,
 }
 
 // normalizeAttachmentContentType maps a sender-supplied MIME type onto the

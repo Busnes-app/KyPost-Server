@@ -539,6 +539,9 @@ type contactsSyncPushRequest struct {
 // than this to push pages it.
 const maxContactsSyncChanges = 500
 
+// maxContactsSyncBodyBytes bounds one mobile-sync push body.
+const maxContactsSyncBodyBytes = 1 << 20
+
 // maxContactsBulkDeleteIDs bounds one bulk delete from the web UI. Same figure
 // and same reason as maxContactsSyncChanges — it sizes a single ApplyBatch
 // transaction — but its own constant because the two endpoints have separate
@@ -566,15 +569,24 @@ func (s *Server) handleContactsSync(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s.writeContactsSyncResponse(w, store, parseNonNegativeInt64Query(r, "since"))
 	case http.MethodPost:
+		// An over-cap body is the same "split the batch" signal as too many
+		// changes, so it gets the same 413 shape a client pages off.
 		var req contactsSyncPushRequest
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
-			return
+		tooLarge := ""
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxContactsSyncBodyBytes)).Decode(&req); err != nil {
+			if contactImportReadStatus(err) != http.StatusRequestEntityTooLarge {
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
+			tooLarge = "request body too large"
+		} else if len(req.Changes) > maxContactsSyncChanges {
+			tooLarge = "too many changes in one request"
 		}
-		if len(req.Changes) > maxContactsSyncChanges {
+		if tooLarge != "" {
 			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
-				"error":      "too many changes in one request",
+				"error":      tooLarge,
 				"maxChanges": maxContactsSyncChanges,
+				"maxBytes":   maxContactsSyncBodyBytes,
 			})
 			return
 		}

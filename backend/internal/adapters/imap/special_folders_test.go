@@ -11,6 +11,7 @@ package imap
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -300,4 +301,36 @@ func TestSaveDraft_UsesTheServersDraftsFolder(t *testing.T) {
 		t.Fatalf("appended to the wrong folder: %v", appends)
 	}
 	assertNoCreate(t, s)
+}
+
+// The folder list reports roles keyed by the exact paths ListSubfolders
+// returns, from attributes only: a plain "Sent" without \Sent gets no role.
+func TestSpecialUseFolders_KeysMatchListedPaths(t *testing.T) {
+	quietRetries(t, 0)
+	s := newFakeIMAPServer(t, ".", true, []fakeFolder{
+		inboxFolder(),
+		{name: "INBOX.Gesendet", attrs: `\Sent`},
+		{name: "INBOX.Entw&APw-rfe", attrs: `\Drafts`},
+		{name: "INBOX.Sent"},
+	})
+	c := s.client(inbox)
+
+	uses, err := c.SpecialUseFolders(context.Background())
+	if err != nil {
+		t.Fatalf("special-use folders: %v", err)
+	}
+	want := map[string]string{"INBOX.Gesendet": "sent", "INBOX.Entw&APw-rfe": "drafts"}
+	if fmt.Sprint(uses) != fmt.Sprint(want) {
+		t.Fatalf("uses = %v, want %v", uses, want)
+	}
+
+	listed, err := c.ListSubfolders(context.Background(), "")
+	if err != nil {
+		t.Fatalf("list subfolders: %v", err)
+	}
+	for path := range want {
+		if !slices.Contains(listed, path) {
+			t.Fatalf("%q not among listed paths %v", path, listed)
+		}
+	}
 }

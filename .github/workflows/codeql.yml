@@ -71,15 +71,12 @@ jobs:
       # toolchain newer than the runner image ships. Without this the autobuild
       # step falls back to whatever `go` is on PATH and the extraction is
       # partial — which shows up as an analysis that finds nothing rather than
-      # as a failure, so it is worth pinning explicitly.
-      #
-      # GOTOOLCHAIN is left at its default here, unlike ci.yml: setup-go
-      # installs exactly what go.mod names, and forbidding a download would
-      # only turn a version bump into an extractor failure.
+      # as a failure, so it is worth installing explicitly.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: matrix.language == 'go'
         with:
-          go-version-file: backend/go.mod
+          go-version: stable
+          check-latest: true
           cache-dependency-path: backend/go.sum
 
       - name: Initialize CodeQL

@@ -1,13 +1,12 @@
 import { Fragment, FormEvent, useEffect, useState } from "react";
 import { toErrorMessage } from "../../api/client";
 import {
-  clearUserMFA,
   createUser,
-  deactivateUser,
   listUsers,
-  reactivateUser,
   resetUserPassword,
   setUserRole,
+  userAction,
+  type AdminConfirm,
   type ManagedUser
 } from "../../api/users";
 import { useAuth, type Role } from "../../auth";
@@ -28,6 +27,14 @@ export function Users() {
   const [status, setStatus] = useState("");
   const [busyId, setBusyId] = useState("");
   const [assignId, setAssignId] = useState("");
+  const ssoSession = auth.ssoSession === true;
+  const [adminPassword, setAdminPassword] = useState("");
+  const unlocked = ssoSession || adminPassword.length > 0;
+  // Each change confirms the acting admin once; the password is not kept.
+  function takeConfirm(): AdminConfirm {
+    setAdminPassword("");
+    return { ssoSession, password: adminPassword };
+  }
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -64,7 +71,7 @@ export function Users() {
     setCreateBusy(true);
     setStatus("");
     try {
-      const created = await createUser(newUsername.trim(), newPassword, newRole);
+      const created = await createUser(takeConfirm(), newUsername.trim(), newPassword, newRole);
       setNewUsername("");
       setNewPassword("");
       setNewRole("user");
@@ -77,11 +84,12 @@ export function Users() {
     }
   }
 
-  async function withRowBusy(user: ManagedUser, action: () => Promise<void>) {
+  async function withRowBusy(user: ManagedUser, action: (confirm: AdminConfirm) => Promise<void>) {
+    const confirm = takeConfirm();
     setBusyId(user.id);
     setStatus("");
     try {
-      await action();
+      await action(confirm);
       await refresh();
     } catch (error: unknown) {
       setStatus(`Failed: ${toErrorMessage(error, "unknown error")}`);
@@ -92,19 +100,19 @@ export function Users() {
 
   function toggleRole(user: ManagedUser) {
     const nextRole: Role = user.role === "admin" ? "user" : "admin";
-    void withRowBusy(user, async () => {
-      await setUserRole(user.id, nextRole);
+    void withRowBusy(user, async (confirm) => {
+      await setUserRole(confirm, user.id, nextRole);
       setStatus(`${user.username} is now ${nextRole === "admin" ? "an admin" : "a standard user"}.`);
     });
   }
 
   function toggleActive(user: ManagedUser) {
-    void withRowBusy(user, async () => {
+    void withRowBusy(user, async (confirm) => {
       if (user.active) {
-        await deactivateUser(user.id);
+        await userAction(confirm, user.id, "deactivate");
         setStatus(`${user.username} deactivated. Their data is retained and they can no longer sign in.`);
       } else {
-        await reactivateUser(user.id);
+        await userAction(confirm, user.id, "reactivate");
         setStatus(`${user.username} reactivated.`);
       }
     });
@@ -139,8 +147,8 @@ export function Users() {
     if (!password || !password.trim()) {
       return;
     }
-    void withRowBusy(user, async () => {
-      const result = await resetUserPassword(user.id, password);
+    void withRowBusy(user, async (confirm) => {
+      const result = await resetUserPassword(confirm, user.id, password);
       setStatus(
         result.pgpKeyInaccessible
           ? `Password reset for ${user.username}. Their end-to-end PGP key is now inaccessible ` +
@@ -159,8 +167,8 @@ export function Users() {
     if (!confirmed) {
       return;
     }
-    void withRowBusy(user, async () => {
-      await clearUserMFA(user.id);
+    void withRowBusy(user, async (confirm) => {
+      await userAction(confirm, user.id, "clear-mfa");
       setStatus(`Two-factor authentication cleared for ${user.username}.`);
     });
   }
@@ -189,6 +197,23 @@ export function Users() {
         ) : null}
       </header>
 
+      <fieldset className="config-card config-grid">
+        <legend>Confirm each change</legend>
+        {ssoSession ? (
+          <p>Confirm each change with KySignOn.</p>
+        ) : (
+          <label>
+            <div>Your account password</div>
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={adminPassword}
+              onChange={(e) => setAdminPassword(e.target.value)}
+            />
+          </label>
+        )}
+      </fieldset>
+
       <div className="users-layout">
         <form onSubmit={submitCreate} className="users-card users-create-card">
           <h3>Create User</h3>
@@ -214,7 +239,7 @@ export function Users() {
               <option value="admin">admin</option>
             </select>
           </label>
-          <button type="submit" className="users-create-submit" disabled={createBusy}>
+          <button type="submit" className="users-create-submit" disabled={createBusy || !unlocked}>
             {createBusy ? "Creating..." : "Create User"}
           </button>
         </form>
@@ -287,7 +312,7 @@ export function Users() {
                               type="button"
                               className="users-action"
                               onClick={() => toggleRole(user)}
-                              disabled={busy}
+                              disabled={busy || !unlocked}
                             >
                               {user.role === "admin" ? "Make User" : "Make Admin"}
                             </button>
@@ -295,7 +320,7 @@ export function Users() {
                               type="button"
                               className="users-action"
                               onClick={() => resetPassword(user)}
-                              disabled={busy}
+                              disabled={busy || !unlocked}
                             >
                               Reset Password
                             </button>
@@ -312,7 +337,7 @@ export function Users() {
                                 type="button"
                                 className="users-action users-action-danger"
                                 onClick={() => clearMFA(user)}
-                                disabled={busy}
+                                disabled={busy || !unlocked}
                               >
                                 Clear MFA
                               </button>
@@ -321,7 +346,7 @@ export function Users() {
                               type="button"
                               className={user.active ? "users-action users-action-danger" : "users-action"}
                               onClick={() => toggleActive(user)}
-                              disabled={busy}
+                              disabled={busy || !unlocked}
                             >
                               {user.active ? "Deactivate" : "Reactivate"}
                             </button>
@@ -331,7 +356,7 @@ export function Users() {
                         {assignId === user.id ? (
                           <tr>
                             <td colSpan={4}>
-                              <AssignMailbox user={user} onClose={() => setAssignId("")} />
+                              <AssignMailbox user={user} unlocked={unlocked} takeConfirm={takeConfirm} onClose={() => setAssignId("")} />
                             </td>
                           </tr>
                         ) : null}

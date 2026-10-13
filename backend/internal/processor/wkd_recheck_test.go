@@ -29,11 +29,10 @@ func verifiedDomains(t *testing.T, s *wkdpublish.Store) map[string]bool {
 // newTestPollerForHarvest / newTestPollerForSendAs in this package.
 func newTestPollerForWKDRecheck(t *testing.T) *Poller {
 	t.Helper()
-	logger, err := logging.New(t.TempDir())
+	logger, err := logging.New()
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}
-	t.Cleanup(func() { _ = logger.Close() })
 
 	stateDir := t.TempDir()
 	wkdStore, err := wkdpublish.New(stateDir)

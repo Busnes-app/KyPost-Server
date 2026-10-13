@@ -200,36 +200,9 @@ func TestUnifiedPushSenderEncryptsWhenDeviceHasKeys(t *testing.T) {
 	}
 }
 
-// A device registered by an older client, or through a distributor whose
-// connector supplied no key material, keeps working exactly as it does today.
-func TestUnifiedPushSenderFallsBackToPlaintextWithoutDeviceKeys(t *testing.T) {
-	var seenBody map[string]any
-	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(raw, &seenBody)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	keyPath, publicKey := writeVAPIDKeyFile(t)
-	sender := NewUnifiedPushSender(nil, publicKey, keyPath)
-	sender.client = ts.Client()
-
-	err := sender.Send(context.Background(),
-		state.NativeDevice{PushToken: ts.URL + "/topic", Transport: "unifiedpush"},
-		NativePushMessage{Title: "Title", Body: "Body"})
-	if err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
-	if seenBody["title"] != "Title" {
-		t.Fatalf("plaintext fallback body = %+v", seenBody)
-	}
-}
-
-// A server whose VAPID private key cannot be read must still deliver. Losing
-// encryption is bad; losing every notification is worse, and the operator sees
-// the load failure in the log either way.
-func TestUnifiedPushSenderFallsBackToPlaintextWithoutVAPIDKey(t *testing.T) {
+// keyedUnifiedPushDevice returns a UnifiedPush device with fresh WebPush keys.
+func keyedUnifiedPushDevice(t *testing.T) state.NativeDevice {
+	t.Helper()
 	uaPrivate, err := ecdh.P256().GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
@@ -238,29 +211,49 @@ func TestUnifiedPushSenderFallsBackToPlaintextWithoutVAPIDKey(t *testing.T) {
 	if _, err := rand.Read(authSecret); err != nil {
 		t.Fatalf("rand.Read: %v", err)
 	}
-
-	var seenBody map[string]any
-	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(raw, &seenBody)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	sender := NewUnifiedPushSender(nil, "", filepath.Join(t.TempDir(), "does-not-exist.pem"))
-	sender.client = ts.Client()
-
-	err = sender.Send(context.Background(), state.NativeDevice{
-		PushToken: ts.URL + "/topic",
+	return state.NativeDevice{
 		Transport: "unifiedpush",
 		P256DH:    base64.RawURLEncoding.EncodeToString(uaPrivate.PublicKey().Bytes()),
 		Auth:      base64.RawURLEncoding.EncodeToString(authSecret),
-	}, NativePushMessage{Title: "Title", Body: "Body"})
-	if err != nil {
-		t.Fatalf("Send() error = %v", err)
 	}
-	if seenBody["title"] != "Title" {
-		t.Fatalf("plaintext fallback body = %+v", seenBody)
+}
+
+// Without device keys or a VAPID key the payload cannot be encrypted, so
+// nothing reaches the distributor and the failure classifies as "unencrypted".
+func TestUnifiedPushSenderRefusesPlaintext(t *testing.T) {
+	keyed := keyedUnifiedPushDevice(t)
+	keyPath, publicKey := writeVAPIDKeyFile(t)
+
+	cases := []struct {
+		name   string
+		device state.NativeDevice
+		sender *UnifiedPushSender
+	}{
+		{"no device keys", state.NativeDevice{Transport: "unifiedpush"}, NewUnifiedPushSender(nil, publicKey, keyPath)},
+		{"no VAPID key", keyed, NewUnifiedPushSender(nil, "", filepath.Join(t.TempDir(), "does-not-exist.pem"))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			posted := false
+			ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				posted = true
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer ts.Close()
+			tc.sender.client = ts.Client()
+			tc.device.PushToken = ts.URL + "/topic"
+
+			err := tc.sender.Send(context.Background(), tc.device, NativePushMessage{Title: "Title", Body: "Body"})
+			if !errors.Is(err, errUnifiedPushNotEncrypted) {
+				t.Fatalf("Send() error = %v, want errUnifiedPushNotEncrypted", err)
+			}
+			if posted {
+				t.Fatal("payload reached the distributor")
+			}
+			if got := classifyNativePushFailure("android", err); got != "[android] unencrypted" {
+				t.Fatalf("classify = %q", got)
+			}
+		})
 	}
 }
 
@@ -319,5 +312,84 @@ func TestUnifiedPushSenderEncryptedPathRefusesNonHTTPS(t *testing.T) {
 	}, NativePushMessage{Title: "Title"})
 	if err == nil {
 		t.Fatal("Send() to an http endpoint succeeded, want an error")
+	}
+}
+
+// An MFA challenge is eligible for UnifiedPush only because it is encrypted:
+// the device opens exactly the challenge data, and when the sender cannot
+// encrypt it refuses with no request on the wire and no retry.
+func TestUnifiedPushSenderMFAChallengeEncryptedOrRefused(t *testing.T) {
+	uaPrivate, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	authSecret := make([]byte, 16)
+	if _, err := rand.Read(authSecret); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
+	p256dh := base64.RawURLEncoding.EncodeToString(uaPrivate.PublicKey().Bytes())
+	auth := base64.RawURLEncoding.EncodeToString(authSecret)
+	keyPath, publicKey := writeVAPIDKeyFile(t)
+	missingKey := filepath.Join(t.TempDir(), "does-not-exist.pem")
+
+	data := map[string]string{
+		"type": "mfa_challenge", "challengeId": "ch-1", "issuedAt": "1760140800000",
+		"matchDigits": "42", "decoyDigits": "07,93",
+	}
+	message := NativePushMessage{Title: "Approve sign-in", Body: "b", Data: data}
+
+	cases := []struct {
+		name          string
+		vapidKeyPath  string
+		p256dh, auth  string
+		wantEncrypted bool
+	}{
+		{name: "keys and vapid encrypt", vapidKeyPath: keyPath, p256dh: p256dh, auth: auth, wantEncrypted: true},
+		{name: "no vapid key refuses", vapidKeyPath: missingKey, p256dh: p256dh, auth: auth},
+		{name: "no device keys refuses", vapidKeyPath: keyPath},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := 0
+			var seenBody []byte
+			ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				seenBody, _ = io.ReadAll(r.Body)
+				w.WriteHeader(http.StatusCreated)
+			}))
+			defer ts.Close()
+			sender := NewUnifiedPushSender(nil, publicKey, tc.vapidKeyPath)
+			sender.client = ts.Client()
+
+			err := sender.Send(context.Background(), state.NativeDevice{
+				PushToken: ts.URL + "/topic", Transport: "unifiedpush", P256DH: tc.p256dh, Auth: tc.auth,
+			}, message)
+
+			if !tc.wantEncrypted {
+				if !errors.Is(err, errUnifiedPushNotEncrypted) {
+					t.Fatalf("Send() error = %v, want errUnifiedPushNotEncrypted", err)
+				}
+				if requests != 0 {
+					t.Fatalf("endpoint received %d requests, want 0", requests)
+				}
+				if retryablePushFailure(err) {
+					t.Fatal("errUnifiedPushNotEncrypted must not be retried")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Send() error = %v", err)
+			}
+			var got struct {
+				Title string            `json:"title"`
+				Data  map[string]string `json:"data"`
+			}
+			if err := json.Unmarshal(decryptAES128GCM(t, seenBody, uaPrivate, authSecret), &got); err != nil {
+				t.Fatalf("decrypted payload is not JSON: %v", err)
+			}
+			if got.Title != "Approve sign-in" || fmt.Sprint(got.Data) != fmt.Sprint(data) {
+				t.Fatalf("decrypted payload = %+v, want data %v", got, data)
+			}
+		})
 	}
 }

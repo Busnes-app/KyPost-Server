@@ -92,7 +92,7 @@ func TestNotificationSubscriptionsSyncAcrossStoreInstances(t *testing.T) {
 		t.Fatalf("UpsertNotificationSubscription: %v", err)
 	}
 
-	subs := daemonStore.ListNotificationSubscriptions()
+	subs := mustSubscriptions(t, daemonStore)
 	if len(subs) != 1 {
 		t.Fatalf("ListNotificationSubscriptions len = %d, want 1", len(subs))
 	}
@@ -167,7 +167,7 @@ func TestMarkProcessedDoesNotWipeNotificationSubscriptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New reloaded store: %v", err)
 	}
-	subs := reloadedStore.ListNotificationSubscriptions()
+	subs := mustSubscriptions(t, reloadedStore)
 	if len(subs) != 1 {
 		t.Fatalf("ListNotificationSubscriptions len = %d, want 1", len(subs))
 	}
@@ -198,7 +198,7 @@ func TestNativeDevicesSyncAcrossStoreInstances(t *testing.T) {
 		t.Fatalf("UpsertNativeDevice: %v", err)
 	}
 
-	devices := daemonStore.ListNativeDevices()
+	devices := mustNativeDevices(t, daemonStore)
 	if len(devices) != 1 {
 		t.Fatalf("ListNativeDevices len = %d, want 1", len(devices))
 	}
@@ -218,7 +218,7 @@ func TestUpsertNativeDeviceMergesBySamePushToken(t *testing.T) {
 	if err := s.UpsertNativeDevice(NativeDevice{Platform: "macos", PushToken: "tok-mac", DeviceName: "Mac 1"}); err != nil {
 		t.Fatalf("UpsertNativeDevice: %v", err)
 	}
-	first := s.ListNativeDevices()
+	first := mustNativeDevices(t, s)
 	if len(first) != 1 || first[0].DeviceID == "" {
 		t.Fatalf("ListNativeDevices after first upsert = %+v, want 1 device with minted ID", first)
 	}
@@ -228,7 +228,7 @@ func TestUpsertNativeDeviceMergesBySamePushToken(t *testing.T) {
 	if err := s.UpsertNativeDevice(NativeDevice{Platform: "macos", PushToken: "tok-mac", DeviceName: "Mac 2"}); err != nil {
 		t.Fatalf("UpsertNativeDevice: %v", err)
 	}
-	merged := s.ListNativeDevices()
+	merged := mustNativeDevices(t, s)
 	if len(merged) != 1 {
 		t.Fatalf("ListNativeDevices len = %d, want 1 (same token must merge)", len(merged))
 	}
@@ -247,7 +247,7 @@ func TestUpsertNativeDeviceMergesBySamePushToken(t *testing.T) {
 	if err := s.UpsertNativeDevice(NativeDevice{Platform: "ios", PushToken: "tok-mac"}); err != nil {
 		t.Fatalf("UpsertNativeDevice: %v", err)
 	}
-	if got := len(s.ListNativeDevices()); got != 2 {
+	if got := len(mustNativeDevices(t, s)); got != 2 {
 		t.Fatalf("ListNativeDevices len = %d, want 2 (different platform must not merge)", got)
 	}
 }
@@ -285,7 +285,7 @@ func TestSetCheckpointDoesNotWipeNativeDevices(t *testing.T) {
 	if got := checkpointForTest(t, reloadedStore); got != "uid-77" {
 		t.Fatalf("checkpoint = %q, want %q", got, "uid-77")
 	}
-	devices := reloadedStore.ListNativeDevices()
+	devices := mustNativeDevices(t, reloadedStore)
 	if len(devices) != 1 {
 		t.Fatalf("ListNativeDevices len = %d, want 1", len(devices))
 	}
@@ -576,7 +576,7 @@ func TestDecisionsSortByInstantNotString(t *testing.T) {
 			t.Fatalf("AddDecision: %v", err)
 		}
 	}
-	got := s.Decisions(0)
+	got := mustDecisions(t, s, 0)
 	if len(got) != 2 {
 		t.Fatalf("Decisions len = %d, want 2", len(got))
 	}
@@ -890,4 +890,31 @@ func TestPullNotificationsAddressedToDevices(t *testing.T) {
 	if cursor != 2 {
 		t.Fatalf("cursor = %d, want the global sequence 2", cursor)
 	}
+}
+
+func mustDecisions(t testing.TB, s *Store, limit int) []Decision {
+	t.Helper()
+	d, err := s.DecisionsStrict(limit)
+	if err != nil {
+		t.Fatalf("DecisionsStrict: %v", err)
+	}
+	return d
+}
+
+func mustNativeDevices(t testing.TB, s *Store) []NativeDevice {
+	t.Helper()
+	d, err := s.ListNativeDevicesStrict()
+	if err != nil {
+		t.Fatalf("ListNativeDevicesStrict: %v", err)
+	}
+	return d
+}
+
+func mustSubscriptions(t testing.TB, s *Store) []NotificationSubscription {
+	t.Helper()
+	subs, err := s.ListNotificationSubscriptionsStrict()
+	if err != nil {
+		t.Fatalf("ListNotificationSubscriptionsStrict: %v", err)
+	}
+	return subs
 }

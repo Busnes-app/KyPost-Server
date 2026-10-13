@@ -1,11 +1,10 @@
 package imap
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"sort"
+	"context"
+	"errors"
 	"strconv"
+	"strings"
 	"testing"
 
 	goimap "github.com/BrianLeishman/go-imap"
@@ -27,76 +26,30 @@ func TestFetchAttachmentsOversizedSearchCriteria(t *testing.T) {
 	}
 }
 
-// TestFetchAttachmentsSearchesBeforeItFetches is the ordering assertion that
-// IS the fix.
-//
-// fetchAttachments used to call GetEmails first and check emailContentSize
-// afterwards, on the stated reasoning that "the one-message blast radius here
-// is the same whether the size check runs before or after the fetch". It is
-// not: go-imap's GetEmails requests, buffers, MIME-parses and base64-decodes
-// the whole message before returning, so a check that runs afterwards can
-// only describe the allocation. The recipient opening a message with
-// attachments is enough to spend it — ReadPage loads the attachment list
-// automatically — and how big that message is belongs to whoever sent it.
-//
-// A static check because this package cannot drive a *goimap.Dialer without a
-// live or fake server (see TestPartitionUIDsBySize's note), and because the
-// property is an ordering in the source rather than a state to assert:
-// SearchUIDs after GetEmails would pass any behavioural test that only looked
-// at the returned error.
-func TestFetchAttachmentsSearchesBeforeItFetches(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "client_attachments.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse client_attachments.go: %v", err)
-	}
-
-	var body *ast.BlockStmt
-	for _, decl := range file.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "fetchAttachments" {
-			body = fn.Body
+// TestFetchAttachmentsRefusesOversizeBeforeFetching is the property the old
+// post-fetch check got wrong: an oversized message must be refused from the
+// server's own RFC822.SIZE (a UID LARGER search) before a byte of it is
+// requested, because opening a message loads its attachment list and how big
+// that message is belongs to whoever sent it.
+func TestFetchAttachmentsRefusesOversizeBeforeFetching(t *testing.T) {
+	quietRetries(t, 0)
+	server := newFakeIMAPServer(t, "/", true, []fakeFolder{{name: "INBOX"}})
+	server.mu.Lock()
+	server.commandHook = func(tag, command string) (string, bool) {
+		if strings.HasPrefix(command, "UID SEARCH") && strings.Contains(command, "LARGER") {
+			return "* SEARCH 7\r\n" + tag + " OK done\r\n", true
 		}
+		return "", false
 	}
-	if body == nil {
-		t.Fatal("fetchAttachments not found in client_attachments.go; if it moved, move this test with it")
-	}
+	server.mu.Unlock()
+	client := server.client("INBOX")
 
-	type call struct {
-		name string
-		pos  token.Pos
+	if _, err := client.ListAttachments(context.Background(), "INBOX", 7); !errors.Is(err, mailmsg.ErrMessageTooLarge) {
+		t.Fatalf("err = %v, want ErrMessageTooLarge", err)
 	}
-	var calls []call
-	ast.Inspect(body, func(n ast.Node) bool {
-		expr, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
+	for _, c := range server.commandsMatching("UID") {
+		if strings.HasPrefix(c, "UID FETCH") {
+			t.Fatalf("oversized message was fetched: %q", c)
 		}
-		if sel, ok := expr.Fun.(*ast.SelectorExpr); ok {
-			calls = append(calls, call{name: sel.Sel.Name, pos: expr.Pos()})
-		}
-		return true
-	})
-	sort.Slice(calls, func(i, j int) bool { return calls[i].pos < calls[j].pos })
-
-	indexOf := func(name string) int {
-		for i, c := range calls {
-			if c.name == name {
-				return i
-			}
-		}
-		return -1
-	}
-
-	search := indexOf("SearchUIDs")
-	fetch := indexOf("GetEmails")
-
-	if fetch < 0 {
-		t.Fatal("fetchAttachments no longer calls GetEmails; this test names the fetch it guards")
-	}
-	if search < 0 {
-		t.Fatal("fetchAttachments has no pre-fetch LARGER SEARCH: an oversized message is buffered in full before any size check runs")
-	}
-	if search > fetch {
-		t.Error("fetchAttachments searches for oversized messages AFTER fetching one; the whole message is already in memory by then")
 	}
 }

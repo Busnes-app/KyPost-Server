@@ -169,6 +169,7 @@ func TestMailExport(t *testing.T) {
 		want int
 	}{
 		{"no step-up", call("POST", "/api/export", me, `{"format":"mbox"}`, nil), 403},
+		{"oversized body", start(me, `"format":"mbox","pad":"`+strings.Repeat("x", maxActionBytes)+`",`), 413},
 		{"wrong password", call("POST", "/api/export", me, `{"format":"mbox","password":"wrong-password-here"}`, nil), 403},
 		{"no csrf", call("POST", "/api/export", caller{me.token, ""}, `{"format":"mbox","password":"`+password+`"}`, nil), 403},
 		{"bad format", start(me, `"format":"pst",`), 400},

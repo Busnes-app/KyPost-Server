@@ -22,7 +22,7 @@ const maxWrappedKeyBytes = 128 << 10
 //
 // Serving this to the authenticated owner is not a disclosure: the envelope
 // is sealed under a key derived from their password, which the server does
-// not have and cannot derive (it stores only a scrypt hash). An attacker
+// not have and cannot derive (it stores only a password hash). An attacker
 // with a stolen session gets a blob they still have to crack the password to
 // open — which is the security property the whole mode exists to provide.
 func (s *Server) handlePGPWrappedKey(w http.ResponseWriter, r *http.Request) {
@@ -284,7 +284,7 @@ func (s *Server) handlePGPExportLegacyKey(w http.ResponseWriter, r *http.Request
 
 // Envelope slots are the additional sealings of a client-protected private key
 // — a recovery code today, enrolled devices later. See
-// docs/superpowers/specs/2026-08-04-multi-wrapped-key-custody-design.md.
+// docs/DEVICE_ENROLLMENT.md (custody design: git show 5d38c48:docs/superpowers/specs/2026-08-04-multi-wrapped-key-custody-design.md).
 //
 // All three are withAuth (session only), never withMailAuth. A paired device
 // must not be able to mint a sealing of the account key: that is the property

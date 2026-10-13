@@ -36,8 +36,8 @@ func TestValidateWebPushKeys(t *testing.T) {
 		errMatch string
 	}{
 		{name: "valid pair", p256dh: goodP256DH, auth: goodAuth},
-		{name: "both absent is allowed", p256dh: "", auth: ""},
-		{name: "whitespace counts as absent", p256dh: "  ", auth: "\t"},
+		{name: "both absent", p256dh: "", auth: "", wantErr: true, errMatch: "both"},
+		{name: "whitespace counts as absent", p256dh: "  ", auth: "\t", wantErr: true, errMatch: "both"},
 		{
 			name: "p256dh without auth", p256dh: goodP256DH, auth: "",
 			wantErr: true, errMatch: "both",

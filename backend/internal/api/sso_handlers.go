@@ -58,10 +58,20 @@ func (s *Server) handleSSOConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleAdminSSOGet returns full SSO settings for administrators.
+// adminSSOView is the settings an administrator reads: the client secret is
+// write-only, reported only as set or not.
+func adminSSOView(settings sso.SSOSettings) any {
+	set := settings.ClientSecret != ""
+	settings.ClientSecret = ""
+	return struct {
+		sso.SSOSettings
+		ClientSecretSet bool `json:"clientSecretSet"`
+	}{settings, set}
+}
+
+// handleAdminSSOGet returns SSO settings, without the client secret, for administrators.
 func (s *Server) handleAdminSSOGet(w http.ResponseWriter, r *http.Request) {
-	settings := s.ssoStore.Load()
-	writeJSON(w, http.StatusOK, settings)
+	writeJSON(w, http.StatusOK, adminSSOView(s.ssoStore.Load()))
 }
 
 // handleAdminSSOPut updates SSO settings for administrators.
@@ -87,12 +97,18 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A blank secret keeps the stored one, but only for the issuer and client it
+	// was issued for: a changed destination never receives the old secret.
+	if stored := s.ssoStore.Load(); req.ClientSecret == "" && req.IssuerURL == stored.IssuerURL && req.ClientID == stored.ClientID {
+		req.ClientSecret = stored.ClientSecret
+	}
+
 	if err := s.ssoStore.Save(req); err != nil {
 		http.Error(w, "failed to save SSO settings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "settings": req})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "settings": adminSSOView(req)})
 }
 
 // ssoRedirectURI builds the callback URL the provider must be told to return to.

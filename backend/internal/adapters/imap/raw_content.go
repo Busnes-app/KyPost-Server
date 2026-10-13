@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net/mail"
+	"regexp"
 	"strings"
 
 	goimap "github.com/BrianLeishman/go-imap"
@@ -41,6 +42,54 @@ func emailFromHeaders(headers mail.Header) *goimap.Email {
 	e.Sent, _ = headers.Date()
 	return e
 }
+
+// maxCalendarParts bounds how many undisposed calendar parts are exposed.
+const maxCalendarParts = 4
+
+// calendarParts exposes the text/calendar parts enmime leaves in OtherParts —
+// an iMIP invite sent as a multipart/alternative body part has no
+// Content-Disposition — as attachments named invite.ics. They go after every
+// real attachment, so existing attachment indexes do not move.
+func calendarParts(env *enmime.Envelope) []goimap.Attachment {
+	var out []goimap.Attachment
+	for _, p := range env.OtherParts {
+		if strings.EqualFold(p.ContentType, "text/calendar") && len(out) < maxCalendarParts {
+			out = append(out, goimap.Attachment{Name: "invite.ics", MimeType: "text/calendar", Content: p.Content})
+		}
+	}
+	return out
+}
+
+// calendarMethodPattern is an iTIP method name (RFC 5546 §1.4 plus x-names).
+var calendarMethodPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]{0,31}$`)
+
+// CalendarMethod returns the uppercase METHOD property of an iCalendar
+// object, or "" when there is none or it is not a plain token. Only the head
+// of the object is scanned: METHOD precedes the first component.
+func CalendarMethod(ics []byte) string {
+	if len(ics) > 64<<10 {
+		ics = ics[:64<<10]
+	}
+	for _, line := range strings.Split(string(ics), "\n") {
+		name, value, ok := strings.Cut(strings.TrimRight(line, "\r"), ":")
+		if !ok {
+			continue
+		}
+		switch strings.ToUpper(name) {
+		case "METHOD":
+			if value = strings.TrimSpace(value); calendarMethodPattern.MatchString(value) {
+				return strings.ToUpper(value)
+			}
+			return ""
+		case "BEGIN":
+			if !strings.EqualFold(strings.TrimSpace(value), "VCALENDAR") {
+				return ""
+			}
+		}
+	}
+	return ""
+}
+
 func ParseRawContent(raw []byte) (ParsedContent, error) {
 	if int64(len(raw)) > mailmsg.MaxInboundMessageBytes {
 		return ParsedContent{}, mailmsg.ErrMessageTooLarge
@@ -60,6 +109,7 @@ func ParseRawContent(raw []byte) (ParsedContent, error) {
 			e.Attachments = append(e.Attachments, goimap.Attachment{Name: a.FileName, MimeType: a.ContentType, Content: a.Content})
 		}
 	}
+	e.Attachments = append(e.Attachments, calendarParts(env)...)
 	if emailContentSize(e) > mailmsg.MaxInboundMessageBytes {
 		return ParsedContent{}, mailmsg.ErrMessageTooLarge
 	}

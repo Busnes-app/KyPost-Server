@@ -3,6 +3,9 @@ package mailcache
 import (
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // TestSyncContactKeyGenerationDropsVerdictsFromAnOlderGeneration pins the
@@ -50,5 +53,37 @@ func TestSyncContactKeyGenerationDropsVerdictsFromAnOlderGeneration(t *testing.T
 	if len(entries) == 1 && entries[0].PGPVerified {
 		t.Fatal("a cached 'signature verified' verdict survived a change to the " +
 			"address book it was derived from")
+	}
+}
+
+// Both verdict writers must hold the cross-process lock: the daemon writes
+// mailcache.json too, and s.mu does not reach it.
+func TestVerdictWritersWaitForCrossProcessLock(t *testing.T) {
+	for name, write := range map[string]func(*Store) error{
+		"SyncContactKeyGeneration": func(s *Store) error { return s.SyncContactKeyGeneration(1) },
+		"InvalidatePGPVerdicts":    (*Store).InvalidatePGPVerdicts,
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, err := New(t.TempDir())
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			release, err := fsutil.LockFile(store.path())
+			if err != nil {
+				t.Fatalf("LockFile: %v", err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- write(store) }()
+			select {
+			case err := <-done:
+				release()
+				t.Fatalf("wrote while another holder had the lock (err=%v)", err)
+			case <-time.After(100 * time.Millisecond):
+			}
+			release()
+			if err := <-done; err != nil {
+				t.Fatalf("write after release: %v", err)
+			}
+		})
 	}
 }

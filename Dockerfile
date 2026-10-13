@@ -13,7 +13,7 @@
 # matches its tag is a silent lie about what is being built, so re-resolve with:
 #
 #   docker buildx imagetools inspect golang:<tag> --format '{{.Manifest.Digest}}'
-FROM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS backend-builder
+FROM golang:1.27.0@sha256:4013ae0f9e7994f8535c58c811f8f863fbed38b72e0d51e6592156f758d66146 AS backend-builder
 WORKDIR /app
 COPY backend/go.mod backend/go.sum* ./backend/
 RUN cd backend && go mod download
@@ -26,7 +26,7 @@ COPY backend ./backend
 # silently acquiring a link against the builder stage's glibc.
 RUN cd backend && CGO_ENABLED=0 go build -trimpath -o /app/bin/kypost-server ./cmd/main.go
 
-FROM node:26.5.0-slim@sha256:715e55e4b84e4bb0ff48e49b398a848f08e55daed8eb6a0ea1839ae53bc57583 AS frontend-builder
+FROM node:26.11.1-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS frontend-builder
 WORKDIR /frontend
 # `npm ci` and a required, non-globbed lockfile. `npm install` re-resolves
 # every caret range at build time, so two builds of the same commit can ship
@@ -41,7 +41,7 @@ RUN npm run build
 # the stage above, and the admin-password hashing that once needed `node` is now
 # `kypost-server --mode bootstrap-admin`. Keep it that way — a Node runtime here
 # is a CVE stream to track for no runtime benefit. See scripts/AGENTS.md.
-FROM debian:stable-slim@sha256:328d16499860ae6cb9b345e2e4cebca08c2a36e4f7278482c7bd1f39d71e5bfd
+FROM debian:stable-slim@sha256:eb593cf2c358cacef45ca0a424bbc7d30cfa3466265fc2662b9466a0ca6ba1c5
 
 # The GHCR package is the documented install path, and without
 # org.opencontainers.image.source it is an orphan: the package page links back
@@ -100,9 +100,9 @@ RUN apt-get update \
 # turned a 2-6 minute ci-docker into a 16 minute one on the first PR that
 # touched the frontend. Nothing here depends on the COPYs; the apt step above
 # is what supplies curl, ca-certificates, zstd and tar.
-ARG OLLAMA_VERSION=0.40.0
-ARG OLLAMA_SHA256_AMD64=c94aa4156b3d13e64ebc2efe5ea53f015384c882be776e6695cfb37fb180d5ad
-ARG OLLAMA_SHA256_ARM64=4d27cb1d8f46176a3c0ce10aea2a16e4ad73dfe1599f2ed13468f29e5b8aba0d
+ARG OLLAMA_VERSION=0.40.2
+ARG OLLAMA_SHA256_AMD64=726bee78706c281b0eeef00746efe51a044d71c592c3f0b195820707f31fdf04
+ARG OLLAMA_SHA256_ARM64=92b3ef3d5e10f5849273bfa1345000f2a8ce8bc834e95061ff5b9df5d08e3c3f
 ARG TARGETARCH
 RUN set -eu; \
 	case "${TARGETARCH:-}" in \

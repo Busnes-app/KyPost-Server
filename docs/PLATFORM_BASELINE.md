@@ -95,7 +95,7 @@ The response carries `subscriberId`, `serverBaseUrl`, `registerEndpoint`,
 
 Enrollment seals the account's PGP private key to a paired device. The full
 normative spec is
-[`docs/superpowers/specs/2026-08-04-device-enrollment-design.md`](superpowers/specs/2026-08-04-device-enrollment-design.md);
+[`docs/DEVICE_ENROLLMENT.md`](DEVICE_ENROLLMENT.md);
 the reference implementation is `frontend/src/lib/deviceEnrollment.ts`, and the
 Android side is `EnrollmentCodeFormat.kt` in the Android repo.
 
@@ -236,7 +236,7 @@ Server-side notes a client should know:
 
 ### UnifiedPush: the WebPush key exchange is REQUIRED
 
-A device registering with `transport: "unifiedpush"` SHOULD send the WebPush
+A device registering with `transport: "unifiedpush"` MUST send the WebPush
 (RFC 8291) subscription keys its connector generated for the endpoint, as two
 extra fields on the registration request:
 
@@ -245,21 +245,24 @@ extra fields on the registration request:
 | `p256dh` | the uncompressed P-256 public point, 65 bytes, base64 |
 | `auth` | the 16-byte auth secret, base64 |
 
-Both or neither. A partial pair is rejected with `400`
+Both are required. A registration missing either is rejected with `400`
 (`processor.ValidateWebPushKeys`), as is a `p256dh` that is not a point on the
 curve. Padded and unpadded, standard and URL alphabets are all accepted — the
 check mirrors what the sender would later accept, so validation can never refuse
 material that would have worked.
 
-Two things follow from sending them, and neither is optional in practice:
+What follows from the keys:
 
-1. **The payload is encrypted.** With keys stored, the server sends aes128gcm
-   ciphertext (`processor.UnifiedPushSender`). Without them it falls back to the
-   plaintext JSON POST it has always sent, so an older client keeps working —
-   but the notification's title and body then cross the distributor's broker in
-   the clear. A public broker is a third party; treat the fallback as a
-   compatibility shim, not a supported configuration.
-2. **Push-MFA depends on it.** `api.MFATransportEligible` allows an MFA
+1. **The payload is always encrypted, or not sent.** The server sends only
+   aes128gcm ciphertext (`processor.UnifiedPushSender`); there is no plaintext
+   fallback, because the distributor's broker is a third party. If the device
+   has no stored keys, or the server's VAPID private key failed to load, the
+   send is refused, nothing reaches the endpoint, and device health records
+   `unencrypted`. Notifications still reach the pull queue.
+2. **Legacy registrations must pair again.** A device registered by an older
+   build without keys receives no UnifiedPush at all until it registers again
+   with keys. Clients SHOULD drop any push that does not decrypt.
+3. **Push-MFA depends on it.** `api.MFATransportEligible` allows an MFA
    challenge over UnifiedPush only for a device that supplied keys. A challenge
    carries the sign-in IP, the user agent and the match digits, so a keyless
    UnifiedPush device is excluded and its user cannot approve logins from it.
@@ -284,7 +287,10 @@ as issue #137. Until then, a mode change requires the device to re-check.
   (`contacts_handlers.go:510`); over that the server answers 413 with
   `{"error", "maxChanges"}`. **A client MUST batch** rather than assume its
   local set fits.
-- Request bodies are read under a 1 MiB limit.
+- Request bodies are read under a 1 MiB limit; a larger body also answers 413,
+  with `{"error", "maxChanges", "maxBytes"}`. Split the batch on any 413; a
+  single change that alone exceeds `maxBytes` cannot be pushed. Malformed
+  JSON stays 400.
 
 ---
 
@@ -302,6 +308,47 @@ A client that handles mail must, at minimum:
 
 See [`docs/E2E_PGP.md`](E2E_PGP.md) for the full model, and
 [`docs/WKD_Publishing.md`](WKD_Publishing.md) for key discovery.
+
+**Reply threading.** `POST /api/mail/send` accepts optional
+`replyToMessageId` (the list `messageId` of the message being answered) and
+`replyToMailbox` (its folder; default the account's inbox). The server reads
+that message's `Message-ID`, `References` and `In-Reply-To` and writes
+`In-Reply-To` and `References` (root plus newest, at most 20) itself; clients
+cannot supply header text. A malformed/stale reference answers 400, a missing
+message 404, a mailbox read failure 502 — all before anything is sent; drop
+the field to send unthreaded. An original with no usable `Message-ID` is sent
+unthreaded. Client-encrypted sends (`/api/mail/send-pgp`) build their own MIME
+and are not covered.
+
+**Calendar invites.** `GET /api/mail/attachments` lists every `text/calendar`
+part. An iMIP invite carried as an undisposed `multipart/alternative` part
+(Google, Outlook) is listed after the real attachments as
+`{"name":"invite.ics","mimeType":"text/calendar","calendarMethod":"REQUEST"}`
+— existing indexes do not move. `calendarMethod` is the object's uppercase
+`METHOD` (`REQUEST`, `CANCEL`, `REPLY`, ...), absent when missing or not a
+plain token; attached `.ics` files with `mimeType` `text/calendar` carry it too.
+Downloads serve `Content-Type: text/calendar` with `Content-Disposition:
+attachment` and `nosniff`. Parse the bytes as untrusted input. Inbox rows set
+`hasAttachments: true` for a message with such a part (IMAP: from one batched
+`BODYSTRUCTURE` fetch per list request, only for messages with no other
+attachment), so a client may fetch attachments only when it is true. Rows
+cached before the server had this keep their old value until re-warmed; a
+server without it reports `false` for invite-only mail.
+
+**RSVP.** `POST /api/mail/send` accepts `calendarReply: {"ics": "<iCalendar>"}`
+and sends it as a `text/calendar; method=REPLY; charset=UTF-8` part in
+`multipart/alternative` beside the body (inside `multipart/mixed` when there
+are attachments). The object must be ≤64 KiB UTF-8 with no control
+characters, one `VCALENDAR` with exactly one top-level `METHOD:REPLY` and
+exactly one `VEVENT`; line endings are normalised to CRLF. The server does
+not check UID/SEQUENCE/ATTENDEE — copy them from the invite. A refusal is 400
+with the reason; `encrypt` or `sign` with `calendarReply` is 400 (an
+organizer's calendar cannot read a PGP-wrapped reply). Address it to the
+invite's ORGANIZER; drafts ignore the field. A successful send that carried
+the part answers `"calendarReply": true` beside `ok`/`sentSaved`/`warning`.
+A server without RSVP support ignores the field and sends a plain email with
+no `calendarReply` in the response: treat a 200 without it as "RSVP not
+delivered" and tell the user.
 
 ---
 
@@ -373,6 +420,43 @@ Two things a client must keep in mind when it opts out:
 Responses from `writeJSON` are gzipped when the client sends `Accept-Encoding:
 gzip` and the payload is at least 1 KiB (`backend/internal/api/gzip.go`). A
 client that does not send the header gets identical bytes to before.
+
+**Preview.** Add `preview=1` to get `preview`: at most 200 characters of
+single-line plain text (HTML flattened, control characters and line breaks
+turned into spaces), taken from the first 32 KiB of a body the server already
+has for that row. It works with `bodies=0`. It is absent on rows the server has
+no body for: `changeType:"updated"` delta rows (keep your stored preview),
+`before=` pages, search results, and any encrypted message (including one the server decrypted). Render it as text, never markup.
+
+**Older mail.** `GET /api/inbox?mailbox=<path>&limit=N&before=<messageId>`
+returns the next `limit` messages older than `messageId` (exactly as a list row
+gave it), newest first, as `{tabs, byTab, hasMore, nextBefore}`. Rows are
+metadata only — no `body`, `bodyMode`, `hasAttachments` or PGP flags, and an
+encrypted message shows its outer subject — like `/api/mail/search`; open a
+message through `/api/mail/body`. `hasMore` says older mail remains;
+`nextBefore` (absent on an empty page) is the `before` for the next page. The
+page has no `cursor`/`delta`/`removed`, ignores `since`, and never changes the
+cursor window. A malformed or stale reference answers 400; refresh the window.
+
+**Cursor deltas (`since=<cursor>`, external IMAP).** Each `limit` keeps its own
+window and cursor, so clients asking for different limits do not reset each
+other; a client must keep using the limit its cursor came from. Delta fields:
+
+- `removed` — the message left the mailbox; delete it.
+- `agedOut` — newer mail pushed it below a full window; it still exists. Keep
+  it (or drop it from a view that shows only the window). A message deleted in
+  the same poll that pushes it out is reported here, not in `removed`.
+- `hasMore: true` + `nextBefore` — more mail arrived than the window holds.
+  Page `before=nextBefore` (then each page's `nextBefore`) until a page
+  contains a message you already hold or `hasMore` is false; commit the
+  response `cursor` only after that, or the skipped mail is lost.
+- `delta: false` on a request with `since > 0` — the cursor was not issued by
+  this window (new limit, lost cache, or a window the server evicted: it keeps
+  at most 3 non-500 limits per mailbox, least recently used first out); the
+  response is a full window: replace.
+- Cursors are opaque non-negative integers below 2^53 (new windows start at a
+  random value around 2^40–2^52). Store and send them back exactly; never do
+  arithmetic on them or assume they start small.
 
 [`docs/INBOX_PAYLOAD_HANDOFF.md`](INBOX_PAYLOAD_HANDOFF.md) is the porting
 guide: what each client has to change, and the three things that break if you

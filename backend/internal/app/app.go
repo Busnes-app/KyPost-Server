@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -103,7 +104,6 @@ func Run(args []string) error {
 	paths := config.Paths{
 		ConfigFile: filepath.Join(config.ConfigDir(), "config.yaml"),
 		StateDir:   config.StateDir(),
-		LogDir:     config.LogDir(),
 	}
 
 	// Capture legacy notification prefs before LoadOrInit rewrites
@@ -130,11 +130,10 @@ func Run(args []string) error {
 		}
 	}
 
-	logger, err := logging.New(paths.LogDir)
+	logger, err := logging.New()
 	if err != nil {
 		return fmt.Errorf("create logger: %w", err)
 	}
-	defer logger.Close()
 
 	configDir := config.ConfigDir()
 	usersStore, store, err := openStores(logger, configDir, paths.StateDir, legacyPrefs, legacyPrefsOK)
@@ -304,8 +303,11 @@ func runDaemon(ctx context.Context, d runDeps) error {
 // One list, called from both runServer and runAll. As nine duplicated
 // `go srv.StartXSweeper(ctx)` lines, a tenth added to one list and not the other
 // is a leak that only appears in the run mode nobody is testing when they add it.
-func startBackgroundSweepers(ctx context.Context, srv *api.Server) {
-	for _, sweep := range []func(context.Context){
+//
+// The returned wait blocks until every sweeper has returned after ctx is
+// canceled, so shutdown does not cut off work already under way.
+func startBackgroundSweepers(ctx context.Context, srv *api.Server, logger *logging.Logger) (wait func()) {
+	return runSweepers(ctx, logger, sweeperDrain, []func(context.Context){
 		srv.StartNativeProvisioning,
 		srv.StartPickupSweeper,
 		srv.StartContactPhotoSweeper,
@@ -318,8 +320,27 @@ func startBackgroundSweepers(ctx context.Context, srv *api.Server) {
 		srv.StartPoWSweeper,
 		srv.StartUserStoreSweeper,
 		srv.StartVersionMonitor,
-	} {
-		go sweep(ctx)
+		srv.StartScheduledSendSweeper,
+	}...)
+}
+
+// sweeperDrain bounds how long shutdown waits for sweepers; a scheduled send
+// already claimed gets its own deadline, well inside this.
+const sweeperDrain = 5 * time.Minute
+
+func runSweepers(ctx context.Context, logger *logging.Logger, drain time.Duration, sweeps ...func(context.Context)) (wait func()) {
+	var wg sync.WaitGroup
+	for _, sweep := range sweeps {
+		wg.Go(func() { sweep(ctx) })
+	}
+	return func() {
+		done := make(chan struct{})
+		go func() { wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(drain):
+			logger.Error("background sweepers still running at shutdown", "limit", drain.String())
+		}
 	}
 }
 
@@ -341,7 +362,8 @@ func runServer(ctx context.Context, d runDeps) error {
 
 	sweeperCtx, cancelSweepers := context.WithCancel(ctx)
 	defer cancelSweepers()
-	startBackgroundSweepers(sweeperCtx, srv)
+	waitSweepers := startBackgroundSweepers(sweeperCtx, srv, d.logger)
+	defer func() { cancelSweepers(); waitSweepers() }()
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -419,7 +441,8 @@ func runAll(ctx context.Context, d runDeps) error {
 	defer func() { <-backupDone }()
 	poller.Start()
 	d.logger.Info("poller goroutine started")
-	startBackgroundSweepers(sweeperCtx, srv)
+	waitSweepers := startBackgroundSweepers(sweeperCtx, srv, d.logger)
+	defer func() { cancelSweepers(); waitSweepers() }()
 	go monitorHealth(ctx, d.logger, d.health)
 	serveDone := make(chan struct{})
 	go func() {

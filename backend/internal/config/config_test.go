@@ -179,3 +179,22 @@ func privateScalar(t *testing.T, k *ecdsa.PrivateKey) []byte {
 	}
 	return e.Bytes()
 }
+
+// The api and daemon processes share these files, so the layout is pinned.
+func TestUserPathLayout(t *testing.T) {
+	const id = "0f6c1c1e-6d1a-4c4e-9d3b-2f0f1e2d3c4b"
+	for _, c := range [][2]string{
+		{UserDir("/state", id), "/state/users/" + id},
+		{UserIMAPConfigPath("/config", id), "/config/users/" + id + "/imap-config.json"},
+		{UserTuningPath("/config", id), "/config/users/" + id + "/tuning.md"},
+		{UserSettingsPath("/config", id), "/config/users/" + id + "/config.yaml"},
+		{UserDir("/state", "../escape"), "/state/users/__invalid-user-id__"},
+		{UserDir("/state", ""), "/state/users/__invalid-user-id__"},
+		{UserSettingsPath("/config", "a/b"), "/config/users/__invalid-user-id__/config.yaml"},
+		{SafeUserPathComponent("mbx-1234abcd"), "mbx-1234abcd"},
+	} {
+		if c[0] != c[1] {
+			t.Errorf("got %q, want %q", c[0], c[1])
+		}
+	}
+}

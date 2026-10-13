@@ -50,8 +50,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          go-version: stable
+          check-latest: true
+          cache-dependency-path: |
+            backend/go.sum
+            tools/go.sum
 
       - name: gofmt
         run: |
@@ -66,14 +69,14 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
-        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
+        run: go tool -modfile=../tools/go.mod golangci-lint run ./...
 
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: go tool -modfile=../tools/go.mod govulncheck ./...
 
-      # internal/api package tests run serially due to global hashCostN state
+      # internal/api package tests run serially due to global hashParams state
       # managed by TestMain. This job runs only the api package tests, which
-      # take 7-8 minutes dominated by scrypt derivations at production cost.
+      # are dominated by Argon2id derivations.
       - name: go test -race (api package only)
         run: go test -race -count=1 -timeout=20m ./internal/api/...
 
@@ -88,8 +91,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          go-version: stable
+          check-latest: true
+          cache-dependency-path: |
+            backend/go.sum
+            tools/go.sum
 
       - name: gofmt
         run: |
@@ -104,10 +110,10 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
-        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
+        run: go tool -modfile=../tools/go.mod golangci-lint run ./...
 
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: go tool -modfile=../tools/go.mod govulncheck ./...
 
       # The sorter's parity test and the poller's hybrid-engine tests skip
       # without the real model, so CI fetches it. The pins are read from the
@@ -159,7 +165,7 @@ jobs:
       # shadows jsdom's, so the draft-autosave suite passed on every dev
       # machine (Node 24) and failed all 14 cases here. CI must not be the
       # first place a version difference shows up.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: frontend/.nvmrc
           cache: npm
@@ -204,7 +210,13 @@ jobs:
         run: npm audit --audit-level=high
 
       - name: typecheck
-        run: npx tsc --noEmit
+        run: npm run typecheck
+
+      # Separate lockfile: typescript-eslint needs the TypeScript 6 API.
+      - name: lint
+        run: |
+          npm ci --prefix lint
+          npm run lint
 
       - name: test
         run: npm test -- --run
@@ -218,7 +230,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: frontend/.nvmrc
 
@@ -264,19 +276,28 @@ jobs:
       # These scripts have no runtime dependency to install: the updater test
       # fakes docker and gh with shell stubs on PATH.
       #
-      # Syntax only, not shellcheck. A lint gate whose current result is unknown
-      # is a gate that goes red on the commit that adds it, and the job's value
-      # here is the updater test rather than style enforcement. Adding
-      # shellcheck is a separate change that starts by fixing what it reports.
+      # Parse each script with the shell its shebang names: `bash -n` accepts
+      # bashisms that dash (the image's /bin/sh) rejects.
       - name: shell syntax
         run: |
           shopt -s nullglob
           for f in scripts/*.sh; do
-            bash -n "$f"
+            if head -n1 "$f" | grep -q '^#!/bin/sh'; then sh -n "$f"; else bash -n "$f"; fi
           done
+
+      # shellcheck ships on the ubuntu runner image.
+      - name: shellcheck
+        run: shellcheck scripts/*.sh
 
       - name: update-host self-check
         run: scripts/update-host.test.sh
+
+      - name: supervisord.conf self-check
+        run: scripts/supervisord.test.sh
+
+      # A variable .env.example offers but compose never passes does nothing.
+      - name: env example reaches compose
+        run: scripts/check-env-example.sh
 
       # release-image.yml is the one workflow nothing exercises until a release
       # is published, and its failure mode is silence: a refactor once deleted

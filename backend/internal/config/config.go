@@ -23,7 +23,6 @@ import (
 type Paths struct {
 	ConfigFile string
 	StateDir   string
-	LogDir     string
 }
 
 // The container's data directories. These literals used to be copy-pasted as
@@ -217,6 +216,34 @@ func SeedUserLabels(s *UserSettings, house Config) bool {
 		s.Labels.KeywordMappings[label] = append([]string{}, keywords...)
 	}
 	return true
+}
+
+// SafeUserPathComponent keeps malformed or legacy IDs inside the directory they
+// name an entry of. Valid IDs are opaque UUIDs, but path construction must not
+// rely on that surviving hand-edited or migrated users.json files.
+func SafeUserPathComponent(id string) string {
+	if fsutil.SafePathComponent(id) {
+		return id
+	}
+	return "__invalid-user-id__"
+}
+
+// UserDir is a user's directory under a config or state root.
+func UserDir(root, userID string) string {
+	return filepath.Join(root, "users", SafeUserPathComponent(userID))
+}
+
+// Per-user files under the config root.
+func UserIMAPConfigPath(configDir, userID string) string {
+	return filepath.Join(UserDir(configDir, userID), "imap-config.json")
+}
+
+func UserTuningPath(configDir, userID string) string {
+	return filepath.Join(UserDir(configDir, userID), "tuning.md")
+}
+
+func UserSettingsPath(configDir, userID string) string {
+	return filepath.Join(UserDir(configDir, userID), "config.yaml")
 }
 
 // LoadUserLabelSettings reads an account's settings and seeds its labels from

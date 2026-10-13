@@ -445,6 +445,7 @@ func TestIMAPImport(t *testing.T) {
 		want int
 	}{
 		{"no step-up", call("/api/import/imap", me, `{`+account+`"x":1}`, nil), 403},
+		{"oversized body", start(me, `"pad":"`+strings.Repeat("x", maxActionBytes)+`",`), 413},
 		{"no csrf", call("/api/import/imap", caller{me.token, ""}, `{`+account+`"password":"`+password+`"}`, nil), 403},
 		{"other port", start(me, `"host":"imap.example.com","port":25,"security":"tls","username":"u",`), 400},
 		{"plaintext", start(me, `"host":"imap.example.com","port":143,"security":"none","username":"u",`), 400},
