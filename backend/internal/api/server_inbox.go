@@ -75,6 +75,28 @@ type inboxEmail struct {
 type inboxFolder struct {
 	Path      string `json:"path"`
 	Deletable bool   `json:"deletable"`
+	// Special is the folder's RFC 6154 role ("sent", "drafts", ...) when the
+	// server published one, so clients find a localized Sent folder.
+	Special string `json:"special,omitempty"`
+}
+
+// specialUseLister is implemented by the IMAP client; other sources omit roles.
+type specialUseLister interface {
+	SpecialUseFolders(ctx context.Context) (map[string]string, error)
+}
+
+// specialUseOf returns the client's special-use roles by path, or nil. A failure
+// costs only the roles, never the folder list.
+func specialUseOf(ctx context.Context, client imapadapter.Client) map[string]string {
+	lister, ok := client.(specialUseLister)
+	if !ok {
+		return nil
+	}
+	uses, err := lister.SpecialUseFolders(ctx)
+	if err != nil {
+		return nil
+	}
+	return uses
 }
 
 func mailboxLeaf(path string) string {
@@ -107,7 +129,13 @@ func isBuiltinMailbox(path string) bool {
 	}
 }
 
-func toInboxFolders(paths []string) []inboxFolder {
+// isProtectedMailbox is a folder the user may not rename or delete: built-in by
+// name, or carrying a special-use role. A failed role lookup protects by name only.
+func isProtectedMailbox(ctx context.Context, client imapadapter.Client, path string) bool {
+	return isBuiltinMailbox(path) || specialUseOf(ctx, client)[path] != ""
+}
+
+func toInboxFolders(paths []string, special map[string]string) []inboxFolder {
 	folders := make([]inboxFolder, 0, len(paths))
 	for _, folder := range paths {
 		clean := strings.TrimSpace(folder)
@@ -116,7 +144,8 @@ func toInboxFolders(paths []string) []inboxFolder {
 		}
 		folders = append(folders, inboxFolder{
 			Path:      clean,
-			Deletable: mailboxParentPath(clean) != "" && !isBuiltinMailbox(clean),
+			Deletable: mailboxParentPath(clean) != "" && !isBuiltinMailbox(clean) && special[clean] == "",
+			Special:   special[clean],
 		})
 	}
 	return folders
@@ -928,7 +957,10 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "imap client is not configured", http.StatusServiceUnavailable)
 		return
 	}
+	serveInboxFolders(w, r, mailClient)
+}
 
+func serveInboxFolders(w http.ResponseWriter, r *http.Request, mailClient imapadapter.Client) {
 	switch r.Method {
 	case http.MethodGet:
 		parent := strings.TrimSpace(r.URL.Query().Get("parent"))
@@ -941,7 +973,7 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 
 		writeJSON(w, http.StatusOK, map[string]any{
 			"parent":  parent,
-			"folders": toInboxFolders(folders),
+			"folders": toInboxFolders(folders, specialUseOf(r.Context(), mailClient)),
 		})
 	case http.MethodPost:
 		var req struct {
@@ -986,7 +1018,7 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "folder and name are required", http.StatusBadRequest)
 			return
 		}
-		if isBuiltinMailbox(folder) {
+		if isProtectedMailbox(r.Context(), mailClient, folder) {
 			http.Error(w, "built-in folders cannot be renamed", http.StatusBadRequest)
 			return
 		}
@@ -1013,7 +1045,7 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "folder is required", http.StatusBadRequest)
 			return
 		}
-		if isBuiltinMailbox(folder) {
+		if isProtectedMailbox(r.Context(), mailClient, folder) {
 			http.Error(w, "built-in folders cannot be deleted", http.StatusBadRequest)
 			return
 		}
