@@ -9,6 +9,7 @@
 package imap
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -285,6 +286,31 @@ func (c *APIClient) existingSpecialFolderLocked(d *goimap.Dialer, use string) (s
 		return "", false
 	}
 	return index.resolve(use)
+}
+
+// SpecialUseFolders maps each mailbox the server marked with a special-use
+// attribute to that use, without the backslash: "sent", "drafts", "trash",
+// "junk" or "archive". Attributes only; no name guessing.
+func (c *APIClient) SpecialUseFolders(ctx context.Context) (map[string]string, error) {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	d, err := c.ensureConnectedLocked()
+	if err != nil {
+		return nil, err
+	}
+	index, err := c.folderIndexLocked(d)
+	if err != nil {
+		return nil, err
+	}
+	uses := make(map[string]string, len(index.special))
+	for use, name := range index.special {
+		uses[name] = strings.TrimPrefix(use, `\`)
+	}
+	return uses, nil
 }
 
 // specialFolderLocked resolves the account's folder for a special use, creating

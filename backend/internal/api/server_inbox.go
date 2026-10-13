@@ -75,6 +75,28 @@ type inboxEmail struct {
 type inboxFolder struct {
 	Path      string `json:"path"`
 	Deletable bool   `json:"deletable"`
+	// Special is the folder's RFC 6154 role ("sent", "drafts", ...) when the
+	// server published one, so clients find a localized Sent folder.
+	Special string `json:"special,omitempty"`
+}
+
+// specialUseLister is implemented by the IMAP client; other sources omit roles.
+type specialUseLister interface {
+	SpecialUseFolders(ctx context.Context) (map[string]string, error)
+}
+
+// specialUseOf returns the client's special-use roles by path, or nil. A failure
+// costs only the roles, never the folder list.
+func specialUseOf(ctx context.Context, client imapadapter.Client) map[string]string {
+	lister, ok := client.(specialUseLister)
+	if !ok {
+		return nil
+	}
+	uses, err := lister.SpecialUseFolders(ctx)
+	if err != nil {
+		return nil
+	}
+	return uses
 }
 
 func mailboxLeaf(path string) string {
@@ -107,7 +129,7 @@ func isBuiltinMailbox(path string) bool {
 	}
 }
 
-func toInboxFolders(paths []string) []inboxFolder {
+func toInboxFolders(paths []string, special map[string]string) []inboxFolder {
 	folders := make([]inboxFolder, 0, len(paths))
 	for _, folder := range paths {
 		clean := strings.TrimSpace(folder)
@@ -117,6 +139,7 @@ func toInboxFolders(paths []string) []inboxFolder {
 		folders = append(folders, inboxFolder{
 			Path:      clean,
 			Deletable: mailboxParentPath(clean) != "" && !isBuiltinMailbox(clean),
+			Special:   special[clean],
 		})
 	}
 	return folders
@@ -941,7 +964,7 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 
 		writeJSON(w, http.StatusOK, map[string]any{
 			"parent":  parent,
-			"folders": toInboxFolders(folders),
+			"folders": toInboxFolders(folders, specialUseOf(r.Context(), mailClient)),
 		})
 	case http.MethodPost:
 		var req struct {
