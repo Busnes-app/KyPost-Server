@@ -104,7 +104,7 @@ IMAP and inbox:
 - `POST /api/inbox/actions` (`delete`, `archive`, `spam`, `read`, `unread`, `move`, `label`, `unlabel`, `snooze`). `snooze` takes `wakeAt` (RFC3339, in the future, at most 366 days ahead; 400 otherwise), moves each message to `Snoozed`, and records it by Message-ID; a message without exactly one valid Message-ID fails individually. At the wake time the daemon moves it back to INBOX as unread. Unsnooze is a `move` to INBOX
 - `GET /api/snoozes` — `{snoozes:[{messageId, wakeAt}]}` for messages in the selected mailbox's `Snoozed` folder
 - Inbox rows carry `wokenAt` (RFC3339) for 30 days after a snoozed message returns to INBOX. Clients sort by `wokenAt` in place of `atUtc` so the message sits at the top; the displayed date stays `atUtc`. Cursor clients receive a gained or lost `wokenAt` as an `updated` row. A native mailbox also lists a woken message that is older than the requested window
-- `GET|POST|PUT|DELETE /api/inbox/folders`. `GET` answers `{parent, folders:[{path, deletable, special?}]}`; `special` is `sent`, `drafts`, `trash`, `junk` or `archive`, present only when the IMAP server marks that exact path with the RFC 6154 attribute
+- `GET|POST|PUT|DELETE /api/inbox/folders`. `GET` answers `{parent, folders:[{path, deletable, special?}]}`; `special` is `sent`, `drafts`, `trash`, `junk` or `archive`, present only when the IMAP server marks that exact path with the RFC 6154 attribute. Such a folder is `deletable: false`; `PUT` and `DELETE` refuse it with 400
 - `GET /api/mail/search`
 
 Mail:

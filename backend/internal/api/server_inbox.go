@@ -129,6 +129,12 @@ func isBuiltinMailbox(path string) bool {
 	}
 }
 
+// isProtectedMailbox is a folder the user may not rename or delete: built-in by
+// name, or carrying a special-use role. A failed role lookup protects by name only.
+func isProtectedMailbox(ctx context.Context, client imapadapter.Client, path string) bool {
+	return isBuiltinMailbox(path) || specialUseOf(ctx, client)[path] != ""
+}
+
 func toInboxFolders(paths []string, special map[string]string) []inboxFolder {
 	folders := make([]inboxFolder, 0, len(paths))
 	for _, folder := range paths {
@@ -138,7 +144,7 @@ func toInboxFolders(paths []string, special map[string]string) []inboxFolder {
 		}
 		folders = append(folders, inboxFolder{
 			Path:      clean,
-			Deletable: mailboxParentPath(clean) != "" && !isBuiltinMailbox(clean),
+			Deletable: mailboxParentPath(clean) != "" && !isBuiltinMailbox(clean) && special[clean] == "",
 			Special:   special[clean],
 		})
 	}
@@ -951,7 +957,10 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "imap client is not configured", http.StatusServiceUnavailable)
 		return
 	}
+	serveInboxFolders(w, r, mailClient)
+}
 
+func serveInboxFolders(w http.ResponseWriter, r *http.Request, mailClient imapadapter.Client) {
 	switch r.Method {
 	case http.MethodGet:
 		parent := strings.TrimSpace(r.URL.Query().Get("parent"))
@@ -1009,7 +1018,7 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "folder and name are required", http.StatusBadRequest)
 			return
 		}
-		if isBuiltinMailbox(folder) {
+		if isProtectedMailbox(r.Context(), mailClient, folder) {
 			http.Error(w, "built-in folders cannot be renamed", http.StatusBadRequest)
 			return
 		}
@@ -1036,7 +1045,7 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "folder is required", http.StatusBadRequest)
 			return
 		}
-		if isBuiltinMailbox(folder) {
+		if isProtectedMailbox(r.Context(), mailClient, folder) {
 			http.Error(w, "built-in folders cannot be deleted", http.StatusBadRequest)
 			return
 		}
