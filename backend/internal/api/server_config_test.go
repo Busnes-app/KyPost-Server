@@ -144,13 +144,13 @@ func TestRoutesRegistersEveryArea(t *testing.T) {
 	// that function ran. Each must resolve to something other than the SPA
 	// fallback.
 	for _, probe := range []struct{ method, path string }{
-		{http.MethodPost, "/api/auth/login"},           // routesAuth
-		{http.MethodGet, "/api/health"},                // routesAdmin
-		{http.MethodGet, "/api/inbox"},                 // routesMail
-		{http.MethodGet, "/api/contacts"},              // routesContacts
-		{http.MethodGet, "/api/pgp/identity"},          // routesPGP
-		{http.MethodGet, "/api/notifications/pairing"}, // routesNotifications
-		{http.MethodGet, "/api/rules"},                 // routesRules
+		{http.MethodPost, "/api/auth/login"},            // routesAuth
+		{http.MethodGet, "/api/health"},                 // routesAdmin
+		{http.MethodGet, "/api/inbox"},                  // routesMail
+		{http.MethodGet, "/api/contacts"},               // routesContacts
+		{http.MethodGet, "/api/pgp/identity"},           // routesPGP
+		{http.MethodPost, "/api/notifications/pairing"}, // routesNotifications
+		{http.MethodGet, "/api/rules"},                  // routesRules
 	} {
 		req := httptest.NewRequest(probe.method, probe.path, nil)
 		rec := httptest.NewRecorder()

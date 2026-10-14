@@ -240,7 +240,15 @@ func TestNativeAuthRestoreProvisionedDerivedPushAndQR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	deviceID, deviceSecret := pairNativeDevice(t, s, u.ID, "restore-device")
+	if _, _, ok, _ := s.deviceAuthFromRequest(deviceRequest(deviceID, deviceSecret)); !ok {
+		t.Fatal("live native device credential refused")
+	}
 	holdAuthRestore(t, s)
+	// userStore applies the hold, so a device credential is refused like a cookie.
+	if _, _, ok, _ := s.deviceAuthFromRequest(deviceRequest(deviceID, deviceSecret)); ok {
+		t.Fatal("held native account admitted a device credential")
+	}
 	before, err := s.users.Get(u.ID)
 	if err != nil {
 		t.Fatal(err)

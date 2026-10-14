@@ -38,7 +38,7 @@ Multi-factor authentication:
 - `POST /api/mfa/totp/confirm`
 - `POST /api/mfa/totp/disable`
 - `POST /api/mfa/recovery-codes/regenerate`
-- `PUT /api/mfa/push/enabled`
+- `PUT /api/mfa/push/enabled` (step-up: `password`/`authSecret` or KySignOn)
 - `POST /api/auth/mfa/totp` and `POST /api/auth/mfa/recovery-code` (login-time verification)
 - `POST /api/auth/mfa/push/poll`, `POST /api/auth/mfa/push/finish`, and `POST /api/mfa/push/respond` (push-approval sign-in)
 
@@ -189,11 +189,11 @@ Notifications (all scoped to the signed-in user):
 - `GET /api/notifications/vapid-public-key`
 - `POST|DELETE /api/notifications/subscriptions`
 - `POST /api/notifications/test`
-- `GET /api/notifications/pairing`
+- `POST /api/notifications/pairing` (step-up: `password`/`authSecret` or KySignOn; mints a 90-second single-use pairing token)
 - `POST /api/notifications/native/register` and `POST /api/notifications/native/deregister`
 - `GET|DELETE /api/notifications/native/devices`
 - `PUT /api/notifications/native/mode` (relay push vs. app pull)
-- `PUT /api/notifications/native/devices/{deviceId}/mfa` (allow a device to approve sign-ins)
+- `PUT /api/notifications/native/devices/{deviceId}/mfa` (allow a device to approve sign-ins; step-up as above; a new device is not an approver)
 - `GET /api/notifications/native/pull` (every notification is queued here in both modes, addressed to the devices it was sent to, so a device that stops hearing from the relay can poll and catch up)
 - `POST /api/notifications/native/unpair`
 

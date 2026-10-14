@@ -10,6 +10,10 @@ image. `:stable` is moved to that image only after its build attestation has
 been published *and* verified, and only when the release is the newest published
 non-prerelease version.
 
+## Unreleased
+
+- **Security: a stolen session can no longer pair a device or add a second factor.** Showing a pairing code, turning push sign-in approval on or off, and letting a device approve sign-ins now ask for the account password (or a KySignOn confirmation). The pairing route is now `POST /api/notifications/pairing`. A newly paired device is not an approver until you tick **Can approve sign-ins** for it. Devices paired before push approval existed, and never ticked, stop receiving approvals: tick them on Security → Devices. Your authenticator app keeps working throughout.
+
 ## 0.4.0 — 2026-10-13
 
 **Before upgrading:** find accounts and credentials still on retired scrypt hashes (they stop signing in; see the BREAKING entry below), read your `.env` (variables compose used to drop now apply), and back up the new `$SECRET_DIR/scheduled-send.key`. UnifiedPush devices without WebPush keys must pair again.
