@@ -16,6 +16,8 @@
 FROM golang:1.27.0@sha256:4013ae0f9e7994f8535c58c811f8f863fbed38b72e0d51e6592156f758d66146 AS backend-builder
 WORKDIR /app
 COPY backend/go.mod backend/go.sum* ./backend/
+# go.mod replaces go-imap with this directory; download needs it present.
+COPY backend/third_party ./backend/third_party
 RUN cd backend && go mod download
 COPY backend ./backend
 # -trimpath, in a file whose first fifteen lines are about reproducible builds.

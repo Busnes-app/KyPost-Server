@@ -61,3 +61,5 @@ require (
 	golang.org/x/sys v0.49.0
 	golang.org/x/text v0.42.0
 )
+
+replace github.com/BrianLeishman/go-imap => ./third_party/go-imap
