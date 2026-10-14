@@ -18,50 +18,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 )
 
-// trustedProxyNets is the set of peer addresses whose X-Forwarded-* headers may
-// be believed, from TRUSTED_PROXY_CIDRS (comma-separated CIDRs or bare IPs).
-//
-// This replaces a bare TRUST_PROXY_HEADERS=true boolean, which was not a trust
-// decision at all: it trusted the headers on EVERY connection, from any peer
-// that could reach the port. With the container port published, that let anyone
-// connecting directly to 5866 name their own IP and bypass every IP-keyed
-// control at once — the login, CardDAV and device lockouts, the WKD limiter, and
-// the proof-of-work escalation and challenge-to-client binding.
-//
-// Empty (the default) means trust nothing and use RemoteAddr, the only safe
-// default for a directly-exposed listener.
-var trustedProxyNets = parseTrustedProxyCIDRs(os.Getenv("TRUSTED_PROXY_CIDRS"))
+// trustedProxyNets are the peers whose forwarded headers may be believed, and
+// clientIPHeader the one header clientIP reads from them. Empty trusts nothing.
+// Set once at startup by SetTrustedProxies.
+var (
+	trustedProxyNets []*net.IPNet
+	clientIPHeader   = "X-Forwarded-For"
+)
 
-// parseTrustedProxyCIDRs accepts CIDRs ("10.0.0.0/8", "::1/128") and bare IPs
-// ("172.18.0.1", which is what a docker-compose sidecar proxy looks like),
-// normalizing the latter to single-host CIDRs.
-//
-// A malformed entry is skipped rather than silently widening trust, and is not
-// fatal: refusing to boot over one typo would take the mail server down to
-// protect a header, and skipping fails toward trusting less.
-func parseTrustedProxyCIDRs(raw string) []*net.IPNet {
-	var nets []*net.IPNet
-	for _, field := range strings.Split(raw, ",") {
-		field = strings.TrimSpace(field)
-		if field == "" {
-			continue
-		}
-		if _, n, err := net.ParseCIDR(field); err == nil {
-			nets = append(nets, n)
-			continue
-		}
-		if ip := net.ParseIP(field); ip != nil {
-			bits := 32
-			if ip.To4() == nil {
-				bits = 128
-			}
-			nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
-		}
-	}
-	return nets
+// SetTrustedProxies applies TRUSTED_PROXY_CIDRS and TRUSTED_PROXY_HEADER.
+// Startup-only, before any request goroutine.
+func SetTrustedProxies(p config.TrustedProxies) {
+	trustedProxyNets, clientIPHeader = p.Nets, p.Header
 }
 
 // proxyHeadersTrusted reports whether r's X-Forwarded-* headers may be believed,
@@ -118,43 +90,13 @@ func lastForwardedValue(r *http.Request, header string) string {
 // is the operator's own statement of the address, and it is the only source:
 // see pickupBaseURL and pairingBaseURL in pickup_handlers.go.
 
-// clientIP resolves the caller's IP for logging, CAPTCHA context, and lockout
-// keying.
-//
-// This is a lockout key, so getting it wrong does not degrade gracefully. A
-// caller who can choose what this returns has defeated every rate limit keyed on
-// it, and a value that is CONSTANT across callers is just as broken the other
-// way: every visitor shares one bucket, so 50 failures from anyone locks out
-// everyone. Hence the trust test on the peer address rather than a global flag,
-// and the order below.
-//
-// When the peer is a trusted proxy (see proxyHeadersTrusted), in order:
-//
-//  1. CF-Connecting-IP, which Cloudflare sets to exactly the visitor's address.
-//     Preferred over X-Forwarded-For because the correct XFF element depends on
-//     how many hops appended to it: a tunnel daemon or a second proxy can append
-//     its own address after Cloudflare's, silently making the right-most element
-//     a loopback address and collapsing per-client keying for the whole instance.
-//     Cloudflare's rules engine cannot rewrite a cf- header, only remove it, so
-//     it cannot be forged through the edge.
-//  2. The right-most X-Forwarded-For element, for every other proxy.
-//
-// Untrusted peers, and anything that does not parse as an IP, fall through to
-// the connection's own address.
-//
-// This returns the caller's ACTUAL address. Callers using it as a lockout or
-// rate-limit key must pass it through lockoutKeyForIP first, which folds IPv6 to
-// a /64 so a budget cannot be reset by rotating inside one prefix.
+// clientIP is the caller's address: from clientIPHeader when the peer is a
+// trusted proxy (right-most hop for XFF), else the peer itself. The other header
+// is never read, since a proxy passes unknown headers through from the client.
+// Lockout callers must fold it with lockoutKeyForIP.
 func clientIP(r *http.Request) string {
 	if proxyHeadersTrusted(r) {
-		// Single-valued, so read it whole rather than through
-		// lastForwardedValue: a comma in this header is not a hop list, it is a
-		// malformed value, and taking the last element of one would be inventing
-		// structure that is not there.
-		if ip := parseClientAddr(r.Header.Get("CF-Connecting-IP")); ip != "" {
-			return ip
-		}
-		if ip := parseClientAddr(lastForwardedValue(r, "X-Forwarded-For")); ip != "" {
+		if ip := parseClientAddr(lastForwardedValue(r, clientIPHeader)); ip != "" {
 			return ip
 		}
 	}
@@ -300,7 +242,7 @@ func warnOnRetiredProxyEnv(logger *logging.Logger) {
 	logger.Error("TRUST_PROXY_HEADERS is set but is RETIRED and ignored, and TRUSTED_PROXY_CIDRS is empty: " +
 		"forwarded headers are NOT being trusted. Session cookies will not be marked Secure and the login, " +
 		"CardDAV and device lockouts are keying off your proxy's address instead of the caller's. " +
-		"Set TRUSTED_PROXY_CIDRS to your reverse proxy's address (e.g. 127.0.0.1/32) to restore the previous behaviour.")
+		"Set TRUSTED_PROXY_CIDRS to your reverse proxy's address (see docs/Reverse_Proxy_Networking.md) to restore the previous behaviour.")
 }
 
 // unusedProxyHeaderWarning fires warnOnUnusedProxyHeaders' message at most once

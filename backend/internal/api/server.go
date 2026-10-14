@@ -1076,15 +1076,9 @@ func (s *Server) StartSessionSweeper(ctx context.Context) {
 	}
 }
 
-// logSaturatedLockouts reports any lockout table that has hit
-// loginLockoutHardCap and started shedding new keys.
-//
-// A saturated table refuses to track keys it has not seen before, which the
-// caller experiences as a 429 on a perfectly good credential. That is the
-// deliberate trade — shedding rather than evicting live lockouts, see
-// loginLockoutHardCap — but it must not be silent: from the outside it is
-// indistinguishable from "login is broken", and it means tens of thousands of
-// distinct keys are locked out at once, which is an attack in progress.
+// logSaturatedLockouts reports any lockout table that has hit its hard cap: a
+// flood in progress, which may be forgiving partial strikes or, if every entry
+// is a live lockout, answering new callers 429. See loginLockoutHardCap.
 func (s *Server) logSaturatedLockouts() {
 	if s.logger == nil {
 		return
@@ -1098,10 +1092,10 @@ func (s *Server) logSaturatedLockouts() {
 		"device":          s.deviceLockout,
 	} {
 		if lockout != nil && lockout.Saturated() {
-			s.logger.Error("lockout table saturated; new keys are being shed",
+			s.logger.Error("lockout table saturated",
 				"table", name,
 				"hard_cap", strconv.Itoa(lockout.HardCap()),
-				"effect", "callers not already tracked receive 429; lockouts already in force are preserved")
+				"effect", "stalest unlocked entries are evicted for new callers; if only live lockouts remain, new callers receive 429")
 		}
 	}
 }

@@ -261,30 +261,26 @@ func TestLoginRefundsTheStrikeForAChallengeIssuedToAnotherAddress(t *testing.T) 
 	}
 }
 
-func TestLoginSpendsTheStrikeForAWrongSolution(t *testing.T) {
+// A wrong solution is refused before any lockout write: it checks no password,
+// and the budget refunds it, so a strike would let junk tokens fill the tables.
+func TestWrongSolutionWritesNoLockoutEntry(t *testing.T) {
 	srv := newTestServer(t)
 	srv.captchaVerifier = stubVerifier{ok: false}
 
-	// Get the bootstrap admin user's actual username
-	all, err := srv.users.List()
-	if err != nil || len(all) != 1 {
-		t.Fatalf("expected exactly one bootstrap user, got %+v err=%v", all, err)
-	}
-	adminUsername := all[0].Username
-
-	for i := 0; i < loginMaxFailures; i++ {
+	for i := 0; i <= loginMaxFailures; i++ {
 		rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-			map[string]string{"username": adminUsername, "password": "irrelevant", "captchaToken": "wrong"})
+			map[string]string{"username": "admin", "password": "irrelevant", "captchaToken": "wrong"})
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d: status = %d, want 401", i+1, rec.Code)
 		}
 	}
-	// A wrong solution is a failed attempt and costs one, exactly as
-	// cancelAttempt's doc comment says.
-	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": adminUsername, "password": "irrelevant", "captchaToken": "wrong"})
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("status after %d wrong solutions = %d, want 429", loginMaxFailures, rec.Code)
+	for name, l := range map[string]*failureLockout{"login": srv.loginLockout, "login_ip": srv.loginIPLockout} {
+		l.mu.Lock()
+		n := len(l.entries)
+		l.mu.Unlock()
+		if n != 0 {
+			t.Errorf("%s lockout holds %d entries after wrong solutions, want 0", name, n)
+		}
 	}
 }
 

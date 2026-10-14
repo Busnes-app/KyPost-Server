@@ -8,21 +8,27 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-// trustProxyCIDRsForTest points trustedProxyNets at the given CIDRs for the
-// duration of a test.
-//
-// The list is parsed once at package init from TRUSTED_PROXY_CIDRS, so
-// t.Setenv cannot reach it — and it deliberately stays that way, because
-// re-parsing CIDRs on every request to make a test convenient would put work on
-// the hot path of every lockout key lookup. Same seam as outboundIPGuard.
+// trustProxiesForTest applies proxy trust for the duration of a test, as
+// SetTrustedProxies does at startup.
+func trustProxiesForTest(t *testing.T, cidrs, header string) {
+	t.Helper()
+	p, err := config.ParseTrustedProxies(cidrs, header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldNets, oldHeader := trustedProxyNets, clientIPHeader
+	SetTrustedProxies(p)
+	t.Cleanup(func() { trustedProxyNets, clientIPHeader = oldNets, oldHeader })
+}
+
+// trustProxyCIDRsForTest trusts cidrs in the default X-Forwarded-For mode.
 func trustProxyCIDRsForTest(t *testing.T, cidrs string) {
 	t.Helper()
-	old := trustedProxyNets
-	trustedProxyNets = parseTrustedProxyCIDRs(cidrs)
-	t.Cleanup(func() { trustedProxyNets = old })
+	trustProxiesForTest(t, cidrs, "")
 }
 
 func forwardedRequest(t *testing.T) *http.Request {
@@ -129,9 +135,6 @@ func TestParseTrustedProxyCIDRs(t *testing.T) {
 		{"ipv6 cidr", "::1/128", "::1", true},
 		{"multiple entries", "10.0.0.0/8, 172.18.0.1", "172.18.0.1", true},
 		{"whitespace tolerated", "  10.0.0.0/8  ", "10.9.9.9", true},
-		// A typo must narrow trust, never widen it, and must not be fatal.
-		{"malformed entry skipped", "not-an-ip, 10.0.0.0/8", "10.0.0.1", true},
-		{"malformed entry alone trusts nothing", "not-an-ip", "10.0.0.1", false},
 		{"empty trusts nothing", "", "10.0.0.1", false},
 	}
 
@@ -151,38 +154,46 @@ func TestParseTrustedProxyCIDRs(t *testing.T) {
 	}
 }
 
-// TestCFConnectingIPPreferredOverForwardedFor is the cloudflared case.
-//
-// Cloudflare's edge APPENDS the visitor IP to X-Forwarded-For, so for a plain
-// Cloudflare proxy the right-most element is correct. But when a tunnel daemon
-// (or a second proxy) sits between the edge and this server and appends its own
-// address after it, the right-most element becomes a loopback address — and every
-// visitor then resolves to the same key. That is not a small degradation: the
-// per-IP login lockout becomes one shared bucket, so 50 failures from anyone
-// locks out sign-in for everyone.
-//
-// CF-Connecting-IP carries exactly one value with no chain, and Cloudflare's
-// rules engine will not let a transform rule rewrite a cf- header, so it is both
-// unambiguous and unforgeable through the edge.
-func TestCFConnectingIPPreferredOverForwardedFor(t *testing.T) {
-	trustProxyCIDRsForTest(t, "127.0.0.1/32")
+// Behind nginx (XFF mode) the client can send its own CF-Connecting-IP, which
+// nginx passes through. Honouring it let one caller pick a fresh lockout key per
+// request.
+func TestSpoofedCFConnectingIPIgnoredInForwardedForMode(t *testing.T) {
+	trustProxyCIDRsForTest(t, "10.89.0.1/32")
 	req := httptest.NewRequest(http.MethodGet, "http://backend.internal/api/x", nil)
-	req.RemoteAddr = "127.0.0.1:41000" // cloudflared, on loopback
-
-	// What the origin actually sees when cloudflared appends its own hop.
-	req.Header.Set("X-Forwarded-For", "203.0.113.9, 127.0.0.1")
-	req.Header.Set("CF-Connecting-IP", "203.0.113.9")
-
+	req.RemoteAddr = "10.89.0.1:41000"
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+	req.Header.Set("CF-Connecting-IP", "1.2.3.4")
 	if got := clientIP(req); got != "203.0.113.9" {
-		t.Errorf("clientIP = %q, want the visitor address 203.0.113.9. Falling back to the "+
-			"right-most XFF hop here yields 127.0.0.1 for every visitor, which collapses the "+
-			"per-IP lockout into a single shared bucket", got)
+		t.Errorf("clientIP = %q, want the X-Forwarded-For address 203.0.113.9", got)
+	}
+
+	req.Header.Del("X-Forwarded-For")
+	if got := clientIP(req); got != "10.89.0.1" {
+		t.Errorf("clientIP = %q without X-Forwarded-For, want the peer, not CF-Connecting-IP", got)
+	}
+}
+
+// cloudflared appends its own hop to X-Forwarded-For, so in cf-connecting-ip mode
+// only CF-Connecting-IP names the client, and XFF is never read.
+func TestCFConnectingIPModeReadsOnlyCFConnectingIP(t *testing.T) {
+	trustProxiesForTest(t, "127.0.0.1/32", "cf-connecting-ip")
+	req := httptest.NewRequest(http.MethodGet, "http://backend.internal/api/x", nil)
+	req.RemoteAddr = "127.0.0.1:41000"
+	req.Header.Set("X-Forwarded-For", "198.51.100.1, 127.0.0.1")
+	req.Header.Set("CF-Connecting-IP", "203.0.113.9")
+	if got := clientIP(req); got != "203.0.113.9" {
+		t.Errorf("clientIP = %q, want CF-Connecting-IP 203.0.113.9", got)
+	}
+
+	req.Header.Del("CF-Connecting-IP")
+	if got := clientIP(req); got != "127.0.0.1" {
+		t.Errorf("clientIP = %q without CF-Connecting-IP, want the peer, not X-Forwarded-For", got)
 	}
 }
 
 func TestCFConnectingIPIgnoredFromUntrustedPeer(t *testing.T) {
 	// A configured proxy that is not this peer.
-	trustProxyCIDRsForTest(t, "10.0.0.0/8")
+	trustProxiesForTest(t, "10.0.0.0/8", "cf-connecting-ip")
 	req := httptest.NewRequest(http.MethodGet, "http://backend.internal/api/x", nil)
 	req.RemoteAddr = "203.0.113.50:40000"
 	req.Header.Set("CF-Connecting-IP", "1.2.3.4")
@@ -199,38 +210,29 @@ func TestCFConnectingIPIgnoredFromUntrustedPeer(t *testing.T) {
 // sending "unknown", an empty element from a trailing comma, or arbitrary text
 // would otherwise mint keys that match nothing real and grow without limit.
 func TestClientIPFallsBackWhenHeadersDoNotParse(t *testing.T) {
-	trustProxyCIDRsForTest(t, "127.0.0.1/32")
-
 	cases := []struct {
-		name string
-		cf   string
-		xff  string
-		want string
+		name   string
+		header string
+		value  string
+		want   string
 	}{
-		{"unknown literal", "unknown", "", "127.0.0.1"},
-		{"empty trailing element", "", "203.0.113.1, ", "127.0.0.1"},
-		{"arbitrary text", "not-an-ip", "also-not-an-ip", "127.0.0.1"},
-		// A malformed CF header must not shadow a usable XFF.
-		{"bad cf falls through to xff", "garbage", "203.0.113.7", "203.0.113.7"},
-		// Proxies in the wild send ip:port in XFF; accept it rather than
+		{"unknown literal", "CF-Connecting-IP", "unknown", "127.0.0.1"},
+		{"empty trailing element", "X-Forwarded-For", "203.0.113.1, ", "127.0.0.1"},
+		{"arbitrary text", "X-Forwarded-For", "also-not-an-ip", "127.0.0.1"},
+		// Proxies in the wild send ip:port; accept it rather than
 		// discarding a perfectly good address.
-		{"xff with port", "", "203.0.113.8:5555", "203.0.113.8"},
-		{"cf with port", "203.0.113.9:443", "", "203.0.113.9"},
-		// IPv6 in both forms.
-		{"ipv6 bare", "2001:db8::1", "", "2001:db8::1"},
-		{"ipv6 bracketed with port", "[2001:db8::2]:443", "", "2001:db8::2"},
+		{"xff with port", "X-Forwarded-For", "203.0.113.8:5555", "203.0.113.8"},
+		{"cf with port", "CF-Connecting-IP", "203.0.113.9:443", "203.0.113.9"},
+		{"ipv6 bare", "CF-Connecting-IP", "2001:db8::1", "2001:db8::1"},
+		{"ipv6 bracketed with port", "CF-Connecting-IP", "[2001:db8::2]:443", "2001:db8::2"},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			trustProxiesForTest(t, "127.0.0.1/32", c.header)
 			req := httptest.NewRequest(http.MethodGet, "http://backend.internal/api/x", nil)
 			req.RemoteAddr = "127.0.0.1:41000"
-			if c.cf != "" {
-				req.Header.Set("CF-Connecting-IP", c.cf)
-			}
-			if c.xff != "" {
-				req.Header.Set("X-Forwarded-For", c.xff)
-			}
+			req.Header.Set(c.header, c.value)
 			if got := clientIP(req); got != c.want {
 				t.Errorf("clientIP = %q, want %q", got, c.want)
 			}
@@ -282,7 +284,7 @@ func TestStatusReportsResolvedClientIP(t *testing.T) {
 	}
 
 	// Trusted peer: reports the real visitor address.
-	trustProxyCIDRsForTest(t, "127.0.0.1/32")
+	trustProxiesForTest(t, "127.0.0.1/32", "cf-connecting-ip")
 	ip, trusted = call()
 	if !trusted {
 		t.Error("proxyHeadersTrusted is false for a configured peer")

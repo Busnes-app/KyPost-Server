@@ -10,6 +10,13 @@ image. `:stable` is moved to that image only after its build attestation has
 been published *and* verified, and only when the release is the newest published
 non-prerelease version.
 
+## Unreleased
+
+**Before upgrading:** behind cloudflared, set `TRUSTED_PROXY_HEADER=cf-connecting-ip`; behind a proxy on the same host reaching `127.0.0.1:5866`, change `TRUSTED_PROXY_CIDRS=127.0.0.1/32` to the `kypost-net` gateway, `10.89.0.1/32` by default. A malformed `TRUSTED_PROXY_CIDRS` entry now refuses startup.
+
+- **Security: client address from one header.** A trusted proxy's client address now comes only from `TRUSTED_PROXY_HEADER`: `x-forwarded-for` (default, nginx/Caddy) or `cf-connecting-ip` (cloudflared). `CF-Connecting-IP` used to win over `X-Forwarded-For` from any trusted proxy, so behind nginx, which passes it through, a client chose a fresh address per request and reset every IP-keyed lockout. Unknown values and malformed CIDRs refuse startup instead of being skipped.
+- **Security: junk CAPTCHAs can no longer block sign-in.** Login checks the CAPTCHA before writing lockout state, and a full lockout table evicts its stalest unlocked entry instead of refusing every new caller. Before, failed CAPTCHAs cost nothing yet filled the table, after which every new sign-in got 429. A wrong CAPTCHA no longer counts as a lockout strike.
+
 ## 0.4.0 — 2026-10-13
 
 **Before upgrading:** find accounts and credentials still on retired scrypt hashes (they stop signing in; see the BREAKING entry below), read your `.env` (variables compose used to drop now apply), and back up the new `$SECRET_DIR/scheduled-send.key`. UnifiedPush devices without WebPush keys must pair again.

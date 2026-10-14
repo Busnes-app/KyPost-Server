@@ -190,6 +190,32 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	defer budget.refund()
 
+	// CAPTCHA before any lockout write: a failed solution is refunded from the
+	// budget above, so if it created lockout entries, junk tokens could fill the
+	// tables for free.
+	if s.captchaVerifier != nil {
+		ok, err := s.captchaVerifier.Verify(r.Context(), req.CaptchaToken, clientIP(r))
+		switch {
+		case errors.Is(err, captcha.ErrChallengeExpired):
+			// Self-hosted proof-of-work only: a signed solution past its deadline, a
+			// tab left open. 401, not the provider-down 503 below.
+			http.Error(w, "security check expired, please try again", http.StatusUnauthorized)
+			return
+		case errors.Is(err, captcha.ErrChallengeWrongClient):
+			// Self-hosted proof-of-work only: a valid solution from a different address
+			// than it was issued to, e.g. a phone moving from wifi to cellular.
+			http.Error(w, "your network address changed during the security check, please try again", http.StatusUnauthorized)
+			return
+		case err != nil:
+			s.logger.Error("captcha verification failed", "error", err.Error())
+			http.Error(w, "captcha verification unavailable", http.StatusServiceUnavailable)
+			return
+		case !ok:
+			http.Error(w, "captcha verification failed", http.StatusUnauthorized)
+			return
+		}
+	}
+
 	// Per-IP lockout, independent of the username. Closes the rotating-username
 	// hole in the per-account budget below: 50 failures from one address in 15
 	// minutes stops that address, whatever names it tried. Loose on purpose — a NAT
@@ -231,47 +257,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			"retryAfterSeconds": retrySeconds,
 		})
 		return
-	}
-
-	// CAPTCHA, when an operator has configured a provider, is required on
-	// every login attempt and checked before the password is verified so a
-	// failed/missing solution never pays the password KDF's cost.
-	if s.captchaVerifier != nil {
-		ok, err := s.captchaVerifier.Verify(r.Context(), req.CaptchaToken, clientIP(r))
-		switch {
-		case errors.Is(err, captcha.ErrChallengeExpired):
-			// Self-hosted proof-of-work only: a correctly signed solution that arrived
-			// after its deadline — a tab left open, not a credential. Refund the strike so
-			// three stale tabs cannot lock anyone out. 401, not the 503 below, which means
-			// "the provider is down" and there is no provider here. No password is checked
-			// on this path, so the refund buys an attacker no guesses.
-			s.loginLockout.cancelAttempt(strike)
-			s.loginIPLockout.cancelAttempt(ipStrike)
-			http.Error(w, "security check expired, please try again", http.StatusUnauthorized)
-			return
-		case errors.Is(err, captcha.ErrChallengeWrongClient):
-			// Self-hosted proof-of-work only: a valid solution presented from a different
-			// address than it was issued to. The binding stops an attacker fetching cheap
-			// challenges from a clean address and spending them from an escalated one, but
-			// a phone handing off wifi to cellular mid-solve looks identical. A changed
-			// address is a network event, not a wrong credential, so refund the strike.
-			s.loginLockout.cancelAttempt(strike)
-			s.loginIPLockout.cancelAttempt(ipStrike)
-			http.Error(w, "your network address changed during the security check, please try again", http.StatusUnauthorized)
-			return
-		case err != nil:
-			// The operator's CAPTCHA provider is down; the user never got as
-			// far as offering a password. Give the strike back, or an outage
-			// would lock out every user of the instance.
-			s.loginLockout.cancelAttempt(strike)
-			s.loginIPLockout.cancelAttempt(ipStrike)
-			s.logger.Error("captcha verification failed", "error", err.Error())
-			http.Error(w, "captcha verification unavailable", http.StatusServiceUnavailable)
-			return
-		case !ok:
-			http.Error(w, "captcha verification failed", http.StatusUnauthorized)
-			return
-		}
 	}
 
 	// The account this attempt targeted, folded the same way GetByUsername
