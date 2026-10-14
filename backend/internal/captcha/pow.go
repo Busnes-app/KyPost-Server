@@ -272,10 +272,3 @@ func (v *PoWVerifier) SweepExpired(now time.Time) {
 		}
 	}
 }
-
-// spentCount reports how many salts are currently recorded. Test-only.
-func (v *PoWVerifier) spentCount() int {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	return len(v.spent)
-}

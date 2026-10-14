@@ -12,6 +12,7 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -362,7 +363,7 @@ func stubVerifiedDKIM(t *testing.T) {
 // master key, because nothing in it opens a user's private key any more.
 func seedPollerPGPIdentity(t *testing.T, p *Poller, userID, name, email string) *pgpmail.Identity {
 	t.Helper()
-	id, err := pgpmail.GenerateIdentity(name, email)
+	id, err := pgpmailtest.GenerateIdentity(name, email)
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

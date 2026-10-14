@@ -4,17 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"mime/multipart"
-	"mime/quotedprintable"
 	"net/textproto"
-	"strings"
 
-	opgperrors "github.com/ProtonMail/go-crypto/openpgp/errors"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -82,7 +77,7 @@ func writeEnvelopeHeaders(w io.Writer, envelope textproto.MIMEHeader) {
 // OuterPlaceholderSubject replaces the real Subject on the unencrypted outer
 // envelope of a PGP/MIME-encrypted message. The real subject is instead
 // carried inside the encrypted payload via protected headers (protectContent)
-// and restored on the receiving side (ExtractProtectedSubject). Also reused
+// and restored by the reading client. Also reused
 // for the outer subject of pickup notifications so the real subject never
 // travels in cleartext.
 const OuterPlaceholderSubject = "[Encrypted] Email Sent by KyPost"
@@ -97,9 +92,8 @@ const OuterPlaceholderSubject = "[Encrypted] Email Sent by KyPost"
 // byte-verbatim as the final part.
 //
 // Scope is deliberately Subject-only (LAMPS baseline). Hand-assembled rather
-// than via a mime/multipart.Writer for the same reason as buildSignedEnvelope:
-// CreatePart injects its own header separator and would corrupt the
-// byte-verbatim nested content.
+// than via a mime/multipart.Writer: CreatePart injects its own header
+// separator and would corrupt the byte-verbatim nested content.
 func protectContent(content []byte, subject string) []byte {
 	subject = mailmsg.FoldEncodedWords(mailmsg.SanitizeHeaderValue(subject))
 	boundary := randomBoundary()
@@ -122,41 +116,12 @@ func protectContent(content []byte, subject string) []byte {
 
 	// Per RFC 2046 the CRLF before a boundary delimiter belongs to the
 	// delimiter; write it unconditionally after the (possibly multipart)
-	// content, mirroring buildSignedEnvelope.
+	// content.
 	msg.WriteString("--" + boundary + "\r\n")
 	msg.Write(content)
 	msg.WriteString("\r\n")
 	msg.WriteString("--" + boundary + "--\r\n")
 	return msg.Bytes()
-}
-
-// ExtractProtectedSubject reads a protected Subject header from a decrypted
-// PGP/MIME content part (the bytes returned by DecryptMIME). It accepts both
-// KyPost's own protectContent output and Thunderbird/Mutt/K-9 protected-headers
-// mail, RFC 2047-decoding an encoded-word subject. The inner Subject is
-// sender-authored encrypted data — the same trust level as the body — so it is
-// accepted regardless of the protected-headers parameter. ok is false when no
-// Subject is present or it decodes to empty, and callers then fall back to the
-// outer envelope subject.
-func ExtractProtectedSubject(content []byte) (subject string, ok bool) {
-	reader := textproto.NewReader(bufio.NewReader(bytes.NewReader(content)))
-	header, err := reader.ReadMIMEHeader()
-	if err != nil && header == nil {
-		return "", false
-	}
-	raw := header.Get("Subject")
-	if raw == "" {
-		return "", false
-	}
-	decoded, err := (&mime.WordDecoder{}).DecodeHeader(raw)
-	if err != nil {
-		decoded = raw
-	}
-	decoded = mailmsg.SanitizeHeaderValue(decoded)
-	if decoded == "" {
-		return "", false
-	}
-	return decoded, true
 }
 
 // EncryptMIME wraps a plaintext RFC 5322 message (as produced by
@@ -165,8 +130,8 @@ func ExtractProtectedSubject(content []byte) (subject string, ok bool) {
 // stay on the outer, unencrypted envelope headers. A Subject is moved into the
 // encrypted payload via protected headers and the outer Subject replaced with
 // OuterPlaceholderSubject, so the real subject never travels in cleartext. A
-// non-nil signer signs the content before encryption, verified in one step by
-// DecryptMIME on the way back.
+// non-nil signer signs the content before encryption, so the recipient
+// verifies it while decrypting.
 func EncryptMIME(plaintext []byte, recipientArmoredPubKeys []string, signer *Identity) ([]byte, error) {
 	return encryptMIME(plaintext, recipientArmoredPubKeys, signer, false)
 }
@@ -250,156 +215,6 @@ func buildEncryptedEnvelope(envelope textproto.MIMEHeader, armoredEncrypted stri
 	return msg.Bytes()
 }
 
-// DecryptResult is the outcome of decrypting a PGP/MIME payload: the
-// recovered content (a Content-Type header plus body, ready for
-// ParseContent) and, when the message was combined sign+encrypt, the
-// signature verification outcome.
-type DecryptResult struct {
-	Content           []byte
-	Signed            bool
-	Verified          bool
-	SignerFingerprint string
-}
-
-// DecryptMIME decrypts an armored OpenPGP message (the data part of a
-// multipart/encrypted structure) using recipient's private key. If
-// signerArmoredPubKeys is non-empty, an inline signature (present when the
-// sender combined sign+encrypt) is verified against them.
-func DecryptMIME(armoredPGPMessage string, recipient *Identity, signerArmoredPubKeys []string) (*DecryptResult, error) {
-	if recipient == nil {
-		return nil, errors.New("pgpmail: recipient identity required to decrypt")
-	}
-	// Defense in depth against a giant armored input even before decryption
-	// is attempted — the real decompression-bomb guard is
-	// MaxDecompressedMessageSize below, which bounds the *decrypted* output
-	// regardless of how small the ciphertext is, but there's no reason to
-	// let an absurdly large armored blob through either.
-	if int64(len(armoredPGPMessage)) > mailmsg.MaxInboundMessageBytes {
-		return nil, mailmsg.ErrMessageTooLarge
-	}
-	decryptionKeys, err := crypto.NewKeyRing(recipient.key)
-	if err != nil {
-		return nil, fmt.Errorf("pgpmail: build decryption keyring: %w", err)
-	}
-
-	// MaxDecompressedMessageSize is gopenpgp's own guard against a PGP
-	// decompression bomb: a small ciphertext whose compressed packet expands
-	// to gigabytes of plaintext once decrypted. Unlike the read sites in
-	// package imap, this is a genuine streaming limit enforced by the
-	// underlying go-crypto library while decompressing, not a post-hoc size
-	// check — see LimitReader in go-crypto's openpgp/packet/compressed.go.
-	builder := crypto.PGP().Decryption().DecryptionKeys(decryptionKeys).MaxDecompressedMessageSize(mailmsg.MaxInboundMessageBytes)
-	var verifying bool
-	if len(signerArmoredPubKeys) > 0 {
-		verifyKeys, err := crypto.NewKeyRing(nil)
-		if err != nil {
-			return nil, fmt.Errorf("pgpmail: build verification keyring: %w", err)
-		}
-		for _, armored := range signerArmoredPubKeys {
-			key, err := crypto.NewKeyFromArmored(armored)
-			if err != nil {
-				return nil, fmt.Errorf("pgpmail: parse signer key: %w", err)
-			}
-			if err := verifyKeys.AddKey(key); err != nil {
-				return nil, fmt.Errorf("pgpmail: add signer key: %w", err)
-			}
-		}
-		builder = builder.VerificationKeys(verifyKeys)
-		verifying = true
-	}
-
-	decHandle, err := builder.New()
-	if err != nil {
-		return nil, fmt.Errorf("pgpmail: build decryption handle: %w", err)
-	}
-	result, err := decHandle.Decrypt([]byte(armoredPGPMessage), crypto.Auto)
-	if err != nil {
-		// Best-effort, not the primary guarantee: go-crypto's
-		// HandleSensitiveParsingError genericizes every parsing error encountered while
-		// reading symmetrically-decrypted data — including a MaxDecompressedMessageSize
-		// overflow — into an opaque "parsing error", so an attacker cannot use the error
-		// to distinguish "ciphertext too large" from "wrong key" before the message is
-		// authenticated. For an ordinary encrypted message a decompression-bomb
-		// rejection therefore surfaces as a generic decrypt error, and this branch only
-		// catches it on the rarer paths go-crypto does not genericize. Either way
-		// decryption fails closed and the oversized plaintext is never returned; see
-		// TestDecryptMIMERejectsDecompressionBomb.
-		if errors.Is(err, opgperrors.ErrMessageTooLarge) {
-			return nil, mailmsg.ErrMessageTooLarge
-		}
-		return nil, fmt.Errorf("pgpmail: decrypt: %w", err)
-	}
-
-	out := &DecryptResult{Content: result.Bytes()}
-	if verifying {
-		out.Signed = len(result.Signatures) > 0
-		out.Verified = out.Signed && result.SignatureError() == nil
-		if key := result.SignedByKey(); key != nil {
-			out.SignerFingerprint = key.GetFingerprint()
-		}
-	}
-	return out, nil
-}
-
-// SignMIME wraps a plaintext RFC 5322 message in an RFC 3156 multipart/
-// signed envelope: the message's Content-Type and body, byte-identical,
-// alongside a detached OpenPGP signature over those exact bytes.
-func SignMIME(plaintext []byte, signer *Identity) ([]byte, error) {
-	if signer == nil {
-		return nil, errors.New("pgpmail: signer identity required")
-	}
-	envelope, content, err := splitMessage(plaintext)
-	if err != nil {
-		return nil, err
-	}
-
-	signHandle, err := crypto.PGP().Sign().SigningKey(signer.key).Detached().New()
-	if err != nil {
-		return nil, fmt.Errorf("pgpmail: build sign handle: %w", err)
-	}
-	signature, err := signHandle.Sign(content, crypto.Armor)
-	if err != nil {
-		return nil, fmt.Errorf("pgpmail: sign: %w", err)
-	}
-
-	return buildSignedEnvelope(envelope, content, string(signature)), nil
-}
-
-// buildSignedEnvelope hand-assembles the multipart/signed structure instead of
-// using mime/multipart.Writer for the first part: CreatePart always inserts its
-// own blank-line header separator, which would corrupt the signed part's bytes
-// (content already carries its own embedded Content-Type header line), and those
-// bytes on the wire must be byte-identical to what was passed to Sign.
-//
-// Per RFC 2046 the CRLF immediately before a boundary delimiter belongs to the
-// delimiter, not the part body, so it is written after content unconditionally —
-// even when content already ends in its own "\r\n". That trailing CRLF is
-// signed data, and a compliant parser strips exactly one additional CRLF as the
-// delimiter separator, not two.
-func buildSignedEnvelope(envelope textproto.MIMEHeader, content []byte, armoredSignature string) []byte {
-	boundary := randomBoundary()
-
-	var msg bytes.Buffer
-	writeEnvelopeHeaders(&msg, envelope)
-	msg.WriteString("MIME-Version: 1.0\r\n")
-	msg.WriteString(`Content-Type: multipart/signed; protocol="application/pgp-signature"; micalg="pgp-sha256"; boundary="` + boundary + "\"\r\n")
-	msg.WriteString("\r\n")
-
-	msg.WriteString("--" + boundary + "\r\n")
-	msg.Write(content)
-	msg.WriteString("\r\n")
-
-	msg.WriteString("--" + boundary + "\r\n")
-	msg.WriteString("Content-Type: application/pgp-signature; name=\"signature.asc\"\r\n")
-	msg.WriteString("Content-Disposition: attachment; filename=\"signature.asc\"\r\n")
-	msg.WriteString("\r\n")
-	msg.WriteString(armoredSignature)
-	msg.WriteString("\r\n")
-
-	msg.WriteString("--" + boundary + "--\r\n")
-	return msg.Bytes()
-}
-
 // randomBoundary returns a MIME boundary with 128+ bits of entropy.
 //
 // crypto/rand.Text is used rather than rand.Read so there is no error to
@@ -418,191 +233,3 @@ func randomBoundary() string {
 // unverified. Recovering the bytes it would have needed is
 // ExtractSignedParts's job (signed_parts.go), and by the time you have them
 // the verification belongs on the client that fetched them.
-
-// maxContentDepth bounds recursion into nested multipart structures so a
-// maliciously deep message can't exhaust the stack. Legitimate mail (including
-// KyPost's own protected-headers wrapper around a multipart/mixed with
-// attachments) nests only a couple of levels.
-const maxContentDepth = 8
-
-// bodyMode reports which render mode a part's Content-Type asks for. The caller
-// carries it to the client so nothing downstream has to sniff the bytes.
-func bodyMode(contentType string) string {
-	if mediaType, _, err := mime.ParseMediaType(contentType); err == nil &&
-		strings.EqualFold(mediaType, "text/html") {
-		return BodyModeHTML
-	}
-	return BodyModePlain
-}
-
-// Body render modes, matching imapadapter's.
-const (
-	BodyModeHTML  = "html"
-	BodyModePlain = "plain"
-)
-
-// ParseContent decodes a decrypted PGP/MIME content part (a Content-Type header
-// line, a blank line, and a body — either a single text part or a multipart
-// structure) into a display body and any attachments. It recurses into nested
-// multipart parts, so both KyPost's own protected-headers wrapper and
-// third-party senders whose inner structure differs (e.g. Thunderbird's nested
-// multipart/alternative) render correctly. text/rfc822-headers parts (the
-// protected-headers legacy-display part) are skipped. Anything unrecognized
-// degrades gracefully to an attachment rather than erroring, so the message
-// still renders.
-//
-// Nothing in production calls this: server-side decryption is retired
-// (api.decryptPGPPayload never opens a key), so frontend/src/lib/mimeContent.ts
-// is the only parser that renders mail. This is the reference that corpus holds
-// it to — see mime_corpus_test.go.
-func ParseContent(content []byte) (body, mode string, attachments []mailmsg.Attachment, err error) {
-	if int64(len(content)) > mailmsg.MaxInboundMessageBytes {
-		return "", "", nil, mailmsg.ErrMessageTooLarge
-	}
-	reader := textproto.NewReader(bufio.NewReader(bytes.NewReader(content)))
-	header, err := reader.ReadMIMEHeader()
-	if err != nil && header == nil {
-		return "", "", nil, fmt.Errorf("pgpmail: read content headers: %w", err)
-	}
-	rest, err := mailmsg.BoundedRead(reader.R, mailmsg.MaxInboundMessageBytes)
-	if err != nil {
-		if errors.Is(err, mailmsg.ErrMessageTooLarge) {
-			return "", "", nil, err
-		}
-		return "", "", nil, fmt.Errorf("pgpmail: read content body: %w", err)
-	}
-
-	mediaType, params, err := mime.ParseMediaType(header.Get("Content-Type"))
-	if err != nil || !strings.HasPrefix(mediaType, "multipart/") || params["boundary"] == "" {
-		rest = decodeBody(rest, header.Get("Content-Transfer-Encoding"))
-		return string(rest), bodyMode(header.Get("Content-Type")), nil, nil
-	}
-
-	mode = BodyModePlain
-	err = parseMultipart(bytes.NewReader(rest), params["boundary"], 0, &body, &mode, &attachments)
-	return body, mode, attachments, err
-}
-
-// partFileName reports a part's filename from BOTH Content-Disposition and
-// Content-Type, which is what decides whether the part is a body candidate.
-//
-// Go's part.FileName() consults only Content-Disposition. The browser mirror
-// (walkMultipart in frontend/src/lib/mimeContent.ts) also honours Content-Type
-// name=, so a part named solely by name= read as UNNAMED here and as NAMED
-// there — and the two parsers then chose DIFFERENT display bodies for the same
-// bytes. Because buildPGPDeliveries encrypts one plaintext to every To/CC key
-// in a single call, recipients on different custody modes received identical
-// ciphertext under one signature and were shown different messages. That is the
-// exact property the "signature verified" badge exists to deny, so the two
-// implementations must agree here. See testdata/mime-corpus.json, which both
-// test suites execute.
-func partFileName(part *multipart.Part) string {
-	if name := part.FileName(); name != "" {
-		return name
-	}
-	_, params, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
-	if err != nil {
-		return ""
-	}
-	return params["name"]
-}
-
-// parseMultipart walks the parts of a multipart body, recursing into nested
-// multipart parts up to maxContentDepth. The first text/plain, text/html or
-// untyped part found (in document order, across nesting) wins as the display
-// body; other recognized parts become attachments; text/rfc822-headers parts
-// are skipped.
-func parseMultipart(r io.Reader, boundary string, depth int, body, mode *string, attachments *[]mailmsg.Attachment) error {
-	if depth >= maxContentDepth {
-		return nil
-	}
-	mr := multipart.NewReader(r, boundary)
-	for {
-		part, err := mr.NextPart()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("pgpmail: read multipart part: %w", err)
-		}
-
-		partType := part.Header.Get("Content-Type")
-		// Media types are case-insensitive (RFC 2045 5.1) and the browser
-		// mirror lowercases before comparing, so classify on the parsed media
-		// type — never on the raw header. Comparing the raw header with
-		// HasPrefix made "TEXT/PLAIN" an attachment here and the display body
-		// there, and let "text/plainish" win as the body here and nowhere else.
-		partMedia, params, mtErr := mime.ParseMediaType(partType)
-		if mtErr == nil && strings.HasPrefix(partMedia, "multipart/") && params["boundary"] != "" {
-			if err := parseMultipart(part, params["boundary"], depth+1, body, mode, attachments); err != nil {
-				return err
-			}
-			continue
-		}
-
-		partBody, err := mailmsg.BoundedRead(part, mailmsg.MaxInboundMessageBytes)
-		if err != nil {
-			if errors.Is(err, mailmsg.ErrMessageTooLarge) {
-				return err
-			}
-			return fmt.Errorf("pgpmail: read part body: %w", err)
-		}
-		partBody = decodeBody(partBody, part.Header.Get("Content-Transfer-Encoding"))
-
-		// The protected-headers legacy-display part carries only a human-
-		// readable Subject line for non-aware clients; never show it as body
-		// or attachment.
-		if strings.EqualFold(partMedia, "text/rfc822-headers") {
-			continue
-		}
-		// A text part without a filename is a body candidate (or, in a
-		// multipart/alternative, an alternative rendering of one): the first
-		// wins as the display body and the rest are dropped rather than
-		// misfiled as attachments. A text part *with* a filename is a genuine
-		// text attachment (e.g. note.txt) and falls through below.
-		filename := partFileName(part)
-		if filename == "" && (strings.EqualFold(partMedia, "text/plain") || strings.EqualFold(partMedia, "text/html") || partType == "") {
-			if *body == "" {
-				*body = string(partBody)
-				// The winning part's own type decides the render mode. Taken
-				// here rather than sniffed later: a text/plain part mentioning
-				// "<user@example.com>" is not markup, and rendering it as markup
-				// deletes the address.
-				*mode = bodyMode(partType)
-			}
-			continue
-		}
-		name := filename
-		if name == "" {
-			name = "attachment"
-		}
-		*attachments = append(*attachments, mailmsg.Attachment{
-			Name:     name,
-			MimeType: partType,
-			Content:  partBody,
-		})
-	}
-	return nil
-}
-
-// decodeBody reverses a part's Content-Transfer-Encoding, decoding exactly what
-// the browser mirror decodes (decodePart in mimeContent.ts). Malformed input
-// keeps the raw bytes rather than losing the part, which is what the browser
-// does too. mime/multipart decodes quoted-printable parts itself and drops the
-// header, so only the single-part path reaches that case here.
-func decodeBody(body []byte, encoding string) []byte {
-	var r io.Reader
-	switch {
-	case strings.EqualFold(encoding, "base64"):
-		r = base64.NewDecoder(base64.StdEncoding, bytes.NewReader(body))
-	case strings.EqualFold(encoding, "quoted-printable"):
-		r = quotedprintable.NewReader(bytes.NewReader(body))
-	default:
-		return body
-	}
-	decoded, err := io.ReadAll(r)
-	if err != nil {
-		return body
-	}
-	return decoded
-}

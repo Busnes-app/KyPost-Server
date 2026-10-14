@@ -20,6 +20,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/redaction"
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -74,7 +75,7 @@ func incomingPollerForTest(t *testing.T) (*Poller, userCtx, *encryptingMailbox) 
 		t.Fatalf("users: %v", err)
 	}
 	u := all[0]
-	identity, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	identity, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}

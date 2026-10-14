@@ -24,7 +24,7 @@ func newAdmissionTestClient(t *testing.T, srv *httptest.Server, concurrency int,
 		paceInterval: pace,
 	}
 	getWarmupState(c.baseURL + c.path + "|" + c.model).ready = true
-	t.Cleanup(ResetWarmupState)
+	t.Cleanup(resetWarmupState)
 	return c
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -394,7 +395,7 @@ func TestScheduledSendReturnsWhenMaterialGenerationChanges(t *testing.T) {
 		MaterialGeneration: &generation, SendAt: at.Format(time.RFC3339),
 	}))
 	// A rotation to the next keyring generation.
-	rotated, err := pgpmail.GenerateIdentity("Ring", "ring@example.invalid")
+	rotated, err := pgpmailtest.GenerateIdentity("Ring", "ring@example.invalid")
 	if err != nil {
 		t.Fatal(err)
 	}

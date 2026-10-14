@@ -23,6 +23,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -53,7 +54,7 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 	if _, err = s.users.SetPassword(context.Background(), u.ID, "retained-native-password", false, nil); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := pgpmail.GenerateIdentity("Retained", "one@example.test")
+	identity, err := pgpmailtest.GenerateIdentity("Retained", "one@example.test")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,14 +9,14 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 func TestIncomingPreferenceRequiresCredentialAndAcknowledgement(t *testing.T) {
 	server := newTestServer(t)
 	id := server.mustBootstrapUserID(t)
 	password := stepUpPassword(t, server, id)
-	identity, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	identity, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}

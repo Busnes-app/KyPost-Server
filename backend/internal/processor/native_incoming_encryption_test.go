@@ -21,6 +21,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -56,7 +57,7 @@ func TestNativeIncomingPollerJournalRecovery(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			ctx := context.Background()
 			p, uc, _ := incomingPollerForTest(t)
-			key, err := pgpmail.GenerateIdentity("Alice", "alice@example.test")
+			key, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.test")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,7 +183,7 @@ func TestNativeIncomingPollerJournalRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			decrypted, err := pgpmail.DecryptMIME(content[int(replacement)].PGPEncryptedPayload, key, nil)
+			decrypted, err := pgpmailtest.DecryptMIME(content[int(replacement)].PGPEncryptedPayload, key, nil)
 			if err != nil || !bytes.Contains(decrypted.Content, raw) {
 				t.Fatal("recovery lost exact original MIME", err)
 			}

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -44,7 +45,7 @@ func convertedUser(t *testing.T, srv *Server) users.User {
 // convertUser gives u a fresh client-protected keyring at generation 1.
 func convertUser(t *testing.T, srv *Server, u users.User) users.User {
 	t.Helper()
-	identity, err := pgpmail.GenerateIdentity("Ring", "ring@example.invalid")
+	identity, err := pgpmailtest.GenerateIdentity("Ring", "ring@example.invalid")
 	if err != nil {
 		t.Fatal(err)
 	}

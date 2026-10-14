@@ -101,10 +101,3 @@ func (l *powChallengeLimiter) sweepExpiredLocked(now time.Time) {
 		}
 	}
 }
-
-// windowCount reports how many IPs are currently tracked. Test-only.
-func (l *powChallengeLimiter) windowCount() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.windows)
-}

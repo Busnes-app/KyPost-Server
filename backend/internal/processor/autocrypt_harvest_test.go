@@ -8,14 +8,14 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 
 // autocryptTestKey returns a fresh armored public key + fingerprint for addr.
 func autocryptTestKey(t *testing.T, name, addr string) (armored, fingerprint string) {
 	t.Helper()
-	id, err := pgpmail.GenerateIdentity(name, addr)
+	id, err := pgpmailtest.GenerateIdentity(name, addr)
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -235,7 +235,7 @@ func newTestPollerForHarvest(t *testing.T) *Poller {
 // public key as base64 keydata, matching what a real sender would send.
 func autocryptHeaderFor(t *testing.T, name, addr string) string {
 	t.Helper()
-	id, err := pgpmail.GenerateIdentity(name, addr)
+	id, err := pgpmailtest.GenerateIdentity(name, addr)
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

@@ -21,7 +21,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -555,7 +555,7 @@ func TestNativeExtraMailboxIncomingEncryptionRace(t *testing.T) {
 		t.Fatal(err)
 	}
 	userPassword := stepUpPassword(t, srv, one.ID)
-	identity, err := pgpmail.GenerateIdentity("One", "one@example.test")
+	identity, err := pgpmailtest.GenerateIdentity("One", "one@example.test")
 	if err != nil {
 		t.Fatal(err)
 	}

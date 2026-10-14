@@ -162,10 +162,10 @@ export function looksLikeHtml(body: string): boolean {
  * Decides how to render a body, preferring what the server said over any
  * inspection of the bytes.
  *
- * `mode` comes from imapadapter.clientBody / pgpmail.ParseContent, which read
- * it off the part's own Content-Type. It is absent only where the server
- * genuinely cannot know: a client-protected account's mail, which the browser
- * decrypts itself, and cache entries predating the field.
+ * `mode` comes from imapadapter.clientBody, which reads it off the part's own
+ * Content-Type. It is absent only where the server genuinely cannot know: a
+ * client-protected account's mail, which the browser decrypts itself, and
+ * cache entries predating the field.
  */
 export function resolveBodyMode(body: string, mode?: string): "html" | "plain" {
   if (mode === "html" || mode === "plain") {

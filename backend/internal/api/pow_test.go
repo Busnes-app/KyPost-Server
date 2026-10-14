@@ -305,3 +305,10 @@ func TestLoginStillReports503WhenAProviderIsDown(t *testing.T) {
 		t.Fatalf("status = %d, want 503 — the pre-existing outage path must be unchanged", rec.Code)
 	}
 }
+
+// windowCount reports how many IPs are currently tracked.
+func (l *powChallengeLimiter) windowCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.windows)
+}

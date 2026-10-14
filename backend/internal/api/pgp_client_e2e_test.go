@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
@@ -54,7 +54,7 @@ func TestLegacyKeyMigrationRoundTrip(t *testing.T) {
 	userID := srv.mustBootstrapUserID(t)
 	password := stepUpPassword(t, srv, userID)
 
-	identity, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	identity, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestHandlePGPPayloadNarrowsSignerKeysToTheResolvedSender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("userContactsStore: %v", err)
 	}
-	bob, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	bob, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity bob: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestHandlePGPPayloadNarrowsSignerKeysToTheResolvedSender(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Upsert bob contact: %v", err)
 	}
-	eve, err := pgpmail.GenerateIdentity("Eve", "eve@evil.example")
+	eve, err := pgpmailtest.GenerateIdentity("Eve", "eve@evil.example")
 	if err != nil {
 		t.Fatalf("GenerateIdentity eve: %v", err)
 	}
@@ -518,4 +518,14 @@ func TestHandleMailSendPGPRejectsHeaderlessDelivery(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "missing required header") {
 		t.Fatalf("unhelpful rejection: %s", rec.Body.String())
 	}
+}
+
+// validatePGPMimeDelivery runs handleMailSendPGP's two delivery checks in its
+// order: shape before any account state, then the From binding once
+// resolveMailFrom has authorized a sender.
+func validatePGPMimeDelivery(delivery, authorizedFrom string) error {
+	if err := validateClientDeliveryShape(delivery); err != nil {
+		return err
+	}
+	return validateDeliveryFrom(delivery, authorizedFrom)
 }

@@ -10,6 +10,7 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // A PGP/MIME message carries exactly one MIME attachment — the armored
@@ -140,7 +141,7 @@ func TestServeAttachmentDownloadPassesCiphertextThroughForServerCustody(t *testi
 // client-protected account's browser expects to receive.
 func TestServeAttachmentListPassesCiphertextThroughWithoutAKey(t *testing.T) {
 	srv := newTestServer(t)
-	identity, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	identity, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

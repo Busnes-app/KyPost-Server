@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
 
@@ -527,7 +527,7 @@ func TestWKDServedAliasKeyIsAcceptedByDiscovery(t *testing.T) {
 	if len(userIDs) < 2 {
 		t.Fatalf("expected the verified alias in the suggested user IDs, got %v", userIDs)
 	}
-	id, err := pgpmail.GenerateIdentity("Alice", userIDs[0], userIDs[1:]...)
+	id, err := pgpmailtest.GenerateIdentity("Alice", userIDs[0], userIDs[1:]...)
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

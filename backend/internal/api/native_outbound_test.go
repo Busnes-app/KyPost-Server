@@ -31,6 +31,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 func TestNativeOutboundAPIProcess(t *testing.T) {
@@ -75,11 +76,11 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 	body := []byte(`{"to":"visible@outside.test","bcc":"hidden@outside.test","subject":"native — café ✉","body":"native compose"}`)
 	var sender, recipient *pgpmail.Identity
 	if mode == "pgp" || mode == "device-pgp" {
-		sender, err = pgpmail.GenerateIdentity("Sender", "one@example.test")
+		sender, err = pgpmailtest.GenerateIdentity("Sender", "one@example.test")
 		if err != nil {
 			t.Fatal(err)
 		}
-		recipient, err = pgpmail.GenerateIdentity("Recipient", "visible@outside.test")
+		recipient, err = pgpmailtest.GenerateIdentity("Recipient", "visible@outside.test")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -238,11 +239,11 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 			raw      []byte
 			identity *pgpmail.Identity
 		}{{wire, recipient}, {sent, sender}} {
-			result, err := pgpmail.DecryptMIME(extractArmoredPGPMessage(t, item.raw), item.identity, []string{sender.ArmoredPublicKey})
+			result, err := pgpmailtest.DecryptMIME(extractArmoredPGPMessage(t, item.raw), item.identity, []string{sender.ArmoredPublicKey})
 			if err != nil || !result.Verified {
 				t.Fatal("recipient or Sent PGP verification failed", err)
 			}
-			body, _, _, parseErr := pgpmail.ParseContent(result.Content)
+			body, _, _, parseErr := pgpmailtest.ParseContent(result.Content)
 			if parseErr != nil || body != "native signed secret" {
 				t.Fatal("native PGP plaintext changed", parseErr)
 			}

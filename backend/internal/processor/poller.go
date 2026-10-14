@@ -90,7 +90,7 @@ type Poller struct {
 	// newMailClient builds one user's IMAP client from their sealed credential
 	// file. A field rather than a direct call to
 	// imapadapter.NewAPIClientFromStoredConfig — the same test-seam idiom as
-	// sendRejectionNotice — so a test can drive a whole tickUser against a
+	// sendRejectionNotice — so a test can drive a whole tickMailbox against a
 	// scripted mailbox and assert what the checkpoint, the processed set and
 	// the audit log look like afterwards. Those are the contracts that decide
 	// whether mail is retried or thrown away, and until this existed they could
@@ -233,8 +233,7 @@ func (p *Poller) lifetimeCtx() context.Context {
 	return p.ctx
 }
 
-func (p *Poller) userStateDir(userID string) string  { return config.UserDir(p.stateDir, userID) }
-func (p *Poller) userConfigDir(userID string) string { return config.UserDir(p.configDir, userID) }
+func (p *Poller) userStateDir(userID string) string { return config.UserDir(p.stateDir, userID) }
 func (p *Poller) userIMAPConfigPath(userID string) string {
 	return config.UserIMAPConfigPath(p.configDir, userID)
 }
@@ -791,10 +790,6 @@ func mailCacheEntriesFromMessages(messages []imapadapter.Message) []mailcache.En
 	return entries
 }
 
-func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
-	return p.tickMailbox(u, "", imapConfigModTime)
-}
-
 // tickMailbox polls one of the user's mailboxes ("" is the primary) with the
 // user's settings, rules and labels. Incoming encryption keeps one journal per
 // user, so it runs on the primary mailbox only.
@@ -836,8 +831,7 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 	p.ensureOwnAddressProven(u.ID)
 	// Verified aliases are no longer added to the key as User IDs: that needed
 	// server custody, now retired, and nothing replaces it. WKD still serves the
-	// key for such an alias while recipients reject it for missing the address
-	// (see pgpmail.ArmoredKeyCertifiesAddress, which has no callers yet).
+	// key for such an alias while recipients reject it for missing the address.
 
 	p.recordTick(uc, len(messages), res, checkpointHeld)
 	// Returned last: the work this tick did is persisted; the error only changes
@@ -1239,7 +1233,7 @@ func (p *Poller) recordTick(uc userCtx, fetched int, res tickResult, checkpointH
 	}
 }
 
-// classifierErr marks an error returned by classifyWithRetry so tickUser's
+// classifierErr marks an error returned by classifyWithRetry so tickMailbox's
 // message loop (via shouldMarkProcessedOnError) can apply the classifier's own
 // permanent/transient split (isPermanentClassifierError) rather than the
 // blanket judgement below.
@@ -1267,7 +1261,7 @@ func (e *classifierErr) Unwrap() error { return e.err }
 // referencing a folder that does not exist, or a malformed action, fails
 // identically forever, and retrying it only holds the checkpoint back. Wrapping
 // is therefore opt-in at the call site that knows the failure is an outage
-// rather than a mistake. The attempt cap in tickUser is the backstop for
+// rather than a mistake. The attempt cap in tickMailbox is the backstop for
 // getting that judgement wrong in the retryable direction.
 type retryableErr struct {
 	err error
@@ -1276,7 +1270,7 @@ type retryableErr struct {
 func (e *retryableErr) Error() string { return e.err.Error() }
 func (e *retryableErr) Unwrap() error { return e.err }
 
-// shouldMarkProcessedOnError reports whether tickUser should mark a message
+// shouldMarkProcessedOnError reports whether tickMailbox should mark a message
 // processed after handleMessage returned err — that is, whether to RETIRE the
 // message or leave it for a later tick.
 //
@@ -1286,7 +1280,7 @@ func (e *retryableErr) Unwrap() error { return e.err }
 //   - anything else retires, because an unrecognised failure that repeats
 //     forever must not hold the checkpoint forever.
 //
-// Deferral is not unbounded: tickUser counts attempts per message and retires
+// Deferral is not unbounded: tickMailbox counts attempts per message and retires
 // one that has exhausted them, whatever this says.
 func shouldMarkProcessedOnError(err error) bool {
 	var cerr *classifierErr
@@ -1363,14 +1357,14 @@ func clipForLog(s string) string {
 	return s
 }
 
-// recordMessageFailure is what tickUser's message loop runs on every
+// recordMessageFailure is what tickMailbox's message loop runs on every
 // handleMessage failure: it logs the failure and records it as a "failed"
 // Decision, retiring the message (marking it processed) only when retire says
 // so. A deferred message is deliberately left unmarked so it retries next poll
-// tick — which also requires tickUser to hold the poll checkpoint below it, or
+// tick — which also requires tickMailbox to hold the poll checkpoint below it, or
 // the retry cannot happen at all.
 //
-// retire is passed in rather than re-derived from err. tickUser has to make the
+// retire is passed in rather than re-derived from err. tickMailbox has to make the
 // same call to decide the checkpoint, and it also applies the deferral attempt
 // cap, which err alone cannot express: a message given up on after 40 attempts
 // carries an error that still looks perfectly transient.
@@ -1596,7 +1590,7 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 	var selected string
 	if guess.confident(p.embedMin) {
 		// The embedding sorter is sure enough: no LLM call, no rate budget
-		// spent (tickUser's pre-check made the same decision). It saw the same
+		// spent (tickMailbox's pre-check made the same decision). It saw the same
 		// redacted, clamped text the LLM would have.
 		selected = guess.label
 		detail = fmt.Sprintf("label applied by the embedding sorter (confidence %.2f)", guess.conf) + presortNote
@@ -2335,7 +2329,7 @@ func (p *Poller) classifyMessage(ctx context.Context, uc userCtx, msg imapadapte
 		// installed (the container's pull can fail while everything else comes
 		// up fine) otherwise showed up nowhere an operator looks.
 		p.health.RecordClassifierFailure()
-		// Wrapped so the caller (tickUser, via shouldMarkProcessedOnError)
+		// Wrapped so the caller (tickMailbox, via shouldMarkProcessedOnError)
 		// can tell a classifier failure apart from rule/IMAP errors and gate
 		// MarkProcessed on isPermanentClassifierError instead of always
 		// retiring the message — see recordMessageFailure.

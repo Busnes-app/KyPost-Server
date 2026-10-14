@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -36,7 +36,7 @@ func stepUpPassword(t *testing.T, srv *Server, userID string) string {
 // start from "this account has something to lose".
 func giveUserAnIdentity(t *testing.T, srv *Server, userID string) {
 	t.Helper()
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestPGPClientIdentityReplacementRequiresTheAccountPassword(t *testing.T) {
 	password := stepUpPassword(t, srv, userID)
 	giveUserAnIdentity(t, srv, userID)
 
-	attacker, err := pgpmail.GenerateIdentity("Mallory", "alice@example.com")
+	attacker, err := pgpmailtest.GenerateIdentity("Mallory", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestPGPRewrapRequiresTheAccountPassword(t *testing.T) {
 	password := stepUpPassword(t, srv, userID)
 	// Client-protected, since rewrap refuses an account whose key the server
 	// still holds.
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestPGPPutEnvelopeSlotRequiresTheAccountPassword(t *testing.T) {
 	srv := newTestServer(t)
 	userID := srv.mustBootstrapUserID(t)
 	password := stepUpPassword(t, srv, userID)
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestPGPDeleteEnvelopeSlotRequiresTheAccountPassword(t *testing.T) {
 	srv := newTestServer(t)
 	userID := srv.mustBootstrapUserID(t)
 	password := stepUpPassword(t, srv, userID)
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestFirstPGPIdentityNeedsStepUp(t *testing.T) {
 	userID := srv.mustBootstrapUserID(t)
 	password := stepUpPassword(t, srv, userID)
 
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

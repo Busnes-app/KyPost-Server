@@ -12,13 +12,14 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 func TestPGPKeyringHTTPCompatibilityAndReset(t *testing.T) {
 	srv := newTestServer(t)
 	u := clientProtectedUser(t, srv)
-	identity, err := pgpmail.GenerateIdentity("Ring API", "ring@example.invalid")
+	identity, err := pgpmailtest.GenerateIdentity("Ring API", "ring@example.invalid")
 	if err != nil {
 		t.Fatal(err)
 	}

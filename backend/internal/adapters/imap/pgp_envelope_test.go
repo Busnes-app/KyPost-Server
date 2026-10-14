@@ -8,6 +8,7 @@ import (
 	"github.com/jhillyerd/enmime/v2"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 const armoredCiphertext = "-----BEGIN PGP MESSAGE-----\r\n\r\nhQIMA0\r\n-----END PGP MESSAGE-----"
@@ -44,7 +45,7 @@ func goimapAttachmentsFor(t *testing.T, raw []byte) []goimap.Attachment {
 // one in internal/api was: it meant the attachment listing never looked inside
 // genuine encrypted mail, only inside the fake in its own test.
 func TestPGPEnvelopePayload_RealPGPMIMEMessage(t *testing.T) {
-	identity, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	identity, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

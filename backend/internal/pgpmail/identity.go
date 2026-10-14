@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	openpgp "github.com/ProtonMail/go-crypto/openpgp/v2"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
@@ -28,85 +27,6 @@ type Identity struct {
 	ArmoredPublicKey string
 
 	key *crypto.Key
-}
-
-// normalizeAddress lowercases and trims an email address for User ID
-// comparison, matching how the address-binding checks elsewhere (WKD's
-// validateDiscoveredKey, Autocrypt's buildAutocryptHeader) normalize before
-// matching a key's User IDs against a mail address.
-func normalizeAddress(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
-// hasUserIDEmail reports whether entity already carries target (already
-// normalized) as the email of one of its User IDs.
-func hasUserIDEmail(entity *openpgp.Entity, target string) bool {
-	for _, uid := range entity.Identities {
-		if normalizeAddress(uid.UserId.Email) == target {
-			return true
-		}
-	}
-	return false
-}
-
-// ArmoredKeyCertifiesAddress reports whether the armored public key carries
-// address as the PARSED email of one of its User IDs.
-//
-// The parsed email, never a substring of the raw User-ID text. A User ID is
-// free-form and self-certified, so "the sender's address appears somewhere in
-// it" proves nothing: a UID of
-//
-//	Mallory <mallory@evil.example> aka Bob <bob@example.com>
-//
-// contains bob@example.com but parses — here and in every other binding check in
-// this codebase — as mallory@evil.example. Matching on the parsed field is what
-// makes this agree with the checks that decide which contact a key is pinned to.
-//
-// An unparseable or absent key returns false: it certifies nothing.
-func ArmoredKeyCertifiesAddress(armoredPublicKey, address string) bool {
-	target := normalizeAddress(address)
-	if target == "" || strings.TrimSpace(armoredPublicKey) == "" {
-		return false
-	}
-	key, err := crypto.NewKeyFromArmored(armoredPublicKey)
-	if err != nil {
-		return false
-	}
-	entity := key.GetEntity()
-	if entity == nil {
-		return false
-	}
-	return hasUserIDEmail(entity, target)
-}
-
-// GenerateIdentity creates a new OpenPGP keypair for name/email using
-// gopenpgp's default profile (EdDSA/Curve25519 + SHA256, RFC4880-compatible
-// and interoperable with the openpgp.js keys already used client-side for
-// contacts).
-//
-// email becomes the primary User ID; each of additionalEmails becomes a
-// further User ID on the same key, so one key can be published and
-// advertised for every address its owner actually sends and receives as
-// (WKD serving and Autocrypt both require the key to carry the address in
-// question as a User ID). Blank entries and addresses already covered —
-// case-insensitively, including email itself — are skipped rather than
-// producing duplicate or empty User IDs.
-func GenerateIdentity(name, email string, additionalEmails ...string) (*Identity, error) {
-	gen := crypto.PGP().KeyGeneration().AddUserId(name, email)
-	seen := map[string]bool{normalizeAddress(email): true}
-	for _, extra := range additionalEmails {
-		addr := normalizeAddress(extra)
-		if addr == "" || seen[addr] {
-			continue
-		}
-		seen[addr] = true
-		gen = gen.AddUserId(name, addr)
-	}
-	key, err := gen.New().GenerateKey()
-	if err != nil {
-		return nil, fmt.Errorf("pgpmail: generate key: %w", err)
-	}
-	return identityFromKey(key)
 }
 
 func identityFromKey(key *crypto.Key) (*Identity, error) {
@@ -143,11 +63,17 @@ func OpenPrivateKey(enc, keyPath string) (*Identity, error) {
 	if err != nil {
 		return nil, err
 	}
-	unlockedKey, err := crypto.NewKeyFromArmored(armored)
+	return ParsePrivateKey(armored)
+}
+
+// ParsePrivateKey loads an unprotected armored private key, as unsealed by
+// OpenPrivateKey.
+func ParsePrivateKey(armored string) (*Identity, error) {
+	key, err := crypto.NewKeyFromArmored(armored)
 	if err != nil {
 		return nil, fmt.Errorf("pgpmail: parse stored private key: %w", err)
 	}
-	return identityFromKey(unlockedKey)
+	return identityFromKey(key)
 }
 
 // PublicKeyInfo describes an armored public key well enough to store it as

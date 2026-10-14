@@ -339,3 +339,10 @@ func TestNewVerifierPoWRequiresAnHMACKey(t *testing.T) {
 		t.Fatal("pow with no HMAC key must fail closed")
 	}
 }
+
+// spentCount reports how many salts are currently recorded.
+func (v *PoWVerifier) spentCount() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return len(v.spent)
+}

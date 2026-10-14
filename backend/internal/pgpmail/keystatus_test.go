@@ -1,4 +1,4 @@
-package pgpmail
+package pgpmail_test
 
 import (
 	"testing"
@@ -6,14 +6,17 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 func TestCheckKeyStatusUsableKey(t *testing.T) {
-	id, err := GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
-	status, err := CheckKeyStatus(id.ArmoredPublicKey)
+	status, err := pgpmail.CheckKeyStatus(id.ArmoredPublicKey)
 	if err != nil {
 		t.Fatalf("CheckKeyStatus: %v", err)
 	}
@@ -37,7 +40,7 @@ func TestCheckKeyStatusExpiredKey(t *testing.T) {
 		t.Fatalf("GetArmoredPublicKey: %v", err)
 	}
 
-	status, err := CheckKeyStatus(armored)
+	status, err := pgpmail.CheckKeyStatus(armored)
 	if err != nil {
 		t.Fatalf("CheckKeyStatus: %v", err)
 	}
@@ -59,7 +62,7 @@ func TestCheckKeyStatusRevokedKey(t *testing.T) {
 		t.Fatalf("GetArmoredPublicKey: %v", err)
 	}
 
-	status, err := CheckKeyStatus(armored)
+	status, err := pgpmail.CheckKeyStatus(armored)
 	if err != nil {
 		t.Fatalf("CheckKeyStatus: %v", err)
 	}
@@ -69,13 +72,13 @@ func TestCheckKeyStatusRevokedKey(t *testing.T) {
 }
 
 func TestCheckKeyStatusInvalidArmor(t *testing.T) {
-	if _, err := CheckKeyStatus("not a real armored key"); err == nil {
+	if _, err := pgpmail.CheckKeyStatus("not a real armored key"); err == nil {
 		t.Fatal("expected an error parsing invalid armored text")
 	}
 }
 
 func TestIdentityStatusUsable(t *testing.T) {
-	id, err := GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

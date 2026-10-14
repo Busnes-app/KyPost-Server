@@ -10,7 +10,7 @@ import (
 
 // TestPairingTokenPurposeMismatchRejected drives the purpose check directly:
 // a token minted for one purpose must be rejected by both
-// validatePairingToken and parsePairingTokenUserID when checked against a
+// validatePairingToken and decodeAndVerifyPairingToken when checked against a
 // different wantPurpose, even though the signature, subject, and expiry are
 // all otherwise valid. This is the core security property Task 10 adds —
 // without it, a token minted for one flow (e.g. a pickup link mailed in
@@ -35,11 +35,11 @@ func TestPairingTokenPurposeMismatchRejected(t *testing.T) {
 		t.Fatalf("validatePairingToken with mismatched purpose should fail, got nil error")
 	}
 
-	if _, err := srv.parsePairingTokenUserID(token, pairingPurposePickupLink, time.Now()); err != nil {
-		t.Fatalf("parsePairingTokenUserID with matching purpose should succeed, got: %v", err)
+	if _, err := srv.decodeAndVerifyPairingToken(token, pairingPurposePickupLink, time.Now()); err != nil {
+		t.Fatalf("decodeAndVerifyPairingToken with matching purpose should succeed, got: %v", err)
 	}
-	if _, err := srv.parsePairingTokenUserID(token, pairingPurposeNativeDevice, time.Now()); err == nil {
-		t.Fatalf("parsePairingTokenUserID with mismatched purpose should fail, got nil error")
+	if _, err := srv.decodeAndVerifyPairingToken(token, pairingPurposeNativeDevice, time.Now()); err == nil {
+		t.Fatalf("decodeAndVerifyPairingToken with mismatched purpose should fail, got nil error")
 	}
 }
 

@@ -48,11 +48,6 @@ func PrepareMailboxContext(ctx context.Context, parent string, owner Owner, addr
 	return prepareAccountContext(ctx, parent, owner, address, limits, publishPreparedAccount)
 }
 
-// publish is the syscall boundary exercised by killed-process checks.
-func prepareAccount(stateRoot string, owner Owner, address string, limits Limits, publish func(string, string) error) (string, error) {
-	return prepareAccountContext(context.Background(), filepath.Join(stateRoot, "users"), owner, address, limits, publish)
-}
-
 // root is the parent directory the mailbox is published into.
 func prepareAccountContext(ctx context.Context, root string, owner Owner, address string, limits Limits, publish func(string, string) error) (string, error) {
 	if err := ctx.Err(); err != nil {

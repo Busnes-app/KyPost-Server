@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // POST /api/pgp/identity/client must answer with the SAME identity shape as
@@ -23,7 +23,7 @@ func TestClientIdentityResponseMatchesTheIdentityShape(t *testing.T) {
 	userID := srv.mustBootstrapUserID(t)
 	password := stepUpPassword(t, srv, userID)
 
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

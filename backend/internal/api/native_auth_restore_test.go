@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -221,7 +221,7 @@ func TestNativeAuthRestoreProvisionedDerivedPushAndQR(t *testing.T) {
 	if _, err := s.mfaChallenges.ResolvePushWithMatch(ch.ID, "test-approved-device", true, ch.MatchDigits); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := pgpmail.GenerateIdentity("Restore QR", "one@example.test")
+	identity, err := pgpmailtest.GenerateIdentity("Restore QR", "one@example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
