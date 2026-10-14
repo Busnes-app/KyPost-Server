@@ -15,7 +15,7 @@ import (
 func (d *Dialer) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
 	taglen := len(tag)
 	for {
-		line, err := r.ReadBytes('\n')
+		line, err := readLine(r)
 		if err != nil {
 			_ = d.Close()
 			return fmt.Errorf("imap append read response: %w", err)
@@ -83,7 +83,7 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 
 	// Phase 2: Wait for continuation response (+)
 	r := bufio.NewReader(d.conn)
-	line, err := r.ReadBytes('\n')
+	line, err := readLine(r)
 	if err != nil {
 		_ = d.Close()
 		return fmt.Errorf("imap append read continuation: %w", err)

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
 )
 
 // The allowlist exists for one job: let a sandbox deployment point KyPost
@@ -14,10 +16,10 @@ import (
 // here is about making sure it cannot do anything more than that.
 
 func TestSandboxPrivateHostsDefaultsToEmpty(t *testing.T) {
-	if len(parseSandboxPrivateHosts("")) != 0 {
+	if len(netguard.ParseHosts("")) != 0 {
 		t.Fatal("unset SANDBOX_PRIVATE_HOSTS must allow nothing")
 	}
-	if len(parseSandboxPrivateHosts("   ,  , ")) != 0 {
+	if len(netguard.ParseHosts("   ,  , ")) != 0 {
 		t.Fatal("blank entries must allow nothing")
 	}
 	// The production default, as actually wired up.
@@ -27,10 +29,10 @@ func TestSandboxPrivateHostsDefaultsToEmpty(t *testing.T) {
 }
 
 func TestSandboxPrivateHostsMatchesExactHostnamesOnly(t *testing.T) {
-	allowed := parseSandboxPrivateHosts("kypost-demo-mail, Demo.Internal ")
+	allowed := netguard.ParseHosts("kypost-demo-mail, Demo.Internal ")
 
 	for _, host := range []string{"kypost-demo-mail", "demo.internal", "DEMO.INTERNAL"} {
-		if !sandboxHostAllowed(allowed, host) {
+		if !netguard.HostAllowed(allowed, host) {
 			t.Errorf("sandboxHostAllowed(%q) = false, want true", host)
 		}
 	}
@@ -46,7 +48,7 @@ func TestSandboxPrivateHostsMatchesExactHostnamesOnly(t *testing.T) {
 		"sub.demo.internal",
 		"",
 	} {
-		if sandboxHostAllowed(allowed, host) {
+		if netguard.HostAllowed(allowed, host) {
 			t.Errorf("sandboxHostAllowed(%q) = true, want false", host)
 		}
 	}
@@ -56,9 +58,9 @@ func TestSandboxPrivateHostsNeverAllowsIPLiterals(t *testing.T) {
 	// An operator who lists an IP gets nothing: the guard's whole point is that
 	// a URL naming a private address is refused, and an allowlist that accepted
 	// literals would turn one typo into a full SSRF primitive.
-	allowed := parseSandboxPrivateHosts("172.30.0.20, 127.0.0.1, ::1")
+	allowed := netguard.ParseHosts("172.30.0.20, 127.0.0.1, ::1")
 	for _, host := range []string{"172.30.0.20", "127.0.0.1", "::1"} {
-		if sandboxHostAllowed(allowed, host) {
+		if netguard.HostAllowed(allowed, host) {
 			t.Errorf("sandboxHostAllowed(%q) = true, want false for an IP literal", host)
 		}
 	}
@@ -69,7 +71,7 @@ func TestSandboxPrivateHostsNeverAllowsIPLiterals(t *testing.T) {
 }
 
 func TestValidateOutboundURLAllowsListedSandboxHost(t *testing.T) {
-	allowed := parseSandboxPrivateHosts("kypost-demo-mail")
+	allowed := netguard.ParseHosts("kypost-demo-mail")
 
 	// The host does not resolve in a test environment, so a passing allowlist
 	// check has to short-circuit resolution entirely — which is also what makes
@@ -110,7 +112,7 @@ func TestSSRFSafeDialAllowsListedSandboxHostAtDialTime(t *testing.T) {
 
 	// "localhost" stands in for the compose hostname: it resolves to private
 	// space, so reaching it at all proves the allowlist is what let it through.
-	dial := sandboxAwareDialContext(parseSandboxPrivateHosts("localhost"))
+	dial := sandboxAwareDialContext(netguard.ParseHosts("localhost"))
 	conn, err := dial(context.Background(), "tcp", net.JoinHostPort("localhost", u.Port()))
 	if err != nil {
 		t.Fatalf("dial of an allowlisted sandbox host = %v, want success", err)

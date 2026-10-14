@@ -3,8 +3,10 @@ package imap
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +14,31 @@ import (
 	retry "github.com/StirlingMarketingGroup/go-retry"
 	"github.com/rs/xid"
 )
+
+// Response limits, 0 meaning none (KyPost patch). A server past one fails the
+// command with ErrResponseTooLarge instead of making this process allocate.
+var (
+	MaxLiteralSize  int   // one {N} literal
+	MaxLineSize     int   // one line outside literals
+	MaxResponseSize int64 // everything one command reads
+)
+
+var ErrResponseTooLarge = errors.New("imap: server response exceeds the configured limit")
+
+// readLine is ReadBytes('\n') bounded by MaxLineSize.
+func readLine(r *bufio.Reader) ([]byte, error) {
+	var line []byte
+	for {
+		frag, err := r.ReadSlice('\n')
+		line = append(line, frag...)
+		if MaxLineSize > 0 && len(line) > MaxLineSize {
+			return nil, ErrResponseTooLarge
+		}
+		if err != bufio.ErrBufferFull {
+			return line, err
+		}
+	}
+}
 
 // readLiterals reads IMAP literal continuations appended to a response line.
 // It repeatedly checks for {NNN} or {NNN+} patterns at the end of the line,
@@ -29,6 +56,9 @@ func readLiterals(r *bufio.Reader, line []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if MaxLiteralSize > 0 && n > MaxLiteralSize {
+			return nil, ErrResponseTooLarge
+		}
 
 		buf := make([]byte, n)
 		_, err = io.ReadFull(r, buf)
@@ -37,7 +67,7 @@ func readLiterals(r *bufio.Reader, line []byte) ([]byte, error) {
 		}
 		line = append(line, buf...)
 
-		buf, err = r.ReadBytes('\n')
+		buf, err = readLine(r)
 		if err != nil {
 			return nil, err
 		}
@@ -46,9 +76,8 @@ func readLiterals(r *bufio.Reader, line []byte) ([]byte, error) {
 }
 
 // execOnce runs a single attempt of an IMAP command
-func (d *Dialer) execOnce(command string, buildResponse bool, processLine func(line []byte) error) (strings.Builder, error) {
+func (d *Dialer) execOnce(command string, buildResponse bool, processLine func(line []byte) error) (resp strings.Builder, err error) {
 	tag := []byte(strings.ToUpper(xid.New().String()))
-	var resp strings.Builder
 
 	if CommandTimeout != 0 {
 		_ = d.conn.SetDeadline(time.Now().Add(CommandTimeout))
@@ -66,7 +95,16 @@ func (d *Dialer) execOnce(command string, buildResponse bool, processLine func(l
 		return resp, err
 	}
 
-	r := bufio.NewReader(d.conn)
+	budget := &io.LimitedReader{R: d.conn, N: MaxResponseSize}
+	if MaxResponseSize <= 0 {
+		budget.N = math.MaxInt64
+	}
+	defer func() {
+		if err != nil && budget.N <= 0 {
+			err = ErrResponseTooLarge
+		}
+	}()
+	r := bufio.NewReader(budget)
 	if buildResponse {
 		resp = strings.Builder{}
 	}
@@ -74,7 +112,10 @@ func (d *Dialer) execOnce(command string, buildResponse bool, processLine func(l
 	var readErr error
 	var line []byte
 	for readErr == nil {
-		line, readErr = r.ReadBytes('\n')
+		line, readErr = readLine(r)
+		if readErr == ErrResponseTooLarge {
+			return resp, readErr
+		}
 		var litErr error
 		line, litErr = readLiterals(r, line)
 		if litErr != nil {

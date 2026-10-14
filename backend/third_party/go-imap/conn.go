@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -35,14 +36,28 @@ type Dialer struct {
 	useXOAUTH2 bool
 }
 
+// DialContext opens the TCP connection TLS runs over, on every connect and
+// reconnect. KyPost patch: replace it to control where connections may go.
+var DialContext = (&net.Dialer{}).DialContext
+
 // dialHost establishes a TLS connection to the IMAP server
 func dialHost(host string, port int) (*tls.Conn, error) {
-	dialer := &net.Dialer{Timeout: DialTimeout}
-	var cfg *tls.Config
-	if TLSSkipVerify {
-		cfg = &tls.Config{InsecureSkipVerify: true}
+	ctx := context.Background()
+	if DialTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, DialTimeout)
+		defer cancel()
 	}
-	return tls.DialWithDialer(dialer, "tcp", host+":"+strconv.Itoa(port), cfg)
+	raw, err := DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return nil, err
+	}
+	conn := tls.Client(raw, &tls.Config{ServerName: host, InsecureSkipVerify: TLSSkipVerify})
+	if err := conn.HandshakeContext(ctx); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	return conn, nil
 }
 
 // NewWithOAuth2 creates a new IMAP connection using OAuth2 authentication

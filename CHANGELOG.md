@@ -10,6 +10,14 @@ image. `:stable` is moved to that image only after its build attestation has
 been published *and* verified, and only when the release is the newest published
 non-prerelease version.
 
+## Unreleased
+
+**Before upgrading:** if any user's external mail account (IMAP or SMTP host, or the `SMTP_HOST` fallback) points at a server on your LAN, tailnet or this host, add its hostname to `SANDBOX_PRIVATE_HOSTS`, or it stops connecting. An account configured with an IP address needs a hostname first.
+
+- **Security: external mail servers are held to the outbound guard.** IMAP and SMTP connections for external mail accounts now refuse private, loopback, link-local, CGNAT/Tailscale and reserved addresses at connect time, resolving once and dialling only the checked address. Before, any user could aim the server at internal services, including cloud metadata. `SANDBOX_PRIVATE_HOSTS` lists the exceptions. The guard also now covers `0.0.0.0/8`, `240.0.0.0/4` and `64:ff9b:1::/48`.
+- **Security: an IMAP server can no longer exhaust memory.** The IMAP library allocated whatever literal size the server declared and read lines and responses without limit, so one hostile account server could kill the process for every user. Literals are capped at the inbound message limit plus 1 MiB, lines at 64 MiB and one command's response at one fetch page; past a cap the command fails. go-imap is now a patched copy in `backend/third_party/go-imap`.
+- The inbox's live-fetch fallback lists messages over the 25 MiB inbound cap from their headers, without a body, instead of fetching them.
+
 ## 0.4.0 — 2026-10-13
 
 **Before upgrading:** find accounts and credentials still on retired scrypt hashes (they stop signing in; see the BREAKING entry below), read your `.env` (variables compose used to drop now apply), and back up the new `$SECRET_DIR/scheduled-send.key`. UnifiedPush devices without WebPush keys must pair again.

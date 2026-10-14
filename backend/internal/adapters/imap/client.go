@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"mime"
 	"os"
 	"slices"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
 
 	goimap "github.com/BrianLeishman/go-imap"
 	pgpcrypto "github.com/ProtonMail/gopenpgp/v3/crypto"
@@ -1065,11 +1067,18 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, mailbox string, limi
 
 	sort.Ints(uids)
 
-	// A single GetEmails call is enough: it internally calls GetOverviews
-	// first and never overwrites Flags/Sent/Received when it later merges
-	// in body content, so overviewFromEmail(uid, e) below already has
-	// everything a second, separate GetOverviews call used to provide.
-	emails, _, err := fetchEmailsBounded(d, uids)
+	// A body past the literal cap would fail its whole page, so oversized
+	// messages are listed from their overview, without a body.
+	oversized, err := d.SearchUIDs(goimap.Search().UID(uidSetCriteria(uids)).Larger(int(mailmsg.MaxInboundMessageBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("imap search oversized: %w", err)
+	}
+	toFetch, tooLarge := partitionUIDsBySize(uids, oversized)
+
+	// GetEmails internally calls GetOverviews first and never overwrites
+	// Flags/Sent/Received when it later merges in body content, so
+	// overviewFromEmail(uid, e) below already has everything it needs.
+	emails, _, err := fetchEmailsBounded(d, toFetch)
 	if err != nil {
 		return nil, fmt.Errorf("imap fetch emails: %w", err)
 	}
@@ -1086,6 +1095,13 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, mailbox string, limi
 	}
 	envelopes := collectPGPEnvelopes(d, emails, clientBodyText)
 	invites := calendarInviteUIDs(d, emails)
+	if len(tooLarge) > 0 {
+		overviews, err := d.GetOverviews(tooLarge...)
+		if err != nil {
+			return nil, fmt.Errorf("imap fetch overviews: %w", err)
+		}
+		maps.Copy(emails, overviews)
+	}
 
 	out := make([]UnreadMessage, 0, len(uids))
 	for i := len(uids) - 1; i >= 0; i-- {
@@ -1609,20 +1625,29 @@ func clientBody(e *goimap.Email) (body, mode string) {
 	return "", ""
 }
 
-// goimapDefaults sets the vendored library's package-level tunables exactly
-// once. DialTimeout/CommandTimeout/RetryCount are globals inside go-imap, and
-// assigning them inline on every first-connect had several concurrent user ticks
-// writing them at once, which -race flags. Every writer wrote the same
-// constants, so it never misbehaved — and stops being benign the moment any of
-// these becomes configurable.
-var goimapDefaults sync.Once
+// Read limits for every go-imap connection. The account's server is
+// user-chosen, so what it declares is never an allocation size.
+var (
+	// One message body plus slack for servers whose RFC822.SIZE (what LARGER
+	// filters on) is slightly off.
+	maxIMAPLiteral = int(mailmsg.MaxInboundMessageBytes) + 1<<20
+	// The longest legitimate line is UID SEARCH ALL: about 7M UIDs.
+	maxIMAPLine = 64 << 20
+	// The largest command is one fetchEmailsBounded page of bodies.
+	maxIMAPResponse = int64(unreadFetchPageSize*maxIMAPLiteral + maxIMAPLine)
+)
 
-func configureGoIMAPDefaults() {
-	goimapDefaults.Do(func() {
-		goimap.DialTimeout = 10 * time.Second
-		goimap.CommandTimeout = 45 * time.Second
-		goimap.RetryCount = 3
-	})
+// go-imap's tunables are process-wide, so they are set at init, before any
+// caller (this package or the API's connection test) can dial: every account
+// connection goes through netguard and is bounded in what it reads.
+func init() {
+	goimap.DialTimeout = 10 * time.Second
+	goimap.CommandTimeout = 45 * time.Second
+	goimap.RetryCount = 3
+	goimap.DialContext = netguard.DialContext
+	goimap.MaxLiteralSize = maxIMAPLiteral
+	goimap.MaxLineSize = maxIMAPLine
+	goimap.MaxResponseSize = maxIMAPResponse
 }
 
 // Close tears down this client's IMAP connection, if it has opened one.
@@ -1661,8 +1686,6 @@ func (c *APIClient) ensureConnectedLocked() (*goimap.Dialer, error) {
 	}
 
 	if c.dialer == nil {
-		configureGoIMAPDefaults()
-
 		d, err := goimap.New(c.username, c.password, c.host, c.port)
 		if err != nil {
 			return nil, fmt.Errorf("imap connect: %w", err)

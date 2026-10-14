@@ -15,11 +15,20 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
+// allowLoopbackSMTP lets account sends reach a loopback test server past
+// netguard.
+func allowLoopbackSMTP(t *testing.T) {
+	previous := mailmsg.AccountDial
+	mailmsg.AccountDial = (&net.Dialer{}).DialContext
+	t.Cleanup(func() { mailmsg.AccountDial = previous })
+}
+
 // captureSMTPDelivery accepts one loopback SMTP session and hands back DATA.
 // ponytail: a sibling of the reply-threading test's capture; merge them once
 // both stacks land.
 func captureSMTPDelivery(t *testing.T) (string, int, <-chan string) {
 	t.Helper()
+	allowLoopbackSMTP(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
