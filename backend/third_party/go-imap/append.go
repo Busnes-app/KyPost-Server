@@ -27,7 +27,7 @@ func (d *Dialer) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
 
 		if len(line) >= taglen+3 && bytes.Equal(line[:taglen], tag) {
 			if !bytes.Equal(line[taglen+1:taglen+3], []byte("OK")) {
-				return fmt.Errorf("imap append failed: %s", dropNl(line[taglen+1:]))
+				return fmt.Errorf("imap append failed: %s", excerpt(dropNl(line[taglen+1:])))
 			}
 			return nil
 		}
@@ -94,7 +94,7 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	}
 
 	if !bytes.HasPrefix(bytes.TrimSpace(line), []byte("+")) {
-		return fmt.Errorf("imap append: expected continuation (+), got: %s", dropNl(line))
+		return fmt.Errorf("imap append: expected continuation (+), got: %s", excerpt(dropNl(line)))
 	}
 
 	// Phase 3: Send the literal message bytes

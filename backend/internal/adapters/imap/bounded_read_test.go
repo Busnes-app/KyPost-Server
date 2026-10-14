@@ -20,8 +20,8 @@ import (
 )
 
 // hostileIMAPClient returns a client for a server that accepts LOGIN and
-// answers every other command with send's bytes, then hangs up.
-func hostileIMAPClient(t *testing.T, send func(io.Writer)) *APIClient {
+// answers every other command through send, hanging up when it returns false.
+func hostileIMAPClient(t *testing.T, send func(w io.Writer, tag, command string) bool) *APIClient {
 	t.Helper()
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{selfSignedCert(t)}})
 	if err != nil {
@@ -49,8 +49,9 @@ func hostileIMAPClient(t *testing.T, send func(io.Writer)) *APIClient {
 						_, _ = fmt.Fprintf(conn, "%s OK LOGIN completed\r\n", tag)
 						continue
 					}
-					send(conn)
-					return
+					if !send(conn, tag, strings.ToUpper(command)) {
+						return
+					}
 				}
 			}()
 		}
@@ -83,23 +84,28 @@ func setLimit[T int | int64](t *testing.T, p *T, v T) {
 	t.Cleanup(func() { *p = previous })
 }
 
+// once adapts a one-shot hostile answer: send it, then hang up.
+func once(send func(io.Writer)) func(io.Writer, string, string) bool {
+	return func(w io.Writer, _, _ string) bool { send(w); return false }
+}
+
 // A hostile account server must fail the command, not size an allocation.
 func TestIMAPHostileResponsesFailBounded(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		limit func(t *testing.T)
-		send  func(io.Writer)
+		send  func(io.Writer, string, string) bool
 	}{
-		{"declared 2 GiB literal", func(*testing.T) {}, func(w io.Writer) {
+		{"declared 2 GiB literal", func(*testing.T) {}, once(func(w io.Writer) {
 			_, _ = io.WriteString(w, "* 1 FETCH (BODY[] {2147483648}\r\n")
-		}},
-		{"endless line", func(t *testing.T) { setLimit(t, &goimap.MaxLineSize, 1<<20) }, func(w io.Writer) {
+		})},
+		{"endless line", func(t *testing.T) { setLimit(t, &goimap.MaxLineSize, 1<<20) }, once(func(w io.Writer) {
 			stream(w, "a", 32<<20)
-		}},
-		{"endless response", func(t *testing.T) { setLimit(t, &goimap.MaxResponseSize, 1<<20) }, func(w io.Writer) {
+		})},
+		{"endless response", func(t *testing.T) { setLimit(t, &goimap.MaxResponseSize, 1<<20) }, once(func(w io.Writer) {
 			// Long lines: go-imap's per-line regexp garbage would swamp the count.
 			stream(w, "* OK "+strings.Repeat("x", 4<<10)+"\r\n", 32<<20)
-		}},
+		})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.limit(t)
@@ -119,6 +125,41 @@ func TestIMAPHostileResponsesFailBounded(t *testing.T) {
 				t.Errorf("allocated %d MiB answering a hostile server", grew>>20)
 			}
 		})
+	}
+}
+
+// A response under the limit that then fails to parse must not be copied into
+// the error (and its log) whole.
+func TestIMAPMalformedFetchErrorIsBounded(t *testing.T) {
+	const limit = 4 << 20
+	setLimit(t, &goimap.MaxResponseSize, limit)
+	// A malformed literal size, just under the limit; built before measuring.
+	fetch := []byte("* 1 FETCH (UID 1 BODY[] {5X" + strings.Repeat("a", limit-64<<10) + ")\r\n")
+	c := hostileIMAPClient(t, func(w io.Writer, tag, command string) bool {
+		switch {
+		case strings.HasPrefix(command, "SELECT"):
+			_, _ = fmt.Fprintf(w, "* 1 EXISTS\r\n%s OK SELECT completed\r\n", tag)
+		case strings.HasPrefix(command, "UID SEARCH"):
+			_, _ = fmt.Fprintf(w, "* SEARCH 1\r\n%s OK SEARCH completed\r\n", tag)
+		default:
+			_, _ = w.Write(fetch)
+			_, _ = fmt.Fprintf(w, "%s OK FETCH completed\r\n", tag)
+		}
+		return true
+	})
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err := c.ListOverviews(context.Background(), "INBOX", 1)
+	runtime.ReadMemStats(&after)
+
+	if err == nil || len(err.Error()) > 4<<10 {
+		t.Fatalf("err = %d bytes, want a parse error under 4 KiB", len(fmt.Sprint(err)))
+	}
+	// Reading costs ~3x (line assembly 2x, the response 1x); each copy of the
+	// response in an error or log line would add at least 1x more.
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 3*limit+limit/2 {
+		t.Errorf("allocated %d MiB for a %d MiB response", grew>>20, limit>>20)
 	}
 }
 

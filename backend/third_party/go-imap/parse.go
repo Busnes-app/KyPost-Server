@@ -91,18 +91,18 @@ func parseAtomLiteral(r string, i, tokenStart int) (newTokenStart, tokenEnd, new
 	if b == '+' {
 		i++ // skip '+', now should be '}'
 		if i >= len(r) || r[i] != '}' {
-			return 0, 0, 0, fmt.Errorf("expected '}' after '+' in literal at char %d in %s", i, r)
+			return 0, 0, 0, fmt.Errorf("expected '}' after '+' in literal at char %d in %s", i, excerpt(r))
 		}
 	} else if b != '}' {
 		// Any non-digit byte after '{<digits>' must be '}' (or '+}').
 		// Accepting anything else silently misparses malformed headers
 		// like "{5Xabcde" as a 5-byte literal starting after 'X'.
-		return 0, 0, 0, fmt.Errorf("expected '}' or '+}' after literal size at char %d, got %q in %s", i, b, r)
+		return 0, 0, 0, fmt.Errorf("expected '}' or '+}' after literal size at char %d, got %q in %s", i, b, excerpt(r))
 	}
 	// tokenStart for size was set when '{' was seen. r[tokenStart:tokenEndOfSize] is the size string.
 	sizeVal, err := strconv.Atoi(string(r[tokenStart:tokenEndOfSize]))
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("TAtom size Atoi failed for '%s': %w", string(r[tokenStart:tokenEndOfSize]), err)
+		return 0, 0, 0, fmt.Errorf("TAtom size Atoi failed for %s: %w", excerpt(r[tokenStart:tokenEndOfSize]), err)
 	}
 
 	i++ // Advance 'i' past '}' to the start of actual literal data
@@ -160,7 +160,7 @@ func (s *fetchParserState) handleUnsetByte(b byte, i int, r string, pushToken fu
 		s.container[s.depth] = &t.Tokens
 	case b == ')':
 		if s.depth == 0 { // Unmatched ')'
-			return fmt.Errorf("unmatched ')' at char %d in %s", i, r)
+			return fmt.Errorf("unmatched ')' at char %d in %s", i, excerpt(r))
 		}
 		pushToken() // push any pending token before closing container
 		s.depth--
@@ -252,7 +252,7 @@ func parseFetchTokens(r string) ([]*Token, error) {
 	}
 
 	if st.depth != 0 {
-		return nil, fmt.Errorf("mismatched parentheses, depth %d at end of parsing %s", st.depth, r)
+		return nil, fmt.Errorf("mismatched parentheses, depth %d at end of parsing %s", st.depth, excerpt(r))
 	}
 
 	if len(tokens) == 1 && tokens[0].Type == TContainer {
@@ -291,7 +291,7 @@ func skipIMAPLiteralInContent(s string, i int) (newI int, skipped bool, err erro
 	}
 	size, err := strconv.Atoi(s[i+1 : sizeEnd])
 	if err != nil {
-		return 0, false, fmt.Errorf("parse literal size %q: %w", s[i+1:sizeEnd], err)
+		return 0, false, fmt.Errorf("parse literal size %s: %w", excerpt(s[i+1:sizeEnd]), err)
 	}
 
 	i = j + 1
@@ -396,7 +396,7 @@ func parseSingleFetchLine(line string) ([]*Token, error) {
 	fetchContent := line[fetchContentStart:fetchContentEnd]
 	tokens, parseErr := parseFetchTokens(fetchContent)
 	if parseErr != nil {
-		return nil, fmt.Errorf("token parsing failed for line part [%s] from original line [%s]: %w", fetchContent, line, parseErr)
+		return nil, fmt.Errorf("token parsing failed for %s: %w", excerpt(fetchContent), parseErr)
 	}
 	return tokens, nil
 }
@@ -405,22 +405,22 @@ func parseSingleFetchLine(line string) ([]*Token, error) {
 // Returns fetchContentStart, fetchContentEnd, and any error.
 func extractFetchContent(body string, start int) (fetchContentStart, fetchContentEnd int, err error) {
 	lineSnippet := func() string {
-		return strings.TrimSpace(body[start:findLineEnd(body, start)])
+		return excerpt(strings.TrimSpace(body[start:findLineEnd(body, start)]))
 	}
 	if !strings.HasPrefix(body[start:], "* ") {
-		return 0, 0, fmt.Errorf("unable to parse Fetch line (expected '* ' prefix, regex mismatch?): %#v", lineSnippet())
+		return 0, 0, fmt.Errorf("unable to parse Fetch line (expected '* ' prefix, regex mismatch?): %s", lineSnippet())
 	}
 
 	restStart := start + 2
 	rest := body[restStart:]
 	idx := strings.IndexByte(rest, ' ')
 	if idx == -1 {
-		return 0, 0, fmt.Errorf("unable to parse Fetch line (no space after seq number, regex mismatch?): %#v", lineSnippet())
+		return 0, 0, fmt.Errorf("unable to parse Fetch line (no space after seq number, regex mismatch?): %s", lineSnippet())
 	}
 
 	seqNumStr := rest[:idx]
 	if _, convErr := strconv.Atoi(seqNumStr); convErr != nil {
-		return 0, 0, fmt.Errorf("unable to parse Fetch line (invalid seq num %s): %#v: %w", seqNumStr, lineSnippet(), convErr)
+		return 0, 0, fmt.Errorf("unable to parse Fetch line (invalid seq num %s): %s: %w", excerpt(seqNumStr), lineSnippet(), convErr)
 	}
 
 	restAfterSeqStart := restStart + idx + 1
@@ -428,7 +428,7 @@ func extractFetchContent(body string, start int) (fetchContentStart, fetchConten
 		restAfterSeqStart++
 	}
 	if !strings.HasPrefix(body[restAfterSeqStart:], "FETCH ") {
-		return 0, 0, fmt.Errorf("unable to parse Fetch line (expected 'FETCH ' prefix after seq num, regex mismatch?): %#v", lineSnippet())
+		return 0, 0, fmt.Errorf("unable to parse Fetch line (expected 'FETCH ' prefix after seq num, regex mismatch?): %s", lineSnippet())
 	}
 	fetchContentStart = restAfterSeqStart + len("FETCH ")
 	fetchContentEnd, endErr := findFetchContentEnd(body, fetchContentStart)
@@ -472,11 +472,10 @@ func (d *Dialer) ParseFetchResponse(responseBody string) (records [][]*Token, er
 			return nil, extractErr
 		}
 
-		currentLineToProcess := strings.TrimSpace(trimmedResponseBody[start:fetchContentEnd])
 		fetchContent := trimmedResponseBody[fetchContentStart:fetchContentEnd]
 		tokens, err := parseFetchTokens(fetchContent)
 		if err != nil {
-			return nil, fmt.Errorf("token parsing failed for line part [%s] from original line [%s]: %w", fetchContent, currentLineToProcess, err)
+			return nil, fmt.Errorf("token parsing failed for %s: %w", excerpt(fetchContent), err)
 		}
 		records = append(records, tokens)
 		parsedUntil = fetchContentEnd
@@ -502,14 +501,14 @@ func parseUIDSearchResponse(r string) ([]int, error) {
 		for _, f := range fields[2:] {
 			u, err := strconv.Atoi(f)
 			if err != nil {
-				return nil, fmt.Errorf("parse uid %q: %w", f, err)
+				return nil, fmt.Errorf("parse uid %s: %w", excerpt(f), err)
 			}
 			uids = append(uids, u)
 		}
 		return uids, nil
 	}
 
-	return nil, fmt.Errorf("invalid response: %q", strings.TrimSpace(r))
+	return nil, fmt.Errorf("invalid response: %s", excerpt(strings.TrimSpace(r)))
 }
 
 // Parse SEARCH RETURN(MAX) command response
@@ -537,7 +536,7 @@ func parseMaxUIDSearchResponse(r string) (int, error) {
 		if matches := searchMaxUIDRE.FindStringSubmatch(line); len(matches) > 1 {
 			maxUID, err := strconv.Atoi(matches[1])
 			if err != nil {
-				return 0, fmt.Errorf("parse max uid %q: %w", matches[1], err)
+				return 0, fmt.Errorf("parse max uid %s: %w", excerpt(matches[1]), err)
 			}
 			return maxUID, nil
 		}
@@ -548,7 +547,7 @@ func parseMaxUIDSearchResponse(r string) (int, error) {
 			if strings.Contains(upper, "ESEARCH") {
 				// If MAX keyword is present but didn't match \d+, that's malformed
 				if strings.Contains(upper, " MAX ") {
-					return 0, fmt.Errorf("malformed ESEARCH MAX value in: %q", line)
+					return 0, fmt.Errorf("malformed ESEARCH MAX value in: %s", excerpt(line))
 				}
 				// ESEARCH present without MAX means empty result set (RFC 4731)
 				return 0, nil
@@ -630,5 +629,6 @@ func (d *Dialer) CheckType(token *Token, acceptableTypes []TType, tks []*Token, 
 		}
 		b.WriteString(GetTokenName(a))
 	}
-	return fmt.Errorf("IMAP%d:%s: expected %s token %s, got %+v in %v", d.ConnNum, d.Folder, b.String(), fmt.Sprintf(loc, v...), token, tks)
+	// KyPost patch: name the token type only; the token and tks hold literals.
+	return fmt.Errorf("IMAP%d:%s: expected %s token %s, got %s", d.ConnNum, d.Folder, b.String(), fmt.Sprintf(loc, v...), GetTokenName(token.Type))
 }

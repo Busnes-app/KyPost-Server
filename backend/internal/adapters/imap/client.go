@@ -292,10 +292,11 @@ func pgpEnvelopePayload(attachments []goimap.Attachment) string {
 // stops that peak from being a function of how much unread mail is waiting.
 //
 // unreadFetchPageSize is a memory bound, not a throughput knob: worst case a
-// page is unreadFetchPageSize x mailmsg.MaxInboundMessageBytes (16 x 25 MiB =
-// 400 MiB) held at once inside GetEmails, against the 8 GiB the API, the daemon
-// and Ollama share in docker-compose.yml. Ordinary mail is kilobytes, so in
-// practice a page is a few hundred KiB and the cost of paging is round trips.
+// page is unreadFetchPageSize x mailmsg.MaxInboundMessageBytes (4 x 25 MiB =
+// 100 MiB on the wire, about 3.3x that decoded) held at once inside GetEmails,
+// against the 8 GiB the API, the daemon and Ollama share in docker-compose.yml.
+// It also sizes maxIMAPResponse. Ordinary mail is kilobytes, so in practice a
+// page is tens of KiB and the cost of paging is round trips.
 //
 // unreadFetchByteBudget bounds what accumulates ACROSS pages, since the caller
 // receives every message in one slice. maxUnreadMessagesPerCall bounds the same
@@ -306,7 +307,7 @@ func pgpEnvelopePayload(attachments []goimap.Attachment) string {
 // order, so everything unreached stays above the returned checkpoint and the
 // next tick continues from there.
 const (
-	unreadFetchPageSize      = 16
+	unreadFetchPageSize      = 4
 	unreadFetchByteBudget    = 192 << 20
 	maxUnreadMessagesPerCall = 200
 )
@@ -1633,8 +1634,9 @@ var (
 	maxIMAPLiteral = int(mailmsg.MaxInboundMessageBytes) + 1<<20
 	// The longest legitimate line is UID SEARCH ALL: about 7M UIDs.
 	maxIMAPLine = 64 << 20
-	// The largest command is one fetchEmailsBounded page of bodies.
-	maxIMAPResponse = int64(unreadFetchPageSize*maxIMAPLiteral + maxIMAPLine)
+	// One page of maximum-size bodies plus 1 MiB of FETCH metadata, ~105 MiB;
+	// it also covers maxIMAPLine, the other large response.
+	maxIMAPResponse = int64(max(unreadFetchPageSize*maxIMAPLiteral, maxIMAPLine) + 1<<20)
 )
 
 // go-imap's tunables are process-wide, so they are set at init, before any

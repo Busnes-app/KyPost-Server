@@ -25,18 +25,21 @@ var (
 
 var ErrResponseTooLarge = errors.New("imap: server response exceeds the configured limit")
 
-// readLine is ReadBytes('\n') bounded by MaxLineSize.
+// readLine is ReadBytes('\n') bounded by MaxLineSize. Like ReadBytes it joins
+// the fragments once, so a long line costs about twice its size, not five.
 func readLine(r *bufio.Reader) ([]byte, error) {
-	var line []byte
+	var frags [][]byte
+	n := 0
 	for {
 		frag, err := r.ReadSlice('\n')
-		line = append(line, frag...)
-		if MaxLineSize > 0 && len(line) > MaxLineSize {
+		n += len(frag)
+		if MaxLineSize > 0 && n > MaxLineSize {
 			return nil, ErrResponseTooLarge
 		}
 		if err != bufio.ErrBufferFull {
-			return line, err
+			return bytes.Join(append(frags, frag), nil), err
 		}
+		frags = append(frags, bytes.Clone(frag))
 	}
 }
 
@@ -131,7 +134,7 @@ func (d *Dialer) execOnce(command string, buildResponse bool, processLine func(l
 		oklen := 3
 		if len(line) >= taglen+oklen && bytes.Equal(line[:taglen], tag) {
 			if !bytes.Equal(line[taglen+1:taglen+oklen], []byte("OK")) {
-				return resp, fmt.Errorf("imap command failed: %s", line[taglen+oklen+1:])
+				return resp, fmt.Errorf("imap command failed: %s", excerpt(line[taglen+oklen+1:]))
 			}
 			break
 		}

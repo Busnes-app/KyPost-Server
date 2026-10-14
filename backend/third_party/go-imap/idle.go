@@ -56,7 +56,7 @@ func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
 	index := 0
 	event := ""
 	if _, err := fmt.Sscanf(string(data), "%d %s", &index, &event); err != nil {
-		return fmt.Errorf("invalid IDLE event format: %s", data)
+		return fmt.Errorf("invalid IDLE event format: %s", excerpt(data))
 	}
 	switch event {
 	case IdleEventExists:
@@ -82,7 +82,7 @@ func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
 			})
 			go handler.OnFetch(FetchEvent{MessageIndex: messageIndex, UID: uint32(uid), Flags: flags})
 		} else {
-			return fmt.Errorf("invalid FETCH event format: %s", data)
+			return fmt.Errorf("invalid FETCH event format: %s", excerpt(data))
 		}
 	}
 
@@ -158,7 +158,7 @@ func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 				if strings.HasPrefix(strLine, "BYE") {
 					d.setState(StateDisconnected)
 					_ = d.Close()
-					return fmt.Errorf("server sent BYE: %s", line)
+					return fmt.Errorf("server sent BYE: %s", excerpt(line))
 				}
 				return d.runIdleEvent([]byte(strLine), handler)
 			case bytes.HasPrefix(line, []byte("OK ")):

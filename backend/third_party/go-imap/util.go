@@ -2,6 +2,12 @@ package imap
 
 import "fmt"
 
+// excerpt quotes at most 128 bytes of server data, and its length, for an
+// error (KyPost patch): errors and their logs never copy a whole response.
+func excerpt[T string | []byte](b T) string {
+	return fmt.Sprintf("%q (%d bytes)", b[:min(len(b), 128)], len(b))
+}
+
 // dropNl removes trailing newline characters from a byte slice
 func dropNl(b []byte) []byte {
 	if len(b) >= 1 && b[len(b)-1] == '\n' {
