@@ -10,6 +10,10 @@ image. `:stable` is moved to that image only after its build attestation has
 been published *and* verified, and only when the release is the newest published
 non-prerelease version.
 
+## Unreleased
+
+- **Redaction beyond US formats.** The default patterns that strip personal data before mail reaches the classifier now catch international phone numbers (`+44 20 7946 0958`, `030 12345678`), Unicode email addresses (`jürgen@münchen.de`), lowercase and spaced IBANs, and SSNs written with spaces or, after the word "SSN", without separators. A spaced IBAN is no longer half-eaten by the card rule. Existing installs keep the pattern list saved in `config.yaml`; see [redaction patterns](docs/CONFIGURATION.md#redaction-patterns) to adopt the new defaults.
+
 ## 0.4.0 — 2026-10-13
 
 **Before upgrading:** find accounts and credentials still on retired scrypt hashes (they stop signing in; see the BREAKING entry below), read your `.env` (variables compose used to drop now apply), and back up the new `$SECRET_DIR/scheduled-send.key`. UnifiedPush devices without WebPush keys must pair again.

@@ -387,12 +387,23 @@ func Default() Config {
 	cfg.Scan.IntervalSeconds = 90
 	cfg.RateLimits.PerMinute = 10
 	cfg.RateLimits.PerHour = 20
+	// Order matters: each pattern runs over the previous one's output. IBAN
+	// and card go before the national phone form, which would otherwise take
+	// a digit run out of their middle. \b is ASCII-only in RE2, so the Unicode
+	// email pattern goes without it.
 	cfg.Redaction.Patterns = []Pattern{
-		{Name: "email", Regex: `(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`, Replacement: "[REDACTED_EMAIL]"},
-		{Name: "phone", Regex: `\b(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b`, Replacement: "[REDACTED_PHONE]"},
-		{Name: "ssn", Regex: `\b\d{3}-\d{2}-\d{4}\b`, Replacement: "[REDACTED_SSN]"},
-		{Name: "iban", Regex: `\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b`, Replacement: "[REDACTED_IBAN]"},
+		{Name: "email", Regex: `(?i)[\p{L}\p{M}\p{N}_.%+'-]+@[\p{L}\p{M}\p{N}-]+(?:\.[\p{L}\p{M}\p{N}-]+)*\.(?:xn--[\p{L}\p{N}-]+|[\p{L}\p{M}]{2,})`, Replacement: "[REDACTED_EMAIL]"},
+		// Unbroken, or spaced in fours; after the bank code a spaced group
+		// needs a digit, so "RT66 road trip" stays prose.
+		{Name: "iban", Regex: `(?i)\b[A-Z]{2}\d{2}(?:[A-Z0-9]{11,30}\b| [A-Z0-9]{4}(?: (?:\d[A-Z0-9]{3}|[A-Z0-9]{3}\d)){1,6}(?: [A-Z0-9]{0,3}\d)?)`, Replacement: "[REDACTED_IBAN]"},
+		// E.164 after + or 00, 7-15 digits; before card so 13-15 digits keep this label.
+		{Name: "phone_intl", Regex: `(?:\+|\b00)\d(?:[ .()-]{0,2}\d){6,14}`, Replacement: "[REDACTED_PHONE]"},
 		{Name: "card", Regex: `\b(?:\d[ -]*?){13,19}\b`, Replacement: "[REDACTED_CARD]"},
+		// A bare 9-digit number is an SSN only after the word SSN; otherwise
+		// every order and tracking number would go.
+		{Name: "ssn", Regex: `\b\d{3}-\d{2}-\d{4}\b|\b\d{3} \d{2} \d{4}\b|(?i:\bssn|\bsocial security(?: number| no\.?)?)[\s:#]*\d{9}\b`, Replacement: "[REDACTED_SSN]"},
+		// US 3-3-4, or a 0-led area code then 7-12 digits, which no dd-mm-yyyy date reaches.
+		{Name: "phone", Regex: `(?:\(\d{3}\) ?|\b\d{3}[ .-]?)\d{3}[ .-]?\d{4}\b|(?:\(0\d{1,4}\) ?|\b0\d{1,4}[ /-]?)\d(?: ?\d){6,11}\b`, Replacement: "[REDACTED_PHONE]"},
 	}
 	cfg.Labels.KeywordMappings = map[string][]string{}
 	return cfg

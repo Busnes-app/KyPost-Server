@@ -87,3 +87,29 @@ Notes:
 - The classifier model defaults to `nemotron-3-nano:4b` everywhere — `Dockerfile`,
   `docker-compose.yml`, `.env.example`, and the backend's own fallback.
 - The image sets `OLLAMA_MODELS=/kypost/ollama-models`.
+
+## Redaction patterns
+
+`redaction.patterns` in `config.yaml` (or admin-only `PUT /api/config`) is
+applied in order to each message's sender, subject and body before the
+on-device sorter or the classifier sees them. The defaults
+(`config.Default()` in `backend/internal/config/config.go`) replace:
+
+- email addresses, including Unicode and IDN (`jürgen@münchen.de`, `xn--` domains);
+- IBANs, unbroken or spaced in fours, any case;
+- phone numbers: `+` or `00` followed by 7–15 digits, US `555-123-4567` /
+  `(555) 123-4567`, and national numbers with a leading `0` and at least 9 digits
+  (`030 12345678`, `020 7946 0958`);
+- card numbers (13–19 digits);
+- SSNs: `123-45-6789`, `123 45 6789`, and nine bare digits only after "SSN" or
+  "Social Security", because a bare nine-digit number is usually an order number.
+
+Dates, times, prices, IP addresses, version strings and short order numbers stay
+intact. Any 10-digit number, and any number of 9 or more digits starting with
+`0`, is read as a phone number.
+
+The list is saved to `config.yaml` on first start and a saved list replaces the
+defaults whole, so an upgrade does not change it. To adopt the current defaults,
+delete the `redaction:` block from `config.yaml` and restart; to keep your own,
+edit the list. Patterns are Go RE2 regular expressions; a `$` in a replacement
+must be written `$$`.
