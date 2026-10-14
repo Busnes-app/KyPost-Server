@@ -393,20 +393,26 @@ func Default() Config {
 	// email pattern goes without it.
 	cfg.Redaction.Patterns = []Pattern{
 		{Name: "email", Regex: `(?i)[\p{L}\p{M}\p{N}_.%+'-]+@[\p{L}\p{M}\p{N}-]+(?:\.[\p{L}\p{M}\p{N}-]+)*\.(?:xn--[\p{L}\p{N}-]+|[\p{L}\p{M}]{2,})`, Replacement: "[REDACTED_EMAIL]"},
+		// The 0.4 phone rule in its 0.4 place (3-3-4 with an optional country
+		// code: 15551234567, 1-800-555-0199), so an upgrade un-redacts nothing
+		// and no later rule can cut into its numbers. Unlike 0.4 it also takes
+		// a leading + that follows a space.
+		{Name: "phone_us", Regex: `(?:\+\d{1,3}[\s.-]?|\b(?:\+?\d{1,3}[\s.-]?)?)(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b`, Replacement: "[REDACTED_PHONE]"},
 		// Unbroken, or spaced in fours; after the bank code a spaced group
 		// needs a digit, so "RT66 road trip" stays prose.
 		{Name: "iban", Regex: `(?i)\b[A-Z]{2}\d{2}(?:[A-Z0-9]{11,30}\b| [A-Z0-9]{4}(?: (?:\d[A-Z0-9]{3}|[A-Z0-9]{3}\d)){1,6}(?: [A-Z0-9]{0,3}\d)?)`, Replacement: "[REDACTED_IBAN]"},
-		// E.164 after + or 00, 7-15 digits; before card so 13-15 digits keep this label.
-		{Name: "phone_intl", Regex: `(?:\+|\b00)\d(?:[ .()-]{0,2}\d){6,14}`, Replacement: "[REDACTED_PHONE]"},
-		{Name: "card", Regex: `\b(?:\d[ -]*?){13,19}\b`, Replacement: "[REDACTED_CARD]"},
+		// E.164 after + or 00, then every digit that follows: stopping at 15
+		// would leave the rest of an adjacent number behind. Before card so
+		// 13-15 digits keep this label.
+		{Name: "phone_intl", Regex: `(?:\+|\b00)\d(?:[ .()-]{0,2}\d){6,}`, Replacement: "[REDACTED_PHONE]"},
+		// 13 or more digits, greedy to the end of the run for the same reason.
+		{Name: "card", Regex: `\b\d(?:[ -]*\d){12,}\b`, Replacement: "[REDACTED_CARD]"},
 		// A bare 9-digit number is an SSN only after the word SSN; otherwise
 		// every order and tracking number would go.
 		{Name: "ssn", Regex: `\b\d{3}-\d{2}-\d{4}\b|\b\d{3} \d{2} \d{4}\b|(?i:\bssn|\bsocial security(?: number| no\.?)?)[\s:#]*\d{9}\b`, Replacement: "[REDACTED_SSN]"},
-		// The 0.4 rule verbatim (3-3-4 with an optional bare country code, so
-		// 15551234567 and 1-800-555-0199), so an upgrade un-redacts nothing;
-		// then (555) after a space, and a 0-led area code then 7-12 digits,
-		// which no dd-mm-yyyy date reaches.
-		{Name: "phone", Regex: `\b(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b|(?:\(\d{3}\) ?|\b\d{3}[ .-]?)\d{3}[ .-]?\d{4}\b|(?:\(0\d{1,4}\) ?|\b0\d{1,4}[ /-]?)\d(?: ?\d){6,11}\b`, Replacement: "[REDACTED_PHONE]"},
+		// (555) after a space, or a 0-led area code then 7-12 digits, which no
+		// dd-mm-yyyy date reaches.
+		{Name: "phone", Regex: `(?:\(\d{3}\) ?|\b\d{3}[ .-]?)\d{3}[ .-]?\d{4}\b|(?:\(0\d{1,4}\) ?|\b0\d{1,4}[ /-]?)\d(?: ?\d){6,11}\b`, Replacement: "[REDACTED_PHONE]"},
 	}
 	cfg.Labels.KeywordMappings = map[string][]string{}
 	return cfg

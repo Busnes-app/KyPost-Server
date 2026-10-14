@@ -109,7 +109,9 @@ Dates, times, prices, IP addresses, version strings and short order numbers stay
 intact. Any run of 10–13 digits (including a UUID's last group), and any number
 of 9 or more digits starting with `0`, is read as a phone number: everything the
 0.4 defaults removed is still removed. Not caught: national numbers written with dots
-(`030.12345678`, which looks like a `dd.mm.yyyy` date) or split across lines.
+(`030.12345678`, which looks like a `dd.mm.yyyy` date) or split across lines, and
+a number joined to an email address by a bare hyphen (`555-123-4567-jo@x.de`),
+where the address takes the number's last digits and leaves the rest.
 
 The list is saved to `config.yaml` on first start and a saved list replaces the
 defaults whole, so an upgrade does not change it. To adopt the current defaults,

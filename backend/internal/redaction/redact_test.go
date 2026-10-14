@@ -37,6 +37,14 @@ var defaultCases = []struct{ in, want string }{
 	{"1-555-123-4567", "[REDACTED_PHONE]"},
 	{"1 (555) 123-4567", "[REDACTED_PHONE]"},
 	{"1.555.123.4567", "[REDACTED_PHONE]"},
+	// Adjacent identifiers: no rule may stop inside the next one.
+	{"555-123-4567 555-987-6543", "[REDACTED_PHONE] [REDACTED_PHONE]"},
+	{"555-123-4567-555-987-6543", "[REDACTED_PHONE]-[REDACTED_PHONE]"},
+	{"+1 555 123 4567 +1 555 987 6543", "[REDACTED_PHONE] [REDACTED_PHONE]"},
+	{"+44 20 7946 0958 123-45-6789", "[REDACTED_PHONE]"},
+	{"+44 20 7946 0958 555-123-4567", "[REDACTED_PHONE] [REDACTED_PHONE]"},
+	{"+44 20 7946\n555\n123\n4567", "[REDACTED_PHONE]\n[REDACTED_PHONE]"},
+	{"4111 1111 1111 1111 555-123-4567", "[REDACTED_CARD] [REDACTED_PHONE]"},
 	// Accepted over-redaction (docs/CONFIGURATION.md): 0 plus 8 or more digits.
 	{"invoice 0012345678", "invoice [REDACTED_PHONE]"},
 	// Accepted, as in 0.4: 10-13 digits read as a phone with a bare country code.
@@ -123,10 +131,10 @@ func TestDefaultsRedactWhatOldDefaultsDid(t *testing.T) {
 		t.Fatal(err)
 	}
 	digits := regexp.MustCompile(`\d+`)
-	for _, tc := range defaultCases {
-		old, got := oldEngine.Apply(tc.in), newEngine.Apply(tc.in)
-		if old == tc.in {
-			continue
+	check := func(in string) {
+		old, got := oldEngine.Apply(in), newEngine.Apply(in)
+		if old == in {
+			return
 		}
 		kept := map[string]int{}
 		for _, run := range digits.FindAllString(old, -1) {
@@ -134,12 +142,26 @@ func TestDefaultsRedactWhatOldDefaultsDid(t *testing.T) {
 		}
 		for _, run := range digits.FindAllString(got, -1) {
 			if kept[run] == 0 {
-				t.Errorf("%q: old defaults gave %q, new defaults leave %q in %q", tc.in, old, run, got)
+				t.Errorf("%q: old defaults gave %q, new defaults leave %q in %q", in, old, run, got)
 			}
 			kept[run]--
 		}
 		if strings.Count(got, "@") > strings.Count(old, "@") {
-			t.Errorf("%q: old defaults gave %q, new defaults leave an address in %q", tc.in, old, got)
+			t.Errorf("%q: old defaults gave %q, new defaults leave an address in %q", in, old, got)
+		}
+	}
+	// Every row, then every pair of identifier rows written back to back, so
+	// no rule can stop inside the identifier that follows it. (Next to a date
+	// or a price, 0.4's card rule also ate the date; keeping it is intended.)
+	for _, a := range defaultCases {
+		check(a.in)
+		for _, b := range defaultCases {
+			if a.in == a.want || b.in == b.want {
+				continue
+			}
+			for _, sep := range []string{" ", "\n", ", "} {
+				check(a.in + sep + b.in)
+			}
 		}
 	}
 }
