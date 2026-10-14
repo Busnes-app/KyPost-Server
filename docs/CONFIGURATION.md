@@ -120,7 +120,8 @@ a number joined to an email address by a bare hyphen (`555-123-4567-jo@x.de`),
 where the address takes the number's last digits and leaves the rest.
 
 The list is saved to `config.yaml` on first start and a saved list replaces the
-defaults whole. A list still exactly equal to the 0.3–0.4 defaults is replaced
+defaults whole. A list still exactly equal to an earlier default list (0.3–0.4, or the
+pre-2026-07-17 list whose doubled backslashes matched nothing) is replaced
 with the current defaults at startup and saved back; any edited list, even one
 changed character, is left alone. To adopt the current defaults over an edited
 list, delete the `redaction:` block from `config.yaml` and restart. Patterns are Go RE2 regular expressions; a `$` in a replacement

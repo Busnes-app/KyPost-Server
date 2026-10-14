@@ -489,10 +489,10 @@ func LoadOrInit(path string) (Config, error) {
 		}
 		// A saved list replaces the defaults whole, so an unedited old default
 		// list is upgraded here; an edited one is the admin's and stays.
-		if slices.Equal(cfg.Redaction.Patterns, redactionDefaultsV04) {
+		if slices.Equal(cfg.Redaction.Patterns, redactionDefaultsV04) || slices.Equal(cfg.Redaction.Patterns, redactionDefaultsV01) {
 			cfg.Redaction.Patterns = Default().Redaction.Patterns
 			changed = true
-			slog.Info("config.yaml: replaced the unedited 0.4 redaction defaults with the current ones")
+			slog.Info("config.yaml: replaced unedited old redaction defaults with the current ones")
 		}
 		if changed {
 			if err := Save(path, cfg); err != nil {
@@ -522,6 +522,16 @@ var redactionDefaultsV04 = []Pattern{
 	{Name: "ssn", Regex: `\b\d{3}-\d{2}-\d{4}\b`, Replacement: "[REDACTED_SSN]"},
 	{Name: "iban", Regex: `\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b`, Replacement: "[REDACTED_IBAN]"},
 	{Name: "card", Regex: `\b(?:\d[ -]*?){13,19}\b`, Replacement: "[REDACTED_CARD]"},
+}
+
+// redactionDefaultsV01 is Default()'s list before 7e0b788 (2026-07-17). Its
+// doubled backslashes match nothing, so those installs redacted nothing.
+var redactionDefaultsV01 = []Pattern{
+	{Name: "email", Regex: `(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b`, Replacement: "[REDACTED_EMAIL]"},
+	{Name: "phone", Regex: `\\b(?:\\+?\\d{1,3}[\\s.-]?)?(?:\\(\\d{3}\\)|\\d{3})[\\s.-]?\\d{3}[\\s.-]?\\d{4}\\b`, Replacement: "[REDACTED_PHONE]"},
+	{Name: "ssn", Regex: `\\b\\d{3}-\\d{2}-\\d{4}\\b`, Replacement: "[REDACTED_SSN]"},
+	{Name: "iban", Regex: `\\b[A-Z]{2}\\d{2}[A-Z0-9]{10,30}\\b`, Replacement: "[REDACTED_IBAN]"},
+	{Name: "card", Regex: `\\b(?:\\d[ -]*?){13,19}\\b`, Replacement: "[REDACTED_CARD]"},
 }
 
 // Load reads config.yaml strictly: an unknown key is an error naming it, so a

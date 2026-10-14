@@ -120,6 +120,47 @@ func TestLoadOrInitUpgradesUneditedRedactionDefaults(t *testing.T) {
 	assertLoadOrInitIdempotent(t, path)
 }
 
+// testdata/config-pre-7e0b788.yaml is Save(Default()) from 7e0b788^, whose
+// doubled-backslash patterns matched nothing.
+func TestLoadOrInitUpgradesPre7e0b788Config(t *testing.T) {
+	raw, err := os.ReadFile("testdata/config-pre-7e0b788.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SECRET_DIR", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(old.Redaction.Patterns, redactionDefaultsV01) {
+		t.Fatalf("historical file does not load as redactionDefaultsV01: %+v", old.Redaction.Patterns)
+	}
+	cfg, err := LoadOrInit(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Default().Redaction.Patterns
+	if !slices.Equal(cfg.Redaction.Patterns, want) {
+		t.Fatalf("patterns not upgraded: %+v", cfg.Redaction.Patterns)
+	}
+	if onDisk, err := Load(path); err != nil || !slices.Equal(onDisk.Redaction.Patterns, want) {
+		t.Fatalf("upgrade not persisted: %+v, %v", onDisk.Redaction.Patterns, err)
+	}
+	assertLoadOrInitIdempotent(t, path)
+
+	edited := slices.Clone(redactionDefaultsV01)
+	edited[4].Replacement = "[CARD]"
+	path = initWithPatterns(t, edited)
+	if cfg, err := LoadOrInit(path); err != nil || !slices.Equal(cfg.Redaction.Patterns, edited) {
+		t.Fatalf("edited pre-7e0b788 list changed: %+v, %v", cfg.Redaction.Patterns, err)
+	}
+	assertLoadOrInitIdempotent(t, path)
+}
+
 func TestLoadOrInitLeavesEditedRedactionList(t *testing.T) {
 	edited := slices.Clone(redactionDefaultsV04)
 	edited[0].Replacement = "[EMAIL]"

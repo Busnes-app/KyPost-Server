@@ -322,7 +322,7 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 | File | Purpose |
 |------|---------|
-| `$CONFIG_DIR/config.yaml` | Global system config (admin-editable). `config.Load` refuses unknown keys; keys older versions wrote are listed in `dropRetiredKeys` — add a removed field there, or upgrades stop starting. An unedited `redactionDefaultsV04` list is upgraded to `Default()` by `LoadOrInit` |
+| `$CONFIG_DIR/config.yaml` | Global system config (admin-editable). `config.Load` refuses unknown keys; keys older versions wrote are listed in `dropRetiredKeys` — add a removed field there, or upgrades stop starting. An unedited `redactionDefaultsV04` or `redactionDefaultsV01` list is upgraded to `Default()` by `LoadOrInit` |
 | `$CONFIG_DIR/users.json` | User accounts, roles, Argon2id password hashes; a retired `scrypt$` hash never verifies and needs an admin password reset (startup logs a WARN listing them) |
 | `$CONFIG_DIR/users/<userID>/imap-config.json` | User's encrypted IMAP credentials (master key encrypted) |
 | `$CONFIG_DIR/users/<userID>/tuning.md` | User's classification prompt |
