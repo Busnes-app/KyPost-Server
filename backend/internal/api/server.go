@@ -860,6 +860,7 @@ func (s *Server) Prepare() {
 	if err := os.RemoveAll(filepath.Join(s.stateDir, importDir)); err != nil {
 		s.logger.Error("leftover import uploads could not be removed", "error", err.Error())
 	}
+	s.bindUnboundSSOLinks()
 	port := config.EnvInt("WEB_PORT", 5866)
 	// Timeouts are set explicitly because net/http's zero values mean "no limit":
 	// without them a connection that dribbles one header line every few seconds is

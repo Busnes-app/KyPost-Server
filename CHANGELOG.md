@@ -10,6 +10,11 @@ image. `:stable` is moved to that image only after its build attestation has
 been published *and* verified, and only when the release is the newest published
 non-prerelease version.
 
+## Unreleased
+
+- **Security: SSO admin from a generic provider needs a named group.** Authentik/Keycloak tokens no longer make a new account an administrator by carrying a shared group such as `admins`, `administrator` or `authentik default admins`. Admin > Server > SSO has a new **Administrator group** (empty by default: no account becomes an administrator through SSO). Existing administrators are not demoted. KySignOn's `kypost.admin` app role is unchanged. **Operator action:** if you used a generic provider with auto-provisioning, review your administrators, and set the group if you want SSO to create them.
+- **Security: SSO links are bound to their provider.** An account is claimed by issuer and `sub`, not `sub` alone, so after changing providers the new provider's `"1"` can no longer sign in as the old provider's `"1"`. Saving a different issuer URL revokes links made at any other provider; those users sign in with their password and link again from Security (an SSO-only account needs an administrator password reset first). Links made before this release are bound to the configured issuer at startup.
+
 ## 0.4.0 — 2026-10-13
 
 **Before upgrading:** find accounts and credentials still on retired scrypt hashes (they stop signing in; see the BREAKING entry below), read your `.env` (variables compose used to drop now apply), and back up the new `$SECRET_DIR/scheduled-send.key`. UnifiedPush devices without WebPush keys must pair again.

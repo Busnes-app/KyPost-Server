@@ -55,6 +55,7 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
+			s.bindUnboundSSOLinks() // as API startup does for a pre-issuer record
 			if _, e = s.userStore(legacy.ID); e != nil {
 				t.Fatal(e)
 			}
