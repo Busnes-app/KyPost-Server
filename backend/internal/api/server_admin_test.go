@@ -89,6 +89,20 @@ func firstBytes(in []string) []string {
 	return out
 }
 
+// The repair route hard-exited the process, skipping graceful shutdown. It is
+// gone; an admin hitting it gets the unknown-endpoint 404.
+func TestHealthRepairRouteRemoved(t *testing.T) {
+	srv := newTestServer(t)
+	admin, _ := newTestUsers(t, srv)
+	req := httptest.NewRequest(http.MethodPost, "/api/health/repair", nil)
+	authRequestAs(srv, req, admin.ID)
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestStatusReportsPollFreshness covers the end-to-end path for the health
 // page's poll stats: the daemon records a tick into the user's state.db, and
 // the API process — a different process in deployment — reads it back out.

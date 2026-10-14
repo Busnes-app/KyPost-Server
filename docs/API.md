@@ -58,7 +58,6 @@ Runtime:
 - `GET /api/status`
 - `GET /api/health`
 - `GET /healthz` (public `ky.health/1` status for KyPulse: 200 `ok` or 503 `down`; one cached `service` check covers the API and daemon without exposing mailbox, version, or failure details. `/api/health` keeps its existing detailed response.)
-- `POST /api/health/repair` (admin only)
 - `POST /api/admin/mail/poll-now` (admin only. Starts an immediate poll.)
 - `GET /api/setup` (reports whether the initial admin setup completed)
 - `GET /api/server/version` (the running version and whether a newer release exists)

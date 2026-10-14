@@ -89,10 +89,6 @@ calls. `settings/sections/` is per-user, `admin/sections/` is admin-only.
 inline copy is the only place an operator reads it. The server refuses the same
 configuration independently — this UI is the explanation, not the check.
 
-`POST /api/health/repair` is a real admin route with no caller in this SPA;
-it is exercised by operators directly. Do not add a button for it without
-reading its handler first.
-
 ### App Shell → API Mapping
 
 | Component | Endpoints used |

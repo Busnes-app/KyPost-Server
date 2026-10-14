@@ -71,8 +71,8 @@ Less common variables:
   refusing to start a mail server over a variable the operator set deliberately
   is the worse outcome. Use `https://` for anything off-host.)
 - `UNHEALTHY_RESTART_SECONDS` (default `300`. How long health may stay red before
-  the process exits and lets supervisord and the Docker restart policy bring it
-  back.)
+  the daemon shuts down gracefully, as on SIGTERM, and exits non-zero so
+  supervisord restarts it.)
 - `PGP_PRIVATE_KEY_FILE` (default `$SECRET_DIR/pgp-private-key.key`) and
   `PICKUP_STORE_KEY_FILE` (default `$SECRET_DIR/pickup-store.key`) — the two
   remaining `SECRET_DIR`-derived secret paths.
