@@ -240,9 +240,12 @@ func (p *Poller) logDuplicateProvenAliases() {
 		return
 	}
 	for _, ids := range owners {
-		if len(ids) > 1 {
+		if len(ids) < 2 {
+			continue
+		}
+		for _, id := range ids {
 			p.log.Warn("send-as address domain-proven by more than one user; WKD serves no key for it",
-				"user_ids", strings.Join(ids, ","))
+				"user_id", id)
 		}
 	}
 }

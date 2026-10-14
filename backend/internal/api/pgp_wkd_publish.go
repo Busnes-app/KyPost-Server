@@ -286,8 +286,9 @@ func (s *Server) lookupPublishedKey(domain, hu string) ([]byte, bool) {
 		}
 		if owner != nil {
 			if s.logger != nil {
-				s.logger.Warn("wkd: address domain-proven by more than one user; serving no key",
-					"user_ids", owner.ID+","+u.ID)
+				for _, id := range []string{owner.ID, u.ID} {
+					s.logger.Warn("wkd: address domain-proven by more than one user; serving no key", "user_id", id)
+				}
 			}
 			return nil, false
 		}
