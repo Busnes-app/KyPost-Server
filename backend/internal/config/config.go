@@ -402,8 +402,11 @@ func Default() Config {
 		// A bare 9-digit number is an SSN only after the word SSN; otherwise
 		// every order and tracking number would go.
 		{Name: "ssn", Regex: `\b\d{3}-\d{2}-\d{4}\b|\b\d{3} \d{2} \d{4}\b|(?i:\bssn|\bsocial security(?: number| no\.?)?)[\s:#]*\d{9}\b`, Replacement: "[REDACTED_SSN]"},
-		// US 3-3-4, or a 0-led area code then 7-12 digits, which no dd-mm-yyyy date reaches.
-		{Name: "phone", Regex: `(?:\(\d{3}\) ?|\b\d{3}[ .-]?)\d{3}[ .-]?\d{4}\b|(?:\(0\d{1,4}\) ?|\b0\d{1,4}[ /-]?)\d(?: ?\d){6,11}\b`, Replacement: "[REDACTED_PHONE]"},
+		// The 0.4 rule verbatim (3-3-4 with an optional bare country code, so
+		// 15551234567 and 1-800-555-0199), so an upgrade un-redacts nothing;
+		// then (555) after a space, and a 0-led area code then 7-12 digits,
+		// which no dd-mm-yyyy date reaches.
+		{Name: "phone", Regex: `\b(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b|(?:\(\d{3}\) ?|\b\d{3}[ .-]?)\d{3}[ .-]?\d{4}\b|(?:\(0\d{1,4}\) ?|\b0\d{1,4}[ /-]?)\d(?: ?\d){6,11}\b`, Replacement: "[REDACTED_PHONE]"},
 	}
 	cfg.Labels.KeywordMappings = map[string][]string{}
 	return cfg

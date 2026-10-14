@@ -97,16 +97,18 @@ on-device sorter or the classifier sees them. The defaults
 
 - email addresses, including Unicode and IDN (`jürgen@münchen.de`, `xn--` domains);
 - IBANs, unbroken or spaced in fours, any case;
-- phone numbers: `+` or `00` followed by 7–15 digits, US `555-123-4567` /
-  `(555) 123-4567`, and national numbers with a leading `0` and at least 9 digits
-  (`030 12345678`, `020 7946 0958`);
+- phone numbers: `+` or `00` followed by 7–15 digits; US `555-123-4567` /
+  `(555) 123-4567`, also with a bare country code (`15551234567`,
+  `1-800-555-0199`, `442079460958`), as in 0.4; and national numbers with a
+  leading `0` and at least 9 digits (`030 12345678`, `020 7946 0958`);
 - card numbers (13–19 digits);
 - SSNs: `123-45-6789`, `123 45 6789`, and nine bare digits only after "SSN" or
   "Social Security", because a bare nine-digit number is usually an order number.
 
 Dates, times, prices, IP addresses, version strings and short order numbers stay
-intact. Any 10-digit number, and any number of 9 or more digits starting with
-`0`, is read as a phone number. Not caught: national numbers written with dots
+intact. Any run of 10–13 digits (including a UUID's last group), and any number
+of 9 or more digits starting with `0`, is read as a phone number: everything the
+0.4 defaults removed is still removed. Not caught: national numbers written with dots
 (`030.12345678`, which looks like a `dd.mm.yyyy` date) or split across lines.
 
 The list is saved to `config.yaml` on first start and a saved list replaces the
