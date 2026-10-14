@@ -282,7 +282,7 @@ func (s *Server) warnOnUnusedProxyHeaders(r *http.Request) {
 				s.logger.Error("TRUSTED_PROXY_HEADER is missing or names a trusted proxy's own address, so every caller "+
 					"shares one lockout key. Behind cloudflared set TRUSTED_PROXY_HEADER=cf-connecting-ip; see "+
 					"docs/Reverse_Proxy_Networking.md.",
-					"header", clientIPHeader, "resolved", clientIP(r))
+					"header", clientIPHeader, "header_reports", clientIP(r))
 			})
 		}
 		return
