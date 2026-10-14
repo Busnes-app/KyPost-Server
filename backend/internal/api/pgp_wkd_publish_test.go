@@ -447,25 +447,9 @@ func TestWKDServingRespectsPublishWKDOptOut(t *testing.T) {
 	}
 }
 
-// TestLookupPublishedKeySkipsCorruptKeyContinuesToNextUser covers O1:
-// lookupPublishedKey used to `return nil, false` the instant it hit a user
-// whose stored PGPPublicKey failed to parse, aborting the scan for every
-// other user on the instance. It must instead skip only that one user and
-// keep looking. The bootstrap user (always users.List()[0]) is given a
-// verified claim + matching address but a corrupt key; a second user with a
-// genuinely valid key at the same domain/local-part must still be found.
-func TestLookupPublishedKeySkipsCorruptKeyContinuesToNextUser(t *testing.T) {
-	srv := newTestServer(t)
-	corruptUserID := srv.mustBootstrapUserID(t)
-
-	writeUnreachableSMTPIMAPConfig(t, srv, corruptUserID, "alice@example.com")
-	seedVerifiedSendAs(t, srv, corruptUserID, "alice@example.com")
-	if _, err := srv.users.SetPGPIdentity(corruptUserID, "fp", "kid", "not a real armored key", "", "generated", "2026-07-24T00:00:00Z"); err != nil {
-		t.Fatalf("SetPGPIdentity corrupt: %v", err)
-	}
-	// example.com is claimed and verified once in the shared instance store —
-	// both the corrupt-keyed user and the valid-keyed user below are
-	// publishable addresses under this single instance-wide claim.
+// claimExampleCom claims and verifies example.com in the instance WKD store.
+func claimExampleCom(t *testing.T, srv *Server) {
+	t.Helper()
 	wkdStore, err := srv.wkdPublishStore()
 	if err != nil {
 		t.Fatalf("wkdPublishStore: %v", err)
@@ -476,6 +460,21 @@ func TestLookupPublishedKeySkipsCorruptKeyContinuesToNextUser(t *testing.T) {
 	if err := wkdStore.SetVerified("example.com", true, time.Now()); err != nil {
 		t.Fatalf("SetVerified: %v", err)
 	}
+}
+
+// One user's corrupt key must not abort the scan for every other user: the
+// bootstrap user (listed first) has a corrupt key, and another user's address
+// on the same domain is still served.
+func TestLookupPublishedKeySkipsCorruptKeyContinuesToNextUser(t *testing.T) {
+	srv := newTestServer(t)
+	corruptUserID := srv.mustBootstrapUserID(t)
+
+	writeUnreachableSMTPIMAPConfig(t, srv, corruptUserID, "bob@example.com")
+	seedVerifiedSendAs(t, srv, corruptUserID, "bob@example.com")
+	if _, err := srv.users.SetPGPIdentity(corruptUserID, "fp", "kid", "not a real armored key", "", "generated", "2026-07-24T00:00:00Z"); err != nil {
+		t.Fatalf("SetPGPIdentity corrupt: %v", err)
+	}
+	claimExampleCom(t, srv)
 
 	validUser, err := srv.users.Create(context.Background(), "valid-wkd-user", "initial-pass-123", users.RoleUser)
 	if err != nil {
@@ -485,13 +484,36 @@ func TestLookupPublishedKeySkipsCorruptKeyContinuesToNextUser(t *testing.T) {
 	seedVerifiedSendAs(t, srv, validUser.ID, "alice@example.com")
 	seedUserPGPKey(t, srv, validUser.ID, "alice@example.com")
 
-	hu := wkdHashLocalPart("alice")
-	rec := doRaw(t, srv, http.MethodGet, "/.well-known/openpgpkey/example.com/hu/"+hu, "", nil)
+	rec := doRaw(t, srv, http.MethodGet, "/.well-known/openpgpkey/example.com/hu/"+wkdHashLocalPart("alice"), "", nil)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 despite one user's corrupt key, got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 200 despite another user's corrupt key, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	if _, err := crypto.NewKey(rec.Body.Bytes()); err != nil {
 		t.Fatalf("response body is not a binary key: %v", err)
+	}
+	if r := doRaw(t, srv, http.MethodGet, "/.well-known/openpgpkey/example.com/hu/"+wkdHashLocalPart("bob"), "", nil); r.Code != http.StatusNotFound {
+		t.Fatalf("corrupt key: status %d, want 404", r.Code)
+	}
+}
+
+// Two users domain-proving one address is ambiguous: WKD serves neither key,
+// rather than whichever users.List() returns first.
+func TestLookupPublishedKeyRefusesAddressProvenByTwoUsers(t *testing.T) {
+	srv := newTestServer(t)
+	firstID := srv.mustBootstrapUserID(t)
+	claimExampleCom(t, srv)
+	second, err := srv.users.Create(context.Background(), "second-wkd-user", "initial-pass-123", users.RoleUser)
+	if err != nil {
+		t.Fatalf("Create second user: %v", err)
+	}
+	for _, id := range []string{firstID, second.ID} {
+		writeUnreachableSMTPIMAPConfig(t, srv, id, "alice@example.com")
+		seedVerifiedSendAs(t, srv, id, "alice@example.com")
+		seedUserPGPKey(t, srv, id, "alice@example.com")
+	}
+
+	if _, ok := srv.lookupPublishedKey("example.com", wkdHashLocalPart("alice")); ok {
+		t.Fatal("served a key for an address two users have proven")
 	}
 }
 

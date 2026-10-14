@@ -3,27 +3,31 @@ package processor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/mail"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
 )
 
-// verifyDKIMForDomain indirects imapadapter.VerifyDKIMForDomain so tests in
-// this package can reach the verified branch below at all: the real verifier
-// resolves the signing domain's public key from live DNS, which no unit test
-// here can satisfy. Production never reassigns it; the DKIM crypto itself is
-// covered in internal/adapters/imap/dkim_verify_test.go.
-var verifyDKIMForDomain = imapadapter.VerifyDKIMForDomain
+// verifyDKIMCoversHeader and dkimSignedHeaders indirect the imap adapter so
+// tests here can reach the verified branches: the real verifier resolves the
+// signing key from live DNS. Production never reassigns them; the DKIM crypto
+// is covered in internal/adapters/imap.
+var (
+	verifyDKIMCoversHeader = imapadapter.VerifyDKIMCoversHeader
+	dkimSignedHeaders      = imapadapter.DKIMSignedHeaders
+)
 
-// verifyDKIMCoversHeader indirects imapadapter.VerifyDKIMCoversHeader for the
-// same reason, and is the check that actually gates alias verification: a
-// signature must cover the header the code was found in, not merely come from
-// the right domain.
-var verifyDKIMCoversHeader = imapadapter.VerifyDKIMCoversHeader
+// sendAsProofHeaders must all be covered by the alias domain's signature:
+// From names the alias, Message-ID binds the message to this probe, Subject
+// carries the code and Date places it after the challenge.
+var sendAsProofHeaders = []string{"from", "message-id", "subject", "date"}
 
 // userSendAsStore returns the cached send-as alias store for a user,
 // mirroring userMailCacheStore/userRulesStore — the api process
@@ -58,12 +62,9 @@ func (p *Poller) userSendAsStore(userID string) (*sendas.Store, error) {
 // *some* message with that text exists in an inbox the account owner fully
 // controls, which they could trivially fake themselves (e.g. via IMAP
 // APPEND, which involves no MTA and lets the owner write any header they
-// like). Verification additionally requires that message to carry a
-// cryptographically valid DKIM signature (VerifyDKIMForDomain) whose d=
-// domain matches the candidate address's own domain — a signature the
-// account owner cannot forge without that domain's private key, unlike a
-// merely-claimed Authentication-Results header. See dkim_verify.go for the
-// full rationale.
+// like). Verification additionally requires that message to be the probe
+// itself, signed by the candidate address's own domain (provesSendAs), and
+// the address not to be domain-proven by another user.
 //
 // Errors from the mail client (search/fetch failures) are logged and
 // leave the affected record pending for the next tick — they are not
@@ -111,11 +112,6 @@ func (p *Poller) checkPendingSendAsAliases(ctx context.Context, userID string, m
 			continue
 		}
 
-		// Zero on a parse failure, which makes the Date check below inert rather
-		// than rejecting everything — the Subject check is the load-bearing one.
-		createdAt, _ := time.Parse(time.RFC3339, alias.CreatedAt)
-
-		domain := domainOf(alias.Email)
 		verified := false
 		for _, m := range matches {
 			raw, err := mail.FetchRawMessage(ctx, "INBOX", m.UID)
@@ -124,73 +120,23 @@ func (p *Poller) checkPendingSendAsAliases(ctx context.Context, userID string, m
 					"user_id", userID, "alias_id", alias.ID, "uid", strconv.Itoa(m.UID), "error", err.Error())
 				continue
 			}
-			// The verification code lives in the Subject, so the signature must
-			// actually cover the Subject — a d= match alone proved nothing
-			// about it. RFC 6376 hashes only the headers named in h=, takes the
-			// last occurrence of each, and tolerates extras, so an account
-			// holder could take any genuinely signed message from the target
-			// domain, staple "Subject: <code>" on top, IMAP-APPEND it to their
-			// own INBOX, and have the alias verified without ever controlling
-			// the address. Run-3 replaced a forgeable Authentication-Results
-			// header with real crypto here; this binds that crypto to the thing
-			// actually being trusted.
-			if !verifyDKIMCoversHeader(raw, domain, "Subject") {
-				continue
+			if provesSendAs(raw, alias) {
+				verified = true
+				break
 			}
-			// And the signature must cover the From header, checked the same
-			// way as Subject. Without this the comparison below is worthless:
-			// rawFromAddress reads the FIRST From, while the DKIM header picker
-			// scans backwards and signs the LAST, so an unsigned
-			// "From: <alias>" stapled above the signed one would satisfy it.
-			if !verifyDKIMCoversHeader(raw, domain, "From") {
-				continue
-			}
-			// The signed From must be the alias ITSELF, not merely something at
-			// the same domain. Comparing domains meant any account holder with
-			// one mailbox at a domain could verify every other address there —
-			// including a colleague's — and the instance would then publish
-			// their key over WKD under it. autocrypt_harvest.go binds the exact
-			// address for the same reason.
-			if !strings.EqualFold(strings.TrimSpace(rawFromAddress(raw)), strings.TrimSpace(alias.Email)) {
-				continue
-			}
-			// And the signed Subject must actually CARRY this challenge's code.
-			//
-			// Everything above proves the message came from the alias's domain
-			// with a signed From equal to the alias. None of it proves the
-			// message is a response to THIS challenge. Until this check the code
-			// was used only as the IMAP SEARCH term — and that search is
-			// answered by a server the account holder chose, since
-			// POST /api/imap/config stores any host with no connection attempt
-			// and no ownership check. So one genuine, unmodified, correctly
-			// signed message the target once sent the attacker (any
-			// mailing-list post) satisfied the alias.
-			//
-			// The Subject is already proven DKIM-covered and proven to occur
-			// exactly once by the check above, so reading it back here is
-			// reading signed data.
-			if !strings.Contains(rawSubject(raw), alias.VerificationCode) {
-				continue
-			}
-			// A message that predates the challenge cannot be a response to it.
-			// Without this, an attacker's server may serve an old message that
-			// happens to quote a code — and codes are not secret from the
-			// account holder, who is the one being challenged.
-			if sentAt, ok := rawSentAt(raw); ok && sentAt.Before(createdAt) {
-				continue
-			}
-			// An unattended responder is not a person proving control.
-			if rawIsAutoReply(raw) {
-				continue
-			}
-			verified = true
-			break
 		}
-		if verified {
-			if err := store.MarkVerified(alias.ID); err != nil {
-				p.log.Error("failed to mark send-as alias verified",
-					"user_id", userID, "alias_id", alias.ID, "error", err.Error())
-			}
+		if !verified {
+			continue
+		}
+		if owners, err := p.domainProvenOwners(); err != nil || otherOwner(owners[alias.Email], userID) {
+			// One address, one key on WKD. Leave the record pending to expire.
+			p.log.Warn("send-as domain proof refused: address already proven by another user or owners unreadable",
+				"user_id", userID, "alias_id", alias.ID)
+			continue
+		}
+		if err := store.MarkVerified(alias.ID); err != nil {
+			p.log.Error("failed to mark send-as alias verified",
+				"user_id", userID, "alias_id", alias.ID, "error", err.Error())
 		}
 	}
 
@@ -209,41 +155,96 @@ func domainOf(email string) string {
 	return ""
 }
 
-// rawFromAddress pulls the lowercased addr-spec out of a complete message's
-// From header, or "" when it has none.
-func rawFromAddress(raw []byte) string {
+// provesSendAs reports whether raw is the alias's own probe come back signed by
+// the alias domain: the account's SMTP got it signed there, or the alias
+// delivered it here. The IMAP server answering is the account holder's choice,
+// so only signed headers count, and a reply never does: an out-of-office or a
+// colleague answering a probe the account holder sent through their own SMTP
+// would otherwise prove the colleague's address for them.
+func provesSendAs(raw []byte, alias sendas.Alias) bool {
+	signed := dkimSignedHeaders(raw, domainOf(alias.Email))
+	for _, h := range sendAsProofHeaders {
+		if !signed[h] {
+			return false
+		}
+	}
 	msg, err := mail.ReadMessage(bytes.NewReader(raw))
 	if err != nil {
-		return ""
+		return false
 	}
-	return parseFromAddress(msg.Header.Get("From"))
+	ids := mailmsg.MessageIDs(msg.Header.Get("Message-ID"))
+	if alias.ProbeMessageID == "" || len(ids) != 1 || ids[0] != alias.ProbeMessageID {
+		return false
+	}
+	if !strings.EqualFold(parseFromAddress(msg.Header.Get("From")), alias.Email) ||
+		!strings.Contains(msg.Header.Get("Subject"), alias.VerificationCode) {
+		return false
+	}
+	createdAt, cerr := time.Parse(time.RFC3339, alias.CreatedAt)
+	sentAt, derr := mail.ParseDate(msg.Header.Get("Date"))
+	if cerr != nil || derr != nil || sentAt.Before(createdAt) {
+		return false
+	}
+	return !rawIsAutoReply(raw)
 }
 
-// rawSubject returns the message's Subject header, or "" if the message does
-// not parse.
-//
-// Package-level rather than inline in checkPendingSendAsAliases because that
-// function's `mail imapadapter.Client` parameter shadows the net/mail import.
-func rawSubject(raw []byte) string {
-	msg, err := mail.ReadMessage(bytes.NewReader(raw))
-	if err != nil {
-		return ""
+// domainProvenOwners maps each domain-proven send-as address to the active
+// users holding it. An error means ownership is unknown and must not be assumed.
+func (p *Poller) domainProvenOwners() (map[string][]string, error) {
+	if p.users == nil {
+		return nil, errors.New("no users store")
 	}
-	return msg.Header.Get("Subject")
+	all, err := p.users.List()
+	if err != nil {
+		return nil, err
+	}
+	owners := map[string][]string{}
+	for _, u := range all {
+		if !u.Active {
+			continue
+		}
+		store, err := p.userSendAsStore(u.ID)
+		if err != nil {
+			return nil, err
+		}
+		verified, err := store.ListVerified()
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range verified {
+			if a.DomainProven() {
+				addr := strings.ToLower(strings.TrimSpace(a.Email))
+				if !slices.Contains(owners[addr], u.ID) {
+					owners[addr] = append(owners[addr], u.ID)
+				}
+			}
+		}
+	}
+	return owners, nil
 }
 
-// rawSentAt returns the message's Date, and whether it parsed. Same shadowing
-// reason as rawSubject.
-func rawSentAt(raw []byte) (time.Time, bool) {
-	msg, err := mail.ReadMessage(bytes.NewReader(raw))
-	if err != nil {
-		return time.Time{}, false
+func otherOwner(owners []string, userID string) bool {
+	return slices.ContainsFunc(owners, func(id string) bool { return id != userID })
+}
+
+// logDuplicateProvenAliases reports addresses domain-proven by more than one
+// user, proven before uniqueness was enforced. They are left as they are (WKD
+// serves neither); an administrator decides which record to remove.
+func (p *Poller) logDuplicateProvenAliases() {
+	if p.users == nil {
+		return
 	}
-	t, err := mail.ParseDate(msg.Header.Get("Date"))
+	owners, err := p.domainProvenOwners()
 	if err != nil {
-		return time.Time{}, false
+		p.log.Error("failed to check send-as aliases for duplicates", "error", err.Error())
+		return
 	}
-	return t, true
+	for _, ids := range owners {
+		if len(ids) > 1 {
+			p.log.Warn("send-as address domain-proven by more than one user; WKD serves no key for it",
+				"user_ids", strings.Join(ids, ","))
+		}
+	}
 }
 
 // rawIsAutoReply reports whether the message announces itself as machine

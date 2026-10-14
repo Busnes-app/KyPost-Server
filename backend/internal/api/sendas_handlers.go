@@ -156,13 +156,16 @@ func (s *Server) handleSendAsCreate(w http.ResponseWriter, r *http.Request) {
 	// into this inbox, or the user typing the code into handleSendAsConfirm.
 	from := mailmsg.SanitizeHeaderValue(normalizedEmail)
 	msg := mailmsg.Message{
-		From:    from,
-		To:      []string{normalizedEmail},
-		Subject: "Verify send-as: " + alias.VerificationCode,
-		Body: "KyPost is verifying that you can send mail as this address.\r\n\r\n" +
+		From:      from,
+		To:        []string{normalizedEmail},
+		Subject:   "Verify send-as: " + alias.VerificationCode,
+		MessageID: alias.ProbeMessageID,
+		Body: "KyPost account " + imapCfg.Username + " asked to send mail as this address.\r\n\r\n" +
 			"Your verification code is: " + alias.VerificationCode + "\r\n\r\n" +
-			"Enter it in KyPost under Settings → Mail → Send-As Addresses within 30 minutes. " +
-			"If you did not request this, you can ignore it.",
+			"Whoever has this code can send mail from this address through that account. " +
+			"Do not share it, forward it or reply with it unless that account is yours. " +
+			"If it is, enter the code in KyPost under Settings → Mail → Send-As Addresses within 30 minutes. " +
+			"If you did not request this, ignore it.",
 		Mode: "plain",
 	}.Build()
 

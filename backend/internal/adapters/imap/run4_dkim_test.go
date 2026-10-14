@@ -80,3 +80,32 @@ func TestVerifyDKIMCoversHeader(t *testing.T) {
 		}
 	})
 }
+
+// DKIMSignedHeaders reports exactly the headers a valid signature covers and
+// that occur once; send-as verification gates on several of them at once.
+func TestDKIMSignedHeaders(t *testing.T) {
+	f := newDKIMTestFixture(t, "example.com", "sel")
+	var b strings.Builder
+	if err := dkim.Sign(&b, strings.NewReader(testMail), &dkim.SignOptions{
+		Domain: f.domain, Selector: f.selector, Signer: f.key,
+		HeaderKeys: []string{"from", "subject", "message-id"},
+	}); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	signed := b.String()
+
+	got := dkimSignedHeadersWithLookup([]byte(signed), "example.com", f.lookupTXT)
+	if !got["from"] || !got["subject"] || !got["message-id"] {
+		t.Fatalf("signed headers missing: %v", got)
+	}
+	if got["date"] || got["to"] {
+		t.Fatalf("unsigned headers reported as signed: %v", got)
+	}
+	dup := dkimSignedHeadersWithLookup([]byte("Message-ID: <forged@example.com>\r\n"+signed), "example.com", f.lookupTXT)
+	if dup["message-id"] || !dup["from"] {
+		t.Fatalf("a duplicated header must drop out while the others stay: %v", dup)
+	}
+	if len(dkimSignedHeadersWithLookup([]byte(signed), "other.example", f.lookupTXT)) != 0 {
+		t.Fatal("headers reported for a domain that did not sign")
+	}
+}

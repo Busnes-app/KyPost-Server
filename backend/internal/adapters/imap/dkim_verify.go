@@ -97,37 +97,44 @@ func VerifyDKIMCoversHeader(raw []byte, domain, header string) bool {
 }
 
 func verifyDKIMCoversHeaderWithLookup(raw []byte, domain, header string, lookupTXT func(string) ([]string, error)) bool {
-	domain = strings.ToLower(strings.TrimSpace(domain))
-	header = strings.TrimSpace(header)
-	if domain == "" || header == "" || len(raw) == 0 {
-		return false
-	}
+	return dkimSignedHeadersWithLookup(raw, domain, lookupTXT)[strings.ToLower(strings.TrimSpace(header))]
+}
 
+// DKIMSignedHeaders returns the lowercased names of the headers that a valid
+// DKIM signature for domain covers and that appear exactly once in raw (see
+// VerifyDKIMCoversHeader). Empty when no signature for domain verifies. One
+// verification pass, for callers that need several headers covered.
+func DKIMSignedHeaders(raw []byte, domain string) map[string]bool {
+	return dkimSignedHeadersWithLookup(raw, domain, nil)
+}
+
+func dkimSignedHeadersWithLookup(raw []byte, domain string, lookupTXT func(string) ([]string, error)) map[string]bool {
+	out := map[string]bool{}
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain == "" || len(raw) == 0 {
+		return out
+	}
 	msg, err := mail.ReadMessage(bytes.NewReader(raw))
 	if err != nil {
-		return false
+		return out
 	}
-	if len(msg.Header[textproto.CanonicalMIMEHeaderKey(header)]) != 1 {
-		return false
-	}
-
-	var verifications []*dkim.Verification
-	verifications, err = dkim.VerifyWithOptions(bytes.NewReader(raw), &dkim.VerifyOptions{
+	verifications, err := dkim.VerifyWithOptions(bytes.NewReader(raw), &dkim.VerifyOptions{
 		LookupTXT:        lookupTXT,
 		MaxVerifications: maxDKIMVerifications,
 	})
 	if err != nil {
-		return false
+		return out
 	}
 	for _, v := range verifications {
 		if v.Err != nil || !strings.EqualFold(strings.TrimSpace(v.Domain), domain) {
 			continue
 		}
 		for _, signed := range v.HeaderKeys {
-			if strings.EqualFold(strings.TrimSpace(signed), header) {
-				return true
+			name := strings.TrimSpace(signed)
+			if len(msg.Header[textproto.CanonicalMIMEHeaderKey(name)]) == 1 {
+				out[strings.ToLower(name)] = true
 			}
 		}
 	}
-	return false
+	return out
 }
