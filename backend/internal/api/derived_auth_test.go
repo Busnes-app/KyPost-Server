@@ -1,7 +1,6 @@
 package api
 
 import (
-	"fmt"
 	"bytes"
 	"context"
 	"crypto/hmac"
@@ -10,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
