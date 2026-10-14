@@ -10,6 +10,12 @@ image. `:stable` is moved to that image only after its build attestation has
 been published *and* verified, and only when the release is the newest published
 non-prerelease version.
 
+## Unreleased
+
+- **Security: replayed Autocrypt mail no longer rolls back a contact's key.** The harvest now orders keys by the message's DKIM-signed `Date` (capped at now) and ignores mail that is not strictly newer or has no Date. A newer, different Autocrypt key is shown as a key change (reader warning, send refused as `keyChangedRecipients`) instead of being pinned silently. Contacts harvested before this release are treated as dated zero.
+- **Security: contact keys are validated on every write path and stored public-only.** `POST`/`PUT /api/contacts` and mobile sync now refuse, with a 400, a key that does not parse, is revoked or expired, does not carry one of the contact's addresses, or is a private key. Resending the stored key unchanged is still accepted. Any private key already stored is replaced with its public part when the address book is first opened. The contact editor shows the refusal inside the form.
+- A CardDAV `PUT` that omits `KEY` (as many phone clients do) or carries an unusable one keeps the stored key and its pin instead of deleting them. Editing a contact no longer drops its key's source and verified flag.
+
 ## 0.4.0 — 2026-10-13
 
 **Before upgrading:** find accounts and credentials still on retired scrypt hashes (they stop signing in; see the BREAKING entry below), read your `.env` (variables compose used to drop now apply), and back up the new `$SECRET_DIR/scheduled-send.key`. UnifiedPush devices without WebPush keys must pair again.

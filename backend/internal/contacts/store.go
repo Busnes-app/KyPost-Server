@@ -3,6 +3,7 @@ package contacts
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -52,6 +53,9 @@ func New(baseDir string) (*Store, error) {
 	s := &Store{baseDir: baseDir, contacts: []Contact{}}
 	if err := s.load(); err != nil {
 		return nil, err
+	}
+	if err := s.stripPrivatePGPKeys(); err != nil {
+		return nil, fmt.Errorf("strip private contact keys: %w", err)
 	}
 	return s, nil
 }
@@ -193,6 +197,9 @@ type ContactPrecondition struct {
 	// contact with this UID currently exists and its ETag equals this value.
 	// Empty means no If-Match check.
 	RequireETag string
+	// KeepAbsentPGPKey keeps the stored key and pin when the write carries no
+	// key. Many CardDAV clients drop KEY, which must not erase the anchor.
+	KeepAbsentPGPKey bool
 }
 
 // UpsertWithPrecondition evaluates precondition and performs the write in the
@@ -217,6 +224,9 @@ func (s *Store) UpsertWithPrecondition(c Contact, precondition ContactPreconditi
 	}
 	if precondition.RequireETag != "" && (!exists || existing.ETag() != precondition.RequireETag) {
 		return Contact{}, ErrPreconditionFailed
+	}
+	if precondition.KeepAbsentPGPKey && c.PGPKey == "" && exists {
+		c.PGPKey = existing.PGPKey
 	}
 	return s.upsertLocked(c)
 }
@@ -245,17 +255,24 @@ func (s *Store) getLocked(uid string) (Contact, bool) {
 // Carrying it here rather than at the call sites is the point: a sixth write
 // path cannot forget, in the same way none can drop a PhotoRef.
 //
-// Only when the key material is byte-identical. A different key deserves a
+// Only when it is the same key (same bytes, or same fingerprint once the sink
+// has re-armored it as public-only). A different key deserves a
 // different pin, and stamping the old fingerprint onto new key material would be
 // worse than dropping it — tierKeyChanged would compare against a fingerprint no
 // key has. An emptied key takes its provenance with it, for the same reason.
 //
 // A writer that supplies provenance explicitly is authoritative and is left
-// alone: that is how the resolver re-pins a verified key change and how
-// backfillPGPKeyFingerprint fills in a manually pasted key.
+// alone: that is how the resolver re-pins a verified key change and how the
+// Autocrypt harvest keeps the old pin on a rotated key.
 func carryPGPProvenance(c *Contact, existing Contact) {
-	if c.PGPKey == "" || c.PGPKey != existing.PGPKey {
+	if c.PGPKey == "" || existing.PGPKey == "" {
 		return
+	}
+	if c.PGPKey != existing.PGPKey {
+		fp := pgpKeyFingerprint(c.PGPKey)
+		if fp == "" || !strings.EqualFold(fp, pgpKeyFingerprint(existing.PGPKey)) {
+			return
+		}
 	}
 	if c.PGPKeyFingerprint != "" || c.PGPKeySource != "" || c.PGPKeyVerified {
 		return
@@ -263,6 +280,7 @@ func carryPGPProvenance(c *Contact, existing Contact) {
 	c.PGPKeyFingerprint = existing.PGPKeyFingerprint
 	c.PGPKeySource = existing.PGPKeySource
 	c.PGPKeyVerified = existing.PGPKeyVerified
+	c.PGPKeyAutocryptDate = existing.PGPKeyAutocryptDate
 }
 
 func (s *Store) upsertLocked(c Contact) (Contact, error) {
@@ -303,10 +321,19 @@ func (s *Store) applyUpsertLocked(c Contact) (Contact, error) {
 		}
 	}
 
+	// Never persist secret key material, whichever writer supplied it.
+	c.PGPKey = publicPGPKey(c.PGPKey)
+
+	// Carry before pinning: a pin derived from the incoming key would count as
+	// explicit provenance and silently re-pin a key the stored pin disputes.
+	if existing, ok := s.getLocked(c.UID); ok {
+		carryPGPProvenance(&c, existing)
+	}
+
 	// Pin the TOFU fingerprint here, where EVERY write path passes, rather than
 	// at the two handlers that remembered to.
 	//
-	// carryPGPProvenance below covers the update case: a write that resends an
+	// carryPGPProvenance above covers the update case: a write that resends an
 	// existing key without provenance keeps the pin it already had. It cannot
 	// cover the CREATE case, because there is nothing yet to carry from — and
 	// create is exactly what vCard import, CardDAV PUT, mobile sync and the
@@ -361,7 +388,6 @@ func (s *Store) applyUpsertLocked(c Contact) (Contact, error) {
 			// never send it, and dropping it would promote a stranger harvested
 			// from Autocrypt to a known sender (processor/presort.go).
 			c.DiscoveryCreated = c.DiscoveryCreated || existing.DiscoveryCreated
-			carryPGPProvenance(&c, existing)
 			s.contacts[i] = c
 			return c, nil
 		}
@@ -835,12 +861,75 @@ func pinPGPKeyFingerprint(c Contact) Contact {
 	if c.PGPKey == "" || c.PGPKeyFingerprint != "" {
 		return c
 	}
-	key, err := crypto.NewKeyFromArmored(c.PGPKey)
-	if err != nil {
-		return c
-	}
-	c.PGPKeyFingerprint = key.GetFingerprint()
+	c.PGPKeyFingerprint = pgpKeyFingerprint(c.PGPKey)
 	return c
+}
+
+// pgpKeyFingerprint returns the key's fingerprint, or "" when it does not parse.
+func pgpKeyFingerprint(armored string) string {
+	key, err := crypto.NewKeyFromArmored(armored)
+	if err != nil {
+		return ""
+	}
+	return key.GetFingerprint()
+}
+
+// publicPGPKey re-armors a key as its public part only, so secret material is
+// never stored. Unparseable text is returned as-is (legacy behaviour; the API
+// write paths refuse it).
+func publicPGPKey(armored string) string {
+	if armored == "" {
+		return ""
+	}
+	key, err := crypto.NewKeyFromArmored(armored)
+	if err != nil {
+		return armored
+	}
+	pub, err := key.GetArmoredPublicKey()
+	if err != nil {
+		return armored
+	}
+	return pub
+}
+
+// stripPrivatePGPKeys replaces any stored private key block with its public
+// part. Runs on every open: a no-op once clean, and a crash before the atomic
+// write leaves the file as it was.
+func (s *Store) stripPrivatePGPKeys() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	release, err := fsutil.LockFile(s.path())
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := s.refreshFromDiskLocked(); err != nil {
+		return err
+	}
+	n := 0
+	for _, c := range s.contacts {
+		if c.Deleted || c.PGPKey == "" {
+			continue
+		}
+		key, err := crypto.NewKeyFromArmored(c.PGPKey)
+		if err != nil || !key.IsPrivate() {
+			continue
+		}
+		// Same key, so the pin and provenance are kept; the sink strips it.
+		if _, err := s.applyUpsertLocked(c); err != nil {
+			return err
+		}
+		n++
+	}
+	if n == 0 {
+		return nil
+	}
+	if err := s.persistLocked(); err != nil {
+		return err
+	}
+	slog.Info("contacts private key migration", "actor", "contacts-store", "task_id", "strip-private-pgp-keys",
+		"action", "migrate", "target", "contacts", "result", "stripped", "contacts", n)
+	return nil
 }
 
 // liveContactCountLocked counts contacts that are not tombstoned. Tombstones
