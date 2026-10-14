@@ -928,7 +928,7 @@ func (s *Store) stripPrivatePGPKeys() error {
 		return err
 	}
 	slog.Info("contacts private key migration", "actor", "contacts-store", "task_id", "strip-private-pgp-keys",
-		"action", "migrate", "target", "contacts", "result", "stripped", "contacts", n)
+		"action", "migrate", "target", "contacts", "result", "stripped", "contact_count", n)
 	return nil
 }
 
