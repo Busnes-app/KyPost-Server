@@ -100,9 +100,9 @@ RUN apt-get update \
 # turned a 2-6 minute ci-docker into a 16 minute one on the first PR that
 # touched the frontend. Nothing here depends on the COPYs; the apt step above
 # is what supplies curl, ca-certificates, zstd and tar.
-ARG OLLAMA_VERSION=0.40.2
-ARG OLLAMA_SHA256_AMD64=726bee78706c281b0eeef00746efe51a044d71c592c3f0b195820707f31fdf04
-ARG OLLAMA_SHA256_ARM64=92b3ef3d5e10f5849273bfa1345000f2a8ce8bc834e95061ff5b9df5d08e3c3f
+ARG OLLAMA_VERSION=0.40.3
+ARG OLLAMA_SHA256_AMD64=ce6f8b671a699bf1ebafb28d60dbbabf4f37b30b499145fa308a8ba72de021d6
+ARG OLLAMA_SHA256_ARM64=5754700747a93ea14db88888f08072386d2da6fbf7dd75be19a684348b9f28b8
 ARG TARGETARCH
 RUN set -eu; \
 	case "${TARGETARCH:-}" in \
