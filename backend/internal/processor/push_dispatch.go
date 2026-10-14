@@ -11,6 +11,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
+	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
 	"github.com/Busnes-app/kypost-server/backend/internal/retry"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 
@@ -80,7 +81,7 @@ func SendWebPush(ctx context.Context, store *state.Store, publicKey, privateKeyP
 		// rather than refusing produces the same outcome.
 		HTTPClient: &http.Client{
 			Timeout:   15 * time.Second,
-			Transport: &http.Transport{DialContext: safeDialContext},
+			Transport: &http.Transport{DialContext: netguard.Dialer(nil)},
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},

@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
@@ -283,40 +282,6 @@ func TestDispatcherSendRoutesCorrectly(t *testing.T) {
 	}
 }
 
-// isPrivateOrReservedIP must flag every address class that must never be
-// reached via a client-supplied UnifiedPush endpoint (SSRF defense), and
-// leave ordinary public addresses alone.
-func TestIsPrivateOrReservedIP(t *testing.T) {
-	cases := []struct {
-		ip   string
-		want bool
-	}{
-		{"127.0.0.1", true},             // loopback
-		{"::1", true},                   // IPv6 loopback
-		{"10.0.0.5", true},              // RFC1918 private
-		{"172.16.0.1", true},            // RFC1918 private
-		{"192.168.1.1", true},           // RFC1918 private
-		{"169.254.169.254", true},       // link-local / cloud metadata
-		{"169.254.0.1", true},           // link-local
-		{"fc00::1", true},               // RFC4193 unique local (IPv6 private)
-		{"fe80::1", true},               // IPv6 link-local
-		{"0.0.0.0", true},               // unspecified
-		{"224.0.0.1", true},             // multicast
-		{"8.8.8.8", false},              // public
-		{"1.1.1.1", false},              // public
-		{"2606:4700:4700::1111", false}, // public IPv6 (Cloudflare)
-	}
-	for _, c := range cases {
-		ip := net.ParseIP(c.ip)
-		if ip == nil {
-			t.Fatalf("net.ParseIP(%q) returned nil", c.ip)
-		}
-		if got := isPrivateOrReservedIP(ip); got != c.want {
-			t.Errorf("isPrivateOrReservedIP(%q) = %v, want %v", c.ip, got, c.want)
-		}
-	}
-}
-
 // ValidateUnifiedPushEndpointURL must reject non-https schemes and IP-literal
 // hosts in private/reserved ranges (including the cloud metadata address),
 // and accept public IP-literal hosts. IP literals avoid any DNS dependency
@@ -359,19 +324,19 @@ func TestUnifiedPushSenderSendRejectsNonHTTPS(t *testing.T) {
 
 // The dispatcher's UnifiedPush sender must refuse to dial private/loopback
 // addresses even when not overridden with a test client, proving the
-// production dial path (safeDialContext) is actually wired in and not just
+// production dial path (netguard.Dialer) is actually wired in and not just
 // bypassed by tests that swap in ts.Client().
 func TestUnifiedPushSenderRefusesPrivateAddressAtDialTime(t *testing.T) {
 	// Real keys, or Send refuses as unencrypted before it ever dials.
 	keyPath, publicKey := writeVAPIDKeyFile(t)
 	sender := NewUnifiedPushSender(nil, publicKey, keyPath)
 	// A loopback listener the sender must refuse to connect to via its real
-	// (non-test-overridden) transport, proving safeDialContext is active.
+	// (non-test-overridden) transport, proving the netguard dialer is active.
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer ts.Close()
-	// Use the sender's real transport (not ts.Client()) so safeDialContext runs;
+	// Use the sender's real transport (not ts.Client()) so the netguard dialer runs;
 	// only borrow the test server's TLS trust so the handshake itself would
 	// otherwise succeed if the dial were allowed through.
 	sender.client.Transport.(*http.Transport).TLSClientConfig = ts.Client().Transport.(*http.Transport).TLSClientConfig
@@ -379,7 +344,7 @@ func TestUnifiedPushSenderRefusesPrivateAddressAtDialTime(t *testing.T) {
 	device := keyedUnifiedPushDevice(t)
 	device.PushToken = ts.URL + "/topic"
 	err := sender.Send(context.Background(), device, NativePushMessage{Title: "Test"})
-	if err == nil || !strings.Contains(err.Error(), "no public address available") {
-		t.Fatalf("Send() error = %v, want safeDialContext's refusal", err)
+	if !errors.Is(err, netguard.ErrInternalAddress) {
+		t.Fatalf("Send() error = %v, want netguard.ErrInternalAddress", err)
 	}
 }
