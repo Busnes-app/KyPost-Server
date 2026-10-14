@@ -158,30 +158,26 @@ func domainOf(email string) string {
 // provesSendAs reports whether raw is the alias's own probe come back signed by
 // the alias domain: the account's SMTP got it signed there, or the alias
 // delivered it here. The IMAP server answering is the account holder's choice,
-// so only signed headers count, and a reply never does: an out-of-office or a
-// colleague answering a probe the account holder sent through their own SMTP
-// would otherwise prove the colleague's address for them.
+// so only the signed instances of signed headers are read, and a reply never
+// counts: an out-of-office or a colleague answering a probe the account holder
+// sent through their own SMTP would otherwise prove the colleague's address.
 func provesSendAs(raw []byte, alias sendas.Alias) bool {
 	signed := dkimSignedHeaders(raw, domainOf(alias.Email))
 	for _, h := range sendAsProofHeaders {
-		if !signed[h] {
+		if _, ok := signed[h]; !ok {
 			return false
 		}
 	}
-	msg, err := mail.ReadMessage(bytes.NewReader(raw))
-	if err != nil {
-		return false
-	}
-	ids := mailmsg.MessageIDs(msg.Header.Get("Message-ID"))
+	ids := mailmsg.MessageIDs(signed["message-id"])
 	if alias.ProbeMessageID == "" || len(ids) != 1 || ids[0] != alias.ProbeMessageID {
 		return false
 	}
-	if !strings.EqualFold(parseFromAddress(msg.Header.Get("From")), alias.Email) ||
-		!strings.Contains(msg.Header.Get("Subject"), alias.VerificationCode) {
+	if !strings.EqualFold(parseFromAddress(signed["from"]), alias.Email) ||
+		!strings.Contains(signed["subject"], alias.VerificationCode) {
 		return false
 	}
 	createdAt, cerr := time.Parse(time.RFC3339, alias.CreatedAt)
-	sentAt, derr := mail.ParseDate(msg.Header.Get("Date"))
+	sentAt, derr := mail.ParseDate(signed["date"])
 	if cerr != nil || derr != nil || sentAt.Before(createdAt) {
 		return false
 	}
