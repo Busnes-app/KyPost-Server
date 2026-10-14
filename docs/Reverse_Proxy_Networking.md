@@ -35,6 +35,7 @@ client pick its own address.
 | cloudflared container on `kypost-net` | its pinned address | `cf-connecting-ip` |
 | cloudflared → nginx → KyPost | nginx's address | `cf-connecting-ip` |
 | nginx or cloudflared on the host, via `127.0.0.1:5866` | `10.89.0.1/32` | as above |
+| Cloudflare proxied DNS (CDN) → nginx → KyPost | nginx's address | `x-forwarded-for`, with nginx restoring the visitor address (below) |
 
 - nginx with `x-forwarded-for`: `proxy_set_header X-Forwarded-For $remote_addr;`.
   `$proxy_add_x_forwarded_for` also works, because KyPost uses the right-most
@@ -43,8 +44,14 @@ client pick its own address.
   `cf-connecting-ip`. With nginx in between, nginx must pass the header on
   (`proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;`) and must be
   reachable only from cloudflared, or a client can send its own.
+- Behind Cloudflare's CDN, the peer nginx sees is a Cloudflare edge. Have nginx
+  take the visitor from `CF-Connecting-IP` only from Cloudflare's ranges
+  (`set_real_ip_from` each range from <https://www.cloudflare.com/ips/>,
+  `real_ip_header CF-Connecting-IP;`) and pass
+  `proxy_set_header X-Forwarded-For $remote_addr;`.
 - A proxy on the host reaching the published port does not arrive from
-  `127.0.0.1`. Docker hands the connection over from the `kypost-net` gateway,
+  `127.0.0.1`. With rootful Docker (rootless Docker and Podman may differ; check
+  `/api/status`), Docker hands the connection over from the `kypost-net` gateway,
   the first address of `KYPOST_SUBNET` (`10.89.0.1` by default), and every other
   process on the host arrives from it too. Trust it only with
   `KYPOST_BIND=127.0.0.1`; a proxy container on `kypost-net` is better.

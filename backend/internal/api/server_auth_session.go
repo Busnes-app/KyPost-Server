@@ -190,9 +190,31 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	defer budget.refund()
 
+	// Per-IP lockout, independent of the username. Closes the rotating-username
+	// hole in the per-account budget below: 50 failures from one address in 15
+	// minutes stops that address, whatever names it tried. Loose on purpose — a NAT
+	// egress or an office must not be easier to lock out than an account. Login is
+	// where a constant clientIP does the most damage, so it is where the proxy
+	// misconfiguration announces itself.
+	s.warnOnUnusedProxyHeaders(r)
+	ipLockoutKey := lockoutKeyForIP(clientIP(r))
+	ipLocked := func(retryAfter time.Duration) {
+		retrySeconds := int(retryAfter.Seconds()) + 1
+		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"error":             "too many failed attempts from this address, try again later",
+			"retryAfterSeconds": retrySeconds,
+		})
+	}
+	// Read-only, so a locked address never reaches the CAPTCHA provider.
+	if wait := s.loginIPLockout.lockedFor(ipLockoutKey); wait > 0 {
+		ipLocked(wait)
+		return
+	}
+
 	// CAPTCHA before any lockout write: a failed solution is refunded from the
-	// budget above, so if it created lockout entries, junk tokens could fill the
-	// tables for free.
+	// budget above, so if it created per-account entries, junk tokens could fill
+	// that table for free.
 	if s.captchaVerifier != nil {
 		ok, err := s.captchaVerifier.Verify(r.Context(), req.CaptchaToken, clientIP(r))
 		switch {
@@ -211,27 +233,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "captcha verification unavailable", http.StatusServiceUnavailable)
 			return
 		case !ok:
+			// A strike on the address only, so one address cannot keep provider
+			// calls in flight (each holds instance budget) indefinitely.
+			s.loginIPLockout.tryAttempt(ipLockoutKey)
 			http.Error(w, "captcha verification failed", http.StatusUnauthorized)
 			return
 		}
 	}
 
-	// Per-IP lockout, independent of the username. Closes the rotating-username
-	// hole in the per-account budget below: 50 failures from one address in 15
-	// minutes stops that address, whatever names it tried. Loose on purpose — a NAT
-	// egress or an office must not be easier to lock out than an account. Login is
-	// where a constant clientIP does the most damage, so it is where the proxy
-	// misconfiguration announces itself.
-	s.warnOnUnusedProxyHeaders(r)
-	ipLockoutKey := lockoutKeyForIP(clientIP(r))
 	allowed, retryAfter, ipStrike := s.loginIPLockout.tryAttempt(ipLockoutKey)
 	if !allowed {
-		retrySeconds := int(retryAfter.Seconds()) + 1
-		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
-		writeJSON(w, http.StatusTooManyRequests, map[string]any{
-			"error":             "too many failed attempts from this address, try again later",
-			"retryAfterSeconds": retrySeconds,
-		})
+		ipLocked(retryAfter)
 		return
 	}
 

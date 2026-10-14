@@ -71,9 +71,10 @@ const (
 	// all new sign-ins instance-wide.
 	//
 	// Eviction can forgive partial strikes, but only after the flood fills the
-	// table, and login entries are only written after the CAPTCHA and inside the
-	// instance KDF budget (loginKDFDutyCycle), so lockoutFor buys an attacker a
-	// few thousand keys, far short of this.
+	// table. Per-account login entries are written only after the CAPTCHA and
+	// inside the instance KDF budget (loginKDFDutyCycle), so lockoutFor buys an
+	// attacker a few thousand keys, far short of this. Per-IP entries cost one
+	// address each, and an attacker with that many addresses can rotate anyway.
 	loginLockoutHardCap = 50_000
 	// maxLockoutKeyComponentBytes bounds the caller-supplied half of a lockout
 	// key.
@@ -243,6 +244,17 @@ func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.D
 		e.lockedUntil = now.Add(l.lockoutFor)
 	}
 	return true, 0, lockoutReservation{key: username, at: now}
+}
+
+// lockedFor is how long key stays locked, or 0. Read-only: a pre-check, not a
+// reservation.
+func (l *failureLockout) lockedFor(key string) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e, ok := l.entries[key]; ok {
+		return max(e.lockedUntil.Sub(l.now()), 0)
+	}
+	return 0
 }
 
 // lockoutReservation identifies one strike spent by tryAttempt, so

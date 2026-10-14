@@ -40,14 +40,16 @@ func SetTrustedProxies(p config.TrustedProxies) {
 // which is true only when the request's own peer address is inside
 // trustedProxyNets — the one thing about a request a client cannot forge.
 func proxyHeadersTrusted(r *http.Request) bool {
-	if len(trustedProxyNets) == 0 {
-		return false
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = strings.TrimSpace(r.RemoteAddr)
 	}
-	ip := net.ParseIP(host)
+	return isTrustedProxy(host)
+}
+
+// isTrustedProxy reports whether addr is inside trustedProxyNets.
+func isTrustedProxy(addr string) bool {
+	ip := net.ParseIP(addr)
 	if ip == nil {
 		return false
 	}
@@ -70,10 +72,13 @@ func proxyHeadersTrusted(r *http.Request) bool {
 // address is how the session cookie's Secure flag ended up decided by a
 // client-supplied value.
 //
+// Every header line counts: a proxy that adds its own line after the client's
+// would otherwise leave the client's value first.
+//
 // Assumes a single trusted proxy in front; multi-proxy deployments should
 // terminate the chain at a known hop.
 func lastForwardedValue(r *http.Request, header string) string {
-	raw := r.Header.Get(header)
+	raw := strings.Join(r.Header.Values(header), ",")
 	if strings.TrimSpace(raw) == "" {
 		return ""
 	}
@@ -248,7 +253,7 @@ func warnOnRetiredProxyEnv(logger *logging.Logger) {
 // unusedProxyHeaderWarning fires warnOnUnusedProxyHeaders' message at most once
 // per process. This is a standing misconfiguration, not an event: repeating it on
 // every request would bury the log it is trying to be found in.
-var unusedProxyHeaderWarning sync.Once
+var unusedProxyHeaderWarning, proxySelfHeaderWarning sync.Once
 
 // warnOnUnusedProxyHeaders complains, once, when requests demonstrably arrive
 // through a proxy whose forwarding headers this server is discarding.
@@ -266,7 +271,20 @@ var unusedProxyHeaderWarning sync.Once
 // throwing it away. A directly-exposed server sees no such header and stays
 // quiet.
 func (s *Server) warnOnUnusedProxyHeaders(r *http.Request) {
-	if s.logger == nil || len(trustedProxyNets) != 0 {
+	if s.logger == nil {
+		return
+	}
+	if len(trustedProxyNets) != 0 {
+		// The selected header is missing or names a proxy (e.g. cloudflared's own
+		// appended X-Forwarded-For hop): every caller shares that one key.
+		if proxyHeadersTrusted(r) && isTrustedProxy(clientIP(r)) {
+			proxySelfHeaderWarning.Do(func() {
+				s.logger.Error("TRUSTED_PROXY_HEADER is missing or names a trusted proxy's own address, so every caller "+
+					"shares one lockout key. Behind cloudflared set TRUSTED_PROXY_HEADER=cf-connecting-ip; see "+
+					"docs/Reverse_Proxy_Networking.md.",
+					"header", clientIPHeader, "resolved", clientIP(r))
+			})
+		}
 		return
 	}
 	header := "CF-Connecting-IP"

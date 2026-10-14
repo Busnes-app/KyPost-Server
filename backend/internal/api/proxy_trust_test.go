@@ -173,6 +173,19 @@ func TestSpoofedCFConnectingIPIgnoredInForwardedForMode(t *testing.T) {
 	}
 }
 
+// A proxy that adds its own X-Forwarded-For line after the client's must win:
+// Header.Get reads only the first line, which the client wrote.
+func TestForwardedForReadsTheLastHeaderLine(t *testing.T) {
+	trustProxyCIDRsForTest(t, "10.89.0.1/32")
+	req := httptest.NewRequest(http.MethodGet, "http://backend.internal/api/x", nil)
+	req.RemoteAddr = "10.89.0.1:41000"
+	req.Header.Add("X-Forwarded-For", "1.2.3.4")
+	req.Header.Add("X-Forwarded-For", "203.0.113.9")
+	if got := clientIP(req); got != "203.0.113.9" {
+		t.Errorf("clientIP = %q, want the proxy's line 203.0.113.9", got)
+	}
+}
+
 // cloudflared appends its own hop to X-Forwarded-For, so in cf-connecting-ip mode
 // only CF-Connecting-IP names the client, and XFF is never read.
 func TestCFConnectingIPModeReadsOnlyCFConnectingIP(t *testing.T) {

@@ -143,6 +143,9 @@ type Server struct {
 	pickupStore          *pgpmail.PickupStore
 	poller               *processor.Poller
 	loginLockout         *failureLockout
+	// reviewPairingLockout is review pairing's own table: that route has no
+	// CAPTCHA or budget, so it must not be able to fill loginLockout.
+	reviewPairingLockout *failureLockout
 	davLockout           *failureLockout
 	mfaLockout           *failureLockout
 	// passwordChangeLockout bounds current-credential guessing on
@@ -400,6 +403,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		deviceReserving:          map[string]int{},
 		davCredentials:           newDAVCredentialCache(),
 		loginLockout:             newLoginLockout(),
+		reviewPairingLockout:     newLoginLockout(),
 		davLockout:               newFailureLockout(davMaxFailures, davLockoutFor),
 		mfaLockout:               newFailureLockout(mfaMaxFailures, mfaLockoutFor),
 		passwordChangeLockout:    newFailureLockout(passwordChangeMaxFailures, passwordChangeLockoutFor),
@@ -1086,6 +1090,7 @@ func (s *Server) logSaturatedLockouts() {
 	for name, lockout := range map[string]*failureLockout{
 		"login":           s.loginLockout,
 		"login_ip":        s.loginIPLockout,
+		"review_pairing":  s.reviewPairingLockout,
 		"dav":             s.davLockout,
 		"mfa":             s.mfaLockout,
 		"password_change": s.passwordChangeLockout,
