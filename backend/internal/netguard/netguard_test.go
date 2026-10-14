@@ -93,13 +93,13 @@ func TestDialerRefusesInternalUnlessAllowed(t *testing.T) {
 	defer cancel()
 
 	refuse := Dialer(ParseHosts("127.0.0.1, 169.254.169.254")) // literals never count
-	for _, host := range []string{"127.0.0.1", "169.254.169.254", "::1", "localhost", "localhost.evil.example"} {
+	for _, host := range []string{"127.0.0.1", "169.254.169.254", "::1", "localhost"} {
 		conn, err := refuse(ctx, "tcp", net.JoinHostPort(host, port))
 		if conn != nil {
 			conn.Close()
 		}
-		if err == nil {
-			t.Errorf("dial %s succeeded, want refusal", host)
+		if !errors.Is(err, ErrInternalAddress) {
+			t.Errorf("dial %s: %v, want ErrInternalAddress", host, err)
 		}
 	}
 
@@ -108,6 +108,12 @@ func TestDialerRefusesInternalUnlessAllowed(t *testing.T) {
 		t.Fatalf("allowlisted localhost: %v", err)
 	}
 	conn.Close()
+
+	// A lookalike of an allowed name is checked like any other name.
+	stubLookup(t, []net.IP{net.ParseIP("127.0.0.1")})
+	if _, err := Dialer(ParseHosts("localhost"))(ctx, "tcp", net.JoinHostPort("localhost.evil.example", port)); !errors.Is(err, ErrInternalAddress) {
+		t.Fatalf("lookalike of an allowed host: %v, want ErrInternalAddress", err)
+	}
 }
 
 // stubLookup answers every lookup with the next answer, counting calls.

@@ -18,6 +18,7 @@ package netguard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -137,27 +138,32 @@ var lookupIP = net.DefaultResolver.LookupIP
 
 // Dialer resolves the host once, refuses it if ANY address is internal, then
 // dials the checked addresses themselves, so DNS cannot answer differently in
-// between. Allowed hosts are dialled by name.
+// between. Allowed hosts are dialled by name. Connecting gets 10 seconds in
+// total, however many addresses the host has.
 func Dialer(allowed map[string]struct{}) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, err
 		}
-		d := net.Dialer{Timeout: 10 * time.Second}
+		var d net.Dialer
 		if HostAllowed(allowed, host) {
+			d.Timeout = 10 * time.Second
 			return d.DialContext(ctx, network, addr)
 		}
 		ips, err := lookupIP(ctx, "ip", host)
 		if err != nil {
 			return nil, err
 		}
+		refused := fmt.Errorf("%w: %s", ErrInternalAddress, host)
 		for _, ip := range ips {
 			if IsPrivateOrReserved(ip) {
-				return nil, ErrInternalAddress
+				return nil, refused
 			}
 		}
-		lastErr := ErrInternalAddress // no addresses at all
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		lastErr := refused // no addresses at all
 		for _, ip := range ips {
 			conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
 			if err == nil {
