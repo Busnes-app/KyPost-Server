@@ -106,7 +106,8 @@ on-device sorter or the classifier sees them. The defaults
 
 Dates, times, prices, IP addresses, version strings and short order numbers stay
 intact. Any 10-digit number, and any number of 9 or more digits starting with
-`0`, is read as a phone number.
+`0`, is read as a phone number. Not caught: national numbers written with dots
+(`030.12345678`, which looks like a `dd.mm.yyyy` date) or split across lines.
 
 The list is saved to `config.yaml` on first start and a saved list replaces the
 defaults whole, so an upgrade does not change it. To adopt the current defaults,
