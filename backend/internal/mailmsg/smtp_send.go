@@ -112,10 +112,9 @@ func ResolveSMTPTarget(payload IMAPConfigPayload) (smtpHost string, smtpPort int
 	}
 	smtpPort = payload.SMTPPort
 	if smtpPort <= 0 {
-		smtpPort = config.EnvInt("SMTP_PORT", 587)
-	}
-	if smtpPort <= 0 {
-		smtpPort = 587
+		if smtpPort, err = config.SMTPPort.Get(); err != nil {
+			return "", 0, "", err
+		}
 	}
 	return smtpHost, smtpPort, fmt.Sprintf("%s:%d", smtpHost, smtpPort), nil
 }
@@ -141,7 +140,8 @@ func ResolveSMTPTarget(payload IMAPConfigPayload) (smtpHost string, smtpPort int
 // for a genuinely plaintext relay on a trusted LAN. Off by default, and there
 // is deliberately no per-request way to set it: a downgrade has to be a
 // deployment decision, not something a caller or a remote server can trigger.
-var AllowInsecureSMTP = strings.EqualFold(strings.TrimSpace(os.Getenv("ALLOW_INSECURE_SMTP")), "true")
+// A malformed value reads as false here; config.CheckEnv refuses it at startup.
+var AllowInsecureSMTP, _ = config.EnvBool("ALLOW_INSECURE_SMTP")
 
 // requireSTARTTLS decides whether a submission session that did not negotiate
 // TLS may proceed to DATA.

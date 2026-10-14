@@ -19,9 +19,7 @@ import (
 
 // freeTCPPort asks the OS for a currently-unused TCP port by briefly binding
 // to port 0 and reading back what it was assigned. WEB_PORT can't just be set
-// to "0" for this: config.EnvInt treats 0 as "unset" and falls back to the
-// hardcoded production default (5866), which risks colliding with a real
-// instance or another test.
+// to "0" for this: config.WebPort refuses anything outside 1-65535.
 func freeTCPPort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

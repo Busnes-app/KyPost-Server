@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -267,12 +268,12 @@ type Server struct {
 	// comment for why sharing one instance matters.
 	wkdStore *wkdpublish.Store
 
-	// TLS state, resolved by Prepare from TLS_CERT_FILE/TLS_KEY_FILE. tlsConfig
-	// is nil for a plain-HTTP listener; tlsErr is non-nil when the configuration
-	// is broken, and Serve refuses to start rather than falling back to
-	// cleartext. See tls.go.
+	// Listener state, resolved by Prepare from WEB_PORT and TLS_CERT_FILE/
+	// TLS_KEY_FILE. tlsConfig is nil for a plain-HTTP listener; prepareErr is
+	// non-nil when either is broken, and Serve refuses to start rather than
+	// falling back to a default port or cleartext. See tls.go.
 	tlsConfig   *tls.Config
-	tlsErr      error
+	prepareErr  error
 	tlsCertFile string
 	tlsKeyFile  string
 
@@ -334,13 +335,14 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		SiteKey:   captchaSiteKey,
 		SecretKey: strings.TrimSpace(os.Getenv("CAPTCHA_SECRET_KEY")),
 	}
+	var maxNumberErr error
 	if captchaProvider == captcha.ProviderPoW {
 		captchaCfg.HMACKey = resolvePoWSecret(
 			config.SecretFile("POW_SECRET_FILE", "pow.key"), logger)
-		captchaCfg.MaxNumber = config.EnvInt("POW_MAX_NUMBER", 0)
+		captchaCfg.MaxNumber, maxNumberErr = config.PoWMaxNumber.Get()
 	}
 	captchaVerifier, err := captcha.NewVerifier(captchaCfg)
-	if err != nil {
+	if err = cmp.Or(maxNumberErr, err); err != nil {
 		// Misconfigured CAPTCHA must fail closed on login (see handleLogin)
 		// rather than silently running unprotected, but must not prevent the
 		// server itself from starting.
@@ -860,7 +862,7 @@ func (s *Server) Prepare() {
 	if err := os.RemoveAll(filepath.Join(s.stateDir, importDir)); err != nil {
 		s.logger.Error("leftover import uploads could not be removed", "error", err.Error())
 	}
-	port := config.EnvInt("WEB_PORT", 5866)
+	port, portErr := config.WebPort.Get()
 	// Timeouts are set explicitly because net/http's zero values mean "no limit":
 	// without them a connection that dribbles one header line every few seconds is
 	// held open indefinitely, and the shipped compose file publishes this port
@@ -889,6 +891,10 @@ func (s *Server) Prepare() {
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
+	if portErr != nil {
+		s.prepareErr = portErr
+		return
+	}
 
 	// Optional inbound TLS — see tls.go. The error is stashed rather than returned
 	// because Prepare has no error return; Serve surfaces it and refuses to start.
@@ -900,7 +906,7 @@ func (s *Server) Prepare() {
 		s.tlsConfig, err = newTLSConfig(certFile, keyFile)
 	}
 	if err != nil {
-		s.tlsErr = err
+		s.prepareErr = fmt.Errorf("tls configuration: %w", err)
 		return
 	}
 	if s.tlsConfig != nil {
@@ -918,9 +924,9 @@ func (s *Server) Serve() error {
 	if s.httpServer == nil {
 		s.Prepare()
 	}
-	// A TLS misconfiguration is fatal here rather than a fallback to cleartext.
-	if s.tlsErr != nil {
-		return fmt.Errorf("tls configuration: %w", s.tlsErr)
+	// Fatal here rather than a fallback to a default port or cleartext.
+	if s.prepareErr != nil {
+		return s.prepareErr
 	}
 
 	var err error

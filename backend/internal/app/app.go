@@ -76,6 +76,9 @@ func Run(args []string) error {
 		return BootstrapAdmin()
 	}
 
+	if err := config.CheckEnv(); err != nil {
+		return err
+	}
 	if _, err := config.LoadBackupConfig(); err != nil {
 		return err
 	}
@@ -553,9 +556,8 @@ func saveMFAClearAllCleared(path string, cleared map[string]struct{}) error {
 // If the clear fails partway, the marker is deliberately not written so the next
 // boot retries — but only for users not yet recorded in mfaClearAllProgressFile.
 func clearAllMFAIfRequested(logger *logging.Logger, usersStore *users.Store, stateDir string) {
-	if raw := strings.TrimSpace(os.Getenv("MFA_CLEAR_ALL")); raw == "" {
-		return
-	} else if enabled, err := strconv.ParseBool(raw); err != nil || !enabled {
+	// Run's config.CheckEnv has already refused a malformed value.
+	if enabled, _ := config.EnvBool("MFA_CLEAR_ALL"); !enabled {
 		return
 	}
 
@@ -629,7 +631,7 @@ func clearAllMFAIfRequested(logger *logging.Logger, usersStore *users.Store, sta
 func monitorHealth(ctx context.Context, logger *logging.Logger, healthSvc *health.Service) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
-	threshold := config.EnvInt("UNHEALTHY_RESTART_SECONDS", 300)
+	threshold, _ := config.UnhealthyRestartSeconds.Get() // validated by Run's config.CheckEnv
 	for {
 		select {
 		case <-ctx.Done():

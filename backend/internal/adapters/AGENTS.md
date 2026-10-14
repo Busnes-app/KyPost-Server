@@ -38,7 +38,7 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 ### `classifier/` — Classifier HTTP Client
 
 - Sends classification requests to Ollama `/api/generate` via HTTP POST
-- Admission control lives in `http_client.go`: `CLASSIFY_CONCURRENCY` (default 1) bounds in-flight generations via a channel semaphore, `CLASSIFY_PACE_MS` (default 0) inserts dead time between request starts. The pace was an unconditional 3 s, which capped the whole instance at 20 classifications/minute regardless of user count — it is not backpressure, since Ollama queues internally and the retry loop already backs off. Raise `CLASSIFY_CONCURRENCY` to match `OLLAMA_NUM_PARALLEL` or the extra capacity is unreachable
+- Admission control lives in `http_client.go`, reading `config.ClassifyConcurrency`/`ClassifyPaceMS`: `CLASSIFY_CONCURRENCY` (default 1) bounds in-flight generations via a channel semaphore, `CLASSIFY_PACE_MS` (default 0) inserts dead time between request starts. The pace was an unconditional 3 s, which capped the whole instance at 20 classifications/minute regardless of user count — it is not backpressure, since Ollama queues internally and the retry loop already backs off. Raise `CLASSIFY_CONCURRENCY` to match `OLLAMA_NUM_PARALLEL` or the extra capacity is unreachable
 - Implements exponential backoff on transient HTTP errors
 - `client.go` — high-level interface: accepts prompt + email text, returns raw model output string
 - `http_client.go` — low-level transport: request construction, admission control, retry loop, `Stats()` for queue depth

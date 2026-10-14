@@ -245,11 +245,11 @@ func TestServeRefusesToStartOnBrokenTLSConfig(t *testing.T) {
 	srv := newTestServer(t)
 	t.Setenv("TLS_CERT_FILE", filepath.Join(t.TempDir(), "nope.pem"))
 	t.Setenv("TLS_KEY_FILE", filepath.Join(t.TempDir(), "nope.key"))
-	t.Setenv("WEB_PORT", "0")
+	t.Setenv("WEB_PORT", "")
 
 	srv.Prepare()
-	if srv.tlsErr == nil {
-		t.Fatal("Prepare recorded no tlsErr for an unreadable keypair")
+	if srv.prepareErr == nil {
+		t.Fatal("Prepare recorded no prepareErr for an unreadable keypair")
 	}
 	if srv.httpServer.TLSConfig != nil {
 		t.Error("a broken TLS config was installed on the server")
@@ -267,8 +267,8 @@ func TestPrepareStaysPlainHTTPWithoutCerts(t *testing.T) {
 	t.Setenv("TLS_KEY_FILE", "")
 
 	srv.Prepare()
-	if srv.tlsErr != nil {
-		t.Errorf("tlsErr = %v with no TLS configured", srv.tlsErr)
+	if srv.prepareErr != nil {
+		t.Errorf("prepareErr = %v with no TLS configured", srv.prepareErr)
 	}
 	if srv.tlsConfig != nil || srv.httpServer.TLSConfig != nil {
 		t.Error("a TLS config was built with no certificate configured")
