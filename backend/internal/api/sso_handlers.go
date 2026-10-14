@@ -105,13 +105,19 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 
 	// A blank secret keeps the stored one, but only for the issuer and client it
 	// was issued for: a changed destination never receives the old secret.
-	if stored := s.ssoStore.Load(); req.ClientSecret == "" && req.IssuerURL == stored.IssuerURL && req.ClientID == stored.ClientID {
+	stored := s.ssoStore.Load()
+	if req.ClientSecret == "" && req.IssuerURL == stored.IssuerURL && req.ClientID == stored.ClientID {
 		req.ClientSecret = stored.ClientSecret
 	}
 
 	if err := s.ssoStore.Save(req); err != nil {
 		http.Error(w, "failed to save SSO settings: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// Sessions carry the issuer, client and admin ceiling they were minted
+	// under; a change to any of them, or disabling SSO, ends them all.
+	if req.Enabled != stored.Enabled || req.IssuerURL != stored.IssuerURL || req.ClientID != stored.ClientID || req.AdminGroup != stored.AdminGroup {
+		s.endSSOSessions()
 	}
 	// Links made at another provider name other people here. Idempotent, so a
 	// failed revocation is finished by saving again.
@@ -348,6 +354,7 @@ func (s *Server) startSSOFlow(w http.ResponseWriter, r *http.Request, settings s
 
 // handleSSOCallback processes the authorization code callback from the OIDC IdP.
 func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
+	epoch := s.ssoEpoch.Load() // before the settings it vouches for
 	settings := s.ssoStore.Load()
 	if !settings.Enabled || settings.IssuerURL == "" {
 		http.Error(w, "Single Sign-On is not configured or disabled", http.StatusServiceUnavailable)
@@ -509,7 +516,7 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.mintSession(w, r, Session{UserID: user.ID, SSO: identity, SSOAppAdmin: claims.AppAdmin(settings.AdminGroup), SSOKySignOn: claims.KySignOn()}); err != nil {
+	if err := s.mintSession(w, r, Session{UserID: user.ID, SSO: identity, SSOAppAdmin: claims.AppAdmin(settings.AdminGroup), SSOKySignOn: claims.KySignOn(), SSOEpoch: epoch}); err != nil {
 		http.Error(w, "failed to initialize session", http.StatusInternalServerError)
 		return
 	}
