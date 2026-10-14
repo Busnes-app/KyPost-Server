@@ -209,3 +209,32 @@ func TestNativeRuntimeStorageRetryPreservesLocalDeactivation(t *testing.T) {
 		t.Fatal("storage retry reauthorized locally revoked mailbox")
 	}
 }
+
+// The api answers exactly as sso.AdmitUserMailbox, which the daemon also uses;
+// with native mail off, primary and extra mailboxes refuse alike.
+func TestNativeAdmissionMatchesDaemon(t *testing.T) {
+	ctx := context.Background()
+	s := newNativeRuntimeServer(t)
+	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "admission-create", 1, runtimeDirectoryUser(true)))
+	u, err := s.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.ssoLifecycle.CreateNativeMailbox(ctx, s.stateDir, u.ID, "sales@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []bool{true, false} {
+		s.nativeMail = mode
+		for _, id := range []string{"", u.ID, m.ID, "mbx-unknown"} {
+			a, native, err := s.nativeMailboxAssignment(ctx, u.ID, id)
+			wa, wnative, werr := sso.AdmitUserMailbox(ctx, mode, sso.NewStore(s.configDir), sso.NewLifecycleStore(s.configDir), s.users, s.stateDir, u.ID, id)
+			if a.Owner != wa.Owner || native != wnative || !errors.Is(err, werr) {
+				t.Fatalf("mode %v mailbox %q: api (%v, %v, %v) shared (%v, %v, %v)", mode, id, a.Owner, native, err, wa.Owner, wnative, werr)
+			}
+			if !mode && (!native || !errors.Is(err, sso.ErrNativeMailDisabled)) {
+				t.Fatalf("mailbox %q with native mail off: (%v, %v)", id, native, err)
+			}
+		}
+	}
+}
