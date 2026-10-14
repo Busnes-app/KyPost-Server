@@ -76,7 +76,7 @@ func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
 		matches := re.FindStringSubmatch(str)
 		if len(matches) == 4 {
 			messageIndex, _ := strconv.Atoi(matches[1])
-			uid, _ := strconv.Atoi(matches[2])
+			uid, _ := strconv.ParseUint(matches[2], 10, 32) // KyPost patch: bounded parse
 			flags := strings.FieldsFunc(strings.ReplaceAll(matches[3], `\`, ""), func(r rune) bool {
 				return unicode.IsSpace(r) || r == ','
 			})
