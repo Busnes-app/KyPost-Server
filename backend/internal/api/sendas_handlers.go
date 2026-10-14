@@ -130,6 +130,11 @@ func (s *Server) handleSendAsCreate(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// The cooldown is per address and an alias can be deleted and re-added,
+	// so the probe also spends the sending quota.
+	if !s.admitSend(w, r.Context(), ac.UserID, 1) {
+		return
+	}
 	// 7. Create the pending record before attempting to send the probe
 	// email. Do not roll this back if sending fails (step 9) — a send
 	// failure just means the record sits pending until the daemon's expiry

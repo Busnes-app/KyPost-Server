@@ -90,7 +90,8 @@ export function ApplicationRuntime() {
         timezone: cfg.timezone,
         logLevel: cfg.logLevel,
         scan: cfg.scan,
-        rateLimits: cfg.rateLimits
+        rateLimits: cfg.rateLimits,
+        sendQuota: cfg.sendQuota
       });
       setConfigStatus("Configuration saved.");
     } catch {
@@ -161,6 +162,24 @@ export function ApplicationRuntime() {
             type="number"
             value={cfg.rateLimits.perHour}
             onChange={(event) => updateConfig("rateLimits", { ...cfg.rateLimits, perHour: Number(event.target.value) || 0 })}
+          />
+        </label>
+        <label>
+          <div>Sending Quota: Messages Per Hour (per user)</div>
+          <input
+            type="number"
+            min={1}
+            value={cfg.sendQuota.messagesPerHour}
+            onChange={(event) => updateConfig("sendQuota", { ...cfg.sendQuota, messagesPerHour: Number(event.target.value) || 0 })}
+          />
+        </label>
+        <label>
+          <div>Sending Quota: Recipients Per Day (per user)</div>
+          <input
+            type="number"
+            min={1}
+            value={cfg.sendQuota.recipientsPerDay}
+            onChange={(event) => updateConfig("sendQuota", { ...cfg.sendQuota, recipientsPerDay: Number(event.target.value) || 0 })}
           />
         </label>
         <label>

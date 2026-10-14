@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 
 	"github.com/Busnes-app/ky-primitives/password"
@@ -60,6 +61,8 @@ type User struct {
 	CreatedAt          string           `json:"createdAt"`
 	UpdatedAt          string           `json:"updatedAt"`
 	DeactivatedAt      string           `json:"deactivatedAt,omitempty"`
+	// SendQuota overrides the install-wide quota for this account; nil uses it.
+	SendQuota *config.SendQuota `json:"sendQuota,omitempty"`
 
 	// TOTPSecretEnc is a cryptutil envelope sealed with the dedicated TOTP key,
 	// set at enrollment; TOTPEnabled flips true on confirmation. Never exposed
@@ -364,11 +367,12 @@ type Public struct {
 	// revocation keeps the subject so directory sync can still address the
 	// account. A viewer shown the subject with no flag would read a revoked
 	// link as live. See User.SSOLinkRevokedAt.
-	SSOLinkRevoked  bool   `json:"ssoLinkRevoked,omitempty"`
-	PGPFingerprint  string `json:"pgpFingerprint,omitempty"`
-	PGPKeyID        string `json:"pgpKeyId,omitempty"`
-	PGPKeySource    string `json:"pgpKeySource,omitempty"`
-	PGPKeyCreatedAt string `json:"pgpKeyCreatedAt,omitempty"`
+	SSOLinkRevoked  bool              `json:"ssoLinkRevoked,omitempty"`
+	SendQuota       *config.SendQuota `json:"sendQuota,omitempty"`
+	PGPFingerprint  string            `json:"pgpFingerprint,omitempty"`
+	PGPKeyID        string            `json:"pgpKeyId,omitempty"`
+	PGPKeySource    string            `json:"pgpKeySource,omitempty"`
+	PGPKeyCreatedAt string            `json:"pgpKeyCreatedAt,omitempty"`
 	// PGPKeyProtection tells the client whether it must unwrap the private
 	// key itself ("client") or whether this is a legacy server-held key
 	// ("server") the UI should prompt the user to migrate.
@@ -396,6 +400,7 @@ func (u User) Public() Public {
 		PGPKeySource:       u.PGPKeySource,
 		PGPKeyCreatedAt:    u.PGPKeyCreatedAt,
 		PGPKeyProtection:   u.PGPProtection(),
+		SendQuota:          u.SendQuota,
 	}
 }
 
@@ -1573,6 +1578,15 @@ func (s *Store) SetRole(id string, role Role) (User, error) {
 	}
 	return s.mutateGuarded(id, guard, func(u *User) error {
 		u.Role = role
+		return nil
+	})
+}
+
+// SetSendQuota overrides the account's sending quota; nil returns it to the
+// install-wide one.
+func (s *Store) SetSendQuota(id string, q *config.SendQuota) (User, error) {
+	return s.mutate(id, func(u *User) error {
+		u.SendQuota = q
 		return nil
 	})
 }

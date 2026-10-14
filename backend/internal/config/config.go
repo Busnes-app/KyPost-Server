@@ -94,6 +94,8 @@ type Config struct {
 		PerHour   int `yaml:"perHour" json:"perHour"`
 	} `yaml:"rateLimits" json:"rateLimits"`
 
+	SendQuota SendQuota `yaml:"sendQuota" json:"sendQuota"`
+
 	Redaction struct {
 		Patterns []Pattern `yaml:"patterns" json:"patterns"`
 	} `yaml:"redaction" json:"redaction"`
@@ -373,6 +375,14 @@ func LoadLegacyNotificationPrefs(path string) (UserNotificationSettings, bool) {
 	return legacy.Notifications, true
 }
 
+// SendQuota bounds how much mail one user sends, over every send path.
+type SendQuota struct {
+	MessagesPerHour  int `yaml:"messagesPerHour" json:"messagesPerHour"`
+	RecipientsPerDay int `yaml:"recipientsPerDay" json:"recipientsPerDay"`
+}
+
+func (q SendQuota) Valid() bool { return q.MessagesPerHour > 0 && q.RecipientsPerDay > 0 }
+
 type Pattern struct {
 	Name        string `yaml:"name" json:"name"`
 	Regex       string `yaml:"regex" json:"regex"`
@@ -387,6 +397,7 @@ func Default() Config {
 	cfg.Scan.IntervalSeconds = 90
 	cfg.RateLimits.PerMinute = 10
 	cfg.RateLimits.PerHour = 20
+	cfg.SendQuota = SendQuota{MessagesPerHour: 60, RecipientsPerDay: 1000}
 	cfg.Redaction.Patterns = []Pattern{
 		{Name: "email", Regex: `(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`, Replacement: "[REDACTED_EMAIL]"},
 		{Name: "phone", Regex: `\b(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b`, Replacement: "[REDACTED_PHONE]"},

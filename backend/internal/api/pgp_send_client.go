@@ -115,6 +115,7 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 	// and this pass needs no IMAP config, so a malformed request still costs no
 	// config read and no SMTP connection.
 	prepared := make([]mailmsg.PreparedSMTPMessage, len(req.Deliveries))
+	total := 0
 	for i, delivery := range req.Deliveries {
 		recipients, rerr := parseDeliveryRecipients(delivery.Recipients)
 		if rerr != nil {
@@ -124,6 +125,7 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		if len(recipients) == 0 || strings.TrimSpace(delivery.Ciphertext) == "" {
 			continue
 		}
+		total += len(recipients)
 		if err := validateClientDeliveryShape(strings.TrimSpace(delivery.Ciphertext)); err != nil {
 			http.Error(w, fmt.Sprintf("delivery %d: %s", i, err), http.StatusBadRequest)
 			return
@@ -134,6 +136,10 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		prepared[i] = normalized
+	}
+	if total == 0 {
+		http.Error(w, "no deliveries supplied", http.StatusBadRequest)
+		return
 	}
 	if req.SendAt != "" {
 		if msg := validateScheduledPGP(&req, time.Now()); msg != "" {
@@ -183,6 +189,9 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		}
 		if !req.sendAt.IsZero() {
 			s.scheduleClientPGP(w, r, ac, u, req, true, from, "", deliveries, sent, nil)
+			return
+		}
+		if !s.admitSend(w, r.Context(), ac.UserID, total) {
 			return
 		}
 		s.finishNativeSend(w, r, ac, u, from, deliveries, sent, true, req.MaterialGeneration, 0, warning)
@@ -246,6 +255,9 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !req.sendAt.IsZero() {
 		s.scheduleClientPGP(w, r, ac, u, req, false, envelopeFrom, sanitizeHeaderValue(payload.Username), raw, nil, sentCopy)
+		return
+	}
+	if !s.admitSend(w, r.Context(), ac.UserID, total) {
 		return
 	}
 	account := smtpAccount{host: smtpHost, port: smtpPort, addr: addr, username: payload.Username, password: payload.Password}

@@ -5,9 +5,13 @@ export type AppConfig = {
   logLevel: string;
   scan: { intervalSeconds: number };
   rateLimits: { perMinute: number; perHour: number };
+  sendQuota: SendQuota;
   labels: { allowlist: string[]; keywordMappings: Record<string, string[]> };
   classifier: { baseUrl: string; apiKey: string; classifyPath: string; apiKeySet: boolean };
 };
+
+/** Mail one user may send: messages per hour and recipients per day. */
+export type SendQuota = { messagesPerHour: number; recipientsPerDay: number };
 
 export function uniqueLabels(labels: string[]): string[] {
   return Array.from(new Set(labels.map((label) => label.trim()).filter(Boolean)));
@@ -71,6 +75,7 @@ export function normalizeConfig(input: unknown): AppConfig {
   const classifier = obj(source.classifier);
   const scan = obj(source.scan);
   const rateLimits = obj(source.rateLimits);
+  const sendQuota = obj(source.sendQuota);
 
   return {
     timezone: str(source.timezone, "UTC"),
@@ -79,6 +84,10 @@ export function normalizeConfig(input: unknown): AppConfig {
     rateLimits: {
       perMinute: num(rateLimits.perMinute, 10),
       perHour: num(rateLimits.perHour, 20)
+    },
+    sendQuota: {
+      messagesPerHour: num(sendQuota.messagesPerHour, 60),
+      recipientsPerDay: num(sendQuota.recipientsPerDay, 1000)
     },
     labels: {
       allowlist: strArray(labels.allowlist),

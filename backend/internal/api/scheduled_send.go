@@ -388,16 +388,21 @@ func (s *Server) runScheduled(ctx context.Context, key []byte, row state.Schedul
 		return
 	}
 	deadline := time.Unix(row.SendAt, 0).Add(scheduledRetryWindow)
-	next, reason := state.ScheduledReturning, reasonLate
+	// A row held for quota keeps saying so, through to its return.
+	late := reasonLate
+	if row.Reason == reasonQuota {
+		late = reasonQuota
+	}
+	next, reason := state.ScheduledReturning, late
 	if !now().After(deadline) {
-		next, reason = s.dispatchScheduled(ctx, j)
+		next, reason = s.dispatchScheduled(ctx, j, now)
 	}
 	if next == state.ScheduledWaiting {
 		if retry := now().Add(scheduledRetryDelay); retry.Before(deadline) {
-			move(state.ScheduledWaiting, "", retry.Unix())
+			move(state.ScheduledWaiting, reason, retry.Unix())
 			return
 		}
-		next, reason = state.ScheduledReturning, reasonLate
+		next, reason = state.ScheduledReturning, cmp.Or(reason, reasonLate)
 	}
 	move(next, reason, 0)
 	if next == state.ScheduledReturning {
@@ -408,7 +413,7 @@ func (s *Server) runScheduled(ctx context.Context, key []byte, row state.Schedul
 
 // dispatchScheduled rechecks authority and sends, naming the row's next
 // status: a final one, returning with a reason, or scheduled to retry.
-func (s *Server) dispatchScheduled(ctx context.Context, j scheduledJob) (string, string) {
+func (s *Server) dispatchScheduled(ctx context.Context, j scheduledJob, now func() time.Time) (string, string) {
 	retry := state.ScheduledWaiting
 	reason, err := s.scheduledAuthority(ctx, j)
 	switch {
@@ -418,6 +423,19 @@ func (s *Server) dispatchScheduled(ctx context.Context, j scheduledJob) (string,
 		return retry, ""
 	case reason != "":
 		return state.ScheduledReturning, reason
+	}
+	recipients := 0
+	for _, d := range j.Job.Deliveries {
+		recipients += len(d.Recipients)
+	}
+	switch _, err := s.chargeSend(ctx, j.ID, j.UserID, recipients, now()); {
+	case errors.Is(err, state.ErrSendQuota):
+		s.logger.Warn("sending quota reached", "user_id", j.UserID, "correlation_id", j.ID)
+		return retry, reasonQuota
+	case errors.Is(err, state.ErrSendTooLarge):
+		return state.ScheduledReturning, err.Error()
+	case err != nil:
+		return retry, ""
 	}
 	if j.Native {
 		// The outbox worker delivers it and files Sent; the job ID is the row's.
