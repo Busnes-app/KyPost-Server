@@ -236,5 +236,12 @@ func TestNativeAdmissionMatchesDaemon(t *testing.T) {
 				t.Fatalf("mailbox %q with native mail off: (%v, %v)", id, native, err)
 			}
 		}
+		// A body-named extra mailbox: admitted, or 503 (not 404) while the mode is off.
+		r := httptest.NewRequest(http.MethodPost, "/api/export", nil)
+		r = r.WithContext(context.WithValue(r.Context(), authContextKey{}, AuthContext{UserID: u.ID}))
+		w := httptest.NewRecorder()
+		if _, ok := s.admitMailbox(w, r, m.ID); ok != mode || !mode && w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("mode %v: admitMailbox ok=%v status %d", mode, ok, w.Code)
+		}
 	}
 }

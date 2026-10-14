@@ -9,7 +9,7 @@ import (
 )
 
 // ErrNativeMailDisabled refuses a native account while KYPOST_NATIVE_MAIL is off.
-var ErrNativeMailDisabled = fmt.Errorf("%w: native mailbox mode is disabled; enable KYPOST_NATIVE_MAIL explicitly", ErrNativeProvisioning)
+var ErrNativeMailDisabled = fmt.Errorf("native mailbox mode is disabled; enable KYPOST_NATIVE_MAIL explicitly: %w", ErrNativeProvisioning)
 
 // AdmitUserMailbox is the native-mail admission the api and daemon share;
 // mailboxID "" is the primary. native is true for every native account, so a
