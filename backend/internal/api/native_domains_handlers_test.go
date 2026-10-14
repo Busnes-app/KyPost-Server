@@ -69,11 +69,11 @@ func TestNativeMailDomainsAdminSetAndRelayDomains(t *testing.T) {
 		}
 		return nil, err
 	})
-	confirm := `{"password":"` + password + `"}`
-	if w := call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"Second.test","password":"`+password+`"}`); w.Code != 409 {
+	confirm := `{"authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`
+	if w := call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"Second.test","authSecret":"`+userAuthSecret(srv, admin.ID, password)+`"}`); w.Code != 409 {
 		t.Fatal("uppercase domain accepted", w.Code, w.Body)
 	}
-	w := call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"second.test","password":"`+password+`"}`)
+	w := call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"second.test","authSecret":"`+userAuthSecret(srv, admin.ID, password)+`"}`)
 	var added struct {
 		Domain, RecordName, RecordValue string
 		Configured, Established         bool
@@ -105,37 +105,37 @@ func TestNativeMailDomainsAdminSetAndRelayDomains(t *testing.T) {
 		}
 		return w.Code, mailmsg.DomainRelay{Generation: got.Generation, Domains: got.Domains, RetiredDomains: got.RetiredDomains}
 	}
-	code, first := relay(`{"host":"smtp.example.test","smtpUsername":"login","smtpPassword":"secret","password":"` + password + `"}`)
+	code, first := relay(`{"host":"smtp.example.test","smtpUsername":"login","smtpPassword":"secret","authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`)
 	if code != 200 || !slices.Equal(first.Domains, []string{"example.test"}) {
 		t.Fatal("legacy relay shape", code, first)
 	}
-	code, both := relay(`{"domains":["second.test","example.test"],"password":"` + password + `"}`)
+	code, both := relay(`{"domains":["second.test","example.test"],"authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`)
 	if code != 200 || both.Generation != first.Generation || !slices.Equal(both.Domains, []string{"example.test", "second.test"}) {
 		t.Fatal("adding a relay domain", code, both)
 	}
-	if code, _ = relay(`{"domains":["example.test","unknown.test"],"password":"` + password + `"}`); code != 409 {
+	if code, _ = relay(`{"domains":["example.test","unknown.test"],"authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`); code != 409 {
 		t.Fatal("unverified relay domain accepted", code)
 	}
 	// A lapsed retained domain no longer blocks a credential rotation or the
 	// relay check; a newly added domain still needs fresh proof, and at least
 	// one domain must prove.
 	lapsed["second.test"] = true
-	code, rotated := relay(`{"host":"smtp.example.test","smtpUsername":"login","smtpPassword":"rotated","password":"` + password + `"}`)
+	code, rotated := relay(`{"host":"smtp.example.test","smtpUsername":"login","smtpPassword":"rotated","authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`)
 	if code != 200 || rotated.Generation == first.Generation || !slices.Equal(rotated.Domains, both.Domains) {
 		t.Fatal("lapsed retained domain blocked rotation", code, rotated)
 	}
 	if _, proofs, err := srv.nativeRelayCheckProfile(context.Background(), rotated.Generation, nil); err != nil || len(proofs) != 1 || proofs[0].Domain != "example.test" {
 		t.Fatal("lapsed retained domain blocked the relay check", proofs, err)
 	}
-	if w = call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"third.test","password":"`+password+`"}`); w.Code != 200 {
+	if w = call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"third.test","authSecret":"`+userAuthSecret(srv, admin.ID, password)+`"}`); w.Code != 200 {
 		t.Fatal("add third", w.Code, w.Body)
 	}
 	lapsed["third.test"] = true
-	if code, _ = relay(`{"domains":["example.test","second.test","third.test"],"password":"` + password + `"}`); code != 409 {
+	if code, _ = relay(`{"domains":["example.test","second.test","third.test"],"authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`); code != 409 {
 		t.Fatal("unproven new relay domain accepted", code)
 	}
 	lapsed["example.test"] = true
-	if code, _ = relay(`{"host":"smtp.example.test","smtpUsername":"login","smtpPassword":"rotated","password":"` + password + `"}`); code != 409 {
+	if code, _ = relay(`{"host":"smtp.example.test","smtpUsername":"login","smtpPassword":"rotated","authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`); code != 409 {
 		t.Fatal("relay rotated with no fresh proof", code)
 	}
 	if _, _, err := srv.nativeRelayCheckProfile(context.Background(), rotated.Generation, nil); err == nil {
@@ -176,7 +176,7 @@ func TestNativeMailDomainsAdminSetAndRelayDomains(t *testing.T) {
 	if err = box.QueueOutbound(context.Background(), master, jobID, mailbox.OutboundJob{From: "one@second.test", RelayGeneration: first.Generation, Deliveries: []mailbox.OutboundDelivery{{Recipients: []string{"receiver@outside.test"}, Raw: raw}}}); err != nil {
 		t.Fatal(err)
 	}
-	if code, _ = relay(`{"domains":["example.test"],"password":"` + password + `"}`); code != 409 {
+	if code, _ = relay(`{"domains":["example.test"],"authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`); code != 409 {
 		t.Fatal("removed a relay domain with a queued job", code)
 	}
 	if w = call("DELETE", "/api/admin/mail-domains/second.test", token, csrf, confirm); w.Code != 409 {
@@ -185,7 +185,7 @@ func TestNativeMailDomainsAdminSetAndRelayDomains(t *testing.T) {
 	if err = box.QuarantineOutbound(context.Background(), jobID, 0); err != nil {
 		t.Fatal(err)
 	}
-	code, removed := relay(`{"domains":["example.test"],"password":"` + password + `"}`)
+	code, removed := relay(`{"domains":["example.test"],"authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`)
 	if code != 200 || removed.Generation != first.Generation || !slices.Equal(removed.RetiredDomains, []string{"second.test"}) {
 		t.Fatal("relay domain removal", code, removed)
 	}
@@ -211,18 +211,18 @@ func TestNativeMailDomainsAdminSetAndRelayDomains(t *testing.T) {
 	if w = call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"second.test"}`); w.Code != 403 {
 		t.Fatal("re-add without confirmation", w.Code, w.Body)
 	}
-	if w = call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"second.test","password":"`+password+`"}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"established":false`) || !strings.Contains(w.Body.String(), `"retired":false`) {
+	if w = call("POST", "/api/admin/mail-domains", token, csrf, `{"domain":"second.test","authSecret":"`+userAuthSecret(srv, admin.ID, password)+`"}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"established":false`) || !strings.Contains(w.Body.String(), `"retired":false`) {
 		t.Fatal("re-add", w.Code, w.Body)
 	}
 	lapsed["second.test"] = true
-	if code, _ = relay(`{"domains":["example.test","second.test"],"password":"` + password + `"}`); code != 409 {
+	if code, _ = relay(`{"domains":["example.test","second.test"],"authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`); code != 409 {
 		t.Fatal("unproven re-added domain joined the relay", code)
 	}
 	lapsed["second.test"] = false
 	if w = call("POST", "/api/admin/mail-domains/second.test/verify", token, csrf, confirm); w.Code != 200 {
 		t.Fatal("verify re-added", w.Code, w.Body)
 	}
-	code, readded := relay(`{"domains":["example.test","second.test"],"password":"` + password + `"}`)
+	code, readded := relay(`{"domains":["example.test","second.test"],"authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`)
 	if code != 200 || readded.Generation != removed.Generation || !slices.Equal(readded.Domains, []string{"example.test", "second.test"}) || len(readded.RetiredDomains) != 0 {
 		t.Fatal("relay re-add", code, readded)
 	}

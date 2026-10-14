@@ -146,8 +146,6 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
       }>("/api/auth/login", {
         username,
         ...credentialFields(credential),
-        loginSalt: credential.loginSalt,
-        loginIterations: credential.loginIterations,
         captchaToken: captchaToken || undefined
       });
       if (res.mfaRequired && res.challengeId) {

@@ -218,7 +218,9 @@ All of these live in `/kypost/private`. **Back up this volume separately and sto
 ### Login Flow
 
 - Username + password, with per-account salt and work factor.
-- Password never reaches the server. The browser derives an authentication half (what gets sent) and a key-wrapping half (for PGP key encryption, stays in the browser).
+- Password never reaches the server. The browser derives an authentication half (what gets sent) and a key-wrapping half (for PGP key encryption, stays in the browser). Every credential check accepts only the derived half; a request carrying the password fails as a wrong credential.
+- An account still holding a pre-derived-auth password hash cannot sign in. To an unauthenticated caller it is indistinguishable from an unknown user or wrong password; the server logs a warning at startup and on each refused attempt, and Admin → Users flags it "needs password reset". An admin password reset restores access.
+- Exceptions: admin create/reset and `BOOTSTRAP_ADMIN_PASS` hand the server a temporary password. It derives and stores it in derived form immediately, and the forced first-login change replaces it with a credential the server never sees.
 - CAPTCHA challenge on login (optional, configurable: `pow`, `turnstile`, `friendly`, or `none`).
 - Proof-of-work CAPTCHA (`pow`) uses `crypto.subtle` and requires HTTPS (except localhost). Difficulty adapts per address; escalation is counted per IP and decays after 15 minutes or on successful login.
 - 3-strikes account lockout (15 minutes).

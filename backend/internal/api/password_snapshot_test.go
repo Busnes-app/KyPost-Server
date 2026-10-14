@@ -49,7 +49,7 @@ func TestPasswordSnapshotForcedChangePreservesPGP(t *testing.T) {
 				t.Fatalf("bootstrap: %d", rec.Code)
 			}
 			body, err := json.Marshal(map[string]any{
-				"oldPassword": temporary, "newAuthSecret": strings.Repeat("a", 64),
+				"oldAuthSecret": authSecretFor(srv, temporary), "newAuthSecret": strings.Repeat("a", 64),
 				"newLoginSalt":  base64.StdEncoding.EncodeToString([]byte("0123456789abcdef")),
 				"newIterations": 600000, "expectedRevision": snapshot.PGPRevision,
 			})

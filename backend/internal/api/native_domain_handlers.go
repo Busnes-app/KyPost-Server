@@ -40,7 +40,6 @@ func (s *Server) handleNativeMailDomain(w http.ResponseWriter, r *http.Request) 
 	}
 	var body struct {
 		Domain     string `json:"domain"`
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret"`
 	}
 	if !s.nativeDomainGate(w, r, &body) {
@@ -67,7 +66,6 @@ func (s *Server) handleNativeMailDomain(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleNativeMailDomainVerify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body struct {
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret"`
 	}
 	if !s.nativeDomainGate(w, r, &body) {
@@ -124,7 +122,6 @@ func (s *Server) handleNativeMailDomains(w http.ResponseWriter, r *http.Request)
 	}
 	var body struct {
 		Domain     string `json:"domain"`
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret"`
 	}
 	if !s.nativeDomainGate(w, r, &body) {
@@ -152,7 +149,6 @@ func (s *Server) handleNativeMailDomains(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleNativeMailDomainsVerify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body struct {
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret"`
 	}
 	if !s.nativeDomainGate(w, r, &body) {
@@ -178,7 +174,6 @@ func (s *Server) handleNativeMailDomainsVerify(w http.ResponseWriter, r *http.Re
 func (s *Server) handleNativeMailDomainsRetire(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body struct {
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret"`
 	}
 	if !s.nativeDomainGate(w, r, &body) {
@@ -207,7 +202,6 @@ func (s *Server) nativeDomainGate(w http.ResponseWriter, r *http.Request, into a
 		return false
 	}
 	var credential struct {
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret"`
 	}
 	if json.Unmarshal(raw, &credential) != nil {
@@ -219,5 +213,5 @@ func (s *Server) nativeDomainGate(w http.ResponseWriter, r *http.Request, into a
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return false
 	}
-	return s.confirmActor(w, r, ac.UserID, credential.Password, credential.AuthSecret)
+	return s.confirmActor(w, r, ac.UserID, credential.AuthSecret)
 }

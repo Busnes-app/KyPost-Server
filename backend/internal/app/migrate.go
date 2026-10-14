@@ -165,9 +165,9 @@ func openStores(logger *logging.Logger, configDir, stateDir string, legacyPrefs 
 	return usersStore, store, nil
 }
 
-// warnRetiredPasswordHashes names accounts whose password hash is not Argon2id
-// (pre-Argon2id scrypt): they can no longer sign in with a password until an
-// admin resets it. Never blocks startup and never rewrites a hash.
+// warnRetiredPasswordHashes names accounts that cannot sign in until an admin
+// resets the password: a legacy plaintext-password hash, or a pre-Argon2id
+// scrypt one. Never blocks startup and never rewrites a hash.
 func warnRetiredPasswordHashes(logger *logging.Logger, usersStore *users.Store) {
 	all, err := usersStore.List()
 	if err != nil {
@@ -176,17 +176,17 @@ func warnRetiredPasswordHashes(logger *logging.Logger, usersStore *users.Store) 
 	}
 	var ids []string
 	for _, u := range all {
-		if u.PasswordHash != "" && !users.IsArgon2idHash(u.PasswordHash) {
+		if u.NeedsPasswordReset() || u.PasswordHash != "" && !users.IsArgon2idHash(u.PasswordHash) {
 			ids = append(ids, u.ID)
 		}
 	}
 	if len(ids) == 0 {
 		return
 	}
-	logger.Warn("accounts hold a retired (pre-Argon2id) password hash and cannot sign in with a password; reset each in Admin → Users (POST /api/users/{id}/reset-password)",
+	logger.Warn("accounts hold a legacy or retired password hash and cannot sign in; reset each in Admin → Users (POST /api/users/{id}/reset-password)",
 		"count", strconv.Itoa(len(ids)))
 	// One line per account: a joined list outgrows the logger's 256-byte value cap.
 	for _, id := range ids {
-		logger.Warn("account holds a retired password hash", "user_id", id)
+		logger.Warn("account needs a password reset", "user_id", id)
 	}
 }

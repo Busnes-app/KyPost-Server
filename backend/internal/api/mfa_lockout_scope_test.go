@@ -15,7 +15,7 @@ import (
 // source address.
 func regenerateFrom(t *testing.T, srv *Server, userID, ip, password string) *httptest.ResponseRecorder {
 	t.Helper()
-	body, err := json.Marshal(map[string]string{"password": password})
+	body, err := json.Marshal(map[string]string{"authSecret": authSecretFor(srv, password)})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

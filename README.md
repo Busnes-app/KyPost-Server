@@ -227,12 +227,10 @@ for that to hold:
    random salt stored inside the envelope; authentication uses the account's
    login salt. Neither value can be computed from the other without the password.
 
-Point 1 was not true before. Earlier versions POSTed the plaintext password to
-`/api/auth/login` on every sign-in, so the server was handed the wrapping key's
-source material repeatedly and merely chose not to keep it — a few lines in the
-login handler would have opened every client-protected key on the instance. That
-made the claim in this section, and in the code, false. Existing accounts convert
-automatically on their next sign-in; nothing needs to be re-imported.
+The server accepts only the derived authentication half, never the password. An
+account still holding a hash from before derived authentication cannot sign in
+until an admin resets its password; such accounts are flagged "needs password
+reset" in Admin → Users.
 
 Your browser decrypts and signs. A person who takes the disk, a backup, or the
 memory of this process gets ciphertext.

@@ -102,7 +102,7 @@ func TestPushEnableAndStatusAndDeviceToggle(t *testing.T) {
 func loginChallenge(t *testing.T, srv *Server, username, password string) (challengeID string, methods []string) {
 	t.Helper()
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": username, "password": password})
+		map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -417,7 +417,7 @@ func TestLoginStopsOfferingPushWhenThrottled(t *testing.T) {
 	}
 
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": "ulf", "password": "pw-ulf-testpassword"})
+		map[string]string{"username": "ulf", "authSecret": testAuthSecret(srv, "ulf", "pw-ulf-testpassword")})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("throttled login must still succeed: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -508,7 +508,7 @@ func TestPushFinishRequiresTheBrowsersSecret(t *testing.T) {
 	enablePush(t, srv, u.ID)
 
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": username, "password": password})
+		map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login: status=%d body=%s", rec.Code, rec.Body.String())
 	}

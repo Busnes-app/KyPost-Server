@@ -78,7 +78,7 @@ func TestChangePasswordRevokesOtherSessions(t *testing.T) {
 	srv.sessions[otherToken] = Session{UserID: u.ID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: "csrf-b"}
 	srv.sessMu.Unlock()
 
-	body, _ := json.Marshal(map[string]string{"oldPassword": "old-password-testpassword", "newPassword": "new-password-testpassword"})
+	body, _ := json.Marshal(passwordChangeBody(srv, u.Username, "old-password-testpassword", "new-password-testpassword"))
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(body))
 	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: changingToken})
 	req.Header.Set("X-CSRF-Token", "csrf-a")

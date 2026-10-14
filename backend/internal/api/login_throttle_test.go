@@ -94,7 +94,7 @@ func TestLoginRequiresProofOfWorkByDefault(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	body, _ := json.Marshal(map[string]string{"username": u.Username, "password": "correct-horse-battery-staple"})
+	body, _ := json.Marshal(map[string]string{"username": u.Username, "authSecret": testAuthSecret(srv, u.Username, "correct-horse-battery-staple")})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 	req.RemoteAddr = "203.0.113.5:1234"
 	rec := httptest.NewRecorder()
@@ -142,8 +142,8 @@ func TestLoginRateLimitIsInstanceWide(t *testing.T) {
 	got429 := false
 	for i := range loginRateBurst + 40 {
 		body, _ := json.Marshal(map[string]string{
-			"username": "nobody-" + string(rune('a'+i%26)) + string(rune('a'+i/26)),
-			"password": "wrong-password-entirely",
+			"username":   "nobody-" + string(rune('a'+i%26)) + string(rune('a'+i/26)),
+			"authSecret": testAuthSecret(srv, "nobody-"+string(rune('a'+i%26))+string(rune('a'+i/26)), "wrong-password-entirely"),
 		})
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 		req.RemoteAddr = "198.51.100." + string(rune('0'+i%10)) + ":2000"
@@ -188,8 +188,8 @@ func TestLoginIPLockoutCatchesRotatingUsernames(t *testing.T) {
 	locked := false
 	for i := range maxFailures + 5 {
 		body, _ := json.Marshal(map[string]string{
-			"username": "victim-" + string(rune('a'+i%26)) + string(rune('0'+i/26)),
-			"password": "wrong-password-entirely",
+			"username":   "victim-" + string(rune('a'+i%26)) + string(rune('0'+i/26)),
+			"authSecret": testAuthSecret(srv, "victim-"+string(rune('a'+i%26))+string(rune('0'+i/26)), "wrong-password-entirely"),
 		})
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 		req.RemoteAddr = ip + ":3000"
@@ -207,7 +207,7 @@ func TestLoginIPLockoutCatchesRotatingUsernames(t *testing.T) {
 
 	// A different address must be unaffected — this must not become a way to
 	// lock the whole instance out.
-	body, _ := json.Marshal(map[string]string{"username": "someone", "password": "wrong-password-entirely"})
+	body, _ := json.Marshal(map[string]string{"username": "someone", "authSecret": testAuthSecret(srv, "someone", "wrong-password-entirely")})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 	req.RemoteAddr = "203.0.113.200:3000"
 	rec := httptest.NewRecorder()
@@ -233,7 +233,7 @@ func TestSuccessfulLoginDoesNotRefundTheIPBudget(t *testing.T) {
 	}
 
 	login := func(username, password string) int {
-		body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+		body, _ := json.Marshal(map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 		req.RemoteAddr = "198.51.100.90:4000"
 		rec := httptest.NewRecorder()
@@ -277,7 +277,7 @@ func TestLoginLockoutKeysAreBoundedInLength(t *testing.T) {
 
 	long := strings.Repeat("a", 65000)
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": long, "password": "irrelevant", "captchaToken": "wrong"})
+		map[string]string{"username": long, "authSecret": testAuthSecret(srv, long, "irrelevant"), "captchaToken": "wrong"})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
@@ -301,7 +301,7 @@ func TestLoginLockoutStillSeparatesDistinctUsernames(t *testing.T) {
 
 	for _, name := range []string{"alice", "bob"} {
 		rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-			map[string]string{"username": name, "password": "irrelevant", "captchaToken": "wrong"})
+			map[string]string{"username": name, "authSecret": testAuthSecret(srv, name, "irrelevant"), "captchaToken": "wrong"})
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("%s: status = %d, want 401", name, rec.Code)
 		}

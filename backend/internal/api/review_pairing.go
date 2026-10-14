@@ -5,86 +5,39 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-// handleReviewPairing is an explicit Play-review escape hatch. A trailing * in the configured
-// username admits that prefix; without it, only the exact configured account is admitted.
+// handleReviewPairing is an explicit Play-review escape hatch for the one
+// account named by REVIEW_PAIRING_USERNAME (exact match). It takes the same
+// derived credential and the same protections as handleLogin (verifyLogin);
+// any other username fails like a wrong password.
 func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
-	reviewPattern := strings.TrimSpace(os.Getenv("REVIEW_PAIRING_USERNAME"))
-	if reviewPattern == "" {
+	reviewUsername := users.NormalizeUsername(strings.TrimSpace(os.Getenv("REVIEW_PAIRING_USERNAME")))
+	if reviewUsername == "" {
 		http.NotFound(w, r)
 		return
 	}
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username     string `json:"username"`
+		AuthSecret   string `json:"authSecret"`
+		CaptchaToken string `json:"captchaToken,omitempty"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-
-	requestedUsername := strings.TrimSpace(req.Username)
-	lockKey := clampLockoutKeyComponent(users.NormalizeUsername(requestedUsername)) + "\x00" + lockoutKeyForIP(clientIP(r))
-	allowed, retryAfter, strike := s.loginLockout.tryAttempt(lockKey)
-	if !allowed {
-		w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
-		http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
-		return
-	}
-	credentialStart := time.Now() // failures padded from here; see settleCredentialTiming
-	u, err := s.users.GetByUsername(requestedUsername)
-	if err != nil || !u.Active || !reviewUsernameMatches(reviewPattern, requestedUsername) {
-		// Keep the configured-account failure indistinguishable from a bad password.
-		if err := s.equalizeLoginTiming(r.Context(), req.Password); err != nil {
-			s.loginLockout.cancelAttempt(strike)
-			writeKDFBusy(w)
-			return
-		}
-		s.settleCredentialTiming(r.Context(), credentialStart)
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
-		return
-	}
-	credential := req.Password
-	if u.UsesDerivedAuth() {
-		credential, err = users.DeriveAuthSecret(req.Password, u.LoginSalt, u.LoginIterations)
-		if err != nil {
-			s.loginLockout.cancelAttempt(strike)
-			http.Error(w, "review account is not configured correctly", http.StatusServiceUnavailable)
-			return
-		}
-	}
-	verified, verifyErr := verifyAccountCredential(r.Context(), u, req.Password, credential)
-	if verifyErr != nil {
-		s.loginLockout.cancelAttempt(strike)
-		writeKDFBusy(w)
-		return
-	}
-	if !verified {
-		s.settleCredentialTiming(r.Context(), credentialStart)
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+	u, ok := s.verifyLogin(w, r, req.Username, req.AuthSecret, req.CaptchaToken, func(u users.User) bool {
+		return users.NormalizeUsername(u.Username) == reviewUsername
+	})
+	if !ok {
 		return
 	}
 	if u.MustChangePassword || u.TOTPEnabled || u.PushMFAEnabled {
-		s.loginLockout.cancelAttempt(strike)
 		http.Error(w, "review account requires an interactive sign-in", http.StatusForbidden)
 		return
 	}
-	s.loginLockout.recordSuccess(lockKey)
 	s.writeNotificationPairing(w, u.ID)
-}
-
-func reviewUsernameMatches(pattern, username string) bool {
-	want := users.NormalizeUsername(strings.TrimSpace(pattern))
-	got := users.NormalizeUsername(username)
-	if strings.HasSuffix(want, "*") {
-		prefix := strings.TrimSuffix(want, "*")
-		return prefix != "" && strings.HasPrefix(got, prefix)
-	}
-	return got == want
 }

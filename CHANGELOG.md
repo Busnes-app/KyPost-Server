@@ -10,6 +10,14 @@ image. `:stable` is moved to that image only after its build attestation has
 been published *and* verified, and only when the release is the newest published
 non-prerelease version.
 
+## Unreleased
+
+**Before upgrading:** reset the password of every account flagged "needs password reset" in Admin → Users (or listed by the startup WARN); those accounts cannot sign in after the upgrade until you do. Update every API client and cached web bundle.
+
+- **BREAKING: the server never accepts the account password.** Login, step-up, MFA, password change, admin step-up, backup, mail import/export, mail-domain/relay admin, native-recovery, quarantine, sender-block and review-pairing routes accept only the browser-derived `authSecret`. Removed fields: login `password`, `loginSalt` and `loginIterations` (body is now `{username, authSecret, captchaToken?}`); `adminPassword` (use `adminAuthSecret`); password-change `oldPassword`/`newPassword` (use `oldAuthSecret`, `newAuthSecret`, `newLoginSalt`, `newIterations`). A login carrying `password` fails as a wrong credential; strict native-recovery routes answer 400. `GET /api/auth/login-params` no longer returns `derivation`.
+- **BREAKING: accounts with a pre-derived-auth password hash no longer convert on sign-in.** They are refused exactly like an unknown user until an admin resets the password (Admin → Users or `POST /api/users/{id}/reset-password`); the user then signs in with the temporary password and must change it. Find them: startup logs "accounts hold a legacy or retired password hash and cannot sign in…" plus one WARN per `user_id`; Admin → Users shows "needs password reset" (`needsPasswordReset` in `GET /api/users`). Admin-set and bootstrap passwords are stored derived immediately; `--mode bootstrap-admin` now also writes `ADMIN_LOGIN_SALT` and `ADMIN_LOGIN_ITERATIONS`, and an older `admin.env` hash without them needs a reset.
+- **BREAKING: review pairing takes `authSecret` and an exact username.** `POST /api/notifications/review-pairing` takes `{username, authSecret, captchaToken?}`; `REVIEW_PAIRING_USERNAME` matches one account exactly (the trailing-`*` wildcard is gone, so `demo*` matches nothing) and the route now shares login's CAPTCHA/PoW, per-IP and per-account lockouts, KDF budget and restore hold.
+
 ## 0.4.0 — 2026-10-13
 
 **Before upgrading:** find accounts and credentials still on retired scrypt hashes (they stop signing in; see the BREAKING entry below), read your `.env` (variables compose used to drop now apply), and back up the new `$SECRET_DIR/scheduled-send.key`. UnifiedPush devices without WebPush keys must pair again.

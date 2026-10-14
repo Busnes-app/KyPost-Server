@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"bytes"
 	"context"
 	"crypto/hmac"
@@ -11,8 +12,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -32,6 +39,92 @@ func loginParams(t *testing.T, srv *Server, username string) (string, int) {
 		t.Fatalf("decode login-params: %v", err)
 	}
 	return out.Salt, out.Iterations
+}
+
+var testAuthSecrets sync.Map
+
+// testAuthSecret is what a browser sends for username's password: the
+// derivation under the login parameters the server hands out. Cached, since
+// every derivation is a full PBKDF2 stretch.
+func testAuthSecret(srv *Server, username, password string) string {
+	salt, iterations := srv.loginParamsFor(username)
+	key := password + "\x00" + salt + "\x00" + strconv.Itoa(iterations)
+	if v, ok := testAuthSecrets.Load(key); ok {
+		return v.(string)
+	}
+	v, err := users.DeriveAuthSecret(password, salt, iterations)
+	if err != nil {
+		panic(err)
+	}
+	testAuthSecrets.Store(key, v)
+	return v
+}
+
+// authSecretFor is what a browser sends when the account whose password this is
+// confirms an action: the derivation under that account's salt. A password no
+// account holds yields a well-formed wrong secret. Two accounts sharing the
+// password are reported as AMBIGUOUS; use userAuthSecret/testAuthSecret instead.
+func authSecretFor(srv *Server, password string) string {
+	all, err := srv.users.List()
+	if err != nil {
+		panic(err)
+	}
+	match := ""
+	for _, u := range all {
+		if !u.UsesDerivedAuth() {
+			continue
+		}
+		secret := testAuthSecret(srv, u.Username, password)
+		if ok, _ := users.VerifyAuthSecret(context.Background(), u, secret); ok {
+			if match != "" {
+				// Not a panic: that would abort every later test in the binary.
+				fmt.Fprintln(os.Stderr, "AMBIGUOUS authSecretFor: password "+password+" is shared by several accounts")
+			}
+			match = secret
+		}
+	}
+	if match == "" {
+		return testAuthSecret(srv, "", password)
+	}
+	return match
+}
+
+// userAuthSecret is testAuthSecret for an account known by id.
+func userAuthSecret(srv *Server, userID, password string) string {
+	u, err := srv.users.Get(userID)
+	if err != nil {
+		panic(err)
+	}
+	return testAuthSecret(srv, u.Username, password)
+}
+
+// sessionAuthSecret is userAuthSecret for the account a session token belongs to.
+func sessionAuthSecret(srv *Server, token, password string) string {
+	srv.sessMu.Lock()
+	id := srv.sessions[token].UserID
+	srv.sessMu.Unlock()
+	return userAuthSecret(srv, id, password)
+}
+
+// verifyTestPassword reports whether password signs u in.
+func verifyTestPassword(srv *Server, u users.User, password string) (bool, error) {
+	return users.VerifyAuthSecret(context.Background(), u, testAuthSecret(srv, u.Username, password))
+}
+
+// passwordChangeBody is the /api/auth/password body the SPA sends.
+func passwordChangeBody(srv *Server, username, oldPassword, newPassword string) map[string]any {
+	const salt = "bmV3LXRlc3Qtc2FsdC0xNg==" // "new-test-salt-16"
+	iterations := users.LoginIterations()
+	newSecret, err := users.DeriveAuthSecret(newPassword, salt, iterations)
+	if err != nil {
+		panic(err)
+	}
+	return map[string]any{
+		"oldAuthSecret": testAuthSecret(srv, username, oldPassword),
+		"newAuthSecret": newSecret,
+		"newLoginSalt":  salt,
+		"newIterations": iterations,
+	}
 }
 
 func postLogin(t *testing.T, srv *Server, body map[string]any) *httptest.ResponseRecorder {
@@ -96,109 +189,150 @@ func TestLoginParamsDoesNotRevealAccountExistence(t *testing.T) {
 	}
 }
 
-// TestLegacyAccountUpgradesToDerivedAuthOnLogin covers the migration: an account
-// created before derived auth existed converts on its next successful sign-in,
-// after which the password is no longer accepted or needed.
-func TestLegacyAccountUpgradesToDerivedAuthOnLogin(t *testing.T) {
+// TestLoginAcceptsOnlyTheAuthSecret: the derived secret signs in; the correct
+// plaintext password, alone or alongside a wrong secret, is refused exactly
+// like a wrong credential.
+func TestLoginAcceptsOnlyTheAuthSecret(t *testing.T) {
 	srv := newTestServer(t)
+	const pw = "correct-horse-battery-staple"
+	if _, err := srv.users.Create(context.Background(), "derived-user", pw, users.RoleUser); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	salt, iterations := loginParams(t, srv, "derived-user")
+	authSecret := deriveAuthSecretForTest(t, pw, salt, iterations)
+
+	if rec := postLogin(t, srv, map[string]any{"username": "derived-user", "authSecret": authSecret}); rec.Code != http.StatusOK {
+		t.Fatalf("auth secret login: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	wrong := postLogin(t, srv, map[string]any{"username": "derived-user", "authSecret": strings0(64)})
+	for name, body := range map[string]map[string]any{
+		"password only":                {"username": "derived-user", "password": pw},
+		"password with a wrong secret": {"username": "derived-user", "password": pw, "authSecret": strings0(64)},
+	} {
+		rec := postLogin(t, srv, body)
+		if rec.Code != http.StatusUnauthorized || rec.Body.String() != wrong.Body.String() {
+			t.Errorf("%s: %d %q, want the wrong-credential 401 %q", name, rec.Code, rec.Body.String(), wrong.Body.String())
+		}
+	}
+}
+
+// TestLegacyAccountIsRefusedLikeAnUnknownUser: an account still holding a
+// plaintext-password hash cannot sign in with any credential, and the public
+// endpoints answer exactly as for a nonexistent user or a wrong password. The
+// refusal is logged by user_id only.
+func TestLegacyAccountIsRefusedLikeAnUnknownUser(t *testing.T) {
+	var logs bytes.Buffer
+	srv := newTestServer(t)
+	logger, err := logging.NewWithOutput(&logs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.logger = logger
 	const pw = "correct-horse-battery-staple"
 	u, err := srv.users.Create(context.Background(), "legacy-user", pw, users.RoleUser)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if u.UsesDerivedAuth() {
-		t.Fatal("a freshly created account should start legacy (the admin set its password)")
-	}
-
-	salt, iterations := loginParams(t, srv, "legacy-user")
-	authSecret := deriveAuthSecretForTest(t, pw, salt, iterations)
-
-	// Legacy login: client sends BOTH, server verifies the password and converts.
-	rec := postLogin(t, srv, map[string]any{
-		"username":        "legacy-user",
-		"password":        pw,
-		"authSecret":      authSecret,
-		"loginSalt":       salt,
-		"loginIterations": iterations,
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("legacy login: status %d (%s)", rec.Code, rec.Body.String())
-	}
-
-	after, err := srv.users.Get(u.ID)
+	plaintextHash, err := users.HashPassword(context.Background(), pw)
 	if err != nil {
-		t.Fatalf("Get: %v", err)
+		t.Fatalf("HashPassword: %v", err)
 	}
-	if !after.UsesDerivedAuth() {
-		t.Fatal("the account did not convert to derived auth after a successful legacy login")
-	}
-	if after.LoginSalt != salt {
-		t.Errorf("stored LoginSalt = %q, want the salt the client actually used (%q); otherwise the "+
-			"next login derives a different secret and the user is locked out", after.LoginSalt, salt)
-	}
+	plantLegacyCredential(t, srv, u.ID, plaintextHash)
 
-	// The derived secret now works on its own, with no password at all.
-	rec = postLogin(t, srv, map[string]any{"username": "legacy-user", "authSecret": authSecret})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("derived login after upgrade: status %d (%s)", rec.Code, rec.Body.String())
+	if salt, _ := loginParams(t, srv, "legacy-user"); salt != srv.syntheticLoginSalt("legacy-user") {
+		t.Error("login-params served a legacy account something other than the synthetic salt")
 	}
-
-	// And the plaintext password alone is no longer a credential — the whole
-	// point. If this passed, the server would still be accepting (and therefore
-	// still receiving) the value that opens the PGP vault.
-	rec = postLogin(t, srv, map[string]any{"username": "legacy-user", "password": pw})
-	if rec.Code == http.StatusOK {
-		t.Error("the plaintext password still authenticates after conversion; the server is still " +
-			"being handed the PGP vault's wrapping-key material on every login")
+	unknown := postLogin(t, srv, map[string]any{"username": "no-such-user", "authSecret": strings0(64)})
+	for name, body := range map[string]map[string]any{
+		"plaintext password":                {"username": "legacy-user", "password": pw},
+		"derived secret":                    {"username": "legacy-user", "authSecret": testAuthSecret(srv, "legacy-user", pw)},
+		"the stored hash input as a secret": {"username": "legacy-user", "authSecret": pw},
+	} {
+		rec := postLogin(t, srv, body)
+		if rec.Code != unknown.Code || rec.Body.String() != unknown.Body.String() || rec.Header().Get("Content-Type") != unknown.Header().Get("Content-Type") {
+			t.Errorf("%s: %d %q, want the unknown-user answer %d %q", name, rec.Code, rec.Body.String(), unknown.Code, unknown.Body.String())
+		}
+	}
+	if !strings.Contains(logs.String(), u.ID) || !strings.Contains(logs.String(), "password reset required") {
+		t.Errorf("legacy refusal was not logged by user_id: %q", logs.String())
+	}
+	if strings.Contains(logs.String(), pw) || strings.Contains(logs.String(), plaintextHash) {
+		t.Error("the log carries the password or its hash")
+	}
+	list := httptest.NewRecorder()
+	srv.handleUsersList(list, httptest.NewRequest(http.MethodGet, "/api/users", nil))
+	if !strings.Contains(list.Body.String(), `"needsPasswordReset":true`) {
+		t.Errorf("admin users list does not flag the legacy account: %s", list.Body.String())
 	}
 }
 
-// TestDerivedAuthRejectsCrossFormCredentials is the confusion guard. The salt is
-// public, so if the server would check a derived secret as a password (or the
-// reverse) anyone could authenticate with a value computed from the salt alone.
-func TestDerivedAuthRejectsCrossFormCredentials(t *testing.T) {
+// plantLegacyCredential rewrites an account into the pre-derivation shape: a
+// hash of the plaintext and no login parameters.
+func plantLegacyCredential(t *testing.T, srv *Server, userID, hash string) {
+	t.Helper()
+	plantPasswordHash(t, srv, userID, hash)
+	usersPath := filepath.Join(srv.configDir, "users.json")
+	raw, err := os.ReadFile(usersPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file map[string]any
+	if err := json.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range file["users"].([]any) {
+		if e := entry.(map[string]any); e["id"] == userID {
+			delete(e, "authDerivation")
+			delete(e, "loginSalt")
+			delete(e, "loginIterations")
+		}
+	}
+	if raw, err = json.Marshal(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(usersPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if u, err := srv.users.Get(userID); err != nil || !u.NeedsPasswordReset() {
+		t.Fatalf("planted account is not legacy: %v", err)
+	}
+}
+
+// TestAdminCreatedAccountsAreStoredDerived: admin create and admin reset hand
+// the server a plaintext password; it is stored derived at once, so the user's
+// first sign-in sends only the auth secret.
+func TestAdminCreatedAccountsAreStoredDerived(t *testing.T) {
 	srv := newTestServer(t)
-	const pw = "correct-horse-battery-staple"
-	u, err := srv.users.Create(context.Background(), "cross-form", pw, users.RoleUser)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
+	create := httptest.NewRecorder()
+	srv.handleUsersCreate(create, httptest.NewRequest(http.MethodPost, "/api/users",
+		strings.NewReader(`{"username":"new-hire","password":"temporary-test-password","role":"user"}`)))
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", create.Code, create.Body.String())
 	}
-	salt, iterations := loginParams(t, srv, "cross-form")
-	authSecret := deriveAuthSecretForTest(t, pw, salt, iterations)
-	if err := srv.users.UpgradeToDerivedAuth(context.Background(), u.ID, pw, authSecret, salt, iterations); err != nil {
-		t.Fatalf("UpgradeToDerivedAuth: %v", err)
+	u, err := srv.users.GetByUsername("new-hire")
+	if err != nil {
+		t.Fatalf("GetByUsername: %v", err)
+	}
+	if !u.UsesDerivedAuth() || u.NeedsPasswordReset() || strings.Contains(create.Body.String(), "needsPasswordReset") {
+		t.Fatalf("admin-created account stored legacy: %+v", u.Public())
+	}
+	if rec := postLogin(t, srv, map[string]any{"username": "new-hire", "authSecret": testAuthSecret(srv, "new-hire", "temporary-test-password")}); rec.Code != http.StatusOK {
+		t.Fatalf("first sign-in with the derived secret: %d %s", rec.Code, rec.Body.String())
 	}
 
-	converted, err := srv.users.Get(u.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
+	plantLegacyCredential(t, srv, u.ID, u.PasswordHash)
+	req := httptest.NewRequest(http.MethodPost, "/api/users/"+u.ID+"/reset-password", strings.NewReader(`{"password":"reset-test-password"}`))
+	req.SetPathValue("id", u.ID)
+	rec := httptest.NewRecorder()
+	srv.handleUsersResetPassword(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: %d %s", rec.Code, rec.Body.String())
 	}
-
-	// The derived secret must not be accepted as a password. Not because the
-	// salt alone yields it — PBKDF2 still needs the password — but because the
-	// two are different credentials for one account, and any call site that
-	// reached for the wrong verifier would silently accept the wrong one.
-	if ok, _ := users.VerifyPassword(context.Background(), converted, authSecret); ok {
-		t.Error("VerifyPassword accepted the derived auth secret; the two credential forms must be " +
-			"strictly disjoint so no call site can mix them")
+	if after, _ := srv.users.Get(u.ID); !after.UsesDerivedAuth() || after.NeedsPasswordReset() {
+		t.Fatal("admin reset did not convert a legacy account to derived auth")
 	}
-	// And the real password must not verify either, now that the account has
-	// converted: PasswordHash no longer covers it.
-	if ok, _ := users.VerifyPassword(context.Background(), converted, pw); ok {
-		t.Error("VerifyPassword accepted the plaintext password on a converted account")
-	}
-	// And a password must not be accepted as a derived secret.
-	if ok, _ := users.VerifyAuthSecret(context.Background(), converted, pw); ok {
-		t.Error("VerifyAuthSecret accepted the plaintext password")
-	}
-	// VerifyAuthSecret must refuse outright for a legacy account, so no call site
-	// can use it as a general-purpose check.
-	legacy, err := srv.users.Create(context.Background(), "still-legacy", pw, users.RoleUser)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if ok, _ := users.VerifyAuthSecret(context.Background(), legacy, pw); ok {
-		t.Error("VerifyAuthSecret returned true for a legacy account")
+	if rec := postLogin(t, srv, map[string]any{"username": "new-hire", "authSecret": testAuthSecret(srv, "new-hire", "reset-test-password")}); rec.Code != http.StatusOK {
+		t.Fatalf("sign-in after reset: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -228,7 +362,7 @@ func TestPasswordChangeCommitsCredentialAndRewrapTogether(t *testing.T) {
 	const newEnvelope = `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"CCCC","iv":"DDDD","ciphertext":"NEW"}`
 
 	body, _ := json.Marshal(map[string]any{
-		"oldPassword":     oldPw,
+		"oldAuthSecret":   testAuthSecret(srv, "rewrap-user", oldPw),
 		"newAuthSecret":   newSecret,
 		"newLoginSalt":    newSalt,
 		"newIterations":   600000,
@@ -263,32 +397,31 @@ func TestPasswordChangeCommitsCredentialAndRewrapTogether(t *testing.T) {
 	}
 }
 
-// TestPasswordChangeRefusesRewrapWithoutDerivedAuth guards the mismatched pair:
-// the legacy plaintext path resets the account to legacy derivation, so storing
-// an envelope alongside it would seal the key under a key nothing asks for.
-func TestPasswordChangeRefusesRewrapWithoutDerivedAuth(t *testing.T) {
+// TestPasswordChangeRejectsPlaintextFields: the retired oldPassword/newPassword
+// fields neither prove the current credential nor set a new one.
+func TestPasswordChangeRejectsPlaintextFields(t *testing.T) {
 	srv := newTestServer(t)
 	const oldPw = "correct-horse-battery-staple"
 	u, err := srv.users.Create(context.Background(), "mismatch-user", oldPw, users.RoleUser)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := srv.users.ClearMustChangePassword(u.ID); err != nil {
-		t.Fatalf("ClearMustChangePassword: %v", err)
+	change := func(body map[string]any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(raw))
+		rec := httptest.NewRecorder()
+		srv.handleChangePassword(rec, req.WithContext(context.WithValue(req.Context(), authContextKey{},
+			AuthContext{UserID: u.ID, Username: u.Username, Role: users.RoleUser})))
+		return rec
 	}
-
-	body, _ := json.Marshal(map[string]any{
-		"oldPassword":     oldPw,
-		"newPassword":     "another-correct-horse-battery",
-		"rewrappedPgpKey": `{"v":2}`,
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(body))
-	rec := httptest.NewRecorder()
-	srv.handleChangePassword(rec, req.WithContext(context.WithValue(req.Context(), authContextKey{},
-		AuthContext{UserID: u.ID, Username: u.Username, Role: users.RoleUser})))
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status %d, want 400: a rewrap alongside a plaintext change stores an envelope "+
-			"sealed under a key nothing will ask for", rec.Code)
+	if rec := change(map[string]any{"oldPassword": oldPw, "newPassword": "another-correct-horse-battery"}); rec.Code != http.StatusUnauthorized {
+		t.Errorf("plaintext oldPassword: status %d, want 401", rec.Code)
+	}
+	if rec := change(map[string]any{"oldAuthSecret": testAuthSecret(srv, u.Username, oldPw), "newPassword": "another-correct-horse-battery"}); rec.Code != http.StatusBadRequest {
+		t.Errorf("plaintext newPassword: status %d, want 400", rec.Code)
+	}
+	if after, _ := srv.users.Get(u.ID); after.PasswordHash != u.PasswordHash {
+		t.Error("a plaintext change body replaced the credential")
 	}
 }
 
@@ -302,9 +435,7 @@ func strings0(n int) string {
 
 // deriveAuthSecretForTest mirrors frontend/src/lib/authSecret.ts: stretch the
 // password with the server-supplied login salt, then HKDF-Expand under the auth
-// label. Kept in the test rather than in production code because the server must
-// never be able to perform this derivation — it does not have the password, and
-// that is the entire point.
+// label. Independent of users.DeriveAuthSecret so the two cross-check.
 func deriveAuthSecretForTest(t *testing.T, password, saltB64 string, iterations int) string {
 	t.Helper()
 	salt, err := base64.StdEncoding.DecodeString(saltB64)
@@ -329,87 +460,4 @@ func hkdfExtract(salt, ikm []byte) []byte {
 	mac := hmac.New(sha256.New, salt)
 	mac.Write(ikm)
 	return mac.Sum(nil)
-}
-
-// TestSPARequestShapeSignsInLegacyAccount pins the composition the shipped client
-// actually produces, which is the thing the other tests in this file do not cover.
-//
-// The regression it guards against: the SPA inferred "legacy" from an empty
-// login-params salt and sent authSecret ALONE. But loginParamsFor never returns an
-// empty salt — a legacy or nonexistent account gets a stable SYNTHETIC one, so the
-// endpoint cannot be used to enumerate accounts. The inference was therefore always
-// false, every legacy account got a 401, and since Create, the bootstrap admin and
-// SetPassword all produce legacy accounts, a fresh install had no account that could
-// sign in at all.
-//
-// Asserting on credentialFields' OUTPUT SHAPE rather than on a hand-written body is
-// the point: a test that sends both fields by hand passes whatever the client does.
-func TestSPARequestShapeSignsInLegacyAccount(t *testing.T) {
-	srv := newTestServer(t)
-	const pw = "correct-horse-battery-staple"
-	if _, err := srv.users.Create(context.Background(), "legacy-user", pw, users.RoleUser); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	salt, iterations := loginParams(t, srv, "legacy-user")
-	if salt == "" {
-		t.Fatal("login-params returned an empty salt for a legacy account; the synthetic-salt " +
-			"anti-enumeration property is what makes the client unable to detect legacy accounts")
-	}
-	authSecret := deriveAuthSecretForTest(t, pw, salt, iterations)
-
-	// Unauthenticated sign-in: the server does not disclose the derivation, so the
-	// client sends BOTH forms and lets the server pick.
-	rec := postLogin(t, srv, map[string]any{
-		"username":        "legacy-user",
-		"password":        pw,
-		"authSecret":      authSecret,
-		"loginSalt":       salt,
-		"loginIterations": iterations,
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("sign-in with both credential forms: status %d (%s)", rec.Code, rec.Body.String())
-	}
-
-	// And the shape that broke it, against a SECOND still-legacy account (the first
-	// one converted on the successful sign-in above, so it would no longer show the
-	// bug).
-	if _, err := srv.users.Create(context.Background(), "legacy-user2", pw, users.RoleUser); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	salt2, iterations2 := loginParams(t, srv, "legacy-user2")
-	rec = postLogin(t, srv, map[string]any{
-		"username":        "legacy-user2",
-		"authSecret":      deriveAuthSecretForTest(t, pw, salt2, iterations2),
-		"loginSalt":       salt2,
-		"loginIterations": iterations2,
-	})
-	if rec.Code == http.StatusOK {
-		t.Fatal("authSecret alone authenticated a legacy account; that form cannot be verified " +
-			"against a hash that covers the plaintext")
-	}
-}
-
-// TestLoginParamsDisclosesDerivationOnlyToTheAccountItself is the property that lets
-// the authenticated flows (step-up, re-auth, password change) send exactly one
-// credential form without re-introducing an account-existence oracle.
-func TestLoginParamsDisclosesDerivationOnlyToTheAccountItself(t *testing.T) {
-	srv := newTestServer(t)
-	if _, err := srv.users.Create(context.Background(), "someone", "correct-horse-battery-staple", users.RoleUser); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	for _, username := range []string{"someone", "no-such-account"} {
-		req := httptest.NewRequest(http.MethodGet, "/api/auth/login-params?username="+username, nil)
-		rec := httptest.NewRecorder()
-		srv.handleLoginParams(rec, req)
-		var out map[string]any
-		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if _, ok := out["derivation"]; ok {
-			t.Fatalf("unauthenticated login-params for %q disclosed the derivation; that tells an "+
-				"attacker whether the username names a converted (and therefore existing) account", username)
-		}
-	}
 }
