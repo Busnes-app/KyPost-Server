@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -20,10 +21,11 @@ func TestPairingEndpointsIgnoreTheRequestHost(t *testing.T) {
 	all, _ := srv.users.List()
 	owner := all[0]
 
+	body := pairingStepUpBody(t, srv, owner.ID)
 	pairingResponse := func() map[string]any {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/notifications/pairing", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/notifications/pairing", strings.NewReader(body))
 		req.Host = "attacker.example"
 		req.Header.Set("X-Forwarded-Host", "attacker.example")
 		authRequestAs(srv, req, owner.ID)

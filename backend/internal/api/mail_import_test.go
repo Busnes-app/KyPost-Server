@@ -78,7 +78,7 @@ func TestMailImport(t *testing.T) {
 		return w
 	}
 	start := func(c caller, fields string) *httptest.ResponseRecorder {
-		return call("POST", "/api/import", c, `{`+fields+`"password":"`+password+`"}`, nil)
+		return call("POST", "/api/import", c, `{`+fields+`"authSecret":"`+sessionAuthSecret(srv, c.token, password)+`"}`, nil)
 	}
 	grant := func(c caller, fields string) string {
 		t.Helper()
@@ -121,7 +121,7 @@ func TestMailImport(t *testing.T) {
 			t.Fatal(what, "left temp files", left)
 		}
 	}
-	w := call("POST", "/api/admin/mailboxes", adm, `{"user":"`+one.ID+`","address":"sales@example.test","password":"`+password+`"}`, nil)
+	w := call("POST", "/api/admin/mailboxes", adm, `{"user":"`+one.ID+`","address":"sales@example.test","authSecret":"`+userAuthSecret(srv, admin.ID, password)+`"}`, nil)
 	var extra sso.NativeMailbox
 	if json.Unmarshal(w.Body.Bytes(), &extra) != nil || w.Code != 200 {
 		t.Fatal("create extra", w.Code, w.Body)
@@ -155,8 +155,8 @@ func TestMailImport(t *testing.T) {
 	}{
 		{"no step-up", call("POST", "/api/import", me, `{}`, nil), 403},
 		{"oversized body", start(me, `"pad":"`+strings.Repeat("x", maxActionBytes)+`",`), 413},
-		{"wrong password", call("POST", "/api/import", me, `{"password":"wrong-password-here"}`, nil), 403},
-		{"no csrf", call("POST", "/api/import", caller{me.token, ""}, `{"password":"`+password+`"}`, nil), 403},
+		{"wrong password", call("POST", "/api/import", me, `{"authSecret":"`+userAuthSecret(srv, one.ID, "wrong-password-here")+`"}`, nil), 403},
+		{"no csrf", call("POST", "/api/import", caller{me.token, ""}, `{"authSecret":"`+userAuthSecret(srv, one.ID, password)+`"}`, nil), 403},
 		{"unsafe folder", start(me, `"folder":"a\\b",`), 400},
 		{"missing parent", start(me, `"folder":"Nope/Child",`), 404},
 		{"foreign mailbox", start(other, `"mailbox":"`+extra.ID+`",`), 404},
@@ -572,7 +572,6 @@ func tempUpload(t *testing.T, data []byte) string {
 func TestMailImportIdentities(t *testing.T) {
 	ctx := context.Background()
 	const password = "long-password-for-import"
-	const imapBody = `{"host":"imap.example.com","port":993,"security":"tls","username":"u","password":"` + password + `"}`
 	startAt := func(path, body string, s *Server, userID string, device ...string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -586,10 +585,10 @@ func TestMailImportIdentities(t *testing.T) {
 		return w
 	}
 	start := func(s *Server, userID string, device ...string) *httptest.ResponseRecorder {
-		return startAt("/api/import", `{"password":"`+password+`"}`, s, userID, device...)
+		return startAt("/api/import", `{"authSecret":"`+userAuthSecret(s, userID, password)+`"}`, s, userID, device...)
 	}
 	startIMAP := func(s *Server, userID string, device ...string) *httptest.ResponseRecorder {
-		return startAt("/api/import/imap", imapBody, s, userID, device...)
+		return startAt("/api/import/imap", `{"host":"imap.example.com","port":993,"security":"tls","username":"u","authSecret":"`+userAuthSecret(s, userID, password)+`"}`, s, userID, device...)
 	}
 
 	s := newNativeRuntimeServer(t)

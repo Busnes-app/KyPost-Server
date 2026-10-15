@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -39,40 +38,10 @@ var outboundIPGuard = isPrivateOrReservedIP
 // an http:// target is necessarily a public host reached in the clear.
 var outboundCardDAVSchemes = []string{"https"}
 
-// sandboxPrivateHosts names hosts that may resolve to private space anyway.
-//
-// A sandbox deployment runs its CardDAV server on a compose network, so its
-// address is private by definition and the guard below refuses it — which
-// leaves the CardDAV path untestable end to end. Empty unless an operator sets
-// SANDBOX_PRIVATE_HOSTS, so production is unchanged.
-//
-// Hostnames only, matched exactly. IP literals are never allowed: the entire
-// point of the guard is that a URL naming a private address is refused, and
-// accepting literals here would make one entry a general SSRF primitive.
-var sandboxPrivateHosts = parseSandboxPrivateHosts(os.Getenv("SANDBOX_PRIVATE_HOSTS"))
-
-func parseSandboxPrivateHosts(raw string) map[string]struct{} {
-	hosts := make(map[string]struct{})
-	for _, h := range strings.Split(raw, ",") {
-		h = strings.ToLower(strings.TrimSpace(h))
-		if h == "" || net.ParseIP(h) != nil {
-			continue
-		}
-		hosts[h] = struct{}{}
-	}
-	return hosts
-}
-
-// sandboxHostAllowed reports whether host is listed. Exact match after case
-// folding — no suffix or wildcard matching, so a name an attacker controls
-// cannot swallow an entry by extending it.
-func sandboxHostAllowed(allowed map[string]struct{}, host string) bool {
-	if len(allowed) == 0 || host == "" || net.ParseIP(host) != nil {
-		return false
-	}
-	_, ok := allowed[strings.ToLower(host)]
-	return ok
-}
+// sandboxPrivateHosts is the operator's SANDBOX_PRIVATE_HOSTS allowlist; see
+// netguard.AllowedHosts. It lets a sandbox reach a CardDAV host on a compose
+// network.
+var sandboxPrivateHosts = netguard.AllowedHosts
 
 // validateOutboundURL rejects URLs that are not safe for this server to make
 // requests to on a user's behalf: schemes outside allowedSchemes, and hosts
@@ -107,7 +76,7 @@ func validateOutboundURLWithSandbox(rawURL string, allowed map[string]struct{}, 
 	// server may connect, not whether the user's password crosses the wire in
 	// the clear. Resolution is skipped too, since a compose hostname does not
 	// resolve outside the network it belongs to.
-	if sandboxHostAllowed(allowed, host) {
+	if netguard.HostAllowed(allowed, host) {
 		return nil
 	}
 	if ip := net.ParseIP(host); ip != nil {
@@ -151,7 +120,7 @@ func sandboxAwareDialContext(allowed map[string]struct{}) func(context.Context, 
 		// straight to the dialer and let it try every address the way it normally
 		// would. Pinning one resolved IP here would break a host that answers on
 		// both families.
-		if sandboxHostAllowed(allowed, host) {
+		if netguard.HostAllowed(allowed, host) {
 			dialer := &net.Dialer{Timeout: 10 * time.Second}
 			return dialer.DialContext(ctx, network, addr)
 		}

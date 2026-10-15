@@ -18,6 +18,9 @@ type Alias struct {
 	// for Store.Confirm, so it must never reach an API response: a session
 	// that can read it can verify any address without reading its mailbox.
 	VerificationCode string `json:"verificationCode,omitempty"`
+	// ProbeMessageID is the Message-ID the probe email is sent with. The DKIM
+	// proof must be that exact message coming back signed, not a reply to it.
+	ProbeMessageID string `json:"probeMessageId,omitempty"`
 	// ConfirmAttempts counts wrong codes typed against this record; at
 	// maxConfirmAttempts the record fails.
 	ConfirmAttempts int    `json:"confirmAttempts,omitempty"`

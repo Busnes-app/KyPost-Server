@@ -25,7 +25,7 @@ func instanceBudget(t *testing.T, srv *Server) float64 {
 // loginFrom posts a login and reports the status code.
 func loginFrom(t *testing.T, srv *Server, ip, username, password string) int {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	body, _ := json.Marshal(map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 	req.RemoteAddr = ip + ":1234"
 	rec := httptest.NewRecorder()

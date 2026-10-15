@@ -79,6 +79,9 @@ type Server struct {
 
 	// sessMu guards sessions only.
 	sessMu sync.RWMutex
+	// ssoEpoch counts SSO trust changes (endSSOSessions); an SSO session
+	// minted under an older epoch is dead.
+	ssoEpoch atomic.Uint64
 	// pairingMu serializes native registration with credential revocation. A
 	// pairing token resolves its owner before it writes a device; revocation must
 	// not delete devices and rotate the subscriber between those two operations.
@@ -143,8 +146,8 @@ type Server struct {
 	pickupStore          *pgpmail.PickupStore
 	poller               *processor.Poller
 	loginLockout         *failureLockout
-	// reviewPairingLockout is review pairing's own table: that route has no
-	// CAPTCHA or budget, so it must not be able to fill loginLockout.
+	// reviewPairingLockout is review pairing's own per-account table (its
+	// verifyLogin accountLockout), so that route can never fill loginLockout.
 	reviewPairingLockout *failureLockout
 	davLockout           *failureLockout
 	mfaLockout           *failureLockout
@@ -538,7 +541,7 @@ func (s *Server) routesAuth(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mfa/totp/confirm", s.withAuth(s.handleMFAConfirm))
 	mux.HandleFunc("POST /api/mfa/totp/disable", s.withAuth(s.handleMFADisable))
 	mux.HandleFunc("POST /api/mfa/recovery-codes/regenerate", s.withAuth(s.handleMFARecoveryCodesRegenerate))
-	mux.HandleFunc("PUT /api/mfa/push/enabled", s.withAuth(s.handleMFAPushEnabled))
+	mux.HandleFunc("PUT /api/mfa/push/enabled", s.withAuth(withActionDigest(s.handleMFAPushEnabled)))
 	mux.HandleFunc("GET /api/auth/me", withSelfAuth(s.handleMe))
 	mux.HandleFunc("GET /api/auth/csrf", withSelfAuth(s.handleCSRFToken))
 	mux.HandleFunc("POST /api/auth/logout", s.withAuth(s.handleLogout))
@@ -807,14 +810,14 @@ func (s *Server) routesPGP(mux *http.ServeMux) {
 // per-device credentials rather than a session, so they carry no middleware
 // here and check inside the handler.
 func (s *Server) routesNotifications(mux *http.ServeMux) {
-	mux.HandleFunc("PUT /api/notifications/native/devices/{deviceId}/mfa", s.withAuth(s.handleNativeDeviceMFA))
+	mux.HandleFunc("PUT /api/notifications/native/devices/{deviceId}/mfa", s.withAuth(withActionDigest(s.handleNativeDeviceMFA)))
 	mux.HandleFunc("GET /api/notifications/preferences", s.withAuth(s.handleNotificationPreferences))
 	mux.HandleFunc("PUT /api/notifications/preferences", s.withAuth(s.handleNotificationPreferences))
 	mux.HandleFunc("GET /api/notifications/vapid-public-key", s.withAuth(s.handleNotificationVAPIDPublicKey))
 	mux.HandleFunc("POST /api/notifications/subscriptions", s.withAuth(s.handleNotificationSubscriptions))
 	mux.HandleFunc("DELETE /api/notifications/subscriptions", s.withAuth(s.handleNotificationSubscriptions))
 	mux.HandleFunc("POST /api/notifications/test", s.withAuth(s.handleNotificationTest))
-	mux.HandleFunc("GET /api/notifications/pairing", s.withAuth(s.handleNotificationPairing))
+	mux.HandleFunc("POST /api/notifications/pairing", s.withAuth(withActionDigest(s.handleNotificationPairing)))
 	mux.HandleFunc("POST /api/notifications/review-pairing", withPublicRoute(s.handleReviewPairing))
 	mux.HandleFunc("POST /api/auth/native/signon", withTokenAuth(s.handleNativeSignOn))
 	// withTokenAuth, not withDeviceAuth: registration creates the device, so
@@ -863,6 +866,7 @@ func (s *Server) Prepare() {
 	if err := os.RemoveAll(filepath.Join(s.stateDir, importDir)); err != nil {
 		s.logger.Error("leftover import uploads could not be removed", "error", err.Error())
 	}
+	s.bindUnboundSSOLinks()
 	port := config.EnvInt("WEB_PORT", 5866)
 	// Timeouts are set explicitly because net/http's zero values mean "no limit":
 	// without them a connection that dribbles one header line every few seconds is

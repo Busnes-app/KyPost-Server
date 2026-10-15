@@ -204,7 +204,7 @@ func issueChallenge(t *testing.T, srv *Server, ip string) captcha.Challenge {
 // doLoginFrom posts a login that is expected to fail, from a given IP.
 func doLoginFrom(t *testing.T, srv *Server, ip, username, password string) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	body, _ := json.Marshal(map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 	req.RemoteAddr = ip + ":1234"
 	srv.handleLogin(httptest.NewRecorder(), req)

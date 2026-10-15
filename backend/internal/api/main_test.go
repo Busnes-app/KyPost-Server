@@ -30,11 +30,15 @@ import (
 // bucket itself stays entirely real, so a test that drains it still gets a 429.
 func TestMain(m *testing.M) {
 	restoreParams := users.SetHashParamsForTest(password.Params{Memory: 8 * 1024, Time: 1, Threads: 1})
+	// Every created account is derived server-side (PBKDF2), which -race makes
+	// ~175 ms at the production floor; no test here is about the work factor.
+	restoreIterations := users.SetLoginIterationsForTest(1000)
 	loginKDFBilledSeconds = func(time.Duration) float64 { return loginKDFReserveSeconds }
 	// The drive reserve (5 GiB or more) would tie imports to the host's free
 	// space; tests that check it set their own disk.
 	fsutil.DiskSpace = func(string) (uint64, uint64, error) { return 1 << 50, 1 << 50, nil }
 	code := m.Run()
+	restoreIterations()
 	restoreParams()
 	os.Exit(code)
 }

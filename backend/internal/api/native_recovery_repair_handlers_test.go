@@ -29,7 +29,10 @@ import (
 )
 
 const nativeRepairPath = "/api/admin/native-recovery/repair"
-const nativeRepairBody = `{"password":"operator-test-password"}`
+
+func nativeRepairBody(s *Server) string {
+	return `{"authSecret":"` + authSecretFor(s, "operator-test-password") + `"}`
+}
 
 type nativeRepairFixture struct {
 	s                    *Server
@@ -108,7 +111,7 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 	if err = client.ApplyLabel(context.Background(), strconv.FormatInt(message, 10), "Retained"); err != nil {
 		t.Fatal(err)
 	}
-	w := doJSON(s, s.handleLogin, "POST", "/api/auth/login", map[string]string{"username": u.Username, "password": "retained-native-password"})
+	w := doJSON(s, s.handleLogin, "POST", "/api/auth/login", map[string]string{"username": u.Username, "authSecret": testAuthSecret(s, u.Username, "retained-native-password")})
 	if w.Code != 200 {
 		t.Fatal("native pre-hold login", w.Code)
 	}
@@ -155,7 +158,7 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 	}
 	cookie := sessionCookieFrom(w)
 	fingerprint := sha256.Sum256([]byte(testSyncKey))
-	b, _ := json.Marshal(map[string]any{"password": recoveryAdminPassword, "systemId": "paired-system", "keyFingerprint": hex.EncodeToString(fingerprint[:])})
+	b, _ := json.Marshal(map[string]any{"authSecret": authSecretFor(s, recoveryAdminPassword), "systemId": "paired-system", "keyFingerprint": hex.EncodeToString(fingerprint[:])})
 	w = gatedCall(t, s, cookie, "POST", "/api/admin/native-recovery/challenge", string(b), "")
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
@@ -186,7 +189,7 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ = json.Marshal(map[string]any{"password": recoveryAdminPassword, "bodyBase64": base64.StdEncoding.EncodeToString(rawEvidence), "signature": headers.Signature, "timestamp": headers.Timestamp, "eventType": headers.EventType, "eventId": headers.EventID})
+	b, _ = json.Marshal(map[string]any{"authSecret": authSecretFor(s, recoveryAdminPassword), "bodyBase64": base64.StdEncoding.EncodeToString(rawEvidence), "signature": headers.Signature, "timestamp": headers.Timestamp, "eventType": headers.EventType, "eventId": headers.EventID})
 	w = gatedCall(t, s, cookie, "POST", "/api/admin/native-recovery/evidence", string(b), "")
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
@@ -221,7 +224,7 @@ func TestNativeRecoveryRepairHTTPReconcilesAndRevokesWhileHeld(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			w := gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody, "")
+			w := gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody(f.s), "")
 			if w.Code != 200 || !strings.Contains(w.Body.String(), `"accountsRepaired":true`) || !strings.Contains(w.Body.String(), `"restoreHeld":true`) {
 				t.Fatal(w.Code, w.Body.String())
 			}
@@ -284,13 +287,13 @@ func TestNativeRecoveryRepairHTTPReconcilesAndRevokesWhileHeld(t *testing.T) {
 			if w = gatedCall(t, f.s, f.nativeCookie, "GET", "/api/admin/mail-domain", "", ""); w.Code != 401 {
 				t.Fatal("native old session usable", w.Code)
 			}
-			if w = doJSON(f.s, f.s.handleLogin, "POST", "/api/auth/login", map[string]string{"username": f.native.Username, "password": "retained-native-password"}); w.Code != 401 {
+			if w = doJSON(f.s, f.s.handleLogin, "POST", "/api/auth/login", map[string]string{"username": f.native.Username, "authSecret": testAuthSecret(f.s, f.native.Username, "retained-native-password")}); w.Code != 401 {
 				t.Fatal("native password usable", w.Code)
 			}
 			if sso.RequireNativeRestoreReleased(f.s.stateDir) == nil {
 				t.Fatal("hold released")
 			}
-			if w = gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody, ""); w.Code != 409 {
+			if w = gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody(f.s), ""); w.Code != 409 {
 				t.Fatal("repair repeated", w.Code)
 			}
 		})
@@ -305,10 +308,10 @@ func TestNativeRecoveryRepairHTTPFailsClosed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			body := nativeRepairBody
+			body := nativeRepairBody(f.s)
 			switch scenario {
 			case "bad-password":
-				body = `{"password":"wrong"}`
+				body = `{"authSecret":"` + authSecretFor(f.s, "wrong") + `"}`
 			case "missing-storage":
 				if err = os.Remove(filepath.Join(f.s.userStateDir(f.native.ID), "state.db")); err != nil {
 					t.Fatal(err)
@@ -376,14 +379,14 @@ func nativeRepairSSOSession(f nativeRepairFixture) {
 func TestNativeRecoveryRepairHTTPConsumesStepUpOnlyOnce(t *testing.T) {
 	f := nativeRepairHTTPFixture(t, "inactive", false)
 	nativeRepairSSOSession(f)
-	grant := challengeFrom(t, gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody, ""))
+	grant := challengeFrom(t, gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody(f.s), ""))
 	// Exercise action-bound single-use confirmation; provider proof is synthetic.
 	f.s.stepUpMu.Lock()
 	proof := f.s.stepUps[grant]
 	proof.verified = true
 	f.s.stepUps[grant] = proof
 	f.s.stepUpMu.Unlock()
-	w := gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody, grant)
+	w := gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody(f.s), grant)
 	if w.Code != 200 {
 		t.Fatal("confirmation repeated or witnesses lost", w.Code, w.Body.String())
 	}
@@ -394,7 +397,7 @@ func TestNativeRecoveryRepairHTTPRechecksConfirmedActor(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			f := nativeRepairHTTPFixture(t, "inactive", false)
 			nativeRepairSSOSession(f)
-			grant := challengeFrom(t, gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody, ""))
+			grant := challengeFrom(t, gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody(f.s), ""))
 			f.s.stepUpMu.Lock()
 			proof := f.s.stepUps[grant]
 			proof.verified = true
@@ -411,7 +414,7 @@ func TestNativeRecoveryRepairHTTPRechecksConfirmedActor(t *testing.T) {
 				}
 			}()
 			done := make(chan *httptest.ResponseRecorder, 1)
-			go func() { done <- gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody, grant) }()
+			go func() { done <- gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody(f.s), grant) }()
 			deadline := time.Now().Add(time.Second)
 			for {
 				f.s.stepUpMu.Lock()

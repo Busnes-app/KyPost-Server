@@ -375,6 +375,7 @@ func (p *Poller) Run() {
 	}
 
 	p.log.Info("poller started", "interval", interval.String())
+	p.logDuplicateProvenAliases()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	wkdTicker := time.NewTicker(recheckWKDInterval)

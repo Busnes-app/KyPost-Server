@@ -103,7 +103,7 @@ func qualifyNativeAndroidMail(t *testing.T, s *Server, userID string) *httptest.
 		Token        string `json:"pairingToken"`
 	}
 	pairing := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/api/notifications/pairing", nil)
+	r := httptest.NewRequest("POST", "/api/notifications/pairing", strings.NewReader(pairingStepUpBody(t, s, userID)))
 	authRequestAs(s, r, userID)
 	routes.ServeHTTP(pairing, r)
 	if pairing.Code != 200 || json.Unmarshal(pairing.Body.Bytes(), &proof) != nil || proof.SubscriberID == "" || proof.Token == "" {

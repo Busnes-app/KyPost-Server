@@ -14,8 +14,6 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
-
-	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 
 // contactPayload is the client-supplied subset of contacts.Contact — it omits
@@ -109,24 +107,14 @@ func (p contactPayload) toContact(uid string) contacts.Contact {
 	}
 }
 
-// backfillPGPKeyFingerprint gives a TOFU pin to manually/legacy-entered
-// contact keys that don't have one yet, so the resolver's key_changed guard
-// (gated on pinnedFP != "") protects them too — otherwise an unpinned manual
-// key can be silently overwritten by a later WKD lookup once it expires. It
-// only fills in the fingerprint; PGPKeySource/PGPKeyVerified are left alone
-// so a discovery-set key's provenance isn't relabeled by an unrelated edit.
-// An unparseable key is left with an empty fingerprint rather than failing
-// the write — the armored text itself is still stored as-is.
-func backfillPGPKeyFingerprint(c contacts.Contact) contacts.Contact {
-	if c.PGPKey == "" || c.PGPKeyFingerprint != "" {
-		return c
+// checkContactKeyWrite refuses a client-supplied key that fails
+// validateContactKey. Resending the stored key unchanged is not a new key and
+// is accepted as-is, so a key that has since expired does not block edits.
+func checkContactKeyWrite(c contacts.Contact, stored string) error {
+	if c.PGPKey == "" || c.PGPKey == stored {
+		return nil
 	}
-	key, err := crypto.NewKeyFromArmored(c.PGPKey)
-	if err != nil {
-		return c
-	}
-	c.PGPKeyFingerprint = key.GetFingerprint()
-	return c
+	return validateContactKey(c.PGPKey, c.Emails)
 }
 
 // discoveryCreatedEmails returns the email addresses of the contact at uid if
@@ -198,7 +186,12 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request) {
 			}
 			payload.GroupIDs = ids
 		}
-		created, err := store.Upsert(backfillPGPKeyFingerprint(payload.toContact("")))
+		c := payload.toContact("")
+		if err := checkContactKeyWrite(c, ""); err != nil {
+			http.Error(w, "invalid PGP key: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		created, err := store.Upsert(c)
 		if err != nil {
 			http.Error(w, "failed to create contact", http.StatusInternalServerError)
 			return
@@ -279,7 +272,12 @@ func (s *Server) handleContactByID(w http.ResponseWriter, r *http.Request) {
 			}
 			payload.GroupIDs = ids
 		}
-		updated, err := store.Upsert(backfillPGPKeyFingerprint(payload.toContact(uid)))
+		c := payload.toContact(uid)
+		if err := checkContactKeyWrite(c, existing.PGPKey); err != nil {
+			http.Error(w, "invalid PGP key: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		updated, err := store.Upsert(c)
 		if err != nil {
 			http.Error(w, "failed to update contact", http.StatusInternalServerError)
 			return
@@ -601,6 +599,15 @@ func (s *Server) handleContactsSync(w http.ResponseWriter, r *http.Request) {
 		// returned 500, after which the client resynced from its old base cursor
 		// and re-applied everything. ApplyBatch commits all or none, which is
 		// what makes the cursor returned below mean anything.
+		live, err := store.List()
+		if err != nil {
+			http.Error(w, "failed to read contacts", http.StatusInternalServerError)
+			return
+		}
+		storedKeys := make(map[string]string, len(live))
+		for _, c := range live {
+			storedKeys[c.UID] = c.PGPKey
+		}
 		ops := make([]contacts.BatchOp, 0, len(req.Changes))
 		for _, change := range req.Changes {
 			uid := strings.TrimSpace(change.UID)
@@ -620,7 +627,12 @@ func (s *Server) handleContactsSync(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			change.GroupIDs = ids
-			ops = append(ops, contacts.BatchOp{Contact: change.toContact(uid)})
+			c := change.toContact(uid)
+			if err := checkContactKeyWrite(c, storedKeys[uid]); err != nil {
+				http.Error(w, "invalid PGP key for contact "+uid+": "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			ops = append(ops, contacts.BatchOp{Contact: c})
 		}
 		if err := store.ApplyBatch(ops); err != nil {
 			http.Error(w, "failed to apply changes", http.StatusInternalServerError)
