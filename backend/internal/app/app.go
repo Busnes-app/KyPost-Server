@@ -93,6 +93,11 @@ func Run(args []string) error {
 	if _, err := config.NativeRestoreReleaseEnabled(); err != nil {
 		return err
 	}
+	proxies, err := config.LoadTrustedProxies()
+	if err != nil {
+		return err
+	}
+	api.SetTrustedProxies(proxies)
 	// The quota is native-only configuration: a bad value never stops IMAP.
 	if nativeMail {
 		quota, err := config.MailboxQuotaBytes()
@@ -314,7 +319,6 @@ func startBackgroundSweepers(ctx context.Context, srv *api.Server, logger *loggi
 		srv.StartContactsTombstoneSweeper,
 		srv.StartEnvelopeSweeper,
 		srv.StartCooldownSweeper,
-		srv.StartMfaPushLimiterSweeper,
 		srv.StartSessionSweeper,
 		srv.StartMFAChallengeSweeper,
 		srv.StartPoWSweeper,

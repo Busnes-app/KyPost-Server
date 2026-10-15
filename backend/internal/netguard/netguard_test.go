@@ -22,6 +22,9 @@ func TestIsPrivateOrReservedRefusesInternalDestinations(t *testing.T) {
 		{"fd00::1", "RFC4193 unique local"},
 		{"169.254.169.254", "cloud metadata"},
 		{"0.0.0.0", "unspecified"},
+		{"0.1.2.3", "this network (0.0.0.0/8)"},
+		{"240.0.0.1", "reserved 240.0.0.0/4"},
+		{"255.255.255.255", "broadcast"},
 		{"224.0.0.1", "multicast"},
 
 		// The gap this package was extracted to close: both call sites had
@@ -39,6 +42,7 @@ func TestIsPrivateOrReservedRefusesInternalDestinations(t *testing.T) {
 		{"203.0.113.1", "TEST-NET-3"},
 		{"64:ff9b::a00:1", "NAT64-wrapped 10.0.0.1"},
 		{"2002:a00:1::", "6to4-wrapped 10.0.0.1"},
+		{"64:ff9b:1::a00:1", "local-use NAT64-wrapped 10.0.0.1"},
 	} {
 		ip := net.ParseIP(tc.ip)
 		if ip == nil {
@@ -60,6 +64,8 @@ func TestIsPrivateOrReservedAllowsPublicDestinations(t *testing.T) {
 		"99.255.255.255",  // immediately below 100.64/10
 		"100.63.255.255",  // ditto, boundary
 		"100.128.0.0",     // immediately above 100.64/10
+		"1.0.0.1",         // immediately above 0.0.0.0/8
+		"223.255.255.255", // immediately below 240.0.0.0/4
 		"2606:4700::1111", // public IPv6
 	} {
 		ip := net.ParseIP(addr)
@@ -93,7 +99,7 @@ func TestDialerRefusesInternalUnlessAllowed(t *testing.T) {
 	defer cancel()
 
 	refuse := Dialer(ParseHosts("127.0.0.1, 169.254.169.254")) // literals never count
-	for _, host := range []string{"127.0.0.1", "169.254.169.254", "::1", "localhost"} {
+	for _, host := range []string{"127.0.0.1", "169.254.169.254", "::1", "0.1.2.3", "localhost"} {
 		conn, err := refuse(ctx, "tcp", net.JoinHostPort(host, port))
 		if conn != nil {
 			conn.Close()

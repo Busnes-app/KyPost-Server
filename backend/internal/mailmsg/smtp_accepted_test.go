@@ -28,8 +28,16 @@ import (
 // smtpScript runs a minimal SMTP server that accepts one message. If
 // dropAfterData is set it closes the connection immediately after answering
 // 250 to the message body, without ever responding to QUIT.
+// allowLoopbackAccountDial lets account sends reach a loopback test server.
+func allowLoopbackAccountDial(t *testing.T) {
+	previous := AccountDial
+	AccountDial = (&net.Dialer{}).DialContext
+	t.Cleanup(func() { AccountDial = previous })
+}
+
 func smtpScript(t *testing.T, dropAfterData bool, finalReply string) string {
 	t.Helper()
+	allowLoopbackAccountDial(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -163,6 +171,7 @@ func TestSMTPFinalResponseDistinguishesRefusalFromUncertainty(t *testing.T) {
 // A failure before DATA is accepted must NOT claim acceptance, or the quota
 // leak this distinction exists to fix comes straight back.
 func TestSMTPSendDoesNotClaimAcceptanceWhenRefusedEarly(t *testing.T) {
+	allowLoopbackAccountDial(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen: %v", err)

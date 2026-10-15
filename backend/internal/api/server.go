@@ -143,6 +143,9 @@ type Server struct {
 	pickupStore          *pgpmail.PickupStore
 	poller               *processor.Poller
 	loginLockout         *failureLockout
+	// reviewPairingLockout is review pairing's own table: that route has no
+	// CAPTCHA or budget, so it must not be able to fill loginLockout.
+	reviewPairingLockout *failureLockout
 	davLockout           *failureLockout
 	mfaLockout           *failureLockout
 	// passwordChangeLockout bounds current-credential guessing on
@@ -154,30 +157,30 @@ type Server struct {
 	imapLoginLockout *failureLockout
 	imapListSlots    chan struct{}
 	deviceLockout    *failureLockout
-	wkdLimiter       *ipRateLimiter
+	wkdLimiter       *keyedLimiter
 	// accountWriteLimiter meters MUTATING withAuth requests per account. Every
 	// such request is at least one whole-file users.json marshal + fsync under
 	// a global cross-process lock that every authenticated request also reads
 	// through, so an unthrottled mutating route is an instance-wide stall that
 	// one session can drive. See withAuth and accountWriteBurst.
-	accountWriteLimiter *ipRateLimiter
+	accountWriteLimiter *keyedLimiter
 	// pushPollLimiter meters the two unauthenticated push-MFA endpoints per IP.
 	// They were the only public routes with no meter, and both take mfa.Store's
 	// process-wide lock. See withPushPollRateLimit.
-	pushPollLimiter *ipRateLimiter
+	pushPollLimiter *keyedLimiter
 	// loginParamsLimiter meters GET /api/auth/login-params PER IP. Drawing a full
 	// attempt's reservation from the instance-wide derivation budget below priced a
 	// ~5us HMAC at 0.2 core-seconds: sixteen free requests emptied the bucket and
 	// denied sign-in to the whole instance, with no per-IP proxy rule able to
 	// restore it.
-	loginParamsLimiter *ipRateLimiter
-	mfaPushLimiter     *mfaPushLimiter
-	sendAsCooldown     *cooldown
+	loginParamsLimiter *keyedLimiter
+	mfaPushLimiter     *keyedLimiter
+	sendAsCooldown     *keyedLimiter
 	// notificationTestCooldown meters POST /api/notifications/test per user:
 	// the one endpoint an authenticated caller can use to trigger the serial
 	// push fanout on demand. See notificationTestCooldownFor.
-	notificationTestCooldown *cooldown
-	nativeRelayCheckCooldown *cooldown
+	notificationTestCooldown *keyedLimiter
+	nativeRelayCheckCooldown *keyedLimiter
 	captchaVerifier          captcha.Verifier
 	captchaProvider          captcha.Provider
 	captchaSiteKey           string
@@ -187,7 +190,7 @@ type Server struct {
 	// challenge endpoint and the sweeper need Issue/SweepExpired, which are
 	// not on the Verifier interface. nil for every other provider.
 	powVerifier   *captcha.PoWVerifier
-	powChallenges *powChallengeLimiter
+	powChallenges *keyedLimiter
 	powDifficulty *powEscalation
 
 	// loginRateLimiter is an INSTANCE-WIDE token bucket on POST /api/auth/login,
@@ -202,7 +205,7 @@ type Server struct {
 	//
 	// Instance-wide is the point: a per-IP limit is defeated by more IPs, and the
 	// CPU being protected is shared.
-	loginRateLimiter *ipRateLimiter
+	loginRateLimiter *keyedLimiter
 	// loginIPLockout is a second, coarser lockout keyed on the client IP ALONE,
 	// so a caller cycling through usernames from one address runs out of budget.
 	loginIPLockout *failureLockout
@@ -258,7 +261,7 @@ type Server struct {
 	// deviceRescan throttles full device-index rebuilds. A rebuild opens every
 	// account's SQLite store, and an unauthenticated caller can force a cache
 	// miss on every request just by varying the device id.
-	deviceRescan   *intervalGate
+	deviceRescan   *keyedLimiter
 	davCredentials davCredentialCache
 
 	// wkdStore is the single instance-level WKD domain-claim store, injected
@@ -400,17 +403,18 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		deviceReserving:          map[string]int{},
 		davCredentials:           newDAVCredentialCache(),
 		loginLockout:             newLoginLockout(),
+		reviewPairingLockout:     newLoginLockout(),
 		davLockout:               newFailureLockout(davMaxFailures, davLockoutFor),
 		mfaLockout:               newFailureLockout(mfaMaxFailures, mfaLockoutFor),
 		passwordChangeLockout:    newFailureLockout(passwordChangeMaxFailures, passwordChangeLockoutFor),
 		imapLoginLockout:         newFailureLockout(imapLoginMaxFailures, imapLoginLockoutFor),
 		imapListSlots:            make(chan struct{}, maxIMAPListings),
 		deviceLockout:            newFailureLockout(deviceMaxFailures, deviceLockoutFor),
-		wkdLimiter:               newIPRateLimiter(wkdRateBurst, wkdRateRefillPerSec),
-		accountWriteLimiter:      newIPRateLimiter(accountWriteBurst, accountWriteRefillPerSec),
-		pushPollLimiter:          newIPRateLimiter(pushPollBurst, pushPollRefillPerSec),
-		loginParamsLimiter:       newIPRateLimiter(loginParamsBurst, loginParamsRefillPerSec),
-		deviceRescan:             newIntervalGate(deviceRescanInterval),
+		wkdLimiter:               newKeyedLimiter(wkdRateBurst, wkdRateRefillPerSec),
+		accountWriteLimiter:      newKeyedLimiter(accountWriteBurst, accountWriteRefillPerSec),
+		pushPollLimiter:          newKeyedLimiter(pushPollBurst, pushPollRefillPerSec),
+		loginParamsLimiter:       newKeyedLimiter(loginParamsBurst, loginParamsRefillPerSec),
+		deviceRescan:             newKeyedLimiter(1, 1/deviceRescanInterval.Seconds()),
 		mfaPushLimiter:           newMfaPushLimiter(),
 		sendAsCooldown:           newCooldown(sendAsVerificationCooldownFor),
 		notificationTestCooldown: newCooldown(notificationTestCooldownFor),
@@ -421,7 +425,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		powVerifier:              powVerifier,
 		powChallenges:            newPowChallengeLimiter(),
 		powDifficulty:            newPowEscalation(),
-		loginRateLimiter:         newIPRateLimiter(loginKDFBurstSeconds, loginKDFDutyCycle),
+		loginRateLimiter:         newKeyedLimiter(loginKDFBurstSeconds, loginKDFDutyCycle),
 		loginIPLockout:           newFailureLockout(loginIPMaxFailures, loginIPLockoutFor),
 		globalStore:              globalStore,
 		wkdStore:                 wkdStore,
@@ -1076,15 +1080,9 @@ func (s *Server) StartSessionSweeper(ctx context.Context) {
 	}
 }
 
-// logSaturatedLockouts reports any lockout table that has hit
-// loginLockoutHardCap and started shedding new keys.
-//
-// A saturated table refuses to track keys it has not seen before, which the
-// caller experiences as a 429 on a perfectly good credential. That is the
-// deliberate trade — shedding rather than evicting live lockouts, see
-// loginLockoutHardCap — but it must not be silent: from the outside it is
-// indistinguishable from "login is broken", and it means tens of thousands of
-// distinct keys are locked out at once, which is an attack in progress.
+// logSaturatedLockouts reports any lockout table that has hit its hard cap: a
+// flood in progress, which may be forgiving partial strikes or, if every entry
+// is a live lockout, answering new callers 429. See loginLockoutHardCap.
 func (s *Server) logSaturatedLockouts() {
 	if s.logger == nil {
 		return
@@ -1092,16 +1090,17 @@ func (s *Server) logSaturatedLockouts() {
 	for name, lockout := range map[string]*failureLockout{
 		"login":           s.loginLockout,
 		"login_ip":        s.loginIPLockout,
+		"review_pairing":  s.reviewPairingLockout,
 		"dav":             s.davLockout,
 		"mfa":             s.mfaLockout,
 		"password_change": s.passwordChangeLockout,
 		"device":          s.deviceLockout,
 	} {
 		if lockout != nil && lockout.Saturated() {
-			s.logger.Error("lockout table saturated; new keys are being shed",
+			s.logger.Error("lockout table saturated",
 				"table", name,
 				"hard_cap", strconv.Itoa(lockout.HardCap()),
-				"effect", "callers not already tracked receive 429; lockouts already in force are preserved")
+				"effect", "stalest unlocked entries are evicted for new callers; if only live lockouts remain, new callers receive 429")
 		}
 	}
 }
@@ -1166,25 +1165,9 @@ func (s *Server) StartCooldownSweeper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, c := range []*cooldown{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown} {
-				c.sweep(cooldownSweepMaxAge)
+			for _, c := range []*keyedLimiter{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown, s.mfaPushLimiter} {
+				c.sweep()
 			}
-		}
-	}
-}
-
-// StartMfaPushLimiterSweeper runs mfaPushLimiter.sweep on an interval for the
-// process lifetime, mirroring StartSendAsCooldownSweeper's ticker/select pattern
-// exactly. Call once after NewServer.
-func (s *Server) StartMfaPushLimiterSweeper(ctx context.Context) {
-	ticker := time.NewTicker(mfaPushLimiterSweepInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.mfaPushLimiter.sweep(mfaPushLimiterSweepMaxAge)
 		}
 	}
 }

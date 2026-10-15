@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -273,7 +274,7 @@ func TestSuccessfulLoginDoesNotRefundTheIPBudget(t *testing.T) {
 // bounded too.
 func TestLoginLockoutKeysAreBoundedInLength(t *testing.T) {
 	srv := newTestServer(t)
-	srv.captchaVerifier = stubVerifier{ok: false}
+	srv.captchaVerifier = stubVerifier{ok: true}
 
 	long := strings.Repeat("a", 65000)
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
@@ -297,7 +298,7 @@ func TestLoginLockoutKeysAreBoundedInLength(t *testing.T) {
 // or three failures against a decoy would lock out a real user.
 func TestLoginLockoutStillSeparatesDistinctUsernames(t *testing.T) {
 	srv := newTestServer(t)
-	srv.captchaVerifier = stubVerifier{ok: false}
+	srv.captchaVerifier = stubVerifier{ok: true}
 
 	for _, name := range []string{"alice", "bob"} {
 		rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
@@ -311,5 +312,39 @@ func TestLoginLockoutStillSeparatesDistinctUsernames(t *testing.T) {
 	defer srv.loginLockout.mu.Unlock()
 	if len(srv.loginLockout.entries) != 2 {
 		t.Fatalf("entries = %d, want 2: distinct usernames must not collide", len(srv.loginLockout.entries))
+	}
+}
+
+// tokenVerifier accepts exactly one CAPTCHA token.
+type tokenVerifier string
+
+func (v tokenVerifier) Verify(_ context.Context, token, _ string) (bool, error) {
+	return token == string(v), nil
+}
+
+// Junk CAPTCHAs cost the caller nothing (the KDF budget is refunded), so if they
+// write lockout entries, a few hundred /64s fill both tables and every new
+// sign-in is refused with 429.
+func TestFailedCaptchaFloodCannotBlockNewSignIns(t *testing.T) {
+	srv := newTestServer(t)
+	srv.captchaVerifier = tokenVerifier("good")
+	srv.loginLockout = newFailureLockoutSized(loginMaxFailures, loginLockoutFor, 10, 50)
+	srv.loginIPLockout = newFailureLockoutSized(loginIPMaxFailures, loginIPLockoutFor, 10, 50)
+
+	login := func(user, ip, token string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(
+			`{"username":"`+user+`","password":"wrong","captchaToken":"`+token+`"}`))
+		req.RemoteAddr = ip
+		rec := httptest.NewRecorder()
+		srv.handleLogin(rec, req)
+		return rec.Code
+	}
+	for i := range 200 {
+		if code := login(fmt.Sprintf("u%d", i), fmt.Sprintf("[2001:db8:%x::1]:1", i), "junk"); code != http.StatusUnauthorized {
+			t.Fatalf("junk captcha %d: status %d, want 401", i, code)
+		}
+	}
+	if code := login("fresh", "198.51.100.77:1", "good"); code != http.StatusUnauthorized {
+		t.Fatalf("fresh caller after a junk-CAPTCHA flood: status %d, want 401 (credential checked)", code)
 	}
 }
