@@ -17,6 +17,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
 )
 
 // IMAPConfigPayload is a user's stored IMAP/SMTP mail credentials, encrypted
@@ -162,6 +163,13 @@ func requireSTARTTLS(negotiatedTLS, allowInsecure bool) error {
 	return errors.New("smtp submission refused: server did not offer STARTTLS and ALLOW_INSECURE_SMTP is not set")
 }
 
+// AccountDial opens SMTP connections to a user's account server. The host is
+// user-supplied, so it goes through netguard; only tests reassign it.
+var AccountDial = netguard.DialContext
+
+// relayDial opens the admin-configured domain relay, which may be on the LAN.
+var relayDial = (&net.Dialer{}).DialContext
+
 func SMTPSendWithTimeout(addr string, auth smtp.Auth, from string, recipients []string, msg []byte, timeout time.Duration) error {
 	if err := validateSMTPEnvelope(from, recipients); err != nil {
 		return err
@@ -171,7 +179,9 @@ func SMTPSendWithTimeout(addr string, auth smtp.Auth, from string, recipients []
 		return fmt.Errorf("invalid smtp address %q: %w", addr, err)
 	}
 
-	conn, err := (&net.Dialer{Timeout: timeout}).Dial("tcp", addr)
+	dialCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	conn, err := AccountDial(dialCtx, "tcp", addr)
 	if err != nil {
 		return err
 	}
@@ -334,28 +344,33 @@ func NormalizeSMTPMessage(msg []byte) ([]byte, error) {
 // SMTPSendWithImplicitTLS delivers msg over an implicit-TLS (port 465 style)
 // SMTP connection, since net/smtp only supports STARTTLS natively.
 func SMTPSendWithImplicitTLS(host string, port int, username, password, from string, recipients []string, msg []byte, timeout time.Duration) error {
-	return smtpSendWithImplicitTLS(host, port, username, password, from, recipients, msg, timeout, false)
+	return smtpSendWithImplicitTLS(AccountDial, host, port, username, password, from, recipients, msg, timeout, false)
 }
 
 var errSMTPRelayAuthUnavailable = errors.New("domain relay submission refused: server did not offer AUTH; check the configured SMTP endpoint")
 
-func smtpSendWithImplicitTLS(host string, port int, username, password, from string, recipients []string, msg []byte, timeout time.Duration, requireAuth bool) error {
+func smtpSendWithImplicitTLS(dial func(context.Context, string, string) (net.Conn, error), host string, port int, username, password, from string, recipients []string, msg []byte, timeout time.Duration, requireAuth bool) error {
 	if err := validateSMTPEnvelope(from, recipients); err != nil {
 		return err
 	}
-	return withImplicitTLSSMTP(context.Background(), host, port, username, password, timeout, requireAuth, func(client *smtp.Client) error {
+	return withImplicitTLSSMTP(context.Background(), dial, host, port, username, password, timeout, requireAuth, func(client *smtp.Client) error {
 		return writeSMTPMessage(client, from, recipients, msg)
 	})
 }
 
 // Both delivery and the no-mail check use the same certificate and AUTH policy.
-func withImplicitTLSSMTP(ctx context.Context, host string, port int, username, password string, timeout time.Duration, requireAuth bool, action func(*smtp.Client) error) error {
-	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: timeout}, Config: &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, fmt.Sprint(port)))
+func withImplicitTLSSMTP(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error), host string, port int, username, password string, timeout time.Duration, requireAuth bool, action func(*smtp.Client) error) error {
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	raw, err := dial(dialCtx, "tcp", net.JoinHostPort(host, fmt.Sprint(port)))
 	if err != nil {
 		return err
 	}
+	conn := tls.Client(raw, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
 	defer conn.Close()
+	if err := conn.HandshakeContext(dialCtx); err != nil {
+		return err
+	}
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	deadline := time.Now().Add(timeout)
