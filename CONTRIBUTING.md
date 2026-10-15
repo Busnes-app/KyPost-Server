@@ -169,7 +169,7 @@ if a job is genuinely flaky, that is a bug to fix in the job.
 | Job | What it runs |
 |---|---|
 | `ci-backend-api` | `gofmt -l`, `go vet`, `golangci-lint`, `govulncheck`, `deadcode` (nothing unreachable from `cmd/` beyond `backend/deadcode.allow`), `go test -race ./internal/api/...` |
-| `ci-backend-other` | Same lint gates, `go test -race` on every other backend package |
+| `ci-backend-other` | Same lint gates, `go test -race` on every other backend package, then 20-second fuzz runs for rules, redaction, reply threading and IMAP header records |
 | `ci-frontend` | `npm audit --omit=dev --audit-level=low` (blocking), `tsc --noEmit`, ESLint (rules-of-hooks errors block), `vitest`, `vite build` |
 | `ci-relay` | Typecheck both relay Workers, `node --test` on the relay and one-message receiving Worker behaviour suites, disposable workerd/R2 capture and pickup qualification |
 | `ci-scripts` | Shell syntax and shellcheck, CI Go/Node pins equal the Dockerfile builder tags, the `.env.example`-reaches-Compose and `supervisord.conf` log-file checks, setup-wizard definition-only input/dotenv/Compose checks, receiver launcher refusal checks, pinned Rspamd effective-config/socket/clean/GTUBE/privacy qualification, the `update-host` and model-installer self-checks, `compose config`, the cumulative Supervisor shutdown budget, the live-main publish-gate regression, and the workflow shape assertions that keep the release and `:main` publish gates from being quietly deleted |

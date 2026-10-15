@@ -165,6 +165,15 @@ jobs:
       - name: go test -race (all packages except api)
         run: go list ./... | grep -v "^github.com/Busnes-app/kypost-server/backend/internal/api$" | xargs go test -race -count=1 -timeout=20m
 
+      # Seed corpora already ran as tests above; this mutates past them. A
+      # failure prints the input: commit it under that package's testdata/fuzz.
+      - name: fuzz smoke (20s per target)
+        run: |
+          go test -run='^$' -fuzz='^FuzzParseRuleText$' -fuzztime=20s ./internal/rules/
+          go test -run='^$' -fuzz='^FuzzDefaultPatterns$' -fuzztime=20s ./internal/redaction/
+          go test -run='^$' -fuzz='^FuzzReplyThreading$' -fuzztime=20s ./internal/mailmsg/
+          go test -run='^$' -fuzz='^FuzzParseHeaderFieldsRecords$' -fuzztime=20s ./internal/adapters/imap/
+
   frontend:
     name: ci-frontend
     runs-on: ubuntu-latest
