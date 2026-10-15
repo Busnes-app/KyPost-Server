@@ -146,10 +146,10 @@ Three ways to get TLS:
 **2. Cloudflare Tunnel**
 - cloudflared gives the browser a real HTTPS origin (needed for proof-of-work CAPTCHA).
 - No TLS configuration of your own.
-- Set `TRUSTED_PROXY_CIDRS` to the proxy's address.
+- Set `TRUSTED_PROXY_CIDRS` to cloudflared's address and `TRUSTED_PROXY_HEADER=cf-connecting-ip`.
 
 **3. Reverse proxy you operate** (nginx, Caddy, etc.)
-- Set `TRUSTED_PROXY_CIDRS` to the proxy's address.
+- Set `TRUSTED_PROXY_CIDRS` to the proxy's address; `TRUSTED_PROXY_HEADER` stays `x-forwarded-for`.
 - Proxy must use HTTPS when reaching KyPost if the hop carries session cookies across a real network.
 
 ### KYPOST_BIND: Which Interface to Publish
@@ -175,13 +175,18 @@ When a reverse proxy sits in front of KyPost, the server sees the proxy's addres
 
 **If `TRUSTED_PROXY_CIDRS` is empty, forwarded headers are discarded entirely.** Every caller is keyed as the proxy, so all users share one lockout bucket and push notifications show the gateway address instead of the user signing in.
 
-**If `TRUSTED_PROXY_CIDRS` is set, KyPost trusts `X-Forwarded-Proto`, `X-Forwarded-Host`, and `X-Forwarded-For` from that CIDR.** This marks cookies `Secure` and keys lockouts off the real caller. Cloudflare Tunnel also reads `CF-Connecting-IP` in preference to `X-Forwarded-For` (the edge appends your IP to XFF, but cloudflared may append its own hop after it).
+**If `TRUSTED_PROXY_CIDRS` is set, KyPost trusts forwarded headers from that CIDR.** This marks cookies `Secure` (`X-Forwarded-Proto`) and keys lockouts off the real caller. The caller's address comes from exactly one header, chosen by `TRUSTED_PROXY_HEADER`; the other is never read, because nginx and Caddy pass unknown headers through from the client:
 
-**Name the proxy's address specifically, not a wide range.** Any peer inside the range you name can forge their own client IP and bypass every rate limit and lockout. Example:
+- `x-forwarded-for` (default): nginx or Caddy. In nginx, `proxy_set_header X-Forwarded-For $remote_addr;` (`$proxy_add_x_forwarded_for` also works; the right-most element is used).
+- `cf-connecting-ip`: cloudflared, which appends its own hop to `X-Forwarded-For`. Also for cloudflared → nginx → KyPost, with nginx passing it on (`proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;`) and reachable only from cloudflared.
+- Cloudflare proxied DNS (CDN) in front of nginx: keep `x-forwarded-for` and have nginx restore the visitor from `CF-Connecting-IP` only for Cloudflare's ranges (`set_real_ip_from`, `real_ip_header CF-Connecting-IP;`); see [Reverse_Proxy_Networking.md](docs/Reverse_Proxy_Networking.md#trusting-the-proxy).
 
-- Proxy on same host: `TRUSTED_PROXY_CIDRS=127.0.0.1/32`
+A malformed `TRUSTED_PROXY_CIDRS` entry or any other `TRUSTED_PROXY_HEADER` value refuses startup.
+
+**Name the proxy's address specifically, not a wide range.** Any peer inside the range you name can forge their own client IP and bypass every rate limit and lockout. Never `0.0.0.0/0`. Example:
+
 - Proxy pinned on `kypost-net`: `TRUSTED_PROXY_CIDRS=10.89.0.10/32` (replace with your proxy's actual Docker network IP)
-- Cloudflare Tunnel: `TRUSTED_PROXY_CIDRS=0.0.0.0/0` is unavoidable; Tunnel is the proxy and only Cloudflare can reach it
+- Proxy on same host reaching `127.0.0.1:5866`: `TRUSTED_PROXY_CIDRS=10.89.0.1/32`, the `kypost-net` gateway (first address of `KYPOST_SUBNET`). Docker hands the connection over from there, not from `127.0.0.1`, and so does every other process on the host, so use it only with `KYPOST_BIND=127.0.0.1`.
 
 This replaces the old `TRUST_PROXY_HEADERS=true`, which trusted forwarded headers on *every* connection from any peer and was only ever safe when nothing but the proxy could reach the port.
 
@@ -218,7 +223,9 @@ All of these live in `/kypost/private`. **Back up this volume separately and sto
 ### Login Flow
 
 - Username + password, with per-account salt and work factor.
-- Password never reaches the server. The browser derives an authentication half (what gets sent) and a key-wrapping half (for PGP key encryption, stays in the browser).
+- Password never reaches the server. The browser derives an authentication half (what gets sent) and a key-wrapping half (for PGP key encryption, stays in the browser). Every credential check accepts only the derived half; a request carrying the password fails as a wrong credential.
+- An account still holding a pre-derived-auth password hash cannot sign in. To an unauthenticated caller it is indistinguishable from an unknown user or wrong password; the server logs a warning at startup and on each refused attempt, and Admin → Users flags it "needs password reset". An admin password reset restores access.
+- Exceptions: admin create/reset and `BOOTSTRAP_ADMIN_PASS` hand the server a temporary password. It derives and stores it in derived form immediately, and the forced first-login change replaces it with a credential the server never sees.
 - CAPTCHA challenge on login (optional, configurable: `pow`, `turnstile`, `friendly`, or `none`).
 - Proof-of-work CAPTCHA (`pow`) uses `crypto.subtle` and requires HTTPS (except localhost). Difficulty adapts per address; escalation is counted per IP and decays after 15 minutes or on successful login.
 - 3-strikes account lockout (15 minutes).

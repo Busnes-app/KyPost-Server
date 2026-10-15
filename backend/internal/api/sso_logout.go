@@ -88,6 +88,19 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"status": "logged_out"})
 }
 
+// endSSOSessions deletes every SSO session and bumps ssoEpoch under the same
+// lock, so a callback already past its settings read cannot mint one after.
+func (s *Server) endSSOSessions() {
+	s.sessMu.Lock()
+	defer s.sessMu.Unlock()
+	s.ssoEpoch.Add(1)
+	for token, sess := range s.sessions {
+		if sess.SSO.Subject != "" {
+			delete(s.sessions, token)
+		}
+	}
+}
+
 // revokeSessionsCoveredBy deletes every session the logout addresses and
 // returns how many. Scope is sso.LogoutEvent.Covers: a session by its sid,
 // or a subject's sessions issued no later than the token.

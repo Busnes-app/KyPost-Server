@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,7 +57,7 @@ const (
 	classifyRetryBackoff = 5 * time.Second
 )
 
-// Classify admission control.
+// classifyAdmission reads classify admission control (defaults in config).
 //
 // CLASSIFY_CONCURRENCY bounds how many generations are in flight at once. The
 // default of 1 matches Ollama's one-generation-at-a-time behaviour; an operator
@@ -71,21 +70,11 @@ const (
 // it capped the WHOLE INSTANCE at 20 classifications a minute, so a mailbox
 // import could never catch up. Restore a nonzero value only for a backend that
 // genuinely misbehaves under back-to-back requests.
-const (
-	defaultClassifyConcurrency = 1
-	defaultClassifyPaceMS      = 0
-)
-
-// classifyAdmission reads the two knobs above.
+//
+// A malformed value reads as its default here; config.CheckEnv refuses it at startup.
 func classifyAdmission() (concurrency int, pace time.Duration) {
-	concurrency = defaultClassifyConcurrency
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("CLASSIFY_CONCURRENCY"))); err == nil && v > 0 {
-		concurrency = v
-	}
-	ms := defaultClassifyPaceMS
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("CLASSIFY_PACE_MS"))); err == nil && v >= 0 {
-		ms = v
-	}
+	concurrency, _ = config.ClassifyConcurrency.Get()
+	ms, _ := config.ClassifyPaceMS.Get()
 	return concurrency, time.Duration(ms) * time.Millisecond
 }
 

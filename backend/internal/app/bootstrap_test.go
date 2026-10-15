@@ -47,7 +47,14 @@ func TestBootstrapAdminSeedsAUsableAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByUsername(admin): %v", err)
 	}
-	if ok, _ := users.VerifyPassword(context.Background(), u, password); !ok {
+	if !u.UsesDerivedAuth() {
+		t.Fatal("bootstrap admin was stored legacy; it would need a reset before first sign-in")
+	}
+	secret, err := users.DeriveAuthSecret(password, u.LoginSalt, u.LoginIterations)
+	if err != nil {
+		t.Fatalf("DeriveAuthSecret: %v", err)
+	}
+	if ok, _ := users.VerifyAuthSecret(context.Background(), u, secret); !ok {
 		t.Fatal("the generated password does not verify against the seeded hash")
 	}
 	if !u.MustChangePassword {

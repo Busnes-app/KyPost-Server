@@ -211,7 +211,7 @@ func (s *Server) handleNotificationTest(w http.ResponseWriter, r *http.Request) 
 	// account has, serially, each with its own network timeout — so without a
 	// meter it is an authenticated user's switch for making the server spend
 	// unbounded time on outbound requests to destinations they chose.
-	if allowed, retryAfter := s.notificationTestCooldown.tryConsume(ac.UserID); !allowed {
+	if allowed, retryAfter := s.notificationTestCooldown.allow(ac.UserID); !allowed {
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
 			"error":             "a test notification was just sent; try again shortly",
 			"retryAfterSeconds": int(retryAfter.Seconds()) + 1,
@@ -337,6 +337,18 @@ func (s *Server) handleNotificationPairing(w http.ResponseWriter, r *http.Reques
 	ac, okAuth := authFromContext(r)
 	if !okAuth {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	// The token mints a device credential that outlives the session, so a
+	// session alone may not ask for one.
+	var cred struct {
+		AuthSecret string `json:"authSecret"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&cred); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if !s.confirmActor(w, r, ac.UserID, cred.AuthSecret) {
 		return
 	}
 	s.writeNotificationPairing(w, ac.UserID)
@@ -641,18 +653,17 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 	secretHash := users.HashDeviceSecret(rawSecret)
 
 	device := state.NativeDevice{
-		DeviceID:    strings.TrimSpace(req.DeviceID),
-		Platform:    platform,
-		Transport:   transport,
-		P256DH:      webPushP256DH,
-		Auth:        webPushAuth,
-		PushToken:   deviceToken,
-		DeviceName:  clampField(req.DeviceName, maxDeviceTextLen),
-		AppVersion:  clampField(req.AppVersion, maxDeviceTextLen),
-		UserAgent:   clampField(r.Header.Get("User-Agent"), maxUserAgentLen),
-		UserID:      ownerID,
-		MFAApprover: true,
-		SecretHash:  secretHash,
+		DeviceID:   strings.TrimSpace(req.DeviceID),
+		Platform:   platform,
+		Transport:  transport,
+		P256DH:     webPushP256DH,
+		Auth:       webPushAuth,
+		PushToken:  deviceToken,
+		DeviceName: clampField(req.DeviceName, maxDeviceTextLen),
+		AppVersion: clampField(req.AppVersion, maxDeviceTextLen),
+		UserAgent:  clampField(r.Header.Get("User-Agent"), maxUserAgentLen),
+		UserID:     ownerID,
+		SecretHash: secretHash, // not an approver until the owner opts in with step-up
 	}
 	if err := store.UpsertNativeDevice(device); err != nil {
 		// See the same branch on the web-push subscription handler: at the cap
@@ -737,7 +748,7 @@ func (s *Server) handleNotificationNativeDevices(w http.ResponseWriter, r *http.
 			redacted[i] = d.Redacted()
 		}
 		// deliveryMode rides along so the UI can render the Relay Push / App
-		// Pull toggle without calling GET /api/notifications/pairing, which
+		// Pull toggle without calling POST /api/notifications/pairing, which
 		// mints a live 90-second pairing token as a side effect. Reading a
 		// setting should not hand out a credential.
 		writeJSON(w, http.StatusOK, map[string]any{

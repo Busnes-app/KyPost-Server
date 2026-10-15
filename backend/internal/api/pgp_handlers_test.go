@@ -69,9 +69,9 @@ func TestPGPIdentityGenerateAndImportRefuseServerCustody(t *testing.T) {
 		body    map[string]string
 	}{
 		{"generate", "/api/pgp/identity/generate", srv.handlePGPIdentityGenerate,
-			map[string]string{"password": password}},
+			map[string]string{"authSecret": authSecretFor(srv, password)}},
 		{"import", "/api/pgp/identity/import", srv.handlePGPIdentityImport,
-			map[string]string{"armoredPrivateKey": "irrelevant", "password": password}},
+			map[string]string{"armoredPrivateKey": "irrelevant", "authSecret": authSecretFor(srv, password)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body, _ := json.Marshal(tc.body)
@@ -181,7 +181,7 @@ func TestPGPIdentityGetThenDelete(t *testing.T) {
 	}
 
 	// Deleting an existing identity is step-up gated (pgp_stepup.go).
-	delBody, _ := json.Marshal(map[string]string{"password": password})
+	delBody, _ := json.Marshal(map[string]string{"authSecret": authSecretFor(srv, password)})
 	delReq := httptest.NewRequest(http.MethodDelete, "/api/pgp/identity", bytes.NewReader(delBody))
 	authRequest(srv, delReq)
 	delRec := httptest.NewRecorder()

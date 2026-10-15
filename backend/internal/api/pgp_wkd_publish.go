@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -246,16 +247,12 @@ func hostDomain(host string) string {
 	return strings.TrimPrefix(host, "openpgpkey.")
 }
 
-// lookupPublishedKey scans users for an Active user with a non-empty PGP key
-// whose per-user PublishWKD setting is on (checked after the cheap
-// Active/has-key checks and before any address matching, so a settings file
-// read only happens for plausible candidates) and who has a publishable
-// address at domain (domain must hold a verified instance-level WKD claim)
-// whose hashed local-part matches hu. On a match it returns the BINARY
-// (unarmored) form of that user's public key, as WKD requires. One user's
-// unparseable/corrupt key, or a failed settings read, is skipped (continue
-// to the next user) rather than aborting the whole scan, so it can't deny
-// WKD lookups for every other user on the same instance.
+// lookupPublishedKey finds the one Active user with a publishable address at
+// domain (which must hold a verified instance-level WKD claim) whose hashed
+// local-part matches hu, and returns the BINARY (unarmored) form of their
+// public key, as WKD requires, if they have one and PublishWKD is on. Two
+// users proving the same address serve nothing; one user's corrupt key or
+// unreadable settings affects only their own addresses.
 func (s *Server) lookupPublishedKey(domain, hu string) ([]byte, bool) {
 	store, err := s.wkdPublishStore()
 	if err != nil {
@@ -270,39 +267,49 @@ func (s *Server) lookupPublishedKey(domain, hu string) ([]byte, bool) {
 	if err != nil || !verified[domain] {
 		return nil, false
 	}
-	users, err := s.users.List()
+	all, err := s.users.List()
 	if err != nil {
 		return nil, false
 	}
-usersLoop:
-	for _, u := range users {
-		if !u.Active || u.PGPPublicKey == "" {
+	// Every active user proving the address is a claimant, published or not:
+	// two claimants must serve nothing rather than whichever lists first.
+	var owner *users.User
+	for i, u := range all {
+		if !u.Active {
 			continue
 		}
-		settings, serr := pgpdiscovery.Load(s.userStateDir(u.ID))
-		if serr != nil || !settings.PublishWKD {
-			continue
-		}
-		for _, addr := range s.publishableAddressesAt(u, domain) {
+		if !slices.ContainsFunc(s.publishableAddressesAt(u, domain), func(addr string) bool {
 			at := strings.LastIndex(addr, "@")
-			if at <= 0 {
-				continue
-			}
-			if wkdHashLocalPart(addr[:at]) != hu {
-				continue
-			}
-			key, err := crypto.NewKeyFromArmored(u.PGPPublicKey)
-			if err != nil {
-				continue usersLoop
-			}
-			binary, err := key.GetPublicKey()
-			if err != nil {
-				continue usersLoop
-			}
-			return binary, true
+			return at > 0 && wkdHashLocalPart(addr[:at]) == hu
+		}) {
+			continue
 		}
+		if owner != nil {
+			if s.logger != nil {
+				for _, id := range []string{owner.ID, u.ID} {
+					s.logger.Warn("wkd: address domain-proven by more than one user; serving no key", "user_id", id)
+				}
+			}
+			return nil, false
+		}
+		owner = &all[i]
 	}
-	return nil, false
+	if owner == nil || owner.PGPPublicKey == "" {
+		return nil, false
+	}
+	settings, err := pgpdiscovery.Load(s.userStateDir(owner.ID))
+	if err != nil || !settings.PublishWKD {
+		return nil, false
+	}
+	key, err := crypto.NewKeyFromArmored(owner.PGPPublicKey)
+	if err != nil {
+		return nil, false
+	}
+	binary, err := key.GetPublicKey()
+	if err != nil {
+		return nil, false
+	}
+	return binary, true
 }
 
 // publishableAddressesAt returns the lowercased addresses belonging to user

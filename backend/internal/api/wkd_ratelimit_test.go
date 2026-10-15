@@ -14,7 +14,7 @@ func fixedClock(start time.Time) (now func() time.Time, advance func(time.Durati
 }
 
 func TestIPRateLimiterAllowsBurstThenBlocks(t *testing.T) {
-	l := newIPRateLimiter(3, 1)
+	l := newKeyedLimiter(3, 1)
 	for i := 0; i < 3; i++ {
 		if ok, _ := l.allow("1.2.3.4"); !ok {
 			t.Fatalf("request %d in burst should be allowed", i+1)
@@ -30,7 +30,7 @@ func TestIPRateLimiterAllowsBurstThenBlocks(t *testing.T) {
 }
 
 func TestIPRateLimiterIsPerKey(t *testing.T) {
-	l := newIPRateLimiter(1, 1)
+	l := newKeyedLimiter(1, 1)
 	if ok, _ := l.allow("1.1.1.1"); !ok {
 		t.Fatal("first key should be allowed")
 	}
@@ -44,7 +44,7 @@ func TestIPRateLimiterIsPerKey(t *testing.T) {
 }
 
 func TestIPRateLimiterRefillsOverTime(t *testing.T) {
-	l := newIPRateLimiter(2, 1) // 2 burst, 1 token/sec
+	l := newKeyedLimiter(2, 1) // 2 burst, 1 token/sec
 	now, advance := fixedClock(time.Now())
 	l.now = now
 
@@ -64,7 +64,7 @@ func TestIPRateLimiterRefillsOverTime(t *testing.T) {
 }
 
 func TestIPRateLimiterDoesNotExceedBurstOnRefill(t *testing.T) {
-	l := newIPRateLimiter(2, 1)
+	l := newKeyedLimiter(2, 1)
 	now, advance := fixedClock(time.Now())
 	l.now = now
 
@@ -82,7 +82,7 @@ func TestIPRateLimiterDoesNotExceedBurstOnRefill(t *testing.T) {
 }
 
 func TestIPRateLimiterSweepsIdleEntries(t *testing.T) {
-	l := newIPRateLimiter(1, 1)
+	l := newKeyedLimiter(1, 1)
 	l.sweepThreshold = 4
 	now, advance := fixedClock(time.Now())
 	l.now = now
@@ -105,7 +105,7 @@ func TestIPRateLimiterSweepsIdleEntries(t *testing.T) {
 // per client IP and answer 429 with Retry-After once a client exceeds it.
 func TestWKDServingRateLimited(t *testing.T) {
 	srv := newTestServer(t)
-	srv.wkdLimiter = newIPRateLimiter(2, 1)
+	srv.wkdLimiter = newKeyedLimiter(2, 1)
 	handler := srv.routes()
 
 	path := "/.well-known/openpgpkey/example.com/hu/abc"

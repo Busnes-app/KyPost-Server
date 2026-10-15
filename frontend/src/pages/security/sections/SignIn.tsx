@@ -194,8 +194,7 @@ export function SignIn({
     setBusy(true);
     setMessage("");
     try {
-      // credentialFields sends only the form the account stores. Derived
-      // against the caller's own session parameters — see api/auth.ts.
+      // Derived against the caller's own session parameters — see api/auth.ts.
       const credential = await deriveCredential("", disablePassword);
       await postJSON<{ ok: boolean }>("/api/mfa/totp/disable", {
         ...credentialFields(credential)
@@ -217,16 +216,6 @@ export function SignIn({
     setBusy(true);
     setMessage("");
     try {
-      // credentialFields, like submitDisable twenty lines up and submitConfirm
-      // above it. This was the one place in the whole frontend that posted a
-      // bare account password, and it did not work: verifyAccountCredential
-      // picks its verifier from what the ACCOUNT stores with no fallback, and
-      // accounts convert to derived auth on first SPA sign-in — so a correct
-      // plaintext password got a 401 on essentially every deployment. The
-      // guaranteed failure then induced retries that re-sent the plaintext and
-      // burned lockout strikes. On a client-protected account that plaintext
-      // also derives the PGP key-wrapping key, which is the entire reason
-      // authSecret.ts exists.
       const credential = await deriveCredential("", regeneratePassword);
       const res = await postJSON<ConfirmResponse>("/api/mfa/recovery-codes/regenerate", {
         ...credentialFields(credential)

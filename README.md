@@ -79,7 +79,8 @@ Optional for local development (outside Docker):
    > **This is what makes the client IP correct, not a nicety.** A proxy on a
    > *separate* Docker network — or one that reaches this container through the
    > published port, even from `kypost-net` — is source-NATed on the way in, so the
-   > server sees the same `172.x.0.1` gateway for every caller. That address is the
+   > server sees the same gateway (`10.89.0.1` for the published port) for every
+   > caller. That address is the
    > lockout key, so every user shares one bucket, and the MFA sign-in push names
    > the gateway instead of whoever is signing in.
    >
@@ -103,9 +104,12 @@ Optional for local development (outside Docker):
    > `proxy_http_version 1.1;`. Mail export refuses mbox over HTTP/1.0, where a
    > cut-off download is indistinguishable from a complete one.
    >
-   > Options 2 and 3 need `TRUSTED_PROXY_CIDRS` set to the proxy's address — e.g.
-   > `127.0.0.1/32` for a proxy on the same host, or the address you pinned for a
-   > proxy container on `kypost-net` (e.g. `10.89.0.10/32`). Putting the proxy on
+   > Options 2 and 3 need `TRUSTED_PROXY_CIDRS` set to the proxy's address — the
+   > address you pinned for a proxy container on `kypost-net` (e.g.
+   > `10.89.0.10/32`), or, for a proxy on the same host reaching `127.0.0.1:5866`,
+   > the `kypost-net` gateway `10.89.0.1/32` (Docker hands the connection over from
+   > there, not from `127.0.0.1`; trust it only with `KYPOST_BIND=127.0.0.1`).
+   > A malformed entry refuses startup. Putting the proxy on
    > that network is what makes such an address meaningful, but it is not a
    > substitute for setting this: with it empty, forwarded headers are discarded
    > and every caller is keyed as the proxy. Only with it set does the server believe
@@ -118,11 +122,20 @@ Optional for local development (outside Docker):
    > headers on *every* connection from any peer, so it was only ever safe when
    > nothing but the proxy could reach the port.
    >
-   > Behind Cloudflare specifically, the client address is read from
-   > `CF-Connecting-IP` in preference to `X-Forwarded-For`: the edge appends the
-   > visitor IP to XFF, but cloudflared can append its own hop after it, which
-   > would make every visitor look like `127.0.0.1` and collapse the per-IP lockout
-   > into one shared bucket.
+   > `TRUSTED_PROXY_HEADER` names the one header the client address is read from;
+   > the other is ignored, because a proxy passes unknown headers through from the
+   > client:
+   >
+   > - nginx or Caddy: `x-forwarded-for` (the default). In nginx,
+   >   `proxy_set_header X-Forwarded-For $remote_addr;`
+   >   (`$proxy_add_x_forwarded_for` also works; the right-most element is used).
+   > - cloudflared: `cf-connecting-ip`. cloudflared appends its own hop to
+   >   `X-Forwarded-For`, so XFF would make every visitor look like the tunnel.
+   > - cloudflared → nginx → KyPost: `cf-connecting-ip`, with nginx passing it on
+   >   (`proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;`) and reachable
+   >   only from cloudflared, or a client can send its own.
+   >
+   > Any other value refuses startup.
    >
    > If the proxy runs on a **different host**, combine option 1 with 2 or 3 — that
    > hop carries session cookies across a real network. A self-signed certificate
@@ -227,12 +240,10 @@ for that to hold:
    random salt stored inside the envelope; authentication uses the account's
    login salt. Neither value can be computed from the other without the password.
 
-Point 1 was not true before. Earlier versions POSTed the plaintext password to
-`/api/auth/login` on every sign-in, so the server was handed the wrapping key's
-source material repeatedly and merely chose not to keep it — a few lines in the
-login handler would have opened every client-protected key on the instance. That
-made the claim in this section, and in the code, false. Existing accounts convert
-automatically on their next sign-in; nothing needs to be re-imported.
+The server accepts only the derived authentication half, never the password. An
+account still holding a hash from before derived authentication cannot sign in
+until an admin resets its password; such accounts are flagged "needs password
+reset" in Admin → Users.
 
 Your browser decrypts and signs. A person who takes the disk, a backup, or the
 memory of this process gets ciphertext.

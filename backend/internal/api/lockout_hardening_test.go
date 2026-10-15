@@ -14,7 +14,7 @@ import (
 )
 
 func loginAttempt(srv *Server, username, password, remoteAddr string) *httptest.ResponseRecorder {
-	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	body, _ := json.Marshal(map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 	req.RemoteAddr = remoteAddr
 	rec := httptest.NewRecorder()
@@ -127,9 +127,8 @@ func TestDAVAuthSuccessKeepsLockoutHistory(t *testing.T) {
 // previous version made room exactly that way, taking locked entries first — so
 // an attacker who wanted more guesses at one account pushed the table past the
 // cap with rotating keys and their target's lockout was in the first tranche
-// deleted. Fifteen minutes became zero, repeatably. Saturation now sheds new
-// keys instead: an outage for callers the table has not seen, never an amnesty
-// for one it has.
+// deleted. Fifteen minutes became zero, repeatably. A table of nothing but live
+// lockouts sheds new keys instead.
 func TestFailureLockoutIsHardBounded(t *testing.T) {
 	// Reduced bounds, same proof: shedding is scale-invariant, and at production
 	// scale this one test was 35% of the package's entire runtime under -race.
@@ -170,25 +169,41 @@ func TestFailureLockoutIsHardBounded(t *testing.T) {
 	}
 }
 
-// A saturated table must still serve the keys it already knows. Shedding is for
-// keys it has never seen; refusing an existing one would let a flood lock out
-// every user who was mid-accumulation.
-func TestSaturatedTableStillServesKnownKeys(t *testing.T) {
+// A full table admits a new key by evicting the stalest unlocked entry, never a
+// live lockout. Shedding new keys instead let a flood refuse every new sign-in.
+func TestFullTableEvictsStalestUnlockedEntry(t *testing.T) {
 	l := newFailureLockoutSized(3, 15*time.Minute, 100, 500)
+	clock := time.Now()
+	l.now = func() time.Time { clock = clock.Add(time.Millisecond); return clock }
 
-	const known = "known\x00203.0.113.1"
-	l.tryAttempt(known) // 1 of 3: known to the table, not locked
-
-	for i := range l.hardCap + l.hardCap/10 {
+	const locked, stalest = "locked", "stalest"
+	for range 3 {
+		l.tryAttempt(locked)
+	}
+	l.tryAttempt(stalest)
+	for i := range l.hardCap - 2 {
 		l.tryAttempt(fmt.Sprintf("filler-%d", i))
 	}
 
-	if ok, _, _ := l.tryAttempt(known); !ok {
-		t.Error("a saturated table refused a key it was already tracking; a flood would " +
-			"lock out every user mid-accumulation")
+	if ok, _, _ := l.tryAttempt("brand-new-key"); !ok {
+		t.Fatal("a full table refused a new key; a flood blocks every new sign-in")
 	}
-	if ok, _, _ := l.tryAttempt("brand-new-key"); ok {
-		t.Error("a saturated table admitted a brand-new key, so the cap does not hold")
+	l.mu.Lock()
+	size := len(l.entries)
+	_, stalestKept := l.entries[stalest]
+	_, fillerKept := l.entries["filler-0"]
+	l.mu.Unlock()
+	if size > l.hardCap {
+		t.Errorf("table holds %d entries, want at most %d", size, l.hardCap)
+	}
+	if stalestKept || !fillerKept {
+		t.Errorf("evicted the wrong entry: stalest kept=%v, next-stalest kept=%v", stalestKept, fillerKept)
+	}
+	if ok, _ := l.lockedNow(locked); ok {
+		t.Error("making room forgave a live lockout")
+	}
+	if !l.Saturated() {
+		t.Error("hitting the cap was not recorded for logSaturatedLockouts")
 	}
 }
 

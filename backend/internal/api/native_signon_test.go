@@ -192,7 +192,7 @@ func TestNativeSignOnRefusals(t *testing.T) {
 				t.Fatalf("create: %v", err)
 			}
 			u, _ := s.users.GetByUsername("alice")
-			if err := s.users.LinkSSO(u.ID, "sso-sub-12345", "alice", ""); err != nil {
+			if err := s.users.LinkSSOIssuer(s.ssoStore.Load().IssuerURL, u.ID, "sso-sub-12345", "alice", ""); err != nil {
 				t.Fatalf("link: %v", err)
 			}
 			if _, err := s.users.Deactivate(u.ID); err != nil {
@@ -417,7 +417,7 @@ func TestNativeSignOnOriginMismatchLeavesJTIUnspent(t *testing.T) {
 func linkedPasswordAccount(t *testing.T, srv *Server) users.User {
 	t.Helper()
 	u := localAccount(t, srv, "alice")
-	if err := srv.users.LinkSSO(u.ID, "sso-sub-12345", "alice", ""); err != nil {
+	if err := srv.users.LinkSSOIssuer(srv.ssoStore.Load().IssuerURL, u.ID, "sso-sub-12345", "alice", ""); err != nil {
 		t.Fatalf("LinkSSO: %v", err)
 	}
 	u, err := srv.users.Get(u.ID)

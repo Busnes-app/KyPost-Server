@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"os/signal"
@@ -19,9 +20,7 @@ import (
 
 // freeTCPPort asks the OS for a currently-unused TCP port by briefly binding
 // to port 0 and reading back what it was assigned. WEB_PORT can't just be set
-// to "0" for this: config.EnvInt treats 0 as "unset" and falls back to the
-// hardcoded production default (5866), which risks colliding with a real
-// instance or another test.
+// to "0" for this: config.WebPort refuses anything outside 1-65535.
 func freeTCPPort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -132,6 +131,30 @@ func TestRunAll_ShutsDownGracefullyOnCancel(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("runAll did not return after cancellation — shutdown did not complete")
+	}
+}
+
+// Sustained bad health ends the run through the normal shutdown path and
+// returns an error, so main exits non-zero and supervisord restarts it.
+func TestHealthRestartShutsDownAndFails(t *testing.T) {
+	for name, run := range map[string]func(context.Context, runDeps) error{"daemon": runDaemon, "all": runAll} {
+		t.Run(name, func(t *testing.T) {
+			shortenHealthCheck(t)
+			d := newGracefulShutdownTestDeps(t)
+			d.health.MarkUnhealthy("imap unreachable for all users")
+
+			result := make(chan error, 1)
+			go func() { result <- run(context.Background(), d) }()
+
+			select {
+			case err := <-result:
+				if !errors.Is(err, errUnhealthy) {
+					t.Fatalf("run returned %v, want errUnhealthy", err)
+				}
+			case <-time.After(60 * time.Second):
+				t.Fatal("unhealthy run did not shut down")
+			}
+		})
 	}
 }
 

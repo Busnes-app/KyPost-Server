@@ -15,7 +15,7 @@ import (
 // pairApproverDevice registers a native device for userID and returns the
 // deviceId/deviceSecret credential pair a simulated device presents to
 // handlePushRespond via X-Kypost-Device-Id/X-Kypost-Device-Secret. Thin
-// wrapper over pairNativeDevice (which already sets MFAApprover: true).
+// wrapper over pairNativeDevice, which flags the device as an approver.
 func pairApproverDevice(t *testing.T, srv *Server, userID, deviceID string) (id, secret string) {
 	t.Helper()
 	return pairNativeDevice(t, srv, userID, deviceID)
@@ -60,7 +60,7 @@ func TestPushEnableAndStatusAndDeviceToggle(t *testing.T) {
 	pairApproverDevice(t, srv, u.ID, "dev-pia")
 
 	enableRec := doJSONAuth(srv, srv.withAuth(srv.handleMFAPushEnabled), http.MethodPut,
-		"/api/mfa/push/enabled", map[string]bool{"enabled": true}, u.ID)
+		"/api/mfa/push/enabled", map[string]any{"enabled": true, "authSecret": userAuthSecret(srv, u.ID, "pw-pia-testpassword")}, u.ID)
 	if enableRec.Code != http.StatusOK {
 		t.Fatalf("enable: status=%d body=%s", enableRec.Code, enableRec.Body.String())
 	}
@@ -83,7 +83,7 @@ func TestPushEnableAndStatusAndDeviceToggle(t *testing.T) {
 
 	// Toggle the device's approver flag off via the path-scoped endpoint.
 	toggleReq := httptest.NewRequest(http.MethodPut, "/api/notifications/native/devices/dev-pia/mfa",
-		bytes.NewReader([]byte(`{"approver":false}`)))
+		bytes.NewReader([]byte(`{"approver":false,"authSecret":"`+userAuthSecret(srv, u.ID, "pw-pia-testpassword")+`"}`)))
 	toggleReq.SetPathValue("deviceId", "dev-pia")
 	authRequestAs(srv, toggleReq, u.ID)
 	toggleRec := httptest.NewRecorder()
@@ -102,7 +102,7 @@ func TestPushEnableAndStatusAndDeviceToggle(t *testing.T) {
 func loginChallenge(t *testing.T, srv *Server, username, password string) (challengeID string, methods []string) {
 	t.Helper()
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": username, "password": password})
+		map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -179,7 +179,7 @@ func pollPush(srv *Server, challengeID string) string {
 func enablePush(t *testing.T, srv *Server, userID string) {
 	t.Helper()
 	rec := doJSONAuth(srv, srv.withAuth(srv.handleMFAPushEnabled), http.MethodPut,
-		"/api/mfa/push/enabled", map[string]bool{"enabled": true}, userID)
+		"/api/mfa/push/enabled", map[string]any{"enabled": true, "authSecret": userAuthSecret(srv, userID, testPasswordFor(t, srv, userID))}, userID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("enable push: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -299,8 +299,7 @@ func TestPushRespondCrossUserRejected(t *testing.T) {
 }
 
 // TestPushRespondRejectedWithoutPushEnabled covers a user who has TOTP 2FA and
-// a paired device (MFAApprover=true, the default for ordinary push
-// notifications) but has never opted into push as a second factor. Their
+// a paired approver device but has never opted into push as a second factor. Their
 // login challenge must not offer "push", and a response from their own paired
 // device must be rejected outright — not merely fail at finish time — proving
 // ResolvePush never ran and the challenge stays "pending".
@@ -355,7 +354,7 @@ func TestSecondLoginWithinWindowPushesAgainAndSupersedesTheFirst(t *testing.T) {
 	pairApproverDevice(t, srv, u.ID, "dev-uma")
 	enablePush(t, srv, u.ID)
 
-	if _, sent := srv.mfaPushLimiter.sent[u.ID]; sent {
+	if _, sent := srv.mfaPushLimiter.entries[u.ID]; sent {
 		t.Fatal("expected no push recorded before any login")
 	}
 
@@ -376,8 +375,9 @@ func TestSecondLoginWithinWindowPushesAgainAndSupersedesTheFirst(t *testing.T) {
 	if !methodsContain(methods, "push") {
 		t.Fatalf("methods = %v, want push offered on the second login too", methods)
 	}
-	if got := len(srv.mfaPushLimiter.sent[u.ID]); got != 2 {
-		t.Fatalf("recorded pushes = %d, want 2 (one per attempt)", got)
+	// Two pushes spent; the refill since is microseconds against a 5-minute window.
+	if got := mfaPushBurst - srv.mfaPushLimiter.entries[u.ID].tokens; got < 1.99 || got > 2 {
+		t.Fatalf("recorded pushes = %v, want 2 (one per attempt)", got)
 	}
 
 	if _, ok := srv.mfaChallenges.PushStatus(first); ok {
@@ -411,13 +411,13 @@ func TestLoginStopsOfferingPushWhenThrottled(t *testing.T) {
 	// test is the first login *after* the burst is spent, so that is the only one it
 	// pays for.
 	for i := 0; i < mfaPushBurst; i++ {
-		if ok, _ := srv.mfaPushLimiter.tryConsume(u.ID); !ok {
+		if ok, _ := srv.mfaPushLimiter.allow(u.ID); !ok {
 			t.Fatalf("could not spend burst slot %d of %d", i+1, mfaPushBurst)
 		}
 	}
 
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": "ulf", "password": "pw-ulf-testpassword"})
+		map[string]string{"username": "ulf", "authSecret": testAuthSecret(srv, "ulf", "pw-ulf-testpassword")})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("throttled login must still succeed: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -508,7 +508,7 @@ func TestPushFinishRequiresTheBrowsersSecret(t *testing.T) {
 	enablePush(t, srv, u.ID)
 
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": username, "password": password})
+		map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login: status=%d body=%s", rec.Code, rec.Body.String())
 	}

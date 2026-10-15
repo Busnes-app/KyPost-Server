@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -79,6 +80,9 @@ type Server struct {
 
 	// sessMu guards sessions only.
 	sessMu sync.RWMutex
+	// ssoEpoch counts SSO trust changes (endSSOSessions); an SSO session
+	// minted under an older epoch is dead.
+	ssoEpoch atomic.Uint64
 	// pairingMu serializes native registration with credential revocation. A
 	// pairing token resolves its owner before it writes a device; revocation must
 	// not delete devices and rotate the subscriber between those two operations.
@@ -143,6 +147,9 @@ type Server struct {
 	pickupStore          *pgpmail.PickupStore
 	poller               *processor.Poller
 	loginLockout         *failureLockout
+	// reviewPairingLockout is review pairing's own per-account table (its
+	// verifyLogin accountLockout), so that route can never fill loginLockout.
+	reviewPairingLockout *failureLockout
 	davLockout           *failureLockout
 	mfaLockout           *failureLockout
 	// passwordChangeLockout bounds current-credential guessing on
@@ -154,30 +161,30 @@ type Server struct {
 	imapLoginLockout *failureLockout
 	imapListSlots    chan struct{}
 	deviceLockout    *failureLockout
-	wkdLimiter       *ipRateLimiter
+	wkdLimiter       *keyedLimiter
 	// accountWriteLimiter meters MUTATING withAuth requests per account. Every
 	// such request is at least one whole-file users.json marshal + fsync under
 	// a global cross-process lock that every authenticated request also reads
 	// through, so an unthrottled mutating route is an instance-wide stall that
 	// one session can drive. See withAuth and accountWriteBurst.
-	accountWriteLimiter *ipRateLimiter
+	accountWriteLimiter *keyedLimiter
 	// pushPollLimiter meters the two unauthenticated push-MFA endpoints per IP.
 	// They were the only public routes with no meter, and both take mfa.Store's
 	// process-wide lock. See withPushPollRateLimit.
-	pushPollLimiter *ipRateLimiter
+	pushPollLimiter *keyedLimiter
 	// loginParamsLimiter meters GET /api/auth/login-params PER IP. Drawing a full
 	// attempt's reservation from the instance-wide derivation budget below priced a
 	// ~5us HMAC at 0.2 core-seconds: sixteen free requests emptied the bucket and
 	// denied sign-in to the whole instance, with no per-IP proxy rule able to
 	// restore it.
-	loginParamsLimiter *ipRateLimiter
-	mfaPushLimiter     *mfaPushLimiter
-	sendAsCooldown     *cooldown
+	loginParamsLimiter *keyedLimiter
+	mfaPushLimiter     *keyedLimiter
+	sendAsCooldown     *keyedLimiter
 	// notificationTestCooldown meters POST /api/notifications/test per user:
 	// the one endpoint an authenticated caller can use to trigger the serial
 	// push fanout on demand. See notificationTestCooldownFor.
-	notificationTestCooldown *cooldown
-	nativeRelayCheckCooldown *cooldown
+	notificationTestCooldown *keyedLimiter
+	nativeRelayCheckCooldown *keyedLimiter
 	captchaVerifier          captcha.Verifier
 	captchaProvider          captcha.Provider
 	captchaSiteKey           string
@@ -187,7 +194,7 @@ type Server struct {
 	// challenge endpoint and the sweeper need Issue/SweepExpired, which are
 	// not on the Verifier interface. nil for every other provider.
 	powVerifier   *captcha.PoWVerifier
-	powChallenges *powChallengeLimiter
+	powChallenges *keyedLimiter
 	powDifficulty *powEscalation
 
 	// loginRateLimiter is an INSTANCE-WIDE token bucket on POST /api/auth/login,
@@ -202,7 +209,7 @@ type Server struct {
 	//
 	// Instance-wide is the point: a per-IP limit is defeated by more IPs, and the
 	// CPU being protected is shared.
-	loginRateLimiter *ipRateLimiter
+	loginRateLimiter *keyedLimiter
 	// loginIPLockout is a second, coarser lockout keyed on the client IP ALONE,
 	// so a caller cycling through usernames from one address runs out of budget.
 	loginIPLockout *failureLockout
@@ -258,7 +265,7 @@ type Server struct {
 	// deviceRescan throttles full device-index rebuilds. A rebuild opens every
 	// account's SQLite store, and an unauthenticated caller can force a cache
 	// miss on every request just by varying the device id.
-	deviceRescan   *intervalGate
+	deviceRescan   *keyedLimiter
 	davCredentials davCredentialCache
 
 	// wkdStore is the single instance-level WKD domain-claim store, injected
@@ -267,12 +274,12 @@ type Server struct {
 	// comment for why sharing one instance matters.
 	wkdStore *wkdpublish.Store
 
-	// TLS state, resolved by Prepare from TLS_CERT_FILE/TLS_KEY_FILE. tlsConfig
-	// is nil for a plain-HTTP listener; tlsErr is non-nil when the configuration
-	// is broken, and Serve refuses to start rather than falling back to
-	// cleartext. See tls.go.
+	// Listener state, resolved by Prepare from WEB_PORT and TLS_CERT_FILE/
+	// TLS_KEY_FILE. tlsConfig is nil for a plain-HTTP listener; prepareErr is
+	// non-nil when either is broken, and Serve refuses to start rather than
+	// falling back to a default port or cleartext. See tls.go.
 	tlsConfig   *tls.Config
-	tlsErr      error
+	prepareErr  error
 	tlsCertFile string
 	tlsKeyFile  string
 
@@ -334,13 +341,14 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		SiteKey:   captchaSiteKey,
 		SecretKey: strings.TrimSpace(os.Getenv("CAPTCHA_SECRET_KEY")),
 	}
+	var maxNumberErr error
 	if captchaProvider == captcha.ProviderPoW {
 		captchaCfg.HMACKey = resolvePoWSecret(
 			config.SecretFile("POW_SECRET_FILE", "pow.key"), logger)
-		captchaCfg.MaxNumber = config.EnvInt("POW_MAX_NUMBER", 0)
+		captchaCfg.MaxNumber, maxNumberErr = config.PoWMaxNumber.Get()
 	}
 	captchaVerifier, err := captcha.NewVerifier(captchaCfg)
-	if err != nil {
+	if err = cmp.Or(maxNumberErr, err); err != nil {
 		// Misconfigured CAPTCHA must fail closed on login (see handleLogin)
 		// rather than silently running unprotected, but must not prevent the
 		// server itself from starting.
@@ -400,17 +408,18 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		deviceReserving:          map[string]int{},
 		davCredentials:           newDAVCredentialCache(),
 		loginLockout:             newLoginLockout(),
+		reviewPairingLockout:     newLoginLockout(),
 		davLockout:               newFailureLockout(davMaxFailures, davLockoutFor),
 		mfaLockout:               newFailureLockout(mfaMaxFailures, mfaLockoutFor),
 		passwordChangeLockout:    newFailureLockout(passwordChangeMaxFailures, passwordChangeLockoutFor),
 		imapLoginLockout:         newFailureLockout(imapLoginMaxFailures, imapLoginLockoutFor),
 		imapListSlots:            make(chan struct{}, maxIMAPListings),
 		deviceLockout:            newFailureLockout(deviceMaxFailures, deviceLockoutFor),
-		wkdLimiter:               newIPRateLimiter(wkdRateBurst, wkdRateRefillPerSec),
-		accountWriteLimiter:      newIPRateLimiter(accountWriteBurst, accountWriteRefillPerSec),
-		pushPollLimiter:          newIPRateLimiter(pushPollBurst, pushPollRefillPerSec),
-		loginParamsLimiter:       newIPRateLimiter(loginParamsBurst, loginParamsRefillPerSec),
-		deviceRescan:             newIntervalGate(deviceRescanInterval),
+		wkdLimiter:               newKeyedLimiter(wkdRateBurst, wkdRateRefillPerSec),
+		accountWriteLimiter:      newKeyedLimiter(accountWriteBurst, accountWriteRefillPerSec),
+		pushPollLimiter:          newKeyedLimiter(pushPollBurst, pushPollRefillPerSec),
+		loginParamsLimiter:       newKeyedLimiter(loginParamsBurst, loginParamsRefillPerSec),
+		deviceRescan:             newKeyedLimiter(1, 1/deviceRescanInterval.Seconds()),
 		mfaPushLimiter:           newMfaPushLimiter(),
 		sendAsCooldown:           newCooldown(sendAsVerificationCooldownFor),
 		notificationTestCooldown: newCooldown(notificationTestCooldownFor),
@@ -421,7 +430,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		powVerifier:              powVerifier,
 		powChallenges:            newPowChallengeLimiter(),
 		powDifficulty:            newPowEscalation(),
-		loginRateLimiter:         newIPRateLimiter(loginKDFBurstSeconds, loginKDFDutyCycle),
+		loginRateLimiter:         newKeyedLimiter(loginKDFBurstSeconds, loginKDFDutyCycle),
 		loginIPLockout:           newFailureLockout(loginIPMaxFailures, loginIPLockoutFor),
 		globalStore:              globalStore,
 		wkdStore:                 wkdStore,
@@ -534,7 +543,7 @@ func (s *Server) routesAuth(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mfa/totp/confirm", s.withAuth(s.handleMFAConfirm))
 	mux.HandleFunc("POST /api/mfa/totp/disable", s.withAuth(s.handleMFADisable))
 	mux.HandleFunc("POST /api/mfa/recovery-codes/regenerate", s.withAuth(s.handleMFARecoveryCodesRegenerate))
-	mux.HandleFunc("PUT /api/mfa/push/enabled", s.withAuth(s.handleMFAPushEnabled))
+	mux.HandleFunc("PUT /api/mfa/push/enabled", s.withAuth(withActionDigest(s.handleMFAPushEnabled)))
 	mux.HandleFunc("GET /api/auth/me", withSelfAuth(s.handleMe))
 	mux.HandleFunc("GET /api/auth/csrf", withSelfAuth(s.handleCSRFToken))
 	mux.HandleFunc("POST /api/auth/logout", s.withAuth(s.handleLogout))
@@ -590,7 +599,6 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/admin/backup/schedule", s.withAdmin(withActionDigest(s.handleBackupSchedule)))
 	mux.HandleFunc("/api/health", withPublicRoute(s.handleHealth))
 	mux.HandleFunc("GET /healthz", withPublicRoute(s.suiteHealthHandler().ServeHTTP))
-	mux.HandleFunc("POST /api/health/repair", s.withAdmin(s.handleRepair))
 	mux.HandleFunc("POST /api/admin/mail/poll-now", s.withAdmin(s.handlePollNow))
 	mux.HandleFunc("GET /api/installer/network", withPublicRoute(s.handleInstallerNetwork))
 	mux.HandleFunc("/api/status", s.withAuth(s.handleStatus))
@@ -804,14 +812,14 @@ func (s *Server) routesPGP(mux *http.ServeMux) {
 // per-device credentials rather than a session, so they carry no middleware
 // here and check inside the handler.
 func (s *Server) routesNotifications(mux *http.ServeMux) {
-	mux.HandleFunc("PUT /api/notifications/native/devices/{deviceId}/mfa", s.withAuth(s.handleNativeDeviceMFA))
+	mux.HandleFunc("PUT /api/notifications/native/devices/{deviceId}/mfa", s.withAuth(withActionDigest(s.handleNativeDeviceMFA)))
 	mux.HandleFunc("GET /api/notifications/preferences", s.withAuth(s.handleNotificationPreferences))
 	mux.HandleFunc("PUT /api/notifications/preferences", s.withAuth(s.handleNotificationPreferences))
 	mux.HandleFunc("GET /api/notifications/vapid-public-key", s.withAuth(s.handleNotificationVAPIDPublicKey))
 	mux.HandleFunc("POST /api/notifications/subscriptions", s.withAuth(s.handleNotificationSubscriptions))
 	mux.HandleFunc("DELETE /api/notifications/subscriptions", s.withAuth(s.handleNotificationSubscriptions))
 	mux.HandleFunc("POST /api/notifications/test", s.withAuth(s.handleNotificationTest))
-	mux.HandleFunc("GET /api/notifications/pairing", s.withAuth(s.handleNotificationPairing))
+	mux.HandleFunc("POST /api/notifications/pairing", s.withAuth(withActionDigest(s.handleNotificationPairing)))
 	mux.HandleFunc("POST /api/notifications/review-pairing", withPublicRoute(s.handleReviewPairing))
 	mux.HandleFunc("POST /api/auth/native/signon", withTokenAuth(s.handleNativeSignOn))
 	// withTokenAuth, not withDeviceAuth: registration creates the device, so
@@ -860,7 +868,8 @@ func (s *Server) Prepare() {
 	if err := os.RemoveAll(filepath.Join(s.stateDir, importDir)); err != nil {
 		s.logger.Error("leftover import uploads could not be removed", "error", err.Error())
 	}
-	port := config.EnvInt("WEB_PORT", 5866)
+	s.bindUnboundSSOLinks()
+	port, portErr := config.WebPort.Get()
 	// Timeouts are set explicitly because net/http's zero values mean "no limit":
 	// without them a connection that dribbles one header line every few seconds is
 	// held open indefinitely, and the shipped compose file publishes this port
@@ -889,6 +898,10 @@ func (s *Server) Prepare() {
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
+	if portErr != nil {
+		s.prepareErr = portErr
+		return
+	}
 
 	// Optional inbound TLS — see tls.go. The error is stashed rather than returned
 	// because Prepare has no error return; Serve surfaces it and refuses to start.
@@ -900,7 +913,7 @@ func (s *Server) Prepare() {
 		s.tlsConfig, err = newTLSConfig(certFile, keyFile)
 	}
 	if err != nil {
-		s.tlsErr = err
+		s.prepareErr = fmt.Errorf("tls configuration: %w", err)
 		return
 	}
 	if s.tlsConfig != nil {
@@ -918,9 +931,9 @@ func (s *Server) Serve() error {
 	if s.httpServer == nil {
 		s.Prepare()
 	}
-	// A TLS misconfiguration is fatal here rather than a fallback to cleartext.
-	if s.tlsErr != nil {
-		return fmt.Errorf("tls configuration: %w", s.tlsErr)
+	// Fatal here rather than a fallback to a default port or cleartext.
+	if s.prepareErr != nil {
+		return s.prepareErr
 	}
 
 	var err error
@@ -1076,15 +1089,9 @@ func (s *Server) StartSessionSweeper(ctx context.Context) {
 	}
 }
 
-// logSaturatedLockouts reports any lockout table that has hit
-// loginLockoutHardCap and started shedding new keys.
-//
-// A saturated table refuses to track keys it has not seen before, which the
-// caller experiences as a 429 on a perfectly good credential. That is the
-// deliberate trade — shedding rather than evicting live lockouts, see
-// loginLockoutHardCap — but it must not be silent: from the outside it is
-// indistinguishable from "login is broken", and it means tens of thousands of
-// distinct keys are locked out at once, which is an attack in progress.
+// logSaturatedLockouts reports any lockout table that has hit its hard cap: a
+// flood in progress, which may be forgiving partial strikes or, if every entry
+// is a live lockout, answering new callers 429. See loginLockoutHardCap.
 func (s *Server) logSaturatedLockouts() {
 	if s.logger == nil {
 		return
@@ -1092,16 +1099,17 @@ func (s *Server) logSaturatedLockouts() {
 	for name, lockout := range map[string]*failureLockout{
 		"login":           s.loginLockout,
 		"login_ip":        s.loginIPLockout,
+		"review_pairing":  s.reviewPairingLockout,
 		"dav":             s.davLockout,
 		"mfa":             s.mfaLockout,
 		"password_change": s.passwordChangeLockout,
 		"device":          s.deviceLockout,
 	} {
 		if lockout != nil && lockout.Saturated() {
-			s.logger.Error("lockout table saturated; new keys are being shed",
+			s.logger.Error("lockout table saturated",
 				"table", name,
 				"hard_cap", strconv.Itoa(lockout.HardCap()),
-				"effect", "callers not already tracked receive 429; lockouts already in force are preserved")
+				"effect", "stalest unlocked entries are evicted for new callers; if only live lockouts remain, new callers receive 429")
 		}
 	}
 }
@@ -1166,25 +1174,9 @@ func (s *Server) StartCooldownSweeper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, c := range []*cooldown{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown} {
-				c.sweep(cooldownSweepMaxAge)
+			for _, c := range []*keyedLimiter{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown, s.mfaPushLimiter} {
+				c.sweep()
 			}
-		}
-	}
-}
-
-// StartMfaPushLimiterSweeper runs mfaPushLimiter.sweep on an interval for the
-// process lifetime, mirroring StartSendAsCooldownSweeper's ticker/select pattern
-// exactly. Call once after NewServer.
-func (s *Server) StartMfaPushLimiterSweeper(ctx context.Context) {
-	ticker := time.NewTicker(mfaPushLimiterSweepInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.mfaPushLimiter.sweep(mfaPushLimiterSweepMaxAge)
 		}
 	}
 }
@@ -1520,20 +1512,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	zw := gzip.NewWriter(gw)
 	defer func() { _ = zw.Close() }()
 	_, _ = zw.Write(body)
-}
-
-// scheduleContainerRestart exits this process after delay so supervisord's
-// autorestart brings it back with fresh state. It restarts THIS PROCESS, not
-// the container: this process is unprivileged and PID 1 is not ours, so
-// signalling PID 1 only ever returns EPERM.
-func scheduleContainerRestart(logger *logging.Logger, reason string, delay time.Duration) {
-	go func() {
-		time.Sleep(delay)
-		if logger != nil {
-			logger.Error("restarting process; supervisord will bring it back", "reason", reason)
-		}
-		os.Exit(2)
-	}()
 }
 
 func randomToken(size int) (string, error) {

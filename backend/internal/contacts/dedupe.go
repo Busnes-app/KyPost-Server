@@ -186,8 +186,9 @@ func mergeGroup(members []Contact) (survivor Contact, absorbed []string) {
 	// compares against a fingerprint no key has — and it is reachable by anything
 	// that can create a duplicate, including a hostile upstream CardDAV server,
 	// which cannot overwrite a local contact by UID but can certainly add one.
-	survivor.PGPKey, survivor.PGPKeyFingerprint, survivor.PGPKeySource, survivor.PGPKeyVerified =
-		mergePGPProvenance(survivor, byNewest)
+	k := mergePGPProvenance(survivor, byNewest)
+	survivor.PGPKey, survivor.PGPKeyFingerprint, survivor.PGPKeySource, survivor.PGPKeyVerified, survivor.PGPKeyAutocryptDate =
+		k.PGPKey, k.PGPKeyFingerprint, k.PGPKeySource, k.PGPKeyVerified, k.PGPKeyAutocryptDate
 	survivor.PhoneticGivenName = firstNonEmpty(byNewest, func(c Contact) string { return c.PhoneticGivenName })
 	survivor.PhoneticFamilyName = firstNonEmpty(byNewest, func(c Contact) string { return c.PhoneticFamilyName })
 	survivor.Department = firstNonEmpty(byNewest, func(c Contact) string { return c.Department })
@@ -360,14 +361,14 @@ func (u *unionFind) union(a, b int) {
 // have it replaced by a duplicate that arrived later from a sync. Only when the
 // survivor has no key at all does the newest member's key move across, and then
 // its provenance moves with it.
-func mergePGPProvenance(survivor Contact, byNewest []Contact) (key, fingerprint, source string, verified bool) {
+func mergePGPProvenance(survivor Contact, byNewest []Contact) Contact {
 	if survivor.PGPKey != "" {
-		return survivor.PGPKey, survivor.PGPKeyFingerprint, survivor.PGPKeySource, survivor.PGPKeyVerified
+		return survivor
 	}
 	for _, c := range byNewest {
 		if c.PGPKey != "" {
-			return c.PGPKey, c.PGPKeyFingerprint, c.PGPKeySource, c.PGPKeyVerified
+			return c
 		}
 	}
-	return "", "", "", false
+	return Contact{}
 }

@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"strconv"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // Step-up authentication for the operations that replace or destroy a PGP
@@ -38,17 +40,14 @@ import (
 // confirmAccountCredential verifies a re-entered account credential, writing
 // the response and returning false if it does not check out.
 //
-// password and authSecret are the two forms a caller may present; which one is
-// checked depends on what the ACCOUNT stores, not on what arrives — see
-// verifyAccountCredential and login_params.go. A client-protected account never
-// sends its password to this server at all, so requiring one here would make
-// the step-up impossible for exactly the accounts that have most to protect.
+// Only the derived authSecret is accepted (login_params.go); the password never
+// reaches this server.
 //
 // Rate-limited on the same per-account throttle the MFA path uses, because an
 // endpoint that says "wrong password" without limit is a password oracle
 // whatever else it is for.
-func (s *Server) confirmAccountCredential(w http.ResponseWriter, r *http.Request, userID, password, authSecret string) bool {
-	if !s.confirmAccountCredentialNoRecord(w, r, userID, password, authSecret) {
+func (s *Server) confirmAccountCredential(w http.ResponseWriter, r *http.Request, userID, authSecret string) bool {
+	if !s.confirmAccountCredentialNoRecord(w, r, userID, authSecret) {
 		return false
 	}
 	s.passwordChangeLockout.recordSuccess(stepUpLockoutKey(userID, r))
@@ -82,7 +81,7 @@ func stepUpLockoutKey(userID string, r *http.Request) string {
 // deletes the entry outright, so the second check would start from zero on every
 // request and its throttle would never fire. Such a caller uses this and records
 // the success itself once every factor has passed. See handleAuthStepUp.
-func (s *Server) confirmAccountCredentialNoRecord(w http.ResponseWriter, r *http.Request, userID, password, authSecret string) bool {
+func (s *Server) confirmAccountCredentialNoRecord(w http.ResponseWriter, r *http.Request, userID, authSecret string) bool {
 	u, err := s.users.Get(userID)
 	if err != nil {
 		http.Error(w, "user unavailable", http.StatusInternalServerError)
@@ -94,7 +93,7 @@ func (s *Server) confirmAccountCredentialNoRecord(w http.ResponseWriter, r *http
 		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
 		return false
 	}
-	confirmed, err := verifyAccountCredential(r.Context(), u, password, authSecret)
+	confirmed, err := users.VerifyAuthSecret(r.Context(), u, authSecret)
 	if err != nil {
 		// Nothing was checked, so the throttle strike goes back with it.
 		s.passwordChangeLockout.cancelAttempt(strike)
@@ -113,8 +112,8 @@ func (s *Server) confirmAccountCredentialNoRecord(w http.ResponseWriter, r *http
 // requirePGPStepUp gates an operation that creates, replaces or destroys a PGP
 // identity. It returns true when the caller may proceed, which now means only
 // one thing: they just proved the account credential.
-func (s *Server) requirePGPStepUp(w http.ResponseWriter, r *http.Request, userID, password, authSecret string) bool {
-	return s.confirmAccountCredential(w, r, userID, password, authSecret)
+func (s *Server) requirePGPStepUp(w http.ResponseWriter, r *http.Request, userID, authSecret string) bool {
+	return s.confirmAccountCredential(w, r, userID, authSecret)
 }
 
 // clearDeviceEnrollmentsFor resets every paired device's enrollment state after

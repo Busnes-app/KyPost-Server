@@ -97,7 +97,6 @@ func TestEveryDerivationEntryPointSharesTheOneLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
 	}
-	legacyUser := User{ID: "u1", Username: "legacy", PasswordHash: hash}
 	derivedUser := User{
 		ID: "u2", Username: "derived", PasswordHash: hash,
 		AuthDerivation: AuthDerivationPBKDF2, LoginSalt: "c2FsdA==", LoginIterations: MinLoginIterations,
@@ -125,8 +124,8 @@ func TestEveryDerivationEntryPointSharesTheOneLimit(t *testing.T) {
 			_, err := HashPassword(ctx, "anything")
 			return err
 		}},
-		{"VerifyPassword", func() error {
-			_, err := VerifyPassword(ctx, legacyUser, "anything")
+		{"DeriveCredential", func() error {
+			_, err := DeriveCredential(ctx, "anything-long-enough")
 			return err
 		}},
 		{"VerifyAuthSecret", func() error {

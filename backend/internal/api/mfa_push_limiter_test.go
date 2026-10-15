@@ -11,7 +11,7 @@ func TestMfaPushLimiterAllowsBurstThenBlocks(t *testing.T) {
 	const userID = "user-1"
 
 	for i := 0; i < mfaPushBurst; i++ {
-		ok, retryAfter := c.tryConsume(userID)
+		ok, retryAfter := c.allow(userID)
 		if !ok {
 			t.Fatalf("push %d of %d: expected to be allowed within the burst", i+1, mfaPushBurst)
 		}
@@ -20,12 +20,12 @@ func TestMfaPushLimiterAllowsBurstThenBlocks(t *testing.T) {
 		}
 	}
 
-	ok, retryAfter := c.tryConsume(userID)
+	ok, retryAfter := c.allow(userID)
 	if ok {
 		t.Fatalf("expected push %d to be blocked once the burst is spent", mfaPushBurst+1)
 	}
-	if retryAfter <= 0 || retryAfter > mfaPushWindow {
-		t.Fatalf("retryAfter = %v, want a positive duration <= %v", retryAfter, mfaPushWindow)
+	if retryAfter <= 0 || retryAfter > mfaPushWindow+time.Millisecond {
+		t.Fatalf("retryAfter = %v, want a positive duration <= %v (+1ms rounding)", retryAfter, mfaPushWindow)
 	}
 }
 
@@ -36,10 +36,10 @@ func TestMfaPushLimiterAllowsASecondPushImmediately(t *testing.T) {
 	c := newMfaPushLimiter()
 	const userID = "user-retry"
 
-	if ok, _ := c.tryConsume(userID); !ok {
+	if ok, _ := c.allow(userID); !ok {
 		t.Fatal("expected the first push to be allowed")
 	}
-	if ok, retryAfter := c.tryConsume(userID); !ok {
+	if ok, retryAfter := c.allow(userID); !ok {
 		t.Fatalf("a second sign-in attempt must still get a push; blocked for %v", retryAfter)
 	}
 }
@@ -47,43 +47,47 @@ func TestMfaPushLimiterAllowsASecondPushImmediately(t *testing.T) {
 func TestMfaPushLimiterIsPerAccount(t *testing.T) {
 	c := newMfaPushLimiter()
 	for i := 0; i < mfaPushBurst; i++ {
-		c.tryConsume("user-a")
+		c.allow("user-a")
 	}
 
-	if ok, _ := c.tryConsume("user-a"); ok {
+	if ok, _ := c.allow("user-a"); ok {
 		t.Fatal("user-a should be throttled after spending its burst")
 	}
-	if ok, _ := c.tryConsume("user-b"); !ok {
+	if ok, _ := c.allow("user-b"); !ok {
 		t.Fatal("user-b's push must not be affected by user-a's throttling")
 	}
 }
 
 func TestMfaPushLimiterRecoversAsTheWindowSlides(t *testing.T) {
 	c := newMfaPushLimiter()
+	now, advance := fixedClock(time.Now())
+	c.now = now
 	const userID = "user-2"
 	for i := 0; i < mfaPushBurst; i++ {
-		c.tryConsume(userID)
+		c.allow(userID)
 	}
-	if ok, _ := c.tryConsume(userID); ok {
+	if ok, _ := c.allow(userID); ok {
 		t.Fatal("expected the burst to be spent")
 	}
 
-	// Age the oldest entry out of the window, leaving the rest inside it: one
-	// slot should free up, and exactly one.
-	c.mu.Lock()
-	c.sent[userID][0] = time.Now().Add(-mfaPushWindow - time.Second)
-	c.mu.Unlock()
+	// Never a fourth push inside the window; one window later one slot frees
+	// up, and exactly one.
+	advance(mfaPushWindow - time.Second)
+	if ok, _ := c.allow(userID); ok {
+		t.Fatal("a fourth push inside the window")
+	}
+	advance(2 * time.Second)
 
-	if ok, _ := c.tryConsume(userID); !ok {
+	if ok, _ := c.allow(userID); !ok {
 		t.Fatal("expected a slot to free up once the oldest push left the window")
 	}
-	if ok, _ := c.tryConsume(userID); ok {
+	if ok, _ := c.allow(userID); ok {
 		t.Fatal("only one slot had expired; the burst must not be refilled wholesale")
 	}
 }
 
 // TestMfaPushLimiterTryConsumeIsAtomicUnderRace fires many concurrent
-// tryConsume calls for the same account and asserts exactly mfaPushBurst
+// allow calls for the same account and asserts exactly mfaPushBurst
 // succeed — this is the exact TOCTOU the old separate allowed()+recordSent()
 // calls were vulnerable to.
 func TestMfaPushLimiterTryConsumeIsAtomicUnderRace(t *testing.T) {
@@ -100,7 +104,7 @@ func TestMfaPushLimiterTryConsumeIsAtomicUnderRace(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-barrier
-			ok, _ := c.tryConsume(userID)
+			ok, _ := c.allow(userID)
 			results[idx] = ok
 		}(i)
 	}
@@ -114,28 +118,25 @@ func TestMfaPushLimiterTryConsumeIsAtomicUnderRace(t *testing.T) {
 		}
 	}
 	if allowedCount != mfaPushBurst {
-		t.Fatalf("expected exactly %d of %d concurrent tryConsume calls to succeed, got %d",
+		t.Fatalf("expected exactly %d of %d concurrent allow calls to succeed, got %d",
 			mfaPushBurst, n, allowedCount)
 	}
 }
 
 func TestMfaPushLimiterSweepDropsIdleAccounts(t *testing.T) {
 	c := newMfaPushLimiter()
-	c.tryConsume("user-idle")
-	c.tryConsume("user-active")
+	now, advance := fixedClock(time.Now())
+	c.now = now
+	c.allow("user-idle")
+	advance(mfaPushWindow + time.Second) // one push refilled: the burst is full again
+	c.allow("user-active")
 
-	c.mu.Lock()
-	c.sent["user-idle"][0] = time.Now().Add(-mfaPushLimiterSweepMaxAge - time.Minute)
-	c.mu.Unlock()
+	c.sweep()
 
-	c.sweep(mfaPushLimiterSweepMaxAge)
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, exists := c.sent["user-idle"]; exists {
+	if _, exists := c.entries["user-idle"]; exists {
 		t.Fatal("expected the idle account's entry to be reclaimed")
 	}
-	if _, exists := c.sent["user-active"]; !exists {
+	if _, exists := c.entries["user-active"]; !exists {
 		t.Fatal("an account whose push is still inside the window must survive the sweep")
 	}
 }

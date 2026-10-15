@@ -48,21 +48,24 @@ type Contact struct {
 	Notes         string           `json:"notes,omitempty"`
 	Birthday      string           `json:"birthday,omitempty"` // YYYY-MM-DD
 
-	PhotoRef           string               `json:"photoRef,omitempty"` // "<sha256hex>.<ext>", servable filename under contact-photos/
-	GroupIDs           []string             `json:"groupIDs,omitempty"`
-	PGPKey             string               `json:"pgpKey,omitempty"`            // opaque armored ASCII public key text
-	PGPKeySource       string               `json:"pgpKeySource,omitempty"`      // manual|qr|wkd|keyserver
-	PGPKeyFingerprint  string               `json:"pgpKeyFingerprint,omitempty"` // TOFU pin (first-seen fingerprint)
-	PGPKeyVerified     bool                 `json:"pgpKeyVerified,omitempty"`    // user eyeballed the fingerprint / came via QR
-	IMs                []ContactIM          `json:"ims,omitempty"`
-	Websites           []ContactURL         `json:"websites,omitempty"`
-	Relations          []ContactRelation    `json:"relations,omitempty"`
-	Events             []ContactEvent       `json:"events,omitempty"` // anniversary, custom dates — Birthday stays a separate field
-	PhoneticGivenName  string               `json:"phoneticGivenName,omitempty"`
-	PhoneticFamilyName string               `json:"phoneticFamilyName,omitempty"`
-	Department         string               `json:"department,omitempty"`
-	CustomFields       []ContactCustomField `json:"customFields,omitempty"`
-	Pronouns           string               `json:"pronouns,omitempty"`
+	PhotoRef          string   `json:"photoRef,omitempty"` // "<sha256hex>.<ext>", servable filename under contact-photos/
+	GroupIDs          []string `json:"groupIDs,omitempty"`
+	PGPKey            string   `json:"pgpKey,omitempty"`            // opaque armored ASCII public key text
+	PGPKeySource      string   `json:"pgpKeySource,omitempty"`      // manual|qr|wkd|keyserver
+	PGPKeyFingerprint string   `json:"pgpKeyFingerprint,omitempty"` // TOFU pin (first-seen fingerprint)
+	PGPKeyVerified    bool     `json:"pgpKeyVerified,omitempty"`    // user eyeballed the fingerprint / came via QR
+	// PGPKeyAutocryptDate is the RFC 3339 effective date of the Autocrypt
+	// message that supplied PGPKey; older Autocrypt headers are ignored.
+	PGPKeyAutocryptDate string               `json:"pgpKeyAutocryptDate,omitempty"`
+	IMs                 []ContactIM          `json:"ims,omitempty"`
+	Websites            []ContactURL         `json:"websites,omitempty"`
+	Relations           []ContactRelation    `json:"relations,omitempty"`
+	Events              []ContactEvent       `json:"events,omitempty"` // anniversary, custom dates — Birthday stays a separate field
+	PhoneticGivenName   string               `json:"phoneticGivenName,omitempty"`
+	PhoneticFamilyName  string               `json:"phoneticFamilyName,omitempty"`
+	Department          string               `json:"department,omitempty"`
+	CustomFields        []ContactCustomField `json:"customFields,omitempty"`
+	Pronouns            string               `json:"pronouns,omitempty"`
 
 	// Server-side-only provenance from deduplication. MergedUIDs lists the
 	// UIDs a survivor absorbed; MergedInto points a loser's tombstone at the
@@ -162,6 +165,7 @@ func (c *Contact) tombstone() {
 	c.PhotoRef = ""
 	c.GroupIDs = nil
 	c.PGPKey = ""
+	c.PGPKeyAutocryptDate = ""
 	c.IMs = nil
 	c.Websites = nil
 	c.Relations = nil
