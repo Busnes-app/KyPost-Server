@@ -12,6 +12,8 @@ non-prerelease version.
 
 ## Unreleased
 
+- Main-image publication checks the live remote main tip as well as the checkout and tested commit, so rerunning an old workflow cannot republish stale code after main advances.
+
 **Before upgrading:** every account now has a sending quota of 60 messages an hour and 1000 recipients a day; raise it under Admin → Application, or per account under Admin → Users, if your users send more.
 
 **Before upgrading:** reset the password of every account flagged "needs password reset" in Admin → Users (or listed by the startup WARN); those accounts cannot sign in after the upgrade until you do. Update every API client and cached web bundle.

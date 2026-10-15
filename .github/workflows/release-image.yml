@@ -12,20 +12,21 @@ concurrency:
   group: release-image
   cancel-in-progress: false
 
-permissions:
-  contents: read
-  packages: write
-  attestations: write
-  artifact-metadata: write
-  id-token: write
-  # Read the check runs recorded against the tagged commit. Without this the
-  # CI gate below cannot see whether ci.yml ever passed for it.
-  checks: read
+permissions: {}
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      artifact-metadata: write
+      id-token: write
+      # Read the check runs recorded against the tagged commit. Without this the
+      # CI gate below cannot see whether ci.yml ever passed for it.
+      checks: read
     env:
       # Literal, and lowercase: a registry path must be lowercase, and
       # ${{ github.repository_owner }} is not. Every other reference to this

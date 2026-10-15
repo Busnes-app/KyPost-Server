@@ -29,15 +29,16 @@ env:
   # Dockerfile build the URL without a mapping table.
   OLLAMA_ARCHES: "amd64 arm64"
 
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+permissions: {}
 
 jobs:
   bump:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write # push the bump branch
+      pull-requests: write # open the draft PR
+      issues: write # report a failed run
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

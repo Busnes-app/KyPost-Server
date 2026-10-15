@@ -1,0 +1,10 @@
+# Read by osv-scanner (and OpenSSF Scorecard's Vulnerabilities check) for go.mod
+# in this directory.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = """golang.org/x/crypto/openpgp is unmaintained; the advisory covers every \
+x/crypto version. No package under golang.org/x/crypto/openpgp is in the build \
+graph (PGP uses github.com/ProtonMail/go-crypto). Verify: cd backend && \
+go list -deps -test ./... | grep '^golang.org/x/crypto/openpgp' (must print \
+nothing). ci-backend-other enforces this."""
