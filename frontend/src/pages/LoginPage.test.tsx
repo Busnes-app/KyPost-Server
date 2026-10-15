@@ -58,6 +58,9 @@ function plainTextResponse(status: number, text: string): Response {
   } as unknown as Response;
 }
 
+// What login-params answers for any username: a salt and a work factor.
+const LOGIN_PARAMS = { salt: "c2FsdHNhbHRzYWx0c2FsdA==", iterations: 100_000 };
+
 function stubFetch(loginResponse: Response) {
   vi.stubGlobal(
     "fetch",
@@ -69,6 +72,9 @@ function stubFetch(loginResponse: Response) {
       if (url.startsWith("/api/auth/captcha-config")) {
         // No provider configured: the form must not wait on this to submit.
         return Promise.resolve(jsonResponse(404, { error: "not found" }));
+      }
+      if (url.startsWith("/api/auth/login-params")) {
+        return Promise.resolve(jsonResponse(200, LOGIN_PARAMS));
       }
       if (url.startsWith("/api/auth/login")) {
         return Promise.resolve(loginResponse);
@@ -200,6 +206,9 @@ it("redeems an approved push challenge with the login response's finishSecret", 
       if (url.startsWith("/api/auth/captcha-config")) {
         return Promise.resolve(jsonResponse(404, { error: "not found" }));
       }
+      if (url.startsWith("/api/auth/login-params")) {
+        return Promise.resolve(jsonResponse(200, LOGIN_PARAMS));
+      }
       if (url.startsWith("/api/auth/login")) {
         return Promise.resolve(
           jsonResponse(200, {
@@ -231,4 +240,32 @@ it("redeems an approved push challenge with the login response's finishSecret", 
     challengeId: "chal-1",
     finishSecret: "the-browsers-own-secret"
   });
+});
+
+it("signs in with the derived secret only, never the typed password", async () => {
+  const loginBodies: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("/api/auth/login-params")) {
+        return Promise.resolve(jsonResponse(200, LOGIN_PARAMS));
+      }
+      if (url.startsWith("/api/auth/login")) {
+        loginBodies.push(String(init?.body ?? ""));
+        return Promise.resolve(plainTextResponse(401, "invalid credentials"));
+      }
+      return Promise.resolve(jsonResponse(404, { error: "not found" }));
+    })
+  );
+  const user = userEvent.setup();
+  renderLoginPage();
+
+  await submit(user);
+
+  await waitFor(() => expect(loginBodies).toHaveLength(1));
+  const body = JSON.parse(loginBodies[0]) as Record<string, unknown>;
+  expect(Object.keys(body).sort()).toEqual(["authSecret", "username"]);
+  expect(body.authSecret).toMatch(/^[0-9a-f]{64}$/);
+  expect(loginBodies[0]).not.toContain("whatever");
 });

@@ -70,44 +70,12 @@ func outboundConfigError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) nativeMailAssignment(ctx context.Context, userID string) (sso.NativeAssignment, bool, error) {
-	u, err := s.users.Get(userID)
-	if err != nil {
-		return sso.NativeAssignment{}, false, err
-	}
-	if u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" {
-		return sso.NativeAssignment{}, false, nil
-	}
-	if !s.nativeMail {
-		return sso.NativeAssignment{}, true, errors.New("native mailbox mode is disabled; enable KYPOST_NATIVE_MAIL explicitly")
-	}
-	settings := s.ssoStore.Load()
-	if !settings.Enabled {
-		return sso.NativeAssignment{}, true, sso.ErrNativeProvisioning
-	}
-	a, err := s.ssoLifecycle.AdmitNativeMail(ctx, s.stateDir, settings.IssuerURL, userID, s.users)
-	return a, true, err
+	return s.nativeMailboxAssignment(ctx, userID, "")
 }
 
-// nativeMailboxAssignment admits one of the user's mailboxes ("" is the
-// primary). Unknown, foreign and disabled mailboxes refuse alike with
-// sso.ErrNativeMailboxUnknown; a non-native account has none.
+// nativeMailboxAssignment is sso.AdmitUserMailbox ("" is the primary).
 func (s *Server) nativeMailboxAssignment(ctx context.Context, userID, mailboxID string) (sso.NativeAssignment, bool, error) {
-	if mailboxID == "" {
-		return s.nativeMailAssignment(ctx, userID)
-	}
-	u, err := s.users.Get(userID)
-	if err != nil {
-		return sso.NativeAssignment{}, false, err
-	}
-	if u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" || !s.nativeMail {
-		return sso.NativeAssignment{}, false, sso.ErrNativeMailboxUnknown
-	}
-	settings := s.ssoStore.Load()
-	if !settings.Enabled {
-		return sso.NativeAssignment{}, true, sso.ErrNativeProvisioning
-	}
-	a, err := s.ssoLifecycle.AdmitNativeMailbox(ctx, s.stateDir, settings.IssuerURL, userID, mailboxID, s.users)
-	return a, true, err
+	return sso.AdmitUserMailbox(ctx, s.nativeMail, s.ssoStore, s.ssoLifecycle, s.users, s.stateDir, userID, mailboxID)
 }
 
 // The client cache is keyed by mailbox ID (a primary's is its user ID).

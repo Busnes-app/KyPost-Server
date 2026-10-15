@@ -64,9 +64,10 @@ func runSetupStatus(args []string, out io.Writer) error {
 	relay, exists, e := mailmsg.ReadDomainRelay(filepath.Join(config.ConfigDir(), "native-relay.json"), filepath.Join(config.SecretDir(), "native-relay.key"))
 	add("relay", e == nil && exists && relay.Issuer == settings.IssuerURL, "configure the operator relay in Server Mail domain, then run Check saved relay")
 	receiving, e := config.NativeReceivingEnabled()
-	profile := os.Getenv("KYPOST_NATIVE_RECEIVER") == "true" || os.Getenv("KYPOST_CLOUDFLARE_RECEIVING_ORIGIN") != ""
+	bundled, bundledErr := config.EnvBool("KYPOST_NATIVE_RECEIVER")
+	profile := bundled || os.Getenv("KYPOST_CLOUDFLARE_RECEIVING_ORIGIN") != ""
 	info, spoolErr := os.Lstat(filepath.Join(config.StateDir(), "receiving", "ingress.db"))
-	add("receiving", e == nil && receiving && profile && spoolErr == nil && info.Mode().IsRegular(), "initialize a new spool once and select the bundled or hosted receiving profile; runtime and external delivery still require verification")
+	add("receiving", e == nil && bundledErr == nil && receiving && profile && spoolErr == nil && info.Mode().IsRegular(), "initialize a new spool once and select the bundled or hosted receiving profile; runtime and external delivery still require verification")
 	bc, e := config.LoadBackupConfig()
 	add("bulk-backup", e == nil && bc.BulkRepository != "", "configure KYPOST_BULK_BACKUP_REPOSITORY before mail exceeds ordinary capsule limits")
 	info, e = os.Lstat(filepath.Join(config.StateDir(), "state.db"))

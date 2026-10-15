@@ -109,12 +109,13 @@ func startCloudflareReceiving(ctx context.Context, d runDeps) (<-chan struct{}, 
 		return done, err
 	}
 	spam, err := receivingRspamdEnabled()
+	bundled, bundledErr := config.EnvBool("KYPOST_NATIVE_RECEIVER")
 	switch {
-	case err != nil:
-		return nil, err
+	case err != nil || bundledErr != nil:
+		return nil, errors.Join(err, bundledErr)
 	case !d.nativeReceiving:
 		return nil, errors.New(cfOriginEnv + " requires KYPOST_NATIVE_RECEIVING=true")
-	case os.Getenv("KYPOST_NATIVE_RECEIVER") == "true":
+	case bundled:
 		return nil, errors.New(cfOriginEnv + " and the bundled receiver are separate profiles; enable only one")
 	case !spam:
 		return nil, errors.New(cfOriginEnv + " requires KYPOST_RECEIVING_RSPAMD=true and the qualified local sidecar")

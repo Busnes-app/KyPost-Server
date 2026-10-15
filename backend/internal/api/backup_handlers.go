@@ -35,7 +35,6 @@ func (s *Server) detachedBackup(w http.ResponseWriter, r *http.Request) (context
 }
 
 type backupCredential struct {
-	Password   string `json:"password"`
 	AuthSecret string `json:"authSecret"`
 }
 
@@ -72,7 +71,7 @@ func (s *Server) backupGate(w http.ResponseWriter, r *http.Request, into any) (a
 			}
 		}
 	}
-	if !s.confirmActor(w, r, ac.UserID, cred.Password, cred.AuthSecret) {
+	if !s.confirmActor(w, r, ac.UserID, cred.AuthSecret) {
 		return "", false
 	}
 	if !s.backupAudit(w, "admin.backup_intent", ac.UserID, r.URL.Path, "started", nil) {

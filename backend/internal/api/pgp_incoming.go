@@ -42,7 +42,6 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 			Enabled                bool    `json:"enabled"`
 			AcknowledgeReplacement bool    `json:"acknowledgeReplacement"`
 			ExpectedRevision       *uint64 `json:"expectedRevision"`
-			Password               string  `json:"password,omitempty"`
 			AuthSecret             string  `json:"authSecret,omitempty"`
 		}
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
@@ -60,7 +59,7 @@ func (s *Server) handlePGPIncoming(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
+		if !s.requirePGPStepUp(w, r, ac.UserID, req.AuthSecret) {
 			return
 		}
 		if req.Enabled {

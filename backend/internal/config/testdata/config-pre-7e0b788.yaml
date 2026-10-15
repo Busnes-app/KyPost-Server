@@ -1,0 +1,34 @@
+timezone: America/New_York
+logLevel: info
+llama:
+    baseUrl: ""
+    apiKey: ""
+    classifyPath: ""
+scan:
+    intervalSeconds: 90
+rateLimits:
+    perMinute: 10
+    perHour: 20
+redaction:
+    patterns:
+        - name: email
+          regex: (?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b
+          replacement: '[REDACTED_EMAIL]'
+        - name: phone
+          regex: \\b(?:\\+?\\d{1,3}[\\s.-]?)?(?:\\(\\d{3}\\)|\\d{3})[\\s.-]?\\d{3}[\\s.-]?\\d{4}\\b
+          replacement: '[REDACTED_PHONE]'
+        - name: ssn
+          regex: \\b\\d{3}-\\d{2}-\\d{4}\\b
+          replacement: '[REDACTED_SSN]'
+        - name: iban
+          regex: \\b[A-Z]{2}\\d{2}[A-Z0-9]{10,30}\\b
+          replacement: '[REDACTED_IBAN]'
+        - name: card
+          regex: \\b(?:\\d[ -]*?){13,19}\\b
+          replacement: '[REDACTED_CARD]'
+labels:
+    allowlist: []
+    keywordMappings: {}
+notifications:
+    publicKey: ""
+    privateKeyPath: ""

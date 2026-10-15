@@ -109,12 +109,58 @@ func TestSSOSessionAdminIsBoundedByTokenAndAccount(t *testing.T) {
 	}
 }
 
-func TestSSOGenericProviderStillMapsAdminGroups(t *testing.T) {
+func setAdminGroup(t *testing.T, srv *Server, group string) {
+	t.Helper()
+	settings := srv.ssoStore.Load()
+	settings.AdminGroup = group
+	if err := srv.ssoStore.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A generic provider's shared "admins" group belongs to whatever else uses that
+// provider; only a group the operator names makes a KyPost administrator.
+func TestSSOGenericAdminGroupIsOperatorConfigured(t *testing.T) {
 	srv, idp := setupSSOTestServer(t)
 
-	grouped := signInWith(t, srv, idp, map[string]any{"sub": "e", "preferred_username": "e", "groups": []string{"admins"}})
-	if got := effectiveRole(t, srv, grouped); got != users.RoleAdmin {
-		t.Fatalf("authentik admin group gave role %q, want admin", got)
+	for _, claims := range []map[string]any{
+		{"sub": "e1", "preferred_username": "e1", "groups": []string{"admins"}},
+		{"sub": "e2", "preferred_username": "e2", "ak_groups": []string{"authentik Admins"}},
+		{"sub": "e3", "preferred_username": "e3", "realm_access": map[string]any{"roles": []string{"administrator"}}},
+	} {
+		c := signInWith(t, srv, idp, claims)
+		if u, _ := srv.users.GetBySSOSub(claims["sub"].(string)); u.Role != users.RoleUser {
+			t.Fatalf("%v provisioned role %q, want user", claims, u.Role)
+		}
+		if got := effectiveRole(t, srv, c); got != users.RoleUser {
+			t.Fatalf("%v gave session role %q, want user", claims, got)
+		}
+	}
+
+	// An existing administrator keeps admin with no group configured.
+	if _, err := srv.users.CreateSSOUserIssuer(idp.URL(), "g", users.RoleAdmin, "g", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	existing := signInWith(t, srv, idp, map[string]any{"sub": "g", "preferred_username": "g", "groups": []string{"admins"}})
+	if got := effectiveRole(t, srv, existing); got != users.RoleAdmin {
+		t.Fatalf("existing admin's session role = %q, want admin", got)
+	}
+
+	setAdminGroup(t, srv, "/kypost-admins")
+	granted := signInWith(t, srv, idp, map[string]any{"sub": "h", "preferred_username": "h", "groups": []string{"/kypost-admins"}})
+	if u, _ := srv.users.GetBySSOSub("h"); u.Role != users.RoleAdmin {
+		t.Fatalf("configured group provisioned role %q, want admin", u.Role)
+	}
+	if got := effectiveRole(t, srv, granted); got != users.RoleAdmin {
+		t.Fatalf("configured group gave session role %q, want admin", got)
+	}
+	shared := signInWith(t, srv, idp, map[string]any{"sub": "i", "preferred_username": "i", "groups": []string{"admins", "/KyPost-Admins"}})
+	if got := effectiveRole(t, srv, shared); got != users.RoleUser {
+		t.Fatalf("unconfigured group gave session role %q, want user", got)
+	}
+	// Once a group is named, it is the only generic admin signal, ceiling included.
+	if got := effectiveRole(t, srv, signInWith(t, srv, idp, map[string]any{"sub": "g", "preferred_username": "g", "groups": []string{"admins"}})); got != users.RoleUser {
+		t.Fatalf("admin outside the configured group kept session role %q", got)
 	}
 	// A bare legacy role claim, with no roles array and no groups, is not
 	// a generic admin signal either.

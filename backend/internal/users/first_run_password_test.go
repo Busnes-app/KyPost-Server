@@ -70,7 +70,7 @@ func TestFreshInstallHandsThePasswordOverInAFileNotOnStderr(t *testing.T) {
 	if len(users) != 1 {
 		t.Fatalf("fresh install has %d users, want 1", len(users))
 	}
-	if ok, _ := VerifyPassword(context.Background(), users[0], password); !ok {
+	if ok, _ := verifyPassword(context.Background(), users[0], password); !ok {
 		t.Fatal("the password in the handoff file does not authenticate the account it was written for")
 	}
 

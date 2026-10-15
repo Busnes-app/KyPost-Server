@@ -25,7 +25,7 @@ const user: ManagedUser = {
   id: "u1", username: "gwen", role: "user", active: true, mustChangePassword: false, createdAt: "", updatedAt: ""
 };
 
-const confirm: AdminConfirm = { ssoSession: false, password: "admin-pw" };
+const confirm: AdminConfirm = { ssoSession: false, accountPassword: "admin-pw" };
 const view = <AssignMailbox user={user} unlocked takeConfirm={() => confirm} onClose={() => undefined} />;
 
 afterEach(cleanup);

@@ -24,6 +24,8 @@ export type DeviceListProps = {
    */
   approvalsKnown: boolean;
   busy: boolean;
+  /** Approver checkboxes stay off until the step-up credential is entered. */
+  approvalLocked?: boolean;
   removingId: string;
   onToggleApprover: (deviceId: string, approver: boolean) => void;
   onRemove: (deviceId: string) => void;
@@ -45,6 +47,7 @@ export function DeviceList({
   pushEnabled,
   approvalsKnown,
   busy,
+  approvalLocked = false,
   removingId,
   onToggleApprover,
   onRemove,
@@ -112,9 +115,8 @@ export function DeviceList({
                   <input
                     type="checkbox"
                     checked={row.approver && row.canApprove}
-                    disabled={
-                      busy || !approvalsKnown || !pushEnabled || !row.canApprove || row.approvalUnavailable
-                    }
+                    // Not gated on pushEnabled: enabling push needs an approver first.
+                    disabled={busy || approvalLocked || !approvalsKnown || !row.canApprove || row.approvalUnavailable}
                     onChange={(e) => onToggleApprover(row.deviceId, e.target.checked)}
                   />
                   <span>Can approve sign-ins</span>

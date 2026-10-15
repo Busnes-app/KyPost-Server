@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 )
@@ -73,12 +72,6 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"configured": len(all) > 0})
-}
-
-func (s *Server) handleRepair(w http.ResponseWriter, r *http.Request) {
-	s.logger.Error("manual repair requested")
-	scheduleContainerRestart(s.logger, "manual repair", 250*time.Millisecond)
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "restart requested"})
 }
 
 // handlePollNow forces an immediate mail poll tick instead of waiting for

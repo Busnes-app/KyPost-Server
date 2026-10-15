@@ -345,7 +345,7 @@ func TestIMAPImport(t *testing.T) {
 	}
 	const account = `"host":"imap.example.com","port":993,"security":"tls","username":"alice@example.com",`
 	start := func(c caller, fields string) *httptest.ResponseRecorder {
-		return call("/api/import/imap", c, `{`+fields+`"password":"`+password+`"}`, nil)
+		return call("/api/import/imap", c, `{`+fields+`"authSecret":"`+sessionAuthSecret(srv, c.token, password)+`"}`, nil)
 	}
 	grant := func(fields string) string {
 		t.Helper()
@@ -446,7 +446,7 @@ func TestIMAPImport(t *testing.T) {
 	}{
 		{"no step-up", call("/api/import/imap", me, `{`+account+`"x":1}`, nil), 403},
 		{"oversized body", start(me, `"pad":"`+strings.Repeat("x", maxActionBytes)+`",`), 413},
-		{"no csrf", call("/api/import/imap", caller{me.token, ""}, `{`+account+`"password":"`+password+`"}`, nil), 403},
+		{"no csrf", call("/api/import/imap", caller{me.token, ""}, `{`+account+`"authSecret":"`+userAuthSecret(srv, one.ID, password)+`"}`, nil), 403},
 		{"other port", start(me, `"host":"imap.example.com","port":25,"security":"tls","username":"u",`), 400},
 		{"plaintext", start(me, `"host":"imap.example.com","port":143,"security":"none","username":"u",`), 400},
 		{"tls on 143", start(me, `"host":"imap.example.com","port":143,"security":"tls","username":"u",`), 400},

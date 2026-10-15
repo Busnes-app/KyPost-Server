@@ -89,13 +89,13 @@ func TestQuarantineAdminAPI(t *testing.T) {
 		t.Fatal("member listed quarantine", w.Code)
 	}
 	for _, path := range []string{base + "/maddy-local/keep/release", base + "/maddy-local/drop/discard"} {
-		if w := call("POST", path, mtoken, mcsrf, `{"password":"x"}`); w.Code != 403 {
+		if w := call("POST", path, mtoken, mcsrf, `{"authSecret":"`+authSecretFor(srv, "x")+`"}`); w.Code != 403 {
 			t.Fatal("member changed quarantine", path, w.Code)
 		}
 		if w := call("POST", path, token, csrf, `{}`); w.Code != 403 || !strings.Contains(w.Body.String(), "invalid credentials") {
 			t.Fatal("no step-up accepted", path, w.Code)
 		}
-		if w := call("POST", path, token, csrf, `{"password":"wrong-password-for-quarantine"}`); w.Code != 403 || !strings.Contains(w.Body.String(), "invalid credentials") {
+		if w := call("POST", path, token, csrf, `{"authSecret":"`+authSecretFor(srv, "wrong-password-for-quarantine")+`"}`); w.Code != 403 || !strings.Contains(w.Body.String(), "invalid credentials") {
 			t.Fatal("wrong step-up accepted", path, w.Code)
 		}
 	}
@@ -109,7 +109,7 @@ func TestQuarantineAdminAPI(t *testing.T) {
 			t.Fatal("listing leaked message content", secret)
 		}
 	}
-	confirm := `{"password":"` + password + `"}`
+	confirm := `{"authSecret":"` + authSecretFor(srv, password) + `"}`
 	if w = call("POST", base+"/maddy-local/missing/release", token, csrf, confirm); w.Code != 404 {
 		t.Fatal("missing release", w.Code, w.Body)
 	}
@@ -260,14 +260,14 @@ func TestQuarantineReleaseToCurrentOwnerAPI(t *testing.T) {
 	if w := call("GET", base, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"unresolved":true`) || !strings.Contains(w.Body.String(), `"currentMailbox":"`+one.ID+`"`) || !strings.Contains(w.Body.String(), `"currentUser":"`+one.ID+`"`) || !strings.Contains(w.Body.String(), `"mailbox":""`) {
 		t.Fatal("unresolved listing", w.Code, w.Body)
 	}
-	plain, flagged := `{"password":"`+password+`"}`, `{"password":"`+password+`","toCurrentOwner":true,"currentMailbox":"`+one.ID+`"}`
+	plain, flagged := `{"authSecret":"`+authSecretFor(srv, password)+`"}`, `{"authSecret":"`+authSecretFor(srv, password)+`","toCurrentOwner":true,"currentMailbox":"`+one.ID+`"}`
 	if w := call("POST", base+"/cloudflare-continuous/waited/release", plain); w.Code != 409 || !strings.Contains(w.Body.String(), "current owner") || strings.Contains(w.Body.String(), "resync and retry") {
 		t.Fatal("unresolved released without the flag", w.Code, w.Body)
 	}
 	if w := call("POST", base+"/cloudflare-continuous/waited/discard", flagged); w.Code != 400 {
 		t.Fatal("flag accepted on discard", w.Code)
 	}
-	for _, bad := range []string{`{"password":"` + password + `","toCurrentOwner":true}`, `{"password":"` + password + `","currentMailbox":"` + one.ID + `"}`} {
+	for _, bad := range []string{`{"authSecret":"` + authSecretFor(srv, password) + `","toCurrentOwner":true}`, `{"authSecret":"` + authSecretFor(srv, password) + `","currentMailbox":"` + one.ID + `"}`} {
 		if w := call("POST", base+"/cloudflare-continuous/waited/release", bad); w.Code != 400 {
 			t.Fatal("release without the reviewed mailbox, or a mailbox without the flag", w.Code, w.Body)
 		}
@@ -326,7 +326,7 @@ func TestSenderBlocksAdminAPI(t *testing.T) {
 		return w
 	}
 	const base = "/api/admin/receiving/blocks"
-	confirm := `"password":"` + password + `"`
+	confirm := `"authSecret":"` + authSecretFor(srv, password) + `"`
 	// Before receiving init: empty list, and changes refuse without creating the spool.
 	if w := call("GET", base, token, csrf, ""); w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"blocks":[],"evidence":{"damaged":false,"resetAt":null,"domainBlocksFrom":null,"goodFull":false,"automaticFull":false}}` {
 		t.Fatal("empty list", w.Code, w.Body)
@@ -348,13 +348,13 @@ func TestSenderBlocksAdminAPI(t *testing.T) {
 		t.Fatal("member listed blocks", w.Code)
 	}
 	for _, c := range [][2]string{{"POST", base}, {"DELETE", base + "/" + ingress.BlockID("domain", "evil.test")}} {
-		if w := call(c[0], c[1], mtoken, mcsrf, `{"kind":"domain","value":"evil.test","password":"x"}`); w.Code != 403 {
+		if w := call(c[0], c[1], mtoken, mcsrf, `{"kind":"domain","value":"evil.test","authSecret":"`+authSecretFor(srv, "x")+`"}`); w.Code != 403 {
 			t.Fatal("member changed blocks", c, w.Code)
 		}
 		if w := call(c[0], c[1], token, csrf, `{"kind":"domain","value":"evil.test"}`); w.Code != 403 || !strings.Contains(w.Body.String(), "invalid credentials") {
 			t.Fatal("no step-up accepted", c, w.Code)
 		}
-		if w := call(c[0], c[1], token, csrf, `{"kind":"domain","value":"evil.test","password":"wrong-password-for-blocks"}`); w.Code != 403 || !strings.Contains(w.Body.String(), "invalid credentials") {
+		if w := call(c[0], c[1], token, csrf, `{"kind":"domain","value":"evil.test","authSecret":"`+authSecretFor(srv, "wrong-password-for-blocks")+`"}`); w.Code != 403 || !strings.Contains(w.Body.String(), "invalid credentials") {
 			t.Fatal("wrong step-up accepted", c, w.Code)
 		}
 	}
