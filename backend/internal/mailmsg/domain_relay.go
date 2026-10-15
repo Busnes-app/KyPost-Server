@@ -80,7 +80,7 @@ func (c DomainRelay) Deliver(from string, recipients []string, msg []byte) error
 	if err != nil {
 		return err
 	}
-	if err := smtpSendWithImplicitTLS(c.Host, c.Port, c.Username, c.Password, from, recipients, normalized, 45*time.Second, true); err != nil {
+	if err := smtpSendWithImplicitTLS(relayDial, c.Host, c.Port, c.Username, c.Password, from, recipients, normalized, 45*time.Second, true); err != nil {
 		return domainRelaySubmissionError{cause: err}
 	}
 	return nil
@@ -94,7 +94,7 @@ func (c DomainRelay) Check(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	if err := withImplicitTLSSMTP(ctx, c.Host, c.Port, c.Username, c.Password, 15*time.Second, true, func(client *smtp.Client) error { return client.Quit() }); err != nil {
+	if err := withImplicitTLSSMTP(ctx, relayDial, c.Host, c.Port, c.Username, c.Password, 15*time.Second, true, func(client *smtp.Client) error { return client.Quit() }); err != nil {
 		return domainRelayCheckError{cause: err}
 	}
 	return ctx.Err()

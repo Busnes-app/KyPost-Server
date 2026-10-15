@@ -711,7 +711,7 @@ func (s *Server) lookupUserByDevice(deviceID string) (string, bool) {
 	// The rescan MERGES; sweepDeviceIndex is what removes. A rescan can be triggered
 	// by an unauthenticated caller and must never delete anything, least of all a
 	// reservation another registration is holding but has not yet persisted.
-	if s.deviceRescan.allow() {
+	if ok, _ := s.deviceRescan.allow(""); ok {
 		s.rescanDeviceIndex()
 	}
 

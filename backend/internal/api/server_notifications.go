@@ -211,7 +211,7 @@ func (s *Server) handleNotificationTest(w http.ResponseWriter, r *http.Request) 
 	// account has, serially, each with its own network timeout — so without a
 	// meter it is an authenticated user's switch for making the server spend
 	// unbounded time on outbound requests to destinations they chose.
-	if allowed, retryAfter := s.notificationTestCooldown.tryConsume(ac.UserID); !allowed {
+	if allowed, retryAfter := s.notificationTestCooldown.allow(ac.UserID); !allowed {
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
 			"error":             "a test notification was just sent; try again shortly",
 			"retryAfterSeconds": int(retryAfter.Seconds()) + 1,
