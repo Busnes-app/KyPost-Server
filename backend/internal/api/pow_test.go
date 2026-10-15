@@ -17,64 +17,72 @@ import (
 
 func TestPoWChallengeLimiterAllowsBurstThenRefuses(t *testing.T) {
 	l := newPowChallengeLimiter()
-	now := time.Now()
+	now, advance := fixedClock(time.Now())
+	l.now = now
 	for i := 0; i < powChallengeBurst; i++ {
-		if !l.allow("1.2.3.4", now) {
+		if ok, _ := l.allow("1.2.3.4"); !ok {
 			t.Fatalf("request %d of the burst should be allowed", i+1)
 		}
 	}
-	if l.allow("1.2.3.4", now) {
+	if ok, _ := l.allow("1.2.3.4"); ok {
 		t.Fatal("the request after the burst must be refused")
 	}
 	// A different client is unaffected: the endpoint is unauthenticated, so
 	// one noisy IP must not deny service to everyone else.
-	if !l.allow("5.6.7.8", now) {
+	if ok, _ := l.allow("5.6.7.8"); !ok {
 		t.Fatal("a different IP must have its own budget")
 	}
-	// The window rolls.
-	if !l.allow("1.2.3.4", now.Add(powChallengeWindowLen+time.Second)) {
-		t.Fatal("the budget must refill after the window")
+	// A full window refills the whole burst.
+	advance(powChallengeWindowLen + time.Second)
+	for i := 0; i < powChallengeBurst; i++ {
+		if ok, _ := l.allow("1.2.3.4"); !ok {
+			t.Fatalf("request %d after a window should be allowed", i+1)
+		}
 	}
 }
 
 func TestPoWChallengeLimiterSweepDropsStaleWindows(t *testing.T) {
 	l := newPowChallengeLimiter()
-	now := time.Now()
-	l.allow("1.2.3.4", now)
-	if got := l.windowCount(); got != 1 {
-		t.Fatalf("windowCount() = %d, want 1", got)
+	now, advance := fixedClock(time.Now())
+	l.now = now
+	l.allow("1.2.3.4")
+	if got := len(l.entries); got != 1 {
+		t.Fatalf("entries = %d, want 1", got)
 	}
-	l.sweepExpired(now.Add(powChallengeWindowLen + time.Second))
-	if got := l.windowCount(); got != 0 {
-		t.Fatalf("windowCount() after sweep = %d, want 0", got)
+	advance(powChallengeWindowLen + time.Second)
+	l.sweep()
+	if got := len(l.entries); got != 0 {
+		t.Fatalf("entries after sweep = %d, want 0", got)
 	}
 }
 
 func TestPoWChallengeLimiterSweepsAtThreshold(t *testing.T) {
 	// GET /api/auth/pow-challenge is unauthenticated and costs the caller
 	// nothing, so an attacker presenting many distinct source IPs can mint
-	// one map entry per request. sweepExpired only runs on StartPoWSweeper's
+	// one map entry per request. sweep only runs on StartPoWSweeper's
 	// 10-minute ticker, so without a second, size-triggered bound the map
-	// could grow unbounded between ticks. allow() must reclaim expired
-	// windows inline once the map crosses sweepThreshold.
+	// could grow unbounded between ticks. allow() must reclaim refilled
+	// buckets inline once the map crosses sweepThreshold.
 	l := newPowChallengeLimiter()
 	l.sweepThreshold = 4
-	now := time.Now()
+	now, advance := fixedClock(time.Now())
+	l.now = now
 
 	for _, ip := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4"} {
-		l.allow(ip, now)
+		l.allow(ip)
 	}
-	if got := l.windowCount(); got != 4 {
-		t.Fatalf("windowCount() = %d, want 4", got)
+	if got := len(l.entries); got != 4 {
+		t.Fatalf("entries = %d, want 4", got)
 	}
 
-	// All four windows are now stale, and the fifth insertion crosses the
+	// All four buckets have refilled, and the fifth insertion crosses the
 	// (lowered) threshold, so it must trigger an inline sweep before adding
 	// its own entry.
-	l.allow("5.5.5.5", now.Add(powChallengeWindowLen+time.Second))
+	advance(powChallengeWindowLen + time.Second)
+	l.allow("5.5.5.5")
 
-	if got := l.windowCount(); got != 1 {
-		t.Fatalf("windowCount() after threshold sweep = %d, want 1 (only the new entry)", got)
+	if got := len(l.entries); got != 1 {
+		t.Fatalf("entries after threshold sweep = %d, want 1 (only the new entry)", got)
 	}
 }
 
@@ -200,8 +208,9 @@ func TestPoWChallengeEndpointRateLimitsPerIP(t *testing.T) {
 	if last.Code != http.StatusTooManyRequests {
 		t.Fatalf("status after the burst = %d, want 429", last.Code)
 	}
-	if last.Header().Get("Retry-After") == "" {
-		t.Error("a 429 should tell the client when to come back")
+	// One challenge refills every two seconds; the header rounds up.
+	if got := last.Header().Get("Retry-After"); got != "2" && got != "3" {
+		t.Errorf("Retry-After = %q, want 2 or 3", got)
 	}
 }
 
