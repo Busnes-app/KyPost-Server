@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/rules"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // TestMailCacheEntriesFromMessages covers the pure conversion tickUser uses
@@ -1129,3 +1131,15 @@ func mustDecisions(t testing.TB, s *state.Store, limit int) []state.Decision {
 	}
 	return d
 }
+
+// tickUser polls the user's primary mailbox.
+func (p *Poller) tickUser(u users.User, imapConfigModTime time.Time) error {
+	return p.tickMailbox(u, "", imapConfigModTime)
+}
+
+func (p *Poller) mailClientForUser(userID string, modTime time.Time) (imapadapter.Client, error) {
+	client, _, err := p.mailClientForMailbox(userID, "", modTime)
+	return client, err
+}
+
+func (p *Poller) userConfigDir(userID string) string { return config.UserDir(p.configDir, userID) }

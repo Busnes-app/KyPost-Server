@@ -81,6 +81,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "rate limits must be greater than zero"})
 			return
 		}
+		if !next.SendQuota.Valid() {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "sending quota limits must be greater than zero"})
+			return
+		}
 		if err := config.Save(s.configPath, next); err != nil {
 			http.Error(w, "failed to save config", http.StatusInternalServerError)
 			return
@@ -307,8 +311,8 @@ func (s *Server) handleTuning(w http.ResponseWriter, r *http.Request) {
 		// Creating it first at 0755 made the per-user directory world-readable.
 		//
 		// AtomicWriteFile, like every other persisted file here: os.WriteFile
-		// truncates in place, so a full disk or a mid-write exit (which
-		// scheduleContainerRestart does) leaves a half-written prompt.
+		// truncates in place, so a full disk or a mid-write kill leaves a
+		// half-written prompt.
 		if err := fsutil.AtomicWriteFile(tuningPath, []byte(req.Content), 0o600); err != nil {
 			http.Error(w, "failed to save tuning file", http.StatusInternalServerError)
 			return

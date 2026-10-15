@@ -92,10 +92,10 @@ func (s *Server) sessionOf(r *http.Request) (Session, string, bool) {
 // provider would refuse it forever, while the credential check fails closed
 // on its own for an account that has none. It writes the response and
 // returns false when the caller may not proceed.
-func (s *Server) confirmActor(w http.ResponseWriter, r *http.Request, userID, password, authSecret string) bool {
+func (s *Server) confirmActor(w http.ResponseWriter, r *http.Request, userID, authSecret string) bool {
 	sess, token, ok := s.sessionOf(r)
 	if !ok || !sess.SSOKySignOn {
-		return s.confirmAccountCredential(w, r, userID, password, authSecret)
+		return s.confirmAccountCredential(w, r, userID, authSecret)
 	}
 	return s.confirmSSOStepUp(w, r, token)
 }

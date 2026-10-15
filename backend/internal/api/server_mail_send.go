@@ -672,8 +672,7 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	// no account has one any more: client custody keeps it in the browser, and
 	// server custody is retired. Every req.Sign path below therefore RETURNS,
 	// which is why nothing downstream carries a signer — the Sent copy and the
-	// per-recipient ciphertexts are built unsigned, and pgpmail.SignMIME has no
-	// caller here at all.
+	// per-recipient ciphertexts are built unsigned.
 	//
 	// Refusing loudly rather than falling through matters: sending the message
 	// unsigned and unencrypted is the one outcome a user who ticked those boxes
@@ -742,6 +741,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			} else {
 				schedule([]mailbox.OutboundDelivery{{Recipients: recipients, Raw: msg}}, nil, sentCopySource, nil)
 			}
+			return
+		}
+		if !s.admitSend(w, r.Context(), ac.UserID, len(recipients)) {
 			return
 		}
 		if req.CalendarReply != nil {
@@ -824,6 +826,11 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			"keylessRecipients":       plan.withoutKeyEmails,
 			"pickupFallbackAvailable": true,
 		})
+		return
+	}
+	// Charged after every refusal above, which a client answers by sending
+	// again; a scheduled send is charged when it goes out.
+	if req.SendAt.IsZero() && !s.admitSend(w, r.Context(), ac.UserID, len(recipients)) {
 		return
 	}
 

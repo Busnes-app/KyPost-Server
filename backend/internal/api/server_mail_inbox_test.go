@@ -15,6 +15,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // fakeMailClient is a configurable imapadapter.Client for exercising
@@ -476,7 +477,7 @@ func TestServeInboxDeltaUsesSenderBindingAddressForVerification(t *testing.T) {
 	userID, recipient, contactsStore, srv := pgpVictimWithIdentity(t)
 
 	const attackerAddress = "attacker@evil.example"
-	attacker, err := pgpmail.GenerateIdentity("Attacker", attackerAddress)
+	attacker, err := pgpmailtest.GenerateIdentity("Attacker", attackerAddress)
 	if err != nil {
 		t.Fatalf("GenerateIdentity attacker: %v", err)
 	}

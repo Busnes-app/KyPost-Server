@@ -14,13 +14,14 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 
 func keyringCandidate(t *testing.T) (*Store, string, PGPKeyringUpdate) {
 	t.Helper()
 	s, id := newClientProtectedUser(t)
-	identity, err := pgpmail.GenerateIdentity("Keyring test", "ring@example.invalid")
+	identity, err := pgpmailtest.GenerateIdentity("Keyring test", "ring@example.invalid")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func TestPGPKeyringAtomicConversionRetirementAndPassword(t *testing.T) {
 	}
 	oldPublic := update.PublicKey
 	oldInventory := slices.Clone(converted.PGPKeyring.KeyFingerprints)
-	next, err := pgpmail.GenerateIdentity("Replacement", "ring@example.invalid")
+	next, err := pgpmailtest.GenerateIdentity("Replacement", "ring@example.invalid")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +333,7 @@ func TestPGPKeyringPersistenceFailureCommitsNothing(t *testing.T) {
 
 func TestPGPKeyringPreservesMultipleUIDPackets(t *testing.T) {
 	s, id, update := keyringCandidate(t)
-	identity, err := pgpmail.GenerateIdentity("Many UIDs", "one@example.invalid", "two@example.invalid", "three@example.invalid")
+	identity, err := pgpmailtest.GenerateIdentity("Many UIDs", "one@example.invalid", "two@example.invalid", "three@example.invalid")
 	if err != nil {
 		t.Fatal(err)
 	}

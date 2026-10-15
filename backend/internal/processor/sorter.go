@@ -88,7 +88,7 @@ func (p *Poller) userHead(userID string, store *state.Store, labels config.UserL
 
 // guess embeds the message exactly as the LLM would see it — redacted and
 // clamped — and asks the head for a label among allowlist. Memoised per tick so
-// the rate-limit pre-check in tickUser and handleMessage share one embedding.
+// the rate-limit pre-check in tickMailbox and handleMessage share one embedding.
 func (p *Poller) guess(uc userCtx, msg imapadapter.Message, allowlist []string) sortGuess {
 	if g, ok := uc.guesses[msg.ID]; ok {
 		return g

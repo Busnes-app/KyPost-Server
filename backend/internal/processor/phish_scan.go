@@ -322,7 +322,7 @@ func (p *Poller) flagAppImpersonation(ctx context.Context, uc userCtx, msg imapa
 
 // mirrorPhishKeyword writes the flag into the cached copy of a message.
 //
-// tickUser warms the mail cache from the whole fetched batch before the
+// tickMailbox warms the mail cache from the whole fetched batch before the
 // per-message loop runs, so a message flagged inside that loop would otherwise
 // sit in the cache with stale keywords until the next tick — leaving the warning
 // up to a poll interval late on exactly the message the user is most likely to
@@ -336,7 +336,7 @@ func (p *Poller) mirrorPhishKeyword(cache *mailcache.Store, msg imapadapter.Mess
 		return
 	}
 	// Copy rather than append in place: msg.Keywords shares its backing array
-	// with the batch tickUser warmed the cache from, and mutating it would make
+	// with the batch tickMailbox warmed the cache from, and mutating it would make
 	// this mirror's effect depend on iteration order.
 	flagged := msg
 	flagged.Keywords = append(append(make([]string, 0, len(msg.Keywords)+1), msg.Keywords...), phishKeyword)

@@ -24,7 +24,6 @@ import (
 const maxNativeRecoveryUploadBytes = 384 << 10
 
 type nativeRecoveryCredential struct {
-	Password   string `json:"password"`
 	AuthSecret string `json:"authSecret"`
 }
 
@@ -73,7 +72,7 @@ func (s *Server) confirmNativeRecoveryOperator(w http.ResponseWriter, r *http.Re
 		http.Error(w, "a usable legacy recovery administrator is required; sign in again", http.StatusForbidden)
 		return operator, false
 	}
-	return operator, s.confirmActor(w, r, ac.UserID, credential.Password, credential.AuthSecret)
+	return operator, s.confirmActor(w, r, ac.UserID, credential.AuthSecret)
 }
 
 // Caller already holds settings -> directory -> users. The returned release
@@ -366,7 +365,11 @@ func maddyProfile(configDir string) (bool, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return true, err
 	}
-	return os.Getenv("KYPOST_NATIVE_RECEIVER") == "true" || err == nil, nil
+	bundled, flagErr := config.EnvBool("KYPOST_NATIVE_RECEIVER")
+	if flagErr != nil {
+		return true, flagErr
+	}
+	return bundled || err == nil, nil
 }
 
 func (s *Server) releaseHit(point string) error {

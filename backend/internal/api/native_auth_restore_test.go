@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -92,7 +92,7 @@ func TestNativeAuthRestoreDeniesSessionsAndPassword(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			login := doJSON(s, s.handleLogin, "POST", "/api/auth/login", map[string]string{"username": u.Username, "password": "session-tester-testpassword"})
+			login := doJSON(s, s.handleLogin, "POST", "/api/auth/login", map[string]string{"username": u.Username, "authSecret": testAuthSecret(s, u.Username, "session-tester-testpassword")})
 			if login.Code != http.StatusUnauthorized || sessionCookieFrom(login) != nil {
 				t.Fatalf("held login: %d", login.Code)
 			}
@@ -200,14 +200,7 @@ func TestNativeAuthRestoreProvisionedDerivedPushAndQR(t *testing.T) {
 	if _, err := s.users.SetPassword(context.Background(), u.ID, password, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	salt := s.syntheticLoginSalt(u.Username)
-	authSecret, err := users.DeriveAuthSecret(password, salt, clientLoginIterations)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.users.UpgradeToDerivedAuth(context.Background(), u.ID, password, authSecret, salt, clientLoginIterations); err != nil {
-		t.Fatal(err)
-	}
+	authSecret := testAuthSecret(s, u.Username, password)
 	if w := doJSON(s, s.handleLogin, "POST", "/api/auth/login", map[string]string{"username": u.Username, "authSecret": authSecret}); w.Code != 200 || sessionCookieFrom(w) == nil {
 		t.Fatalf("live derived native login: %d", w.Code)
 	}
@@ -221,7 +214,7 @@ func TestNativeAuthRestoreProvisionedDerivedPushAndQR(t *testing.T) {
 	if _, err := s.mfaChallenges.ResolvePushWithMatch(ch.ID, "test-approved-device", true, ch.MatchDigits); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := pgpmail.GenerateIdentity("Restore QR", "one@example.test")
+	identity, err := pgpmailtest.GenerateIdentity("Restore QR", "one@example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +233,15 @@ func TestNativeAuthRestoreProvisionedDerivedPushAndQR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	deviceID, deviceSecret := pairNativeDevice(t, s, u.ID, "restore-device")
+	if _, _, ok, _ := s.deviceAuthFromRequest(deviceRequest(deviceID, deviceSecret)); !ok {
+		t.Fatal("live native device credential refused")
+	}
 	holdAuthRestore(t, s)
+	// userStore applies the hold, so a device credential is refused like a cookie.
+	if _, _, ok, _ := s.deviceAuthFromRequest(deviceRequest(deviceID, deviceSecret)); ok {
+		t.Fatal("held native account admitted a device credential")
+	}
 	before, err := s.users.Get(u.ID)
 	if err != nil {
 		t.Fatal(err)

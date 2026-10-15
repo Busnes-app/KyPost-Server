@@ -78,25 +78,25 @@ func (f *dkimTestFixture) sign(t *testing.T, mail string, expiration time.Time) 
 	return b.Bytes()
 }
 
-func TestVerifyDKIMForDomainWithLookup_ValidSignaturePasses(t *testing.T) {
+func TestVerifyDKIMCoversHeaderWithLookup_ValidSignaturePasses(t *testing.T) {
 	f := newDKIMTestFixture(t, "example.com", "sel1")
 	signed := f.sign(t, testMail, time.Time{})
 
-	if !verifyDKIMForDomainWithLookup(signed, "example.com", f.lookupTXT) {
+	if !verifyDKIMCoversHeaderWithLookup(signed, "example.com", "from", f.lookupTXT) {
 		t.Fatal("expected a genuinely valid, freshly-signed message to verify")
 	}
 }
 
-func TestVerifyDKIMForDomainWithLookup_WrongDomainFails(t *testing.T) {
+func TestVerifyDKIMCoversHeaderWithLookup_WrongDomainFails(t *testing.T) {
 	f := newDKIMTestFixture(t, "example.com", "sel1")
 	signed := f.sign(t, testMail, time.Time{})
 
-	if verifyDKIMForDomainWithLookup(signed, "attacker.example", f.lookupTXT) {
+	if verifyDKIMCoversHeaderWithLookup(signed, "attacker.example", "from", f.lookupTXT) {
 		t.Fatal("expected a valid signature for example.com to NOT satisfy a check for a different domain")
 	}
 }
 
-func TestVerifyDKIMForDomainWithLookup_TamperedBodyFails(t *testing.T) {
+func TestVerifyDKIMCoversHeaderWithLookup_TamperedBodyFails(t *testing.T) {
 	f := newDKIMTestFixture(t, "example.com", "sel1")
 	signed := f.sign(t, testMail, time.Time{})
 
@@ -105,22 +105,22 @@ func TestVerifyDKIMForDomainWithLookup_TamperedBodyFails(t *testing.T) {
 		t.Fatal("test setup invalid: tamper replacement did not change the message")
 	}
 
-	if verifyDKIMForDomainWithLookup(tampered, "example.com", f.lookupTXT) {
+	if verifyDKIMCoversHeaderWithLookup(tampered, "example.com", "from", f.lookupTXT) {
 		t.Fatal("expected a body-tampered message to fail DKIM verification")
 	}
 }
 
-func TestVerifyDKIMForDomainWithLookup_ExpiredSignatureFails(t *testing.T) {
+func TestVerifyDKIMCoversHeaderWithLookup_ExpiredSignatureFails(t *testing.T) {
 	f := newDKIMTestFixture(t, "example.com", "sel1")
 	signed := f.sign(t, testMail, time.Now().Add(-time.Hour))
 
-	if verifyDKIMForDomainWithLookup(signed, "example.com", f.lookupTXT) {
+	if verifyDKIMCoversHeaderWithLookup(signed, "example.com", "from", f.lookupTXT) {
 		t.Fatal("expected an expired signature to fail verification")
 	}
 }
 
-func TestVerifyDKIMForDomainWithLookup_NoSignaturePresentFails(t *testing.T) {
-	if verifyDKIMForDomainWithLookup([]byte(testMail), "example.com", func(string) ([]string, error) {
+func TestVerifyDKIMCoversHeaderWithLookup_NoSignaturePresentFails(t *testing.T) {
+	if verifyDKIMCoversHeaderWithLookup([]byte(testMail), "example.com", "from", func(string) ([]string, error) {
 		t.Fatal("lookupTXT must not be called when there is no DKIM-Signature header at all")
 		return nil, nil
 	}) {
@@ -128,7 +128,7 @@ func TestVerifyDKIMForDomainWithLookup_NoSignaturePresentFails(t *testing.T) {
 	}
 }
 
-func TestVerifyDKIMForDomainWithLookup_WrongPublishedKeyFails(t *testing.T) {
+func TestVerifyDKIMCoversHeaderWithLookup_WrongPublishedKeyFails(t *testing.T) {
 	f := newDKIMTestFixture(t, "example.com", "sel1")
 	signed := f.sign(t, testMail, time.Time{})
 
@@ -137,31 +137,31 @@ func TestVerifyDKIMForDomainWithLookup_WrongPublishedKeyFails(t *testing.T) {
 	// signature was produced with f's private key, so it must not verify
 	// against a different key.
 	other := newDKIMTestFixture(t, "example.com", "sel1")
-	if verifyDKIMForDomainWithLookup(signed, "example.com", other.lookupTXT) {
+	if verifyDKIMCoversHeaderWithLookup(signed, "example.com", "from", other.lookupTXT) {
 		t.Fatal("expected verification against a different published key to fail")
 	}
 }
 
-func TestVerifyDKIMForDomainWithLookup_EmptyInputsFailClosed(t *testing.T) {
+func TestVerifyDKIMCoversHeaderWithLookup_EmptyInputsFailClosed(t *testing.T) {
 	f := newDKIMTestFixture(t, "example.com", "sel1")
 	signed := f.sign(t, testMail, time.Time{})
 
-	if verifyDKIMForDomainWithLookup(nil, "example.com", f.lookupTXT) {
+	if verifyDKIMCoversHeaderWithLookup(nil, "example.com", "from", f.lookupTXT) {
 		t.Fatal("expected nil raw message to fail")
 	}
-	if verifyDKIMForDomainWithLookup(signed, "", f.lookupTXT) {
+	if verifyDKIMCoversHeaderWithLookup(signed, "", "from", f.lookupTXT) {
 		t.Fatal("expected empty domain to fail")
 	}
 }
 
-// TestVerifyDKIMForDomain_PublicEntrypointFailsWithoutNetwork is a light
-// smoke test of the exported VerifyDKIMForDomain wrapper (which always uses
+// TestVerifyDKIMCoversHeader_PublicEntrypointFailsWithoutNetwork is a light
+// smoke test of the exported VerifyDKIMCoversHeader wrapper (which always uses
 // dkim.Verify's real net.LookupTXT default, unreachable from tests without
 // a real DNS-published key): an unsigned message must still fail closed
 // without making any network call at all, since there is no DKIM-Signature
 // header to even attempt a lookup for.
-func TestVerifyDKIMForDomain_PublicEntrypointFailsWithoutNetwork(t *testing.T) {
-	if VerifyDKIMForDomain([]byte(testMail), "example.com") {
+func TestVerifyDKIMCoversHeader_PublicEntrypointFailsWithoutNetwork(t *testing.T) {
+	if VerifyDKIMCoversHeader([]byte(testMail), "example.com", "from") {
 		t.Fatal("expected an unsigned message to fail via the public entrypoint")
 	}
 }

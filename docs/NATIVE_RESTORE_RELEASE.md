@@ -49,7 +49,7 @@ Hold check, verified: `reconcileNativeSubject`, `AllocateNativeAccount` and the 
 
 ## Release operation
 
-`POST /api/admin/native-recovery/release` with `{password}` or `{authSecret}`, plus `"confirm": "original-host-decommissioned"` on the Maddy profile (`KYPOST_NATIVE_RECEIVER=true` or `config/receiving.conf` present; an unreadable config state refuses). Exact-action CSRF and step-up, API only. Off: `404`; an invalid flag value: `409`; no hold and no release: `409` "no native restore hold".
+`POST /api/admin/native-recovery/release` with `{authSecret}`, plus `"confirm": "original-host-decommissioned"` on the Maddy profile (`KYPOST_NATIVE_RECEIVER=true` or `config/receiving.conf` present; an unreadable config state refuses). Exact-action CSRF and step-up, API only. Off: `404`; an invalid flag value: `409`; no hold and no release: `409` "no native restore hold".
 
 1. Flag, P6 session check, step-up (P5), then P6 on the confirmed account.
 2. Maddy confirmation; a fresh `VerifyDomain` for every configured domain, outside the fences (P8).

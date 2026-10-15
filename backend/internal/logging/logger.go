@@ -60,6 +60,7 @@ var (
 	_ = kylog.DeclareString("admin_id")
 	_ = kylog.DeclareString("alias_id")
 	_ = kylog.DeclareString("allowlist_count")
+	_ = kylog.DeclareString("contact_count")
 	_ = kylog.DeclareString("attempts")
 	_ = kylog.DeclareString("base_url")
 	_ = kylog.DeclareString("challenge_id")

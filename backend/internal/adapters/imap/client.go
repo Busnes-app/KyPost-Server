@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"mime"
 	"os"
 	"slices"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
 
 	goimap "github.com/BrianLeishman/go-imap"
 	pgpcrypto "github.com/ProtonMail/gopenpgp/v3/crypto"
@@ -290,10 +292,11 @@ func pgpEnvelopePayload(attachments []goimap.Attachment) string {
 // stops that peak from being a function of how much unread mail is waiting.
 //
 // unreadFetchPageSize is a memory bound, not a throughput knob: worst case a
-// page is unreadFetchPageSize x mailmsg.MaxInboundMessageBytes (16 x 25 MiB =
-// 400 MiB) held at once inside GetEmails, against the 8 GiB the API, the daemon
-// and Ollama share in docker-compose.yml. Ordinary mail is kilobytes, so in
-// practice a page is a few hundred KiB and the cost of paging is round trips.
+// page is unreadFetchPageSize x mailmsg.MaxInboundMessageBytes (4 x 25 MiB =
+// 100 MiB on the wire, about 3.3x that decoded) held at once inside GetEmails,
+// against the 8 GiB the API, the daemon and Ollama share in docker-compose.yml.
+// It also sizes maxIMAPResponse. Ordinary mail is kilobytes, so in practice a
+// page is tens of KiB and the cost of paging is round trips.
 //
 // unreadFetchByteBudget bounds what accumulates ACROSS pages, since the caller
 // receives every message in one slice. maxUnreadMessagesPerCall bounds the same
@@ -304,7 +307,7 @@ func pgpEnvelopePayload(attachments []goimap.Attachment) string {
 // order, so everything unreached stays above the returned checkpoint and the
 // next tick continues from there.
 const (
-	unreadFetchPageSize      = 16
+	unreadFetchPageSize      = 4
 	unreadFetchByteBudget    = 192 << 20
 	maxUnreadMessagesPerCall = 200
 )
@@ -1065,11 +1068,18 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, mailbox string, limi
 
 	sort.Ints(uids)
 
-	// A single GetEmails call is enough: it internally calls GetOverviews
-	// first and never overwrites Flags/Sent/Received when it later merges
-	// in body content, so overviewFromEmail(uid, e) below already has
-	// everything a second, separate GetOverviews call used to provide.
-	emails, _, err := fetchEmailsBounded(d, uids)
+	// A body past the literal cap would fail its whole page, so oversized
+	// messages are listed from their overview, without a body.
+	oversized, err := d.SearchUIDs(goimap.Search().UID(uidSetCriteria(uids)).Larger(int(mailmsg.MaxInboundMessageBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("imap search oversized: %w", err)
+	}
+	toFetch, tooLarge := partitionUIDsBySize(uids, oversized)
+
+	// GetEmails internally calls GetOverviews first and never overwrites
+	// Flags/Sent/Received when it later merges in body content, so
+	// overviewFromEmail(uid, e) below already has everything it needs.
+	emails, _, err := fetchEmailsBounded(d, toFetch)
 	if err != nil {
 		return nil, fmt.Errorf("imap fetch emails: %w", err)
 	}
@@ -1086,6 +1096,13 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, mailbox string, limi
 	}
 	envelopes := collectPGPEnvelopes(d, emails, clientBodyText)
 	invites := calendarInviteUIDs(d, emails)
+	if len(tooLarge) > 0 {
+		overviews, err := d.GetOverviews(tooLarge...)
+		if err != nil {
+			return nil, fmt.Errorf("imap fetch overviews: %w", err)
+		}
+		maps.Copy(emails, overviews)
+	}
 
 	out := make([]UnreadMessage, 0, len(uids))
 	for i := len(uids) - 1; i >= 0; i-- {
@@ -1609,20 +1626,30 @@ func clientBody(e *goimap.Email) (body, mode string) {
 	return "", ""
 }
 
-// goimapDefaults sets the vendored library's package-level tunables exactly
-// once. DialTimeout/CommandTimeout/RetryCount are globals inside go-imap, and
-// assigning them inline on every first-connect had several concurrent user ticks
-// writing them at once, which -race flags. Every writer wrote the same
-// constants, so it never misbehaved — and stops being benign the moment any of
-// these becomes configurable.
-var goimapDefaults sync.Once
+// Read limits for every go-imap connection. The account's server is
+// user-chosen, so what it declares is never an allocation size.
+var (
+	// One message body plus slack for servers whose RFC822.SIZE (what LARGER
+	// filters on) is slightly off.
+	maxIMAPLiteral = int(mailmsg.MaxInboundMessageBytes) + 1<<20
+	// The longest legitimate line is UID SEARCH ALL: about 7M UIDs.
+	maxIMAPLine = 64 << 20
+	// One page of maximum-size bodies plus 1 MiB of FETCH metadata, ~105 MiB;
+	// it also covers maxIMAPLine, the other large response.
+	maxIMAPResponse = int64(max(unreadFetchPageSize*maxIMAPLiteral, maxIMAPLine) + 1<<20)
+)
 
-func configureGoIMAPDefaults() {
-	goimapDefaults.Do(func() {
-		goimap.DialTimeout = 10 * time.Second
-		goimap.CommandTimeout = 45 * time.Second
-		goimap.RetryCount = 3
-	})
+// go-imap's tunables are process-wide, so they are set at init, before any
+// caller (this package or the API's connection test) can dial: every account
+// connection goes through netguard and is bounded in what it reads.
+func init() {
+	goimap.DialTimeout = 10 * time.Second
+	goimap.CommandTimeout = 45 * time.Second
+	goimap.RetryCount = 3
+	goimap.DialContext = netguard.DialContext
+	goimap.MaxLiteralSize = maxIMAPLiteral
+	goimap.MaxLineSize = maxIMAPLine
+	goimap.MaxResponseSize = maxIMAPResponse
 }
 
 // Close tears down this client's IMAP connection, if it has opened one.
@@ -1661,8 +1688,6 @@ func (c *APIClient) ensureConnectedLocked() (*goimap.Dialer, error) {
 	}
 
 	if c.dialer == nil {
-		configureGoIMAPDefaults()
-
 		d, err := goimap.New(c.username, c.password, c.host, c.port)
 		if err != nil {
 			return nil, fmt.Errorf("imap connect: %w", err)
@@ -1717,11 +1742,6 @@ func formatCheckpoint(namespace string, uid int) string {
 		return strconv.Itoa(uid)
 	}
 	return ""
-}
-
-func parseCheckpointUID(checkpoint string) int {
-	_, uid := parseCheckpoint(checkpoint)
-	return uid
 }
 
 // pollNamespace identifies the selected mailbox's UID space. A new UIDVALIDITY

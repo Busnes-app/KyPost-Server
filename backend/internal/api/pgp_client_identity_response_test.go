@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // POST /api/pgp/identity/client must answer with the SAME identity shape as
@@ -23,15 +23,15 @@ func TestClientIdentityResponseMatchesTheIdentityShape(t *testing.T) {
 	userID := srv.mustBootstrapUserID(t)
 	password := stepUpPassword(t, srv, userID)
 
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
 	rec := pgpRequest(t, srv, http.MethodPost, "/api/pgp/identity/client", map[string]string{
-		"publicKey": id.ArmoredPublicKey,
-		"wrapped":   `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"Y3Q="}`,
-		"source":    "generated",
-		"password":  password,
+		"publicKey":  id.ArmoredPublicKey,
+		"wrapped":    `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"Y3Q="}`,
+		"source":     "generated",
+		"authSecret": authSecretFor(srv, password),
 	}, srv.handlePGPIdentityClient)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("client identity: status %d; body=%s", rec.Code, rec.Body.String())

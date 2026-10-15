@@ -13,6 +13,7 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // A server-custody encrypted send used to store its Sent copy as cleartext:
@@ -48,7 +49,7 @@ func extractArmoredPGPMessage(t *testing.T, raw []byte) string {
 }
 
 func TestEncryptedSentCopyHidesTheBodyAndSubjectFromTheStore(t *testing.T) {
-	alice, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	alice, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestEncryptedSentCopyHidesTheBodyAndSubjectFromTheStore(t *testing.T) {
 // The copy is worth keeping only if the sender can still read it. This is the
 // half a "store nothing at all" fix would fail.
 func TestEncryptedSentCopyStillOpensWithTheSendersKey(t *testing.T) {
-	alice, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	alice, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -98,18 +99,18 @@ func TestEncryptedSentCopyStillOpensWithTheSendersKey(t *testing.T) {
 		t.Fatalf("encryptedSentCopy: %v", err)
 	}
 
-	result, err := pgpmail.DecryptMIME(extractArmoredPGPMessage(t, copyBytes), alice, nil)
+	result, err := pgpmailtest.DecryptMIME(extractArmoredPGPMessage(t, copyBytes), alice, nil)
 	if err != nil {
 		t.Fatalf("the sender cannot decrypt their own Sent copy: %v", err)
 	}
-	body, _, _, err := pgpmail.ParseContent(result.Content)
+	body, _, _, err := pgpmailtest.ParseContent(result.Content)
 	if err != nil {
 		t.Fatalf("ParseContent: %v", err)
 	}
 	if !strings.Contains(body, "revenue fell 40%") {
 		t.Fatalf("decrypted body lost the message: %q", body)
 	}
-	subject, ok := pgpmail.ExtractProtectedSubject(result.Content)
+	subject, ok := pgpmailtest.ExtractProtectedSubject(result.Content)
 	if !ok || subject != "Quarterly numbers" {
 		t.Fatalf("protected subject = %q (ok=%v), want the real subject", subject, ok)
 	}
@@ -166,7 +167,7 @@ func TestSentCopyDraftAppendsTheEncryptedCopyVerbatim(t *testing.T) {
 // was a Sent folder where encrypted sends silently lost their BCC history while
 // plaintext ones kept it.
 func TestEncryptedSentCopyKeepsBCC(t *testing.T) {
-	alice, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	alice, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -283,7 +284,7 @@ func testUserWithServerKey(t *testing.T, srv *Server) (string, *pgpmail.Identity
 		t.Fatalf("users.List: %v (%d users)", err, len(all))
 	}
 	id := all[0].ID
-	identity, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	identity, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

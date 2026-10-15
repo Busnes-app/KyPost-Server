@@ -711,7 +711,7 @@ func (s *Server) lookupUserByDevice(deviceID string) (string, bool) {
 	// The rescan MERGES; sweepDeviceIndex is what removes. A rescan can be triggered
 	// by an unauthenticated caller and must never delete anything, least of all a
 	// reservation another registration is holding but has not yet persisted.
-	if s.deviceRescan.allow() {
+	if ok, _ := s.deviceRescan.allow(""); ok {
 		s.rescanDeviceIndex()
 	}
 
@@ -1005,7 +1005,7 @@ func (s *Server) revokeUserCredentials(u users.User, keepSessionToken string, pr
 	// it is a stateless HMAC over {sub, exp, nonce, purpose}, signed with the
 	// server-wide pairing secret and bound to nothing this function touches. So
 	// a token minted before an admin password reset still redeemed after one and
-	// minted a fresh device credential, with MFAApprover set, on an account the
+	// minted a fresh device credential on an account the
 	// admin believed was secured. The single-use nonce guard does not help: the
 	// token is redeemed exactly once, just later than intended.
 	//

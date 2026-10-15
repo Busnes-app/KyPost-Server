@@ -13,6 +13,7 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 func newTestClient(t *testing.T) (*Store, *Client) {
@@ -136,12 +137,12 @@ func TestNativeClientReadParseAndActions(t *testing.T) {
 func TestNativeClientPGPMIMEAndSenderBinding(t *testing.T) {
 	ctx := context.Background()
 	s, c := newTestClient(t)
-	key, err := pgpmail.GenerateIdentity("Sender", "sender@outside.test")
+	key, err := pgpmailtest.GenerateIdentity("Sender", "sender@outside.test")
 	must(t, err)
 	raw := mailmsg.Message{From: "Sender <sender@outside.test>", To: []string{"alice@example.test"}, Subject: "protected subject", Body: "private plaintext"}.Build()
 	encrypted, err := pgpmail.EncryptMIME(raw, []string{key.ArmoredPublicKey}, key)
 	must(t, err)
-	signed, err := pgpmail.SignMIME(raw, key)
+	signed, err := pgpmailtest.SignMIME(raw, key)
 	must(t, err)
 	for _, test := range []struct {
 		id                string

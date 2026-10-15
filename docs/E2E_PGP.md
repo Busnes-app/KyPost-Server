@@ -53,8 +53,10 @@ revisited without touching stored data.
 
 ### Why the server can't cheat
 
-The server holds an Argon2id hash of the password, never the password. It
-therefore cannot derive the wrapping key,
+The browser derives a login auth secret from the password (PBKDF2-SHA256 under
+the account's login salt, then HKDF-SHA256 info `kypost/auth/v1`), and the
+server accepts and stores only that: an Argon2id hash of the auth secret, never
+the password. It therefore cannot derive the wrapping key,
 and there is no code path that tries. `cryptutil.OpenString` uses `LoadKey`, not `LoadOrCreateKey`, so a
 missing master key is a loud error rather than a silently-minted new one.
 
@@ -728,6 +730,11 @@ signed-only message is encrypted to the sender's own key like every other
 client-custody Sent copy. The four combinations: neither goes through
 `/api/mail/send`; sign only is this path; encrypt only and both go through
 `buildEncryptedDeliveries`, where signing is inline inside the ciphertext.
+
+Client-prepared delivery groups must have disjoint envelope recipients, compared
+case-insensitively after address parsing. An overlap returns `400` before SMTP,
+quota admission or scheduling; distinct Bcc groups remain supported and count
+as one message against the hourly quota.
 
 SMTP send errors containing `smtp: acceptance uncertain` indicate a lost or
 invalid final DATA acknowledgment. Ordinary and client-prepared PGP sends must

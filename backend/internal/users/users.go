@@ -4,6 +4,7 @@ package users
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -28,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 
 	"github.com/Busnes-app/ky-primitives/password"
@@ -60,6 +62,8 @@ type User struct {
 	CreatedAt          string           `json:"createdAt"`
 	UpdatedAt          string           `json:"updatedAt"`
 	DeactivatedAt      string           `json:"deactivatedAt,omitempty"`
+	// SendQuota overrides the install-wide quota for this account; nil uses it.
+	SendQuota *config.SendQuota `json:"sendQuota,omitempty"`
 
 	// TOTPSecretEnc is a cryptutil envelope sealed with the dedicated TOTP key,
 	// set at enrollment; TOTPEnabled flips true on confirmation. Never exposed
@@ -111,10 +115,9 @@ type User struct {
 	// login handler.
 	//
 	// AuthDerivationLegacy (the empty string) means PasswordHash covers the
-	// plaintext password. Those upgrade in place on the next successful sign-in —
-	// see UpgradeToDerivedAuth. Admin-set temporary passwords are written legacy
-	// (the admin's browser cannot derive a secret for somebody else's account);
-	// the mandatory first-login change converts them.
+	// plaintext password. Nothing writes it any more and nothing verifies it:
+	// such an account cannot sign in until an admin resets its password
+	// (NeedsPasswordReset). Server-set passwords are derived server-side.
 	AuthDerivation  string `json:"authDerivation,omitempty"`
 	LoginSalt       string `json:"loginSalt,omitempty"`
 	LoginIterations int    `json:"loginIterations,omitempty"`
@@ -364,15 +367,18 @@ type Public struct {
 	// revocation keeps the subject so directory sync can still address the
 	// account. A viewer shown the subject with no flag would read a revoked
 	// link as live. See User.SSOLinkRevokedAt.
-	SSOLinkRevoked  bool   `json:"ssoLinkRevoked,omitempty"`
-	PGPFingerprint  string `json:"pgpFingerprint,omitempty"`
-	PGPKeyID        string `json:"pgpKeyId,omitempty"`
-	PGPKeySource    string `json:"pgpKeySource,omitempty"`
-	PGPKeyCreatedAt string `json:"pgpKeyCreatedAt,omitempty"`
+	SSOLinkRevoked  bool              `json:"ssoLinkRevoked,omitempty"`
+	SendQuota       *config.SendQuota `json:"sendQuota,omitempty"`
+	PGPFingerprint  string            `json:"pgpFingerprint,omitempty"`
+	PGPKeyID        string            `json:"pgpKeyId,omitempty"`
+	PGPKeySource    string            `json:"pgpKeySource,omitempty"`
+	PGPKeyCreatedAt string            `json:"pgpKeyCreatedAt,omitempty"`
 	// PGPKeyProtection tells the client whether it must unwrap the private
 	// key itself ("client") or whether this is a legacy server-held key
 	// ("server") the UI should prompt the user to migrate.
 	PGPKeyProtection string `json:"pgpKeyProtection,omitempty"`
+	// NeedsPasswordReset flags a legacy account an admin must reset.
+	NeedsPasswordReset bool `json:"needsPasswordReset,omitempty"`
 }
 
 func (u User) Public() Public {
@@ -396,6 +402,8 @@ func (u User) Public() Public {
 		PGPKeySource:       u.PGPKeySource,
 		PGPKeyCreatedAt:    u.PGPKeyCreatedAt,
 		PGPKeyProtection:   u.PGPProtection(),
+		SendQuota:          u.SendQuota,
+		NeedsPasswordReset: u.NeedsPasswordReset(),
 	}
 }
 
@@ -665,12 +673,20 @@ func LoadOrMigrate(ctx context.Context, configDir, legacyAdminEnvPath string) (*
 			CreatedAt:          now,
 			UpdatedAt:          now,
 		}
+		// app.BootstrapAdmin writes the hash already derived; a hash without
+		// login parameters stays legacy and needs an admin reset.
+		if iterations, err := strconv.Atoi(admin["ADMIN_LOGIN_ITERATIONS"]); err == nil && u.PasswordHash != "" {
+			if validateLoginSalt(admin["ADMIN_LOGIN_SALT"]) != nil || validateLoginIterations(iterations) != nil {
+				return nil, errors.New("admin.env carries invalid ADMIN_LOGIN_SALT/ADMIN_LOGIN_ITERATIONS")
+			}
+			DerivedCredential{Hash: u.PasswordHash, Salt: admin["ADMIN_LOGIN_SALT"], Iterations: iterations}.apply(&u)
+		}
 		if u.PasswordHash == "" && admin["ADMIN_PASS"] != "" {
-			hash, err := HashPassword(ctx, admin["ADMIN_PASS"])
+			cred, err := DeriveCredential(ctx, admin["ADMIN_PASS"])
 			if err != nil {
 				return nil, err
 			}
-			u.PasswordHash = hash
+			cred.apply(&u)
 		}
 		if u.Username == "" {
 			u.Username = "admin"
@@ -688,7 +704,7 @@ func LoadOrMigrate(ctx context.Context, configDir, legacyAdminEnvPath string) (*
 	if err != nil {
 		return nil, err
 	}
-	hash, err := HashPassword(ctx, randomPassword)
+	cred, err := DeriveCredential(ctx, randomPassword)
 	if err != nil {
 		return nil, err
 	}
@@ -700,13 +716,13 @@ func LoadOrMigrate(ctx context.Context, configDir, legacyAdminEnvPath string) (*
 	u := User{
 		ID:                 id,
 		Username:           "admin",
-		PasswordHash:       hash,
 		Role:               RoleAdmin,
 		Active:             true,
 		MustChangePassword: true,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
+	cred.apply(&u)
 	won, err := store.createInitial(usersFile{Version: 1, Users: []User{u}})
 	if err != nil {
 		return nil, err
@@ -1119,14 +1135,72 @@ func (s *Store) GetBySSOSub(ssoSub string) (User, error) {
 	return out, nil
 }
 
-// GetBySSOSubIssuer fences all new issuer-bound identities; historical unbound
-// records retain legacy behavior until an explicit owner-approved migration.
+// GetBySSOSubIssuer resolves an identity only under the issuer that linked it:
+// the same `sub` at another provider is another person. An unbound record
+// (written before issuers were stored) matches nothing until
+// BindUnboundSSOLinks adopts it.
 func (s *Store) GetBySSOSubIssuer(issuer, sub string) (User, error) {
 	u, err := s.GetBySSOSub(sub)
-	if err == nil && ((u.SSOIssuer != "" && u.SSOIssuer != issuer) || (u.NativeMailboxSource != "" && (issuer == "" || u.NativeMailboxIssuer != issuer))) {
+	if err == nil && (issuer == "" || u.SSOIssuer != issuer || (u.NativeMailboxSource != "" && u.NativeMailboxIssuer != issuer)) {
 		return User{}, ErrNativeAccountConflict
 	}
 	return u, err
+}
+
+// BindUnboundSSOLinks records an issuer on links stored without one: a native
+// account's own issuer, otherwise the configured one. The old lookup already
+// resolved unbound links for any issuer, so this grants nothing; it removes
+// every other issuer. Idempotent; returns how many it bound.
+func (s *Store) BindUnboundSSOLinks(issuer string) (int, error) {
+	return s.updateSSOLinks(func(u *User) bool {
+		if u.SSOIssuer != "" || (u.NativeMailboxIssuer == "" && issuer == "") {
+			return false
+		}
+		u.SSOIssuer = cmp.Or(u.NativeMailboxIssuer, issuer)
+		return true
+	})
+}
+
+// RevokeSSOLinksNotFrom revokes every live link not bound to issuer, after the
+// operator changes provider. Users re-link through the step-up link flow.
+// Native accounts are skipped: their issuer is immutable and already fenced,
+// and they cannot re-link.
+func (s *Store) RevokeSSOLinksNotFrom(issuer string) (int, error) {
+	now := time.Now().UTC().Unix()
+	return s.updateSSOLinks(func(u *User) bool {
+		if u.SSOIssuer == issuer || u.SSOLinkRevokedAt != 0 || u.NativeMailboxSource != "" {
+			return false
+		}
+		u.SSOLinkRevokedAt = now
+		return true
+	})
+}
+
+func (s *Store) updateSSOLinks(fn func(*User) bool) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := 0
+	err := fsutil.WithFileLock(s.path, func() error {
+		f, err := s.readFileUnlocked()
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		for i := range f.Users {
+			if f.Users[i].SSOSub != "" && fn(&f.Users[i]) {
+				f.Users[i].UpdatedAt = now
+				changed++
+			}
+		}
+		if changed == 0 {
+			return nil
+		}
+		return s.writeFileUnlocked(f)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return changed, nil
 }
 
 // LinkSSO connects a user's account to an SSO identity.
@@ -1158,7 +1232,8 @@ func (s *Store) linkSSO(issuer, userID, ssoSub, ssoUsername, ssoEmail string) er
 		found := false
 		for i := range f.Users {
 			if f.Users[i].ID == userID {
-				if f.Users[i].NativeMailboxSource != "" || (f.Users[i].SSOIssuer != "" && f.Users[i].SSOIssuer != issuer) {
+				// A revoked link may move to the new issuer; a live one may not.
+				if f.Users[i].NativeMailboxSource != "" || (f.Users[i].SSOIssuer != "" && f.Users[i].SSOIssuer != issuer && f.Users[i].SSOLinkRevokedAt == 0) {
 					return ErrNativeAccountConflict
 				}
 
@@ -1371,7 +1446,7 @@ func (s *Store) Create(ctx context.Context, username, password string, role Role
 				return ErrUsernameTaken
 			}
 		}
-		hash, err := HashPassword(ctx, password)
+		cred, err := DeriveCredential(ctx, password)
 		if err != nil {
 			return err
 		}
@@ -1383,13 +1458,13 @@ func (s *Store) Create(ctx context.Context, username, password string, role Role
 		created = User{
 			ID:                 id,
 			Username:           username,
-			PasswordHash:       hash,
 			Role:               role,
 			Active:             true,
 			MustChangePassword: true,
 			CreatedAt:          now,
 			UpdatedAt:          now,
 		}
+		cred.apply(&created)
 		f.Users = append(f.Users, created)
 		return s.writeFileUnlocked(f)
 	})
@@ -1577,13 +1652,23 @@ func (s *Store) SetRole(id string, role Role) (User, error) {
 	})
 }
 
-// SetPassword sets a new password. If requireChange is true the user must
-// change it again on next login (used for admin-initiated resets).
+// SetSendQuota overrides the account's sending quota; nil returns it to the
+// install-wide one.
+func (s *Store) SetSendQuota(id string, q *config.SendQuota) (User, error) {
+	return s.mutate(id, func(u *User) error {
+		u.SendQuota = q
+		return nil
+	})
+}
+
+// SetPassword sets a server-known password (an admin reset), stored derived
+// like every other credential. If requireChange is true the user must change it
+// again on next login.
 func (s *Store) SetPassword(ctx context.Context, id, newPassword string, requireChange bool, expectedRevision *uint64) (User, error) {
 	if err := ValidatePassword(newPassword); err != nil {
 		return User{}, err
 	}
-	hash, err := HashPassword(ctx, newPassword)
+	cred, err := DeriveCredential(ctx, newPassword)
 	if err != nil {
 		return User{}, err
 	}
@@ -1591,20 +1676,8 @@ func (s *Store) SetPassword(ctx context.Context, id, newPassword string, require
 		if u.PGPKeyring != nil && !requireChange {
 			return ErrPGPKeyringUpgradeRequired
 		}
-		u.PasswordHash = hash
+		cred.apply(u)
 		u.MustChangePassword = requireChange
-		// Back to legacy derivation. This path stores a hash of a PLAINTEXT password,
-		// which is how an admin sets a temporary one — an admin's browser cannot
-		// derive an auth secret for somebody else's account.
-		//
-		// Clearing these three is load-bearing, not tidiness: leaving AuthDerivation
-		// set while PasswordHash covers a plaintext password would make
-		// VerifyAuthSecret the active check against a hash it can never match, and lock
-		// the user out of the temporary password they were just given. The mandatory
-		// first-login change converts the account back to derived auth.
-		u.AuthDerivation = AuthDerivationLegacy
-		u.LoginSalt = ""
-		u.LoginIterations = 0
 		return nil
 	})
 }
@@ -2049,24 +2122,6 @@ func (s *Store) ConsumeRecoveryCode(_ context.Context, id, candidate string, dig
 	return u, true, nil
 }
 
-// VerifyPassword checks a plaintext password against u's stored hash.
-//
-// Refuses outright for a derived-auth account. After conversion PasswordHash
-// covers the client-derived AUTH SECRET, so a bare comparison would happily
-// accept that secret here as though it were the password. The two are different
-// credentials for the same account, and each verifier refusing the other's
-// accounts is what keeps them from becoming interchangeable by accident. See
-// VerifyAuthSecret for the mirror image.
-// A non-nil error means the credential was NOT examined (ErrKDFBusy, or ctx
-// cancelled); it never means "wrong". Callers must not spend a lockout strike
-// on it — see ErrKDFBusy.
-func VerifyPassword(ctx context.Context, u User, candidate string) (bool, error) {
-	if u.UsesDerivedAuth() {
-		return false, nil
-	}
-	return verifyAccountHash(ctx, u, candidate)
-}
-
 // verifyAccountHash verifies u's stored credential, warning (by id, never the
 // hash) when it is in a retired format and so can never verify. An empty hash
 // is an account with no password (SSO-only), not a retired one.
@@ -2084,8 +2139,8 @@ func IsArgon2idHash(encoded string) bool { return strings.HasPrefix(encoded, arg
 const argon2idPrefix = "$argon2id$"
 
 // VerifySecretHash checks a candidate secret against a hash produced by
-// HashPassword — the generic counterpart to VerifyPassword, for secrets other
-// than a User's login password (e.g. an app-specific CardDAV password).
+// HashPassword — the generic counterpart to VerifyAuthSecret, for secrets other
+// than a User's login credential (e.g. an app-specific CardDAV password).
 func VerifySecretHash(ctx context.Context, encoded, candidate string) (bool, error) {
 	return verifyHash(ctx, encoded, candidate)
 }
@@ -2352,7 +2407,7 @@ func parseArgon2Params(segment string) (mem, t uint32, threads uint8, ok bool) {
 }
 
 // RehashPassword re-derives id's password hash at the current cost parameters,
-// given the already-verified plaintext. It verifies the candidate again inside
+// given the already-verified auth secret. It verifies the candidate again inside
 // the write lock: this function's whole job is overwriting a credential, and
 // re-checking under the lock is what makes a bug at the call site fail closed
 // instead of setting the account's password to whatever string was passed in.
@@ -2374,19 +2429,7 @@ func (s *Store) RehashPassword(ctx context.Context, id, verifiedCredential strin
 		return err
 	}
 	_, err = s.mutate(id, func(u *User) error {
-		// Whichever credential form this account stores, chosen explicitly.
-		// VerifyPassword refuses derived-auth accounts by design, so the branch
-		// is required rather than defensive — and written as if/else so the
-		// correctness is local instead of resting on that refusal.
-		var (
-			ok  bool
-			err error
-		)
-		if u.UsesDerivedAuth() {
-			ok, err = VerifyAuthSecret(ctx, *u, verifiedCredential)
-		} else {
-			ok, err = VerifyPassword(ctx, *u, verifiedCredential)
-		}
+		ok, err := VerifyAuthSecret(ctx, *u, verifiedCredential)
 		if err != nil {
 			return err
 		}
@@ -2405,7 +2448,7 @@ func (s *Store) RehashPassword(ctx context.Context, id, verifiedCredential strin
 // Login credential derivation modes. See User's AuthDerivation field.
 const (
 	// AuthDerivationLegacy is the zero value: PasswordHash covers the plaintext
-	// password, which the client therefore has to transmit.
+	// password. Never verified; the account needs an admin password reset.
 	AuthDerivationLegacy = ""
 	// AuthDerivationPBKDF2 means PasswordHash covers a client-derived auth
 	// secret and the password never leaves the browser.
@@ -2417,7 +2460,7 @@ const (
 // is the point — so it measures what it does receive: the browser derives 32
 // bytes (64 hex chars), and anything shorter is a client that is not doing the
 // derivation. MinPasswordLen is enforced in the browser before derivation, and
-// by this store on every path where it still sees a plaintext password.
+// by this store where an admin or bootstrap hands it a password.
 const MinAuthSecretHexLen = 64
 
 // ErrAuthSecretMalformed is returned when a client-supplied auth secret is not
@@ -2449,6 +2492,12 @@ func (u User) SSOLinkRevoked() bool {
 	return u.SSOSub != "" && u.SSOLinkRevokedAt != 0
 }
 
+// NeedsPasswordReset reports an account still holding a legacy plaintext-password
+// hash. It cannot sign in; an admin password reset converts it.
+func (u User) NeedsPasswordReset() bool {
+	return u.HasLocalCredential() && !u.UsesDerivedAuth()
+}
+
 // HasLocalCredential reports whether this account stores a password or derived
 // auth secret of its own. An auto-provisioned SSO account has neither: its link
 // is not a bypass of some other credential, it is the only one. Nothing may
@@ -2458,11 +2507,12 @@ func (u User) HasLocalCredential() bool {
 	return u.PasswordHash != ""
 }
 
-// VerifyAuthSecret checks a client-derived auth secret against u's stored hash.
-// Separate from VerifyPassword so no call site can accidentally accept a
-// plaintext password for a derived-auth account, or the reverse: treating a
-// derived secret as a password would let anyone who read the salt off the public
-// login-params endpoint authenticate with it.
+// VerifyAuthSecret checks a client-derived auth secret against u's stored hash,
+// the only account credential this server accepts. A legacy (plaintext-hash)
+// account is refused without derivation work; callers on unauthenticated paths
+// equalize timing themselves.
+// A non-nil error means the credential was NOT examined (ErrKDFBusy, or ctx
+// cancelled); it never means "wrong".
 func VerifyAuthSecret(ctx context.Context, u User, candidate string) (bool, error) {
 	if !u.UsesDerivedAuth() {
 		return false, nil
@@ -2568,12 +2618,12 @@ const MinLoginIterations = 100_000
 const MaxLoginIterations = 12_000_000
 
 // validateLoginIterations bounds a client-declared work factor at both ends.
-// One function so the two write paths — SetDerivedAuthAndRewrapPGP and
-// UpgradeToDerivedAuth — cannot drift, which is exactly how the ceiling came to
-// be missing from both.
+// One function so every write path — SetDerivedAuthAndRewrapPGP, admin.env
+// import and SetLoginIterationsForTest — applies the same bounds.
 func validateLoginIterations(iterations int) error {
-	if iterations < MinLoginIterations {
-		return fmt.Errorf("login iterations must be at least %d", MinLoginIterations)
+	// loginIterations is below the floor only under SetLoginIterationsForTest.
+	if floor := min(MinLoginIterations, loginIterations); iterations < floor {
+		return fmt.Errorf("login iterations must be at least %d", floor)
 	}
 	if iterations > MaxLoginIterations {
 		return fmt.Errorf("login iterations must be at most %d", MaxLoginIterations)
@@ -2609,63 +2659,6 @@ func validateLoginSalt(salt string) error {
 		return fmt.Errorf("login salt must decode to between %d and %d bytes", MinLoginSaltBytes, MaxLoginSaltBytes)
 	}
 	return nil
-}
-
-// UpgradeToDerivedAuth converts a legacy account to client-derived auth after a
-// successful legacy login, given the auth secret the client derived alongside
-// the password it just proved — the only moment both credentials are in hand at
-// once. It verifies the plaintext again inside the write lock so a bug at the
-// call site fails closed rather than pinning the account to a caller-supplied
-// secret. A no-op for an account that has already upgraded, so a racing second
-// login cannot downgrade it.
-func (s *Store) UpgradeToDerivedAuth(ctx context.Context, id, verifiedPassword, authSecret, loginSalt string, iterations int) error {
-	if err := ValidateAuthSecret(authSecret); err != nil {
-		return err
-	}
-	if err := validateLoginSalt(loginSalt); err != nil {
-		return err
-	}
-	if err := validateLoginIterations(iterations); err != nil {
-		return err
-	}
-	hash, err := HashPassword(ctx, authSecret)
-	if err != nil {
-		return err
-	}
-	_, err = s.mutate(id, func(u *User) error {
-		if u.UsesDerivedAuth() {
-			return nil
-		}
-		ok, verr := VerifyPassword(ctx, *u, verifiedPassword)
-		if verr != nil {
-			return verr
-		}
-		if !ok {
-			return errors.New("refusing to upgrade auth derivation: password does not match")
-		}
-		// And the secret must actually BE the derivation of that password.
-		//
-		// Re-verifying the plaintext proves the caller knows the password; it
-		// says nothing about the value being pinned as the new credential. The
-		// doc comment above promises this check ("fails closed rather than
-		// pinning the account to a caller-supplied secret") and it was never
-		// performed, so anyone holding the current password — an admin-issued
-		// temporary one, say — could pin the account to a credential of their
-		// choosing and lock the owner out, on a login request that returns
-		// mfaRequired and never proves a second factor.
-		//
-		// The server holds the plaintext here, which is the whole reason this
-		// is the moment the claim is checkable at all.
-		if derr := authSecretMatchesPassword(verifiedPassword, authSecret, loginSalt, iterations); derr != nil {
-			return derr
-		}
-		u.PasswordHash = hash
-		u.AuthDerivation = AuthDerivationPBKDF2
-		u.LoginSalt = loginSalt
-		u.LoginIterations = iterations
-		return nil
-	})
-	return err
 }
 
 // ErrIncomingEncryptionPending prevents deleting/replacing a key while a

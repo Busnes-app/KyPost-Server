@@ -14,10 +14,7 @@ import (
 // changePassword posts a password change as u from the given source address.
 func changePassword(t *testing.T, srv *Server, u users.User, ip, oldPassword, newPassword string) *httptest.ResponseRecorder {
 	t.Helper()
-	body, err := json.Marshal(map[string]string{
-		"oldPassword": oldPassword,
-		"newPassword": newPassword,
-	})
+	body, err := json.Marshal(passwordChangeBody(srv, u.Username, oldPassword, newPassword))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

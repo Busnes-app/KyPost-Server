@@ -19,19 +19,20 @@ concurrency:
   group: publish-main
   cancel-in-progress: false
 
-permissions:
-  contents: read
-  packages: write
-  attestations: write
-  id-token: write
-  # Read the check runs recorded against the tested commit. Without this the
-  # CI gate below cannot see whether every required job passed for it.
-  checks: read
+permissions: {}
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+      # Read the check runs recorded against the tested commit. Without this the
+      # CI gate below cannot see whether every required job passed for it.
+      checks: read
     # A green run of ci.yml, for a push to main, and nothing else. The
     # `branches:` filter above matches the triggering run's head branch, so it
     # is restated here: if that filter is ever edited away, this stays.
@@ -43,11 +44,11 @@ jobs:
       IMAGE_NAME: ghcr.io/busnes-app/kypost-server
       TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
-      # workflow_run checks out the default branch by default, which is a
-      # moving target. Build the commit CI actually tested.
+      # The default event commit, never a ref taken from workflow_run input.
+      # A rerun keeps that old commit; the gate also resolves live remote main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # "The run concluded success" is weaker than it sounds: a run whose
@@ -64,9 +65,14 @@ jobs:
         run: |
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
-          if [ "$sha" != "$TESTED_SHA" ]; then
-            echo "::error::checked out $sha but CI ran against $TESTED_SHA" >&2
-            exit 1
+          main_sha="$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"
+          # Not an error: main moving on while CI ran is ordinary, and the newer
+          # commit's own CI run publishes it. This is also what stops a re-run
+          # of an old commit's CI from moving the mutable :main tag backwards.
+          if [ "$sha" != "$TESTED_SHA" ] || [ "$sha" != "$main_sha" ]; then
+            echo "::notice::checkout ${sha}, tested ${TESTED_SHA}, and remote main ${main_sha} differ; skipping publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "tested commit: $sha"
 
@@ -98,23 +104,6 @@ jobs:
             exit 1
           fi
           echo "all required CI jobs passed for ${sha}"
-
-          # workflow_run fires on RE-RUNS too, and :main is a mutable tag. Someone
-          # re-running ci.yml against a months-old commit would otherwise move the
-          # published image backwards to it — the tag would silently regress with a
-          # green tick and a valid attestation for the wrong source. Publish only
-          # the current tip.
-          #
-          # Not an error: a newer commit landing while this run was still testing
-          # is ordinary, and that commit's own run publishes it. Failing red here
-          # would turn a normal race into a broken build nobody should act on.
-          git fetch --depth=1 origin main
-          tip="$(git rev-parse FETCH_HEAD)"
-          if [ "$sha" != "$tip" ]; then
-            echo "::notice::${sha} is no longer the tip of main (${tip}); skipping publish"
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           echo "publish=true" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -67,6 +68,17 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 	m, err := life.CreateNativeMailbox(ctx, p.stateDir, u.ID, "sales@example.test")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The daemon answers exactly as sso.AdmitUserMailbox, which the api also uses.
+	for _, mode := range []bool{false, true} {
+		p.nativeMail = mode
+		for _, id := range []string{"", u.ID, m.ID, "mbx-unknown"} {
+			a, native, err := p.nativeMailboxAssignment(ctx, u.ID, id)
+			wa, wnative, werr := sso.AdmitUserMailbox(ctx, mode, sso.NewStore(p.configDir), life, p.users, p.stateDir, u.ID, id)
+			if a.Owner != wa.Owner || native != wnative || !errors.Is(err, werr) || !mode && !errors.Is(err, sso.ErrNativeMailDisabled) {
+				t.Fatalf("mode %v mailbox %q: daemon (%v, %v, %v) shared (%v, %v, %v)", mode, id, a.Owner, native, err, wa.Owner, wnative, werr)
+			}
+		}
 	}
 	primary := tickStore(t, p, u)
 	if err := primary.UpsertNativeDevice(state.NativeDevice{DeviceID: "phone", Platform: "android", PushToken: "synthetic"}); err != nil {
