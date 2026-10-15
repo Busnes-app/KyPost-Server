@@ -17,6 +17,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // extractArmoredPGPPayload is a test-only helper that pulls the armored
@@ -88,7 +89,7 @@ func TestServerCustodyCiphertextIsNotDecrypted(t *testing.T) {
 	}
 	userID := all[0].ID
 
-	recipient, err := pgpmail.GenerateIdentity("Recipient", "recipient@example.com")
+	recipient, err := pgpmailtest.GenerateIdentity("Recipient", "recipient@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -137,7 +138,7 @@ func pgpVictimWithIdentity(t *testing.T) (string, *pgpmail.Identity, *contacts.S
 	}
 	userID := all[0].ID
 
-	recipient, err := pgpmail.GenerateIdentity("Recipient", "recipient@example.com")
+	recipient, err := pgpmailtest.GenerateIdentity("Recipient", "recipient@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -162,11 +163,11 @@ func pgpVictimWithIdentity(t *testing.T) (string, *pgpmail.Identity, *contacts.S
 func TestSignerKeysRequireTheContactPin(t *testing.T) {
 	_, _, contactsStore, _ := pgpVictimWithIdentity(t)
 
-	real, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	real, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
-	swapped, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	swapped, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -217,7 +218,7 @@ func TestSignerKeysRequireTheContactPin(t *testing.T) {
 func TestBoundSignerKeysCarriesProvenance(t *testing.T) {
 	_, _, store, _ := pgpVictimWithIdentity(t)
 
-	key, err := pgpmail.GenerateIdentity("Shared", "shared@example.com")
+	key, err := pgpmailtest.GenerateIdentity("Shared", "shared@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -261,7 +262,7 @@ func TestBoundSignerKeysCarriesProvenance(t *testing.T) {
 func TestBoundSignerKeysMarksPinConflictInsteadOfDropping(t *testing.T) {
 	_, _, store, _ := pgpVictimWithIdentity(t)
 
-	key, err := pgpmail.GenerateIdentity("Rotated", "rotated@example.com")
+	key, err := pgpmailtest.GenerateIdentity("Rotated", "rotated@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -294,7 +295,7 @@ func TestBoundSignerKeysMarksPinConflictInsteadOfDropping(t *testing.T) {
 func TestBoundSignerKeysForSenderExcludesOtherContacts(t *testing.T) {
 	_, _, store, _ := pgpVictimWithIdentity(t)
 
-	bob, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	bob, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity bob: %v", err)
 	}
@@ -307,7 +308,7 @@ func TestBoundSignerKeysForSenderExcludesOtherContacts(t *testing.T) {
 		t.Fatalf("Upsert bob contact: %v", err)
 	}
 
-	eve, err := pgpmail.GenerateIdentity("Eve", "eve@evil.example")
+	eve, err := pgpmailtest.GenerateIdentity("Eve", "eve@evil.example")
 	if err != nil {
 		t.Fatalf("GenerateIdentity eve: %v", err)
 	}
@@ -335,7 +336,7 @@ func TestBoundSignerKeysForSenderExcludesOtherContacts(t *testing.T) {
 func TestBoundSignerKeysForSenderIgnoresAnAddressHiddenInAComment(t *testing.T) {
 	_, _, store, _ := pgpVictimWithIdentity(t)
 
-	bob, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	bob, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity bob: %v", err)
 	}
@@ -348,7 +349,7 @@ func TestBoundSignerKeysForSenderIgnoresAnAddressHiddenInAComment(t *testing.T) 
 		t.Fatalf("Upsert bob contact: %v", err)
 	}
 
-	eve, err := pgpmail.GenerateIdentity("Eve", "eve@evil.example")
+	eve, err := pgpmailtest.GenerateIdentity("Eve", "eve@evil.example")
 	if err != nil {
 		t.Fatalf("GenerateIdentity eve: %v", err)
 	}
@@ -383,7 +384,7 @@ func TestBoundSignerKeysForSenderIgnoresAnAddressHiddenInAComment(t *testing.T) 
 func TestBoundSignerKeysForSenderStillReportsAConflict(t *testing.T) {
 	_, _, store, _ := pgpVictimWithIdentity(t)
 
-	rotated, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	rotated, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -399,7 +400,7 @@ func TestBoundSignerKeysForSenderStillReportsAConflict(t *testing.T) {
 	// A second, unrelated contact whose key ALSO conflicts its pin. Its
 	// conflict belongs to eve@evil.example and must never appear in a
 	// lookup for bob@example.com.
-	rotatedEve, err := pgpmail.GenerateIdentity("Eve", "eve@evil.example")
+	rotatedEve, err := pgpmailtest.GenerateIdentity("Eve", "eve@evil.example")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

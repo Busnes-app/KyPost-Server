@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Pins the Go CI tools (`golangci-lint`, `govulncheck`) as `tool` directives so their versions are reviewable and Dependabot bumps them.
+Pins the Go CI tools (`golangci-lint`, `govulncheck`, `deadcode`) as `tool` directives so their versions are reviewable and Dependabot bumps them.
 
 ## Ownership
 
@@ -25,6 +25,7 @@ CI runs these from `backend/`:
 
 - `go tool -modfile=../tools/go.mod golangci-lint run ./...`
 - `go tool -modfile=../tools/go.mod govulncheck ./...`
+- `go tool -modfile=../tools/go.mod deadcode -test=false ./cmd/...`, compared against `backend/deadcode.allow`
 
 ## Child DOX Index
 

@@ -73,14 +73,14 @@ func TestBackupPinScheduleAndAuditFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pin := map[string]any{"password": password, "publicKey": base64.StdEncoding.EncodeToString(key.Public().Bytes()), "threshold": 2, "totalShares": 3}
+	pin := map[string]any{"authSecret": authSecretFor(srv, password), "publicKey": base64.StdEncoding.EncodeToString(key.Public().Bytes()), "threshold": 2, "totalShares": 3}
 	if r := call("POST", "pin-key", pin); r.Code != 200 {
 		t.Fatalf("pin %d: %s", r.Code, r.Body.String())
 	}
-	if r := call("PUT", "schedule", map[string]any{"password": password, "intervalSec": 900}); r.Code != 200 {
+	if r := call("PUT", "schedule", map[string]any{"authSecret": authSecretFor(srv, password), "intervalSec": 900}); r.Code != 200 {
 		t.Fatalf("schedule: %s", r.Body.String())
 	}
-	if r := call("PUT", "schedule", map[string]any{"password": password, "intervalSec": 1 << 55}); r.Code != 400 {
+	if r := call("PUT", "schedule", map[string]any{"authSecret": authSecretFor(srv, password), "intervalSec": 1 << 55}); r.Code != 400 {
 		t.Fatalf("overflow accepted: %d", r.Code)
 	}
 	rows, err := srv.globalStore.RecentBackupAudit(10)
@@ -89,7 +89,7 @@ func TestBackupPinScheduleAndAuditFailure(t *testing.T) {
 	}
 	// Closing the audit store must prevent an unpair mutation before it starts.
 	srv.globalStore.Close()
-	if r := call("DELETE", "pairing", map[string]any{"password": password}); r.Code != 500 {
+	if r := call("DELETE", "pairing", map[string]any{"authSecret": authSecretFor(srv, password)}); r.Code != 500 {
 		t.Fatalf("audit outage: %d", r.Code)
 	}
 	if _, err := os.Stat(filepath.Join(srv.stateDir, "recovery.pub")); err != nil {

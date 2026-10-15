@@ -204,7 +204,7 @@ func issueChallenge(t *testing.T, srv *Server, ip string) captcha.Challenge {
 // doLoginFrom posts a login that is expected to fail, from a given IP.
 func doLoginFrom(t *testing.T, srv *Server, ip, username, password string) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	body, _ := json.Marshal(map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 	req.RemoteAddr = ip + ":1234"
 	srv.handleLogin(httptest.NewRecorder(), req)
@@ -318,4 +318,11 @@ func TestPowEscalationEntryExpiresDespiteContinuedFailures(t *testing.T) {
 		t.Fatal("entry survived a sweep 25 decay windows after it was created, " +
 			"because every failure pushed its expiry forward")
 	}
+}
+
+// entryCount reports how many IPs are tracked.
+func (p *powEscalation) entryCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.entries)
 }

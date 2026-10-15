@@ -2,18 +2,26 @@ package processor
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
+	"github.com/emersion/go-msgauth/dkim"
 )
 
 var errFakeRawFetch = errors.New("fake raw message fetch failure")
@@ -112,7 +120,7 @@ func backdateSendAsField(t *testing.T, stateDir, userID, aliasID string, mutate 
 
 // TestCheckPendingSendAsAliasesStaysPendingOnNoDKIMSignature covers the
 // deterministic, no-DNS-required case: a matched message with no
-// DKIM-Signature header at all reliably fails VerifyDKIMForDomain without
+// DKIM-Signature header at all reliably fails DKIMSignedHeaders without
 // any network access, so the alias must stay pending. Real DKIM
 // pass/fail crypto outcomes (valid signature, tampered body, wrong domain,
 // expired signature) are exhaustively covered in
@@ -336,23 +344,55 @@ func newTestPollerWithUsers(t *testing.T) (*Poller, string) {
 	return p, all[0].ID
 }
 
-// stubVerifiedDKIM makes the DKIM check unconditionally pass for the
-// duration of one test. Real DKIM crypto is covered in
-// internal/adapters/imap/dkim_verify_test.go; stubbing it here is what makes
-// the *verified* branch reachable at all from this package, since the real
-// verifier resolves the signing domain's public key from live DNS.
+// testDKIMKey signs for every domain in these tests; stubVerifiedDKIM serves
+// its public half from a fake DNS, so the real verifier checks real signatures.
+var testDKIMKey = sync.OnceValue(func() ed25519.PrivateKey {
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	return key
+})
+
 func stubVerifiedDKIM(t *testing.T) {
 	t.Helper()
-	prev := verifyDKIMForDomain
-	verifyDKIMForDomain = func([]byte, string) bool { return true }
-	prevCovers := verifyDKIMCoversHeader
-	// Verification now additionally requires the signature to cover the header
-	// the code was found in — stub that too, for the same reason.
-	verifyDKIMCoversHeader = func([]byte, string, string) bool { return true }
-	t.Cleanup(func() {
-		verifyDKIMForDomain = prev
-		verifyDKIMCoversHeader = prevCovers
-	})
+	txt := "v=DKIM1; k=ed25519; p=" + base64.StdEncoding.EncodeToString(testDKIMKey().Public().(ed25519.PublicKey))
+	lookup := func(string) ([]string, error) { return []string{txt}, nil }
+	prev := dkimSignedHeaders
+	dkimSignedHeaders = func(raw []byte, domain string) map[string]string {
+		return imapadapter.DKIMSignedHeadersWithLookup(raw, domain, lookup)
+	}
+	t.Cleanup(func() { dkimSignedHeaders = prev })
+}
+
+// signDKIM signs raw for domain over headers, with relaxed header
+// canonicalization (the variant whose field-name handling differs from net/mail).
+func signDKIM(t *testing.T, raw, domain string, headers ...string) string {
+	t.Helper()
+	var b strings.Builder
+	if err := dkim.Sign(&b, strings.NewReader(raw), &dkim.SignOptions{
+		Domain: domain, Selector: "sel", Signer: testDKIMKey(),
+		HeaderCanonicalization: dkim.CanonicalizationRelaxed, HeaderKeys: headers,
+	}); err != nil {
+		t.Fatalf("dkim.Sign: %v", err)
+	}
+	return b.String()
+}
+
+// probeRaw is alias's own probe as the alias domain delivers it back, unsigned.
+func probeRaw(alias sendas.Alias) string {
+	return "From: " + alias.Email + "\r\nTo: " + alias.Email +
+		"\r\nSubject: Verify send-as: " + alias.VerificationCode +
+		"\r\nDate: " + time.Now().Format(time.RFC1123Z) +
+		"\r\nMessage-ID: " + alias.ProbeMessageID + "\r\n\r\nbody\r\n"
+}
+
+// proofHeaders is what a typical signer covers on the probe.
+var proofHeaders = []string{"from", "to", "subject", "date", "message-id"}
+
+func signedProbe(t *testing.T, alias sendas.Alias) []byte {
+	t.Helper()
+	return []byte(signDKIM(t, probeRaw(alias), domainOf(alias.Email), proofHeaders...))
 }
 
 // seedPollerPGPIdentity generates a key for email and stores it on userID,
@@ -362,7 +402,7 @@ func stubVerifiedDKIM(t *testing.T) {
 // master key, because nothing in it opens a user's private key any more.
 func seedPollerPGPIdentity(t *testing.T, p *Poller, userID, name, email string) *pgpmail.Identity {
 	t.Helper()
-	id, err := pgpmail.GenerateIdentity(name, email)
+	id, err := pgpmailtest.GenerateIdentity(name, email)
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -392,14 +432,7 @@ func verifyAliasViaPoller(t *testing.T, p *Poller, userID, email string) sendas.
 		searchResults: map[string][]imapadapter.Overview{
 			alias.VerificationCode: {{UID: 1}},
 		},
-		// The Subject must carry the challenge code: verification requires the
-		// proving message to be a response to THIS challenge, not merely any
-		// DKIM-signed message from the address. This helper previously used
-		// "Subject: probe" and still verified, which is exactly the defect
-		// TestCheckPendingSendAsAliasesRejectsAMessageThatDoesNotCarryTheCode
-		// now pins.
-		rawResults: map[int][]byte{1: []byte(
-			"From: " + email + "\r\nSubject: Re: Verify send-as: " + alias.VerificationCode + "\r\n\r\nbody\r\n")},
+		rawResults: map[int][]byte{1: signedProbe(t, alias)},
 	}
 	p.checkPendingSendAsAliases(context.Background(), userID, mail)
 
@@ -562,8 +595,7 @@ func TestRawIsAutoReplyRejectsMailingListRedistribution(t *testing.T) {
 // DKIM loop-back can upgrade it to domain-proven (the only proof WKD accepts).
 func TestCheckPendingSendAsAliasesUpgradesCodeConfirmedAlias(t *testing.T) {
 	stubVerifiedDKIM(t)
-	p := newTestPollerForSendAs(t)
-	userID := "user-1"
+	p, userID := newTestPollerWithUsers(t)
 	store, err := p.userSendAsStore(userID)
 	if err != nil {
 		t.Fatalf("userSendAsStore: %v", err)
@@ -577,13 +609,153 @@ func TestCheckPendingSendAsAliasesUpgradesCodeConfirmedAlias(t *testing.T) {
 	}
 	mail := &stubSendAsMailClient{
 		searchResults: map[string][]imapadapter.Overview{alias.VerificationCode: {{UID: 1}}},
-		rawResults: map[int][]byte{1: []byte(
-			"From: alias@example.com\r\nSubject: Verify send-as: " + alias.VerificationCode + "\r\n\r\nbody\r\n")},
+		rawResults:    map[int][]byte{1: signedProbe(t, alias)},
 	}
 	p.checkPendingSendAsAliases(context.Background(), userID, mail)
 
 	got, _ := must2(store.Get(alias.ID))
 	if got.VerifiedBy != sendas.VerifiedByDKIM || !got.DomainProven() {
 		t.Fatalf("after DKIM match: %+v, want upgraded to dkim", got)
+	}
+}
+
+// Domain proof is the alias's own probe coming back signed: never a reply to
+// it (a colleague's out-of-office or answer to a probe the account holder sent
+// through their own SMTP), and never on headers the alias domain did not sign.
+func TestProvesSendAsRequiresTheSignedProbeItself(t *testing.T) {
+	alias := sendas.Alias{
+		Email:            "colleague@corp.example",
+		VerificationCode: "kp-0123abcd",
+		ProbeMessageID:   "<probe123@corp.example>",
+		CreatedAt:        time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
+	}
+	now := time.Now().Format(time.RFC1123Z)
+	dateLine := regexp.MustCompile("\r\nDate: [^\r]*")
+	reply := "From: colleague@corp.example\r\nSubject: Re: Verify send-as: kp-0123abcd" +
+		"\r\nDate: " + now + "\r\nMessage-ID: <reply9@corp.example>" +
+		"\r\nIn-Reply-To: " + alias.ProbeMessageID + "\r\nReferences: " + alias.ProbeMessageID +
+		"\r\n\r\nI am out of the office.\r\n"
+	all := []string{"from", "message-id", "subject", "date", "in-reply-to", "references", "auto-submitted"}
+	without := func(drop string) []string {
+		var out []string
+		for _, h := range all {
+			if h != drop {
+				out = append(out, h)
+			}
+		}
+		return out
+	}
+	sign := func(raw string, headers ...string) string { return signDKIM(t, raw, "corp.example", headers...) }
+	// Genuine signed mail from the address, unrelated to the challenge.
+	unrelated := sign("From: colleague@corp.example\r\nSubject: Lunch?\r\nDate: "+now+
+		"\r\nMessage-ID: <other7@corp.example>\r\n\r\nbody\r\n", all...)
+	stapled := "Message-ID : " + alias.ProbeMessageID + "\r\nSubject : Verify send-as: kp-0123abcd\r\n"
+	otherIDProbe := sign(strings.Replace(probeRaw(alias), alias.ProbeMessageID, "<other7@corp.example>", 1), all...)
+
+	stubVerifiedDKIM(t)
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"the signed probe", sign(probeRaw(alias), all...), true},
+		{"reply quoting the probe in In-Reply-To", sign(reply, all...), false},
+		{"out-of-office with Auto-Submitted stripped", sign(reply, without("auto-submitted")...), false},
+		{"probe with Message-ID unsigned", sign(probeRaw(alias), without("message-id")...), false},
+		{"probe with Date unsigned", sign(probeRaw(alias), without("date")...), false},
+		{"probe with Subject unsigned", sign(probeRaw(alias), without("subject")...), false},
+		{"signed From is another address, alias stapled as a variant", "From : colleague@corp.example\r\n" +
+			sign(strings.Replace(probeRaw(alias), "From: colleague@", "From: other@", 1), all...), false},
+		{"probe without Date", sign(dateLine.ReplaceAllString(probeRaw(alias), ""), all...), false},
+		{"probe dated before the challenge", sign(dateLine.ReplaceAllString(probeRaw(alias),
+			"\r\nDate: "+time.Now().Add(-72*time.Hour).Format(time.RFC1123Z)), all...), false},
+		{"probe from another address", sign(strings.Replace(probeRaw(alias), "From: colleague@", "From: other@", 1), all...), false},
+		{"probe marked automated", sign(strings.Replace(probeRaw(alias), "\r\n\r\n", "\r\nAuto-Submitted: auto-replied\r\n\r\n", 1), all...), false},
+		{"probe signed by another domain", signDKIM(t, probeRaw(alias), "elsewhere.example", all...), false},
+		// Whitespace before the colon: the verifier trims it, net/mail does not.
+		{"unrelated signed mail with variant proof headers stapled above", stapled + unrelated, false},
+		{"other signed message with variant Message-ID stapled below",
+			strings.Replace(otherIDProbe, "\r\n\r\n", "\r\nMessage-ID : "+alias.ProbeMessageID+"\r\n\r\n", 1), false},
+		{"signed probe with a duplicate Subject", "Subject: Verify send-as: kp-0123abcd\r\n" + sign(probeRaw(alias), all...), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := provesSendAs([]byte(tc.raw), alias); got != tc.want {
+				t.Fatalf("provesSendAs = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("record without a probe Message-ID", func(t *testing.T) {
+		legacy := alias
+		legacy.ProbeMessageID = ""
+		if provesSendAs([]byte(sign(probeRaw(alias), all...)), legacy) {
+			t.Fatal("a record with no recorded probe was proven")
+		}
+	})
+}
+
+// The reviewer's regression, end to end through the poller: genuine signed
+// mail from the alias with whitespace-variant proof headers stapled on must
+// leave the alias pending.
+func TestCheckPendingSendAsAliasesRefusesWhitespaceVariantProofHeaders(t *testing.T) {
+	stubVerifiedDKIM(t)
+	p, userID := newTestPollerWithUsers(t)
+	store, err := p.userSendAsStore(userID)
+	if err != nil {
+		t.Fatalf("userSendAsStore: %v", err)
+	}
+	alias, err := store.Create(userID, "colleague@corp.example", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	genuine := signDKIM(t, "From: colleague@corp.example\r\nSubject: Lunch?\r\nDate: "+
+		time.Now().Format(time.RFC1123Z)+"\r\nMessage-ID: <other7@corp.example>\r\n\r\nbody\r\n",
+		"corp.example", proofHeaders...)
+	// Relaxed canonicalization lets the signed lines be respelled "Name :",
+	// which net/mail drops, so it reads only the unsigned plain lines on top.
+	respelled := strings.Replace(strings.Replace(genuine,
+		"\r\nMessage-ID: <other7@", "\r\nMessage-ID : <other7@", 1),
+		"\r\nSubject: Lunch?", "\r\nSubject : Lunch?", 1)
+	forged := "Message-ID: " + alias.ProbeMessageID + "\r\nSubject: Verify send-as: " + alias.VerificationCode + "\r\n" + respelled
+	mail := &stubSendAsMailClient{
+		searchResults: map[string][]imapadapter.Overview{alias.VerificationCode: {{UID: 1}}},
+		rawResults:    map[int][]byte{1: []byte(forged)},
+	}
+	p.checkPendingSendAsAliases(context.Background(), userID, mail)
+
+	got, _ := must2(store.Get(alias.ID))
+	if got.Status != "pending" {
+		t.Fatalf("Status = %q, want pending", got.Status)
+	}
+}
+
+// One address, one key on WKD: a second user cannot domain-prove an address
+// another active user already holds proven.
+func TestCheckPendingSendAsAliasesRefusesAddressProvenByAnotherUser(t *testing.T) {
+	stubVerifiedDKIM(t)
+	p, firstID := newTestPollerWithUsers(t)
+	verifyAliasViaPoller(t, p, firstID, "Shared@Corp.example")
+
+	second, err := p.users.Create(context.Background(), "second-user", "initial-pass-123", users.RoleUser)
+	if err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+	store, err := p.userSendAsStore(second.ID)
+	if err != nil {
+		t.Fatalf("userSendAsStore: %v", err)
+	}
+	alias, err := store.Create(second.ID, "shared@corp.example", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	mail := &stubSendAsMailClient{
+		searchResults: map[string][]imapadapter.Overview{alias.VerificationCode: {{UID: 1}}},
+		rawResults:    map[int][]byte{1: signedProbe(t, alias)},
+	}
+	p.checkPendingSendAsAliases(context.Background(), second.ID, mail)
+
+	got, _ := must2(store.Get(alias.ID))
+	if got.DomainProven() {
+		t.Fatalf("second user domain-proved an address another user holds: %+v", got)
 	}
 }

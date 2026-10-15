@@ -2,10 +2,13 @@ package processor
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 )
 
 // Shutdown must actually reach the work, not just the loop that schedules it.
@@ -87,5 +90,51 @@ func TestTickRefusesToStartAfterStop(t *testing.T) {
 	case <-mail.entered:
 		t.Fatal("a tick that started after Stop reached the mailbox")
 	default:
+	}
+}
+
+// signalWriter closes seen the first time a log line contains want.
+type signalWriter struct {
+	want string
+	seen chan struct{}
+	once sync.Once
+}
+
+func (w *signalWriter) Write(b []byte) (int, error) {
+	if strings.Contains(string(b), w.want) {
+		w.once.Do(func() { close(w.seen) })
+	}
+	return len(b), nil
+}
+
+// A "poll now" queued behind a tick that never yields the semaphore must still
+// return on Stop, or it holds the API's shutdown window.
+func TestTickWaitingForSemaphoreIsCancelledByStop(t *testing.T) {
+	p, _ := newTickTestPoller(t, &blockingMailbox{entered: make(chan struct{}, 1)})
+	w := &signalWriter{want: "poll tick waiting for previous tick", seen: make(chan struct{})}
+	logger, err := logging.NewWithOutput(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.log = logger
+	p.tickSem = make(chan struct{}, 1) // empty: another tick holds it
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.TriggerNow()
+	}()
+	select {
+	case <-w.seen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("TriggerNow never waited on the semaphore")
+	}
+
+	p.Stop()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not release a tick waiting on the semaphore")
 	}
 }

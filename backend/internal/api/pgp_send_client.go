@@ -116,6 +116,7 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 	// config read and no SMTP connection.
 	prepared := make([]mailmsg.PreparedSMTPMessage, len(req.Deliveries))
 	total := 0
+	seenRecipients := map[string]bool{}
 	for i, delivery := range req.Deliveries {
 		recipients, rerr := parseDeliveryRecipients(delivery.Recipients)
 		if rerr != nil {
@@ -124,6 +125,16 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(recipients) == 0 || strings.TrimSpace(delivery.Ciphertext) == "" {
 			continue
+		}
+		// A batch is one message for quota purposes. Distinct Bcc groups are
+		// allowed, but no recipient may receive that message more than once.
+		for _, recipient := range recipients {
+			key := strings.ToLower(recipient)
+			if seenRecipients[key] {
+				http.Error(w, "recipient appears in multiple delivery groups", http.StatusBadRequest)
+				return
+			}
+			seenRecipients[key] = true
 		}
 		total += len(recipients)
 		if err := validateClientDeliveryShape(strings.TrimSpace(delivery.Ciphertext)); err != nil {
@@ -408,25 +419,6 @@ var requiredDeliveryHeaders = []string{"From:", "To:", "Subject:", "Date:"}
 // forged here is exactly what the anti-phishing scan and the send-as
 // verification both read elsewhere.
 var forbiddenDeliveryHeaders = []string{"Received", "Authentication-Results", "Return-Path", "Bcc"}
-
-// validatePGPMimeDelivery rejects a client-supplied delivery that is not a
-// complete RFC 5322 message from an address this caller may send as.
-//
-// authorizedFrom is the header-From resolveMailFrom approved for this caller —
-// their own account address, or a verified send-as alias — and the delivery's
-// own From must equal it. That binding is the point: this endpoint relays the
-// caller's bytes verbatim, and checking only that a few header *names* appeared
-// as substrings and that the armor marker appeared anywhere left the From
-// entirely caller-chosen, let an HTML comment satisfy the armor check, and made
-// the whole send-as authorization subsystem bypassable by anyone with a session
-// or a paired device secret. On a shared organizational smarthost, mail spoofed
-// this way is DKIM-aligned.
-func validatePGPMimeDelivery(delivery, authorizedFrom string) error {
-	if err := validateClientDeliveryShape(delivery); err != nil {
-		return err
-	}
-	return validateDeliveryFrom(delivery, authorizedFrom)
-}
 
 // validateClientDeliveryShape accepts what the browser may hand this relay
 // for delivery: an RFC 3156 multipart/encrypted message, or a multipart/signed

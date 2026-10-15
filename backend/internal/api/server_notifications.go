@@ -339,6 +339,18 @@ func (s *Server) handleNotificationPairing(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
+	// The token mints a device credential that outlives the session, so a
+	// session alone may not ask for one.
+	var cred struct {
+		AuthSecret string `json:"authSecret"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&cred); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if !s.confirmActor(w, r, ac.UserID, cred.AuthSecret) {
+		return
+	}
 	s.writeNotificationPairing(w, ac.UserID)
 }
 
@@ -641,18 +653,17 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 	secretHash := users.HashDeviceSecret(rawSecret)
 
 	device := state.NativeDevice{
-		DeviceID:    strings.TrimSpace(req.DeviceID),
-		Platform:    platform,
-		Transport:   transport,
-		P256DH:      webPushP256DH,
-		Auth:        webPushAuth,
-		PushToken:   deviceToken,
-		DeviceName:  clampField(req.DeviceName, maxDeviceTextLen),
-		AppVersion:  clampField(req.AppVersion, maxDeviceTextLen),
-		UserAgent:   clampField(r.Header.Get("User-Agent"), maxUserAgentLen),
-		UserID:      ownerID,
-		MFAApprover: true,
-		SecretHash:  secretHash,
+		DeviceID:   strings.TrimSpace(req.DeviceID),
+		Platform:   platform,
+		Transport:  transport,
+		P256DH:     webPushP256DH,
+		Auth:       webPushAuth,
+		PushToken:  deviceToken,
+		DeviceName: clampField(req.DeviceName, maxDeviceTextLen),
+		AppVersion: clampField(req.AppVersion, maxDeviceTextLen),
+		UserAgent:  clampField(r.Header.Get("User-Agent"), maxUserAgentLen),
+		UserID:     ownerID,
+		SecretHash: secretHash, // not an approver until the owner opts in with step-up
 	}
 	if err := store.UpsertNativeDevice(device); err != nil {
 		// See the same branch on the web-push subscription handler: at the cap
@@ -737,7 +748,7 @@ func (s *Server) handleNotificationNativeDevices(w http.ResponseWriter, r *http.
 			redacted[i] = d.Redacted()
 		}
 		// deliveryMode rides along so the UI can render the Relay Push / App
-		// Pull toggle without calling GET /api/notifications/pairing, which
+		// Pull toggle without calling POST /api/notifications/pairing, which
 		// mints a live 90-second pairing token as a side effect. Reading a
 		// setting should not hand out a credential.
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -999,9 +1010,9 @@ func (s *Server) createPairingToken(subscriberID, purpose string, ttl time.Durat
 // checks that the token's purpose matches wantPurpose, returning its claims.
 // The purpose check is a plain != — the purpose isn't secret, unlike the
 // HMAC signature and (in validatePairingToken) the subject, which correctly
-// stay constant-time comparisons. Shared by validatePairingToken (which
-// additionally checks the subject against a caller-supplied expectation) and
-// parsePairingTokenUserID (which returns the subject to the caller instead).
+// stay constant-time comparisons. validatePairingToken additionally checks the
+// subject against a caller-supplied expectation; the QR key and native
+// registration handlers read the subject from the claims instead.
 func (s *Server) decodeAndVerifyPairingToken(token, wantPurpose string, now time.Time) (pairingTokenClaims, error) {
 	parts := strings.Split(strings.TrimSpace(token), ".")
 	if len(parts) != 2 {
@@ -1047,18 +1058,4 @@ func (s *Server) validatePairingToken(subscriberID, token, wantPurpose string, n
 		return errors.New("subscriber mismatch")
 	}
 	return nil
-}
-
-// parsePairingTokenUserID decodes and HMAC-verifies token without requiring
-// the caller to already know the expected subject, returning the subject
-// the token was minted for. Used by the QR key-fetch endpoint, which must
-// learn which user a token belongs to rather than confirm a known one —
-// unlike validatePairingToken (used for pickup links, where the URL path
-// already carries the expected ID to check against).
-func (s *Server) parsePairingTokenUserID(token, wantPurpose string, now time.Time) (string, error) {
-	claims, err := s.decodeAndVerifyPairingToken(token, wantPurpose, now)
-	if err != nil {
-		return "", err
-	}
-	return claims.Sub, nil
 }

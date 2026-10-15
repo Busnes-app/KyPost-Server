@@ -118,8 +118,7 @@ func (s *Server) handleMFAConfirm(w http.ResponseWriter, r *http.Request) {
 	// Decoded in one pass: the credential travels in the same body as the code,
 	// so this cannot go through requirePasswordConfirm (which consumes r.Body).
 	var req struct {
-		Code     string `json:"code"`
-		Password string `json:"password"`
+		Code string `json:"code"`
 		// AuthSecret is the client-derived credential, for an account whose
 		// password never reaches this server. See login_params.go.
 		AuthSecret string `json:"authSecret,omitempty"`
@@ -150,7 +149,7 @@ func (s *Server) handleMFAConfirm(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	confirmed, err := verifyAccountCredential(r.Context(), u, req.Password, req.AuthSecret)
+	confirmed, err := users.VerifyAuthSecret(r.Context(), u, req.AuthSecret)
 	if err != nil {
 		// Shed before the derivation ran: nothing was examined, so the strike
 		// tryAttempt just spent goes back. Charging it would let a load spike
@@ -250,8 +249,8 @@ func (s *Server) handleMFARecoveryCodesRegenerate(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "recoveryCodes": codes})
 }
 
-// requirePasswordConfirm decodes a {password} body, loads the caller, and
-// re-verifies their password. On any failure it writes the response and
+// requirePasswordConfirm decodes an {authSecret} body, loads the caller, and
+// re-verifies their credential. On any failure it writes the response and
 // returns ok=false. Subject to the same three-strikes/15-minute lockout as
 // handleLogin (keyed by the caller's own username, since they're already
 // authenticated) — without it, an attacker holding a stolen but
@@ -274,7 +273,6 @@ func (s *Server) requirePasswordConfirm(w http.ResponseWriter, r *http.Request) 
 		return users.User{}, false
 	}
 	var req struct {
-		Password string `json:"password"`
 		// AuthSecret is the client-derived credential, for an account whose
 		// password never reaches this server. See login_params.go.
 		AuthSecret string `json:"authSecret,omitempty"`
@@ -291,7 +289,7 @@ func (s *Server) requirePasswordConfirm(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "user unavailable", http.StatusInternalServerError)
 		return users.User{}, false
 	}
-	confirmed, err := verifyAccountCredential(r.Context(), u, req.Password, req.AuthSecret)
+	confirmed, err := users.VerifyAuthSecret(r.Context(), u, req.AuthSecret)
 	if err != nil {
 		// Never reached a credential check, so the strike goes back — same
 		// reasoning as the decode and load failures above.

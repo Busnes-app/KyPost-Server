@@ -18,6 +18,8 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 
 ### `imap/` — IMAP Client
 
+- DKIM verification uses `DKIMSignedHeaders` and `VerifyDKIMCoversHeader`; signature/domain failure tests exercise the live header verifier, not a domain-only wrapper.
+
 - `raw_content.go` exposes pure MIME/overview helpers reused by the native mailbox Client, including existing PGP detection and single-sender binding. Parsing failures use sanitized `ErrMalformedMIME`; `Message`/`MessageContent.ParseError` mark one unreadable message without aborting a batch. Existing IMAP reads leave that flag false.
 
 - `incoming_encryption.go` owns safe incoming replacements and subsequent rule actions. Reject non-INBOX polling configurations before capturing a source UID. Bind UIDs to the authenticated endpoint/account, UIDVALIDITY and exact content; APPEND must be byte-verified before targeted UID EXPUNGE. Require UIDPLUS/rev2 and preflight MOVE for terminal rules. Perform any folder discovery/create before the final identity guards, then use commands with automatic retries disabled. Reconcile uncertain APPEND/MOVE by marker plus exact ciphertext, never marker alone or global EXPUNGE.
@@ -39,7 +41,7 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 ### `classifier/` — Classifier HTTP Client
 
 - Sends classification requests to Ollama `/api/generate` via HTTP POST
-- Admission control lives in `http_client.go`: `CLASSIFY_CONCURRENCY` (default 1) bounds in-flight generations via a channel semaphore, `CLASSIFY_PACE_MS` (default 0) inserts dead time between request starts. The pace was an unconditional 3 s, which capped the whole instance at 20 classifications/minute regardless of user count — it is not backpressure, since Ollama queues internally and the retry loop already backs off. Raise `CLASSIFY_CONCURRENCY` to match `OLLAMA_NUM_PARALLEL` or the extra capacity is unreachable
+- Admission control lives in `http_client.go`, reading `config.ClassifyConcurrency`/`ClassifyPaceMS`: `CLASSIFY_CONCURRENCY` (default 1) bounds in-flight generations via a channel semaphore, `CLASSIFY_PACE_MS` (default 0) inserts dead time between request starts. The pace was an unconditional 3 s, which capped the whole instance at 20 classifications/minute regardless of user count — it is not backpressure, since Ollama queues internally and the retry loop already backs off. Raise `CLASSIFY_CONCURRENCY` to match `OLLAMA_NUM_PARALLEL` or the extra capacity is unreachable
 - Implements exponential backoff on transient HTTP errors
 - `client.go` — high-level interface: accepts prompt + email text, returns raw model output string
 - `http_client.go` — low-level transport: request construction, admission control, retry loop, `Stats()` for queue depth

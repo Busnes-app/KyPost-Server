@@ -1744,11 +1744,6 @@ func formatCheckpoint(namespace string, uid int) string {
 	return ""
 }
 
-func parseCheckpointUID(checkpoint string) int {
-	_, uid := parseCheckpoint(checkpoint)
-	return uid
-}
-
 // pollNamespace identifies the selected mailbox's UID space. A new UIDVALIDITY
 // (mailbox recreated or migrated) or a different account/mailbox reuses UIDs
 // for other messages, so a checkpoint from another namespace means nothing.

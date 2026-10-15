@@ -3,7 +3,11 @@ package netguard
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -97,10 +101,10 @@ func TestDialerRefusesInternalUnlessAllowed(t *testing.T) {
 	refuse := Dialer(ParseHosts("127.0.0.1, 169.254.169.254")) // literals never count
 	for _, host := range []string{"127.0.0.1", "169.254.169.254", "::1", "0.1.2.3", "localhost"} {
 		conn, err := refuse(ctx, "tcp", net.JoinHostPort(host, port))
+		if conn != nil {
+			conn.Close()
+		}
 		if !errors.Is(err, ErrInternalAddress) {
-			if conn != nil {
-				conn.Close()
-			}
 			t.Errorf("dial %s: %v, want ErrInternalAddress", host, err)
 		}
 	}
@@ -110,4 +114,66 @@ func TestDialerRefusesInternalUnlessAllowed(t *testing.T) {
 		t.Fatalf("allowlisted localhost: %v", err)
 	}
 	conn.Close()
+
+	// A lookalike of an allowed name is checked like any other name.
+	stubLookup(t, []net.IP{net.ParseIP("127.0.0.1")})
+	if _, err := Dialer(ParseHosts("localhost"))(ctx, "tcp", net.JoinHostPort("localhost.evil.example", port)); !errors.Is(err, ErrInternalAddress) {
+		t.Fatalf("lookalike of an allowed host: %v, want ErrInternalAddress", err)
+	}
+}
+
+// stubLookup answers every lookup with the next answer, counting calls.
+func stubLookup(t *testing.T, answers ...[]net.IP) *int {
+	t.Helper()
+	calls := 0
+	previous := lookupIP
+	lookupIP = func(context.Context, string, string) ([]net.IP, error) {
+		calls++
+		return answers[min(calls, len(answers))-1], nil
+	}
+	t.Cleanup(func() { lookupIP = previous })
+	return &calls
+}
+
+// One internal address among public ones refuses the host: a rebinding answer
+// cannot hide a private address behind a public one.
+func TestDialerRefusesMixedAnswer(t *testing.T) {
+	stubLookup(t, []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("10.0.0.1")})
+	if _, err := Dialer(nil)(context.Background(), "tcp", "mixed.example:443"); !errors.Is(err, ErrInternalAddress) {
+		t.Fatalf("mixed answer: %v, want ErrInternalAddress", err)
+	}
+}
+
+// DNS rebinding: the dial uses the address that was checked, never a second
+// resolution of the name. A cancelled context stops the dial before any packet
+// is sent; the error still names the address it was given.
+func TestDialerDialsTheCheckedAddress(t *testing.T) {
+	calls := stubLookup(t, []net.IP{net.ParseIP("8.8.8.8")}, []net.IP{net.ParseIP("127.0.0.1")})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := Dialer(nil)(ctx, "tcp", "rebind.example:443")
+	var op *net.OpError
+	if !errors.As(err, &op) || op.Addr == nil || op.Addr.String() != "8.8.8.8:443" {
+		t.Fatalf("dial error %v, want one naming 8.8.8.8:443", err)
+	}
+	if *calls != 1 {
+		t.Fatalf("resolved %d times, want once", *calls)
+	}
+}
+
+func TestBoundedTransportCapsBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("A", 4096))
+	}))
+	defer srv.Close()
+	client := &http.Client{Transport: &BoundedTransport{Base: http.DefaultTransport, Limit: 100}}
+	resp, err := client.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || len(body) != 100 {
+		t.Fatalf("read %d bytes (%v), want 100", len(body), err)
+	}
 }

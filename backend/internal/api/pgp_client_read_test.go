@@ -14,6 +14,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // signedOnlyFixture builds a real RFC 3156 signed message from sender, and
@@ -25,7 +26,7 @@ func signedOnlyFixture(t *testing.T) (*Server, string, *pgpmail.Identity) {
 	userID, _, contactsStore, srv := pgpVictimWithIdentity(t)
 	srv.imapConfigKeyPath = filepath.Join(t.TempDir(), "imap-config.key")
 
-	sender, err := pgpmail.GenerateIdentity("Sender", "sender@example.com")
+	sender, err := pgpmailtest.GenerateIdentity("Sender", "sender@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity sender: %v", err)
 	}
@@ -44,7 +45,7 @@ func signedOnlyFixture(t *testing.T) (*Server, string, *pgpmail.Identity) {
 		Body:    "trust me",
 		Mode:    "plain",
 	}.Build()
-	signed, err := pgpmail.SignMIME(plaintext, sender)
+	signed, err := pgpmailtest.SignMIME(plaintext, sender)
 	if err != nil {
 		t.Fatalf("SignMIME: %v", err)
 	}

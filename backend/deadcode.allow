@@ -1,0 +1,26 @@
+# Functions CI's deadcode check (.github/workflows/ci.yml) accepts as
+# unreachable from cmd/. Every other unreachable function fails the build:
+# delete it, or move test-only code into a _test.go file or a *test package.
+#
+# Each entry here is a hook another package's tests call to reach this
+# package's unexported state. A _test.go file is visible only to its own
+# package, and a helper package would need that state exported, so the hook has
+# to live in a production file. Keep it that way only while that is true.
+
+# Lowers Argon2id cost for test suites; panics outside a test binary.
+github.com/Busnes-app/kypost-server/backend/internal/users.SetHashParamsForTest
+github.com/Busnes-app/kypost-server/backend/internal/users.HashParams
+
+# Lowers PBKDF2 cost for other packages' test suites; panics outside tests.
+github.com/Busnes-app/kypost-server/backend/internal/users.SetLoginIterationsForTest
+
+# Trusts httptest's TLS certificate for the ssotest provider; panics outside a
+# test binary.
+github.com/Busnes-app/kypost-server/backend/internal/sso.SetTransport
+
+# Writes version-1 native files for migration and backup tests; panics outside
+# a test binary.
+github.com/Busnes-app/kypost-server/backend/internal/sso.WriteNativeV1ForTest
+
+# Points the Ollama release check at an httptest server for api's tests.
+github.com/Busnes-app/kypost-server/backend/internal/ollamaupdate.SetReleasesURLForTest

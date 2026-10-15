@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,5 +164,54 @@ func TestSendQuotaSkipsRefusedSend(t *testing.T) {
 	}
 	if _, err := srv.chargeSend(context.Background(), "after", userID, 1, time.Now()); err != nil {
 		t.Fatal("refusals were charged:", err)
+	}
+}
+
+func TestSendQuotaRejectsOverlappingPGPRecipients(t *testing.T) {
+	for _, scheduled := range []bool{false, true} {
+		for _, recipient := range []string{"bob@example.com", "Bob <BOB@EXAMPLE.COM>"} {
+			t.Run(fmt.Sprintf("scheduled=%t/%s", scheduled, recipient), func(t *testing.T) {
+				f := newScheduledFixture(t, "250 queued")
+				u := convertedUser(t, f.srv)
+				f.useAccount(t, u.ID)
+				setSendQuota(f.srv, 1, 100)
+				at := sendTime()
+				delivery := scheduledPGPDelivery("alice@example.com", at)
+				generation := uint64(1)
+				req := clientEncryptedSendRequest{
+					Deliveries: []clientEncryptedDelivery{
+						{Recipients: []string{"bob@example.com"}, Ciphertext: delivery},
+						{Recipients: []string{recipient}, Ciphertext: delivery},
+					},
+					To: []string{"bob@example.com"}, MaterialGeneration: &generation,
+				}
+				if scheduled {
+					req.SendAt = at.Format(time.RFC3339)
+					req.DraftCopy = delivery
+				}
+				rec := f.post("/api/mail/send-pgp", req)
+				if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "recipient appears in multiple delivery groups") {
+					t.Fatalf("overlapping groups: %d %s", rec.Code, rec.Body)
+				}
+				if _, data := f.smtp.counts(); data != 0 {
+					t.Fatalf("rejected batch submitted %d messages", data)
+				}
+				rows, err := f.srv.globalStore.ListScheduledSends(context.Background(), u.ID, u.ID)
+				if err != nil || len(rows) != 0 {
+					t.Fatalf("rejected batch queued: %v, %v", rows, err)
+				}
+				// A distinct blind-copy group still sends, and the rejected batch
+				// must not have consumed the one hourly message available.
+				req.Deliveries[1].Recipients = []string{"carol@example.com"}
+				req.SendAt = ""
+				rec = f.post("/api/mail/send-pgp", req)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("valid Bcc split: %d %s", rec.Code, rec.Body)
+				}
+				if _, data := f.smtp.counts(); data != 2 {
+					t.Fatalf("valid Bcc split submitted %d messages, want 2", data)
+				}
+			})
+		}
 	}
 }

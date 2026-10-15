@@ -37,8 +37,8 @@ contacts the displayed saved endpoint using its stored credential; unsaved form
 edits are ignored. The provider can record this login attempt. No MAIL, RCPT or
 DATA commands are sent, and no outbox or Sent record is created.
 
-`POST /api/admin/mail-relay/test` accepts `{expectedGeneration,password}` (or
-`authSecret`; KySignOn uses exact-request step-up). Use the generation returned
+`POST /api/admin/mail-relay/test` accepts `{expectedGeneration,authSecret}` (KySignOn uses
+exact-request step-up). Use the generation returned
 by the relay GET. Success returns `{generation,host,port,tls:true,
 authenticated:true,deliveryTested:false}` with `Cache-Control:no-store`.
 Missing/invalid generation returns 400; changed/missing profile, failed DNS,
@@ -105,13 +105,11 @@ request-bound step-up. `PUT /api/admin/mail-relay` accepts:
   "port": 465,
   "smtpUsername": "operator-relay-login",
   "smtpPassword": "operator-relay-secret",
-  "password": "current-admin-account-password"
+  "authSecret": "<derived account credential>"
 }
 ```
 
-The values above are placeholders. Use `authSecret` instead of `password` for
-accounts using derived authentication. These confirmation fields authenticate
-the admin; `smtpUsername` and `smtpPassword` authenticate the relay. Supply
+The values above are placeholders. `authSecret` authenticates the admin; `smtpUsername` and `smtpPassword` authenticate the relay. Supply
 credentials privately through the protected API, never in chat or shell argv.
 Each update supplies the complete relay profile and rotates its generation.
 

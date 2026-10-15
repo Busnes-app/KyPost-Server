@@ -35,7 +35,7 @@ export function Users() {
   // Each change confirms the acting admin once; the password is not kept.
   function takeConfirm(): AdminConfirm {
     setAdminPassword("");
-    return { ssoSession, password: adminPassword };
+    return { ssoSession, accountPassword: adminPassword };
   }
 
   const [newUsername, setNewUsername] = useState("");
@@ -318,7 +318,11 @@ export function Users() {
                               </span>
                               <span className="users-sub">
                                 {joined ? `Joined ${joined}` : " "}
-                                {user.mustChangePassword ? (
+                                {user.needsPasswordReset ? (
+                                  <span className="users-pw-flag" title="Legacy password format: this account cannot sign in until you reset its password">
+                                    needs password reset
+                                  </span>
+                                ) : user.mustChangePassword ? (
                                   <span className="users-pw-flag" title="Must change password on next login">
                                     password change required
                                   </span>

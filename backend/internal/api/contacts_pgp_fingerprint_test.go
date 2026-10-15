@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // TestContactCreateBackfillsPGPKeyFingerprint drives POST /api/contacts with
@@ -20,7 +20,7 @@ func TestContactCreateBackfillsPGPKeyFingerprint(t *testing.T) {
 	srv := newTestServer(t)
 	userID := srv.mustBootstrapUserID(t)
 
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestContactUpdateBackfillsPGPKeyFingerprint(t *testing.T) {
 	srv := newTestServer(t)
 	userID := srv.mustBootstrapUserID(t)
 
-	id, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -123,7 +123,8 @@ func TestContactUpdateBackfillsPGPKeyFingerprint(t *testing.T) {
 	if updated.PGPKeyFingerprint != id.Fingerprint {
 		t.Fatalf("PGPKeyFingerprint = %q, want %q", updated.PGPKeyFingerprint, id.Fingerprint)
 	}
-	if updated.PGPKeySource != "" {
-		t.Fatalf("backfill should not set PGPKeySource, got %q", updated.PGPKeySource)
+	// Resending the same key keeps the stored provenance rather than dropping it.
+	if updated.PGPKeySource != "manual" {
+		t.Fatalf("PGPKeySource = %q, want the stored \"manual\" carried", updated.PGPKeySource)
 	}
 }

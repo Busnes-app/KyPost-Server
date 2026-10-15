@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -54,7 +53,7 @@ func TestValidateOutboundURLRejectsPrivateAndReservedTargets(t *testing.T) {
 }
 
 // TestSSRFSafeHTTPClientRefusesLoopbackAtDialTime proves the production dial
-// path (ssrfSafeDialContext, wired in by newSSRFSafeHTTPClient) is actually
+// path (netguard.DialContext, wired in by newSSRFSafeHTTPClient) is actually
 // active and not just the up-front validateOutboundURL check — this is what
 // closes the DNS-rebinding gap, since it re-resolves and re-checks
 // immediately before every connection, including ones made for redirects.
@@ -70,7 +69,7 @@ func TestSSRFSafeHTTPClientRefusesLoopbackAtDialTime(t *testing.T) {
 		t.Fatalf("NewRequestWithContext: %v", err)
 	}
 	if _, err := client.Do(req); err == nil {
-		t.Fatal("Do() to a loopback address should be refused by ssrfSafeDialContext")
+		t.Fatal("Do() to a loopback address should be refused by netguard.DialContext")
 	}
 }
 
@@ -96,32 +95,5 @@ func TestSSRFSafeHTTPClientLeaksNoConnections(t *testing.T) {
 			t.Fatalf("goroutines grew from %d to %d over 30 requests", base, runtime.NumGoroutine())
 		}
 		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-func TestIsPrivateOrReservedIP(t *testing.T) {
-	cases := []struct {
-		ip   string
-		want bool
-	}{
-		{"127.0.0.1", true},
-		{"::1", true},
-		{"169.254.169.254", true}, // cloud metadata, covered via link-local
-		{"10.1.2.3", true},
-		{"172.16.0.1", true},
-		{"192.168.0.1", true},
-		{"0.0.0.0", true},
-		{"224.0.0.1", true}, // multicast
-		{"8.8.8.8", false},
-		{"93.184.216.34", false},
-	}
-	for _, c := range cases {
-		ip := net.ParseIP(c.ip)
-		if ip == nil {
-			t.Fatalf("net.ParseIP(%q) failed", c.ip)
-		}
-		if got := isPrivateOrReservedIP(ip); got != c.want {
-			t.Errorf("isPrivateOrReservedIP(%q) = %v, want %v", c.ip, got, c.want)
-		}
 	}
 }

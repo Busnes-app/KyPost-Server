@@ -1,80 +1,23 @@
 package imap
 
 import (
+	"bufio"
 	"bytes"
-	"net/mail"
 	"net/textproto"
 	"strings"
 
 	"github.com/emersion/go-msgauth/dkim"
 )
 
-// VerifyDKIMForDomain reports whether raw (a complete RFC 5322 message,
-// headers + body) carries at least one cryptographically valid DKIM
-// signature whose d= domain exactly matches domain.
-//
-// This replaces trusting a stored/claimed Authentication-Results header
-// (which an account holder can forge into their own mailbox via IMAP
-// APPEND, with zero MTA involvement) with real verification: dkim.Verify
-// looks up the signing domain's public key from DNS and recomputes the
-// signature over the message's canonicalized headers/body. An attacker
-// without that domain's private key cannot produce a signature this
-// function will accept, regardless of what headers they can write into
-// their own mailbox.
-//
-// Exact-match on domain (no subdomain/suffix matching) — domain is always
-// the candidate send-as address's own domain, and DKIM's own identity-
-// alignment concept (DMARC's "relaxed" vs "strict" alignment) isn't needed
-// for this one-address-at-a-time check.
-func VerifyDKIMForDomain(raw []byte, domain string) bool {
-	domain = strings.ToLower(strings.TrimSpace(domain))
-	if domain == "" || len(raw) == 0 {
-		return false
-	}
-	return verifyDKIMForDomainWithLookup(raw, domain, nil)
-}
-
-// verifyDKIMForDomainWithLookup is VerifyDKIMForDomain's testable core: a
-// nil lookupTXT defers to dkim.Verify's own default (net.LookupTXT); tests
-// in this package inject a fake lookup instead of requiring live DNS.
-// maxDKIMVerifications caps how many signatures on one message we will verify.
-// A legitimate message carries one or two; the cap exists so a hostile one
-// cannot turn each extra header into a goroutine and a DNS query.
+// maxDKIMVerifications caps signatures verified per message, bounding DNS
+// queries and verifier goroutines for hostile mail.
 const maxDKIMVerifications = 3
-
-func verifyDKIMForDomainWithLookup(raw []byte, domain string, lookupTXT func(string) ([]string, error)) bool {
-	var verifications []*dkim.Verification
-	var err error
-	// MaxVerifications is load-bearing, not tidiness: go-msgauth spawns one
-	// goroutine, one io.Pipe and one DNS TXT lookup PER DKIM-Signature header,
-	// all concurrently, and the d= filter below only runs once they have all
-	// finished. Left unbounded, one inbound message is a goroutine and
-	// attacker-chosen-DNS amplifier against the shared daemon. RFC 6376 6.1
-	// explicitly allows a verifier to stop early.
-	verifications, err = dkim.VerifyWithOptions(bytes.NewReader(raw), &dkim.VerifyOptions{
-		LookupTXT:        lookupTXT,
-		MaxVerifications: maxDKIMVerifications,
-	})
-	if err != nil {
-		// A malformed message, or dkim.ErrTooManySignatures alongside a
-		// partial result — fail closed either way rather than trusting a
-		// partial verification list.
-		return false
-	}
-	for _, v := range verifications {
-		if v.Err == nil && strings.EqualFold(strings.TrimSpace(v.Domain), domain) {
-			return true
-		}
-	}
-	return false
-}
 
 // VerifyDKIMCoversHeader reports whether raw carries a valid DKIM signature
 // for domain that actually covers header — that is, the header is named in the
 // signature's h= tag and appears exactly once in the message.
 //
-// VerifyDKIMForDomain above answers a narrower question than its callers were
-// asking. A DKIM pass proves the headers the signature *covered* are intact;
+// A domain-only DKIM pass proves the headers the signature *covered* are intact;
 // it says nothing about a header the signer never included. Per RFC 6376 the
 // verifier hashes only the fields named in h=, selects the LAST occurrence of
 // each, and tolerates additional fields — so an attacker holding any genuinely
@@ -97,37 +40,78 @@ func VerifyDKIMCoversHeader(raw []byte, domain, header string) bool {
 }
 
 func verifyDKIMCoversHeaderWithLookup(raw []byte, domain, header string, lookupTXT func(string) ([]string, error)) bool {
+	_, ok := DKIMSignedHeadersWithLookup(raw, domain, lookupTXT)[strings.ToLower(strings.TrimSpace(header))]
+	return ok
+}
+
+// DKIMSignedHeaders returns, by lowercased name, the value of each header that
+// a valid DKIM signature for domain covers and that occurs exactly once, so
+// the value returned is the instance that was signed. Empty when no signature
+// for domain verifies. Read values from here, not from net/mail: names are
+// matched as the verifier matches them, so "Subject :" is a second Subject.
+func DKIMSignedHeaders(raw []byte, domain string) map[string]string {
+	return DKIMSignedHeadersWithLookup(raw, domain, nil)
+}
+
+// DKIMSignedHeadersWithLookup is DKIMSignedHeaders with the DNS TXT lookup
+// injected, for tests; nil uses DNS.
+func DKIMSignedHeadersWithLookup(raw []byte, domain string, lookupTXT func(string) ([]string, error)) map[string]string {
+	out := map[string]string{}
 	domain = strings.ToLower(strings.TrimSpace(domain))
-	header = strings.TrimSpace(header)
-	if domain == "" || header == "" || len(raw) == 0 {
-		return false
+	if domain == "" || len(raw) == 0 {
+		return out
 	}
-
-	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	fields, err := dkimHeaderFields(raw)
 	if err != nil {
-		return false
+		return out
 	}
-	if len(msg.Header[textproto.CanonicalMIMEHeaderKey(header)]) != 1 {
-		return false
-	}
-
-	var verifications []*dkim.Verification
-	verifications, err = dkim.VerifyWithOptions(bytes.NewReader(raw), &dkim.VerifyOptions{
+	verifications, err := dkim.VerifyWithOptions(bytes.NewReader(raw), &dkim.VerifyOptions{
 		LookupTXT:        lookupTXT,
 		MaxVerifications: maxDKIMVerifications,
 	})
 	if err != nil {
-		return false
+		return out
 	}
 	for _, v := range verifications {
 		if v.Err != nil || !strings.EqualFold(strings.TrimSpace(v.Domain), domain) {
 			continue
 		}
 		for _, signed := range v.HeaderKeys {
-			if strings.EqualFold(strings.TrimSpace(signed), header) {
-				return true
+			name := strings.ToLower(strings.TrimSpace(signed))
+			if vals := fields[name]; len(vals) == 1 {
+				out[name] = vals[0]
 			}
 		}
 	}
-	return false
+	return out
+}
+
+// dkimHeaderFields splits raw's header block the way go-msgauth's verifier
+// does (dkim/header.go readHeader, parseHeaderField): continuation lines join
+// the field above, and names are whitespace-trimmed. Keys are lowercased;
+// values are unfolded and trimmed.
+func dkimHeaderFields(raw []byte) (map[string][]string, error) {
+	tr := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw)))
+	var lines []string
+	for {
+		l, err := tr.ReadLine()
+		if err != nil {
+			return nil, err
+		}
+		if l == "" {
+			break
+		}
+		if len(lines) > 0 && (l[0] == ' ' || l[0] == '\t') {
+			lines[len(lines)-1] += l
+			continue
+		}
+		lines = append(lines, l)
+	}
+	fields := map[string][]string{}
+	for _, l := range lines {
+		k, v, _ := strings.Cut(l, ":")
+		k = strings.ToLower(strings.TrimSpace(k))
+		fields[k] = append(fields[k], strings.TrimSpace(v))
+	}
+	return fields, nil
 }

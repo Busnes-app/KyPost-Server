@@ -569,7 +569,7 @@ func redeemSSOLink(t *testing.T, srv *Server, idp *ssotest.IdP, sessionCookie *h
 // so a test cannot pass by proving something the browser never proves.
 func startSSOLink(t *testing.T, srv *Server, sessionCookie *http.Cookie, password, code string) *httptest.ResponseRecorder {
 	t.Helper()
-	body, err := json.Marshal(map[string]string{"password": password, "code": code})
+	body, err := json.Marshal(map[string]string{"authSecret": authSecretFor(srv, password), "code": code})
 	if err != nil {
 		t.Fatalf("marshal link request: %v", err)
 	}

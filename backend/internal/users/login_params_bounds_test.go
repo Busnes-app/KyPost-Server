@@ -16,16 +16,11 @@ import (
 // bricked the account it belonged to, and the only interface for fixing it was
 // the client that could no longer sign in.
 
-// testLegacyPassword is the plaintext newLegacyTestUser registers, so the
-// upgrade path below has a credential it can actually prove.
-const testLegacyPassword = "a-sufficiently-long-password"
-
-// newLegacyTestUser returns a store plus a user that still authenticates the
-// legacy way — the only kind UpgradeToDerivedAuth acts on.
-func newLegacyTestUser(t *testing.T) (*Store, User) {
+// newTestUser returns a store plus one created user.
+func newTestUser(t *testing.T) (*Store, User) {
 	t.Helper()
 	store := newTestStore(t)
-	u, err := store.Create(context.Background(), "legacy-user", testLegacyPassword, RoleUser)
+	u, err := store.Create(context.Background(), "test-user", "a-sufficiently-long-password", RoleUser)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -33,7 +28,7 @@ func newLegacyTestUser(t *testing.T) (*Store, User) {
 }
 
 func TestSetDerivedAuthRejectsOutOfRangeLoginParameters(t *testing.T) {
-	store, bootstrap := newLegacyTestUser(t)
+	store, bootstrap := newTestUser(t)
 	ctx := context.Background()
 	const salt = "YWFhYWFhYWFhYWFhYWFhYQ==" // 16 bytes, as both salt sources produce
 	const secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -62,24 +57,6 @@ func TestSetDerivedAuthRejectsOutOfRangeLoginParameters(t *testing.T) {
 				t.Fatalf("SetDerivedAuth(salt=%q, iterations=%d) = %v, want nil", tc.salt, tc.iterations, err)
 			}
 		})
-	}
-}
-
-func TestUpgradeToDerivedAuthRejectsOutOfRangeLoginParameters(t *testing.T) {
-	store, bootstrap := newLegacyTestUser(t)
-	ctx := context.Background()
-	const salt = "YWFhYWFhYWFhYWFhYWFhYQ=="
-	const secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-	if err := store.UpgradeToDerivedAuth(ctx, bootstrap.ID, testLegacyPassword, secret, salt, MaxLoginIterations+1); err == nil {
-		t.Fatal("UpgradeToDerivedAuth accepted a work factor the client refuses to derive with")
-	}
-	u, err := store.Get(bootstrap.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if u.UsesDerivedAuth() {
-		t.Fatal("a rejected upgrade still converted the account")
 	}
 }
 

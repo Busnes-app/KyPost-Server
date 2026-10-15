@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // configureMailFor satisfies the generate handler's precondition that the
@@ -70,15 +70,15 @@ func TestStoringAClientProtectedIdentityClearsDeviceEnrollment(t *testing.T) {
 	password := stepUpPassword(t, srv, userID)
 	enrollDeviceFor(t, srv, userID, "dev-1")
 
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
 	rec := pgpRequest(t, srv, http.MethodPost, "/api/pgp/identity/client", map[string]string{
-		"publicKey": id.ArmoredPublicKey,
-		"wrapped":   `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"Y3Q="}`,
-		"source":    "generated",
-		"password":  password,
+		"publicKey":  id.ArmoredPublicKey,
+		"wrapped":    `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"Y3Q="}`,
+		"source":     "generated",
+		"authSecret": authSecretFor(srv, password),
 	}, srv.handlePGPIdentityClient)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("client identity: status %d; body=%s", rec.Code, rec.Body.String())
@@ -97,7 +97,7 @@ func TestClearingTheIdentityClearsDeviceEnrollment(t *testing.T) {
 	enrollDeviceFor(t, srv, userID, "dev-1")
 
 	rec := pgpRequest(t, srv, http.MethodDelete, "/api/pgp/identity",
-		map[string]string{"password": password}, srv.handlePGPIdentity)
+		map[string]string{"authSecret": authSecretFor(srv, password)}, srv.handlePGPIdentity)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete identity: status %d; body=%s", rec.Code, rec.Body.String())
 	}
@@ -114,15 +114,15 @@ func TestIdentityChangeKeepsDevicesPaired(t *testing.T) {
 	configureMailFor(t, srv, userID)
 	enrollDeviceFor(t, srv, userID, "dev-1")
 
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
 	rec := pgpRequest(t, srv, http.MethodPost, "/api/pgp/identity/client", map[string]string{
-		"publicKey": id.ArmoredPublicKey,
-		"wrapped":   `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"Y3Q="}`,
-		"source":    "generated",
-		"password":  password,
+		"publicKey":  id.ArmoredPublicKey,
+		"wrapped":    `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"Y3Q="}`,
+		"source":     "generated",
+		"authSecret": authSecretFor(srv, password),
 	}, srv.handlePGPIdentityClient)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("client identity: status %d; body=%s", rec.Code, rec.Body.String())

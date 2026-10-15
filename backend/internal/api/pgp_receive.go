@@ -16,8 +16,8 @@ import (
 // and each caller copies fields in and out.
 type pgpDecryptResult struct {
 	Body string
-	// BodyMode is the decrypted display part's render mode ("html"/"plain"),
-	// from pgpmail.ParseContent. The outer message's mode says nothing about it:
+	// BodyMode is the decrypted display part's render mode ("html"/"plain").
+	// The outer message's mode says nothing about it:
 	// a multipart/encrypted envelope carries no readable text part, so without
 	// this the plaintext inside would inherit "plain" and an HTML message would
 	// render as escaped source.
@@ -261,8 +261,8 @@ func keyMatchesPin(c contacts.Contact) bool {
 // whole address book made "verified" mean "some contact of yours signed this".
 // Narrowing to keys carrying the address as a User-ID email was still
 // forgeable, because a User ID is self-asserted and one key may carry many —
-// GenerateIdentity mints `Mallory <mallory@evil.example>` plus
-// `Bob <bob@example.com>` in one variadic call, and the harvest pins it under
+// one key can carry `Mallory <mallory@evil.example>` plus
+// `Bob <bob@example.com>`, and the harvest pins it under
 // Mallory while the second User ID satisfies any UID-based check. `c.Emails` is
 // the only assertion here the USER made, so it is the one to bind on.
 

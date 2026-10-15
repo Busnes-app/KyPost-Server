@@ -49,7 +49,9 @@ func TestNativeMailAddressesAdminAPI(t *testing.T) {
 		srv.routes().ServeHTTP(w, req)
 		return w
 	}
-	confirm := func(fields string) string { return `{` + fields + `"password":"` + password + `"}` }
+	confirm := func(fields string) string {
+		return `{` + fields + `"authSecret":"` + authSecretFor(srv, password) + `"}`
+	}
 	mutations := []struct{ method, path string }{{"POST", "/api/admin/mail-addresses"}, {"DELETE", "/api/admin/mail-addresses/sales@example.test"}, {"POST", "/api/admin/mail-addresses/sales@example.test/reassign"}}
 	for _, route := range mutations {
 		for _, c := range []struct {
@@ -208,7 +210,7 @@ func TestNativeMailAddressReleaseWithPendingRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	release := func() *httptest.ResponseRecorder {
-		req := httptest.NewRequest("DELETE", "/api/admin/mail-addresses/sales@example.test", strings.NewReader(`{"password":"`+password+`"}`))
+		req := httptest.NewRequest("DELETE", "/api/admin/mail-addresses/sales@example.test", strings.NewReader(`{"authSecret":"`+authSecretFor(srv, password)+`"}`))
 		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
 		req.Header.Set("X-CSRF-Token", csrf)
 		w := httptest.NewRecorder()

@@ -326,3 +326,8 @@ func TestPrepareAccountKilledBeforeAndAfterPublication(t *testing.T) {
 		})
 	}
 }
+
+// publish is the syscall boundary exercised by killed-process checks.
+func prepareAccount(stateRoot string, owner Owner, address string, limits Limits, publish func(string, string) error) (string, error) {
+	return prepareAccountContext(context.Background(), filepath.Join(stateRoot, "users"), owner, address, limits, publish)
+}

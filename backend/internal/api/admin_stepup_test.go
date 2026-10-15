@@ -53,11 +53,11 @@ func TestAdminMutationsRequireStepUp(t *testing.T) {
 		if rec := send(c.method, c.path, body); rec.Code != http.StatusForbidden {
 			t.Fatalf("%s %s without step-up: %d %s", c.method, c.path, rec.Code, rec.Body)
 		}
-		body["adminPassword"] = "wrong-password-entirely"
+		body["adminAuthSecret"] = authSecretFor(srv, "wrong-password-entirely")
 		if rec := send(c.method, c.path, body); rec.Code != http.StatusForbidden {
 			t.Fatalf("%s %s with a wrong credential: %d %s", c.method, c.path, rec.Code, rec.Body)
 		}
-		body["adminPassword"] = "session-tester-testpassword"
+		body["adminAuthSecret"] = authSecretFor(srv, "session-tester-testpassword")
 		if rec := send(c.method, c.path, body); rec.Code != c.want {
 			t.Fatalf("%s %s with step-up: %d %s", c.method, c.path, rec.Code, rec.Body)
 		}

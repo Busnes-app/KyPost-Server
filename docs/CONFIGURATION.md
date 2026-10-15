@@ -2,6 +2,12 @@
 
 Environment variables the server reads. `docker-compose.yml` passes the ones `.env.example` offers; the rest are image defaults, overlay inputs or advanced overrides.
 
+**A bad value stops startup; it is never replaced by the default.** Unset or empty means the default. A value that is set but malformed makes the api and daemon both exit with an error naming the variable or `config.yaml` key, logged on every attempt to `api.err.log` / `daemon.err.log`. Supervisor retries, then stops the container.
+
+- Numbers must be whole numbers in range: `WEB_PORT` and `SMTP_PORT` 1–65535; `POW_MAX_NUMBER`, `UNHEALTHY_RESTART_SECONDS` and `CLASSIFY_CONCURRENCY` (up to 1024) at least 1; `CLASSIFY_PACE_MS` 0–3600000.
+- On/off switches (`ALLOW_INSECURE_SMTP`, `MFA_CLEAR_ALL`, `KYPOST_NATIVE_*`, `KYPOST_RECEIVING_RSPAMD`) take exactly `true` or `false`.
+- `config.yaml` refuses unknown keys. A misspelled `redacton:` stops startup rather than leaving the redaction defaults in force. Keys older versions wrote (`llama`, `classifier`, and `mode`, `keywords` or `folder` under `notifications`) are still accepted and are dropped the next time the file is saved. Per-user `users/<id>/config.yaml` files are written by the server itself and stay lenient. So does the backup step that reads `config.yaml` from a sealed capsule.
+
 - `KY_LOG_LEVEL`: `info` by default (`debug`, `warn`, `error` supported).
 - `KYPOST_BACKUP_DEPOSIT_INTERVAL`: `24h`; `0` disables, otherwise 15 minutes–366 days.
 - `KYPOST_BACKUP_DIR`: empty disables local copies; `/kypost/state/backups` or outside the data roots.
@@ -42,7 +48,7 @@ Common variables:
 - `SERVER_BASE_URL` (**required for mobile pairing, desktop pairing and Single Sign-On**; recommended always. KyPost embeds this public URL as `srv` in the QR code and uses it to build `reg`, and it is the OIDC `redirect_uri`. Every one of those URLs is where a credential gets sent, so it is never derived from the request's `Host` header — leave it unset and those three features refuse with an error naming it. Pickup links and PGP QR key-exchange URLs fall back to `http://localhost:5866`, which works only on the server itself.)
 - `PAIRING_SECRET` (optional. HMAC secret for pickup links, PGP QR key exchange and mobile pairing tokens. Generated automatically on first start and persisted at `PAIRING_SECRET_FILE` — set it only if several replicas must share one secret, and use `openssl rand -base64 32` if you do. A value shorter than 32 bytes is refused and those three features stay disabled, with the reason logged. Bytes, not characters, because the value is used as the HMAC key verbatim; for the ASCII `openssl rand -base64 32` produces they are the same number.)
 - `PAIRING_SECRET_FILE` (default `$SECRET_DIR/pairing.key`)
-- `REVIEW_PAIRING_USERNAME` (optional, default empty. Enables password-based fast pairing for a disposable Google Play review account at `POST /api/notifications/review-pairing`. A trailing `*`, such as `your-demo-username*`, admits usernames with that prefix; bare `*` is refused. Leave unset on normal servers; MFA and forced-password-change accounts are refused.)
+- `REVIEW_PAIRING_USERNAME` (optional, default empty. Enables fast pairing for a disposable Google Play review account at `POST /api/notifications/review-pairing`, which takes the username and derived `authSecret` with the same CAPTCHA/PoW, lockouts and KDF budget as login. Matched exactly (case-insensitive); there is no wildcard. Leave unset on normal servers; MFA and forced-password-change accounts are refused.)
 - `PUSH_RELAY_URL` (optional. Base URL of the central push relay Worker that delivers Android native push to FCM. Must be `https://` — the relay key travels on every request — except for loopback.)
 - `PUSH_RELAY_KEY` (optional override. Setting `PUSH_RELAY_URL` alone is enough: the server self-registers with the relay on first start and persists the key it is issued at `$SECRET_DIR/push_relay_key`. Set this only to pin a key the operator issued you, or when several servers share one public IP — the relay keeps one active key per address, so the newest registration displaces the previous one.)
 - `APNS_RELAY_URL` (optional. Base URL of the central APNs relay Worker that delivers iOS native push. Must be `https://` — the relay key travels on every request — except for loopback.)
@@ -74,8 +80,8 @@ Less common variables:
   refusing to start a mail server over a variable the operator set deliberately
   is the worse outcome. Use `https://` for anything off-host.)
 - `UNHEALTHY_RESTART_SECONDS` (default `300`. How long health may stay red before
-  the process exits and lets supervisord and the Docker restart policy bring it
-  back.)
+  the daemon shuts down gracefully, as on SIGTERM, and exits non-zero so
+  supervisord restarts it.)
 - `PGP_PRIVATE_KEY_FILE` (default `$SECRET_DIR/pgp-private-key.key`) and
   `PICKUP_STORE_KEY_FILE` (default `$SECRET_DIR/pickup-store.key`) — the two
   remaining `SECRET_DIR`-derived secret paths.
@@ -92,3 +98,36 @@ Notes:
 - The classifier model defaults to `nemotron-3-nano:4b` everywhere — `Dockerfile`,
   `docker-compose.yml`, `.env.example`, and the backend's own fallback.
 - The image sets `OLLAMA_MODELS=/kypost/ollama-models`.
+
+## Redaction patterns
+
+`redaction.patterns` in `config.yaml` (or admin-only `PUT /api/config`) is
+applied in order to each message's sender, subject and body before the
+on-device sorter or the classifier sees them. The defaults
+(`config.Default()` in `backend/internal/config/config.go`) replace:
+
+- email addresses, including Unicode and IDN (`jürgen@münchen.de`, `xn--` domains);
+- IBANs, unbroken or spaced in fours, any case;
+- phone numbers: `+` or `00` followed by 7–15 digits; US `555-123-4567` /
+  `(555) 123-4567`, also with a bare country code (`15551234567`,
+  `1-800-555-0199`, `442079460958`), as in 0.4; and national numbers with a
+  leading `0` and at least 9 digits (`030 12345678`, `020 7946 0958`);
+- card numbers (13–19 digits);
+- SSNs: `123-45-6789`, `123 45 6789`, and nine bare digits only after "SSN" or
+  "Social Security", because a bare nine-digit number is usually an order number.
+
+Dates, times, prices, IP addresses, version strings and short order numbers stay
+intact. Any run of 10–13 digits (including a UUID's last group), and any number
+of 9 or more digits starting with `0`, is read as a phone number: everything the
+0.4 defaults removed is still removed. Not caught: national numbers written with dots
+(`030.12345678`, which looks like a `dd.mm.yyyy` date) or split across lines, and
+a number joined to an email address by a bare hyphen (`555-123-4567-jo@x.de`),
+where the address takes the number's last digits and leaves the rest.
+
+The list is saved to `config.yaml` on first start and a saved list replaces the
+defaults whole. A list still exactly equal to an earlier default list (0.3–0.4, or the
+pre-2026-07-17 list whose doubled backslashes matched nothing) is replaced
+with the current defaults at startup and saved back; any edited list, even one
+changed character, is left alone. To adopt the current defaults over an edited
+list, delete the `redaction:` block from `config.yaml` and restart. Patterns are Go RE2 regular expressions; a `$` in a replacement
+must be written `$$`.

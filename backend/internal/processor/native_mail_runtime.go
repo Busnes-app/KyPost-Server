@@ -1,7 +1,6 @@
 package processor
 
 import (
-	"cmp"
 	"context"
 	"path/filepath"
 	"time"
@@ -20,30 +19,9 @@ func (p *Poller) nativeMailAssignment(ctx context.Context, userID string) (sso.N
 	return p.nativeMailboxAssignment(ctx, userID, "")
 }
 
-// nativeMailboxAssignment admits one of the user's mailboxes ("" is the
-// primary).
+// nativeMailboxAssignment is sso.AdmitUserMailbox ("" is the primary).
 func (p *Poller) nativeMailboxAssignment(ctx context.Context, userID, mailboxID string) (sso.NativeAssignment, bool, error) {
-	u, err := p.users.Get(userID)
-	if err != nil {
-		return sso.NativeAssignment{}, false, err
-	}
-	if u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" {
-		if mailboxID != "" {
-			return sso.NativeAssignment{}, false, sso.ErrNativeMailboxUnknown
-		}
-		return sso.NativeAssignment{}, false, nil
-	}
-	settings := sso.NewStore(p.configDir).Load()
-	if !p.nativeMail || !settings.Enabled {
-		return sso.NativeAssignment{}, true, sso.ErrNativeProvisioning
-	}
-	a, err := sso.NewLifecycleStore(p.configDir).AdmitNativeMailbox(ctx, p.stateDir, settings.IssuerURL, userID, cmp.Or(mailboxID, userID), p.users)
-	return a, true, err
-}
-
-func (p *Poller) mailClientForUser(userID string, modTime time.Time) (imapadapter.Client, error) {
-	client, _, err := p.mailClientForMailbox(userID, "", modTime)
-	return client, err
+	return sso.AdmitUserMailbox(ctx, p.nativeMail, sso.NewStore(p.configDir), sso.NewLifecycleStore(p.configDir), p.users, p.stateDir, userID, mailboxID)
 }
 
 // mailClientForMailbox returns the admitted mailbox's client ("" is the

@@ -8,7 +8,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 type discoverySettingsResp struct {
@@ -250,7 +250,7 @@ func TestSuppressContactClearsKeyAndSuppresses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("userContactsStore: %v", err)
 	}
-	id, err := pgpmail.GenerateIdentity("Lee", "lee@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Lee", "lee@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

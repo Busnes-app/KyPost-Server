@@ -1,16 +1,21 @@
 package config
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	crand "crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -67,18 +72,69 @@ func EnvOrDefault(key, fallback string) string {
 	return fallback
 }
 
-// EnvInt returns the environment variable key parsed as a positive int, or
-// fallback if it is unset, unparseable, or not positive.
-func EnvInt(key string, fallback int) int {
-	raw := os.Getenv(key)
+// IntEnv is an integer environment variable: unset or blank means Default,
+// anything else must be a whole number in [Min, Max].
+type IntEnv struct {
+	Key      string
+	Default  int
+	Min, Max int
+}
+
+// Integer environment variables, declared once so CheckEnv and every reader agree.
+var (
+	WebPort                 = IntEnv{"WEB_PORT", 5866, 1, 65535}
+	SMTPPort                = IntEnv{"SMTP_PORT", 587, 1, 65535}
+	PoWMaxNumber            = IntEnv{"POW_MAX_NUMBER", 0, 1, math.MaxInt32} // 0: captcha's own default
+	UnhealthyRestartSeconds = IntEnv{"UNHEALTHY_RESTART_SECONDS", 300, 1, math.MaxInt32}
+	ClassifyConcurrency     = IntEnv{"CLASSIFY_CONCURRENCY", 1, 1, 1024}
+	ClassifyPaceMS          = IntEnv{"CLASSIFY_PACE_MS", 0, 0, 3_600_000}
+)
+
+// Get reads e. A set but malformed or out-of-range value is an error naming the variable.
+func (e IntEnv) Get() (int, error) {
+	raw := strings.TrimSpace(os.Getenv(e.Key))
 	if raw == "" {
-		return fallback
+		return e.Default, nil
 	}
 	v, err := strconv.Atoi(raw)
-	if err != nil || v <= 0 {
-		return fallback
+	if err != nil || v < e.Min || v > e.Max {
+		return e.Default, fmt.Errorf("%s=%q is not valid: use a whole number from %d to %d, or leave it unset for %d", e.Key, raw, e.Min, e.Max, e.Default)
 	}
-	return v
+	return v, nil
+}
+
+// EnvBool reads key as "true" or "false"; unset or blank is false. Anything
+// else is an error, so a typo cannot silently pick a mode.
+func EnvBool(key string) (bool, error) {
+	switch strings.TrimSpace(os.Getenv(key)) {
+	case "", "false":
+		return false, nil
+	case "true":
+		return true, nil
+	default:
+		return false, errors.New(key + " must be true or false")
+	}
+}
+
+// CheckEnv parses every typed environment variable, so the api and daemon
+// processes refuse the same bad value at startup instead of defaulting.
+func CheckEnv() error {
+	var bad []string
+	for _, e := range []IntEnv{WebPort, SMTPPort, PoWMaxNumber, UnhealthyRestartSeconds, ClassifyConcurrency, ClassifyPaceMS} {
+		if _, err := e.Get(); err != nil {
+			bad = append(bad, err.Error())
+		}
+	}
+	for _, key := range []string{"ALLOW_INSECURE_SMTP", "MFA_CLEAR_ALL", "KYPOST_NATIVE_RECEIVER"} {
+		if _, err := EnvBool(key); err != nil {
+			bad = append(bad, err.Error())
+		}
+	}
+	if len(bad) > 0 {
+		// One line: the logger escapes newlines.
+		return errors.New(strings.Join(bad, "; "))
+	}
+	return nil
 }
 
 type Config struct {
@@ -398,12 +454,32 @@ func Default() Config {
 	cfg.RateLimits.PerMinute = 10
 	cfg.RateLimits.PerHour = 20
 	cfg.SendQuota = SendQuota{MessagesPerHour: 60, RecipientsPerDay: 1000}
+	// Order matters: each pattern runs over the previous one's output. IBAN
+	// and card go before the national phone form, which would otherwise take
+	// a digit run out of their middle. \b is ASCII-only in RE2, so the Unicode
+	// email pattern goes without it.
 	cfg.Redaction.Patterns = []Pattern{
-		{Name: "email", Regex: `(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`, Replacement: "[REDACTED_EMAIL]"},
-		{Name: "phone", Regex: `\b(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b`, Replacement: "[REDACTED_PHONE]"},
-		{Name: "ssn", Regex: `\b\d{3}-\d{2}-\d{4}\b`, Replacement: "[REDACTED_SSN]"},
-		{Name: "iban", Regex: `\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b`, Replacement: "[REDACTED_IBAN]"},
-		{Name: "card", Regex: `\b(?:\d[ -]*?){13,19}\b`, Replacement: "[REDACTED_CARD]"},
+		{Name: "email", Regex: `(?i)[\p{L}\p{M}\p{N}_.%+'-]+@[\p{L}\p{M}\p{N}-]+(?:\.[\p{L}\p{M}\p{N}-]+)*\.(?:xn--[\p{L}\p{N}-]+|[\p{L}\p{M}]{2,})`, Replacement: "[REDACTED_EMAIL]"},
+		// The 0.4 phone rule in its 0.4 place (3-3-4 with an optional country
+		// code: 15551234567, 1-800-555-0199), so an upgrade un-redacts nothing
+		// and no later rule can cut into its numbers. Unlike 0.4 it also takes
+		// a leading + that follows a space.
+		{Name: "phone_us", Regex: `(?:\+\d{1,3}[\s.-]?|\b(?:\+?\d{1,3}[\s.-]?)?)(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b`, Replacement: "[REDACTED_PHONE]"},
+		// Unbroken, or spaced in fours; after the bank code a spaced group
+		// needs a digit, so "RT66 road trip" stays prose.
+		{Name: "iban", Regex: `(?i)\b[A-Z]{2}\d{2}(?:[A-Z0-9]{11,30}\b| [A-Z0-9]{4}(?: (?:\d[A-Z0-9]{3}|[A-Z0-9]{3}\d)){1,6}(?: [A-Z0-9]{0,3}\d)?)`, Replacement: "[REDACTED_IBAN]"},
+		// E.164 after + or 00, then every digit that follows: stopping at 15
+		// would leave the rest of an adjacent number behind. Before card so
+		// 13-15 digits keep this label.
+		{Name: "phone_intl", Regex: `(?:\+|\b00)\d(?:[ .()-]{0,2}\d){6,}`, Replacement: "[REDACTED_PHONE]"},
+		// 13 or more digits, greedy to the end of the run for the same reason.
+		{Name: "card", Regex: `\b\d(?:[ -]*\d){12,}\b`, Replacement: "[REDACTED_CARD]"},
+		// A bare 9-digit number is an SSN only after the word SSN; otherwise
+		// every order and tracking number would go.
+		{Name: "ssn", Regex: `\b\d{3}-\d{2}-\d{4}\b|\b\d{3} \d{2} \d{4}\b|(?i:\bssn|\bsocial security(?: number| no\.?)?)[\s:#]*\d{9}\b`, Replacement: "[REDACTED_SSN]"},
+		// (555) after a space, or a 0-led area code then 7-12 digits, which no
+		// dd-mm-yyyy date reaches.
+		{Name: "phone", Regex: `(?:\(\d{3}\) ?|\b\d{3}[ .-]?)\d{3}[ .-]?\d{4}\b|(?:\(0\d{1,4}\) ?|\b0\d{1,4}[ /-]?)\d(?: ?\d){6,11}\b`, Replacement: "[REDACTED_PHONE]"},
 	}
 	cfg.Labels.KeywordMappings = map[string][]string{}
 	return cfg
@@ -421,6 +497,13 @@ func LoadOrInit(path string) (Config, error) {
 		changed, err := ensureNotificationKeyMaterial(configDir, secretDir, &cfg)
 		if err != nil {
 			return Config{}, err
+		}
+		// A saved list replaces the defaults whole, so an unedited old default
+		// list is upgraded here; an edited one is the admin's and stays.
+		if slices.Equal(cfg.Redaction.Patterns, redactionDefaultsV04) || slices.Equal(cfg.Redaction.Patterns, redactionDefaultsV01) {
+			cfg.Redaction.Patterns = Default().Redaction.Patterns
+			changed = true
+			slog.Info("config.yaml: replaced unedited old redaction defaults with the current ones")
 		}
 		if changed {
 			if err := Save(path, cfg); err != nil {
@@ -443,25 +526,92 @@ func LoadOrInit(path string) (Config, error) {
 	return cfg, nil
 }
 
+// redactionDefaultsV04 is Default()'s redaction list from 0.3.0 through 0.4.0.
+var redactionDefaultsV04 = []Pattern{
+	{Name: "email", Regex: `(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`, Replacement: "[REDACTED_EMAIL]"},
+	{Name: "phone", Regex: `\b(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b`, Replacement: "[REDACTED_PHONE]"},
+	{Name: "ssn", Regex: `\b\d{3}-\d{2}-\d{4}\b`, Replacement: "[REDACTED_SSN]"},
+	{Name: "iban", Regex: `\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b`, Replacement: "[REDACTED_IBAN]"},
+	{Name: "card", Regex: `\b(?:\d[ -]*?){13,19}\b`, Replacement: "[REDACTED_CARD]"},
+}
+
+// redactionDefaultsV01 is Default()'s list before 7e0b788 (2026-07-17). Its
+// doubled backslashes match nothing, so those installs redacted nothing.
+var redactionDefaultsV01 = []Pattern{
+	{Name: "email", Regex: `(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b`, Replacement: "[REDACTED_EMAIL]"},
+	{Name: "phone", Regex: `\\b(?:\\+?\\d{1,3}[\\s.-]?)?(?:\\(\\d{3}\\)|\\d{3})[\\s.-]?\\d{3}[\\s.-]?\\d{4}\\b`, Replacement: "[REDACTED_PHONE]"},
+	{Name: "ssn", Regex: `\\b\\d{3}-\\d{2}-\\d{4}\\b`, Replacement: "[REDACTED_SSN]"},
+	{Name: "iban", Regex: `\\b[A-Z]{2}\\d{2}[A-Z0-9]{10,30}\\b`, Replacement: "[REDACTED_IBAN]"},
+	{Name: "card", Regex: `\\b(?:\\d[ -]*?){13,19}\\b`, Replacement: "[REDACTED_CARD]"},
+}
+
+// Load reads config.yaml strictly: an unknown key is an error naming it, so a
+// misspelled setting cannot silently run on its default. Keys older versions
+// wrote are dropped first, so an upgrade still starts.
 func Load(path string) (Config, error) {
-	b, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, err
 	}
-	cfg := Default()
-	if err := yaml.Unmarshal(b, &cfg); err != nil {
-		return Config{}, err
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
-	warnRetiredClassifier(b)
+	b := raw
+	if dropRetiredKeys(&doc) {
+		if b, err = yaml.Marshal(&doc); err != nil {
+			return Config{}, fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	cfg := Default()
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+		var te *yaml.TypeError
+		if errors.As(err, &te) {
+			return Config{}, fmt.Errorf("%s: %s", path, strings.Join(te.Errors, "; "))
+		}
+		return Config{}, fmt.Errorf("%s: %w", path, err)
+	}
+	warnRetiredClassifier(raw)
 	return cfg, nil
+}
+
+// dropRetiredKeys removes keys earlier versions wrote to config.yaml; the next
+// Save leaves them out of the file.
+func dropRetiredKeys(doc *yaml.Node) bool {
+	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return false
+	}
+	top := doc.Content[0]
+	dropped := dropKeys(top, "llama", "classifier")
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		if top.Content[i].Value == "notifications" && top.Content[i+1].Kind == yaml.MappingNode {
+			dropped = dropKeys(top.Content[i+1], "mode", "keywords", "folder") || dropped
+		}
+	}
+	return dropped
+}
+
+func dropKeys(m *yaml.Node, keys ...string) (dropped bool) {
+	kept := m.Content[:0]
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if slices.Contains(keys, m.Content[i].Value) {
+			dropped = true
+			continue
+		}
+		kept = append(kept, m.Content[i], m.Content[i+1])
+	}
+	m.Content = kept
+	return dropped
 }
 
 // warnRetiredClassifier says so out loud when config.yaml still carries the
 // retired `classifier:` block.
 //
-// yaml.Unmarshal ignores unknown keys, so an install that pointed
-// classification at a remote endpoint keeps starting cleanly — but it is now
-// classifying against the OLLAMA_* env vars instead, with no other symptom.
+// Load drops the block, so an install that pointed classification at a remote
+// endpoint keeps starting — but it is now classifying against the OLLAMA_* env
+// vars instead, with no other symptom.
 // A silent change of where email content is sent deserves a line in the log.
 func warnRetiredClassifier(raw []byte) {
 	var probe struct {

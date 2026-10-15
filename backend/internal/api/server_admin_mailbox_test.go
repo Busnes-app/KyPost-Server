@@ -19,7 +19,7 @@ import (
 func doJSONAs(t *testing.T, srv *Server, asUser, method, path string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	var buf bytes.Buffer
-	fields := map[string]any{"adminPassword": "session-tester-testpassword"}
+	fields := map[string]any{"adminAuthSecret": authSecretFor(srv, "session-tester-testpassword")}
 	maps.Copy(fields, body)
 	_ = json.NewEncoder(&buf).Encode(fields)
 	req := httptest.NewRequest(method, path, &buf)

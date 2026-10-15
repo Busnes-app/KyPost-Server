@@ -249,14 +249,6 @@ type UnifiedPushSender struct {
 	vapidPrivateKey string
 }
 
-// isPrivateOrReservedIP reports whether ip must never be reached via a
-// server-supplied UnifiedPush endpoint: loopback, RFC1918/RFC4193 private,
-// link-local (this also covers the 169.254.169.254 cloud metadata address),
-// multicast, or unspecified.
-func isPrivateOrReservedIP(ip net.IP) bool {
-	return netguard.IsPrivateOrReserved(ip)
-}
-
 // ValidateUnifiedPushEndpointURL rejects UnifiedPush endpoint URLs that are
 // not safe to POST to from the server: non-https schemes, and hosts that
 // resolve (or are given as IP literals) to a private/loopback/link-local
@@ -275,7 +267,7 @@ func ValidateUnifiedPushEndpointURL(rawURL string) error {
 		return errors.New("endpoint missing host")
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		if isPrivateOrReservedIP(ip) {
+		if netguard.IsPrivateOrReserved(ip) {
 			return errors.New("endpoint resolves to a private or reserved address")
 		}
 		return nil
@@ -285,42 +277,15 @@ func ValidateUnifiedPushEndpointURL(rawURL string) error {
 		return fmt.Errorf("failed to resolve endpoint host: %w", err)
 	}
 	for _, ip := range ips {
-		if isPrivateOrReservedIP(ip) {
+		if netguard.IsPrivateOrReserved(ip) {
 			return fmt.Errorf("endpoint host resolves to a private or reserved address (%s)", ip)
 		}
 	}
 	return nil
 }
 
-// safeDialContext re-resolves the target host and refuses to connect if every
-// candidate address is private/reserved. Run at actual dial time (not just
-// registration time) so a hostname that was public at registration but has
-// since been rebound to an internal address (DNS rebinding) is still blocked.
-func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
-	if err != nil {
-		return nil, err
-	}
-	var chosen net.IP
-	for _, ip := range ips {
-		if !isPrivateOrReservedIP(ip) {
-			chosen = ip
-			break
-		}
-	}
-	if chosen == nil {
-		return nil, fmt.Errorf("refusing to dial %q: no public address available", host)
-	}
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	return dialer.DialContext(ctx, network, net.JoinHostPort(chosen.String(), port))
-}
-
 // NewUnifiedPushSender constructs a direct HTTPS client for UnifiedPush endpoints,
-// with dial-time SSRF protection (see safeDialContext) and redirects disabled
+// with dial-time SSRF protection (netguard.Dialer, no allowlist) and redirects disabled
 // (a redirect target bypasses the pre-dial check otherwise).
 func NewUnifiedPushSender(log *logging.Logger, vapidPublicKey, vapidPrivateKeyPath string) *UnifiedPushSender {
 	// Never fail construction: FCM and APNs still work without a VAPID key.
@@ -340,7 +305,7 @@ func NewUnifiedPushSender(log *logging.Logger, vapidPublicKey, vapidPrivateKeyPa
 		vapidPrivateKey: privateKey,
 		client: &http.Client{
 			Timeout:   15 * time.Second,
-			Transport: &http.Transport{DialContext: safeDialContext},
+			Transport: &http.Transport{DialContext: netguard.Dialer(nil)},
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return errors.New("redirects are not followed for UnifiedPush endpoints")
 			},
@@ -384,7 +349,7 @@ func (s *UnifiedPushSender) Send(ctx context.Context, device state.NativeDevice,
 // sendEncrypted POSTs an RFC 8291 (aes128gcm) payload the connector can open.
 // It hands webpush-go this sender's own client, not the bare *http.Client
 // webpush-go would otherwise build: the endpoint URL is user-supplied, so
-// losing safeDialContext and the redirect refusal here would reopen the SSRF
+// losing the netguard dialer and the redirect refusal here would reopen the SSRF
 // hole UnifiedPushSender exists to close.
 func (s *UnifiedPushSender) sendEncrypted(ctx context.Context, endpointURL string, device state.NativeDevice, body []byte) error {
 	resp, err := webpush.SendNotificationWithContext(ctx, body, &webpush.Subscription{

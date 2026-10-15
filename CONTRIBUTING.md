@@ -166,7 +166,7 @@ if a job is genuinely flaky, that is a bug to fix in the job.
 
 | Job | What it runs |
 |---|---|
-| `ci-backend-api` | `gofmt -l`, `go vet`, `golangci-lint`, `govulncheck`, `go test -race ./internal/api/...` |
+| `ci-backend-api` | `gofmt -l`, `go vet`, `golangci-lint`, `govulncheck`, `deadcode` (nothing unreachable from `cmd/` beyond `backend/deadcode.allow`), `go test -race ./internal/api/...` |
 | `ci-backend-other` | Same lint gates, `go test -race` on every other backend package |
 | `ci-frontend` | `npm audit --omit=dev --audit-level=low` (blocking), `tsc --noEmit`, ESLint (rules-of-hooks errors block), `vitest`, `vite build` |
 | `ci-relay` | Typecheck both relay Workers, `node --test` on the relay and one-message receiving Worker behaviour suites, disposable workerd/R2 capture and pickup qualification |
