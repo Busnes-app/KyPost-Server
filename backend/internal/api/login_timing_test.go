@@ -154,9 +154,19 @@ func TestLoginTimingDoesNotRevealUnknownUsernames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	plantPasswordHash(t, srv, older.ID, olderCostArgon2Hash(t, pw))
+	plantPasswordHash(t, srv, older.ID, olderCostArgon2Hash(t, testAuthSecret(srv, older.Username, pw)))
+	plaintext, err := srv.users.Create(context.Background(), "timing-plaintext", pw, users.RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	plaintextHash, err := users.HashPassword(context.Background(), pw)
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	plantLegacyCredential(t, srv, plaintext.ID, plaintextHash)
 
 	wrongPassword := func(username string) func(string) {
+		testAuthSecret(srv, username, "wrong-password") // derive outside the timed call
 		return func(addr string) {
 			if rec := loginAttempt(srv, username, "wrong-password", addr); rec.Code != http.StatusUnauthorized {
 				t.Fatalf("%s: status = %d, want 401", username, rec.Code)
@@ -167,6 +177,7 @@ func TestLoginTimingDoesNotRevealUnknownUsernames(t *testing.T) {
 		"argon2id account":       fastest(t, "argon2id account", wrongPassword(modern.Username)),
 		"retired scrypt account": fastest(t, "retired scrypt account", wrongPassword(legacy.Username)),
 		"older-cost argon2id":    fastest(t, "older-cost argon2id", wrongPassword(older.Username)),
+		"legacy plaintext hash":  fastest(t, "legacy plaintext hash", wrongPassword(plaintext.Username)),
 		"unknown username":       fastest(t, "unknown username", wrongPassword("no-such-user-anywhere")),
 	})
 }
@@ -192,7 +203,7 @@ func olderCostArgon2Hash(t *testing.T, secret string) string {
 // does set it, a cheaper miss says which name was configured.
 func TestReviewPairingTimingDoesNotRevealTheConfiguredAccount(t *testing.T) {
 	withProductionHashCost(t)
-	t.Setenv("REVIEW_PAIRING_USERNAME", "review-*")
+	t.Setenv("REVIEW_PAIRING_USERNAME", "review-argon2id")
 	srv := newTestServer(t)
 	const pw = "correct-horse-battery-staple"
 	modern, err := srv.users.Create(context.Background(), "review-argon2id", pw, users.RoleUser)
@@ -206,8 +217,9 @@ func TestReviewPairingTimingDoesNotRevealTheConfiguredAccount(t *testing.T) {
 	plantPasswordHash(t, srv, legacy.ID, retiredScryptHash)
 
 	wrongPassword := func(username string) func(string) {
+		secret := testAuthSecret(srv, username, "wrong-password")
 		return func(addr string) {
-			body, _ := json.Marshal(map[string]string{"username": username, "password": "wrong-password"})
+			body, _ := json.Marshal(map[string]string{"username": username, "authSecret": secret})
 			req := httptest.NewRequest(http.MethodPost, "/api/notifications/review-pairing", bytes.NewReader(body))
 			req.RemoteAddr = addr
 			rec := httptest.NewRecorder()
@@ -218,9 +230,9 @@ func TestReviewPairingTimingDoesNotRevealTheConfiguredAccount(t *testing.T) {
 		}
 	}
 	assertTimingSpread(t, map[string]time.Duration{
-		"argon2id review account": fastest(t, "argon2id review account", wrongPassword(modern.Username)),
-		"retired review account":  fastest(t, "retired review account", wrongPassword(legacy.Username)),
-		"unmatched username":      fastest(t, "unmatched username", wrongPassword("no-such-user-anywhere")),
+		"configured review account": fastest(t, "configured review account", wrongPassword(modern.Username)),
+		"other existing account":    fastest(t, "other existing account", wrongPassword(legacy.Username)),
+		"unknown username":          fastest(t, "unknown username", wrongPassword("no-such-user-anywhere")),
 	})
 }
 

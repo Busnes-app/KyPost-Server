@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,12 +34,12 @@ func TestStepUpNeedsTheAccountPassword(t *testing.T) {
 	if resp := stepUpRequest(t, srv, u.ID, map[string]string{}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("an empty body passed step-up: %d", resp.StatusCode)
 	}
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": "not-the-password"}); resp.StatusCode != http.StatusForbidden {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"authSecret": authSecretFor(srv, "not-the-password")}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a wrong password passed step-up: %d", resp.StatusCode)
 	}
 	// No TOTP on this account, so the credential is the whole gate and a missing
 	// code must not be held against it.
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": "pw-gwen-testpassword"}); resp.StatusCode != http.StatusOK {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"authSecret": authSecretFor(srv, "pw-gwen-testpassword")}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("the owner could not step up with their own password: %d", resp.StatusCode)
 	}
 }
@@ -54,22 +55,22 @@ func TestStepUpNeedsTheSecondFactorWhenTOTPIsOn(t *testing.T) {
 
 	// The password alone is what a shoulder-surfer or a password manager left
 	// unlocked already gives up; on an account with TOTP it is half the gate.
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password}); resp.StatusCode != http.StatusForbidden {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"authSecret": authSecretFor(srv, password)}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("the password alone passed step-up on a TOTP account: %d", resp.StatusCode)
 	}
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": "000000"}); resp.StatusCode != http.StatusForbidden {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"authSecret": authSecretFor(srv, password), "code": "000000"}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a wrong code passed step-up: %d", resp.StatusCode)
 	}
 
 	code := totpCodeForTest(t, secret, time.Now())
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": code}); resp.StatusCode != http.StatusOK {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"authSecret": authSecretFor(srv, password), "code": code}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("the owner could not step up with a valid code: %d", resp.StatusCode)
 	}
 
 	// The replay guard is per ACCOUNT, not per endpoint: a code spent here is
 	// spent everywhere, or a captured one is worth a second use at the login
 	// challenge inside the same window.
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": code}); resp.StatusCode != http.StatusForbidden {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"authSecret": authSecretFor(srv, password), "code": code}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a replayed code passed step-up: %d", resp.StatusCode)
 	}
 }
@@ -86,10 +87,10 @@ func TestStepUpAcceptsARecoveryCodeAndConsumesIt(t *testing.T) {
 	// Without this, losing an authenticator is a lockout rather than an
 	// inconvenience: login takes a recovery code, and the page that recovery
 	// leads to — the one that turns TOTP off — would not.
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": recoveryCodes[0]}); resp.StatusCode != http.StatusOK {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"authSecret": authSecretFor(srv, password), "code": recoveryCodes[0]}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("a recovery code was refused at step-up: %d", resp.StatusCode)
 	}
-	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": recoveryCodes[0]}); resp.StatusCode != http.StatusForbidden {
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"authSecret": authSecretFor(srv, password), "code": recoveryCodes[0]}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a recovery code was reusable at step-up: %d", resp.StatusCode)
 	}
 	after, err := srv.users.Get(u.ID)
@@ -121,7 +122,7 @@ func TestStepUpSecondFactorIsThrottled(t *testing.T) {
 	lastCode := 0
 	for i := 0; i < mfaMaxFailures+5; i++ {
 		// Correct password, wrong second factor — the shape that reset the counter.
-		resp := stepUpRequest(t, srv, u.ID, map[string]string{"password": password, "code": "000000"})
+		resp := stepUpRequest(t, srv, u.ID, map[string]string{"authSecret": authSecretFor(srv, password), "code": "000000"})
 		lastCode = resp.StatusCode
 		if resp.StatusCode == http.StatusTooManyRequests {
 			return // throttled, as it must be
@@ -161,7 +162,7 @@ func TestStepUpFailuresDoNotDenyTheOwnersSecondFactor(t *testing.T) {
 	for i := 0; i < mfaMaxFailures+2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/step-up", nil)
 		rec := httptest.NewRecorder()
-		srv.confirmAccountCredentialNoRecord(rec, req, u.ID, "wrong-password", "")
+		srv.confirmAccountCredentialNoRecord(rec, req, u.ID, strings.Repeat("0", 64))
 	}
 
 	// The owner's second factor must still be reachable.

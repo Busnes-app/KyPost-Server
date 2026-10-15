@@ -67,7 +67,7 @@ func qualifyReleaseFixture(t *testing.T, s *Server, native users.User) {
 func nativeReleaseFixture(t *testing.T) nativeRepairFixture {
 	t.Helper()
 	f := nativeRepairHTTPFixture(t, "release", false)
-	if w := gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody, ""); w.Code != 200 {
+	if w := gatedCall(t, f.s, f.cookie, "POST", nativeRepairPath, nativeRepairBody(f.s), ""); w.Code != 200 {
 		t.Fatal("repair", w.Code, w.Body.String())
 	}
 	f.s.backup, _ = backup.New(backup.Dirs{Config: f.s.configDir, State: f.s.stateDir, Secret: f.s.configDir}, config.BackupConfig{Keep: 1}, f.s.globalStore, "test")
@@ -85,7 +85,7 @@ func TestNativeRestoreReleaseHTTPFlag(t *testing.T) {
 	f := nativeReleaseFixture(t)
 	for value, code := range map[string]int{"": 404, "false": 404, "maybe": 409} {
 		t.Setenv("KYPOST_NATIVE_RESTORE_RELEASE", value)
-		if w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody, ""); w.Code != code || !releaseHeld(t, f.s) {
+		if w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody(f.s), ""); w.Code != code || !releaseHeld(t, f.s) {
 			t.Fatalf("flag %q: %d %s", value, w.Code, w.Body.String())
 		}
 	}
@@ -95,10 +95,10 @@ func TestNativeRestoreReleaseHTTPRefusesOperators(t *testing.T) {
 	for name, code := range map[string]int{"bad-password": 403, "kysignon-session": 403, "generic-sso-session": 403, "expired-session": 401, "linked-admin": 403, "native-account": 401} {
 		t.Run(name, func(t *testing.T) {
 			f := nativeReleaseFixture(t)
-			cookie, body, refusal := f.cookie, nativeRepairBody, "P6:"
+			cookie, body, refusal := f.cookie, nativeRepairBody(f.s), "P6:"
 			switch name {
 			case "bad-password":
-				body, refusal = `{"password":"wrong-password-for-release"}`, "invalid credentials"
+				body, refusal = `{"authSecret":"`+authSecretFor(f.s, "wrong-password-for-release")+`"}`, "invalid credentials"
 			case "kysignon-session":
 				nativeRepairSSOSession(f)
 			case "generic-sso-session":
@@ -154,7 +154,7 @@ func TestNativeRestoreReleaseHTTPPreconditions(t *testing.T) {
 				}
 			}
 			lifecycle, _ := os.ReadFile(filepath.Join(f.s.configDir, "sso-lifecycle.json"))
-			w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody, "")
+			w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody(f.s), "")
 			if w.Code != 409 || !strings.Contains(w.Body.String(), reason) || !releaseHeld(t, f.s) {
 				t.Fatalf("%d %s", w.Code, w.Body.String())
 			}
@@ -176,7 +176,7 @@ func TestNativeRestoreReleaseHTTPReleases(t *testing.T) {
 		t.Fatal(err)
 	}
 	login := func(name, password string) *http.Cookie {
-		w := doJSON(f.s, f.s.handleLogin, "POST", "/api/auth/login", map[string]string{"username": name, "password": password})
+		w := doJSON(f.s, f.s.handleLogin, "POST", "/api/auth/login", map[string]string{"username": name, "authSecret": testAuthSecret(f.s, name, password)})
 		c := sessionCookieFrom(w)
 		if c == nil {
 			t.Fatal("login", name, w.Code)
@@ -189,7 +189,7 @@ func TestNativeRestoreReleaseHTTPReleases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, `{"password":"operator-test-password","confirm":"original-host-decommissioned"}`, "")
+	w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, `{"authSecret":"`+authSecretFor(f.s, "operator-test-password")+`","confirm":"original-host-decommissioned"}`, "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"released":true`) || !strings.Contains(w.Body.String(), `"alreadyReleased":false`) || releaseHeld(t, f.s) {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -232,7 +232,7 @@ func TestNativeRestoreReleaseHTTPReleases(t *testing.T) {
 			t.Fatal("audit does not name the changed accounts", outcome, rows)
 		}
 	}
-	w = gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, `{"password":"operator-test-password","confirm":"original-host-decommissioned"}`, "")
+	w = gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, `{"authSecret":"`+authSecretFor(f.s, "operator-test-password")+`","confirm":"original-host-decommissioned"}`, "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"alreadyReleased":true`) {
 		t.Fatal("retry", w.Code, w.Body.String())
 	}
@@ -248,7 +248,7 @@ func TestNativeRestoreReleaseHTTPCrashPoints(t *testing.T) {
 				}
 				return nil
 			}
-			w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody, "")
+			w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody(f.s), "")
 			if point == "rename" {
 				// Released, durability unconfirmed: no "failed" audit, retry confirms.
 				if w.Code != 200 || !strings.Contains(w.Body.String(), `"confirmed":false`) || releaseHeld(t, f.s) {
@@ -258,7 +258,7 @@ func TestNativeRestoreReleaseHTTPCrashPoints(t *testing.T) {
 				t.Fatal(w.Code, w.Body.String())
 			}
 			f.s.nativeReleaseHit = nil
-			w = gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody, "")
+			w = gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody(f.s), "")
 			if point == "rename" {
 				audit, _ := f.s.globalStore.RecentBackupAudit(10)
 				outcomes := ""
@@ -287,7 +287,7 @@ func TestNativeRestoreReleaseHTTPWithoutHold(t *testing.T) {
 	if err := os.Remove(filepath.Join(f.s.stateDir, sso.NativeRestoreHoldFile)); err != nil {
 		t.Fatal(err)
 	}
-	if w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody, ""); w.Code != 409 || !strings.Contains(w.Body.String(), "no native restore hold") {
+	if w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody(f.s), ""); w.Code != 409 || !strings.Contains(w.Body.String(), "no native restore hold") {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }

@@ -3,18 +3,18 @@ import { credentialFields, deriveCredential } from "./auth";
 import { withSSOStepUp } from "./stepup";
 import type { Role } from "../auth";
 
-/** The acting admin's step-up: their account password, unused for a KySignOn session. */
-export type AdminConfirm = { ssoSession: boolean; password: string };
+/** The acting admin's step-up: their account password (derived, never sent), unused for a KySignOn session. */
+export type AdminConfirm = { ssoSession: boolean; accountPassword: string };
 
 type Send<T> = (body: object, headers: Record<string, string>) => Promise<T>;
 
 /**
  * Sends one user-management change with the actor's credential as
- * adminPassword/adminAuthSecret (the bodies carry passwords of their own),
- * or through a KySignOn confirmation bound to the identical request.
+ * adminAuthSecret (the bodies carry a password of their own), or through a
+ * KySignOn confirmation bound to the identical request.
  */
 export async function confirmedAdmin<T>(confirm: AdminConfirm, body: object, send: Send<T>): Promise<T> {
-  const credential = confirm.ssoSession ? {} : credentialFields(await deriveCredential("", confirm.password), "admin");
+  const credential = confirm.ssoSession ? {} : credentialFields(await deriveCredential("", confirm.accountPassword), "admin");
   const signed = { ...body, ...credential };
   return withSSOStepUp((headers) => send(signed, headers));
 }
@@ -29,6 +29,8 @@ export type ManagedUser = {
   updatedAt: string;
   deactivatedAt?: string;
   totpEnabled?: boolean;
+  /** Legacy plaintext-password hash: cannot sign in until an admin resets it. */
+  needsPasswordReset?: boolean;
 };
 
 type UsersListResponse = {

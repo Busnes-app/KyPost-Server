@@ -154,7 +154,7 @@ func TestEnvelopeSlotRoundTrip(t *testing.T) {
 	id := clientProtectedSlotUser(t, srv)
 
 	put := httptest.NewRequest(http.MethodPut, "/api/pgp/identity/envelope/recovery",
-		strings.NewReader(`{"envelope":"{\"v\":2,\"rec\":1}","password":"pw-slotapi-testpassword"}`))
+		strings.NewReader(`{"envelope":"{\"v\":2,\"rec\":1}","authSecret":"`+authSecretFor(srv, "pw-slotapi-testpassword")+`"}`))
 	put.SetPathValue("slot", "recovery")
 	authRequestAs(srv, put, id)
 	rec := httptest.NewRecorder()
@@ -185,7 +185,7 @@ func TestEnvelopeSlotRoundTrip(t *testing.T) {
 	}
 
 	del := httptest.NewRequest(http.MethodDelete, "/api/pgp/identity/envelope/recovery",
-		strings.NewReader(`{"password":"pw-slotapi-testpassword"}`))
+		strings.NewReader(`{"authSecret":"`+authSecretFor(srv, "pw-slotapi-testpassword")+`"}`))
 	del.SetPathValue("slot", "recovery")
 	authRequestAs(srv, del, id)
 	rec = httptest.NewRecorder()
@@ -206,7 +206,7 @@ func TestEnvelopeSlotRefusesPasswordSlot(t *testing.T) {
 	srv := newTestServer(t)
 	id := clientProtectedSlotUser(t, srv)
 	put := httptest.NewRequest(http.MethodPut, "/api/pgp/identity/envelope/password",
-		strings.NewReader(`{"envelope":"x","password":"pw-slotapi-testpassword"}`))
+		strings.NewReader(`{"envelope":"x","authSecret":"`+authSecretFor(srv, "pw-slotapi-testpassword")+`"}`))
 	put.SetPathValue("slot", "password")
 	authRequestAs(srv, put, id)
 	rec := httptest.NewRecorder()
@@ -235,7 +235,7 @@ func TestRecoveryWriteIdentityPreconditions(t *testing.T) {
 			srv := newTestServer(t)
 			id := clientProtectedSlotUser(t, srv)
 			for _, expected := range []string{"STALE", "fpr"} {
-				body := map[string]string{"password": "pw-slotapi-testpassword", "expectedFingerprint": expected, "envelope": "sealed-recovery", "wrapped": "sealed-password"}
+				body := map[string]string{"authSecret": authSecretFor(srv, "pw-slotapi-testpassword"), "expectedFingerprint": expected, "envelope": "sealed-recovery", "wrapped": "sealed-password"}
 				raw, err := json.Marshal(body)
 				if err != nil {
 					t.Fatal(err)

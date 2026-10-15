@@ -53,8 +53,10 @@ revisited without touching stored data.
 
 ### Why the server can't cheat
 
-The server holds an Argon2id hash of the password, never the password. It
-therefore cannot derive the wrapping key,
+The browser derives a login auth secret from the password (PBKDF2-SHA256 under
+the account's login salt, then HKDF-SHA256 info `kypost/auth/v1`), and the
+server accepts and stores only that: an Argon2id hash of the auth secret, never
+the password. It therefore cannot derive the wrapping key,
 and there is no code path that tries. `cryptutil.OpenString` uses `LoadKey`, not `LoadOrCreateKey`, so a
 missing master key is a loud error rather than a silently-minted new one.
 

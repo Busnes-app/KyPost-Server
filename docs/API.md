@@ -6,7 +6,7 @@
 
 Auth:
 
-- `POST /api/auth/login`
+- `POST /api/auth/login` — body `{username, authSecret, captchaToken?}`. The server never accepts the password; an account still holding a pre-derived-auth hash is refused like an unknown user until an admin resets it.
 - `GET /api/auth/login-params` — the per-account salt and work factor a client
   needs to derive its auth secret, so the password is never transmitted. Public,
   and deliberately answers identically for a username that does not exist.
@@ -16,14 +16,14 @@ Auth:
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
 - `GET|POST /api/auth/password` (read a private password-change snapshot, then atomically commit credential and optional PGP rewrap; forced resets preserve the previous sealed key for recovery)
-- `POST /api/auth/step-up` (re-confirms the password, and a second factor when one is enrolled, before the Security page renders; a session signed in through KySignOn confirms with KySignOn instead, see below)
+- `POST /api/auth/step-up` (body `{authSecret, code}`: re-confirms the account credential, and a second factor when one is enrolled, before the Security page renders; a session signed in through KySignOn confirms with KySignOn instead, see below)
 
 Single Sign-On (OpenID Connect):
 
 - `GET /api/auth/sso-config` — public `{enabled, issuerUrl, clientId}` that gates the sign-in button and native sign-on. Never returns the client secret.
 - `POST /api/auth/native/signon` — body `{idToken}`: a KyIdentity device-grant ID token, refused unless its `origin` claim matches `SERVER_BASE_URL`. Requires SSO plus `PAIRING_SECRET` and `SERVER_BASE_URL`, otherwise 503. Answers the same single-use 90-second pairing deep link as review-pairing.
 - `GET /api/auth/oidc/login` (alias `/auth/sso/login`) — starts the authorization-code flow for signing in.
-- `POST /api/settings/sso/link` — links the provider identity to the *caller's own* account. Requires the account password (and the two-factor code, when one is enrolled) re-entered now, because a linked identity is a way to sign in.
+- `POST /api/settings/sso/link` — links the provider identity to the *caller's own* account. Requires the account credential (`authSecret`, and the two-factor code, when one is enrolled) re-entered now, because a linked identity is a way to sign in.
 - `GET /api/auth/oidc/callback` (alias `/auth/sso/callback`) — verifies the ID token, including a positive issuance timestamp no more than 30 seconds ahead of the server, then signs in, auto-provisions, or links by `sub`. Keep issuer/server clocks synchronized. The session remembers the provider's `sid`, so the provider can end it.
 - `POST /api/auth/oidc/step-up`, `GET|DELETE /api/auth/oidc/step-up/{id}` — action-bound re-authentication for a session signed in through KySignOn. A sensitive request (the Security page gate, backup actions) answers `403 {"error":"sso_step_up_required","challenge":…}`; the browser opens a KySignOn sign-in popup for that one action (`prompt=login`), and repeats the request with `X-Kypost-Step-Up: <challenge>` once it is verified. The grant is spent once, for that request only.
 - `POST /api/auth/oidc/backchannel-logout` — OpenID Connect back-channel logout receiver. Register it at the provider (KySignOn: the client's *back-channel logout URI*). The `logout_token` is verified against the issuer's JWKS, admitted once durably, and ends the session it names, or every session of the subject when it names none. Needs an `https` issuer.
@@ -38,15 +38,15 @@ Multi-factor authentication:
 - `POST /api/mfa/totp/confirm`
 - `POST /api/mfa/totp/disable`
 - `POST /api/mfa/recovery-codes/regenerate`
-- `PUT /api/mfa/push/enabled`
+- `PUT /api/mfa/push/enabled` (step-up: `authSecret` or KySignOn)
 - `POST /api/auth/mfa/totp` and `POST /api/auth/mfa/recovery-code` (login-time verification)
 - `POST /api/auth/mfa/push/poll`, `POST /api/auth/mfa/push/finish`, and `POST /api/mfa/push/respond` (push-approval sign-in)
 
-User management (admin only). Every non-GET route needs a step-up bound to the exact request: the acting admin's credential as `adminPassword`/`adminAuthSecret` in the body, or a KySignOn confirmation for a KySignOn session.
+User management (admin only). Every non-GET route needs a step-up bound to the exact request: the acting admin's credential as `adminAuthSecret` in the body, or a KySignOn confirmation for a KySignOn session.
 
 - `GET|POST /api/users`
 - `PUT /api/users/{id}` (change role)
-- `POST /api/users/{id}/reset-password`
+- `POST /api/users/{id}/reset-password` (the body's `password` is the new temporary password, stored derived; the user must change it at first sign-in)
 - `POST /api/users/{id}/deactivate`
 - `POST /api/users/{id}/reactivate`
 - `POST /api/users/{id}/clear-mfa`
@@ -71,7 +71,7 @@ Config and data:
 - `GET /api/scheduled` — the selected mailbox's scheduled mail: `{scheduled:[{id,status,reason,sendAt,subject,to}]}`, status `scheduled|sending|returning|returned|sent|queued|uncertain|failed`. Subject is the encrypted-placeholder for browser-encrypted mail. Final rows are kept 30 days.
 - `POST /api/scheduled/{id}/cancel` — returns a `scheduled` message to Drafts (200, or 202 with `warning` when the draft save is retried later); 409 once sending has started; 404 for another user's or mailbox's id.
 - `GET /api/mail/outbox/{id}` — session/device-authenticated native delivery state for the acting owner, with attempts/retry timing and Sent status; no MIME or credentials. Native send replies add `outboxId`; success still requires confirmed primary SMTP acceptance. Inspect uncertain jobs before resubmitting. See [outbox contract](NATIVE_OUTBOX.md).
-- `GET|PUT /api/admin/mail-relay` — admin-only encrypted domain relay settings. PUT accepts `{host,port,smtpUsername,smtpPassword,domains?,password}` (or `authSecret` for account confirmation), requires CSRF/request-bound step-up and fresh issuer-bound DNS proof of every newly added relay domain and of at least one domain overall, and defaults port to 465. Omitted `domains` keeps the saved set (the founding domain for a new relay); a body with only `domains` changes the set and keeps the generation; removing a domain with queued or retryable jobs is refused and moves it to `retiredDomains`. Responses redact both relay credentials and report configured native capability in `sendingEnabled` (not provider readiness); this native profile requires verified implicit TLS and AUTH. See [relay contract](DOMAIN_RELAY.md).
+- `GET|PUT /api/admin/mail-relay` — admin-only encrypted domain relay settings. PUT accepts `{host,port,smtpUsername,smtpPassword,domains?,authSecret}` (`authSecret` is the acting account's derived credential), requires CSRF/request-bound step-up and fresh issuer-bound DNS proof of every newly added relay domain and of at least one domain overall, and defaults port to 465. Omitted `domains` keeps the saved set (the founding domain for a new relay); a body with only `domains` changes the set and keeps the generation; removing a domain with queued or retryable jobs is refused and moves it to `retiredDomains`. Responses redact both relay credentials and report configured native capability in `sendingEnabled` (not provider readiness); this native profile requires verified implicit TLS and AUTH. See [relay contract](DOMAIN_RELAY.md).
 - `POST /api/admin/mail-relay/test` — admin-confirmed no-mail check of the saved `expectedGeneration`, using the same strict TLS/AUTH policy as delivery. Fresh domain/issuer and restore gates run before and after connection; one check per instance per 30 seconds. No MAIL/RCPT/DATA or outbox writes; success reports `deliveryTested:false` and proves neither From authorization nor inbox placement. See [check contract](DOMAIN_RELAY.md#check-the-saved-relay-without-sending-mail).
 
 - `GET|PUT /api/config` (GET omits `redaction.patterns` for non-admins; PUT is admin only)
@@ -90,7 +90,7 @@ IMAP and inbox:
 - `GET /api/admin/native-recovery/status` — administrator, read-only: each native restore hold release precondition with its reasons, the `KYPOST_NATIVE_RESTORE_RELEASE` flag, Cloudflare fence state and ordered next steps; never evidence contents. `kypost-server restore status`, run as the `STATE_DIR` owner, prints the same. See [reading release status](RESTORE.md#reading-release-status).
 - `POST /api/admin/native-recovery/repair` — separately confirmed administrator repair using the current stored signed evidence. Reconciles existing native activity/roles, persists replay barriers before account writes, and revokes sessions, device/push, pairing and CardDAV credentials before recording completion. Legacy accounts and retained mail/PGP data are preserved. Partial failures keep the restore held and require fresh evidence; success also preserves the hold. See [protected recovery procedure](NATIVE_RESTORE_AUTHORITY.md#protected-consumer-procedure).
 - `POST /api/admin/native-recovery/release` — off unless `KYPOST_NATIVE_RESTORE_RELEASE=true`. An unlinked local administrator on a password session confirms the credential; the server rechecks every release precondition under its fences and a fresh DNS proof, and on the bundled-receiver profile requires `"confirm": "original-host-decommissioned"`. It deactivates non-native accounts the evidence shows inactive, demotes non-native administrators it shows without the administrator role, writes release floors and ID-token fences, then renames the hold to `native-restore-released.json`. A repeat answers `alreadyReleased`. See [releasing the hold](RESTORE.md#releasing-the-hold).
-- `GET|PUT /api/admin/mail-domain` and `POST /api/admin/mail-domain/verify` — admin-only mail-domain diagnostics/setup. Writes require CSRF and the current account credential (KySignOn uses request-bound step-up). Configure `{domain,password}` or `{domain,authSecret}` after KyIdentity pairing, publish the returned exact TXT record, then verify with the same credential fields. These routes serve the founding domain. DNS proof binds one immutable domain/issuer, initial verification expires after 24 hours, and configuring again rotates the challenge. Once established, the same TXT record is rechecked automatically without daily DNS changes. System DNS is not DNSSEC; every allocation rechecks it. Explicit KYPOST_NATIVE_MAIL=true enables provisioning and local mailbox access after verified directory assignment; verification alone enables no reception or sending. See [setup and failure responses](NATIVE_PROVISIONING.md).
+- `GET|PUT /api/admin/mail-domain` and `POST /api/admin/mail-domain/verify` — admin-only mail-domain diagnostics/setup. Writes require CSRF and the current account credential (KySignOn uses request-bound step-up). Configure `{domain,authSecret}` after KyIdentity pairing, publish the returned exact TXT record, then verify with the same credential fields. These routes serve the founding domain. DNS proof binds one immutable domain/issuer, initial verification expires after 24 hours, and configuring again rotates the challenge. Once established, the same TXT record is rechecked automatically without daily DNS changes. System DNS is not DNSSEC; every allocation rechecks it. Explicit KYPOST_NATIVE_MAIL=true enables provisioning and local mailbox access after verified directory assignment; verification alone enables no reception or sending. See [setup and failure responses](NATIVE_PROVISIONING.md).
 - `GET|POST /api/admin/mail-domains`, `POST /api/admin/mail-domains/{domain}/verify` and `DELETE /api/admin/mail-domains/{domain}` — admin-only domain set: list per-domain status (`configured`, `retired`, `recordName`, `recordValue`, `established`, `expiresAt`, `verifiedUntil`), add a domain or rotate its challenge with `{domain}`, verify one domain, and retire one (409 while an address on it is active, a queued/retryable outbox job sends from it, accepted (pending) incoming mail is bound to it or the relay still sends for it; address records are kept; re-adding a retired domain configures it afresh, and its addresses resume for their recorded mailboxes once it verifies again). Same CSRF, credential and step-up rules as the single-domain routes; each proof fences only its own domain. See [several domains](NATIVE_PROVISIONING.md#several-domains).
 - `GET|POST /api/admin/mail-addresses`, `DELETE /api/admin/mail-addresses/{address}` and `POST /api/admin/mail-addresses/{address}/reassign` — admin-only native aliases: list mailboxes and their addresses (`address`, `kind`, `state`, `generation`; `?user=<id>` filters) with each mailbox's `usedBytes`/`quotaBytes` and a `storage` summary of quotas against the drive (`overcommitted` above 80%), add an alias with `{mailbox,address}` to an everyday identity's mailbox on a configured domain, release one (kept as `reserved`, never deleted) and reassign a reserved one with `{mailbox}`. Each change of owner or state moves the address to a new generation, so mail or outbox jobs frozen against an older one are quarantined, never delivered; ordinary KyIdentity edits change no generation. 400 malformed, 404 unknown, 409 taken/reserved/primary/a KyIdentity primary/administrator owner/unconfigured domain/restore hold; a committed change whose receiving-route update is still pending answers 200 with a `warning`. Same CSRF, credential and step-up rules as the domain routes. Users send from an active alias by naming it in `from`. See [addresses](NATIVE_PROVISIONING.md#addresses-aliases-and-generations).
 - `GET|POST /api/admin/mailboxes`, `POST /api/admin/mailboxes/{id}/disable` and `POST /api/admin/mailboxes/{id}/enable` — admin-only extra native mailboxes: list mailboxes with `kind` and `state` (`?user=<id>` filters), create one for an everyday identity with `{user,address}` (its primary address on an established domain, unique and not any KyIdentity primary; stored under `$STATE_DIR/mailboxes/`), and disable or re-enable it (mail is kept; its addresses stop routing and sending; jobs still queued in its outbox are quarantined). Listings carry `prepared`. Creation is 409 while the owner has incoming encryption on, and enabling incoming encryption is 409 while the user has an extra mailbox: it covers the primary only. Same gates and error mapping as the alias routes. See [extra mailboxes](NATIVE_PROVISIONING.md#extra-mailboxes).
@@ -183,19 +183,20 @@ CardDAV server (address book sync for phones and desktop apps. A per-user DAV pa
 - `/.well-known/carddav`
 - `/dav/...`
 
-Notifications (all scoped to the signed-in user):
+Notifications (scoped to the signed-in user unless noted):
 
 - `GET|PUT /api/notifications/preferences`
 - `GET /api/notifications/vapid-public-key`
 - `POST|DELETE /api/notifications/subscriptions`
 - `POST /api/notifications/test`
-- `GET /api/notifications/pairing`
+- `POST /api/notifications/pairing` (step-up: `authSecret` or KySignOn; mints a 90-second single-use pairing token)
 - `POST /api/notifications/native/register` and `POST /api/notifications/native/deregister`
 - `GET|DELETE /api/notifications/native/devices`
 - `PUT /api/notifications/native/mode` (relay push vs. app pull)
-- `PUT /api/notifications/native/devices/{deviceId}/mfa` (allow a device to approve sign-ins)
+- `PUT /api/notifications/native/devices/{deviceId}/mfa` (allow a device to approve sign-ins; step-up as above; a new device is not an approver)
 - `GET /api/notifications/native/pull` (every notification is queued here in both modes, addressed to the devices it was sent to, so a device that stops hearing from the relay can poll and catch up)
 - `POST /api/notifications/native/unpair`
+- `POST /api/notifications/review-pairing` — public, and 404 unless `REVIEW_PAIRING_USERNAME` is set. Body `{username, authSecret, captchaToken?}`; the username must match exactly. Same protections as login (CAPTCHA/PoW, per-IP and per-account lockouts, KDF budget, restore hold; its per-account lockout is a separate table); MFA and forced-password-change accounts get 403. Answers the single-use 90-second pairing deep link.
 
 Logs (admin only):
 

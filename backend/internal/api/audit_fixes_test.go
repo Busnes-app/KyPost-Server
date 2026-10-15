@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -252,7 +253,7 @@ func TestMustChangePasswordBlocksOtherEndpoints(t *testing.T) {
 	}
 
 	// The password-change endpoint must remain reachable so the user can escape.
-	body := []byte(`{"oldPassword":"initial-pass-123","newPassword":"a-brand-new-pass-456"}`)
+	body, _ := json.Marshal(passwordChangeBody(srv, u.Username, "initial-pass-123", "a-brand-new-pass-456"))
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(body))
 	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})

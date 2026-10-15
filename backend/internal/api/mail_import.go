@@ -145,7 +145,6 @@ func (s *Server) handleImportStart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Mailbox    string `json:"mailbox"`
 		Folder     string `json:"folder"`
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -166,7 +165,7 @@ func (s *Server) handleImportStart(w http.ResponseWriter, r *http.Request) {
 		writeImportRefusal(w, err)
 		return
 	}
-	if !s.confirmActor(w, r, ac.UserID, body.Password, body.AuthSecret) {
+	if !s.confirmActor(w, r, ac.UserID, body.AuthSecret) {
 		return
 	}
 	s.importMu.Lock()

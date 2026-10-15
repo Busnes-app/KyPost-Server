@@ -89,6 +89,10 @@ The response carries `subscriberId`, `serverBaseUrl`, `registerEndpoint`,
 `deliveryMode` is learned here, and that has a consequence a client must handle
 — see §4.
 
+A newly registered device cannot approve push sign-ins; the owner turns that on
+per device in the web UI, behind step-up. The web UI also takes step-up before it
+shows a QR code, so nothing changes on the client side.
+
 ---
 
 ## 2. Device enrollment — **NORMATIVE**

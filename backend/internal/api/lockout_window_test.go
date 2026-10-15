@@ -94,7 +94,7 @@ func TestLoginIPLockoutWindowRunsFromFailures(t *testing.T) {
 	}
 	login := func(username, password string, want int) {
 		t.Helper()
-		body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+		body, _ := json.Marshal(map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 		req.RemoteAddr = "198.51.100.91:4000"
 		rec := httptest.NewRecorder()
@@ -165,7 +165,7 @@ func TestPendingSuccessDoesNotBridgeExpiredWindow(t *testing.T) {
 
 	login := func(password string, want int) {
 		t.Helper()
-		body, _ := json.Marshal(map[string]string{"username": "bridge-a", "password": password})
+		body, _ := json.Marshal(map[string]string{"username": "bridge-a", "authSecret": testAuthSecret(srv, "bridge-a", password)})
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 		req.RemoteAddr = ip
 		rec := httptest.NewRecorder()
