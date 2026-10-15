@@ -743,6 +743,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		if !s.admitSend(w, r.Context(), ac.UserID, len(recipients)) {
+			return
+		}
 		if req.CalendarReply != nil {
 			r = r.WithContext(context.WithValue(r.Context(), calendarReplySentKey{}, true))
 		}
@@ -823,6 +826,11 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			"keylessRecipients":       plan.withoutKeyEmails,
 			"pickupFallbackAvailable": true,
 		})
+		return
+	}
+	// Charged after every refusal above, which a client answers by sending
+	// again; a scheduled send is charged when it goes out.
+	if req.SendAt.IsZero() && !s.admitSend(w, r.Context(), ac.UserID, len(recipients)) {
 		return
 	}
 

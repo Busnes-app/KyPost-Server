@@ -150,6 +150,8 @@ type Config struct {
 		PerHour   int `yaml:"perHour" json:"perHour"`
 	} `yaml:"rateLimits" json:"rateLimits"`
 
+	SendQuota SendQuota `yaml:"sendQuota" json:"sendQuota"`
+
 	Redaction struct {
 		Patterns []Pattern `yaml:"patterns" json:"patterns"`
 	} `yaml:"redaction" json:"redaction"`
@@ -429,6 +431,14 @@ func LoadLegacyNotificationPrefs(path string) (UserNotificationSettings, bool) {
 	return legacy.Notifications, true
 }
 
+// SendQuota bounds how much mail one user sends, over every send path.
+type SendQuota struct {
+	MessagesPerHour  int `yaml:"messagesPerHour" json:"messagesPerHour"`
+	RecipientsPerDay int `yaml:"recipientsPerDay" json:"recipientsPerDay"`
+}
+
+func (q SendQuota) Valid() bool { return q.MessagesPerHour > 0 && q.RecipientsPerDay > 0 }
+
 type Pattern struct {
 	Name        string `yaml:"name" json:"name"`
 	Regex       string `yaml:"regex" json:"regex"`
@@ -443,6 +453,7 @@ func Default() Config {
 	cfg.Scan.IntervalSeconds = 90
 	cfg.RateLimits.PerMinute = 10
 	cfg.RateLimits.PerHour = 20
+	cfg.SendQuota = SendQuota{MessagesPerHour: 60, RecipientsPerDay: 1000}
 	// Order matters: each pattern runs over the previous one's output. IBAN
 	// and card go before the national phone form, which would otherwise take
 	// a digit run out of their middle. \b is ASCII-only in RE2, so the Unicode

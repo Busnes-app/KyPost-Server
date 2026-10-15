@@ -81,6 +81,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "rate limits must be greater than zero"})
 			return
 		}
+		if !next.SendQuota.Valid() {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "sending quota limits must be greater than zero"})
+			return
+		}
 		if err := config.Save(s.configPath, next); err != nil {
 			http.Error(w, "failed to save config", http.StatusInternalServerError)
 			return

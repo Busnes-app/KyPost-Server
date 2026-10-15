@@ -241,6 +241,16 @@ CREATE TABLE IF NOT EXISTS scheduled_sends (
 CREATE INDEX IF NOT EXISTS scheduled_sends_due ON scheduled_sends(status, send_at);
 CREATE INDEX IF NOT EXISTS scheduled_sends_user ON scheduled_sends(user_id, status);
 
+-- Sends charged to each user's quota over the last day; used only in the
+-- install-wide state.db. See send_ledger.go.
+CREATE TABLE IF NOT EXISTS send_ledger (
+	id         TEXT PRIMARY KEY,
+	user_id    TEXT NOT NULL,
+	at         INTEGER NOT NULL,
+	recipients INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS send_ledger_user ON send_ledger(user_id, at);
+
 -- Snoozed mail, keyed by RFC 5322 Message-ID because a move renumbers an IMAP
 -- UID. woken_at=0 means still snoozed; once woken, inbox_id is the message's
 -- id in INBOX and the row pins it to the top of the inbox. See snoozes.go.
