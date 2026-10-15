@@ -365,7 +365,11 @@ func maddyProfile(configDir string) (bool, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return true, err
 	}
-	return os.Getenv("KYPOST_NATIVE_RECEIVER") == "true" || err == nil, nil
+	bundled, flagErr := config.EnvBool("KYPOST_NATIVE_RECEIVER")
+	if flagErr != nil {
+		return true, flagErr
+	}
+	return bundled || err == nil, nil
 }
 
 func (s *Server) releaseHit(point string) error {

@@ -2,6 +2,12 @@
 
 Environment variables the server reads. `docker-compose.yml` passes the ones `.env.example` offers; the rest are image defaults, overlay inputs or advanced overrides.
 
+**A bad value stops startup; it is never replaced by the default.** Unset or empty means the default. A value that is set but malformed makes the api and daemon both exit with an error naming the variable or `config.yaml` key, logged on every attempt to `api.err.log` / `daemon.err.log`. Supervisor retries, then stops the container.
+
+- Numbers must be whole numbers in range: `WEB_PORT` and `SMTP_PORT` 1–65535; `POW_MAX_NUMBER`, `UNHEALTHY_RESTART_SECONDS` and `CLASSIFY_CONCURRENCY` (up to 1024) at least 1; `CLASSIFY_PACE_MS` 0–3600000.
+- On/off switches (`ALLOW_INSECURE_SMTP`, `MFA_CLEAR_ALL`, `KYPOST_NATIVE_*`, `KYPOST_RECEIVING_RSPAMD`) take exactly `true` or `false`.
+- `config.yaml` refuses unknown keys. A misspelled `redacton:` stops startup rather than leaving the redaction defaults in force. Keys older versions wrote (`llama`, `classifier`, and `mode`, `keywords` or `folder` under `notifications`) are still accepted and are dropped the next time the file is saved. Per-user `users/<id>/config.yaml` files are written by the server itself and stay lenient. So does the backup step that reads `config.yaml` from a sealed capsule.
+
 - `KY_LOG_LEVEL`: `info` by default (`debug`, `warn`, `error` supported).
 - `KYPOST_BACKUP_DEPOSIT_INTERVAL`: `24h`; `0` disables, otherwise 15 minutes–366 days.
 - `KYPOST_BACKUP_DIR`: empty disables local copies; `/kypost/state/backups` or outside the data roots.
@@ -117,7 +123,9 @@ a number joined to an email address by a bare hyphen (`555-123-4567-jo@x.de`),
 where the address takes the number's last digits and leaves the rest.
 
 The list is saved to `config.yaml` on first start and a saved list replaces the
-defaults whole, so an upgrade does not change it. To adopt the current defaults,
-delete the `redaction:` block from `config.yaml` and restart; to keep your own,
-edit the list. Patterns are Go RE2 regular expressions; a `$` in a replacement
+defaults whole. A list still exactly equal to an earlier default list (0.3–0.4, or the
+pre-2026-07-17 list whose doubled backslashes matched nothing) is replaced
+with the current defaults at startup and saved back; any edited list, even one
+changed character, is left alone. To adopt the current defaults over an edited
+list, delete the `redaction:` block from `config.yaml` and restart. Patterns are Go RE2 regular expressions; a `$` in a replacement
 must be written `$$`.
