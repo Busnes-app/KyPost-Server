@@ -10,25 +10,9 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-// AdmitNativeMail reads current authority before an operation, never permission
-// cached with a client. Directory updates serialize with this decision; an
-// operation already admitted may finish after later offboarding.
-func (s *LifecycleStore) AdmitNativeMail(ctx context.Context, stateRoot, issuer, userID string, accounts *users.Store) (NativeAssignment, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	release, err := fsutil.LockFileContext(ctx, s.path)
-	if err != nil {
-		return NativeAssignment{}, err
-	}
-	defer release()
-	u, err := accounts.Get(userID)
-	if err != nil {
-		return NativeAssignment{}, err
-	}
-	return s.admitNativeMailUser(ctx, stateRoot, issuer, u)
-}
-
-// AdmitNativeMailbox is AdmitNativeMail for one of the user's mailboxes:
+// AdmitNativeMailbox reads current authority before an operation, never
+// permission cached with a client. Directory updates serialize with this
+// decision; an operation already admitted may finish after later offboarding.
 // mailboxID equal to the user ID is the primary. Unknown, foreign and
 // disabled mailboxes refuse alike with ErrNativeMailboxUnknown.
 func (s *LifecycleStore) AdmitNativeMailbox(ctx context.Context, stateRoot, issuer, userID, mailboxID string, accounts *users.Store) (NativeAssignment, error) {
