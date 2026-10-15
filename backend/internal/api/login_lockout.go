@@ -64,22 +64,17 @@ const (
 	// never reaches the lockout threshold and is otherwise never removed. Past
 	// this size, not-currently-locked entries are swept.
 	loginLockoutSweepThreshold = 10_000
-	// loginLockoutHardCap is the size past which NEW keys are shed rather than
-	// admitted. Live lockouts are never evicted to make room.
+	// loginLockoutHardCap bounds each table. A new key past it evicts the
+	// stalest unlocked entry; live lockouts are never evicted (that was a
+	// lockout bypass), so only a table of nothing but live lockouts sheds new
+	// keys with 429. Shedding every new key at the cap let a cheap flood refuse
+	// all new sign-ins instance-wide.
 	//
-	// Evicting them is a lockout bypass, not a memory trade: with locked entries
-	// swept first, an attacker wanting more guesses at one account only has to push
-	// the table past this cap with rotating keys and their target's cooldown goes in
-	// the first tranche.
-	//
-	// Shedding is fail-CLOSED. A saturated table refuses to track new keys — a 429
-	// outage for new sign-ins — but every lockout already in force stays in force.
-	// An outage is visible and ends when the flood does; silently unlocking accounts
-	// under load is invisible and is what the flood is for.
-	//
-	// Reaching this takes an attack: the login path is metered instance-wide in
-	// seconds of derivation work (loginKDFDutyCycle), roughly one attempt a second,
-	// so lockoutFor buys an attacker on the order of a thousand keys.
+	// Eviction can forgive partial strikes, but only after the flood fills the
+	// table. Per-account login entries are written only after the CAPTCHA and
+	// inside the instance KDF budget (loginKDFDutyCycle), so lockoutFor buys an
+	// attacker a few thousand keys, far short of this. Per-IP entries cost one
+	// address each, and an attacker with that many addresses can rotate anyway.
 	loginLockoutHardCap = 50_000
 	// maxLockoutKeyComponentBytes bounds the caller-supplied half of a lockout
 	// key.
@@ -140,8 +135,8 @@ type failureLockout struct {
 	// paid a full scan — the attacker choosing how much work each of their requests
 	// costs the server.
 	lastSweep time.Time
-	// saturated records that the table hit hardCap and shed a new key. Cleared
-	// when a sweep gets it back under the cap. Read via Saturated.
+	// saturated records that a new key arrived at hardCap. Cleared when a sweep
+	// gets the table back under the cap. Read via Saturated.
 	saturated bool
 	// sweepThreshold and hardCap default to the package constants of the same
 	// name and are fields only so a test can prove the shedding behaviour at a
@@ -220,13 +215,13 @@ func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.D
 
 	e, exists := l.entries[username]
 	if !exists {
-		// Saturated: sweeping could not get the table under the cap, so every remaining
-		// entry is either locked or mid-accumulation. Shed this new key rather than
-		// making room by forgiving one of them — see loginLockoutHardCap. Keys already
-		// known to the table proceed normally.
+		// At the cap, make room by evicting the stalest unlocked entry; shed only
+		// when every entry is a live lockout. See loginLockoutHardCap.
 		if len(l.entries) >= l.hardCap {
 			l.saturated = true
-			return false, l.lockoutFor, lockoutReservation{}
+			if !l.evictOldestUnlockedLocked(now) {
+				return false, l.lockoutFor, lockoutReservation{}
+			}
 		}
 		e = &loginLockoutEntry{}
 		l.entries[username] = e
@@ -251,6 +246,17 @@ func (l *failureLockout) tryAttempt(username string) (ok bool, retryAfter time.D
 	return true, 0, lockoutReservation{key: username, at: now}
 }
 
+// lockedFor is how long key stays locked, or 0. Read-only: a pre-check, not a
+// reservation.
+func (l *failureLockout) lockedFor(key string) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e, ok := l.entries[key]; ok {
+		return max(e.lockedUntil.Sub(l.now()), 0)
+	}
+	return 0
+}
+
 // lockoutReservation identifies one strike spent by tryAttempt, so
 // cancelAttempt refunds exactly that strike and not a concurrent request's.
 type lockoutReservation struct {
@@ -259,11 +265,8 @@ type lockoutReservation struct {
 }
 
 // cancelAttempt returns a strike reserved by tryAttempt, for a path that turned
-// out not to be a credential attempt at all — e.g. a CAPTCHA provider outage,
-// where the user never got as far as offering a password and counting it would
-// lock out every user of the instance for the duration.
-//
-// A FAILED captcha is deliberately not cancelled; that is an attempt.
+// out not to be a credential attempt at all — e.g. the KDF slots were full and
+// no password was checked.
 //
 // A reservation whose strike is already gone (the window reset under it) is a
 // no-op, so a refund can never become credit for extra attempts.
@@ -305,9 +308,7 @@ func (l *failureLockout) cancelAttempt(res lockoutReservation) {
 // entry idle for longer than lockoutFor is safe to drop because its strikes
 // would be reset on the next attempt anyway.
 //
-// Nothing here evicts a LIVE entry. The hard cap is enforced in tryAttempt by
-// refusing new keys, so a saturated table denies service instead of forgiving
-// lockouts. See loginLockoutHardCap.
+// Nothing here evicts a live entry; the hard cap is enforced in tryAttempt.
 func (l *failureLockout) sweepIfCrowdedLocked(now time.Time) {
 	if len(l.entries) < l.sweepThreshold {
 		return
@@ -333,16 +334,35 @@ func (l *failureLockout) sweepIfCrowdedLocked(now time.Time) {
 	}
 }
 
-// HardCap is the size past which this table sheds new keys. Reported by
+// evictOldestUnlockedLocked drops the unlocked entry with the oldest strike and
+// reports whether there was one. Live lockouts are never evicted. Callers must
+// hold l.mu. ponytail: O(n) per new key at the cap; a heap if that ever shows.
+func (l *failureLockout) evictOldestUnlockedLocked(now time.Time) bool {
+	var victim string
+	var oldest time.Time
+	found := false
+	for k, e := range l.entries {
+		if now.Before(e.lockedUntil) {
+			continue
+		}
+		if !found || e.lastStrike().Before(oldest) {
+			victim, oldest, found = k, e.lastStrike(), true
+		}
+	}
+	if found {
+		delete(l.entries, victim)
+	}
+	return found
+}
+
+// HardCap is the size past which this table evicts or sheds new keys. Reported by
 // logSaturatedLockouts so an operator sees the bound that actually applied,
 // rather than the package default.
 func (l *failureLockout) HardCap() int { return l.hardCap }
 
-// Saturated reports whether the table has had to shed a new key since the last
-// time it drained below the hard cap. Surfaced rather than handled silently:
-// shedding is a denial of service to every caller the table has not seen before,
-// and an operator needs to know the difference between that and their login
-// being broken. Read by logSaturatedLockouts.
+// Saturated reports whether the table has hit its hard cap (evicting or
+// shedding) since it last drained below it, which means a flood. Read by
+// logSaturatedLockouts.
 func (l *failureLockout) Saturated() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -448,9 +468,9 @@ var loginKDFBilledSeconds = billMeasuredTime
 // bucket, held from the admitCost at the top of handleLogin until something
 // settles it.
 //
-// handleLogin reserves BEFORE the per-IP lockout, the per-account lockout and
-// the CAPTCHA check — deliberately, so an outbound CAPTCHA verification is
-// inside the budget too — and any of those can return without reaching a
+// handleLogin reserves BEFORE the CAPTCHA check and the per-IP and per-account
+// lockouts — deliberately, so an outbound CAPTCHA verification is inside the
+// budget too — and any of those can return without reaching a
 // derivation. Walking away still holding 200 ms of a bucket that refills at
 // 0.2 s/s lets ten empty POSTs a second hold it at zero and answer every
 // legitimate login with 429.

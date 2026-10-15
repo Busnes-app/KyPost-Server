@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -217,63 +216,5 @@ func TestBucketDebtIsFloored(t *testing.T) {
 	_, retryAfter := l.admitCost("k", 0.2)
 	if maxRecovery := time.Duration(l.burst / l.refillPerSec * float64(time.Second)); retryAfter > maxRecovery+time.Second {
 		t.Errorf("retryAfter = %v, want at most %v", retryAfter, maxRecovery)
-	}
-}
-
-// TestCrowdedTableEvictsLockedBeforePartialStrikes covers stage 2 of
-// sweepIfCrowdedLocked, which reintroduced the bypass stage 1 exists to close.
-//
-// An unlocked entry has a zero lockedUntil, and time.Time's zero value sorts
-// BEFORE every real timestamp. Ordering the eviction list on lockedUntil alone
-// therefore put the mid-accumulation entries at the front and deleted every real
-// user's 1-of-3 and 2-of-3 progress before touching a single attacker-made
-// lockout — so past the hard cap, no key ever reached its third strike and the
-// lockout stopped engaging for anybody.
-//
-// TestCrowdedTableDoesNotErasePartialStrikes covers the same property at the
-// SWEEP THRESHOLD; this one drives the table past the HARD CAP, which is the
-// only place stage 2 runs.
-func TestCrowdedTableEvictsLockedBeforePartialStrikes(t *testing.T) {
-	// Reduced bounds, same proof — see newFailureLockoutSized. At production
-	// scale the loop below is 165,000 race-instrumented tryAttempt calls.
-	l := newFailureLockoutSized(3, 15*time.Minute, 100, 500)
-
-	// A real user, mid-accumulation at 2 of 3 strikes.
-	const victim = "real-victim\x00198.51.100.7"
-	for range 2 {
-		l.tryAttempt(victim)
-	}
-
-	// Now flood past the hard cap with fully-locked entries, the way an attacker
-	// manufactures them: three requests each buys one that survives stage 1.
-	for i := range l.hardCap + l.hardCap/10 {
-		key := fmt.Sprintf("filler-%d", i)
-		for range 3 {
-			l.tryAttempt(key)
-		}
-	}
-
-	l.mu.Lock()
-	size := len(l.entries)
-	_, victimSurvived := l.entries[victim]
-	l.mu.Unlock()
-
-	if size > l.hardCap {
-		t.Errorf("table holds %d entries, want at most %d: the hard cap did not engage",
-			size, l.hardCap)
-	}
-	if !victimSurvived {
-		t.Fatal("the victim's partial strike record was evicted while attacker-manufactured " +
-			"lockouts were kept. Flooding past the hard cap therefore erases every real key's " +
-			"progress and the three-strikes lockout never engages — a lockout bypass by flooding.")
-	}
-
-	// And the record is intact, not merely present: the third strike must lock.
-	if ok, _, _ := l.tryAttempt(victim); !ok {
-		t.Fatal("the victim's 3rd attempt was refused; it should be the one that locks")
-	}
-	if ok, _, _ := l.tryAttempt(victim); ok {
-		t.Fatal("the victim's 4th attempt was allowed: the strike record survived eviction " +
-			"but its accumulated failures did not")
 	}
 }

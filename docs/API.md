@@ -196,7 +196,7 @@ Notifications (scoped to the signed-in user unless noted):
 - `PUT /api/notifications/native/devices/{deviceId}/mfa` (allow a device to approve sign-ins)
 - `GET /api/notifications/native/pull` (every notification is queued here in both modes, addressed to the devices it was sent to, so a device that stops hearing from the relay can poll and catch up)
 - `POST /api/notifications/native/unpair`
-- `POST /api/notifications/review-pairing` — public, and 404 unless `REVIEW_PAIRING_USERNAME` is set. Body `{username, authSecret, captchaToken?}`; the username must match exactly. Same protections as login (CAPTCHA/PoW, per-IP and per-account lockouts, KDF budget, restore hold); MFA and forced-password-change accounts get 403. Answers the single-use 90-second pairing deep link.
+- `POST /api/notifications/review-pairing` — public, and 404 unless `REVIEW_PAIRING_USERNAME` is set. Body `{username, authSecret, captchaToken?}`; the username must match exactly. Same protections as login (CAPTCHA/PoW, per-IP and per-account lockouts, KDF budget, restore hold; its per-account lockout is a separate table); MFA and forced-password-change accounts get 403. Answers the single-use 90-second pairing deep link.
 
 Logs (admin only):
 

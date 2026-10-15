@@ -29,7 +29,7 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	u, ok := s.verifyLogin(w, r, req.Username, req.AuthSecret, req.CaptchaToken, func(u users.User) bool {
+	u, ok := s.verifyLogin(w, r, s.reviewPairingLockout, req.Username, req.AuthSecret, req.CaptchaToken, func(u users.User) bool {
 		return users.NormalizeUsername(u.Username) == reviewUsername
 	})
 	if !ok {

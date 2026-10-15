@@ -87,3 +87,22 @@ func TestReviewPairingSharesLoginProtections(t *testing.T) {
 		t.Fatalf("locked-out address: status %d, want 429", rec.Code)
 	}
 }
+
+// Review pairing's per-account strikes go to its own table, never loginLockout,
+// so the route cannot fill the table every sign-in shares.
+func TestReviewPairingKeepsItsOwnAccountLockout(t *testing.T) {
+	t.Setenv("REVIEW_PAIRING_USERNAME", "play-review")
+	srv := newTestServer(t)
+	rec := reviewPairing(srv, map[string]string{"username": "play-review", "authSecret": strings.Repeat("0", 64)}, "203.0.113.81:1")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong credential: status %d, want 401", rec.Code)
+	}
+	for l, want := range map[*failureLockout]int{srv.loginLockout: 0, srv.reviewPairingLockout: 1} {
+		l.mu.Lock()
+		n := len(l.entries)
+		l.mu.Unlock()
+		if n != want {
+			t.Errorf("lockout holds %d entries, want %d", n, want)
+		}
+	}
+}

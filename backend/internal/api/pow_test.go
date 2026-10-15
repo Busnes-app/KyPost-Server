@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -261,30 +262,55 @@ func TestLoginRefundsTheStrikeForAChallengeIssuedToAnotherAddress(t *testing.T) 
 	}
 }
 
-func TestLoginSpendsTheStrikeForAWrongSolution(t *testing.T) {
+// A wrong solution checks no password and the budget refunds it, so it must not
+// create per-account entries; it strikes the address only.
+func TestWrongSolutionStrikesOnlyTheAddress(t *testing.T) {
 	srv := newTestServer(t)
 	srv.captchaVerifier = stubVerifier{ok: false}
 
-	// Get the bootstrap admin user's actual username
-	all, err := srv.users.List()
-	if err != nil || len(all) != 1 {
-		t.Fatalf("expected exactly one bootstrap user, got %+v err=%v", all, err)
-	}
-	adminUsername := all[0].Username
-
-	for i := 0; i < loginMaxFailures; i++ {
+	for i := 0; i <= loginMaxFailures; i++ {
 		rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-			map[string]string{"username": adminUsername, "authSecret": testAuthSecret(srv, adminUsername, "irrelevant"), "captchaToken": "wrong"})
+			map[string]string{"username": "admin", "authSecret": testAuthSecret(srv, "admin", "irrelevant"), "captchaToken": "wrong"})
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d: status = %d, want 401", i+1, rec.Code)
 		}
 	}
-	// A wrong solution is a failed attempt and costs one, exactly as
-	// cancelAttempt's doc comment says.
-	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": adminUsername, "authSecret": testAuthSecret(srv, adminUsername, "irrelevant"), "captchaToken": "wrong"})
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("status after %d wrong solutions = %d, want 429", loginMaxFailures, rec.Code)
+	for l, want := range map[*failureLockout]int{srv.loginLockout: 0, srv.loginIPLockout: 1} {
+		l.mu.Lock()
+		n := len(l.entries)
+		l.mu.Unlock()
+		if n != want {
+			t.Errorf("lockout holds %d entries after wrong solutions, want %d", n, want)
+		}
+	}
+}
+
+// countingVerifier rejects every token and counts provider calls.
+type countingVerifier struct{ calls *int }
+
+func (v countingVerifier) Verify(context.Context, string, string) (bool, error) {
+	*v.calls++
+	return false, nil
+}
+
+// Each provider call holds instance budget while in flight, so a locked address
+// must be refused before the provider is called, and junk tokens must lock it.
+func TestLockedAddressNeverReachesCaptchaProvider(t *testing.T) {
+	srv := newTestServer(t)
+	var calls int
+	srv.captchaVerifier = countingVerifier{&calls}
+	srv.loginIPLockout = newFailureLockout(3, loginIPLockoutFor)
+
+	codes := make([]int, 5)
+	for i := range codes {
+		codes[i] = doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
+			map[string]string{"username": fmt.Sprintf("u%d", i), "authSecret": "x", "captchaToken": "junk"}).Code
+	}
+	if codes[2] != http.StatusUnauthorized || codes[3] != http.StatusTooManyRequests || codes[4] != http.StatusTooManyRequests {
+		t.Fatalf("statuses = %v, want 401 x3 then 429", codes)
+	}
+	if calls != 3 {
+		t.Errorf("provider called %d times, want 3: a locked address still reached it", calls)
 	}
 }
 
