@@ -388,7 +388,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// why this is a burst cap rather than one-per-window.
 		pushDispatched, pushRetryAfter := false, time.Duration(0)
 		if u.PushMFAEnabled {
-			if allowed, retryAfter := s.mfaPushLimiter.tryConsume(u.ID); allowed {
+			if allowed, retryAfter := s.mfaPushLimiter.allow(u.ID); allowed {
 				// At most one challenge for this account is ever both pushed and answerable.
 				// Earlier attempts that were never answered are dropped rather than left
 				// polling an id no device was told about — which, with the old

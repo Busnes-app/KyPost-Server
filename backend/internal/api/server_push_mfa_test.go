@@ -355,7 +355,7 @@ func TestSecondLoginWithinWindowPushesAgainAndSupersedesTheFirst(t *testing.T) {
 	pairApproverDevice(t, srv, u.ID, "dev-uma")
 	enablePush(t, srv, u.ID)
 
-	if _, sent := srv.mfaPushLimiter.sent[u.ID]; sent {
+	if _, sent := srv.mfaPushLimiter.entries[u.ID]; sent {
 		t.Fatal("expected no push recorded before any login")
 	}
 
@@ -376,8 +376,9 @@ func TestSecondLoginWithinWindowPushesAgainAndSupersedesTheFirst(t *testing.T) {
 	if !methodsContain(methods, "push") {
 		t.Fatalf("methods = %v, want push offered on the second login too", methods)
 	}
-	if got := len(srv.mfaPushLimiter.sent[u.ID]); got != 2 {
-		t.Fatalf("recorded pushes = %d, want 2 (one per attempt)", got)
+	// Two pushes spent; the refill since is microseconds against a 5-minute window.
+	if got := mfaPushBurst - srv.mfaPushLimiter.entries[u.ID].tokens; got < 1.99 || got > 2 {
+		t.Fatalf("recorded pushes = %v, want 2 (one per attempt)", got)
 	}
 
 	if _, ok := srv.mfaChallenges.PushStatus(first); ok {
@@ -411,7 +412,7 @@ func TestLoginStopsOfferingPushWhenThrottled(t *testing.T) {
 	// test is the first login *after* the burst is spent, so that is the only one it
 	// pays for.
 	for i := 0; i < mfaPushBurst; i++ {
-		if ok, _ := srv.mfaPushLimiter.tryConsume(u.ID); !ok {
+		if ok, _ := srv.mfaPushLimiter.allow(u.ID); !ok {
 			t.Fatalf("could not spend burst slot %d of %d", i+1, mfaPushBurst)
 		}
 	}
