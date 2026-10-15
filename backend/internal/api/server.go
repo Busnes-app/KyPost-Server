@@ -597,7 +597,6 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/admin/backup/schedule", s.withAdmin(withActionDigest(s.handleBackupSchedule)))
 	mux.HandleFunc("/api/health", withPublicRoute(s.handleHealth))
 	mux.HandleFunc("GET /healthz", withPublicRoute(s.suiteHealthHandler().ServeHTTP))
-	mux.HandleFunc("POST /api/health/repair", s.withAdmin(s.handleRepair))
 	mux.HandleFunc("POST /api/admin/mail/poll-now", s.withAdmin(s.handlePollNow))
 	mux.HandleFunc("GET /api/installer/network", withPublicRoute(s.handleInstallerNetwork))
 	mux.HandleFunc("/api/status", s.withAuth(s.handleStatus))
@@ -1507,20 +1506,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	zw := gzip.NewWriter(gw)
 	defer func() { _ = zw.Close() }()
 	_, _ = zw.Write(body)
-}
-
-// scheduleContainerRestart exits this process after delay so supervisord's
-// autorestart brings it back with fresh state. It restarts THIS PROCESS, not
-// the container: this process is unprivileged and PID 1 is not ours, so
-// signalling PID 1 only ever returns EPERM.
-func scheduleContainerRestart(logger *logging.Logger, reason string, delay time.Duration) {
-	go func() {
-		time.Sleep(delay)
-		if logger != nil {
-			logger.Error("restarting process; supervisord will bring it back", "reason", reason)
-		}
-		os.Exit(2)
-	}()
 }
 
 func randomToken(size int) (string, error) {

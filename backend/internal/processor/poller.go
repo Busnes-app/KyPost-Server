@@ -678,7 +678,12 @@ func (p *Poller) tick() {
 		// acquired immediately
 	default:
 		p.log.Info("poll tick waiting for previous tick to finish")
-		<-p.tickSem
+		select {
+		case <-p.tickSem:
+		case <-p.lifetimeCtx().Done():
+			p.log.Info("poll tick abandoned: poller is shutting down")
+			return
+		}
 	}
 	defer func() { p.tickSem <- struct{}{} }()
 

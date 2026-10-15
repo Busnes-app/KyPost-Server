@@ -91,10 +91,6 @@ configuration independently — this UI is the explanation, not the check.
 Its optional `adminGroup` field (empty by default) is the only generic-provider
 admin grant; the issuer hint states that changing the issuer revokes links.
 
-`POST /api/health/repair` is a real admin route with no caller in this SPA;
-it is exercised by operators directly. Do not add a button for it without
-reading its handler first.
-
 ### App Shell → API Mapping
 
 | Component | Endpoints used |
