@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -98,8 +99,8 @@ func (s *Server) handlePoWChallenge(w http.ResponseWriter, r *http.Request) {
 	// refunded by handleLogin rather than penalised.
 	ip := clientIP(r)
 	budgetKey := lockoutKeyForIP(ip)
-	if !s.powChallenges.allow(budgetKey, time.Now()) {
-		w.Header().Set("Retry-After", "60")
+	if ok, retryAfter := s.powChallenges.allow(budgetKey); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
 		http.Error(w, "too many challenge requests, try again shortly", http.StatusTooManyRequests)
 		return
 	}
@@ -124,7 +125,7 @@ func (s *Server) handlePoWChallenge(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ch)
 }
 
-// StartPoWSweeper reclaims spent salts, stale rate-limit windows, and decayed
+// StartPoWSweeper reclaims spent salts, refilled rate-limit buckets, and decayed
 // per-IP difficulty escalation on an interval for the process lifetime,
 // mirroring StartSendAsCooldownSweeper's ticker/select pattern. All three maps
 // are fed by unauthenticated callers, so all three need a real sweep rather
@@ -154,7 +155,7 @@ func (s *Server) StartPoWSweeper(ctx context.Context) {
 				continue
 			}
 			s.powVerifier.SweepExpired(now)
-			s.powChallenges.sweepExpired(now)
+			s.powChallenges.sweep()
 		}
 	}
 }

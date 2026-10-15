@@ -319,7 +319,6 @@ func startBackgroundSweepers(ctx context.Context, srv *api.Server, logger *loggi
 		srv.StartContactsTombstoneSweeper,
 		srv.StartEnvelopeSweeper,
 		srv.StartCooldownSweeper,
-		srv.StartMfaPushLimiterSweeper,
 		srv.StartSessionSweeper,
 		srv.StartMFAChallengeSweeper,
 		srv.StartPoWSweeper,

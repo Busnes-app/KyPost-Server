@@ -157,30 +157,30 @@ type Server struct {
 	imapLoginLockout *failureLockout
 	imapListSlots    chan struct{}
 	deviceLockout    *failureLockout
-	wkdLimiter       *ipRateLimiter
+	wkdLimiter       *keyedLimiter
 	// accountWriteLimiter meters MUTATING withAuth requests per account. Every
 	// such request is at least one whole-file users.json marshal + fsync under
 	// a global cross-process lock that every authenticated request also reads
 	// through, so an unthrottled mutating route is an instance-wide stall that
 	// one session can drive. See withAuth and accountWriteBurst.
-	accountWriteLimiter *ipRateLimiter
+	accountWriteLimiter *keyedLimiter
 	// pushPollLimiter meters the two unauthenticated push-MFA endpoints per IP.
 	// They were the only public routes with no meter, and both take mfa.Store's
 	// process-wide lock. See withPushPollRateLimit.
-	pushPollLimiter *ipRateLimiter
+	pushPollLimiter *keyedLimiter
 	// loginParamsLimiter meters GET /api/auth/login-params PER IP. Drawing a full
 	// attempt's reservation from the instance-wide derivation budget below priced a
 	// ~5us HMAC at 0.2 core-seconds: sixteen free requests emptied the bucket and
 	// denied sign-in to the whole instance, with no per-IP proxy rule able to
 	// restore it.
-	loginParamsLimiter *ipRateLimiter
-	mfaPushLimiter     *mfaPushLimiter
-	sendAsCooldown     *cooldown
+	loginParamsLimiter *keyedLimiter
+	mfaPushLimiter     *keyedLimiter
+	sendAsCooldown     *keyedLimiter
 	// notificationTestCooldown meters POST /api/notifications/test per user:
 	// the one endpoint an authenticated caller can use to trigger the serial
 	// push fanout on demand. See notificationTestCooldownFor.
-	notificationTestCooldown *cooldown
-	nativeRelayCheckCooldown *cooldown
+	notificationTestCooldown *keyedLimiter
+	nativeRelayCheckCooldown *keyedLimiter
 	captchaVerifier          captcha.Verifier
 	captchaProvider          captcha.Provider
 	captchaSiteKey           string
@@ -190,7 +190,7 @@ type Server struct {
 	// challenge endpoint and the sweeper need Issue/SweepExpired, which are
 	// not on the Verifier interface. nil for every other provider.
 	powVerifier   *captcha.PoWVerifier
-	powChallenges *powChallengeLimiter
+	powChallenges *keyedLimiter
 	powDifficulty *powEscalation
 
 	// loginRateLimiter is an INSTANCE-WIDE token bucket on POST /api/auth/login,
@@ -205,7 +205,7 @@ type Server struct {
 	//
 	// Instance-wide is the point: a per-IP limit is defeated by more IPs, and the
 	// CPU being protected is shared.
-	loginRateLimiter *ipRateLimiter
+	loginRateLimiter *keyedLimiter
 	// loginIPLockout is a second, coarser lockout keyed on the client IP ALONE,
 	// so a caller cycling through usernames from one address runs out of budget.
 	loginIPLockout *failureLockout
@@ -261,7 +261,7 @@ type Server struct {
 	// deviceRescan throttles full device-index rebuilds. A rebuild opens every
 	// account's SQLite store, and an unauthenticated caller can force a cache
 	// miss on every request just by varying the device id.
-	deviceRescan   *intervalGate
+	deviceRescan   *keyedLimiter
 	davCredentials davCredentialCache
 
 	// wkdStore is the single instance-level WKD domain-claim store, injected
@@ -410,11 +410,11 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		imapLoginLockout:         newFailureLockout(imapLoginMaxFailures, imapLoginLockoutFor),
 		imapListSlots:            make(chan struct{}, maxIMAPListings),
 		deviceLockout:            newFailureLockout(deviceMaxFailures, deviceLockoutFor),
-		wkdLimiter:               newIPRateLimiter(wkdRateBurst, wkdRateRefillPerSec),
-		accountWriteLimiter:      newIPRateLimiter(accountWriteBurst, accountWriteRefillPerSec),
-		pushPollLimiter:          newIPRateLimiter(pushPollBurst, pushPollRefillPerSec),
-		loginParamsLimiter:       newIPRateLimiter(loginParamsBurst, loginParamsRefillPerSec),
-		deviceRescan:             newIntervalGate(deviceRescanInterval),
+		wkdLimiter:               newKeyedLimiter(wkdRateBurst, wkdRateRefillPerSec),
+		accountWriteLimiter:      newKeyedLimiter(accountWriteBurst, accountWriteRefillPerSec),
+		pushPollLimiter:          newKeyedLimiter(pushPollBurst, pushPollRefillPerSec),
+		loginParamsLimiter:       newKeyedLimiter(loginParamsBurst, loginParamsRefillPerSec),
+		deviceRescan:             newKeyedLimiter(1, 1/deviceRescanInterval.Seconds()),
 		mfaPushLimiter:           newMfaPushLimiter(),
 		sendAsCooldown:           newCooldown(sendAsVerificationCooldownFor),
 		notificationTestCooldown: newCooldown(notificationTestCooldownFor),
@@ -425,7 +425,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		powVerifier:              powVerifier,
 		powChallenges:            newPowChallengeLimiter(),
 		powDifficulty:            newPowEscalation(),
-		loginRateLimiter:         newIPRateLimiter(loginKDFBurstSeconds, loginKDFDutyCycle),
+		loginRateLimiter:         newKeyedLimiter(loginKDFBurstSeconds, loginKDFDutyCycle),
 		loginIPLockout:           newFailureLockout(loginIPMaxFailures, loginIPLockoutFor),
 		globalStore:              globalStore,
 		wkdStore:                 wkdStore,
@@ -1166,25 +1166,9 @@ func (s *Server) StartCooldownSweeper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, c := range []*cooldown{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown} {
-				c.sweep(cooldownSweepMaxAge)
+			for _, c := range []*keyedLimiter{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown, s.mfaPushLimiter} {
+				c.sweep()
 			}
-		}
-	}
-}
-
-// StartMfaPushLimiterSweeper runs mfaPushLimiter.sweep on an interval for the
-// process lifetime, mirroring StartSendAsCooldownSweeper's ticker/select pattern
-// exactly. Call once after NewServer.
-func (s *Server) StartMfaPushLimiterSweeper(ctx context.Context) {
-	ticker := time.NewTicker(mfaPushLimiterSweepInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.mfaPushLimiter.sweep(mfaPushLimiterSweepMaxAge)
 		}
 	}
 }
