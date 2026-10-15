@@ -85,14 +85,14 @@ func TestPGPIdentityDeleteRequiresTheAccountPassword(t *testing.T) {
 
 	// Wrong password: refused.
 	rec = pgpRequest(t, srv, http.MethodDelete, "/api/pgp/identity",
-		map[string]string{"password": "not-the-password"}, srv.handlePGPIdentity)
+		map[string]string{"authSecret": authSecretFor(srv, "not-the-password")}, srv.handlePGPIdentity)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a wrong password deleted the identity: %d", rec.Code)
 	}
 
 	// Correct password: allowed.
 	rec = pgpRequest(t, srv, http.MethodDelete, "/api/pgp/identity",
-		map[string]string{"password": password}, srv.handlePGPIdentity)
+		map[string]string{"authSecret": authSecretFor(srv, password)}, srv.handlePGPIdentity)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the owner could not delete their own identity: %d %s", rec.Code, rec.Body.String())
 	}
@@ -133,7 +133,7 @@ func TestPGPClientIdentityReplacementRequiresTheAccountPassword(t *testing.T) {
 		t.Fatal("the published key was replaced by a request that was refused")
 	}
 
-	body["password"] = password
+	body["authSecret"] = userAuthSecret(srv, userID, password)
 	rec = pgpRequest(t, srv, http.MethodPost, "/api/pgp/identity/client", body, srv.handlePGPIdentityClient)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the owner could not replace their own key: %d %s", rec.Code, rec.Body.String())
@@ -166,7 +166,7 @@ func TestPGPRewrapRequiresTheAccountPassword(t *testing.T) {
 	}
 
 	rec = pgpRequest(t, srv, http.MethodPost, "/api/pgp/identity/rewrap",
-		map[string]string{"wrapped": `{"v":1,"blob":"legitimate"}`, "password": password}, srv.handlePGPRewrapKey)
+		map[string]string{"wrapped": `{"v":1,"blob":"legitimate"}`, "authSecret": authSecretFor(srv, password)}, srv.handlePGPRewrapKey)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the owner could not rewrap their own key: %d %s", rec.Code, rec.Body.String())
 	}
@@ -217,13 +217,13 @@ func TestPGPPutEnvelopeSlotRequiresTheAccountPassword(t *testing.T) {
 	}
 
 	// Wrong password: refused.
-	rec = putReq(map[string]string{"envelope": `{"v":1,"blob":"recovery"}`, "password": "not-the-password"})
+	rec = putReq(map[string]string{"envelope": `{"v":1,"blob":"recovery"}`, "authSecret": authSecretFor(srv, "not-the-password")})
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a wrong password installed a wrapped-envelope slot: %d", rec.Code)
 	}
 
 	// Correct password: allowed.
-	rec = putReq(map[string]string{"envelope": `{"v":1,"blob":"recovery"}`, "password": password})
+	rec = putReq(map[string]string{"envelope": `{"v":1,"blob":"recovery"}`, "authSecret": authSecretFor(srv, password)})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the owner could not install their own recovery slot: %d %s", rec.Code, rec.Body.String())
 	}
@@ -283,14 +283,14 @@ func TestPGPDeleteEnvelopeSlotRequiresTheAccountPassword(t *testing.T) {
 	}
 
 	// Wrong password: refused.
-	raw, _ = json.Marshal(map[string]string{"password": "not-the-password"})
+	raw, _ = json.Marshal(map[string]string{"authSecret": authSecretFor(srv, "not-the-password")})
 	rec = delReq(bytes.NewReader(raw))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a wrong password destroyed a wrapped-envelope slot: %d", rec.Code)
 	}
 
 	// Correct password: allowed.
-	raw, _ = json.Marshal(map[string]string{"password": password})
+	raw, _ = json.Marshal(map[string]string{"authSecret": authSecretFor(srv, password)})
 	rec = delReq(bytes.NewReader(raw))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the owner could not delete their own recovery slot: %d %s", rec.Code, rec.Body.String())
@@ -344,10 +344,10 @@ func TestFirstPGPIdentityNeedsStepUp(t *testing.T) {
 	}
 
 	rec = install(map[string]string{
-		"publicKey": id.ArmoredPublicKey,
-		"wrapped":   `{"v":1,"blob":"opaque"}`,
-		"source":    "generated",
-		"password":  password,
+		"publicKey":  id.ArmoredPublicKey,
+		"wrapped":    `{"v":1,"blob":"opaque"}`,
+		"source":     "generated",
+		"authSecret": authSecretFor(srv, password),
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the owner could not set up their own first identity: %d %s", rec.Code, rec.Body.String())
@@ -415,7 +415,7 @@ func TestFirstLoginExemptionDoesNotCoverTheEnvelope(t *testing.T) {
 
 	// Presenting the temporary password, it works.
 	rec = changePasswordAs(t, srv, u.ID, map[string]any{
-		"oldPassword":   "temporary-password-xyz",
+		"oldAuthSecret": userAuthSecret(srv, u.ID, "temporary-password-xyz"),
 		"newAuthSecret": strings.Repeat("b", 64),
 		"newLoginSalt":  base64.StdEncoding.EncodeToString([]byte("fedcba9876543210")),
 		"newIterations": 600000,
@@ -460,7 +460,7 @@ func TestWrongStepUpIsForbiddenNotASessionExpiry(t *testing.T) {
 		srv.routes().ServeHTTP(w, req)
 		return w
 	}
-	wrong, right := `{"password":"not-the-password"}`, `{"password":"`+password+`"}`
+	wrong, right := `{"authSecret":"`+authSecretFor(srv, "not-the-password")+`"}`, `{"authSecret":"`+authSecretFor(srv, password)+`"}`
 
 	if w := call(http.MethodDelete, wrong); w.Code != http.StatusForbidden || strings.TrimSpace(w.Body.String()) != "invalid credentials" {
 		t.Fatalf("wrong step-up: %d %q, want 403 invalid credentials", w.Code, w.Body.String())

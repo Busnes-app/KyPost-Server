@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,10 +97,16 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Matched exactly, so stray whitespace would silently match nothing.
+	if strings.TrimSpace(req.AdminGroup) != req.AdminGroup || len(req.AdminGroup) > 256 {
+		http.Error(w, "admin group must be at most 256 characters without leading or trailing spaces", http.StatusBadRequest)
+		return
+	}
 
 	// A blank secret keeps the stored one, but only for the issuer and client it
 	// was issued for: a changed destination never receives the old secret.
-	if stored := s.ssoStore.Load(); req.ClientSecret == "" && req.IssuerURL == stored.IssuerURL && req.ClientID == stored.ClientID {
+	stored := s.ssoStore.Load()
+	if req.ClientSecret == "" && req.IssuerURL == stored.IssuerURL && req.ClientID == stored.ClientID {
 		req.ClientSecret = stored.ClientSecret
 	}
 
@@ -107,8 +114,33 @@ func (s *Server) handleAdminSSOPut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to save SSO settings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Sessions carry the issuer, client and admin ceiling they were minted
+	// under; a change to any of them, or disabling SSO, ends them all.
+	if req.Enabled != stored.Enabled || req.IssuerURL != stored.IssuerURL || req.ClientID != stored.ClientID || req.AdminGroup != stored.AdminGroup {
+		s.endSSOSessions()
+	}
+	// Links made at another provider name other people here. Idempotent, so a
+	// failed revocation is finished by saving again.
+	if req.IssuerURL != "" {
+		if _, err := s.users.RevokeSSOLinksNotFrom(req.IssuerURL); err != nil {
+			s.logger.Error("sso: revoking links from a previous issuer failed", "error", err.Error())
+			http.Error(w, "settings saved, but revoking SSO links from the previous provider failed; save again", http.StatusInternalServerError)
+			return
+		}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "settings": adminSSOView(req)})
+}
+
+// bindUnboundSSOLinks adopts links stored before issuers were (see
+// users.BindUnboundSSOLinks). Runs at startup; a failure leaves them unable to
+// sign in, never able to sign in elsewhere.
+func (s *Server) bindUnboundSSOLinks() {
+	if n, err := s.users.BindUnboundSSOLinks(s.ssoStore.Load().IssuerURL); err != nil {
+		s.logger.Error("sso: binding legacy links to the configured issuer failed", "error", err.Error())
+	} else if n > 0 {
+		s.logger.Info("sso: bound legacy links to the configured issuer", "count", strconv.Itoa(n))
+	}
 }
 
 // ssoRedirectURI builds the callback URL the provider must be told to return to.
@@ -219,7 +251,6 @@ func (s *Server) handleSSOLinkStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret,omitempty"`
 		Code       string `json:"code,omitempty"`
 	}
@@ -246,7 +277,7 @@ func (s *Server) handleSSOLinkStart(w http.ResponseWriter, r *http.Request) {
 	// Credential first, then the second factor, each on its own counter and the
 	// success recorded only once both hold — handleAuthStepUp explains why
 	// clearing between the two would leave the second factor unthrottled.
-	if !s.confirmAccountCredentialNoRecord(w, r, ac.UserID, req.Password, req.AuthSecret) {
+	if !s.confirmAccountCredentialNoRecord(w, r, ac.UserID, req.AuthSecret) {
 		return
 	}
 	if u.TOTPEnabled && !s.confirmSecondFactor(w, r, u, strings.TrimSpace(req.Code)) {
@@ -322,6 +353,7 @@ func (s *Server) startSSOFlow(w http.ResponseWriter, r *http.Request, settings s
 
 // handleSSOCallback processes the authorization code callback from the OIDC IdP.
 func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
+	epoch := s.ssoEpoch.Load() // before the settings it vouches for
 	settings := s.ssoStore.Load()
 	if !settings.Enabled || settings.IssuerURL == "" {
 		http.Error(w, "Single Sign-On is not configured or disabled", http.StatusServiceUnavailable)
@@ -483,7 +515,7 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.mintSession(w, r, Session{UserID: user.ID, SSO: identity, SSOAppAdmin: claims.AppAdmin(), SSOKySignOn: claims.KySignOn()}); err != nil {
+	if err := s.mintSession(w, r, Session{UserID: user.ID, SSO: identity, SSOAppAdmin: claims.AppAdmin(settings.AdminGroup), SSOKySignOn: claims.KySignOn(), SSOEpoch: epoch}); err != nil {
 		http.Error(w, "failed to initialize session", http.StatusInternalServerError)
 		return
 	}
@@ -548,6 +580,10 @@ func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings,
 		}
 		return user, nil
 	}
+	if errors.Is(err, users.ErrNativeAccountConflict) {
+		http.Error(w, "Access denied: this SSO subject belongs to an account linked at a different identity provider. Contact your administrator.", http.StatusForbidden)
+		return users.User{}, err
+	}
 	if !errors.Is(err, users.ErrNotFound) {
 		http.Error(w, "failed to look up SSO identity", http.StatusInternalServerError)
 		return users.User{}, err
@@ -564,7 +600,7 @@ func (s *Server) resolveSSOUser(w http.ResponseWriter, settings sso.SSOSettings,
 	}
 
 	role := users.RoleUser
-	if claims.AppAdmin() {
+	if claims.GrantsAdmin(settings.AdminGroup) {
 		role = users.RoleAdmin
 	}
 

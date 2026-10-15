@@ -55,6 +55,7 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
+			s.bindUnboundSSOLinks() // as API startup does for a pre-issuer record
 			if _, e = s.userStore(legacy.ID); e != nil {
 				t.Fatal(e)
 			}
@@ -78,7 +79,7 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 
 			// Obtain a real password session before restore quarantine.
 			w := httptest.NewRecorder()
-			login, _ := json.Marshal(map[string]any{"username": native.Username, "password": "retained-native-password"})
+			login, _ := json.Marshal(map[string]any{"username": native.Username, "authSecret": testAuthSecret(s, native.Username, "retained-native-password")})
 			lr := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(string(login)))
 			lr.Header.Set("Content-Type", "application/json")
 			s.routes().ServeHTTP(w, lr)
@@ -96,7 +97,7 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 			}
 			cookie := sessionCookieFrom(w)
 			sum := sha256.Sum256([]byte(testSyncKey))
-			b, _ := json.Marshal(map[string]any{"password": recoveryAdminPassword, "systemId": "paired-system", "keyFingerprint": hex.EncodeToString(sum[:])})
+			b, _ := json.Marshal(map[string]any{"authSecret": authSecretFor(s, recoveryAdminPassword), "systemId": "paired-system", "keyFingerprint": hex.EncodeToString(sum[:])})
 			w = gatedCall(t, s, cookie, "POST", "/api/admin/native-recovery/challenge", string(b), "")
 			if w.Code != 200 {
 				t.Fatal(w.Code, w.Body.String())
@@ -106,7 +107,7 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 				t.Fatal(e)
 			}
 			c := response.Challenge
-			w = gatedCall(t, s, cookie, "POST", "/api/admin/native-recovery/evidence", recoveryHTTPUpload(t, c, 0, testSyncKey), "")
+			w = gatedCall(t, s, cookie, "POST", "/api/admin/native-recovery/evidence", recoveryHTTPUpload(t, s, c, 0, testSyncKey), "")
 			if w.Code != 200 {
 				t.Fatal(w.Code, w.Body.String())
 			}
@@ -204,7 +205,7 @@ func assertRecoveryReceiptInvalidated(t *testing.T, s *Server) {
 
 func TestNativeRecoveryPublishedLegacyOffboarding(t *testing.T) {
 	s, c, ch := nativeRecoveryHTTPFixture(t)
-	rec := gatedCall(t, s, c, "POST", "/api/admin/native-recovery/evidence", recoveryHTTPUpload(t, ch, 0, testSyncKey), "")
+	rec := gatedCall(t, s, c, "POST", "/api/admin/native-recovery/evidence", recoveryHTTPUpload(t, s, ch, 0, testSyncKey), "")
 	if rec.Code != 200 {
 		t.Fatal(rec.Code, rec.Body.String())
 	}

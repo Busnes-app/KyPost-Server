@@ -97,7 +97,7 @@ func TestNativeAdmissionRefusesPromotedSubject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := life.AdmitNativeMail(ctx, root, nativeIssuer, u.ID, accounts)
+	a, err := life.AdmitNativeMailbox(ctx, root, nativeIssuer, u.ID, u.ID, accounts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestNativeAdmissionRefusesPromotedSubject(t *testing.T) {
 		t.Fatal(err)
 	}
 	admit := func() error {
-		_, err := life.AdmitNativeMail(ctx, root, nativeIssuer, u.ID, accounts)
+		_, err := life.AdmitNativeMailbox(ctx, root, nativeIssuer, u.ID, u.ID, accounts)
 		called := false
 		access := life.WithNativeMailAccess(ctx, root, nativeIssuer, accounts, []string{u.ID}, func(map[string]NativeAssignment) error { called = true; return nil })
 		if (err == nil) != (access == nil) || called != (access == nil) {
@@ -163,7 +163,7 @@ func TestNativeLegacyMixedUseClearedOnlyByDemotion(t *testing.T) {
 	}
 	root := a.StateRoot
 	admit := func() error {
-		_, err := life.AdmitNativeMail(ctx, root, nativeIssuer, ids["boss"], accounts)
+		_, err := life.AdmitNativeMailbox(ctx, root, nativeIssuer, ids["boss"], ids["boss"], accounts)
 		return err
 	}
 	if err := admit(); err != nil || !legacyFlag(t, life, "boss") {
@@ -335,7 +335,7 @@ func TestNativeLegacyMixedUseDemotionFailsOnUnreadableLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := life.AdmitNativeMail(ctx, a.StateRoot, nativeIssuer, ids["boss"], accounts); !errors.Is(err, ErrNativeAdministrator) {
+	if _, err := life.AdmitNativeMailbox(ctx, a.StateRoot, nativeIssuer, ids["boss"], ids["boss"], accounts); !errors.Is(err, ErrNativeAdministrator) {
 		t.Fatal("re-promotion regained mail", err)
 	}
 }

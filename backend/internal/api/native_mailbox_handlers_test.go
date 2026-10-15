@@ -60,7 +60,9 @@ func TestNativeMailboxesAdminAPIAndSelection(t *testing.T) {
 		srv.routes().ServeHTTP(w, req)
 		return w
 	}
-	confirm := func(fields string) string { return `{` + fields + `"password":"` + password + `"}` }
+	confirm := func(fields string) string {
+		return `{` + fields + `"authSecret":"` + authSecretFor(srv, password) + `"}`
+	}
 
 	// Same gates as the address routes.
 	for _, route := range []string{"/api/admin/mailboxes", "/api/admin/mailboxes/mbx-x/disable", "/api/admin/mailboxes/mbx-x/enable"} {
@@ -432,7 +434,7 @@ func TestNativeExtraMailboxExcludesIncomingEncryption(t *testing.T) {
 	}
 	token, csrf := mintSessionForTest(srv, admin.ID)
 	create := func(address string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("POST", "/api/admin/mailboxes", strings.NewReader(`{"user":"`+one.ID+`","address":"`+address+`","password":"`+password+`"}`))
+		req := httptest.NewRequest("POST", "/api/admin/mailboxes", strings.NewReader(`{"user":"`+one.ID+`","address":"`+address+`","authSecret":"`+authSecretFor(srv, password)+`"}`))
 		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
 		req.Header.Set("X-CSRF-Token", csrf)
 		w := httptest.NewRecorder()
@@ -485,7 +487,7 @@ func TestNativeExtraMailboxExcludesIncomingEncryption(t *testing.T) {
 		t.Fatal("a disabled extra mailbox still blocks incoming encryption", w.Code, w.Body)
 	}
 	toggle := func(action string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("POST", "/api/admin/mailboxes/"+extra.ID+"/"+action, strings.NewReader(`{"password":"`+password+`"}`))
+		req := httptest.NewRequest("POST", "/api/admin/mailboxes/"+extra.ID+"/"+action, strings.NewReader(`{"authSecret":"`+authSecretFor(srv, password)+`"}`))
 		req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
 		req.Header.Set("X-CSRF-Token", csrf)
 		w := httptest.NewRecorder()
@@ -579,7 +581,7 @@ func TestNativeExtraMailboxIncomingEncryptionRace(t *testing.T) {
 		return w
 	}
 	encrypt := func() *httptest.ResponseRecorder {
-		body := `{"enabled":true,"acknowledgeReplacement":true,"expectedRevision":` + strconv.FormatUint(one.PGPRevision, 10) + `,"password":"` + userPassword + `"}`
+		body := `{"enabled":true,"acknowledgeReplacement":true,"expectedRevision":` + strconv.FormatUint(one.PGPRevision, 10) + `,"authSecret":"` + authSecretFor(srv, userPassword) + `"}`
 		req := httptest.NewRequest("PUT", "/api/pgp/incoming", strings.NewReader(body))
 		authRequestAs(srv, req, one.ID)
 		w := httptest.NewRecorder()
@@ -649,7 +651,7 @@ func TestNativeExtraMailboxIncomingEncryptionRace(t *testing.T) {
 		reset()
 		address := "race" + strconv.Itoa(i) + "@example.test"
 		enc, extra := race(delay(i), func() *httptest.ResponseRecorder {
-			w := adminPost("/api/admin/mailboxes", `{"user":"`+one.ID+`","address":"`+address+`","password":"`+adminPassword+`"}`)
+			w := adminPost("/api/admin/mailboxes", `{"user":"`+one.ID+`","address":"`+address+`","authSecret":"`+userAuthSecret(srv, admin.ID, adminPassword)+`"}`)
 			var m sso.NativeMailbox
 			if w.Code == 200 && json.Unmarshal(w.Body.Bytes(), &m) == nil {
 				last = m.ID
@@ -664,7 +666,7 @@ func TestNativeExtraMailboxIncomingEncryptionRace(t *testing.T) {
 	for i := range rounds {
 		reset()
 		enc, extra := race(delay(i), func() *httptest.ResponseRecorder {
-			return adminPost("/api/admin/mailboxes/"+last+"/enable", `{"password":"`+adminPassword+`"}`)
+			return adminPost("/api/admin/mailboxes/"+last+"/enable", `{"authSecret":"`+userAuthSecret(srv, admin.ID, adminPassword)+`"}`)
 		})
 		won["enable:"+strconv.FormatBool(enc)+strconv.FormatBool(extra)]++
 	}

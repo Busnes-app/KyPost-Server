@@ -59,7 +59,7 @@ beforeEach(() => {
     if (url === "/api/users" && failUsers) return new Response("users unreadable", { status: 503 });
     return json(url === "/api/users" ? users : listResponse);
   });
-  vi.mocked(deriveCredential).mockResolvedValue({ password: "must-not-transmit", authSecret: "derived-test-secret", loginSalt: "test-salt", loginIterations: 1, derivation: "pbkdf2" });
+  vi.mocked(deriveCredential).mockResolvedValue({ authSecret: "derived-test-secret" });
   vi.mocked(withSSOStepUp).mockImplementation(run => run({}));
   document.cookie = "csrf_token=test-csrf";
 });

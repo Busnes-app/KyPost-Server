@@ -10,7 +10,6 @@
 package api
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -20,37 +19,16 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
-// clientLoginIterations is the PBKDF2 work factor this server asks new clients
-// to use. It matches keyVault.ts's DEFAULT_ITERATIONS (the OWASP figure for
-// PBKDF2-HMAC-SHA256), so one stretch serves both halves.
-//
-// Advisory: the client reports back what it actually used and the store bounds
-// it (users.MinLoginIterations). Raising this affects new credentials only.
-const clientLoginIterations = 600_000
-
-// Wire values for the "derivation" hint handleLoginParams returns to an
-// AUTHENTICATED caller, telling it which credential form to send back. Spelled
-// out rather than reusing users.AuthDerivation*, whose legacy value is the empty
-// string and so cannot be distinguished from a field the server did not send.
-const (
-	derivationLegacy  = "legacy"
-	derivationDerived = "pbkdf2"
-)
-
 // handleLoginParams returns the salt and work factor a client must use to derive
 // its auth secret for a given username. Public and unauthenticated: it runs
 // before any credential exists.
 //
 // IT MUST NOT REVEAL WHETHER THE ACCOUNT EXISTS. A real account returns its
-// stored salt; a nonexistent account, or a legacy one not yet converted, returns
-// a synthetic salt derived from the instance secret and the username. All three
-// are 16 random-looking bytes with no distinguishing shape, and the synthetic
-// one is stable across requests, so asking twice does not out it either.
-//
-// The response deliberately carries no "derivation" or "legacy" field: once
-// every account has converted, "legacy" would mean "no such user". The client
-// always derives and always sends the auth secret, and additionally sends the
-// plaintext only while it still has to — see handleLogin.
+// stored salt; a nonexistent account, or a legacy one awaiting an admin reset,
+// returns a synthetic salt derived from the instance secret and the username.
+// All three are 16 random-looking bytes with no distinguishing shape, and the
+// synthetic one is stable across requests, so asking twice does not out it
+// either.
 func (s *Server) handleLoginParams(w http.ResponseWriter, r *http.Request) {
 	// Metered per IP, in requests. This endpoint performs no derivation, so charging
 	// it a full attempt's reservation against the INSTANCE-WIDE derivation budget
@@ -68,45 +46,19 @@ func (s *Server) handleLoginParams(w http.ResponseWriter, r *http.Request) {
 
 	username := strings.TrimSpace(r.URL.Query().Get("username"))
 	// With no username, answer for the authenticated caller. That is what the
-	// re-authentication flows need (disabling TOTP, exporting a legacy key): they
-	// already have a session, and making them echo their own username back invites a
-	// caller to pass someone else's. Falling through to the synthetic salt for the
-	// empty string would hand them a salt that cannot reproduce their credential.
-	authenticated := false
+	// re-authentication flows need (step-up, disabling TOTP): they already have a
+	// session, and making them echo their own username back invites a caller to
+	// pass someone else's.
 	if username == "" {
 		if ac, ok := s.currentUser(r); ok {
 			username = ac.Username
-			authenticated = true
 		}
 	}
 	salt, iterations := s.loginParamsFor(username)
-	body := map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"salt":       salt,
 		"iterations": iterations,
-	}
-	// Which credential form this account actually stores — but ONLY for a caller
-	// who has already proved they are that account.
-	//
-	// The client cannot otherwise know whether to send the plaintext password or
-	// the derived secret, and guessing wrong is a hard failure: verifyAccountCredential
-	// picks by what the ACCOUNT stores, never by what arrived. Answering it for an
-	// arbitrary username would be exactly the existence oracle the synthetic salt
-	// exists to prevent — "legacy or nonexistent" and "converted" are
-	// indistinguishable today only because nothing distinguishes them. Answering it
-	// for the authenticated caller discloses nothing: they are already that user.
-	//
-	// Unauthenticated callers (sign-in) get no such field and must send both forms;
-	// see credentialFields in frontend/src/api/auth.ts.
-	// Explicit wire values rather than users.AuthDerivation*: the legacy constant
-	// is the empty string, which a client cannot tell from an absent field.
-	if authenticated {
-		derivation := derivationLegacy
-		if u, err := s.users.GetByUsername(username); err == nil && u.UsesDerivedAuth() {
-			derivation = derivationDerived
-		}
-		body["derivation"] = derivation
-	}
-	writeJSON(w, http.StatusOK, body)
+	})
 }
 
 // loginParamsFor resolves the salt and iteration count for a username, without
@@ -121,11 +73,11 @@ func (s *Server) loginParamsFor(username string) (salt string, iterations int) {
 		// itself. The store now rejects such a value on write — this covers
 		// anything already persisted, and costs nothing.
 		if it < users.MinLoginIterations || it > users.MaxLoginIterations {
-			it = clientLoginIterations
+			it = users.LoginIterations()
 		}
 		return u.LoginSalt, it
 	}
-	return s.syntheticLoginSalt(username), clientLoginIterations
+	return s.syntheticLoginSalt(username), users.LoginIterations()
 }
 
 // syntheticLoginSalt derives a stable, per-username salt for any username this
@@ -134,11 +86,8 @@ func (s *Server) loginParamsFor(username string) (salt string, iterations int) {
 // so repeated requests for the same username agree — a salt that changed per
 // request would be a louder existence oracle than returning nothing at all.
 //
-// It is also the salt a legacy account's first derived credential ends up pinned
-// to: the client derives with whatever this returns, and the upgrade in
-// handleLogin recomputes and stores that same value. The domain string and the
-// fold must not change without a migration, since changing either invalidates
-// every credential derived against it.
+// Credentials pinned to it by the retired legacy upgrade still depend on it, so
+// the domain string and the fold must not change without a migration.
 //
 // Falls back to a fixed key when no pairing secret is configured: with no
 // secret the salt is merely non-secret, and a salt's job is uniqueness, not
@@ -152,24 +101,4 @@ func (s *Server) syntheticLoginSalt(username string) string {
 	mac.Write([]byte("kypost/login-salt/v1|"))
 	mac.Write([]byte(users.NormalizeUsername(username)))
 	return base64.StdEncoding.EncodeToString(mac.Sum(nil)[:16])
-}
-
-// verifyAccountCredential checks a re-authentication request against whichever
-// credential form the account actually stores. Shared by every endpoint that
-// re-verifies the account password before doing something sensitive (disabling
-// TOTP, exporting a legacy private key). The account decides which form is
-// checked, never the request: the derivation salt is public, so letting a caller
-// choose "check this as a password" against a derived-auth account would let
-// them authenticate with a value computed from the salt alone.
-//
-// The (bool, error) split is the caller's cue: an error means the credential
-// was NOT checked (the derivation slots were saturated, or the client hung up),
-// so the caller must answer 503 and must not spend a lockout strike. Folding it
-// into false would report overload as "wrong password" and, on the flows that
-// take a strike, lock the account out of its own remediation during a spike.
-func verifyAccountCredential(ctx context.Context, u users.User, password, authSecret string) (bool, error) {
-	if u.UsesDerivedAuth() {
-		return users.VerifyAuthSecret(ctx, u, authSecret)
-	}
-	return users.VerifyPassword(ctx, u, password)
 }

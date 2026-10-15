@@ -329,7 +329,7 @@ func TestDirectoryRefusesUnsignedMalformedAndLastAdminRemoval(t *testing.T) {
 			admin = u
 		}
 	}
-	if err := srv.users.LinkSSO(admin.ID, "only-admin", "admin", ""); err != nil {
+	if err := srv.users.LinkSSOIssuer(srv.ssoStore.Load().IssuerURL, admin.ID, "only-admin", "admin", ""); err != nil {
 		t.Fatal(err)
 	}
 	if rec := postDirectory(t, srv, testSyncKey, "user.deleted", "ev-rm", 1, scimUser("only-admin", "admin", false)); rec.Code != http.StatusUnprocessableEntity {

@@ -89,25 +89,38 @@ func TestClaimsAppAdmin(t *testing.T) {
 		c.RealmAccess.Roles = roles
 		return c
 	}
+	// ceiling is AppAdmin (bounds a session), grant is GrantsAdmin (a new
+	// account's role); group is the operator's AdminGroup.
 	cases := []struct {
-		name   string
-		claims *SSOTokenClaims
-		want   bool
+		name           string
+		claims         *SSOTokenClaims
+		group          string
+		ceiling, grant bool
 	}{
-		{"kysignon app role", &SSOTokenClaims{Roles: json.RawMessage(`["kypost.admin"]`)}, true},
-		{"kysignon object form", &SSOTokenClaims{Roles: json.RawMessage(`[{"value":"kypost.admin"}]`)}, true},
-		{"kysignon without the role", &SSOTokenClaims{Roles: json.RawMessage(`["notes.admin","admin"]`)}, false},
-		{"kysignon roles outrank generic groups", &SSOTokenClaims{Roles: json.RawMessage(`[]`), Groups: []string{"admins"}}, false},
-		{"kysignon roles null", &SSOTokenClaims{Roles: json.RawMessage(`null`), Groups: []string{"admins"}}, false},
-		{"authentik group", &SSOTokenClaims{Groups: []string{"authentik default admins"}}, true},
-		{"authentik ak_groups", &SSOTokenClaims{AKGroups: []string{"Admins"}}, true},
-		{"keycloak realm role", keycloak("admin"), true},
-		{"plain user", &SSOTokenClaims{Groups: []string{"users"}}, false},
-		{"nil", nil, false},
+		{"kysignon app role", &SSOTokenClaims{Roles: json.RawMessage(`["kypost.admin"]`)}, "", true, true},
+		{"kysignon object form", &SSOTokenClaims{Roles: json.RawMessage(`[{"value":"kypost.admin"}]`)}, "", true, true},
+		{"kysignon without the role", &SSOTokenClaims{Roles: json.RawMessage(`["notes.admin","admin"]`)}, "admin", false, false},
+		{"kysignon roles outrank generic groups", &SSOTokenClaims{Roles: json.RawMessage(`[]`), Groups: []string{"admins"}}, "admins", false, false},
+		{"kysignon roles null", &SSOTokenClaims{Roles: json.RawMessage(`null`), Groups: []string{"admins"}}, "", false, false},
+		// No group configured: legacy names still cap a session, never grant.
+		{"authentik group", &SSOTokenClaims{Groups: []string{"authentik default admins"}}, "", true, false},
+		{"authentik ak_groups", &SSOTokenClaims{AKGroups: []string{"Admins"}}, "", true, false},
+		{"keycloak realm role", keycloak("admin"), "", true, false},
+		// A configured group is matched exactly and replaces the legacy names.
+		{"configured group", &SSOTokenClaims{Groups: []string{"/kypost-admins"}}, "/kypost-admins", true, true},
+		{"configured ak_group", &SSOTokenClaims{AKGroups: []string{"KyPost Admins"}}, "KyPost Admins", true, true},
+		{"configured realm role", keycloak("kypost-admin"), "kypost-admin", true, true},
+		{"configured group, other case", &SSOTokenClaims{Groups: []string{"/KyPost-Admins"}}, "/kypost-admins", false, false},
+		{"shared group once configured", &SSOTokenClaims{Groups: []string{"admins"}}, "/kypost-admins", false, false},
+		{"plain user", &SSOTokenClaims{Groups: []string{"users"}}, "", false, false},
+		{"nil", nil, "x", false, false},
 	}
 	for _, tc := range cases {
-		if got := tc.claims.AppAdmin(); got != tc.want {
-			t.Errorf("%s: AppAdmin = %v, want %v", tc.name, got, tc.want)
+		if got := tc.claims.AppAdmin(tc.group); got != tc.ceiling {
+			t.Errorf("%s: AppAdmin = %v, want %v", tc.name, got, tc.ceiling)
+		}
+		if got := tc.claims.GrantsAdmin(tc.group); got != tc.grant {
+			t.Errorf("%s: GrantsAdmin = %v, want %v", tc.name, got, tc.grant)
 		}
 	}
 }
@@ -120,7 +133,7 @@ func TestClaimsLegacyRoleIsNotAdmin(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &c); err != nil {
 			t.Fatal(err)
 		}
-		if c.AppAdmin() {
+		if c.AppAdmin("") || c.GrantsAdmin("admin") {
 			t.Errorf("%s: legacy global admin mapped to product admin", raw)
 		}
 	}
@@ -137,7 +150,7 @@ func TestExchangeAcceptsSignedToken(t *testing.T) {
 	if claims.Sub != "sso-sub-12345" || claims.PreferredUsername != "admin_sso" || claims.Email != "admin_sso@urlxl.com" {
 		t.Errorf("unexpected claims: %+v", claims)
 	}
-	if !claims.AppAdmin() {
+	if !claims.AppAdmin("") {
 		t.Errorf("expected the kypost.admin role to survive verification")
 	}
 	if claims.Issuer != idp.URL() {

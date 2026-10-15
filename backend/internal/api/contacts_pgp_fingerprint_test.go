@@ -123,7 +123,8 @@ func TestContactUpdateBackfillsPGPKeyFingerprint(t *testing.T) {
 	if updated.PGPKeyFingerprint != id.Fingerprint {
 		t.Fatalf("PGPKeyFingerprint = %q, want %q", updated.PGPKeyFingerprint, id.Fingerprint)
 	}
-	if updated.PGPKeySource != "" {
-		t.Fatalf("backfill should not set PGPKeySource, got %q", updated.PGPKeySource)
+	// Resending the same key keeps the stored provenance rather than dropping it.
+	if updated.PGPKeySource != "manual" {
+		t.Fatalf("PGPKeySource = %q, want the stored \"manual\" carried", updated.PGPKeySource)
 	}
 }

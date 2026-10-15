@@ -26,12 +26,11 @@ func (s *Server) withAdmin(next http.HandlerFunc) http.HandlerFunc {
 
 // withAdminStepUp confirms the acting admin (confirmActor) before next runs.
 // Register inside withAdmin(withActionDigest(...)). The credential travels as
-// adminPassword/adminAuthSecret because these bodies carry passwords of their own.
+// adminAuthSecret because create and reset bodies carry a password of their own.
 func (s *Server) withAdminStepUp(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw, err := io.ReadAll(r.Body) // bounded by withActionDigest
 		var cred struct {
-			Password   string `json:"adminPassword"`
 			AuthSecret string `json:"adminAuthSecret"`
 		}
 		if err != nil || len(raw) > 0 && json.Unmarshal(raw, &cred) != nil {
@@ -39,7 +38,7 @@ func (s *Server) withAdminStepUp(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		ac, _ := authFromContext(r)
-		if !s.confirmActor(w, r, ac.UserID, cred.Password, cred.AuthSecret) {
+		if !s.confirmActor(w, r, ac.UserID, cred.AuthSecret) {
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(raw))

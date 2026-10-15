@@ -1,33 +1,24 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
 )
 
-// isPrivateOrReservedIP defers to netguard, which is the single definition
-// shared with internal/processor's UnifiedPush endpoint guard. It stays a named
-// function here only so outboundIPGuard below has something to point at.
-func isPrivateOrReservedIP(ip net.IP) bool {
-	return netguard.IsPrivateOrReserved(ip)
-}
-
-// outboundIPGuard decides whether an IP is forbidden for user-supplied
-// outbound requests. It exists as a variable, rather than validateOutboundURL
-// and ssrfSafeDialContext calling isPrivateOrReservedIP directly, solely so
-// tests in this package can relax it to reach httptest's loopback listeners
-// — production code must never reassign it.
-var outboundIPGuard = isPrivateOrReservedIP
+// outboundIPGuard and outboundDial are variables solely so tests in this
+// package can relax them to reach httptest's loopback listeners — production
+// code must never reassign them.
+var (
+	outboundIPGuard = netguard.IsPrivateOrReserved
+	outboundDial    = netguard.DialContext
+)
 
 // outboundCardDAVSchemes are the schemes a user-supplied CardDAV server URL
 // may use.
@@ -39,49 +30,14 @@ var outboundIPGuard = isPrivateOrReservedIP
 // an http:// target is necessarily a public host reached in the clear.
 var outboundCardDAVSchemes = []string{"https"}
 
-// sandboxPrivateHosts names hosts that may resolve to private space anyway.
-//
-// A sandbox deployment runs its CardDAV server on a compose network, so its
-// address is private by definition and the guard below refuses it — which
-// leaves the CardDAV path untestable end to end. Empty unless an operator sets
-// SANDBOX_PRIVATE_HOSTS, so production is unchanged.
-//
-// Hostnames only, matched exactly. IP literals are never allowed: the entire
-// point of the guard is that a URL naming a private address is refused, and
-// accepting literals here would make one entry a general SSRF primitive.
-var sandboxPrivateHosts = parseSandboxPrivateHosts(os.Getenv("SANDBOX_PRIVATE_HOSTS"))
-
-func parseSandboxPrivateHosts(raw string) map[string]struct{} {
-	hosts := make(map[string]struct{})
-	for _, h := range strings.Split(raw, ",") {
-		h = strings.ToLower(strings.TrimSpace(h))
-		if h == "" || net.ParseIP(h) != nil {
-			continue
-		}
-		hosts[h] = struct{}{}
-	}
-	return hosts
-}
-
-// sandboxHostAllowed reports whether host is listed. Exact match after case
-// folding — no suffix or wildcard matching, so a name an attacker controls
-// cannot swallow an entry by extending it.
-func sandboxHostAllowed(allowed map[string]struct{}, host string) bool {
-	if len(allowed) == 0 || host == "" || net.ParseIP(host) != nil {
-		return false
-	}
-	_, ok := allowed[strings.ToLower(host)]
-	return ok
-}
-
 // validateOutboundURL rejects URLs that are not safe for this server to make
 // requests to on a user's behalf: schemes outside allowedSchemes, and hosts
 // that (as an IP literal or via DNS) resolve to a private/loopback/link-local
 // address. Intended as an up-front check at configuration time; see
-// ssrfSafeDialContext for the dial-time recheck that also covers DNS
+// netguard.Dialer for the dial-time recheck that also covers DNS
 // rebinding and redirects.
 func validateOutboundURL(rawURL string, allowedSchemes ...string) error {
-	return validateOutboundURLWithSandbox(rawURL, sandboxPrivateHosts, allowedSchemes...)
+	return validateOutboundURLWithSandbox(rawURL, netguard.AllowedHosts, allowedSchemes...)
 }
 
 func validateOutboundURLWithSandbox(rawURL string, allowed map[string]struct{}, allowedSchemes ...string) error {
@@ -107,7 +63,7 @@ func validateOutboundURLWithSandbox(rawURL string, allowed map[string]struct{}, 
 	// server may connect, not whether the user's password crosses the wire in
 	// the clear. Resolution is skipped too, since a compose hostname does not
 	// resolve outside the network it belongs to.
-	if sandboxHostAllowed(allowed, host) {
+	if netguard.HostAllowed(allowed, host) {
 		return nil
 	}
 	if ip := net.ParseIP(host); ip != nil {
@@ -128,52 +84,6 @@ func validateOutboundURLWithSandbox(rawURL string, allowed map[string]struct{}, 
 	return nil
 }
 
-// ssrfSafeDialContext re-resolves the target host at actual dial time and
-// refuses to connect if every candidate address is private/reserved. Run at
-// dial time (not just once up front via validateOutboundURL) so a hostname
-// that was public when the caller configured it but has since been rebound
-// to an internal address (DNS rebinding) is still blocked — and so
-// redirects, which make Go's http.Client dial again, get the same check
-// applied to their target.
-func ssrfSafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	return sandboxAwareDialContext(sandboxPrivateHosts)(ctx, network, addr)
-}
-
-// sandboxAwareDialContext builds the dial-time guard around a given allowlist,
-// so tests can exercise it without touching the process environment.
-func sandboxAwareDialContext(allowed map[string]struct{}) func(context.Context, string, string) (net.Conn, error) {
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, err
-		}
-		// A listed host has no address check left to make, so hand the name
-		// straight to the dialer and let it try every address the way it normally
-		// would. Pinning one resolved IP here would break a host that answers on
-		// both families.
-		if sandboxHostAllowed(allowed, host) {
-			dialer := &net.Dialer{Timeout: 10 * time.Second}
-			return dialer.DialContext(ctx, network, addr)
-		}
-		ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
-		if err != nil {
-			return nil, err
-		}
-		var chosen net.IP
-		for _, ip := range ips {
-			if !outboundIPGuard(ip) {
-				chosen = ip
-				break
-			}
-		}
-		if chosen == nil {
-			return nil, fmt.Errorf("refusing to dial %q: no public address available", host)
-		}
-		dialer := &net.Dialer{Timeout: 10 * time.Second}
-		return dialer.DialContext(ctx, network, net.JoinHostPort(chosen.String(), port))
-	}
-}
-
 // maxOutboundResponseBytes bounds how much of a response from a user-supplied
 // host this process will read.
 //
@@ -189,43 +99,17 @@ func sandboxAwareDialContext(allowed map[string]struct{}) func(context.Context, 
 // cover every current and future go-webdav call at once.
 const maxOutboundResponseBytes = 32 << 20
 
-// boundedBodyTransport caps every response body it returns.
-//
-// Note the failure mode: a truncated body surfaces to the caller as a parse
-// error rather than a clean "too large". That is acceptable here because the
-// limit is far above any legitimate CardDAV response, so reaching it already
-// means the remote server is misbehaving.
-type boundedBodyTransport struct {
-	base  http.RoundTripper
-	limit int64
-}
-
-type boundedBody struct {
-	io.Reader
-	io.Closer
-}
-
-func (t *boundedBodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := t.base.RoundTrip(req)
-	if err != nil {
-		return nil, err
-	}
-	resp.Body = boundedBody{Reader: io.LimitReader(resp.Body, t.limit), Closer: resp.Body}
-	return resp, nil
-}
-
 // newSSRFSafeHTTPClient builds an http.Client for outbound requests whose
 // destination host is supplied by a user (e.g. a CardDAV server URL): every
-// dial, including ones made for redirects, is re-resolved and checked against
-// isPrivateOrReservedIP immediately before connecting, and every response body
-// is bounded at maxOutboundResponseBytes.
+// dial, including ones made for redirects, goes through netguard.DialContext,
+// and every response body is bounded at maxOutboundResponseBytes.
 func newSSRFSafeHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
-		Transport: &boundedBodyTransport{
+		Transport: &netguard.BoundedTransport{
 			// One transport per call: pooled conns would never be reused, only leaked.
-			base:  &http.Transport{DialContext: ssrfSafeDialContext, DisableKeepAlives: true},
-			limit: maxOutboundResponseBytes,
+			Base:  &http.Transport{DialContext: outboundDial, DisableKeepAlives: true},
+			Limit: maxOutboundResponseBytes,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {

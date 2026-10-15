@@ -58,7 +58,7 @@ func TestPushNumberMatchAtTheHTTPLayer(t *testing.T) {
 		// not accept.
 		{"login returns the match digits", func(t *testing.T) {
 			rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-				map[string]string{"username": username, "password": password})
+				map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 			if rec.Code != http.StatusOK {
 				t.Fatalf("login: status=%d body=%s", rec.Code, rec.Body.String())
 			}
@@ -163,7 +163,7 @@ func TestLoginOmitsMatchDigitsForTOTPOnlyUser(t *testing.T) {
 	enrollTOTP(t, srv, u.ID)
 
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": "sage", "password": "pw-sage-testpassword"})
+		map[string]string{"username": "sage", "authSecret": testAuthSecret(srv, "sage", "pw-sage-testpassword")})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login: status=%d body=%s", rec.Code, rec.Body.String())
 	}

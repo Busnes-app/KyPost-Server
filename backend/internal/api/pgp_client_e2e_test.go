@@ -67,7 +67,7 @@ func TestLegacyKeyMigrationRoundTrip(t *testing.T) {
 		t.Fatalf("SetPGPIdentity: %v", err)
 	}
 
-	exportBody, _ := json.Marshal(map[string]string{"password": password})
+	exportBody, _ := json.Marshal(map[string]string{"authSecret": authSecretFor(srv, password)})
 	exportReq := httptest.NewRequest(http.MethodPost, "/api/pgp/identity/export-legacy", bytes.NewReader(exportBody))
 	authRequest(srv, exportReq)
 	exportRec := httptest.NewRecorder()
@@ -94,10 +94,10 @@ func TestLegacyKeyMigrationRoundTrip(t *testing.T) {
 
 	// The browser wraps it and hands back the opaque envelope.
 	clientBody, _ := json.Marshal(map[string]string{
-		"publicKey": exported.PublicKey,
-		"wrapped":   `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"Y3Q="}`,
-		"source":    "imported",
-		"password":  password,
+		"publicKey":  exported.PublicKey,
+		"wrapped":    `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"Y3Q="}`,
+		"source":     "imported",
+		"authSecret": authSecretFor(srv, password),
 	})
 	clientReq := httptest.NewRequest(http.MethodPost, "/api/pgp/identity/client", bytes.NewReader(clientBody))
 	authRequest(srv, clientReq)

@@ -61,9 +61,8 @@ export function ChangePasswordForm({
     try {
       // MIN_PASSWORD_LEN is enforced here, in the client, because the server
       // cannot see the new password any more — that is the point of deriving the
-      // credential locally. The server still checks length on the legacy
-      // plaintext path and on admin-set passwords, which is where an operator
-      // policy actually needs to bite.
+      // credential locally. The server still checks length on admin-set
+      // passwords.
       if ([...newPassword].length < MIN_PASSWORD_LEN) {
         setStatus(`New password must be at least ${MIN_PASSWORD_LEN} characters.`);
         setBusy(false);
@@ -81,9 +80,7 @@ export function ChangePasswordForm({
       const salt = newLoginSalt();
       const newAuthSecret = await deriveNewCredential(newPassword, salt, iterations);
       // Empty username: this flow always runs with a session (/api/auth/password
-      // is withAuth), so the server answers for the caller AND tells us which
-      // credential form it stores — which keeps a converted account's plaintext
-      // password off the wire here. See credentialFields.
+      // is withAuth), so the server answers with the caller's own parameters.
       const oldCredential = await deriveCredential("", currentPassword);
       const pgpUpdate = await rewrappedEnvelopeFor(currentPassword, newPassword);
 

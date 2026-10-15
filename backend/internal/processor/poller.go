@@ -374,6 +374,7 @@ func (p *Poller) Run() {
 	}
 
 	p.log.Info("poller started", "interval", interval.String())
+	p.logDuplicateProvenAliases()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	wkdTicker := time.NewTicker(recheckWKDInterval)
@@ -676,7 +677,12 @@ func (p *Poller) tick() {
 		// acquired immediately
 	default:
 		p.log.Info("poll tick waiting for previous tick to finish")
-		<-p.tickSem
+		select {
+		case <-p.tickSem:
+		case <-p.lifetimeCtx().Done():
+			p.log.Info("poll tick abandoned: poller is shutting down")
+			return
+		}
 	}
 	defer func() { p.tickSem <- struct{}{} }()
 

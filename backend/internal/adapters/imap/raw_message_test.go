@@ -42,7 +42,7 @@ func TestParseRawMessageRecord(t *testing.T) {
 	t.Run("NIL value is returned as empty, not an error", func(t *testing.T) {
 		// Mirrors parseHeaderFieldsRecords's convention: NIL means "no
 		// content", not a parse failure. Safe downstream since
-		// VerifyDKIMForDomain fails closed on an empty raw message anyway.
+		// VerifyDKIMCoversHeader fails closed on an empty raw message anyway.
 		raw := "* 1 FETCH (UID 300 BODY[] NIL)\r\n"
 		records := parseRecords(t, raw)
 		got, err := parseRawMessageRecord(records, 300)

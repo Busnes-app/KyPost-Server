@@ -11,6 +11,9 @@
 github.com/Busnes-app/kypost-server/backend/internal/users.SetHashParamsForTest
 github.com/Busnes-app/kypost-server/backend/internal/users.HashParams
 
+# Lowers PBKDF2 cost for other packages' test suites; panics outside tests.
+github.com/Busnes-app/kypost-server/backend/internal/users.SetLoginIterationsForTest
+
 # Trusts httptest's TLS certificate for the ssotest provider; panics outside a
 # test binary.
 github.com/Busnes-app/kypost-server/backend/internal/sso.SetTransport

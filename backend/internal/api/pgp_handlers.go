@@ -88,7 +88,6 @@ func (s *Server) handlePGPIdentity(w http.ResponseWriter, r *http.Request) {
 		// enough — see pgp_stepup.go.
 		var req struct {
 			ExpectedRevision *uint64 `json:"expectedRevision,omitempty"`
-			Password         string  `json:"password,omitempty"`
 			AuthSecret       string  `json:"authSecret,omitempty"`
 		}
 		// An empty body is fine and stays a 401 rather than a 400: an account
@@ -104,7 +103,7 @@ func (s *Server) handlePGPIdentity(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
+		if !s.requirePGPStepUp(w, r, ac.UserID, req.AuthSecret) {
 			return
 		}
 		u, err := s.users.ClearPGPIdentity(ac.UserID, req.ExpectedRevision)

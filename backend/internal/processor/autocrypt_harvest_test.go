@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"testing"
+	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
@@ -29,7 +30,7 @@ func TestHarvestPinCreatesContact(t *testing.T) {
 	}
 	armored, fp := autocryptTestKey(t, "Alice", "alice@example.com")
 
-	action, err := harvestPinAutocryptKey(store, "alice@example.com", armored, fp)
+	action, err := harvestPinAutocryptKey(store, "alice@example.com", armored, fp, harvestTestDate)
 	if err != nil {
 		t.Fatalf("harvestPinAutocryptKey: %v", err)
 	}
@@ -62,7 +63,7 @@ func TestHarvestPinFillsExistingContactGap(t *testing.T) {
 	}
 	armored, fp := autocryptTestKey(t, "Bob", "bob@example.com")
 
-	action, err := harvestPinAutocryptKey(store, "bob@example.com", armored, fp)
+	action, err := harvestPinAutocryptKey(store, "bob@example.com", armored, fp, harvestTestDate)
 	if err != nil {
 		t.Fatalf("harvestPinAutocryptKey: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestHarvestPinSkipsStrongerSource(t *testing.T) {
 	}
 	autoArmored, autoFP := autocryptTestKey(t, "Carol Auto", "carol@example.com")
 
-	action, err := harvestPinAutocryptKey(store, "carol@example.com", autoArmored, autoFP)
+	action, err := harvestPinAutocryptKey(store, "carol@example.com", autoArmored, autoFP, harvestTestDate)
 	if err != nil {
 		t.Fatalf("harvestPinAutocryptKey: %v", err)
 	}
@@ -109,28 +110,54 @@ func TestHarvestPinSkipsStrongerSource(t *testing.T) {
 	}
 }
 
-func TestHarvestPinUpdatesOlderAutocryptKey(t *testing.T) {
+var (
+	harvestTestDate = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	harvestTestRaw  = []byte("Date: Thu, 01 Jan 2026 00:00:00 +0000\r\nFrom: x@example.com\r\n\r\nbody\r\n")
+)
+
+// seedAutocryptContact stores an autocrypt-sourced key for addr, harvested at
+// date (zero = a record from before dates were kept).
+func seedAutocryptContact(t *testing.T, addr string, date time.Time) (*contacts.Store, contacts.Contact, string) {
+	t.Helper()
 	store, err := contacts.New(t.TempDir())
 	if err != nil {
 		t.Fatalf("contacts.New: %v", err)
 	}
-	oldArmored, oldFP := autocryptTestKey(t, "Dave Old", "dave@example.com")
-	existing, err := store.Upsert(contacts.Contact{
-		FormattedName:     "Dave",
-		Emails:            []contacts.ContactValue{{Value: "dave@example.com"}},
-		PGPKey:            oldArmored,
-		PGPKeyFingerprint: oldFP,
+	armored, fp := autocryptTestKey(t, "Old", addr)
+	c := contacts.Contact{
+		FormattedName:     addr,
+		Emails:            []contacts.ContactValue{{Value: addr}},
+		PGPKey:            armored,
+		PGPKeyFingerprint: fp,
 		PGPKeySource:      contacts.PGPSourceAutocrypt,
-	})
+	}
+	if !date.IsZero() {
+		c.PGPKeyAutocryptDate = date.Format(time.RFC3339)
+	}
+	existing, err := store.Upsert(c)
 	if err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	newArmored, newFP := autocryptTestKey(t, "Dave New", "dave@example.com")
-	if newFP == oldFP {
-		t.Fatalf("test setup: expected two distinct fingerprints")
-	}
+	return store, existing, fp
+}
 
-	action, err := harvestPinAutocryptKey(store, "dave@example.com", newArmored, newFP)
+func storedKeyFingerprint(t *testing.T, c contacts.Contact) string {
+	t.Helper()
+	key, err := crypto.NewKeyFromArmored(c.PGPKey)
+	if err != nil {
+		t.Fatalf("stored key does not parse: %v", err)
+	}
+	return key.GetFingerprint()
+}
+
+// A newer message with a different key replaces the key but keeps the pin, so
+// the contact now reads as a key change (keyMatchesPin false) instead of being
+// silently re-pinned.
+func TestHarvestPinNewerDifferentKeyIsAKeyChange(t *testing.T) {
+	store, existing, oldFP := seedAutocryptContact(t, "dave@example.com", harvestTestDate)
+	newArmored, newFP := autocryptTestKey(t, "Dave New", "dave@example.com")
+
+	action, err := harvestPinAutocryptKey(store, "dave@example.com", newArmored, newFP, harvestTestDate.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("harvestPinAutocryptKey: %v", err)
 	}
@@ -138,38 +165,88 @@ func TestHarvestPinUpdatesOlderAutocryptKey(t *testing.T) {
 		t.Fatalf("action = %q, want updated", action)
 	}
 	c, _ := must2(store.Get(existing.UID))
-	if c.PGPKeyFingerprint != newFP {
-		t.Fatalf("expected newest autocrypt key to win, got %+v", c)
+	if got := storedKeyFingerprint(t, c); got != newFP {
+		t.Fatalf("stored key = %s, want the newer key %s", got, newFP)
+	}
+	if c.PGPKeyFingerprint != oldFP {
+		t.Fatalf("pin moved with the key (%s); the change would never be flagged", c.PGPKeyFingerprint)
+	}
+	if c.PGPKeyAutocryptDate != harvestTestDate.Add(time.Hour).Format(time.RFC3339) {
+		t.Fatalf("date not advanced: %q", c.PGPKeyAutocryptDate)
 	}
 }
 
-func TestHarvestPinSameAutocryptFingerprintIsNoop(t *testing.T) {
-	store, err := contacts.New(t.TempDir())
-	if err != nil {
-		t.Fatalf("contacts.New: %v", err)
-	}
-	armored, fp := autocryptTestKey(t, "Erin", "erin@example.com")
-	existing, err := store.Upsert(contacts.Contact{
-		FormattedName:     "Erin",
-		Emails:            []contacts.ContactValue{{Value: "erin@example.com"}},
-		PGPKey:            armored,
-		PGPKeyFingerprint: fp,
-		PGPKeySource:      contacts.PGPSourceAutocrypt,
-	})
-	if err != nil {
-		t.Fatalf("Upsert: %v", err)
-	}
+// The replay: an older (or same-dated) message carrying a retired key must not
+// roll the contact back, whatever order the messages arrive in.
+func TestHarvestPinIgnoresReplayedOlderMessage(t *testing.T) {
+	store, existing, fp := seedAutocryptContact(t, "dave@example.com", harvestTestDate)
+	oldArmored, oldFP := autocryptTestKey(t, "Dave Retired", "dave@example.com")
 
-	action, err := harvestPinAutocryptKey(store, "erin@example.com", armored, fp)
-	if err != nil {
-		t.Fatalf("harvestPinAutocryptKey: %v", err)
-	}
-	if action != harvestUnchanged {
-		t.Fatalf("action = %q, want unchanged", action)
+	for _, date := range []time.Time{harvestTestDate.Add(-24 * time.Hour), harvestTestDate} {
+		action, err := harvestPinAutocryptKey(store, "dave@example.com", oldArmored, oldFP, date)
+		if err != nil {
+			t.Fatalf("harvestPinAutocryptKey: %v", err)
+		}
+		if action != harvestSkipped {
+			t.Fatalf("date %s: action = %q, want skipped", date, action)
+		}
 	}
 	c, _ := must2(store.Get(existing.UID))
-	if c.Rev != existing.Rev {
-		t.Fatalf("no-op must not bump Rev: was %d now %d", existing.Rev, c.Rev)
+	if c.Rev != existing.Rev || c.PGPKey != existing.PGPKey || c.PGPKeyFingerprint != fp {
+		t.Fatalf("replayed older message changed the contact: %+v", c)
+	}
+}
+
+// A record harvested before dates were kept counts as dated zero, and its
+// first rotation is still surfaced as a key change.
+func TestHarvestPinUndatedLegacyRotationIsAKeyChange(t *testing.T) {
+	store, existing, oldFP := seedAutocryptContact(t, "dave@example.com", time.Time{})
+	newArmored, newFP := autocryptTestKey(t, "Dave New", "dave@example.com")
+
+	action, err := harvestPinAutocryptKey(store, "dave@example.com", newArmored, newFP, harvestTestDate)
+	if err != nil || action != harvestUpdated {
+		t.Fatalf("action = %q, err = %v; want updated", action, err)
+	}
+	c, _ := must2(store.Get(existing.UID))
+	if c.PGPKeyFingerprint != oldFP || storedKeyFingerprint(t, c) != newFP {
+		t.Fatalf("legacy rotation was not surfaced: pin=%s", c.PGPKeyFingerprint)
+	}
+}
+
+// The same key from a newer message only advances the date (so a later replay
+// of anything older loses); from the same date it is a no-op.
+func TestHarvestPinSameAutocryptKeyAdvancesOnlyTheDate(t *testing.T) {
+	store, existing, fp := seedAutocryptContact(t, "erin@example.com", harvestTestDate)
+
+	action, err := harvestPinAutocryptKey(store, "erin@example.com", existing.PGPKey, fp, harvestTestDate)
+	if err != nil || action != harvestSkipped {
+		t.Fatalf("same date: action = %q, err = %v; want skipped", action, err)
+	}
+	if c, _ := must2(store.Get(existing.UID)); c.Rev != existing.Rev {
+		t.Fatalf("same-date no-op bumped Rev: was %d now %d", existing.Rev, c.Rev)
+	}
+
+	later := harvestTestDate.Add(time.Hour)
+	action, err = harvestPinAutocryptKey(store, "erin@example.com", existing.PGPKey, fp, later)
+	if err != nil || action != harvestUnchanged {
+		t.Fatalf("newer date: action = %q, err = %v; want unchanged", action, err)
+	}
+	c, _ := must2(store.Get(existing.UID))
+	if c.PGPKey != existing.PGPKey || c.PGPKeyFingerprint != fp || c.PGPKeyAutocryptDate != later.Format(time.RFC3339) {
+		t.Fatalf("same key: want only the date advanced, got %+v", c)
+	}
+}
+
+func TestAutocryptEffectiveDate(t *testing.T) {
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	if _, ok := autocryptEffectiveDate([]byte("From: x@example.com\r\n\r\nbody"), now); ok {
+		t.Fatal("a message without Date must be ignored")
+	}
+	if got, ok := autocryptEffectiveDate([]byte("Date: Fri, 01 Jan 2100 00:00:00 +0000\r\n\r\n"), now); !ok || !got.Equal(now) {
+		t.Fatalf("future Date must be capped at now, got %v ok=%v", got, ok)
+	}
+	if got, ok := autocryptEffectiveDate(harvestTestRaw, now); !ok || !got.Equal(harvestTestDate) {
+		t.Fatalf("Date = %v ok=%v, want %v", got, ok, harvestTestDate)
 	}
 }
 
@@ -262,7 +339,7 @@ func TestHarvestAutocryptPinsOnDKIMPass(t *testing.T) {
 			"Autocrypt: " + header,
 			"From: Faythe <faythe@example.com>",
 		}},
-		raw: map[int][]byte{7: []byte("raw message bytes")},
+		raw: map[int][]byte{7: harvestTestRaw},
 	}
 	uc := userCtx{id: "u1", mail: client}
 	msg := imapadapter.Message{ID: "7", Sender: "faythe@example.com"}
@@ -297,7 +374,7 @@ func TestHarvestAutocryptAuthenticatesTheFolderItReadHeadersFrom(t *testing.T) {
 			"Autocrypt: " + header,
 			"From: Heidi <heidi@example.com>",
 		}},
-		raw: map[int][]byte{7: []byte("raw message bytes")},
+		raw: map[int][]byte{7: harvestTestRaw},
 		// Serve raw bytes only for the configured folder.
 		rawMailbox: "",
 	}
@@ -328,7 +405,7 @@ func TestHarvestAutocryptSkipsOnDKIMFail(t *testing.T) {
 	header := autocryptHeaderFor(t, "Grace", "grace@example.com")
 	client := &harvestStubClient{
 		headerFields: map[int][]string{7: {"Autocrypt: " + header, "From: grace@example.com"}},
-		raw:          map[int][]byte{7: []byte("raw")},
+		raw:          map[int][]byte{7: harvestTestRaw},
 	}
 	uc := userCtx{id: "u1", mail: client}
 
@@ -337,6 +414,29 @@ func TestHarvestAutocryptSkipsOnDKIMFail(t *testing.T) {
 	store, _ := p.userContactsStore("u1")
 	if _, ok := must2(findContactByEmail(store, "grace@example.com")); ok {
 		t.Fatalf("DKIM failure must harvest nothing")
+	}
+}
+
+// Without a Date there is nothing to order keys by, so the spec ignores the
+// message.
+func TestHarvestAutocryptSkipsUndatedMessage(t *testing.T) {
+	prev := verifyAutocryptDKIM
+	verifyAutocryptDKIM = func(_ []byte, _ string) bool { return true }
+	defer func() { verifyAutocryptDKIM = prev }()
+
+	p := newTestPollerForHarvest(t)
+	header := autocryptHeaderFor(t, "Grace", "grace@example.com")
+	client := &harvestStubClient{
+		headerFields: map[int][]string{7: {"Autocrypt: " + header, "From: grace@example.com"}},
+		raw:          map[int][]byte{7: []byte("From: grace@example.com\r\n\r\nbody\r\n")},
+	}
+	uc := userCtx{id: "u1", mail: client}
+
+	p.harvestAutocrypt(context.Background(), uc, imapadapter.Message{ID: "7"}, nil)
+
+	store, _ := p.userContactsStore("u1")
+	if _, ok := must2(findContactByEmail(store, "grace@example.com")); ok {
+		t.Fatalf("an undated message must harvest nothing")
 	}
 }
 
@@ -350,7 +450,7 @@ func TestHarvestAutocryptSkipsAddrMismatch(t *testing.T) {
 	header := autocryptHeaderFor(t, "Heidi", "heidi@example.com")
 	client := &harvestStubClient{
 		headerFields: map[int][]string{7: {"Autocrypt: " + header, "From: mallory@evil.example"}},
-		raw:          map[int][]byte{7: []byte("raw")},
+		raw:          map[int][]byte{7: harvestTestRaw},
 	}
 	uc := userCtx{id: "u1", mail: client}
 
@@ -376,7 +476,7 @@ func TestHarvestAutocryptSkipsMultipleHeaders(t *testing.T) {
 			"Autocrypt: " + h2,
 			"From: ivan@example.com",
 		}},
-		raw: map[int][]byte{7: []byte("raw")},
+		raw: map[int][]byte{7: harvestTestRaw},
 	}
 	uc := userCtx{id: "u1", mail: client}
 
@@ -397,7 +497,7 @@ func TestHarvestAutocryptSkipsSuppressedAddress(t *testing.T) {
 	header := autocryptHeaderFor(t, "Judy", "judy@example.com")
 	client := &harvestStubClient{
 		headerFields: map[int][]string{7: {"Autocrypt: " + header, "From: judy@example.com"}},
-		raw:          map[int][]byte{7: []byte("raw")},
+		raw:          map[int][]byte{7: harvestTestRaw},
 	}
 	uc := userCtx{id: "u1", mail: client}
 
@@ -441,7 +541,7 @@ func TestHarvestPinSkipsSecondaryAddressOnMultiAddressContact(t *testing.T) {
 	// address as its only User ID and she can legitimately DKIM-sign for it.
 	armored, fp := autocryptTestKey(t, "Mallory", "bob@lapsed-domain.example")
 
-	action, err := harvestPinAutocryptKey(store, "bob@lapsed-domain.example", armored, fp)
+	action, err := harvestPinAutocryptKey(store, "bob@lapsed-domain.example", armored, fp, harvestTestDate)
 	if err != nil {
 		t.Fatalf("harvestPinAutocryptKey: %v", err)
 	}
@@ -480,7 +580,7 @@ func TestHarvestPinSecondaryAddressCannotReplaceAnExistingKey(t *testing.T) {
 	}
 	mallory, malloryFP := autocryptTestKey(t, "Mallory", "bob@lapsed-domain.example")
 
-	action, err := harvestPinAutocryptKey(store, "bob@lapsed-domain.example", mallory, malloryFP)
+	action, err := harvestPinAutocryptKey(store, "bob@lapsed-domain.example", mallory, malloryFP, harvestTestDate)
 	if err != nil {
 		t.Fatalf("harvestPinAutocryptKey: %v", err)
 	}
@@ -514,7 +614,7 @@ func TestHarvestPinStillWorksForThePrimaryAddress(t *testing.T) {
 	}
 	armored, fp := autocryptTestKey(t, "Bob", "bob@example.com")
 
-	action, err := harvestPinAutocryptKey(store, "bob@example.com", armored, fp)
+	action, err := harvestPinAutocryptKey(store, "bob@example.com", armored, fp, harvestTestDate)
 	if err != nil {
 		t.Fatalf("harvestPinAutocryptKey: %v", err)
 	}

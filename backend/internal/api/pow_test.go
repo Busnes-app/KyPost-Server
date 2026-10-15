@@ -240,7 +240,7 @@ func TestLoginRefundsTheStrikeForAnExpiredChallenge(t *testing.T) {
 	// and return 429; if they are refunded, it still returns 401.
 	for i := 0; i <= loginMaxFailures; i++ {
 		rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-			map[string]string{"username": adminUsername, "password": "irrelevant", "captchaToken": "stale"})
+			map[string]string{"username": adminUsername, "authSecret": testAuthSecret(srv, adminUsername, "irrelevant"), "captchaToken": "stale"})
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d: status = %d, want 401 (body %s)", i+1, rec.Code, rec.Body.String())
 		}
@@ -264,7 +264,7 @@ func TestLoginRefundsTheStrikeForAChallengeIssuedToAnotherAddress(t *testing.T) 
 	// refunded: unrefunded, the final request would return 429.
 	for i := 0; i <= loginMaxFailures; i++ {
 		rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-			map[string]string{"username": adminUsername, "password": "irrelevant", "captchaToken": "foreign"})
+			map[string]string{"username": adminUsername, "authSecret": testAuthSecret(srv, adminUsername, "irrelevant"), "captchaToken": "foreign"})
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d: status = %d, want 401 (body %s)", i+1, rec.Code, rec.Body.String())
 		}
@@ -279,7 +279,7 @@ func TestWrongSolutionStrikesOnlyTheAddress(t *testing.T) {
 
 	for i := 0; i <= loginMaxFailures; i++ {
 		rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-			map[string]string{"username": "admin", "password": "irrelevant", "captchaToken": "wrong"})
+			map[string]string{"username": "admin", "authSecret": testAuthSecret(srv, "admin", "irrelevant"), "captchaToken": "wrong"})
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d: status = %d, want 401", i+1, rec.Code)
 		}
@@ -313,7 +313,7 @@ func TestLockedAddressNeverReachesCaptchaProvider(t *testing.T) {
 	codes := make([]int, 5)
 	for i := range codes {
 		codes[i] = doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-			map[string]string{"username": fmt.Sprintf("u%d", i), "password": "x", "captchaToken": "junk"}).Code
+			map[string]string{"username": fmt.Sprintf("u%d", i), "authSecret": "x", "captchaToken": "junk"}).Code
 	}
 	if codes[2] != http.StatusUnauthorized || codes[3] != http.StatusTooManyRequests || codes[4] != http.StatusTooManyRequests {
 		t.Fatalf("statuses = %v, want 401 x3 then 429", codes)
@@ -335,7 +335,7 @@ func TestLoginStillReports503WhenAProviderIsDown(t *testing.T) {
 	adminUsername := all[0].Username
 
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": adminUsername, "password": "irrelevant", "captchaToken": "x"})
+		map[string]string{"username": adminUsername, "authSecret": testAuthSecret(srv, adminUsername, "irrelevant"), "captchaToken": "x"})
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 — the pre-existing outage path must be unchanged", rec.Code)
 	}

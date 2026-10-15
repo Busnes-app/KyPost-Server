@@ -76,6 +76,9 @@ func Run(args []string) error {
 		return BootstrapAdmin()
 	}
 
+	if err := config.CheckEnv(); err != nil {
+		return err
+	}
 	if _, err := config.LoadBackupConfig(); err != nil {
 		return err
 	}
@@ -256,6 +259,9 @@ func configureSorter(log *logging.Logger, poller *processor.Poller) error {
 }
 
 func runDaemon(ctx context.Context, d runDeps) error {
+	ctx, restart := context.WithCancelCause(ctx)
+	defer restart(nil)
+	go monitorHealth(ctx, d.logger, d.health, healthCheckInterval, restart)
 	outboundCtx, cancelOutbound := context.WithCancel(ctx)
 	outboundDone := startNativeOutbound(outboundCtx, d)
 	defer func() { cancelOutbound(); <-outboundDone }()
@@ -291,7 +297,6 @@ func runDaemon(ctx context.Context, d runDeps) error {
 	defer func() { <-backupDone }()
 	poller.Start()
 	d.logger.Info("poller goroutine started")
-	go monitorHealth(ctx, d.logger, d.health)
 	<-ctx.Done()
 	poller.Stop()
 	awaitWarmup(d.logger, warmupDone)
@@ -300,7 +305,7 @@ func runDaemon(ctx context.Context, d runDeps) error {
 	// cancels; without this the process could exit, or a test could remove
 	// its state directory, while those were still writing to it.
 	poller.Wait()
-	return nil
+	return healthRestart(ctx)
 }
 
 // startBackgroundSweepers launches every periodic reclaim the API process needs.
@@ -394,6 +399,9 @@ func runServer(ctx context.Context, d runDeps) error {
 const shutdownTimeout = 20 * time.Second
 
 func runAll(ctx context.Context, d runDeps) error {
+	ctx, restart := context.WithCancelCause(ctx)
+	defer restart(nil)
+	go monitorHealth(ctx, d.logger, d.health, healthCheckInterval, restart)
 	outboundCtx, cancelOutbound := context.WithCancel(ctx)
 	outboundDone := startNativeOutbound(outboundCtx, d)
 	defer func() { cancelOutbound(); <-outboundDone }()
@@ -447,7 +455,6 @@ func runAll(ctx context.Context, d runDeps) error {
 	d.logger.Info("poller goroutine started")
 	waitSweepers := startBackgroundSweepers(sweeperCtx, srv, d.logger)
 	defer func() { cancelSweepers(); waitSweepers() }()
-	go monitorHealth(ctx, d.logger, d.health)
 	serveDone := make(chan struct{})
 	go func() {
 		defer close(serveDone)
@@ -457,13 +464,11 @@ func runAll(ctx context.Context, d runDeps) error {
 	}()
 
 	<-ctx.Done()
-	// Cancel the sweepers right away. Draining the HTTP server before stopping the
-	// poller is convention, not a correctness requirement: poller.Stop() only
-	// cancels the background ticker loop in Poller.Run, which an in-flight admin
-	// "poll now" request never observes — TriggerNow's tick() derives its own
-	// context.Background()-based contexts. Stop is non-blocking, so its position
-	// relative to Shutdown does not affect correctness.
+	// Stop the poller before draining HTTP: Stop cancels every tick, including
+	// one an in-flight "poll now" request is running, so that request returns
+	// instead of holding Shutdown for its whole window.
 	cancelSweepers()
+	poller.Stop()
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancelShutdown()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -476,14 +481,13 @@ func runAll(ctx context.Context, d runDeps) error {
 	// "TempDir RemoveAll cleanup: directory not empty" in the shutdown test:
 	// the test's temp dir was still being written after runAll had returned.
 	<-serveDone
-	poller.Stop()
 	awaitWarmup(d.logger, warmupDone)
 	// Wait for the poller's own goroutines (the tick loop, plus the eager
 	// recheckWKDDomains and cleanupAllUsers runs) to finish. Stop only
 	// cancels; without this the process could exit, or a test could remove
 	// its state directory, while those were still writing to it.
 	poller.Wait()
-	return nil
+	return healthRestart(ctx)
 }
 
 // mfaClearAllMarkerFile is the break-glass one-shot marker: once MFA_CLEAR_ALL
@@ -557,9 +561,8 @@ func saveMFAClearAllCleared(path string, cleared map[string]struct{}) error {
 // If the clear fails partway, the marker is deliberately not written so the next
 // boot retries — but only for users not yet recorded in mfaClearAllProgressFile.
 func clearAllMFAIfRequested(logger *logging.Logger, usersStore *users.Store, stateDir string) {
-	if raw := strings.TrimSpace(os.Getenv("MFA_CLEAR_ALL")); raw == "" {
-		return
-	} else if enabled, err := strconv.ParseBool(raw); err != nil || !enabled {
+	// Run's config.CheckEnv has already refused a malformed value.
+	if enabled, _ := config.EnvBool("MFA_CLEAR_ALL"); !enabled {
 		return
 	}
 
@@ -630,38 +633,42 @@ func clearAllMFAIfRequested(logger *logging.Logger, usersStore *users.Store, sta
 	logger.Error("MFA_CLEAR_ALL: cleared two-factor auth for all users and wrote a completion marker; this env var can now be left set safely, it will not clear MFA again")
 }
 
-func monitorHealth(ctx context.Context, logger *logging.Logger, healthSvc *health.Service) {
-	ticker := time.NewTicker(15 * time.Second)
+// errUnhealthy ends a run that stayed unhealthy past UNHEALTHY_RESTART_SECONDS;
+// the non-zero exit lets supervisord restart the process.
+var errUnhealthy = errors.New("unhealthy threshold exceeded; restarting")
+
+// healthCheckInterval is a var so tests can shorten it; read it before `go`.
+var healthCheckInterval = 15 * time.Second
+
+// monitorHealth calls restart once health has been bad past the threshold.
+// Restart cancels the run's context, so shutdown drains exactly as on SIGTERM.
+func monitorHealth(ctx context.Context, logger *logging.Logger, healthSvc *health.Service, interval time.Duration, restart context.CancelCauseFunc) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	threshold := config.EnvInt("UNHEALTHY_RESTART_SECONDS", 300)
+	threshold, _ := config.UnhealthyRestartSeconds.Get() // validated by Run's config.CheckEnv
 	for {
 		select {
 		case <-ctx.Done():
-			// Stop watching once shutdown starts. Left unbounded (as
-			// `for range ticker.C` was), this goroutine outlived every
-			// shutdown and could still fire os.Exit(2) while the process was
-			// draining — turning a clean exit into exit code 2 and a
-			// supervisord "unexpected exit" restart.
 			return
 		case <-ticker.C:
 		}
 		st := healthSvc.GetStatus()
-		if st.Healthy {
+		if st.Healthy || st.UnhealthyFor < int64(threshold) {
 			continue
 		}
-		if st.UnhealthyFor < int64(threshold) {
-			continue
-		}
-		// No syscall.Kill(1, SIGTERM) here. This used to call it and discard
-		// the error, which was always EPERM: the process runs unprivileged and
-		// PID 1 does not belong to it, so the call had never once worked. The
-		// restart comes entirely from the exit below plus supervisord's
-		// autorestart — api.scheduleContainerRestart already says so at its own
-		// call site, and this was the sibling that kept the dead line.
-		logger.Error("unhealthy threshold exceeded; exiting so supervisord restarts this process",
+		logger.Error("unhealthy threshold exceeded; shutting down so supervisord restarts this process",
 			"unhealthy_for_seconds", strconv.FormatInt(st.UnhealthyFor, 10))
-		os.Exit(2)
+		restart(errUnhealthy)
+		return
 	}
+}
+
+// healthRestart returns errUnhealthy when monitorHealth ended the run.
+func healthRestart(ctx context.Context) error {
+	if err := context.Cause(ctx); errors.Is(err, errUnhealthy) {
+		return err
+	}
+	return nil
 }
 
 // newClassifierClient builds the one shared LLM client from the OLLAMA_* env

@@ -166,7 +166,7 @@ func TestSSOStepUpIsBoundToTheActionAndTheSession(t *testing.T) {
 	}
 	clearMustChangePassword(t, srv, local.ID)
 	token, _ := mintSessionForTest(srv, local.ID)
-	rec := gatedCall(t, srv, &http.Cookie{Name: "kypost_session", Value: token}, http.MethodPost, "/api/auth/step-up", `{"password":"wrong"}`, "")
+	rec := gatedCall(t, srv, &http.Cookie{Name: "kypost_session", Value: token}, http.MethodPost, "/api/auth/step-up", `{"authSecret":"`+authSecretFor(srv, "wrong")+`"}`, "")
 	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "sso_step_up_required") {
 		t.Fatalf("password session: status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -237,8 +237,9 @@ func TestSSOStepUpRefusesStaleOrWeakProof(t *testing.T) {
 // a credential, rather than being refused forever.
 func TestStepUpKeepsThePasswordForGenericProviderSessions(t *testing.T) {
 	srv, idp := setupSSOTestServer(t)
-	// No roles claim: a generic provider. Groups make the account an admin.
-	cookie := signInWith(t, srv, idp, map[string]any{"sub": "kc", "preferred_username": "kc", "groups": []string{"admins"}})
+	// No roles claim: a generic provider. The configured group makes the account an admin.
+	setAdminGroup(t, srv, "kypost-admins")
+	cookie := signInWith(t, srv, idp, map[string]any{"sub": "kc", "preferred_username": "kc", "groups": []string{"kypost-admins"}})
 	kc, err := srv.users.GetBySSOSub("kc")
 	if err != nil {
 		t.Fatal(err)
@@ -256,14 +257,14 @@ func TestStepUpKeepsThePasswordForGenericProviderSessions(t *testing.T) {
 	}
 
 	// The password gate answers, in both directions.
-	if rec := gatedCall(t, srv, cookie, http.MethodPost, "/api/auth/step-up", `{"password":"wrong"}`, ""); rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "sso_step_up_required") {
+	if rec := gatedCall(t, srv, cookie, http.MethodPost, "/api/auth/step-up", `{"authSecret":"`+authSecretFor(srv, "wrong")+`"}`, ""); rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "sso_step_up_required") {
 		t.Fatalf("wrong password: status %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := gatedCall(t, srv, cookie, http.MethodPost, "/api/auth/step-up", `{"password":"kc-local-password-123"}`, ""); rec.Code != http.StatusOK {
+	if rec := gatedCall(t, srv, cookie, http.MethodPost, "/api/auth/step-up", `{"authSecret":"`+authSecretFor(srv, "kc-local-password-123")+`"}`, ""); rec.Code != http.StatusOK {
 		t.Fatalf("right password: status %d: %s", rec.Code, rec.Body.String())
 	}
 	srv.backup, _ = backup.New(backup.Dirs{Config: srv.configDir, State: srv.stateDir, Secret: srv.configDir}, config.BackupConfig{Keep: 1}, srv.globalStore, "test")
-	if rec := gatedCall(t, srv, cookie, http.MethodPut, "/api/admin/backup/schedule", `{"intervalSec":3600,"password":"kc-local-password-123"}`, ""); rec.Code != http.StatusOK {
+	if rec := gatedCall(t, srv, cookie, http.MethodPut, "/api/admin/backup/schedule", `{"intervalSec":3600,"authSecret":"`+authSecretFor(srv, "kc-local-password-123")+`"}`, ""); rec.Code != http.StatusOK {
 		t.Fatalf("backup with the password: status %d: %s", rec.Code, rec.Body.String())
 	}
 	// And KySignOn cannot be asked on its behalf.

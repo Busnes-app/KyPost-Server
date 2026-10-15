@@ -80,6 +80,15 @@ derived from it must be invalidated by a mechanism the daemon can reach — see
   what a key is an anchor for, without changing its bytes), and it must NOT
   move for unrelated edits like a rename, or every signed message re-fetches
   its body on every contact edit.
+- **`applyUpsertLocked` stores only the public part of any key** (`publicPGPKey`),
+  then carries provenance, then pins — in that order. Carrying after pinning made
+  every resend of an existing key look like explicit provenance, dropping
+  source/verified and silently re-pinning a key its pin disputed. "Same key" for
+  carrying means same fingerprint, since the sink re-armors. `New` runs
+  `stripPrivatePGPKeys`, an idempotent migration for keys stored before the sink
+  stripped them (logs a count only).
+- `ContactPrecondition.KeepAbsentPGPKey` (CardDAV PUT) keeps the stored key and
+  pin when the write carries none; many CardDAV clients drop KEY.
 - Conflict/concurrency policy (e.g. CardDAV `If-Match`, mobile-sync
   last-write-wins) is decided by callers in `api/`, not by `Store` itself —
   `Store.Upsert`/`Store.Delete` always apply the write unconditionally. Read
