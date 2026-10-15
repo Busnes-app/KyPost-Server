@@ -96,6 +96,11 @@ func Run(args []string) error {
 	if _, err := config.NativeRestoreReleaseEnabled(); err != nil {
 		return err
 	}
+	proxies, err := config.LoadTrustedProxies()
+	if err != nil {
+		return err
+	}
+	api.SetTrustedProxies(proxies)
 	// The quota is native-only configuration: a bad value never stops IMAP.
 	if nativeMail {
 		quota, err := config.MailboxQuotaBytes()
