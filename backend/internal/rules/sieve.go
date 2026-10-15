@@ -3,7 +3,6 @@ package rules
 import (
 	"fmt"
 	"net/textproto"
-	"strconv"
 	"strings"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
@@ -47,7 +46,7 @@ func CompileRule(r Rule) (string, error) {
 	if len(caps) > 0 {
 		quoted := make([]string, len(caps))
 		for i, c := range caps {
-			quoted[i] = strconv.Quote(c)
+			quoted[i] = sieveQuote(c)
 		}
 		sb.WriteString("require [" + strings.Join(quoted, ", ") + "];\n\n")
 	}
@@ -171,19 +170,19 @@ func compileLeafCondition(c Condition) (string, error) {
 	switch field {
 	case "from", "to", "cc", "bcc", "subject":
 		if strings.EqualFold(c.Comparator, "exists") {
-			return fmt.Sprintf("exists [%s]", strconv.Quote(field)), nil
+			return fmt.Sprintf("exists [%s]", sieveQuote(field)), nil
 		}
-		return fmt.Sprintf("header :%s [%s] %s", comparatorTag(c.Comparator), strconv.Quote(field), strconv.Quote(c.Value)), nil
+		return fmt.Sprintf("header :%s [%s] %s", comparatorTag(c.Comparator), sieveQuote(field), sieveQuote(c.Value)), nil
 	case "header":
-		name := strconv.Quote(textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(c.Header)))
+		name := sieveQuote(textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(c.Header)))
 		if strings.EqualFold(c.Comparator, "exists") {
 			return fmt.Sprintf("exists [%s]", name), nil
 		}
-		return fmt.Sprintf("header :%s [%s] %s", comparatorTag(c.Comparator), name, strconv.Quote(c.Value)), nil
+		return fmt.Sprintf("header :%s [%s] %s", comparatorTag(c.Comparator), name, sieveQuote(c.Value)), nil
 	case "body":
-		return fmt.Sprintf("body :%s %s", comparatorTag(c.Comparator), strconv.Quote(c.Value)), nil
+		return fmt.Sprintf("body :%s %s", comparatorTag(c.Comparator), sieveQuote(c.Value)), nil
 	case "keyword":
-		return fmt.Sprintf("hasflag :%s %s", comparatorTag(c.Comparator), strconv.Quote(c.Value)), nil
+		return fmt.Sprintf("hasflag :%s %s", comparatorTag(c.Comparator), sieveQuote(c.Value)), nil
 	default:
 		return "", fmt.Errorf("unsupported condition field %q", c.Field)
 	}
@@ -201,11 +200,11 @@ func comparatorTag(comparator string) string {
 func compileAction(a Action) (string, error) {
 	switch a.Type {
 	case "keyword":
-		return fmt.Sprintf("addflag %s;", strconv.Quote(a.Value)), nil
+		return fmt.Sprintf("addflag %s;", sieveQuote(a.Value)), nil
 	case "unkeyword":
-		return fmt.Sprintf("removeflag %s;", strconv.Quote(a.Value)), nil
+		return fmt.Sprintf("removeflag %s;", sieveQuote(a.Value)), nil
 	case "move":
-		return fmt.Sprintf("fileinto %s;", strconv.Quote(a.Value)), nil
+		return fmt.Sprintf("fileinto %s;", sieveQuote(a.Value)), nil
 	case "read":
 		return "markread;", nil
 	case "archive":
@@ -220,6 +219,13 @@ func compileAction(a Action) (string, error) {
 		return "", fmt.Errorf("unsupported action type %q", a.Type)
 	}
 }
+
+// sieveQuote writes s as a Sieve quoted string (RFC 5228 §2.4.2): only `"` and
+// `\` are escaped. strconv.Quote's Go escapes (\t, \x7f,  ) were read back
+// by the lexer as plain letters, silently changing the rule on its next save.
+var sieveEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+
+func sieveQuote(s string) string { return `"` + sieveEscaper.Replace(s) + `"` }
 
 // ---- Parser ----
 

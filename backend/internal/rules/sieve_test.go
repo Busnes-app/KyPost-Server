@@ -347,40 +347,41 @@ func TestValidateMatchShapeCountsAcrossGroupBoundaries(t *testing.T) {
 	}
 }
 
-// TestRoundTrip verifies CompileRule(mustParse(CompileRule(r))) is
-// semantically equivalent to CompileRule(r) for every GUI-producible rule
-// shape (flat allof/anyof of leaf conditions, one condition per field).
-func TestRoundTrip(t *testing.T) {
-	fixtures := []Rule{
-		{
-			Match:   MatchGroup{Op: "allof", Conditions: []Condition{{Field: "from", Comparator: "contains", Value: "acme"}}},
-			Actions: []Action{{Type: "move", Value: "Archive/Acme"}},
-		},
-		{
-			Match: MatchGroup{Op: "anyof", Conditions: []Condition{
-				{Field: "subject", Comparator: "is", Value: "spam", Negate: true},
-				{Field: "keyword", Comparator: "contains", Value: "vip"},
-				{Field: "body", Comparator: "matches", Value: "*unsubscribe*"},
-			}},
-			Actions: []Action{{Type: "keyword", Value: "Flagged"}, {Type: "unkeyword", Value: "Unread"}, {Type: "stop"}},
-		},
-		{
-			Match:   MatchGroup{Op: "allof", Conditions: []Condition{{Field: "cc", Comparator: "exists"}}},
-			Actions: []Action{{Type: "read"}, {Type: "archive"}, {Type: "spam"}, {Type: "delete"}},
-		},
-		{
-			Match: MatchGroup{Op: "allof", Conditions: []Condition{{Field: "to", Comparator: "regex", Value: "^a.*z$"}}},
-		},
-		{
-			Match: MatchGroup{Op: "anyof", Conditions: []Condition{
-				{Field: "header", Header: "X-Spam-Flag", Comparator: "is", Value: "YES"},
-				{Field: "header", Header: "List-Id", Comparator: "exists"},
-			}},
-			Actions: []Action{{Type: "spam"}, {Type: "stop"}},
-		},
-	}
+// roundTripFixtures covers every GUI-producible rule shape (flat allof/anyof
+// of leaf conditions, one condition per field). FuzzParseRuleText seeds from it.
+var roundTripFixtures = []Rule{
+	{
+		Match:   MatchGroup{Op: "allof", Conditions: []Condition{{Field: "from", Comparator: "contains", Value: "acme"}}},
+		Actions: []Action{{Type: "move", Value: "Archive/Acme"}},
+	},
+	{
+		Match: MatchGroup{Op: "anyof", Conditions: []Condition{
+			{Field: "subject", Comparator: "is", Value: "spam", Negate: true},
+			{Field: "keyword", Comparator: "contains", Value: "vip"},
+			{Field: "body", Comparator: "matches", Value: "*unsubscribe*"},
+		}},
+		Actions: []Action{{Type: "keyword", Value: "Flagged"}, {Type: "unkeyword", Value: "Unread"}, {Type: "stop"}},
+	},
+	{
+		Match:   MatchGroup{Op: "allof", Conditions: []Condition{{Field: "cc", Comparator: "exists"}}},
+		Actions: []Action{{Type: "read"}, {Type: "archive"}, {Type: "spam"}, {Type: "delete"}},
+	},
+	{
+		Match: MatchGroup{Op: "allof", Conditions: []Condition{{Field: "to", Comparator: "regex", Value: "^a.*z$"}}},
+	},
+	{
+		Match: MatchGroup{Op: "anyof", Conditions: []Condition{
+			{Field: "header", Header: "X-Spam-Flag", Comparator: "is", Value: "YES"},
+			{Field: "header", Header: "List-Id", Comparator: "exists"},
+		}},
+		Actions: []Action{{Type: "spam"}, {Type: "stop"}},
+	},
+}
 
-	for i, rule := range fixtures {
+// TestRoundTrip verifies CompileRule(mustParse(CompileRule(r))) is
+// semantically equivalent to CompileRule(r) for every fixture.
+func TestRoundTrip(t *testing.T) {
+	for i, rule := range roundTripFixtures {
 		first, err := CompileRule(rule)
 		if err != nil {
 			t.Fatalf("fixture %d: CompileRule: %v", i, err)
