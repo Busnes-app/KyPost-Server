@@ -113,6 +113,16 @@ jobs:
       - name: govulncheck
         run: go tool -modfile=../tools/go.mod govulncheck ./...
 
+      # backend/osv-scanner.toml ignores GO-2026-5932 (x/crypto/openpgp is
+      # unmaintained) because nothing imports it. Keep that true.
+      - name: x/crypto/openpgp stays out of the build graph
+        run: |
+          deps="$(go list -deps -test ./...)"
+          if printf '%s\n' "$deps" | grep '^golang.org/x/crypto/openpgp'; then
+            echo "::error::golang.org/x/crypto/openpgp entered the build; remove it or drop the GO-2026-5932 ignore in backend/osv-scanner.toml" >&2
+            exit 1
+          fi
+
       # The sorter's parity test and the poller's hybrid-engine tests skip
       # without the real model, so CI fetches it. The pins are read from the
       # Dockerfile's ARG lines rather than copied here, so the image and the
@@ -151,11 +161,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Node is the Dockerfile's node builder tag: frontend/.nvmrc must match
-      # it (ci-scripts checks). npm is pinned to 12.0.1, the developers'
-      # version (package.json "engines"); the image's `npm ci` uses the npm
-      # bundled with its node tag, which ci-docker exercises. npm 10 and npm
-      # 12 disagree about how esbuild's optional per-platform packages are
-      # recorded, so a lockfile written by one is rejected by the other.
+      # it (ci-scripts checks). npm is the one bundled with that Node, the
+      # same npm the image's `npm ci` runs; no global npm install, so nothing
+      # here is fetched unpinned. npm majors disagree about how esbuild's
+      # optional per-platform packages are recorded, so CI must use the
+      # image's npm, not a newer one.
       #
       # The version is read from frontend/.nvmrc, which is also what pins
       # developers (with package.json "engines"). Pinning CI alone was worse
@@ -168,9 +178,6 @@ jobs:
           node-version-file: frontend/.nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
-      - name: pin npm to the developers' version
-        run: npm install -g npm@12.0.1
 
       # `npm ci` here for the same reason the Dockerfile uses it: CI must
       # build the dependency set the lockfile pins, not whatever resolves today.

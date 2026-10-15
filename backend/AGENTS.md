@@ -436,6 +436,7 @@ This list is the CI gate, in the order `ci-backend-api` and `ci-backend-other` r
 - `go vet ./...` must pass
 - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...` must report `0 issues` — **staticcheck is enabled**, so it rejects things `go vet` accepts (an `if cond { return true }; return false` tail, for one). It is the step most likely to fail a change that passed every other gate locally, because it is the one nothing else approximates
 - `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` must find no called vulnerability
+- `go list -deps -test ./... | grep '^golang.org/x/crypto/openpgp'` must print nothing (`ci-backend-other`). `osv-scanner.toml` ignores GO-2026-5932 (x/crypto/openpgp unmaintained) only because of this; PGP uses `github.com/ProtonMail/go-crypto`. Never import x/crypto/openpgp; if that changes, drop the ignore
 - `go build -buildvcs=false ./...` must succeed with zero errors
 - `go test -race -count=1 -timeout=20m ./...` must pass. The sorter parity test and the poller's hybrid tests skip unless `EMBED_MODEL_DIR` points at the pinned model; `ci-backend-other` downloads it using the Dockerfile's `EMBED_*` ARG pins, so set it locally too or those tests prove nothing. The `-timeout` is not optional: `internal/api` alone exceeds Go's default 600s under `-race`, which is why CI splits it into its own job and passes `-timeout=20m`. Running plain `go test -race ./...` locally reports a timeout that CI would not see
 
