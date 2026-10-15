@@ -620,6 +620,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/users/{id}/deactivate", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersDeactivate))))
 	mux.HandleFunc("POST /api/users/{id}/reactivate", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersReactivate))))
 	mux.HandleFunc("POST /api/users/{id}/clear-mfa", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUsersClearMFA))))
+	mux.HandleFunc("PUT /api/users/{id}/send-quota", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleUserSendQuota))))
 	mux.HandleFunc("GET /api/users/{id}/imap-config", s.withAdmin(s.handleAdminUserIMAPConfig))
 	mux.HandleFunc("PUT /api/users/{id}/imap-config", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleAdminUserIMAPConfig))))
 	mux.HandleFunc("DELETE /api/users/{id}/imap-config", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleAdminUserIMAPConfig))))

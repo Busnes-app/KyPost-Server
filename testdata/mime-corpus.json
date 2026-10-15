@@ -1,12 +1,12 @@
 {
   "$comment": [
-    "Shared MIME corpus, executed by BOTH backend/internal/pgpmail (Go) and",
+    "Shared MIME corpus, executed by BOTH backend/internal/pgpmail/pgpmailtest (Go) and",
     "frontend/src/lib/mimeContent.test.ts (TypeScript).",
     "",
     "Two parsers exist because the server never sees a client-protected",
     "account's plaintext, so the browser must re-implement what the server does.",
     "Only the browser's renders mail today: server-side decryption is retired, so",
-    "pgpmail.ParseContent is the reference this corpus holds it to rather than a",
+    "pgpmailtest.ParseContent is the reference this corpus holds it to rather than a",
     "second live reading. It was one, and the danger is why the corpus exists:",
     "buildPGPDeliveries encrypts ONE plaintext to every To/CC key in a single",
     "call, so recipients on different custody modes received identical ciphertext",

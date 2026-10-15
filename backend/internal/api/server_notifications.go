@@ -1010,9 +1010,9 @@ func (s *Server) createPairingToken(subscriberID, purpose string, ttl time.Durat
 // checks that the token's purpose matches wantPurpose, returning its claims.
 // The purpose check is a plain != — the purpose isn't secret, unlike the
 // HMAC signature and (in validatePairingToken) the subject, which correctly
-// stay constant-time comparisons. Shared by validatePairingToken (which
-// additionally checks the subject against a caller-supplied expectation) and
-// parsePairingTokenUserID (which returns the subject to the caller instead).
+// stay constant-time comparisons. validatePairingToken additionally checks the
+// subject against a caller-supplied expectation; the QR key and native
+// registration handlers read the subject from the claims instead.
 func (s *Server) decodeAndVerifyPairingToken(token, wantPurpose string, now time.Time) (pairingTokenClaims, error) {
 	parts := strings.Split(strings.TrimSpace(token), ".")
 	if len(parts) != 2 {
@@ -1058,18 +1058,4 @@ func (s *Server) validatePairingToken(subscriberID, token, wantPurpose string, n
 		return errors.New("subscriber mismatch")
 	}
 	return nil
-}
-
-// parsePairingTokenUserID decodes and HMAC-verifies token without requiring
-// the caller to already know the expected subject, returning the subject
-// the token was minted for. Used by the QR key-fetch endpoint, which must
-// learn which user a token belongs to rather than confirm a known one —
-// unlike validatePairingToken (used for pickup links, where the URL path
-// already carries the expected ID to check against).
-func (s *Server) parsePairingTokenUserID(token, wantPurpose string, now time.Time) (string, error) {
-	claims, err := s.decodeAndVerifyPairingToken(token, wantPurpose, now)
-	if err != nil {
-		return "", err
-	}
-	return claims.Sub, nil
 }

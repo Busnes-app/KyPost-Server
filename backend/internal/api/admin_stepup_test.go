@@ -37,6 +37,7 @@ func TestAdminMutationsRequireStepUp(t *testing.T) {
 		{"PUT", u, map[string]any{"role": "user"}, 200},
 		{"POST", u + "/reset-password", map[string]any{"password": "stepup-temp-password-1234"}, 200},
 		{"POST", u + "/clear-mfa", nil, 200},
+		{"PUT", u + "/send-quota", map[string]any{"sendQuota": map[string]int{"messagesPerHour": 1, "recipientsPerDay": 1}}, 200},
 		{"POST", u + "/deactivate", nil, 200},
 		{"POST", u + "/reactivate", nil, 200},
 		{"PUT", u + "/imap-config", map[string]any{"host": "imap.example.test", "username": "m", "password": "imap-pw"}, 200},

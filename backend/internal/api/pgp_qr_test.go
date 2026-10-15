@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 func TestPGPQRTokenAndKeyRoundTrip(t *testing.T) {
@@ -20,7 +20,7 @@ func TestPGPQRTokenAndKeyRoundTrip(t *testing.T) {
 	all, _ := srv.users.List()
 	userID := all[0].ID
 
-	id, err := pgpmail.GenerateIdentity("QR Test", "qr-test@example.com")
+	id, err := pgpmailtest.GenerateIdentity("QR Test", "qr-test@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestPGPQRTokenAcceptsDeviceCredentials(t *testing.T) {
 	srv := newTestServer(t)
 	userID := srv.mustBootstrapUserID(t)
 
-	id, err := pgpmail.GenerateIdentity("QR Test", "qr-test@example.com")
+	id, err := pgpmailtest.GenerateIdentity("QR Test", "qr-test@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestPGPQRTokenAcceptsDeviceCredentials(t *testing.T) {
 }
 
 // TestPGPQRKeyRejectsTamperedSignature drives the
-// subtle.ConstantTimeCompare mismatch branch in parsePairingTokenUserID
+// subtle.ConstantTimeCompare mismatch branch in decodeAndVerifyPairingToken
 // directly: the only prior negative test used an expired-but-validly-signed
 // token, which never reaches signature comparison failure. Here the token
 // is well-formed and unexpired, but its signature is corrupted, so it must
@@ -192,7 +192,7 @@ func TestPGPQRKeyIncludesContactCardWhenSelfContactSet(t *testing.T) {
 	srv := newTestServer(t)
 	userID := srv.mustBootstrapUserID(t)
 
-	id, err := pgpmail.GenerateIdentity("Card Test", "card-test@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Card Test", "card-test@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestPGPQRKeyOmitsContactCardWhenNoSelfContact(t *testing.T) {
 	srv := newTestServer(t)
 	userID := srv.mustBootstrapUserID(t)
 
-	id, err := pgpmail.GenerateIdentity("No Card Test", "no-card-test@example.com")
+	id, err := pgpmailtest.GenerateIdentity("No Card Test", "no-card-test@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

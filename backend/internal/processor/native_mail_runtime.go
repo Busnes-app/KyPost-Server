@@ -24,11 +24,6 @@ func (p *Poller) nativeMailboxAssignment(ctx context.Context, userID, mailboxID 
 	return sso.AdmitUserMailbox(ctx, p.nativeMail, sso.NewStore(p.configDir), sso.NewLifecycleStore(p.configDir), p.users, p.stateDir, userID, mailboxID)
 }
 
-func (p *Poller) mailClientForUser(userID string, modTime time.Time) (imapadapter.Client, error) {
-	client, _, err := p.mailClientForMailbox(userID, "", modTime)
-	return client, err
-}
-
 // mailClientForMailbox returns the admitted mailbox's client ("" is the
 // primary); clients are cached by mailbox ID, which for a primary is the user
 // ID. The assignment is zero for an IMAP account.

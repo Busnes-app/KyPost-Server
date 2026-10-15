@@ -73,6 +73,20 @@ jobs:
       - name: govulncheck
         run: go tool -modfile=../tools/go.mod govulncheck ./...
 
+      # Fails on any function unreachable from cmd/ (main and modeleval) that
+      # backend/deadcode.allow does not list, and on stale allow entries.
+      # Test-only code belongs in a _test.go file or a *test package.
+      - name: deadcode
+        run: |
+          set -o pipefail
+          go tool -modfile=../tools/go.mod deadcode -test=false \
+            -f '{{range .Funcs}}{{$.Path}}.{{.Name}}{{"\n"}}{{end}}' ./cmd/... | sort > "$RUNNER_TEMP/dead"
+          grep -v -e '^#' -e '^$' deadcode.allow | sort > "$RUNNER_TEMP/allowed"
+          if ! diff -u "$RUNNER_TEMP/allowed" "$RUNNER_TEMP/dead"; then
+            echo "deadcode: + lines are unreachable from cmd/ (delete them, or move test-only code into a _test.go file or a *test package); - lines are stale deadcode.allow entries." >&2
+            exit 1
+          fi
+
       # internal/api package tests run serially due to global hashParams state
       # managed by TestMain. This job runs only the api package tests, which
       # are dominated by Argon2id derivations.
@@ -315,6 +329,9 @@ jobs:
       # into the registry and went green without publishing anything. Assert
       # the stages exist, and that the privileged workflows are pinned to
       # commits rather than to tags anyone can move under them.
+      - name: publish main gate regression
+        run: python3 scripts/check-publish-main.py
+
       - name: release workflow shape
         run: |
           set -euo pipefail

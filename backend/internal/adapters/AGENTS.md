@@ -18,6 +18,8 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 
 ### `imap/` — IMAP Client
 
+- DKIM verification uses `DKIMSignedHeaders` and `VerifyDKIMCoversHeader`; signature/domain failure tests exercise the live header verifier, not a domain-only wrapper.
+
 - `raw_content.go` exposes pure MIME/overview helpers reused by the native mailbox Client, including existing PGP detection and single-sender binding. Parsing failures use sanitized `ErrMalformedMIME`; `Message`/`MessageContent.ParseError` mark one unreadable message without aborting a batch. Existing IMAP reads leave that flag false.
 
 - `incoming_encryption.go` owns safe incoming replacements and subsequent rule actions. Reject non-INBOX polling configurations before capturing a source UID. Bind UIDs to the authenticated endpoint/account, UIDVALIDITY and exact content; APPEND must be byte-verified before targeted UID EXPUNGE. Require UIDPLUS/rev2 and preflight MOVE for terminal rules. Perform any folder discovery/create before the final identity guards, then use commands with automatic retries disabled. Reconcile uncertain APPEND/MOVE by marker plus exact ciphertext, never marker alone or global EXPUNGE.

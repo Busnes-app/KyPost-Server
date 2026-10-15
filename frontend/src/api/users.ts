@@ -2,6 +2,7 @@ import { getJSON, postJSON, putJSON, deleteJSON } from "./client";
 import { credentialFields, deriveCredential } from "./auth";
 import { withSSOStepUp } from "./stepup";
 import type { Role } from "../auth";
+import type { SendQuota } from "./config";
 
 /** The acting admin's step-up: their account password (derived, never sent), unused for a KySignOn session. */
 export type AdminConfirm = { ssoSession: boolean; accountPassword: string };
@@ -29,6 +30,7 @@ export type ManagedUser = {
   updatedAt: string;
   deactivatedAt?: string;
   totpEnabled?: boolean;
+  sendQuota?: SendQuota;
   /** Legacy plaintext-password hash: cannot sign in until an admin resets it. */
   needsPasswordReset?: boolean;
 };
@@ -76,6 +78,11 @@ export function resetUserPassword(
 /** Deactivates, reactivates or clears MFA for one account. */
 export function userAction(confirm: AdminConfirm, id: string, action: "deactivate" | "reactivate" | "clear-mfa"): Promise<ManagedUser> {
   return confirmedAdmin(confirm, {}, (b, h) => postJSON<ManagedUser>(`/api/users/${encodeURIComponent(id)}/${action}`, b, h));
+}
+
+/** Overrides one account's sending quota; null returns it to the install-wide one. */
+export function setUserSendQuota(confirm: AdminConfirm, id: string, sendQuota: SendQuota | null): Promise<ManagedUser> {
+  return confirmedAdmin(confirm, { sendQuota }, (b, h) => putJSON<ManagedUser>(`/api/users/${encodeURIComponent(id)}/send-quota`, b, h));
 }
 
 export type UserIMAPStatus = {

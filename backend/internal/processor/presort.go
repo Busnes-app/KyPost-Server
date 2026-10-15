@@ -73,7 +73,7 @@ func knownSenders(store *contacts.Store) (map[string]bool, error) {
 //
 // ponytail: From is not DKIM-checked, so a spoofed contact lands in Primary.
 // Labels are a sorting hint, not a trust signal (SECURITY.md); gate on
-// imapadapter.VerifyDKIMForDomain if that ever changes.
+// imapadapter.VerifyDKIMCoversHeader for From if that ever changes.
 func presort(uc userCtx, msg imapadapter.Message, uid int) (label string, allowlist []string, note string) {
 	if msg.TooLarge {
 		return "", uc.allowlist, ""

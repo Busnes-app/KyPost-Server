@@ -93,6 +93,8 @@ Less common variables:
 
 Notes:
 
+- The sending quota is not an environment variable. Admins set it under Admin → Application (`sendQuota` in `config.yaml`, 60 messages an hour and 1000 recipients a day by default; both must be at least 1) and per account under Admin → Users. A zero in a hand-edited `config.yaml` falls back to the default, never to no limit.
+
 - The classifier model defaults to `nemotron-3-nano:4b` everywhere — `Dockerfile`,
   `docker-compose.yml`, `.env.example`, and the backend's own fallback.
 - The image sets `OLLAMA_MODELS=/kypost/ollama-models`.

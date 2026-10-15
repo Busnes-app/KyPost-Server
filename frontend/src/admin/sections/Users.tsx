@@ -5,10 +5,12 @@ import {
   listUsers,
   resetUserPassword,
   setUserRole,
+  setUserSendQuota,
   userAction,
   type AdminConfirm,
   type ManagedUser
 } from "../../api/users";
+import type { SendQuota } from "../../api/config";
 import { useAuth, type Role } from "../../auth";
 import { AssignMailbox } from "./AssignMailbox";
 
@@ -156,6 +158,34 @@ export function Users() {
             "Security → Mail Keys → \"Key won't unlock?\", or from a recovery backup. " +
             "Generating a new identity is the last resort — it permanently discards the old key."
           : `Password reset for ${user.username}. They must change it on next login.`
+      );
+    });
+  }
+
+  function editSendQuota(user: ManagedUser) {
+    const current = user.sendQuota ? `${user.sendQuota.messagesPerHour},${user.sendQuota.recipientsPerDay}` : "";
+    const answer = window.prompt(
+      `Sending quota for ${user.username} as "messages per hour,recipients per day". Leave blank to use the install-wide quota.`,
+      current
+    );
+    if (answer === null) {
+      return;
+    }
+    let sendQuota: SendQuota | null = null;
+    if (answer.trim()) {
+      const [messagesPerHour, recipientsPerDay] = answer.split(",").map((part) => Number(part.trim()));
+      if (!(Number.isInteger(messagesPerHour) && Number.isInteger(recipientsPerDay) && messagesPerHour >= 1 && recipientsPerDay >= 1)) {
+        setStatus("Failed: enter two whole numbers of at least 1, such as 60,1000.");
+        return;
+      }
+      sendQuota = { messagesPerHour, recipientsPerDay };
+    }
+    void withRowBusy(user, async (confirm) => {
+      await setUserSendQuota(confirm, user.id, sendQuota);
+      setStatus(
+        sendQuota
+          ? `${user.username} may send ${sendQuota.messagesPerHour} messages an hour to ${sendQuota.recipientsPerDay} recipients a day.`
+          : `${user.username} uses the install-wide sending quota.`
       );
     });
   }
@@ -327,6 +357,15 @@ export function Users() {
                               disabled={busy || !unlocked}
                             >
                               Reset Password
+                            </button>
+                            <button
+                              type="button"
+                              className="users-action"
+                              onClick={() => editSendQuota(user)}
+                              disabled={busy || !unlocked}
+                              title={user.sendQuota ? `${user.sendQuota.messagesPerHour}/hour, ${user.sendQuota.recipientsPerDay} recipients/day` : "Install-wide quota"}
+                            >
+                              Send Quota
                             </button>
                             <button
                               type="button"

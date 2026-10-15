@@ -9,7 +9,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 
@@ -19,7 +19,7 @@ import (
 // must land in the shared To/CC bucket rather than withoutKeyEmails.
 func TestBuildPlanUsesDiscovery(t *testing.T) {
 	allowLoopbackOutboundForTest(t)
-	id, err := pgpmail.GenerateIdentity("Erin", "erin@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Erin", "erin@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

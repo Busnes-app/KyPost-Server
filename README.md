@@ -7,6 +7,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 ## Features
 
 - IMAP web client: inbox reader, folders, compose with SMTP send, scheduled send and draft save, filter rules (GUI and Sieve).
+- Sending quotas across immediate and scheduled mail: 60 messages an hour and 1000 recipients a day by default, adjustable by administrators per installation or account.
 - Automatic keyword labels from an on-device embedding sorter backed by a local Ollama model; each account keeps its own labels. Labels are a hint, not a security boundary — see [Architecture](#architecture).
 - PGP encryption and signing, recipient key discovery, Web Key Directory publishing and opt-in incoming encryption. Read [Where your PGP private key lives](#where-your-pgp-private-key-lives) before relying on it.
 - Contacts with CardDAV server and client, groups, and CSV/vCard import and export.

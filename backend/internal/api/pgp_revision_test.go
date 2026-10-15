@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -24,7 +24,7 @@ func TestPGPRevisionHTTPRejectsSameKeyStaleWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := pgpmail.GenerateIdentity("Revision test", "revision@example.invalid")
+	identity, err := pgpmailtest.GenerateIdentity("Revision test", "revision@example.invalid")
 	if err != nil {
 		t.Fatal(err)
 	}

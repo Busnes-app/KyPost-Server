@@ -18,6 +18,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
@@ -91,7 +92,7 @@ func TestMailSendRefusesToSignForServerCustody(t *testing.T) {
 		t.Fatalf("writeIMAPConfigPayload: %v", err)
 	}
 
-	identity, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	identity, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -171,11 +172,11 @@ func TestBuildPGPRecipientPlanSplitsToCCFromBCCAndFiltersUnusableKeys(t *testing
 		t.Fatalf("contacts.New: %v", err)
 	}
 
-	bobID, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	bobID, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity bob: %v", err)
 	}
-	daveID, err := pgpmail.GenerateIdentity("Dave", "dave@example.com")
+	daveID, err := pgpmailtest.GenerateIdentity("Dave", "dave@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity dave: %v", err)
 	}
@@ -261,19 +262,19 @@ func extractArmoredPGPData(t *testing.T, raw []byte) string {
 // nobody else (not the To/CC recipients, not other BCC recipients) can
 // decrypt at all.
 func TestBuildPGPDeliveriesIsolatesBCCRecipients(t *testing.T) {
-	bob, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	bob, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity bob: %v", err)
 	}
-	carol, err := pgpmail.GenerateIdentity("Carol", "carol@example.com")
+	carol, err := pgpmailtest.GenerateIdentity("Carol", "carol@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity carol: %v", err)
 	}
-	dave, err := pgpmail.GenerateIdentity("Dave", "dave@example.com")
+	dave, err := pgpmailtest.GenerateIdentity("Dave", "dave@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity dave: %v", err)
 	}
-	eve, err := pgpmail.GenerateIdentity("Eve", "eve@example.com")
+	eve, err := pgpmailtest.GenerateIdentity("Eve", "eve@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity eve: %v", err)
 	}
@@ -305,13 +306,13 @@ func TestBuildPGPDeliveriesIsolatesBCCRecipients(t *testing.T) {
 		t.Fatalf("expected shared delivery to bob+carol, got %v", shared.Recipients)
 	}
 	sharedArmored := extractArmoredPGPData(t, shared.Ciphertext)
-	if _, err := pgpmail.DecryptMIME(sharedArmored, bob, nil); err != nil {
+	if _, err := pgpmailtest.DecryptMIME(sharedArmored, bob, nil); err != nil {
 		t.Fatalf("bob should decrypt the shared to/cc ciphertext: %v", err)
 	}
-	if _, err := pgpmail.DecryptMIME(sharedArmored, carol, nil); err != nil {
+	if _, err := pgpmailtest.DecryptMIME(sharedArmored, carol, nil); err != nil {
 		t.Fatalf("carol should decrypt the shared to/cc ciphertext: %v", err)
 	}
-	if _, err := pgpmail.DecryptMIME(sharedArmored, dave, nil); err == nil {
+	if _, err := pgpmailtest.DecryptMIME(sharedArmored, dave, nil); err == nil {
 		t.Fatal("dave (bcc) must not be able to decrypt the shared to/cc ciphertext")
 	}
 
@@ -324,21 +325,21 @@ func TestBuildPGPDeliveriesIsolatesBCCRecipients(t *testing.T) {
 	}
 
 	daveArmored := extractArmoredPGPData(t, daveDelivery.Ciphertext)
-	if _, err := pgpmail.DecryptMIME(daveArmored, dave, nil); err != nil {
+	if _, err := pgpmailtest.DecryptMIME(daveArmored, dave, nil); err != nil {
 		t.Fatalf("dave should decrypt his own bcc ciphertext: %v", err)
 	}
-	if _, err := pgpmail.DecryptMIME(daveArmored, eve, nil); err == nil {
+	if _, err := pgpmailtest.DecryptMIME(daveArmored, eve, nil); err == nil {
 		t.Fatal("eve must not be able to decrypt dave's bcc ciphertext")
 	}
-	if _, err := pgpmail.DecryptMIME(daveArmored, bob, nil); err == nil {
+	if _, err := pgpmailtest.DecryptMIME(daveArmored, bob, nil); err == nil {
 		t.Fatal("bob (to/cc recipient) must not be able to decrypt dave's bcc ciphertext")
 	}
 
 	eveArmored := extractArmoredPGPData(t, eveDelivery.Ciphertext)
-	if _, err := pgpmail.DecryptMIME(eveArmored, eve, nil); err != nil {
+	if _, err := pgpmailtest.DecryptMIME(eveArmored, eve, nil); err != nil {
 		t.Fatalf("eve should decrypt her own bcc ciphertext: %v", err)
 	}
-	if _, err := pgpmail.DecryptMIME(eveArmored, dave, nil); err == nil {
+	if _, err := pgpmailtest.DecryptMIME(eveArmored, dave, nil); err == nil {
 		t.Fatal("dave must not be able to decrypt eve's bcc ciphertext")
 	}
 
@@ -355,7 +356,7 @@ func TestBuildPGPDeliveriesIsolatesBCCRecipients(t *testing.T) {
 }
 
 func TestBuildPGPDeliveriesBCCOnlyWhenNoToCCHasUsableKey(t *testing.T) {
-	dave, err := pgpmail.GenerateIdentity("Dave", "dave@example.com")
+	dave, err := pgpmailtest.GenerateIdentity("Dave", "dave@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity dave: %v", err)
 	}
@@ -385,7 +386,7 @@ func TestBuildPGPRecipientPlanDedupesAcrossToCcBccKeepingFirstOccurrence(t *test
 	if err != nil {
 		t.Fatalf("contacts.New: %v", err)
 	}
-	bobID, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	bobID, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

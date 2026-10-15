@@ -44,8 +44,8 @@ jobs:
       IMAGE_NAME: ghcr.io/busnes-app/kypost-server
       TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
-      # The default ref (main), never a ref taken from the workflow_run event.
-      # The gate below publishes only if main is still the commit CI tested.
+      # The default event commit, never a ref taken from workflow_run input.
+      # A rerun keeps that old commit; the gate also resolves live remote main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -65,11 +65,12 @@ jobs:
         run: |
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
+          main_sha="$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"
           # Not an error: main moving on while CI ran is ordinary, and the newer
           # commit's own CI run publishes it. This is also what stops a re-run
           # of an old commit's CI from moving the mutable :main tag backwards.
-          if [ "$sha" != "$TESTED_SHA" ]; then
-            echo "::notice::main is at ${sha}, past the tested ${TESTED_SHA}; skipping publish"
+          if [ "$sha" != "$TESTED_SHA" ] || [ "$sha" != "$main_sha" ]; then
+            echo "::notice::checkout ${sha}, tested ${TESTED_SHA}, and remote main ${main_sha} differ; skipping publish"
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

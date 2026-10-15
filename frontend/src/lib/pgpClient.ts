@@ -44,7 +44,7 @@ export async function generateIdentity(
   // Every address the account has proven it owns becomes a User ID. Both WKD
   // serving and Autocrypt advertising refuse a key that does not carry the
   // address in question, so a key with only the primary address silently
-  // fails to publish for verified aliases. Mirrors pgpmail.GenerateIdentity.
+  // fails to publish for verified aliases.
   const seen = new Set([email.trim().toLowerCase()]);
   const userIDs = [{ name, email: email.trim() }];
   for (const extra of additionalEmails) {
@@ -430,7 +430,7 @@ export type EncryptedDelivery = {
  * earlier version of this module emitted only Content-Type and MIME-Version,
  * producing messages with no From, To, Subject, or Date — malformed, and
  * rejected or rendered blank by receiving clients. The server now refuses
- * such a delivery (validatePGPMimeDelivery) rather than relaying it.
+ * such a delivery (validateClientDeliveryShape) rather than relaying it.
  *
  * bcc is deliberately absent: BCC recipients get their own delivery and must
  * not appear in anyone's headers, exactly as the server-side path does it.
@@ -632,7 +632,7 @@ export const OUTER_PLACEHOLDER_SUBJECT = "[Encrypted] Email Sent by KyPost";
 /**
  * Wraps the real content in an RFC 5322 protected-headers part carrying the
  * true Subject, mirroring pgpmail.protectContent. The receiving side lifts it
- * back out (pgpmail.ExtractProtectedSubject).
+ * back out (mimeContent.ts readProtectedHeaders).
  *
  * Attachments follow the body as their own parts of the same multipart/mixed,
  * base64 in 76-column lines with the headers mailmsg.Build writes, so the

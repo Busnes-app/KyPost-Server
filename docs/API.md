@@ -50,6 +50,7 @@ User management (admin only). Every non-GET route needs a step-up bound to the e
 - `POST /api/users/{id}/deactivate`
 - `POST /api/users/{id}/reactivate`
 - `POST /api/users/{id}/clear-mfa`
+- `PUT /api/users/{id}/send-quota` (body `{"sendQuota":{"messagesPerHour","recipientsPerDay"}}` overrides the account's sending quota; `{"sendQuota":null}` returns it to the install-wide one)
 - `GET|PUT|DELETE /api/users/{id}/imap-config` (assign a user's IMAP/SMTP credentials; `managed: true` locks the user's own route)
 - `GET|PUT|DELETE /api/users/{id}/carddav-client` (same for the outbound CardDAV client)
 
@@ -110,6 +111,8 @@ IMAP and inbox:
 
 Mail:
 
+- Client-prepared `/api/mail/send-pgp` batches reject envelope recipients repeated across delivery groups (case-insensitive parsed addresses) with `400`, before sending, charging quota or scheduling. Distinct Bcc groups remain supported.
+- Sending quota: every account may send `sendQuota.messagesPerHour` messages an hour and `sendQuota.recipientsPerDay` recipients (To, Cc and Bcc) a day, across `/api/mail/send`, `/api/mail/send-pgp` and send-as verification mail, defaults 60 and 1000, set in `PUT /api/config` or per account. Over it, a send gets `429` with `Retry-After` and `{"error","retryAfterSeconds"}`, and nothing is sent; a message with more recipients than the daily quota gets `422`, since it can never fit. A send is charged when it is attempted, so one that then fails still counts. Scheduled mail is charged when it goes out: over the quota it waits, retrying every 5 minutes, and returns to Drafts with the reason if no room frees up within an hour of `sendAt`.
 - `POST /api/mail/send`. Optional `attachments: [{name, mimeType, dataBase64}]`, 25 MB in total. Optional `encrypt` and `sign`. If `encrypt` is true and a recipient has no usable key, the call fails with 409. To allow the pickup-link fallback instead, set `allowPickupFallback`. See [Where your PGP private key lives](../README.md#where-your-pgp-private-key-lives). Optional `replyToMessageId` (and `replyToMailbox`) makes it a threaded reply: the server reads the original and sets `In-Reply-To`/`References` itself. Optional `calendarReply: {ics}` sends a calendar RSVP (iTIP REPLY) alongside the body.
 - `POST /api/mail/draft` (the same optional `attachments` shape)
 - `GET /api/mail/body?mailbox=&messageId=` (one message's body and its `bodyMode`, for clients that list with `bodies=0`; 422 if an adapter reports malformed MIME, preserving original mail)

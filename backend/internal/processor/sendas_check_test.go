@@ -18,6 +18,7 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/emersion/go-msgauth/dkim"
@@ -119,7 +120,7 @@ func backdateSendAsField(t *testing.T, stateDir, userID, aliasID string, mutate 
 
 // TestCheckPendingSendAsAliasesStaysPendingOnNoDKIMSignature covers the
 // deterministic, no-DNS-required case: a matched message with no
-// DKIM-Signature header at all reliably fails VerifyDKIMForDomain without
+// DKIM-Signature header at all reliably fails DKIMSignedHeaders without
 // any network access, so the alias must stay pending. Real DKIM
 // pass/fail crypto outcomes (valid signature, tampered body, wrong domain,
 // expired signature) are exhaustively covered in
@@ -401,7 +402,7 @@ func signedProbe(t *testing.T, alias sendas.Alias) []byte {
 // master key, because nothing in it opens a user's private key any more.
 func seedPollerPGPIdentity(t *testing.T, p *Poller, userID, name, email string) *pgpmail.Identity {
 	t.Helper()
-	id, err := pgpmail.GenerateIdentity(name, email)
+	id, err := pgpmailtest.GenerateIdentity(name, email)
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

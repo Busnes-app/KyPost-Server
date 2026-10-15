@@ -731,6 +731,11 @@ client-custody Sent copy. The four combinations: neither goes through
 `/api/mail/send`; sign only is this path; encrypt only and both go through
 `buildEncryptedDeliveries`, where signing is inline inside the ciphertext.
 
+Client-prepared delivery groups must have disjoint envelope recipients, compared
+case-insensitively after address parsing. An overlap returns `400` before SMTP,
+quota admission or scheduling; distinct Bcc groups remain supported and count
+as one message against the hourly quota.
+
 SMTP send errors containing `smtp: acceptance uncertain` indicate a lost or
 invalid final DATA acknowledgment. Ordinary and client-prepared PGP sends must
 be reconciled against provider/recipient evidence before retrying; the relay

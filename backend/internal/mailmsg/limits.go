@@ -7,9 +7,8 @@ import (
 
 // ErrMessageTooLarge is the shared sentinel every inbound-mail read site
 // returns when the data it would otherwise have to hold in memory exceeds
-// MaxInboundMessageBytes: a raw fetched message (imap.FetchRawMessage), a
-// fetched attachment (imap.APIClient's fetchAttachments, GetAttachment), or a
-// decrypted/parsed PGP/MIME payload (pgpmail.DecryptMIME, pgpmail.ParseContent).
+// MaxInboundMessageBytes: a raw fetched message (imap.FetchRawMessage) or a
+// fetched attachment (imap.APIClient's fetchAttachments, GetAttachment).
 // GetMessageBodies is the one exception: a batch call across many UIDs must
 // not let one oversized message fail every other UID in the same call, so it
 // marks that UID's MessageContent.TooLarge instead of returning this sentinel
@@ -22,9 +21,8 @@ import (
 var ErrMessageTooLarge = errors.New("mailmsg: message exceeds maximum allowed size")
 
 // MaxInboundMessageBytes bounds how much of a single inbound message (raw
-// bytes, attachment content, decrypted PGP payload) this server will hold in
-// memory at once. A large attachment or a PGP decompression bomb must not be
-// able to OOM the process.
+// bytes, attachment content) this server will hold in memory at once. A large
+// attachment must not be able to OOM the process.
 //
 // This is deliberately NOT the same number as the outbound
 // maxMailAttachmentBytes cap in internal/api/server.go, and it used to claim it

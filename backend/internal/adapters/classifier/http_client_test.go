@@ -6,23 +6,12 @@ import (
 	"unicode/utf8"
 )
 
-func TestResetWarmupStateClearsReadiness(t *testing.T) {
-	const key = "test-warmup-key"
-
-	state := getWarmupState(key)
-	state.mu.Lock()
-	state.ready = true
-	state.mu.Unlock()
-
-	if got := getWarmupState(key); !got.ready {
-		t.Fatal("test setup invalid: expected warmup state to be marked ready before reset")
-	}
-
-	ResetWarmupState()
-
-	if got := getWarmupState(key); got.ready {
-		t.Fatal("expected ResetWarmupState to clear cached warmup readiness")
-	}
+// resetWarmupState clears cached warmup readiness so the next classify/warmup
+// re-runs model pull/readiness initialization.
+func resetWarmupState() {
+	warmupStatesMu.Lock()
+	defer warmupStatesMu.Unlock()
+	warmupStates = map[string]*warmupState{}
 }
 
 // TestClipErrorBody covers the bound on upstream text quoted into an error.
