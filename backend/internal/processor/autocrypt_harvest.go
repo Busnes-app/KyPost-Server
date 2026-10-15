@@ -1,12 +1,14 @@
 package processor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"net/mail"
 	"strconv"
 	"strings"
+	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
@@ -22,8 +24,8 @@ type harvestAction string
 const (
 	harvestCreated   harvestAction = "created"   // new contact + key pinned
 	harvestPinned    harvestAction = "pinned"    // existing contact had no key
-	harvestUpdated   harvestAction = "updated"   // autocrypt->autocrypt, newest wins
-	harvestSkipped   harvestAction = "skipped"   // stronger/non-autocrypt key kept
+	harvestUpdated   harvestAction = "updated"   // newer autocrypt key; pin kept, so it reads as a key change
+	harvestSkipped   harvestAction = "skipped"   // stronger/non-autocrypt key kept, or message not newer
 	harvestUnchanged harvestAction = "unchanged" // same autocrypt fingerprint
 )
 
@@ -78,8 +80,14 @@ func authenticatedForContact(c contacts.Contact, addr string) bool {
 // validated, DKIM-authenticated Autocrypt key. Harvest is the weakest rung: it
 // never overrides a non-autocrypt key (manual/qr/wkd/keyserver), fills a gap
 // when the contact has no key, creates a DiscoveryCreated contact when none
-// exists, and for an existing autocrypt key lets the newest fingerprint win.
-func harvestPinAutocryptKey(store *contacts.Store, addr, armored, fingerprint string) (harvestAction, error) {
+// exists, and for an existing autocrypt key lets a strictly newer message win.
+//
+// date is the message's effective date (autocryptEffectiveDate). Arrival order
+// must not decide the key: a replayed old message would roll the contact back
+// to a retired key. A newer, different key replaces the key but NOT the pin, so
+// readers and the send path see a key change instead of a silent re-pin.
+func harvestPinAutocryptKey(store *contacts.Store, addr, armored, fingerprint string, date time.Time) (harvestAction, error) {
+	stamp := date.UTC().Format(time.RFC3339)
 	// An unreadable address book must not read as "no such contact": that is
 	// the branch that CREATES a contact and pins the harvested key to it, so a
 	// storage fault would turn the weakest trust rung into a new record.
@@ -111,12 +119,13 @@ func harvestPinAutocryptKey(store *contacts.Store, addr, armored, fingerprint st
 	}
 	if !ok {
 		_, err := store.Upsert(contacts.Contact{
-			FormattedName:     addr,
-			Emails:            []contacts.ContactValue{{Value: addr}},
-			PGPKey:            armored,
-			PGPKeyFingerprint: fingerprint,
-			PGPKeySource:      contacts.PGPSourceAutocrypt,
-			DiscoveryCreated:  true,
+			FormattedName:       addr,
+			Emails:              []contacts.ContactValue{{Value: addr}},
+			PGPKey:              armored,
+			PGPKeyFingerprint:   fingerprint,
+			PGPKeySource:        contacts.PGPSourceAutocrypt,
+			PGPKeyAutocryptDate: stamp,
+			DiscoveryCreated:    true,
 		})
 		return harvestCreated, err
 	}
@@ -125,6 +134,7 @@ func harvestPinAutocryptKey(store *contacts.Store, addr, armored, fingerprint st
 		c.PGPKeyFingerprint = fingerprint
 		c.PGPKeySource = contacts.PGPSourceAutocrypt
 		c.PGPKeyVerified = false
+		c.PGPKeyAutocryptDate = stamp
 		_, err := store.UpsertWithPrecondition(c, contacts.ContactPrecondition{RequireETag: c.ETag()})
 		if errors.Is(err, contacts.ErrPreconditionFailed) {
 			// The contact changed between our read and our write (e.g. the
@@ -137,12 +147,23 @@ func harvestPinAutocryptKey(store *contacts.Store, addr, armored, fingerprint st
 	if c.PGPKeySource != contacts.PGPSourceAutocrypt {
 		return harvestSkipped, nil
 	}
-	if strings.EqualFold(c.PGPKeyFingerprint, fingerprint) {
-		return harvestUnchanged, nil
+	// No stored date (harvested before dates were kept) parses as zero: any
+	// dated message is newer, and a different key still surfaces below.
+	stored, _ := time.Parse(time.RFC3339, c.PGPKeyAutocryptDate)
+	if !date.After(stored) {
+		return harvestSkipped, nil
 	}
-	c.PGPKey = armored
-	c.PGPKeyFingerprint = fingerprint
-	c.PGPKeyVerified = false
+	action := harvestUnchanged
+	if current, err := crypto.NewKeyFromArmored(c.PGPKey); err != nil || !strings.EqualFold(current.GetFingerprint(), fingerprint) {
+		if c.PGPKeyFingerprint == "" && err == nil {
+			c.PGPKeyFingerprint = current.GetFingerprint()
+		}
+		c.PGPKey = armored
+		c.PGPKeyVerified = false
+		action = harvestUpdated
+	}
+	// The same key still records the newer date, so an older replay stays older.
+	c.PGPKeyAutocryptDate = stamp
 	_, err = store.UpsertWithPrecondition(c, contacts.ContactPrecondition{RequireETag: c.ETag()})
 	if errors.Is(err, contacts.ErrPreconditionFailed) {
 		// The contact changed between our read and our write (e.g. the api
@@ -150,7 +171,25 @@ func harvestPinAutocryptKey(store *contacts.Store, addr, armored, fingerprint st
 		// tick re-evaluates.
 		return harvestSkipped, nil
 	}
-	return harvestUpdated, err
+	return action, err
+}
+
+// autocryptEffectiveDate is the Autocrypt effective date: the Date header,
+// capped at now so a future-dated message cannot outrank later ones. A message
+// without a parseable Date is ignored, as the spec requires.
+func autocryptEffectiveDate(raw []byte, now time.Time) (time.Time, bool) {
+	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		return time.Time{}, false
+	}
+	date, err := msg.Header.Date()
+	if err != nil {
+		return time.Time{}, false
+	}
+	if date.After(now) {
+		return now, true
+	}
+	return date, true
 }
 
 // verifyAutocryptDKIM is the DKIM gate for harvesting, a package var so tests
@@ -167,8 +206,11 @@ func harvestPinAutocryptKey(store *contacts.Store, addr, armored, fingerprint st
 // because the original signature is untouched. The header must therefore be
 // inside the signed, non-duplicated set, or the "the signing domain vouches
 // for this key" claim this gate exists to make is not one we can make.
+// Date must be signed too: it orders competing keys, so an unsigned Date would
+// let a replayer make an old key look newest.
 var verifyAutocryptDKIM = func(raw []byte, domain string) bool {
-	return imapadapter.VerifyDKIMCoversHeader(raw, domain, "Autocrypt")
+	return imapadapter.VerifyDKIMCoversHeader(raw, domain, "Autocrypt") &&
+		imapadapter.VerifyDKIMCoversHeader(raw, domain, "Date")
 }
 
 // autocryptHarvestConfig loads the per-user harvest gate once per tick:
@@ -301,6 +343,10 @@ func (p *Poller) harvestAutocrypt(ctx context.Context, uc userCtx, msg imapadapt
 	if !verifyAutocryptDKIM(raw, domainOf(normAddr)) {
 		return
 	}
+	date, ok := autocryptEffectiveDate(raw, time.Now())
+	if !ok {
+		return
+	}
 	armored, fingerprint, err := validateAutocryptKey(keydata, addr)
 	if err != nil {
 		return
@@ -310,7 +356,7 @@ func (p *Poller) harvestAutocrypt(ctx context.Context, uc userCtx, msg imapadapt
 		p.log.Error("autocrypt harvest: open contacts store failed", "user_id", uc.id, "error", err.Error())
 		return
 	}
-	action, err := harvestPinAutocryptKey(store, addr, armored, fingerprint)
+	action, err := harvestPinAutocryptKey(store, addr, armored, fingerprint, date)
 	if err != nil {
 		p.log.Error("autocrypt harvest: pin failed", "user_id", uc.id, "addr", addr, "error", err.Error())
 		return

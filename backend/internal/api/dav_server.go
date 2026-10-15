@@ -450,7 +450,7 @@ func (b *contactsDAVBackend) PutAddressObject(ctx context.Context, p string, car
 	// write (UpsertWithPrecondition holds the store's lock across both), so
 	// two concurrent PUTs racing the same precondition can't both pass the
 	// check and silently clobber each other.
-	var precondition contacts.ContactPrecondition
+	precondition := contacts.ContactPrecondition{KeepAbsentPGPKey: true}
 	if opts != nil {
 		if opts.IfNoneMatch.IsSet() && opts.IfNoneMatch.IsWildcard() {
 			precondition.RequireAbsent = true
@@ -762,10 +762,9 @@ func contactFromVCard(uid string, card vcard.Card) parsedVCardContact {
 		// design.
 		//
 		// This function backs CardDAV pull, CardDAV PUT and vCard import, so
-		// validating here covers all three.
-		if err := validateContactVCardKey(armored, c.Emails); err != nil {
-			c.PGPKey = ""
-		} else {
+		// validating here covers all three. A refused KEY reads as absent; PUT
+		// then keeps the stored key (KeepAbsentPGPKey).
+		if err := validateContactKey(armored, c.Emails); err == nil {
 			c.PGPKey = armored
 		}
 	}
@@ -866,18 +865,27 @@ func resolveGroupIDsByName(store *groups.Store, names []string) []string {
 	return ids
 }
 
-// validateContactVCardKey reports why a vCard KEY value is unusable as a
-// contact's PGP trust anchor, or nil.
+// errPrivateContactKey refuses a pasted secret key: the store would keep only
+// its public half, but the user should learn they pasted the wrong block.
+var errPrivateContactKey = errors.New("this is a private key; paste the public key block instead")
+
+// validateContactKey reports why a key is unusable as a contact's PGP trust
+// anchor, or nil. Every client-supplied contact key passes through it: JSON
+// create/update, mobile sync, and (via contactFromVCard) CardDAV PUT, CardDAV
+// pull and vCard import.
 //
 // Mirrors validateDiscoveredKey (WKD) and processor.validateAutocryptKey: the
 // key must parse, be neither revoked nor expired, and carry one of the
 // contact's own addresses as a User ID. Without the last check a remote CardDAV
 // server — which the code elsewhere in this package already treats as hostile
 // for size bounds — could attach any key to any contact.
-func validateContactVCardKey(armored string, emails []contacts.ContactValue) error {
+func validateContactKey(armored string, emails []contacts.ContactValue) error {
 	key, err := crypto.NewKeyFromArmored(armored)
 	if err != nil {
 		return fmt.Errorf("parse contact key: %w", err)
+	}
+	if key.IsPrivate() {
+		return errPrivateContactKey
 	}
 	status, err := pgpmail.CheckKeyStatus(armored)
 	if err != nil {
