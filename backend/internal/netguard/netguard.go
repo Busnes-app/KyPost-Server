@@ -1,6 +1,7 @@
 // Package netguard holds the single definition of "this IP is somewhere inside
 // the deployment and must never be reached by an outbound request made on a
-// user's behalf".
+// user's behalf", the dial-time guard built on it (Dialer) and the response
+// cap for those clients (BoundedTransport).
 //
 // It is a leaf package with no dependencies on the rest of this codebase
 // because two packages need it and neither can import the other: internal/api
@@ -17,9 +18,13 @@ package netguard
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 // extraReservedCIDRs are ranges Go's own net.IP predicates do not classify but
@@ -131,9 +136,13 @@ func DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	return Dialer(AllowedHosts)(ctx, network, addr)
 }
 
+// lookupIP is swapped only by this package's tests.
+var lookupIP = net.DefaultResolver.LookupIP
+
 // Dialer resolves the host once, refuses it if ANY address is internal, then
 // dials the checked addresses themselves, so DNS cannot answer differently in
-// between. Allowed hosts are dialled by name.
+// between. Allowed hosts are dialled by name. Connecting gets 10 seconds in
+// total, however many addresses the host has.
 func Dialer(allowed map[string]struct{}) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
@@ -142,18 +151,22 @@ func Dialer(allowed map[string]struct{}) func(context.Context, string, string) (
 		}
 		var d net.Dialer
 		if HostAllowed(allowed, host) {
+			d.Timeout = 10 * time.Second
 			return d.DialContext(ctx, network, addr)
 		}
-		ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+		ips, err := lookupIP(ctx, "ip", host)
 		if err != nil {
 			return nil, err
 		}
+		refused := fmt.Errorf("%w: %s", ErrInternalAddress, host)
 		for _, ip := range ips {
 			if IsPrivateOrReserved(ip) {
-				return nil, ErrInternalAddress
+				return nil, refused
 			}
 		}
-		lastErr := ErrInternalAddress // no addresses at all
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		lastErr := refused // no addresses at all
 		for _, ip := range ips {
 			conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
 			if err == nil {
@@ -163,4 +176,24 @@ func Dialer(allowed map[string]struct{}) func(context.Context, string, string) (
 		}
 		return nil, lastErr
 	}
+}
+
+// BoundedTransport caps every response body Base returns at Limit bytes. A
+// longer body reads as truncated, so callers see a parse error, not a
+// "too large"; size Limit far above any legitimate response.
+type BoundedTransport struct {
+	Base  http.RoundTripper
+	Limit int64
+}
+
+func (t *BoundedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.Base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.LimitReader(resp.Body, t.Limit), resp.Body}
+	return resp, nil
 }

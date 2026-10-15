@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -37,6 +36,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
 )
 
 // SSOSettings holds the OpenID Connect SSO configuration.
@@ -155,21 +155,6 @@ func SetTransport(rt http.RoundTripper) (previous http.RoundTripper) {
 	return previous
 }
 
-// boundedTransport caps every response body at maxOIDCResponseBytes.
-type boundedTransport struct{ base http.RoundTripper }
-
-func (t *boundedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := t.base.RoundTrip(req)
-	if err != nil {
-		return nil, err
-	}
-	resp.Body = struct {
-		io.Reader
-		io.Closer
-	}{io.LimitReader(resp.Body, maxOIDCResponseBytes), resp.Body}
-	return resp, nil
-}
-
 // httpClient builds the only client this package talks to a provider with:
 // bounded bodies, a hard timeout, and no redirects at all.
 //
@@ -183,7 +168,7 @@ func httpClient() *http.Client {
 	transportMu.RUnlock()
 	return &http.Client{
 		Timeout:   15 * time.Second,
-		Transport: &boundedTransport{base: base},
+		Transport: &netguard.BoundedTransport{Base: base, Limit: maxOIDCResponseBytes},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return fmt.Errorf("refusing redirect to %s: OIDC endpoints must answer directly", req.URL.Redacted())
 		},

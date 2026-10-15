@@ -22,16 +22,17 @@ import (
 // allowLoopbackOutboundForTest relaxes the SSRF guard (see ssrf_guard.go)
 // for the duration of a test so syncCardDAVClient can reach an
 // httptest.Server, which always listens on a loopback address AND speaks
-// plain http. Production code must never touch outboundIPGuard or
-// outboundCardDAVSchemes.
+// plain http. Production code must never touch outboundIPGuard, outboundDial
+// or outboundCardDAVSchemes.
 func allowLoopbackOutboundForTest(t *testing.T) {
 	t.Helper()
-	oldGuard := outboundIPGuard
+	oldGuard, oldDial := outboundIPGuard, outboundDial
 	outboundIPGuard = func(net.IP) bool { return false }
+	outboundDial = (&net.Dialer{}).DialContext
 	oldSchemes := outboundCardDAVSchemes
 	outboundCardDAVSchemes = []string{"http", "https"}
 	t.Cleanup(func() {
-		outboundIPGuard = oldGuard
+		outboundIPGuard, outboundDial = oldGuard, oldDial
 		outboundCardDAVSchemes = oldSchemes
 	})
 }
