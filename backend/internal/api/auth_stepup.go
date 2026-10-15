@@ -54,7 +54,6 @@ func (s *Server) handleAuthStepUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Password string `json:"password"`
 		// AuthSecret is the client-derived credential, for an account whose
 		// password never reaches this server. See login_params.go.
 		AuthSecret string `json:"authSecret,omitempty"`
@@ -79,7 +78,7 @@ func (s *Server) handleAuthStepUp(w http.ResponseWriter, r *http.Request) {
 	// confirmSecondFactor's throttle ("six digits do not survive one") described a
 	// control that was not running. The success is recorded once, below, after
 	// BOTH factors hold.
-	if !s.confirmAccountCredentialNoRecord(w, r, ac.UserID, req.Password, req.AuthSecret) {
+	if !s.confirmAccountCredentialNoRecord(w, r, ac.UserID, req.AuthSecret) {
 		return
 	}
 	u, err := s.users.Get(ac.UserID)

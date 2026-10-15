@@ -151,6 +151,11 @@ func (kr *keyResolver) resolve(ctx context.Context, email string) resolvedKey {
 	}
 	pinnedFP := ""
 	if hasContact && c.PGPKey != "" {
+		// A stored key its own pin disputes (e.g. an Autocrypt rotation) is a
+		// key change, never a silent encryption target.
+		if !keyMatchesPin(c) {
+			return resolvedKey{Tier: tierKeyChanged}
+		}
 		if st, err := pgpmail.CheckKeyStatus(c.PGPKey); err == nil && st.Usable() {
 			return resolvedKey{Armored: c.PGPKey, Fingerprint: c.PGPKeyFingerprint, Tier: tierContactVerified, Usable: true}
 		}

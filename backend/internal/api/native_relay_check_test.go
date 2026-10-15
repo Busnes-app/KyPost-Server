@@ -88,11 +88,11 @@ func TestNativeMailRelayCheckRuntime(t *testing.T) {
 				srv.routes().ServeHTTP(w, req)
 				return w
 			}
-			body, _ := json.Marshal(map[string]string{"expectedGeneration": profile.Generation, "password": password})
+			body, _ := json.Marshal(map[string]string{"expectedGeneration": profile.Generation, "authSecret": userAuthSecret(srv, admin.ID, password)})
 			for _, c := range []struct {
 				token, csrf, body string
 				want              int
-			}{{"", "", string(body), 401}, {memberToken, memberCSRF, string(body), 403}, {token, "", string(body), 403}, {token, csrf, `{}`, 403}, {token, csrf, `{"password":"wrong"}`, 403}, {token, csrf, `{"password":"` + password + `"}`, 400}, {token, csrf, `{"password":"` + password + `","expectedGeneration":"12345678-1234-4234-8234-123456789abc"}`, 409}} {
+			}{{"", "", string(body), 401}, {memberToken, memberCSRF, string(body), 403}, {token, "", string(body), 403}, {token, csrf, `{}`, 403}, {token, csrf, `{"authSecret":"` + authSecretFor(srv, "wrong") + `"}`, 403}, {token, csrf, `{"authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`, 400}, {token, csrf, `{"authSecret":"` + userAuthSecret(srv, admin.ID, password) + `","expectedGeneration":"12345678-1234-4234-8234-123456789abc"}`, 409}} {
 				if w := call(c.token, c.csrf, c.body); w.Code != c.want {
 					t.Fatal("pre-network gate", w.Code, c.want, w.Body)
 				}

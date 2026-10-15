@@ -243,12 +243,14 @@ func (s *Store) create(userID, email, displayName string, auto bool) (Alias, err
 			return err
 		}
 		now := time.Now().UTC()
+		email = strings.ToLower(email)
 		created = Alias{
 			ID:               id,
 			UserID:           userID,
-			Email:            strings.ToLower(email),
+			Email:            email,
 			DisplayName:      displayName,
 			VerificationCode: code,
+			ProbeMessageID:   "<" + strings.ToLower(rand.Text()) + "@" + email[strings.LastIndex(email, "@")+1:] + ">",
 			Status:           "pending",
 			CreatedAt:        now.Format(time.RFC3339),
 			ExpiresAt:        now.Add(pendingExpiry).Format(time.RFC3339),

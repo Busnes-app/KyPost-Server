@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"os/signal"
@@ -130,6 +131,30 @@ func TestRunAll_ShutsDownGracefullyOnCancel(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("runAll did not return after cancellation — shutdown did not complete")
+	}
+}
+
+// Sustained bad health ends the run through the normal shutdown path and
+// returns an error, so main exits non-zero and supervisord restarts it.
+func TestHealthRestartShutsDownAndFails(t *testing.T) {
+	for name, run := range map[string]func(context.Context, runDeps) error{"daemon": runDaemon, "all": runAll} {
+		t.Run(name, func(t *testing.T) {
+			shortenHealthCheck(t)
+			d := newGracefulShutdownTestDeps(t)
+			d.health.MarkUnhealthy("imap unreachable for all users")
+
+			result := make(chan error, 1)
+			go func() { result <- run(context.Background(), d) }()
+
+			select {
+			case err := <-result:
+				if !errors.Is(err, errUnhealthy) {
+					t.Fatalf("run returned %v, want errUnhealthy", err)
+				}
+			case <-time.After(60 * time.Second):
+				t.Fatal("unhealthy run did not shut down")
+			}
+		})
 	}
 }
 

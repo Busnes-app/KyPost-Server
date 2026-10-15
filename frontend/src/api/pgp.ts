@@ -64,8 +64,6 @@ export function getPGPIdentity(): Promise<PGPIdentity> {
  * That includes the FIRST identity, which the server used to leave ungated on
  * the reasoning that a keyless account has nothing to lose. It has: the key the
  * operation publishes. Every caller here must send a credential.
- *
- * credentialFields sends only the form the account can verify.
  */
 async function stepUp(password: string): Promise<Record<string, string>> {
   if (!password) return {};
@@ -341,8 +339,8 @@ export async function getRecoveryBackup(): Promise<RecoveryBackup> {
  * One-time migration: hands a legacy server-held key back so the browser can
  * rewrap it. Requires the account password, not just a session.
  */
-// credentialFields sends only the form the account can verify. The derivation
-// parameters come from the caller's own session, so no username is needed here.
+// The derivation parameters come from the caller's own session, so no username
+// is needed here.
 export async function exportLegacyPGPKey(
   password: string
 ): Promise<{ privateKey: string; publicKey: string; pgpRevision?: number }> {

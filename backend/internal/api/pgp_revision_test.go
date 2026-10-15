@@ -39,13 +39,12 @@ func TestPGPRevisionHTTPRejectsSameKeyStaleWrites(t *testing.T) {
 		{"device", http.MethodPut, "/api/pgp/identity/envelope/device:test", "device:test", srv.handlePGPPutEnvelopeSlot, map[string]any{"envelope": `{"v":2}`}},
 		{"slot-delete", http.MethodDelete, "/api/pgp/identity/envelope/recovery", "recovery", srv.handlePGPDeleteEnvelopeSlot, map[string]any{}},
 		{"identity-delete", http.MethodDelete, "/api/pgp/identity", "", srv.handlePGPIdentity, map[string]any{}},
-		{"password-pair", http.MethodPost, "/api/auth/password", "", srv.handleChangePassword, map[string]any{"oldPassword": password, "newAuthSecret": strings.Repeat("a", 64), "newLoginSalt": base64.StdEncoding.EncodeToString([]byte("0123456789abcdef")), "newIterations": 600000, "rewrappedPgpKey": `{"v":2}`}},
-		{"legacy-password", http.MethodPost, "/api/auth/password", "", srv.handleChangePassword, map[string]any{"oldPassword": password, "newPassword": "replacement-test-password"}},
+		{"password-pair", http.MethodPost, "/api/auth/password", "", srv.handleChangePassword, map[string]any{"oldAuthSecret": userAuthSecret(srv, u.ID, password), "newAuthSecret": strings.Repeat("a", 64), "newLoginSalt": base64.StdEncoding.EncodeToString([]byte("0123456789abcdef")), "newIterations": 600000, "rewrappedPgpKey": `{"v":2}`}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			test.payload["expectedRevision"] = before.PGPRevision
-			test.payload["password"] = password
+			test.payload["authSecret"] = userAuthSecret(srv, u.ID, password)
 			handler := srv.withAuth(func(w http.ResponseWriter, r *http.Request) { r.SetPathValue("slot", test.slot); test.handler(w, r) })
 			rec := doJSONAuth(srv, handler, test.method, test.path, test.payload, u.ID)
 			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"pgpStateChanged":true`) {
@@ -74,7 +73,7 @@ func TestPGPRevisionHTTPMetadataAndCompatibility(t *testing.T) {
 		return doJSONAuth(srv, srv.withAuth(func(w http.ResponseWriter, r *http.Request) { r.SetPathValue("slot", slot); handler(w, r) }), method, path, payload, u.ID)
 	}
 	// Legacy writers can omit the guard until account conversion ships.
-	rec := call(http.MethodPut, "/api/pgp/identity/envelope/recovery", "recovery", map[string]any{"password": password, "envelope": `{"v":2,"recovery":true}`}, srv.handlePGPPutEnvelopeSlot)
+	rec := call(http.MethodPut, "/api/pgp/identity/envelope/recovery", "recovery", map[string]any{"authSecret": authSecretFor(srv, password), "envelope": `{"v":2,"recovery":true}`}, srv.handlePGPPutEnvelopeSlot)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("legacy put: %d %s", rec.Code, rec.Body.String())
 	}
@@ -111,7 +110,7 @@ func TestPGPRevisionHTTPMetadataAndCompatibility(t *testing.T) {
 		}
 	}
 	for _, expected := range []any{0, -1, 1.5, "bad", users.MaxPGPRevision + 1} {
-		rec := call(http.MethodPost, "/api/pgp/identity/rewrap", "", map[string]any{"password": password, "wrapped": `{"v":2}`, "expectedRevision": expected}, srv.handlePGPRewrapKey)
+		rec := call(http.MethodPost, "/api/pgp/identity/rewrap", "", map[string]any{"authSecret": authSecretFor(srv, password), "wrapped": `{"v":2}`, "expectedRevision": expected}, srv.handlePGPRewrapKey)
 		if rec.Code != http.StatusConflict && rec.Code != http.StatusBadRequest {
 			t.Fatalf("invalid/stale expectation %v: %d", expected, rec.Code)
 		}
@@ -127,7 +126,7 @@ func TestPGPRevisionHTTPPasswordPairCommitsOneRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := changePasswordAs(t, srv, user.ID, map[string]any{
-		"oldPassword":      password,
+		"oldAuthSecret":    userAuthSecret(srv, user.ID, password),
 		"newAuthSecret":    strings.Repeat("b", 64),
 		"newLoginSalt":     base64.StdEncoding.EncodeToString([]byte("0123456789abcdef")),
 		"newIterations":    600000,

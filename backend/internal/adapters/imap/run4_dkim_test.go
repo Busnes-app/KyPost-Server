@@ -80,3 +80,75 @@ func TestVerifyDKIMCoversHeader(t *testing.T) {
 		}
 	})
 }
+
+func signForTest(t *testing.T, f *dkimTestFixture, mail string, canon dkim.Canonicalization, headers ...string) string {
+	t.Helper()
+	var b strings.Builder
+	if err := dkim.Sign(&b, strings.NewReader(mail), &dkim.SignOptions{
+		Domain: f.domain, Selector: f.selector, Signer: f.key,
+		HeaderCanonicalization: canon, HeaderKeys: headers,
+	}); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	return b.String()
+}
+
+// DKIMSignedHeaders returns the signed instance of each covered header, and
+// nothing for a header the signature left out.
+func TestDKIMSignedHeaders(t *testing.T) {
+	f := newDKIMTestFixture(t, "example.com", "sel")
+	mail := strings.Replace(testMail, "Subject: hello", "Subject: hello\r\n world", 1)
+	signed := signForTest(t, f, mail, dkim.CanonicalizationRelaxed, "from", "subject", "message-id")
+
+	got := DKIMSignedHeadersWithLookup([]byte(signed), "example.com", f.lookupTXT)
+	if got["from"] != "alice@example.com" || got["subject"] != "hello world" || got["message-id"] != "<test@example.com>" {
+		t.Fatalf("signed values = %q", got)
+	}
+	if _, ok := got["date"]; ok {
+		t.Fatalf("unsigned Date reported as signed: %q", got)
+	}
+	if len(DKIMSignedHeadersWithLookup([]byte(signed), "other.example", f.lookupTXT)) != 0 {
+		t.Fatal("headers reported for a domain that did not sign")
+	}
+}
+
+// The verifier matches field names after trimming whitespace, so "Subject :"
+// is another Subject to it. Any second instance, however it is spelled and
+// wherever it sits, must leave the header uncovered: otherwise a reader can
+// take the unsigned copy's value for the signed one.
+func TestDKIMSignedHeadersRefusesAnyDuplicate(t *testing.T) {
+	f := newDKIMTestFixture(t, "example.com", "sel")
+	for _, canon := range []dkim.Canonicalization{dkim.CanonicalizationRelaxed, dkim.CanonicalizationSimple} {
+		signed := signForTest(t, f, testMail, canon, "from", "subject", "message-id", "date")
+		for _, extra := range []string{
+			"Subject: forged", "Subject : forged", "Subject\t: forged", "SUBJECT : forged",
+			"Message-ID : <forged@example.com>", "From : mallory@example.com", "Date : Mon, 1 Jan 2035 00:00:00 +0000",
+		} {
+			name := strings.ToLower(strings.TrimSpace(strings.SplitN(extra, ":", 2)[0]))
+			for where, raw := range map[string]string{
+				"above": extra + "\r\n" + signed,
+				"below": strings.Replace(signed, "\r\n\r\n", "\r\n"+extra+"\r\n\r\n", 1),
+			} {
+				if v, ok := DKIMSignedHeadersWithLookup([]byte(raw), "example.com", f.lookupTXT)[name]; ok {
+					t.Errorf("%s %s %q: %s reported covered as %q", canon, where, extra, name, v)
+				}
+			}
+		}
+	}
+
+	// The exploit shape: relaxed canonicalization ignores whitespace before the
+	// colon, so the signed line can be respelled "Subject :" (net/mail then
+	// drops it) and an unsigned plain Subject prepended (net/mail reads that).
+	relaxed := signForTest(t, f, testMail, dkim.CanonicalizationRelaxed, "from", "subject", "message-id", "date")
+	respelled := "Subject: forged\r\n" + strings.Replace(relaxed, "\r\nSubject: hello", "\r\nSubject : hello", 1)
+	if v, ok := DKIMSignedHeadersWithLookup([]byte(respelled), "example.com", f.lookupTXT)["subject"]; ok {
+		t.Errorf("respelled signed Subject plus unsigned plain one reported covered as %q", v)
+	}
+
+	// Both instances signed (h= names it twice) is still two values: refuse.
+	twice := strings.Replace(testMail, "Subject: hello", "Subject: one\r\nSubject: two", 1)
+	signed := signForTest(t, f, twice, dkim.CanonicalizationRelaxed, "from", "subject", "subject")
+	if v, ok := DKIMSignedHeadersWithLookup([]byte(signed), "example.com", f.lookupTXT)["subject"]; ok {
+		t.Errorf("two signed Subjects reported covered as %q", v)
+	}
+}

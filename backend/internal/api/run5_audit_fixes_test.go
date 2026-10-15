@@ -32,7 +32,7 @@ func TestLoginLockoutSurvivesUsernameCaseAndWhitespace(t *testing.T) {
 	}
 
 	attempt := func(username string) int {
-		body, _ := json.Marshal(map[string]string{"username": username, "password": "wrong-guess"})
+		body, _ := json.Marshal(map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, "wrong-guess")})
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 		req.RemoteAddr = "203.0.113.9:5555"
 		rec := httptest.NewRecorder()
@@ -66,7 +66,7 @@ func TestLoginLockoutStillScopedPerAccount(t *testing.T) {
 		}
 	}
 	attempt := func(username string) int {
-		body, _ := json.Marshal(map[string]string{"username": username, "password": "wrong-guess"})
+		body, _ := json.Marshal(map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, "wrong-guess")})
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 		req.RemoteAddr = "203.0.113.9:5555"
 		rec := httptest.NewRecorder()

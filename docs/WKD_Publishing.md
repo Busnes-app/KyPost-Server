@@ -49,7 +49,8 @@ at once:
    a send-as alias verified by the DKIM loop-back; an alias confirmed only by
    typed code may send but is not published) — this is the anti-impersonation check: a
    verified domain alone never lets one user's key be served under an
-   address that belongs to someone else, or to nobody.
+   address that belongs to someone else, or to nobody. An address two users
+   have both proven is served for neither until one alias is removed.
 
 Steps 1 and 2 are one-time, admin-side DNS work per domain. Step 3 is a
 per-user toggle, on by default, with nothing to configure beyond that.
