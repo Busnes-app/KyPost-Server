@@ -32,6 +32,8 @@ import {
 } from "./pgp";
 import { deleteUserIMAPConfig, setUserRole, userAction } from "./users";
 
+import { mintPairing, setPushApproval, setDeviceApprover } from "./devices";
+
 const PLAINTEXT = "the-account-plaintext-password";
 const confirm = { ssoSession: false, accountPassword: PLAINTEXT };
 
@@ -41,6 +43,9 @@ describe("the account password never reaches the wire", () => {
   });
 
   it.each([
+    ["pairing", () => mintPairing(confirm)],
+    ["push approval", () => setPushApproval(confirm, true)],
+    ["device approver", () => setDeviceApprover(confirm, "phone", true)],
     ["step-up", () => reauthenticate(PLAINTEXT, "123456")],
     ["delete identity", () => deletePGPIdentity(PLAINTEXT, 1)],
     ["store identity", () => storeClientPGPIdentity("pub", "{}", "generated", PLAINTEXT, 1)],

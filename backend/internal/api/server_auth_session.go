@@ -928,9 +928,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// A password change is what a user reaches for when they think they have been
 	// compromised, so it must cut off EVERY credential, not just sessions: a device
 	// secret minted from a stolen session is independent of the password and would
-	// otherwise keep full mailbox access and — since every device registers
-	// MFAApprover=true — a standing second factor. The caller's own session is
-	// preserved.
+	// otherwise keep full mailbox access and, if flagged as an approver, a
+	// standing second factor. The caller's own session is preserved.
 	if err := s.revokeAllUserCredentialsExcept(u, currentSessionToken(r)); err != nil {
 		http.Error(w, "password changed but credential revocation failed; retry immediately", http.StatusInternalServerError)
 		return
