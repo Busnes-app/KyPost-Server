@@ -38,9 +38,9 @@ func TestIncomingPreferenceRequiresCredentialAndAcknowledgement(t *testing.T) {
 		status int
 	}{
 		{"missing credential", map[string]any{"enabled": true, "acknowledgeReplacement": true, "expectedRevision": user.PGPRevision}, http.StatusForbidden},
-		{"missing acknowledgement", map[string]any{"enabled": true, "password": password, "expectedRevision": user.PGPRevision}, http.StatusBadRequest},
-		{"stale revision", map[string]any{"enabled": true, "password": password, "acknowledgeReplacement": true, "expectedRevision": user.PGPRevision + 1}, http.StatusConflict},
-		{"enable", map[string]any{"enabled": true, "password": password, "acknowledgeReplacement": true, "expectedRevision": user.PGPRevision}, http.StatusOK},
+		{"missing acknowledgement", map[string]any{"enabled": true, "authSecret": authSecretFor(server, password), "expectedRevision": user.PGPRevision}, http.StatusBadRequest},
+		{"stale revision", map[string]any{"enabled": true, "authSecret": authSecretFor(server, password), "acknowledgeReplacement": true, "expectedRevision": user.PGPRevision + 1}, http.StatusConflict},
+		{"enable", map[string]any{"enabled": true, "authSecret": authSecretFor(server, password), "acknowledgeReplacement": true, "expectedRevision": user.PGPRevision}, http.StatusOK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body, err := json.Marshal(test.body)
@@ -64,7 +64,7 @@ func TestIncomingPreferenceRequiresCredentialAndAcknowledgement(t *testing.T) {
 	if err != nil || len(entries) != 1 || entries[0].Body != "" {
 		t.Fatalf("plaintext cache persisted: %v %v", entries, err)
 	}
-	req := httptest.NewRequest(http.MethodPut, "/api/pgp/incoming", bytes.NewBufferString(`{"enabled":false,"password":"`+password+`"}`))
+	req := httptest.NewRequest(http.MethodPut, "/api/pgp/incoming", bytes.NewBufferString(`{"enabled":false,"authSecret":"`+authSecretFor(server, password)+`"}`))
 	authRequest(server, req)
 	rec := httptest.NewRecorder()
 	server.withAuth(server.handlePGPIncoming)(rec, req)

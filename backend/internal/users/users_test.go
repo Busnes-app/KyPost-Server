@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -44,30 +45,45 @@ func TestLoadOrMigrateFreshInstallMintsDefaultAdmin(t *testing.T) {
 }
 
 func TestLoadOrMigrateImportsLegacyAdminEnv(t *testing.T) {
-	dir := t.TempDir()
-	hash, err := HashPassword(context.Background(), "hunter2")
+	cred, err := DeriveCredential(context.Background(), "hunter2-testpassword")
+	if err != nil {
+		t.Fatalf("DeriveCredential: %v", err)
+	}
+	plainHash, err := HashPassword(context.Background(), "hunter2-testpassword")
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
 	}
-	adminEnvPath := filepath.Join(dir, "admin.env")
-	content := "ADMIN_USER=legacyadmin\nADMIN_PASS_HASH=" + hash + "\nMUST_CHANGE_PASSWORD=false\n"
-	if err := os.WriteFile(adminEnvPath, []byte(content), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	store, err := LoadOrMigrate(context.Background(), dir, adminEnvPath)
-	if err != nil {
-		t.Fatalf("LoadOrMigrate: %v", err)
-	}
-	u, err := store.GetByUsername("legacyadmin")
-	if err != nil {
-		t.Fatalf("GetByUsername: %v", err)
-	}
-	if u.Role != RoleAdmin || !u.Active || u.MustChangePassword {
-		t.Fatalf("unexpected migrated admin: %+v", u)
-	}
-	if ok, _ := VerifyPassword(context.Background(), u, "hunter2"); !ok {
-		t.Fatalf("VerifyPassword: expected migrated password to verify")
+	for _, tc := range []struct {
+		name, env   string
+		wantDerived bool
+	}{
+		{"derived, as BootstrapAdmin writes it", "ADMIN_PASS_HASH=" + cred.Hash + "\nADMIN_LOGIN_SALT=" + cred.Salt + "\nADMIN_LOGIN_ITERATIONS=" + strconv.Itoa(cred.Iterations), true},
+		{"plaintext ADMIN_PASS", "ADMIN_PASS=hunter2-testpassword", true},
+		{"hash without login parameters stays legacy", "ADMIN_PASS_HASH=" + plainHash, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			adminEnvPath := filepath.Join(dir, "admin.env")
+			content := "ADMIN_USER=legacyadmin\n" + tc.env + "\nMUST_CHANGE_PASSWORD=false\n"
+			if err := os.WriteFile(adminEnvPath, []byte(content), 0o600); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+			store, err := LoadOrMigrate(context.Background(), dir, adminEnvPath)
+			if err != nil {
+				t.Fatalf("LoadOrMigrate: %v", err)
+			}
+			u, err := store.GetByUsername("legacyadmin")
+			if err != nil {
+				t.Fatalf("GetByUsername: %v", err)
+			}
+			if u.Role != RoleAdmin || !u.Active || u.MustChangePassword {
+				t.Fatalf("unexpected migrated admin: %+v", u)
+			}
+			ok, _ := verifyPassword(context.Background(), u, "hunter2-testpassword")
+			if ok != tc.wantDerived || u.NeedsPasswordReset() == tc.wantDerived {
+				t.Fatalf("verifies=%v needsReset=%v, want derived=%v", ok, u.NeedsPasswordReset(), tc.wantDerived)
+			}
+		})
 	}
 }
 
@@ -101,8 +117,8 @@ func TestStoreLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if ok, _ := VerifyPassword(context.Background(), u, "correct-horse-testpassword"); !ok {
-		t.Fatalf("VerifyPassword: expected new user's password to verify")
+	if ok, _ := verifyPassword(context.Background(), u, "correct-horse-testpassword"); !ok {
+		t.Fatalf("verifyPassword: expected new user's password to verify")
 	}
 
 	if _, err := store.Create(context.Background(), "alice", "other-testpassword", RoleUser); err != ErrUsernameTaken {
@@ -124,7 +140,7 @@ func TestStoreLifecycle(t *testing.T) {
 		t.Fatalf("SetPassword: %v", err)
 	}
 	got, _ = store.Get(u.ID)
-	okPassword, _ := VerifyPassword(context.Background(), got, "new-password-testpassword")
+	okPassword, _ := verifyPassword(context.Background(), got, "new-password-testpassword")
 	if !got.MustChangePassword || !okPassword {
 		t.Fatalf("unexpected state after SetPassword: %+v", got)
 	}
@@ -417,87 +433,5 @@ func TestConcurrentStoresDoNotLoseUpdates(t *testing.T) {
 	}
 	if got != n {
 		t.Fatalf("%d/%d fingerprints survived concurrent mutation; lost %d updates", got, n, n-got)
-	}
-}
-
-// TestUpgradeToDerivedAuthRefusesAnUnrelatedSecret pins the property this
-// function's own doc comment already promises: "a bug at the call site fails
-// closed rather than pinning the account to a caller-supplied secret".
-//
-// It re-verifies the plaintext password, but never checks that authSecret is
-// the derivation OF that password — so any caller who knows the current
-// password can pin the account to a credential of their choosing. handleLogin
-// runs this BEFORE the MFA branch, so the rewrite lands on a request that
-// returns mfaRequired with no session and no second-factor proof, and the
-// legitimate owner is locked out of an account the attacker still cannot enter.
-//
-// The server holds the plaintext on this path, so it can derive the expected
-// value rather than trusting the one supplied.
-func TestUpgradeToDerivedAuthRefusesAnUnrelatedSecret(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	store, err := LoadOrMigrate(ctx, dir, filepath.Join(dir, "admin.env"))
-	if err != nil {
-		t.Fatalf("LoadOrMigrate: %v", err)
-	}
-	u, err := store.Create(ctx, "victim", "correct-horse-battery-staple", RoleUser)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	const salt = "AAAAAAAAAAAAAAAAAAAAAA=="
-	attacker := strings.Repeat("de", 32) // 64 hex chars, well-formed but unrelated
-
-	err = store.UpgradeToDerivedAuth(ctx, u.ID, "correct-horse-battery-staple", attacker, salt, MinLoginIterations)
-	if err == nil {
-		t.Fatal("upgraded the account to an auth secret that is not the derivation of the verified password")
-	}
-
-	after, err := store.Get(u.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if after.UsesDerivedAuth() {
-		t.Fatal("account was converted despite the mismatch")
-	}
-	ok, err := VerifyPassword(ctx, after, "correct-horse-battery-staple")
-	if err != nil || !ok {
-		t.Fatal("the owner's real password no longer authenticates")
-	}
-}
-
-// TestUpgradeToDerivedAuthAcceptsTheGenuineDerivation is the control: the real
-// client flow must still convert.
-func TestUpgradeToDerivedAuthAcceptsTheGenuineDerivation(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	store, err := LoadOrMigrate(ctx, dir, filepath.Join(dir, "admin.env"))
-	if err != nil {
-		t.Fatalf("LoadOrMigrate: %v", err)
-	}
-	u, err := store.Create(ctx, "alice", "correct-horse-battery-staple", RoleUser)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	const salt = "AAAAAAAAAAAAAAAAAAAAAA=="
-	genuine, err := DeriveAuthSecret("correct-horse-battery-staple", salt, MinLoginIterations)
-	if err != nil {
-		t.Fatalf("DeriveAuthSecret: %v", err)
-	}
-
-	if err := store.UpgradeToDerivedAuth(ctx, u.ID, "correct-horse-battery-staple", genuine, salt, MinLoginIterations); err != nil {
-		t.Fatalf("UpgradeToDerivedAuth rejected the genuine derivation: %v", err)
-	}
-	after, err := store.Get(u.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if !after.UsesDerivedAuth() {
-		t.Fatal("account was not converted")
-	}
-	ok, err := VerifyAuthSecret(ctx, after, genuine)
-	if err != nil || !ok {
-		t.Fatal("the derived secret does not authenticate after conversion")
 	}
 }

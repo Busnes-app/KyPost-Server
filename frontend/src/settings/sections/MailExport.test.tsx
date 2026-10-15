@@ -37,7 +37,7 @@ beforeEach(() => {
     const selected = (init?.headers as Record<string, string>)["X-KyPost-Mailbox"];
     return json({ folders: selected === "mbx-1" ? ["INBOX", "Leads"] : ["INBOX", "Work"] });
   });
-  vi.mocked(deriveCredential).mockResolvedValue({ password: "must-not-transmit", authSecret: "derived-test-secret", loginSalt: "salt", loginIterations: 1, derivation: "pbkdf2" });
+  vi.mocked(deriveCredential).mockResolvedValue({ authSecret: "derived-test-secret" });
   vi.mocked(withSSOStepUp).mockImplementation(run => run({}));
   document.cookie = "csrf_token=test-csrf";
 });

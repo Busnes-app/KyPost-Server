@@ -13,6 +13,7 @@ type SSOSettings = {
   clientSecretSet?: boolean;
   autoProvision: boolean;
   allowInsecureIssuer: boolean;
+  adminGroup?: string;
 };
 
 // The server refuses a cleartext issuer unless allowInsecureIssuer is set,
@@ -76,7 +77,7 @@ export function SSOConfig() {
     const accountPassword = password;
     setPassword("");
     try {
-      const saved = await confirmedAdmin({ ssoSession, password: accountPassword }, settings, (b, h) =>
+      const saved = await confirmedAdmin({ ssoSession, accountPassword }, settings, (b, h) =>
         putJSON<{ settings: SSOSettings }>("/api/admin/sso", b, h)
       );
       setSettings({ ...saved.settings, clientSecret: "" });
@@ -134,7 +135,8 @@ export function SSOConfig() {
           required={settings.enabled}
         />
         <span className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem", display: "block" }}>
-          The OIDC base issuer URL supporting <code>.well-known/openid-configuration</code>.
+          The OIDC base issuer URL supporting <code>.well-known/openid-configuration</code>. Changing it revokes every
+          account link made at the previous provider; users link again from Security.
         </span>
       </div>
 
@@ -172,6 +174,23 @@ export function SSOConfig() {
           />
           <span>Auto-provision new accounts upon successful SSO authentication</span>
         </label>
+      </div>
+
+      <div className="field-group">
+        <label htmlFor="sso_admin_group">Administrator group (optional)</label>
+        <input
+          id="sso_admin_group"
+          type="text"
+          className="input font-mono"
+          placeholder="None: no account becomes an administrator through SSO"
+          value={settings.adminGroup || ""}
+          onChange={(e) => setSettings({ ...settings, adminGroup: e.target.value })}
+        />
+        <span className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem", display: "block" }}>
+          For Authentik or Keycloak: the exact group or realm role, as it appears in the token, whose members are
+          provisioned as administrators. Use a group made for KyPost, not a shared one like <code>admins</code>.
+          KySignOn uses its <code>kypost.admin</code> app role instead.
+        </span>
       </div>
 
       {isCleartextIssuer(settings.issuerUrl) || settings.allowInsecureIssuer ? (

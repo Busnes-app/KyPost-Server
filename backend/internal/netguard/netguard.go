@@ -1,6 +1,7 @@
 // Package netguard holds the single definition of "this IP is somewhere inside
 // the deployment and must never be reached by an outbound request made on a
-// user's behalf".
+// user's behalf", the dial-time guard built on it (Dialer) and the response
+// cap for those clients (BoundedTransport).
 //
 // It is a leaf package with no dependencies on the rest of this codebase
 // because two packages need it and neither can import the other: internal/api
@@ -14,7 +15,17 @@
 // of them.
 package netguard
 
-import "net"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
 
 // extraReservedCIDRs are ranges Go's own net.IP predicates do not classify but
 // which are just as much "inside" as RFC1918 is.
@@ -32,13 +43,16 @@ import "net"
 // that only inspects IPv6 predicates.
 var extraReservedCIDRs = func() []*net.IPNet {
 	cidrs := []string{
+		"0.0.0.0/8",       // RFC 1122 "this network"; Linux routes 0.x to the host
 		"100.64.0.0/10",   // RFC 6598 CGNAT / Tailscale
 		"192.0.0.0/24",    // RFC 6890 IETF protocol assignments
 		"198.18.0.0/15",   // RFC 2544 benchmarking
 		"192.0.2.0/24",    // TEST-NET-1
 		"198.51.100.0/24", // TEST-NET-2
 		"203.0.113.0/24",  // TEST-NET-3
+		"240.0.0.0/4",     // reserved, and 255.255.255.255 broadcast
 		"64:ff9b::/96",    // RFC 6052 NAT64 — wraps arbitrary IPv4
+		"64:ff9b:1::/48",  // RFC 8215 local-use NAT64 — likewise
 		"2002::/16",       // 6to4 — likewise
 	}
 	nets := make([]*net.IPNet, 0, len(cidrs))
@@ -84,4 +98,102 @@ func IsPrivateOrReserved(ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+// AllowedHosts are hostnames an operator lets resolve to internal addresses
+// (SANDBOX_PRIVATE_HOSTS): a LAN mail server, a sandbox CardDAV host.
+var AllowedHosts = ParseHosts(os.Getenv("SANDBOX_PRIVATE_HOSTS"))
+
+// ParseHosts reads a comma-separated host list. IP literals are dropped: one
+// entry must never make a private address generally reachable.
+func ParseHosts(raw string) map[string]struct{} {
+	hosts := make(map[string]struct{})
+	for _, h := range strings.Split(raw, ",") {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h == "" || net.ParseIP(h) != nil {
+			continue
+		}
+		hosts[h] = struct{}{}
+	}
+	return hosts
+}
+
+// HostAllowed reports whether host is listed: exact match after case folding,
+// so a name an attacker controls cannot swallow an entry by extending it.
+func HostAllowed(allowed map[string]struct{}, host string) bool {
+	if len(allowed) == 0 || host == "" || net.ParseIP(host) != nil {
+		return false
+	}
+	_, ok := allowed[strings.ToLower(host)]
+	return ok
+}
+
+// ErrInternalAddress is returned by Dialer for a refused destination.
+var ErrInternalAddress = errors.New("destination resolves to a private or reserved address")
+
+// DialContext is Dialer(AllowedHosts).
+func DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	return Dialer(AllowedHosts)(ctx, network, addr)
+}
+
+// lookupIP is swapped only by this package's tests.
+var lookupIP = net.DefaultResolver.LookupIP
+
+// Dialer resolves the host once, refuses it if ANY address is internal, then
+// dials the checked addresses themselves, so DNS cannot answer differently in
+// between. Allowed hosts are dialled by name. Connecting gets 10 seconds in
+// total, however many addresses the host has.
+func Dialer(allowed map[string]struct{}) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		var d net.Dialer
+		if HostAllowed(allowed, host) {
+			d.Timeout = 10 * time.Second
+			return d.DialContext(ctx, network, addr)
+		}
+		ips, err := lookupIP(ctx, "ip", host)
+		if err != nil {
+			return nil, err
+		}
+		refused := fmt.Errorf("%w: %s", ErrInternalAddress, host)
+		for _, ip := range ips {
+			if IsPrivateOrReserved(ip) {
+				return nil, refused
+			}
+		}
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		lastErr := refused // no addresses at all
+		for _, ip := range ips {
+			conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		return nil, lastErr
+	}
+}
+
+// BoundedTransport caps every response body Base returns at Limit bytes. A
+// longer body reads as truncated, so callers see a parse error, not a
+// "too large"; size Limit far above any legitimate response.
+type BoundedTransport struct {
+	Base  http.RoundTripper
+	Limit int64
+}
+
+func (t *BoundedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.Base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.LimitReader(resp.Body, t.Limit), resp.Body}
+	return resp, nil
 }

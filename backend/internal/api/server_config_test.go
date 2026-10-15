@@ -78,7 +78,7 @@ func TestChangePasswordRevokesOtherSessions(t *testing.T) {
 	srv.sessions[otherToken] = Session{UserID: u.ID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: "csrf-b"}
 	srv.sessMu.Unlock()
 
-	body, _ := json.Marshal(map[string]string{"oldPassword": "old-password-testpassword", "newPassword": "new-password-testpassword"})
+	body, _ := json.Marshal(passwordChangeBody(srv, u.Username, "old-password-testpassword", "new-password-testpassword"))
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(body))
 	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: changingToken})
 	req.Header.Set("X-CSRF-Token", "csrf-a")
@@ -144,13 +144,13 @@ func TestRoutesRegistersEveryArea(t *testing.T) {
 	// that function ran. Each must resolve to something other than the SPA
 	// fallback.
 	for _, probe := range []struct{ method, path string }{
-		{http.MethodPost, "/api/auth/login"},           // routesAuth
-		{http.MethodGet, "/api/health"},                // routesAdmin
-		{http.MethodGet, "/api/inbox"},                 // routesMail
-		{http.MethodGet, "/api/contacts"},              // routesContacts
-		{http.MethodGet, "/api/pgp/identity"},          // routesPGP
-		{http.MethodGet, "/api/notifications/pairing"}, // routesNotifications
-		{http.MethodGet, "/api/rules"},                 // routesRules
+		{http.MethodPost, "/api/auth/login"},            // routesAuth
+		{http.MethodGet, "/api/health"},                 // routesAdmin
+		{http.MethodGet, "/api/inbox"},                  // routesMail
+		{http.MethodGet, "/api/contacts"},               // routesContacts
+		{http.MethodGet, "/api/pgp/identity"},           // routesPGP
+		{http.MethodPost, "/api/notifications/pairing"}, // routesNotifications
+		{http.MethodGet, "/api/rules"},                  // routesRules
 	} {
 		req := httptest.NewRequest(probe.method, probe.path, nil)
 		rec := httptest.NewRecorder()

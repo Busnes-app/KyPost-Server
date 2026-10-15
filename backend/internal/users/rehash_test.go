@@ -133,8 +133,12 @@ func TestRehashPasswordUpgradesInPlace(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
+	secret, err := DeriveAuthSecret(pw, u.LoginSalt, u.LoginIterations)
+	if err != nil {
+		t.Fatalf("DeriveAuthSecret: %v", err)
+	}
 	// Plant an Argon2id hash written at an older, cheaper cost.
-	legacy, err := password.HashWith(pw, password.Params{Memory: 8 * 1024, Time: 1, Threads: 1})
+	legacy, err := password.HashWith(secret, password.Params{Memory: 8 * 1024, Time: 1, Threads: 1})
 	if err != nil {
 		t.Fatalf("HashWith: %v", err)
 	}
@@ -154,7 +158,7 @@ func TestRehashPasswordUpgradesInPlace(t *testing.T) {
 		t.Fatal("planted hash does not report as needing a rehash")
 	}
 
-	if err := store.RehashPassword(context.Background(), u.ID, pw); err != nil {
+	if err := store.RehashPassword(context.Background(), u.ID, secret); err != nil {
 		t.Fatalf("RehashPassword: %v", err)
 	}
 
@@ -165,7 +169,7 @@ func TestRehashPasswordUpgradesInPlace(t *testing.T) {
 	if NeedsRehash(after.PasswordHash) {
 		t.Errorf("hash still at the old cost after rehash: %q", after.PasswordHash)
 	}
-	if ok, _ := VerifyPassword(context.Background(), after, pw); !ok {
+	if ok, _ := verifyPassword(context.Background(), after, pw); !ok {
 		t.Error("the password no longer verifies after the rehash — this locks the user out")
 	}
 	if after.PasswordHash == before.PasswordHash {
@@ -203,10 +207,10 @@ func TestRehashPasswordRefusesAWrongCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if ok, _ := VerifyPassword(context.Background(), after, "attacker-chosen-password"); ok {
+	if ok, _ := verifyPassword(context.Background(), after, "attacker-chosen-password"); ok {
 		t.Fatal("the account's password was replaced by the rejected candidate")
 	}
-	if ok, _ := VerifyPassword(context.Background(), after, pw); !ok {
+	if ok, _ := verifyPassword(context.Background(), after, pw); !ok {
 		t.Error("the original password stopped working")
 	}
 }

@@ -45,8 +45,8 @@ func TestRetiredScryptHashFailsLikeAWrongPasswordAndWarns(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 	defer slog.SetDefault(previous)
 
-	u := User{ID: "user-123", PasswordHash: retiredScryptHash}
-	ok, err := VerifyPassword(context.Background(), u, "any password")
+	u := User{ID: "user-123", PasswordHash: retiredScryptHash, AuthDerivation: AuthDerivationPBKDF2}
+	ok, err := VerifyAuthSecret(context.Background(), u, "any password")
 	if ok || err != nil {
 		t.Fatalf("retired hash: ok=%v err=%v, want false,nil", ok, err)
 	}

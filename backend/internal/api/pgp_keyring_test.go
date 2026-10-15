@@ -179,7 +179,7 @@ func TestPGPKeyringHTTPCompatibilityAndReset(t *testing.T) {
 	u = saved
 	// Version opt-in is explicit, and the revision belongs to the verified credential snapshot.
 	body := map[string]any{"oldAuthSecret": authSecret, "newAuthSecret": authSecret, "newLoginSalt": salt,
-		"newIterations": 600000, "rewrappedPgpKey": `{"v":2,"password":"rewrapped-ring"}`, "keyringVersion": 1}
+		"newIterations": 600000, "rewrappedPgpKey": `{"v":2,"authSecret":"` + authSecretFor(srv, "rewrapped-ring") + `"}`, "keyringVersion": 1}
 	for _, version := range []int{0, 2, 1} {
 		body["keyringVersion"] = version
 		if version != 1 {
@@ -213,7 +213,7 @@ func TestPGPKeyringHTTPCompatibilityAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/users/"+u.ID+"/reset-password", strings.NewReader(`{"password":"temporary-ring-password","adminPassword":"admin-test-password"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/users/"+u.ID+"/reset-password", strings.NewReader(`{"password":"temporary-ring-password","adminAuthSecret":"`+userAuthSecret(srv, admin.ID, "admin-test-password")+`"}`))
 	authRequestAs(srv, req, admin.ID)
 	rec := httptest.NewRecorder()
 	srv.routes().ServeHTTP(rec, req)

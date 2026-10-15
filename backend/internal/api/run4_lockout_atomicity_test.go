@@ -144,7 +144,7 @@ func TestSendAsCooldownTryConsumeAdmitsOnlyOne(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if ok, _ := cooldown.tryConsume("user|target@example.com"); ok {
+			if ok, _ := cooldown.allow("user|target@example.com"); ok {
 				mu.Lock()
 				admitted++
 				mu.Unlock()
@@ -161,10 +161,10 @@ func TestSendAsCooldownTryConsumeAdmitsOnlyOne(t *testing.T) {
 func TestSendAsCooldownTryConsumeIsPerKey(t *testing.T) {
 	cooldown := newCooldown(sendAsVerificationCooldownFor)
 
-	if ok, _ := cooldown.tryConsume("user|a@example.com"); !ok {
+	if ok, _ := cooldown.allow("user|a@example.com"); !ok {
 		t.Fatal("first address refused")
 	}
-	if ok, _ := cooldown.tryConsume("user|b@example.com"); !ok {
+	if ok, _ := cooldown.allow("user|b@example.com"); !ok {
 		t.Fatal("a different address was penalised by the first one's cooldown")
 	}
 }

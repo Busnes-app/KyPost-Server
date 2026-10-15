@@ -70,8 +70,8 @@ func TestLoginMeLogoutFlow(t *testing.T) {
 
 	// Wrong password is rejected.
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login", map[string]string{
-		"username": admin.Username,
-		"password": "wrong-password",
+		"username":   admin.Username,
+		"authSecret": testAuthSecret(srv, admin.Username, "wrong-password"),
 	})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("login with wrong password: status = %d, want 401", rec.Code)
@@ -95,8 +95,8 @@ func TestLoginMeLogoutFlow(t *testing.T) {
 	}
 
 	rec = doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login", map[string]string{
-		"username": u.Username,
-		"password": "correct-horse-battery",
+		"username":   u.Username,
+		"authSecret": testAuthSecret(srv, u.Username, "correct-horse-battery"),
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login: status = %d, body=%s", rec.Code, rec.Body.String())
@@ -141,12 +141,12 @@ func TestHandleLoginRehashesStaleArgon2idPassword(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	stale := staleArgon2Hash(t, pw)
+	stale := staleArgon2Hash(t, testAuthSecret(srv, u.Username, pw))
 	plantPasswordHash(t, srv, u.ID, stale)
 
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login", map[string]string{
-		"username": u.Username,
-		"password": pw,
+		"username":   u.Username,
+		"authSecret": testAuthSecret(srv, u.Username, pw),
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login with stale Argon2id hash: status = %d, body=%s", rec.Code, rec.Body.String())
@@ -162,7 +162,7 @@ func TestHandleLoginRehashesStaleArgon2idPassword(t *testing.T) {
 	if users.NeedsRehash(after.PasswordHash) {
 		t.Error("hash still reports needing a rehash after login upgraded it")
 	}
-	if ok, _ := users.VerifyPassword(context.Background(), after, pw); !ok {
+	if ok, _ := verifyTestPassword(srv, after, pw); !ok {
 		t.Error("the password no longer verifies after the login-triggered rehash")
 	}
 }
@@ -183,7 +183,7 @@ func TestSessionCookieSecureFlag(t *testing.T) {
 	}
 
 	login := func(setHeaders func(*http.Request)) *http.Cookie {
-		body, _ := json.Marshal(map[string]string{"username": u.Username, "password": "correct-horse-battery"})
+		body, _ := json.Marshal(map[string]string{"username": u.Username, "authSecret": testAuthSecret(srv, u.Username, "correct-horse-battery")})
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 		if setHeaders != nil {
 			setHeaders(req)
@@ -226,8 +226,8 @@ func TestHandleLoginLocksOutAfterThreeFailures(t *testing.T) {
 
 	for i := 0; i < loginMaxFailures; i++ {
 		rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login", map[string]string{
-			"username": u.Username,
-			"password": "wrong-password",
+			"username":   u.Username,
+			"authSecret": testAuthSecret(srv, u.Username, "wrong-password"),
 		})
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d: status = %d, want 401", i+1, rec.Code)
@@ -236,8 +236,8 @@ func TestHandleLoginLocksOutAfterThreeFailures(t *testing.T) {
 
 	// Even the correct password must now be rejected while locked out.
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login", map[string]string{
-		"username": u.Username,
-		"password": "correct-horse-battery",
+		"username":   u.Username,
+		"authSecret": testAuthSecret(srv, u.Username, "correct-horse-battery"),
 	})
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429, body=%s", rec.Code, rec.Body.String())
@@ -271,8 +271,8 @@ func TestHandleLoginRequiresCaptchaWhenConfigured(t *testing.T) {
 
 	srv.captchaVerifier = fakeCaptchaVerifier{ok: false}
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login", map[string]string{
-		"username": u.Username,
-		"password": "correct-horse-battery",
+		"username":   u.Username,
+		"authSecret": testAuthSecret(srv, u.Username, "correct-horse-battery"),
 	})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("rejected captcha: status = %d, want 401, body=%s", rec.Code, rec.Body.String())
@@ -281,7 +281,7 @@ func TestHandleLoginRequiresCaptchaWhenConfigured(t *testing.T) {
 	srv.captchaVerifier = fakeCaptchaVerifier{ok: true}
 	rec = doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login", map[string]string{
 		"username":     u.Username,
-		"password":     "correct-horse-battery",
+		"authSecret":   testAuthSecret(srv, u.Username, "correct-horse-battery"),
 		"captchaToken": "whatever-the-widget-produced",
 	})
 	if rec.Code != http.StatusOK {
@@ -320,7 +320,7 @@ func TestCSRFProtectionOnCookieAuthedMutations(t *testing.T) {
 	protected := srv.withAuth(srv.handleChangePassword)
 
 	// Cookie present, no CSRF header: rejected, even with correct password.
-	body, _ := json.Marshal(map[string]string{"oldPassword": "old-password-testpassword", "newPassword": "new-password-testpassword"})
+	body, _ := json.Marshal(passwordChangeBody(srv, u.Username, "old-password-testpassword", "new-password-testpassword"))
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(body))
 	token := "session-token-" + u.ID
 	srv.sessMu.Lock()
@@ -386,7 +386,7 @@ func TestChangePasswordRequiresCurrentPassword(t *testing.T) {
 	protected := srv.withAuth(srv.handleChangePassword)
 
 	// Wrong old password is rejected.
-	body, _ := json.Marshal(map[string]string{"oldPassword": "not-it", "newPassword": "new-password-testpassword"})
+	body, _ := json.Marshal(passwordChangeBody(srv, u.Username, "not-it", "new-password-testpassword"))
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(body))
 	authRequestAs(srv, req, u.ID)
 	rec := httptest.NewRecorder()
@@ -396,7 +396,7 @@ func TestChangePasswordRequiresCurrentPassword(t *testing.T) {
 	}
 
 	// Correct old password succeeds and the new password takes effect.
-	body, _ = json.Marshal(map[string]string{"oldPassword": "old-password-testpassword", "newPassword": "new-password-testpassword"})
+	body, _ = json.Marshal(passwordChangeBody(srv, u.Username, "old-password-testpassword", "new-password-testpassword"))
 	req = httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(body))
 	authRequestAs(srv, req, u.ID)
 	rec = httptest.NewRecorder()
@@ -409,7 +409,7 @@ func TestChangePasswordRequiresCurrentPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if ok, _ := users.VerifyPassword(context.Background(), got, "new-password-testpassword"); !ok {
+	if ok, _ := verifyTestPassword(srv, got, "new-password-testpassword"); !ok {
 		t.Fatalf("expected new password to verify")
 	}
 }

@@ -65,6 +65,8 @@ export function ContactsPage() {
   const [form, setForm] = useState<FormState>(emptyFormState);
   const [editingUid, setEditingUid] = useState("");
   const [saving, setSaving] = useState(false);
+  // Shown inside the modal form; the page status line sits behind its backdrop.
+  const [formError, setFormError] = useState("");
 
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   // The account's real PGP identity (Security page), not the self-marked
@@ -176,6 +178,7 @@ export function ContactsPage() {
 
   function closeForm() {
     startCreate();
+    setFormError("");
     setFormOpen(false);
   }
 
@@ -188,6 +191,7 @@ export function ContactsPage() {
     }
     setSaving(true);
     setStatus("");
+    setFormError("");
     try {
       const input = formStateToInput(form);
       if (editingUid) {
@@ -206,7 +210,7 @@ export function ContactsPage() {
         }
       }
     } catch (error: unknown) {
-      setStatus(`Failed to save contact: ${toErrorMessage(error, "unknown error")}`);
+      setFormError(`Failed to save contact: ${toErrorMessage(error, "unknown error")}`);
     } finally {
       setSaving(false);
     }
@@ -1163,6 +1167,11 @@ export function ContactsPage() {
               <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} />
             </label>
 
+            {formError ? (
+              <p className="notice notice-error" role="alert">
+                {formError}
+              </p>
+            ) : null}
             <div className="contacts-form-actions">
               <button type="submit" className="contacts-create-submit" disabled={saving}>
                 {saving ? "Saving..." : editingUid ? "Save Changes" : "Add Contact"}

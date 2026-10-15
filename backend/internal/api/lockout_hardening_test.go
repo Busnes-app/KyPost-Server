@@ -14,7 +14,7 @@ import (
 )
 
 func loginAttempt(srv *Server, username, password, remoteAddr string) *httptest.ResponseRecorder {
-	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	body, _ := json.Marshal(map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 	req.RemoteAddr = remoteAddr
 	rec := httptest.NewRecorder()

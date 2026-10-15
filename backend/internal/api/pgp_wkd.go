@@ -86,7 +86,7 @@ var wkdBaseURLOverride string
 //
 // Deliberately syntax only. Whether a syntactically fine hostname is one we
 // may actually talk to (localhost, 169.254.169.254, anything resolving into
-// private space) is validateOutboundURL and ssrfSafeDialContext's decision,
+// private space) is validateOutboundURL and netguard.DialContext's decision,
 // and duplicating it here would mean two rules to keep in agreement.
 func validWKDDomain(domain string) bool {
 	// 253 is the longest name representable in a 255-byte wire-format QNAME.

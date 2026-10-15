@@ -28,10 +28,10 @@ func TestClientIdentityResponseMatchesTheIdentityShape(t *testing.T) {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
 	rec := pgpRequest(t, srv, http.MethodPost, "/api/pgp/identity/client", map[string]string{
-		"publicKey": id.ArmoredPublicKey,
-		"wrapped":   `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"Y3Q="}`,
-		"source":    "generated",
-		"password":  password,
+		"publicKey":  id.ArmoredPublicKey,
+		"wrapped":    `{"v":2,"kdf":"PBKDF2-SHA256","iterations":600000,"salt":"c2FsdA==","iv":"aXY=","ciphertext":"Y3Q="}`,
+		"source":     "generated",
+		"authSecret": authSecretFor(srv, password),
 	}, srv.handlePGPIdentityClient)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("client identity: status %d; body=%s", rec.Code, rec.Body.String())

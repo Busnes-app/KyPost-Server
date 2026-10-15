@@ -1,8 +1,8 @@
 package imap
 
 import (
+	"bufio"
 	"bytes"
-	"net/mail"
 	"net/textproto"
 	"strings"
 
@@ -97,37 +97,78 @@ func VerifyDKIMCoversHeader(raw []byte, domain, header string) bool {
 }
 
 func verifyDKIMCoversHeaderWithLookup(raw []byte, domain, header string, lookupTXT func(string) ([]string, error)) bool {
+	_, ok := DKIMSignedHeadersWithLookup(raw, domain, lookupTXT)[strings.ToLower(strings.TrimSpace(header))]
+	return ok
+}
+
+// DKIMSignedHeaders returns, by lowercased name, the value of each header that
+// a valid DKIM signature for domain covers and that occurs exactly once, so
+// the value returned is the instance that was signed. Empty when no signature
+// for domain verifies. Read values from here, not from net/mail: names are
+// matched as the verifier matches them, so "Subject :" is a second Subject.
+func DKIMSignedHeaders(raw []byte, domain string) map[string]string {
+	return DKIMSignedHeadersWithLookup(raw, domain, nil)
+}
+
+// DKIMSignedHeadersWithLookup is DKIMSignedHeaders with the DNS TXT lookup
+// injected, for tests; nil uses DNS.
+func DKIMSignedHeadersWithLookup(raw []byte, domain string, lookupTXT func(string) ([]string, error)) map[string]string {
+	out := map[string]string{}
 	domain = strings.ToLower(strings.TrimSpace(domain))
-	header = strings.TrimSpace(header)
-	if domain == "" || header == "" || len(raw) == 0 {
-		return false
+	if domain == "" || len(raw) == 0 {
+		return out
 	}
-
-	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	fields, err := dkimHeaderFields(raw)
 	if err != nil {
-		return false
+		return out
 	}
-	if len(msg.Header[textproto.CanonicalMIMEHeaderKey(header)]) != 1 {
-		return false
-	}
-
-	var verifications []*dkim.Verification
-	verifications, err = dkim.VerifyWithOptions(bytes.NewReader(raw), &dkim.VerifyOptions{
+	verifications, err := dkim.VerifyWithOptions(bytes.NewReader(raw), &dkim.VerifyOptions{
 		LookupTXT:        lookupTXT,
 		MaxVerifications: maxDKIMVerifications,
 	})
 	if err != nil {
-		return false
+		return out
 	}
 	for _, v := range verifications {
 		if v.Err != nil || !strings.EqualFold(strings.TrimSpace(v.Domain), domain) {
 			continue
 		}
 		for _, signed := range v.HeaderKeys {
-			if strings.EqualFold(strings.TrimSpace(signed), header) {
-				return true
+			name := strings.ToLower(strings.TrimSpace(signed))
+			if vals := fields[name]; len(vals) == 1 {
+				out[name] = vals[0]
 			}
 		}
 	}
-	return false
+	return out
+}
+
+// dkimHeaderFields splits raw's header block the way go-msgauth's verifier
+// does (dkim/header.go readHeader, parseHeaderField): continuation lines join
+// the field above, and names are whitespace-trimmed. Keys are lowercased;
+// values are unfolded and trimmed.
+func dkimHeaderFields(raw []byte) (map[string][]string, error) {
+	tr := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw)))
+	var lines []string
+	for {
+		l, err := tr.ReadLine()
+		if err != nil {
+			return nil, err
+		}
+		if l == "" {
+			break
+		}
+		if len(lines) > 0 && (l[0] == ' ' || l[0] == '\t') {
+			lines[len(lines)-1] += l
+			continue
+		}
+		lines = append(lines, l)
+	}
+	fields := map[string][]string{}
+	for _, l := range lines {
+		k, v, _ := strings.Cut(l, ":")
+		k = strings.ToLower(strings.TrimSpace(k))
+		fields[k] = append(fields[k], strings.TrimSpace(v))
+	}
+	return fields, nil
 }

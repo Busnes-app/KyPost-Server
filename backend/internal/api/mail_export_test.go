@@ -93,7 +93,7 @@ func TestMailExport(t *testing.T) {
 		return w
 	}
 	start := func(c caller, fields string) *httptest.ResponseRecorder {
-		return call("POST", "/api/export", c, `{`+fields+`"password":"`+password+`"}`, nil)
+		return call("POST", "/api/export", c, `{`+fields+`"authSecret":"`+sessionAuthSecret(srv, c.token, password)+`"}`, nil)
 	}
 	counted := -1
 	grant := func(c caller, fields string) string {
@@ -117,7 +117,7 @@ func TestMailExport(t *testing.T) {
 	adminCall := func(body string) *httptest.ResponseRecorder {
 		return call("POST", "/api/admin/mailboxes", adm, body, nil)
 	}
-	w := adminCall(`{"user":"` + one.ID + `","address":"sales@example.test","password":"` + password + `"}`)
+	w := adminCall(`{"user":"` + one.ID + `","address":"sales@example.test","authSecret":"` + userAuthSecret(srv, admin.ID, password) + `"}`)
 	var extra sso.NativeMailbox
 	if json.Unmarshal(w.Body.Bytes(), &extra) != nil || w.Code != 200 {
 		t.Fatal("create extra", w.Code, w.Body)
@@ -170,8 +170,8 @@ func TestMailExport(t *testing.T) {
 	}{
 		{"no step-up", call("POST", "/api/export", me, `{"format":"mbox"}`, nil), 403},
 		{"oversized body", start(me, `"format":"mbox","pad":"`+strings.Repeat("x", maxActionBytes)+`",`), 413},
-		{"wrong password", call("POST", "/api/export", me, `{"format":"mbox","password":"wrong-password-here"}`, nil), 403},
-		{"no csrf", call("POST", "/api/export", caller{me.token, ""}, `{"format":"mbox","password":"`+password+`"}`, nil), 403},
+		{"wrong password", call("POST", "/api/export", me, `{"format":"mbox","authSecret":"`+userAuthSecret(srv, one.ID, "wrong-password-here")+`"}`, nil), 403},
+		{"no csrf", call("POST", "/api/export", caller{me.token, ""}, `{"format":"mbox","authSecret":"`+userAuthSecret(srv, one.ID, password)+`"}`, nil), 403},
 		{"bad format", start(me, `"format":"pst",`), 400},
 		{"missing folder", start(me, `"format":"mbox","folder":"Nope",`), 404},
 		{"unsafe folder", start(me, `"format":"mbox","folder":"a\\b",`), 400},
@@ -232,7 +232,7 @@ func TestMailExport(t *testing.T) {
 		t.Fatal("HEAD", w.Code, len(srv.exports))
 	}
 	// A POST arriving over HTTP/1.0 cannot export mbox.
-	req := httptest.NewRequest("POST", "/api/export", strings.NewReader(`{"format":"mbox","password":"`+password+`"}`))
+	req := httptest.NewRequest("POST", "/api/export", strings.NewReader(`{"format":"mbox","authSecret":"`+userAuthSecret(srv, one.ID, password)+`"}`))
 	req.Proto, req.ProtoMinor = "HTTP/1.0", 0
 	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: me.token})
 	req.Header.Set("X-CSRF-Token", me.csrf)
@@ -339,7 +339,7 @@ func TestMailExport(t *testing.T) {
 		put(one.ID, extra.ID, "INBOX", append([]byte(fmt.Sprintf("Subject: more %d\r\n\r\n", i)), big...))
 	}
 	toggle := func(action string) int {
-		return call("POST", "/api/admin/mailboxes/"+extra.ID+"/"+action, adm, `{"password":"`+password+`"}`, nil).Code
+		return call("POST", "/api/admin/mailboxes/"+extra.ID+"/"+action, adm, `{"authSecret":"`+userAuthSecret(srv, admin.ID, password)+`"}`, nil).Code
 	}
 	disabled := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -420,7 +420,7 @@ func TestMailExportIdentities(t *testing.T) {
 	ctx := context.Background()
 	const password = "long-password-for-export"
 	start := func(s *Server, userID string, device ...string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "/api/export", strings.NewReader(`{"format":"mbox","password":"`+password+`"}`))
+		r := httptest.NewRequest("POST", "/api/export", strings.NewReader(`{"format":"mbox","authSecret":"`+userAuthSecret(s, userID, password)+`"}`))
 		r.Header.Set("Content-Type", "application/json")
 		if device != nil {
 			setDeviceHeaders(r, device[0], device[1])

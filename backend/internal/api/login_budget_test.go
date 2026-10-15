@@ -25,7 +25,7 @@ func instanceBudget(t *testing.T, srv *Server) float64 {
 // loginFrom posts a login and reports the status code.
 func loginFrom(t *testing.T, srv *Server, ip, username, password string) int {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	body, _ := json.Marshal(map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 	req.RemoteAddr = ip + ":1234"
 	rec := httptest.NewRecorder()
@@ -157,7 +157,7 @@ func TestLockedOutFloodDoesNotDenySignInToEveryoneElse(t *testing.T) {
 // if both fired, every real login would MINT budget, and the throttle would
 // stop being a throttle under exactly the load it exists for.
 func TestBudgetIsSettledExactlyOnce(t *testing.T) {
-	l := newIPRateLimiter(loginKDFBurstSeconds, loginKDFDutyCycle)
+	l := newKeyedLimiter(loginKDFBurstSeconds, loginKDFDutyCycle)
 	b := loginBudget{limiter: l}
 
 	l.admitCost(loginRateLimitKey, loginKDFReserveSeconds)
@@ -179,7 +179,7 @@ func TestBudgetIsSettledExactlyOnce(t *testing.T) {
 	}
 }
 
-func instanceBudgetOf(l *ipRateLimiter) float64 {
+func instanceBudgetOf(l *keyedLimiter) float64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.entries[loginRateLimitKey].tokens
@@ -194,7 +194,7 @@ func instanceBudgetOf(l *ipRateLimiter) float64 {
 // outage that outlives it. Floored, recovery is capped at burst/refillPerSec no
 // matter how long the abuse ran.
 func TestBucketDebtIsFloored(t *testing.T) {
-	l := newIPRateLimiter(3.0, 0.2)
+	l := newKeyedLimiter(3.0, 0.2)
 	now := time.Now()
 	l.now = func() time.Time { return now }
 

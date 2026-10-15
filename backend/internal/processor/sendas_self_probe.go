@@ -129,9 +129,10 @@ func (p *Poller) ensureOwnAddressProven(userID string) {
 
 	from := mailmsg.SanitizeHeaderValue(payload.Username)
 	msg := mailmsg.Message{
-		From:    from,
-		To:      []string{ownAddress},
-		Subject: "Verify send-as: " + alias.VerificationCode,
+		From:      from,
+		To:        []string{ownAddress},
+		Subject:   "Verify send-as: " + alias.VerificationCode,
+		MessageID: alias.ProbeMessageID,
 		Body: "This is an automated verification message from KyPost, confirming that mail addressed to this account really arrives here. " +
 			"It is what lets your public key be published for this address. No action is needed — this check completes automatically.",
 		Mode: "plain",
