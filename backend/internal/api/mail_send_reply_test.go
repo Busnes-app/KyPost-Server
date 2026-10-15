@@ -17,6 +17,7 @@ import (
 // captureSMTP accepts one message on loopback and returns what DATA carried.
 func captureSMTP(t *testing.T) (string, int, func(wait time.Duration) string) {
 	t.Helper()
+	allowLoopbackSMTP(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
