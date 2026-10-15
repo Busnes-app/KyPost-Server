@@ -139,7 +139,20 @@ updates:
     commit-message:
       prefix: "chore(ci)"
 
+  # A golang or node bump here fails ci-scripts until backend/go.mod's
+  # toolchain line or frontend/.nvmrc (+ package.json engines) is pushed to
+  # the same PR; the failure names the file.
   - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Pinned images in the optional compose files (rspamd).
+  - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: weekly

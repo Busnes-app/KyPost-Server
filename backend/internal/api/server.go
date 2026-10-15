@@ -143,6 +143,9 @@ type Server struct {
 	pickupStore          *pgpmail.PickupStore
 	poller               *processor.Poller
 	loginLockout         *failureLockout
+	// reviewPairingLockout is review pairing's own table: that route has no
+	// CAPTCHA or budget, so it must not be able to fill loginLockout.
+	reviewPairingLockout *failureLockout
 	davLockout           *failureLockout
 	mfaLockout           *failureLockout
 	// passwordChangeLockout bounds current-credential guessing on
@@ -400,6 +403,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		deviceReserving:          map[string]int{},
 		davCredentials:           newDAVCredentialCache(),
 		loginLockout:             newLoginLockout(),
+		reviewPairingLockout:     newLoginLockout(),
 		davLockout:               newFailureLockout(davMaxFailures, davLockoutFor),
 		mfaLockout:               newFailureLockout(mfaMaxFailures, mfaLockoutFor),
 		passwordChangeLockout:    newFailureLockout(passwordChangeMaxFailures, passwordChangeLockoutFor),
@@ -1076,15 +1080,9 @@ func (s *Server) StartSessionSweeper(ctx context.Context) {
 	}
 }
 
-// logSaturatedLockouts reports any lockout table that has hit
-// loginLockoutHardCap and started shedding new keys.
-//
-// A saturated table refuses to track keys it has not seen before, which the
-// caller experiences as a 429 on a perfectly good credential. That is the
-// deliberate trade — shedding rather than evicting live lockouts, see
-// loginLockoutHardCap — but it must not be silent: from the outside it is
-// indistinguishable from "login is broken", and it means tens of thousands of
-// distinct keys are locked out at once, which is an attack in progress.
+// logSaturatedLockouts reports any lockout table that has hit its hard cap: a
+// flood in progress, which may be forgiving partial strikes or, if every entry
+// is a live lockout, answering new callers 429. See loginLockoutHardCap.
 func (s *Server) logSaturatedLockouts() {
 	if s.logger == nil {
 		return
@@ -1092,16 +1090,17 @@ func (s *Server) logSaturatedLockouts() {
 	for name, lockout := range map[string]*failureLockout{
 		"login":           s.loginLockout,
 		"login_ip":        s.loginIPLockout,
+		"review_pairing":  s.reviewPairingLockout,
 		"dav":             s.davLockout,
 		"mfa":             s.mfaLockout,
 		"password_change": s.passwordChangeLockout,
 		"device":          s.deviceLockout,
 	} {
 		if lockout != nil && lockout.Saturated() {
-			s.logger.Error("lockout table saturated; new keys are being shed",
+			s.logger.Error("lockout table saturated",
 				"table", name,
 				"hard_cap", strconv.Itoa(lockout.HardCap()),
-				"effect", "callers not already tracked receive 429; lockouts already in force are preserved")
+				"effect", "stalest unlocked entries are evicted for new callers; if only live lockouts remain, new callers receive 429")
 		}
 	}
 }
