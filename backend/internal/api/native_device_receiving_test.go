@@ -28,7 +28,7 @@ func qualifyNativeDeviceReceiving(t *testing.T, s *Server, userID string, sessio
 	if _, err := os.Stat(s.userIMAPConfigPath(userID)); !os.IsNotExist(err) {
 		t.Fatal("native device test must have no IMAP configuration", err)
 	}
-	pairing := sessionRequest("GET", "/api/notifications/pairing", nil)
+	pairing := sessionRequest("POST", "/api/notifications/pairing", []byte(pairingStepUpBody(t, s, userID)))
 	var proof struct {
 		Configured   bool   `json:"configured"`
 		SubscriberID string `json:"subscriberId"`

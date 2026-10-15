@@ -7,7 +7,6 @@
 package api
 
 import (
-	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -135,35 +134,14 @@ type AuthContext struct {
 	SessionCSRFToken string
 }
 
-func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Username string `json:"username"`
-		// Password is the LEGACY credential, sent only while this account still
-		// authenticates with one. A converted account's client leaves it empty
-		// and the server never sees the password again.
-		Password string `json:"password"`
-		// AuthSecret is the client-derived authentication half of the stretched
-		// password — see login_params.go and frontend/src/lib/authSecret.ts. The
-		// key-wrapping half is derived from the same stretch under a different HKDF
-		// label and never leaves the browser, which is what makes the PGP vault
-		// genuinely end-to-end.
-		AuthSecret string `json:"authSecret,omitempty"`
-		// LoginSalt/LoginIterations are what the client actually used, echoed
-		// back so a legacy upgrade can pin the credential to them.
-		LoginSalt       string `json:"loginSalt,omitempty"`
-		LoginIterations int    `json:"loginIterations,omitempty"`
-		CaptchaToken    string `json:"captchaToken,omitempty"`
-	}
-	// Bounded before it is buffered. This is the only unauthenticated decode in the
-	// codebase and it runs before the lockout and captcha checks below, so an
-	// unbounded body let any anonymous caller choose the server's allocation:
-	// json.Decode buffers the whole value and then allocates the string on top,
-	// measured at ~5.6x the wire size.
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
-
+// verifyLogin is the unauthenticated credential check shared by handleLogin and
+// handleReviewPairing: instance KDF budget, a read-only per-IP lock check,
+// CAPTCHA, the per-IP and per-account lockouts, restore hold, then the auth
+// secret, with failures timing-equalized. accountLockout is the caller's
+// per-account table (loginLockout, or review pairing's own). admit, when set,
+// is an extra account condition that fails like an unknown user. On false the
+// response has been written.
+func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLockout *failureLockout, username, authSecret, captchaToken string, admit func(users.User) bool) (users.User, bool) {
 	// Instance-wide rate limit FIRST, before anything that costs real work.
 	//
 	// The per-account lockout below cannot bound total work: it is keyed on
@@ -187,7 +165,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				"error":             "too many sign-in attempts right now, try again shortly",
 				"retryAfterSeconds": retrySeconds,
 			})
-			return
+			return users.User{}, false
 		}
 		budget.limiter = s.loginRateLimiter
 	}
@@ -212,42 +190,42 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Read-only, so a locked address never reaches the CAPTCHA provider.
 	if wait := s.loginIPLockout.lockedFor(ipLockoutKey); wait > 0 {
 		ipLocked(wait)
-		return
+		return users.User{}, false
 	}
 
 	// CAPTCHA before any lockout write: a failed solution is refunded from the
 	// budget above, so if it created per-account entries, junk tokens could fill
 	// that table for free.
 	if s.captchaVerifier != nil {
-		ok, err := s.captchaVerifier.Verify(r.Context(), req.CaptchaToken, clientIP(r))
+		ok, err := s.captchaVerifier.Verify(r.Context(), captchaToken, clientIP(r))
 		switch {
 		case errors.Is(err, captcha.ErrChallengeExpired):
 			// Self-hosted proof-of-work only: a signed solution past its deadline, a
 			// tab left open. 401, not the provider-down 503 below.
 			http.Error(w, "security check expired, please try again", http.StatusUnauthorized)
-			return
+			return users.User{}, false
 		case errors.Is(err, captcha.ErrChallengeWrongClient):
 			// Self-hosted proof-of-work only: a valid solution from a different address
 			// than it was issued to, e.g. a phone moving from wifi to cellular.
 			http.Error(w, "your network address changed during the security check, please try again", http.StatusUnauthorized)
-			return
+			return users.User{}, false
 		case err != nil:
 			s.logger.Error("captcha verification failed", "error", err.Error())
 			http.Error(w, "captcha verification unavailable", http.StatusServiceUnavailable)
-			return
+			return users.User{}, false
 		case !ok:
 			// A strike on the address only, so one address cannot keep provider
 			// calls in flight (each holds instance budget) indefinitely.
 			s.loginIPLockout.tryAttempt(ipLockoutKey)
 			http.Error(w, "captcha verification failed", http.StatusUnauthorized)
-			return
+			return users.User{}, false
 		}
 	}
 
 	allowed, retryAfter, ipStrike := s.loginIPLockout.tryAttempt(ipLockoutKey)
 	if !allowed {
 		ipLocked(retryAfter)
-		return
+		return users.User{}, false
 	}
 
 	// Three-strikes/15-minute lockout, keyed on username+client IP: on the username
@@ -262,8 +240,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Clamped: NormalizeUsername folds case and trims but does not truncate, and
 	// the body allows 64 KiB, so without this the caller sizes the lockout
 	// table's memory as well as populating it.
-	lockoutKey := clampLockoutKeyComponent(users.NormalizeUsername(req.Username)) + "\x00" + lockoutKeyForIP(clientIP(r))
-	allowed, retryAfter, strike := s.loginLockout.tryAttempt(lockoutKey)
+	lockoutKey := clampLockoutKeyComponent(users.NormalizeUsername(username)) + "\x00" + lockoutKeyForIP(clientIP(r))
+	allowed, retryAfter, strike := accountLockout.tryAttempt(lockoutKey)
 	if !allowed {
 		retrySeconds := int(retryAfter.Seconds()) + 1
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
@@ -271,40 +249,41 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			"error":             "too many failed attempts, try again later",
 			"retryAfterSeconds": retrySeconds,
 		})
-		return
+		return users.User{}, false
 	}
 
 	// The account this attempt targeted, folded the same way GetByUsername
 	// resolves it and the lockout key above is built — so escalation, lockout
 	// and lookup all agree on what "the same account" means.
-	powAccount := clampLockoutKeyComponent(users.NormalizeUsername(req.Username))
+	powAccount := clampLockoutKeyComponent(users.NormalizeUsername(username))
 
 	// Failures are padded from here (settleCredentialTiming); before the lookup,
 	// whose own cost differs between a hit and a miss.
 	credentialStart := time.Now()
-	u, err := s.users.GetByUsername(req.Username)
-	if err != nil || !u.Active || s.requireAccountRestoreReleased(u) != nil {
+	u, err := s.users.GetByUsername(username)
+	if err == nil && u.NeedsPasswordReset() {
+		s.logger.Warn("sign-in refused: legacy password hash, admin password reset required", "user_id", u.ID)
+	}
+	// A legacy account fails exactly like an unknown one, so this public
+	// endpoint is no oracle for which accounts await a reset.
+	if err != nil || !u.Active || !u.UsesDerivedAuth() || s.requireAccountRestoreReleased(u) != nil || admit != nil && !admit(u) {
 		// Do the same derivation work a real check would, so neither timing nor
 		// slot contention reveals whether the username exists (or is inactive).
-		// Equalize against whichever credential
-		// was offered: a converted client sends only AuthSecret, so equalizing
-		// on the empty Password would make the unknown-account path cheap again
-		// for exactly the callers that matter.
 		if _, err := s.chargeLoginKDF(r.Context(), &budget, func(ctx context.Context) bool {
 			// The error is discarded here because the enclosing chargeLoginKDF
 			// already holds the slot, so this derivation cannot be shed — see
 			// users.WithKDFSlot.
-			_ = s.equalizeLoginTiming(ctx, cmp.Or(req.AuthSecret, req.Password))
+			_ = s.equalizeLoginTiming(ctx, authSecret)
 			return false
 		}); err != nil {
 			// Shed before the equalization ran. The refund is not just
 			// courtesy: answering 401 instantly on the unknown-username path
 			// while a real account still waits for a slot is the timing
 			// disclosure equalizeLoginTiming exists to erase.
-			s.loginLockout.cancelAttempt(strike)
+			accountLockout.cancelAttempt(strike)
 			s.loginIPLockout.cancelAttempt(ipStrike)
 			writeKDFBusy(w)
-			return
+			return users.User{}, false
 		}
 		s.settleCredentialTiming(r.Context(), credentialStart)
 		// Make the next challenge from this address more expensive. Recorded
@@ -313,105 +292,40 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.powDifficulty.recordFailure(lockoutKeyForIP(clientIP(r)), powAccount, time.Now())
 		// No recordFailure on the lockout: tryAttempt already spent the strike.
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
-		return
+		return users.User{}, false
 	}
-	// Two credential shapes, chosen by what the ACCOUNT stores rather than by what
-	// the client sent. Letting the request pick would mean a caller could present a
-	// plaintext password against a derived-auth account (or the reverse) and have
-	// the server try both — and since the derivation salt is public
-	// (login_params.go), "try both" would let anyone authenticate with a value they
-	// can compute from the salt alone.
-	//
-	// Both verifiers run inside chargeLoginKDF's slot, so their busy error is
-	// unreachable here and a false really is a wrong credential.
-	verify := func(ctx context.Context) bool {
-		ok, _ := users.VerifyPassword(ctx, u, req.Password)
+	// Runs inside chargeLoginKDF's slot, so the busy error is unreachable here
+	// and a false really is a wrong credential.
+	verified, err := s.chargeLoginKDF(r.Context(), &budget, func(ctx context.Context) bool {
+		ok, _ := users.VerifyAuthSecret(ctx, u, authSecret)
 		return ok
-	}
-	if u.UsesDerivedAuth() {
-		verify = func(ctx context.Context) bool {
-			ok, _ := users.VerifyAuthSecret(ctx, u, req.AuthSecret)
-			return ok
-		}
-	}
-	verified, err := s.chargeLoginKDF(r.Context(), &budget, verify)
+	})
 	if err != nil {
 		// Saturated slots, not a wrong password. Refund both strikes: a 401 here would
 		// spend a third of this account's budget on a credential nobody looked at, so
 		// three unlucky arrivals during a burst would lock out a user who typed
 		// everything correctly. recordFailure is skipped for the same reason.
-		s.loginLockout.cancelAttempt(strike)
+		accountLockout.cancelAttempt(strike)
 		s.loginIPLockout.cancelAttempt(ipStrike)
 		writeKDFBusy(w)
-		return
+		return users.User{}, false
 	}
 	if !verified {
 		s.settleCredentialTiming(r.Context(), credentialStart)
 		s.powDifficulty.recordFailure(lockoutKeyForIP(clientIP(r)), powAccount, time.Now())
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
-		return
+		return users.User{}, false
 	}
-	s.loginLockout.recordSuccess(lockoutKey)
+	accountLockout.recordSuccess(lockoutKey)
 	// Refund only this attempt's strike: clearing the address's budget let one
 	// valid account reset failures spent guessing other accounts' passwords.
 	s.loginIPLockout.cancelAttempt(ipStrike)
 
-	// Transparently upgrade a password hash written at an older, cheaper scrypt
-	// cost. This is the only moment the plaintext is legitimately in hand, so it is
-	// the only place the upgrade can happen — otherwise raising the cost protects
-	// new accounts and leaves every existing one at the old strength forever.
-	//
-	// Best-effort and non-blocking to the login: a failure here means the account
-	// keeps its old hash and gets another chance next time, which is strictly
-	// better than refusing a correct password.
+	// Transparently upgrade a hash written at an older, cheaper Argon2id cost.
+	// Best-effort: a failure keeps the old hash and retries next sign-in.
 	if users.NeedsRehash(u.PasswordHash) {
-		credential := req.Password
-		if u.UsesDerivedAuth() {
-			credential = req.AuthSecret
-		}
-		if err := s.users.RehashPassword(r.Context(), u.ID, credential); err != nil {
+		if err := s.users.RehashPassword(r.Context(), u.ID, authSecret); err != nil {
 			s.logger.Error("password hash upgrade failed", "user_id", u.ID, "error", err.Error())
-		}
-	}
-
-	// Convert a legacy account to derived auth, now that the password has been
-	// proven and the client has supplied the secret it derived from it — the only
-	// moment both are in hand. After this the password stops being transmitted at
-	// all.
-	//
-	// Pinned to the salt the CLIENT used, which for a legacy account is the
-	// synthetic one loginParamsFor handed out, recomputed here rather than trusted
-	// from the request so a caller cannot pin their credential to a salt of their
-	// choosing.
-	if !u.UsesDerivedAuth() && req.AuthSecret != "" {
-		salt := s.syntheticLoginSalt(req.Username)
-		// Checked against what this server ISSUED, not clamped into range.
-		//
-		// loginParamsFor hands a legacy account exactly one work factor —
-		// clientLoginIterations — so that is the only value a client can
-		// honestly echo. Clamping an out-of-range echo was worse than useless:
-		// the stored count has to be the one the client actually derived with,
-		// so silently substituting a different number pins the account to a
-		// credential nobody can reproduce, and the next sign-in fails for good.
-		// A mismatch means the client did not use the parameters it was given,
-		// which is not something to paper over.
-		//
-		// Zero is the one exception: a client that never sent the field used
-		// what it was handed, because there was nothing else to use.
-		iterations := req.LoginIterations
-		if iterations == 0 {
-			iterations = clientLoginIterations
-		}
-		if iterations != clientLoginIterations {
-			// Non-fatal, like every other failure in this block: the account
-			// keeps authenticating the legacy way.
-			s.logger.Error("refusing auth derivation upgrade: client used a work factor this server did not issue",
-				"user_id", u.ID, "client_iterations", strconv.Itoa(req.LoginIterations))
-		} else if err := s.users.UpgradeToDerivedAuth(r.Context(), u.ID, req.Password, req.AuthSecret, salt, iterations); err != nil {
-			// Non-fatal: the account keeps authenticating the legacy way and
-			// gets another chance next sign-in. Refusing a correct password
-			// because an optimization failed would be worse.
-			s.logger.Error("auth derivation upgrade failed", "user_id", u.ID, "error", err.Error())
 		}
 	}
 	// A correct password proves whoever is at this address holds THIS
@@ -419,6 +333,33 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// been guessing at from the same address. Forgive only this one; see
 	// powEscalation.clearAccount.
 	s.powDifficulty.clearAccount(lockoutKeyForIP(clientIP(r)), powAccount)
+	return u, true
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		// AuthSecret is the client-derived authentication half of the stretched
+		// password — see login_params.go and frontend/src/lib/authSecret.ts. The
+		// key-wrapping half never leaves the browser. There is no plaintext
+		// password field: a body carrying one is ignored and fails as a wrong
+		// credential.
+		AuthSecret   string `json:"authSecret"`
+		CaptchaToken string `json:"captchaToken,omitempty"`
+	}
+	// Bounded before it is buffered. This is the only unauthenticated decode in the
+	// codebase and it runs before the lockout and captcha checks below, so an
+	// unbounded body let any anonymous caller choose the server's allocation:
+	// json.Decode buffers the whole value and then allocates the string on top,
+	// measured at ~5.6x the wire size.
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	u, ok := s.verifyLogin(w, r, s.loginLockout, req.Username, req.AuthSecret, req.CaptchaToken, nil)
+	if !ok {
+		return
+	}
 
 	// Second-factor users must clear a challenge before a session exists. No
 	// cookie is set here; the client receives a challenge id plus the methods it
@@ -848,16 +789,9 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		// Legacy plaintext fields, for a client that has not converted and for
-		// an account whose credential is still a password (an admin-set
-		// temporary one, or a first sign-in).
-		OldPassword string `json:"oldPassword"`
-		NewPassword string `json:"newPassword"`
-
-		// Derived-auth fields. NewAuthSecret plus NewLoginSalt/NewIterations
-		// replace the credential without the server ever seeing the new
-		// password; OldAuthSecret proves the current one for an account that has
-		// already converted.
+		// NewAuthSecret plus NewLoginSalt/NewIterations replace the credential
+		// without the server ever seeing the new password; OldAuthSecret proves
+		// the current one. No plaintext fields exist.
 		OldAuthSecret string `json:"oldAuthSecret,omitempty"`
 		NewAuthSecret string `json:"newAuthSecret,omitempty"`
 		NewLoginSalt  string `json:"newLoginSalt,omitempty"`
@@ -885,8 +819,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the CURRENT credential in whichever form this account stores, for the
-	// same reason handleLogin does: the account decides, not the request.
+	// Verify the CURRENT credential.
 	//
 	// Behind a lockout, and every derivation on this path is admitted by the
 	// shared slots. This is three 128 MiB derivations per request on an endpoint
@@ -896,12 +829,6 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// reached scrypt on their own, which is two thirds of the cost of the most
 	// expensive authenticated endpoint sitting outside the ceiling. They now take
 	// the request context and are admitted like everything else.
-	verifyCurrent := func() (bool, error) {
-		if u.UsesDerivedAuth() {
-			return users.VerifyAuthSecret(r.Context(), u, req.OldAuthSecret)
-		}
-		return users.VerifyPassword(r.Context(), u, req.OldPassword)
-	}
 	// This request always verifies the current credential. There is no
 	// MustChangePassword exemption, and there was one.
 	//
@@ -941,7 +868,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	okCurrent, err := verifyCurrent()
+	okCurrent, err := users.VerifyAuthSecret(r.Context(), u, req.OldAuthSecret)
 	if err != nil {
 		// Shed before the derivation ran. Refund: no credential was
 		// examined, so this attempt must not count against the budget.
@@ -971,81 +898,46 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prefer the derived form when the client supplied it. The plaintext branch
-	// stays only for clients that have not converted; it is the one that still
-	// lets the server see a password, so it must never be the path taken when
-	// the better one is available.
+	if req.NewAuthSecret == "" || req.NewLoginSalt == "" {
+		http.Error(w, "newAuthSecret and newLoginSalt are required", http.StatusBadRequest)
+		return
+	}
+	iterations := req.NewIterations
+	if iterations <= 0 {
+		iterations = users.LoginIterations()
+	}
+	// One mutation for the credential and the PGP envelope, or neither.
 	var updated users.User
-	switch {
-	case req.NewAuthSecret != "":
-		if req.NewLoginSalt == "" {
-			http.Error(w, "newLoginSalt is required with newAuthSecret", http.StatusBadRequest)
+	if req.KeyringVersion != nil {
+		updated, err = s.users.ChangeKeyringPassword(r.Context(), u.ID, users.PGPKeyringCredential{
+			AuthSecret: req.NewAuthSecret, LoginSalt: req.NewLoginSalt, Iterations: iterations,
+		}, req.RewrappedPGPKey, req.ExpectedRevision)
+	} else {
+		updated, err = s.users.SetDerivedAuthAndRewrapPGP(
+			r.Context(), u.ID, req.NewAuthSecret, req.NewLoginSalt, iterations, false, req.RewrappedPGPKey, req.ExpectedRevision,
+		)
+	}
+	if err != nil {
+		if errors.Is(err, users.ErrPGPRevisionChanged) || errors.Is(err, users.ErrInvalidPGPRevision) || errors.Is(err, users.ErrPGPKeyringUpgradeRequired) {
+			writeUserStoreError(w, err)
 			return
 		}
-		iterations := req.NewIterations
-		if iterations <= 0 {
-			iterations = clientLoginIterations
-		}
-		// One mutation for the credential and the PGP envelope, or neither.
-		if req.KeyringVersion != nil {
-			updated, err = s.users.ChangeKeyringPassword(r.Context(), u.ID, users.PGPKeyringCredential{
-				AuthSecret: req.NewAuthSecret, LoginSalt: req.NewLoginSalt, Iterations: iterations,
-			}, req.RewrappedPGPKey, req.ExpectedRevision)
-		} else {
-			updated, err = s.users.SetDerivedAuthAndRewrapPGP(
-				r.Context(), u.ID, req.NewAuthSecret, req.NewLoginSalt, iterations, false, req.RewrappedPGPKey, req.ExpectedRevision,
-			)
-		}
-		if err != nil {
-			if errors.Is(err, users.ErrPGPRevisionChanged) || errors.Is(err, users.ErrInvalidPGPRevision) || errors.Is(err, users.ErrPGPKeyringUpgradeRequired) {
-				writeUserStoreError(w, err)
-				return
-			}
-			if errors.Is(err, users.ErrKDFBusy) {
-				writeKDFBusy(w)
-				return
-			}
-			if errors.Is(err, users.ErrAuthSecretMalformed) || errors.Is(err, users.ErrNotClientProtected) {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			http.Error(w, "failed to update password", http.StatusInternalServerError)
+		if errors.Is(err, users.ErrKDFBusy) {
+			writeKDFBusy(w)
 			return
 		}
-	default:
-		// The server can still measure length here, so it does.
-		if err := users.ValidatePassword(req.NewPassword); err != nil {
+		if errors.Is(err, users.ErrAuthSecretMalformed) || errors.Is(err, users.ErrNotClientProtected) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.RewrappedPGPKey != "" {
-			// A plaintext password change cannot carry a rewrap: SetPassword
-			// resets the account to legacy derivation, and accepting an envelope
-			// alongside it would store one sealed under a key nothing will ask
-			// for. Refuse rather than write a mismatched pair.
-			http.Error(w, "rewrappedPgpKey requires newAuthSecret", http.StatusBadRequest)
-			return
-		}
-		updated, err = s.users.SetPassword(r.Context(), u.ID, req.NewPassword, false, req.ExpectedRevision)
-		if err != nil {
-			if errors.Is(err, users.ErrPGPRevisionChanged) || errors.Is(err, users.ErrInvalidPGPRevision) || errors.Is(err, users.ErrPGPKeyringUpgradeRequired) {
-				writeUserStoreError(w, err)
-				return
-			}
-			if errors.Is(err, users.ErrKDFBusy) {
-				writeKDFBusy(w)
-				return
-			}
-			http.Error(w, "failed to update password", http.StatusInternalServerError)
-			return
-		}
+		http.Error(w, "failed to update password", http.StatusInternalServerError)
+		return
 	}
 	// A password change is what a user reaches for when they think they have been
 	// compromised, so it must cut off EVERY credential, not just sessions: a device
 	// secret minted from a stolen session is independent of the password and would
-	// otherwise keep full mailbox access and — since every device registers
-	// MFAApprover=true — a standing second factor. The caller's own session is
-	// preserved.
+	// otherwise keep full mailbox access and, if flagged as an approver, a
+	// standing second factor. The caller's own session is preserved.
 	if err := s.revokeAllUserCredentialsExcept(u, currentSessionToken(r)); err != nil {
 		http.Error(w, "password changed but credential revocation failed; retry immediately", http.StatusInternalServerError)
 		return

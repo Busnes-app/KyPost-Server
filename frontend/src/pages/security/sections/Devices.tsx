@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { deleteJSON, postJSON, putJSON, toErrorMessage } from "../../../api/client";
-import type { NativeDeliveryMode } from "../../../api/devices";
+import { setDeviceApprover, setPushApproval, type NativeDeliveryMode } from "../../../api/devices";
+import { useAuth } from "../../../auth";
 import {
   DeviceMailAccessStatus,
   DeviceMailPanel,
@@ -61,7 +62,11 @@ export function Devices({
   setUnlockOpen = noop,
   onGoToSignIn = noop
 }: DevicesProps = {}) {
+  const { ssoSession = false } = useAuth();
   const [busy, setBusy] = useState(false);
+  // Sign-in approval changes re-prove the account; one field serves them all.
+  const [approvalPassword, setApprovalPassword] = useState("");
+  const approvalLocked = !ssoSession && !approvalPassword;
   const [deviceRemoveBusyId, setDeviceRemoveBusyId] = useState("");
   const [unpairBusy, setUnpairBusy] = useState(false);
   const [pairingOpen, setPairingOpen] = useState(false);
@@ -139,8 +144,10 @@ export function Devices({
   async function togglePush(enabled: boolean) {
     setBusy(true);
     setMessage("");
+    const confirm = { ssoSession, accountPassword: approvalPassword };
+    setApprovalPassword("");
     try {
-      await putJSON<{ ok: boolean; pushMfaEnabled: boolean }>("/api/mfa/push/enabled", { enabled });
+      await setPushApproval(confirm, enabled);
       await refreshStatus();
     } catch (err) {
       setMessage(toErrorMessage(err, "Failed to update push approval."));
@@ -152,11 +159,10 @@ export function Devices({
   async function toggleApprover(deviceId: string, approver: boolean) {
     setBusy(true);
     setMessage("");
+    const confirm = { ssoSession, accountPassword: approvalPassword };
+    setApprovalPassword("");
     try {
-      await putJSON<{ ok: boolean }>(
-        `/api/notifications/native/devices/${encodeURIComponent(deviceId)}/mfa`,
-        { approver }
-      );
+      await setDeviceApprover(confirm, deviceId, approver);
       await refreshStatus();
     } catch (err) {
       setMessage(toErrorMessage(err, "Failed to update device."));
@@ -179,7 +185,14 @@ export function Devices({
               onStatus={setMessage}
             />
             <div className="sec-actions">
-              <button type="button" className="sec-action-quiet" onClick={() => setPairingOpen(false)}>
+              <button
+                type="button"
+                className="sec-action-quiet"
+                onClick={() => {
+                  setPairingOpen(false);
+                  void refreshDevices();
+                }}
+              >
                 Done
               </button>
             </div>
@@ -216,15 +229,32 @@ export function Devices({
               that is active.
             </p>
           ) : (
-            <label className="sec-check">
-              <input
-                type="checkbox"
-                checked={pushOn}
-                disabled={busy}
-                onChange={(e) => void togglePush(e.target.checked)}
-              />
-              Let a paired device approve sign-ins with a tap
-            </label>
+            <>
+              {ssoSession ? (
+                <p className="sec-muted">Changes to sign-in approval are confirmed with KySignOn.</p>
+              ) : (
+                <label className="sec-label">
+                  <span>Account password to change sign-in approval</span>
+                  <input
+                    className="sec-input"
+                    type="password"
+                    autoComplete="current-password"
+                    value={approvalPassword}
+                    disabled={busy}
+                    onChange={(e) => setApprovalPassword(e.target.value)}
+                  />
+                </label>
+              )}
+              <label className="sec-check">
+                <input
+                  type="checkbox"
+                  checked={pushOn}
+                  disabled={busy || approvalLocked}
+                  onChange={(e) => void togglePush(e.target.checked)}
+                />
+                Let a paired device approve sign-ins with a tap
+              </label>
+            </>
           )}
 
           {devicesError ? (
@@ -235,6 +265,7 @@ export function Devices({
               pushEnabled={pushOn && Boolean(status?.totpEnabled)}
               approvalsKnown={status !== null}
               busy={busy}
+              approvalLocked={approvalLocked}
               removingId={deviceRemoveBusyId}
               onToggleApprover={(id, approver) => void toggleApprover(id, approver)}
               onRemove={(id) => void removeDevice(id)}

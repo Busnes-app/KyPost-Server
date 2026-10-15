@@ -74,7 +74,7 @@ func TestLoginRejectsOversizedBody(t *testing.T) {
 	srv := newTestServer(t)
 
 	huge := strings.Repeat("A", 256*1024)
-	body, _ := json.Marshal(map[string]string{"username": "someone", "password": huge})
+	body, _ := json.Marshal(map[string]string{"username": "someone", "authSecret": huge})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 	req.RemoteAddr = "203.0.113.50:40000"
@@ -101,10 +101,7 @@ func TestPasswordChangeRevokesPairedDevices(t *testing.T) {
 		t.Fatal("precondition: paired device should authenticate before the password change")
 	}
 
-	body, _ := json.Marshal(map[string]string{
-		"oldPassword": "session-tester-testpassword",
-		"newPassword": "an-entirely-new-passphrase",
-	})
+	body, _ := json.Marshal(passwordChangeBody(srv, u.Username, "session-tester-testpassword", "an-entirely-new-passphrase"))
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(body))
 	authRequestAs(srv, req, u.ID)
 	rec := httptest.NewRecorder()
@@ -413,10 +410,10 @@ func TestIMAPTestRefusesPartialCredentialOverride(t *testing.T) {
 	srv, u := newTestServerWithUser(t)
 
 	body, _ := json.Marshal(map[string]any{
-		"host":     "mail.attacker.test",
-		"port":     993,
-		"username": "",
-		"password": "",
+		"host":       "mail.attacker.test",
+		"port":       993,
+		"username":   "",
+		"authSecret": testAuthSecret(srv, "", ""),
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/imap/test", bytes.NewReader(body))
 	authRequestAs(srv, req, u.ID)

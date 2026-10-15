@@ -251,7 +251,6 @@ func (s *Server) handleSSOLinkStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret,omitempty"`
 		Code       string `json:"code,omitempty"`
 	}
@@ -278,7 +277,7 @@ func (s *Server) handleSSOLinkStart(w http.ResponseWriter, r *http.Request) {
 	// Credential first, then the second factor, each on its own counter and the
 	// success recorded only once both hold — handleAuthStepUp explains why
 	// clearing between the two would leave the second factor unthrottled.
-	if !s.confirmAccountCredentialNoRecord(w, r, ac.UserID, req.Password, req.AuthSecret) {
+	if !s.confirmAccountCredentialNoRecord(w, r, ac.UserID, req.AuthSecret) {
 		return
 	}
 	if u.TOTPEnabled && !s.confirmSecondFactor(w, r, u, strings.TrimSpace(req.Code)) {

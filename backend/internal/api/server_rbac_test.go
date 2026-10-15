@@ -138,7 +138,7 @@ func TestUserLifecycleEndpoints(t *testing.T) {
 		t.Fatalf("reset password: status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	got, _ := srv.users.Get(created.ID)
-	okPassword, _ := users.VerifyPassword(context.Background(), got, "temp-password-1234")
+	okPassword, _ := verifyTestPassword(srv, got, "temp-password-1234")
 	if !got.MustChangePassword || !okPassword {
 		t.Fatalf("unexpected state after reset: %+v", got)
 	}
