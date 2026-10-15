@@ -47,7 +47,7 @@ beforeEach(() => {
     if (url === "/api/admin/mail-domains") return new Response(JSON.stringify(setResponse), { headers: { "Content-Type": "application/json" } });
     return new Response(JSON.stringify(url === "/api/admin/mail-domain" ? domainResponse : relayResponse), { headers: { "Content-Type": "application/json" } });
   });
-  vi.mocked(deriveCredential).mockResolvedValue({ password: "must-not-transmit", authSecret: "derived-test-secret", loginSalt: "test-salt", loginIterations: 1, derivation: "pbkdf2" });
+  vi.mocked(deriveCredential).mockResolvedValue({ authSecret: "derived-test-secret" });
   vi.mocked(withSSOStepUp).mockImplementation(run => run({}));
   document.cookie = "csrf_token=test-csrf";
 });

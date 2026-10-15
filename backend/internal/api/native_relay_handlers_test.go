@@ -56,7 +56,7 @@ func TestNativeMailRelayAdminAuthorityRedactionAndRotation(t *testing.T) {
 			t.Fatalf("privilege/CSRF/credential gate: got %d want %d: %s", w.Code, c.want, w.Body)
 		}
 	}
-	body, err := json.Marshal(map[string]any{"host": "smtp.example.test", "smtpUsername": "operator-relay-login", "smtpPassword": "operator-relay-secret", "password": password})
+	body, err := json.Marshal(map[string]any{"host": "smtp.example.test", "smtpUsername": "operator-relay-login", "smtpPassword": "operator-relay-secret", "authSecret": userAuthSecret(srv, admin.ID, password)})
 	if err != nil {
 		t.Fatal(err)
 	}

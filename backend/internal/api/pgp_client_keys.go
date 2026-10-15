@@ -58,9 +58,7 @@ type clientIdentityRequest struct {
 	Source           string  `json:"source"`
 
 	// Step-up credential, required only when this REPLACES an existing identity
-	// (pgp_stepup.go). Both forms are accepted because a client-protected
-	// account never sends its password to this server — see login_params.go.
-	Password   string `json:"password,omitempty"`
+	// (pgp_stepup.go).
 	AuthSecret string `json:"authSecret,omitempty"`
 }
 
@@ -87,7 +85,7 @@ func (s *Server) handlePGPIdentityClient(w http.ResponseWriter, r *http.Request)
 	// session: the new public key outlives the session, gets published through
 	// WKD and Autocrypt, and redirects every future correspondent to it. First
 	// -time setup is not gated — see pgp_stepup.go.
-	if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
+	if !s.requirePGPStepUp(w, r, ac.UserID, req.AuthSecret) {
 		return
 	}
 	wrapped := strings.TrimSpace(req.Wrapped)
@@ -168,7 +166,6 @@ func (s *Server) handlePGPRewrapKey(w http.ResponseWriter, r *http.Request) {
 		KeyringVersion      *int    `json:"keyringVersion,omitempty"`
 		// Step-up credential. Always required here: rewrapping presupposes an
 		// identity to rewrap, so this endpoint is never first-time setup.
-		Password   string `json:"password,omitempty"`
 		AuthSecret string `json:"authSecret,omitempty"`
 	}
 	// JSON quoting and step-up fields add overhead; the store caps the envelope itself.
@@ -189,7 +186,7 @@ func (s *Server) handlePGPRewrapKey(w http.ResponseWriter, r *http.Request) {
 	// A stolen session could otherwise overwrite the envelope with a blob whose
 	// contents nobody can check — the server cannot open it by design — leaving
 	// the owner locked out of every message ever encrypted to them.
-	if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
+	if !s.requirePGPStepUp(w, r, ac.UserID, req.AuthSecret) {
 		return
 	}
 	var u users.User
@@ -233,7 +230,6 @@ func (s *Server) handlePGPExportLegacyKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req struct {
-		Password string `json:"password"`
 		// AuthSecret is the client-derived credential, for an account whose
 		// password never reaches this server. See login_params.go.
 		AuthSecret string `json:"authSecret,omitempty"`
@@ -246,7 +242,7 @@ func (s *Server) handlePGPExportLegacyKey(w http.ResponseWriter, r *http.Request
 	// two credential forms, same answers. This endpoint set the standard the
 	// others now meet, and one implementation of it is one place for it to be
 	// got right.
-	if !s.confirmAccountCredential(w, r, ac.UserID, req.Password, req.AuthSecret) {
+	if !s.confirmAccountCredential(w, r, ac.UserID, req.AuthSecret) {
 		return
 	}
 	u, err := s.users.Get(ac.UserID)
@@ -325,7 +321,6 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 		// replaces a sealing of the private key: a stolen session must not be
 		// able to plant an envelope the server cannot validate, and the user
 		// would only discover it was bogus when they actually needed it.
-		Password   string `json:"password,omitempty"`
 		AuthSecret string `json:"authSecret,omitempty"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 3*maxWrappedKeyBytes)).Decode(&req); err != nil {
@@ -342,7 +337,7 @@ func (s *Server) handlePGPPutEnvelopeSlot(w http.ResponseWriter, r *http.Request
 		writeUserStoreError(w, err)
 		return
 	}
-	if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
+	if !s.requirePGPStepUp(w, r, ac.UserID, req.AuthSecret) {
 		return
 	}
 	if deviceID, isDevice := strings.CutPrefix(r.PathValue("slot"), users.EnvelopeSlotDevicePrefix); isDevice {
@@ -423,14 +418,13 @@ func (s *Server) handlePGPDeleteEnvelopeSlot(w http.ResponseWriter, r *http.Requ
 		// body is mandatory: a request with no body at all fails to decode
 		// and is refused (400) rather than silently treated as "no
 		// credential needed."
-		Password   string `json:"password,omitempty"`
 		AuthSecret string `json:"authSecret,omitempty"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxWrappedKeyBytes)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	if !s.requirePGPStepUp(w, r, ac.UserID, req.Password, req.AuthSecret) {
+	if !s.requirePGPStepUp(w, r, ac.UserID, req.AuthSecret) {
 		return
 	}
 	u, err := s.users.DeletePGPWrappedEnvelope(ac.UserID, r.PathValue("slot"), req.ExpectedRevision)

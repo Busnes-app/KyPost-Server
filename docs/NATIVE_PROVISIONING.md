@@ -10,8 +10,8 @@ primary-address sending uses the operator-owned [domain relay](DOMAIN_RELAY.md).
 ## Operator domain setup
 
 Pair/configure KyIdentity first. As an admin, read `GET /api/admin/mail-domain`,
-then `PUT /api/admin/mail-domain` with `{domain,password}` or
-`{domain,authSecret}`. Mutations require session CSRF and the current account
+then `PUT /api/admin/mail-domain` with `{domain,authSecret}`.
+Mutations require session CSRF and the current account
 credential; KySignOn sessions use the existing request-bound step-up round trip.
 The response includes the exact `recordName` and `recordValue` to publish:
 `_kypost-mail.<domain>` TXT `kypost-mail-verify=<random challenge>`.
@@ -587,7 +587,7 @@ Export Mail; [mail import](#mail-import) is its mirror.
 
 - `GET /api/export/folders` lists every folder of the selected mailbox
   (`X-KyPost-Mailbox`).
-- `POST /api/export` with `{mailbox, folder, format, password|authSecret}`:
+- `POST /api/export` with `{mailbox, folder, format, authSecret}`:
   `mailbox` is an ID from `GET /api/mailboxes` (empty or the user ID is the
   primary), `folder` empty for all folders (exact name; only `INBOX` is
   case-insensitive), `format` `mbox` or `eml-zip`. Browser session only (a
@@ -649,7 +649,7 @@ IMAP, into their own native mailbox from Security → Import Mail ("From a
 file" or "From another mail account"). The file rules come first; [import from
 another account](#import-from-another-mail-account) adds its own below.
 
-- `POST /api/import` with `{mailbox, folder, password|authSecret}`: `mailbox`
+- `POST /api/import` with `{mailbox, folder, authSecret}`: `mailbox`
   as for export, `folder` an existing folder or a new one under an existing
   parent (empty is `Imported`; only `INBOX` is case-insensitive). Browser
   session only (a paired device gets 403), CSRF, and `confirmActor` behind
@@ -758,7 +758,7 @@ table, the incoming-encryption refusal (at the grant, at start and before every
 message, under the settings lock) and shutdown are the file import's.
 
 - `POST /api/import/imap` with `{mailbox, host, port, security, username,
-  password|authSecret}` (the KyPost step-up; never the provider password):
+  authSecret}` (the KyPost step-up; never the provider password):
   browser session, CSRF and `confirmActor` behind `withActionDigest`. `security`
   is `tls` on port 993 or `starttls` on 143; nothing else, because no other port
   is an IMAP server worth reaching and a free port would make the server a

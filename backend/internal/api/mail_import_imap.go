@@ -215,7 +215,6 @@ func (s *Server) handleIMAPImportStart(w http.ResponseWriter, r *http.Request) {
 		Port       int    `json:"port"`
 		Security   string `json:"security"`
 		Username   string `json:"username"`
-		Password   string `json:"password"` // the KyPost account's, for step-up
 		AuthSecret string `json:"authSecret"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -253,7 +252,7 @@ func (s *Server) handleIMAPImportStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "enter the username for the other account"})
 		return
 	}
-	if !s.confirmActor(w, r, ac.UserID, body.Password, body.AuthSecret) {
+	if !s.confirmActor(w, r, ac.UserID, body.AuthSecret) {
 		return
 	}
 	if !s.imapAdmissible(w, ac.UserID) {

@@ -52,7 +52,7 @@ func nativeRecoveryHTTPFixture(t *testing.T) (*Server, *http.Cookie, sso.NativeR
 	}
 	cookie := sessionCookieFrom(rec)
 	sum := sha256.Sum256([]byte(testSyncKey))
-	raw, _ := json.Marshal(map[string]any{"password": recoveryAdminPassword, "systemId": "paired-system", "keyFingerprint": hex.EncodeToString(sum[:])})
+	raw, _ := json.Marshal(map[string]any{"authSecret": authSecretFor(srv, recoveryAdminPassword), "systemId": "paired-system", "keyFingerprint": hex.EncodeToString(sum[:])})
 	rec = gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/challenge", string(raw), "")
 	if rec.Code != 200 {
 		t.Fatalf("challenge %d: %s", rec.Code, rec.Body.String())
@@ -63,7 +63,7 @@ func nativeRecoveryHTTPFixture(t *testing.T) (*Server, *http.Cookie, sso.NativeR
 	}
 	return srv, cookie, response.Challenge
 }
-func recoveryHTTPUpload(t *testing.T, c sso.NativeRecoveryChallenge, size int, key string) string {
+func recoveryHTTPUpload(t *testing.T, srv *Server, c sso.NativeRecoveryChallenge, size int, key string) string {
 	t.Helper()
 	now := time.Now().UTC()
 	subjects := make([]any, 0, len(c.Subjects))
@@ -79,12 +79,12 @@ func recoveryHTTPUpload(t *testing.T, c sso.NativeRecoveryChallenge, size int, k
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrapper, _ := json.Marshal(map[string]any{"password": recoveryAdminPassword, "bodyBase64": base64.StdEncoding.EncodeToString(raw), "signature": headers.Signature, "timestamp": headers.Timestamp, "eventType": headers.EventType, "eventId": headers.EventID})
+	wrapper, _ := json.Marshal(map[string]any{"authSecret": authSecretFor(srv, recoveryAdminPassword), "bodyBase64": base64.StdEncoding.EncodeToString(raw), "signature": headers.Signature, "timestamp": headers.Timestamp, "eventType": headers.EventType, "eventId": headers.EventID})
 	return string(wrapper)
 }
 func TestNativeRecoveryHTTPAcceptsLargeEvidenceAndRetainsHold(t *testing.T) {
 	srv, cookie, c := nativeRecoveryHTTPFixture(t)
-	body := recoveryHTTPUpload(t, c, 100<<10, testSyncKey)
+	body := recoveryHTTPUpload(t, srv, c, 100<<10, testSyncKey)
 	if len(body) <= maxActionBytes {
 		t.Fatal("fixture does not cross default digest limit")
 	}
@@ -107,7 +107,7 @@ func TestNativeRecoveryHTTPAcceptsLargeEvidenceAndRetainsHold(t *testing.T) {
 func TestNativeRecoveryHTTPRejectsClientSecretFallback(t *testing.T) {
 	srv, cookie, c := nativeRecoveryHTTPFixture(t)
 	settings := srv.ssoStore.Load()
-	body := recoveryHTTPUpload(t, c, 0, settings.ClientSecret)
+	body := recoveryHTTPUpload(t, srv, c, 0, settings.ClientSecret)
 	before, _ := os.ReadFile(filepath.Join(srv.configDir, "sso-lifecycle.json"))
 	rec := gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/evidence", body, "")
 	after, _ := os.ReadFile(filepath.Join(srv.configDir, "sso-lifecycle.json"))
@@ -147,14 +147,14 @@ func TestNativeRecoveryLargeSSOStepUpBindsExactReplay(t *testing.T) {
 	sess.SSO = sso.SessionIdentity{Issuer: c.Issuer, ClientID: "kypost", Subject: "operator"}
 	srv.sessions[cookie.Value] = sess
 	srv.sessMu.Unlock()
-	body := recoveryHTTPUpload(t, c, 100<<10, testSyncKey)
+	body := recoveryHTTPUpload(t, srv, c, 100<<10, testSyncKey)
 	grant := challengeFrom(t, gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/evidence", body, ""))
 	srv.stepUpMu.Lock()
 	proof := srv.stepUps[grant]
 	proof.verified = true
 	srv.stepUps[grant] = proof
 	srv.stepUpMu.Unlock()
-	altered := strings.Replace(body, `"password":"operator-test-password"`, `"password":"different"`, 1)
+	altered := strings.Replace(body, `"authSecret":"`+authSecretFor(srv, "operator-test-password")+`"`, `"authSecret":"`+authSecretFor(srv, "different")+`"`, 1)
 	if altered == body {
 		t.Fatal("fixture not changed")
 	}
@@ -176,7 +176,7 @@ func TestNativeRecoveryRefusesAdminCycleAfterStepUp(t *testing.T) {
 	sess.SSO = sso.SessionIdentity{Issuer: c.Issuer, ClientID: "kypost", Subject: "operator"}
 	srv.sessions[cookie.Value] = sess
 	srv.sessMu.Unlock()
-	body := recoveryHTTPUpload(t, c, 0, testSyncKey)
+	body := recoveryHTTPUpload(t, srv, c, 0, testSyncKey)
 	grant := challengeFrom(t, gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/evidence", body, ""))
 	srv.stepUpMu.Lock()
 	proof := srv.stepUps[grant]
@@ -288,7 +288,7 @@ func TestNativeRecoveryHTTPDecodedEvidenceBoundary(t *testing.T) {
 		t.Run(map[int]string{0: "maximum", 1: "overflow"}[extra], func(t *testing.T) {
 			srv, cookie, c := nativeRecoveryHTTPFixture(t)
 			var wrapper map[string]string
-			if err := json.Unmarshal([]byte(recoveryHTTPUpload(t, c, 0, testSyncKey)), &wrapper); err != nil {
+			if err := json.Unmarshal([]byte(recoveryHTTPUpload(t, srv, c, 0, testSyncKey)), &wrapper); err != nil {
 				t.Fatal(err)
 			}
 			raw, err := base64.StdEncoding.DecodeString(wrapper["bodyBase64"])
@@ -324,7 +324,7 @@ func TestNativeRecoveryHTTPDecodedEvidenceBoundary(t *testing.T) {
 
 func TestNativeRecoveryStatusIsAdminOnlyAndLeaksNoEvidence(t *testing.T) {
 	srv, cookie, c := nativeRecoveryHTTPFixture(t)
-	if rec := gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/evidence", recoveryHTTPUpload(t, c, 64, testSyncKey), ""); rec.Code != 200 {
+	if rec := gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/evidence", recoveryHTTPUpload(t, srv, c, 64, testSyncKey), ""); rec.Code != 200 {
 		t.Fatalf("upload %d: %s", rec.Code, rec.Body.String())
 	}
 	before, _ := os.ReadFile(filepath.Join(srv.configDir, "sso-lifecycle.json"))

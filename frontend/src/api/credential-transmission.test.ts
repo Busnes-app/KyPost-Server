@@ -3,20 +3,11 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-// run-8 finding F8: SecurityPage's recovery-code regeneration was the ONE place
-// in the frontend that posted a bare account `password` field. It was also
-// broken — verifyAccountCredential picks its verifier from what the ACCOUNT
-// stores with no fallback, and accounts convert to derived auth on first SPA
-// sign-in, so the correct plaintext got a 401 on essentially every deployment.
-// The guaranteed failure induced retries that re-sent the plaintext and burned
-// lockout strikes, and on a client-protected account that plaintext also
-// derives the PGP key-wrapping key.
-//
-// This is a source scan rather than a behavioural test because the property is
-// about the whole tree, not one call site — the audit found this call site by
-// grep, and the next one would arrive the same way. credentialFields (api/auth.ts)
-// is the single sanctioned producer of a `password` field: it emits one only for
-// an account whose stored hash still covers the plaintext.
+// The account password never leaves the browser: every flow sends the derived
+// authSecret through credentialFields (api/auth.ts), and the server accepts
+// nothing else. This is a source scan because the property is about the whole
+// tree, not one call site — a hand-built `password` field is how the last leak
+// arrived.
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
@@ -30,28 +21,52 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
-describe("the account password is never posted directly (run-8 F8)", () => {
-  it("routes every credential through credentialFields", () => {
+// Files that legitimately send a password that is NOT the account password.
+const allowed: Record<string, string> = {
+  "api/users.ts": "admin create/reset: the new account's temporary password, stored derived server-side",
+  "admin/sections/AssignMailbox.tsx": "the external IMAP/CardDAV server's password",
+  "settings/sections/EmailServer.tsx": "the external IMAP server's password",
+  "settings/sections/CardDavClient.tsx": "the external CardDAV server's password",
+  "settings/sections/MailImportAccount.tsx": "the other mail account's password"
+};
+
+// An object key named password/oldPassword/newPassword/adminPassword with a
+// value (`password: x`), or shorthand (`{ password }`) inside a request call.
+// Type annotations are excluded.
+const explicitKey = /(?:^|[^\w.$"'])(?:old|new|admin)?[Pp]assword\s*:\s*(?!string\b|number\b|boolean\b)[^\s$]/;
+const shorthandKey = /[{,]\s*(?:old|new|admin)?[Pp]assword\s*[,}]/;
+const requestCall = /\b(?:postJSON|putJSON|deleteJSON|postBlob|fetch)\b/;
+const comment = /^\s*(?:\/\/|\*|\/\*)/;
+const sendsPassword = (line: string) =>
+  !comment.test(line) && (explicitKey.test(line) || (requestCall.test(line) && shorthandKey.test(line)));
+
+describe("the account password is never put in a request body", () => {
+  it("has no password field outside the allowlist", () => {
     const root = join(__dirname, "..");
     const offenders: string[] = [];
-
     for (const file of sourceFiles(root)) {
-      // auth.ts IS credentialFields; pgp.ts wraps it in stepUp().
-      if (file.endsWith(join("api", "auth.ts"))) continue;
-      const lines = readFileSync(file, "utf8").split("\n");
-      lines.forEach((line, i) => {
-        // A `password:` / `oldPassword:` object property whose value is a
-        // variable — i.e. a credential being placed into a request body by
-        // hand rather than by credentialFields. TS parameter and field
-        // declarations share this shape, so primitive type annotations are
-        // excluded by name.
-        const property = /^\s*(old)?[Pp]assword:\s*([A-Za-z_$][\w.$]*)\s*,?\s*$/.exec(line);
-        if (property && !["string", "number", "boolean", "unknown", "any"].includes(property[2])) {
-          offenders.push(`${file.slice(root.length + 1)}:${i + 1}: ${line.trim()}`);
-        }
-      });
+      const rel = file.slice(root.length + 1).split("\\").join("/");
+      if (rel in allowed) continue;
+      readFileSync(file, "utf8")
+        .split("\n")
+        .forEach((line, i) => {
+          if (sendsPassword(line)) offenders.push(`${rel}:${i + 1}: ${line.trim()}`);
+        });
     }
-
     expect(offenders).toEqual([]);
+  });
+
+  it("scans the shapes it claims to", () => {
+    for (const line of [
+      "  password: currentPassword,",
+      'postJSON("/api/x", { username, password })',
+      "body: { oldPassword: x }",
+      "adminPassword: p"
+    ]) {
+      expect(sendsPassword(line), line).toBe(true);
+    }
+    for (const line of ["  password: string;", "const [password, setPassword] = useState('')", "value={password}", "unlock(envelope, password)", " * password: prose", "`CardDAV password: ${e}`"]) {
+      expect(sendsPassword(line), line).toBe(false);
+    }
   });
 });

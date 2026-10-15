@@ -132,7 +132,7 @@ func pairNativeDevice(t *testing.T, srv *Server, userID, deviceID string) (id, s
 	// password reset is the standard response to a compromise and a device
 	// credential must not outlive it. The bootstrap admin these fixtures use
 	// carries MustChangePassword from birth, and a confined session cannot reach
-	// GET /api/notifications/pairing to pair anything — so a device paired to
+	// POST /api/notifications/pairing to pair anything — so a device paired to
 	// such an account is a state the product cannot actually produce. Clear it
 	// here rather than let every device test assert against an unreachable one.
 	clearMustChangePassword(t, srv, userID)
