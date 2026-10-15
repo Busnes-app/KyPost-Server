@@ -1,0 +1,3 @@
+.wrangler/
+# Real config with live account and bucket names; copy from wrangler.toml.example
+wrangler.toml

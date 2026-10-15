@@ -1,6 +1,7 @@
 # Operator-owned domain relay configuration
 
-Native primary-address sending uses the configured operator-owned relay in
+Native sending (primary address or an administrator-assigned active alias) uses
+the configured operator-owned relay in
 explicit native mode. Saving credentials makes no provider connection;
 `sendingEnabled` reports configured native runtime capability, not DNS/provider
 readiness or recipient delivery. Busnes supplies no relay account or service.
@@ -76,7 +77,8 @@ qualified first. It grants no account or sending authority.
    against the Sent copy; see [native outbox](NATIVE_OUTBOX.md#persistent-contract).
 4. Configure sealed backups under Server → Backup and run a restore drill.
    Review [native restore limits](RESTORE.md#offline-restore-and-native-quarantine):
-   restored native mail remains held, with no supported hold release yet.
+   restored native mail remains held until an administrator follows
+   [releasing the hold](RESTORE.md#releasing-the-hold).
 5. Sign in as the new identity and compose a small message to a recipient you
    control. Record its outbox ID, authenticated owner-scoped
    `GET /api/mail/outbox/{id}` result, Sent copy, provider logs and recipient
@@ -90,7 +92,7 @@ qualified first. It grants no account or sending authority.
    capacity, abuse protection or accepted-mail recovery. Those remain separate
    activation gates before a public domain cutover.
 
-Rollback the relay check by reverting its commit; it changes no persistent schema. The saved relay and existing delivery path remain available.
+The relay check changes no persistent schema; skipping it leaves the saved relay and existing delivery path available.
 Do not delete domain/relay files or switch a native account to IMAP to roll back
 mail storage. Preserve accepted mail, queued jobs and matching relay keys.
 

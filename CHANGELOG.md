@@ -12,6 +12,7 @@ non-prerelease version.
 
 ## Unreleased
 
+- Docs: start-to-finish guides for [native mail](docs/guides/NATIVE_MAIL.md), [external IMAP](docs/guides/IMAP.md) and [Cloudflare Tunnel](docs/guides/CLOUDFLARED.md). The Cloudflare receiving profile is started with `docker-compose.rspamd.yml` but without `docker-compose.receiving.yml`, which starts Maddy and makes the daemon refuse to run; the docs and the Rspamd overlay comment said otherwise. Restore-hold release, alias sending and the quarantine admin UI are no longer described as missing, and README UI names match the current settings pages. `receiving-worker/wrangler.toml` is now git-ignored.
 - Main-image publication checks the live remote main tip as well as the checkout and tested commit, so rerunning an old workflow cannot republish stale code after main advances.
 
 **Before upgrading:** every account now has a sending quota of 60 messages an hour and 1000 recipients a day; raise it under Admin → Application, or per account under Admin → Users, if your users send more.

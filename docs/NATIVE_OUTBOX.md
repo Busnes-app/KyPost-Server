@@ -5,7 +5,7 @@ an admin-configured operator-owned relay. Ordinary compose, public-key encrypted
 compose and client-prepared PGP use the same durable admission/claim boundary.
 API and daemon processes recover due definite-refusal attempts and accepted Sent
 obligations; SQLite claims arbitrate competing processes. External IMAP behavior
-is unchanged. Native pickup notifications, applicable system/probe mail, provider readiness UI and restore-hold release remain pending.
+is unchanged. Native pickup notifications, applicable system/probe mail, and provider readiness UI remain pending; restore-hold release is [opt-in](RESTORE.md#releasing-the-hold).
 The local TLS/PGP checks below are qualification, not live AWS/Cloudflare delivery.
 
 ## Current admission and client responses
@@ -173,8 +173,8 @@ states remain intact. This prevents old queue entries from becoming sendable
 if live authority is restored later; no automatic unquarantine exists.
 A failed per-mailbox update leaves private staging unpublished and held;
 repeating restore quarantine is safe. Native restores retain the whole-stack hold;
-fresh identity/domain/provider and stale-ID reconciliation is still required,
-with no supported release. Per-store consistency, backup size limits, power-loss
+fresh identity/domain/provider and stale-ID reconciliation is still required
+before [releasing the hold](RESTORE.md#releasing-the-hold). Per-store consistency, backup size limits, power-loss
 qualification and current authority remain separate [restore gates](RESTORE.md).
 
 ## Runnable checks

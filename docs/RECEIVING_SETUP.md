@@ -68,7 +68,8 @@ rollback procedure below instead of deleting data.
    after domain setup, then configure `KYPOST_NATIVE_RECEIVING=true` for the
    daemon and receiver command environment and restart the daemon. Initialization refuses an existing spool;
    never repeat it to repair missing accepted mail. A restore hold refuses use
-   and currently requires separate reconciliation work.
+   until it is released; see
+   [releasing the hold](RESTORE.md#releasing-the-hold).
 4. Supply the separately installed, pinned Maddy executable from
    [the assessment](RECEIVING_GATEWAY_ASSESSMENT.md#pinned-executable-and-runnable-check).
    KyPost does not download or distribute it. Keep executable and parent paths
@@ -201,7 +202,7 @@ never delete storage as rollback.
 
 ## Optional Rspamd sidecar
 
-After preparing the receiving profile, use a KyPost image containing this
+After preparing the Maddy receiving profile, use a KyPost image containing this
 integration. The command below rebuilds this checkout before enabling the
 overlay; an older image can ignore the new scanner setting. Rebuilding pauses
 reception, so retain the existing spool and qualify the resulting receiver:
@@ -358,8 +359,16 @@ bucket bound as `MAIL` and Email Routing's catch-all pointing at it.
    and neither can read mail; the bearer and signing key never leave
    `SECRET_DIR`. Deploy both with `wrangler secret put <NAME>`. Use a fresh pair
    for every Worker. `init` refuses when credentials already exist.
-2. Set `KYPOST_CLOUDFLARE_RECEIVING_ORIGIN=https://<worker>.<account>.workers.dev`
-   in `.env` and recreate the container. Within 30 seconds the daemon publishes
+2. Set `KYPOST_NATIVE_MAIL=true`, `KYPOST_NATIVE_RECEIVING=true` and
+   `KYPOST_CLOUDFLARE_RECEIVING_ORIGIN=https://<worker>.<account>.workers.dev`
+   in `.env` and recreate the container with the Rspamd overlay but **without**
+   `docker-compose.receiving.yml`, which starts the Maddy receiver:
+
+   ```sh
+   docker compose -f docker-compose.yml -f docker-compose.rspamd.yml up -d
+   ```
+
+   Within 30 seconds the daemon publishes
    the routing table; mail to an unrouted address is refused by Cloudflare.
 3. Watch `kypost-server receiving cloudflare status` (or
    `GET /api/admin/receiving/cloudflare`): `running`, the last revision and
@@ -389,7 +398,11 @@ command; it resends the same new material and confirms it with the new bearer.
 
 **Restore and takeover.** A restored instance starts fenced: its daemon makes no
 request to the Worker, and the original keeps receiving. Testing or inspecting a
-restore therefore changes nothing. To move receiving to the restored host:
+restore therefore changes nothing. An offline restore is also held, and the
+daemon refuses to start with receiving enabled while it is: start it with
+`KYPOST_NATIVE_RECEIVING=false` and the origin unset until
+[the hold is released](RESTORE.md#releasing-the-hold). To move receiving to the
+restored host:
 
 ```sh
 docker compose exec --user kypost kypost-server kypost-server receiving cloudflare takeover --confirm move-receiving-here
