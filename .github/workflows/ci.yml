@@ -50,8 +50,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: stable
-          check-latest: true
+          go-version-file: backend/go.mod
           cache-dependency-path: |
             backend/go.sum
             tools/go.sum
@@ -105,8 +104,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: stable
-          check-latest: true
+          go-version-file: backend/go.mod
           cache-dependency-path: |
             backend/go.sum
             tools/go.sum
@@ -166,12 +164,12 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Node and npm are pinned to what the Dockerfile actually builds with
-      # (node:26.5.0-slim + npm@12.0.1). A CI job on a different npm major is
-      # testing a toolchain nobody ships: npm 10 and npm 12 disagree about how
-      # esbuild's optional per-platform packages are recorded, so a lockfile
-      # written by one is rejected by the other. Matching the image means a
-      # green frontend job actually predicts a green `docker build`.
+      # Node is the Dockerfile's node builder tag: frontend/.nvmrc must match
+      # it (ci-scripts checks). npm is pinned to 12.0.1, the developers'
+      # version (package.json "engines"); the image's `npm ci` uses the npm
+      # bundled with its node tag, which ci-docker exercises. npm 10 and npm
+      # 12 disagree about how esbuild's optional per-platform packages are
+      # recorded, so a lockfile written by one is rejected by the other.
       #
       # The version is read from frontend/.nvmrc, which is also what pins
       # developers (with package.json "engines"). Pinning CI alone was worse
@@ -185,7 +183,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: pin npm to the image's version
+      - name: pin npm to the developers' version
         run: npm install -g npm@12.0.1
 
       # `npm ci` here for the same reason the Dockerfile uses it: CI must
@@ -312,6 +310,11 @@ jobs:
       # A variable .env.example offers but compose never passes does nothing.
       - name: env example reaches compose
         run: scripts/check-env-example.sh
+
+      # CI installs Go from backend/go.mod and Node from frontend/.nvmrc; the
+      # image builds from the Dockerfile tags. They must be the same toolchain.
+      - name: CI toolchains match the image
+        run: scripts/check-toolchains.sh
 
       # release-image.yml is the one workflow nothing exercises until a release
       # is published, and its failure mode is silence: a refactor once deleted

@@ -31,7 +31,7 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 
 	requestedUsername := strings.TrimSpace(req.Username)
 	lockKey := clampLockoutKeyComponent(users.NormalizeUsername(requestedUsername)) + "\x00" + lockoutKeyForIP(clientIP(r))
-	allowed, retryAfter, strike := s.loginLockout.tryAttempt(lockKey)
+	allowed, retryAfter, strike := s.reviewPairingLockout.tryAttempt(lockKey)
 	if !allowed {
 		w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
 		http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
@@ -42,7 +42,7 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !u.Active || !reviewUsernameMatches(reviewPattern, requestedUsername) {
 		// Keep the configured-account failure indistinguishable from a bad password.
 		if err := s.equalizeLoginTiming(r.Context(), req.Password); err != nil {
-			s.loginLockout.cancelAttempt(strike)
+			s.reviewPairingLockout.cancelAttempt(strike)
 			writeKDFBusy(w)
 			return
 		}
@@ -54,14 +54,14 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 	if u.UsesDerivedAuth() {
 		credential, err = users.DeriveAuthSecret(req.Password, u.LoginSalt, u.LoginIterations)
 		if err != nil {
-			s.loginLockout.cancelAttempt(strike)
+			s.reviewPairingLockout.cancelAttempt(strike)
 			http.Error(w, "review account is not configured correctly", http.StatusServiceUnavailable)
 			return
 		}
 	}
 	verified, verifyErr := verifyAccountCredential(r.Context(), u, req.Password, credential)
 	if verifyErr != nil {
-		s.loginLockout.cancelAttempt(strike)
+		s.reviewPairingLockout.cancelAttempt(strike)
 		writeKDFBusy(w)
 		return
 	}
@@ -71,11 +71,11 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u.MustChangePassword || u.TOTPEnabled || u.PushMFAEnabled {
-		s.loginLockout.cancelAttempt(strike)
+		s.reviewPairingLockout.cancelAttempt(strike)
 		http.Error(w, "review account requires an interactive sign-in", http.StatusForbidden)
 		return
 	}
-	s.loginLockout.recordSuccess(lockKey)
+	s.reviewPairingLockout.recordSuccess(lockKey)
 	s.writeNotificationPairing(w, u.ID)
 }
 
