@@ -32,7 +32,7 @@ describe("pairing step-up", () => {
     expect((show as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("Account password"), { target: { value: "account credential" } });
     fireEvent.click(show);
-    await waitFor(() => expect(mintPairing).toHaveBeenCalledWith({ ssoSession: false, password: "account credential" }));
+    await waitFor(() => expect(mintPairing).toHaveBeenCalledWith({ ssoSession: false, accountPassword: "account credential" }));
     await screen.findByAltText("Native mobile pairing QR code");
   });
 
@@ -41,7 +41,7 @@ describe("pairing step-up", () => {
     render(<PairingPanel onDevicesMayHaveChanged={() => {}} onStatus={() => {}} />);
     expect(screen.queryByLabelText("Account password")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
-    await waitFor(() => expect(mintPairing).toHaveBeenCalledWith({ ssoSession: true, password: "" }));
+    await waitFor(() => expect(mintPairing).toHaveBeenCalledWith({ ssoSession: true, accountPassword: "" }));
   });
 
   it("shows the refusal and stays on the confirmation form", async () => {

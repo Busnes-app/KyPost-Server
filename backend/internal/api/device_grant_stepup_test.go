@@ -45,7 +45,7 @@ func pairingStepUpBody(t *testing.T, srv *Server, userID string) string {
 	if _, err := srv.users.SetPassword(context.Background(), userID, password, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	return `{"password":"` + password + `"}`
+	return `{"authSecret":"` + userAuthSecret(srv, userID, password) + `"}`
 }
 
 func TestPairingTokenRequiresStepUp(t *testing.T) {
@@ -53,14 +53,14 @@ func TestPairingTokenRequiresStepUp(t *testing.T) {
 	srv.pairingSecret = "test-pairing-secret-at-least-32-bytes-long"
 	srv.serverBaseURL = "https://mail.example"
 
-	for name, body := range map[string]string{"no credential": `{}`, "wrong credential": `{"password":"wrong-password-here"}`} {
+	for name, body := range map[string]string{"no credential": `{}`, "wrong credential": `{"authSecret":"wrong-secret"}`} {
 		rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/notifications/pairing", body)
 		if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "pairingToken") {
 			t.Fatalf("%s: status %d body %s, want 403 and no token", name, rec.Code, rec.Body.String())
 		}
 	}
 
-	rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/notifications/pairing", `{"password":"`+deviceGrantPassword+`"}`)
+	rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/notifications/pairing", `{"authSecret":"`+userAuthSecret(srv, u.ID, deviceGrantPassword)+`"}`)
 	var out struct {
 		DeepLink string `json:"deepLink"`
 	}
@@ -94,7 +94,7 @@ func TestPushMFAEnableRequiresStepUp(t *testing.T) {
 		t.Fatal("session-only request enabled push 2FA")
 	}
 
-	rec = deviceGrantCall(t, srv, u.ID, http.MethodPut, "/api/mfa/push/enabled", `{"enabled":true,"password":"`+deviceGrantPassword+`"}`)
+	rec = deviceGrantCall(t, srv, u.ID, http.MethodPut, "/api/mfa/push/enabled", `{"enabled":true,"authSecret":"`+userAuthSecret(srv, u.ID, deviceGrantPassword)+`"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("stepped-up enable: status %d body %s", rec.Code, rec.Body.String())
 	}
@@ -120,7 +120,7 @@ func TestDeviceApproverFlagRequiresStepUp(t *testing.T) {
 		t.Fatalf("session-only set: status %d approver %v, want 403 and unchanged", rec.Code, d.MFAApprover)
 	}
 
-	rec = deviceGrantCall(t, srv, u.ID, http.MethodPut, path, `{"approver":true,"password":"`+deviceGrantPassword+`"}`)
+	rec = deviceGrantCall(t, srv, u.ID, http.MethodPut, path, `{"approver":true,"authSecret":"`+userAuthSecret(srv, u.ID, deviceGrantPassword)+`"}`)
 	if d, _ := store.GetNativeDevice("dev-flag"); rec.Code != http.StatusOK || !d.MFAApprover {
 		t.Fatalf("stepped-up set: status %d approver %v body %s", rec.Code, d.MFAApprover, rec.Body.String())
 	}
@@ -179,5 +179,20 @@ func TestDeviceGrantsChallengeKySignOnSessions(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
 		challengeFrom(t, rec)
+	}
+}
+
+// Newly merged device grants keep the authSecret-only wire contract.
+func TestDeviceGrantsRejectAccountPassword(t *testing.T) {
+	srv, u := newDeviceGrantServer(t)
+	for _, call := range []struct{ method, path, body string }{
+		{http.MethodPost, "/api/notifications/pairing", `{"password":"` + deviceGrantPassword + `"}`},
+		{http.MethodPut, "/api/mfa/push/enabled", `{"enabled":false,"password":"` + deviceGrantPassword + `"}`},
+		{http.MethodPut, "/api/notifications/native/devices/any/mfa", `{"approver":true,"password":"` + deviceGrantPassword + `"}`},
+	} {
+		rec := deviceGrantCall(t, srv, u.ID, call.method, call.path, call.body)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s accepted plaintext credential: status %d body %s", call.path, rec.Code, rec.Body.String())
+		}
 	}
 }

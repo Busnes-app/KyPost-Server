@@ -309,8 +309,8 @@ func TestTLSTerminationDrivesSecureCookieWithoutProxyTrust(t *testing.T) {
 
 	client := ts.Client()
 	body, _ := json.Marshal(map[string]string{
-		"username": u.Username,
-		"password": "correct-horse-battery-staple",
+		"username":   u.Username,
+		"authSecret": testAuthSecret(srv, u.Username, "correct-horse-battery-staple"),
 	})
 	resp, err := client.Post(ts.URL+"/api/auth/login", "application/json", bytes.NewReader(body))
 	if err != nil {

@@ -89,7 +89,6 @@ func (s *Server) handleMFAPushEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Enabled    bool   `json:"enabled"`
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
@@ -134,7 +133,7 @@ func (s *Server) handleMFAPushEnabled(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if !s.confirmActor(w, r, ac.UserID, req.Password, req.AuthSecret) {
+	if !s.confirmActor(w, r, ac.UserID, req.AuthSecret) {
 		return
 	}
 	if _, err := s.users.SetPushMFAEnabled(u.ID, req.Enabled); err != nil {
@@ -165,14 +164,13 @@ func (s *Server) handleNativeDeviceMFA(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Approver   bool   `json:"approver"`
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	if !s.confirmActor(w, r, ac.UserID, req.Password, req.AuthSecret) {
+	if !s.confirmActor(w, r, ac.UserID, req.AuthSecret) {
 		return
 	}
 	updated, err := store.SetNativeDeviceMFAApprover(deviceID, req.Approver)

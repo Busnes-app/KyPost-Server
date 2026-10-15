@@ -128,14 +128,14 @@ export async function waitForDeviceEnrollment(
 }
 
 /** The caller's step-up: their account password, unused for a KySignOn session. */
-export type DeviceConfirm = { ssoSession: boolean; password: string };
+export type DeviceConfirm = { ssoSession: boolean; accountPassword: string };
 
 /**
  * Pairing, push approval and the approver flag each grant something that
  * outlives the session, so the server re-proves the caller on every one.
  */
 async function confirmed<T>(confirm: DeviceConfirm, body: object, send: (body: object, headers: Record<string, string>) => Promise<T>): Promise<T> {
-  const signed = { ...body, ...(confirm.ssoSession ? {} : credentialFields(await deriveCredential("", confirm.password))) };
+  const signed = { ...body, ...(confirm.ssoSession ? {} : credentialFields(await deriveCredential("", confirm.accountPassword))) };
   return withSSOStepUp((headers) => send(signed, headers));
 }
 

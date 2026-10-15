@@ -144,7 +144,7 @@ export function Devices({
   async function togglePush(enabled: boolean) {
     setBusy(true);
     setMessage("");
-    const confirm = { ssoSession, password: approvalPassword };
+    const confirm = { ssoSession, accountPassword: approvalPassword };
     setApprovalPassword("");
     try {
       await setPushApproval(confirm, enabled);
@@ -159,7 +159,7 @@ export function Devices({
   async function toggleApprover(deviceId: string, approver: boolean) {
     setBusy(true);
     setMessage("");
-    const confirm = { ssoSession, password: approvalPassword };
+    const confirm = { ssoSession, accountPassword: approvalPassword };
     setApprovalPassword("");
     try {
       await setDeviceApprover(confirm, deviceId, approver);

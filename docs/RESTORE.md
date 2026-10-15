@@ -376,7 +376,7 @@ minutes, so script steps 2–5 and run them back to back:
 3. Export the evidence from KyIdentity for that nonce and subject list.
 4. `POST /api/admin/native-recovery/evidence`, then
    `POST /api/admin/native-recovery/repair`.
-5. `POST /api/admin/native-recovery/release` with `{password}`; with the bundled
+5. `POST /api/admin/native-recovery/release` with `{authSecret}`; with the bundled
    receiver (Maddy) first stop the original host's receiver and add
    `"confirm": "original-host-decommissioned"`.
 

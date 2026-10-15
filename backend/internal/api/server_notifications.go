@@ -342,14 +342,13 @@ func (s *Server) handleNotificationPairing(w http.ResponseWriter, r *http.Reques
 	// The token mints a device credential that outlives the session, so a
 	// session alone may not ask for one.
 	var cred struct {
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&cred); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	if !s.confirmActor(w, r, ac.UserID, cred.Password, cred.AuthSecret) {
+	if !s.confirmActor(w, r, ac.UserID, cred.AuthSecret) {
 		return
 	}
 	s.writeNotificationPairing(w, ac.UserID)

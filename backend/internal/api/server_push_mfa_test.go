@@ -60,7 +60,7 @@ func TestPushEnableAndStatusAndDeviceToggle(t *testing.T) {
 	pairApproverDevice(t, srv, u.ID, "dev-pia")
 
 	enableRec := doJSONAuth(srv, srv.withAuth(srv.handleMFAPushEnabled), http.MethodPut,
-		"/api/mfa/push/enabled", map[string]any{"enabled": true, "password": "pw-pia-testpassword"}, u.ID)
+		"/api/mfa/push/enabled", map[string]any{"enabled": true, "authSecret": userAuthSecret(srv, u.ID, "pw-pia-testpassword")}, u.ID)
 	if enableRec.Code != http.StatusOK {
 		t.Fatalf("enable: status=%d body=%s", enableRec.Code, enableRec.Body.String())
 	}
@@ -83,7 +83,7 @@ func TestPushEnableAndStatusAndDeviceToggle(t *testing.T) {
 
 	// Toggle the device's approver flag off via the path-scoped endpoint.
 	toggleReq := httptest.NewRequest(http.MethodPut, "/api/notifications/native/devices/dev-pia/mfa",
-		bytes.NewReader([]byte(`{"approver":false,"password":"pw-pia-testpassword"}`)))
+		bytes.NewReader([]byte(`{"approver":false,"authSecret":"`+userAuthSecret(srv, u.ID, "pw-pia-testpassword")+`"}`)))
 	toggleReq.SetPathValue("deviceId", "dev-pia")
 	authRequestAs(srv, toggleReq, u.ID)
 	toggleRec := httptest.NewRecorder()
@@ -102,7 +102,7 @@ func TestPushEnableAndStatusAndDeviceToggle(t *testing.T) {
 func loginChallenge(t *testing.T, srv *Server, username, password string) (challengeID string, methods []string) {
 	t.Helper()
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": username, "password": password})
+		map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -179,7 +179,7 @@ func pollPush(srv *Server, challengeID string) string {
 func enablePush(t *testing.T, srv *Server, userID string) {
 	t.Helper()
 	rec := doJSONAuth(srv, srv.withAuth(srv.handleMFAPushEnabled), http.MethodPut,
-		"/api/mfa/push/enabled", map[string]any{"enabled": true, "password": testPasswordFor(t, srv, userID)}, userID)
+		"/api/mfa/push/enabled", map[string]any{"enabled": true, "authSecret": userAuthSecret(srv, userID, testPasswordFor(t, srv, userID))}, userID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("enable push: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -417,7 +417,7 @@ func TestLoginStopsOfferingPushWhenThrottled(t *testing.T) {
 	}
 
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": "ulf", "password": "pw-ulf-testpassword"})
+		map[string]string{"username": "ulf", "authSecret": testAuthSecret(srv, "ulf", "pw-ulf-testpassword")})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("throttled login must still succeed: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -508,7 +508,7 @@ func TestPushFinishRequiresTheBrowsersSecret(t *testing.T) {
 	enablePush(t, srv, u.ID)
 
 	rec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": username, "password": password})
+		map[string]string{"username": username, "authSecret": testAuthSecret(srv, username, password)})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login: status=%d body=%s", rec.Code, rec.Body.String())
 	}

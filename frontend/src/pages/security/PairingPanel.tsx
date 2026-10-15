@@ -79,7 +79,7 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
   async function showCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
-    const confirm = { ssoSession, password };
+    const confirm = { ssoSession, accountPassword: password };
     setPassword("");
     try {
       applyPairingStatus(await mintPairing<PairingStatusResponse>(confirm));

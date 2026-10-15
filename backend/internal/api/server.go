@@ -143,8 +143,8 @@ type Server struct {
 	pickupStore          *pgpmail.PickupStore
 	poller               *processor.Poller
 	loginLockout         *failureLockout
-	// reviewPairingLockout is review pairing's own table: that route has no
-	// CAPTCHA or budget, so it must not be able to fill loginLockout.
+	// reviewPairingLockout is review pairing's own per-account table (its
+	// verifyLogin accountLockout), so that route can never fill loginLockout.
 	reviewPairingLockout *failureLockout
 	davLockout           *failureLockout
 	mfaLockout           *failureLockout

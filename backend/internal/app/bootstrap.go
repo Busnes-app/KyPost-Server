@@ -65,12 +65,13 @@ func BootstrapAdmin() error {
 		}
 	}
 
-	hash, err := users.HashPassword(context.Background(), password)
+	cred, err := users.DeriveCredential(context.Background(), password)
 	if err != nil {
 		return fmt.Errorf("hash admin password: %w", err)
 	}
 
-	env := fmt.Sprintf("ADMIN_USER=%s\nADMIN_PASS_HASH=%s\nMUST_CHANGE_PASSWORD=true\n", username, hash)
+	env := fmt.Sprintf("ADMIN_USER=%s\nADMIN_PASS_HASH=%s\nADMIN_LOGIN_SALT=%s\nADMIN_LOGIN_ITERATIONS=%d\nMUST_CHANGE_PASSWORD=true\n",
+		username, cred.Hash, cred.Salt, cred.Iterations)
 	if err := fsutil.AtomicWriteFile(adminEnvPath, []byte(env), 0o600); err != nil {
 		return fmt.Errorf("write admin.env: %w", err)
 	}

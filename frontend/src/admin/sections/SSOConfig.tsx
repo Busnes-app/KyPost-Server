@@ -76,7 +76,7 @@ export function SSOConfig() {
     const accountPassword = password;
     setPassword("");
     try {
-      const saved = await confirmedAdmin({ ssoSession, password: accountPassword }, settings, (b, h) =>
+      const saved = await confirmedAdmin({ ssoSession, accountPassword }, settings, (b, h) =>
         putJSON<{ settings: SSOSettings }>("/api/admin/sso", b, h)
       );
       setSettings({ ...saved.settings, clientSecret: "" });

@@ -40,12 +40,12 @@ describe("sign-in approval step-up", () => {
     fireEvent.change(password, { target: { value: "account credential" } });
     expect(approver.disabled).toBe(false);
     fireEvent.click(approver);
-    await waitFor(() => expect(setDeviceApprover).toHaveBeenCalledWith({ ssoSession: false, password: "account credential" }, "phone-1", true));
+    await waitFor(() => expect(setDeviceApprover).toHaveBeenCalledWith({ ssoSession: false, accountPassword: "account credential" }, "phone-1", true));
     expect(password.value).toBe("");
 
     fireEvent.change(password, { target: { value: "account credential" } });
     fireEvent.click(push);
-    await waitFor(() => expect(setPushApproval).toHaveBeenCalledWith({ ssoSession: false, password: "account credential" }, true));
+    await waitFor(() => expect(setPushApproval).toHaveBeenCalledWith({ ssoSession: false, accountPassword: "account credential" }, true));
   });
 
   it("confirms SSO sessions with KySignOn, not a password", async () => {
@@ -53,6 +53,6 @@ describe("sign-in approval step-up", () => {
     render(<Devices status={status} deviceRows={[row]} />);
     expect(screen.queryByLabelText("Account password to change sign-in approval")).toBeNull();
     fireEvent.click(screen.getByLabelText("Let a paired device approve sign-ins with a tap"));
-    await waitFor(() => expect(setPushApproval).toHaveBeenCalledWith({ ssoSession: true, password: "" }, true));
+    await waitFor(() => expect(setPushApproval).toHaveBeenCalledWith({ ssoSession: true, accountPassword: "" }, true));
   });
 });

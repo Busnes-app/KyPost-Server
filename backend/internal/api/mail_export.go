@@ -139,7 +139,6 @@ func (s *Server) handleExportStart(w http.ResponseWriter, r *http.Request) {
 		Mailbox    string `json:"mailbox"`
 		Folder     string `json:"folder"`
 		Format     string `json:"format"`
-		Password   string `json:"password"`
 		AuthSecret string `json:"authSecret"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Format != "mbox" && body.Format != "eml-zip" {
@@ -165,7 +164,7 @@ func (s *Server) handleExportStart(w http.ResponseWriter, r *http.Request) {
 		refused.write(w)
 		return
 	}
-	if !s.confirmActor(w, r, ac.UserID, body.Password, body.AuthSecret) {
+	if !s.confirmActor(w, r, ac.UserID, body.AuthSecret) {
 		return
 	}
 	count, err := ex.ExportCount(r.Context(), folders)
