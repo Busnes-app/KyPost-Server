@@ -96,8 +96,16 @@ func newFakeIMAPServer(t *testing.T, delim string, specialUse bool, folders []fa
 	previous := goimap.TLSSkipVerify
 	goimap.TLSSkipVerify = true
 	t.Cleanup(func() { goimap.TLSSkipVerify = previous })
+	allowLoopbackDial(t)
 
 	return s
+}
+
+// allowLoopbackDial lets go-imap reach this loopback server past netguard.
+func allowLoopbackDial(t *testing.T) {
+	previous := goimap.DialContext
+	goimap.DialContext = (&net.Dialer{}).DialContext
+	t.Cleanup(func() { goimap.DialContext = previous })
 }
 
 func (s *fakeIMAPServer) serve() {

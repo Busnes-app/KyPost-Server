@@ -482,7 +482,7 @@ var loginKDFBilledSeconds = billMeasuredTime
 //
 // The zero value (no limiter configured, or no reservation taken) is inert.
 type loginBudget struct {
-	limiter *ipRateLimiter
+	limiter *keyedLimiter
 }
 
 // settle bills delta (actual cost minus the reservation) and releases the hold.
@@ -618,6 +618,6 @@ func writeKDFBusy(w http.ResponseWriter) {
 }
 
 // loginRateLimitKey is the single bucket key for the instance-wide login
-// throttle. ipRateLimiter is keyed, so a constant key gives one shared bucket
+// throttle. keyedLimiter is keyed, so a constant key gives one shared bucket
 // rather than one per caller — which is the whole point here.
 const loginRateLimitKey = "instance"
