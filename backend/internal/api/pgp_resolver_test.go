@@ -10,14 +10,14 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	openpgp "github.com/ProtonMail/go-crypto/openpgp/v2"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 
 func TestResolveUsesWKDAndPinsContact(t *testing.T) {
 	allowLoopbackOutboundForTest(t)
-	id, err := pgpmail.GenerateIdentity("Erin", "erin@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Erin", "erin@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestResolveTOFUMismatchDoesNotSwitch(t *testing.T) {
 	// address. The resolver must not switch to B — it reports
 	// tierKeyChanged/Usable=false and leaves the pinned key alone.
 	armoredA, fpA := generateExpiredIdentity(t, "Alice A", "alice@example.com")
-	idB, err := pgpmail.GenerateIdentity("Alice B", "alice@example.com")
+	idB, err := pgpmailtest.GenerateIdentity("Alice B", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity B: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestResolvePreservesManualVerificationOnSameFingerprint(t *testing.T) {
 
 func TestResolveMarksDiscoveryCreatedOnNewContact(t *testing.T) {
 	allowLoopbackOutboundForTest(t)
-	id, err := pgpmail.GenerateIdentity("Gale", "gale@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Gale", "gale@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestResolveMarksDiscoveryCreatedOnNewContact(t *testing.T) {
 
 func TestResolveDoesNotMarkDiscoveryCreatedOnExistingContact(t *testing.T) {
 	allowLoopbackOutboundForTest(t)
-	id, err := pgpmail.GenerateIdentity("Hana", "hana@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Hana", "hana@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestResolveSkipsSuppressedAddress(t *testing.T) {
 
 func TestResolveSuppressionDoesNotBlockManualKey(t *testing.T) {
 	allowLoopbackOutboundForTest(t)
-	id, err := pgpmail.GenerateIdentity("Fred", "fred@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Fred", "fred@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
@@ -245,11 +246,11 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 		t.Fatalf("before page: %s", page.Body.String())
 	}
 
-	sender, err := pgpmail.GenerateIdentity("Sender", "sender@outside.test")
+	sender, err := pgpmailtest.GenerateIdentity("Sender", "sender@outside.test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	signed, err := pgpmail.SignMIME(raw, sender)
+	signed, err := pgpmailtest.SignMIME(raw, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +290,7 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 	if payload.Body != "" || payload.ResolvedSender != "sender@outside.test" {
 		t.Fatal("signed response render/binding changed")
 	}
-	ownerKey, err := pgpmail.GenerateIdentity("Owner", "tester@example.com")
+	ownerKey, err := pgpmailtest.GenerateIdentity("Owner", "tester@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,11 +320,11 @@ func TestNativeMailboxClientAPI(t *testing.T) {
 	if !strings.Contains(payload.EncryptedPayload, "-----BEGIN PGP MESSAGE-----") || payload.Body != "" {
 		t.Fatal("ciphertext read lost payload or exposed plaintext")
 	}
-	decrypted, err := pgpmail.DecryptMIME(payload.EncryptedPayload, ownerKey, []string{sender.ArmoredPublicKey})
+	decrypted, err := pgpmailtest.DecryptMIME(payload.EncryptedPayload, ownerKey, []string{sender.ArmoredPublicKey})
 	if err != nil || !decrypted.Verified || decrypted.SignerFingerprint != sender.Fingerprint {
 		t.Fatalf("endpoint ciphertext failed decrypt/signature/body check: %v", err)
 	}
-	decryptedBody, _, _, err := pgpmail.ParseContent(decrypted.Content)
+	decryptedBody, _, _, err := pgpmailtest.ParseContent(decrypted.Content)
 	if err != nil || decryptedBody != "owner body <user@example.test>" {
 		t.Fatalf("endpoint decrypted body mismatch: %v", err)
 	}

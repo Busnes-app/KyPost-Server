@@ -13,7 +13,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -55,7 +55,7 @@ func TestContactCreateRejectsPrivateKey(t *testing.T) {
 func TestContactCreateRejectsKeyForAnotherAddress(t *testing.T) {
 	srv := newTestServer(t)
 	userID := srv.mustBootstrapUserID(t)
-	id, err := pgpmail.GenerateIdentity("Mallory", "mallory@evil.example")
+	id, err := pgpmailtest.GenerateIdentity("Mallory", "mallory@evil.example")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestCardDAVPutWithoutKeyKeepsStoredKey(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	ac := AuthContext{UserID: u.ID, Username: u.Username, Role: u.Role}
-	id, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -143,11 +143,11 @@ func TestCardDAVPutWithoutKeyKeepsStoredKey(t *testing.T) {
 // A stored key its pin disputes (what an Autocrypt rotation now leaves) is a
 // key change on the send side, even while that key is usable.
 func TestResolveRefusesUsableKeyThatFailsItsPin(t *testing.T) {
-	idOld, err := pgpmail.GenerateIdentity("Bob Old", "bob@example.com")
+	idOld, err := pgpmailtest.GenerateIdentity("Bob Old", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
-	idNew, err := pgpmail.GenerateIdentity("Bob New", "bob@example.com")
+	idNew, err := pgpmailtest.GenerateIdentity("Bob New", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

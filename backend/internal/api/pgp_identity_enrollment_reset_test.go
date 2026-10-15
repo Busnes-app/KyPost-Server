@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // configureMailFor satisfies the generate handler's precondition that the
@@ -70,7 +70,7 @@ func TestStoringAClientProtectedIdentityClearsDeviceEnrollment(t *testing.T) {
 	password := stepUpPassword(t, srv, userID)
 	enrollDeviceFor(t, srv, userID, "dev-1")
 
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestIdentityChangeKeepsDevicesPaired(t *testing.T) {
 	configureMailFor(t, srv, userID)
 	enrollDeviceFor(t, srv, userID, "dev-1")
 
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

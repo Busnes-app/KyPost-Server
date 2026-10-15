@@ -11,7 +11,7 @@ import (
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpdiscovery"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // TestKeyChangedRecipientIsNotTreatedAsKeyless pins the distinction the
@@ -39,7 +39,7 @@ func TestKeyChangedRecipientIsNotTreatedAsKeyless(t *testing.T) {
 	// pinned to A's now-expired key, and WKD serves a different key (B) for the
 	// same address.
 	armoredA, fpA := generateExpiredIdentity(t, "Alice A", "alice@example.com")
-	idB, err := pgpmail.GenerateIdentity("Alice B", "alice@example.com")
+	idB, err := pgpmailtest.GenerateIdentity("Alice B", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity B: %v", err)
 	}

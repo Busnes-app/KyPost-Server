@@ -319,3 +319,10 @@ func TestPowEscalationEntryExpiresDespiteContinuedFailures(t *testing.T) {
 			"because every failure pushed its expiry forward")
 	}
 }
+
+// entryCount reports how many IPs are tracked.
+func (p *powEscalation) entryCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.entries)
+}

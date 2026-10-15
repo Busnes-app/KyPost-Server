@@ -13,12 +13,12 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 func TestKeyserverLookupReturnsKey(t *testing.T) {
 	allowLoopbackOutboundForTest(t)
-	id, err := pgpmail.GenerateIdentity("Carol", "carol@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Carol", "carol@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestKeyserverLookupReturnsKey(t *testing.T) {
 
 func TestPGPKeyserverLookupSuccess(t *testing.T) {
 	allowLoopbackOutboundForTest(t)
-	id, err := pgpmail.GenerateIdentity("Keyserver Test", "keyserver-test@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Keyserver Test", "keyserver-test@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestPGPRecipientsCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("userContactsStore: %v", err)
 	}
-	hasKeyID, err := pgpmail.GenerateIdentity("Has Key", "haskey@example.com")
+	hasKeyID, err := pgpmailtest.GenerateIdentity("Has Key", "haskey@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

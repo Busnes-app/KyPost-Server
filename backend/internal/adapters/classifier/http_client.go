@@ -98,14 +98,6 @@ var (
 	warmupStates   = map[string]*warmupState{}
 )
 
-// ResetWarmupState clears cached warmup readiness so the next classify/warmup
-// re-runs model pull/readiness initialization.
-func ResetWarmupState() {
-	warmupStatesMu.Lock()
-	defer warmupStatesMu.Unlock()
-	warmupStates = map[string]*warmupState{}
-}
-
 type HTTPClient struct {
 	baseURL string
 	apiKey  string

@@ -201,10 +201,3 @@ func (p *powEscalation) sweepExpiredLocked(now time.Time) {
 		}
 	}
 }
-
-// entryCount reports how many IPs are tracked. Test-only.
-func (p *powEscalation) entryCount() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return len(p.entries)
-}

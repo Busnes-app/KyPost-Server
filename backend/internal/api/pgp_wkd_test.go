@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 
@@ -23,7 +23,7 @@ func TestWKDHashLocalPart(t *testing.T) {
 }
 
 func TestValidateDiscoveredKeyAcceptsMatchingUsableKey(t *testing.T) {
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestValidateDiscoveredKeyAcceptsMatchingUsableKey(t *testing.T) {
 }
 
 func TestValidateDiscoveredKeyRejectsWrongUID(t *testing.T) {
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestWKDCandidateURLsBuildsBothMethodsForValidDomain(t *testing.T) {
 
 func TestFetchWKDKeyDirectMethod(t *testing.T) {
 	allowLoopbackOutboundForTest(t)
-	id, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

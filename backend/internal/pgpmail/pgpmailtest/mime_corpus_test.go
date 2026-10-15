@@ -1,4 +1,4 @@
-package pgpmail
+package pgpmailtest
 
 import (
 	"encoding/json"
@@ -45,7 +45,7 @@ type mimeCorpus struct {
 
 func loadMIMECorpus(t *testing.T) mimeCorpus {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "testdata", "mime-corpus.json")
+	path := filepath.Join("..", "..", "..", "..", "testdata", "mime-corpus.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read shared corpus %s: %v", path, err)

@@ -17,6 +17,7 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 type incomingFixture struct {
@@ -29,7 +30,7 @@ func incomingForTest(t *testing.T, c *Client, uid int) (incomingFixture, *pgpmai
 	t.Helper()
 	source, err := c.PrepareIncoming(context.Background(), uid, true)
 	must(t, err)
-	key, err := pgpmail.GenerateIdentity("Alice", "alice@example.test")
+	key, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.test")
 	must(t, err)
 	cipher, err := pgpmail.EncryptStoredMIME(source.Raw, key.ArmoredPublicKey)
 	must(t, err)
@@ -76,7 +77,7 @@ func TestNativeIncomingReplacementAtomicRecovery(t *testing.T) {
 	}
 	bodies, err := c.GetMessageBodies(ctx, "INBOX", []int{replacement})
 	must(t, err)
-	decrypted, err := pgpmail.DecryptMIME(bodies[replacement].PGPEncryptedPayload, key, nil)
+	decrypted, err := pgpmailtest.DecryptMIME(bodies[replacement].PGPEncryptedPayload, key, nil)
 	must(t, err)
 	if !bytes.Contains(decrypted.Content, raw) {
 		t.Fatal("encrypted replacement lost original MIME")

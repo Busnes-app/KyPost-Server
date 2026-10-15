@@ -1,6 +1,6 @@
 /**
  * Parses the MIME entity that comes out of a PGP/MIME decryption, in the
- * browser, the same way the server's pgpmail.ParseContent does it.
+ * browser, the same way the Go reference pgpmailtest.ParseContent does it.
  *
  * A PGP/MIME payload decrypts to a complete MIME entity — headers, boundaries,
  * encoded parts — not to display text. For a client-protected account the server
@@ -12,7 +12,7 @@
  * as a tag and deleted the address, and a tag allowlist read "use <br> to break
  * a line" as markup and deleted that. The Content-Type is in the bytes already.
  *
- * Mirrors the server implementation (backend/internal/pgpmail/mime.go) rather
+ * Mirrors the Go reference (backend/internal/pgpmail/pgpmailtest) rather
  * than inventing a second set of rules: same first-part-wins selection, same
  * text/rfc822-headers skip, same depth cap. That parser renders nothing now
  * that server-side decryption is retired, but it is still the reference this
@@ -263,7 +263,7 @@ function charsetFromContentType(value: string): string | undefined {
  * (Go special-cases this at total==0), so normalise that case rather than
  * loosening the match. Both CRLF and bare LF are accepted because Go's reader
  * accepts whichever it sees first. See testdata/mime-corpus.json, which both
- * this suite and backend/internal/pgpmail execute.
+ * this suite and backend/internal/pgpmail/pgpmailtest execute.
  */
 function splitParts(body: string, boundary: string): string[] {
   const opening = `--${boundary}`;
@@ -307,7 +307,7 @@ function isDetachedSigned(contentType: string): boolean {
 /**
  * Walks a multipart body. The first part that qualifies as the display body
  * becomes `out.body`; other recognised parts become attachments, exactly as
- * pgpmail.parseMultipart files them. The walk continues past the body so
+ * pgpmailtest.parseMultipart files them. The walk continues past the body so
  * attachments after it are found.
  */
 function walkMultipart(body: string, boundary: string, depth: number, out: Collector): void {
@@ -428,7 +428,7 @@ export function parseMimeContent(raw: string, limits: MimeLimits = DEFAULT_MIME_
 
 /**
  * The protected headers an entity carries, decoded from RFC 2047 where a
- * sender encoded them. Mirrors pgpmail.ExtractProtectedSubject for Subject
+ * sender encoded them. Mirrors pgpmailtest.ExtractProtectedSubject for Subject
  * and extends it to the address headers a draft needs back.
  */
 function readProtectedHeaders(headers: Map<string, string>): ProtectedHeaders {

@@ -314,7 +314,7 @@ describe("decodeRFC2047", () => {
 });
 
 // The TypeScript half of the shared MIME corpus. The Go half is
-// backend/internal/pgpmail/mime_corpus_test.go, and both read the SAME file.
+// backend/internal/pgpmail/pgpmailtest/mime_corpus_test.go, and both read the SAME file.
 //
 // Two independent MIME parsers exist because the server never sees a
 // client-protected account's plaintext, so this file re-implements what the

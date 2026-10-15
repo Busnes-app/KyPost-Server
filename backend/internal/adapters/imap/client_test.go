@@ -374,7 +374,7 @@ func TestClampCheckpoint(t *testing.T) {
 		// The property that actually matters, stated in ListUnreadInbox's own
 		// terms: UID > checkpoint.
 		next := ClampCheckpoint("10", "20", []string{"14"})
-		if minUID := parseCheckpointUID(next); 14 <= minUID {
+		if _, minUID := parseCheckpoint(next); 14 <= minUID {
 			t.Fatalf("checkpoint %q excludes the deferred UID 14 (minUID=%d)", next, minUID)
 		}
 	})

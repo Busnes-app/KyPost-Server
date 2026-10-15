@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
-	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
+	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 )
 
 // TestContactCreateBackfillsPGPKeyFingerprint drives POST /api/contacts with
@@ -20,7 +20,7 @@ func TestContactCreateBackfillsPGPKeyFingerprint(t *testing.T) {
 	srv := newTestServer(t)
 	userID := srv.mustBootstrapUserID(t)
 
-	id, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Alice", "alice@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestContactUpdateBackfillsPGPKeyFingerprint(t *testing.T) {
 	srv := newTestServer(t)
 	userID := srv.mustBootstrapUserID(t)
 
-	id, err := pgpmail.GenerateIdentity("Bob", "bob@example.com")
+	id, err := pgpmailtest.GenerateIdentity("Bob", "bob@example.com")
 	if err != nil {
 		t.Fatalf("GenerateIdentity: %v", err)
 	}

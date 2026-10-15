@@ -397,25 +397,6 @@ var requiredDeliveryHeaders = []string{"From:", "To:", "Subject:", "Date:"}
 // verification both read elsewhere.
 var forbiddenDeliveryHeaders = []string{"Received", "Authentication-Results", "Return-Path", "Bcc"}
 
-// validatePGPMimeDelivery rejects a client-supplied delivery that is not a
-// complete RFC 5322 message from an address this caller may send as.
-//
-// authorizedFrom is the header-From resolveMailFrom approved for this caller —
-// their own account address, or a verified send-as alias — and the delivery's
-// own From must equal it. That binding is the point: this endpoint relays the
-// caller's bytes verbatim, and checking only that a few header *names* appeared
-// as substrings and that the armor marker appeared anywhere left the From
-// entirely caller-chosen, let an HTML comment satisfy the armor check, and made
-// the whole send-as authorization subsystem bypassable by anyone with a session
-// or a paired device secret. On a shared organizational smarthost, mail spoofed
-// this way is DKIM-aligned.
-func validatePGPMimeDelivery(delivery, authorizedFrom string) error {
-	if err := validateClientDeliveryShape(delivery); err != nil {
-		return err
-	}
-	return validateDeliveryFrom(delivery, authorizedFrom)
-}
-
 // validateClientDeliveryShape accepts what the browser may hand this relay
 // for delivery: an RFC 3156 multipart/encrypted message, or a multipart/signed
 // one whose two parts and detached signature parse. A signed-only message is
