@@ -14,7 +14,7 @@
     "pretest": "node src/ky-ui/check-vendor.mjs"
   },
   "dependencies": {
-    "dompurify": "3.4.16",
+    "dompurify": "3.4.17",
     "openpgp": "^6.3.2",
     "qrcode": "^1.5.4",
     "quill": "2.0.2",
