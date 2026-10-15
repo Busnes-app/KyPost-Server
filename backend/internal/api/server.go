@@ -79,6 +79,9 @@ type Server struct {
 
 	// sessMu guards sessions only.
 	sessMu sync.RWMutex
+	// ssoEpoch counts SSO trust changes (endSSOSessions); an SSO session
+	// minted under an older epoch is dead.
+	ssoEpoch atomic.Uint64
 	// pairingMu serializes native registration with credential revocation. A
 	// pairing token resolves its owner before it writes a device; revocation must
 	// not delete devices and rotate the subscriber between those two operations.
@@ -864,6 +867,7 @@ func (s *Server) Prepare() {
 	if err := os.RemoveAll(filepath.Join(s.stateDir, importDir)); err != nil {
 		s.logger.Error("leftover import uploads could not be removed", "error", err.Error())
 	}
+	s.bindUnboundSSOLinks()
 	port := config.EnvInt("WEB_PORT", 5866)
 	// Timeouts are set explicitly because net/http's zero values mean "no limit":
 	// without them a connection that dribbles one header line every few seconds is

@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +52,10 @@ type SSOSettings struct {
 	// travel over that link, so this is off unless an operator turns it on
 	// deliberately for a LAN identity provider that has no TLS.
 	AllowInsecureIssuer bool `json:"allowInsecureIssuer"`
+
+	// AdminGroup is the exact group or realm role that makes a generic
+	// provider's new account an administrator. Empty: none does.
+	AdminGroup string `json:"adminGroup,omitempty"`
 }
 
 // Store handles persisting SSOSettings to disk.
@@ -303,48 +308,44 @@ type SSOTokenClaims struct {
 // KySignOn again later; FreshProof's assurance vocabulary is KySignOn's.
 func (c *SSOTokenClaims) KySignOn() bool { return c != nil && c.Roles != nil }
 
-// AppAdmin reports whether the token makes its subject a KyPost administrator.
+// GrantsAdmin reports whether a NEW account for this token is an administrator.
 //
 // A token carrying `roles` is the KySignOn contract: admin iff the array
 // names AdminAppRole, and nothing else in the token counts. KySignOn's
 // legacy `role` claim is the central global admin, which is deliberately
-// never a product admin, so it has no field here at all. A token without
-// `roles` comes from a generic provider, and the admin group names Authentik
-// and Keycloak publish are mapped instead.
-func (c *SSOTokenClaims) AppAdmin() bool {
+// never a product admin, so it has no field here at all. A generic provider
+// grants admin only through the operator's AdminGroup: a shared "admins"
+// group belongs to every other app on that provider.
+func (c *SSOTokenClaims) GrantsAdmin(adminGroup string) bool {
+	return c.AppAdmin(adminGroup) && (c.Roles != nil || adminGroup != "")
+}
+
+// AppAdmin is an SSO session's role ceiling: false caps a local admin to user.
+// It never raises a role. With no AdminGroup a generic provider keeps the
+// legacy admin names here, so existing admins are not demoted; they no longer
+// provision anyone (GrantsAdmin).
+func (c *SSOTokenClaims) AppAdmin(adminGroup string) bool {
 	if c == nil {
 		return false
 	}
 	if c.Roles != nil {
 		return HasAdminRole(c.Roles)
 	}
+	match := func(name string) bool { return name == adminGroup }
+	if adminGroup == "" {
+		match = func(name string) bool { return legacyAdminNames[strings.ToLower(strings.TrimSpace(name))] }
+	}
+	return slices.ContainsFunc(c.Groups, match) || slices.ContainsFunc(c.AKGroups, match) || slices.ContainsFunc(c.RealmAccess.Roles, match)
+}
 
-	adminNames := map[string]bool{
-		"admin":                    true,
-		"admins":                   true,
-		"administrator":            true,
-		"administrators":           true,
-		"kypost_admin":             true,
-		"kypost-admin":             true,
-		"authentik default admins": true,
-	}
-
-	for _, g := range c.Groups {
-		if adminNames[strings.ToLower(strings.TrimSpace(g))] {
-			return true
-		}
-	}
-	for _, g := range c.AKGroups {
-		if adminNames[strings.ToLower(strings.TrimSpace(g))] {
-			return true
-		}
-	}
-	for _, r := range c.RealmAccess.Roles {
-		if adminNames[strings.ToLower(strings.TrimSpace(r))] {
-			return true
-		}
-	}
-	return false
+var legacyAdminNames = map[string]bool{
+	"admin":                    true,
+	"admins":                   true,
+	"administrator":            true,
+	"administrators":           true,
+	"kypost_admin":             true,
+	"kypost-admin":             true,
+	"authentik default admins": true,
 }
 
 // GeneratePKCE creates an ephemeral code_verifier and SHA-256 code_challenge.

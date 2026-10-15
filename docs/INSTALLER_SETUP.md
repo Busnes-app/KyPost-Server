@@ -176,7 +176,8 @@ Docker execution must use `--user kypost`, including capabilities and checks. Th
 interface does not provision identity grants: KyIdentity app role `kypost.admin` and
 signed directory replication remain the authority. New directory/browser identities
 and authorized links now retain a separate issuer binding; legacy unbound identities
-are preserved, require explicit migration and cannot be claimed as installer-owned.
+are bound to the configured issuer when the API starts, never by the installer, and
+cannot be claimed as installer-owned.
 External-IMAP administrator separation and full signed suite qualification remain gates.
 
 The public `GET /api/installer/network` returns exactly `clientIp`,

@@ -58,6 +58,9 @@ type Session struct {
 	// KySignOn; one from a generic provider keeps the password step-up, which
 	// fails closed on its own for an account with no credential.
 	SSOKySignOn bool
+	// SSOEpoch is Server.ssoEpoch when the callback began, so a callback that
+	// read settings before a trust change cannot mint under them.
+	SSOEpoch uint64
 	// SSOLinkGrantedAt is when this session last proved its credential and
 	// second factor at handleSSOLinkStart. It authorizes exactly one SSO link
 	// and is cleared when that link is written, so it cannot be replayed.
@@ -515,6 +518,11 @@ func (s *Server) mintSession(w http.ResponseWriter, r *http.Request, sess Sessio
 	now := time.Now()
 	sess.IssuedAt, sess.ExpiresAt, sess.CSRFToken = now, now.Add(sessionIdleTimeout), csrfToken
 	s.sessMu.Lock()
+	// Under sessMu, which endSSOSessions holds while bumping the epoch.
+	if sess.SSO.Subject != "" && sess.SSOEpoch != s.ssoEpoch.Load() {
+		s.sessMu.Unlock()
+		return errors.New("SSO settings changed during sign-in")
+	}
 	s.sessions[token] = sess
 	s.sessMu.Unlock()
 	secure := isRequestSecure(r)
@@ -1137,7 +1145,10 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
 	}
 
 	u, err := s.users.Get(sess.UserID)
-	if err != nil || !u.Active || s.requireAccountRestoreReleased(u) != nil {
+	// An SSO session lives only as long as the link and the trust settings it
+	// was minted under.
+	ssoStale := sess.SSO.Subject != "" && (u.SSOLinkRevoked() || u.SSOSub != sess.SSO.Subject || sess.SSOEpoch != s.ssoEpoch.Load())
+	if err != nil || !u.Active || ssoStale || s.requireAccountRestoreReleased(u) != nil {
 		s.sessMu.Lock()
 		delete(s.sessions, cookie.Value)
 		s.sessMu.Unlock()

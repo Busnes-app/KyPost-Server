@@ -237,8 +237,9 @@ func TestSSOStepUpRefusesStaleOrWeakProof(t *testing.T) {
 // a credential, rather than being refused forever.
 func TestStepUpKeepsThePasswordForGenericProviderSessions(t *testing.T) {
 	srv, idp := setupSSOTestServer(t)
-	// No roles claim: a generic provider. Groups make the account an admin.
-	cookie := signInWith(t, srv, idp, map[string]any{"sub": "kc", "preferred_username": "kc", "groups": []string{"admins"}})
+	// No roles claim: a generic provider. The configured group makes the account an admin.
+	setAdminGroup(t, srv, "kypost-admins")
+	cookie := signInWith(t, srv, idp, map[string]any{"sub": "kc", "preferred_username": "kc", "groups": []string{"kypost-admins"}})
 	kc, err := srv.users.GetBySSOSub("kc")
 	if err != nil {
 		t.Fatal(err)

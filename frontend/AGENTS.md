@@ -88,6 +88,8 @@ calls. `settings/sections/` is per-user, `admin/sections/` is admin-only.
 (surfaced only once the issuer is actually cleartext non-loopback), and that
 inline copy is the only place an operator reads it. The server refuses the same
 configuration independently — this UI is the explanation, not the check.
+Its optional `adminGroup` field (empty by default) is the only generic-provider
+admin grant; the issuer hint states that changing the issuer revokes links.
 
 `POST /api/health/repair` is a real admin route with no caller in this SPA;
 it is exercised by operators directly. Do not add a button for it without

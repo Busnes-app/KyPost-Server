@@ -4,6 +4,7 @@ package users
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -1129,14 +1130,72 @@ func (s *Store) GetBySSOSub(ssoSub string) (User, error) {
 	return out, nil
 }
 
-// GetBySSOSubIssuer fences all new issuer-bound identities; historical unbound
-// records retain legacy behavior until an explicit owner-approved migration.
+// GetBySSOSubIssuer resolves an identity only under the issuer that linked it:
+// the same `sub` at another provider is another person. An unbound record
+// (written before issuers were stored) matches nothing until
+// BindUnboundSSOLinks adopts it.
 func (s *Store) GetBySSOSubIssuer(issuer, sub string) (User, error) {
 	u, err := s.GetBySSOSub(sub)
-	if err == nil && ((u.SSOIssuer != "" && u.SSOIssuer != issuer) || (u.NativeMailboxSource != "" && (issuer == "" || u.NativeMailboxIssuer != issuer))) {
+	if err == nil && (issuer == "" || u.SSOIssuer != issuer || (u.NativeMailboxSource != "" && u.NativeMailboxIssuer != issuer)) {
 		return User{}, ErrNativeAccountConflict
 	}
 	return u, err
+}
+
+// BindUnboundSSOLinks records an issuer on links stored without one: a native
+// account's own issuer, otherwise the configured one. The old lookup already
+// resolved unbound links for any issuer, so this grants nothing; it removes
+// every other issuer. Idempotent; returns how many it bound.
+func (s *Store) BindUnboundSSOLinks(issuer string) (int, error) {
+	return s.updateSSOLinks(func(u *User) bool {
+		if u.SSOIssuer != "" || (u.NativeMailboxIssuer == "" && issuer == "") {
+			return false
+		}
+		u.SSOIssuer = cmp.Or(u.NativeMailboxIssuer, issuer)
+		return true
+	})
+}
+
+// RevokeSSOLinksNotFrom revokes every live link not bound to issuer, after the
+// operator changes provider. Users re-link through the step-up link flow.
+// Native accounts are skipped: their issuer is immutable and already fenced,
+// and they cannot re-link.
+func (s *Store) RevokeSSOLinksNotFrom(issuer string) (int, error) {
+	now := time.Now().UTC().Unix()
+	return s.updateSSOLinks(func(u *User) bool {
+		if u.SSOIssuer == issuer || u.SSOLinkRevokedAt != 0 || u.NativeMailboxSource != "" {
+			return false
+		}
+		u.SSOLinkRevokedAt = now
+		return true
+	})
+}
+
+func (s *Store) updateSSOLinks(fn func(*User) bool) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := 0
+	err := fsutil.WithFileLock(s.path, func() error {
+		f, err := s.readFileUnlocked()
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		for i := range f.Users {
+			if f.Users[i].SSOSub != "" && fn(&f.Users[i]) {
+				f.Users[i].UpdatedAt = now
+				changed++
+			}
+		}
+		if changed == 0 {
+			return nil
+		}
+		return s.writeFileUnlocked(f)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return changed, nil
 }
 
 // LinkSSO connects a user's account to an SSO identity.
@@ -1168,7 +1227,8 @@ func (s *Store) linkSSO(issuer, userID, ssoSub, ssoUsername, ssoEmail string) er
 		found := false
 		for i := range f.Users {
 			if f.Users[i].ID == userID {
-				if f.Users[i].NativeMailboxSource != "" || (f.Users[i].SSOIssuer != "" && f.Users[i].SSOIssuer != issuer) {
+				// A revoked link may move to the new issuer; a live one may not.
+				if f.Users[i].NativeMailboxSource != "" || (f.Users[i].SSOIssuer != "" && f.Users[i].SSOIssuer != issuer && f.Users[i].SSOLinkRevokedAt == 0) {
 					return ErrNativeAccountConflict
 				}
 

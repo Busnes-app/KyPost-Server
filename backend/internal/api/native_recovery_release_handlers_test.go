@@ -96,12 +96,23 @@ func TestNativeRestoreReleaseHTTPRefusesOperators(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := nativeReleaseFixture(t)
 			cookie, body, refusal := f.cookie, nativeRepairBody(f.s), "P6:"
+			// An SSO session lives only while its account is linked to its subject.
+			linkOperator := func() {
+				f.s.sessMu.RLock()
+				operator := f.s.sessions[f.cookie.Value].UserID
+				f.s.sessMu.RUnlock()
+				if err := f.s.users.LinkSSO(operator, "operator", "operator", ""); err != nil {
+					t.Fatal(err)
+				}
+			}
 			switch name {
 			case "bad-password":
 				body, refusal = `{"authSecret":"`+authSecretFor(f.s, "wrong-password-for-release")+`"}`, "invalid credentials"
 			case "kysignon-session":
+				linkOperator()
 				nativeRepairSSOSession(f)
 			case "generic-sso-session":
+				linkOperator()
 				f.s.sessMu.Lock()
 				sess := f.s.sessions[f.cookie.Value]
 				sess.SSO, sess.SSOAppAdmin = sso.SessionIdentity{Issuer: "https://generic.example", ClientID: "kypost", Subject: "operator"}, true
