@@ -185,7 +185,7 @@ func (s *Server) handleNativeMailRelayTest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// ponytail: one profile per instance, so one fixed cooldown key bounds probes.
-	if ok, _ := s.nativeRelayCheckCooldown.tryConsume("native-relay"); !ok {
+	if ok, _ := s.nativeRelayCheckCooldown.allow("native-relay"); !ok {
 		w.Header().Set("Retry-After", "30")
 		http.Error(w, "relay check cooling down; wait 30 seconds before retrying", http.StatusTooManyRequests)
 		return

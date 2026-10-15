@@ -1,4 +1,6 @@
-import { getJSON } from "./client";
+import { getJSON, postJSON, putJSON } from "./client";
+import { credentialFields, deriveCredential } from "./auth";
+import { withSSOStepUp } from "./stepup";
 
 /**
  * A paired native device, as GET /api/notifications/native/devices serves it.
@@ -65,9 +67,9 @@ export type NativeDeliveryMode = "push" | "pull";
  * The paired-device inventory, plus the account's delivery mode.
  *
  * `deliveryMode` is served here rather than read from
- * `GET /api/notifications/pairing` on purpose: that endpoint mints a live
- * 90-second pairing token as a side effect, so reading a setting from it would
- * hand out a credential every time the tab opened. Absent on older servers.
+ * `POST /api/notifications/pairing` on purpose: that endpoint mints a live
+ * 90-second pairing token, so reading a setting from it would hand out a
+ * credential every time the tab opened. Absent on older servers.
  */
 export async function listNativeDevices(): Promise<{
   devices: NativeDevice[];
@@ -123,4 +125,30 @@ export async function waitForDeviceEnrollment(
     if (Date.now() >= deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
+}
+
+/** The caller's step-up: their account password, unused for a KySignOn session. */
+export type DeviceConfirm = { ssoSession: boolean; password: string };
+
+/**
+ * Pairing, push approval and the approver flag each grant something that
+ * outlives the session, so the server re-proves the caller on every one.
+ */
+async function confirmed<T>(confirm: DeviceConfirm, body: object, send: (body: object, headers: Record<string, string>) => Promise<T>): Promise<T> {
+  const signed = { ...body, ...(confirm.ssoSession ? {} : credentialFields(await deriveCredential("", confirm.password))) };
+  return withSSOStepUp((headers) => send(signed, headers));
+}
+
+/** Mints a 90-second pairing token. */
+export function mintPairing<T>(confirm: DeviceConfirm): Promise<T> {
+  return confirmed(confirm, {}, (b, h) => postJSON<T>("/api/notifications/pairing", b, h));
+}
+
+export function setPushApproval(confirm: DeviceConfirm, enabled: boolean): Promise<unknown> {
+  return confirmed(confirm, { enabled }, (b, h) => putJSON("/api/mfa/push/enabled", b, h));
+}
+
+export function setDeviceApprover(confirm: DeviceConfirm, deviceId: string, approver: boolean): Promise<unknown> {
+  return confirmed(confirm, { approver }, (b, h) =>
+    putJSON(`/api/notifications/native/devices/${encodeURIComponent(deviceId)}/mfa`, b, h));
 }

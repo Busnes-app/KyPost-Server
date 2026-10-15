@@ -17,11 +17,9 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
-// approverDevices returns the devices eligible to approve a push-2FA challenge
-// for a user. Devices explicitly flagged MFAApprover=true are preferred; if the
-// user has push 2FA enabled but no device carries the flag (e.g. devices paired
-// before the flag existed), every paired device is treated as an approver so a
-// legacy pairing keeps working without a migration.
+// approverDevices returns the devices the owner flagged MFAApprover. There is
+// no "none flagged means all" fallback: that made every newly paired device an
+// approver without the step-up the flag requires.
 func approverDevices(store *state.Store) ([]state.NativeDevice, error) {
 	all, err := store.ListNativeDevicesStrict()
 	if err != nil {
@@ -33,10 +31,7 @@ func approverDevices(store *state.Store) ([]state.NativeDevice, error) {
 			approvers = append(approvers, d)
 		}
 	}
-	if len(approvers) > 0 {
-		return approvers, nil
-	}
-	return all, nil
+	return approvers, nil
 }
 
 // MFATransportEligible reports whether a device's push transport may carry an
@@ -83,9 +78,9 @@ func mfaApproverDevices(store *state.Store) ([]state.NativeDevice, error) {
 	return eligible, nil
 }
 
-// handleMFAPushEnabled toggles push 2FA for the calling user. Enabling requires
-// TOTP already enabled (so a fallback always exists) and at least one paired
-// approver-eligible device. Disabling has no preconditions.
+// handleMFAPushEnabled toggles push 2FA for the calling user. Both directions
+// take step-up (confirmActor). Enabling requires TOTP already enabled (so a
+// fallback always exists) and at least one paired approver-eligible device.
 func (s *Server) handleMFAPushEnabled(w http.ResponseWriter, r *http.Request) {
 	ac, ok := authFromContext(r)
 	if !ok {
@@ -93,7 +88,9 @@ func (s *Server) handleMFAPushEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Enabled bool `json:"enabled"`
+		Enabled    bool   `json:"enabled"`
+		Password   string `json:"password"`
+		AuthSecret string `json:"authSecret"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -122,7 +119,7 @@ func (s *Server) handleMFAPushEnabled(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(eligible) == 0 {
-			msg := "pair a device on Security's Devices tab before enabling push approval"
+			msg := "pair a device and let it approve sign-ins on Security's Devices tab before enabling push approval"
 			paired, err := approverDevices(store)
 			if err != nil {
 				http.Error(w, "failed to read paired devices", http.StatusServiceUnavailable)
@@ -137,6 +134,9 @@ func (s *Server) handleMFAPushEnabled(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !s.confirmActor(w, r, ac.UserID, req.Password, req.AuthSecret) {
+		return
+	}
 	if _, err := s.users.SetPushMFAEnabled(u.ID, req.Enabled); err != nil {
 		http.Error(w, "failed to update push 2fa", http.StatusInternalServerError)
 		return
@@ -144,10 +144,15 @@ func (s *Server) handleMFAPushEnabled(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pushMfaEnabled": req.Enabled})
 }
 
-// handleNativeDeviceMFA flips a specific device's MFAApprover flag. Ownership is
-// guaranteed structurally: storeFor resolves the caller's own state store, so a
-// user can only toggle their own devices.
+// handleNativeDeviceMFA flips a specific device's MFAApprover flag behind
+// step-up. Ownership is guaranteed structurally: storeFor resolves the caller's
+// own state store, so a user can only toggle their own devices.
 func (s *Server) handleNativeDeviceMFA(w http.ResponseWriter, r *http.Request) {
+	ac, ok := authFromContext(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
 	store, err := s.storeFor(r)
 	if err != nil {
 		http.Error(w, "failed to open user state", http.StatusInternalServerError)
@@ -159,10 +164,15 @@ func (s *Server) handleNativeDeviceMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Approver bool `json:"approver"`
+		Approver   bool   `json:"approver"`
+		Password   string `json:"password"`
+		AuthSecret string `json:"authSecret"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if !s.confirmActor(w, r, ac.UserID, req.Password, req.AuthSecret) {
 		return
 	}
 	updated, err := store.SetNativeDeviceMFAApprover(deviceID, req.Approver)
@@ -255,7 +265,7 @@ func (s *Server) dispatchPushChallenge(userID, challengeID string, ctx loginCont
 			"user_id", userID,
 			"challenge_id", challengeID,
 			"paired_approver_devices", strconv.Itoa(len(paired)),
-			"reason", "every paired device is UnifiedPush without WebPush encryption keys")
+			"reason", "no approver device, or every approver is UnifiedPush without WebPush encryption keys")
 		return
 	}
 
@@ -428,10 +438,7 @@ func (s *Server) handlePushRespond(w http.ResponseWriter, r *http.Request) {
 
 	// The challenge's owning user must have push 2FA explicitly enabled. A
 	// challenge is created for TOTP-only users too (since login always offers
-	// TOTP), and every native device defaults to MFAApprover=true for ordinary
-	// push notifications regardless of this setting — without this check, any
-	// paired device could silently approve a login for a user who never opted
-	// into push as a second factor.
+	// TOTP), and an approver flag can outlive push 2FA being turned off.
 	owner, err := s.users.Get(userID)
 	if err != nil {
 		http.Error(w, "user unavailable", http.StatusInternalServerError)
@@ -442,27 +449,8 @@ func (s *Server) handlePushRespond(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	store, err := s.userStore(userID)
-	if err != nil {
-		http.Error(w, "failed to open user state", http.StatusInternalServerError)
-		return
-	}
-	// The device must be permitted to approve. Under the graceful default (no
-	// device flagged as approver) any paired device may approve; once any device
-	// is explicitly an approver, only approvers may.
-	devices, err := store.ListNativeDevicesStrict()
-	if err != nil {
-		http.Error(w, "failed to read paired devices", http.StatusServiceUnavailable)
-		return
-	}
-	hasApprover := false
-	for _, d := range devices {
-		if d.MFAApprover {
-			hasApprover = true
-			break
-		}
-	}
-	if hasApprover && !device.MFAApprover {
+	// Only a device the owner flagged may approve.
+	if !device.MFAApprover {
 		http.Error(w, "device is not permitted to approve sign-in", http.StatusForbidden)
 		return
 	}

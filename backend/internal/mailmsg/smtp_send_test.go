@@ -2,11 +2,14 @@ package mailmsg
 
 import (
 	"bytes"
+	"errors"
 	"net"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
 )
 
 func TestNormalizeSMTPMessage(t *testing.T) {
@@ -57,6 +60,21 @@ func TestSMTPTransportsRejectUnsafeEnvelopeBeforeConnecting(t *testing.T) {
 	if err := SMTPSendWithImplicitTLS("not-a-host", 465, "", "",
 		"sender@example.com", []string{"victim@example.com\r\nX-Injected: yes"}, nil, time.Second); err == nil {
 		t.Fatal("SMTPSendWithImplicitTLS accepted an unsafe envelope")
+	}
+}
+
+// Account SMTP hosts are user-supplied: internal destinations are refused at
+// dial, on both transports.
+func TestSMTPAccountSendRefusesInternalHosts(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "169.254.169.254", "localhost"} {
+		err := SMTPSendWithTimeout(net.JoinHostPort(host, "587"), nil, "a@example.com", []string{"b@example.com"}, nil, time.Second)
+		if !errors.Is(err, netguard.ErrInternalAddress) {
+			t.Errorf("STARTTLS to %s: err = %v, want ErrInternalAddress", host, err)
+		}
+		err = SMTPSendWithImplicitTLS(host, 465, "u", "p", "a@example.com", []string{"b@example.com"}, nil, time.Second)
+		if !errors.Is(err, netguard.ErrInternalAddress) {
+			t.Errorf("implicit TLS to %s: err = %v, want ErrInternalAddress", host, err)
+		}
 	}
 }
 
@@ -145,6 +163,7 @@ func TestResolveSMTPTarget(t *testing.T) {
 // baseline, which only holds if the timeout actually tears the connection
 // down rather than abandoning it.
 func TestSMTPSendWithTimeoutDoesNotLeakOnHang(t *testing.T) {
+	allowLoopbackAccountDial(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen: %v", err)

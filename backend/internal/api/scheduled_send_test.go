@@ -38,6 +38,7 @@ type scriptedSMTP struct {
 
 func newScriptedSMTP(t *testing.T, reply string) *scriptedSMTP {
 	t.Helper()
+	allowLoopbackSMTP(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

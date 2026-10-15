@@ -2,6 +2,8 @@ module github.com/Busnes-app/kypost-server/backend
 
 go 1.26.9
 
+toolchain go1.27.2
+
 require (
 	github.com/BrianLeishman/go-imap v0.1.28
 	github.com/Busnes-app/ky-primitives v0.9.0
@@ -61,3 +63,5 @@ require (
 	golang.org/x/sys v0.49.0
 	golang.org/x/text v0.42.0
 )
+
+replace github.com/BrianLeishman/go-imap => ./third_party/go-imap

@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import QRCode from "qrcode";
-import { getJSON, toErrorMessage } from "../../api/client";
+import { toErrorMessage } from "../../api/client";
+import { mintPairing } from "../../api/devices";
+import { useAuth } from "../../auth";
 import {
   DEFAULT_PAIRING_TTL_SECONDS,
   QR_CODE_WIDTH_PX,
@@ -13,11 +15,10 @@ import { buildNativePairingLink } from "./pairingLink";
  * "Pair a new device" — the QR code, its expiry bar, and the desktop deep link.
  *
  * A REAL CHILD COMPONENT, mounted only while the panel is open, and that is the
- * point rather than tidiness. `GET /api/notifications/pairing` mints a live
- * 90-second pairing token on every call and this panel re-mints one every time
- * the bar runs out, so an always-mounted version would turn any open Security
- * tab into a self-refreshing walk-up pairing credential. Unmounting stops the
- * cycle; nothing here fetches until the user asks to pair something.
+ * point rather than tidiness. `POST /api/notifications/pairing` mints a live
+ * 90-second pairing token, and only after the account credential (or a KySignOn
+ * confirmation) is re-proved: the device it pairs outlives the session. A code
+ * that runs out is not replaced on its own; the user confirms again.
  *
  * (React tracks hook order per component instance, so a conditionally *rendered*
  * child is fine — see the hook rule in frontend/AGENTS.md.)
@@ -49,18 +50,17 @@ export type PairingPanelProps = {
 };
 
 export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanelProps) {
+  const { ssoSession = false } = useAuth();
+  const [password, setPassword] = useState("");
   const [pairingStatus, setPairingStatus] = useState<PairingStatusResponse | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [expiresAtMs, setExpiresAtMs] = useState<number | null>(null);
   const [ttlMs, setTtlMs] = useState(DEFAULT_PAIRING_TTL_SECONDS * 1000);
   const [clockMs, setClockMs] = useState<number>(() => Date.now());
-  const [refreshBusy, setRefreshBusy] = useState(false);
-  const [pairBusy, setPairBusy] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   function applyPairingStatus(next: PairingStatusResponse | null) {
     setPairingStatus(next);
-    setLoadFailed(next === null);
     if (!next) {
       setExpiresAtMs(null);
       return;
@@ -71,69 +71,41 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
       : DEFAULT_PAIRING_TTL_SECONDS;
     setTtlMs(ttlSeconds * 1000);
 
-    if (next.pairingExpiresAt) {
-      const parsed = Date.parse(next.pairingExpiresAt);
-      setExpiresAtMs(Number.isFinite(parsed) ? parsed : Date.now() + ttlSeconds * 1000);
-    } else if (next.pairingToken) {
-      setExpiresAtMs(Date.now() + ttlSeconds * 1000);
-    } else {
-      setExpiresAtMs(null);
-    }
+    // Local clock, not pairingExpiresAt: a fast browser clock would drop the code at once.
+    setExpiresAtMs(next.pairingToken ? Date.now() + ttlSeconds * 1000 : null);
     setClockMs(Date.now());
   }
 
-  async function refreshPairingStatus() {
+  async function showCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    const confirm = { ssoSession, password };
+    setPassword("");
     try {
-      applyPairingStatus(await getJSON<PairingStatusResponse>("/api/notifications/pairing"));
-    } catch {
-      applyPairingStatus(null);
+      applyPairingStatus(await mintPairing<PairingStatusResponse>(confirm));
+    } catch (error: unknown) {
+      onStatus(`Could not show a pairing code: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setBusy(false);
     }
     onDevicesMayHaveChanged();
   }
 
-  // The first mint happens on mount, which only happens when the panel opens.
-  useEffect(() => {
-    let cancelled = false;
-    getJSON<PairingStatusResponse>("/api/notifications/pairing")
-      .then((next) => {
-        if (!cancelled) applyPairingStatus(next);
-      })
-      .catch(() => {
-        if (!cancelled) applyPairingStatus(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
+  // Ticks the bar; an expired code is dropped, never silently replaced.
   useEffect(() => {
     if (!expiresAtMs) {
       return;
     }
-    let cancelled = false;
-    let refreshTriggered = false;
-
     const tick = () => {
-      if (cancelled) {
-        return;
-      }
       const now = Date.now();
       setClockMs(now);
-      if (now >= expiresAtMs && !refreshTriggered) {
-        refreshTriggered = true;
-        setRefreshBusy(true);
-        void refreshPairingStatus().finally(() => {
-          setRefreshBusy(false);
-        });
+      if (now >= expiresAtMs) {
+        applyPairingStatus(null);
       }
     };
-
     tick();
     const timer = window.setInterval(tick, 250);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+    return () => window.clearInterval(timer);
   }, [expiresAtMs]);
 
   useEffect(() => {
@@ -158,45 +130,24 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
     };
   }, [pairingStatus]);
 
-  async function pairThisDevice() {
+  function pairThisDevice(next: PairingStatusResponse) {
     // Desktop apps pair over the same native flow as mobile (sub/hash relay
     // auth): one pairing contract for every client, and the desktop app needs
-    // no web session.
-    setPairBusy(true);
+    // no web session. The link carries the code on screen, which is single-use.
+    const deepLink = buildNativePairingLink(next);
     try {
-      // Fetch a fresh pairing token — they expire quickly, so a stale
-      // pairingStatus from panel open may already be dead.
-      const next = await getJSON<PairingStatusResponse>("/api/notifications/pairing");
-      applyPairingStatus(next);
+      window.location.href = deepLink;
+      onStatus(`Launching desktop app with pairing link (valid for ${Math.round(ttlMs / 1000)} seconds)...`);
 
-      if (!next.configured || !next.pairingToken) {
-        onStatus(`Failed to initiate desktop pairing: ${next.configurationError || "pairing is not configured"}`);
-        return;
-      }
-
-      const deepLink = buildNativePairingLink(next);
-      const ttlSeconds = typeof next.pairingTtlSeconds === "number" && next.pairingTtlSeconds > 0
-        ? next.pairingTtlSeconds
-        : DEFAULT_PAIRING_TTL_SECONDS;
-
-      try {
-        window.location.href = deepLink;
-        onStatus(`Launching desktop app with pairing link (valid for ${ttlSeconds} seconds)...`);
-
-        // Fallback: if the desktop app didn't take focus, offer the link for
-        // manual pasting into the app's pairing screen.
-        setTimeout(() => {
-          if (document.hasFocus()) {
-            onStatus(`Desktop app not detected. Paste this link into the app's pairing screen: ${deepLink}`);
-          }
-        }, 2000);
-      } catch {
-        onStatus(`Desktop app not installed. Pairing link: ${deepLink}`);
-      }
-    } catch (error: unknown) {
-      onStatus(`Failed to initiate desktop pairing: ${toErrorMessage(error, "unknown error")}`);
-    } finally {
-      setPairBusy(false);
+      // Fallback: if the desktop app didn't take focus, offer the link for
+      // manual pasting into the app's pairing screen.
+      setTimeout(() => {
+        if (document.hasFocus()) {
+          onStatus(`Desktop app not detected. Paste this link into the app's pairing screen: ${deepLink}`);
+        }
+      }, 2000);
+    } catch {
+      onStatus(`Desktop app not installed. Pairing link: ${deepLink}`);
     }
   }
 
@@ -204,12 +155,36 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
   const barWidth = Math.round(QR_CODE_WIDTH_PX * clamp(remainingMs / Math.max(ttlMs, 1), 0, 1));
   const showBar = remainingMs > 0 && pairingStatus?.configured;
 
-  if (loadFailed) {
-    return <p className="sec-muted">Could not reach the pairing service. Close this and try again.</p>;
-  }
-
   if (!pairingStatus) {
-    return <p className="sec-muted">Preparing pairing code…</p>;
+    return (
+      <form className="sec-pairing" onSubmit={(event) => void showCode(event)}>
+        <p className="sec-muted">
+          A paired device keeps access after you sign out, so confirm it is you first. The code
+          is good for ninety seconds and works once.
+        </p>
+        {ssoSession ? (
+          <p className="sec-muted">You will confirm with KySignOn.</p>
+        ) : (
+          <label className="sec-label">
+            <span>Account password</span>
+            <input
+              className="sec-input"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              disabled={busy}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
+          </label>
+        )}
+        <div className="sec-actions">
+          <button type="submit" disabled={busy || (!ssoSession && !password)}>
+            {busy ? "Confirming…" : "Show pairing code"}
+          </button>
+        </div>
+      </form>
+    );
   }
 
   if (!pairingStatus.configured) {
@@ -224,7 +199,7 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
     <div className="sec-pairing">
       <p className="sec-muted">
         Scan this from the KyPost app to pair a device. The app receives the server URL automatically.
-        Each code is good for {Math.round(ttlMs / 1000)} seconds and replaces itself.
+        This code is good for {Math.round(ttlMs / 1000)} seconds and works once.
       </p>
 
       <div className="sec-pairing-scan">
@@ -253,19 +228,17 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
           <p className="sec-muted">Preparing pairing code…</p>
         )}
 
-        {refreshBusy ? <p className="sec-muted">Refreshing pairing code...</p> : null}
-
         <div className="sec-pairing-meta">
           <span className="sec-eyebrow">Subscriber ID</span>
           <strong>{pairingStatus.subscriberId || "Not available"}</strong>
         </div>
 
         <div className="sec-actions">
-          <button type="button" className="sec-action-quiet" onClick={() => void refreshPairingStatus()}>
+          <button type="button" className="sec-action-quiet" onClick={() => applyPairingStatus(null)}>
             New code
           </button>
-          <button type="button" onClick={() => void pairThisDevice()} disabled={pairBusy}>
-            {pairBusy ? "Pairing..." : "Pair this device"}
+          <button type="button" onClick={() => pairThisDevice(pairingStatus)}>
+            Pair this device
           </button>
         </div>
       </div>

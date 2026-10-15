@@ -1,67 +1,13 @@
 package api
 
-import (
-	"sync"
-	"time"
-)
+import "time"
 
-// cooldown is per-key "not again for a while" state: after a key is consumed,
-// further attempts on that key are refused until the cooldown has elapsed.
-//
-// One type for what were two byte-identical ones — sendAsVerificationCooldown
-// and its sibling cooldowns had the same field names, the same map type, the
-// same tryConsume body, and differed only in which constant they compared
-// against. Only one of them had a sweep, which is the tell: a copy does not
-// inherit the fix made to its original. The copy's map was keyed
-// on admin user ID so it never grew dangerously, but that was luck about the key
-// space rather than a decision, and nothing said so.
-//
-// The cooldown duration is a field rather than a package constant so the two
-// call sites keep their own — they are five minutes and ten seconds, and they
-// exist for unrelated reasons documented where they are constructed.
-type cooldown struct {
-	mu       sync.Mutex
-	every    time.Duration
-	lastSent map[string]time.Time
-}
-
-func newCooldown(every time.Duration) *cooldown {
-	return &cooldown{every: every, lastSent: map[string]time.Time{}}
-}
-
-// tryConsume atomically reports whether key may proceed right now and, if so,
-// starts the cooldown in the same critical section.
-//
-// One call, not allowed() followed by record(): the two-call form let concurrent
-// requests for the same key all observe "allowed" before any of them recorded.
-// On the send-as path that meant a burst mailed a third party's address several
-// times over — the cap is there for them, not for us. Do not split these.
-func (c *cooldown) tryConsume(key string) (ok bool, retryAfter time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if last, exists := c.lastSent[key]; exists {
-		if remaining := c.every - time.Since(last); remaining > 0 {
-			return false, remaining
-		}
-	}
-	c.lastSent[key] = time.Now()
-	return true, 0
-}
-
-// sweep removes entries recorded more than maxAge ago, bounding the map under
-// sustained abuse. Both instances are swept by StartCooldownSweeper.
-//
-// maxAge must stay comfortably above the instance's own cooldown duration, or a
-// sweep reclaims an entry that is still meant to be suppressing something.
-func (c *cooldown) sweep(maxAge time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	cutoff := time.Now().Add(-maxAge)
-	for key, last := range c.lastSent {
-		if last.Before(cutoff) {
-			delete(c.lastSent, key)
-		}
-	}
+// newCooldown is per-key "not again for every": a keyedLimiter with a burst of
+// one that refills after every. allow both checks and starts the cooldown, in
+// one critical section: the two-call form let a concurrent burst all see
+// "allowed", and on the send-as path mailed a third party several times over.
+func newCooldown(every time.Duration) *keyedLimiter {
+	return newKeyedLimiter(1, 1/every.Seconds())
 }
 
 // sendAsVerificationCooldownFor bounds how often a send-as verification probe
@@ -86,15 +32,3 @@ const sendAsVerificationCooldownFor = 5 * time.Minute
 // demand and as often as they like, against destinations they chose. Keyed on
 // the caller's user ID.
 const notificationTestCooldownFor = 10 * time.Second
-
-// cooldownSweepMaxAge bounds how long an entry is kept before StartCooldownSweeper
-// reclaims it.
-//
-// Sized against the LONGER of the two cooldowns (send-as, 5 minutes), because
-// one sweeper serves both and an entry must never be reclaimed while it is still
-// meant to be suppressing something. A 12x margin at that.
-//
-// The send-as map is the one that needs this: it is keyed on
-// userID+"|"+candidate-email, so an attacker mints unbounded distinct keys just
-// by attempting to verify arbitrary addresses.
-const cooldownSweepMaxAge = 1 * time.Hour

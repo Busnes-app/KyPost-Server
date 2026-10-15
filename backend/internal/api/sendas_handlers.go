@@ -122,7 +122,7 @@ func (s *Server) handleSendAsCreate(w http.ResponseWriter, r *http.Request) {
 	// address, which belongs to a third party who did not ask to hear from this
 	// server.
 	key := ac.UserID + "|" + normalizedEmail
-	if allowed, retryAfter := s.sendAsCooldown.tryConsume(key); !allowed {
+	if allowed, retryAfter := s.sendAsCooldown.allow(key); !allowed {
 		retrySeconds := int(retryAfter.Seconds()) + 1
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
 			"error":             "too many verification attempts for this address, try again later",
