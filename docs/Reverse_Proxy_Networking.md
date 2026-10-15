@@ -12,8 +12,8 @@ address the MFA sign-in push reports.
 
 Traffic that crosses from one Docker network to another — or that leaves and
 comes back through the published port — is source-NATed on the way in, so the
-peer address becomes a bridge gateway (`172.x.0.1`) that is **the same for every
-caller**. All those lockouts then collapse into one shared bucket: enough
+peer address becomes a gateway (`10.89.0.1`, the `kypost-net` gateway, for the
+published port) that is **the same for every caller**. All those lockouts then collapse into one shared bucket: enough
 failures from anyone locks out everyone.
 
 Put the proxy on `kypost-net` and address the container by name. Container-to-
@@ -21,6 +21,42 @@ container traffic ignores published ports, so nothing needs publishing at all.
 
 Verify with `GET /api/status`: `clientIp` must be your own public address and
 `proxyHeadersTrusted` must be `true`. Do not assume — check.
+
+## Trusting the proxy
+
+`TRUSTED_PROXY_CIDRS` names the proxy's address; `TRUSTED_PROXY_HEADER` names
+the one header it reports the client in. Only that header is read: a proxy
+passes other headers through from the client, so reading both would let a
+client pick its own address.
+
+| In front of KyPost | `TRUSTED_PROXY_CIDRS` | `TRUSTED_PROXY_HEADER` |
+|---|---|---|
+| nginx or Caddy container on `kypost-net` | its pinned address, e.g. `10.89.0.10/32` | `x-forwarded-for` |
+| cloudflared container on `kypost-net` | its pinned address | `cf-connecting-ip` |
+| cloudflared → nginx → KyPost | nginx's address | `cf-connecting-ip` |
+| nginx or cloudflared on the host, via `127.0.0.1:5866` | `10.89.0.1/32` | as above |
+| Cloudflare proxied DNS (CDN) → nginx → KyPost | nginx's address | `x-forwarded-for`, with nginx restoring the visitor address (below) |
+
+- nginx with `x-forwarded-for`: `proxy_set_header X-Forwarded-For $remote_addr;`.
+  `$proxy_add_x_forwarded_for` also works, because KyPost uses the right-most
+  element, which nginx itself appended.
+- cloudflared appends its own hop to `X-Forwarded-For`, so behind it use
+  `cf-connecting-ip`. With nginx in between, nginx must pass the header on
+  (`proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;`) and must be
+  reachable only from cloudflared, or a client can send its own.
+- Behind Cloudflare's CDN, the peer nginx sees is a Cloudflare edge. Have nginx
+  take the visitor from `CF-Connecting-IP` only from Cloudflare's ranges
+  (`set_real_ip_from` each range from <https://www.cloudflare.com/ips/>,
+  `real_ip_header CF-Connecting-IP;`) and pass
+  `proxy_set_header X-Forwarded-For $remote_addr;`.
+- A proxy on the host reaching the published port does not arrive from
+  `127.0.0.1`. With rootful Docker (rootless Docker and Podman may differ; check
+  `/api/status`), Docker hands the connection over from the `kypost-net` gateway,
+  the first address of `KYPOST_SUBNET` (`10.89.0.1` by default), and every other
+  process on the host arrives from it too. Trust it only with
+  `KYPOST_BIND=127.0.0.1`; a proxy container on `kypost-net` is better.
+
+A malformed CIDR or any other header value refuses startup.
 
 ## Joining the network from another Compose project
 
@@ -39,7 +75,8 @@ networks:
 
 Then point the proxy at `http://KyPost-Server:5866` (this network has DNS, so
 the name is stable across rebuilds) and set
-`TRUSTED_PROXY_CIDRS=10.89.0.10/32`.
+`TRUSTED_PROXY_CIDRS=10.89.0.10/32` and, for cloudflared,
+`TRUSTED_PROXY_HEADER=cf-connecting-ip` (see [Trusting the proxy](#trusting-the-proxy)).
 
 `external: true` goes on the **proxy** side only. This Compose project creates
 and owns the network, so bring KyPost up first. A proxy that starts first fails

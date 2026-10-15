@@ -75,13 +75,17 @@ services:
       #
       # Set it to your proxy's address specifically, not a wide range — a
       # container on kypost-net is the address pinned for it there
-      # (e.g. 10.89.0.10/32); a proxy on this host is 127.0.0.1/32.
+      # (e.g. 10.89.0.10/32); a proxy on this host reaching 127.0.0.1:5866
+      # arrives from the kypost-net gateway (10.89.0.1/32 by default).
       #
       # Do not leave it empty behind a proxy. Failing closed is right, but the
       # closed state keys every caller as the gateway — one shared lockout
       # bucket. Verify with GET /api/status: `clientIp` must be your own public
       # address and `proxyHeadersTrusted` must be true.
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+      # x-forwarded-for (nginx, Caddy) or cf-connecting-ip (cloudflared); only
+      # that one header is read. See .env.example.
+      TRUSTED_PROXY_HEADER: ${TRUSTED_PROXY_HEADER:-x-forwarded-for}
       # Optional inbound TLS. Set both to serve HTTPS directly instead of plain
       # HTTP; leave both empty for the default. Setting only one is a startup
       # error rather than a silent fallback to cleartext.
