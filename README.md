@@ -164,10 +164,17 @@ Optional for local development (outside Docker):
    aggregator you have configured. To set your own password instead, pass
    `BOOTSTRAP_ADMIN_PASS` on the first run (no file is written in that case,
    since you already have it). You can also pass `BOOTSTRAP_ADMIN_USER`.
+   Compose does not forward either from `.env`; add them under the service's
+   `environment:` (for example in a `docker-compose.override.yml`) for that run.
 6. Change the password when KyPost prompts you. Until you change it, the
    account can reach only the password-change screen.
-7. In Config, save the IMAP and SMTP settings. Then run IMAP Test.
-8. In Tuning, change the labels and the prompt. Then save.
+7. In Settings → Mail → Email Settings, enter your IMAP/SMTP account, press
+   Save Email Settings, then Test Email Settings (the test checks IMAP only).
+8. In Email Labels, adjust Your Labels and Prompt Tuning. Then save.
+
+   Start-to-finish guides: [external IMAP](docs/guides/IMAP.md),
+   [native mail](docs/guides/NATIVE_MAIL.md) and
+   [Cloudflare Tunnel](docs/guides/CLOUDFLARED.md).
 
 ## Architecture
 
@@ -331,7 +338,7 @@ Accounts live in `/kypost/config/users.json`. The roles are `admin` and `user`.
   users, changes roles, resets passwords, and deactivates or reactivates
   accounts, alongside runtime settings, updates, verified mail domains and native addresses.
   Diagnostics holds the full health view, the system logs and health repair.
-  Label rules are a Server tab, since the allowlist is instance-wide.
+  Default Labels is a Server tab: the label list new accounts start from.
   Email Labels is entirely per-user — each account's own prompt tuning and
   classification decisions — so it is not admin-only.
 - Users connect their own IMAP and SMTP account. They read and label their own
@@ -661,7 +668,7 @@ silent until someone needs them:
    until mail needs decrypting.
 3. **Confirm a paired device is still listed**, and that TOTP still validates —
    proves `totp-secret.key` and per-user `state.db`.
-4. **Watch one poll tick** in Configuration > Application (or
+4. **Watch one poll tick** in Settings → Admin → Server → Application (or
    `docker compose logs -f`) and confirm the checkpoint advances rather than
    reprocessing the whole mailbox — proves the per-user `state.db` mailbox state
    survived. A reset checkpoint re-labels and re-notifies everything.
@@ -723,8 +730,8 @@ Runtime checks:
 ```bash
 docker compose ps
 docker compose logs -f kypost-server
-docker exec -it kypost-server ps aux
-docker exec -it kypost-server ls -la /kypost/config /kypost/state
+docker compose exec kypost-server ps aux
+docker compose exec kypost-server ls -la /kypost/config /kypost/state
 docker volume ls | grep kypost
 ```
 
@@ -736,8 +743,8 @@ Persistence behavior:
 ## Updating KyPost
 
 KyPost checks GitHub releases hourly. When a newer KyPost release is found, it
-emails the primary admin once and shows the update in Configuration >
-Application. The container reports availability but never controls Docker on
+emails the primary admin once and shows the update in Settings → Admin →
+Server → Application. The container reports availability but never controls Docker on
 its host.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for what changed in each release and for the
@@ -823,13 +830,16 @@ inside the container. On systems without systemd, schedule
 
 ### IMAP connection issues
 
-- Verify the host, port, username, password, and mailbox in Config.
-- Run IMAP Test in Config.
+- Verify the host, port, username, password, and mailbox in Settings → Mail →
+  Email Settings. IMAP needs the implicit-TLS port (normally 993); STARTTLS on
+  143 is not supported.
+- Run Test Email Settings there.
 - Check `daemon.err.log` and `api.err.log` for authentication, TLS, and keyword failures.
 
 ### SMTP send issues
 
-- Verify the SMTP host and port in Config.
+- Verify the SMTP host and port in Settings → Mail → Email Settings. SMTP signs
+  in with the IMAP username and password.
 - Port 465 requires implicit TLS. KyPost supports it.
 - If your provider requires app passwords, use them.
 - `smtp submission refused: server did not offer STARTTLS` means exactly that —

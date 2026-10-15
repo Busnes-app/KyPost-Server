@@ -476,7 +476,8 @@ users/issuer/source, directory lifecycle, reservations, mailbox/state and receiv
 bindings together. Restored roots are authoritative for file lookup, never saved
 absolute paths. Consistent older paired files cannot prove current authority.
 Offline native restores persist `state/native-restore-hold.json`; allocation
-refuses any present/unreadable hold and there is no release path. Follow
+refuses any present/unreadable hold until it is released; see
+[releasing the hold](RESTORE.md#releasing-the-hold). Follow
 [restore gates](RESTORE.md#offline-restore-and-native-quarantine), including fresh
 access repair and stale-message-ID fencing, before runtime activation.
 Release floors in `sso-lifecycle.json` refuse provisioning, allocation and
@@ -1088,7 +1089,7 @@ status below, adds manual blocks and removes either source; see also
   Cloudflare keeps the last published blocks instead. Maddy has no published
   copy to fall back to, and the list is written only by rename, so an
   unreadable one means damaged storage worth stopping for; the refusal is in
-  the receiver log (`receiver.log`), since there is no Maddy status screen. Cloudflare: the publisher signs the blocks in force into the
+  the receiver logs (`receiver.log`, `receiver.err.log`), since there is no Maddy status screen. Cloudflare: the publisher signs the blocks in force into the
   routing table's `blockedSenders`; a change to the list republishes within
   one loop tick (5 seconds), and the Worker rejects with "Sender blocked". An
   unreadable list never stops route publishing (the Worker refuses all mail

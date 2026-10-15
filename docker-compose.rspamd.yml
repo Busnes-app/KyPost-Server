@@ -1,4 +1,6 @@
-# Add after docker-compose.receiving.yml. No scanner/admin port is published.
+# Maddy profile: add after docker-compose.receiving.yml. Cloudflare profile: add
+# directly after docker-compose.yml, never with the receiving overlay.
+# No scanner/admin port is published.
 services:
   kypost-server:
     environment:
