@@ -12,6 +12,53 @@ non-prerelease version.
 
 ## Unreleased
 
+## 0.4.2 — 2026-10-16
+
+0.4.0 was never published, so this is the first release after 0.3.0 and
+includes everything listed under 0.4.0 below.
+
+### Upgrading from 0.3.x
+
+Do these before or right after the upgrade:
+
+1. **Back up first**, including all of `SECRET_DIR` (it now holds
+   `scheduled-send.key`). Rolling back to 0.3.x needs that backup.
+2. **Check `.env` and `config.yaml`** against
+   [Configuration](docs/CONFIGURATION.md). Variables compose used to drop now
+   apply, and a bad value or misspelled key now stops startup instead of
+   falling back to the default. `MFA_CLEAR_ALL` and `ALLOW_INSECURE_SMTP` take
+   exactly `true` or `false`.
+3. **Fix the proxy settings.** Behind cloudflared, set
+   `TRUSTED_PROXY_HEADER=cf-connecting-ip`. Behind Cloudflare's proxy in front
+   of nginx, have nginx restore the visitor address. A same-host proxy reaching
+   `127.0.0.1:5866` needs `TRUSTED_PROXY_CIDRS=10.89.0.1/32` (the `kypost-net`
+   gateway) instead of `127.0.0.1/32`.
+4. **Reset passwords that can no longer sign in.** Accounts on an old hash
+   (scrypt, or pre-derived-auth) are refused until an admin resets them in
+   Admin → Users; they show "needs password reset" and are listed by a startup
+   WARN. Users regenerate old CardDAV app passwords and recovery codes.
+5. **Update every client.** The server no longer accepts the account password,
+   only `authSecret`. Android must be 0.4.2 or newer (Android #240): older
+   builds send the password to review pairing and are refused. Reload cached
+   web bundles and update API scripts.
+6. **Re-pair old devices.** UnifiedPush devices without WebPush keys, and native
+   devices paired before the SHA-256 device-secret format, must pair again.
+   Devices paired before push approval stop receiving approvals until you tick
+   **Can approve sign-ins** under Security → Devices.
+7. **Review pairing:** `REVIEW_PAIRING_USERNAME` now matches one account exactly;
+   a trailing `*` matches nothing.
+8. **LAN mail servers:** add the hostname of any external IMAP/SMTP server on
+   your LAN, tailnet or this host to `SANDBOX_PRIVATE_HOSTS`.
+9. **Sending quota:** every account is limited to 60 messages an hour and 1000
+   recipients a day. Raise it under Admin → Application if needed.
+10. **SSO with Authentik or Keycloak:** a shared `admins` group no longer makes
+    administrators. Review your administrators and set Admin → Server → SSO →
+    **Administrator group** if you want SSO to create them.
+11. **Native mailboxes over 64 MiB:** set `KYPOST_BULK_BACKUP_REPOSITORY`, or
+    backups fail.
+
+### Changes
+
 - Docs: start-to-finish guides for [native mail](docs/guides/NATIVE_MAIL.md), [external IMAP](docs/guides/IMAP.md) and [Cloudflare Tunnel](docs/guides/CLOUDFLARED.md). The Cloudflare receiving profile is started with `docker-compose.rspamd.yml` but without `docker-compose.receiving.yml`, which starts Maddy and makes the daemon refuse to run; the docs and the Rspamd overlay comment said otherwise. Restore-hold release, alias sending and the quarantine admin UI are no longer described as missing, and README UI names match the current settings pages. `receiving-worker/wrangler.toml` is now git-ignored.
 - Main-image publication checks the live remote main tip as well as the checkout and tested commit, so rerunning an old workflow cannot republish stale code after main advances.
 
@@ -43,6 +90,8 @@ non-prerelease version.
 - The inbox's live-fetch fallback lists messages over the 25 MiB inbound cap from their headers, without a body, instead of fetching them.
 
 ## 0.4.0 — 2026-10-13
+
+0.4.0 was never published; its changes first ship in 0.4.2.
 
 **Before upgrading:** find accounts and credentials still on retired scrypt hashes (they stop signing in; see the BREAKING entry below), read your `.env` (variables compose used to drop now apply), and back up the new `$SECRET_DIR/scheduled-send.key`. UnifiedPush devices without WebPush keys must pair again.
 
@@ -938,7 +987,7 @@ non-prerelease version.
 
 | From | To | Path | Rollback |
 |---|---|---|---|
-| 0.3.0 | 0.4.0 | `./scripts/update-host.sh`, after the "Before upgrading" checks in 0.4.0 | Automatic on failed health check; otherwise pin the previous digest |
+| 0.3.0 | 0.4.2 | `./scripts/update-host.sh`, after "Upgrading from 0.3.x" in 0.4.2 | Automatic on failed health check; otherwise pin the previous digest |
 | 0.1.x | 0.3.0 | `./scripts/update-host.sh`, or `docker compose pull && docker compose up -d` | Automatic on failed health check; otherwise pin the previous digest |
 | Locally built | published images (one-time) | `git pull --ff-only && docker compose pull && docker compose up -d` | `KYPOST_VERSION=<older>`, or rebuild at the previous commit |
 | Locally built | a newer local build | `git pull --ff-only && docker compose up --build -d` | Rebuild at the previous commit |
