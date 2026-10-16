@@ -35,7 +35,7 @@ body:
       description: >-
         Admin -> Server -> Application shows "Installed version". The same value
         is the `version` field of `GET /api/status`.
-      placeholder: "0.4.0"
+      placeholder: "0.4.2"
     validations:
       required: true
 

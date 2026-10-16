@@ -8,7 +8,7 @@ stated what they owed each other. A user cannot tell which combinations work,
 and neither could we.
 
 **Scope.** This describes the contract, not the version numbers. Platforms are
-aligned to 0.4.0 once, at launch, and are then free to drift against the
+aligned to 0.4.2 once, at launch, and are then free to drift against the
 compatibility matrix at the end of this document. There is no permanent
 lockstep: coupling the numbers forever means a one-line Linux fix cannot ship
 without bumping the server and Android too.
@@ -484,21 +484,21 @@ bodies** — including the uppercased `KYPOST://` form, which some parsers miss
 
 ## 9. Compatibility matrix
 
-Platforms align to 0.4.0 at launch and drift afterwards against this table.
+Platforms align to 0.4.2 at launch and drift afterwards against this table.
 Update it in the same change that breaks or adds a contract above.
 
 | Contract | Server | Browser | Android | Linux (Qt) | Apple (macOS/iOS) |
 | --- | --- | --- | --- | --- | --- |
-| Pairing URI, unknown-param tolerance | 0.3.0 | 0.3.0 | 0.3.3 | 0.2.0 | 0.4.0 |
-| `pin=` published / honoured | 0.3.0 | 0.3.0 | 0.3.3 | ❌ TOFU instead | 0.4.0 |
+| Pairing URI, unknown-param tolerance | 0.3.0 | 0.3.0 | 0.3.3 | 0.2.0 | 0.4.2 |
+| `pin=` published / honoured | 0.3.0 | 0.3.0 | 0.3.3 | ❌ TOFU instead | 0.4.2 |
 | Enrollment code, 14 chars / 70 bits | 0.3.0 | 0.3.0 | 0.3.3 | ✅ | ✅ |
 | Device credential headers | 0.3.0 | n/a | 0.3.3 | ✅ | ✅ |
 | `pull` delivery mode | 0.3.0 | n/a | 0.3.3 | ✅ | ✅ |
-| Contact sync, 500-change batching | 0.3.0 | n/a | ❌ sends one request | unverified | 0.4.0 |
-| `bodies=0` + `/api/mail/body` | 0.4.0 | 0.4.0 | not adopted | not adopted | not adopted |
+| Contact sync, 500-change batching | 0.3.0 | n/a | ❌ sends one request | unverified | 0.4.2 |
+| `bodies=0` + `/api/mail/body` | 0.4.2 | 0.4.2 | not adopted | not adopted | not adopted |
 | Native mailbox selection (`/api/mailboxes`, `X-KyPost-Mailbox`) | unreleased | unreleased | not adopted | not adopted | not adopted |
 
-The Apple client is unreleased; `0.4.0` is the version it will first ship as,
+The Apple client is unreleased; `0.4.2` is the version it will first ship as,
 set in `MARKETING_VERSION`. It is one target building both macOS and iOS, so
 there is no useful way to split the column.
 
