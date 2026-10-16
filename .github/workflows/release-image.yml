@@ -61,7 +61,19 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: refs/tags/${{ github.event.release.tag_name }}
+
+      # A branch named like the tag must not stand in for it: build only the
+      # commit this release event names.
+      - name: Require the checkout to be the released commit
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          want="$(git rev-parse "$GITHUB_SHA^{commit}")"
+          if [ "$head" != "$want" ]; then
+            echo "::error::checked out $head, but the release names $want" >&2
+            exit 1
+          fi
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # Refuse to publish a tag the code does not agree with.
