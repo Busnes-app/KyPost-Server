@@ -712,7 +712,22 @@ d=$(docker buildx imagetools inspect ghcr.io/busnes-app/kypost-server:main --for
        | grep -qxF "ghcr.io/busnes-app/kypost-server@$d"
 ```
 
-Then set `KYPOST_VERSION` to that version (or `main`) in `.env` and `docker compose up -d`.
+Then start that digest, not the tag. Compose builds the image name from `KYPOST_IMAGE` and
+`KYPOST_VERSION`, so a tag can resolve to another image than the one you verified, and a
+`KYPOST_IMAGE` left on the retired `ghcr.io/busness-app` namespace runs an untrusted image.
+Set `KYPOST_IMAGE` to the official name (or remove it) in `.env` first, then, in the same shell
+as `$d`:
+
+```bash
+grep -q '^KYPOST_IMAGE=' .env && ! grep -qxF 'KYPOST_IMAGE=ghcr.io/busnes-app/kypost-server' .env \
+  && echo "fix KYPOST_IMAGE in .env first" >&2 \
+  || { o=$(mktemp ./.kypost-manual.XXXXXX.yml) \
+       && printf 'services:\n  kypost-server:\n    image: %s\n' "ghcr.io/busnes-app/kypost-server@$d" >"$o" \
+       && docker compose -f docker-compose.yml -f "$o" up -d --no-build kypost-server; rm -f "$o"; }
+```
+
+`--no-build` stops Compose from building the image from source when the pull did not land.
+Then set `KYPOST_VERSION` to that version (or `main`) in `.env`, so later updates follow it.
 
 ### Moving a locally built install onto published images
 
