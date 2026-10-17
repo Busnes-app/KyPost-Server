@@ -674,6 +674,61 @@ rollback. It requires Docker Compose v2, Docker Buildx, and the GitHub CLI
 when either verification or the health check fails. To stay on a specific
 release instead, set `KYPOST_VERSION=0.4.2` in `.env` before running it.
 
+### Verifying an image by hand
+
+Without `update-host.sh` (`gh` logged in), verify the version tag, not `:stable`:
+`:stable` moves, so resolve the version it should be and verify that
+(`gh release view --repo Busnes-app/KyPost-Server --json tagName --jq .tagName` prints the newest).
+The attestation must come from `release-image.yml` at that tag and record the commit the tag
+points to, and the image you pull must be that digest:
+
+```bash
+v=<release version you intend to run, e.g. 0.4.2>
+sha=$(gh api repos/Busnes-app/KyPost-Server/commits/refs/tags/v$v --jq .sha) \
+  && d=$(docker buildx imagetools inspect ghcr.io/busnes-app/kypost-server:$v --format '{{.Manifest.Digest}}') \
+  && gh attestation verify "oci://ghcr.io/busnes-app/kypost-server@$d" --repo Busnes-app/KyPost-Server \
+       --cert-identity https://github.com/Busnes-app/KyPost-Server/.github/workflows/release-image.yml@refs/tags/v$v \
+  && [ "$(gh attestation verify "oci://ghcr.io/busnes-app/kypost-server@$d" --repo Busnes-app/KyPost-Server \
+       --cert-identity https://github.com/Busnes-app/KyPost-Server/.github/workflows/release-image.yml@refs/tags/v$v \
+       --format json --jq '.[0].verificationResult.statement.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit')" = "$sha" ] \
+  && docker pull ghcr.io/busnes-app/kypost-server:$v \
+  && docker image inspect ghcr.io/busnes-app/kypost-server:$v --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+       | grep -qxF "ghcr.io/busnes-app/kypost-server@$d"
+```
+
+`:main` is built from main's tip by `publish-main.yml`; name the commit yourself, and the
+attestation must record it:
+
+```bash
+sha=<full commit sha of main's tip, e.g. $(git rev-parse origin/main)>
+d=$(docker buildx imagetools inspect ghcr.io/busnes-app/kypost-server:main --format '{{.Manifest.Digest}}') \
+  && gh attestation verify "oci://ghcr.io/busnes-app/kypost-server@$d" --repo Busnes-app/KyPost-Server \
+       --cert-identity https://github.com/Busnes-app/KyPost-Server/.github/workflows/publish-main.yml@refs/heads/main \
+  && [ "$(gh attestation verify "oci://ghcr.io/busnes-app/kypost-server@$d" --repo Busnes-app/KyPost-Server \
+       --cert-identity https://github.com/Busnes-app/KyPost-Server/.github/workflows/publish-main.yml@refs/heads/main \
+       --format json --jq '.[0].verificationResult.statement.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit')" = "$sha" ] \
+  && docker pull ghcr.io/busnes-app/kypost-server:main \
+  && docker image inspect ghcr.io/busnes-app/kypost-server:main --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+       | grep -qxF "ghcr.io/busnes-app/kypost-server@$d"
+```
+
+Then start that digest, not the tag. Compose builds the image name from `KYPOST_IMAGE` and
+`KYPOST_VERSION`, so a tag can resolve to another image than the one you verified, and a
+`KYPOST_IMAGE` left on the retired `ghcr.io/busness-app` namespace runs an untrusted image.
+Set `KYPOST_IMAGE` to the official name (or remove it) in `.env` first, then, in the same shell
+as `$d`:
+
+```bash
+grep -q '^KYPOST_IMAGE=' .env && ! grep -qxF 'KYPOST_IMAGE=ghcr.io/busnes-app/kypost-server' .env \
+  && echo "fix KYPOST_IMAGE in .env first" >&2 \
+  || { o=$(mktemp ./.kypost-manual.XXXXXX.yml) \
+       && printf 'services:\n  kypost-server:\n    image: %s\n' "ghcr.io/busnes-app/kypost-server@$d" >"$o" \
+       && docker compose -f docker-compose.yml -f "$o" up -d --no-build kypost-server; rm -f "$o"; }
+```
+
+`--no-build` stops Compose from building the image from source when the pull did not land.
+Then set `KYPOST_VERSION` to that version (or `main`) in `.env`, so later updates follow it.
+
 ### Moving a locally built install onto published images
 
 **Every install created before 2026-08-25 needs this once.** There were no
@@ -813,4 +868,4 @@ KyPost is released under the [MIT License](LICENSE.txt).
 
 ## Upgrading after the Busnes-app owner move
 
-The GitHub organisation was renamed on 2026-09-16 and the image now lives at `ghcr.io/busnes-app/kypost-server`. The project no longer controls `ghcr.io/busness-app`; GHCR does not redirect it, and anything served under that name must be treated as untrusted. If `KYPOST_IMAGE` in `.env` still names the old namespace, re-pinning is required, not optional: first inspect `git remote -v` and replace a retired-owner remote with `https://github.com/Busnes-app/KyPost-Server.git` (prefer a fresh clone plus a known commit). A first `scripts/update-host.sh` run on a container pulled from the retired namespace is expected to refuse because its rollback digest has the old repository prefix; follow [Moving a locally built install onto published images](#moving-a-locally-built-install-onto-published-images), but verify the newly selected digest with `gh attestation verify` before `docker compose up -d`. Once the running image has the official digest, run [`scripts/update-host.sh`](scripts/update-host.sh), which resolves `stable` to a digest and verifies its GitHub build attestation before updating the service. See [Updating KyPost](#updating-kypost) for the procedure.
+The GitHub organisation was renamed on 2026-09-16 and the image now lives at `ghcr.io/busnes-app/kypost-server`. The project no longer controls `ghcr.io/busness-app`; GHCR does not redirect it, and anything served under that name must be treated as untrusted. If `KYPOST_IMAGE` in `.env` still names the old namespace, re-pinning is required, not optional: first inspect `git remote -v` and replace a retired-owner remote with `https://github.com/Busnes-app/KyPost-Server.git` (prefer a fresh clone plus a known commit). A first `scripts/update-host.sh` run on a container pulled from the retired namespace is expected to refuse because its rollback digest has the old repository prefix; follow [Moving a locally built install onto published images](#moving-a-locally-built-install-onto-published-images), but verify the newly selected digest as in [Verifying an image by hand](#verifying-an-image-by-hand) before `docker compose up -d`. Once the running image has the official digest, run [`scripts/update-host.sh`](scripts/update-host.sh), which resolves `stable` to a digest and verifies its GitHub build attestation before updating the service. See [Updating KyPost](#updating-kypost) for the procedure.
