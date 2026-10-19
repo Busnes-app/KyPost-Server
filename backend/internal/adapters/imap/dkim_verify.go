@@ -3,6 +3,7 @@ package imap
 import (
 	"bufio"
 	"bytes"
+	"net/mail"
 	"net/textproto"
 	"strings"
 
@@ -114,4 +115,30 @@ func dkimHeaderFields(raw []byte) (map[string][]string, error) {
 		fields[k] = append(fields[k], strings.TrimSpace(v))
 	}
 	return fields, nil
+}
+
+// DKIMAlignedFrom returns the lowercased From address when raw carries a
+// valid DKIM signature whose d= is exactly that address's domain and whose
+// signed headers include From (occurring once), and "" otherwise. The address
+// is read from the signed From instance; a From naming more than one mailbox
+// is refused. nil lookupTXT uses DNS.
+func DKIMAlignedFrom(raw []byte, lookupTXT func(string) ([]string, error)) string {
+	fields, err := dkimHeaderFields(raw)
+	if err != nil || len(fields["from"]) != 1 {
+		return ""
+	}
+	from, err := mail.ParseAddress(fields["from"][0])
+	if err != nil {
+		return ""
+	}
+	addr := strings.ToLower(from.Address)
+	_, domain, ok := strings.Cut(addr, "@")
+	if !ok || domain == "" {
+		return ""
+	}
+	signed, ok := DKIMSignedHeadersWithLookup(raw, domain, lookupTXT)["from"]
+	if !ok || signed != fields["from"][0] {
+		return ""
+	}
+	return addr
 }

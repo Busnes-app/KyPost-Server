@@ -654,18 +654,18 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 
 	// A scheduled message is dated when it goes out; Stamp keeps a set Date.
 	msg, sentCopySource, recipients := composeSend(mailmsg.Message{
-		Date:          req.SendAt,
-		From:          headerFrom,
-		To:            toList,
-		CC:            ccList,
-		Subject:       req.Subject,
-		EncodedBody:   req.EncodedBody,
-		Mode:          req.Mode,
-		Attachments:   req.Attachments,
-		Autocrypt:     autocryptHeader,
-		InReplyTo:     inReplyTo,
-		References:    references,
-		CalendarReply: req.CalendarReply,
+		Date:        req.SendAt,
+		From:        headerFrom,
+		To:          toList,
+		CC:          ccList,
+		Subject:     req.Subject,
+		EncodedBody: req.EncodedBody,
+		Mode:        req.Mode,
+		Attachments: req.Attachments,
+		Autocrypt:   autocryptHeader,
+		InReplyTo:   inReplyTo,
+		References:  references,
+		Calendar:    req.CalendarReply,
 	}, bccList)
 
 	// Signing on the user's behalf needs a private key this server can open, and

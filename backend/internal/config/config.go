@@ -125,7 +125,7 @@ func CheckEnv() error {
 			bad = append(bad, err.Error())
 		}
 	}
-	for _, key := range []string{"ALLOW_INSECURE_SMTP", "MFA_CLEAR_ALL", "KYPOST_NATIVE_RECEIVER", "KYPOST_DISABLE_AI_SORTING"} {
+	for _, key := range []string{"ALLOW_INSECURE_SMTP", "MFA_CLEAR_ALL", "KYPOST_NATIVE_RECEIVER", "KYPOST_DISABLE_AI_SORTING", "KYPOST_KYCALENDAR_ALLOW_PRIVATE"} {
 		if _, err := EnvBool(key); err != nil {
 			bad = append(bad, err.Error())
 		}
@@ -175,9 +175,12 @@ type NotificationKeys struct {
 // UserSettings is the small per-user preferences document stored at
 // CONFIG_DIR/users/<userID>/config.yaml.
 type UserSettings struct {
-	EncryptIncoming bool                     `yaml:"encryptIncoming" json:"encryptIncoming"`
-	Notifications   UserNotificationSettings `yaml:"notifications" json:"notifications"`
-	Labels          UserLabelSettings        `yaml:"labels" json:"labels"`
+	EncryptIncoming bool `yaml:"encryptIncoming" json:"encryptIncoming"`
+	// KyCalendar lets the paired KyCalendar send invitations from this
+	// mailbox and receive the DKIM-verified invitations it gets (default off).
+	KyCalendar    bool                     `yaml:"kyCalendar" json:"kyCalendar"`
+	Notifications UserNotificationSettings `yaml:"notifications" json:"notifications"`
+	Labels        UserLabelSettings        `yaml:"labels" json:"labels"`
 }
 
 type UserNotificationSettings struct {

@@ -28,6 +28,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/groups"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
+	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -228,6 +229,7 @@ type Server struct {
 	ssoStore      *sso.Store
 	nativeDomains *sso.NativeDomainStore
 	nativeMail    bool
+	kycal         *kycalendar.Client
 	aiDisabled    bool
 	ssoLifecycle  *sso.LifecycleStore
 	ollamaMu      sync.Mutex
@@ -610,6 +612,10 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/sso", s.withAdmin(s.handleAdminSSOGet))
 	mux.HandleFunc("PUT /api/admin/sso", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleAdminSSOPut))))
 	mux.HandleFunc("POST /api/sync/webhook", withPublicRoute(s.handleSyncWebhook))
+	mux.HandleFunc("POST /api/calendar/itip/send", withPublicRoute(s.handleITIPSend))
+	mux.HandleFunc("POST /api/calendar/rsvp", s.withMailAuth(s.withMailbox(s.handleCalendarRSVP)))
+	mux.HandleFunc("GET /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
+	mux.HandleFunc("PUT /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
 	mux.HandleFunc("GET /api/labels", s.withAuth(s.handleLabels))
 	mux.HandleFunc("GET /api/decisions", s.withAuth(s.withMailbox(s.handleDecisions)))
 	mux.HandleFunc("GET /api/logs", s.withAdmin(s.handleLogs))

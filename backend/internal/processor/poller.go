@@ -60,6 +60,8 @@ type Poller struct {
 	nativePushDispatcher *NativePushDispatcher
 	nativeMail           bool
 	aiSortingDisabled    bool
+	// itip forwards DKIM-aligned invitations to KyCalendar; nil when unpaired.
+	itip *itipForwarder
 	// ctx/cancel bound the background tick loop. They are established exactly once,
 	// via ctxOnce, and never reassigned. Assigning cancel inside Run — which runs in
 	// its own goroutine — raced with Stop, which could read a nil cancel and
@@ -161,6 +163,9 @@ type userCtx struct {
 	// handleMessage embed each message once.
 	head    *sorter.Head
 	guesses map[string]sortGuess
+	// kycalSub and kycalIssuer name the user to KyCalendar; empty when
+	// invitations are not forwarded for them (kyCalendarIdentity).
+	kycalSub, kycalIssuer string
 }
 
 var errIncomingEncryptionExtraMailbox = errors.New("incoming encryption is on for the owner of an extra mailbox; disable it or the mailbox")
@@ -904,6 +909,7 @@ func (p *Poller) mailboxTickContext(u users.User, mailboxID string, imapConfigMo
 		rules:            p.runnableRules(u.ID),
 		guesses:          map[string]sortGuess{},
 	}
+	uc.kycalSub, uc.kycalIssuer = p.kyCalendarIdentity(u, settings.KyCalendar)
 
 	boundCache, err := p.mailboxCacheStore(u.ID, a)
 	if err != nil {
@@ -1063,6 +1069,9 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 	// valid answer — see flagAppImpersonation.
 	ownAddress := p.accountAddress(uc.id)
 
+	if uc.kycalSub != "" {
+		p.retryForwards(ctx, uc.id)
+	}
 	var res tickResult
 	for i, msg := range messages {
 		seen, err := uc.store.Seen(msg.ID)
@@ -1089,6 +1098,7 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 		if harvestEnabled {
 			p.harvestAutocrypt(ctx, uc, msg, harvestSuppressed)
 		}
+		p.forwardInvitation(ctx, uc, msg)
 		if headersErr != nil {
 			res.deferredIDs = append(res.deferredIDs, msg.ID)
 			if res.ledgerErr == nil {

@@ -16,6 +16,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - Multi-user with admin and user roles; TOTP, recovery codes and push-approval MFA; OpenID Connect single sign-on; self-hosted proof-of-work login CAPTCHA by default.
 - Browser push, and native push for the mobile apps through the [push relays](#push-relays-cloudflare-workers).
 - Opt-in native mailboxes: KyIdentity provisioning across several domains, quotas, receiving through Cloudflare Email Routing or an operator-supplied receiver (both still in qualification), operator-owned relay sending, sender blocks, quarantine, and mail import and export.
+- Optional KyCalendar pairing: KyCalendar sends invitations, cancellations and replies from a user's own mailbox, and receives the DKIM-verified invitations that arrive there; each user opts in. See [docs/KYCALENDAR.md](docs/KYCALENDAR.md).
 - Sealed configuration and state backups to KyRecovery or a local directory, with restic for mail databases.
 - Single Docker container managed by supervisord, with shared JSON logs.
 
