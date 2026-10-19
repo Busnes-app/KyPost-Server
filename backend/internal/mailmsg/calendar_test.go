@@ -6,6 +6,7 @@ import (
 	"mime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jhillyerd/enmime/v2"
 )
@@ -79,7 +80,7 @@ func TestBuildCalendarReplyMIME(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, withAttachment := range []bool{false, true} {
-		m := Message{From: "b@x.test", To: []string{"organizer@x.test"}, Subject: "Accepted: e1", Body: "Accepted", CalendarReply: ics}
+		m := Message{From: "b@x.test", To: []string{"organizer@x.test"}, Subject: "Accepted: e1", Body: "Accepted", Calendar: ics}
 		if withAttachment {
 			m.Attachments = []Attachment{{Name: "note.txt", MimeType: "text/plain", Content: []byte("n")}}
 		}
@@ -108,6 +109,91 @@ func TestBuildCalendarReplyMIME(t *testing.T) {
 		}
 		if env.Text != "Accepted" || (withAttachment && len(env.Attachments) != 1) {
 			t.Fatalf("attachment=%v: body %q attachments %d", withAttachment, env.Text, len(env.Attachments))
+		}
+	}
+}
+
+const validRequest = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:e1@x.test\r\n" +
+	"SUMMARY:Plan\\, review\r\nORGANIZER;CN=\"Org: Lead\":mailto:Org@X.test\r\nATTENDEE;CN=A:mailto:a@x.test\r\n" +
+	"ATTENDEE:mailto:b@x.test\r\nBEGIN:VALARM\r\nACTION:EMAIL\r\nATTENDEE:mailto:alarm@x.test\r\nEND:VALARM\r\nEND:VEVENT\r\n" +
+	"BEGIN:VEVENT\r\nUID:e1@x.test\r\nRECURRENCE-ID:20261020T100000Z\r\nORGANIZER:mailto:org@x.test\r\nATTENDEE:mailto:c@x.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
+func TestParseITIPReadsTheObject(t *testing.T) {
+	it, raw, err := ParseITIP(validRequest, "REQUEST")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.UID != "e1@x.test" || it.Organizer != "org@x.test" || it.Summary != "Plan, review" ||
+		strings.Join(it.Attendees, ",") != "a@x.test,b@x.test,c@x.test" || string(raw) != validRequest {
+		t.Fatalf("ParseITIP = %+v", it)
+	}
+	if got := ITIPSubject(it); got != "Plan, review" {
+		t.Fatalf("subject %q", got)
+	}
+}
+
+func TestParseITIPRefusals(t *testing.T) {
+	swap := func(old, new string) string { return strings.Replace(validRequest, old, new, 1) }
+	for name, tc := range map[string]struct{ ics, method string }{
+		"method mismatch":   {validRequest, "CANCEL"},
+		"no organizer":      {swap("ORGANIZER;CN=\"Org: Lead\":mailto:Org@X.test\r\n", ""), "REQUEST"},
+		"no uid":            {swap("UID:e1@x.test\r\nSUMMARY", "SUMMARY"), "REQUEST"},
+		"two uids":          {swap("UID:e1@x.test\r\nRECURRENCE", "UID:e2@x.test\r\nRECURRENCE"), "REQUEST"},
+		"two organizers":    {swap("ORGANIZER:mailto:org@x.test", "ORGANIZER:mailto:other@x.test"), "REQUEST"},
+		"non-mailto org":    {strings.ReplaceAll(swap("ORGANIZER;CN=\"Org: Lead\":mailto:Org@X.test", "ORGANIZER:urn:x"), "ORGANIZER:mailto:org@x.test", "ORGANIZER:urn:x"), "REQUEST"},
+		"no event":          {"BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n", "REQUEST"},
+		"too large":         {validRequest + strings.Repeat("X", MaxITIPBytes), "REQUEST"},
+		"long parameter":    {swap("CN=A", "CN="+strings.Repeat("a", 1025)), "REQUEST"},
+		"long quoted param": {swap("CN=A", "CN=\""+strings.Repeat("a:", 513)+"\""), "REQUEST"},
+		"header injection":  {swap("SUMMARY:Plan\\, review", "SUMMARY:x\r\n\r\nBcc: v@x.test"), "REQUEST"},
+		"two calendars":     {validRequest + validRequest, "REQUEST"},
+	} {
+		if _, _, err := ParseITIP(tc.ics, tc.method); !errors.Is(err, ErrITIP) {
+			t.Errorf("%s: err = %v, want ErrITIP", name, err)
+		}
+	}
+	// A 1 KiB parameter is fine; only longer ones are refused.
+	if _, _, err := ParseITIP(swap("CN=A", "CN="+strings.Repeat("a", 1024)), "REQUEST"); err != nil {
+		t.Fatalf("1 KiB parameter refused: %v", err)
+	}
+}
+
+// Folding a megabyte into one property stays linear: the scan unfolds with a
+// builder, not by repeated concatenation.
+func TestParseITIPLongFoldIsLinear(t *testing.T) {
+	ics := strings.Replace(validRequest, "SUMMARY:Plan\\, review", "SUMMARY:x"+strings.Repeat("\r\n y", 250000), 1)
+	start := time.Now()
+	if _, _, err := ParseITIP(ics, "REQUEST"); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("parse took %v", d)
+	}
+}
+
+func TestITIPSubject(t *testing.T) {
+	long := strings.Repeat("é", 150)
+	for _, tc := range []struct {
+		it   ITIP
+		want string
+	}{
+		{ITIP{Method: "REQUEST"}, "Invitation"},
+		{ITIP{Method: "CANCEL"}, "Cancelled"},
+		{ITIP{Method: "REPLY", Summary: " \t "}, "Reply"},
+		{ITIP{Method: "REQUEST", Summary: "a\tb\x7fc"}, "a b c"},
+		{ITIP{Method: "REQUEST", Summary: long}, strings.Repeat("é", 100)},
+	} {
+		if got := ITIPSubject(tc.it); got != tc.want {
+			t.Errorf("ITIPSubject(%q) = %q", tc.it.Summary, got)
+		}
+	}
+}
+
+func TestBuildCalendarMethod(t *testing.T) {
+	for method, want := range map[string]string{"REQUEST": "REQUEST", "CANCEL": "CANCEL", "": "REPLY", "X\r\nBcc: v": "REPLY"} {
+		raw := string(Message{From: "a@x.test", To: []string{"b@x.test"}, Body: "b", Calendar: []byte("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"), CalendarMethod: method}.Build())
+		if !strings.Contains(raw, "Content-Type: text/calendar; method="+want+"; charset=UTF-8\r\n") || strings.Contains(raw, "Bcc") {
+			t.Errorf("method %q:\n%s", method, raw)
 		}
 	}
 }

@@ -55,9 +55,11 @@ type Message struct {
 	// only well-formed msg-ids from them; see MessageIDs.
 	InReplyTo  string
 	References []string
-	// CalendarReply, when set, is an iTIP REPLY from CalendarReply. Build
-	// sends it as a text/calendar; method=REPLY alternative to the body.
-	CalendarReply []byte
+	// Calendar, when set, is an iTIP object from CalendarReply or ParseITIP.
+	// Build sends it as a text/calendar alternative to the body, with
+	// CalendarMethod (REQUEST, CANCEL or REPLY; empty is REPLY) as its method.
+	Calendar       []byte
+	CalendarMethod string
 }
 
 // Stamp fills an empty Date and Message-ID. The Message-ID domain is the From
@@ -259,7 +261,7 @@ func (m Message) Build() []byte {
 		msg.WriteString("Autocrypt: " + FoldHeaderValue(SanitizeHeaderValue(m.Autocrypt)) + "\r\n")
 	}
 
-	if len(m.Attachments) == 0 && len(m.CalendarReply) == 0 {
+	if len(m.Attachments) == 0 && len(m.Calendar) == 0 {
 		msg.WriteString("Content-Type: " + m.ContentType() + "\r\n")
 		msg.WriteString("Content-Transfer-Encoding: base64\r\n")
 		msg.WriteString("\r\n")
@@ -277,7 +279,7 @@ func (m Message) Build() []byte {
 	msg.WriteString("Content-Type: multipart/mixed; boundary=" + w.Boundary() + "\r\n")
 	msg.WriteString("\r\n")
 
-	if len(m.CalendarReply) == 0 {
+	if len(m.Calendar) == 0 {
 		m.writeBodyParts(w, bodyEncoded)
 	} else {
 		boundary := multipart.NewWriter(io.Discard).Boundary()
@@ -321,7 +323,7 @@ func (m Message) Build() []byte {
 	return msg.Bytes()
 }
 
-// writeBodyParts writes the text body and, for an iTIP reply, its
+// writeBodyParts writes the text body and, for an iTIP object, its
 // text/calendar alternative (RFC 6047 §2.4: method parameter required).
 func (m Message) writeBodyParts(w *multipart.Writer, bodyEncoded string) {
 	text, _ := w.CreatePart(textproto.MIMEHeader{
@@ -329,14 +331,24 @@ func (m Message) writeBodyParts(w *multipart.Writer, bodyEncoded string) {
 		"Content-Transfer-Encoding": {"base64"},
 	})
 	writeWrappedBase64(text, bodyEncoded)
-	if len(m.CalendarReply) == 0 {
+	if len(m.Calendar) == 0 {
 		return
 	}
 	cal, _ := w.CreatePart(textproto.MIMEHeader{
-		"Content-Type":              {"text/calendar; method=REPLY; charset=UTF-8"},
+		"Content-Type":              {"text/calendar; method=" + calendarMethod(m.CalendarMethod) + "; charset=UTF-8"},
 		"Content-Transfer-Encoding": {"base64"},
 	})
-	writeBase64Wrapped(cal, m.CalendarReply)
+	writeBase64Wrapped(cal, m.Calendar)
+}
+
+// calendarMethod admits only the three methods KyPost sends, so the header
+// value is never caller text.
+func calendarMethod(method string) string {
+	switch method {
+	case "REQUEST", "CANCEL":
+		return method
+	}
+	return "REPLY"
 }
 
 // writeBase64Wrapped writes base64 content in RFC 2045 76-character lines.

@@ -18,7 +18,7 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 
 ### `imap/` — IMAP Client
 
-- DKIM verification uses `DKIMSignedHeaders` and `VerifyDKIMCoversHeader`; signature/domain failure tests exercise the live header verifier, not a domain-only wrapper.
+- DKIM verification uses `DKIMSignedHeaders` and `VerifyDKIMCoversHeader`; signature/domain failure tests exercise the live header verifier, not a domain-only wrapper. `DKIMAlignedFrom` is the alignment rule (d= exactly the From domain, From signed and present once; the address read from the signed instance) used for KyCalendar forwarding.
 
 - `raw_content.go` exposes pure MIME/overview helpers reused by the native mailbox Client, including existing PGP detection and single-sender binding. Parsing failures use sanitized `ErrMalformedMIME`; `Message`/`MessageContent.ParseError` mark one unreadable message without aborting a batch. Existing IMAP reads leave that flag false.
 

@@ -23,6 +23,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
+	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/processor"
 	"github.com/Busnes-app/kypost-server/backend/internal/sorter"
@@ -100,6 +101,10 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
+	kycal, err := kycalendar.FromEnv()
+	if err != nil {
+		return err
+	}
 	proxies, err := config.LoadTrustedProxies()
 	if err != nil {
 		return err
@@ -173,6 +178,7 @@ func Run(args []string) error {
 		nativeMail:        nativeMail,
 		nativeReceiving:   nativeReceiving,
 		aiSortingDisabled: aiSortingDisabled,
+		kycal:             kycal,
 		cfg:               cfg,
 		configPath:        paths.ConfigFile,
 		configDir:         configDir,
@@ -209,6 +215,7 @@ type runDeps struct {
 	nativeMail        bool
 	nativeReceiving   bool
 	aiSortingDisabled bool
+	kycal             *kycalendar.Client
 	cfg               config.Config
 	configPath        string
 	configDir         string
@@ -289,6 +296,7 @@ func runDaemon(ctx context.Context, d runDeps) error {
 		return err
 	}
 	poller.SetConfigPath(d.configPath)
+	poller.SetKyCalendar(d.kycal)
 	if d.nativeMail {
 		poller.EnableNativeMail()
 	}
@@ -364,6 +372,7 @@ func runServer(ctx context.Context, d runDeps) error {
 	outboundDone := startNativeOutbound(outboundCtx, d)
 	defer func() { cancelOutbound(); <-outboundDone }()
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, nil, d.wkdStore)
+	srv.SetKyCalendar(d.kycal)
 	if d.nativeMail {
 		srv.EnableNativeMail()
 	}
@@ -435,6 +444,8 @@ func runAll(ctx context.Context, d runDeps) error {
 	}
 	poller.SetConfigPath(d.configPath)
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, poller.UpdateConfig, d.wkdStore)
+	srv.SetKyCalendar(d.kycal)
+	poller.SetKyCalendar(d.kycal)
 	if d.nativeMail {
 		poller.EnableNativeMail()
 		srv.EnableNativeMail()

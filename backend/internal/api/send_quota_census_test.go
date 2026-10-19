@@ -26,6 +26,7 @@ var sendCallers = map[string]string{
 	"api.handleMailSendPGP":         "admitSend",
 	"api.handleSendAsCreate":        "admitSend; the per-address cooldown alone resets on delete and re-add",
 	"api.dispatchScheduled":         "chargeSend",
+	"api.sendITIP":                  "chargeSend, keyed by the KyCalendar event ID",
 	"api.finishMailSend":            "a sink, reached only from handleMailSend",
 	"api.finishNativeSend":          "a sink, reached only from the two send handlers",
 	"api.deliverIMAP":               "a sink, reached only from handleMailSendPGP and dispatchScheduled",

@@ -18,6 +18,15 @@ non-prerelease version.
   and keeps the bundled Ollama and its model pull from starting. Filter rules
   still run, and other new mail gets the fallback label.
 - Docker build arg `INSTALL_OLLAMA=false` builds the image without Ollama.
+- KyCalendar pairing (`KYPOST_KYCALENDAR_URL`, `KYPOST_KYCALENDAR_SECRET_FILE`,
+  `KYPOST_KYCALENDAR_ALLOW_PRIVATE`; off by default). With a user's opt-in
+  (Settings → Mail → KyCalendar), KyCalendar sends invitations, cancellations
+  and replies from their own mailbox through the signed
+  `POST /api/calendar/itip/send`, and receives the DKIM-aligned invitations
+  that arrive there. New `POST /api/calendar/rsvp` answers an invitation
+  through KyCalendar from the server-side copy; clients fall back to
+  `calendarReply` when it answers `kycalendar_off`. Contract:
+  `docs/KYCALENDAR.md`.
 
 ## 0.4.2 — 2026-10-16
 
