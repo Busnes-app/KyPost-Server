@@ -330,6 +330,21 @@ Create the model cache directory once before the first run:
 mkdir -p share/ollama/models
 ```
 
+### Running without AI sorting
+
+Set `KYPOST_DISABLE_AI_SORTING=true` in `.env` to turn off automatic labels for
+every account. Filter rules still run, and all other new mail gets the default
+label (Primary). Ollama is not started, no model is pulled, and the server never
+contacts Ollama. To drop Ollama from the image as well (about 1.7 GB smaller),
+build it yourself:
+
+```bash
+docker compose build --build-arg INSTALL_OLLAMA=false
+```
+
+An image built that way never starts Ollama. If you leave AI sorting on with it,
+point `OLLAMA_BASE_URL` at an Ollama running elsewhere.
+
 ## Mobile App Pairing (Native)
 
 The backend handles mobile pairing directly. It does not require Novu.

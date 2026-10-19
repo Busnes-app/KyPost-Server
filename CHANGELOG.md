@@ -12,6 +12,13 @@ non-prerelease version.
 
 ## Unreleased
 
+### Added
+
+- `KYPOST_DISABLE_AI_SORTING=true` turns off automatic labels instance-wide
+  and keeps the bundled Ollama and its model pull from starting. Filter rules
+  still run, and other new mail gets the fallback label.
+- Docker build arg `INSTALL_OLLAMA=false` builds the image without Ollama.
+
 ## 0.4.2 — 2026-10-16
 
 0.4.0 was never published, so this is the first release after 0.3.0 and

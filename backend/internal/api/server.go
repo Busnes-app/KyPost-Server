@@ -228,6 +228,7 @@ type Server struct {
 	ssoStore      *sso.Store
 	nativeDomains *sso.NativeDomainStore
 	nativeMail    bool
+	aiDisabled    bool
 	ssoLifecycle  *sso.LifecycleStore
 	ollamaMu      sync.Mutex
 	ollamaStatus  ollamaVersionStatus

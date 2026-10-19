@@ -8,6 +8,8 @@ export type LabelPrefs = {
   keywordMappings: Record<string, string[]>;
   /** Optional one-line description per label; the local embedding sorter uses it as that label's first example. */
   descriptions: Record<string, string>;
+  /** Read-only: the server set KYPOST_DISABLE_AI_SORTING, which overrides autoApplyEnabled. Never sent back. */
+  aiSortingDisabled?: boolean;
 };
 
 const EMPTY: LabelPrefs = {
@@ -25,7 +27,8 @@ function normalize(raw: Partial<LabelPrefs> | null | undefined): LabelPrefs {
     seeded: raw?.seeded ?? EMPTY.seeded,
     allowlist: raw?.allowlist ?? [],
     keywordMappings: raw?.keywordMappings ?? {},
-    descriptions: raw?.descriptions ?? {}
+    descriptions: raw?.descriptions ?? {},
+    aiSortingDisabled: raw?.aiSortingDisabled ?? false
   };
 }
 
@@ -65,6 +68,7 @@ export async function loadLabelPrefs(): Promise<LabelPrefs> {
 export async function saveLabelPrefsPatch(patch: Partial<LabelPrefs>): Promise<LabelPrefs> {
   const current = await loadLabelPrefs();
   const next: LabelPrefs = { ...current, ...patch };
-  await putJSON<{ ok: boolean }>("/api/labels/preferences", next);
+  const { aiSortingDisabled: _readOnly, ...body } = next;
+  await putJSON<{ ok: boolean }>("/api/labels/preferences", body);
   return next;
 }

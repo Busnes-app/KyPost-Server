@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -138,5 +139,33 @@ func TestLabelDescriptionsAreValidated(t *testing.T) {
 	got := srv.userLabels(u.ID).Descriptions
 	if len(got) != 1 || got["Receipts"] != "Order receipts and invoices" {
 		t.Fatalf("stored descriptions = %v, want trimmed Receipts only", got)
+	}
+}
+
+// KYPOST_DISABLE_AI_SORTING is reported to the settings UI on read, and the
+// Ollama version block gets an answer instead of a permanent 503.
+func TestAISortingDisabledIsReported(t *testing.T) {
+	srv, u := newTestServerWithUser(t)
+	get := func() map[string]any {
+		req := authedRequestForTest(httptest.NewRequest(http.MethodGet, "/api/labels/preferences", nil), u)
+		rec := httptest.NewRecorder()
+		srv.handleLabelPreferences(rec, req)
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode %q: %v", rec.Body.String(), err)
+		}
+		return body
+	}
+	if body := get(); body["aiSortingDisabled"] != nil || body["allowlist"] == nil {
+		t.Fatalf("enabled: got %v, want the label settings and no aiSortingDisabled", body)
+	}
+	srv.DisableAISorting()
+	if body := get(); body["aiSortingDisabled"] != true || body["allowlist"] == nil {
+		t.Fatalf("disabled: got %v, want aiSortingDisabled=true beside the label settings", body)
+	}
+	rec := httptest.NewRecorder()
+	srv.handleOllamaVersion(rec, authedRequestForTest(httptest.NewRequest(http.MethodGet, "/api/ollama/version", nil), u))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"disabled":true`) {
+		t.Fatalf("ollama version: %d %s, want 200 disabled", rec.Code, rec.Body.String())
 	}
 }

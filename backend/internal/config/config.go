@@ -125,7 +125,7 @@ func CheckEnv() error {
 			bad = append(bad, err.Error())
 		}
 	}
-	for _, key := range []string{"ALLOW_INSECURE_SMTP", "MFA_CLEAR_ALL", "KYPOST_NATIVE_RECEIVER"} {
+	for _, key := range []string{"ALLOW_INSECURE_SMTP", "MFA_CLEAR_ALL", "KYPOST_NATIVE_RECEIVER", "KYPOST_DISABLE_AI_SORTING"} {
 		if _, err := EnvBool(key); err != nil {
 			bad = append(bad, err.Error())
 		}

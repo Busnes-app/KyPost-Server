@@ -142,6 +142,10 @@ func (s *Server) refreshOllamaVersionStatus(ctx context.Context) {
 // comparison for the Prompt Tuning page's version block. It deliberately
 // reads the in-memory cache rather than checking live on every request.
 func (s *Server) handleOllamaVersion(w http.ResponseWriter, r *http.Request) {
+	if s.aiDisabled {
+		writeJSON(w, http.StatusOK, map[string]any{"disabled": true})
+		return
+	}
 	status := s.getOllamaStatus()
 	if status.installedVersion == "" && status.checkErr == "" {
 		http.Error(w, "ollama version check has not completed yet", http.StatusServiceUnavailable)

@@ -15,6 +15,8 @@ type TuningSaveResponse = {
 };
 
 type OllamaVersionResponse = {
+  /** Set instead of the version fields when the server disabled AI sorting. */
+  disabled?: boolean;
   installedVersion: string;
   latestVersion: string;
   upgradeAvailable: boolean;
@@ -34,6 +36,7 @@ export function PromptTuning() {
   const [tuningText, setTuningText] = useState("");
   const [tuningStatus, setTuningStatus] = useState("");
   const [autoApplyEnabled, setAutoApplyEnabled] = useState(true);
+  const [aiSortingDisabled, setAISortingDisabled] = useState(false);
   const [labelPrefsStatus, setLabelPrefsStatus] = useState("");
   const [ollamaVersion, setOllamaVersion] = useState<OllamaVersionResponse | null>(null);
   const [ollamaVersionError, setOllamaVersionError] = useState("");
@@ -79,7 +82,10 @@ export function PromptTuning() {
 
   useEffect(() => {
     loadLabelPrefs()
-      .then((prefs) => setAutoApplyEnabled(prefs.autoApplyEnabled))
+      .then((prefs) => {
+        setAutoApplyEnabled(prefs.autoApplyEnabled);
+        setAISortingDisabled(prefs.aiSortingDisabled ?? false);
+      })
       .catch(() => setLabelPrefsStatus("Failed to load labeling preference."));
   }, []);
 
@@ -94,6 +100,7 @@ export function PromptTuning() {
 
   return (
     <>
+      {aiSortingDisabled || ollamaVersion?.disabled ? null : (
       <div style={{ marginBottom: "1.5em" }}>
         <h3>Ollama Version</h3>
         {ollamaVersion ? (
@@ -113,6 +120,7 @@ export function PromptTuning() {
           <p className="config-muted">{ollamaVersionError || "Loading Ollama version..."}</p>
         )}
       </div>
+      )}
 
       <div>
         <h3>TUNING.md</h3>
@@ -122,11 +130,18 @@ export function PromptTuning() {
           <label style={{ display: "flex", alignItems: "center", gap: "0.5em" }}>
             <input
               type="checkbox"
-              checked={autoApplyEnabled}
+              checked={autoApplyEnabled && !aiSortingDisabled}
+              disabled={aiSortingDisabled}
               onChange={(e) => toggleAutoApply(e.target.checked)}
             />
             Automatically apply keyword labels
           </label>
+          {aiSortingDisabled ? (
+            <p className="notice notice-warning">
+              AI sorting is disabled on this server by the administrator (KYPOST_DISABLE_AI_SORTING). New mail is
+              tagged by your filter rules and default label only.
+            </p>
+          ) : null}
           <p className="config-muted">
             When off, the AI classifier is skipped and every new message is tagged with your default label ("Primary" if configured, otherwise your first configured label) only.
           </p>

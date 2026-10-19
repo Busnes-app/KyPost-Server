@@ -105,6 +105,7 @@ services:
       ALLOW_INSECURE_HTTP: ${ALLOW_INSECURE_HTTP:-}
       TZ: ${TZ:-America/New_York}
       SECRET_DIR: ${SECRET_DIR:-/kypost/private}
+      KYPOST_DISABLE_AI_SORTING: ${KYPOST_DISABLE_AI_SORTING:-false}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-nemotron-3-nano:4b}
       TUNING_FILE: ${TUNING_FILE:-/kypost/config/TUNING.md}

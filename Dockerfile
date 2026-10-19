@@ -102,11 +102,22 @@ RUN apt-get update \
 # turned a 2-6 minute ci-docker into a 16 minute one on the first PR that
 # touched the frontend. Nothing here depends on the COPYs; the apt step above
 # is what supplies curl, ca-certificates, zstd and tar.
+#
+# INSTALL_OLLAMA=false leaves Ollama out of the image (about 1.7 GB smaller),
+# for operators who run with KYPOST_DISABLE_AI_SORTING=true or an external
+# OLLAMA_BASE_URL. scripts/entrypoint.sh notices the missing binary and does
+# not start the ollama programs. Anything but true or false is refused.
+ARG INSTALL_OLLAMA=true
 ARG OLLAMA_VERSION=0.40.5
 ARG OLLAMA_SHA256_AMD64=dc5eabc292f9949546c90a97c820f924b035e05243b0de13c7f366182562169c
 ARG OLLAMA_SHA256_ARM64=fbe71ebb1a10e59b8480c4d2839826b5f9dff1a6d5c142428b2e7db9b1a2c642
 ARG TARGETARCH
 RUN set -eu; \
+	case "${INSTALL_OLLAMA}" in \
+		true) ;; \
+		false) echo "INSTALL_OLLAMA=false: building without Ollama"; exit 0 ;; \
+		*) echo "INSTALL_OLLAMA must be true or false, got '${INSTALL_OLLAMA}'" >&2; exit 1 ;; \
+	esac; \
 	case "${TARGETARCH:-}" in \
 		amd64) sha="${OLLAMA_SHA256_AMD64}" ;; \
 		arm64) sha="${OLLAMA_SHA256_ARM64}" ;; \
@@ -156,6 +167,10 @@ ENV LOG_DIR=/kypost/logs
 ENV STATE_DIR=/kypost/state
 # No engine is bundled; only the explicit receiving overlay enables startup.
 ENV KYPOST_NATIVE_RECEIVER=false
+# Derived by scripts/entrypoint.sh from KYPOST_DISABLE_AI_SORTING and whether
+# the image has Ollama; set here only so supervisord's %(ENV_…)s expansion
+# never sees it unset. Not an operator setting.
+ENV KYPOST_START_OLLAMA=true
 ENV WEB_PORT=5866
 ENV TZ=America/New_York
 ENV OLLAMA_BASE_URL=http://127.0.0.1:11434

@@ -21,6 +21,28 @@ case "${KYPOST_BIND:-}" in
 		;;
 esac
 
+# KYPOST_START_OLLAMA drives autostart of the two ollama programs in
+# supervisord.conf. Parsed exactly like config.EnvBool, so the shell and the
+# Go processes cannot disagree on what a value means. An image built with
+# INSTALL_OLLAMA=false has no binary: starting it would only burn startretries
+# into FATAL and take the container down.
+case "${KYPOST_DISABLE_AI_SORTING:-}" in
+	true) KYPOST_START_OLLAMA=false ;;
+	''|false)
+		if command -v ollama >/dev/null 2>&1; then
+			KYPOST_START_OLLAMA=true
+		else
+			KYPOST_START_OLLAMA=false
+			echo "this image has no bundled Ollama; set KYPOST_DISABLE_AI_SORTING=true, or point OLLAMA_BASE_URL at an external Ollama" >&2
+		fi
+		;;
+	*)
+		echo "KYPOST_DISABLE_AI_SORTING must be true or false" >&2
+		exit 1
+		;;
+esac
+export KYPOST_START_OLLAMA
+
 # All four data dirs, plus the model cache. The image creates these, but a
 # volume or bind mount can be mounted over any of them, and `set -e` means a
 # chown against a missing path below would abort the boot.

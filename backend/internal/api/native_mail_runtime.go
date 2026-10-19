@@ -16,6 +16,10 @@ import (
 // EnableNativeMail is startup-only, before request/background goroutines start.
 func (s *Server) EnableNativeMail() { s.nativeMail = true }
 
+// DisableAISorting records KYPOST_DISABLE_AI_SORTING so the settings UI can
+// say why automatic labels are off. Startup-only, like EnableNativeMail.
+func (s *Server) DisableAISorting() { s.aiDisabled = true }
+
 // refuseNativeAdministrator answers the administrator-separation refusal with
 // 403, never 401: the identity is valid, so a client must not drop its
 // session or credential. It reports false for any other error.
