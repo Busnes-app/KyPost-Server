@@ -17,6 +17,14 @@ func NativeReceivingEnabled() (bool, error) {
 	return EnvBool("KYPOST_NATIVE_RECEIVING")
 }
 
+// AISortingDisabled turns off every automatic label (LLM and embedding sorter)
+// for the whole instance; filter rules still run and the rest gets the
+// fallback label. scripts/entrypoint.sh reads the same flag to keep Ollama
+// from starting.
+func AISortingDisabled() (bool, error) {
+	return EnvBool("KYPOST_DISABLE_AI_SORTING")
+}
+
 // NativeRestoreReleaseEnabled gates the future hold release; off by default.
 func NativeRestoreReleaseEnabled() (bool, error) {
 	return EnvBool("KYPOST_NATIVE_RESTORE_RELEASE")

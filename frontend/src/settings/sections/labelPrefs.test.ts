@@ -58,6 +58,16 @@ describe("saveLabelPrefsPatch", () => {
     const [, body] = putJSON.mock.calls[0];
     expect(body.allowlist).toEqual([]);
   });
+
+  it("never sends the server's read-only aiSortingDisabled back", async () => {
+    getJSON.mockResolvedValue({ autoApplyEnabled: true, seeded: true, allowlist: ["Primary"], keywordMappings: {}, aiSortingDisabled: true });
+
+    const next = await saveLabelPrefsPatch({ autoApplyEnabled: false });
+
+    const [, body] = putJSON.mock.calls[0];
+    expect(body).not.toHaveProperty("aiSortingDisabled");
+    expect(next.aiSortingDisabled).toBe(true);
+  });
 });
 
 describe("loadLabelPrefs", () => {

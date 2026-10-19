@@ -32,8 +32,9 @@ func TestCheckEnvNamesEveryBadVariable(t *testing.T) {
 	t.Setenv("SMTP_PORT", "smtp")
 	t.Setenv("CLASSIFY_PACE_MS", "-5")
 	t.Setenv("ALLOW_INSECURE_SMTP", "TRUE")
+	t.Setenv("KYPOST_DISABLE_AI_SORTING", "yes")
 	err := CheckEnv()
-	for _, key := range []string{"SMTP_PORT", "CLASSIFY_PACE_MS", "ALLOW_INSECURE_SMTP"} {
+	for _, key := range []string{"SMTP_PORT", "CLASSIFY_PACE_MS", "ALLOW_INSECURE_SMTP", "KYPOST_DISABLE_AI_SORTING"} {
 		if err == nil || !strings.Contains(err.Error(), key) {
 			t.Errorf("CheckEnv() = %v; want it to name %s", err, key)
 		}

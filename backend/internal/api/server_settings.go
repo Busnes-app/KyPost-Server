@@ -158,8 +158,12 @@ func (s *Server) handleLabelPreferences(w http.ResponseWriter, r *http.Request) 
 	case http.MethodGet:
 		// Seeding read: an account that has never had a list gets the house
 		// list here, so the form opens on what its mail is actually being
-		// classified against rather than on nothing.
-		writeJSON(w, http.StatusOK, s.userLabels(ac.UserID))
+		// classified against rather than on nothing. AISortingDisabled is the
+		// instance-wide override, read-only here and ignored on PUT.
+		writeJSON(w, http.StatusOK, struct {
+			config.UserLabelSettings
+			AISortingDisabled bool `json:"aiSortingDisabled,omitempty"`
+		}{s.userLabels(ac.UserID), s.aiDisabled})
 	case http.MethodPut:
 		var prefs config.UserLabelSettings
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&prefs); err != nil {

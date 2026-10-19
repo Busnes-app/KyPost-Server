@@ -59,6 +59,7 @@ type Poller struct {
 	redaction            *redaction.Engine
 	nativePushDispatcher *NativePushDispatcher
 	nativeMail           bool
+	aiSortingDisabled    bool
 	// ctx/cancel bound the background tick loop. They are established exactly once,
 	// via ctxOnce, and never reassigned. Assigning cancel inside Run — which runs in
 	// its own goroutine — raced with Stop, which could read a nil cancel and
@@ -895,7 +896,7 @@ func (p *Poller) mailboxTickContext(u users.User, mailboxID string, imapConfigMo
 		mail:             mail,
 		tuning:           tuning,
 		settings:         settings.Notifications,
-		autoLabelEnabled: settings.Labels.AutoApplyEnabled,
+		autoLabelEnabled: settings.Labels.AutoApplyEnabled && !p.aiSortingDisabled,
 		encryptIncoming:  settings.EncryptIncoming && mailboxID == "",
 		incomingPending:  u.IncomingEncryptionPending && mailboxID == "",
 		allowlist:        settings.Labels.Allowlist,

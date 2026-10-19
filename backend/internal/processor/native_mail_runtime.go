@@ -12,6 +12,11 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
+// DisableAISorting is startup-only, before Start launches goroutines. It
+// overrides every user's auto-apply setting, so no message reaches the
+// embedding sorter or Ollama.
+func (p *Poller) DisableAISorting() { p.aiSortingDisabled = true }
+
 // EnableNativeMail is startup-only, before Start launches goroutines.
 func (p *Poller) EnableNativeMail() { p.nativeMail = true }
 

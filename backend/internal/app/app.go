@@ -96,6 +96,10 @@ func Run(args []string) error {
 	if _, err := config.NativeRestoreReleaseEnabled(); err != nil {
 		return err
 	}
+	aiSortingDisabled, err := config.AISortingDisabled()
+	if err != nil {
+		return err
+	}
 	proxies, err := config.LoadTrustedProxies()
 	if err != nil {
 		return err
@@ -166,17 +170,18 @@ func Run(args []string) error {
 	}
 
 	deps := runDeps{
-		nativeMail:      nativeMail,
-		nativeReceiving: nativeReceiving,
-		cfg:             cfg,
-		configPath:      paths.ConfigFile,
-		configDir:       configDir,
-		stateDir:        paths.StateDir,
-		logger:          logger,
-		store:           store,
-		users:           usersStore,
-		health:          healthSvc,
-		wkdStore:        wkdStore,
+		nativeMail:        nativeMail,
+		nativeReceiving:   nativeReceiving,
+		aiSortingDisabled: aiSortingDisabled,
+		cfg:               cfg,
+		configPath:        paths.ConfigFile,
+		configDir:         configDir,
+		stateDir:          paths.StateDir,
+		logger:            logger,
+		store:             store,
+		users:             usersStore,
+		health:            healthSvc,
+		wkdStore:          wkdStore,
 	}
 
 	// Signal handling is installed exactly once, here at the real entrypoint, and
@@ -201,17 +206,18 @@ func Run(args []string) error {
 }
 
 type runDeps struct {
-	nativeMail      bool
-	nativeReceiving bool
-	cfg             config.Config
-	configPath      string
-	configDir       string
-	stateDir        string
-	logger          *logging.Logger
-	store           *state.Store
-	users           *users.Store
-	health          *health.Service
-	wkdStore        *wkdpublish.Store
+	nativeMail        bool
+	nativeReceiving   bool
+	aiSortingDisabled bool
+	cfg               config.Config
+	configPath        string
+	configDir         string
+	stateDir          string
+	logger            *logging.Logger
+	store             *state.Store
+	users             *users.Store
+	health            *health.Service
+	wkdStore          *wkdpublish.Store
 }
 
 // defaultEmbedModelDir is where the Dockerfile installs potion-base-8M,
@@ -286,10 +292,10 @@ func runDaemon(ctx context.Context, d runDeps) error {
 	if d.nativeMail {
 		poller.EnableNativeMail()
 	}
-	if err := configureSorter(d.logger, poller); err != nil {
+	warmupDone, err := startClassifier(ctx, d, classifierClient, poller)
+	if err != nil {
 		return err
 	}
-	warmupDone := warmupClassifierOnStartup(ctx, d.logger, classifierClient, poller)
 	backupDone, err := startBackupLoop(ctx, d)
 	if err != nil {
 		return err
@@ -361,7 +367,7 @@ func runServer(ctx context.Context, d runDeps) error {
 	if d.nativeMail {
 		srv.EnableNativeMail()
 	}
-	srv.SetClassifier(newClassifierClient(d.cfg))
+	attachClassifier(srv, d, newClassifierClient(d.cfg))
 
 	// Prepare constructs the *http.Server synchronously, before the Serve
 	// goroutine below is even launched, so a stop signal arriving essentially
@@ -434,8 +440,11 @@ func runAll(ctx context.Context, d runDeps) error {
 		srv.EnableNativeMail()
 	}
 	srv.SetPoller(poller)
-	srv.SetClassifier(classifierClient)
-	warmupDone := warmupClassifierOnStartup(ctx, d.logger, classifierClient, poller)
+	attachClassifier(srv, d, classifierClient)
+	warmupDone, err := startClassifier(ctx, d, classifierClient, poller)
+	if err != nil {
+		return err
+	}
 
 	// Prepare constructs the *http.Server synchronously, before the Serve
 	// goroutine below is launched, so a stop signal arriving essentially
@@ -740,6 +749,35 @@ func warmupClassifierOnStartup(ctx context.Context, logger *logging.Logger, clie
 		poller.TriggerUnreadSweep()
 	}()
 	return done
+}
+
+// startClassifier configures the embedding sorter and starts the Ollama warmup,
+// unless KYPOST_DISABLE_AI_SORTING is set: then the poller labels by filter
+// rules and the fallback label only, and nothing ever calls Ollama. The
+// returned channel is closed when there is no warmup to wait for.
+func startClassifier(ctx context.Context, d runDeps, client *classifier.HTTPClient, poller *processor.Poller) (<-chan struct{}, error) {
+	if d.aiSortingDisabled {
+		d.logger.Info("AI sorting disabled by KYPOST_DISABLE_AI_SORTING; new mail gets the fallback label")
+		poller.DisableAISorting()
+		done := make(chan struct{})
+		close(done)
+		return done, nil
+	}
+	if err := configureSorter(d.logger, poller); err != nil {
+		return nil, err
+	}
+	return warmupClassifierOnStartup(ctx, d.logger, client, poller), nil
+}
+
+// attachClassifier gives the API the classifier for the Ollama version monitor
+// and queue stats. With AI sorting disabled it gets none, so the monitor never
+// probes Ollama or emails the admin about Ollama updates.
+func attachClassifier(srv *api.Server, d runDeps, client *classifier.HTTPClient) {
+	if d.aiSortingDisabled {
+		srv.DisableAISorting()
+		return
+	}
+	srv.SetClassifier(client)
 }
 
 // awaitWarmup waits for the startup warmup goroutine to unwind, bounded so a

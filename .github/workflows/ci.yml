@@ -527,6 +527,59 @@ jobs:
             || { echo "refused, but not by the bind guard:" >&2; cat /tmp/guard.err >&2; exit 1; }
           echo "guard refused 0.0.0.0 without TLS or ALLOW_INSECURE_HTTP"
 
+      - name: entrypoint refuses a malformed KYPOST_DISABLE_AI_SORTING
+        run: |
+          if docker run --rm -e KYPOST_BIND=127.0.0.1 -e KYPOST_DISABLE_AI_SORTING=yes kypost-server:ci 2>/tmp/ai.err; then
+            echo "entrypoint accepted KYPOST_DISABLE_AI_SORTING=yes" >&2
+            exit 1
+          fi
+          grep -q 'KYPOST_DISABLE_AI_SORTING must be true or false' /tmp/ai.err \
+            || { echo "refused, but not by the flag check:" >&2; cat /tmp/ai.err >&2; exit 1; }
+
+      # The INSTALL_OLLAMA=false variant differs only in the Ollama layer, so
+      # every other layer comes from the build above. It must still boot
+      # healthy, with neither ollama program started: in an image without the
+      # binary, starting them would go FATAL and take the container down.
+      - name: docker build without Ollama
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: kypost-server:ci-no-ollama
+          build-args: INSTALL_OLLAMA=false
+          cache-from: type=gha
+
+      - name: image without Ollama starts healthy with AI sorting disabled
+        run: |
+          if docker run --rm --entrypoint sh kypost-server:ci-no-ollama -c 'command -v ollama'; then
+            echo "INSTALL_OLLAMA=false image still contains ollama" >&2
+            exit 1
+          fi
+          docker run -d --name kypost-ci-no-ollama -e KYPOST_BIND=127.0.0.1 -e KYPOST_DISABLE_AI_SORTING=true kypost-server:ci-no-ollama
+          for i in $(seq 1 90); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' kypost-ci-no-ollama 2>/dev/null || echo starting)"
+            if [ "$status" = "healthy" ]; then
+              echo "container reported healthy after ${i}s"
+              for prog in ollama ollama-model; do
+                result=0
+                out=$(docker exec kypost-ci-no-ollama supervisorctl -c /etc/supervisord.conf status "$prog") || result=$?
+                [ "$result" -eq 3 ]
+                printf '%s\n' "$out" | grep -qE "^${prog}[[:space:]]+STOPPED[[:space:]]+Not started$"
+              done
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' kypost-ci-no-ollama)" != "true" ]; then
+              echo "container exited before becoming healthy" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "container never became healthy" >&2
+          exit 1
+
       - name: container logs
         if: always()
-        run: docker logs kypost-ci 2>&1 | tail -80 || true
+        run: |
+          docker logs kypost-ci 2>&1 | tail -80 || true
+          docker logs kypost-ci-no-ollama 2>&1 | tail -40 || true

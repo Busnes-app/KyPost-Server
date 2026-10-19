@@ -35,6 +35,8 @@ Common variables:
 - `TZ` (default `America/New_York`)
 - `SECRET_DIR` (default `/kypost/private`. Every `*_KEY_FILE` / `*_SECRET_FILE` default below is derived from this, so moving it moves all of them together.)
 - Domain relay configuration uses `$CONFIG_DIR/native-relay.json` and `$SECRET_DIR/native-relay.key`, with no individual path overrides or environment credentials. Its retained key also derives owner/job-bound outbox encryption keys. Configure through the protected admin API; primary native compose/client-PGP sending uses fresh authority and the durable outbox.
+- `KYPOST_DISABLE_AI_SORTING` (default `false`): `true` turns off automatic labels for every account, overriding each user's auto-apply setting. Filter rules still run; everything else gets the fallback label (Primary). Neither the embedding sorter nor Ollama runs, the bundled Ollama and its model pull are not started, and the Ollama version check and update email stop. Other values refuse startup.
+- `INSTALL_OLLAMA` (Docker build arg, default `true`): `false` builds the image without Ollama, about 1.7 GB smaller. Such an image never starts Ollama; use it with `KYPOST_DISABLE_AI_SORTING=true` or an external `OLLAMA_BASE_URL`.
 - `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
 - `OLLAMA_MODEL` (default `nemotron-3-nano:4b`; see [Choosing a classifier model](../README.md#choosing-a-classifier-model))
 - `CLASSIFIER_ENGINE` (default `hybrid`: the embedding sorter answers when sure, the LLM otherwise; `llm` sends everything to the LLM. Any other value refuses to start.)
