@@ -98,9 +98,14 @@ tar tzf kypost-backup.tar.gz | grep -E 'private/|state/users/' | head
 Store `kypost-backup.tar.gz` and `backup-version.txt` together, and store them
 encrypted or somewhere you would be willing to keep your mail. The archive
 contains `imap-config.key` and `totp-secret.key`, which unwrap every stored IMAP
-credential and TOTP secret on the install. It does **not** contain anything that
-can decrypt a user's PGP private key — that half of the wrapping key never
-leaves the browser (see [Where your PGP private key lives](PGP-KEYS.md#where-your-pgp-private-key-lives)).
+credential and TOTP secret on the install. It also contains the retained legacy
+PGP master key, `pgp-private-key.key`, when present. For unmigrated accounts,
+that key can decrypt the `pgpPrivateKeyEnc` private keys in `users.json`.
+Treat the archive as containing those accounts' usable PGP private keys.
+Client-protected keys remain wrapped under the user's password-derived key;
+the archive alone does not supply that client-side secret. Keep the legacy
+master key until every legacy account has migrated (see
+[Where your PGP private key lives](PGP-KEYS.md#where-your-pgp-private-key-lives)).
 
 ### Restore
 

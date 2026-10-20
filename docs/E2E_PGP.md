@@ -133,10 +133,12 @@ test asserting nothing lands in either store.
 
 ## Sealed pickup links
 
-A recipient with no PGP key has nothing to encrypt to, so KyPost falls back to
-emailing them a one-time link. Originally the server stored that message's
-plaintext (sealed with its own key, which it holds) for seven days — the exact
-property client-side protection exists to remove.
+A recipient with no PGP key has nothing to encrypt to. With explicit opt-in,
+KyPost can email a one-time pickup link. There are two paths: client-protected
+senders seal the message in the browser; senders with no PGP identity of their
+own use a server-sealed fallback. That fallback stores the subject and body
+sealed with the server's own `pickup-store.key`, so the server can read them
+until consumption or expiry, for up to seven days.
 
 **Behavior change (2026-07-25):** `/api/mail/send` no longer falls back to a
 pickup link on its own. An encrypted send to a recipient with no usable key
@@ -146,9 +148,9 @@ is the point: the fallback stores plaintext server-side for seven days. The
 refusal happens before any SMTP delivery, so a client can safely re-send with
 the flag set once the user confirms — see "What mobile apps must implement"
 below for the exact shape of that 409. This gate applies to the server-side
-encrypt path (`server`-protected senders, on web or mobile); a client-protected
-sender's browser already sealed its own pickup links before this change and
-is unaffected.
+encrypt path for senders with no PGP identity, on web or mobile. Legacy
+server-custody senders must migrate before encrypted sending. A client-protected
+sender's browser seals its pickup links through `/api/pgp/pickup` instead.
 
 For client-protected accounts the message is now sealed in the sender's
 browser instead:
@@ -200,9 +202,12 @@ specifically rather than reporting a generic decryption failure.
   sanitizer available, and the content is written by the sender.
 - Consumption happens on the blob fetch, not the page load, so a link-preview
   bot fetching the HTML does not burn the message.
-- The old server-sealed pickup path belonged to retired server-custody
-  sending. Legacy accounts must migrate; it is not a fallback that can be
-  selected for new mail.
+- Server-sealed pickups remain available to senders with no PGP identity via
+  `/api/mail/send` with `encrypt: true` and `allowPickupFallback: true`.
+  Their stored records use `subjectEnc` and `bodyEnc`, sealed under the
+  server's `pickup-store.key`; this is server-readable storage, unlike the
+  browser-sealed path above. Legacy server-custody accounts must migrate
+  before encrypted sending.
 
 ## Incoming mail encryption (opt-in)
 

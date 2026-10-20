@@ -72,8 +72,8 @@ Existing legacy keys are preserved so users can recover them. In Security →
 Encryption, use **Migrate to end-to-end**: after confirming the account
 credential, the browser receives the old key, wraps it under your password and
 uploads the wrapped copy. That upload removes the server-readable copy. Keep
-the legacy master key available until those accounts have migrated; the
-remaining export path is for recovery and migration, not a supported custody
+the legacy master key (`pgp-private-key.key`) available until those accounts
+have migrated; the remaining export path is for recovery and migration, not a supported custody
 choice. A server-stored **recovery copy** is different: it is sealed under the
 user's separate recovery secret, which the server does not receive.
 
@@ -85,10 +85,17 @@ Other PGP boundaries:
 - **Mobile push notifications are generic by default** for this reason. See
   Settings → Notifications.
 - **A recipient without a key can get an optional one-time pickup link.**
-  The browser seals the message and the server stores ciphertext. The opening
-  key is carried in the link fragment; the recipient decrypts in their browser.
-  This differs from PGP to a known recipient key: the notification is relayed
-  through SMTP, so the sending server and anyone who can read that notification
-  can see the link and its key. Keep that trade-off explicit. An encrypted send
-  to a keyless recipient refuses unless the user enables the fallback. See
+  For a client-protected sender, the browser seals the message, uploads only
+  ciphertext to `/api/pgp/pickup`, and carries the opening key in the link
+  fragment. The recipient decrypts in their browser. The notification travels
+  through SMTP, so the sending server and anyone who can read it can see the
+  link and its key.
+  A sender with no PGP identity of their own can instead opt into
+  `/api/mail/send` with `encrypt: true` and `allowPickupFallback: true`.
+  That fallback seals the subject and body with the server's `pickup-store.key`;
+  the server can read the message until it is consumed or expires, up to seven
+  days. Compose labels it **Secure link if no key (server-held, 7 days)**.
+  Legacy server-custody accounts must migrate before encrypted sending.
+  An encrypted send to a keyless recipient refuses unless the user enables
+  the fallback. See
   [sealed pickup links](E2E_PGP.md#sealed-pickup-links).
