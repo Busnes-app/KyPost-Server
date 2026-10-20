@@ -647,6 +647,13 @@ func readForAgent(ctx context.Context, client imapadapter.Client, folder string,
 	}
 	m := messageOf(client, folder, ov, false)
 	m.SenderControlled.Body, m.SenderControlled.BodyTruncated = agentText(c.Body, c.BodyMode, bodyCap)
+	// The bodies fetch is separate from the raw one rawEncrypted saw: withhold on the reader's verdict too.
+	if c.PGPEncrypted || c.PGPEncryptedPayload != "" || strings.Contains(c.Body, pgpArmor) || strings.Contains(m.SenderControlled.Body, pgpArmor) ||
+		slices.ContainsFunc(attachments, func(a imapadapter.AttachmentInfo) bool {
+			return encryptedContentType(a.MimeType) || encryptedFileName(a.Name)
+		}) {
+		return messageOf(client, folder, ov, true), nil
+	}
 	for _, a := range attachments {
 		m.SenderControlled.Attachments = append(m.SenderControlled.Attachments, mcpAttachment{Name: cleanLine(a.Name), MimeType: cleanLine(a.MimeType), Size: a.Size})
 	}
@@ -712,7 +719,13 @@ func partEncrypted(p *enmime.Part, depth int) bool {
 	case p.ContentType == "message/rfc822":
 		return rawEncryptedAt(p.Content, depth+1)
 	}
-	return bytes.Contains(p.Content, []byte(pgpArmor))
+	// Armor also counts as the agent would see it: HTML flattened, hidden characters dropped.
+	content, mode := string(p.Content), ""
+	if p.ContentType == "text/html" {
+		mode = "html"
+	}
+	text, _ := agentText(content, mode, len(content)+1)
+	return strings.Contains(content, pgpArmor) || strings.Contains(text, pgpArmor)
 }
 
 func encryptedFileName(name string) bool {

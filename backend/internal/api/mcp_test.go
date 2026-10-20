@@ -535,6 +535,27 @@ Content-Type: text/plain; charset=x-kypost-unknown
 SECRET-BODY-CHARSET
 --b4--
 `),
+		// Armor that appears only in the text an agent would be shown.
+		"html entity armor": w.deliver(t, `From: sender@outside.test
+To: one@example.test
+Subject: SECRET-SUBJECT-HTML
+Date: Mon, 19 Oct 2026 10:08:00 +0000
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<p>&#45;&#45;&#45;&#45;&#45;BEGIN PGP MESSAGE&#45;&#45;&#45;&#45;&#45;</p><p>SECRET-BODY-HTML</p>
+`),
+		"zero-width armor": w.deliver(t, `From: sender@outside.test
+To: one@example.test
+Subject: SECRET-SUBJECT-ZW
+Date: Mon, 19 Oct 2026 10:09:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+-----BEGIN PGP MES=E2=80=8BSAGE-----
+SECRET-BODY-ZW
+`),
 	}
 	_, tok := seedAgentToken(t, w.srv, w.user.ID, state.AgentScopeRead, time.Now())
 	var seen bytes.Buffer
