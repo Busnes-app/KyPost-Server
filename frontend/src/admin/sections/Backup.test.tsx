@@ -238,3 +238,18 @@ it("asks a KySignOn session for no password and sends no credential", async () =
   expect(vi.mocked(postJSON).mock.calls[0]?.[0]).toBe("/api/admin/backup/run");
   expect(JSON.stringify(vi.mocked(postJSON).mock.calls[0]?.[1])).not.toContain("derived-test-only");
 });
+
+it("renders a status whose localCopies is null", async () => {
+  vi.mocked(getJSON).mockResolvedValue({
+    keyId: "null-copies-key",
+    paired: false,
+    localDir: "/backups",
+    localCopies: null,
+    intervalSec: 0,
+    recent: [],
+    excluded: "IMAP mail excluded",
+  });
+  render(<Backup />);
+  await screen.findByText("Recovery key: null-copies-key");
+  expect(screen.getByText(/Local copies: 0/)).toBeTruthy();
+});

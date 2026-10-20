@@ -28,6 +28,14 @@ non-prerelease version.
   `calendarReply` when it answers `kycalendar_off`. Contract:
   `docs/KYCALENDAR.md`.
 
+### Fixed
+
+- Server → Backup no longer renders a blank page before the first local copy:
+  the status API answered `localCopies: null` for an empty or missing
+  `KYPOST_BACKUP_DIR` and now answers `[]`; the page also tolerates `null`.
+- A failed Save Draft is shown as `Draft not saved: …` instead of
+  `Send failed: …`.
+
 ### Changes
 
 - Docs: the README quick start pulls the published image instead of building

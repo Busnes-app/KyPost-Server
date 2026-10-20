@@ -26,7 +26,7 @@ type Status = {
   bulkRepository?: string;
   lastBulk?: { snapshot: string; at: string; sizeBytes: number };
   lastReceipt?: { capsule_id: string; digest: string; deposited_at: string };
-  localCopies: { name: string; size_bytes: number }[];
+  localCopies: { name: string; size_bytes: number }[] | null;
   recent: {
     id: number;
     at: string;
@@ -335,7 +335,7 @@ export function Backup() {
               </p>
             )}
             <p>
-              Local copies: {status?.localCopies.length ?? 0} ·{" "}
+              Local copies: {status?.localCopies?.length ?? 0} ·{" "}
               {status?.localDir || "Not configured"}
             </p>
             <h4>Pair with KyRecovery</h4>

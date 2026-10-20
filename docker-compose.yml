@@ -247,8 +247,9 @@ volumes:
 # and why the peer address is wrong without this:
 #   docs/Reverse_Proxy_Networking.md
 #
-# Do not create this network with `docker network create` — Compose only manages
-# networks carrying its own labels. See the doc above to recover if you have.
+# Compose creates it when absent. If KyIdentity or KyNotes needed it first,
+# create it with this subnet; see "When the network already exists" in the doc
+# above.
 networks:
   kypost-net:
     name: ${KYPOST_NETWORK:-kypost-net}

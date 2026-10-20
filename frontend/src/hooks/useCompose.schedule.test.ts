@@ -6,6 +6,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 
 const postJSON = vi.fn(async (_url: string, _body: unknown) => ({ scheduled: true }));
 vi.mock("../api/client", () => ({
+  HttpError: class HttpError extends Error {},
   postJSON: (url: string, body: unknown) => postJSON(url, body),
   toErrorMessage: (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback),
   selectedMailboxId: () => "",
@@ -105,5 +106,24 @@ describe("scheduled send", () => {
     expect(request.sendAt).toBeUndefined();
     expect(request.draftCopy).toBeUndefined();
     expect(buildEncryptedDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe("compose error labels", () => {
+  it("labels a failed draft save as a draft failure, not a send failure", async () => {
+    session.clientProtected = false;
+    postJSON.mockRejectedValueOnce(new Error("IMAP is not configured"));
+    const result = composeTo(false);
+    await act(() => result.current.saveComposeDraft());
+    expect(postJSON.mock.calls[0][0]).toBe("/api/mail/draft");
+    expect(result.current.composeError).toBe("Draft not saved: IMAP is not configured");
+  });
+
+  it("labels a failed send as a send failure", async () => {
+    session.clientProtected = false;
+    postJSON.mockRejectedValueOnce(new Error("SMTP refused"));
+    const result = composeTo(false);
+    await act(() => result.current.sendComposeEmail());
+    expect(result.current.composeError).toBe("Send failed: SMTP refused");
   });
 });
