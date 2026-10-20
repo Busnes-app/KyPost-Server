@@ -426,14 +426,16 @@ func encryptedContentType(value string) bool {
 	return false
 }
 
-// encryptedMessages runs rawEncrypted over each overview's raw message. One
-// that cannot be fetched, or is too large to hold, counts as encrypted: the
-// check fails closed.
+// encryptedMessages runs rawEncrypted over each overview's raw message. A
+// message whose size is unknown or over maxListedWalk is not fetched at all,
+// and one that cannot be fetched counts as encrypted: the check fails closed,
+// and a listing never pulls more than maxListedWalk per message.
 func encryptedMessages(ctx context.Context, client imapadapter.Client, folder string, overviews []imapadapter.Overview) (map[string]bool, error) {
 	out := map[string]bool{}
 	for _, ov := range overviews {
 		uid, err := strconv.Atoi(ov.MessageID)
-		if err != nil {
+		if err != nil || ov.Size <= 0 || ov.Size > maxListedWalk {
+			// Lists as encrypted; read_message decides.
 			out[ov.MessageID] = true
 			continue
 		}
@@ -441,8 +443,6 @@ func encryptedMessages(ctx context.Context, client imapadapter.Client, folder st
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		// A very large message is not walked here; it lists as encrypted, and
-		// read_message decides.
 		out[ov.MessageID] = err != nil || len(raw) > maxListedWalk || rawEncrypted(raw)
 	}
 	return out, nil
@@ -832,6 +832,7 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 		ancestor int // distance, or -1 for a later message
 		date     string
 		ref      string
+		size     int64
 	}
 	var others []member
 	subject := baseSubject(strings.Join(root["Subject"], " "))
@@ -851,11 +852,11 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 				continue // a Sent folder that does not exist is no thread
 			}
 			var uids []int
-			dates := map[int]string{}
+			dates, sizes := map[int]string{}, map[int]int64{}
 			for _, c := range candidates {
 				if n, err := strconv.Atoi(c.MessageID); err == nil && (f != folder || n != uid) {
 					uids = append(uids, n)
-					dates[n] = c.AtUTC
+					dates[n], sizes[n] = c.AtUTC, c.Size
 				}
 			}
 			if len(uids) == 0 {
@@ -877,7 +878,7 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 				if !linked {
 					continue
 				}
-				m := member{f, order, n, -1, dates[n], imapadapter.MessageReference(client, strconv.Itoa(n))}
+				m := member{f, order, n, -1, dates[n], imapadapter.MessageReference(client, strconv.Itoa(n)), sizes[n]}
 				for _, id := range messageIDToken.FindAllString(strings.Join(h["Message-Id"], " "), 1) {
 					if d, ok := ancestry[id]; ok {
 						m.ancestor = d
@@ -931,7 +932,13 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 		if m.ancestor < 0 && !placed {
 			out.Messages, placed = append(out.Messages, requested), true
 		}
-		msg, err := readForAgent(ctx, client, m.folder, m.uid, maxAgentThreadBody)
+		// The same bound a listing keeps: a member is fetched only when its size is
+		// known and small, so one thread is never hundreds of MiB of downloads.
+		err := errors.New(msgNoMessage)
+		var msg mcpMessage
+		if m.size > 0 && m.size <= maxListedWalk {
+			msg, err = readForAgent(ctx, client, m.folder, m.uid, maxAgentThreadBody)
+		}
 		if err != nil {
 			// One unreadable member does not hide the rest of the conversation.
 			msg = mcpMessage{ID: m.ref, Folder: m.folder, Date: m.date, Unavailable: true}

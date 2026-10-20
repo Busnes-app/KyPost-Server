@@ -432,6 +432,10 @@ type Overview struct {
 	AtUTC                string
 	Status               string
 	UID                  int
+	// Size is the stored message's size in bytes (IMAP RFC822.SIZE), 0 when the
+	// source did not say. Lets a caller decline to fetch a message it would not
+	// read whole.
+	Size int64
 }
 
 type DraftMessage struct {
@@ -717,6 +721,7 @@ func overviewFromEmail(uid int, e *goimap.Email) Overview {
 		AtUTC:                atUTC,
 		Status:               status,
 		UID:                  uid,
+		Size:                 int64(e.Size),
 	}
 }
 

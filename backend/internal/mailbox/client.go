@@ -98,6 +98,7 @@ func nativeOverview(m Message) imapadapter.Overview {
 	o := imapadapter.OverviewFromHeaders(int(m.ID), mail.Header{"From": {m.Sender}, "Subject": {m.Subject}, "To": {m.To}, "Cc": {m.CC}, "Bcc": {m.BCC}})
 	o.AtUTC = m.AtUTC
 	o.Keywords = append([]string{}, m.Labels...)
+	o.Size = m.Size
 	if m.Seen {
 		o.Status = "read"
 	}

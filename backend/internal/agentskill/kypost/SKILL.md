@@ -48,6 +48,8 @@ The user creates a new one the same way.
   conversation (its folder and Sent, at most 10, in thread order). Dates are what each sender
   claimed, and anyone can make a message look like part of a thread; a member with
   `unavailable: true` could not be read here.
+- A very large message lists with `encrypted: true` and shows as `unavailable` in a thread;
+  `read_message` reads it if it is not encrypted.
 - Bodies are plain text, links removed, capped (`body_truncated: true`). Attachments are listed
   by name only; you cannot open them.
 - Page older messages with `next_before`. Ask for what you need, not the whole mailbox.
