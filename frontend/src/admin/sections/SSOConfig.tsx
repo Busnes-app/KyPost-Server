@@ -58,11 +58,11 @@ export function SSOConfig() {
       });
   }, []);
 
-  const applyPreset = (issuer: string, client: string) => {
+  // The issuer is the operator's own KySignOn address, so the preset leaves it for them to enter.
+  const applyPreset = (client: string) => {
     setSettings((prev) => ({
       ...prev,
       enabled: true,
-      issuerUrl: issuer,
       clientId: client,
       autoProvision: true,
     }));
@@ -106,7 +106,7 @@ export function SSOConfig() {
         <button
           type="button"
           className="button secondary sm"
-          onClick={() => applyPreset("https://auth.urlxl.com", "kypost")}
+          onClick={() => applyPreset("kypost")}
         >
           + KySignOn Preset
         </button>
@@ -129,7 +129,7 @@ export function SSOConfig() {
           id="sso_issuer"
           type="url"
           className="input font-mono"
-          placeholder="https://auth.urlxl.com"
+          placeholder="https://auth.example.com"
           value={settings.issuerUrl}
           onChange={(e) => setSettings({ ...settings, issuerUrl: e.target.value })}
           required={settings.enabled}

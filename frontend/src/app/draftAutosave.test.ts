@@ -84,8 +84,8 @@ describe("save/load round trip", () => {
 
   it("keeps the mailbox and From it was written in; an older snapshot reads as the primary", async () => {
     const team = "mbx-11111111-2222-4333-8444-555555555555";
-    await saveDraftSnapshot(USER, draft({ subject: "x", mailbox: team, from: "team@urlxl.us" }));
-    expect(await load(USER)).toMatchObject({ mailbox: team, from: "team@urlxl.us" });
+    await saveDraftSnapshot(USER, draft({ subject: "x", mailbox: team, from: "team@example.com" }));
+    expect(await load(USER)).toMatchObject({ mailbox: team, from: "team@example.com" });
     window.sessionStorage.setItem(`kypost-compose-draft:${USER}`, JSON.stringify({ version: 2, savedAt: new Date().toISOString(), fields: { subject: "old" } }));
     expect(await load(USER)).toMatchObject({ subject: "old", mailbox: "", from: "" });
   });

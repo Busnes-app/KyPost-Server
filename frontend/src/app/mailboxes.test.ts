@@ -2,14 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadMailboxSelection, readMailboxes, saveMailboxSelection } from "./mailboxes";
 
 const TEAM = "mbx-11111111-2222-4333-8444-555555555555";
-const primary = { id: "u1", kind: "primary", addresses: [{ address: "me@urlxl.us", kind: "primary" }] };
-const team = { id: TEAM, kind: "extra", addresses: [{ address: "a@urlxl.us", kind: "alias" }, { address: "team@urlxl.us", kind: "primary" }] };
+const primary = { id: "u1", kind: "primary", addresses: [{ address: "me@example.com", kind: "primary" }] };
+const team = { id: TEAM, kind: "extra", addresses: [{ address: "a@example.com", kind: "alias" }, { address: "team@example.com", kind: "primary" }] };
 
 describe("readMailboxes", () => {
   it("reads the primary then extras, primary address first", () => {
     expect(readMailboxes({ mailboxes: [primary, team] }, "u1")).toEqual([
-      { id: "u1", kind: "primary", addresses: ["me@urlxl.us"] },
-      { id: TEAM, kind: "extra", addresses: ["team@urlxl.us", "a@urlxl.us"] }
+      { id: "u1", kind: "primary", addresses: ["me@example.com"] },
+      { id: TEAM, kind: "extra", addresses: ["team@example.com", "a@example.com"] }
     ]);
     expect(readMailboxes({ mailboxes: [] }, "u1")).toEqual([]);
   });
@@ -20,10 +20,10 @@ describe("readMailboxes", () => {
     ["another user's primary", { mailboxes: [{ ...primary, id: "u2" }] }],
     ["an extra ID that is not a mailbox ID", { mailboxes: [primary, { ...team, id: "../u2" }] }],
     ["a repeated extra", { mailboxes: [primary, team, team] }],
-    ["an address in two mailboxes", { mailboxes: [primary, { ...team, addresses: [{ address: "me@urlxl.us", kind: "primary" }] }] }],
-    ["two primary addresses", { mailboxes: [primary, { ...team, addresses: [{ address: "x@urlxl.us", kind: "primary" }, { address: "y@urlxl.us", kind: "primary" }] }] }],
-    ["an unknown address kind", { mailboxes: [primary, { ...team, addresses: [{ address: "x@urlxl.us", kind: "owner" }] }] }],
-    ["a display-name address", { mailboxes: [{ ...primary, addresses: [{ address: "Me <me@urlxl.us>", kind: "primary" }] }] }]
+    ["an address in two mailboxes", { mailboxes: [primary, { ...team, addresses: [{ address: "me@example.com", kind: "primary" }] }] }],
+    ["two primary addresses", { mailboxes: [primary, { ...team, addresses: [{ address: "x@example.com", kind: "primary" }, { address: "y@example.com", kind: "primary" }] }] }],
+    ["an unknown address kind", { mailboxes: [primary, { ...team, addresses: [{ address: "x@example.com", kind: "owner" }] }] }],
+    ["a display-name address", { mailboxes: [{ ...primary, addresses: [{ address: "Me <me@example.com>", kind: "primary" }] }] }]
   ])("refuses %s", (_name, body) => {
     expect(() => readMailboxes(body, "u1")).toThrow("Invalid mailbox list.");
   });

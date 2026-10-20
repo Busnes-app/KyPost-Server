@@ -50,7 +50,7 @@ func TestUpdateConfigRefusesNonCompilingRedactionPatterns(t *testing.T) {
 			"the broken set then reads as current, the rebuild never retries, and redaction fails open")
 	}
 	// The engine must still be the previous, working one.
-	if got := p.currentRedaction().Apply("contact me at yoshi@urlxl.com"); !strings.Contains(got, "[REDACTED_EMAIL]") {
+	if got := p.currentRedaction().Apply("contact me at yoshi@example.com"); !strings.Contains(got, "[REDACTED_EMAIL]") {
 		t.Fatalf("redaction stopped working after a refused update: Apply(...) = %q", got)
 	}
 }
@@ -74,7 +74,7 @@ func TestUpdateConfigAppliesValidRedactionPatternChange(t *testing.T) {
 	}
 	// The replaced set must be gone rather than merged with the new one, or an
 	// operator narrowing their patterns would still be running the old ones.
-	if out := p.currentRedaction().Apply("yoshi@urlxl.com"); strings.Contains(out, "[REDACTED_EMAIL]") {
+	if out := p.currentRedaction().Apply("yoshi@example.com"); strings.Contains(out, "[REDACTED_EMAIL]") {
 		t.Fatalf("Apply(...) = %q, want the replaced pattern set dropped, not merged", out)
 	}
 }
@@ -92,7 +92,7 @@ func TestUpdateConfigWithUnchangedPatternsKeepsRedactionWorking(t *testing.T) {
 	if got := p.currentConfig().Timezone; got != "Etc/UTC" {
 		t.Fatalf("Timezone = %q, want the update committed when the patterns did not change", got)
 	}
-	if got := p.currentRedaction().Apply("contact me at yoshi@urlxl.com"); !strings.Contains(got, "[REDACTED_EMAIL]") {
+	if got := p.currentRedaction().Apply("contact me at yoshi@example.com"); !strings.Contains(got, "[REDACTED_EMAIL]") {
 		t.Fatalf("redaction stopped working after an unrelated config update: Apply(...) = %q", got)
 	}
 }

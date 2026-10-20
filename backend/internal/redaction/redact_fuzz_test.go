@@ -19,7 +19,7 @@ func FuzzDefaultPatterns(f *testing.F) {
 		f.Fatal(err)
 	}
 	for _, s := range []string{
-		"contact me at yoshi@urlxl.com please",
+		"contact me at yoshi@example.com please",
 		"call 555-123-4567 now",
 		"SSN: 123-45-6789",
 		"IBAN GB29NWBK60161331926819",

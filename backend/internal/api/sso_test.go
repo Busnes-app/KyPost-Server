@@ -117,7 +117,7 @@ func TestSSOConfigAndAdmin(t *testing.T) {
 
 	putBody, _ := json.Marshal(sso.SSOSettings{
 		Enabled:       true,
-		IssuerURL:     "https://auth.urlxl.com",
+		IssuerURL:     "https://auth.example.com",
 		ClientID:      "kypost-prod",
 		AutoProvision: false,
 	})
@@ -141,8 +141,8 @@ func TestAdminSSOPutRejectsUnsafeConfig(t *testing.T) {
 		cfg  sso.SSOSettings
 	}{
 		{"cleartext LAN issuer", sso.SSOSettings{Enabled: true, IssuerURL: "http://192.168.1.50:9000", ClientID: "x"}},
-		{"no client id", sso.SSOSettings{Enabled: true, IssuerURL: "https://auth.urlxl.com"}},
-		{"not a URL", sso.SSOSettings{Enabled: true, IssuerURL: "auth.urlxl.com", ClientID: "x"}},
+		{"no client id", sso.SSOSettings{Enabled: true, IssuerURL: "https://auth.example.com"}},
+		{"not a URL", sso.SSOSettings{Enabled: true, IssuerURL: "auth.example.com", ClientID: "x"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body, _ := json.Marshal(tc.cfg)
@@ -509,8 +509,8 @@ func TestSSORedirectURIFollowsConfiguredBaseURL(t *testing.T) {
 			"the Host header must never supply it", got)
 	}
 
-	srv.serverBaseURL = "https://mail.urlxl.com/"
-	want := "https://mail.urlxl.com/api/auth/oidc/callback"
+	srv.serverBaseURL = "https://mail.example.com/"
+	want := "https://mail.example.com/api/auth/oidc/callback"
 	if got := srv.ssoRedirectURI(); got != want {
 		t.Errorf("ssoRedirectURI() = %q, want %q", got, want)
 	}

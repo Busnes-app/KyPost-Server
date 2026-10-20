@@ -59,6 +59,11 @@ non-prerelease version.
 
 ### Changes
 
+- Admin → Single Sign-On: the **KySignOn Preset** button no longer fills in a
+  specific issuer address. It still enables SSO, sets the client ID to
+  `kypost` and turns on auto-provisioning; enter your own KySignOn issuer URL.
+  The issuer placeholder is now `https://auth.example.com`.
+
 - Docs: the README quick start pulls the published image instead of building
   from source, and names the Ollama memory cap (`KYPOST_MEM_LIMIT`, now in
   `docs/CONFIGURATION.md`). `docs/Reverse_Proxy_Networking.md` covers starting
