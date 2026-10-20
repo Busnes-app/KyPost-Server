@@ -51,7 +51,7 @@ mail delivery working. Draft saving and scheduled delivery also need the configu
 services. Configure [TLS](docs/TLS.md) before remote access.
 
 AI sorting is optional. The default model can use about 2.9 GB resident memory and the
-container limit defaults to 8 GB. Follow [running without AI sorting](README.md#running-without-ai-sorting)
+container limit defaults to 8 GB. Follow [running without AI sorting](docs/AI-SORTING.md#running-without-ai-sorting)
 for a smaller deployment. The base Compose creates `kypost-net`; if a network already
 exists, use [the shared-network guide](docs/Reverse_Proxy_Networking.md#when-the-network-already-exists).
 

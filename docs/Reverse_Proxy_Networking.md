@@ -121,7 +121,7 @@ networks:
 ```
 
 `scripts/update-host.sh` and the manual digest start in
-[the README](../README.md#verifying-an-image-by-hand) pass `-f docker-compose.yml`
+[the README](OPERATIONS.md#verifying-an-image-by-hand) pass `-f docker-compose.yml`
 and never read the override; with an existing network they rely on the warning
 behaviour above.
 
@@ -183,7 +183,7 @@ clashes with your own LAN or VPN routes.
 The mobile pairing QR carries a pin for the certificate the device will be
 handed, so the app can pin the registration handshake before it discloses the
 pairing token and its push credentials. See
-[Certificate pinning in the pairing QR](../README.md#certificate-pinning-in-the-pairing-qr).
+[Certificate pinning in the pairing QR](CLIENTS-AND-PUSH.md#certificate-pinning-in-the-pairing-qr).
 
 Your proxy holds that certificate, not this server — with `cloudflared` there is
 no file to mount at all, because the device validates a Cloudflare edge
