@@ -165,6 +165,8 @@ admin grant; the issuer hint states that changing the issuer revokes links.
 
 ## Verification
 
+- Compose keeps its labeled heading, recipients and editor above the security group and sticky send-action footer. Preserve every security choice, attachment/contact action, draft/send/schedule handler and close/trash behavior when refining this layout.
+
 - `npm run build` must succeed with zero TypeScript errors; `npm run typecheck` runs `tsc --noEmit` alone
 - `npm run lint` (after `npm ci --prefix lint`) must report 0 errors. `lint/` is its own package and lockfile because typescript-eslint needs the TypeScript 6 compiler API and the app builds with TypeScript 7; config is `lint/eslint.config.js` (rules-of-hooks error, exhaustive-deps warn). Do not move these deps into the app's `package.json`
 - Time-sensitive test fixtures use relative expiries or a controlled clock, so real calendar dates cannot silently change their intended state.

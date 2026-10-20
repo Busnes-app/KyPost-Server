@@ -63,3 +63,8 @@ covered by real local TLS Go tests and UI result tests, not live delivery.
 Screenshots remain local artifacts:
 - Desktop: `/home/yoshi/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mutkyoxu-27447601.png`.
 - Mobile refusal: `/home/yoshi/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mutkzjjf-7f837189.png`.
+
+
+## Approved interface polish — 2026-10-19
+
+See [UI-POLISH.md](UI-POLISH.md) for the implemented changes, preservation scope, checks, actual before/after screenshots and disposable capture conditions. Earlier captures above remain historical evidence.
