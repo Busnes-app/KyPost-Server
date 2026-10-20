@@ -95,6 +95,8 @@ type Message struct {
 	Folder, Sender, Subject, To, CC, BCC, AtUTC string
 	Seen, Starred, Draft                        bool
 	Labels                                      []string
+	// Size is the stored raw message's length in bytes.
+	Size int64
 }
 type Change struct {
 	Revision, ID int64
@@ -452,7 +454,7 @@ func (s *Store) List(ctx context.Context, folder string, before int64, limit int
 	if !validFolder(folder) || before < 0 || limit < 1 || limit > 1000 {
 		return nil, errors.New("invalid mailbox page")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels FROM messages WHERE folder=? AND raw IS NOT NULL AND (?=0 OR id<?) ORDER BY id DESC LIMIT ?`, folder, before, before, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,folder,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels,length(raw) FROM messages WHERE folder=? AND raw IS NOT NULL AND (?=0 OR id<?) ORDER BY id DESC LIMIT ?`, folder, before, before, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +463,7 @@ func (s *Store) List(ctx context.Context, folder string, before int64, limit int
 	for rows.Next() {
 		var m Message
 		var labels string
-		if err = rows.Scan(&m.ID, &m.Folder, &m.Sender, &m.Subject, &m.To, &m.CC, &m.BCC, &m.AtUTC, &m.Seen, &m.Starred, &m.Draft, &labels); err != nil {
+		if err = rows.Scan(&m.ID, &m.Folder, &m.Sender, &m.Subject, &m.To, &m.CC, &m.BCC, &m.AtUTC, &m.Seen, &m.Starred, &m.Draft, &labels, &m.Size); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal([]byte(labels), &m.Labels); err != nil {

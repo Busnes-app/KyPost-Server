@@ -3,7 +3,9 @@
 Versions are dotted-numeric (`MAJOR.MINOR.PATCH`) and published as GitHub
 releases tagged `v<version>`. The tag, `serverVersion` in
 `backend/internal/api/server_version.go`, and `frontend/package.json` must all
-agree — `release-image.yml` refuses to publish a release where they do not.
+agree — `release-image.yml` refuses to publish a release where they do not. The
+agent skill's `version` (`backend/internal/agentskill/kypost/SKILL.md`) follows
+`serverVersion`; `TestAgentSkillMatchesTheTools` fails until it does.
 
 Each release publishes an immutable `ghcr.io/<owner>/kypost-server:<version>`
 image. `:stable` is moved to that image only after its build attestation has
@@ -13,6 +15,17 @@ non-prerelease version.
 ## Unreleased
 
 ### Added
+
+- AI agent access over MCP at `/mcp` (Streamable HTTP, bearer token). Users
+  create tokens under Security → AI agents (`GET/POST /api/agent-tokens`,
+  `PUT/DELETE /api/agent-tokens/{id}`; create and widen need step-up) with
+  Read only or Read and organize access. Tools search, list and read mail and
+  threads, list folders and labels, apply and remove labels, move, archive and
+  save drafts; nothing sends or deletes. Encrypted mail is metadata only. The
+  agent skill is served at `/agent/skills/kypost/SKILL.md`. Tokens unused for
+  90 days, and all tokens on a sealed-backup restore, are revoked. `/mcp`
+  refuses any request with an `Origin` and sends no CORS headers; token
+  changes need the session, its CSRF token and KyPost's own origin.
 
 - `KYPOST_DISABLE_AI_SORTING=true` turns off automatic labels instance-wide
   and keeps the bundled Ollama and its model pull from starting. Filter rules

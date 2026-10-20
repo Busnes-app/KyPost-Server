@@ -50,6 +50,9 @@ This resolver also sees IMAP, SMTP and WKD lookups. Verify container DNS with
   without that key it cannot be opened). Restore returns every waiting message to
   Drafts with the reason "restored from a backup" and marks interrupted ones
   uncertain, because the original server may already have sent them.
+- AI agent tokens (install-wide state.db). Restore revokes every one before
+  publication: the backup may hold tokens the user has since revoked. Users
+  create new ones under Security → AI agents.
 - Internal mailbox.db and ingress.db snapshots inside the collected roots (or,
   with `KYPOST_BULK_BACKUP_REPOSITORY`, the [bulk manifest](#mail-bulk-backup) naming them),
   including committed WAL rows and exact stored MIME/receipt data. Mailbox snapshots also preserve encrypted outbox intent, claims and Sent receipts; nonempty queues require the matching relay profile/key and additive verification recipe. Native

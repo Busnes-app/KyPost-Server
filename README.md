@@ -20,10 +20,33 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - Browser push, and native push for the mobile apps through the [push relays](docs/CLIENTS-AND-PUSH.md#push-relays-cloudflare-workers).
 - Opt-in native mailboxes: KyIdentity provisioning across several domains, quotas, receiving through Cloudflare Email Routing or an operator-supplied receiver (both still in qualification), operator-owned relay sending, sender blocks, quarantine, and mail import and export.
 - Optional KyCalendar pairing: KyCalendar sends invitations, cancellations and replies from a user's own mailbox, and receives the DKIM-verified invitations that arrive there; each user opts in. See [docs/KYCALENDAR.md](docs/KYCALENDAR.md).
+- AI agent access over MCP: an agent such as OpenClaw, Hermes Agent or Claude Code searches, reads and organizes your mail and saves drafts, with a token you create and can revoke. It never sees encrypted mail and cannot send or delete. See [Connect an AI agent](#connect-an-ai-agent).
 - Sealed configuration and state backups to KyRecovery or a local directory, with restic for mail databases.
 - Single Docker container managed by supervisord, with shared JSON logs.
 
 The full list, with the trade-offs each feature carries, is in [docs/FEATURES.md](docs/FEATURES.md).
+
+## Connect an AI agent
+
+AI agents such as OpenClaw, Hermes Agent and Claude Code reach your mail over MCP at
+`https://<your host>/mcp`. On **Security → AI agents**, create a token with an access level:
+
+- **Read only** (the default): the agent lists folders and labels, searches, and reads messages
+  and threads.
+- **Read and organize**: it can also apply and remove your labels, move and archive mail, and
+  save drafts.
+
+No agent can send or delete mail, or move it to Trash or Junk: it saves a draft and you send it
+from KyPost. End-to-end encrypted mail (PGP or S/MIME) reaches an agent as sender, recipients
+and date only, never its subject or content. The page shows the token once, with config for
+each agent that reads it from `KYPOST_TOKEN`, and the command to install the KyPost skill
+(served at `/agent/skills/kypost/SKILL.md`), which teaches the agent the tools and when to ask
+you first. You can change a token's access there later. A token unused for 90 days is revoked,
+and a sealed-backup restore revokes them all; an agent token never works over CardDAV or the REST API,
+nor a CardDAV password or device credential over MCP. Administrator accounts get no agent.
+
+Mail is written by other people, and an agent may treat it as instructions. Give an agent
+**Read and organize** only if you trust everyone who can email you or message the agent.
 
 ## Licence
 

@@ -58,6 +58,7 @@ Classification flow:
 - `docker-compose.rspamd.yml`: optional pinned private scanner sidecar; fixed configuration in `scripts/rspamd/rspamd.conf`.
 - `docker-compose.receiving.yml`: optional controlled receiver supervision and explicit SMTP publish with operator-supplied read-only engine/TLS mounts.
 
+- `backend/internal/agentskill/`: the AI agent skill (`kypost/SKILL.md`), embedded and served at `/agent/skills/kypost/SKILL.md`; the MCP endpoint itself is `backend/internal/api/mcp.go`.
 - `backend/internal/mailmsg/`: shared MIME/SMTP helpers and encrypted domain relay profile. Strict native implicit-TLS transport is internally qualified; native primary sending uses fresh admission and the durable outbox; provider readiness and pickup/system paths remain pending.
 
 - `backend/internal/sso/`: signed directory lifecycle, admin mail-domain DNS proof, native reservations, opt-in prepare-before-publication account allocation and shared native outbound admission/recovery. See [provisioning contract](NATIVE_PROVISIONING.md).

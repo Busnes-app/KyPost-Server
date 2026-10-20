@@ -17,6 +17,7 @@ import { SignIn } from "./security/sections/SignIn";
 import { Devices } from "./security/sections/Devices";
 import { MailKeys } from "./security/sections/MailKeys";
 import { CardDavAccess } from "../settings/sections/CardDavAccess";
+import { AgentAccess } from "./security/sections/AgentAccess";
 import { MailExport } from "../settings/sections/MailExport";
 import { MailImport } from "../settings/sections/MailImport";
 
@@ -37,18 +38,24 @@ export function SecurityPage() {
   // to live on Configuration, and CardDavAccess is no longer rendered there.
   // lib/secretHold covers the other half: a sidebar link never reaches this.
   const [davPasswordRevealed, setDavPasswordRevealed] = useState(false);
+  // The same for a new AI agent token.
+  const [agentTokenRevealed, setAgentTokenRevealed] = useState(false);
   const [tabSwitchBlockedMessage, setTabSwitchBlockedMessage] = useState("");
   useEffect(() => {
-    if (!davPasswordRevealed) {
+    if (!davPasswordRevealed && !agentTokenRevealed) {
       setTabSwitchBlockedMessage("");
     }
-  }, [davPasswordRevealed]);
+  }, [davPasswordRevealed, agentTokenRevealed]);
 
   function setActiveTab(tab: SecurityTab) {
     if (davPasswordRevealed) {
       setTabSwitchBlockedMessage(
         "Copy or dismiss the generated CardDAV password before switching tabs — it will not be shown again."
       );
+      return;
+    }
+    if (agentTokenRevealed) {
+      setTabSwitchBlockedMessage("Copy the new AI agent token and choose “Done — I saved it” before switching tabs — it will not be shown again.");
       return;
     }
     const next = new URLSearchParams(searchParams);
@@ -323,6 +330,8 @@ export function SecurityPage() {
         {activeTab === "carddav" ? (
           <CardDavAccess onRevealedPasswordChange={setDavPasswordRevealed} />
         ) : null}
+
+        {activeTab === "agents" ? <AgentAccess onRevealedTokenChange={setAgentTokenRevealed} /> : null}
 
         {activeTab === "mail" ? (
           <MailKeys

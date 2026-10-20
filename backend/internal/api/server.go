@@ -152,7 +152,15 @@ type Server struct {
 	// verifyLogin accountLockout), so that route can never fill loginLockout.
 	reviewPairingLockout *failureLockout
 	davLockout           *failureLockout
-	mfaLockout           *failureLockout
+	// mcpLockout and mcpUserLockout count failed /mcp bearer tokens per client
+	// address and per token owner; see withMCPAuth.
+	mcpLockout     *failureLockout
+	mcpUserLockout *failureLockout
+	// mcpCallLimiter meters MCP requests and tool work per user; mcpBusy holds
+	// the users with an MCP request in flight (one each).
+	mcpCallLimiter *keyedLimiter
+	mcpBusy        sync.Map
+	mfaLockout     *failureLockout
 	// passwordChangeLockout bounds current-credential guessing on
 	// POST /api/auth/password, keyed on the acting user's ID.
 	passwordChangeLockout *failureLockout
@@ -413,6 +421,9 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		loginLockout:             newLoginLockout(),
 		reviewPairingLockout:     newLoginLockout(),
 		davLockout:               newFailureLockout(davMaxFailures, davLockoutFor),
+		mcpLockout:               newFailureLockout(mcpMaxFailuresPerIP, mcpLockoutFor),
+		mcpUserLockout:           newFailureLockout(mcpMaxFailuresPerUser, mcpLockoutFor),
+		mcpCallLimiter:           newKeyedLimiter(mcpCallBurst, mcpCallRefillPerSec),
 		mfaLockout:               newFailureLockout(mfaMaxFailures, mfaLockoutFor),
 		passwordChangeLockout:    newFailureLockout(passwordChangeMaxFailures, passwordChangeLockoutFor),
 		imapLoginLockout:         newFailureLockout(imapLoginMaxFailures, imapLoginLockoutFor),
@@ -506,6 +517,7 @@ func (s *Server) routes() http.Handler {
 	s.routesPGP(mux)
 	s.routesNotifications(mux)
 	s.routesRules(mux)
+	s.routesAgents(mux)
 	s.routesFrontend(mux)
 
 	return withGzip(withSecurityHeaders(mux, buildContentSecurityPolicy(s.captchaProvider)))
@@ -691,6 +703,18 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mail/send-as/{id}/confirm", s.withAuth(s.handleSendAsConfirm))
 	mux.HandleFunc("GET /api/mail/attachments", s.withMailAuth(s.withMailbox(s.handleMailAttachmentList)))
 	mux.HandleFunc("GET /api/mail/attachment", s.withMailAuth(s.withMailbox(s.handleMailAttachmentDownload)))
+}
+
+// routesAgents registers AI agent access: token management for the signed-in
+// user, the MCP endpoint the tokens open (bearer only, see withMCPAuth) and
+// the public skill that teaches an agent to use it.
+func (s *Server) routesAgents(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/agent-tokens", s.withAuth(s.handleListAgentTokens))
+	mux.HandleFunc("POST /api/agent-tokens", s.withAuth(s.withSameOrigin(withActionDigest(s.handleCreateAgentToken))))
+	mux.HandleFunc("PUT /api/agent-tokens/{id}", s.withAuth(s.withSameOrigin(withActionDigest(s.handleSetAgentTokenScope))))
+	mux.HandleFunc("DELETE /api/agent-tokens/{id}", s.withAuth(s.withSameOrigin(s.handleDeleteAgentToken)))
+	mux.Handle("/mcp", s.withMCPAuth(s.mcpHandler()))
+	mux.HandleFunc("GET /agent/skills/kypost/SKILL.md", withPublicRoute(s.handleAgentSkill))
 }
 
 // routesContacts registers the address book, groups, and the CardDAV
@@ -1109,6 +1133,8 @@ func (s *Server) logSaturatedLockouts() {
 		"login_ip":        s.loginIPLockout,
 		"review_pairing":  s.reviewPairingLockout,
 		"dav":             s.davLockout,
+		"mcp":             s.mcpLockout,
+		"mcp_user":        s.mcpUserLockout,
 		"mfa":             s.mfaLockout,
 		"password_change": s.passwordChangeLockout,
 		"device":          s.deviceLockout,
@@ -1182,7 +1208,7 @@ func (s *Server) StartCooldownSweeper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, c := range []*keyedLimiter{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown, s.mfaPushLimiter} {
+			for _, c := range []*keyedLimiter{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown, s.mfaPushLimiter, s.mcpCallLimiter} {
 				c.sweep()
 			}
 		}

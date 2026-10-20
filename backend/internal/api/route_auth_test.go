@@ -22,6 +22,7 @@ var authMarkers = map[string]bool{
 	"withMailAuth":     true,
 	"withAdmin":        true,
 	"withDAVBasicAuth": true,
+	"withMCPAuth":      true,
 	// Declarations that the handler is reached another way. See
 	// route_auth_markers.go.
 	"withPublicRoute": true,
@@ -158,6 +159,7 @@ var publicRoutes = map[string]string{
 	"GET /healthz":                           "public suite monitor receives only a coarse service status",
 	"GET /api/setup":                         "pre-login hint for a fresh install with no accounts to authenticate against",
 	"GET /.well-known/openpgpkey/":           "Web Key Directory is public by protocol; any sender's client must fetch published keys uncredentialed",
+	"GET /agent/skills/kypost/SKILL.md":      "the AI agent skill; the same text on every instance, no user or instance data",
 	"/":                                      "SPA shell and static assets",
 }
 

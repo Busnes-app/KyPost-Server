@@ -261,6 +261,20 @@ CREATE TABLE IF NOT EXISTS snoozes (
 	woken_at   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS snoozes_wake ON snoozes(woken_at, wake_at);
+
+-- AI agent tokens for /mcp; used only in the install-wide state.db. hash is
+-- users.HashDeviceSecret of the token's secret, never the secret itself.
+-- last_used_at=0 means never used. See agent_tokens.go.
+CREATE TABLE IF NOT EXISTS agent_tokens (
+	id           TEXT PRIMARY KEY,
+	user_id      TEXT NOT NULL,
+	label        TEXT NOT NULL,
+	hash         TEXT NOT NULL,
+	scope        TEXT NOT NULL,
+	created_at   INTEGER NOT NULL,
+	last_used_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS agent_tokens_user ON agent_tokens(user_id);
 `
 
 func openDB(path, existingSource string) (*sql.DB, error) {

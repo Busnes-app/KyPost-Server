@@ -1289,7 +1289,7 @@ func (s *Server) handleMailSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	allowedKeywords := collectAllowedKeywords(s.userLabels(ac.UserID))
 
-	results, err := mailClient.SearchMessages(r.Context(), mailbox, field, q, limit)
+	results, err := mailClient.SearchMessages(r.Context(), mailbox, field, q, limit, 0)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("search failed: %v", err), http.StatusServiceUnavailable)
 		return
