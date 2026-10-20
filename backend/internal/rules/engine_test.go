@@ -212,7 +212,7 @@ func (f *fakeClient) ListOverviews(context.Context, string, int) ([]imapadapter.
 func (f *fakeClient) ListOverviewsBefore(context.Context, string, int, int) ([]imapadapter.Overview, bool, error) {
 	return nil, false, nil
 }
-func (f *fakeClient) SearchMessages(context.Context, string, string, string, int) ([]imapadapter.Overview, error) {
+func (f *fakeClient) SearchMessages(context.Context, string, string, string, int, int) ([]imapadapter.Overview, error) {
 	return nil, nil
 }
 func (f *fakeClient) GetMessageBodies(context.Context, string, []int) (map[int]imapadapter.MessageContent, error) {

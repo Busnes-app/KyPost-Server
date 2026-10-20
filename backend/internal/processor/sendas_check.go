@@ -102,7 +102,7 @@ func (p *Poller) checkPendingSendAsAliases(ctx context.Context, userID string, m
 			continue
 		}
 
-		matches, err := mail.SearchMessages(ctx, "INBOX", "subject", alias.VerificationCode, 10)
+		matches, err := mail.SearchMessages(ctx, "INBOX", "subject", alias.VerificationCode, 10, 0)
 		if err != nil {
 			p.log.Error("send-as verification search failed",
 				"user_id", userID, "alias_id", alias.ID, "error", err.Error())

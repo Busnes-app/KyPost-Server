@@ -370,7 +370,7 @@ func (c *Client) FetchHeaderFields(ctx context.Context, folder string, uids []in
 	}
 	return out, nil
 }
-func (c *Client) SearchMessages(ctx context.Context, folder, field, query string, limit int) ([]imapadapter.Overview, error) {
+func (c *Client) SearchMessages(ctx context.Context, folder, field, query string, limit, before int) ([]imapadapter.Overview, error) {
 	defer runtime.KeepAlive(c)
 	if err := c.checkAccess(ctx); err != nil {
 		return nil, err
@@ -396,7 +396,7 @@ func (c *Client) SearchMessages(ctx context.Context, folder, field, query string
 	if err != nil {
 		return nil, err
 	}
-	if limit < 1 || limit > batchCount || len(query) > 4096 {
+	if limit < 1 || limit > batchCount || len(query) > 4096 || before < 0 {
 		return nil, errors.New("invalid mailbox search")
 	}
 	if field != "sender" && field != "subject" && field != "body" && field != "all" {
@@ -404,13 +404,14 @@ func (c *Client) SearchMessages(ctx context.Context, folder, field, query string
 	}
 	query = strings.ToLower(query)
 	out := []imapadapter.Overview{}
-	var before, used int64
+	var used int64
+	cursor := int64(before)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// ponytail: bounded full scan, no plaintext search index. Add an index only
 	// after representative storage tests; encrypted bodies are never decrypted.
 	for {
-		messages, err := c.store.List(ctx, folder, before, 200)
+		messages, err := c.store.List(ctx, folder, cursor, 200)
 		if err != nil {
 			return nil, err
 		}
@@ -421,7 +422,7 @@ func (c *Client) SearchMessages(ctx context.Context, folder, field, query string
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			before = m.ID
+			cursor = m.ID
 			o := nativeOverview(m)
 			found := (field == "sender" || field == "all") && strings.Contains(strings.ToLower(o.Sender), query) || (field == "subject" || field == "all") && strings.Contains(strings.ToLower(o.Subject), query)
 			if !found && (field == "body" || field == "all") {

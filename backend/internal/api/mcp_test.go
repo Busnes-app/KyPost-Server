@@ -496,6 +496,14 @@ Content-Type: text/plain
 SECRET-LIST-FOOTER
 --outer--
 `),
+		// Binary ciphertexts under a generic type, known only by their file names.
+		"binary .pgp attachment": w.deliver(t, binaryEncryptedMail("BIN-PGP", `Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="report.pgp"`)),
+		"binary .p7m attachment": w.deliver(t, binaryEncryptedMail("BIN-P7M", `Content-Type: application/octet-stream; name="report.p7m"`)),
+		"rfc2231 .gpg attachment": w.deliver(t, binaryEncryptedMail("BIN-GPG", `Content-Type: application/octet-stream
+Content-Disposition: attachment; filename*=UTF-8''report%2Egpg`)),
+		"encoded-word .p7e attachment": w.deliver(t, binaryEncryptedMail("BIN-P7E", `Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="=?utf-8?q?report=2Ep7e?="`)),
 	}
 	_, tok := seedAgentToken(t, w.srv, w.user.ID, state.AgentScopeRead, time.Now())
 	var seen bytes.Buffer
@@ -551,6 +559,29 @@ SECRET-LIST-FOOTER
 	if leaked := regexp.MustCompile(`SECRET-[A-Z-]+`).FindAllString(seen.String(), -1); len(leaked) > 0 {
 		t.Errorf("encrypted content reached the agent: %v", leaked)
 	}
+}
+
+// binaryEncryptedMail is a readable text part beside a binary attachment whose
+// part headers are partHeader; tag marks its subject and body.
+func binaryEncryptedMail(tag, partHeader string) string {
+	return `From: sender@outside.test
+To: one@example.test
+Subject: SECRET-SUBJECT-` + tag + `
+Date: Mon, 19 Oct 2026 10:05:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="b3"
+
+--b3
+Content-Type: text/plain
+
+SECRET-BODY-` + tag + `
+--b3
+` + partHeader + `
+Content-Transfer-Encoding: base64
+
+hQEMA8sAAAAAAAABAQf/AAECAwQFBgcICQ==
+--b3--
+`
 }
 
 // Message content sits under sender_controlled with a notice, and a body that
@@ -1023,12 +1054,12 @@ func TestAgentTextDropsHiddenCharacters(t *testing.T) {
 	}
 }
 
-// The number of search results says nothing about encrypted mail: the server
-// is always asked for a full page, which is filtered before it is cut.
+// Search results say nothing about encrypted mail: encrypted matches, even more
+// than a page of them, neither change the count nor displace a readable match.
 func TestMCPSearchCountHidesEncryptedMatches(t *testing.T) {
 	w := newMCPWorld(t)
-	older := w.deliver(t, strings.Replace(plainMail, "Readable plan body.", "Codeword marigold.", 1))
-	w.deliver(t, `From: sender@outside.test
+	readable := strings.Replace(plainMail, "Readable plan body.", "Codeword marigold.", 1)
+	const encrypted = `From: sender@outside.test
 To: one@example.test
 Subject: marigold
 Date: Tue, 20 Oct 2026 09:00:00 +0000
@@ -1036,16 +1067,63 @@ MIME-Version: 1.0
 Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="b"
 
 --b--
-`)
+`
+	// Oldest first: a page of readable matches, more than a page of encrypted
+	// ones, then two newer readable matches.
+	var plain []string
+	for range maxAgentList {
+		plain = append(plain, w.deliver(t, readable))
+	}
+	for range maxAgentList + 5 {
+		w.deliver(t, encrypted)
+	}
+	plain = append(plain, w.deliver(t, readable), w.deliver(t, readable))
+	slices.Reverse(plain)
 	_, tok := seedAgentToken(t, w.srv, w.user.ID, state.AgentScopeRead, time.Now())
 	cs := agent(t, w.srv, tok, nil)
-	for _, limit := range []int{1, 25} {
+	for _, limit := range []int{1, 3, maxAgentList} {
 		var found messagesOut
 		if msg := callTool(t, cs, "search_messages", map[string]any{"query": "marigold", "limit": limit}, &found); msg != "" {
 			t.Fatal(msg)
 		}
-		if len(found.Messages) != 1 || found.Messages[0].ID != older {
-			t.Errorf("limit %d: %+v, want only the older plain message", limit, found.Messages)
+		var got []string
+		for _, m := range found.Messages {
+			got = append(got, m.ID)
+		}
+		if !slices.Equal(got, plain[:limit]) {
+			t.Errorf("limit %d: %v, want the newest readable matches %v", limit, got, plain[:limit])
+		}
+	}
+}
+
+// A conventional Junk name the adapter falls back on is Junk here too, with no
+// special-use attribute to say so.
+func TestMCPBulkMailIsJunk(t *testing.T) {
+	w := newMCPWorld(t)
+	client, err := w.srv.userMailClient(w.user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateFolder(context.Background(), "", "Bulk Mail"); err != nil {
+		t.Fatal(err)
+	}
+	if roles := specialUseOf(context.Background(), client); len(roles) != 0 {
+		t.Fatalf("special-use roles %v; the test needs none", roles)
+	}
+	id := w.deliver(t, plainMail)
+	_, tok := seedAgentToken(t, w.srv, w.user.ID, state.AgentScopeOrganize, time.Now())
+	cs := agent(t, w.srv, tok, nil)
+	for tool, args := range map[string]map[string]any{
+		"move into":    {"message_ids": []string{id}, "target": "Bulk Mail"},
+		"move out of":  {"message_ids": []string{id}, "folder": "Bulk Mail", "target": "INBOX"},
+		"archive from": {"message_ids": []string{id}, "folder": "Bulk Mail"},
+	} {
+		name := "move_messages"
+		if tool == "archive from" {
+			name = "archive_messages"
+		}
+		if msg := callTool(t, cs, name, args, nil); msg != msgRefusedTarget {
+			t.Errorf("%s Bulk Mail: %q, want %q", tool, msg, msgRefusedTarget)
 		}
 	}
 }

@@ -38,7 +38,7 @@ func TestRuntimeClientAdmissionCoversEveryOperation(t *testing.T) {
 		"attachments":        func() error { _, err := c.ListAttachments(ctx, "INBOX", 1); return err },
 		"attachment":         func() error { _, _, err := c.GetAttachment(ctx, "INBOX", 1, 0); return err },
 		"headers":            func() error { _, err := c.FetchHeaderFields(ctx, "INBOX", []int{1}, "From"); return err },
-		"search":             func() error { _, err := c.SearchMessages(ctx, "INBOX", "body", "test", 10); return err },
+		"search":             func() error { _, err := c.SearchMessages(ctx, "INBOX", "body", "test", 10, 0); return err },
 		"draft":              func() error { return c.SaveDraft(ctx, imapadapter.DraftMessage{}) },
 		"sent":               func() error { return c.SaveSent(ctx, imapadapter.DraftMessage{}) },
 		"ensure-label":       func() error { return c.EnsureLabel(ctx, "Primary") },

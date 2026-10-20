@@ -539,20 +539,32 @@ func (t mcpTools) searchMessages(ctx context.Context, _ *mcp.CallToolRequest, in
 	if err != nil {
 		return nil, messagesOut{}, err
 	}
-	// Always the full page, then filter, then cut: a caller-chosen limit would let
-	// the count of results betray encrypted matches.
-	results, err := client.SearchMessages(ctx, folder, field, query, maxAgentList)
-	if err != nil {
-		return nil, messagesOut{}, errors.New(msgMailUnavailable)
-	}
-	msgs, err := messagesOf(ctx, client, folder, results)
-	if err != nil {
-		return nil, messagesOut{}, err
-	}
 	// Encrypted messages are left out entirely: a hit would say that the words
-	// occur in one, and the server searched what the agent may not read.
-	msgs = slices.DeleteFunc(msgs, func(m mcpMessage) bool { return m.Encrypted })
-	msgs = msgs[:min(len(msgs), agentLimit(in.Limit))]
+	// occur in one, and the server searched what the agent may not read. Paging
+	// on past them until the limit is filled or the search runs out keeps them
+	// from displacing a readable result, so neither count nor IDs betray them.
+	limit := agentLimit(in.Limit)
+	var msgs []mcpMessage
+	for before := 0; len(msgs) < limit; {
+		results, err := client.SearchMessages(ctx, folder, field, query, maxAgentList, before)
+		if err != nil {
+			return nil, messagesOut{}, errors.New(msgMailUnavailable)
+		}
+		if len(results) == 0 {
+			break
+		}
+		page, err := messagesOf(ctx, client, folder, results)
+		if err != nil {
+			return nil, messagesOut{}, err
+		}
+		msgs = append(msgs, slices.DeleteFunc(page, func(m mcpMessage) bool { return m.Encrypted })...)
+		next, err := strconv.Atoi(results[len(results)-1].MessageID)
+		if err != nil || (before > 0 && next >= before) {
+			return nil, messagesOut{}, errors.New(msgMailUnavailable)
+		}
+		before = next
+	}
+	msgs = msgs[:min(len(msgs), limit)]
 	return nil, messagesOut{Notice: untrustedNotice, Messages: msgs}, nil
 }
 
@@ -669,7 +681,7 @@ func partEncrypted(h textproto.MIMEHeader, body io.Reader, depth int, parts *int
 		return true
 	}
 	ct := h.Get("Content-Type")
-	if encryptedContentType(ct) {
+	if encryptedContentType(ct) || encryptedName(h) {
 		return true
 	}
 	mediaType, params, err := mime.ParseMediaType(ct)
@@ -713,8 +725,33 @@ func transferDecoded(h textproto.MIMEHeader, body io.Reader) io.Reader {
 }
 
 func encryptedPart(a imapadapter.AttachmentInfo) bool {
-	name := strings.ToLower(a.Name)
-	return encryptedContentType(a.MimeType) || slices.ContainsFunc([]string{".p7m", ".p7e", ".gpg", ".pgp"}, func(ext string) bool { return strings.HasSuffix(name, ext) })
+	return encryptedContentType(a.MimeType) || encryptedFileName(a.Name)
+}
+
+func encryptedFileName(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	return slices.ContainsFunc([]string{".p7m", ".p7e", ".gpg", ".pgp"}, func(ext string) bool { return strings.HasSuffix(name, ext) })
+}
+
+// encryptedName reports whether a part's file name (Content-Disposition
+// filename or Content-Type name) is an encrypted file's, so a ciphertext sent
+// as application/octet-stream still counts. An unparseable disposition counts.
+func encryptedName(h textproto.MIMEHeader) bool {
+	for header, param := range map[string]string{"Content-Disposition": "filename", "Content-Type": "name"} {
+		value := h.Get(header)
+		_, params, err := mime.ParseMediaType(value)
+		if value != "" && err != nil {
+			return true
+		}
+		name, err := new(mime.WordDecoder).DecodeHeader(params[param])
+		if err != nil {
+			name = params[param]
+		}
+		if encryptedFileName(name) {
+			return true
+		}
+	}
+	return false
 }
 
 // agentText is a body as plain text: HTML flattened without links, control
@@ -847,7 +884,7 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 			folders = append(folders, "Sent")
 		}
 		for order, f := range folders {
-			candidates, err := client.SearchMessages(ctx, f, "subject", subject, maxAgentList)
+			candidates, err := client.SearchMessages(ctx, f, "subject", subject, maxAgentList, 0)
 			if err != nil {
 				continue // a Sent folder that does not exist is no thread
 			}
@@ -1046,13 +1083,13 @@ func (t mcpTools) moveMessages(ctx context.Context, _ *mcp.CallToolRequest, in m
 	})
 }
 
-// trashOrJunk is Trash or Junk, by name or by special-use role. Moving mail in
-// or out of either is a delete, an undelete or a spam verdict, and servers that
-// learn from moves train on it; agents get none of those.
+// trashOrJunk is Trash or Junk, by special-use role or by any name the adapter
+// falls back on for them. Moving mail in or out of either is a delete, an
+// undelete or a spam verdict, and servers that learn from moves train on it;
+// agents get none of those.
 func trashOrJunk(ctx context.Context, client imapadapter.Client, target string) bool {
 	target = strings.TrimSpace(target)
-	switch strings.ToLower(mailboxLeaf(target)) {
-	case "trash", "deleted items", "deleted messages", "bin", "junk", "spam", "junk e-mail", "junk email":
+	if imapadapter.TrashOrJunkName(mailboxLeaf(target)) {
 		return true
 	}
 	for path, role := range specialUseOf(ctx, client) {

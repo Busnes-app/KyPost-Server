@@ -495,8 +495,9 @@ type Client interface {
 	// below before (newest first), plus whether older messages remain.
 	ListOverviewsBefore(ctx context.Context, mailbox string, before, limit int) ([]Overview, bool, error)
 	// SearchMessages searches messages in mailbox by field (sender/subject/body/all)
-	// and returns the newest N matching messages as Overview objects.
-	SearchMessages(ctx context.Context, mailbox, field, query string, limit int) ([]Overview, error)
+	// and returns the newest N matching messages with a UID below before (no
+	// bound when before <= 0) as Overview objects.
+	SearchMessages(ctx context.Context, mailbox, field, query string, limit, before int) ([]Overview, error)
 	// GetMessageBodies fetches body content and attachment presence for
 	// exactly the given UIDs — called only for UIDs the mail cache reports as
 	// genuinely new. UIDs the server reports as oversized (see
@@ -1255,8 +1256,9 @@ func overviewsNewestFirst(ctx context.Context, d *goimap.Dialer, uids []int) ([]
 }
 
 // SearchMessages searches for messages in mailbox by field (sender/subject/body/all)
-// and returns the newest N matching messages as Overview objects.
-func (c *APIClient) SearchMessages(ctx context.Context, mailbox, field, query string, limit int) ([]Overview, error) {
+// and returns the newest N matching messages with a UID below before (no bound
+// when before <= 0) as Overview objects.
+func (c *APIClient) SearchMessages(ctx context.Context, mailbox, field, query string, limit, before int) ([]Overview, error) {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
 
@@ -1306,6 +1308,12 @@ func (c *APIClient) SearchMessages(ctx context.Context, mailbox, field, query st
 	}
 
 	sort.Ints(uids)
+	if before > 0 {
+		uids = uids[:sort.SearchInts(uids, before)]
+	}
+	if len(uids) == 0 {
+		return []Overview{}, nil
+	}
 
 	// Keep only the last (newest) `limit` results
 	if len(uids) > limit {
