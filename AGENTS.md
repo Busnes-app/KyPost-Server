@@ -111,7 +111,7 @@ Default section order:
 
 `Dockerfile`, `docker-compose.yml`, `supervisord.conf`, `.env.example`, `README.md`, `SECURITY.md`, `CHANGELOG.md`, `LICENSE.txt`, `LOGGING.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md` and everything under `docs/` are owned here, not by any child.
 
-- **`README.md` is the operator-facing surface, and it is the one that drifts.** Its Features summary and Project Structure, the full feature list in `docs/FEATURES.md`, the endpoint list in `docs/API.md`, and the environment-variable reference in `docs/CONFIGURATION.md` (plus `.env.example` and the compose passthrough, enforced by `scripts/check-env-example.sh`) each mirror something the code decides. A change that adds a route, an env var, a top-level directory, or a user-visible capability updates them in the same change set — a child `AGENTS.md` being correct does not discharge this, because operators do not read `AGENTS.md`.
+- **`README.md` is the operator-facing surface, and it is the one that drifts.** Its Features summary and `docs/ARCHITECTURE.md` Project Structure, the full feature list in `docs/FEATURES.md`, the endpoint list in `docs/API.md`, and the environment-variable reference in `docs/CONFIGURATION.md` (plus `.env.example` and the compose passthrough, enforced by `scripts/check-env-example.sh`) each mirror something the code decides. A change that adds a route, an env var, a top-level directory, or a user-visible capability updates them in the same change set — a child `AGENTS.md` being correct does not discharge this, because operators do not read `AGENTS.md`.
 - **`docs/guides/` holds the start-to-finish operator guides** (`NATIVE_MAIL.md`, `IMAP.md`, `CLOUDFLARED.md`). They link the deep docs rather than restating them; a change to a setup step, compose overlay, operator command or the error strings they quote updates the guide in the same change set.
 - **`docs/` holds the cross-repo contracts** the client repos (`kypost-android`, `kypost-Linux`, `kypost-for-Mac`) implement against: `E2E_PGP.md`, `PLATFORM_BASELINE.md`, `DEVICE_ENROLLMENT.md`, `WKD_Publishing.md`, `WEBMAIL_HANDOFF.md`, the server-to-server `KYCALENDAR.md` (with KyCalendar), plus the operator-facing `Reverse_Proxy_Networking.md`. Changing a behaviour another repo implements means changing the doc in the same change set; these files are the only place that agreement is written down.
 
@@ -193,3 +193,8 @@ Use this policy when context is tight. If any gate fails, stop and escalate.
 ## Operator documentation
 
 `INSTALL.md` is the root-owned standalone entry point. When installation prerequisites, bootstrap, persistence or verification change, update it together with `README.md` and the linked operator guides.
+
+
+## README and topic guides
+
+Keep `README.md` as the concise product overview and navigation. Detailed procedures live in `docs/RUNNING.md`, `docs/ARCHITECTURE.md`, `docs/PGP-KEYS.md`, `docs/ACCOUNTS.md`, `docs/AI-SORTING.md`, `docs/CLIENTS-AND-PUSH.md`, `docs/STORAGE-AND-RECOVERY.md`, `docs/DEVELOPMENT.md`, `docs/OPERATIONS.md`. Update the owning topic guide and preserve README links when a procedure changes. Commands in these guides run from the repository root.

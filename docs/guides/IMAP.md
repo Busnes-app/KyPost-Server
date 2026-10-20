@@ -78,7 +78,7 @@ You need Docker and Docker Compose.
 - Cloudflare Tunnel: [CLOUDFLARED.md](./CLOUDFLARED.md).
 - Your own reverse proxy, `kypost-net`, `TRUSTED_PROXY_CIDRS` and
   `TRUSTED_PROXY_HEADER`: [Reverse proxy networking](../Reverse_Proxy_Networking.md).
-- The full TLS discussion: [README Quick Start](../../README.md#quick-start).
+- The full TLS discussion: [README Quick Start](../RUNNING.md#quick-start).
 
 Verify after exposing: sign in and open `GET /api/status`. `clientIp` must be your own
 public address. Behind a proxy, `proxyHeadersTrusted` must be `true`.
@@ -200,13 +200,13 @@ How a message gets its label:
 4. Anything else goes to the Ollama model, checked against your allowed labels.
 
 Labels are a sorting hint a sender can influence, not a security boundary. Never build a
-rule that trusts a label. See [Architecture](../../README.md#architecture).
+rule that trusts a label. See [Architecture](../ARCHITECTURE.md#architecture).
 
 ### The model
 
 - Set `OLLAMA_MODEL` in `.env`. Default `nemotron-3-nano:4b`; `gemma4:e4b` resists
   prompt injection better but needs about three times the memory. See
-  [Choosing a classifier model](../../README.md#choosing-a-classifier-model).
+  [Choosing a classifier model](../AI-SORTING.md#choosing-a-classifier-model).
 - `CLASSIFIER_ENGINE=llm` turns off the on-device sorter. `EMBED_MIN_CONFIDENCE` sets
   how sure the sorter must be.
 - There is no model picker in the UI. **Email Labels → Prompt Tuning** shows the
@@ -244,7 +244,7 @@ rule that trusts a label. See [Architecture](../../README.md#architecture).
   a code mailed through your own SMTP server.
 - Sending quotas apply to immediate and scheduled mail. Over the limit, sending fails
   with `sending quota reached; try again in about N minutes`.
-- PGP: read [Where your PGP private key lives](../../README.md#where-your-pgp-private-key-lives)
+- PGP: read [Where your PGP private key lives](../PGP-KEYS.md#where-your-pgp-private-key-lives)
   before relying on it; the design is in [E2E_PGP.md](../E2E_PGP.md). Subjects are not
   encrypted by ordinary PGP/MIME, so your provider still sees them.
 
@@ -256,8 +256,8 @@ rule that trusts a label. See [Architecture](../../README.md#architecture).
 - **Settings → Security → Devices** pairs the mobile apps by QR code. It needs
   `SERVER_BASE_URL`. **App Pull** delivery fetches notifications straight from your
   server, bypassing Cloudflare and Firebase.
-- Details: [Mobile App Pairing](../../README.md#mobile-app-pairing-native) and
-  [Push Relays](../../README.md#push-relays-cloudflare-workers).
+- Details: [Mobile App Pairing](../CLIENTS-AND-PUSH.md#mobile-app-pairing-native) and
+  [Push Relays](../CLIENTS-AND-PUSH.md#push-relays-cloudflare-workers).
 
 ## 8. Backups
 
@@ -268,7 +268,7 @@ checkpoints.
 - **Sealed backups** (recommended): **Server → Backup**, to KyRecovery or a local
   directory. See [Sealed backup and restore](../RESTORE.md).
 - **Manual volume backup**: stop the container and archive all four volumes in one pass.
-  See [Backup and Restore](../../README.md#backup-and-restore).
+  See [Backup and Restore](../STORAGE-AND-RECOVERY.md#backup-and-restore).
 - Keep `kypost_private` with `kypost_config`. Without `imap-config.key` the stored
   credentials cannot be decrypted, and users must re-enter their passwords.
 

@@ -70,7 +70,7 @@ KyPost is honest about what it does and does not protect. Read these carefully b
 
 ### PGP Key Custody
 
-KyPost has two key protection modes. **Choose deliberately, not by accident.** See [Where your PGP private key lives](README.md#where-your-pgp-private-key-lives) for a complete explanation.
+KyPost has two key protection modes. **Choose deliberately, not by accident.** See [Where your PGP private key lives](docs/PGP-KEYS.md#where-your-pgp-private-key-lives) for a complete explanation.
 
 **Client-Protected (End-to-End):** Your browser generates or wraps the key under a password-derived key. The server cannot open it. Costs: you must unlock it each browser session, and admin operations cannot access your encrypted mail. Security can create an encrypted offline recovery backup in the browser; restoring it requires both the downloaded file and its separately displayed random secret. Neither the plaintext key nor the secret is sent to or stored by the server.
 
@@ -92,7 +92,7 @@ What an attacker can achieve: steer the label on **their own message** into a di
 
 **Encrypted mail also stays out of mobile push payloads.** Native push travels to the relay Worker and on to FCM/APNs in cleartext at every hop. For an encrypted message the sender and subject are withheld from that payload regardless of your Content Preview setting, because a third-party PGP/MIME message that does not use protected headers carries its real subject in the clear. Web push is unaffected—those payloads are encrypted to your browser's own subscription keys (RFC 8291), so Content Preview remains your choice there.
 
-See [Classification flow](README.md#architecture) for details.
+See [Classification flow](docs/ARCHITECTURE.md#architecture) for details.
 
 ### Email HTML Rendering
 
@@ -104,7 +104,7 @@ KyPost renders email HTML in a sandboxed iframe with DOMPurify sanitization. The
 
 ### Session Security
 
-See [Session Behavior](README.md#session-behavior) for full details. Key points:
+See [Session Behavior](docs/ACCOUNTS.md#session-behavior) for full details. Key points:
 
 - Sessions expire after 24 hours without activity (sliding window).
 - Sessions have a hard cap: 7 days from issue, regardless of activity. Stolen cookies cannot be kept alive indefinitely.
@@ -386,7 +386,7 @@ Security-sensitive PRs should include:
 
 ## Additional Resources
 
-- [README Security Section](README.md#where-your-pgp-private-key-lives) — PGP key custody, session behavior, users and roles
+- [README Security Section](docs/PGP-KEYS.md#where-your-pgp-private-key-lives) — PGP key custody, session behavior, users and roles
 - [Reverse Proxy Networking](docs/Reverse_Proxy_Networking.md) — Setting up a proxy on `kypost-net`
 - [TLS setup](docs/TLS.md) — TLS termination and proxy configuration
 - OWASP guidelines on secure development practices

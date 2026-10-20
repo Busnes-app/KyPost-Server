@@ -30,7 +30,7 @@ What it costs:
 
 If that is not acceptable, terminate TLS yourself instead: `TLS_CERT_FILE` /
 `TLS_KEY_FILE` in KyPost, or your own nginx/Caddy. See the TLS options in the
-[README Quick Start](../../README.md#quick-start).
+[README Quick Start](../RUNNING.md#quick-start).
 
 ## 2. Pick a topology
 
@@ -212,7 +212,7 @@ each pairing QR, KyPost makes a verified TLS connection to `SERVER_BASE_URL` and
 pins the certificate it gets back. Tunnel traffic leaves for Cloudflare's edge,
 so this works without NAT hairpinning. If the probe fails, the QR omits the pin
 and the app falls back to trust-on-first-use. See
-[Certificate pinning in the pairing QR](../../README.md#certificate-pinning-in-the-pairing-qr).
+[Certificate pinning in the pairing QR](../CLIENTS-AND-PUSH.md#certificate-pinning-in-the-pairing-qr).
 
 Every variable is explained in `.env.example`; the deeper rationale is in
 [SECURITY.md](../../SECURITY.md).

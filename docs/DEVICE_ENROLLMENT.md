@@ -9,9 +9,9 @@ how one gets minted.
 ## What this is for
 
 A client-protected private key is sealed under the account password. A phone pairs by
-QR and never learns that password, so it cannot open the envelope — which is why
-client-custody accounts are unusable outside the browser today, and why the legacy
-`server` custody mode cannot be retired.
+QR and never learns that password, so it cannot open the envelope. This
+motivated the device-envelope design. Server custody has since been retired: its old keys remain only for migration. Native support depends on each
+client’s implementation; an unenrolled or unsupported client uses webmail.
 
 Device enrollment gives each paired device its own sealing of the same key, opened by
 the device's secure element rather than by a passphrase. The device never learns the
