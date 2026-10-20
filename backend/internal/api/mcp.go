@@ -3,14 +3,9 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
-	"io"
 	"mime"
-	"mime/multipart"
-	"mime/quotedprintable"
 	"net/http"
-	"net/mail"
 	"net/textproto"
 	"regexp"
 	"slices"
@@ -20,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/inbucket/html2text"
+	"github.com/jhillyerd/enmime/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
@@ -649,10 +645,6 @@ func readForAgent(ctx context.Context, client imapadapter.Client, folder string,
 			return mcpMessage{}, errors.New(msgMailUnavailable)
 		}
 	}
-	// The raw walk decided; these are the reader's own verdicts, kept as a second opinion.
-	if c.PGPEncrypted || c.PGPEncryptedPayload != "" || strings.Contains(c.Body, pgpArmor) || slices.ContainsFunc(attachments, encryptedPart) {
-		return messageOf(client, folder, ov, true), nil
-	}
 	m := messageOf(client, folder, ov, false)
 	m.SenderControlled.Body, m.SenderControlled.BodyTruncated = agentText(c.Body, c.BodyMode, bodyCap)
 	for _, a := range attachments {
@@ -663,69 +655,64 @@ func readForAgent(ctx context.Context, client imapadapter.Client, folder string,
 
 const pgpArmor = "-----BEGIN PGP MESSAGE-----"
 
-// rawEncrypted walks every MIME part of raw, embedded messages included, and
-// reports whether any is encrypted: an encrypted Content-Type, or PGP armor in
-// a decoded body. Anything it cannot parse, or nesting past its limits, counts
-// as encrypted.
-func rawEncrypted(raw []byte) bool {
-	m, err := mail.ReadMessage(bytes.NewReader(raw))
-	if err != nil {
-		return true
-	}
-	parts := 0
-	return partEncrypted(textproto.MIMEHeader(m.Header), m.Body, 0, &parts)
+// rawEncrypted is the one encryption verdict every agent tool uses. It parses
+// raw with enmime, the reader's own decoder (transfer encoding and charset),
+// and walks every part, embedded messages included: an encrypted Content-Type
+// or file name, or PGP armor in decoded content, counts. So does anything it
+// cannot parse or decode, an unknown charset included, and nesting past its
+// limits. Each message is decoded twice, once as the reader does (charset
+// detection on) and once by declared charsets alone, so neither decoding can
+// hide armor the other shows.
+func rawEncrypted(raw []byte) bool { return rawEncryptedAt(raw, 0) }
+
+var agentParsers = []*enmime.Parser{
+	enmime.NewParser(enmime.MaxMIMEParts(256)),
+	enmime.NewParser(enmime.MaxMIMEParts(256), enmime.DisableCharacterDetection(true)),
 }
 
-func partEncrypted(h textproto.MIMEHeader, body io.Reader, depth int, parts *int) bool {
-	if *parts++; depth > 8 || *parts > 256 {
+func rawEncryptedAt(raw []byte, depth int) bool {
+	if depth > 8 {
 		return true
 	}
-	ct := h.Get("Content-Type")
-	if encryptedContentType(ct) || encryptedName(h) {
-		return true
-	}
-	mediaType, params, err := mime.ParseMediaType(ct)
-	if ct != "" && err != nil {
-		return true
-	}
-	switch {
-	case strings.HasPrefix(mediaType, "multipart/"):
-		if params["boundary"] == "" {
+	for _, parser := range agentParsers {
+		root, err := parser.ReadParts(bytes.NewReader(raw))
+		if err != nil || partEncrypted(root, depth) {
 			return true
 		}
-		r := multipart.NewReader(body, params["boundary"])
-		for seen := 0; ; seen++ {
-			p, err := r.NextRawPart()
-			// Exactly io.EOF: a boundary that never appears comes back wrapped, and
-			// a multipart with no part at all was never scanned.
-			if err == io.EOF { //nolint:errorlint // the wrapped EOF means "malformed"
-				return seen == 0
-			}
-			if err != nil || partEncrypted(p.Header, p, depth+1, parts) {
+	}
+	return false
+}
+
+func partEncrypted(p *enmime.Part, depth int) bool {
+	ct := p.Header.Get("Content-Type")
+	if _, _, err := mime.ParseMediaType(ct); ct != "" && err != nil {
+		return true
+	}
+	if encryptedContentType(ct) || encryptedName(p.Header) || encryptedFileName(p.FileName) {
+		return true
+	}
+	for _, e := range p.Errors {
+		switch e.Name {
+		case enmime.ErrorMissingContentType, enmime.ErrorCharsetDeclaration, enmime.ErrorPlainTextFromHTML:
+		default: // a failed decode, an unknown charset or a broken structure
+			return true
+		}
+	}
+	switch {
+	case strings.HasPrefix(p.ContentType, "multipart/"):
+		if p.FirstChild == nil {
+			return true
+		}
+		for c := p.FirstChild; c != nil; c = c.NextSibling {
+			if partEncrypted(c, depth) {
 				return true
 			}
 		}
-	case mediaType == "message/rfc822":
-		m, err := mail.ReadMessage(transferDecoded(h, body))
-		return err != nil || partEncrypted(textproto.MIMEHeader(m.Header), m.Body, depth+1, parts)
-	default:
-		data, err := io.ReadAll(transferDecoded(h, body))
-		return err != nil || bytes.Contains(data, []byte(pgpArmor))
+		return false
+	case p.ContentType == "message/rfc822":
+		return rawEncryptedAt(p.Content, depth+1)
 	}
-}
-
-func transferDecoded(h textproto.MIMEHeader, body io.Reader) io.Reader {
-	switch strings.ToLower(strings.TrimSpace(h.Get("Content-Transfer-Encoding"))) {
-	case "base64":
-		return base64.NewDecoder(base64.StdEncoding, body)
-	case "quoted-printable":
-		return quotedprintable.NewReader(body)
-	}
-	return body
-}
-
-func encryptedPart(a imapadapter.AttachmentInfo) bool {
-	return encryptedContentType(a.MimeType) || encryptedFileName(a.Name)
+	return bytes.Contains(p.Content, []byte(pgpArmor))
 }
 
 func encryptedFileName(name string) bool {

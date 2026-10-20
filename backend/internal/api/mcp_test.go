@@ -504,6 +504,37 @@ Content-Disposition: attachment; filename="report.pgp"`)),
 Content-Disposition: attachment; filename*=UTF-8''report%2Egpg`)),
 		"encoded-word .p7e attachment": w.deliver(t, binaryEncryptedMail("BIN-P7E", `Content-Type: application/octet-stream
 Content-Disposition: attachment; filename="=?utf-8?q?report=2Ep7e?="`)),
+		// Armor that appears only once the charset is decoded, as the reader does.
+		"utf-16 inline pgp": w.deliver(t, `From: sender@outside.test
+To: one@example.test
+Subject: SECRET-SUBJECT-UTF16
+Date: Mon, 19 Oct 2026 10:06:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-16
+Content-Transfer-Encoding: base64
+
+//4tAC0ALQAtAC0AQgBFAEcASQBOACAAUABHAFAAIABNAEUAUwBTAEEARwBFAC0ALQAtAC0ALQAN
+AAoADQAKAFMARQBDAFIARQBUAC0AVQBUAEYAMQA2AC0AQgBPAEQAWQANAAoALQAtAC0ALQAtAEUA
+TgBEACAAUABHAFAAIABNAEUAUwBTAEEARwBFAC0ALQAtAC0ALQANAAoA
+`),
+		// A charset nothing can decode might hide anything.
+		"unknown charset": w.deliver(t, `From: sender@outside.test
+To: one@example.test
+Subject: SECRET-SUBJECT-CHARSET
+Date: Mon, 19 Oct 2026 10:07:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="b4"
+
+--b4
+Content-Type: text/plain; charset=utf-8
+
+Readable part.
+--b4
+Content-Type: text/plain; charset=x-kypost-unknown
+
+SECRET-BODY-CHARSET
+--b4--
+`),
 	}
 	_, tok := seedAgentToken(t, w.srv, w.user.ID, state.AgentScopeRead, time.Now())
 	var seen bytes.Buffer
