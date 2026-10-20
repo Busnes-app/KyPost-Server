@@ -70,11 +70,11 @@ KyPost is honest about what it does and does not protect. Read these carefully b
 
 ### PGP Key Custody
 
-KyPost has two key protection modes. **Choose deliberately, not by accident.** See [Where your PGP private key lives](docs/PGP-KEYS.md#where-your-pgp-private-key-lives) for a complete explanation.
+Client-protected custody is the only supported key protection mode. See [Where your PGP private key lives](docs/PGP-KEYS.md#where-your-pgp-private-key-lives) for a complete explanation.
 
 **Client-Protected (End-to-End):** Your browser generates or wraps the key under a password-derived key. The server cannot open it. Costs: you must unlock it each browser session, and admin operations cannot access your encrypted mail. Security can create an encrypted offline recovery backup in the browser; restoring it requires both the downloaded file and its separately displayed random secret. Neither the plaintext key nor the secret is sent to or stored by the server.
 
-**Server-Protected:** The server holds a master key and unwraps your PGP key on demand. Convenience: automatic decryption, password resets work, background polling works. Cost: this is **not** end-to-end encryption. The server, and anyone with access to its disk (root, backup operators, disk seizure), can decrypt everything you receive. If you self-host, this may be acceptable. If someone else runs it, you are trusting them with plaintext mail.
+**Server-Protected (retired):** KyPost no longer generates or imports a private key the server can open, and it refuses to decrypt or sign with a legacy server-held key. An existing legacy key stays sealed under the server master key until its owner migrates it to client protection; until then the server, and anyone with access to its disk (root, backup operators, disk seizure), can still open that key. This is **not** end-to-end encryption, so migrate those accounts.
 
 ### Automatic Label Classification
 
@@ -214,7 +214,7 @@ If `clientIp` is a loopback or bridge address (e.g., `172.17.0.1`), every user s
 - **IMAP credentials:** Stored encrypted at `/kypost/private/imap-config.key` (master key) and per-user encrypted payloads. The key does not rotate; compromise of the key compromises all encrypted credentials.
 - **TOTP secrets:** Master key at `/kypost/private/totp-secret.key`. Same rotation caveat.
 - **Pairing secret:** `/kypost/private/pairing.key` (generated on first start). Must be identical across replicas if you run multiple.
-- **PGP server keys:** Master key at `/kypost/private/pgp-server-key` (only if using server-protected PGP mode).
+- **Legacy PGP server keys:** Master key at `/kypost/private/pgp-private-key.key`. It is kept only so legacy server-held keys can be exported for migration.
 
 All of these live in `/kypost/private`. **Back up this volume separately and store it securely.** Compromise of this directory compromises all user data.
 
@@ -275,7 +275,7 @@ User data is stored in `/kypost/config/users/<userID>/` and `/kypost/state/users
 
 - **IMAP credentials:** AES encryption with a master key (`imap-config.key`).
 - **TOTP secrets:** AES encryption with a master key (`totp-secret.key`).
-- **PGP keys (server-protected mode):** Encryption with a master key (`pgp-server-key`).
+- **Legacy PGP keys (retired server-protected mode):** Encryption with a master key (`pgp-private-key.key`), until the account migrates.
 - **PGP keys (client-protected mode):** Wrapped in the browser under a password-derived key; the server stores only the wrapped blob.
 - **Client recovery backups:** The downloaded backup contains a second browser-created AES-GCM envelope. Its recovery secret is shown once and is not stored by KyPost.
 
@@ -285,7 +285,7 @@ Unencrypted:
 - **Mailbox state:** IMAP checkpoint, processed message IDs, decision history (which labels were assigned to which messages).
 - **Configuration:** Tuning prompts, notification preferences, rules, contacts.
 
-**If the `/kypost/private` volume is compromised, all encrypted data is compromised.** This includes all IMAP credentials, TOTP secrets, and server-protected PGP keys.
+**If the `/kypost/private` volume is compromised, all encrypted data is compromised.** This includes all IMAP credentials, TOTP secrets, and unmigrated legacy server-held PGP keys.
 
 ### Encryption in Transit
 

@@ -321,9 +321,10 @@ still be the wrong feature for this project.
 
 ### If your trade-off is legitimate
 
-Plenty are. Server-protected PGP keys are a real security downgrade and they
-ship, because background polling and password resets are worth it to some
-people and the cost is stated in three places. That is the standard: not "no
+Plenty are. The server-held pickup-link fallback is a real security downgrade
+and it ships, because reaching a recipient without a key is worth it to some
+senders, it is off until the sender enables it, and Compose names the cost
+("server-held, 7 days") at the point of choice. That is the standard: not "no
 trade-offs," but **no unmarked trade-offs, and never as the default.**
 
 ## Documentation: The DOX Chain

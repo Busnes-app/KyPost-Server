@@ -48,6 +48,8 @@ non-prerelease version.
 - Correct the PGP documentation: server-protected key custody is retired, not
   a selectable mode. Describe the retained legacy migration path and distinguish
   it from client-sealed recovery and pickup copies. No key-handling code changes.
+  `SECURITY.md` and `CONTRIBUTING.md` now say the same, and name the legacy
+  master key by its real file, `pgp-private-key.key`.
 
 - Server → Backup no longer renders a blank page before the first local copy:
   the status API answered `localCopies: null` for an empty or missing
