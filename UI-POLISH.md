@@ -1,5 +1,7 @@
 # KyPost interface polish
 
+> Evidence scope: this document records the revision, environment and capture conditions below. Screenshots and generated fixtures demonstrate appearance; they do not qualify live email delivery, push delivery, recovery custody or every product feature. Test counts describe that recorded run, not the current suite.
+
 KyPost now has a quieter compose heading and writing area with visible security choices and a stable action footer. This implements the approved visual direction against the existing product; no mockup data or replacement application shell is shipped.
 
 ## Preserved
@@ -24,7 +26,7 @@ Before is the installation-campaign screenshot used for the approved proposal, w
 
 ## Checked
 
-`npm test`: 1155 tests passed. Production build passed. Typecheck, lint (0 errors; 18 existing warnings), 1,155 tests and production build passed. Native phone checks: no horizontal compose overflow, security choices visible above the footer, Schedule dialog opens/cancels, encryption still exposes the keyless fallback.
+At the recorded revision, typecheck, lint (0 errors; 18 existing warnings), 1,155 frontend tests and the production build passed. Native phone checks: no horizontal compose overflow, security choices visible above the footer, Schedule dialog opens/cancels, encryption still exposes the keyless fallback.
 
 The inspected phone state had no document-width overflow. This is targeted interface verification, not an exhaustive accessibility or nine-product integration qualification. Repository-wide CI, container/PostgreSQL/real-runtime checks and autonomous review remain separate gates.
 
