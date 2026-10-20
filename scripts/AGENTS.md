@@ -10,6 +10,8 @@ All files under `scripts/`.
 
 ## Local Contracts
 
+- `ensure-network.sh [NETWORK [SUBNET]]` owns network-only bootstrap for `kypost-net`, using KyPost's fixed Compose ownership labels. Matching reruns inspect only; foreign ownership/subnet/driver is preserved and refused. No server, volume or credential is created.
+
 ### Startup Sequence
 
 `entrypoint.sh` (runs `bootstrap.sh` synchronously, then chowns, then runs `kypost-server migrate-native` as `kypost`, then execs) → `supervisord` → `api`, `daemon`, `ollama`, `ollama-model` (parallel, priority 10)
@@ -49,6 +51,8 @@ All files under `scripts/`.
 - Do not raise `startretries` to "fix" a crash loop, and do not remove `crashexit`. Each alone reintroduces one of the two failure modes it exists to close: an invisible hot loop, or an invisible death. A program that genuinely cannot start should take the container down where an operator and an orchestrator can both see it
 
 ## Verification
+
+- `bash scripts/ensure-network.test.sh` uses two disposable Docker networks to prove network-only bootstrap, unchanged matching reruns and foreign-network preservation.
 
 - `python3 scripts/check-publish-main.py` executes the workflow gate against disposable local Git repositories: current tested main publishes, stale reruns and mismatched tested commits skip, and failed CI or remote lookup refuses publication.
 
