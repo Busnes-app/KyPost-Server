@@ -160,7 +160,8 @@ Classification flow:
 The location of your private key decides what PGP protects here. This question
 gets its own section for that reason, not a bullet.
 
-KyPost has two protection modes for your PGP private key.
+Client-protected keys are the only supported PGP key mode. Server-protected
+key custody has been retired; old keys remain available for migration.
 
 **Client-protected (end-to-end).** Your browser generates or imports the key.
 The browser then wraps the key under a key derived from your account password.
@@ -194,7 +195,7 @@ reaching logs, heap dumps and backups, and against someone who obtains the data
 at rest. That is the same trust boundary as every other end-to-end product
 delivered through a browser.
 
-The costs are real. Know them before you choose this mode:
+Keep these recovery and unlock requirements in mind:
 
 - **An admin password reset can strand the password-wrapped key.** Before
   you need a reset, use Security → Encryption to create a recovery copy and
@@ -213,39 +214,35 @@ The costs are real. Know them before you choose this mode:
   automatically.** That edit re-signs the key and needs the private half. The
   browser makes the edit, not the background poller.
 
-**Server-protected.** The server seals the key with a master key on the same
-volume and unwraps it whenever it needs to. You get the convenience: mail
-decrypts without you unlocking anything, a password reset never costs you the
-key, send-as addresses get signed in for you, and the background poller can do
-its work while no browser is open. Nothing about the key is your problem after
-setup.
+**Server-protected keys are retired.** KyPost no longer creates or imports a
+private key it can open, and it refuses server-side PGP decryption and signing
+with a legacy server-held key. The old generation/import endpoints return an
+error directing clients to the wrapped-key endpoint.
 
-You pay for that with the trust boundary. This mode is **not** end-to-end
-encryption, and earlier versions of this README described it as if it were. The
-server, and any person who can read that volume — whoever holds root, whoever
-holds a backup, whoever seizes the disk — can decrypt everything you have ever
-received. If you run this server yourself on hardware you control, that may be a
-trade you are happy to make. If someone else runs it, you are trusting them with
-your mail in the clear.
+Existing legacy keys are preserved so users can recover them. In Security →
+Encryption, use **Migrate to end-to-end**: after confirming the account
+credential, the browser receives the old key, wraps it under your password and
+uploads the wrapped copy. That upload removes the server-readable copy. Keep
+the legacy master key available until those accounts have migrated; the
+remaining export path is for recovery and migration, not a supported custody
+choice. A server-stored **recovery copy** is different: it is sealed under the
+user's separate recovery secret, which the server does not receive.
 
-Choose this mode deliberately, not by accident. If you decide the trade is not
-worth it, the Security page offers a one-time migration: it hands the key to your
-browser, rewraps it under your password, and deletes the server-readable copy.
-
-Some facts apply to both modes, and they are worth a plain statement:
+Other PGP boundaries:
 
 - **Ordinary PGP/MIME does not encrypt subject lines.** Your mail provider sees
-  them in both modes. KyPost protects the subject inside the encrypted part when
+  them. KyPost protects the subject inside the encrypted part when
   it can, but the outer header remains.
 - **Mobile push notifications are generic by default** for this reason. See
   Settings → Notifications.
-- **A recipient without a key can get a one-time pickup link.** KyPost stores
-  that message on this server and encrypts it with the server's own key. The
-  message stays until the recipient reads it or it expires. It is not end-to-end
-  encrypted. Nothing sent to a person with no key can be. This fallback is
-  opt-in, not automatic. An encrypted send to a keyless recipient fails with an
-  error unless the request asks for the pickup-link fallback. Plaintext
-  therefore never reaches the server as a side effect of an encrypted send.
+- **A recipient without a key can get an optional one-time pickup link.**
+  The browser seals the message and the server stores ciphertext. The opening
+  key is carried in the link fragment; the recipient decrypts in their browser.
+  This differs from PGP to a known recipient key: the notification is relayed
+  through SMTP, so the sending server and anyone who can read that notification
+  can see the link and its key. Keep that trade-off explicit. An encrypted send
+  to a keyless recipient refuses unless the user enables the fallback. See
+  [sealed pickup links](docs/E2E_PGP.md#sealed-pickup-links).
 
 ## Session Behavior
 

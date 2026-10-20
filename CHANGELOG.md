@@ -30,6 +30,10 @@ non-prerelease version.
 
 ### Fixed
 
+- Correct the PGP documentation: server-protected key custody is retired, not
+  a selectable mode. Describe the retained legacy migration path and distinguish
+  it from client-sealed recovery and pickup copies. No key-handling code changes.
+
 - Server → Backup no longer renders a blank page before the first local copy:
   the status API answered `localCopies: null` for an empty or missing
   `KYPOST_BACKUP_DIR` and now answers `[]`; the page also tolerates `null`.

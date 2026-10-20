@@ -135,7 +135,7 @@ PGP:
 
 - PGP snapshots expose `pgpRevision`; identity, envelope and password writes accept optional `expectedRevision` and reject stale updates with 409. Clients must use the revision from the snapshot that produced their ciphertext. The browser requires revision support for these writes; older clients may still omit it on unconverted accounts. Versioned keyring snapshots and internal atomic storage are prepared; converted records reject legacy single-key writes. Multi-key conversion is not enabled. See [the revision contract](E2E_PGP.md#pgp-revision-preconditions).
 
-- `POST /api/pgp/identity/generate` and `POST /api/pgp/identity/import`
+- `POST /api/pgp/identity/generate` and `POST /api/pgp/identity/import` are retired compatibility routes: both return 400 and direct clients to `/api/pgp/identity/client`; neither creates or imports a server-readable key.
 - `GET|DELETE /api/pgp/identity`
 - `POST /api/pgp/identity/client` (store a client-protected identity — the server never sees the private key)
 - `GET /api/pgp/identity/wrapped` and `POST /api/pgp/identity/rewrap` (fetch and repair the account-password-wrapped envelope; optional `expectedFingerprint` refuses a changed identity with 409)

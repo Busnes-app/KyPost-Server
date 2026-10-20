@@ -11,19 +11,26 @@ between the claim and the design is the thing this work closes.
 
 ## The model
 
-Two protection modes, recorded per user in `users.json` as
-`pgpKeyProtection`:
+Client-protected keys are the only supported mode. The browser generates or
+imports the private key, wraps it under a password-derived key, and uploads the
+wrapped blob to `POST /api/pgp/identity/client`. Decryption and signing happen
+in the browser or an enrolled capable client, not on the server.
 
-| | `server` (legacy) | `client` (end-to-end) |
+`pgpKeyProtection` in `users.json` still distinguishes `client` from legacy
+`server` records. A `server` record is migration state, not an available mode:
+
+| | Legacy `server` record | Supported `client` record |
 |---|---|---|
-| Private key stored as | `pgpPrivateKeyEnc` — AES-GCM under `SECRET_DIR/pgp-private-key.key` | `pgpPrivateKeyWrapped` — AES-GCM under a key derived from the user's password |
-| Server can decrypt mail | Yes | No |
-| Decryption happens | Server (`api/pgp_receive.go`) | Browser (`lib/pgpClient.ts`) |
-| Signing happens | Server (`handleMailSend`) | Browser, delivered via `POST /api/mail/send-pgp` |
-| Send-as User ID reconcile | Daemon, automatically | Browser, when the vault is unlocked |
+| Stored private key | `pgpPrivateKeyEnc`, sealed under the retained legacy master key | `pgpPrivateKeyWrapped`, sealed under the user's password-derived key |
+| Server decrypts or signs mail | Refused with migration guidance | Never; clients handle it |
+| New key creation/import | Old server endpoints return 400 | Browser wraps and uploads the key |
+| Recovery/migration | Credential-confirmed `export-legacy`, then client wrapping/upload | Password unlock or a separately sealed recovery/device envelope |
 
-`users.User.PGPProtection()` is the single source of truth; every server-side
-PGP path calls `HasServerReadableKey()` and refuses rather than assuming.
+The legacy master key can still open an old key for export. Migration removes
+the server-readable copy; existing keys and encrypted mail are not discarded.
+A server-stored recovery envelope does not restore server custody: its secret
+stays with the user. Older design sections below describe superseded behavior
+where explicitly labeled; they do not re-enable this retired mode.
 
 ### Device keyring preparation (gated)
 
@@ -193,12 +200,9 @@ specifically rather than reporting a generic decryption failure.
   sanitizer available, and the content is written by the sender.
 - Consumption happens on the blob fetch, not the page load, so a link-preview
   bot fetching the HTML does not burn the message.
-- Server-protected accounts keep the original server-sealed path. The server
-  can already read their mailbox, so client-sealing there adds machinery
-  without changing what it can see. That page renders as text too, for the
-  same reason — it stores the composed body's mode and flattens an HTML body
-  before escaping it, rather than escaping the markup and showing the
-  recipient the tags.
+- The old server-sealed pickup path belonged to retired server-custody
+  sending. Legacy accounts must migrate; it is not a fallback that can be
+  selected for new mail.
 
 ## Incoming mail encryption (opt-in)
 
@@ -821,6 +825,11 @@ used to downgrade silently, and now refuses instead unless the caller opts in.
 
 ## Mobile plan
 
+**Historical design and compatibility notes.** The former server-custody choice
+is retired. Device-envelope enrollment and each client’s implemented capabilities
+now determine native encrypted-mail support; use the client README and the
+[webmail handoff contract](WEBMAIL_HANDOFF.md) for current setup and fallback behavior.
+
 **Superseded.** An earlier version of this section prescribed porting the
 browser's crypto to Android and Qt. It ran into a constraint it had not
 accounted for, described below, and the answer changed. The old prescription is
@@ -848,28 +857,18 @@ Every way around that is worse:
 
 ### What we do instead
 
-Offer the user the choice, in the terms they can actually evaluate, and make the
-mobile app honest about which one is in force. Both modes already exist; this is
-a UI and copy problem, not new cryptography.
-
-| | `server` | `client` (default) |
-|---|---|---|
-| Server can read your mail | Yes | No |
-| Readable in the native mobile app | Yes | No — deep-links to webmail |
-
-The question the Security page asks is "read encrypted mail on your phone?", not
-"pick a key custody model". The mode follows from the answer. `client` stays the
-default so nothing downgrades by inattention, and the `server` branch is never
-described as end-to-end — advertising it that way is the defect this whole split
-exists to close.
-
-The choice is offered **at key creation only**. There is deliberately no
-downgrade path: `export-legacy` already refuses once an account is
-client-protected, and reversing that invariant to save a re-key is not a trade
-worth making. Switching from `client` to `server` means generating a new key,
-with the usual warning that mail encrypted to the old one stops being readable.
+Use client-protected keys and enroll capable devices with their own wrapped
+envelopes. A client without the required local support hands off to webmail.
+The Security page no longer offers a server/client custody choice at key
+creation. Both old server key-creation routes refuse, and there is no supported
+downgrade from client custody to server custody.
 
 ### What mobile apps must implement
+
+**Superseded compatibility plan:** the list below records the pre-retirement
+mobile behavior. Its server-custody send/decrypt branches are no longer
+operational. They must not be implemented as a current alternative; legacy
+accounts receive migration guidance.
 
 Degradation for `client`-custody accounts, unchanged: the phone never holds
 the unwrapped private key and cannot unwrap it without the account password,
