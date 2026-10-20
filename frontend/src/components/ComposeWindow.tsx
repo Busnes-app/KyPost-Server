@@ -111,7 +111,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
               <p className="compose-pgp-warning">{composeRecipientKeyWarning}</p>
             ) : null}
 
-            {composeError ? <p className="notice notice-error" style={{ margin: 0 }}>Send failed: {composeError}</p> : null}
+            {composeError ? <p className="notice notice-error" style={{ margin: 0 }}>{composeError}</p> : null}
             <PgpUnlockDialog
               open={composeUnlockOpen}
               reason={composeSnapshotPending.current ? "to restore your unsent draft" : "to sign and encrypt this message"}

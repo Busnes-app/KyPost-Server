@@ -47,11 +47,28 @@ Optional for local development (outside Docker):
    start without it — because the alternative is a silent default, and this port
    serves plain HTTP unless `TLS_CERT_FILE` is set. See [docs/TLS.md](docs/TLS.md).
 
-3. Build and start the container.
+3. Pull the published image and start the container.
 
    ```bash
-   docker compose up --build -d
+   docker compose pull && docker compose up -d
    ```
+
+   This runs `ghcr.io/busnes-app/kypost-server:stable`. To pin a release, set
+   `KYPOST_VERSION=0.4.2` (no `v`) in `.env` first. Verify the image before
+   relying on it: [Verifying an image by hand](#verifying-an-image-by-hand).
+   Building from source (`docker compose up --build -d`) still works, but
+   `scripts/update-host.sh` refuses a locally built image; see
+   [Moving a locally built install onto published images](#moving-a-locally-built-install-onto-published-images).
+
+   With AI sorting on, the container also starts Ollama and pulls
+   `OLLAMA_MODEL` (the default is about 2.9 GB resident; see
+   [Choosing a classifier model](#choosing-a-classifier-model)). Compose caps
+   the container at `KYPOST_MEM_LIMIT` (default `8g`). To skip Ollama, see
+   [Running without AI sorting](#running-without-ai-sorting).
+
+   The container joins the `kypost-net` network, which other Ky services share.
+   If you installed KyIdentity or KyNotes first, read
+   [When the network already exists](docs/Reverse_Proxy_Networking.md#when-the-network-already-exists).
 
 4. Open the web UI at http://localhost:5866.
 
@@ -336,7 +353,8 @@ mkdir -p share/ollama/models
 Set `KYPOST_DISABLE_AI_SORTING=true` in `.env` to turn off automatic labels for
 every account. Filter rules still run, and all other new mail gets the default
 label (Primary). Ollama is not started, no model is pulled, and the server never
-contacts Ollama. To drop Ollama from the image as well (about 1.7 GB smaller),
+contacts Ollama. Releases up to and including 0.4.2 ignore this variable and
+always start Ollama. To drop Ollama from the image as well (about 1.7 GB smaller),
 build it yourself:
 
 ```bash

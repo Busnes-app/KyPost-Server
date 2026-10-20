@@ -383,7 +383,8 @@ func (s *Service) InspectStatus() (Status, error) {
 		if err != nil {
 			return st, err
 		}
-		st.LocalCopies = copies
+		// ListLocalCopies returns nil for an empty or missing directory; keep JSON `[]`.
+		st.LocalCopies = append(st.LocalCopies, copies...)
 	}
 	iv, err := recoveryclient.Interval(s.cfg.DepositInterval, s.settings)
 	if err != nil {

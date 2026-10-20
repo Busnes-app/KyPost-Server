@@ -243,3 +243,25 @@ func TestClientSealedPickupNeedsNoServerKey(t *testing.T) {
 		t.Fatal("server-encrypted pickup accepted without key")
 	}
 }
+
+func TestStatusLocalCopiesEmptyIsJSONArray(t *testing.T) {
+	for name, dir := range map[string]string{"empty": t.TempDir(), "missing": filepath.Join(t.TempDir(), "absent")} {
+		t.Run(name, func(t *testing.T) {
+			s := openService(t, fixtureDirs(t), config.BackupConfig{Dir: dir, Keep: 1})
+			st, err := s.InspectStatus()
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(st)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				LocalCopies json.RawMessage `json:"localCopies"`
+			}
+			if err := json.Unmarshal(raw, &got); err != nil || string(got.LocalCopies) != "[]" {
+				t.Fatalf("localCopies = %s, %v", got.LocalCopies, err)
+			}
+		})
+	}
+}

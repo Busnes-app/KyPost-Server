@@ -85,6 +85,11 @@ Version1 JSON, with optional sections (at least one required):
 }
 ```
 
+Inline secrets are shown for brevity. To keep them out of the bundle, use
+target-held file references instead
+(`clientSecretFile`, `pairingSecretFile`, `recovery.codeFile`; see
+[Installer discovery and inspection](#installer-discovery-and-inspection)).
+
 Omit sections not yet available. Pairing-key setup is optional because base
 bootstrap already generates it; supplying it verifies the existing effective key.
 The pairing secret is a witness, never a key-creation request. It must match
@@ -178,6 +183,9 @@ signed directory replication remain the authority. New directory/browser identit
 and authorized links now retain a separate issuer binding; legacy unbound identities
 are bound to the configured issuer when the API starts, never by the installer, and
 cannot be claimed as installer-owned.
+Offboarding needs that replication paired separately: register KyPost's
+`POST /api/sync/webhook` in KyIdentity as a webhook system (see [API](API.md));
+`apply-setup` does not do it.
 External-IMAP administrator separation and full signed suite qualification remain gates.
 
 The public `GET /api/installer/network` returns exactly `clientIp`,

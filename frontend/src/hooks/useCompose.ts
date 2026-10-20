@@ -800,7 +800,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
           : keyless !== null
             ? `No PGP key on file for: ${keyless.join(", ")}. Tick "Secure link if no key" to send those recipients a one-time pickup link instead (stored on this server in plaintext for 7 days), or remove them from the recipients.`
             : toErrorMessage(e, "failed to send email");
-      setComposeError(message);
+      setComposeError(`Send failed: ${message}`);
     } finally {
       setComposeSending(false);
     }
@@ -872,8 +872,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       }
       setComposeSuccess("Draft saved.");
     } catch (e) {
-      const message = toErrorMessage(e, "failed to save draft");
-      setComposeError(message);
+      setComposeError(`Draft not saved: ${toErrorMessage(e, "failed to save draft")}`);
     } finally {
       setComposeSavingDraft(false);
     }

@@ -79,9 +79,11 @@ the name is stable across rebuilds) and set
 `TRUSTED_PROXY_HEADER=cf-connecting-ip` (see [Trusting the proxy](#trusting-the-proxy)).
 
 `external: true` goes on the **proxy** side only. This Compose project creates
-and owns the network, so bring KyPost up first. A proxy that starts first fails
-with `network kypost-net declared as external, but could not be found` — start
-it again once KyPost is up.
+the network when it does not exist yet, so bring KyPost up first where you can.
+A proxy that starts first fails with
+`network kypost-net declared as external, but could not be found` — start it
+again once KyPost is up, or see
+[When the network already exists](#when-the-network-already-exists).
 
 A proxy started with a plain `docker run` and no `--network` lands on Docker's
 default bridge, not here, and reaches the server only through the published
@@ -95,10 +97,35 @@ depend on this checkout's directory name, and a user-configured subnet is the
 prerequisite for the pinned `ipv4_address` — Docker rejects pinned addresses on
 any network it auto-configured, including the default bridge.
 
-## Do not create it by hand
+## When the network already exists
 
-`docker network create` produces a network without Compose's labels, which
-Compose refuses:
+KyIdentity and KyNotes join `kypost-net` as an external network, at
+`10.89.0.2` and `10.89.0.7` by default. Installed before KyPost, they need the
+network created first, with KyPost's subnet so its pinned `10.89.0.5` fits:
+
+```sh
+docker network create --subnet 10.89.0.0/24 kypost-net   # your KYPOST_SUBNET / KYPOST_NETWORK if changed
+```
+
+KyPost then uses it as is. Docker Compose 5.6 prints
+`a network with name kypost-net exists but was not created by compose` and
+continues. To declare it instead and drop the warning, put this in
+`docker-compose.override.yml` next to `docker-compose.yml` (`!reset` needs
+Compose 2.24 or later):
+
+```yaml
+networks:
+  kypost-net:
+    external: true
+    ipam: !reset {}
+```
+
+`scripts/update-host.sh` and the manual digest start in
+[the README](../README.md#verifying-an-image-by-hand) pass `-f docker-compose.yml`
+and never read the override; with an existing network they rely on the warning
+behaviour above.
+
+Older Compose releases refuse a network without Compose's labels:
 
 ```
 network kypost-net was found but has incorrect label
@@ -116,16 +143,16 @@ docker network rm kypost-net
 docker compose up -d                                   # recreates it, labelled
 ```
 
-Start the proxy again so it rejoins. Nothing is lost: the network holds no
-state, and both addresses are pinned, so the containers come back where they
-were.
+Start the proxy and other Ky services again so they rejoin. Nothing is lost:
+the network holds no state, and the addresses are pinned, so the containers
+come back where they were.
 
 ## Address allocation
 
-Keep this network to just the proxy and the server, or pin addresses high
-(`.200`, `.201`). Docker allocates dynamic addresses from the low end of the
-subnet, so a third container joining can be handed the address you pinned for
-something else.
+Ky services pin their own defaults (`.2` KyIdentity, `.5` KyPost, `.7`
+KyNotes). Pin anything else outside those, high (`.200`, `.201`). Docker
+allocates dynamic addresses from the low end of the subnet, so a container
+joining unpinned can be handed an address you pinned for something else.
 
 ## Subnet collisions
 
