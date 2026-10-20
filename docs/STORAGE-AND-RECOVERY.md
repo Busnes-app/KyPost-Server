@@ -143,6 +143,11 @@ printf 'services:\n  kypost-server:\n    image: %s\n' "$(cat backup-version.txt)
 docker compose -f docker-compose.yml -f docker-compose.restore.yml up -d
 ```
 
+This copies the volumes back as they were, credentials included: an AI agent
+token revoked after the backup works again. Ask users to revoke and recreate
+their tokens under Security → AI agents. A sealed-capsule restore
+([RESTORE.md](RESTORE.md)) revokes every agent token itself.
+
 ### Verify the restore
 
 A backup nobody has restored is a hypothesis. Check all four volumes actually

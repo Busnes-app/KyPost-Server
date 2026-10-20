@@ -977,6 +977,14 @@ func (s *Server) revokeUserCredentials(u users.User, keepSessionToken string, pr
 		s.logger.Error("failed to revoke carddav credential", "user_id", u.ID, "error", err.Error())
 		errs = append(errs, fmt.Errorf("remove CardDAV credential: %w", err))
 	}
+	// AI agent tokens. Without a global store none can be used either: withMCPAuth
+	// refuses every token then.
+	if s.globalStore != nil {
+		if err := s.globalStore.DeleteUserAgentTokens(context.Background(), u.ID); err != nil {
+			s.logger.Error("failed to revoke agent tokens", "user_id", u.ID, "error", err.Error())
+			errs = append(errs, fmt.Errorf("revoke AI agent tokens: %w", err))
+		}
+	}
 	// Cut off the linked SSO identity — by flag, and only for an account that
 	// has a credential of its own to fall back on.
 	//

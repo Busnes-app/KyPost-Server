@@ -10,9 +10,10 @@
  * CardDAV access is its own tab rather than a card under Devices: it is a
  * credential you issue for an app, not a device you paired, and it owns a
  * one-time secret whose loss is unrecoverable — which is hard to notice
- * appended below a device list.
+ * appended below a device list. AI agents is its own tab for the same reason:
+ * it issues one-time tokens, for agents rather than apps.
  */
-export const SECURITY_TABS = ["signin", "devices", "carddav", "mail", "import", "export"] as const;
+export const SECURITY_TABS = ["signin", "devices", "carddav", "agents", "mail", "import", "export"] as const;
 
 export type SecurityTab = (typeof SECURITY_TABS)[number];
 
@@ -20,6 +21,7 @@ export const SECURITY_TAB_LABELS: Record<SecurityTab, string> = {
   signin: "Sign-in",
   devices: "Devices",
   carddav: "CardDAV",
+  agents: "AI agents",
   // "Encryption", not "Mail": the tab holds nothing but the PGP key and who
   // can read with it, and "Mail" collided with the top-level Mail nav item
   // that goes somewhere else entirely. The `mail` slug stays — it is in

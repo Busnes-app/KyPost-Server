@@ -53,6 +53,13 @@ func (s *Store) SorterPrediction(messageID string) (check, predicted string, fou
 	return check, predicted, err == nil, err
 }
 
+// ForgetSorterPrediction drops messageID's prediction, so a later keyword
+// change on it is not learned as the user's correction.
+func (s *Store) ForgetSorterPrediction(messageID string) error {
+	_, err := s.db.Exec(`DELETE FROM sorter_predictions WHERE message_id = ?`, messageID)
+	return err
+}
+
 // RecordSorterCorrection records that the user filed messageID under label.
 // It learns only when the message has a recorded prediction whose check
 // matches; relabelling back to the sorter's own answer withdraws an earlier

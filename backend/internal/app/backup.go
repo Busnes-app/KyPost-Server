@@ -199,6 +199,9 @@ func runRestore(rest []string, stdin io.Reader, stdout io.Writer) error {
 	if err := state.FenceRestoredScheduledSends(filepath.Join(staging, "state")); err != nil {
 		return fmt.Errorf("cannot return restored scheduled mail to Drafts; preserve private staging %s for inspection: %w", stage, err)
 	}
+	if err := state.FenceRestoredAgentTokens(filepath.Join(staging, "state")); err != nil {
+		return fmt.Errorf("cannot revoke restored AI agent tokens; preserve private staging %s for inspection: %w", stage, err)
+	}
 	if native {
 		err = fsutil.PublishDirectory(staging, target)
 	} else {

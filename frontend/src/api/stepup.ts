@@ -26,13 +26,13 @@ export function stepUpChallenge(error: unknown): string | null {
  * one and runs it again with the grant. `run` must send the identical
  * request both times, because the grant is bound to it.
  */
-export async function withSSOStepUp<T>(run: (headers: Record<string, string>) => Promise<T>): Promise<T> {
+export async function withSSOStepUp<T>(run: (headers: Record<string, string>) => Promise<T>, purpose?: string): Promise<T> {
   try {
     return await run({});
   } catch (error) {
     const challenge = stepUpChallenge(error);
     if (!challenge) throw error;
-    await confirmSSOAction(challenge);
+    await confirmSSOAction(challenge, purpose);
     return run({ [STEP_UP_HEADER]: challenge });
   }
 }
@@ -47,7 +47,7 @@ const CONFIRMATION_WINDOW_MS = 5 * 60_000;
  * challenge verified. Cancelling or timing out drops the
  * challenge on the server.
  */
-export async function confirmSSOAction(challenge: string): Promise<void> {
+export async function confirmSSOAction(challenge: string, purpose?: string): Promise<void> {
   const endpoint = `/api/auth/oidc/step-up/${encodeURIComponent(challenge)}`;
   let popup: Window | null = null;
   let cancelled = false;
@@ -70,6 +70,9 @@ export async function confirmSSOAction(challenge: string): Promise<void> {
   const explanation = document.createElement("p");
   explanation.className = "contacts-muted";
   explanation.textContent = "Sign in again with KySignOn to authorize only the action you just requested.";
+  // Names what is being granted, so the confirmation never reads as a generic "an app wants access".
+  const what = document.createElement("p");
+  what.textContent = purpose ?? "";
   const proceed = document.createElement("button");
   proceed.type = "button";
   proceed.textContent = "Continue to KySignOn";
@@ -80,7 +83,7 @@ export async function confirmSSOAction(challenge: string): Promise<void> {
   const actions = document.createElement("div");
   actions.style.cssText = "display:flex;gap:8px;margin-top:16px;justify-content:flex-end";
   actions.append(cancel, proceed);
-  body.append(explanation, actions);
+  body.append(...(purpose ? [what] : []), explanation, actions);
   frame.append(head, body);
   dialog.append(frame);
   document.body.append(dialog);
