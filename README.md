@@ -33,6 +33,8 @@ KyPost is released under the [MIT License](LICENSE.txt).
 
 ## Documentation
 
+For Identity-first or Notes-only standalone installs, `bash scripts/ensure-network.sh` creates only the KyPost-owned shared bridge; no mail server is installed. See [network ownership and fixed-IP proxy setup](docs/Reverse_Proxy_Networking.md#when-the-network-already-exists).
+
 - [Running](docs/RUNNING.md) — Requirements, Quick Start, Ports. <a id="requirements"></a><a id="quick-start"></a><a id="ports"></a>
 - [Architecture](docs/ARCHITECTURE.md) — Architecture, Project Structure. <a id="architecture"></a><a id="project-structure"></a>
 - [PGP keys](docs/PGP-KEYS.md) — Where your PGP private key lives. <a id="where-your-pgp-private-key-lives"></a>

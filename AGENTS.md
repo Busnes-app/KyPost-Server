@@ -136,6 +136,8 @@ Default section order:
 
 ## User Preferences
 
+- KyPost is the sole owner of new shared `kypost-net` bridges. Other suite Compose projects and containerized NPM join externally; preserve pre-existing manually owned networks as explicit legacy exceptions. `scripts/ensure-network.sh` performs network-only bootstrap; `docs/Reverse_Proxy_Networking.md` owns creation, proxy trust and migration instructions.
+
 - Repeatable native installation is the next product milestone before full redeployment and recovery/capacity qualification. Read [installer setup](docs/INSTALLER_SETUP.md) for KyQuickStart G7, target-held bundles and acceptance gates; installation success must distinguish applied configuration from observed external delivery/backup readiness.
 
 - Optional `docker-compose.rspamd.yml` enables strict local pre-commit native SMTP scanning. Read [receiving spam setup](docs/RECEIVING_SETUP.md#optional-rspamd-sidecar) before changing policy, transport, sidecar permissions or metadata. Preserve accepted replay and exact mailbox bytes; scanning does not authorize mail movement or ownership. Read [Cloudflare pilot](docs/CLOUDFLARE_RECEIVING.md) before changing hosted capture, frozen claims, pickup credentials or scanner provenance; the one-message profile retains provider copies and does not enable continuous reception.

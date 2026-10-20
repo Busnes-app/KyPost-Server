@@ -99,13 +99,27 @@ any network it auto-configured, including the default bridge.
 
 ## When the network already exists
 
-KyIdentity and KyNotes join `kypost-net` as an external network, at
-`10.89.0.2` and `10.89.0.7` by default. Installed before KyPost, they need the
-network created first, with KyPost's subnet so its pinned `10.89.0.5` fits:
+KyPost is the sole owner for new suite installations. Create the network through
+the KyPost-owned network bootstrap before starting KyIdentity, KyNotes or a containerized NPM:
 
 ```sh
-docker network create --subnet 10.89.0.0/24 kypost-net   # your KYPOST_SUBNET / KYPOST_NETWORK if changed
+bash scripts/ensure-network.sh
 ```
+
+The script creates only a bridge with KyPost's Compose ownership labels, or verifies
+that the existing owner and subnet agree. It installs no mail service and touches
+no credentials or volumes. For custom `.env` values, pass their exact name/subnet:
+`bash scripts/ensure-network.sh MY_NETWORK MY_SUBNET`.
+
+Those projects join it as `external: true`, and only the proxy's fixed `/32` is
+trusted for forwarded headers. Keep its network membership and `ipv4_address` in
+its Compose file so they survive replacement. This is one network per Docker host;
+it does not provide cross-host DNS or routing.
+
+If the network is already manually owned, preserve it as a legacy exception.
+Do not remove it or relabel a live network to force ownership. The explicit KyPost
+external override below retains that existing owner's lifecycle:
+
 
 KyPost then uses it as is. Docker Compose 5.6 prints
 `a network with name kypost-net exists but was not created by compose` and
@@ -132,20 +146,11 @@ network kypost-net was found but has incorrect label
 com.docker.compose.network set to "" (expected: "kypost-net")
 ```
 
-To recover, hand it back to Compose:
-
-```sh
-docker compose down                                   # in this directory
-docker network inspect kypost-net \
-  -f '{{range .Containers}}{{.Name}} {{end}}'          # what is still attached
-docker network disconnect -f kypost-net <each>         # or stop those containers
-docker network rm kypost-net
-docker compose up -d                                   # recreates it, labelled
-```
-
-Start the proxy and other Ky services again so they rejoin. Nothing is lost:
-the network holds no state, and the addresses are pinned, so the containers
-come back where they were.
+Use the explicit external override above and include it in every `-f` invocation.
+Do not disconnect consumers, delete the live network or change its labels to satisfy
+Compose ownership. A legacy owner remains responsible for that network until the
+operator schedules a separate migration. Explicit-file update commands must include
+that override on older Compose versions; refusal is preferable to replacing the network.
 
 ## Address allocation
 

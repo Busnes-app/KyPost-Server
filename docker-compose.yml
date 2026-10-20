@@ -247,9 +247,9 @@ volumes:
 # and why the peer address is wrong without this:
 #   docs/Reverse_Proxy_Networking.md
 #
-# Compose creates it when absent. If KyIdentity or KyNotes needed it first,
-# create it with this subnet; see "When the network already exists" in the doc
-# above.
+# KyPost is the sole owner. Create it through this Compose project before
+# starting external consumers. Preserve pre-existing manually owned networks
+# with the explicit legacy external override in the networking runbook.
 networks:
   kypost-net:
     name: ${KYPOST_NETWORK:-kypost-net}
