@@ -28,6 +28,15 @@ non-prerelease version.
   `calendarReply` when it answers `kycalendar_off`. Contract:
   `docs/KYCALENDAR.md`.
 
+### Changes
+
+- Docs: the README quick start pulls the published image instead of building
+  from source, and names the Ollama memory cap (`KYPOST_MEM_LIMIT`, now in
+  `docs/CONFIGURATION.md`). `docs/Reverse_Proxy_Networking.md` covers starting
+  KyPost when KyIdentity or KyNotes already created `kypost-net`.
+  `docs/INSTALLER_SETUP.md` points to secret file references and the directory
+  webhook needed for offboarding.
+
 ## 0.4.2 — 2026-10-16
 
 0.4.0 was never published, so this is the first release after 0.3.0 and

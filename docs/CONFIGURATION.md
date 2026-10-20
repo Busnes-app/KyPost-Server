@@ -45,6 +45,7 @@ Common variables:
 - `EMBED_MODEL_DIR` (default `/opt/kypost/models/potion-base-8M`, installed by the Dockerfile. A missing or unreadable model is logged as an error and the daemon runs LLM-only.)
 - `TUNING_FILE` (default `/kypost/config/TUNING.md`)
 - `OLLAMA_MODELS_HOST_DIR` (default `./share/ollama/models`)
+- `KYPOST_MEM_LIMIT` (default `8g`) and `KYPOST_CPUS` (default `4.0`): the container's `mem_limit` and `cpus` in `docker-compose.yml`, not read by the server. The bundled Ollama and its model count against this limit.
 - `IMAP_CONFIG_FILE` (default `$SECRET_DIR/imap-config.json`)
 - `IMAP_CONFIG_KEY_FILE` (default `$SECRET_DIR/imap-config.key`)
 - `TOTP_SECRET_KEY_FILE` (default `$SECRET_DIR/totp-secret.key`)
