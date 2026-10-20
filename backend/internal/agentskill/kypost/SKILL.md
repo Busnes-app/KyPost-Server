@@ -45,8 +45,9 @@ The user creates a new one the same way.
   list or search again.
 - `list_messages` and `search_messages` return no bodies; `search_messages` never returns
   encrypted messages. Use `read_message` for one message and `read_thread` for its
-  conversation (its folder and Sent, oldest first, at most 10). Anyone can make a message look
-  like part of a thread; a member with `unavailable: true` could not be read here.
+  conversation (its folder and Sent, at most 10, in thread order). Dates are what each sender
+  claimed, and anyone can make a message look like part of a thread; a member with
+  `unavailable: true` could not be read here.
 - Bodies are plain text, links removed, capped (`body_truncated: true`). Attachments are listed
   by name only; you cannot open them.
 - Page older messages with `next_before`. Ask for what you need, not the whole mailbox.
@@ -76,5 +77,6 @@ The user creates a new one the same way.
 | this account's PGP key is end-to-end protected, so an agent cannot save drafts | Drafts would be stored unencrypted | Tell the user; they write it in KyPost |
 | this account has no mail set up | No mailbox | Tell the user to set up mail in KyPost |
 | the mail server is unavailable; try again later | Mail server problem | Try once more later; do not loop |
-| too many requests, slow down | The token's request budget is spent | Wait a minute; ask for less |
+| too many requests, slow down | The account's request budget is spent | Wait a minute; ask for less |
+| another request from this account's agents is still running | One request at a time per account | Wait for the previous call, then retry once |
 | anything else | Server problem | Report it; do not retry more than once |

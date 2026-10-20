@@ -156,8 +156,10 @@ type Server struct {
 	// address and per token owner; see withMCPAuth.
 	mcpLockout     *failureLockout
 	mcpUserLockout *failureLockout
-	// mcpCallLimiter meters every MCP tool call per agent token.
+	// mcpCallLimiter meters MCP requests and tool work per user; mcpBusy holds
+	// the users with an MCP request in flight (one each).
 	mcpCallLimiter *keyedLimiter
+	mcpBusy        sync.Map
 	mfaLockout     *failureLockout
 	// passwordChangeLockout bounds current-credential guessing on
 	// POST /api/auth/password, keyed on the acting user's ID.

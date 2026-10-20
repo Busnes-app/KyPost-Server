@@ -58,11 +58,13 @@ const (
 	maxAgentThread     = 10
 	maxAgentList       = 25
 	// Every tool call, reads included, spends one from the token's bucket.
-	mcpCallBurst        = 60
-	mcpCallRefillPerSec = 1.0
+	mcpCallBurst        = 120
+	mcpCallRefillPerSec = 2.0
 	maxAgentActionIDs   = 100
 	maxAgentDraftBody   = 256 << 10
-	maxAgentRecipients  = 100
+	// maxListedWalk is the largest message a listing walks for encryption.
+	maxListedWalk      = 4 << 20
+	maxAgentRecipients = 100
 )
 
 var mcpSchemas = mcp.NewSchemaCache()
@@ -196,7 +198,24 @@ func (s *Server) withMCPAuth(next http.Handler) http.Handler {
 			mcpChallenge(w)
 			return
 		}
-		_ = s.globalStore.TouchAgentToken(ctx, tok.ID, now.Unix())
+		// Per user, not per token: a user may hold 20 tokens. One request in flight
+		// per user bounds concurrency, which the rate alone does not.
+		if ok, wait := s.mcpCallLimiter.allow(user.ID); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": msgSlowDown})
+			return
+		}
+		if _, busy := s.mcpBusy.LoadOrStore(user.ID, true); busy {
+			w.Header().Set("Retry-After", "1")
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "another request from this account's agents is still running"})
+			return
+		}
+		defer s.mcpBusy.Delete(user.ID)
+		// Recorded at most once a minute: the idle limit is 90 days, and a write
+		// per request is a write an unmetered caller chooses.
+		if now.Unix()-tok.LastActive() > 60 {
+			_ = s.globalStore.TouchAgentToken(ctx, tok.ID, now.Unix())
+		}
 		ctx = context.WithValue(ctx, authContextKey{}, AuthContext{UserID: user.ID, Username: user.Username, Role: user.Role})
 		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, mcpCallerKey{}, mcpCaller{user: user, token: tok})))
 	})
@@ -228,7 +247,7 @@ func (s *Server) mcpServer(caller mcpCaller) *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{Name: "read_message", Annotations: read,
 		Description: "Read one message as plain text. End-to-end encrypted messages return metadata only." + contentNote}, t.readMessage)
 	mcp.AddTool(srv, &mcp.Tool{Name: "read_thread", Annotations: read,
-		Description: "Read the conversation a message belongs to, from its folder and Sent, oldest first. Encrypted messages return metadata only." + contentNote}, t.readThread)
+		Description: "Read the conversation a message belongs to, from its folder and Sent, in thread order (dates are what each sender claimed). Encrypted messages return metadata only." + contentNote}, t.readThread)
 	mcp.AddTool(srv, &mcp.Tool{Name: "apply_label", Annotations: write,
 		Description: "Add one of the user's labels to messages. Confirm with the user first."}, t.applyLabel)
 	mcp.AddTool(srv, &mcp.Tool{Name: "remove_label", Annotations: write,
@@ -247,12 +266,23 @@ type mcpTools struct {
 	caller mcpCaller
 }
 
+// Extra meter units a tool costs beyond the one every request pays, by how many
+// whole messages it may fetch.
+const (
+	costLight  = 0
+	costRead   = 1
+	costList   = 5
+	costThread = 10
+)
+
 // mail is the caller's primary mailbox client, bound as for every REST route.
-func (t mcpTools) mail() (imapadapter.Client, error) {
-	// Reads are metered too: each one is mail-server work on the user's own
-	// connection, and an agent loops.
-	if ok, _ := t.s.mcpCallLimiter.allow(t.caller.token.ID); !ok {
-		return nil, errors.New(msgSlowDown)
+// Reads are metered too: each one is mail-server work on the user's own
+// connection, and an agent loops.
+func (t mcpTools) mail(cost float64) (imapadapter.Client, error) {
+	if cost > 0 {
+		if ok, _ := t.s.mcpCallLimiter.admitCost(t.caller.user.ID, cost); !ok {
+			return nil, errors.New(msgSlowDown)
+		}
 	}
 	client, err := t.s.userMailClient(t.caller.user.ID)
 	if errors.Is(err, errIMAPNotConfigured) {
@@ -272,7 +302,7 @@ func (t mcpTools) organizer() (imapadapter.Client, error) {
 	if ok, _ := t.s.accountWriteLimiter.allow(t.caller.user.ID); !ok {
 		return nil, errors.New(msgSlowDown)
 	}
-	return t.mail()
+	return t.mail(costRead)
 }
 
 func agentFolder(folder string) (string, error) {
@@ -306,7 +336,7 @@ type listFoldersOut struct {
 }
 
 func (t mcpTools) listFolders(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, listFoldersOut, error) {
-	client, err := t.mail()
+	client, err := t.mail(costLight)
 	if err != nil {
 		return nil, listFoldersOut{}, err
 	}
@@ -411,7 +441,9 @@ func encryptedMessages(ctx context.Context, client imapadapter.Client, folder st
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		out[ov.MessageID] = err != nil || rawEncrypted(raw)
+		// A very large message is not walked here; it lists as encrypted, and
+		// read_message decides.
+		out[ov.MessageID] = err != nil || len(raw) > maxListedWalk || rawEncrypted(raw)
 	}
 	return out, nil
 }
@@ -454,7 +486,7 @@ func (t mcpTools) listMessages(ctx context.Context, _ *mcp.CallToolRequest, in l
 	if err != nil {
 		return nil, messagesOut{}, err
 	}
-	client, err := t.mail()
+	client, err := t.mail(costList)
 	if err != nil {
 		return nil, messagesOut{}, err
 	}
@@ -503,11 +535,13 @@ func (t mcpTools) searchMessages(ctx context.Context, _ *mcp.CallToolRequest, in
 	if err != nil {
 		return nil, messagesOut{}, err
 	}
-	client, err := t.mail()
+	client, err := t.mail(costList)
 	if err != nil {
 		return nil, messagesOut{}, err
 	}
-	results, err := client.SearchMessages(ctx, folder, field, query, agentLimit(in.Limit))
+	// Always the full page, then filter, then cut: a caller-chosen limit would let
+	// the count of results betray encrypted matches.
+	results, err := client.SearchMessages(ctx, folder, field, query, maxAgentList)
 	if err != nil {
 		return nil, messagesOut{}, errors.New(msgMailUnavailable)
 	}
@@ -518,6 +552,7 @@ func (t mcpTools) searchMessages(ctx context.Context, _ *mcp.CallToolRequest, in
 	// Encrypted messages are left out entirely: a hit would say that the words
 	// occur in one, and the server searched what the agent may not read.
 	msgs = slices.DeleteFunc(msgs, func(m mcpMessage) bool { return m.Encrypted })
+	msgs = msgs[:min(len(msgs), agentLimit(in.Limit))]
 	return nil, messagesOut{Notice: untrustedNotice, Messages: msgs}, nil
 }
 
@@ -536,7 +571,7 @@ func (t mcpTools) readMessage(ctx context.Context, _ *mcp.CallToolRequest, in re
 	if err != nil {
 		return nil, messageOut{}, err
 	}
-	client, err := t.mail()
+	client, err := t.mail(costRead)
 	if err != nil {
 		return nil, messageOut{}, err
 	}
@@ -758,7 +793,7 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 	if err != nil {
 		return nil, threadOut{}, err
 	}
-	client, err := t.mail()
+	client, err := t.mail(costThread)
 	if err != nil {
 		return nil, threadOut{}, err
 	}
@@ -777,14 +812,26 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 	}
 	root := imapadapter.HeaderMap(got)
 	ids := threadIDs(root)
-	// Membership comes from headers the sender wrote, so a stranger can claim a
-	// place in a thread; the requested message is always kept, and the rest are
-	// the newest that fit.
+	// Membership comes from headers senders wrote, so a stranger can claim a place
+	// in a thread, and Date is whatever they chose. Ranking uses neither: first
+	// the ancestors the requested message itself names (a later sender cannot
+	// forge those), nearest first, then later messages by server-assigned UID,
+	// newest first. The requested message is always kept.
+	ancestry := map[string]int{} // Message-ID -> distance from the requested message
+	parents := messageIDToken.FindAllString(strings.Join(root["References"], " "), -1)
+	for i, id := range parents {
+		ancestry[id] = len(parents) - i
+	}
+	for _, id := range messageIDToken.FindAllString(strings.Join(root["In-Reply-To"], " "), -1) {
+		ancestry[id] = 0
+	}
 	type member struct {
-		folder string
-		uid    int
-		date   string
-		ref    string
+		folder   string
+		order    int // the folder's place in the search: requested folder first
+		uid      int
+		ancestor int // distance, or -1 for a later message
+		date     string
+		ref      string
 	}
 	var others []member
 	subject := baseSubject(strings.Join(root["Subject"], " "))
@@ -798,17 +845,17 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 		if len(folders) == 1 && folder != "Sent" {
 			folders = append(folders, "Sent")
 		}
-		for _, f := range folders {
+		for order, f := range folders {
 			candidates, err := client.SearchMessages(ctx, f, "subject", subject, maxAgentList)
 			if err != nil {
 				continue // a Sent folder that does not exist is no thread
 			}
 			var uids []int
-			dates := map[string]string{}
+			dates := map[int]string{}
 			for _, c := range candidates {
 				if n, err := strconv.Atoi(c.MessageID); err == nil && (f != folder || n != uid) {
 					uids = append(uids, n)
-					dates[f+"\x00"+c.MessageID] = c.AtUTC
+					dates[n] = c.AtUTC
 				}
 			}
 			if len(uids) == 0 {
@@ -819,12 +866,24 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 				return nil, threadOut{}, errors.New(msgMailUnavailable)
 			}
 			for _, n := range uids {
-				for id := range threadIDs(imapadapter.HeaderMap(heads[n])) {
+				h := imapadapter.HeaderMap(heads[n])
+				linked := false
+				for id := range threadIDs(h) {
 					if ids[id] {
-						others = append(others, member{f, n, dates[f+"\x00"+strconv.Itoa(n)], imapadapter.MessageReference(client, strconv.Itoa(n))})
+						linked = true
 						break
 					}
 				}
+				if !linked {
+					continue
+				}
+				m := member{f, order, n, -1, dates[n], imapadapter.MessageReference(client, strconv.Itoa(n))}
+				for _, id := range messageIDToken.FindAllString(strings.Join(h["Message-Id"], " "), 1) {
+					if d, ok := ancestry[id]; ok {
+						m.ancestor = d
+					}
+				}
+				others = append(others, m)
 			}
 		}
 	}
@@ -832,12 +891,46 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 	if err != nil {
 		return nil, threadOut{}, err
 	}
-	out := threadOut{Notice: untrustedNotice, Messages: []mcpMessage{requested}}
-	slices.SortStableFunc(others, func(a, b member) int { return strings.Compare(b.date, a.date) })
+	// later is 0 for an ancestor, 1 for a later message.
+	later := func(m member) int {
+		if m.ancestor >= 0 {
+			return 0
+		}
+		return 1
+	}
+	slices.SortStableFunc(others, func(a, b member) int {
+		switch {
+		case later(a) != later(b):
+			return later(a) - later(b)
+		case a.ancestor >= 0:
+			return a.ancestor - b.ancestor
+		case a.order != b.order:
+			return a.order - b.order
+		}
+		return b.uid - a.uid
+	})
+	out := threadOut{Notice: untrustedNotice}
 	if len(others) > maxAgentThread-1 {
 		others, out.Truncated = others[:maxAgentThread-1], true
 	}
+	// Shown in thread order: farthest ancestor first, the requested message, then
+	// later messages oldest first, by UID within each folder.
+	slices.SortStableFunc(others, func(a, b member) int {
+		switch {
+		case later(a) != later(b):
+			return later(a) - later(b)
+		case a.ancestor >= 0:
+			return b.ancestor - a.ancestor
+		case a.order != b.order:
+			return a.order - b.order
+		}
+		return a.uid - b.uid
+	})
+	placed := false
 	for _, m := range others {
+		if m.ancestor < 0 && !placed {
+			out.Messages, placed = append(out.Messages, requested), true
+		}
 		msg, err := readForAgent(ctx, client, m.folder, m.uid, maxAgentThreadBody)
 		if err != nil {
 			// One unreadable member does not hide the rest of the conversation.
@@ -845,7 +938,9 @@ func (t mcpTools) readThread(ctx context.Context, _ *mcp.CallToolRequest, in rea
 		}
 		out.Messages = append(out.Messages, msg)
 	}
-	slices.SortStableFunc(out.Messages, func(a, b mcpMessage) int { return strings.Compare(a.Date, b.Date) })
+	if !placed {
+		out.Messages = append(out.Messages, requested)
+	}
 	return nil, out, nil
 }
 
@@ -924,7 +1019,11 @@ func (t mcpTools) moveMessages(ctx context.Context, _ *mcp.CallToolRequest, in m
 	if target == "" || imapadapter.ValidateMailboxName(target) != nil {
 		return nil, actionOut{}, errors.New("target must be a folder from list_folders")
 	}
-	if trashOrJunk(ctx, client, target) || trashOrJunk(ctx, client, in.Folder) {
+	source, err := agentFolder(in.Folder)
+	if err != nil {
+		return nil, actionOut{}, err
+	}
+	if trashOrJunk(ctx, client, target) || trashOrJunk(ctx, client, source) {
 		return nil, actionOut{}, errors.New(msgRefusedTarget)
 	}
 	// Only a folder that exists: a move must not create folders on the user's server.
@@ -935,7 +1034,7 @@ func (t mcpTools) moveMessages(ctx context.Context, _ *mcp.CallToolRequest, in m
 	if !strings.EqualFold(target, "INBOX") && !slices.ContainsFunc(paths, func(p string) bool { return strings.EqualFold(strings.TrimSpace(p), target) }) {
 		return nil, actionOut{}, errors.New("target must be a folder from list_folders")
 	}
-	return t.each(ctx, client, in.Folder, in.MessageIDs, "move", func(id, folder string) error {
+	return t.each(ctx, client, source, in.MessageIDs, "move", func(id, folder string) error {
 		return client.ApplyInboxAction(ctx, id, "move", folder, target)
 	})
 }
@@ -944,6 +1043,7 @@ func (t mcpTools) moveMessages(ctx context.Context, _ *mcp.CallToolRequest, in m
 // or out of either is a delete, an undelete or a spam verdict, and servers that
 // learn from moves train on it; agents get none of those.
 func trashOrJunk(ctx context.Context, client imapadapter.Client, target string) bool {
+	target = strings.TrimSpace(target)
 	switch strings.ToLower(mailboxLeaf(target)) {
 	case "trash", "deleted items", "deleted messages", "bin", "junk", "spam", "junk e-mail", "junk email":
 		return true
@@ -967,10 +1067,14 @@ func (t mcpTools) archiveMessages(ctx context.Context, _ *mcp.CallToolRequest, i
 	if err != nil {
 		return nil, actionOut{}, err
 	}
-	if trashOrJunk(ctx, client, in.Folder) {
+	source, err := agentFolder(in.Folder)
+	if err != nil {
+		return nil, actionOut{}, err
+	}
+	if trashOrJunk(ctx, client, source) {
 		return nil, actionOut{}, errors.New(msgRefusedTarget)
 	}
-	return t.each(ctx, client, in.Folder, in.MessageIDs, "archive", func(id, folder string) error {
+	return t.each(ctx, client, source, in.MessageIDs, "archive", func(id, folder string) error {
 		return client.ApplyInboxAction(ctx, id, "archive", folder, "")
 	})
 }
