@@ -187,3 +187,7 @@ Use this policy when context is tight. If any gate fails, stop and escalate.
 8. Tests required: unit + integration for new logic; regression for high-impact changes; CI must pass.
 9. Approval gates: reviewer-agent for security-sensitive work; human approval for major prod, security, config, or role changes.
 10. Change control: update docs + changelog/manifest in same change set; define rollback for major changes; document exceptions with owner, risk, and expiry.
+
+## Operator documentation
+
+`INSTALL.md` is the root-owned standalone entry point. When installation prerequisites, bootstrap, persistence or verification change, update it together with `README.md` and the linked operator guides.

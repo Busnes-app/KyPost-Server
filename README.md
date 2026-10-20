@@ -1,6 +1,9 @@
 # KyPost
 
-KyPost is self-hosted email. Use it as a web client for the IMAP account you already have, or let it host your mailboxes as well. It encrypts with OpenPGP, so you can exchange end-to-end encrypted mail with anyone who uses PGP; mail in both directions has been tested with Proton Mail. A local Ollama model sorts your unencrypted mail into labels without it leaving your server, and encrypted mail is never sent to the model. The iOS, Android and Linux phone apps get native push notifications.
+**Start here:** [Standalone installation](INSTALL.md) → [existing IMAP/SMTP account](docs/guides/IMAP.md).
+KyIdentity, KyRecovery and the native clients are optional. Real mail access needs a working mailbox and sending service; a healthy web UI alone does not verify delivery.
+
+KyPost is self-hosted email. Use it as a web client for the IMAP account you already have, or let it host your mailboxes as well. It encrypts with OpenPGP, so you can exchange end-to-end encrypted mail with anyone who uses PGP; interoperability depends on the correspondent’s PGP implementation and needs a real send/receive check for your configuration. A local Ollama model sorts your unencrypted mail into labels without it leaving your server, and encrypted mail is never sent to the model. The iOS, Android and Linux phone apps get native push notifications.
 
 Hosting your own mailboxes is opt-in, and receiving mail for them is still in qualification. To rely on KyPost today, connect it to an existing IMAP server.
 
@@ -29,9 +32,9 @@ The full list, with the trade-offs each feature carries, is in [docs/FEATURES.md
 
 Optional for local development (outside Docker):
 
-- Go 1.26+
-- Node.js 20+
-- npm
+- Go 1.27.2 (the toolchain pinned in `backend/go.mod`)
+- Node.js 26.11.1 (see `frontend/.nvmrc`)
+- The npm version bundled with that Node release; install dependencies with `npm ci`
 
 ## Quick Start
 
@@ -95,7 +98,7 @@ Optional for local development (outside Docker):
    `environment:` (for example in a `docker-compose.override.yml`) for that run.
 6. Change the password when KyPost prompts you. Until you change it, the
    account can reach only the password-change screen.
-7. In Settings → Mail → Email Settings, enter your IMAP/SMTP account, press
+7. Create a separate everyday account and sign in as that user. In Settings → Mail → Email Settings, enter your IMAP/SMTP account, press
    Save Email Settings, then Test Email Settings (the test checks IMAP only).
 8. In Email Labels, adjust Your Labels and Prompt Tuning. Then save.
 
