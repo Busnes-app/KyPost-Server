@@ -30,6 +30,8 @@ non-prerelease version.
 
 ### Fixed
 
+- Remove the pre-launch README’s obsolete Busnes-app owner-move upgrade section.
+
 - Correct the PGP documentation: server-protected key custody is retired, not
   a selectable mode. Describe the retained legacy migration path and distinguish
   it from client-sealed recovery and pickup copies. No key-handling code changes.
