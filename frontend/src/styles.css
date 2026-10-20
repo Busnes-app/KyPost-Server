@@ -5418,3 +5418,31 @@ pre {
   color-scheme: dark;
 }
 }
+
+/* Compose: a quiet heading, writing surface, then stable security and send actions. */
+.compose-window { padding: 0; gap: 0; overflow-y: auto; width: min(960px, 96vw); }
+.compose-topbar { padding: 18px 24px; }
+.compose-topbar h2 { margin: 0; font-size: 18px; letter-spacing: -.015em; }
+.compose-connection-hint { padding: 12px 24px; margin: 0; font-size: 12px; color: var(--ink); line-height: 1.5; background: var(--bg); border-bottom: 1px solid var(--line); }
+.compose-window > .compose-form-grid { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: var(--panel); padding: 16px 24px; gap: 10px; }
+.compose-form-grid .compose-field-row { grid-template-columns: 64px minmax(0, 1fr); }
+.compose-field-row > span { font-size: 12px; font-weight: 500; color: var(--ink); }
+.compose-window > .compose-editor-html { margin: 0 24px 16px; width: auto; min-width: 0; min-height: 180px; flex: 1 0 180px; }
+.compose-window > .compose-attachments { margin: 12px 24px 0; }
+.compose-security { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 24px; border-top: 1px solid var(--line); background: var(--bg); }
+.compose-security label { min-height: 32px; color: var(--ink-strong); }
+.compose-security input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+.compose-actionbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 16px 24px; border-top: 1px solid var(--line); background: var(--panel); }
+.compose-actionbar button { min-height: 40px; font-size: 13px; }
+.compose-actionbar .compose-send { color: var(--button-text); min-width: 88px; }
+.compose-actionbar .compose-save-draft { background: var(--panel); border-color: var(--line); color: var(--ink-strong); }
+.compose-actionbar .compose-attach { border-color: transparent; }
+.compose-actionbar .compose-trash { margin-left: auto; }
+.compose-window > .notice, .compose-window > .compose-pgp-warning { padding: 12px 24px; }
+@media (max-width: 600px) { .compose-window { width: 100%; max-height: 100dvh; border-radius: 0; } .compose-topbar, .compose-connection-hint, .compose-security, .compose-actionbar { padding-inline: 16px; } .compose-window > .compose-form-grid { padding-inline: 16px; } .compose-window > .compose-editor-html { margin-inline: 16px; } .compose-form-grid .compose-field-row { grid-template-columns: 48px minmax(0, 1fr); } .compose-actionbar { gap: 6px; } .compose-actionbar .compose-trash { margin-left: 0; } }
+
+.compose-window > .ql-toolbar { margin: 16px 24px 0; width: auto; border-color: var(--line); }
+.compose-window > .compose-editor-html .ql-editor { min-height: 180px; }
+.compose-footer { position: sticky; bottom: 0; flex: 0 0 auto; background: var(--panel); z-index: 2; }
+.compose-footer .compose-actionbar { position: static; }
+@media (max-width: 600px) { .compose-window > .ql-toolbar { margin-inline: 16px; } }

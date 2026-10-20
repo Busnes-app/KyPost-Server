@@ -33,6 +33,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
       <dialog
         ref={composeDialogRef}
         className="compose-backdrop"
+        aria-labelledby="compose-window-title"
         onCancel={(event) => {
           if (composeSending) {
             event.preventDefault();
@@ -51,62 +52,10 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
             onClick={(event) => event.stopPropagation()}
           >
             <div className="compose-topbar">
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button type="button" className="compose-send" onClick={() => void sendComposeEmail()} disabled={composeSending || composeSavingDraft}>{composeSending ? "Sending..." : "Send"}</button>
-                <button type="button" className="compose-save-draft" onClick={() => setScheduleOpen(true)} disabled={composeSending || composeSavingDraft}>Schedule…</button>
-                <button type="button" className="compose-save-draft" onClick={() => void saveComposeDraft()} disabled={composeSending || composeSavingDraft}>Save Draft</button>
-                <button type="button" className="compose-attach" onClick={() => attachmentInputRef.current?.click()} disabled={composeSending || composeSavingDraft}>📎 Attach</button>
-                <button type="button" className="compose-attach" onClick={() => setContactPickerOpen(true)} disabled={composeSending || composeSavingDraft}>📇 Contacts</button>
-                <button type="button" className="compose-trash" onClick={trashComposeDraft} disabled={composeSending || composeSavingDraft}>Trash</button>
-                <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.85rem" }}>
-                  <input
-                    type="checkbox"
-                    checked={composeEncrypt}
-                    onChange={(e) => {
-                      setComposeEncryptOverridden(true);
-                      setComposeEncrypt(e.target.checked);
-                    }}
-                  />
-                  Encrypt
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.85rem" }}>
-                  <input type="checkbox" checked={composeSign} onChange={(e) => {
-                    composeSignOverridden.current = true;
-                    setComposeSign(e.target.checked);
-                  }} />
-                  Sign
-                </label>
-                {!composeSign ? <span className="security-badge security-badge-off">Unsigned</span> : null}
-                {composeEncrypt ? (
-                  <label
-                    style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.85rem" }}
-                    title={
-                      isClientProtected()
-                        ? "Recipients with no PGP key get a one-time link instead. The message is encrypted in your browser " +
-                          "and this server only stores ciphertext — but the key is in the link, so anyone who can read that " +
-                          "email can read the message. Weaker than PGP."
-                        : "Recipients with no PGP key get a one-time link instead. The message is stored on this server in " +
-                          "plaintext for 7 days, and the link travels as ordinary unencrypted mail. Weaker than PGP."
-                    }
-                  >
-                    <input
-                      type="checkbox"
-                      checked={composeSendLinkForKeyless}
-                      onChange={(e) => setComposeSendLinkForKeyless(e.target.checked)}
-                    />
-                    {isClientProtected() ? "Secure link if no key (browser-sealed)" : "Secure link if no key (server-held, 7 days)"}
-                  </label>
-                ) : null}
-                <input
-                  ref={attachmentInputRef}
-                  type="file"
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(event) => void handleAttachmentPick(event)}
-                />
-              </div>
+              <h2 id="compose-window-title">New message</h2>
               <button type="button" className="compose-close" onClick={closeComposeWindow} disabled={composeSending || composeSavingDraft}>Close</button>
             </div>
+            <p className="compose-connection-hint">Send and Save Draft use this mailbox's mail connection. Check your mail account settings if the connection is unavailable.</p>
             {composeRecipientKeyWarning ? (
               <p className="compose-pgp-warning">{composeRecipientKeyWarning}</p>
             ) : null}
@@ -237,6 +186,64 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                 }
               }}
             />
+            <footer className="compose-footer">
+            <div className="compose-security" role="group" aria-label="Message security">
+                <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.85rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={composeEncrypt}
+                    onChange={(e) => {
+                      setComposeEncryptOverridden(true);
+                      setComposeEncrypt(e.target.checked);
+                    }}
+                  />
+                  Encrypt
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.85rem" }}>
+                  <input type="checkbox" checked={composeSign} onChange={(e) => {
+                    composeSignOverridden.current = true;
+                    setComposeSign(e.target.checked);
+                  }} />
+                  Sign
+                </label>
+                {!composeSign ? <span className="security-badge security-badge-off">Unsigned</span> : null}
+                {composeEncrypt ? (
+                  <label
+                    style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.85rem" }}
+                    title={
+                      isClientProtected()
+                        ? "Recipients with no PGP key get a one-time link instead. The message is encrypted in your browser " +
+                          "and this server only stores ciphertext — but the key is in the link, so anyone who can read that " +
+                          "email can read the message. Weaker than PGP."
+                        : "Recipients with no PGP key get a one-time link instead. The message is stored on this server in " +
+                          "plaintext for 7 days, and the link travels as ordinary unencrypted mail. Weaker than PGP."
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={composeSendLinkForKeyless}
+                      onChange={(e) => setComposeSendLinkForKeyless(e.target.checked)}
+                    />
+                    {isClientProtected() ? "Secure link if no key (browser-sealed)" : "Secure link if no key (server-held, 7 days)"}
+                  </label>
+                ) : null}
+                <input
+                  ref={attachmentInputRef}
+                  type="file"
+                  multiple
+                  style={{ display: "none" }}
+                  onChange={(event) => void handleAttachmentPick(event)}
+                />
+            </div>
+            <div className="compose-actionbar" role="group" aria-label="Message actions">
+                <button type="button" className="compose-send" onClick={() => void sendComposeEmail()} disabled={composeSending || composeSavingDraft}>{composeSending ? "Sending..." : "Send"}</button>
+                <button type="button" className="compose-save-draft" onClick={() => setScheduleOpen(true)} disabled={composeSending || composeSavingDraft}>Schedule…</button>
+                <button type="button" className="compose-save-draft" onClick={() => void saveComposeDraft()} disabled={composeSending || composeSavingDraft}>Save Draft</button>
+                <button type="button" className="compose-attach" onClick={() => attachmentInputRef.current?.click()} disabled={composeSending || composeSavingDraft}>Attach</button>
+                <button type="button" className="compose-attach" onClick={() => setContactPickerOpen(true)} disabled={composeSending || composeSavingDraft}>Contacts</button>
+                <button type="button" className="compose-trash" onClick={trashComposeDraft} disabled={composeSending || composeSavingDraft}>Trash</button>
+            </div>
+            </footer>
           </section>
       </dialog>
       <ContactPickerModal
