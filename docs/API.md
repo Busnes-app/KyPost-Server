@@ -188,6 +188,16 @@ CardDAV server (address book sync for phones and desktop apps. A per-user DAV pa
 - `/.well-known/carddav`
 - `/dav/...`
 
+AI agents (MCP):
+
+- `GET /api/agent-tokens` (the signed-in user's AI agent tokens: label, scope `mcp:read` or `mcp:organize`, last use, `revokeAfter`; never the token)
+- `POST /api/agent-tokens` (step-up: `authSecret` or KySignOn; `{label, scope}`, scope required; returns the token once; 20 per user, 403 for administrators)
+- `PUT /api/agent-tokens/{id}` (step-up; `{scope}`, changes the access level)
+- POST, PUT and DELETE above also need the session's CSRF token and refuse a foreign or opaque `Origin` or `Sec-Fetch-Site: cross-site` with 403
+- `DELETE /api/agent-tokens/{id}` (revokes the token)
+- `POST /mcp` (MCP Streamable HTTP, stateless JSON responses; `Authorization: Bearer kp_<id>_<secret>` only, refused with any `Origin` and never sends CORS headers; 401 with `WWW-Authenticate: Bearer` for a missing, wrong, revoked or idle token; 10 failures per address and 50 per owner in 15 minutes give 429)
+- `GET /agent/skills/kypost/SKILL.md` (public; the agent skill matching this instance's tools)
+
 Notifications (scoped to the signed-in user unless noted):
 
 - `GET|PUT /api/notifications/preferences`

@@ -100,7 +100,7 @@ func (f *fakeMailClient) ListOverviewsBefore(_ context.Context, _ string, before
 	return f.olderOverviews, f.olderHasMore, f.overviewsErr
 }
 
-func (f *fakeMailClient) SearchMessages(_ context.Context, _ string, _ string, _ string, _ int) ([]imapadapter.Overview, error) {
+func (f *fakeMailClient) SearchMessages(_ context.Context, _ string, _ string, _ string, _, _ int) ([]imapadapter.Overview, error) {
 	f.searchCalls++
 	if f.searchErr != nil {
 		return nil, f.searchErr

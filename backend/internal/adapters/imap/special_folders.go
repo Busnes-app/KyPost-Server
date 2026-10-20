@@ -11,6 +11,7 @@ package imap
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	goimap "github.com/BrianLeishman/go-imap"
@@ -36,6 +37,14 @@ var folderNameAliases = map[string][]string{
 	useArchive: {"Archive", "Archives"},
 	useSent:    {"Sent", "Sent Items", "Sent Messages", "Sent Mail"},
 	useDrafts:  {"Drafts", "Draft"},
+}
+
+// TrashOrJunkName reports whether leaf is one of the names resolve falls back on
+// for Trash or Junk.
+func TrashOrJunkName(leaf string) bool {
+	return slices.ContainsFunc(slices.Concat(folderNameAliases[useTrash], folderNameAliases[useJunk]), func(alias string) bool {
+		return strings.EqualFold(strings.TrimSpace(leaf), alias)
+	})
 }
 
 // folderIndex is one snapshot of the server's mailbox list: what exists, how

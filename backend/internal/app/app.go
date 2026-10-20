@@ -344,6 +344,7 @@ func startBackgroundSweepers(ctx context.Context, srv *api.Server, logger *loggi
 		srv.StartUserStoreSweeper,
 		srv.StartVersionMonitor,
 		srv.StartScheduledSendSweeper,
+		srv.StartAgentTokenSweeper,
 	}...)
 }
 

@@ -196,7 +196,7 @@ func TestNativeClientPGPMIMEAndSenderBinding(t *testing.T) {
 	if overviews[0].SenderBindingAddress != "" || bodies[uid].Sender != "" {
 		t.Fatal("multiple senders bound to one signer")
 	}
-	hits, err := c.SearchMessages(ctx, "", "body", "private plaintext", 10)
+	hits, err := c.SearchMessages(ctx, "", "body", "private plaintext", 10, 0)
 	must(t, err)
 	if len(hits) != 1 {
 		t.Fatal("search exposed encrypted plaintext or missed signed cleartext")
@@ -226,7 +226,7 @@ func TestNativeClientPollSearchDraftsAndBounds(t *testing.T) {
 		if field == "subject" {
 			query = "first"
 		}
-		hits, err := c.SearchMessages(ctx, "", field, query, 10)
+		hits, err := c.SearchMessages(ctx, "", field, query, 10, 0)
 		must(t, err)
 		if len(hits) == 0 {
 			t.Fatalf("search %s failed", field)
@@ -344,12 +344,12 @@ func TestNativeClientMalformedMIMEIsPerMessage(t *testing.T) {
 	if !bytes.Equal(exact, malformed) {
 		t.Fatal("malformed raw discarded")
 	}
-	hits, err := c.SearchMessages(ctx, "", "all", "custom-header-value", 10)
+	hits, err := c.SearchMessages(ctx, "", "all", "custom-header-value", 10, 0)
 	must(t, err)
 	if len(hits) != 1 || hits[0].UID != bad {
 		t.Fatal("all search omitted raw headers")
 	}
-	hits, err = c.SearchMessages(ctx, "", "all", "alice@example.test", 10)
+	hits, err = c.SearchMessages(ctx, "", "all", "alice@example.test", 10, 0)
 	must(t, err)
 	if len(hits) != 1 || hits[0].UID != good {
 		t.Fatal("all search omitted recipients")

@@ -130,6 +130,8 @@ func (s *Server) handleUsersUpdate(w http.ResponseWriter, r *http.Request) {
 		writeUserStoreError(w, err)
 		return
 	}
+	// An agent token belongs to an everyday identity; a role change ends it.
+	s.revokeAgentTokens(u.ID)
 	s.logger.Info("user role updated", "user_id", u.ID, "role", string(u.Role))
 	writeJSON(w, http.StatusOK, u.Public())
 }

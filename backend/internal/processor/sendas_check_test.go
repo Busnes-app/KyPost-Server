@@ -42,7 +42,7 @@ type stubSendAsMailClient struct {
 	rawCalls      []int
 }
 
-func (c *stubSendAsMailClient) SearchMessages(_ context.Context, _, _, query string, _ int) ([]imapadapter.Overview, error) {
+func (c *stubSendAsMailClient) SearchMessages(_ context.Context, _, _, query string, _, _ int) ([]imapadapter.Overview, error) {
 	c.searchCalls = append(c.searchCalls, query)
 	if c.searchErr != nil {
 		return nil, c.searchErr
