@@ -19,11 +19,11 @@ vi.mock("./lib/pgpSession", () => ({
 }));
 
 const TEAM = "mbx-11111111-2222-4333-8444-555555555555";
-const primary = { id: "u1", kind: "primary", addresses: [{ address: "me@urlxl.us", kind: "primary" }], quotaBytes: 0 };
+const primary = { id: "u1", kind: "primary", addresses: [{ address: "me@example.com", kind: "primary" }], quotaBytes: 0 };
 const team = {
   id: TEAM,
   kind: "extra",
-  addresses: [{ address: "team-alias@urlxl.us", kind: "alias" }, { address: "team-test@urlxl.us", kind: "primary" }],
+  addresses: [{ address: "team-alias@example.com", kind: "alias" }, { address: "team-test@example.com", kind: "primary" }],
   quotaBytes: 0
 };
 
@@ -89,7 +89,7 @@ function snapshot() {
   return {
     version: 2,
     savedAt: new Date().toISOString(),
-    fields: { to: "x@y.test", cc: "", bcc: "", subject: "team draft", body: "<p>hi</p>", attachmentNames: [], mailbox: TEAM, from: "team-test@urlxl.us" }
+    fields: { to: "x@y.test", cc: "", bcc: "", subject: "team draft", body: "<p>hi</p>", attachmentNames: [], mailbox: TEAM, from: "team-test@example.com" }
   };
 }
 
@@ -112,8 +112,8 @@ describe("webmail mailbox switcher", () => {
     mailboxList = { mailboxes: [primary, team] };
     renderApp();
     const select = await switcher();
-    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["me@urlxl.us", "team-test@urlxl.us"]);
-    expect(select.selectedOptions[0]?.textContent).toBe("me@urlxl.us");
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["me@example.com", "team-test@example.com"]);
+    expect(select.selectedOptions[0]?.textContent).toBe("me@example.com");
   });
 
   it("sends the header for an extra mailbox only, and shows nothing of the other mailbox after a switch", async () => {
@@ -123,7 +123,7 @@ describe("webmail mailbox switcher", () => {
     expect(calls.every((c) => c.mailbox === null)).toBe(true);
 
     calls = [];
-    await user.selectOptions(await switcher(), "team-test@urlxl.us");
+    await user.selectOptions(await switcher(), "team-test@example.com");
     await screen.findByText("Team inbox");
     expect(screen.queryByText("Primary inbox")).toBeNull();
     expect(await screen.findByText("TeamOnly")).toBeTruthy();
@@ -132,10 +132,10 @@ describe("webmail mailbox switcher", () => {
     expect(sent("/api/inbox/folders").every((c) => c.mailbox === TEAM)).toBe(true);
     // Per-user routes never carry it.
     expect(calls.filter((c) => !/^\/api\/(inbox|mail\/)/.test(c.url)).every((c) => c.mailbox === null)).toBe(true);
-    expect((await switcher()).selectedOptions[0]?.textContent).toBe("team-test@urlxl.us");
+    expect((await switcher()).selectedOptions[0]?.textContent).toBe("team-test@example.com");
 
     calls = [];
-    await user.selectOptions(await switcher(), "me@urlxl.us");
+    await user.selectOptions(await switcher(), "me@example.com");
     await screen.findByText("Primary inbox");
     expect(screen.queryByText("Team inbox")).toBeNull();
     expect(sent("/api/inbox?").length).toBeGreaterThan(0);
@@ -145,12 +145,12 @@ describe("webmail mailbox switcher", () => {
   it("offers the selected mailbox's addresses as From and sends from it", async () => {
     const user = userEvent.setup();
     renderApp();
-    await user.selectOptions(await switcher(), "team-test@urlxl.us");
+    await user.selectOptions(await switcher(), "team-test@example.com");
     await screen.findByText("Team inbox");
     await user.click(screen.getByRole("button", { name: "New Email" }));
     const from = screen.getByRole("combobox", { name: "FROM:" }) as HTMLSelectElement;
-    expect(Array.from(from.options).map((o) => o.value)).toEqual(["team-test@urlxl.us", "team-alias@urlxl.us"]);
-    expect(from.value).toBe("team-test@urlxl.us");
+    expect(Array.from(from.options).map((o) => o.value)).toEqual(["team-test@example.com", "team-alias@example.com"]);
+    expect(from.value).toBe("team-test@example.com");
 
     await user.type(screen.getByLabelText("To recipients"), "x@y.test{Enter}");
     await user.type(screen.getByPlaceholderText("Subject"), "hello");
@@ -158,7 +158,7 @@ describe("webmail mailbox switcher", () => {
     await waitFor(() => expect(calls.filter((c) => c.url === "/api/mail/send")).toHaveLength(1));
     const [send] = calls.filter((c) => c.url === "/api/mail/send");
     expect(send.mailbox).toBe(TEAM);
-    expect(JSON.parse(send.body).from).toBe("team-test@urlxl.us");
+    expect(JSON.parse(send.body).from).toBe("team-test@example.com");
   });
 
   it("offers the primary's addresses as From for the primary", async () => {
@@ -167,13 +167,13 @@ describe("webmail mailbox switcher", () => {
     await switcher();
     await user.click(screen.getByRole("button", { name: "New Email" }));
     const from = screen.getByRole("combobox", { name: "FROM:" }) as HTMLSelectElement;
-    expect(Array.from(from.options).map((o) => o.value)).toEqual(["me@urlxl.us"]);
+    expect(Array.from(from.options).map((o) => o.value)).toEqual(["me@example.com"]);
   });
 
   it("keeps an open compose on its mailbox when the selection changes underneath it", async () => {
     const user = userEvent.setup();
     renderApp();
-    await user.selectOptions(await switcher(), "team-test@urlxl.us");
+    await user.selectOptions(await switcher(), "team-test@example.com");
     await screen.findByText("Team inbox");
     await user.click(screen.getByRole("button", { name: "New Email" }));
     await user.type(screen.getByLabelText("To recipients"), "x@y.test{Enter}");
@@ -193,10 +193,10 @@ describe("webmail mailbox switcher", () => {
     renderApp();
     await switcher();
     await user.click(screen.getByRole("button", { name: "New Email" }));
-    await screen.findByText(/written in team-test@urlxl.us/);
+    await screen.findByText(/written in team-test@example.com/);
     const from = screen.getByRole("combobox", { name: "FROM:" }) as HTMLSelectElement;
-    expect(from.value).toBe("team-test@urlxl.us");
-    expect(Array.from(from.options).map((o) => o.value)).toEqual(["team-test@urlxl.us", "team-alias@urlxl.us"]);
+    expect(from.value).toBe("team-test@example.com");
+    expect(Array.from(from.options).map((o) => o.value)).toEqual(["team-test@example.com", "team-alias@example.com"]);
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(calls.filter((c) => c.url === "/api/mail/send")).toHaveLength(1));
     expect(calls.find((c) => c.url === "/api/mail/send")?.mailbox).toBe(TEAM);
@@ -210,7 +210,7 @@ describe("webmail mailbox switcher", () => {
     await screen.findByText("Primary inbox");
     await waitFor(() => expect(sent("/api/mailboxes")).toHaveLength(1));
     await user.click(screen.getByRole("button", { name: "New Email" }));
-    await screen.findByText(/An unsent draft from team-test@urlxl.us is kept/);
+    await screen.findByText(/An unsent draft from team-test@example.com is kept/);
     expect((screen.getByPlaceholderText("Subject") as HTMLInputElement).value).toBe("");
     await user.type(screen.getByPlaceholderText("Subject"), "new");
     await new Promise((resolve) => window.setTimeout(resolve, 1200));
@@ -223,7 +223,7 @@ describe("webmail mailbox switcher", () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     const user = userEvent.setup();
     renderApp();
-    await user.selectOptions(await switcher(), "team-test@urlxl.us");
+    await user.selectOptions(await switcher(), "team-test@example.com");
     await user.click(await screen.findByText("Team inbox"));
     const download = await screen.findByRole("button", { name: /plan\.pdf/ });
     expect(screen.queryByRole("link", { name: /plan\.pdf/ })).toBeNull();
@@ -246,15 +246,15 @@ describe("webmail mailbox switcher", () => {
     hold = (url) => url.startsWith("/api/mail/body?") ? new Promise((resolve) => { pending.push(resolve); }) : undefined;
     const user = userEvent.setup();
     renderApp();
-    await user.selectOptions(await switcher(), "team-test@urlxl.us");
+    await user.selectOptions(await switcher(), "team-test@example.com");
     await user.click(await screen.findByRole("link", { name: "Drafts" }));
     await user.click(await screen.findByText("Team Drafts"));
     await waitFor(() => expect(sent("/api/mail/body?").length).toBeGreaterThan(0));
-    await user.selectOptions(await switcher(), "me@urlxl.us");
+    await user.selectOptions(await switcher(), "me@example.com");
     await screen.findByText("Primary inbox");
     for (const release of pending) release(json(200, { body: "draft body", bodyMode: "plain" }));
     const from = await screen.findByRole("combobox", { name: "FROM:" }) as HTMLSelectElement;
-    expect(from.value).toBe("team-test@urlxl.us");
+    expect(from.value).toBe("team-test@example.com");
   });
 
   it("ignores a folder list answered for a mailbox no longer selected", async () => {
@@ -262,7 +262,7 @@ describe("webmail mailbox switcher", () => {
     hold = (url, mailbox) => url === "/api/inbox/folders" && mailbox === null ? new Promise((resolve) => { fail = resolve; }) : undefined;
     const user = userEvent.setup();
     renderApp();
-    await user.selectOptions(await switcher(), "team-test@urlxl.us");
+    await user.selectOptions(await switcher(), "team-test@example.com");
     expect(await screen.findByText("TeamOnly")).toBeTruthy();
     fail(json(500, { error: "boom" }));
     await new Promise((resolve) => window.setTimeout(resolve, 50));
@@ -282,15 +282,15 @@ describe("webmail mailbox switcher", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(calls.filter((c) => c.url === "/api/mail/send")).toHaveLength(1));
     // The select alone would display its first option even with no From chosen.
-    expect(JSON.parse(calls.find((c) => c.url === "/api/mail/send")?.body ?? "{}").from).toBe("me@urlxl.us");
+    expect(JSON.parse(calls.find((c) => c.url === "/api/mail/send")?.body ?? "{}").from).toBe("me@example.com");
   });
 
   it("names the open mailbox on the read page and in folder links", async () => {
     const user = userEvent.setup();
     renderApp();
-    await user.selectOptions(await switcher(), "team-test@urlxl.us");
+    await user.selectOptions(await switcher(), "team-test@example.com");
     await screen.findByText("Team inbox");
-    expect(document.querySelector(".read-mailbox-name")?.textContent).toBe("team-test@urlxl.us");
+    expect(document.querySelector(".read-mailbox-name")?.textContent).toBe("team-test@example.com");
     expect(screen.getByRole("link", { name: "Sent" }).getAttribute("href")).toBe(`/read?mailbox=Sent&box=${TEAM}`);
   });
 
@@ -357,9 +357,9 @@ describe("webmail mailbox switcher", () => {
     act(() => holdForSecret("Copy the CardDAV password before leaving."));
     calls = [];
     try {
-      await user.selectOptions(await switcher(), "team-test@urlxl.us");
+      await user.selectOptions(await switcher(), "team-test@example.com");
       expect(await screen.findByText("Copy the CardDAV password before leaving.")).toBeTruthy();
-      expect((await switcher()).selectedOptions[0]?.textContent).toBe("me@urlxl.us");
+      expect((await switcher()).selectedOptions[0]?.textContent).toBe("me@example.com");
       expect(calls.some((c) => c.mailbox === TEAM)).toBe(false);
       expect(screen.getByText("Primary inbox")).toBeTruthy();
     } finally {

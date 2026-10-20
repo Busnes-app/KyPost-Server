@@ -147,7 +147,7 @@ func TestRevokeAllUserCredentialsClearsTheSSOLink(t *testing.T) {
 	srv, _ := setupSSOTestServer(t)
 	u := localAccount(t, srv, "linked")
 
-	if err := srv.users.LinkSSO(u.ID, "sso-sub-admin-path", "linked_sso", "linked@urlxl.com"); err != nil {
+	if err := srv.users.LinkSSO(u.ID, "sso-sub-admin-path", "linked_sso", "linked@example.com"); err != nil {
 		t.Fatalf("LinkSSO: %v", err)
 	}
 	u, err := srv.users.Get(u.ID)
@@ -196,7 +196,7 @@ func TestRevocationKeepsTheLinkWhenItIsTheOnlyCredential(t *testing.T) {
 
 	// The test IdP's own subject, so the sign-in below actually resolves here.
 	u, err := srv.users.CreateSSOUser("provisioned", users.RoleUser,
-		"sso-sub-12345", "provisioned", "provisioned@urlxl.com")
+		"sso-sub-12345", "provisioned", "provisioned@example.com")
 	if err != nil {
 		t.Fatalf("CreateSSOUser: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestUnlinkRefusesWhenTheLinkIsTheOnlyCredential(t *testing.T) {
 	srv, _ := setupSSOTestServer(t)
 
 	u, err := srv.users.CreateSSOUser("provisioned", users.RoleUser,
-		"sso-sub-12345", "provisioned", "provisioned@urlxl.com")
+		"sso-sub-12345", "provisioned", "provisioned@example.com")
 	if err != nil {
 		t.Fatalf("CreateSSOUser: %v", err)
 	}

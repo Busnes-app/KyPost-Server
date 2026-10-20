@@ -75,7 +75,7 @@ func New(t *testing.T, clientID string) *IdP {
 		foreignKey: foreignKey,
 		claims: map[string]any{
 			"sub":                "sso-sub-12345",
-			"email":              "admin_sso@urlxl.com",
+			"email":              "admin_sso@example.com",
 			"preferred_username": "admin_sso",
 			"roles":              []string{"kypost.admin"},
 		},

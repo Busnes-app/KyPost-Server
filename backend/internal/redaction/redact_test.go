@@ -16,7 +16,7 @@ import (
 // positive row here catches.
 var defaultCases = []struct{ in, want string }{
 	// email
-	{"contact me at yoshi@urlxl.com please", "contact me at [REDACTED_EMAIL] please"},
+	{"contact me at yoshi@example.com please", "contact me at [REDACTED_EMAIL] please"},
 	{"jürgen@münchen.de", "[REDACTED_EMAIL]"},
 	{"Écrire à Zoë.Ä@example.fr.", "Écrire à [REDACTED_EMAIL]."},
 	{"<ivan@почта.рф>", "<[REDACTED_EMAIL]>"},

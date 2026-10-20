@@ -68,7 +68,7 @@ func TestSSOSettingsStore(t *testing.T) {
 
 	cfg := SSOSettings{
 		Enabled:       true,
-		IssuerURL:     "https://auth.urlxl.com",
+		IssuerURL:     "https://auth.example.com",
 		ClientID:      "kypost",
 		ClientSecret:  "secret123",
 		AutoProvision: true,
@@ -78,7 +78,7 @@ func TestSSOSettingsStore(t *testing.T) {
 	}
 
 	got := NewStore(tmpDir).Load()
-	if !got.Enabled || got.IssuerURL != "https://auth.urlxl.com" || got.ClientID != "kypost" {
+	if !got.Enabled || got.IssuerURL != "https://auth.example.com" || got.ClientID != "kypost" {
 		t.Errorf("unexpected loaded settings: %+v", got)
 	}
 }
@@ -147,7 +147,7 @@ func TestExchangeAcceptsSignedToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exchange() error = %v, want success", err)
 	}
-	if claims.Sub != "sso-sub-12345" || claims.PreferredUsername != "admin_sso" || claims.Email != "admin_sso@urlxl.com" {
+	if claims.Sub != "sso-sub-12345" || claims.PreferredUsername != "admin_sso" || claims.Email != "admin_sso@example.com" {
 		t.Errorf("unexpected claims: %+v", claims)
 	}
 	if !claims.AppAdmin("") {
@@ -318,25 +318,25 @@ func TestValidateIssuerURL(t *testing.T) {
 		allowInsecure bool
 		wantErr       bool
 	}{
-		{"trailing slash is refused", "https://auth.urlxl.com/", false, true},
-		{"whitespace is refused", " https://auth.urlxl.com", false, true},
-		{"https is always fine", "https://auth.urlxl.com", false, false},
+		{"trailing slash is refused", "https://auth.example.com/", false, true},
+		{"whitespace is refused", " https://auth.example.com", false, true},
+		{"https is always fine", "https://auth.example.com", false, false},
 		{"loopback http is fine for development", "http://127.0.0.1:9000", false, false},
 		{"localhost http is fine for development", "http://localhost:9000", false, false},
 		{"ipv6 loopback http is fine", "http://[::1]:9000", false, false},
 
 		// The client secret and authorization code travel this link.
 		{"cleartext http on a LAN host is refused", "http://192.168.1.50:9000", false, true},
-		{"cleartext http on a public host is refused", "http://auth.urlxl.com", false, true},
+		{"cleartext http on a public host is refused", "http://auth.example.com", false, true},
 
 		// ...unless an operator turned the knob deliberately.
 		{"LAN http is allowed once opted in", "http://192.168.1.50:9000", true, false},
 
-		{"other schemes are refused", "ftp://auth.urlxl.com", false, true},
-		{"embedded credentials are refused", "https://user:pass@auth.urlxl.com", false, true},
-		{"a bare host is refused", "auth.urlxl.com", false, true},
+		{"other schemes are refused", "ftp://auth.example.com", false, true},
+		{"embedded credentials are refused", "https://user:pass@auth.example.com", false, true},
+		{"a bare host is refused", "auth.example.com", false, true},
 		{"empty is refused", "", false, true},
-		{"a query string is refused", "https://auth.urlxl.com?x=1", false, true},
+		{"a query string is refused", "https://auth.example.com?x=1", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateIssuerURL(tc.raw, tc.allowInsecure)
@@ -372,9 +372,9 @@ func TestExchangeMergesUserInfo(t *testing.T) {
 	t.Run("fills only the blanks", func(t *testing.T) {
 		idp := newIdP(t)
 		// Signed token carries sub and email but no username.
-		idp.SetClaims(map[string]any{"sub": "sub-thin", "email": "signed@urlxl.com"})
+		idp.SetClaims(map[string]any{"sub": "sub-thin", "email": "signed@example.com"})
 		// Userinfo supplies the username and disagrees about the email.
-		idp.UserInfo = map[string]any{"preferred_username": "yoshi", "email": "userinfo@urlxl.com"}
+		idp.UserInfo = map[string]any{"preferred_username": "yoshi", "email": "userinfo@example.com"}
 
 		claims, err := exchange(t, idp)
 		if err != nil {
@@ -383,7 +383,7 @@ func TestExchangeMergesUserInfo(t *testing.T) {
 		if claims.PreferredUsername != "yoshi" {
 			t.Errorf("PreferredUsername = %q, want the userinfo value to fill the blank", claims.PreferredUsername)
 		}
-		if claims.Email != "signed@urlxl.com" {
+		if claims.Email != "signed@example.com" {
 			t.Errorf("Email = %q, want the signed token's value to survive", claims.Email)
 		}
 		if claims.Sub != "sub-thin" {
@@ -394,7 +394,7 @@ func TestExchangeMergesUserInfo(t *testing.T) {
 	t.Run("ignores a profile for a different subject", func(t *testing.T) {
 		idp := newIdP(t)
 		idp.SetClaims(map[string]any{"sub": "sub-thin"})
-		idp.UserInfo = map[string]any{"preferred_username": "somebody_else", "email": "other@urlxl.com"}
+		idp.UserInfo = map[string]any{"preferred_username": "somebody_else", "email": "other@example.com"}
 		idp.UserInfoSub = "a-different-subject"
 
 		claims, err := exchange(t, idp)

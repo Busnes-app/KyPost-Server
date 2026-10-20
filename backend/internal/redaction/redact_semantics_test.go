@@ -90,7 +90,7 @@ func TestApplyWithNoPatternsReturnsInputUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New(nil): %v", err)
 	}
-	const in = "yoshi@urlxl.com 555-123-4567"
+	const in = "yoshi@example.com 555-123-4567"
 	if got := engine.Apply(in); got != in {
 		t.Fatalf("Apply = %q, want the input unchanged when no patterns are configured", got)
 	}
