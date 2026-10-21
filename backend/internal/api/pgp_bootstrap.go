@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"net/http"
+	"net/mail"
 	"strings"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -126,6 +128,10 @@ func (s *Server) handlePGPBootstrap(w http.ResponseWriter, r *http.Request) {
 	// guess — the login name is frequently not an email address at all.
 	// Mirrors handlePGPIdentityGenerate's own derivation.
 	resp["suggestedUserIDs"] = s.suggestedKeyUserIDs(ac.UserID)
+	// The addresses this account sends as, so a client can leave its own
+	// addresses out of Reply All. Separate from suggestedUserIDs, which has
+	// key-generation semantics and keeps a login that is not an address.
+	resp["accountAddresses"] = s.accountAddresses(ac.UserID)
 	resp["displayName"] = u.Username
 
 	// Tell the client where to go for ciphertext rather than making it infer
@@ -156,22 +162,66 @@ func (s *Server) suggestedKeyUserIDs(userID string) []string {
 	}
 	out = append(out, strings.TrimSpace(payload.Username))
 
-	seen := map[string]bool{strings.ToLower(out[0]): true}
+	return s.appendVerifiedAliases(userID, out, sendas.Alias.DomainProven)
+}
+
+// accountAddresses returns the addresses this account sends as, primary
+// first: the From the relay uses when the client names none (the native
+// address, or the IMAP login — see resolveMailFrom), then every verified
+// send-as alias. Unlike suggestedKeyUserIDs it keeps code-verified aliases:
+// they authorize From, and this list claims nothing to anyone else. A login
+// that is not an address is not a sending address, so it is left out rather
+// than guessed at. Never fails: a read error logs and yields what is known,
+// possibly nothing.
+func (s *Server) accountAddresses(userID string) []string {
+	out := []string{}
+	if s.users != nil {
+		a, native, err := s.nativeMailAssignment(context.Background(), userID)
+		if err != nil {
+			s.logger.Error("failed to resolve native mailbox for account addresses", "user_id", userID, "error", err.Error())
+			return out
+		}
+		if native {
+			return []string{a.Address}
+		}
+	}
+	payload, exists, err := mailmsg.ReadIMAPConfigPayload(s.userIMAPConfigPath(userID), s.imapConfigKeyPath)
+	if err != nil {
+		s.logger.Error("failed to read imap config for account addresses", "user_id", userID, "error", err.Error())
+		return out
+	}
+	if !exists {
+		return out
+	}
+	if addr, perr := mail.ParseAddress(strings.TrimSpace(payload.Username)); perr == nil {
+		out = append(out, addr.Address)
+	}
+	return s.appendVerifiedAliases(userID, out, func(sendas.Alias) bool { return true })
+}
+
+// appendVerifiedAliases appends every verified send-as alias that keep accepts
+// and that is not already in out, compared case-insensitively.
+func (s *Server) appendVerifiedAliases(userID string, out []string, keep func(sendas.Alias) bool) []string {
+	seen := map[string]bool{}
+	for _, addr := range out {
+		seen[strings.ToLower(addr)] = true
+	}
 	store, err := s.userSendAsStore(userID)
 	if err != nil {
 		// A key missing its alias User IDs is only fixable by regenerating,
+		// and a client missing its own aliases puts them back in Reply All,
 		// so this is worth a log line rather than a silent partial answer.
-		s.logger.Error("failed to open send-as store for key user ids", "user_id", userID, "error", err.Error())
+		s.logger.Error("failed to open send-as store", "user_id", userID, "error", err.Error())
 		return out
 	}
 	verified, err := store.ListVerified()
 	if err != nil {
-		s.logger.Error("failed to read send-as aliases for key user ids", "user_id", userID, "error", err.Error())
+		s.logger.Error("failed to read send-as aliases", "user_id", userID, "error", err.Error())
 		return out
 	}
 	for _, alias := range verified {
 		addr := strings.TrimSpace(alias.Email)
-		if !alias.DomainProven() || addr == "" || seen[strings.ToLower(addr)] {
+		if !keep(alias) || addr == "" || seen[strings.ToLower(addr)] {
 			continue
 		}
 		seen[strings.ToLower(addr)] = true

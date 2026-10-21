@@ -142,7 +142,7 @@ PGP:
 - `GET|PUT|DELETE /api/pgp/identity/envelope/{slot}` (session-only wrapped recovery/device copies; PUT and DELETE require the current account credential. PUT accepts `expectedFingerprint`; GET includes the identity fingerprint and public key from the same snapshot.)
 - `POST /api/pgp/identity/export-legacy` (one-time export of a server-held key, so it can be migrated or backed up)
 - `GET|PUT|DELETE /api/pgp/identity/envelope/{slot}` (per-slot key envelopes)
-- `GET /api/pgp/bootstrap` (everything the browser needs to unlock a client-protected identity in one call)
+- `GET /api/pgp/bootstrap` (everything the browser needs to unlock a client-protected identity in one call; `accountAddresses` lists the addresses this account sends as, for leaving them out of Reply All)
 - `GET /api/pgp/keyserver/lookup` (queries keys.openpgp.org)
 - `POST /api/pgp/recipients/check` (key status for a set of recipients before you send)
 - `POST /api/pgp/recipients/resolve` (resolves the key actually used for each recipient)
