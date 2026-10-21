@@ -25,6 +25,7 @@ import type {
   DragMessagePayload
 } from "./app/types";
 import { clearDraftSnapshot } from "./app/draftAutosave";
+import { mailboxLabel, standardMailboxKind, standardMailboxPath } from "./app/mailboxKind";
 
 // Every page below is a separate chunk. Only LoginPage is eager: it is what an
 // unauthenticated visitor lands on, so putting it behind a second round trip
@@ -457,21 +458,6 @@ export function App() {
   useDialogOpen(licenseDialogRef, licenseOpen);
 
 
-  function mailboxLabel(path: string): string {
-    const clean = path.trim();
-    if (!clean) return "";
-    const parts = clean.replace(/^INBOX[/.]/i, "").split(/[/.]/).filter(Boolean);
-    return parts[parts.length - 1] ?? clean;
-  }
-
-  function standardMailboxKey(path: string): string {
-    const value = mailboxLabel(path).trim().toLowerCase();
-    if (!value) return "custom";
-    if (["inbox", "draft", "drafts", "junk", "spam", "sent", "trash"].includes(value)) {
-      return value;
-    }
-    return "custom";
-  }
 
 
   if (auth === null) {
@@ -561,10 +547,20 @@ export function App() {
           <p className="sidebar-section-label">Mailboxes</p>
           <div className="mobile-quick-nav" aria-label="Mobile mailboxes">
             <Link className={onReadPage && currentMailbox === "" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read">Inbox</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "drafts" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Drafts${boxQuery}`}>Drafts</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "junk" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Junk${boxQuery}`}>Junk</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "sent" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Sent${boxQuery}`}>Sent</Link>
-            <Link className={onReadPage && currentMailbox.toLowerCase() === "trash" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={`/read?mailbox=Trash${boxQuery}`}>Trash</Link>
+            {/* Stand-ins for the folder rows the phone CSS hides by data-folder-kind,
+                so each points at the account's real folder ("Sent Items" too). */}
+            {([["drafts", "Drafts"], ["junk", "Junk"], ["sent", "Sent"], ["trash", "Trash"]] as const).map(([kind, label]) => {
+              const path = standardMailboxPath(mailboxFolders, kind, label);
+              return (
+                <Link
+                  key={kind}
+                  className={onReadPage && currentMailbox.toLowerCase() === path.toLowerCase() ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}
+                  to={`/read?mailbox=${encodeURIComponent(path)}${boxQuery}`}
+                >
+                  {label}
+                </Link>
+              );
+            })}
             <Link className={location.pathname === "/scheduled" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/scheduled">Scheduled</Link>
             <button
               type="button"
@@ -629,7 +625,7 @@ export function App() {
             {mailboxFoldersLoading ? <span>Loading folders...</span> : null}
             {!mailboxFoldersLoading
               ? mailboxFolders.map((folder) => (
-                  <div key={folder.path} className="sidebar-folder-row" data-folder-kind={standardMailboxKey(folder.path)}>
+                  <div key={folder.path} className="sidebar-folder-row" data-folder-kind={standardMailboxKind(folder)}>
                     <Link
                       to={`/read?mailbox=${encodeURIComponent(folder.path)}${boxQuery}`}
                       className={[
@@ -723,7 +719,7 @@ export function App() {
 
           <Link
             to="/scheduled"
-            className={["nav-heading", location.pathname === "/scheduled" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"].join(" ")}
+            className={["nav-heading scheduled-heading", location.pathname === "/scheduled" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"].join(" ")}
           >
             Scheduled
           </Link>

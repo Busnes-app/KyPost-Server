@@ -9,6 +9,8 @@ export type BeforeInstallPromptEvent = Event & {
 export type InboxFolder = {
   path: string;
   deletable: boolean;
+  /** The server-published RFC 6154 role ("sent", "drafts", "trash", "junk", "archive"), if any. */
+  special?: string;
 };
 
 export type InboxFoldersResponse = {

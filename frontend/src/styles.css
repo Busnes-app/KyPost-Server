@@ -4548,12 +4548,12 @@ pre {
     display: block;
   }
 
+  /* The quick nav stands in for these (and for the Scheduled heading). */
   .inbox-nav-row,
+  .scheduled-heading,
   .sidebar-folder-row[data-folder-kind="inbox"],
-  .sidebar-folder-row[data-folder-kind="draft"],
   .sidebar-folder-row[data-folder-kind="drafts"],
   .sidebar-folder-row[data-folder-kind="junk"],
-  .sidebar-folder-row[data-folder-kind="spam"],
   .sidebar-folder-row[data-folder-kind="sent"],
   .sidebar-folder-row[data-folder-kind="trash"] {
     display: none;

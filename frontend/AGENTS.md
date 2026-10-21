@@ -121,6 +121,9 @@ admin grant; the issuer hint states that changing the issuer revokes links.
 
 ## Work Guidance
 
+- Ask for the account password with `components/PasswordPrompt.tsx` (`usePasswordPrompt`), never `window.prompt`: the browser prompt shows it in clear text and cannot be filled by a password manager. Components mounted more than once (both `PgpUnlockDialog`s) take input ids from `useId`.
+- The phone layout hides sidebar folder rows whose `data-folder-kind` the quick nav stands in for. `app/mailboxKind.ts` decides the kind from the server's `special` role first, then the alias names mirrored from `backend/internal/adapters/imap/special_folders.go`; change both together. Quick-nav links open the folder of that kind, and the Scheduled heading (`scheduled-heading`) is hidden there too.
+
 - Mail message IDs are opaque strings in inbox/actions/URLs and cache keys. Native references include the restore generation; never parse or strip them. `PGPMessagePayload.messageId` admits a legacy IMAP number or native string. The reader cached-body regression uses the same numeric suffix across two generations and must fetch the new body.
 
 - `api/devices.ts` validates `enrollmentEnvelopeVersions` at the listing boundary; absent/null from old servers means `[2]`. `DeviceMailPanel` refuses v2 setup when the advertised list excludes 2, before requesting secrets. Claims do not replace SAS or future key/revision/generation-bound v3 delivery checks. Keep the bounds and legacy defaults aligned with `docs/E2E_PGP.md`.
