@@ -84,3 +84,30 @@ func TestClassifierErrorResponsesNeverReachLogs(t *testing.T) {
 		})
 	}
 }
+
+// An installed model is not pulled again: a pull writes into the models
+// directory, which a supported pre-populated cache may not let the container do.
+func TestWarmupSkipsPullForInstalledModel(t *testing.T) {
+	var pulls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			w.Write([]byte(`{"modelfile":""}`))
+		case "/api/pull":
+			pulls++
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error":"open /models/blobs/sha256-x.tmp: permission denied"}`))
+		default:
+			w.Write([]byte(`{"response":"work"}`))
+		}
+	}))
+	defer srv.Close()
+	c := NewHTTPClient(srv.URL, "", "/api/generate", "", 0)
+	if _, err := c.Classify(context.Background(), []string{"work"}, "", "", "", ""); err != nil {
+		t.Fatalf("classify with installed model: %v", err)
+	}
+	if pulls != 0 {
+		t.Fatalf("pulled %d times for an installed model", pulls)
+	}
+}

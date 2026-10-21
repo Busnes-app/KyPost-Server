@@ -12,8 +12,6 @@ export type LabelsResponse = {
 
 export type IMAPConfigStatus = {
   configured: boolean;
-  path?: string;
-  keyPath?: string;
   host?: string;
   port?: number;
   username?: string;

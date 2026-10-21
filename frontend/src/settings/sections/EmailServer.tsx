@@ -200,8 +200,6 @@ export function EmailServer() {
       {imapStatus ? (
         <div className="config-status-card">
           <p>Configured: {imapStatus.configured ? "Yes" : "No"}</p>
-          {imapStatus.path ? <p>Config Path: {imapStatus.path}</p> : null}
-          {imapStatus.keyPath ? <p>Key Path: {imapStatus.keyPath}</p> : null}
           {imapStatus.host ? <p>Host: {imapStatus.host}</p> : null}
           {imapStatus.port ? <p>Port: {imapStatus.port}</p> : null}
           {imapStatus.username ? <p>Username: {imapStatus.username}</p> : null}

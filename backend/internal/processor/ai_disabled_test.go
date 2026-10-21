@@ -37,3 +37,27 @@ func TestDisableAISorting_OverridesAutoApply(t *testing.T) {
 		t.Fatalf("Ollama called %d times with AI sorting disabled", n)
 	}
 }
+
+// Mail that already carries a label keyword keeps that label when the
+// classifier is skipped; the fallback must not be stacked on as a second tab.
+func TestAutoLabelOff_KeepsExistingLabel(t *testing.T) {
+	mail := &scriptedMailbox{msgs: []imapadapter.Message{
+		{ID: "1", Sender: "deals@store.example", Subject: "40% off", Body: "Sale.", Keywords: []string{"promotions"}},
+		{ID: "2", Sender: "friend@example.com", Subject: "Hi", Body: "Lunch?"},
+	}}
+	p, u := newTickTestPoller(t, mail)
+	settings := config.DefaultUserSettings()
+	settings.Labels.AutoApplyEnabled = false
+	settings.Labels.Allowlist = []string{"Primary", "Promotions"}
+	settings.Labels.Seeded = true
+	if err := config.SaveUserSettings(p.userSettingsPath(u.ID), settings); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.tickUser(u, time.Time{}); err != nil {
+		t.Fatalf("tickUser: %v", err)
+	}
+	if want := []string{"1:Promotions", "2:Primary"}; !reflect.DeepEqual(mail.labelled, want) {
+		t.Fatalf("labelled = %v, want %v", mail.labelled, want)
+	}
+}

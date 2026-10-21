@@ -56,6 +56,27 @@ non-prerelease version.
   `KYPOST_BACKUP_DIR` and now answers `[]`; the page also tolerates `null`.
 - A failed Save Draft is shown as `Draft not saved: …` instead of
   `Send failed: …`.
+- Launch-video bugs:
+  - The phone-layout mailbox nav no longer repeats folders. It hid rows by
+    exact name only, so "Sent Items" and the Scheduled heading showed beside
+    the quick nav. It now uses the server's special-use role and the usual
+    alias names, and its Drafts/Junk/Sent/Trash links open the account's
+    real folders.
+  - A keyless account's forced first-login password change no longer warns
+    that PGP recovery status is unavailable.
+  - Security → Encryption asks for the account password in a masked page
+    dialog instead of the browser's clear-text `window.prompt`.
+  - The read and compose PGP unlock dialogs no longer share the input id
+    `pgp-unlock-password`.
+  - `GET /api/imap/config` and the admin per-user IMAP config no longer return
+    the server's on-disk `path` and `keyPath`, and Mail settings no longer
+    show them.
+  - With automatic labels off, mail that already carries one of the account's
+    labels keeps it instead of also getting the fallback label.
+  - The classifier warm-up no longer pulls a model Ollama already has. The
+    pull wrote into the models directory, so a pre-populated cache the
+    container could not write failed every warm-up and stalled
+    classification.
 
 ### Changes
 
