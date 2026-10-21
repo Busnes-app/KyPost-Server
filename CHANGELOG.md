@@ -43,6 +43,10 @@ non-prerelease version.
 
 ### Fixed
 
+- Built with Go 1.27.3, which distrusts compromised intermediate certificates
+  in `crypto/x509` (GO-2026-6809). Outbound SMTP over TLS verified server
+  certificates with the affected code.
+
 - Remove the pre-launch README’s obsolete Busnes-app owner-move upgrade section.
 
 - Correct the PGP documentation: server-protected key custody is retired, not
