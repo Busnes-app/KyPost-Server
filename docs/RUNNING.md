@@ -11,7 +11,7 @@ Commands and unlinked file paths below are relative to the repository root.
 
 Optional for local development (outside Docker):
 
-- Go 1.27.2 (the toolchain pinned in `backend/go.mod`)
+- Go 1.27.3 (the toolchain pinned in `backend/go.mod`)
 - Node.js 26.11.1 (see `frontend/.nvmrc`)
 - The npm version bundled with that Node release; install dependencies with `npm ci`
 

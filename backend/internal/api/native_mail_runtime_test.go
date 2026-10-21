@@ -81,6 +81,9 @@ func TestNativeRuntimeSignedDirectoryToMailbox(t *testing.T) {
 	if got := s.suggestedKeyUserIDs(u.ID); len(got) != 1 || got[0] != a.Address {
 		t.Fatalf("native PGP identity addresses: %v", got)
 	}
+	if got := s.accountAddresses(u.ID); len(got) != 1 || got[0] != a.Address {
+		t.Fatalf("native account addresses: %v", got)
+	}
 	held, err := s.userMailClient(u.ID)
 	if err != nil {
 		t.Fatal(err)

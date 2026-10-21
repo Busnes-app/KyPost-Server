@@ -677,6 +677,8 @@ from nothing:
 | `signerKeys` | contact public keys, each with the addresses the address book binds it to, so signatures verify without waiting on a contacts sync |
 | `payloadEndpoint` | where to fetch ciphertext; absent on older servers |
 | `envelopeSlots` | names of every sealing that exists for this identity (e.g. `password`, `recovery`, `device:*`) — always an array, never `null` |
+| `suggestedUserIDs` | the User IDs a newly generated key must carry: the account login (even when it is not an address) or native address, then every domain-proven send-as alias. Key generation, WKD and Autocrypt only; empty with no mail account |
+| `accountAddresses` | the addresses this account sends as, for leaving its own addresses out of Reply All: the From the relay uses when none is named (native address, or the IMAP login only when it is an address), then every verified send-as alias — including code-verified ones, which authorize From but are not domain-proven — de-duplicated case-insensitively. Always an array, possibly empty; absent on older servers, where clients fall back to `suggestedUserIDs` |
 
 Doing this as separate calls gives four chances to render a
 half-initialized UI — showing "no PGP identity" to someone who has one, or
