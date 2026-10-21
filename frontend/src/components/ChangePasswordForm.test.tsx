@@ -7,6 +7,7 @@ const postJSON = vi.fn();
 let recoverySlots: string[] | undefined;
 let protection = "client";
 let mustChangePassword = false;
+let bootstrapError = "";
 const onSuccess = vi.fn();
 const TEST_LEDE = "This account needs a new password before you can go any further.";
 
@@ -33,7 +34,9 @@ vi.mock("../api/pgp", async (importOriginal) => ({
 
 vi.mock("../lib/pgpSession", async (importOriginal) => ({
   subscribePGPSession: (fn: (s: unknown) => void) => {
-    fn({ loaded: true, error: "", bootstrap: { protection, envelopeSlots: recoverySlots } });
+    fn(bootstrapError
+      ? { loaded: true, error: bootstrapError, bootstrap: null }
+      : { loaded: true, error: "", bootstrap: { protection, envelopeSlots: recoverySlots } });
     return () => {};
   },
   rewrappedEnvelopeFor: async (...args: [string, string]) => mustChangePassword
@@ -48,6 +51,7 @@ beforeEach(() => {
   recoverySlots = [];
   protection = "client";
   mustChangePassword = false;
+  bootstrapError = "";
   postJSON.mockReset();
   onSuccess.mockReset();
   postJSON.mockResolvedValue({ ok: true });
@@ -94,10 +98,10 @@ describe("ChangePasswordForm", () => {
 
 
 describe("PGP recovery warning", () => {
-  it.each([[], undefined])("warns when no server copy is confirmed: %s", (slots) => {
+  it.each([[], undefined])("warns when no server copy is confirmed: %s", async (slots) => {
     recoverySlots = slots;
     render(<ChangePasswordForm username="gwen" lede={TEST_LEDE} onSuccess={onSuccess} />);
-    expect(screen.getByText(/No server recovery copy is confirmed/)).toBeTruthy();
+    expect(await screen.findByText(/No server recovery copy is confirmed/)).toBeTruthy();
   });
   it("does not claim a missing copy when a recovery slot exists", () => {
     recoverySlots = ["password", "recovery"];
@@ -108,6 +112,21 @@ describe("PGP recovery warning", () => {
     protection = "";
     render(<ChangePasswordForm username="gwen" lede={TEST_LEDE} onSuccess={onSuccess} />);
     expect(screen.queryByText(/No server recovery copy is confirmed/)).toBeNull();
+  });
+  // A forced first-login reset is refused the PGP bootstrap, so only the
+  // password snapshot can say the account has no key.
+  it("does not call recovery status unavailable for a keyless forced reset", async () => {
+    protection = "";
+    mustChangePassword = true;
+    bootstrapError = "password change required";
+    render(<ChangePasswordForm username="gwen" lede={TEST_LEDE} onSuccess={onSuccess} />);
+    await waitFor(() => expect((screen.getByRole("button", { name: /update password/i }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText(/PGP recovery status is unavailable/)).toBeNull();
+  });
+  it("still says recovery status is unavailable when a keyed account's bootstrap fails", async () => {
+    bootstrapError = "password change required";
+    render(<ChangePasswordForm username="gwen" lede={TEST_LEDE} onSuccess={onSuccess} />);
+    expect(await screen.findByText(/PGP recovery status is unavailable/)).toBeTruthy();
   });
 });
 
