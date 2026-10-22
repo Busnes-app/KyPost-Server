@@ -54,10 +54,10 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !exists {
-			writeJSON(w, http.StatusOK, map[string]any{"configured": false, "path": imapConfigPath, "keyPath": s.imapConfigKeyPath})
+			writeJSON(w, http.StatusOK, map[string]any{"configured": false})
 			return
 		}
-		writeJSON(w, http.StatusOK, imapConfigStatus(imapConfigPath, s.imapConfigKeyPath, payload))
+		writeJSON(w, http.StatusOK, imapConfigStatus(payload))
 	case http.MethodPost:
 		if managed, err := s.imapConfigManaged(imapConfigPath); err != nil {
 			s.logger.Error("failed to read imap configuration", "user_id", ac.UserID, "error", err.Error())
@@ -100,7 +100,7 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		s.invalidateUserMail(ac.UserID)
 
-		status := imapConfigStatus(imapConfigPath, s.imapConfigKeyPath, payload)
+		status := imapConfigStatus(payload)
 		status["ok"] = true
 		writeJSON(w, http.StatusOK, status)
 	case http.MethodDelete:
@@ -122,12 +122,11 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // imapConfigStatus is the password-free view of a stored config, shared by the
-// user route and the admin route so both report the same fields.
-func imapConfigStatus(path, keyPath string, p imapConfigPayload) map[string]any {
+// user route and the admin route so both report the same fields. It carries
+// no on-disk paths: they are server internals, not settings.
+func imapConfigStatus(p imapConfigPayload) map[string]any {
 	return map[string]any{
 		"configured":      true,
-		"path":            path,
-		"keyPath":         keyPath,
 		"host":            p.Host,
 		"port":            p.Port,
 		"username":        p.Username,

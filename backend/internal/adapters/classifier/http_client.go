@@ -497,26 +497,19 @@ func (c *HTTPClient) runWarmup(ctx context.Context) error {
 	return nil
 }
 
+// pullModel pulls the model unless Ollama already has it. A pull writes into
+// the models directory even for an installed model, and a pre-populated cache
+// the container cannot write is supported (see entrypoint.sh), so asking first
+// keeps such a cache from failing every warm-up.
 func (c *HTTPClient) pullModel(ctx context.Context) error {
-	payload := map[string]any{
-		"model":  c.model,
-		"stream": false,
-	}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return err
+	if resp, err := c.postOllama(ctx, "/api/show", map[string]any{"model": c.model}); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return nil
+		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/pull", bytes.NewReader(b))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
-
-	resp, err := c.client.Do(req)
+	resp, err := c.postOllama(ctx, "/api/pull", map[string]any{"model": c.model, "stream": false})
 	if err != nil {
 		return fmt.Errorf("ollama pull failed: %w", err)
 	}
@@ -527,6 +520,22 @@ func (c *HTTPClient) pullModel(ctx context.Context) error {
 	}
 	c.logServer("[OLLAMA WARMUP] model pulled")
 	return nil
+}
+
+func (c *HTTPClient) postOllama(ctx context.Context, path string, payload map[string]any) (*http.Response, error) {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	return c.client.Do(req)
 }
 
 func getWarmupState(key string) *warmupState {

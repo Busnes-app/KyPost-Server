@@ -113,7 +113,6 @@ beforeEach(() => {
   restoreRecoveryBackup.mockResolvedValue({ ...BACKUP, privateKey: "ARMORED" });
   putJSON.mockResolvedValue({ ok: true });
   postJSON.mockResolvedValue({ ok: true, pgpRevision: 8 });
-  vi.spyOn(window, "prompt").mockReturnValue("account-password");
   // jsdom has no object URL implementation; saveRecoveryBackup needs one.
   (URL as unknown as { createObjectURL: unknown }).createObjectURL = () => "blob:x";
   (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = () => {};
@@ -159,6 +158,13 @@ beforeEach(() => {
     return Promise.resolve({});
   });
 });
+
+// MailKeys asks for the account password in its own dialog, not window.prompt.
+async function enterAccountPassword() {
+  const dialog = await screen.findByRole("dialog", { name: "Enter your account password" });
+  await userEvent.type(within(dialog).getByLabelText("Account password"), "account-password");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
+}
 
 function renderPage(tab = "mail") {
   return render(
@@ -596,10 +602,24 @@ describe("server recovery", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
     expect(putJSON).not.toHaveBeenCalled();
     await userEvent.click(await screen.findByRole("button", { name: "I saved the secret — store server copy" }));
+    await enterAccountPassword();
     await waitFor(() => expect(putJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/recovery", {
       envelope: JSON.stringify(BACKUP.envelope), expectedFingerprint: BACKUP.fingerprint, expectedRevision: 7, authSecret: "derived-account-credential"
     }));
     expect(JSON.stringify(putJSON.mock.calls)).not.toMatch(/SECRET-ABCD|ARMORED|account-password/);
+  });
+
+  it("asks for the account password in a masked page dialog, and Cancel stores nothing", async () => {
+    const prompt = vi.spyOn(window, "prompt");
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
+    await userEvent.click(await screen.findByRole("button", { name: "I saved the secret — store server copy" }));
+    const dialog = await screen.findByRole("dialog", { name: "Enter your account password" });
+    expect(within(dialog).getByLabelText("Account password").getAttribute("type")).toBe("password");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Enter your account password" })).toBeNull();
+    expect(prompt).not.toHaveBeenCalled();
+    expect(putJSON).not.toHaveBeenCalled();
   });
 
   it("retains the file and secret after an uncertain upload and a tab switch", async () => {
@@ -607,6 +627,7 @@ describe("server recovery", () => {
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
     await userEvent.click(await screen.findByRole("button", { name: "I saved the secret — store server copy" }));
+    await enterAccountPassword();
     await screen.findByText(/Server recovery storage could not be confirmed/);
     await userEvent.click(screen.getByRole("tab", { name: "Devices" }));
     await userEvent.click(screen.getByRole("tab", { name: "Encryption" }));
@@ -696,6 +717,7 @@ it("starts a delayed recovery PUT only after secret-save acknowledgement", async
   await screen.findByText("SECRET-ABCD-1234");
   expect(putJSON).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "I saved the secret — store server copy" }));
+  await enterAccountPassword();
   await waitFor(() => expect(putJSON).toHaveBeenCalledTimes(1));
   page.unmount();
   finish();
@@ -711,6 +733,7 @@ it("retains a prepared recovery revision across refresh, tab switch and rejected
   await userEvent.click(screen.getByRole("tab", { name: "Encryption" }));
   putJSON.mockRejectedValue(new Error("PGP state changed; reload"));
   await userEvent.click(await screen.findByRole("button", { name: "I saved the secret — store server copy" }));
+  await enterAccountPassword();
   await screen.findByText(/PGP state changed/);
   expect(putJSON).toHaveBeenCalledExactlyOnceWith("/api/pgp/identity/envelope/recovery", expect.objectContaining({ expectedRevision: 7 }));
   expect(screen.getByText("SECRET-ABCD-1234")).toBeTruthy();
@@ -804,6 +827,7 @@ describe("complete keyring recovery UI gates", () => {
     expect(importIdentity).not.toHaveBeenCalled();
     expect(storePGPKeyringRecovery).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: /I saved the secret — store server copy/ }));
+    await enterAccountPassword();
     await screen.findByText(/Recovery copy saved on the server/);
     expect(storePGPKeyringRecovery).toHaveBeenCalledWith(ringBackup,"SECRET-ABCD-1234","account-password",7,expect.any(Function));
     expect(putJSON).not.toHaveBeenCalled();

@@ -120,7 +120,9 @@ export function ChangePasswordForm({
           <p className="auth-lede">{lede}</p>
         </header>
 
-        {!pgpSession?.loaded || pgpSession.error || !pgpSession.bootstrap ? (
+        {/* A keyless account has nothing to recover. The password snapshot says
+            so even in a forced reset, where the PGP bootstrap is refused. */}
+        {!passwordSnapshot || passwordSnapshot.protection === "" ? null : !pgpSession?.loaded || pgpSession.error || !pgpSession.bootstrap ? (
           <p className="notice">PGP recovery status is unavailable. Check your recovery file and secret before changing this password.</p>
         ) : pgpSession.bootstrap.protection === "client" && !pgpSession.bootstrap.envelopeSlots?.includes("recovery") ? (
           <p className="notice">No server recovery copy is confirmed for your PGP key. Keep a recovery file and its secret before changing this password. You can create one in Security → Encryption.</p>

@@ -2183,9 +2183,29 @@ func applySingleKeywordWithRetry(ctx context.Context, c imapadapter.Client, mess
 
 // tagWithFallbackLabel retires a message with the account's fallback label,
 // for the two non-failure skips: auto-labeling off, and an encrypted message
-// with no readable body.
+// with no readable body. Mail that already carries one of the account's
+// labels keeps it: stacking the fallback on top would show it in two tabs.
 func (p *Poller) tagWithFallbackLabel(ctx context.Context, uc userCtx, cfg config.Config, msg imapadapter.Message, reason string) error {
-	return p.tagWithLabel(ctx, uc, msg, disabledLabelingFallback(uc.allowlist), reason)
+	label := existingLabel(msg.Keywords, uc.allowlist, uc.keywordMappings)
+	if label == "" {
+		label = disabledLabelingFallback(uc.allowlist)
+	}
+	return p.tagWithLabel(ctx, uc, msg, label, reason)
+}
+
+// existingLabel returns the first allowlisted label whose keywords msg already
+// carries, or "" when it carries none.
+func existingLabel(have, allowlist []string, mappings map[string][]string) string {
+	for _, label := range allowlist {
+		for _, keyword := range keywordsForSelectedLabel(label, mappings) {
+			for _, h := range have {
+				if strings.EqualFold(strings.TrimSpace(h), keyword) {
+					return strings.TrimSpace(label)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // tagWithLabel retires a message the classifier is not going to be asked

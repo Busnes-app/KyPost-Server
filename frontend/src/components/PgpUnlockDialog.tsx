@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useDialogOpen } from "../hooks/useDialogOpen";
 import { unlockPGPSession } from "../lib/pgpSession";
 import { toErrorMessage } from "../api/client";
@@ -22,6 +22,8 @@ type Props = {
  */
 export function PgpUnlockDialog({ open, reason, onUnlocked, onCancel }: Props) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  // Read and compose each mount their own dialog, so a fixed id would repeat.
+  const passwordId = useId();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -79,11 +81,11 @@ export function PgpUnlockDialog({ open, reason, onUnlocked, onCancel }: Props) {
             unlocked here each time the page loads.
           </p>
           <form onSubmit={submit}>
-            <label htmlFor="pgp-unlock-password" style={{ display: "block", marginBottom: 4 }}>
+            <label htmlFor={passwordId} style={{ display: "block", marginBottom: 4 }}>
               Account password
             </label>
             <input
-              id="pgp-unlock-password"
+              id={passwordId}
               type="password"
               autoFocus
               autoComplete="current-password"

@@ -90,3 +90,30 @@ func TestIMAPConfigPOSTCannotSelfManage(t *testing.T) {
 		t.Fatal("user was able to set managed on their own config")
 	}
 }
+
+// Mail settings are shown to every user; on-disk paths are server internals.
+func TestIMAPConfigGETOmitsServerPaths(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		srv, u := newTestServerWithUser(t)
+		if configured {
+			seedManagedIMAP(t, srv, u.ID, false)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/imap/config", nil)
+		authRequestAs(srv, req, u.ID)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("configured=%v: status = %d body=%s", configured, rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if body["configured"] != configured {
+			t.Fatalf("configured = %v, want %v", body["configured"], configured)
+		}
+		for _, key := range []string{"path", "keyPath"} {
+			if _, leaked := body[key]; leaked {
+				t.Fatalf("configured=%v: %s leaked: %s", configured, key, rec.Body.String())
+			}
+		}
+	}
+}

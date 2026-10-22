@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { IncomingEncryption } from "./IncomingEncryption";
+import { usePasswordPrompt } from "../../../components/PasswordPrompt";
 import { toErrorMessage } from "../../../api/client";
 import {
   deletePGPIdentity,
@@ -83,6 +84,7 @@ export function MailKeys({
   setRecoverySecret = noop
 }: MailKeysProps = {}) {
   const { userId } = useAuth();
+  const [askPassword, passwordPrompt] = usePasswordPrompt();
   const recoveryBackup = preparedRecovery?.backup ?? null;
   const mounted = useRef(true);
   useEffect(() => {
@@ -196,7 +198,7 @@ export function MailKeys({
    * password here, at creation, not just a session.
    */
   async function handleGeneratePGPIdentity() {
-    const password = window.prompt(
+    const password = await askPassword(
       "Enter your account password.\n\nYour new private key will be encrypted with it before it leaves this browser. " +
         "This server will not be able to decrypt it — keep a backup of the key."
     );
@@ -374,7 +376,7 @@ export function MailKeys({
 
   async function handleStoreRecoveryBackup() {
     if (!recoveryBackup || !recoverySecret || !preparedRecovery) return;
-    const password = window.prompt(
+    const password = await askPassword(
       "Enter your account password to store the recovery copy.\n\n" +
       "You have confirmed that you saved its secret. This replaces any previous server recovery copy and its secret. Older downloaded files still work with their own secrets."
     );
@@ -552,7 +554,7 @@ export function MailKeys({
     setPgpBusy(true);
     setPgpStatus("");
     try {
-      const password = window.prompt(
+      const password = await askPassword(
         "Enter your account password.\n\nThe imported key will be encrypted with it before it leaves this browser."
       );
       if (!password) {
@@ -596,7 +598,7 @@ export function MailKeys({
     // on this page that cannot be undone by any later one — a stolen session
     // could otherwise make every message ever encrypted to this key unreadable,
     // permanently, in a single request.
-    const password = window.prompt(
+    const password = await askPassword(
       "Enter your account password to confirm deleting your PGP identity.\n\n" +
         "This cannot be undone: mail already encrypted to this key stays unreadable."
     );
@@ -632,6 +634,7 @@ export function MailKeys({
 
   return (
     <>
+      {passwordPrompt}
       <IncomingEncryption identity={pgpIdentity} clientProtected={pgpSession?.bootstrap?.protection === "client"} />
       <div
         className={`sec-card ${

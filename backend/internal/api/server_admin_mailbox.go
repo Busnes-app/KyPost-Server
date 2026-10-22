@@ -53,7 +53,7 @@ func (s *Server) handleAdminUserIMAPConfig(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, map[string]any{"configured": false})
 			return
 		}
-		writeJSON(w, http.StatusOK, imapConfigStatus(path, s.imapConfigKeyPath, payload))
+		writeJSON(w, http.StatusOK, imapConfigStatus(payload))
 	case http.MethodPut:
 		var payload imapConfigPayload
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload); err != nil {
@@ -95,7 +95,7 @@ func (s *Server) handleAdminUserIMAPConfig(w http.ResponseWriter, r *http.Reques
 		}
 		s.invalidateUserMail(target.ID)
 		s.logger.Info("user mailbox assigned by admin", "user_id", target.ID, "admin_id", ac.UserID, "managed", strconv.FormatBool(payload.Managed), "host", payload.Host)
-		status := imapConfigStatus(path, s.imapConfigKeyPath, payload)
+		status := imapConfigStatus(payload)
 		status["ok"] = true
 		writeJSON(w, http.StatusOK, status)
 	case http.MethodDelete:
