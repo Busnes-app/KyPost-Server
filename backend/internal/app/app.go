@@ -403,7 +403,9 @@ func runServer(ctx context.Context, d runDeps) error {
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			d.logger.Error("api server shutdown error", "error", err.Error())
 		}
-		<-serveErr
+		if err := <-serveErr; err != nil {
+			d.logger.Error("api server serve error", "error", err.Error())
+		}
 		return nil
 	case err := <-serveErr:
 		return err
