@@ -9,7 +9,7 @@ import time
 import uuid
 
 root = Path(__file__).resolve().parent.parent
-image = "rspamd/rspamd:4.2.0@sha256:063ba7817e2ffba07a8b7ec8224dcdcecf74aefad551f5cae6196dbf3e58603f"
+image = "rspamd/rspamd:4.2.2@sha256:33526f94cfbb5ab5485805ad9d6eddb6a52aca6529aad0ce99b67b01c2e756de"
 
 def run(args, data=None):
     result = subprocess.run(args, input=data, capture_output=True, timeout=45, cwd=root)

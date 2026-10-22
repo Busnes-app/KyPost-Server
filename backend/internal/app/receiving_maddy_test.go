@@ -739,7 +739,7 @@ func startReceivingRspamdProof(t *testing.T, config string, extra ...string) {
 	}
 	_ = listener.Close()
 	name := "kypost-rspamd-proof-" + strconv.Itoa(os.Getpid())
-	image := "rspamd/rspamd:4.2.0@sha256:063ba7817e2ffba07a8b7ec8224dcdcecf74aefad551f5cae6196dbf3e58603f"
+	image := "rspamd/rspamd:4.2.2@sha256:33526f94cfbb5ab5485805ad9d6eddb6a52aca6529aad0ce99b67b01c2e756de"
 	args := []string{"run", "--rm", "-d", "--name", name, "--network", "host", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--memory", "512m", "--pids-limit", "64", "--tmpfs", "/tmp:uid=11333,gid=11333,mode=0700", "--tmpfs", "/var/lib/rspamd:uid=11333,gid=11333,mode=0700", "--mount", "type=bind,source=" + config + ",target=/etc/rspamd/rspamd.conf,readonly"}
 	args = append(append(args, extra...), "--entrypoint", "rspamd", image, "-f", "-c", "/etc/rspamd/rspamd.conf")
 	if out, err := exec.Command("docker", args...).CombinedOutput(); err != nil {
