@@ -16,6 +16,11 @@ non-prerelease version.
 
 ### Added
 
+- `GET /api/pgp/bootstrap` returns `accountAddresses`: the account's sending
+  address, then its verified send-as aliases. Clients use it to leave the
+  account's own addresses out of Reply All when the IMAP login is not an email
+  address (#452). `suggestedUserIDs` is unchanged.
+
 - AI agent access over MCP at `/mcp` (Streamable HTTP, bearer token). Users
   create tokens under Security → AI agents (`GET/POST /api/agent-tokens`,
   `PUT/DELETE /api/agent-tokens/{id}`; create and widen need step-up) with
@@ -42,6 +47,10 @@ non-prerelease version.
   `docs/KYCALENDAR.md`.
 
 ### Fixed
+
+- Built with Go 1.27.3, which distrusts compromised intermediate certificates
+  in `crypto/x509` (GO-2026-6809). Outbound SMTP over TLS verified server
+  certificates with the affected code.
 
 - Remove the pre-launch README’s obsolete Busnes-app owner-move upgrade section.
 
