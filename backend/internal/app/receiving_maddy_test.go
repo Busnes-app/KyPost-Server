@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -739,7 +740,16 @@ func startReceivingRspamdProof(t *testing.T, config string, extra ...string) {
 	}
 	_ = listener.Close()
 	name := "kypost-rspamd-proof-" + strconv.Itoa(os.Getpid())
-	image := "rspamd/rspamd:4.2.0@sha256:063ba7817e2ffba07a8b7ec8224dcdcecf74aefad551f5cae6196dbf3e58603f"
+	// docker-compose.rspamd.yml is the only place the pin lives.
+	compose, err := os.ReadFile("../../../docker-compose.rspamd.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := regexp.MustCompile(`(?m)^\s+image:\s*(rspamd/rspamd:\S+@sha256:[0-9a-f]{64})\s*$`).FindSubmatch(compose)
+	if pin == nil {
+		t.Fatal("docker-compose.rspamd.yml has no 'image: rspamd/rspamd:<version>@sha256:<digest>' line")
+	}
+	image := string(pin[1])
 	args := []string{"run", "--rm", "-d", "--name", name, "--network", "host", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--memory", "512m", "--pids-limit", "64", "--tmpfs", "/tmp:uid=11333,gid=11333,mode=0700", "--tmpfs", "/var/lib/rspamd:uid=11333,gid=11333,mode=0700", "--mount", "type=bind,source=" + config + ",target=/etc/rspamd/rspamd.conf,readonly"}
 	args = append(append(args, extra...), "--entrypoint", "rspamd", image, "-f", "-c", "/etc/rspamd/rspamd.conf")
 	if out, err := exec.Command("docker", args...).CombinedOutput(); err != nil {
