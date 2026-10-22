@@ -4,12 +4,18 @@ import json
 from email.utils import formatdate
 import os
 from pathlib import Path
+import re
 import subprocess
 import time
 import uuid
 
 root = Path(__file__).resolve().parent.parent
-image = "rspamd/rspamd:4.2.0@sha256:063ba7817e2ffba07a8b7ec8224dcdcecf74aefad551f5cae6196dbf3e58603f"
+# docker-compose.rspamd.yml is the only place the pin lives, so a Dependabot
+# bump of that file alone keeps this check (and the backend proof) in step.
+pin = re.search(r"^\s+image:\s*(rspamd/rspamd:\S+@sha256:[0-9a-f]{64})\s*$",
+                (root / "docker-compose.rspamd.yml").read_text(), re.M)
+assert pin, "docker-compose.rspamd.yml has no 'image: rspamd/rspamd:<version>@sha256:<digest>' line"
+image = pin.group(1)
 
 def run(args, data=None):
     result = subprocess.run(args, input=data, capture_output=True, timeout=45, cwd=root)
