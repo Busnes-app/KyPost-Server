@@ -14,7 +14,7 @@ require (
 	github.com/emersion/go-msgauth v0.7.0
 	github.com/emersion/go-vcard v0.1.0
 	github.com/emersion/go-webdav v0.7.0
-	github.com/go-jose/go-jose/v4 v4.1.5
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/inbucket/html2text v1.0.0
 	github.com/jhillyerd/enmime/v2 v2.5.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
