@@ -2,9 +2,9 @@
 // adding a panel is a one-line edit in an obvious place.
 //
 // ponytail: version is no longer a frontend constant — About and Admin > Server
-// both read backend serverVersion (via GET /api/status `version`), the same LHS
-// the self-update check uses. One bump (server_version.go / package.json) updates
-// both badges; see release-image.yml gate.
+// both read the backend's appversion.String() (via GET /api/status `version`),
+// the same LHS the self-update check uses. backend/internal/appversion/VERSION
+// is the only version source; package.json has none.
 
 export type SettingsNavItem = { to: string; label: string };
 

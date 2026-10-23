@@ -1,11 +1,15 @@
 # Changelog
 
 Versions are dotted-numeric (`MAJOR.MINOR.PATCH`) and published as GitHub
-releases tagged `v<version>`. The tag, `serverVersion` in
-`backend/internal/api/server_version.go`, and `frontend/package.json` must all
-agree — `release-image.yml` refuses to publish a release where they do not. The
-agent skill's `version` (`backend/internal/agentskill/kypost/SKILL.md`) follows
-`serverVersion`; `TestAgentSkillMatchesTheTools` fails until it does.
+releases tagged `v<version>`. The tag must match
+`backend/internal/appversion/VERSION`, the only version source —
+`release-image.yml` refuses to publish a release where it does not. The agent
+skill's `version` (`backend/internal/agentskill/kypost/SKILL.md`) follows
+`VERSION`; `TestAgentSkillMatchesTheTools` fails until it does.
+
+Dependabot changes ship as `MAJOR.MINOR.PATCH.N` releases (`v0.4.2.1`,
+`v0.4.2.2`, …), at most one a day, published by `dependency-release.yml` with
+generated release notes and no entry here.
 
 Each release publishes an immutable `ghcr.io/<owner>/kypost-server:<version>`
 image. `:stable` is moved to that image only after its build attestation has
@@ -88,6 +92,11 @@ non-prerelease version.
     classification.
 
 ### Changes
+
+- Dependabot updates now ship on their own: once a day, if any merged, a
+  `v0.4.2.N` release and image are published and `:stable` follows it. The
+  version lives in `backend/internal/appversion/VERSION` alone; release images
+  report the full four-part version, source builds the three-part line.
 
 - Admin → Single Sign-On: the **KySignOn Preset** button no longer fills in a
   specific issuer address. It still enables SSO, sets the client ID to
