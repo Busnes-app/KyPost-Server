@@ -6,27 +6,25 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/appversion"
 	"github.com/Busnes-app/kypost-server/backend/internal/ghrelease"
 )
 
-// serverVersion is the KyPost-Server release this binary was built from, and
-// the left-hand side of the self-update check below.
+// The KyPost-Server version this binary reports is appversion.String(): the
+// release line in backend/internal/appversion/VERSION, or the release tag's
+// full version (X.Y.Z or X.Y.Z.N) that release-image.yml compiles into the
+// image. It is the LEFT-HAND SIDE of the self-update check below.
 //
-// It is a compiled-in constant rather than a build-time flag on purpose: the
-// documented install is `git clone` + `docker compose up --build`, which
-// passes no build args, so anything supplied through --build-arg would be
-// empty for almost every operator and the check would never fire. The cost is
-// that cutting a release means bumping this in the same commit as the tag —
-// see backend/AGENTS.md.
+// The line is embedded rather than supplied by a build flag alone on purpose:
+// a source install (`docker compose up --build`) passes no build args, and an
+// empty version would make the check never fire. A source build therefore
+// reports X.Y.Z even at a commit released as X.Y.Z.N.
 //
-// It must equal frontend/package.json's version and the release tag it is
-// published under. That is not a convention: release-image.yml refuses to
-// publish a tag that disagrees with either, because a mismatch here is not
-// cosmetic. This constant is the LEFT-HAND SIDE of the update check, so a
-// binary tagged v1.0.0 while this still said 0.1.0 would compare itself
-// against every published release, conclude it was out of date forever, and
-// email the admin of every install about an upgrade they had already applied.
-const serverVersion = "0.4.2"
+// release-image.yml refuses to publish a tag whose X.Y.Z disagrees with
+// VERSION, because a mismatch here is not cosmetic: a binary tagged v1.0.0
+// while VERSION still said 0.1.0 would compare itself against every published
+// release, conclude it was out of date forever, and email the admin of every
+// install about an upgrade they had already applied.
 
 // serverReleasesURL is the LIST endpoint for this project's own releases. A
 // var, not a const, only so tests can point it at an httptest server.
@@ -75,22 +73,22 @@ func (s *Server) checkForServerUpdate(ctx context.Context) {
 	latest, err := ghrelease.Latest(checkCtx, serverReleasesURL, serverReleaseMinAge)
 	if err != nil {
 		s.logger.Error("kypost-server release check failed", "error", err.Error())
-		s.setServerStatus(serverVersionStatus{installedVersion: serverVersion, checkErr: "failed to check for updates"})
+		s.setServerStatus(serverVersionStatus{installedVersion: appversion.String(), checkErr: "failed to check for updates"})
 		return
 	}
 	// Empty means the repository has published no usable release yet, which is
 	// an ordinary state. Render it as installed so the UI can say it is current.
 	if latest == "" {
 		s.setServerStatus(serverVersionStatus{
-			installedVersion: serverVersion,
-			latestVersion:    serverVersion,
+			installedVersion: appversion.String(),
+			latestVersion:    appversion.String(),
 			checkedAt:        time.Now().UTC(),
 		})
 		return
 	}
-	upgradeAvailable := ghrelease.IsNewer(latest, serverVersion)
+	upgradeAvailable := ghrelease.IsNewer(latest, appversion.String())
 	s.setServerStatus(serverVersionStatus{
-		installedVersion: serverVersion,
+		installedVersion: appversion.String(),
 		latestVersion:    latest,
 		upgradeAvailable: upgradeAvailable,
 		checkedAt:        time.Now().UTC(),
@@ -108,7 +106,7 @@ func (s *Server) checkForServerUpdate(ctx context.Context) {
 		return
 	}
 
-	s.logger.Info("kypost-server update available", "installed", serverVersion, "latest", latest)
+	s.logger.Info("kypost-server update available", "installed", appversion.String(), "latest", latest)
 	if err := s.notifyAdminServerUpdateAvailable(latest); err != nil {
 		s.logger.Error("failed to email admin about kypost-server update", "error", err.Error())
 	}
@@ -152,10 +150,10 @@ func (s *Server) notifyAdminServerUpdateAvailable(latest string) error {
 				"Automatic updates are optional: install the systemd timer documented in README.md.\n\n"+
 				"Release notes: https://github.com/Busnes-app/KyPost-Server/releases/tag/v%s\n\n"+
 				"You will get this message once per new release, not once per check.",
-			serverVersion, latest, latest,
+			appversion.String(), latest, latest,
 		),
 	)
 }
 
 // Version identifies the binary in recovery manifests.
-func Version() string { return serverVersion }
+func Version() string { return appversion.String() }

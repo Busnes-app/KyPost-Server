@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
+	"github.com/Busnes-app/kypost-server/backend/internal/appversion"
 	"github.com/Busnes-app/kypost-server/backend/internal/backup"
 	"github.com/Busnes-app/kypost-server/backend/internal/captcha"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -457,7 +458,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		if err != nil {
 			panic(fmt.Errorf("backup config: %w", err))
 		}
-		s.backup, err = backup.New(backup.Dirs{Config: configDir, State: stateDir, Secret: config.SecretDir()}, bc, globalStore, serverVersion)
+		s.backup, err = backup.New(backup.Dirs{Config: configDir, State: stateDir, Secret: config.SecretDir()}, bc, globalStore, appversion.String())
 		if err != nil {
 			panic(err)
 		}
@@ -1273,7 +1274,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		checkpoint = ""
 	}
 	resp := map[string]any{
-		"version":                 serverVersion,
+		"version":                 appversion.String(),
 		"scanIntervalSeconds":     cfg.Scan.IntervalSeconds,
 		"rateLimits":              cfg.RateLimits,
 		"checkpoint":              checkpoint,
