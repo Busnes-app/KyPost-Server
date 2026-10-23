@@ -2,7 +2,7 @@
 
 This Worker delivers native push notifications to iOS devices via Apple Push Notification service (APNs).
 
-The published iOS app is compiled with a single bundle ID (`com.urlxl.mail`), so only a holder of the corresponding Apple Developer Team ID can deliver push to it. Instead of shipping the APNs auth key (`.p8`) to every self-hosted server, the **maintainer** runs this Worker. Self-hosted KyPost servers forward push requests to it, each authenticated with its own API key. Self-hosters need **no Apple Developer account and never recompile the app**.
+The published iOS app is compiled with a single bundle ID (`org.kysecurity.mail`), so only a holder of the corresponding Apple Developer Team ID can deliver push to it. Instead of shipping the APNs auth key (`.p8`) to every self-hosted server, the **maintainer** runs this Worker. Self-hosted KyPost servers forward push requests to it, each authenticated with its own API key. Self-hosters need **no Apple Developer account and never recompile the app**.
 
 ```
 self-hosted Go server  --(Bearer per-server key)-->  this Worker  --(APNs provider token)-->  APNs  -->  iOS Device
@@ -42,7 +42,7 @@ self-hosted Go server  --(Bearer per-server key)-->  this Worker  --(APNs provid
    npx wrangler secret put APNS_AUTH_KEY    # Contents of the .p8 file (preserve all newlines)
    npx wrangler secret put APNS_KEY_ID      # Key ID from step 3
    npx wrangler secret put APNS_TEAM_ID     # Team ID from your Apple Developer account
-   npx wrangler secret put APNS_TOPIC       # Bundle ID, e.g. "com.urlxl.mail"
+   npx wrangler secret put APNS_TOPIC       # Bundle ID, e.g. "org.kysecurity.mail"
    npx wrangler secret put APNS_ENVIRONMENT # "production" or "sandbox" (use "sandbox" for debug/TestFlight builds)
    ```
    `APNS_ENVIRONMENT` is parsed strictly. Unset means production; anything that

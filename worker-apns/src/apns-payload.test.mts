@@ -38,7 +38,7 @@ const config = {
   authKey: "-----BEGIN PRIVATE KEY-----\nMHc=\n-----END PRIVATE KEY-----",
   keyId: "KEYID12345",
   teamId: "TEAMID1234",
-  topic: "com.urlxl.mail",
+  topic: "org.kysecurity.mail",
   environment: "production" as const,
 };
 
