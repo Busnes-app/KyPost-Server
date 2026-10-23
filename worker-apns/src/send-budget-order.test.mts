@@ -79,7 +79,7 @@ async function env(kvEntries: [string, unknown][] = []) {
     APNS_AUTH_KEY: AUTH_KEY,
     APNS_KEY_ID: "KEYID12345",
     APNS_TEAM_ID: "TEAMID1234",
-    APNS_TOPIC: "com.urlxl.mail",
+    APNS_TOPIC: "org.kysecurity.mail",
     APNS_ENVIRONMENT: "production",
     APNS_TOKEN_CACHE: {
       async get() {

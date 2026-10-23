@@ -79,7 +79,7 @@ dataset = "kypost_push_usage_apns"
 #   APNS_AUTH_KEY      - .p8 PEM private key contents from Apple Developer portal (preserve newlines)
 #   APNS_KEY_ID        - Key ID from Apple Developer portal
 #   APNS_TEAM_ID       - Team ID from Apple Developer portal
-#   APNS_TOPIC         - Bundle ID, e.g. "com.urlxl.mail"
+#   APNS_TOPIC         - Bundle ID, e.g. "org.kysecurity.mail"
 #   APNS_ENVIRONMENT   - "production" or "sandbox" (unset means production).
 #                        Any other value is a configuration error, not a
 #                        default: /health reports configured=false and /send

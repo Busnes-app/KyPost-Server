@@ -22,7 +22,7 @@ export interface ApnsConfig {
   authKey: string; // .p8 PEM contents
   keyId: string; // from Apple Developer portal
   teamId: string; // Team ID from Apple Developer portal
-  topic: string; // bundle ID, e.g. "com.urlxl.mail"
+  topic: string; // bundle ID, e.g. "org.kysecurity.mail"
   environment: ApnsEnvironment;
 }
 
