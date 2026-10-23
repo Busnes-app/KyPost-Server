@@ -44,7 +44,7 @@ attestation with `gh attestation verify`, and preserves that exact digest for
 rollback. It requires Docker Compose v2, Docker Buildx, and the GitHub CLI
 (`gh`), and checks for each up front; it fails closed
 when either verification or the health check fails. To stay on a specific
-release instead, set `KYPOST_VERSION=0.4.2` in `.env` before running it.
+release instead, set `KYPOST_VERSION=0.4.3` in `.env` before running it.
 
 ### Verifying an image by hand
 
@@ -55,7 +55,7 @@ The attestation must come from `release-image.yml` at that tag and record the co
 points to, and the image you pull must be that digest:
 
 ```bash
-v=<release version you intend to run, e.g. 0.4.2>
+v=<release version you intend to run, e.g. 0.4.3>
 sha=$(gh api repos/Busnes-app/KyPost-Server/commits/refs/tags/v$v --jq .sha) \
   && d=$(docker buildx imagetools inspect ghcr.io/busnes-app/kypost-server:$v --format '{{.Manifest.Digest}}') \
   && gh attestation verify "oci://ghcr.io/busnes-app/kypost-server@$d" --repo Busnes-app/KyPost-Server \
