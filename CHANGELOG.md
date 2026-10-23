@@ -18,6 +18,8 @@ non-prerelease version.
 
 ## Unreleased
 
+## 0.4.3 — 2026-10-23
+
 ### Added
 
 - `GET /api/pgp/bootstrap` returns `accountAddresses`: the account's sending
@@ -94,7 +96,7 @@ non-prerelease version.
 ### Changes
 
 - Dependabot updates now ship on their own: once a day, if any merged, a
-  `v0.4.2.N` release and image are published and `:stable` follows it. The
+  `v0.4.3.N` release and image are published and `:stable` follows it. The
   version lives in `backend/internal/appversion/VERSION` alone; release images
   report the full four-part version, source builds the three-part line.
 
