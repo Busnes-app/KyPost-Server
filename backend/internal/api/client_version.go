@@ -32,7 +32,7 @@ const linuxClientReleaseMinAge = 6 * time.Hour
 // It holds no "upgradeAvailable" field on purpose. This server does not know
 // what version any given client is running, and must not: the comparison
 // belongs on the client, where the installed version is a compiled-in
-// constant and is the LEFT-HAND SIDE. server_version.go:12-28 explains what
+// constant and is the LEFT-HAND SIDE. server_version.go's header explains what
 // a wrong left-hand side costs.
 type linuxClientStatus struct {
 	latestVersion string

@@ -26,7 +26,12 @@ COPY backend ./backend
 # the digest pins above exist to remove. CGO is off because every dependency is
 # pure Go (modernc.org/sqlite, not mattn/go-sqlite3), which keeps the build from
 # silently acquiring a link against the builder stage's glibc.
-RUN cd backend && CGO_ENABLED=0 go build -trimpath -o /app/bin/kypost-server ./cmd/main.go
+# Release builds pass the tag's version (X.Y.Z or X.Y.Z.N, release-image.yml);
+# every other build passes none and reports backend/internal/appversion/VERSION.
+ARG VERSION=
+RUN cd backend && CGO_ENABLED=0 go build -trimpath \
+	-ldflags="-X github.com/Busnes-app/kypost-server/backend/internal/appversion.release=${VERSION}" \
+	-o /app/bin/kypost-server ./cmd/main.go
 
 FROM node:26.12.1-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS frontend-builder
 WORKDIR /frontend
@@ -51,7 +56,7 @@ FROM debian:stable-slim@sha256:eb593cf2c358cacef45ca0a424bbc7d30cfa3466265fc2662
 # repository". Deliberately no version label — it would have to arrive as a
 # build arg, the documented build (`docker compose up --build`) passes none, and
 # a label that says the wrong version is worse than one that says nothing. The
-# version lives in the binary; see backend/internal/api/server_version.go.
+# version lives in the binary; see backend/internal/appversion.
 LABEL org.opencontainers.image.source="https://github.com/Busnes-app/KyPost-Server" \
       org.opencontainers.image.title="KyPost" \
       org.opencontainers.image.description="Self-hosted IMAP web client that labels mail with a local Ollama model" \

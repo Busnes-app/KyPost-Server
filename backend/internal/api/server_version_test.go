@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/appversion"
 )
 
 // TestCheckForServerUpdateNotifiesOncePerRelease drives checkForServerUpdate
@@ -56,7 +58,7 @@ func TestServerVersionStatusAndEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got.InstalledVersion != serverVersion || got.LatestVersion != "99.0.0" || !got.UpgradeAvailable || got.CheckedAt == "" {
+	if got.InstalledVersion != appversion.String() || got.LatestVersion != "99.0.0" || !got.UpgradeAvailable || got.CheckedAt == "" {
 		t.Fatalf("unexpected status: %+v", got)
 	}
 }
@@ -70,7 +72,7 @@ func TestCheckForServerUpdateStaysQuietWhenCurrent(t *testing.T) {
 		name string
 		body string
 	}{
-		{"already running the newest release", `[{"tag_name":"v` + serverVersion + `","published_at":"` +
+		{"already running the newest release", `[{"tag_name":"v` + appversion.String() + `","published_at":"` +
 			time.Now().UTC().Add(-time.Hour).Format(time.RFC3339) + `"}]`},
 		{"no releases published", `[]`},
 		{"only a prerelease", `[{"tag_name":"v99.0.0","prerelease":true,"published_at":"` +

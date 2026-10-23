@@ -1,0 +1,98 @@
+name: dependency release
+
+# Once a day, if Dependabot changes have landed on main since the last release
+# on the current line, publish the next fourth-number release: v0.4.2 -> v0.4.2.1
+# -> v0.4.2.2. However many Dependabot PRs merged that day, the day gets one
+# release. Running it by hand releases main now, Dependabot or not, so a fix
+# can ship without waiting for the schedule.
+#
+# The line (X.Y.Z) is backend/internal/appversion/VERSION. A bumped line is
+# released by hand first (publish vX.Y.Z); until then this workflow waits.
+# Nothing is committed: the fourth number lives only in the tag, and
+# release-image.yml builds it into the image.
+on:
+  schedule:
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: dependency-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide the next release
+        id: next
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          line="$(tr -d '[:space:]' < backend/internal/appversion/VERSION)"
+          head="$(git rev-parse HEAD)"
+          # A failed lookup must stop here: an empty list would read as "never released".
+          tags="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq '.[] | select(.draft == false) | .tag_name')"
+          latest="$(printf '%s\n' "$tags" | grep -E "^v${line//./\\.}(\.[1-9][0-9]*)?\$" | sort -V | tail -n1 || true)"
+          if [ -z "$latest" ]; then
+            echo "::notice::v$line has not been released; publish it by hand first"
+            exit 0
+          fi
+          if ! git merge-base --is-ancestor "$latest" "$head"; then
+            echo "::error::$latest is not an ancestor of main" >&2
+            exit 1
+          fi
+          if [ -z "$(git rev-list "$latest..$head")" ]; then
+            echo "nothing on main since $latest"
+            exit 0
+          fi
+          if [ "$EVENT" = schedule ] && [ -z "$(git log --format=%H --author='^dependabot\[bot\]' "$latest..$head")" ]; then
+            echo "no Dependabot changes since $latest"
+            exit 0
+          fi
+
+          # The image build refuses a commit whose CI did not pass; refuse it here
+          # too, so a red day leaves no release without an image. Tomorrow retries.
+          ci="$(gh run list --workflow ci.yml --branch main --commit "$head" --event push \
+            --limit 1 --json status,conclusion --jq '.[0] | "\(.status)/\(.conclusion)"')"
+          if [ "$ci" != "completed/success" ]; then
+            echo "::warning::CI on $head is ${ci:-absent}, not completed/success; not releasing"
+            exit 0
+          fi
+
+          n="${latest#"v$line"}"
+          next="v$line.$(( ${n#.} + 1 ))"
+          echo "releasing $next at $head (previous $latest)"
+          printf 'tag=%s\nprevious=%s\nsha=%s\n' "$next" "$latest" "$head" >> "$GITHUB_OUTPUT"
+
+      # A release made with GITHUB_TOKEN raises no release event, so the image
+      # workflow is dispatched on the new tag (its attestation identity stays
+      # release-image.yml@refs/tags/<tag>).
+      - name: Publish the release and its image
+        if: steps.next.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.next.outputs.tag }}
+          PREVIOUS: ${{ steps.next.outputs.previous }}
+          SHA: ${{ steps.next.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SHA" --title "$TAG" \
+            --generate-notes --notes-start-tag "$PREVIOUS" --latest
+          gh workflow run release-image.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "Released \`$TAG\` at \`$SHA\`; release-image.yml dispatched on it" >> "$GITHUB_STEP_SUMMARY"

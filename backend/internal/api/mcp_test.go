@@ -23,6 +23,7 @@ import (
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/agentskill"
+	"github.com/Busnes-app/kypost-server/backend/internal/appversion"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -856,8 +857,8 @@ func TestAgentSkillMatchesTheTools(t *testing.T) {
 	if want := []string{"name", "description", "version"}; !slices.Equal(keys, want) {
 		t.Errorf("frontmatter keys %v, want exactly %v", keys, want)
 	}
-	if !strings.Contains(front, `version: "`+serverVersion+`"`) {
-		t.Errorf("skill version is not the server version %s", serverVersion)
+	if !strings.Contains(front, `version: "`+appversion.String()+`"`) {
+		t.Errorf("skill version is not the server version %s", appversion.String())
 	}
 	_, tok := seedAgentToken(t, w.srv, w.user.ID, state.AgentScopeRead, time.Now())
 	tools, err := agent(t, w.srv, tok, nil).ListTools(context.Background(), nil)

@@ -1,8 +1,14 @@
 name: publish release image
 
+# A published release vX.Y.Z (or vX.Y.Z.N, from dependency-release.yml) publishes
+# the immutable :X.Y.Z[.N] image, attests and verifies it, then moves :stable.
+#
+# A release created by a workflow's GITHUB_TOKEN raises no release event, so
+# dependency-release.yml dispatches this workflow on the release's tag instead.
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 # One release publish at a time. Two runs racing both end in "move :stable",
 # and the winner is whichever finished last rather than whichever is newer.
@@ -33,6 +39,8 @@ jobs:
       # image — docker-compose.yml, .env.example, scripts/update-host.sh,
       # publish-main.yml — spells it out the same way.
       IMAGE_NAME: ghcr.io/busnes-app/kypost-server
+      # The release event names its tag; a dispatch runs on the tag's ref.
+      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
     steps:
       # First step, before the checkout: this reads nothing but the tag name,
       # and a bad tag should cost nothing to reject.
@@ -45,23 +53,42 @@ jobs:
       # no failure anyone would notice. Every release in this repository is a
       # server release, so there is no tag namespace this job should sit out;
       # the only correct answers are "published" and "red".
+      #
+      # A dispatch must run on a tag that has a published release, so it can
+      # only build what a release event would have built.
       - name: Validate release version
         id: version
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          EVENT_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           set -euo pipefail
-          version="${TAG#v}"
-          if [ "$version" = "$TAG" ] || ! printf '%s' "$version" \
-            | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::release tag must be v<major>.<minor>.<patch>, got: $TAG" >&2
+          if [[ ! "$TAG" =~ ^v(([0-9]+\.[0-9]+\.[0-9]+)(\.[1-9][0-9]*)?)$ ]]; then
+            echo "::error::release tag must be v<major>.<minor>.<patch> or v<major>.<minor>.<patch>.<n>, got: $TAG" >&2
             exit 1
           fi
-          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "value=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "line=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = release ]; then
+            echo "prerelease=$EVENT_PRERELEASE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$REF_TYPE" != tag ]; then
+            echo "::error::dispatch this workflow on a release tag, not a branch" >&2
+            exit 1
+          fi
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '{draft, prerelease}')"
+          if [ "$(jq -r .draft <<< "$release")" != false ]; then
+            echo "::error::$TAG has no published release" >&2
+            exit 1
+          fi
+          echo "prerelease=$(jq -r .prerelease <<< "$release")" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/tags/${{ github.event.release.tag_name }}
+          ref: refs/tags/${{ env.TAG }}
 
       # A branch named like the tag must not stand in for it: build only the
       # commit this release event names.
@@ -78,38 +105,25 @@ jobs:
 
       # Refuse to publish a tag the code does not agree with.
       #
-      # serverVersion is compiled in, and it is the LEFT-HAND SIDE of the
-      # hourly update check every install runs. Tagging v1.0.0 while that
-      # constant still says 0.1.0 ships a 1.0 server that compares itself
-      # against 1.0, decides it is behind, and emails the admin of every
-      # install about an upgrade they are already running — forever, because
-      # the comparison never stops being true. Nothing detected that, because
-      # the constant is only ever read at runtime against live GitHub data.
+      # backend/internal/appversion/VERSION is the only version source, and the
+      # server's version is the LEFT-HAND SIDE of the hourly update check every
+      # install runs. Tagging v1.0.0 while VERSION still says 0.1.0 ships a
+      # source build that compares itself against 1.0, decides it is behind,
+      # and emails the admin of every install about an upgrade they are already
+      # running — forever, because the comparison never stops being true.
       #
-      # frontend/package.json is checked with it so "what version is this?" has
-      # exactly one answer across the whole artifact.
-      - name: Require the tag, serverVersion and frontend version to agree
+      # The image reports the tag's full version (the build below sets it); the
+      # tag's X.Y.Z must be the file's.
+      - name: Require the tag to match backend/internal/appversion/VERSION
         env:
-          VERSION: ${{ steps.version.outputs.value }}
+          LINE: ${{ steps.version.outputs.line }}
         run: |
           set -euo pipefail
-          server="$(sed -n 's/^const serverVersion = "\(.*\)"$/\1/p' \
-            backend/internal/api/server_version.go)"
-          frontend="$(node -p 'require("./frontend/package.json").version')"
-
-          echo "tag=${VERSION} serverVersion=${server:-<unparsed>} frontend=${frontend:-<unparsed>}"
-
-          if [ -z "$server" ]; then
-            echo "::error::could not read serverVersion from backend/internal/api/server_version.go" >&2
-            echo "If the constant was reformatted, update this check with it." >&2
-            exit 1
-          fi
-          fail=""
-          [ "$server" = "$VERSION" ] || fail="${fail} serverVersion(${server})"
-          [ "$frontend" = "$VERSION" ] || fail="${fail} frontend/package.json(${frontend})"
-          if [ -n "$fail" ]; then
-            echo "::error::release ${VERSION} disagrees with:${fail}" >&2
-            echo "Bump every version source in the commit you tag. See backend/AGENTS.md." >&2
+          file="$(tr -d '[:space:]' < backend/internal/appversion/VERSION)"
+          echo "tag line: ${LINE}; backend/internal/appversion/VERSION: ${file:-<empty>}"
+          if [ "$file" != "$LINE" ]; then
+            echo "::error::${TAG} is on the ${LINE} line, but backend/internal/appversion/VERSION says ${file:-nothing}" >&2
+            echo "Bump backend/internal/appversion/VERSION in the commit you tag. See backend/AGENTS.md." >&2
             exit 1
           fi
 
@@ -208,6 +222,7 @@ jobs:
           context: .
           push: true
           tags: ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.value }}
+          build-args: VERSION=${{ steps.version.outputs.value }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha
@@ -251,8 +266,9 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
           REPO: ${{ github.repository }}
           # GitHub's `published` activity type fires for prereleases too, so
-          # this job runs for them and must decide what that means.
-          PRERELEASE: ${{ github.event.release.prerelease }}
+          # this job runs for them and must decide what that means. A dispatch
+          # reads the flag from the API (see "Validate release version").
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
           set -euo pipefail
 
@@ -277,12 +293,16 @@ jobs:
             exit 0
           fi
 
-          # Every published, non-draft, non-prerelease dotted-numeric release.
+          # Every published, non-draft, non-prerelease dotted-numeric release,
+          # X.Y.Z or X.Y.Z.N (sort -V orders 0.4.2 < 0.4.2.1 < 0.4.2.10).
           # Drafts and prereleases are excluded because operators following
           # :stable did not opt into them.
-          published="$(gh api --paginate "repos/${REPO}/releases" \
-            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
-            | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+          # A failed lookup must stop here: inside the pipeline, `|| true` would
+          # swallow it and an empty list would make this release "highest".
+          tags="$(gh api --paginate "repos/${REPO}/releases" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')"
+          published="$(printf '%s\n' "$tags" | sed 's/^v//' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(\.[1-9][0-9]*)?$' || true)"
 
           highest="$(printf '%s\n%s\n' "$published" "$VERSION" | sort -V | tail -n1)"
           echo "highest published release: ${highest}; this release: ${VERSION}"
