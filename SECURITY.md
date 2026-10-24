@@ -397,6 +397,8 @@ Security-sensitive PRs should include:
 - [README Security Section](docs/PGP-KEYS.md#where-your-pgp-private-key-lives) — PGP key custody, session behavior, users and roles
 - [Reverse Proxy Networking](docs/Reverse_Proxy_Networking.md) — Setting up a proxy on `kypost-net`
 - [TLS setup](docs/TLS.md) — TLS termination and proxy configuration
+- [docs/VERIFYING-RELEASES.md](docs/VERIFYING-RELEASES.md) — verify a release image and rebuild its binary
+- [docs/ASSURANCE-CASE.md](docs/ASSURANCE-CASE.md) — threat model and the argument that the protections above hold
 - OWASP guidelines on secure development practices
 
 ## Sealed server backups
