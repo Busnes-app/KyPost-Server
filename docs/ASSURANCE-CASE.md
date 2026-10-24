@@ -22,8 +22,8 @@ KyPost is a self-hosted mail client and, opt-in, a mail host. Its security requi
    in the browser; the server, the classifier and AI agents never see the key or the plaintext.
 5. **Secrets at rest stay secret** from anyone who copies the config volume without the private
    key volume.
-6. **The server cannot be turned against the network it sits in** through user- or
-   operator-supplied hosts.
+6. **The server cannot be turned against the network it sits in** through hosts a user
+   supplies.
 7. **No secret or message content reaches a log.**
 
 ## Threat model
@@ -52,10 +52,15 @@ Out of scope: an attacker who already runs code in the container or holds both t
 2. **Mail content → the web app.** Mail HTML is sanitised with DOMPurify and rendered in an
    iframe whose sandbox does not allow scripts (`FRAME_SANDBOX` in
    `frontend/src/pages/read/EmailBodyFrame.tsx`), under a CSP without `'unsafe-inline'` scripts.
-3. **KyPost → outbound hosts** (IMAP, SMTP, classifier, WKD lookups, KyCalendar, SSO discovery,
-   push). Destinations go through `backend/internal/netguard`, which resolves once, refuses the
-   host if any address is loopback, private, link-local (which covers 169.254.169.254) or
-   otherwise reserved, then dials the checked address, unless the operator allow-lists the host.
+3. **KyPost → user-supplied hosts** (IMAP and SMTP servers, CardDAV, WKD key lookups, browser and
+   UnifiedPush endpoints). These dial through `backend/internal/netguard`, which resolves once,
+   refuses the host if any address is loopback, private, link-local (which covers
+   169.254.169.254) or otherwise reserved, then dials the checked address, unless the operator
+   allow-lists the host. KyCalendar applies the same address check unless
+   `KYPOST_KYCALENDAR_ALLOW_PRIVATE` is set. Two operator-configured endpoints that normally live
+   on the private network are **not** address-checked: the Ollama classifier (which instead
+   refuses cleartext to a public host, `backend/internal/adapters/classifier/base_url.go`) and
+   the SSO issuer (`backend/internal/sso/sso.go`, no redirects, bounded responses).
 4. **KyPost → its volumes.** Secrets are encrypted with AES-256-GCM under master keys that live
    in `/kypost/private`, separate from the data they protect.
 5. **KyPost → AI agents.** `/mcp` accepts only a bearer agent token and refuses any request that
@@ -73,7 +78,7 @@ Out of scope: an attacker who already runs code in the container or holds both t
   no agent.
 - **Fail-safe defaults.** `KYPOST_BIND` has no default. Forwarded headers are ignored until a
   proxy is named. SMTP submission without STARTTLS is refused unless `ALLOW_INSECURE_SMTP=true`.
-  Private outbound targets are refused unless allow-listed.
+  Private addresses behind user-supplied hosts are refused unless allow-listed.
 - **Complete mediation.** Authorization is checked on every request, so a deactivation or
   demotion takes effect on the next request, not at the next sign-in.
 - **Economy of mechanism.** One container, the standard library for HTTP and crypto primitives,
@@ -97,7 +102,7 @@ Out of scope: an attacker who already runs code in the container or holds both t
 | Cross-site scripting through mail | DOMPurify, an iframe sandbox without `allow-scripts`, and a CSP with no `'unsafe-inline'` or `'unsafe-eval'` in `script-src`, `object-src 'none'`, `frame-ancestors 'none'` | `frontend/src/lib/emailHtml.ts`, `frontend/src/pages/read/EmailBodyFrame.tsx`, `backend/internal/api/security_headers.go` |
 | SQL injection | `database/sql` with `?` parameters; the one formatted statement adds columns whose names are constants in the same file | `backend/internal/state/schema.go` |
 | Command injection | The only subprocess is `restic`, started with an argument list, never a shell | `backend/internal/backup/bulk.go` |
-| Server-side request forgery | One guarded dialer, address checked after resolution and before connect | `backend/internal/netguard/netguard.go` |
+| Server-side request forgery | User-supplied hosts use one guarded dialer, address checked after resolution and before connect; the operator's classifier and SSO issuer are trusted configuration | `backend/internal/netguard/netguard.go`, `backend/internal/api/ssrf_guard.go` |
 | TLS downgrade on submission | STARTTLS required when not on implicit TLS; refused otherwise unless the operator opts out for the whole deployment | `requireSTARTTLS` in `backend/internal/mailmsg/smtp_send.go` |
 | Secrets at rest | AES-256-GCM with a random nonce per encryption and 32-byte master keys; client-protected PGP keys wrapped in the browser with AES-GCM under a PBKDF2 key | `backend/internal/cryptutil/cryptutil.go`, `frontend/src/lib/keyVault.ts` |
 | Weak or broken crypto | No MD5, DES or RC4; SHA-1 appears only where a protocol fixes it (WKD's local-part hash) and as a non-secret CardDAV path key; `golang.org/x/crypto/openpgp` is kept out of the build graph by a CI step | `backend/internal/api/pgp_wkd.go`, `carddav_client.go`, `ci-backend-other` |
