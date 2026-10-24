@@ -67,3 +67,5 @@ For Identity-first or Notes-only standalone installs, `bash scripts/ensure-netwo
 - [Storage and recovery](docs/STORAGE-AND-RECOVERY.md) — Persistence, Backup and Restore. <a id="persistence"></a><a id="backup-and-restore"></a><a id="back-up"></a><a id="restore"></a><a id="verify-the-restore"></a>
 - [Development](docs/DEVELOPMENT.md) — API Highlights, Build and Dev Checks. <a id="api-highlights"></a><a id="build-and-dev-checks"></a>
 - [Operations](docs/OPERATIONS.md) — Operations, Updating KyPost, Troubleshooting. <a id="operations"></a><a id="updating-kypost"></a><a id="verifying-an-image-by-hand"></a><a id="moving-a-locally-built-install-onto-published-images"></a><a id="troubleshooting"></a><a id="ollama-or-model-issues"></a><a id="imap-connection-issues"></a><a id="smtp-send-issues"></a><a id="kypost-does-not-apply-labels"></a><a id="pwa-installation-on-firefox"></a>
+- [Verifying releases](docs/VERIFYING-RELEASES.md) — Check a release image's signature and source commit, and rebuild its binary to the same bytes.
+- [Assurance case](docs/ASSURANCE-CASE.md) — Threat model, trust boundaries, and why the security requirements are met.

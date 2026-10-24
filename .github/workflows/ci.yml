@@ -67,6 +67,21 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # The release binary must not depend on where it is built: build it the way the
+      # Dockerfile does (no .git in the context, -trimpath) from two directories and require
+      # identical bytes. docs/VERIFYING-RELEASES.md tells users how to repeat this.
+      - name: release binary is repeatable
+        run: |
+          set -euo pipefail
+          ld="-X github.com/Busnes-app/kypost-server/backend/internal/appversion.release=0.0.0"
+          for d in "$RUNNER_TEMP/a" "$RUNNER_TEMP/elsewhere/b"; do
+            mkdir -p "$d/src"
+            git -C "$GITHUB_WORKSPACE" archive HEAD | tar -x -C "$d/src"
+            (cd "$d/src/backend" && CGO_ENABLED=0 go build -trimpath -ldflags="$ld" -o "$d/kypost-server" ./cmd/main.go)
+          done
+          sha256sum "$RUNNER_TEMP/a/kypost-server" "$RUNNER_TEMP/elsewhere/b/kypost-server"
+          cmp "$RUNNER_TEMP/a/kypost-server" "$RUNNER_TEMP/elsewhere/b/kypost-server"
+
       - name: golangci-lint
         run: go tool -modfile=../tools/go.mod golangci-lint run ./...
 

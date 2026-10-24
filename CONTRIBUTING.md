@@ -168,7 +168,7 @@ if a job is genuinely flaky, that is a bug to fix in the job.
 
 | Job | What it runs |
 |---|---|
-| `ci-backend-api` | `gofmt -l`, `go vet`, `golangci-lint`, `govulncheck`, `deadcode` (nothing unreachable from `cmd/` beyond `backend/deadcode.allow`), `go test -race ./internal/api/...` |
+| `ci-backend-api` | `gofmt -l`, `go vet`, two builds of the release binary that must be byte-identical, `golangci-lint`, `govulncheck`, `deadcode` (nothing unreachable from `cmd/` beyond `backend/deadcode.allow`), `go test -race ./internal/api/...` |
 | `ci-backend-other` | Same lint gates, `go test -race` on every other backend package, then 20-second fuzz runs for rules, redaction, reply threading and IMAP header records |
 | `ci-frontend` | `npm audit --omit=dev --audit-level=low` (blocking), `tsc --noEmit`, ESLint (rules-of-hooks errors block), `vitest`, `vite build` |
 | `ci-relay` | Typecheck both relay Workers, `node --test` on the relay and one-message receiving Worker behaviour suites, disposable workerd/R2 capture and pickup qualification |
@@ -199,6 +199,22 @@ Notes that trip people up:
   attack-path coverage, not just the happy path — see
   [SECURITY.md](SECURITY.md#testing) and the
   `backend/internal/api/*_security_fixes_test.go` files for the pattern.
+
+### Coding standard
+
+Contributions follow these style guides. CI enforces the parts a tool can check, so a
+style failure is a red build, not a review comment.
+
+| Language | Style guide | Enforced by |
+|---|---|---|
+| Go (`backend/`) | [Effective Go](https://go.dev/doc/effective_go) and the [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments) | `gofmt -l` (must print nothing), `go vet ./...`, `golangci-lint` with `backend/.golangci.yml` (errcheck, govet, ineffassign, staticcheck with all checks bar a few ST style rules, unused) in `ci-backend-api` and `ci-backend-other`; `deadcode` in `ci-backend-api` |
+| TypeScript (`frontend/`) | The TypeScript compiler in `strict` mode, and the [Rules of Hooks](https://react.dev/reference/rules/rules-of-hooks) | `npm run typecheck` (`tsc --noEmit`) and `npm run lint` (ESLint, `react-hooks/rules-of-hooks` is an error) in `ci-frontend` |
+| TypeScript (`worker/`, `worker-apns/`) | The TypeScript compiler in `strict` mode | `npm run typecheck` in `ci-relay` |
+| Shell (`scripts/`) | [ShellCheck](https://www.shellcheck.net/)'s rules | `sh -n` or `bash -n` per shebang, and `shellcheck scripts/*.sh`, in `ci-scripts` |
+
+Beyond what the tools check: keep to the comment density and naming of the file you are
+editing, and follow the `ponytail` rules in [AGENTS.md](AGENTS.md): standard library first,
+shortest working diff.
 
 ## Every PR Must Pass Hostile AI Code Review
 
