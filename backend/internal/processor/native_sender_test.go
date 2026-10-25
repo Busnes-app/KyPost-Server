@@ -94,13 +94,18 @@ func TestNewRelaySenderFromEnvRequiresURL(t *testing.T) {
 	}
 }
 
-// When there is no key and registration fails (e.g. the relay has registration
-// disabled), the sender must not be created.
-func TestNewRelaySenderFromEnvRegistrationFails(t *testing.T) {
+// A failed startup registration must NOT permanently disable push. The sender
+// is still created and resolves its key lazily, so once a sibling process has
+// written the key file the next send recovers without a restart. Regression
+// test for the silent-disable bug (issue #461).
+func TestNewRelaySenderFromEnvRegistrationFailsCreatesLazySender(t *testing.T) {
+	var registerCalls int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/register" {
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"error":"self-registration is disabled"}`))
+			atomic.AddInt32(&registerCalls, 1)
+			// The one-key-per-IP race loser sees this 503, as the daemon did.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"registration is temporarily unavailable"}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -111,8 +116,69 @@ func TestNewRelaySenderFromEnvRegistrationFails(t *testing.T) {
 	t.Setenv("PUSH_RELAY_KEY", "")
 	t.Setenv("PUSH_RELAY_KEY_FILE", filepath.Join(t.TempDir(), "push_relay_key"))
 
-	if sender := newRelaySenderFromEnvWithPrefix(nil, "PUSH_RELAY"); sender != nil {
-		t.Fatal("NewRelaySenderFromEnv should return nil when registration fails")
+	sender := newRelaySenderFromEnvWithPrefix(nil, "PUSH_RELAY")
+	if sender == nil {
+		t.Fatal("a failed registration must still yield a (lazy) sender, not nil")
+	}
+	if sender.apiKey != "" {
+		t.Fatalf("apiKey = %q, want empty after a failed registration", sender.apiKey)
+	}
+	if got := atomic.LoadInt32(&registerCalls); got != 1 {
+		t.Fatalf("register calls at startup = %d, want 1", got)
+	}
+}
+
+// The core recovery path: a process whose startup registration failed delivers
+// push on its next send once the key file exists — the hand-off a sibling
+// process (the race winner) writes. No restart, which is what the bug required.
+func TestRelaySenderRecoversFromKeyFileAfterFailedRegistration(t *testing.T) {
+	var seenAuth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/register":
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"registration is temporarily unavailable"}`))
+		case "/send":
+			seenAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	keyFile := filepath.Join(t.TempDir(), "push_relay_key")
+	t.Setenv("PUSH_RELAY_URL", ts.URL)
+	t.Setenv("PUSH_RELAY_KEY", "")
+	t.Setenv("PUSH_RELAY_KEY_FILE", keyFile)
+
+	sender := newRelaySenderFromEnvWithPrefix(nil, "PUSH_RELAY")
+	if sender == nil {
+		t.Fatal("expected a lazy sender after a failed registration")
+	}
+	sender.client = ts.Client()
+
+	dev := state.NativeDevice{PushToken: "device-token", Platform: "android"}
+	msg := NativePushMessage{Title: "T", Body: "B"}
+
+	// Before the key file exists the send still fails (registration is 503 and
+	// backing off), so push is genuinely unavailable — not silently "sent".
+	if err := sender.Send(context.Background(), dev, msg); err == nil {
+		t.Fatal("Send should fail while no key is available")
+	}
+
+	// The sibling process (the race winner) persists the shared key.
+	if err := os.WriteFile(keyFile, []byte("sibling-key"), 0o600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+
+	// The next send reads the file and succeeds, with no restart.
+	if err := sender.Send(context.Background(), dev, msg); err != nil {
+		t.Fatalf("Send after key file appeared = %v, want nil", err)
+	}
+	if seenAuth != "Bearer sibling-key" {
+		t.Fatalf("authorization = %q, want %q", seenAuth, "Bearer sibling-key")
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
@@ -34,6 +35,13 @@ const (
 	// webPushSubscriber is the VAPID "sub" claim, matching SendWebPush's
 	// existing convention — distributors do not act on it.
 	webPushSubscriber = "mailto:noreply@localhost"
+
+	// registerRetryInterval throttles send-time self-registration. On a failed
+	// startup registration the sender resolves its key lazily, reading the key
+	// file (which a sibling process may have written) on every send but only
+	// attempting a fresh /register this often, so a disabled or busy relay, or a
+	// lost one-key-per-IP race, does not become a registration storm.
+	registerRetryInterval = 60 * time.Second
 )
 
 type NativePushMessage struct {
@@ -49,8 +57,18 @@ type NativePushMessage struct {
 // every platform (iOS and Android), so it is the only native sender.
 type RelaySender struct {
 	relayURL string
-	apiKey   string
 	client   *http.Client
+
+	// prefix and log let the sender resolve its key lazily (ensureKey).
+	prefix string
+	log    *logging.Logger
+
+	// mu guards apiKey and lastRegAttempt. The api and daemon run as separate
+	// processes, so this only serialises concurrent sends within one process;
+	// the key file is the hand-off between the processes.
+	mu             sync.Mutex
+	apiKey         string
+	lastRegAttempt time.Time
 }
 
 // relaySendRequest is the JSON body POSTed to the relay's /send endpoint.
@@ -107,7 +125,14 @@ func ValidateRelayURL(rawURL string) error {
 }
 
 // newRelaySenderFromEnvWithPrefix builds a relay sender for the given prefix
-// (e.g. "PUSH_RELAY" or "APNS_RELAY"), or returns nil if not configured.
+// (e.g. "PUSH_RELAY" or "APNS_RELAY"). It returns nil only when the relay is not
+// configured at all (no URL) or the URL is unusable (plaintext, no host).
+//
+// A missing key is NOT fatal. The sender resolves its key lazily at send time
+// (ensureKey): an explicit key, then the key file a sibling process may have
+// written, then a throttled self-registration. So a server whose startup
+// registration lost the one-key-per-IP race to its sibling process still
+// delivers push on its next send, without a restart.
 func newRelaySenderFromEnvWithPrefix(log *logging.Logger, prefix string) *RelaySender {
 	relayURL := strings.TrimRight(strings.TrimSpace(os.Getenv(prefix+"_URL")), "/")
 	if relayURL == "" {
@@ -118,22 +143,66 @@ func newRelaySenderFromEnvWithPrefix(log *logging.Logger, prefix string) *RelayS
 		return nil
 	}
 	client := &http.Client{Timeout: 15 * time.Second}
+	s := &RelaySender{relayURL: relayURL, client: client, prefix: prefix, log: log}
 
-	apiKey, err := resolveRelayKeyWithPrefix(log, prefix, relayURL, client)
+	// Best-effort eager resolution: the configured and first-boot cases get their
+	// key (and the "auto-registered with relay" log) at startup, as before. A
+	// failure here is logged, not fatal; ensureKey retries at send time, which is
+	// what lets the process that lost the startup race recover on its own.
+	if apiKey, err := resolveRelayKeyWithPrefix(log, prefix, relayURL, client); err != nil {
+		logNativeSenderError(log, prefix+" relay key unavailable at startup; will resolve at send time", err.Error())
+		s.lastRegAttempt = time.Now()
+	} else if apiKey != "" {
+		s.apiKey = apiKey
+	}
+	return s
+}
+
+// ensureKey returns the per-server relay key, resolving it lazily the first time
+// it is needed. The lookup order is the cached key, an explicit {prefix}_KEY,
+// the persisted key file, then a throttled self-registration — the same order as
+// the startup path, except the key file is re-read on every call so the process
+// that lost the startup race picks up the key its sibling persisted. On a failed
+// or backing-off resolution it returns an error, so the send is reported failed
+// (health.RecordNativePushFailure) rather than silently dropped.
+func (s *RelaySender) ensureKey(_ context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.apiKey != "" {
+		return s.apiKey, nil
+	}
+	if key := strings.TrimSpace(os.Getenv(s.prefix + "_KEY")); key != "" {
+		s.apiKey = key
+		return key, nil
+	}
+	path := relayKeyFilePathWithPrefix(s.prefix)
+	if b, err := os.ReadFile(path); err == nil {
+		if key := strings.TrimSpace(string(b)); key != "" {
+			s.apiKey = key
+			if s.log != nil {
+				s.log.Info("relay key read from key file", "prefix", s.prefix, "key_file", path)
+			}
+			return key, nil
+		}
+	}
+	if !s.lastRegAttempt.IsZero() && time.Since(s.lastRegAttempt) < registerRetryInterval {
+		return "", fmt.Errorf("%s relay key unavailable (self-registration backing off)", s.prefix)
+	}
+	s.lastRegAttempt = time.Now()
+	key, err := registerWithRelay(s.relayURL, s.client)
 	if err != nil {
-		logNativeSenderError(log, prefix+" relay key unavailable", err.Error())
-		return nil
+		return "", fmt.Errorf("%s relay self-registration failed: %w", s.prefix, err)
 	}
-	if apiKey == "" {
-		logNativeSenderError(log, prefix+"_KEY missing", "no key in "+prefix+"_KEY, the key file, or from auto-registration")
-		return nil
+	if werr := fsutil.AtomicWriteFile(path, []byte(key+"\n"), 0o600); werr != nil {
+		if s.log != nil {
+			s.log.Error("failed to persist auto-registered relay key", "prefix", s.prefix, "path", path, "error", werr.Error())
+		}
+	} else if s.log != nil {
+		s.log.Info("auto-registered with relay", "prefix", s.prefix, "key_file", path)
 	}
-
-	return &RelaySender{
-		relayURL: relayURL,
-		apiKey:   apiKey,
-		client:   client,
-	}
+	s.apiKey = key
+	return key, nil
 }
 
 // relayKeyFilePathWithPrefix is where an auto-registered key is persisted.
@@ -507,6 +576,11 @@ func (s *RelaySender) Send(ctx context.Context, device state.NativeDevice, messa
 		return errors.New("missing push token")
 	}
 
+	apiKey, err := s.ensureKey(ctx)
+	if err != nil {
+		return err
+	}
+
 	body, err := json.Marshal(relaySendRequest{
 		Token:    registrationToken,
 		Title:    message.Title,
@@ -523,7 +597,7 @@ func (s *RelaySender) Send(ctx context.Context, device state.NativeDevice, messa
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+s.apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.client.Do(req)
