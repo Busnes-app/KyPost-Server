@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"time"
 )
@@ -17,13 +18,16 @@ import (
 // the account's current material.
 
 var (
-	ErrInvalidDeviceEnvelope    = errors.New("device envelope is not a well-formed v2 or v3 sealing")
-	ErrDeviceEnvelopeVersion    = errors.New("device envelope version does not match the account: a converted account takes v3, a legacy account v2")
+	ErrInvalidDeviceEnvelope    = errors.New("device envelope is not a well-formed v2, v3, v4 or v5 sealing")
+	ErrDeviceEnvelopeVersion    = errors.New("device envelope version does not match the account: a converted account takes v3 or v5, a legacy account v2 or v4")
 	ErrDeviceDeliveryIncomplete = errors.New("device delivery needs the enrollment key it was sealed to and the expected fingerprint")
 	ErrPGPGenerationChanged     = errors.New("PGP key material changed; reload and prepare the delivery again")
 )
 
-const deviceEnvelopeAlg = "ECDH-P256+HKDF-SHA256+A256GCM"
+const (
+	deviceEnvelopeAlg     = "ECDH-P256+HKDF-SHA256+A256GCM"
+	hpkeDeviceEnvelopeAlg = "HPKE-Base-P256-SHA256-A256GCM"
+)
 
 // DeviceDelivery is one sealing the browser prepared for one device.
 type DeviceDelivery struct {
@@ -41,51 +45,109 @@ type DeviceDelivery struct {
 }
 
 // ParseDeviceEnvelopeVersion checks the framing of a sealed device envelope
-// without decrypting it and returns its version. Anything but the exact
-// {v, alg, epk, iv, ct} shape with a P-256 point, a 12-byte IV and at least a
-// tag's worth of ciphertext is refused before it reaches the store.
+// without decrypting it and returns its version. v2/v3 must be exactly
+// {v, alg, epk, iv, ct} with a P-256 point, a 12-byte IV and at least a tag's
+// worth of ciphertext; v4/v5 (HPKE) exactly {v, alg, enc, ct} with a P-256
+// point and at least a tag, in canonical base64. Anything else is refused
+// before it reaches the store.
 func ParseDeviceEnvelopeVersion(envelope string) (int, error) {
 	if err := ValidateWrappedEnvelope(envelope); err != nil {
 		return 0, err
 	}
-	var e struct {
-		V   int    `json:"v"`
-		Alg string `json:"alg"`
-		EPK string `json:"epk"`
-		IV  string `json:"iv"`
-		CT  string `json:"ct"`
+	var probe struct {
+		V int `json:"v"`
 	}
+	if json.Unmarshal([]byte(envelope), &probe) != nil {
+		return 0, ErrInvalidDeviceEnvelope
+	}
+	switch probe.V {
+	case 2, 3:
+		var e struct {
+			V   int    `json:"v"`
+			Alg string `json:"alg"`
+			EPK string `json:"epk"`
+			IV  string `json:"iv"`
+			CT  string `json:"ct"`
+		}
+		if !decodeExact(envelope, &e, "v", "alg", "epk", "iv", "ct") || e.Alg != deviceEnvelopeAlg {
+			return 0, ErrInvalidDeviceEnvelope
+		}
+		epk, err := base64.StdEncoding.DecodeString(e.EPK)
+		if err != nil || len(epk) != 65 || epk[0] != 0x04 {
+			return 0, ErrInvalidDeviceEnvelope
+		}
+		iv, err := base64.StdEncoding.DecodeString(e.IV)
+		if err != nil || len(iv) != 12 {
+			return 0, ErrInvalidDeviceEnvelope
+		}
+		ct, err := base64.StdEncoding.DecodeString(e.CT)
+		if err != nil || len(ct) < 16 {
+			return 0, ErrInvalidDeviceEnvelope
+		}
+	case 4, 5:
+		var e struct {
+			V   int    `json:"v"`
+			Alg string `json:"alg"`
+			Enc string `json:"enc"`
+			CT  string `json:"ct"`
+		}
+		if !decodeExact(envelope, &e, "v", "alg", "enc", "ct") || e.Alg != hpkeDeviceEnvelopeAlg {
+			return 0, ErrInvalidDeviceEnvelope
+		}
+		enc, ok := canonicalBase64(e.Enc)
+		if !ok || len(enc) != 65 || enc[0] != 0x04 {
+			return 0, ErrInvalidDeviceEnvelope
+		}
+		if ct, ok := canonicalBase64(e.CT); !ok || len(ct) < 16 {
+			return 0, ErrInvalidDeviceEnvelope
+		}
+	default:
+		return 0, ErrInvalidDeviceEnvelope
+	}
+	return probe.V, nil
+}
+
+// decodeExact decodes one flat JSON object into v. It must hold exactly the
+// given keys, each once and case-sensitively (encoding/json alone folds case
+// and lets a repeat win), with scalar values and nothing after it.
+func decodeExact(envelope string, v any, keys ...string) bool {
 	dec := json.NewDecoder(strings.NewReader(envelope))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&e); err != nil {
-		return 0, ErrInvalidDeviceEnvelope
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return false
 	}
-	if err := dec.Decode(new(any)); err != io.EOF {
-		return 0, ErrInvalidDeviceEnvelope
+	seen := map[string]bool{}
+	for dec.More() {
+		t, err := dec.Token()
+		key, ok := t.(string)
+		if err != nil || !ok || seen[key] || !slices.Contains(keys, key) {
+			return false
+		}
+		seen[key] = true
+		if t, err := dec.Token(); err != nil {
+			return false
+		} else if _, nested := t.(json.Delim); nested {
+			return false
+		}
 	}
-	if (e.V != 2 && e.V != 3) || e.Alg != deviceEnvelopeAlg {
-		return 0, ErrInvalidDeviceEnvelope
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return false
 	}
-	epk, err := base64.StdEncoding.DecodeString(e.EPK)
-	if err != nil || len(epk) != 65 || epk[0] != 0x04 {
-		return 0, ErrInvalidDeviceEnvelope
+	if _, err := dec.Token(); err != io.EOF {
+		return false
 	}
-	iv, err := base64.StdEncoding.DecodeString(e.IV)
-	if err != nil || len(iv) != 12 {
-		return 0, ErrInvalidDeviceEnvelope
-	}
-	ct, err := base64.StdEncoding.DecodeString(e.CT)
-	if err != nil || len(ct) < 16 {
-		return 0, ErrInvalidDeviceEnvelope
-	}
-	return e.V, nil
+	return len(seen) == len(keys) && json.Unmarshal([]byte(envelope), v) == nil
+}
+
+func canonicalBase64(s string) ([]byte, bool) {
+	b, err := base64.StdEncoding.DecodeString(s)
+	return b, err == nil && base64.StdEncoding.EncodeToString(b) == s
 }
 
 // SetPGPDeviceEnvelope stores the transport copy for one device and returns
 // the envelope version it recorded. It is the only writer of device slots.
 //
-// A converted account (one with a keyring) accepts only a v3 envelope, which
-// carries the complete ring; a legacy account only v2. The caller's expected
+// A converted account (one with a keyring) accepts only v3 or v5, which carry
+// the complete ring; a legacy account only v2 or v4. The caller's expected
 // fingerprint, revision and material generation must all be the account's
 // current ones, so a sealing prepared from a stale snapshot is refused rather
 // than delivered. The record keeps the version, generation, fingerprint and
@@ -115,11 +177,11 @@ func (s *Store) SetPGPDeviceEnvelope(id string, d DeviceDelivery) (User, int, er
 		if u.PGPProtection() != PGPProtectionClient {
 			return ErrNotClientProtected
 		}
-		generation, want := uint64(0), 2
+		generation, want := uint64(0), []int{2, 4}
 		if u.PGPKeyring != nil {
-			generation, want = u.PGPKeyring.MaterialGeneration, 3
+			generation, want = u.PGPKeyring.MaterialGeneration, []int{3, 5}
 		}
-		if version != want {
+		if !slices.Contains(want, version) {
 			return ErrDeviceEnvelopeVersion
 		}
 		if d.ExpectedGeneration != generation {

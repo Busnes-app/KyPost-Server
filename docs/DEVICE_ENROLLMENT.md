@@ -203,6 +203,43 @@ is purely a browser↔device contract and belongs here rather than in any server
   uppercase hex with no spaces.
 - **Plaintext** = the armored PGP private key, UTF-8.
 
+### NORMATIVE: the HPKE envelope (v4/v5)
+
+v4 and v5 carry the v2 and v3 plaintexts respectively, sealed with RFC 9180 HPKE instead
+of the hand-assembled ECDH/HKDF/AES-GCM above. v2/v3 stay for devices that do not
+advertise 4/5 (Android today); the browser picks the HPKE version whenever it is advertised.
+
+```json
+{"v": 4, "alg": "HPKE-Base-P256-SHA256-A256GCM", "enc": "<base64>", "ct": "<base64>"}
+```
+
+- Exactly these four keys; `v` is a JSON integer, 4 or 5. Standard padded canonical base64.
+- **Suite:** mode_base, KEM 0x0010 DHKEM(P-256, HKDF-SHA256), KDF 0x0001 HKDF-SHA256,
+  AEAD 0x0002 AES-256-GCM. `enc` is the 65-byte uncompressed encapsulated key; `ct` is the
+  ciphertext with its 16-byte tag.
+- **`info`** = the AAD layout above with domain `"kypost-device-envelope/v4"` or `"/v5"`:
+  `UTF8(domain) || uint16BE(len id) || id || uint16BE(len fp) || fp`. HPKE `aad` is empty.
+  The opener builds `info` from its **own** device ID and the fingerprint it checked, and
+  the version from the server-recorded delivery, never from the envelope; it refuses an
+  envelope whose `v` differs.
+- v5 keeps v3's 128 KiB serialized-envelope cap and 40- or 64-hex fingerprint.
+
+Vectors, all public test data:
+
+- [`testdata/hpke-cfrg-p256-aes256.json`](../testdata/hpke-cfrg-p256-aes256.json): the CFRG
+  entry for this suite, unmodified, with upstream commit and file SHA-256. Every port opens
+  `encryptions[0]` before anything KyPost-specific (RFC 9180 A.3 is AES-128, the wrong suite).
+- [`testdata/device-envelope-hpke.json`](../testdata/device-envelope-hpke.json): one v4 and
+  one v5 sealed by Go `crypto/hpke` to the v3 fixture's device key and plaintexts, plus
+  negatives each tagged `rejectedBy` `framing` or `open`: wrong device ID, wrong fingerprint,
+  v4 relabelled v5, wrong `alg`, `enc` not on the curve.
+- [`testdata/device-envelope-hpke-browser.json`](../testdata/device-envelope-hpke-browser.json):
+  the browser's sealing of the same two under a fixed ephemeral key; Go opens it.
+
+Checked by `backend/internal/cryptutil/device_envelope_hpke_test.go` and
+`frontend/src/lib/deviceEnvelopeHpke.test.ts`. Clients copying a vector record its source
+commit and SHA-256.
+
 **The AAD binding is a shipping condition, not an optimisation.** It is what the Android
 side required before withdrawing its rejection of this design. Binding the device id stops
 an envelope minted for one device being replayed at another; binding the fingerprint stops

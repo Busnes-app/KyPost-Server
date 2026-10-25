@@ -23,6 +23,7 @@
 // docs/DEVICE_ENROLLMENT.md. Changing any of
 // it is a wire-format break and must move the version tag with it.
 
+import { Aes256Gcm, CipherSuite, DhkemP256HkdfSha256, HkdfSha256 } from "@hpke/core";
 import { validateKeyringSnapshot } from "./pgpKeyring";
 
 /** Seconds per code bucket. Matches GET /api/pgp/qr/token's TTL deliberately. */
@@ -57,7 +58,7 @@ const CODE_BITS = CODE_LENGTH * 5; // 70
 
 // v1 -> v2 (2026-08-05): the AAD stopped being pipe-delimited concatenation and
 // became length-prefixed. See buildEnvelopeAad.
-const envelopeDomain = (version: 2 | 3) => `kypost-device-envelope/v${version}`;
+const envelopeDomain = (version: EnvelopeVersion) => `kypost-device-envelope/v${version}`;
 const RAW_KEY_BYTES = 65; // 0x04 || X(32) || Y(32)
 
 export type DeviceEnvelope = {
@@ -69,6 +70,27 @@ export type DeviceEnvelope = {
 };
 
 export type KeyringDeviceEnvelope = Omit<DeviceEnvelope, "v"> & { v: 3 };
+
+/** v4 carries the v2 plaintext, v5 the v3 ring, sealed with RFC 9180 HPKE. */
+export type HpkeDeviceEnvelope = {
+  v: 4 | 5;
+  alg: "HPKE-Base-P256-SHA256-A256GCM";
+  enc: string;
+  ct: string;
+};
+
+type SealedEnvelope = { 2: DeviceEnvelope; 3: KeyringDeviceEnvelope; 4: HpkeDeviceEnvelope; 5: HpkeDeviceEnvelope };
+type EnvelopeVersion = keyof SealedEnvelope;
+
+/**
+ * The version to seal for a device: a converted account needs the complete
+ * ring (v5, else v3), a legacy one the single key (v4, else v2). HPKE is
+ * preferred whenever advertised; null means the device takes neither.
+ */
+export function deviceEnvelopeVersion(converted: boolean, advertised: readonly number[]): EnvelopeVersion | null {
+  const [hpke, legacy] = converted ? [5, 3] as const : [4, 2] as const;
+  return advertised.includes(hpke) ? hpke : advertised.includes(legacy) ? legacy : null;
+}
 
 // The ArrayBuffer type argument is load-bearing, not decoration: TypeScript 7
 // defaults a bare Uint8Array to ArrayBufferLike, which WebCrypto's BufferSource
@@ -307,7 +329,7 @@ export function buildEnvelopeAad(deviceId: string, pgpFingerprint: string): Uint
   return envelopeAad(deviceId, pgpFingerprint, 2);
 }
 
-function envelopeAad(deviceId: string, pgpFingerprint: string, version: 2 | 3): Uint8Array<ArrayBuffer> {
+function envelopeAad(deviceId: string, pgpFingerprint: string, version: EnvelopeVersion): Uint8Array<ArrayBuffer> {
   const enc = new TextEncoder();
   const info = enc.encode(envelopeDomain(version));
   const id = enc.encode(deviceId);
@@ -341,23 +363,27 @@ function envelopeAad(deviceId: string, pgpFingerprint: string, version: 2 | 3): 
  * identity rotation fails authentication instead of decrypting into a key the
  * account no longer advertises.
  */
-export async function sealEnvelopeForDevice(
+export async function sealEnvelopeForDevice<V extends 2 | 4 = 2>(
   publicKeyB64: string,
   deviceId: string,
   pgpFingerprint: string,
   armoredPrivateKey: string,
-): Promise<DeviceEnvelope> {
-  return sealDevicePayload(publicKeyB64, deviceId, pgpFingerprint, armoredPrivateKey, 2);
+  version: V = 2 as V,
+): Promise<SealedEnvelope[V]> {
+  return (version === 4
+    ? sealHpkePayload(publicKeyB64, deviceId, pgpFingerprint, armoredPrivateKey, 4)
+    : sealDevicePayload(publicKeyB64, deviceId, pgpFingerprint, armoredPrivateKey, 2)) as Promise<SealedEnvelope[V]>;
 }
 
-/** V3 preparation only: no upload or capability negotiation. Never deliver this through v2. */
-export async function sealKeyringForDevice({ publicKeyB64, deviceId, typedCode, raw, snapshot }: {
+/** V3/v5 preparation only: no upload or capability negotiation. Never deliver this through v2/v4. */
+export async function sealKeyringForDevice<V extends 3 | 5 = 3>({ publicKeyB64, deviceId, typedCode, raw, snapshot, version = 3 as V }: {
   publicKeyB64: string;
   deviceId: string;
   typedCode: string;
   raw: string;
   snapshot: Parameters<typeof validateKeyringSnapshot>[1];
-}): Promise<KeyringDeviceEnvelope> {
+  version?: V;
+}): Promise<SealedEnvelope[V]> {
   const ring = await validateKeyringSnapshot(raw, snapshot);
   const fingerprint = ring.activeKey.getFingerprint().toUpperCase();
   if (!deviceId || new TextEncoder().encode(deviceId).length > 0xffff) {
@@ -367,11 +393,13 @@ export async function sealKeyringForDevice({ publicKeyB64, deviceId, typedCode, 
   if (!await verifyEnrollmentCode(publicKeyB64, deviceId, typedCode)) {
     throw new Error("Device verification code does not match. Check the code on the device.");
   }
-  const envelope = await sealDevicePayload(publicKeyB64, deviceId, fingerprint, raw, 3);
+  const envelope = version === 5
+    ? await sealHpkePayload(publicKeyB64, deviceId, fingerprint, raw, 5)
+    : await sealDevicePayload(publicKeyB64, deviceId, fingerprint, raw, 3);
   if (new TextEncoder().encode(JSON.stringify(envelope)).length > 128 << 10) {
     throw new Error("The complete device envelope exceeds 128 KiB. No key was delivered.");
   }
-  return envelope;
+  return envelope as SealedEnvelope[V];
 }
 
 async function sealDevicePayload<V extends 2 | 3>(
@@ -417,6 +445,25 @@ async function sealDevicePayload<V extends 2 | 3>(
     epk: bytesToBase64(epk),
     iv: bytesToBase64(iv),
     ct: bytesToBase64(ct),
+  };
+}
+
+// RFC 9180 mode_base; info is the same length-prefixed binding the v2/v3 AAD
+// uses, and the HPKE aad is empty. The opener rebuilds info from its own ID.
+async function sealHpkePayload(
+  publicKeyB64: string, deviceId: string, pgpFingerprint: string, plaintext: string, version: 4 | 5,
+): Promise<HpkeDeviceEnvelope> {
+  const suite = new CipherSuite({ kem: new DhkemP256HkdfSha256(), kdf: new HkdfSha256(), aead: new Aes256Gcm() });
+  const recipientPublicKey = await suite.kem.deserializePublicKey(decodeRawKey(publicKeyB64));
+  const { enc, ct } = await suite.seal(
+    { recipientPublicKey, info: envelopeAad(deviceId, pgpFingerprint, version) },
+    new TextEncoder().encode(plaintext),
+  );
+  return {
+    v: version,
+    alg: "HPKE-Base-P256-SHA256-A256GCM",
+    enc: bytesToBase64(new Uint8Array(enc)),
+    ct: bytesToBase64(new Uint8Array(ct)),
   };
 }
 

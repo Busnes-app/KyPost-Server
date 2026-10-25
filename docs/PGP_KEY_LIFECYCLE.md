@@ -246,6 +246,9 @@ cd backend
 GOTOOLCHAIN=go1.26.9 go test -v -run DeviceEnvelope ./internal/cryptutil
 ```
 
+V5 is the same plaintext sealed with RFC 9180 HPKE; its framing and vectors are in
+[DEVICE_ENROLLMENT.md](DEVICE_ENROLLMENT.md#normative-the-hpke-envelope-v4v5).
+
 Passing these vectors proves crypto framing compatibility, not native durable
 keyring import or released-client readiness. Each native port must also pass the
 persistence and stale-device scenarios below before conversion can ship.

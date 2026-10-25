@@ -3,7 +3,9 @@ package users
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -19,6 +21,14 @@ func deviceEnvelope(version int) string {
 		`","ct":"` + base64.StdEncoding.EncodeToString(make([]byte, 16)) + `"}`
 }
 
+// hpkeDeviceEnvelope is a well-formed v4/v5 sealing, framing only.
+func hpkeDeviceEnvelope(version int) string {
+	enc := make([]byte, 65)
+	enc[0] = 4
+	return `{"v":` + string(rune('0'+version)) + `,"alg":"HPKE-Base-P256-SHA256-A256GCM","enc":"` +
+		base64.StdEncoding.EncodeToString(enc) + `","ct":"` + base64.StdEncoding.EncodeToString(make([]byte, 16)) + `"}`
+}
+
 // seedDeviceSlot delivers a v2 sealing to a device through the one writer of
 // device slots, for tests that only care that a slot exists.
 func seedDeviceSlot(store *Store, id, deviceID string) (User, error) {
@@ -31,15 +41,40 @@ func seedDeviceSlot(store *Store, id, deviceID string) (User, error) {
 }
 
 func TestParseDeviceEnvelopeVersion(t *testing.T) {
-	for _, v := range []int{2, 3} {
-		if got, err := ParseDeviceEnvelopeVersion(deviceEnvelope(v)); err != nil || got != v {
+	for _, v := range []int{2, 3, 4, 5} {
+		envelope := deviceEnvelope(v)
+		if v >= 4 {
+			envelope = hpkeDeviceEnvelope(v)
+		}
+		if got, err := ParseDeviceEnvelopeVersion(envelope); err != nil || got != v {
 			t.Fatalf("v%d: got %d, %v", v, got, err)
 		}
 	}
 	good := deviceEnvelope(3)
+	hpkeGood := hpkeDeviceEnvelope(5)
 	point := base64.StdEncoding.EncodeToString(append([]byte{4}, make([]byte, 64)...))
+	tag := base64.StdEncoding.EncodeToString(make([]byte, 16))
 	bad := map[string]string{
-		"unknown version":  strings.Replace(good, `"v":3`, `"v":4`, 1),
+		"unknown version":  strings.Replace(good, `"v":3`, `"v":6`, 1),
+		"v3 as v4":         strings.Replace(good, `"v":3`, `"v":4`, 1),
+		"v5 as v3":         strings.Replace(hpkeGood, `"v":5`, `"v":3`, 1),
+		"string version":   strings.Replace(hpkeGood, `"v":5`, `"v":"5"`, 1),
+		"float version":    strings.Replace(hpkeGood, `"v":5`, `"v":5.0`, 1),
+		"hpke legacy alg":  strings.Replace(hpkeGood, "HPKE-Base-P256-SHA256-A256GCM", deviceEnvelopeAlg, 1),
+		"hpke extra iv":    strings.Replace(hpkeGood, `{"v":5`, `{"iv":"","v":5`, 1),
+		"hpke missing enc": strings.Replace(hpkeGood, `"enc":"`+point+`",`, ``, 1),
+		"hpke short enc":   strings.Replace(hpkeGood, point, base64.StdEncoding.EncodeToString(make([]byte, 33)), 1),
+		"hpke compressed":  strings.Replace(hpkeGood, point, base64.StdEncoding.EncodeToString(append([]byte{2}, make([]byte, 64)...)), 1),
+		"hpke no tag":      strings.Replace(hpkeGood, tag, base64.StdEncoding.EncodeToString(make([]byte, 15)), 1),
+		"hpke unpadded":    strings.Replace(hpkeGood, tag, strings.TrimRight(tag, "="), 1),
+		"hpke newline":     strings.Replace(hpkeGood, tag, tag[:4]+`\n`+tag[4:], 1),
+		"hpke upper keys":  strings.Replace(strings.Replace(hpkeGood, `"enc"`, `"ENC"`, 1), `"v":5`, `"V":5`, 1),
+		"hpke repeated v":  strings.Replace(hpkeGood, `}`, `,"v":4}`, 1),
+		"hpke repeated ct": strings.Replace(hpkeGood, `{"v":5`, `{"ct":null,"v":5`, 1),
+		"hpke nested":      strings.Replace(hpkeGood, `"v":5`, `"v":5,"x":{}`, 1),
+		"v3 upper keys":    strings.Replace(good, `"epk"`, `"EPK"`, 1),
+		"v3 repeated v":    strings.Replace(good, `}`, `,"v":2}`, 1),
+		"hpke url base64":  strings.Replace(hpkeGood, tag, base64.URLEncoding.EncodeToString(append(make([]byte, 15), 0xff)), 1),
 		"legacy shape":     `{"v":2}`,
 		"other algorithm":  strings.Replace(good, "A256GCM", "A128GCM", 1),
 		"extra field":      strings.Replace(good, `{"v":3`, `{"x":1,"v":3`, 1),
@@ -67,7 +102,19 @@ func TestSetPGPDeviceEnvelopeBindsVersionGenerationAndKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	delivery := func(version int) DeviceDelivery {
-		return DeviceDelivery{DeviceID: "phone", Envelope: deviceEnvelope(version), AddedAt: "now", EnrollmentKey: "DEVKEY", ExpectedFingerprint: u.PGPFingerprint}
+		envelope := deviceEnvelope(version)
+		if version >= 4 {
+			envelope = hpkeDeviceEnvelope(version)
+		}
+		return DeviceDelivery{DeviceID: "phone", Envelope: envelope, AddedAt: "now", EnrollmentKey: "DEVKEY", ExpectedFingerprint: u.PGPFingerprint}
+	}
+	slotVersion := func(u User) int {
+		for _, e := range u.WrappedEnvelopes() {
+			if e.Slot == EnvelopeSlotDevicePrefix+"phone" {
+				return e.Version
+			}
+		}
+		return 0
 	}
 
 	// A legacy account takes v2 only, and records what it delivered.
@@ -86,6 +133,13 @@ func TestSetPGPDeviceEnvelopeBindsVersionGenerationAndKey(t *testing.T) {
 	}
 	if slot.Version != 2 || slot.MaterialGeneration != 0 || slot.Fingerprint != u.PGPFingerprint || slot.EnrollmentKey != "DEVKEY" || slot.ExpiresAt == "" {
 		t.Fatalf("recorded slot = %+v", slot)
+	}
+	// The HPKE form of the same plaintext: v4 yes, v5 no.
+	if _, _, err := s.SetPGPDeviceEnvelope(id, delivery(5)); !errors.Is(err, ErrDeviceEnvelopeVersion) {
+		t.Fatalf("v5 on a legacy account: %v", err)
+	}
+	if stored, version, err := s.SetPGPDeviceEnvelope(id, delivery(4)); err != nil || version != 4 || slotVersion(stored) != 4 {
+		t.Fatalf("v4 on a legacy account: %d %v", version, err)
 	}
 	incomplete := delivery(2)
 	incomplete.EnrollmentKey = ""
@@ -118,8 +172,13 @@ func TestSetPGPDeviceEnvelopeBindsVersionGenerationAndKey(t *testing.T) {
 		d.ExpectedGeneration, d.ExpectedRevision = generation, &rev
 		return d
 	}
-	if _, _, err := s.SetPGPDeviceEnvelope(id, converted(2, 1)); !errors.Is(err, ErrDeviceEnvelopeVersion) {
-		t.Fatalf("v2 on a converted account: %v", err)
+	for _, v := range []int{2, 4} {
+		if _, _, err := s.SetPGPDeviceEnvelope(id, converted(v, 1)); !errors.Is(err, ErrDeviceEnvelopeVersion) {
+			t.Fatalf("v%d on a converted account: %v", v, err)
+		}
+	}
+	if stored, version, err := s.SetPGPDeviceEnvelope(id, converted(5, 1)); err != nil || version != 5 || slotVersion(stored) != 5 {
+		t.Fatalf("v5 on a converted account: %d %v", version, err)
 	}
 	if _, _, err := s.SetPGPDeviceEnvelope(id, converted(3, 0)); !errors.Is(err, ErrPGPGenerationChanged) {
 		t.Fatalf("stale generation: %v", err)
@@ -152,5 +211,32 @@ func TestSetPGPDeviceEnvelopeBindsVersionGenerationAndKey(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("device slots after re-delivery = %d, want 1", n)
+	}
+}
+
+// The shared HPKE fixture passes or fails framing exactly as it declares.
+func TestParseDeviceEnvelopeVersionHPKEFixture(t *testing.T) {
+	data, err := os.ReadFile("../../../testdata/device-envelope-hpke.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Vectors, Negative []struct {
+			Name, RejectedBy string
+			Envelope         json.RawMessage
+		}
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range append(f.Vectors, f.Negative...) {
+		got, err := ParseDeviceEnvelopeVersion(string(v.Envelope))
+		if v.RejectedBy == "framing" {
+			if !errors.Is(err, ErrInvalidDeviceEnvelope) {
+				t.Errorf("%s: framing accepted it", v.Name)
+			}
+		} else if err != nil || (i < len(f.Vectors) && got != i+4) {
+			t.Errorf("%s: %d %v", v.Name, got, err)
+		}
 	}
 }

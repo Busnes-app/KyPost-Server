@@ -387,11 +387,15 @@ Implemented:
   on a converted account `materialGeneration` is required and must equal the
   keyring's current generation, else `409 {"pgpStateChanged": true,
   "materialGeneration": <current>}`. The envelope's own `v` selects the
-  version: the server parses the `{v, alg, epk, iv, ct}` framing (no other
-  keys, a 65-byte P-256 point, a 12-byte IV, at least a tag of ciphertext)
-  without decrypting, refuses anything else with 400, accepts only `v: 3` on
-  a converted account and only `v: 2` on a legacy one (`409
-  {"deviceEnvelopeVersion": true}` otherwise), and refuses a version the
+  version and the server checks its framing without decrypting, refusing
+  anything else with 400: v2/v3 are exactly `{v, alg, epk, iv, ct}` (a 65-byte
+  P-256 point, a 12-byte IV, at least a tag of ciphertext); v4/v5 are exactly
+  `{v, alg:"HPKE-Base-P256-SHA256-A256GCM", enc, ct}` in canonical padded
+  base64 (`enc` 65 bytes starting `0x04`, `ct` at least 16 bytes; see
+  [DEVICE_ENROLLMENT.md](DEVICE_ENROLLMENT.md#normative-the-hpke-envelope-v4v5)).
+  It accepts only `v: 3` or `5` on a converted account and only `v: 2` or `4`
+  on a legacy one (`409 {"deviceEnvelopeVersion": true}` otherwise), and
+  refuses a version the
   device did not advertise (`409 {"enrollmentChanged": true,
   "envelopeVersions": [...]}`). The stored slot records `version`,
   `materialGeneration` (0 for a legacy account), `fingerprint` and
@@ -413,13 +417,17 @@ Implemented:
     to, which is precisely the substitution the verification code exists to
     catch.
     The optional `envelopeVersions` field publishes codec support with that key:
-    `{"publicKey":"<base64 SEC1 point>","envelopeVersions":[2,3]}`. Omitted or
+    `{"publicKey":"<base64 SEC1 point>","envelopeVersions":[2,3,4,5]}`. Omitted or
     `null` means `[2]`, including on re-publication of the same key; this resets
     a stale v3 claim when an older client republishes. Explicit lists contain
     1–16 distinct integers from 2 through 65535 and are stored sorted. Empty,
     duplicate, fractional or out-of-range lists return 400 without changing the
     key or capabilities. Future version numbers are retained, not interpreted
-    as support by this server. The entire JSON request is bounded to 4 KiB;
+    as support by this server. The browser seals the HPKE version when the
+    device advertises it: a converted account gets v5, else v3; a legacy
+    account v4, else v2. A device opens by the server-recorded delivery
+    `version`. While v2/v3 remain, a hostile server can downgrade a device to
+    them by trimming its list. The entire JSON request is bounded to 4 KiB;
     trailing JSON or oversized padding is refused.
 
     Key and versions are written together. Push registration cannot set them
@@ -465,7 +473,8 @@ Implemented:
 - `POST /api/pgp/device/enrollment-state` is the device's own report on its
   own route, with `encryptionEnrolled` required, and it is where a device says
   **what** it holds: `{"encryptionEnrolled": true, "envelopeVersion": 3,
-  "materialGeneration": 4, "fingerprint": "<hex>"}`. The three go together.
+  "materialGeneration": 4, "fingerprint": "<hex>"}`. The three go together;
+  `envelopeVersion` is the version delivered (3 or 5 on a converted account).
   On a converted account they are required — a bare `true` is `409
   {"generationRequired": true, "materialGeneration": <current>, "fingerprint":
   <current>}` and records nothing, because the legacy boolean is never proof
