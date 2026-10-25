@@ -54,7 +54,9 @@ vi.mock("../lib/deviceEnrollment", async (importOriginal) => {
     // what this component owes it is the right inputs, which the spy records.
     sealKeyringForDevice: (args: Parameters<typeof actual.sealKeyringForDevice>[0]) => {
       sealKeyringSpy(args);
-      return Promise.resolve({ v: args.version ?? 3, alg: "ECDH-P256+HKDF-SHA256+A256GCM", epk: "E", iv: "I", ct: "C" });
+      return Promise.resolve(args.version === 5
+        ? { v: 5, alg: "HPKE-Base-P256-SHA256-A256GCM", enc: "E", ct: "C" }
+        : { v: 3, alg: "ECDH-P256+HKDF-SHA256+A256GCM", epk: "E", iv: "I", ct: "C" });
     }
   };
 });

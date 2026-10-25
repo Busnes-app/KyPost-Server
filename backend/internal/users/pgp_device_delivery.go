@@ -69,7 +69,7 @@ func ParseDeviceEnvelopeVersion(envelope string) (int, error) {
 			IV  string `json:"iv"`
 			CT  string `json:"ct"`
 		}
-		if !decodeExact(envelope, &e) || e.Alg != deviceEnvelopeAlg {
+		if !decodeExact(envelope, &e, "v", "alg", "epk", "iv", "ct") || e.Alg != deviceEnvelopeAlg {
 			return 0, ErrInvalidDeviceEnvelope
 		}
 		epk, err := base64.StdEncoding.DecodeString(e.EPK)
@@ -91,7 +91,7 @@ func ParseDeviceEnvelopeVersion(envelope string) (int, error) {
 			Enc string `json:"enc"`
 			CT  string `json:"ct"`
 		}
-		if !decodeExact(envelope, &e) || e.Alg != hpkeDeviceEnvelopeAlg {
+		if !decodeExact(envelope, &e, "v", "alg", "enc", "ct") || e.Alg != hpkeDeviceEnvelopeAlg {
 			return 0, ErrInvalidDeviceEnvelope
 		}
 		enc, ok := canonicalBase64(e.Enc)
@@ -107,12 +107,35 @@ func ParseDeviceEnvelopeVersion(envelope string) (int, error) {
 	return probe.V, nil
 }
 
-// decodeExact decodes one JSON object into v, refusing unknown fields and
-// trailing data.
-func decodeExact(envelope string, v any) bool {
+// decodeExact decodes one flat JSON object into v. It must hold exactly the
+// given keys, each once and case-sensitively (encoding/json alone folds case
+// and lets a repeat win), with scalar values and nothing after it.
+func decodeExact(envelope string, v any, keys ...string) bool {
 	dec := json.NewDecoder(strings.NewReader(envelope))
-	dec.DisallowUnknownFields()
-	return dec.Decode(v) == nil && dec.Decode(new(any)) == io.EOF
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return false
+	}
+	seen := map[string]bool{}
+	for dec.More() {
+		t, err := dec.Token()
+		key, ok := t.(string)
+		if err != nil || !ok || seen[key] || !slices.Contains(keys, key) {
+			return false
+		}
+		seen[key] = true
+		if t, err := dec.Token(); err != nil {
+			return false
+		} else if _, nested := t.(json.Delim); nested {
+			return false
+		}
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return false
+	}
+	return len(seen) == len(keys) && json.Unmarshal([]byte(envelope), v) == nil
 }
 
 func canonicalBase64(s string) ([]byte, bool) {
