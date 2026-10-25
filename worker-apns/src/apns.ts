@@ -138,6 +138,25 @@ export function isStaleResponse(status: number, _response: string): boolean {
 }
 
 /**
+ * Apple's APNs error responses are JSON, e.g. {"reason":"ExpiredProviderToken"}
+ * (a 410 also carries a timestamp). Pull the reason field out so classification
+ * matches Apple's exact strings instead of scanning the raw body. Returns ""
+ * when the body is empty or not that JSON shape (an HTML error page from
+ * something in front of Apple, say).
+ */
+export function apnsReason(detail: string): string {
+  try {
+    const parsed = JSON.parse(detail) as { reason?: unknown };
+    if (parsed && typeof parsed.reason === "string") {
+      return parsed.reason;
+    }
+  } catch {
+    // Not JSON; no reason to extract.
+  }
+  return "";
+}
+
+/**
  * Send a single push via APNs HTTP/2. Body shape mirrors FCM's for consistency.
  */
 export async function sendApnsMessage(
@@ -221,11 +240,17 @@ export async function sendApnsMessage(
       return { ok: false, stale: true, reachedProvider: true, status: resp.status, detail };
     }
 
-    // Provider-token errors: refresh the token cache and return 502 so backend retries
-    const detailLower = detail.toLowerCase();
+    // Provider-token errors: drop the cached token and return 502 so the backend
+    // retries (the next send mints a fresh one). Apple's reasons are
+    // ExpiredProviderToken / InvalidProviderToken, e.g. an APNS_AUTH_KEY scoped
+    // to the wrong environment. Match them exactly from the JSON reason field;
+    // the old substring test ("expiredtoken"/"invalidtoken") never matched
+    // Apple's actual strings, so a rejected token stayed cached for the full 29
+    // minutes and every send kept failing until the cache expired.
+    const reason = apnsReason(detail).toLowerCase();
     if (
       resp.status === 403 &&
-      (detailLower.includes("expiredtoken") || detailLower.includes("invalidtoken"))
+      (reason === "expiredprovidertoken" || reason === "invalidprovidertoken")
     ) {
       await cache.delete("apns_provider_token");
       return {

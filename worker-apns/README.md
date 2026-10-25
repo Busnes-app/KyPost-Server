@@ -43,7 +43,7 @@ self-hosted Go server  --(Bearer per-server key)-->  this Worker  --(APNs provid
    npx wrangler secret put APNS_KEY_ID      # Key ID from step 3
    npx wrangler secret put APNS_TEAM_ID     # Team ID from your Apple Developer account
    npx wrangler secret put APNS_TOPIC       # Bundle ID, e.g. "org.kysecurity.mail"
-   npx wrangler secret put APNS_ENVIRONMENT # "production" or "sandbox" (use "sandbox" for debug/TestFlight builds)
+   npx wrangler secret put APNS_ENVIRONMENT # "production" or "sandbox" (must match how the app was signed)
    ```
    `APNS_ENVIRONMENT` is parsed strictly. Unset means production; anything that
    is neither `production` nor `sandbox` makes `/health` report
@@ -51,6 +51,13 @@ self-hosted Go server  --(Bearer per-server key)-->  this Worker  --(APNs provid
    picked the sandbox host would make Apple reject every production device
    token as `BadDeviceToken` — which this relay reports as a dead token, and
    the backend acts on by unregistering the device.
+
+   Production serves the App Store and TestFlight; sandbox serves only Xcode
+   development builds, so pick the one that matches how the app was signed. APNs
+   auth keys can additionally be scoped to an environment: a sandbox-only key
+   used against production is rejected with 403 InvalidProviderToken. The relay
+   then drops its cached provider token and returns 502 so the backend retries,
+   rather than serving the rejected token until the cache expires.
 
    There is no `ADMIN_SECRET`: the relay has no admin API. See
    [Managing keys](#managing-keys).
@@ -207,6 +214,7 @@ block in `wrangler.toml.example` creates the class on first deploy.
 
 | Error | Cause | Fix |
 |-------|-------|-----|
+| InvalidProviderToken / ExpiredProviderToken (HTTP 403) | The provider (auth) token was rejected, often an APNS_AUTH_KEY scoped to the other environment (a sandbox-only key sent to production) | Use an auth key valid for APNS_ENVIRONMENT; the relay evicts its cached token and the backend retries automatically |
 | `InvalidToken` / `Unauthorized` (HTTP 403) | Auth key is incorrect, expired, or revoked | Regenerate the `.p8` key in Apple Developer portal and rotate the secret |
 | `BadDeviceToken` (HTTP 400) | Device token is malformed or stale | Device was uninstalled or re-registered; backend automatically re-tries registration on next notification |
 | `DeviceTokenNotForTopic` (HTTP 400) | Token was registered for a different bundle ID | Provisioning profile mismatch; rebuild the app with the correct bundle ID |
