@@ -4,9 +4,12 @@ name: "KyPost CodeQL"
 # filter is needed, and default setup cannot express one — see that workflow's
 # header for why the repository moved off default setup.
 #
-# The default query suite is used unmodified apart from the exclusions below.
-# Nothing here widens coverage or swaps in a lighter suite: the point is to
-# silence one query that cannot be satisfied, not to lower the bar generally.
+# The security-and-quality suite is selected below (security plus the
+# maintainability/reliability queries), minus the single exclusion that
+# follows, which silences one query that cannot be satisfied here.
+
+queries:
+  - uses: security-and-quality
 
 query-filters:
   # go/email-injection reports "untrusted input reaches email content". On a
