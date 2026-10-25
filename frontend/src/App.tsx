@@ -74,6 +74,17 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(() =>
     ["/settings", "/admin", "/apps"].some((prefix) => location.pathname.startsWith(prefix))
   );
+  // On a phone the sidebar is a short (24vh) scrolling strip and the Settings
+  // links render at its bottom, past the folder list, so opening them changed
+  // nothing on screen and the mobile "Settings" button looked dead (#456).
+  // Scroll the group into view whenever it opens; block "nearest" is a no-op on
+  // desktop, where it is already in view.
+  const settingsNavRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (settingsOpen) {
+      settingsNavRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [settingsOpen]);
   const [pwaInstallPrompt, setPwaInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [pwaInstalled, setPwaInstalled] = useState(false);
   const [licenseOpen, setLicenseOpen] = useState(false);
@@ -566,6 +577,8 @@ export function App() {
               type="button"
               className="mobile-settings-toggle"
               aria-label="Toggle settings"
+              aria-expanded={settingsOpen}
+              aria-controls="settings-nav-group"
               title="Settings"
               onClick={() => setSettingsOpen((open) => !open)}
             >
@@ -734,13 +747,14 @@ export function App() {
             type="button"
             className="nav-heading settings-heading"
             aria-expanded={settingsOpen}
+            aria-controls="settings-nav-group"
             onClick={() => setSettingsOpen((open) => !open)}
           >
             Settings {settingsOpen ? "-" : "+"}
           </button>
 
           {settingsOpen ? (
-            <div className="nav-group">
+            <div className="nav-group" id="settings-nav-group" ref={settingsNavRef}>
               {visibleSettingsGroups(isAdmin).map((group) => (
                 <div key={group.heading ?? "settings"} className="nav-subgroup">
                   {group.heading ? <p className="nav-subheading">{group.heading}</p> : null}
