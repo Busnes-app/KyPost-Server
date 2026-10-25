@@ -54,7 +54,7 @@ vi.mock("../lib/deviceEnrollment", async (importOriginal) => {
     // what this component owes it is the right inputs, which the spy records.
     sealKeyringForDevice: (args: Parameters<typeof actual.sealKeyringForDevice>[0]) => {
       sealKeyringSpy(args);
-      return Promise.resolve({ v: 3, alg: "ECDH-P256+HKDF-SHA256+A256GCM", epk: "E", iv: "I", ct: "C" });
+      return Promise.resolve({ v: args.version ?? 3, alg: "ECDH-P256+HKDF-SHA256+A256GCM", epk: "E", iv: "I", ct: "C" });
     }
   };
 });
@@ -620,8 +620,22 @@ it("enrolls after a recovery commit with different fingerprint casing", async ()
   expect(screen.queryByText(/PGP identity changed/)).toBeNull();
 });
 
-it("refuses v2 enrollment when the device only advertises newer versions", async () => {
-  render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [3, 4] })} />);
+it("seals v4 (HPKE) when the device advertises it, v2 otherwise", async () => {
+  for (const [versions, v, alg] of [[[2, 3, 4, 5], 4, "HPKE-Base-P256-SHA256-A256GCM"], [[2, 3], 2, "ECDH-P256+HKDF-SHA256+A256GCM"]] as const) {
+    cleanup();
+    putDeviceEnvelope.mockClear();
+    sealSpy.mockClear();
+    render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [...versions] })} />);
+    await startCeremony();
+    await submitCeremony(await codeFor(HONEST_KEY));
+    await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledTimes(1));
+    expect(sealSpy.mock.calls[0][4]).toBe(v);
+    expect(putDeviceEnvelope.mock.calls[0][1]).toMatchObject({ v, alg });
+  }
+});
+
+it("refuses legacy enrollment when the device advertises neither v2 nor v4", async () => {
+  render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [3, 5] })} />);
   await startCeremony();
   expect(screen.getByText(/format this server does not yet deliver/)).toBeTruthy();
   expect(screen.queryByLabelText("Account password")).toBeNull();
@@ -655,9 +669,20 @@ describe("a converted account", () => {
     expect(sealSpy).not.toHaveBeenCalled();
     expect(sealKeyringSpy).toHaveBeenCalledWith({
       publicKeyB64: HONEST_KEY, deviceId: "d1", typedCode: code, raw: ring,
-      snapshot: { fingerprint: "AAAA1111BBBB2222", publicKey: "-----BEGIN PGP PUBLIC KEY BLOCK-----", keyring }
+      snapshot: { fingerprint: "AAAA1111BBBB2222", publicKey: "-----BEGIN PGP PUBLIC KEY BLOCK-----", keyring },
+      version: 3
     });
     expect(putDeviceEnvelope).toHaveBeenCalledWith("d1", expect.objectContaining({ v: 3 }), "hunter2", 7, HONEST_KEY, "AAAA1111BBBB2222", 4);
+  });
+
+  it("seals v5 to a device that advertises it", async () => {
+    render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [2, 3, 4, 5] })} />);
+    await startCeremony();
+    await submitCeremony(await codeFor(HONEST_KEY));
+    await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledTimes(1));
+    expect(sealSpy).not.toHaveBeenCalled();
+    expect(sealKeyringSpy).toHaveBeenCalledWith(expect.objectContaining({ version: 5 }));
+    expect(putDeviceEnvelope).toHaveBeenCalledWith("d1", expect.objectContaining({ v: 5 }), "hunter2", 7, HONEST_KEY, "AAAA1111BBBB2222", 4);
   });
 
   it("refuses a device that has not claimed v3 before asking for anything", async () => {

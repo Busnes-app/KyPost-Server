@@ -18,6 +18,16 @@ non-prerelease version.
 
 ## Unreleased
 
+### Added
+
+- **HPKE device envelopes (v4/v5).** The browser seals device enrollments with
+  RFC 9180 HPKE (`@hpke/core` 1.9.0; P-256, HKDF-SHA256, AES-256-GCM) when the
+  device advertises it: v5 for a converted account, v4 for a legacy one. The
+  server accepts their `{v, alg, enc, ct}` framing. Devices advertising only
+  v2/v3 (Android) keep getting those. Shared vectors:
+  `testdata/hpke-cfrg-p256-aes256.json`, `device-envelope-hpke.json`,
+  `device-envelope-hpke-browser.json`.
+
 ## 0.4.3 — 2026-10-23
 
 ### Added

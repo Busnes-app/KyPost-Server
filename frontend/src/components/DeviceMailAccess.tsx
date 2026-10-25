@@ -6,6 +6,7 @@ import { pgpSessionState, unlockedPGPIdentity } from "../lib/pgpSession";
 import { requireUnlockedKey, requireUnlockedKeyMaterial } from "../lib/keyVault";
 import type { MailAccess } from "../pages/security/deviceJoin";
 import {
+  deviceEnvelopeVersion,
   explainEnrollmentFailure,
   sealEnvelopeForDevice,
   sealKeyringForDevice,
@@ -151,12 +152,12 @@ export function DeviceMailPanel({
   awaitEnrollment?: (deviceId: string) => Promise<boolean>;
 }) {
   if (panel === "enroll") {
-    // A converted account delivers the complete ring (v3) and nothing less;
-    // a legacy account delivers v2. The device must have claimed the one this
-    // account needs, or the server would refuse the upload after the code and
-    // password were typed.
+    // A converted account delivers the complete ring (v5 or v3) and nothing
+    // less; a legacy account delivers v4 or v2. The device must have claimed
+    // one this account can send, or the server would refuse the upload after
+    // the code and password were typed.
     const converted = pgpSessionState().bootstrap?.keyring != null;
-    if (!(device.enrollmentEnvelopeVersions ?? [2]).includes(converted ? 3 : 2)) {
+    if (deviceEnvelopeVersion(converted, device.enrollmentEnvelopeVersions ?? [2]) === null) {
       return <div className="sec-inline-form">
         <p>{converted
           ? "This device's app must be updated before it can hold your complete keyring. Update the app, start encryption setup on it again, then check here."
@@ -211,6 +212,7 @@ function EnrollPanel({
   // exists to catch, arriving through a later render. The panel unmounts when
   // it closes, so reopening re-snapshots.
   const [publicKey] = useState(() => device.enrollmentPublicKey ?? "");
+  const [versions] = useState(() => device.enrollmentEnvelopeVersions ?? [2]);
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   // Sentinels only — never server- or exception-derived text. `failure` gates
@@ -273,15 +275,18 @@ function EnrollPanel({
         return;
       }
 
-      // v3 carries the complete ring, validated against the same snapshot
+      // v3/v5 carry the complete ring, validated against the same snapshot
       // the server will bind the delivery to; sealKeyringForDevice re-checks
       // the code against the same key immediately before sealing.
+      const version = deviceEnvelopeVersion(keyring != null, versions);
+      if (version === null) throw new Error("This device cannot receive this account's key format. Update the app, then try again.");
       const envelope = keyring && bootstrap
         ? await sealKeyringForDevice({
             publicKeyB64: publicKey, deviceId: device.deviceId, typedCode: code, raw: material,
-            snapshot: { fingerprint: bootstrap.fingerprint, publicKey: bootstrap.publicKey, keyring }
+            snapshot: { fingerprint: bootstrap.fingerprint, publicKey: bootstrap.publicKey, keyring },
+            version: version === 5 ? 5 : 3
           })
-        : await sealEnvelopeForDevice(publicKey, device.deviceId, fingerprint, material);
+        : await sealEnvelopeForDevice(publicKey, device.deviceId, fingerprint, material, version === 4 ? 4 : 2);
       await putDeviceEnvelope(device.deviceId, envelope, password, snapshot.pgpRevision, publicKey, snapshot.fingerprint, keyring?.materialGeneration);
 
       // PAST THE POINT OF FAILURE. The sealing is stored; nothing below may

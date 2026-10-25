@@ -391,3 +391,47 @@ func TestClientSealedSendRefusesStaleMaterial(t *testing.T) {
 		t.Fatalf("legacy device send gated: %s", rec.Body.String())
 	}
 }
+
+// hpkeSealedEnvelope is a well-formed v4/v5 sealing, framing only.
+func hpkeSealedEnvelope(version int) string {
+	enc := make([]byte, 65)
+	enc[0] = 4
+	return `{"v":` + string(rune('0'+version)) + `,"alg":"HPKE-Base-P256-SHA256-A256GCM","enc":"` +
+		base64.StdEncoding.EncodeToString(enc) + `","ct":"` + base64.StdEncoding.EncodeToString(make([]byte, 16)) + `"}`
+}
+
+// v5 reaches only a device that advertised it, and its acknowledgement
+// enrolls the device at v5; an Android-style [2,3] device is refused it.
+func TestHPKEDeviceDeliveryFollowsAdvertisedVersions(t *testing.T) {
+	srv := newTestServer(t)
+	u := convertedUser(t, srv)
+	publishDevice(t, srv, u.ID, "android", []int{2, 3})
+	macAuth, _ := publishDevice(t, srv, u.ID, "mac", []int{2, 3, 4, 5})
+	body := func(version int) map[string]any {
+		return map[string]any{"envelope": hpkeSealedEnvelope(version), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint,
+			"enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}
+	}
+	rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:android", body(5))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"envelopeVersions":[2,3]`) {
+		t.Fatalf("v5 to a [2,3] device: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:mac", body(4))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"deviceEnvelopeVersion":true`) {
+		t.Fatalf("v4 on a converted account: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:mac", body(5))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"version":5`) {
+		t.Fatalf("v5 delivery: %d %s", rec.Code, rec.Body.String())
+	}
+	ack := map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}
+	if rec := deviceJSON(t, srv, macAuth, http.MethodPost, "/api/pgp/device/enrollment-state", ack); rec.Code != http.StatusConflict {
+		t.Fatalf("v3 acknowledgement of a v5 delivery: %d %s", rec.Code, rec.Body.String())
+	}
+	ack["envelopeVersion"] = 5
+	if rec := deviceJSON(t, srv, macAuth, http.MethodPost, "/api/pgp/device/enrollment-state", ack); rec.Code != http.StatusOK {
+		t.Fatalf("v5 acknowledgement: %d %s", rec.Code, rec.Body.String())
+	}
+	if d := deviceByID(t, srv, u.ID, "mac"); !d.EncryptionEnrolled || d.EnrolledVersion != 5 || d.EnrolledGeneration != 1 {
+		t.Fatalf("v5 enrollment not confirmed: %+v", d)
+	}
+}

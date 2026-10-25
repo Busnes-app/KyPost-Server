@@ -265,3 +265,37 @@ func TestDeviceEnvelopeHPKEFixtureReproducible(t *testing.T) {
 		t.Fatal("generator output differs from testdata/device-envelope-hpke.json; regenerate only for a deliberate fixture change")
 	}
 }
+
+// The browser sealer (@hpke/core) under a fixed ephemeral; the frontend test
+// pins these bytes, so Go opening them proves the two interoperate.
+func TestDeviceEnvelopeHPKEBrowserVectors(t *testing.T) {
+	f, priv := loadHPKEFixture(t)
+	data, err := os.ReadFile("../../../testdata/device-envelope-hpke-browser.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var browser struct {
+		EphemeralPrivateKey string
+		Vectors             []hpkeVector
+	}
+	if err := json.Unmarshal(data, &browser); err != nil {
+		t.Fatal(err)
+	}
+	if len(browser.Vectors) != len(f.Vectors) {
+		t.Fatal("need one browser vector per Go vector")
+	}
+	eph, err := ecdh.P256().NewPrivateKey(mustB64(t, browser.EphemeralPrivateKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range browser.Vectors {
+		want := f.Vectors[i]
+		if v.DeviceID != want.DeviceID || v.Fingerprint != want.Fingerprint || !bytes.Equal(mustB64(t, v.Envelope.Enc), eph.PublicKey().Bytes()) {
+			t.Fatalf("vector %d does not match its Go counterpart", i)
+		}
+		_, pt, err := openHPKEEnvelope(t, priv, want.Envelope.V, want.DeviceID, want.Fingerprint, v.Envelope)
+		if err != nil || string(pt) != want.Plaintext {
+			t.Fatalf("vector %d: %v", i, err)
+		}
+	}
+}
