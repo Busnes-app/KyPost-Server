@@ -1,0 +1,17 @@
+#!/bin/sh
+# After fullchecks.sh: rerun KyCalendar make ci on the committed tree, then both browser suites,
+# each waiting until the shared Playwright port 5391 is free (other workers use it too).
+export PATH=/home/yoshi/.local/share/ky-toolchains/node-v26.12.1-linux-x64/bin:$PATH
+R=/home/yoshi/git/busnes.app; L=/tmp/fleet-appearance-scratch/checks
+cap() { systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 -- "$@"; }
+step() { name=$1; dir=$2; shift 2; start=$(date -u +%FT%TZ); (cd $dir && cap "$@") > $L/$name.log 2>&1; rc=$?; echo "$name exit=$rc start=$start end=$(date -u +%FT%TZ) head=$(git -C $dir rev-parse --short HEAD) :: $*" >> $L/followup.txt; }
+# Browser suites first while the shared port is reserved for this run.
+for r in KyCalendar KyMessage-Server; do W=$R/$r/.claude/worktrees/fleet-appearance
+  step $r-browser-server-rerun $W go build -o .browser/server ./cmd/server
+  n=0; while ss -ltn | grep -q '127.0.0.1:5391 ' && [ $n -lt 360 ]; do sleep 5; n=$((n+1)); done
+  step $r-test-browser-rerun $W/web npm run test:browser
+done
+echo BROWSER-DONE >> $L/followup.txt
+W=$R/KyCalendar/.claude/worktrees/fleet-appearance
+step KyCalendar-make-ci-rerun $W make ci
+echo DONE >> $L/followup.txt

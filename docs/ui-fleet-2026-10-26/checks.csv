@@ -1,0 +1,11 @@
+product,check,command,result,exit,head,start_utc,end_utc,notes
+kypost,frontend lint,npm run lint,pass,0,0572ca49,2026-10-26T11:45:53Z,2026-10-26T11:45:57Z,"0 errors, 0 warnings"
+kypost,frontend typecheck,npm run typecheck,pass,0,0572ca49,2026-10-26T11:45:57Z,2026-10-26T11:45:58Z,
+kypost,frontend vitest (full),npx vitest run,pass,0,0572ca49,2026-10-26T11:45:58Z,2026-10-26T11:46:17Z,"1218/1218, incl. readability.test.tsx over all 22 themes and Appearance.test.tsx"
+kypost,frontend build,npm run build,pass,0,0572ca49,2026-10-26T11:46:17Z,2026-10-26T11:46:18Z,
+kypost,backend gofmt,"sh -c test -z ""$(gofmt -l .)""",pass,0,0572ca49,2026-10-26T11:47:54Z,2026-10-26T11:47:54Z,backend unchanged by this branch
+kypost,backend go vet,go vet ./...,pass,0,0572ca49,2026-10-26T11:47:54Z,2026-10-26T11:47:56Z,
+kypost,backend go test -race -count=1,go test -race -count=1 -timeout=20m ./...,pass,0,0572ca49,2026-10-26T11:47:56Z,2026-10-26T11:57:22Z,"fresh run (-count=1), 9.5 min"
+kypost,vitest MailExport.test.tsx flake check,npx vitest run src/settings/sections/MailExport.test.tsx (x3),pass,0,69c4a764,2026-10-26T11:33Z,2026-10-26T11:33Z,"failed once inside a subset run at load average 48 (""Unable to find option Work""); 3/3 alone; passes in both full runs"
+kypost,real-browser keyboard/reload/overflow (390x844),node keyboard-post.mjs (drivers/),pass,0,0572ca49,2026-10-26T11:44:58Z,2026-10-26T11:44:58Z,"keyboard-06-after.json: arrow selection+focus, solid outline, Sky persists, 2x173px columns, 0 overflow, light+dark"
+kypost,product browser suite,n/a,notrun,,,,,"KyPost has no Playwright suite; covered by vitest, the keyboard check and captures"

@@ -1,0 +1,22 @@
+#!/bin/sh
+# Full required checks for the three products; one log per step, exit codes in checks.txt.
+export PATH=/home/yoshi/.local/share/ky-toolchains/node-v26.12.1-linux-x64/bin:$PATH
+R=/home/yoshi/git/busnes.app; L=/tmp/fleet-appearance-scratch/checks; mkdir -p $L; : > $L/checks.txt
+cap() { systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0 -- "$@"; }
+step() { name=$1; dir=$2; shift 2; start=$(date -u +%FT%TZ); (cd $dir && cap "$@") > $L/$name.log 2>&1; rc=$?; echo "$name exit=$rc start=$start end=$(date -u +%FT%TZ) :: $*" >> $L/checks.txt; }
+P=$R/kypost-server/.claude/worktrees/fleet-appearance
+step post-lint-ci $P/frontend npm ci --prefix lint
+step post-lint $P/frontend npm run lint
+step post-typecheck $P/frontend npm run typecheck
+step post-test $P/frontend npx vitest run
+step post-build $P/frontend npm run build
+for r in KyCalendar KyMessage-Server; do W=$R/$r/.claude/worktrees/fleet-appearance
+  step $r-make-ci $W make ci
+  step $r-browser-server $W go build -o .browser/server ./cmd/server
+  step $r-test-browser $W/web npm run test:browser
+  step $r-dist-diff $W git status --short -- web/dist
+done
+step post-gofmt $P/backend sh -c 'test -z "$(gofmt -l .)"'
+step post-vet $P/backend go vet ./...
+step post-go-race $P/backend go test -race -count=1 -timeout=20m ./...
+echo DONE >> $L/checks.txt

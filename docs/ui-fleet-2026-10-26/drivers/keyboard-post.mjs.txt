@@ -1,0 +1,42 @@
+// KyPost Appearance in a real browser at 390x844: keyboard selection, visible focus,
+// reload persistence, two columns and no overflow. Real sign-in; prints JSON.
+import { readFile } from 'node:fs/promises';
+const { chromium } = await import('/home/yoshi/git/busnes.app/KyCalendar/.claude/worktrees/fleet-appearance/web/node_modules/@playwright/test/index.mjs');
+const creds = JSON.parse(await readFile('/tmp/fleet-appearance-scratch/kypost/creds.json', 'utf8'));
+const out = {};
+const browser = await chromium.launch();
+try {
+  for (const scheme of ['light', 'dark']) {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: scheme, serviceWorkers: 'block' });
+    const p = await ctx.newPage();
+    await p.goto('http://localhost:5696');
+    await p.getByLabel('Username', { exact: true }).fill(creds.user);
+    await p.getByLabel('Password', { exact: true }).fill(creds.password);
+    await p.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await p.waitForURL('**/read');
+    await p.goto('http://localhost:5696/settings/appearance');
+    const system = p.getByRole('radio', { name: /^Match system/ });
+    const r = { system_checked_initially: await system.isChecked() };
+    await system.focus();
+    await p.keyboard.press('ArrowDown');
+    const light = p.getByRole('radio', { name: /^Busnes Light/ });
+    r.arrow_selects_next = await light.isChecked();
+    r.arrow_moves_focus = await light.evaluate((el) => el === document.activeElement);
+    r.focus_outline = await p.locator('.ky-appearance-option', { has: light }).evaluate((el) => getComputedStyle(el).outlineStyle);
+    await p.getByRole('radio', { name: /^Sky/ }).check();
+    r.saved = await p.evaluate(() => localStorage.getItem('kypost-theme'));
+    await p.reload();
+    r.sky_checked_after_reload = await p.getByRole('radio', { name: /^Sky/ }).isChecked();
+    r.bg_after_reload = await p.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    Object.assign(r, await p.evaluate(() => ({
+      columns: getComputedStyle(document.querySelector('.ky-appearance-grid')).gridTemplateColumns,
+      grid_left_px: Math.round(document.querySelector('.ky-appearance-grid').getBoundingClientRect().left),
+      overflow_px: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    })));
+    await p.getByRole('radio', { name: /^Match system/ }).check();
+    r.saved_after_system = await p.evaluate(() => localStorage.getItem('kypost-theme'));
+    out[scheme] = r;
+    await ctx.close();
+  }
+} finally { await browser.close(); }
+console.log(JSON.stringify({ checked_at: new Date().toISOString(), viewport: '390x844', ...out }, null, 2));

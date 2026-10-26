@@ -1,0 +1,1482 @@
+{
+  "product": "kypost",
+  "repository": "kypost-server",
+  "branch": "ui/fleet-appearance",
+  "base_commit": "7aea66f888ec3f251ab1b68b66378bd5c3e144c8",
+  "generated": "2026-10-26T12:01:27Z",
+  "os": "Linux 7.2.10-1-cachyos (CachyOS, x86-64)",
+  "node": "v26.12.1",
+  "go": "go version go1.27.1-X:nodwarf5 linux/amd64",
+  "driver": "Playwright headless Chromium (T3 preview not used: documented product harness drivers, adapted from ky-ui reviews/2026-10-26-council)",
+  "theme_source": "OS-following Busnes (context colorScheme, nothing saved) unless the surface name starts with a named theme chosen through the product's own Appearance radio",
+  "fixture": "Scratch KyPost on localhost:5696 using a copy of the council's synthetic data directory (everyday user alex; no administrator captures) and the loopback kypost-demo-IMAP fixture (alice@kypost-demo.local on 127.0.0.1:5993/5587/5443, self-signed CA via SSL_CERT_DIR, SANDBOX_PRIVATE_HOSTS=localhost); seeded mail flags restored and drip mail deleted through /api/inbox/actions before each inbox capture; real proof-of-work sign-in; America/New_York, en-US; service workers blocked; no Ollama. No auth/CSRF/CSP bypass, no mocks, no personal data.",
+  "notes": [
+    "Before captures ran on the clean base commit with its committed ky-ui 0.3.0 vendor copy; no source change.",
+    "VOID ATTEMPT (not evidence, bytes not kept): the first 01-after batch at ~07:21 was served by the still-running server-before process because the restarted server could not bind :5696; it showed the old picker. Those files were overwritten at 07:22 by the batch recorded here, after the stale process was stopped and run.sh fixed to record real PIDs.",
+    "Chromium gives every native radio an empty style=\"\" attribute (no declarations, no CSP effect); inline_style_attrs counts non-empty ones only.",
+    "Server binary is the same for 01/02/03 (backend unchanged); stages differ only in frontend assets."
+  ],
+  "pairs": [
+    {
+      "stage": "01",
+      "before": "00-before",
+      "after": "01-after",
+      "compare": [
+        "inbox",
+        "appearance"
+      ]
+    },
+    {
+      "stage": "02",
+      "before": "01-after",
+      "after": "02-after",
+      "compare": [
+        "appearance mobile: 640px horizontal overflow fixed (.panel min-inline-size: 0)",
+        "inbox unchanged"
+      ]
+    },
+    {
+      "stage": "03",
+      "before": "02-after",
+      "after": "03-after",
+      "compare": [
+        "appearance: space between lede and Theme legend"
+      ]
+    },
+    {
+      "stage": "04",
+      "before": "03-after",
+      "after": "04-after",
+      "compare": [
+        "appearance: shared description, preview hairline, wrapping; inbox unchanged (02-after inbox reused)"
+      ]
+    },
+    {
+      "stage": "05",
+      "before": "04-after",
+      "after": "05-after",
+      "compare": [
+        "appearance only: title-to-description spacing"
+      ]
+    },
+    {
+      "stage": "06",
+      "before": "05-after",
+      "after": "06-after",
+      "compare": [
+        "appearance phone: one column (350px content) -> two columns (358px), same inset as KyCalendar/KyMessages; desktop unchanged",
+        "keyboard-06-after.json: arrow selection, focus outline, reload persistence, 0 overflow at 390x844 light/dark"
+      ]
+    }
+  ],
+  "stages": [
+    {
+      "id": "00-before",
+      "phase": "before",
+      "commit": "7aea66f8",
+      "source": "clean base (origin/main merge of #480); ky-ui 0.3.0",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-before",
+      "assets": "/tmp/fleet-appearance-scratch/kypost/dist-before",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "assets_tree_sha256": "06230571272afec5b18223bae92d624381f574d7ed11688ae44cad04b0b7d9b9"
+    },
+    {
+      "id": "01-after",
+      "phase": "after",
+      "commit": "7aea66f8 + patch",
+      "source": "ky-ui 0.4.0 vendor (f48e7a0 sync) + catalog adapter (theme.ts keeps names and mail-only roles), native radio-card Appearance, Match system, old swatch CSS removed; known defect: 640px mobile overflow",
+      "patch": "patches/kypost-01-after.src.patch",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after",
+      "assets": "/tmp/fleet-appearance-scratch/kypost/dist-after",
+      "patch_sha256": "52a4bb14595d1ab11a2eedffb56aa62167d129114f0cfbbda8acc606182a7e2b",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "assets_tree_sha256": "0599b7156dcb5152f42b27e2a49fa17a46f408469dbc585d5d38f5afbdcbf07f"
+    },
+    {
+      "id": "02-after",
+      "phase": "after",
+      "commit": "7aea66f8 + patch",
+      "source": "01 + .panel min-inline-size: 0",
+      "patch": "patches/kypost-02-after.src.patch",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after2",
+      "assets": "/tmp/fleet-appearance-scratch/kypost/dist-after2",
+      "patch_sha256": "c3f990ae5e6f9c3b8ab75fd18e10464bc4232755f06dd3ccad62bdeafa63c572",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "assets_tree_sha256": "f0835b73d5684de97e08b77e3ea2bce745298c6cd477a84f8286ab655a6de8af"
+    },
+    {
+      "id": "03-after",
+      "phase": "after",
+      "commit": "7aea66f8 + patch",
+      "source": "02 + #theme margin-block-start",
+      "patch": "patches/kypost-03-after.src.patch",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after3",
+      "assets": "/tmp/fleet-appearance-scratch/kypost/dist-after3",
+      "patch_sha256": "6df6bdb5febe389dc0c8205eaf3767330b0052c5ed23426ca7ec5bc7e9bd5a64",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "assets_tree_sha256": "31f04be3d3380291981c8510c5e7d1cf66f0029cf06fbe4d04ff1767b130356a"
+    },
+    {
+      "id": "04-after",
+      "phase": "after",
+      "commit": "7aea66f8 + patch",
+      "source": "owner correction 2026-10-26: shell theme select removed (Appearance nav row kept for every role); shared .ky-appearance-description with the exact copy; ky-ui 0.4.0 at 4f83f34 (preview hairline b849ac5, wrapping names/modes); KyPost had no shell select; #theme margin removed (the shared description owns the spacing)",
+      "patch": "patches/kypost-04-after.src.patch",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after02",
+      "assets": "/tmp/fleet-appearance-scratch/kypost/dist-after02",
+      "patch_sha256": "d09c2e5a262c9e349eca53dd92dd5b651db44a814f09342af358978f34a96e15",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "assets_tree_sha256": "40385a3aeff3678cac2d9e94fd1a3d8488e8169c36e9b1d67ae1ca7ab4dcfd59"
+    },
+    {
+      "id": "05-after",
+      "phase": "after",
+      "commit": "7aea66f8 + patch",
+      "source": "04 + Appearance title is a bare h1 (shared spacing, same in all three products)",
+      "patch": "patches/kypost-05-after.src.patch",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after03",
+      "assets": "/tmp/fleet-appearance-scratch/kypost/dist-after03",
+      "patch_sha256": "c697f7a15253aa16cb9add4e1c0f89b9ebd92c093f9586c2068c71e576641217",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "assets_tree_sha256": "f50564414d764fff5bf8202171f683883aeca73b80b34abcbba9d4be46d8b104"
+    },
+    {
+      "id": "06-after",
+      "phase": "after",
+      "commit": "7aea66f8 + patch",
+      "source": "05 + phone inset 16px on the Appearance panel only (two 173px columns at 390px)",
+      "patch": "patches/kypost-06-after.src.patch",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after06",
+      "assets": "/tmp/fleet-appearance-scratch/kypost/dist-after06",
+      "patch_sha256": "188c9fa474db0e5b176b53a60b80a912654a99e2016af8ada9295006c6314f3c",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "assets_tree_sha256": "e1ea181b47e4b5faa20c251116d906e905cef2364b35eb5431d1b8777aa6f762"
+    }
+  ],
+  "capture_runs": [
+    {
+      "record": "captures-00-before-1793013054101.json",
+      "product": "kypost",
+      "stage": "00-before",
+      "captured": "2026-10-26T11:10:54.101Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-before",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-01-after-1793013776522.json",
+      "product": "kypost",
+      "stage": "01-after",
+      "captured": "2026-10-26T11:22:56.522Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-01-after-1793013799691.json",
+      "product": "kypost",
+      "stage": "01-after",
+      "captured": "2026-10-26T11:23:19.691Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-02-after-1793013896974.json",
+      "product": "kypost",
+      "stage": "02-after",
+      "captured": "2026-10-26T11:24:56.974Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-02-after-1793013918327.json",
+      "product": "kypost",
+      "stage": "02-after",
+      "captured": "2026-10-26T11:25:18.327Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-03-after-1793013946988.json",
+      "product": "kypost",
+      "stage": "03-after",
+      "captured": "2026-10-26T11:25:46.988Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-04-after-1793014600955.json",
+      "product": "kypost",
+      "stage": "04-after",
+      "captured": "2026-10-26T11:36:40.955Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after02",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-04-after-1793014605188.json",
+      "product": "kypost",
+      "stage": "04-after",
+      "captured": "2026-10-26T11:36:45.188Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after02",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-05-after-1793014703654.json",
+      "product": "kypost",
+      "stage": "05-after",
+      "captured": "2026-10-26T11:38:23.654Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after03",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-06-after-1793015111561.json",
+      "product": "kypost",
+      "stage": "06-after",
+      "captured": "2026-10-26T11:45:11.561Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after06",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-06-after-1793015115629.json",
+      "product": "kypost",
+      "stage": "06-after",
+      "captured": "2026-10-26T11:45:15.629Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after06",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    }
+  ],
+  "files": [
+    {
+      "file": "kypost-00-before-appearance-desktop-dark.png",
+      "sha256": "64c983f106bbe0b2ab5244e551ee5b3947c80a7cdab7bc89a2adea46399b696e",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "stage": "00-before",
+      "run": "captures-00-before-1793013054101.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:10:54.101Z"
+    },
+    {
+      "file": "kypost-00-before-appearance-desktop-light.png",
+      "sha256": "ab1cb9e2c8180b622de4c8c05f4922e545dc7d8a6b4173d3521b717476f164b8",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "stage": "00-before",
+      "run": "captures-00-before-1793013054101.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:10:54.101Z"
+    },
+    {
+      "file": "kypost-00-before-appearance-mobile-dark.png",
+      "sha256": "014fe03c4a3b175f612497bddf0cc1486e5daa69256d067f4743f4fc2be7b6a3",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "stage": "00-before",
+      "run": "captures-00-before-1793013054101.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:10:54.101Z"
+    },
+    {
+      "file": "kypost-00-before-appearance-mobile-light.png",
+      "sha256": "f24515414d92d4d25e69ebdf61bf5c8f9c4ec41e9ae96eff046bc2c179f0177a",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "stage": "00-before",
+      "run": "captures-00-before-1793013054101.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:10:54.101Z"
+    },
+    {
+      "file": "kypost-00-before-inbox-desktop-dark.png",
+      "sha256": "1bb671b6c21304e3ca38de651293083ecd36e82349a7f0ded5b2ceb5e98f3bc4",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "stage": "00-before",
+      "run": "captures-00-before-1793013054101.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:10:54.101Z"
+    },
+    {
+      "file": "kypost-00-before-inbox-desktop-light.png",
+      "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-light",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "stage": "00-before",
+      "run": "captures-00-before-1793013054101.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:10:54.101Z"
+    },
+    {
+      "file": "kypost-00-before-inbox-mobile-dark.png",
+      "sha256": "e34c9979dcaa2d5a466831b209e8e72133373d29da8fe0b6ca68388912f496b4",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "stage": "00-before",
+      "run": "captures-00-before-1793013054101.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:10:54.101Z"
+    },
+    {
+      "file": "kypost-00-before-inbox-mobile-light.png",
+      "sha256": "fea66931ae6deca445d7516a45e36a62688cfc3f4bbd6f98d24ef84ddc1ee24d",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-light",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "stage": "00-before",
+      "run": "captures-00-before-1793013054101.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:10:54.101Z"
+    },
+    {
+      "file": "kypost-01-after-appearance-desktop-dark.png",
+      "sha256": "129739970476c441d5b0aa6e898296c489e0de54c07372a3e086e54e7751c436",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013776522.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:22:56.522Z"
+    },
+    {
+      "file": "kypost-01-after-appearance-desktop-light.png",
+      "sha256": "1b55835cacd1b2195a3c638cc3357de0aa02f75de63f89b9522f627e19d9943d",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013776522.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:22:56.522Z"
+    },
+    {
+      "file": "kypost-01-after-appearance-mobile-dark.png",
+      "sha256": "bf95ff6a7d16819bebfa0315627676c022b20cdac1a77a66a56d55d37f772c3d",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "390x844",
+      "overflow_px": 640,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013776522.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:22:56.522Z"
+    },
+    {
+      "file": "kypost-01-after-appearance-mobile-light.png",
+      "sha256": "29183a75315f056c7678d6608d333f7174926ebc21392b03f72050270c046ef7",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 640,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013776522.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:22:56.522Z"
+    },
+    {
+      "file": "kypost-01-after-inbox-desktop-dark.png",
+      "sha256": "1bb671b6c21304e3ca38de651293083ecd36e82349a7f0ded5b2ceb5e98f3bc4",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013776522.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:22:56.522Z"
+    },
+    {
+      "file": "kypost-01-after-inbox-desktop-light.png",
+      "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-light",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013776522.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:22:56.522Z"
+    },
+    {
+      "file": "kypost-01-after-inbox-mobile-dark.png",
+      "sha256": "e34c9979dcaa2d5a466831b209e8e72133373d29da8fe0b6ca68388912f496b4",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013776522.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:22:56.522Z"
+    },
+    {
+      "file": "kypost-01-after-inbox-mobile-light.png",
+      "sha256": "fea66931ae6deca445d7516a45e36a62688cfc3f4bbd6f98d24ef84ddc1ee24d",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-light",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013776522.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:22:56.522Z"
+    },
+    {
+      "file": "kypost-01-after-nord-inbox-desktop-light.png",
+      "sha256": "c4ccb21bd36b94be7d19394d5550aec409e815d99e1be360c72b4f922f508ac0",
+      "surface": "nord-inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": null,
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013799691.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:23:19.691Z"
+    },
+    {
+      "file": "kypost-01-after-nord-inbox-mobile-light.png",
+      "sha256": "9033ee425c4e54e5001a68a366692d923f5b4d69fd5eb7b7b0f7868b1113cf18",
+      "surface": "nord-inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": null,
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013799691.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:23:19.691Z"
+    },
+    {
+      "file": "kypost-01-after-ocean-appearance-desktop-light.png",
+      "sha256": "9f1866b9fc3f530293e924d962279afa3398c42370906f26348eedf9eb32488a",
+      "surface": "ocean-appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": null,
+      "checked": "Ocean",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013799691.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:23:19.691Z"
+    },
+    {
+      "file": "kypost-01-after-ocean-appearance-mobile-light.png",
+      "sha256": "d819b9e6b81ee3bcbeae6abcbcf3ed90fc68d6a46914ee5fbbe3307bb9d605a0",
+      "surface": "ocean-appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 640,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": null,
+      "checked": "Ocean",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013799691.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:23:19.691Z"
+    },
+    {
+      "file": "kypost-01-after-sky-inbox-desktop-light.png",
+      "sha256": "06829c1e81a590ec9c6075a6a7e059331218843ed2be3ba501d268a17c69b555",
+      "surface": "sky-inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": null,
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013799691.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:23:19.691Z"
+    },
+    {
+      "file": "kypost-01-after-sky-inbox-mobile-light.png",
+      "sha256": "26997990544298637b84e969c1e2ecd0275f7efc3f9ffe6171e3bbe6abb9f7ae",
+      "surface": "sky-inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": null,
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "01-after",
+      "run": "captures-01-after-1793013799691.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:23:19.691Z"
+    },
+    {
+      "file": "kypost-02-after-appearance-desktop-dark.png",
+      "sha256": "129739970476c441d5b0aa6e898296c489e0de54c07372a3e086e54e7751c436",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013896974.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:24:56.974Z"
+    },
+    {
+      "file": "kypost-02-after-appearance-desktop-light.png",
+      "sha256": "1b55835cacd1b2195a3c638cc3357de0aa02f75de63f89b9522f627e19d9943d",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013896974.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:24:56.974Z"
+    },
+    {
+      "file": "kypost-02-after-appearance-mobile-dark.png",
+      "sha256": "99031c221dd8c99307c6f8f7fb6895efc87f942f1f97bcefab122766cf97ba5a",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013896974.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:24:56.974Z"
+    },
+    {
+      "file": "kypost-02-after-appearance-mobile-light.png",
+      "sha256": "13d69f893c3b6fc67c1a47456929e8d78ce011823a535ef0bf363a0b3beffec9",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013896974.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:24:56.974Z"
+    },
+    {
+      "file": "kypost-02-after-inbox-desktop-dark.png",
+      "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013896974.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:24:56.974Z"
+    },
+    {
+      "file": "kypost-02-after-inbox-desktop-light.png",
+      "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-light",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013896974.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:24:56.974Z"
+    },
+    {
+      "file": "kypost-02-after-inbox-mobile-dark.png",
+      "sha256": "e34c9979dcaa2d5a466831b209e8e72133373d29da8fe0b6ca68388912f496b4",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013896974.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:24:56.974Z"
+    },
+    {
+      "file": "kypost-02-after-inbox-mobile-light.png",
+      "sha256": "fea66931ae6deca445d7516a45e36a62688cfc3f4bbd6f98d24ef84ddc1ee24d",
+      "surface": "inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": "busnes-light",
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013896974.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:24:56.974Z"
+    },
+    {
+      "file": "kypost-02-after-nord-inbox-desktop-light.png",
+      "sha256": "c4ccb21bd36b94be7d19394d5550aec409e815d99e1be360c72b4f922f508ac0",
+      "surface": "nord-inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": null,
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013918327.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:25:18.327Z"
+    },
+    {
+      "file": "kypost-02-after-nord-inbox-mobile-light.png",
+      "sha256": "9033ee425c4e54e5001a68a366692d923f5b4d69fd5eb7b7b0f7868b1113cf18",
+      "surface": "nord-inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": null,
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013918327.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:25:18.327Z"
+    },
+    {
+      "file": "kypost-02-after-ocean-appearance-desktop-light.png",
+      "sha256": "9f1866b9fc3f530293e924d962279afa3398c42370906f26348eedf9eb32488a",
+      "surface": "ocean-appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": null,
+      "checked": "Ocean",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013918327.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:25:18.327Z"
+    },
+    {
+      "file": "kypost-02-after-ocean-appearance-mobile-light.png",
+      "sha256": "7c3da4c7bc83a779f3c69045b6d1ec2c6307e48441df475bd24aadd550648eec",
+      "surface": "ocean-appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": null,
+      "checked": "Ocean",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013918327.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:25:18.327Z"
+    },
+    {
+      "file": "kypost-02-after-sky-inbox-desktop-light.png",
+      "sha256": "06829c1e81a590ec9c6075a6a7e059331218843ed2be3ba501d268a17c69b555",
+      "surface": "sky-inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": null,
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013918327.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:25:18.327Z"
+    },
+    {
+      "file": "kypost-02-after-sky-inbox-mobile-light.png",
+      "sha256": "26997990544298637b84e969c1e2ecd0275f7efc3f9ffe6171e3bbe6abb9f7ae",
+      "surface": "sky-inbox",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Inbox"
+      ],
+      "data_theme": null,
+      "checked": null,
+      "radios": 0,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 0,
+      "stage": "02-after",
+      "run": "captures-02-after-1793013918327.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:25:18.327Z"
+    },
+    {
+      "file": "kypost-03-after-appearance-desktop-dark.png",
+      "sha256": "f28cff9d4f5fed6233b3a1de65338616c5cfa59adad13e40a224ae1943c7bb6c",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "03-after",
+      "run": "captures-03-after-1793013946988.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:25:46.988Z"
+    },
+    {
+      "file": "kypost-03-after-appearance-desktop-light.png",
+      "sha256": "503aaf766f24e6ffbf9586ae0205eddfd403b4b8418c05233be147c6a39c7a38",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "03-after",
+      "run": "captures-03-after-1793013946988.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:25:46.988Z"
+    },
+    {
+      "file": "kypost-03-after-appearance-mobile-dark.png",
+      "sha256": "74b159ca978fb9c76f29d489c9a5b1904d38a460b170a94d9b0c7f0cd1223648",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "03-after",
+      "run": "captures-03-after-1793013946988.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:25:46.988Z"
+    },
+    {
+      "file": "kypost-03-after-appearance-mobile-light.png",
+      "sha256": "01a0cffa3d1047351078f90acbc767f5090f522b4863a4edc8e230ce69a304b6",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "03-after",
+      "run": "captures-03-after-1793013946988.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:25:46.988Z"
+    },
+    {
+      "file": "kypost-04-after-appearance-desktop-dark.png",
+      "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "04-after",
+      "run": "captures-04-after-1793014600955.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:36:40.955Z"
+    },
+    {
+      "file": "kypost-04-after-appearance-desktop-light.png",
+      "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "04-after",
+      "run": "captures-04-after-1793014600955.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:36:40.955Z"
+    },
+    {
+      "file": "kypost-04-after-appearance-mobile-dark.png",
+      "sha256": "0dd7b3cf5f4e474ed4bfe753dc24facda13ade7d6b13c271c66e02673ef80739",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "04-after",
+      "run": "captures-04-after-1793014600955.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:36:40.955Z"
+    },
+    {
+      "file": "kypost-04-after-appearance-mobile-light.png",
+      "sha256": "7e8cda92dc9ada1066ed8cc35232bc5d63a11ca446941fc0ce956a2db16eb5f6",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "04-after",
+      "run": "captures-04-after-1793014600955.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:36:40.955Z"
+    },
+    {
+      "file": "kypost-04-after-ocean-appearance-desktop-light.png",
+      "sha256": "4a39671f46e15c8f84c82b39b8e7577f033d66376d11e86ee03e126c02d84962",
+      "surface": "ocean-appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": null,
+      "checked": "Ocean",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "04-after",
+      "run": "captures-04-after-1793014605188.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:36:45.188Z"
+    },
+    {
+      "file": "kypost-04-after-ocean-appearance-mobile-light.png",
+      "sha256": "565759e5e6e30b81a77a7f804e7f07d70a527fa63cb2eacff403f187ff737e38",
+      "surface": "ocean-appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": null,
+      "checked": "Ocean",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "04-after",
+      "run": "captures-04-after-1793014605188.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:36:45.188Z"
+    },
+    {
+      "file": "kypost-05-after-appearance-desktop-dark.png",
+      "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "05-after",
+      "run": "captures-05-after-1793014703654.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:38:23.654Z"
+    },
+    {
+      "file": "kypost-05-after-appearance-desktop-light.png",
+      "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "05-after",
+      "run": "captures-05-after-1793014703654.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:38:23.654Z"
+    },
+    {
+      "file": "kypost-05-after-appearance-mobile-dark.png",
+      "sha256": "0dd7b3cf5f4e474ed4bfe753dc24facda13ade7d6b13c271c66e02673ef80739",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "05-after",
+      "run": "captures-05-after-1793014703654.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:38:23.654Z"
+    },
+    {
+      "file": "kypost-05-after-appearance-mobile-light.png",
+      "sha256": "7e8cda92dc9ada1066ed8cc35232bc5d63a11ca446941fc0ce956a2db16eb5f6",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "05-after",
+      "run": "captures-05-after-1793014703654.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:38:23.654Z"
+    },
+    {
+      "file": "kypost-06-after-appearance-desktop-dark.png",
+      "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015111561.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:11.561Z"
+    },
+    {
+      "file": "kypost-06-after-appearance-desktop-light.png",
+      "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015111561.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:11.561Z"
+    },
+    {
+      "file": "kypost-06-after-appearance-mobile-dark.png",
+      "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015111561.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:11.561Z"
+    },
+    {
+      "file": "kypost-06-after-appearance-mobile-light.png",
+      "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015111561.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:11.561Z"
+    },
+    {
+      "file": "kypost-06-after-ocean-appearance-desktop-light.png",
+      "sha256": "4a39671f46e15c8f84c82b39b8e7577f033d66376d11e86ee03e126c02d84962",
+      "surface": "ocean-appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": null,
+      "checked": "Ocean",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015115629.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:15.629Z"
+    },
+    {
+      "file": "kypost-06-after-ocean-appearance-mobile-light.png",
+      "sha256": "37b254c18547a0c90e8f3b3dd4e0396e65da620a9a9614d33615667ff455b506",
+      "surface": "ocean-appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": null,
+      "checked": "Ocean",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015115629.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:15.629Z"
+    }
+  ]
+}

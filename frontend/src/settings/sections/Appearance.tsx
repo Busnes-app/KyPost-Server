@@ -1,41 +1,43 @@
-import { useState } from "react";
-import { applyTheme, getStoredTheme, THEME_OPTIONS, themes, type ThemeName } from "../../theme";
+import { useEffect, useState } from "react";
+import { SYSTEM_THEME, THEME_CATALOG } from "../../ky-ui/themes";
+import { applyTheme, getStoredChoice, type ThemeName } from "../../theme";
+
+const MODE = { system: "Follows device", light: "Light", dark: "Dark" };
 
 /**
- * One swatch per theme, painted in that theme's own colours, applied on
- * click. A dropdown named fifteen themes and showed none of them.
+ * One native radio card per theme, previewed in that theme's own colours by
+ * ky-ui (no inline styles), applied as soon as it is chosen.
  */
 export function Appearance() {
-  const [selectedTheme, setSelectedTheme] = useState<ThemeName>(getStoredTheme());
+  const [choice, setChoice] = useState<ThemeName>(getStoredChoice);
+  useEffect(() => {
+    const sync = () => setChoice(getStoredChoice());
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, []);
 
-  function choose(theme: ThemeName) {
-    setSelectedTheme(theme);
-    applyTheme(theme);
+  function choose(value: ThemeName) {
+    setChoice(value);
+    applyTheme(value);
   }
 
   return (
-    <div className="theme-grid">
-      {THEME_OPTIONS.map((theme) => {
-        const c = themes[theme];
-        return (
-          <button
-            key={theme}
-            type="button"
-            aria-pressed={theme === selectedTheme}
-            className="theme-swatch"
-            onClick={() => choose(theme)}
-          >
-            <span
-              className="theme-swatch-preview"
-              style={{ background: `linear-gradient(90deg, ${c.sidebarStart} 30%, ${c.bg} 30%)` }}
-            >
-              <i style={{ background: c.accent }} />
-              <i style={{ background: c.inkStrong, opacity: 0.55 }} />
-            </span>
-            <span className="theme-swatch-name">{theme}</span>
-          </button>
-        );
-      })}
-    </div>
+    <fieldset className="ky-appearance">
+      <legend className="ky-appearance-legend">Theme</legend>
+      <div className="ky-appearance-grid">
+        {[SYSTEM_THEME, ...THEME_CATALOG].map((theme) => {
+          const value = theme === SYSTEM_THEME ? theme.id : theme.name;
+          return (
+            <label key={theme.id} className="ky-appearance-option">
+              <input className="ky-appearance-radio" type="radio" name="kypost-theme" value={value}
+                checked={choice === value} onChange={() => choose(value)} />
+              <span className="ky-appearance-preview" data-ky-preview={theme.id} aria-hidden="true" />
+              <span className="ky-appearance-name">{theme.name}</span>
+              <small className="ky-appearance-mode">{MODE[theme.scheme]}</small>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }
