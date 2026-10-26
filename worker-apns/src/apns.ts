@@ -5,6 +5,7 @@
  */
 
 import { base64UrlEncode, base64UrlEncodeString, pemToDer } from "../../push-relay-shared/base64url";
+import { cachedToken, dropToken } from "../../push-relay-shared/token-cache";
 import { errorMessage } from "../../push-relay-shared/push-relay-common";
 
 const APNS_PRODUCTION_HOST = "api.push.apple.com";
@@ -92,19 +93,11 @@ async function generateProviderToken(config: ApnsConfig, nowSeconds: number): Pr
  * Retrieve a cached APNs provider token, or generate a new one.
  * Token is cached for ~29 minutes (refresh before 30-min expiry).
  */
-async function getProviderToken(config: ApnsConfig, cache: KVNamespace): Promise<string> {
-  const cacheKey = "apns_provider_token";
-  const cached = await cache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const token = await generateProviderToken(config, nowSeconds);
-
-  // Cache for 29 minutes (refresh before 30-min expiry)
-  await cache.put(cacheKey, token, { expirationTtl: 29 * 60 });
-  return token;
+function getProviderToken(config: ApnsConfig, cache: KVNamespace): Promise<string> {
+  return cachedToken(cache, "apns_provider_token", false, async () => ({
+    token: await generateProviderToken(config, Math.floor(Date.now() / 1000)),
+    ttlSeconds: 29 * 60,
+  }));
 }
 
 /**
@@ -252,7 +245,7 @@ export async function sendApnsMessage(
       resp.status === 403 &&
       (reason === "expiredprovidertoken" || reason === "invalidprovidertoken")
     ) {
-      await cache.delete("apns_provider_token");
+      await dropToken(cache, "apns_provider_token");
       return {
         ok: false,
         stale: false,

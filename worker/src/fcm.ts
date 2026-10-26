@@ -7,6 +7,7 @@
  */
 
 import { base64UrlEncode, base64UrlEncodeString, pemToDer } from "../../push-relay-shared/base64url";
+import { cachedToken } from "../../push-relay-shared/token-cache";
 import { errorMessage } from "../../push-relay-shared/push-relay-common";
 
 const FCM_OAUTH_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
@@ -122,14 +123,13 @@ export function oauthErrorCode(body: string): string {
 }
 
 /**
- * Return a valid Google OAuth access token, using the KV cache when possible.
+ * Return a valid Google OAuth access token, cached when possible.
  */
-async function getAccessToken(config: FcmConfig, cache: KVNamespace): Promise<string> {
-  const cached = await cache.get(OAUTH_CACHE_KEY);
-  if (cached) {
-    return cached;
-  }
+function getAccessToken(config: FcmConfig, cache: KVNamespace): Promise<string> {
+  return cachedToken(cache, OAUTH_CACHE_KEY, false, () => mintAccessToken(config));
+}
 
+async function mintAccessToken(config: FcmConfig): Promise<{ token: string; ttlSeconds: number }> {
   const nowSeconds = Math.floor(Date.now() / 1000);
   const assertion = await signServiceAccountAssertion(config, nowSeconds);
 
@@ -175,9 +175,7 @@ async function getAccessToken(config: FcmConfig, cache: KVNamespace): Promise<st
   }
   const expiresIn = parsed.expires_in && parsed.expires_in > 0 ? parsed.expires_in : 3600;
   // Refresh a minute early, and respect KV's 60s minimum TTL.
-  const ttl = Math.max(60, expiresIn - 60);
-  await cache.put(OAUTH_CACHE_KEY, token, { expirationTtl: ttl });
-  return token;
+  return { token, ttlSeconds: Math.max(60, expiresIn - 60) };
 }
 
 /**

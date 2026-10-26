@@ -57,3 +57,4 @@ cd worker && npm ci && npm run typecheck       # and the same in worker-apns/
 pruning `node_modules` (which is why `node --test <dir>` cannot be used directly),
 and fails if it finds none. A new test file therefore runs without anyone editing
 a list. Both run in CI as the `ci-relay` job. The portable tests use node's own runner and type stripping (Node >= 22.18), with `cloudflare:workers` stubbed through a module hook so the Durable Object runs outside workerd. The FCM key-floor test is the native-runtime exception described above. The `.mts` extension is load-bearing: there is no `package.json` above this directory, so a `.ts` file would be ESM only by Node's syntax detection, and adding one later would silently turn the test into a parse error.
+- Provider credentials (Google access tokens, APNs provider JWTs) are cached only through `token-cache.ts`: KV writes have a daily account quota, and a refused write must not fail a send or force a new token per send.
