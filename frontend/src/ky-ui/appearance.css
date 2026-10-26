@@ -1,0 +1,135 @@
+/* Native radio cards: products retain their saved keys and adapters. */
+.ky-appearance {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--ink-strong, var(--ky-ink-strong));
+  font: inherit;
+}
+
+.ky-appearance .ky-appearance-legend {
+  margin-block-end: 16px;
+  padding: 0;
+  font-size: var(--ky-text-label, 13px);
+  font-weight: 600;
+}
+
+.ky-appearance-description {
+  max-inline-size: 72ch;
+  margin: 0 0 24px;
+  color: var(--ink, var(--ky-ink));
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ky-appearance .ky-appearance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 172px), 1fr));
+  gap: 12px;
+  max-inline-size: 1000px;
+}
+
+.ky-appearance .ky-appearance-option {
+  position: relative;
+  display: block;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line-strong, var(--ky-line-strong));
+  border-radius: var(--ky-control-radius, 8px);
+  background: var(--panel, var(--ky-panel));
+  color: var(--ink-strong, var(--ky-ink-strong));
+  text-align: start;
+  cursor: pointer;
+}
+
+.ky-appearance .ky-appearance-option:hover {
+  border-color: var(--ink-strong, var(--ky-ink-strong));
+}
+
+.ky-appearance .ky-appearance-option:has(.ky-appearance-radio:checked) {
+  border-color: var(--accent, var(--ky-accent));
+  outline: 1px solid var(--accent, var(--ky-accent));
+}
+
+.ky-appearance .ky-appearance-option:has(.ky-appearance-radio:focus-visible) {
+  outline: 2px solid var(--accent, var(--ky-accent));
+  outline-offset: 3px;
+}
+
+.ky-appearance .ky-appearance-radio {
+  position: absolute;
+  inset-inline-end: 12px;
+  inset-block-end: 12px;
+  inline-size: 16px;
+  block-size: 16px;
+  min-block-size: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent, var(--ky-accent));
+  cursor: pointer;
+}
+
+.ky-appearance .ky-appearance-preview {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  block-size: 48px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong, var(--ky-line-strong));
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--ky-preview-sidebar) 30%, var(--ky-preview-bg) 30%);
+}
+
+.ky-appearance .ky-appearance-preview::before,
+.ky-appearance .ky-appearance-preview::after {
+  position: absolute;
+  inset-inline-start: 38%;
+  display: block;
+  block-size: 5px;
+  border-radius: 1px;
+  content: "";
+}
+
+.ky-appearance .ky-appearance-preview::before {
+  inset-block-start: 10px;
+  inline-size: 34%;
+  background: var(--ky-preview-accent);
+}
+
+.ky-appearance .ky-appearance-preview::after {
+  inset-block-start: 21px;
+  inline-size: 48%;
+  background: var(--ky-preview-ink);
+  opacity: .65;
+}
+
+.ky-appearance .ky-appearance-name {
+  display: block;
+  margin-block: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ky-appearance .ky-appearance-mode {
+  display: block;
+  padding-inline-end: 28px;
+  color: var(--ink, var(--ky-ink-muted));
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (forced-colors: active) {
+  .ky-appearance .ky-appearance-option:has(.ky-appearance-radio:checked) {
+    border-color: Highlight;
+    outline-color: Highlight;
+  }
+}
