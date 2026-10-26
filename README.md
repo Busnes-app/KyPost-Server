@@ -1,5 +1,8 @@
 # KyPost
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15927/badge)](https://www.bestpractices.dev/projects/15927)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Busnes-app/KyPost-Server/badge)](https://scorecard.dev/viewer/?uri=github.com/Busnes-app/KyPost-Server)
+
 **Start here:** [Standalone installation](INSTALL.md) → [existing IMAP/SMTP account](docs/guides/IMAP.md).
 KyIdentity, KyRecovery and the native clients are optional. Real mail access needs a working mailbox and sending service; a healthy web UI alone does not verify delivery.
 
