@@ -195,7 +195,7 @@ export function ApplicationRuntime() {
       </div>
       <div className="config-actions">
         <button type="button" onClick={saveTheme}>Apply Theme</button>
-        <button type="button" onClick={saveConfig}>Save Configuration</button>
+        <button type="button" className="btn-primary" onClick={saveConfig}>Save Configuration</button>
       </div>
       <div className="config-card" style={{ marginTop: 16 }}>
         <h3>KyPost Updates</h3>

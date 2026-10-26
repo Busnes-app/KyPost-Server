@@ -67,6 +67,8 @@ function QuarantineForm() {
     void read().catch((e: unknown) => {
       if (live.current && generation === readGeneration.current) setError(toErrorMessage(e, "Unable to load quarantine. Reload before changing it."));
     });
+    // A generation counter, not a DOM node: cleanup bumps the live value so reads still in flight are dropped.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { live.current = false; readGeneration.current++; };
   }, []);
   async function loadMore() {

@@ -136,7 +136,7 @@ export function Logs() {
         );
         setFiles(list);
         setListError("");
-        if (list.length > 0 && !list.includes(active)) setActive(list[0]);
+        if (list.length > 0) setActive((current) => list.includes(current) ? current : list[0]);
       })
       .catch((error: unknown) => setListError(toErrorMessage(error, "unknown error")));
   }, []);

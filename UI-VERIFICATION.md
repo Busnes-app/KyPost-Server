@@ -70,3 +70,23 @@ Screenshots remain local artifacts:
 ## Approved interface polish — 2026-10-19
 
 See [UI-POLISH.md](UI-POLISH.md) for the implemented changes, preservation scope, checks, actual before/after screenshots and disposable capture conditions. Earlier captures above remain historical evidence.
+
+## Suite cohesion pass — 2026-10-26
+
+Shell, task views, and forms and dialogs were refined toward the ky-ui 0.3.0 tokens in three staged batches. For each stage, before and after captures were taken from a real scratch server. The fixture was a loopback IMAP mail account with synthetic messages, plus synthetic contacts added through the normal form. Each stage covered Busnes Light/Dark at 1280×900 and 390×844, and every capture had 0 horizontal overflow. Stage notes, source patch hashes and screenshots are kept with the suite council evidence in ky-ui `reviews/2026-10-26-council/kypost-implementation.md`, not in this repository.
+
+Browser checks on the final build:
+- Keyboard order and 2px focus rings: sidebar, contextual bulk toolbar and Logout.
+- Compose opens with focus inside the dialog, and Escape returns focus to New Email.
+- Measured contrast: field and secondary borders ≥3.6:1, and danger text ≥5:1 on Busnes and on the Dark Matter, Cyber Punk and Polished Ky presets.
+- No overflow at 1024, 1440 and 768 px.
+
+A fourth, usability batch (stage 05) followed the acceptance review:
+- Phone header: brand, New Email and account on one row, then one sideways-scrolling strip with every destination. The current page and any focused item scroll into view.
+- Reader: the subject is the dialog's heading. Reply, Reply All and Forward come first; the other actions are quiet icon-and-label tools.
+- Contact editor: fixed header with Close and fixed Cancel / Add Contact footer. Optional fields sit in collapsible groups that open when the saved contact has data there, or when a hidden field blocks submit.
+- Contacts list stacks on phones, and compose's Quill toolbar follows the theme.
+
+Browser checks on the stage-05 build: single-row strip with a constant 105px header on every page, every Tab stop fully on screen with a 2px ring, reader and contact-editor focus return on Escape, Quill icons 16.1:1 (light) and 12.7:1 (dark), and no overflow at 1024, 768 and 360 px.
+
+Frontend checks passed: 1189 tests, typecheck, lint with 0 errors and 0 warnings, production build and npm audit. This is not a full accessibility audit, and not every named palette and page combination was captured.

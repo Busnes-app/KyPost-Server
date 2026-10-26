@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ChangeEvent } from "react";
 // Quill (and its theme CSS) is the editor for one dialog, but a static import
 // puts it in the entry chunk, so the login page pays for it too. loadQuill
 // below fetches it when compose first opens.
@@ -263,9 +263,12 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     setComposeFrom(mailboxOf(id)?.addresses[0] ?? "");
   }
 
-  // Compose opened before the list arrived has no From yet.
-  useEffect(() => {
+  // Compose opened before the list arrived has no From yet. Only the list's arrival fills it.
+  const fillMissingFrom = useEffectEvent(() => {
     if (composeOpen && !composeFrom) setComposeFrom(mailboxOf(composeMailbox)?.addresses[0] ?? "");
+  });
+  useEffect(() => {
+    fillMissingFrom();
   }, [mailboxes]);
 
   function openComposeWindow() {

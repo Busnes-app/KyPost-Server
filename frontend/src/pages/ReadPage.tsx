@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type TouchEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { escapeHtmlText, processEmailHtml, resolveBodyMode } from "../lib/emailHtml";
 import { EmailBodyFrame, FRAME_SANDBOX } from "./read/EmailBodyFrame";
@@ -19,7 +19,7 @@ import { mailboxName, useMailboxes } from "../app/mailboxes";
 import type { DraftComposePayload } from "../app/types";
 import { useDialogOpen } from "../hooks/useDialogOpen";
 import { PageTabs } from "../components/PageTabs";
-import { ArchiveIcon, CheckIcon, ClockIcon, PrintIcon, TrashIcon, WarningIcon } from "./read/icons";
+import { ArchiveIcon, CheckIcon, ClockIcon, CloseIcon, ImageIcon, PrintIcon, TrashIcon, WarningIcon } from "./read/icons";
 import { SnoozeDialog } from "./read/SnoozeDialog";
 import { sortTime } from "../lib/snooze";
 
@@ -148,7 +148,8 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   const [sortKey, setSortKey] = useState<SortKey>("time");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
-  const [clockTick, setClockTick] = useState(0);
+  // Re-renders every 30s so relative times such as "Updated Just Now" stay current.
+  const [, setClockTick] = useState(0);
   const [swipeRows, setSwipeRows] = useState<Record<string, SwipeRowState>>({});
   const [searchMode, setSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -504,6 +505,8 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       if (loadId === loadIdRef.current) setLoading(false);
     }
   }
+  // Timers and listeners load with the current render's state, not the one they were set up in.
+  const reloadInbox = useEffectEvent(loadInbox);
 
   useEffect(() => {
     // ponytail: clear stale mailbox data synchronously so switching between
@@ -533,12 +536,14 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     // we are leaving can describe a message in the one we are entering.
     setDecrypted({});
     bodyCacheRef.current.clear();
-    void loadInbox();
-    const timer = setInterval(() => void loadInbox(), 15_000);
+    void reloadInbox();
+    const timer = setInterval(() => void reloadInbox(), 15_000);
     return () => clearInterval(timer);
   }, [mailbox]);
 
   useDialogOpen(emailReaderDialogRef, selected);
+
+  const openLinkedEmail = useEffectEvent(openEmailDetails);
 
   // Deep-link support: a push notification click lands here with
   // ?message=<id>&tab=<label> (see maybeSendPushNotification on the
@@ -564,7 +569,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       if (isInboxMailbox && matchTab) {
         setActiveTab(matchTab);
       }
-      void openEmailDetails(match);
+      void openLinkedEmail(match);
     }
 
     setSearchParams(
@@ -587,7 +592,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
 
   useEffect(() => {
     const handleMailboxMove = () => {
-      void loadInbox();
+      void reloadInbox();
     };
     window.addEventListener("mailbox-move-complete", handleMailboxMove as EventListener);
     return () => {
@@ -595,8 +600,9 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     };
   }, [mailbox]);
 
+  // Re-read per opened message, not on every update to its record.
   useEffect(() => {
-    if (!selected) return;
+    if (selected?.messageId === undefined) return;
     let cancelled = false;
     getJSON<{ configured: string[]; imap: string[] }>("/api/labels")
       .then((data) => {
@@ -664,10 +670,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   );
 
   const allRowsSelected = pageRows.length > 0 && pageRows.every((row) => selectedMessageIds.includes(row.messageId));
-  const updatedLabel = useMemo(
-    () => formatUpdatedLabel(lastLoadedAt, Date.now()),
-    [clockTick, lastLoadedAt]
-  );
+  const updatedLabel = formatUpdatedLabel(lastLoadedAt, Date.now());
 
   const batchActions = [
     {
@@ -716,7 +719,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [mailbox, activeTab, sortKey, sortDirection]);
+  }, [mailbox, activeTab, sortKey, sortDirection, setCurrentPage]);
 
   // Woken mail is marked; the Snoozed folder shows when each row wakes.
   function snoozeBadge(item: InboxEmail) {
@@ -1390,9 +1393,9 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
 
   return (
     <section className="panel read-page-panel">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      <div className="inbox-header">
         <div>
-          <h2 style={{ marginTop: 0, marginBottom: 6 }}>{mailbox ? mailbox : "Inbox"}</h2>
+          <h1>{mailbox ? mailbox : "Inbox"}</h1>
           {boxName ? <p className="read-mailbox-name">{mailboxName(boxName)}</p> : null}
         </div>
         <div className="inbox-action-bar">
@@ -1407,28 +1410,28 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               <span>Haptics</span>
             </label>
           ) : null}
-          {batchActions.map((action) => (
+          {/* Contextual: every action needs a selection, so the bar shows only with one. */}
+          {selectedMessageIds.length > 0 ? batchActions.map((action) => (
             <button
               key={action.key}
               type="button"
               onClick={action.onClick}
               disabled={action.disabled}
-              className="inbox-action-button"
+              className={action.key === "delete" ? "inbox-action-button btn-ghost btn-danger" : "inbox-action-button btn-ghost"}
               aria-label={action.label}
               title={action.label}
             >
               <span className="inbox-action-icon" aria-hidden="true">{action.icon}</span>
               <span className="inbox-action-text">{action.label}</span>
             </button>
-          ))}
+          )) : null}
         </div>
       </div>
 
       {error ? <p className="notice notice-error">Failed to load inbox: {error}</p> : null}
       {actionError ? <p className="notice notice-error">Inbox action failed: {actionError}</p> : null}
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 14, marginBottom: 14 }}>
-        <div style={{ flex: 1, minWidth: 200, display: "flex", gap: 4, alignItems: "center" }}>
+      <div className="inbox-search">
           <input
             type="text"
             placeholder="Search..."
@@ -1440,28 +1443,11 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                 void performSearch();
               }
             }}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              padding: "6px 8px",
-              borderRadius: "4px",
-              border: "1px solid var(--line)",
-              backgroundColor: "var(--panel)",
-              color: "var(--ink-strong)",
-              fontSize: "0.9rem"
-            }}
           />
           <select
             value={searchField}
+            aria-label="Search in"
             onChange={(e) => setSearchField(e.target.value as any)}
-            style={{
-              padding: "6px 8px",
-              borderRadius: "4px",
-              border: "1px solid var(--line)",
-              backgroundColor: "var(--panel)",
-              color: "var(--ink-strong)",
-              fontSize: "0.9rem"
-            }}
           >
             <option value="all">All</option>
             <option value="sender">Sender</option>
@@ -1472,16 +1458,14 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             type="button"
             onClick={() => void performSearch()}
             disabled={searching}
-            style={{ padding: "6px 12px" }}
           >
             {searching ? "Searching..." : "Search"}
           </button>
           {searchMode ? (
-            <button type="button" onClick={clearSearch} style={{ padding: "6px 12px" }}>
+            <button type="button" className="btn-ghost" onClick={clearSearch}>
               Clear
             </button>
           ) : null}
-        </div>
       </div>
 
       {searchMode ? (
@@ -1560,7 +1544,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
           )}
         </div>
       ) : isInboxMailbox ? (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14, marginBottom: 14 }}>
+        <div className="inbox-tabs">
           {tabs.map((tab) => {
             const unreadCount = (byTab[tab] ?? []).filter((item) => item.status !== "read").length;
             const isActive = activeTab === tab;
@@ -1568,39 +1552,12 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               <button
                 key={tab}
                 type="button"
+                className="inbox-tab"
+                aria-pressed={isActive}
                 onClick={() => setActiveTab(tab)}
-                style={{
-                  background: isActive ? "var(--accent)" : "transparent",
-                  color: isActive ? "var(--accent-contrast)" : "var(--ink-strong)",
-                  border: "1px solid var(--line)",
-                  borderRadius: 999,
-                  padding: "0.38rem 0.78rem",
-                  fontSize: "0.82rem",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8
-                }}
               >
                 <span>{tab}</span>
-                <span
-                  style={{
-                    minWidth: 18,
-                    height: 18,
-                    borderRadius: 999,
-                    border: "1px solid var(--line)",
-                    background: isActive ? "var(--chip-active-bg)" : "var(--accent-soft)",
-                    color: isActive ? "var(--accent-contrast)" : "var(--ink-strong)",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: "0 6px",
-                    fontSize: "0.72rem",
-                    fontWeight: 700,
-                    lineHeight: 1
-                  }}
-                >
-                  {unreadCount}
-                </span>
+                <span className="inbox-tab-count">{unreadCount}</span>
               </button>
             );
           })}
@@ -1783,6 +1740,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       <dialog
         ref={emailReaderDialogRef}
         className="email-reader-backdrop"
+        aria-labelledby="email-reader-title"
         onCancel={(event) => {
           event.preventDefault();
           setSelected(null);
@@ -1799,58 +1757,47 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="email-reader-head">
-              <h3 style={{ margin: 0 }}>Email Details</h3>
-              <div className="email-reader-actions">
-                <div className="email-reader-actions-row">
+              <h2 id="email-reader-title" className="email-reader-title">
+                {decrypted[decryptedKey(selected.messageId)]?.subject ?? selected.subject ?? "(no subject)"}
+              </h2>
+              <button type="button" className="btn-ghost icon-button" aria-label="Close" title="Close" onClick={() => setSelected(null)}>
+                <CloseIcon />
+              </button>
+            </div>
+            <div className="email-reader-actions">
+              <div className="email-reader-reply">
+                <button type="button" className="btn-primary" onClick={replyToSelectedEmail} disabled={actionLoading}>Reply</button>
+                <button type="button" onClick={replyAllToSelectedEmail} disabled={actionLoading}>Reply All</button>
+                <button type="button" onClick={forwardSelectedEmail} disabled={actionLoading}>Forward</button>
+              </div>
+              <div className="email-reader-tools">
+                {[
+                  { label: "Archive", icon: <ArchiveIcon />, onClick: () => applyInboxAction("archive", [selected.messageId], { closeModal: true }) },
+                  { label: "Snooze", icon: <ClockIcon />, onClick: () => setSnoozeTarget({ ids: [selected.messageId], fromReader: true }) },
+                  { label: "Mark as Read", icon: <CheckIcon />, onClick: () => applyInboxAction("read", [selected.messageId]) },
+                  { label: "Mark as Spam", icon: <WarningIcon />, onClick: () => applyInboxAction("spam", [selected.messageId], { closeModal: true }) },
+                  { label: "Print", icon: <PrintIcon />, onClick: () => printEmails([selected]) },
+                  {
+                    label: showImages ? "Hide Remote Content" : "Show Remote Content",
+                    icon: <ImageIcon />,
+                    onClick: () => setShowImagesFor((current) => (current === selected.messageId ? null : selected.messageId)),
+                    always: true
+                  },
+                  { label: "Delete", icon: <TrashIcon />, onClick: () => applyInboxAction("delete", [selected.messageId], { closeModal: true }), danger: true }
+                ].map(({ label, icon, onClick, always, danger }) => (
                   <button
+                    key={label}
                     type="button"
-                    onClick={() => applyInboxAction("archive", [selected.messageId], { closeModal: true })}
-                    disabled={actionLoading}
+                    className={danger ? "inbox-action-button btn-ghost btn-danger" : "inbox-action-button btn-ghost"}
+                    aria-label={label}
+                    title={label}
+                    onClick={onClick}
+                    disabled={!always && actionLoading}
                   >
-                    Archive
+                    <span className="inbox-action-icon" aria-hidden="true">{icon}</span>
+                    <span className="inbox-action-text">{label}</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setSnoozeTarget({ ids: [selected.messageId], fromReader: true })}
-                    disabled={actionLoading}
-                  >
-                    Snooze
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyInboxAction("read", [selected.messageId])}
-                    disabled={actionLoading}
-                  >
-                    Mark as Read
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyInboxAction("spam", [selected.messageId], { closeModal: true })}
-                    disabled={actionLoading}
-                  >
-                    Mark as Spam
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyInboxAction("delete", [selected.messageId], { closeModal: true })}
-                    disabled={actionLoading}
-                  >
-                    Delete
-                  </button>
-                  <button type="button" onClick={() => printEmails([selected])} disabled={actionLoading}>Print</button>
-                </div>
-                <div className="email-reader-actions-row">
-                  <button type="button" onClick={replyToSelectedEmail} disabled={actionLoading}>Reply</button>
-                  <button type="button" onClick={replyAllToSelectedEmail} disabled={actionLoading}>Reply All</button>
-                  <button type="button" onClick={forwardSelectedEmail} disabled={actionLoading}>Forward</button>
-                      <button
-                        type="button"
-                        onClick={() => setShowImagesFor((current) => (current === selected.messageId ? null : selected.messageId))}
-                      >
-                        {showImages ? "Hide Remote Content" : "Show Remote Content"}
-                      </button>
-                  <button type="button" onClick={() => setSelected(null)}>Close</button>
-                </div>
+                ))}
               </div>
             </div>
 
@@ -1954,9 +1901,13 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                   </p>
                 );
               })()}
-              <p style={{ margin: 0 }}><strong>Subject:</strong> {decrypted[decryptedKey(selected.messageId)]?.subject ?? selected.subject ?? "(no subject)"}</p>
-              <p style={{ margin: 0 }}><strong>Sender:</strong> {selected.sender || "-"}</p>
-              <p style={{ margin: 0 }}><strong>Sent To:</strong> {selected.sentTo || "-"}</p>
+              <div className="email-reader-facts">
+                <p><strong>Sender:</strong> {selected.sender || "-"}</p>
+                <p><strong>Sent To:</strong> {selected.sentTo || "-"}</p>
+                <p><strong>Time:</strong> {formatTimestamp(selected.atUtc)}</p>
+                <p><strong>Status:</strong> {selected.status || "-"}</p>
+                {selected.detail ? <p><strong>Detail:</strong> {selected.detail}</p> : null}
+              </div>
               <div className="email-keyword-editor">
                 <strong>Keywords:</strong>
                 <div className="compose-token-field-wrap">
@@ -1999,9 +1950,6 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                   ))}
                 </datalist>
               </div>
-              <p style={{ margin: 0 }}><strong>Status:</strong> {selected.status || "-"}</p>
-              <p style={{ margin: 0 }}><strong>Time:</strong> {formatTimestamp(selected.atUtc)}</p>
-              {selected.detail ? <p style={{ margin: 0 }}><strong>Detail:</strong> {selected.detail}</p> : null}
               {(() => {
                 // Once a verified view exists, its attachment list replaces
                 // the server's: it covers only the parts inside the signature
@@ -2104,23 +2052,11 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                     );
                   }
                 })() : null}
-                <div style={{ marginTop: 8, display: "flex", gap: 12, fontSize: "0.75rem", opacity: 0.7 }}>
+                <div className="email-reader-foot">
                   {!showRawEmail && (
-                    <p style={{ margin: 0 }}>Remote images are not loaded by default.</p>
+                    <p>Remote images are not loaded by default.</p>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setShowRawEmail(!showRawEmail)}
-                    style={{
-                      padding: 0,
-                      border: 0,
-                      background: "transparent",
-                      color: "var(--accent)",
-                      cursor: "pointer",
-                      textDecoration: "underline",
-                      font: "inherit"
-                    }}
-                  >
+                  <button type="button" className="link-button" onClick={() => setShowRawEmail(!showRawEmail)}>
                     {showRawEmail ? "Hide raw email" : "View raw email"}
                   </button>
                 </div>

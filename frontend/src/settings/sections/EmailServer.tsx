@@ -183,7 +183,7 @@ export function EmailServer() {
       </div>
       <div className="config-actions">
         {managed ? null : (
-          <button type="button" onClick={saveIMAPConfig} disabled={imapBusy}>
+          <button type="button" className="btn-primary" onClick={saveIMAPConfig} disabled={imapBusy}>
             {imapBusy ? "Saving..." : "Save Email Settings"}
           </button>
         )}

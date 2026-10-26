@@ -1,4 +1,4 @@
-import { type DragEvent, type MouseEvent as ReactMouseEvent, type ReactElement, lazy, Suspense, useEffect, useRef, useState } from "react";
+import { type DragEvent, type MouseEvent as ReactMouseEvent, type ReactElement, lazy, Suspense, useEffect, useEffectEvent, useRef, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import { deleteJSON, getJSON, onMailboxGone, postJSON, putJSON, selectedMailboxId, selectMailbox, toErrorMessage } from "./api/client";
 import { AuthContext, type AuthState } from "./auth";
@@ -25,7 +25,14 @@ import type {
   DragMessagePayload
 } from "./app/types";
 import { clearDraftSnapshot } from "./app/draftAutosave";
-import { mailboxLabel, standardMailboxKind, standardMailboxPath } from "./app/mailboxKind";
+import { mailboxLabel, standardMailboxKind, standardMailboxPath, type StandardMailboxKind } from "./app/mailboxKind";
+import {
+  ArchiveIcon, ChevronIcon, ClockIcon, ContactsIcon, DraftIcon, FolderIcon, InboxIcon, LogoutIcon, PlusIcon, SendIcon, SettingsIcon, TrashIcon, WarningIcon
+} from "./pages/read/icons";
+
+const FOLDER_ICONS: Record<StandardMailboxKind | "custom", () => ReactElement> = {
+  inbox: InboxIcon, drafts: DraftIcon, junk: WarningIcon, sent: SendIcon, trash: TrashIcon, custom: FolderIcon
+};
 
 // Every page below is a separate chunk. Only LoginPage is eager: it is what an
 // unauthenticated visitor lands on, so putting it behind a second round trip
@@ -80,6 +87,13 @@ export function App() {
   // Scroll the group into view whenever it opens; block "nearest" is a no-op on
   // desktop, where it is already in view.
   const settingsNavRef = useRef<HTMLDivElement | null>(null);
+  // On a phone the nav is one sideways-scrolling strip; keep the current page's link in view.
+  const navRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    navRef.current
+      ?.querySelectorAll(".sidebar-link-active")
+      .forEach((link) => link.scrollIntoView({ block: "nearest", inline: "nearest" }));
+  }, [location.pathname, location.search, auth?.authenticated, mailboxFolders]);
   useEffect(() => {
     if (settingsOpen) {
       settingsNavRef.current?.scrollIntoView({ block: "nearest" });
@@ -92,6 +106,7 @@ export function App() {
   const [appVersion, setAppVersion] = useState("");
   const currentMailbox = new URLSearchParams(location.search).get("mailbox")?.trim() ?? "";
   const onReadPage = location.pathname === "/read";
+  const onMailView = onReadPage || location.pathname === "/scheduled";
 
   // Navigation hold. A section showing a value the server issues once and
   // cannot reissue (a generated CardDAV app password) registers a hold; any
@@ -148,6 +163,12 @@ export function App() {
     archiveFolderList.reset();
   }
 
+  // Called from async answers, so it must see the current sign-in and folder lists.
+  const fallBackToPrimary = useEffectEvent((notice: string) => {
+    chooseMailbox("");
+    setMailboxNotice(notice);
+  });
+
   // A non-native account gets an empty list, and no header is ever sent for it.
   useEffect(() => {
     const userId = auth?.authenticated ? auth.userId : undefined;
@@ -163,16 +184,14 @@ export function App() {
           if (!live) return;
           setMailboxes(list);
           if (selectedMailboxId() && !list.some((m) => m.id === selectedMailboxId())) {
-            chooseMailbox("");
-            setMailboxNotice("This mailbox is no longer available. Showing your primary mailbox.");
+            fallBackToPrimary("This mailbox is no longer available. Showing your primary mailbox.");
           }
         },
         () => {
           if (!live) return;
           setMailboxes([]);
           if (selectedMailboxId()) {
-            chooseMailbox("");
-            setMailboxNotice("Your mailboxes could not be loaded. Showing your primary mailbox.");
+            fallBackToPrimary("Your mailboxes could not be loaded. Showing your primary mailbox.");
           }
         }
       );
@@ -185,8 +204,7 @@ export function App() {
   useEffect(() => {
     onMailboxGone((id) => {
       if (id !== selectedMailboxId()) return;
-      chooseMailbox("");
-      setMailboxNotice("This mailbox is no longer available. Showing your primary mailbox.");
+      fallBackToPrimary("This mailbox is no longer available. Showing your primary mailbox.");
       setMailboxesVersion((v) => v + 1);
     });
   }, [auth?.userId]);
@@ -446,7 +464,8 @@ export function App() {
     }
   }
 
-  useEffect(() => {
+  // Re-read on sign-in and on every mailbox switch; signing out clears the sidebar.
+  const syncMailboxFolders = useEffectEvent(() => {
     if (!auth?.authenticated) {
       mailboxFolderList.reset();
       setInboxCreateOpen(false);
@@ -458,11 +477,15 @@ export function App() {
       return;
     }
     void loadMailboxFolders();
+  });
+  useEffect(() => {
+    syncMailboxFolders();
   }, [auth?.authenticated, selectedMailbox]);
 
+  const reloadArchiveFolders = useEffectEvent(loadArchiveFolders);
   useEffect(() => {
     if (!archiveOpen) return;
-    void loadArchiveFolders();
+    void reloadArchiveFolders();
   }, [archiveOpen, auth?.authenticated, selectedMailbox]);
 
 
@@ -518,72 +541,79 @@ export function App() {
     <div className="shell">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <img className="sidebar-app-logo" src="/apple-touch-icon.png" alt="" width="48" height="48" />
+          <img className="sidebar-app-logo" src="/apple-touch-icon.png" alt="" width="28" height="28" />
           <span className="sidebar-wordmark">KyPost</span>
         </div>
-        <button type="button" className="new-email-button" onClick={compose.openComposeWindow}>
+        {/* Outside mail views the page's own primary leads, so this steps down to secondary. */}
+        <button
+          type="button"
+          className={onMailView ? "new-email-button" : "new-email-button new-email-button-quiet"}
+          onClick={compose.openComposeWindow}
+        >
           New Email
         </button>
-        <nav onClickCapture={guardNavigation}>
-          {navBlockedNotice ? (
-            <p className="notice notice-error" role="alert">
-              {navBlockedNotice}
-            </p>
-          ) : null}
-          {mailboxes.length > 1 ? (
-            <label className="mailbox-switcher">
-              <span className="sidebar-section-label mailbox-switcher-label">Your mailboxes</span>
-              <select
-                value={selectedMailbox}
-                onChange={(event) => {
-                  // Same hold as the links: switching opens /read and would
-                  // unmount a once-only secret.
-                  if (secretHold) {
-                    setNavBlockedNotice(secretHold);
-                    return;
-                  }
-                  chooseMailbox(event.target.value);
-                  setMailboxNotice("");
-                  navigate("/read");
-                }}
-              >
-                {mailboxes.map((m) => (
-                  <option key={m.id} value={m.kind === "primary" ? "" : m.id}>
-                    {mailboxName(m)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
+        {navBlockedNotice ? (
+          <p className="notice notice-error" role="alert">
+            {navBlockedNotice}
+          </p>
+        ) : null}
+        {mailboxes.length > 1 ? (
+          <label className="mailbox-switcher">
+            <span className="sidebar-section-label mailbox-switcher-label">Your mailboxes</span>
+            <select
+              value={selectedMailbox}
+              onChange={(event) => {
+                // Same hold as the links: switching opens /read and would
+                // unmount a once-only secret.
+                if (secretHold) {
+                  setNavBlockedNotice(secretHold);
+                  return;
+                }
+                chooseMailbox(event.target.value);
+                setMailboxNotice("");
+                navigate("/read");
+              }}
+            >
+              {mailboxes.map((m) => (
+                <option key={m.id} value={m.kind === "primary" ? "" : m.id}>
+                  {mailboxName(m)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {/* Browsers leave a partly visible item clipped when it takes focus, which the phone strip makes common. */}
+        <nav
+          ref={navRef}
+          onClickCapture={guardNavigation}
+          onFocus={(event) => event.target.scrollIntoView({ block: "nearest", inline: "nearest" })}
+        >
           <p className="sidebar-section-label">Mailboxes</p>
           <div className="mobile-quick-nav" aria-label="Mobile mailboxes">
-            <Link className={onReadPage && currentMailbox === "" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read">Inbox</Link>
+            <Link className={onReadPage && currentMailbox === "" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read">
+              <InboxIcon />
+              Inbox
+            </Link>
             {/* Stand-ins for the folder rows the phone CSS hides by data-folder-kind,
                 so each points at the account's real folder ("Sent Items" too). */}
             {([["drafts", "Drafts"], ["junk", "Junk"], ["sent", "Sent"], ["trash", "Trash"]] as const).map(([kind, label]) => {
               const path = standardMailboxPath(mailboxFolders, kind, label);
+              const KindIcon = FOLDER_ICONS[kind];
               return (
                 <Link
                   key={kind}
                   className={onReadPage && currentMailbox.toLowerCase() === path.toLowerCase() ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}
                   to={`/read?mailbox=${encodeURIComponent(path)}${boxQuery}`}
                 >
+                  <KindIcon />
                   {label}
                 </Link>
               );
             })}
-            <Link className={location.pathname === "/scheduled" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/scheduled">Scheduled</Link>
-            <button
-              type="button"
-              className="mobile-settings-toggle"
-              aria-label="Toggle settings"
-              aria-expanded={settingsOpen}
-              aria-controls="settings-nav-group"
-              title="Settings"
-              onClick={() => setSettingsOpen((open) => !open)}
-            >
-              Settings
-            </button>
+            <Link className={location.pathname === "/scheduled" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/scheduled">
+              <ClockIcon />
+              Scheduled
+            </Link>
           </div>
           <div className="inbox-nav-row">
             <Link
@@ -598,18 +628,21 @@ export function App() {
                 void moveDraggedMessages("INBOX", event);
               }}
             >
+              <InboxIcon />
               Inbox
             </Link>
             <button
               type="button"
               className="inbox-expand-button"
               aria-expanded={inboxCreateOpen}
+              aria-label="New folder under Inbox"
+              title="New folder under Inbox"
               onClick={() => {
                 setInboxCreateOpen((open) => !open);
                 setCreateFolderError("");
               }}
             >
-              +
+              <PlusIcon />
             </button>
           </div>
           <div className="nav-group">
@@ -637,8 +670,11 @@ export function App() {
             {deleteFolderError ? <span className="sidebar-folder-error">{deleteFolderError}</span> : null}
             {mailboxFoldersLoading ? <span>Loading folders...</span> : null}
             {!mailboxFoldersLoading
-              ? mailboxFolders.map((folder) => (
-                  <div key={folder.path} className="sidebar-folder-row" data-folder-kind={standardMailboxKind(folder)}>
+              ? mailboxFolders.map((folder) => {
+                  const kind = standardMailboxKind(folder);
+                  const KindIcon = FOLDER_ICONS[kind];
+                  return (
+                  <div key={folder.path} className="sidebar-folder-row" data-folder-kind={kind}>
                     <Link
                       to={`/read?mailbox=${encodeURIComponent(folder.path)}${boxQuery}`}
                       className={[
@@ -654,6 +690,7 @@ export function App() {
                         void moveDraggedMessages(folder.path, event);
                       }}
                     >
+                      <KindIcon />
                       {mailboxLabel(folder.path)}
                     </Link>
                     {folder.deletable ? (
@@ -688,7 +725,8 @@ export function App() {
                       </div>
                     ) : null}
                   </div>
-                ))
+                  );
+                })
               : null}
           </div>
 
@@ -698,7 +736,9 @@ export function App() {
             aria-expanded={archiveOpen}
             onClick={() => setArchiveOpen((open) => !open)}
           >
-            Archive {archiveOpen ? "-" : "+"}
+            <ArchiveIcon />
+            Archive
+            <ChevronIcon />
           </button>
 
           {archiveOpen ? (
@@ -723,6 +763,7 @@ export function App() {
                         void moveDraggedMessages(folder.path, event);
                       }}
                     >
+                      <FolderIcon />
                       {mailboxLabel(folder.path)}
                     </Link>
                   ))
@@ -734,15 +775,30 @@ export function App() {
             to="/scheduled"
             className={["nav-heading scheduled-heading", location.pathname === "/scheduled" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"].join(" ")}
           >
+            <ClockIcon />
             Scheduled
           </Link>
           <Link
             to="/contacts"
             className={["nav-heading", location.pathname === "/contacts" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"].filter(Boolean).join(" ")}
           >
+            <ContactsIcon />
             Contacts
           </Link>
 
+          <button
+            type="button"
+            className="nav-heading mobile-settings-toggle"
+            aria-label="Toggle settings"
+            aria-expanded={settingsOpen}
+            aria-controls="settings-nav-group"
+            title="Settings"
+            onClick={() => setSettingsOpen((open) => !open)}
+          >
+            <SettingsIcon />
+            Settings
+            <ChevronIcon />
+          </button>
           <button
             type="button"
             className="nav-heading settings-heading"
@@ -750,7 +806,9 @@ export function App() {
             aria-controls="settings-nav-group"
             onClick={() => setSettingsOpen((open) => !open)}
           >
-            Settings {settingsOpen ? "-" : "+"}
+            <SettingsIcon />
+            Settings
+            <ChevronIcon />
           </button>
 
           {settingsOpen ? (
@@ -774,12 +832,19 @@ export function App() {
               </div>
             </div>
           ) : null}
-          {auth.authenticated ? (
-            <button type="button" className="nav-link-button nav-heading" onClick={logout}>
-              Logout
-            </button>
-          ) : null}
         </nav>
+        {auth.authenticated ? (
+          <div className="sidebar-account">
+            <div className="sidebar-account-copy">
+              <span className="sidebar-account-name">{auth.username}</span>
+              {isAdmin ? <span className="sidebar-account-role">Admin</span> : null}
+            </div>
+            <button type="button" className="nav-link-button" onClick={logout}>
+              <LogoutIcon />
+              <span className="sidebar-logout-label">Logout</span>
+            </button>
+          </div>
+        ) : null}
         <div className="sidebar-footer">
           <p>
             <button type="button" className="license-link" onClick={() => setLicenseOpen(true)}>

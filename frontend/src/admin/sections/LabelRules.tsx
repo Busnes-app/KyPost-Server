@@ -112,7 +112,7 @@ export function LabelRules() {
       </div>
       <div className="config-actions">
         <button type="button" onClick={applyImapLabelsToAllowlist}>Merge IMAP Labels</button>
-        <button type="button" onClick={saveConfig} disabled={!loaded}>Save Defaults</button>
+        <button type="button" className="btn-primary" onClick={saveConfig} disabled={!loaded}>Save Defaults</button>
       </div>
       <p className="config-muted">{labelsFromImap.length > 0 ? `Discovered IMAP labels: ${labelsFromImap.join(", ")}` : "No IMAP labels discovered yet."}</p>
       {configStatus ? <p className={configStatusTone}>{configStatus}</p> : null}

@@ -104,7 +104,9 @@ describe("webmail mailbox switcher", () => {
   it("is hidden with one mailbox and shows each mailbox by its primary address with two", async () => {
     mailboxList = { mailboxes: [primary] };
     renderApp();
-    await screen.findByText("Primary inbox");
+    // The first render in this file measures about 1.1s under parallel test load (12 timed
+    // runs), past findBy's 1s default. This asserts mailbox content, not render latency.
+    await screen.findByText("Primary inbox", {}, { timeout: 5000 });
     await waitFor(() => expect(sent("/api/mailboxes")).toHaveLength(1));
     expect(screen.queryByRole("combobox", { name: "Your mailboxes" })).toBeNull();
     cleanup();

@@ -44,7 +44,7 @@ export function ScheduledPage() {
   return (
     <section className="panel config-page">
       <div className="config-header">
-        <h2>Scheduled</h2>
+        <h1>Scheduled</h1>
         <p>Mail waiting to send. Canceled or unsendable mail returns to Drafts.</p>
       </div>
       {error ? <p className="notice notice-error">{error}</p> : null}

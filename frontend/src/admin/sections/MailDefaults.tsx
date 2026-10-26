@@ -58,7 +58,7 @@ export function MailDefaults() {
         </label>
       </div>
       <div className="config-actions">
-        <button type="button" onClick={() => void save()} disabled={busy}>
+        <button type="button" className="btn-primary" onClick={() => void save()} disabled={busy}>
           {busy ? "Saving..." : "Save Defaults"}
         </button>
       </div>

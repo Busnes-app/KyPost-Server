@@ -87,6 +87,8 @@ function SenderBlocksForm() {
     void read().catch((e: unknown) => {
       if (live.current && generation === readGeneration.current) setError(toErrorMessage(e, "Unable to load sender blocks. Reload before changing them."));
     });
+    // A generation counter, not a DOM node: cleanup bumps the live value so reads still in flight are dropped.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { live.current = false; readGeneration.current++; };
   }, []);
   // Same answered/unanswered rule as Quarantine: only an answered refusal returns the controls.

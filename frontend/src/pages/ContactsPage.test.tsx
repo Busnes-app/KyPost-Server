@@ -31,4 +31,45 @@ describe("ContactsPage", () => {
     await userEvent.click(within(form).getByRole("button", { name: "Add Contact" }));
     expect((await within(form).findByRole("alert")).textContent).toContain("private key");
   });
+
+  it("keeps Close in the header and Cancel beside the primary in the footer", async () => {
+    render(<ContactsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "New Contact" }));
+    const form = screen.getByRole("form", { name: "Add Contact" });
+    const dialog = form.closest("dialog")!;
+    const footerButtons = within(form.querySelector("footer")!).getAllByRole("button").map((b) => b.textContent);
+    expect(footerButtons).toEqual(["Cancel", "Add Contact"]);
+    await userEvent.click(within(form.querySelector("header")!).getByRole("button", { name: "Close" }));
+    expect(dialog.open).toBe(false);
+  });
+
+  it("opens an optional group when the saved contact has data in it", async () => {
+    fetchMock.mockImplementation(async (url) => {
+      if (String(url).startsWith("/api/contacts")) {
+        return json({ contacts: [{ uid: "c1", rev: 1, createdAt: "", updatedAt: "", fn: "Dana Ops", nickname: "Dee" }] });
+      }
+      if (String(url).startsWith("/api/groups")) return json({ groups: [] });
+      return json({});
+    });
+    render(<ContactsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const form = screen.getByRole("form", { name: "Edit Contact" });
+    const group = (summary: string) => within(form).getByText(summary).closest("details")!;
+    expect(group("More name fields").open).toBe(true);
+    expect(group("Addresses and links").open).toBe(false);
+    // Every field stays in the form, open or not.
+    expect((within(form).getByLabelText("Nickname") as HTMLInputElement).value).toBe("Dee");
+  });
+
+  it("opens a collapsed group whose field blocks submit", async () => {
+    render(<ContactsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "New Contact" }));
+    const form = screen.getByRole("form", { name: "Add Contact" });
+    const links = within(form).getByText("Addresses and links").closest("details")!;
+    await userEvent.click(within(links).getByRole("button", { name: "+ Add website" }));
+    await userEvent.type(within(links).getByPlaceholderText("https://..."), "not a url");
+    expect(links.open).toBe(false);
+    await userEvent.click(within(form).getByRole("button", { name: "Add Contact" }));
+    expect(links.open).toBe(true);
+  });
 });

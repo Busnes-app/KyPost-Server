@@ -153,7 +153,7 @@ export function PromptTuning() {
           <textarea rows={18} value={tuningText} onChange={(e) => setTuningText(e.target.value)} style={{ width: "100%" }} />
         </label>
 
-        <button type="button" onClick={saveTuning}>Save TUNING.md</button>
+        <button type="button" className="btn-primary" onClick={saveTuning}>Save TUNING.md</button>
         {tuningStatus ? <p>{tuningStatus}</p> : null}
       </div>
     </>

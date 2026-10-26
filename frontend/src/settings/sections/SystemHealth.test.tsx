@@ -452,6 +452,6 @@ describe("SystemHealth admin controls", () => {
     render(<SystemHealth full={false} heading="Status" />);
 
     const heading = await screen.findByRole("heading", { name: "Status" });
-    expect(heading.tagName).toBe("H2");
+    expect(heading.tagName).toBe("H1");
   });
 });

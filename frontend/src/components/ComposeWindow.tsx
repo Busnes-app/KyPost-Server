@@ -8,6 +8,7 @@ import type { Compose } from "../hooks/useCompose";
 import { contactToToken } from "../lib/recipients";
 import { isClientProtected } from "../lib/pgpSession";
 import { formatBytes } from "../app/compose";
+import { CloseIcon } from "../pages/read/icons";
 import type { UserMailbox } from "../app/mailboxes";
 
 /** The compose dialog. All state lives in useCompose, which App owns so pages can open it. */
@@ -53,7 +54,16 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
           >
             <div className="compose-topbar">
               <h2 id="compose-window-title">New message</h2>
-              <button type="button" className="compose-close" onClick={closeComposeWindow} disabled={composeSending || composeSavingDraft}>Close</button>
+              <button
+                type="button"
+                className="compose-close btn-ghost icon-button"
+                aria-label="Close"
+                title="Close"
+                onClick={closeComposeWindow}
+                disabled={composeSending || composeSavingDraft}
+              >
+                <CloseIcon />
+              </button>
             </div>
             <p className="compose-connection-hint">Send and Save Draft use this mailbox's mail connection. Check your mail account settings if the connection is unavailable.</p>
             {composeRecipientKeyWarning ? (
@@ -236,12 +246,12 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                 />
             </div>
             <div className="compose-actionbar" role="group" aria-label="Message actions">
-                <button type="button" className="compose-send" onClick={() => void sendComposeEmail()} disabled={composeSending || composeSavingDraft}>{composeSending ? "Sending..." : "Send"}</button>
+                <button type="button" className="compose-send btn-primary" onClick={() => void sendComposeEmail()} disabled={composeSending || composeSavingDraft}>{composeSending ? "Sending..." : "Send"}</button>
                 <button type="button" className="compose-save-draft" onClick={() => setScheduleOpen(true)} disabled={composeSending || composeSavingDraft}>Schedule…</button>
                 <button type="button" className="compose-save-draft" onClick={() => void saveComposeDraft()} disabled={composeSending || composeSavingDraft}>Save Draft</button>
                 <button type="button" className="compose-attach" onClick={() => attachmentInputRef.current?.click()} disabled={composeSending || composeSavingDraft}>Attach</button>
                 <button type="button" className="compose-attach" onClick={() => setContactPickerOpen(true)} disabled={composeSending || composeSavingDraft}>Contacts</button>
-                <button type="button" className="compose-trash" onClick={trashComposeDraft} disabled={composeSending || composeSavingDraft}>Trash</button>
+                <button type="button" className="compose-trash btn-ghost btn-danger" onClick={trashComposeDraft} disabled={composeSending || composeSavingDraft}>Trash</button>
             </div>
             </footer>
           </section>

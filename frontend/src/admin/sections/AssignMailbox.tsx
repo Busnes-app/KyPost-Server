@@ -104,7 +104,7 @@ export function AssignMailbox({ user, unlocked, takeConfirm, onClose }: {
         </label>
       </div>
       <div className="config-actions">
-        <button type="button" disabled={busy || !unlocked} onClick={() => void run("Mailbox saved.", (c) => putUserIMAPConfig(c, user.id, imap), refreshImap)}>Save Mailbox</button>
+        <button type="button" className="btn-primary" disabled={busy || !unlocked} onClick={() => void run("Mailbox saved.", (c) => putUserIMAPConfig(c, user.id, imap), refreshImap)}>Save Mailbox</button>
         {imapConfigured ? (
           <button type="button" disabled={busy || !unlocked} onClick={() => {
             if (window.confirm(`Remove ${user.username}'s stored mailbox credentials?`)) {
@@ -126,7 +126,7 @@ export function AssignMailbox({ user, unlocked, takeConfirm, onClose }: {
         </label>
       </div>
       <div className="config-actions">
-        <button type="button" disabled={busy || !unlocked} onClick={() => void run("Contacts sync saved.", (c) => putUserCardDAVClient(c, user.id, dav), refreshDav)}>Save Contacts Sync</button>
+        <button type="button" className="btn-primary" disabled={busy || !unlocked} onClick={() => void run("Contacts sync saved.", (c) => putUserCardDAVClient(c, user.id, dav), refreshDav)}>Save Contacts Sync</button>
         {davConfigured ? (
           <button type="button" disabled={busy || !unlocked} onClick={() => {
             if (window.confirm(`Remove ${user.username}'s stored CardDAV client credentials?`)) {

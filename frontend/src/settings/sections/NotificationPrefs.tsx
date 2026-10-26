@@ -304,7 +304,7 @@ export function NotificationPrefs() {
           ) : null}
 
           <div className="config-actions">
-            <button type="button" onClick={() => void saveNotificationPrefs()}>Save Notifications</button>
+            <button type="button" className="btn-primary" onClick={() => void saveNotificationPrefs()}>Save Notifications</button>
             <button type="button" onClick={() => void sendTestNotification()} disabled={notifyTestBusy}>
               {notifyTestBusy ? "Sending Test..." : "Send Test Notification"}
             </button>

@@ -62,6 +62,8 @@ function MailAddressesForm() {
     void refresh().catch((e: unknown) => {
       if (live.current && generation === refreshGeneration.current) setError(toErrorMessage(e, "Unable to load mail addresses. Reload before changing them."));
     });
+    // A generation counter, not a DOM node: cleanup bumps the live value so reads still in flight are dropped.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { live.current = false; refreshGeneration.current++; };
   }, []);
   function label(id: string) {

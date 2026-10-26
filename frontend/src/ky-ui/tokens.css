@@ -1,3 +1,23 @@
+/* Product geometry stays local; these values give each composition the same rhythm. */
+:root {
+  --ky-type-title: 1.5rem;
+  --ky-type-section: 1.0625rem;
+  --ky-type-body: 0.9375rem;
+  --ky-type-nav: 0.875rem;
+  --ky-type-meta: 0.8125rem;
+  --ky-space-1: 0.25rem;
+  --ky-space-2: 0.5rem;
+  --ky-space-3: 1rem;
+  --ky-space-4: 1.5rem;
+  --ky-space-5: 2rem;
+  --ky-control-size: 2.5rem;
+  --ky-control-radius: 0.5rem;
+  --ky-sidebar-size: 15rem;
+  /* Product ink/bg aliases preserve existing named palettes as well as Busnes. */
+  --ky-field-border: color-mix(in srgb, var(--ink) 75%, var(--bg));
+  --ky-shadow-overlay: 0 18px 48px rgb(0 0 0 / 0.26), 0 2px 8px rgb(0 0 0 / 0.12);
+}
+
 /* Busnes Light/Dark tokens. Product layouts should consume these, not redefine them. */
 :root,
 :root:not([data-theme]):not([data-ky-theme]),
@@ -21,7 +41,7 @@
   --ky-sidebar-end: #f2efe7;
   --ky-button-text: #ffffff;
   --ky-radius: 10px;
-  --ky-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ky-font-sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --ky-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 

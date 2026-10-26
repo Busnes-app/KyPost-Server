@@ -504,6 +504,7 @@ export function Filters() {
                   <div className="security-actions">
                     <button
                       type="button"
+                      className="btn-primary"
                       onClick={saveDraft}
                       disabled={!draft.guiEditable || draftActionsError !== ""}
                     >

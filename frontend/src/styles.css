@@ -56,7 +56,7 @@
   --link-border: #d8dde6;
   --accent-contrast: #24170f;
   --chip-active-bg: rgba(255, 255, 255, 0.38);
-  --modal-overlay: rgba(124, 103, 127, 0.35);
+  --modal-overlay: rgb(12 16 18 / 0.45);
   --modal-shadow: rgba(128, 118, 163, 0.28);
   --error-soft: rgba(249, 197, 189, 0.35);
   --mono: "IBM Plex Mono", monospace;
@@ -77,41 +77,87 @@ body {
 .shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: var(--ky-sidebar-size) minmax(0, 1fr);
 }
 
+/* The sidebar stays in view so the account region is always at its foot. */
 .sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
   border-right: 1px solid var(--line);
-  padding: 20px;
+  padding: var(--ky-space-3);
   background: linear-gradient(180deg, var(--sidebar-start), var(--sidebar-end));
   display: flex;
   flex-direction: column;
+  gap: var(--ky-space-3);
+  font-size: var(--ky-type-nav);
 }
 
 .new-email-button {
   width: 100%;
+  min-height: var(--ky-control-size);
   border: 1px solid var(--new-email-border);
   background: linear-gradient(180deg, var(--new-email-start), var(--new-email-end));
   color: var(--new-email-text);
-  border-radius: 10px;
-  padding: 10px;
-  font-weight: 700;
-  margin-bottom: 14px;
+  font-weight: 600;
+}
+
+.new-email-button.new-email-button-quiet {
+  border-color: var(--ky-field-border);
+  background: transparent;
+  color: var(--ink-strong);
+}
+
+.new-email-button.new-email-button-quiet:hover {
+  background: color-mix(in srgb, var(--ink-strong) 7%, transparent);
+}
+
+/* A square control holding one icon; its name comes from aria-label. */
+.icon-button {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: var(--ky-control-size);
+  min-height: var(--ky-control-size);
+  padding: 0;
+  color: var(--ink);
+}
+
+.icon-button:hover:not(:disabled) {
+  color: var(--ink-strong);
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-strong);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link-button:hover:not(:disabled) {
+  background: transparent;
+  text-decoration-thickness: 2px;
 }
 
 .sidebar-logo {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
+  gap: var(--ky-space-2);
+  padding: var(--ky-space-1) var(--ky-space-2) 0;
 }
 
 .sidebar-app-logo {
-  border-radius: 12px;
+  border-radius: 7px;
+  flex: none;
 }
 
 .sidebar-wordmark {
-  font-size: 1.35rem;
+  font-size: 1.15rem;
   font-weight: 700;
   letter-spacing: -0.01em;
   color: var(--ink-strong);
@@ -121,13 +167,39 @@ body {
   flex: 1;
 }
 
-.sidebar-footer {
+.sidebar-account {
   margin-top: auto;
-  padding-top: 16px;
+  padding-top: var(--ky-space-3);
   border-top: 1px solid var(--line);
+  display: grid;
+  gap: var(--ky-space-2);
+}
+
+.sidebar-account-copy {
+  min-width: 0;
+  padding: 0 var(--ky-space-2);
+  line-height: 1.35;
+}
+
+.sidebar-account-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--ink-strong);
+}
+
+.sidebar-account-role {
+  display: block;
+  font-size: var(--ky-type-meta);
+  color: var(--ink);
+}
+
+.sidebar-footer {
   font-size: 0.75rem;
   color: var(--ink);
-  text-align: center;
+  padding-left: var(--ky-space-2);
   white-space: nowrap;
 }
 
@@ -154,40 +226,62 @@ body {
 .sidebar nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
-.sidebar a {
-  text-decoration: none;
+/* One row geometry for links, disclosure buttons and Logout: 40px, 8px radius,
+   icon then label. Selected, hover and focus states come from ky-ui/navigation.css. */
+.sidebar a,
+.sidebar .nav-heading,
+.sidebar .nav-link-button {
+  display: flex;
+  align-items: center;
+  gap: var(--ky-space-2);
+  min-height: var(--ky-control-size);
+  width: 100%;
+  padding: 0 var(--ky-space-2);
+  border: 0;
+  border-radius: var(--ky-control-radius);
+  background: transparent;
   color: var(--ink-strong);
-  border: 1px solid transparent;
-  border-radius: 10px;
-  padding: 9px 10px;
-  transition: all 180ms ease;
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: none;
+  transition: background-color 150ms ease, color 150ms ease;
 }
 
-.sidebar a:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+.sidebar a:hover,
+.sidebar .nav-heading:hover,
+.sidebar .nav-link-button:hover {
+  background: color-mix(in srgb, var(--ink-strong) 6%, transparent);
+  filter: none;
+}
+
+.sidebar a svg,
+.sidebar .nav-heading svg,
+.sidebar .nav-link-button svg {
+  flex: none;
+  color: var(--ink);
+}
+
+.nav-chevron {
+  margin-left: auto;
+  transition: transform 150ms ease;
+}
+
+[aria-expanded="true"] > .nav-chevron {
+  transform: rotate(90deg);
 }
 
 .sidebar-section-label {
-  margin: 0 0 6px;
-  font-size: 0.74rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  opacity: 0.72;
-  color: var(--ink-strong);
+  margin: var(--ky-space-2) 0 var(--ky-space-1);
+  padding: 0 var(--ky-space-2);
+  font-size: var(--ky-type-meta);
+  font-weight: 600;
+  color: var(--ink);
 }
 
-.sidebar-link-active {
-  border-color: transparent !important;
-  background: var(--accent-soft) !important;
-}
-
-.mailbox-switcher {
-  margin-bottom: 14px;
-}
 
 .mailbox-switcher .sidebar-section-label {
   margin: 0;
@@ -206,32 +300,16 @@ body {
 }
 
 .inbox-expand-button {
-  width: auto;
-  min-width: 42px;
+  width: var(--ky-control-size);
   padding: 0;
-  font-size: 1.1rem;
-  line-height: 1;
-}
-
-.sidebar .nav-heading {
-  width: 100%;
-  text-align: left;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--ink-strong);
-  border-radius: 10px;
-  padding: 10px;
-}
-
-.sidebar .nav-heading:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  display: inline-grid;
+  place-items: center;
 }
 
 .sidebar .nav-group {
   display: grid;
-  gap: 4px;
-  padding-left: 10px;
+  gap: 2px;
+  padding-left: var(--ky-space-3);
 }
 
 /* One group per audience. A non-admin sees a single unheaded group, so the
@@ -251,11 +329,11 @@ body {
 }
 
 .sidebar .nav-subheading {
-  margin: 0.75rem 0 0.25rem;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  opacity: 0.6;
+  margin: var(--ky-space-2) 0 var(--ky-space-1);
+  padding: 0 var(--ky-space-2);
+  font-size: var(--ky-type-meta);
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .sidebar-folder-form {
@@ -289,29 +367,24 @@ body {
 }
 
 .sidebar-folder-menu-button {
-  width: auto;
-  min-width: 40px;
-  padding: 10px 8px;
+  width: var(--ky-control-size);
+  padding: 0;
 }
 
 /* Quiet by default: these sit beside every folder row, so a filled accent
    button on each one outshouted the folders themselves. */
 .sidebar .inbox-expand-button,
 .sidebar .sidebar-folder-menu-button {
+  min-height: var(--ky-control-size);
   background: transparent;
   border-color: transparent;
   color: var(--ink);
-  opacity: 0.7;
 }
 
 .sidebar .inbox-expand-button:hover,
-.sidebar .sidebar-folder-menu-button:hover,
-.sidebar .inbox-expand-button:focus-visible,
-.sidebar .sidebar-folder-menu-button:focus-visible {
-  opacity: 1;
+.sidebar .sidebar-folder-menu-button:hover {
   color: var(--ink-strong);
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--ink-strong) 6%, transparent);
 }
 
 .sidebar-folder-menu {
@@ -323,83 +396,110 @@ body {
   gap: 6px;
   min-width: 110px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--ky-control-radius);
   padding: 8px;
-  background: #1e1c23;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  background: var(--panel);
+  box-shadow: var(--ky-shadow-overlay);
 }
 
 .sidebar-folder-menu button {
   width: 100%;
 }
 
-.sidebar-folder-delete {
-  width: auto;
-  padding: 10px 12px;
-  border-color: rgba(255, 180, 171, 0.45);
-  background: rgba(255, 180, 171, 0.14);
-  color: #ffd8d3;
-}
-
-.sidebar-folder-delete:hover {
-  background: rgba(255, 180, 171, 0.22);
-}
-
 .sidebar-folder-error {
-  color: #ffb4ab;
-  border-color: rgba(255, 180, 171, 0.35);
+  color: var(--danger);
 }
 
-.sidebar .nav-group span {
-  border: 1px solid transparent;
-  border-radius: 10px;
-  padding: 10px;
-  font-size: 0.9rem;
-  opacity: 0.75;
-}
-
-.sidebar .nav-link-button {
-  width: 100%;
-  text-align: left;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--ink-strong);
-  border-radius: 10px;
-  padding: 10px;
-  font: inherit;
-}
-
-.sidebar .nav-link-button:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+.sidebar .nav-group > span {
+  padding: var(--ky-space-2);
+  color: var(--ink);
 }
 
 .mobile-quick-nav {
   display: none;
 }
 
-.mobile-settings-toggle {
-  width: auto;
+.sidebar .mobile-settings-toggle {
+  display: none;
 }
 
 .content {
-  padding: 28px;
+  min-width: 0;
+  background: var(--panel);
 }
 
+/* Pages sit flat on one content surface; only overlays carry a shadow. */
 .panel {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 18px;
-  margin-bottom: 18px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  padding: var(--ky-space-4) var(--ky-space-5);
+}
+
+.panel h1 {
+  margin: 0;
+  font-size: var(--ky-type-title);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
 }
 
 .read-page-panel {
-  height: calc(100vh - 74px);
+  height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.inbox-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--ky-space-3);
+  flex-wrap: wrap;
+  min-height: var(--ky-control-size);
+}
+
+.inbox-search {
+  display: flex;
+  gap: var(--ky-space-2);
+  align-items: center;
+  margin-top: var(--ky-space-3);
+}
+
+.inbox-search input {
+  flex: 1;
+  min-width: 0;
+}
+
+.inbox-tabs {
+  display: flex;
+  gap: var(--ky-space-2);
+  flex-wrap: wrap;
+  margin-top: var(--ky-space-3);
+}
+
+.inbox-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ky-space-2);
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--ky-type-meta);
+  font-weight: 500;
+}
+
+.inbox-tab[aria-pressed="true"] {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--ink-strong);
+  font-weight: 600;
+}
+
+.inbox-tab-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
 }
 
 .inbox-list-region {
@@ -414,9 +514,7 @@ body {
 .inbox-empty-state {
   flex: 1;
   min-height: 0;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+  border-top: 1px solid var(--line);
   display: grid;
   place-items: center;
   align-content: center;
@@ -450,16 +548,18 @@ body {
   font-size: 0.78rem;
 }
 
-.inbox-page-tab.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-contrast);
+.inbox-page-tab.active,
+.contacts-page-tab.active {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--ink-strong);
+  font-weight: 600;
 }
 
 .inbox-action-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--ky-space-1);
 }
 
 .inbox-haptics-toggle {
@@ -486,6 +586,9 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: var(--ky-control-size);
+  padding: 0 10px;
+  font-size: var(--ky-type-nav);
 }
 
 .inbox-action-icon {
@@ -500,9 +603,6 @@ body {
 
 .inbox-table-wrap {
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 88%, var(--bg));
   min-height: 0;
   flex: 1;
 }
@@ -519,6 +619,7 @@ body {
      sized from it too, and the narrow-viewport override below changes it — so a
      literal in either place silently desyncs the two at that breakpoint. */
   --inbox-cell-pad: 10px;
+  font-size: var(--ky-type-body);
 }
 
 .inbox-col-select {
@@ -551,7 +652,10 @@ body {
   border-bottom: 1px solid var(--line);
   padding: 9px 10px;
   white-space: nowrap;
-  background: color-mix(in srgb, var(--panel) 96%, var(--bg));
+  font-size: var(--ky-type-meta);
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--panel);
   position: sticky;
   top: 0;
   z-index: 2;
@@ -588,7 +692,12 @@ body {
 }
 
 .inbox-row:hover {
-  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
+  background: color-mix(in srgb, var(--ink-strong) 4%, transparent);
+}
+
+/* Selected rows use the shared selection surface; unread rows differ by weight only. */
+.inbox-row:has(.inbox-checkbox:checked) {
+  background: var(--accent-soft);
 }
 
 .inbox-row-swipe-dragging {
@@ -665,9 +774,6 @@ body {
   }
 }
 
-.inbox-row-unread {
-  background: color-mix(in srgb, var(--accent-soft) 16%, transparent);
-}
 
 .inbox-cell {
   border-bottom: 1px solid var(--line);
@@ -723,8 +829,8 @@ body {
   text-align: left;
   cursor: pointer;
   text-decoration: none;
-  font-weight: 450;
-  line-height: 1.3;
+  font-weight: 400;
+  line-height: 1.35;
 }
 
 .inbox-subject-button:hover {
@@ -735,12 +841,20 @@ body {
 
 .inbox-subject-unread {
   color: var(--ink-strong);
-  font-weight: 500;
+  font-weight: 650;
 }
 
 .inbox-sender-cell,
 .inbox-time-cell {
-  color: color-mix(in srgb, var(--ink) 85%, var(--ink-strong));
+  color: var(--ink);
+  font-size: var(--ky-type-nav);
+  font-variant-numeric: tabular-nums;
+}
+
+.inbox-row-unread .inbox-sender-cell,
+.inbox-row-unread .inbox-time-cell {
+  color: var(--ink-strong);
+  font-weight: 600;
 }
 
 .inbox-time-cell {
@@ -778,9 +892,9 @@ body {
   max-height: 96vh;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 16px;
-  box-shadow: 0 14px 40px var(--modal-shadow);
+  border-radius: 12px;
+  padding: var(--ky-space-4);
+  box-shadow: var(--ky-shadow-overlay);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -789,22 +903,80 @@ body {
 .email-reader-head {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
+  gap: var(--ky-space-3);
   flex-shrink: 0;
 }
 
-.email-reader-actions {
-  display: grid;
-  gap: 6px;
-  justify-items: end;
+.email-reader-title {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--ky-type-title);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
 }
 
-.email-reader-actions-row {
+/* Reply first and primary; everything else is a quiet icon-and-label tool. */
+.email-reader-actions {
   display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ky-space-2) var(--ky-space-3);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  padding-bottom: var(--ky-space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.email-reader-reply,
+.email-reader-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--ky-space-2);
+}
+
+.email-reader-tools {
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.email-reader-reply button {
+  min-height: var(--ky-control-size);
+  padding: 0 var(--ky-space-3);
+  font-size: var(--ky-type-nav);
+}
+
+.email-reader-facts {
+  display: grid;
+  gap: 2px;
+  color: var(--ink-strong);
+}
+
+.email-reader-facts p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.email-reader-facts strong,
+.email-keyword-editor > strong {
+  color: var(--ink);
+  font-size: var(--ky-type-meta);
+  font-weight: 600;
+}
+
+.email-reader-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ky-space-1) var(--ky-space-3);
+  margin-top: var(--ky-space-2);
+  font-size: var(--ky-type-meta);
+  color: var(--ink);
+}
+
+.email-reader-foot p {
+  margin: 0;
 }
 
 .email-reader-content {
@@ -887,12 +1059,35 @@ label {
 input,
 textarea,
 select {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px;
+  border: 1px solid var(--ky-field-border);
+  border-radius: var(--ky-control-radius);
+  padding: 8px 12px;
   background: var(--panel);
   color: var(--ink-strong);
   font: inherit;
+}
+
+input:where(:not([type="checkbox"], [type="radio"], [type="file"], [type="range"], [type="color"])),
+select {
+  min-height: var(--ky-control-size);
+}
+
+input[type="file"] {
+  border: 0;
+  padding: 0;
+  background: none;
+}
+
+input[type="file"]::file-selector-button {
+  margin-right: var(--ky-space-2);
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--ky-field-border);
+  border-radius: var(--ky-control-radius);
+  background: transparent;
+  color: var(--ink-strong);
+  font: inherit;
+  cursor: pointer;
 }
 
 textarea {
@@ -904,29 +1099,73 @@ input[type="radio"] {
   accent-color: var(--accent);
 }
 
+/* One button system, shared with KyCalendar's names. A plain button is the
+   secondary outline; a form's submit and .btn-primary carry the view's one
+   accent fill; .btn-ghost drops the outline; .btn-danger recolours either. */
 button {
   width: fit-content;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: var(--button-text);
-  border-radius: 8px;
+  border: 1px solid var(--ky-field-border);
+  background: transparent;
+  color: var(--ink-strong);
+  border-radius: var(--ky-control-radius);
   padding: 9px 14px;
   font: inherit;
   cursor: pointer;
-  transition: filter 120ms ease, transform 120ms ease;
+  transition: background-color 120ms ease, filter 120ms ease, transform 120ms ease;
 }
 
-button:hover:not(:disabled) {
-  filter: brightness(1.06);
+:where(button):hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--ink-strong) 7%, transparent);
 }
 
 button:active:not(:disabled) {
   transform: translateY(1px);
 }
 
+button[type="submit"],
+.btn-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--button-text);
+  font-weight: 600;
+}
+
+button[type="submit"]:hover:not(:disabled),
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+
+.btn-danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.btn-ghost {
+  border-color: transparent;
+}
+
+/* Disabled reads as unavailable, not as a faded primary: muted ink, dashed
+   edge, and no accent fill. */
 button:disabled {
-  opacity: 0.6;
-  cursor: default;
+  color: color-mix(in srgb, var(--ink) 65%, transparent);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+button[type="submit"]:disabled,
+.btn-primary:disabled {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--ink-strong) 10%, transparent);
+  color: color-mix(in srgb, var(--ink) 75%, transparent);
+}
+
+.btn-ghost:disabled {
+  border-color: transparent;
 }
 
 button:focus-visible,
@@ -976,10 +1215,6 @@ pre {
   gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 12px;
-}
-
-.health-head h2 {
-  margin: 0;
 }
 
 .health-controls {
@@ -1069,14 +1304,6 @@ pre {
 
 .config-page {
   position: relative;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 6% 8%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 36%),
-    linear-gradient(160deg, color-mix(in srgb, var(--panel) 85%, var(--bg)), color-mix(in srgb, var(--panel) 95%, var(--bg)) 46%);
-}
-
-.config-header h2 {
-  margin: 0;
 }
 
 .config-header p {
@@ -1251,16 +1478,9 @@ pre {
 }
 
 .config-card {
-  margin-top: 14px;
-  border: 1px solid color-mix(in srgb, var(--line) 86%, var(--accent));
-  border-radius: 12px;
-  padding: 14px;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--panel) 88%, var(--bg)),
-    color-mix(in srgb, var(--panel) 80%, var(--bg))
-  );
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink-strong) 8%, transparent);
+  margin-top: var(--ky-space-4);
+  padding-top: var(--ky-space-4);
+  border-top: 1px solid var(--line);
 }
 
 .config-card h3 {
@@ -1295,17 +1515,10 @@ pre {
   margin-top: 0;
 }
 
-.config-card label {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px;
-  background: color-mix(in srgb, var(--panel) 92%, var(--bg));
-}
-
 .config-card label > div {
   color: var(--ink-strong);
-  font-size: 0.84rem;
-  letter-spacing: 0.01em;
+  font-size: var(--ky-type-meta);
+  font-weight: 600;
 }
 
 .config-card select,
@@ -1501,9 +1714,6 @@ pre {
 .users-page {
   position: relative;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 94% 6%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 40%),
-    linear-gradient(160deg, color-mix(in srgb, var(--panel) 85%, var(--bg)), color-mix(in srgb, var(--panel) 95%, var(--bg)) 46%);
 }
 
 .users-header {
@@ -1844,11 +2054,10 @@ pre {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  font-weight: 700;
+  font-weight: 600;
   font-size: 0.92rem;
-  color: var(--accent-contrast);
-  background: linear-gradient(180deg, var(--new-email-start), var(--new-email-end));
-  border: 1px solid var(--new-email-border);
+  color: var(--ink-strong);
+  background: color-mix(in srgb, var(--ink-strong) 9%, var(--panel));
 }
 
 .users-identity-text {
@@ -1965,14 +2174,12 @@ pre {
 }
 
 .users-action-danger {
-  border-color: rgba(255, 180, 171, 0.4);
-  background: rgba(255, 180, 171, 0.12);
-  color: #ffd8d3;
+  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+  color: var(--danger);
 }
 
 .users-action-danger:hover:not(:disabled) {
-  border-color: rgba(255, 180, 171, 0.6);
-  background: rgba(255, 180, 171, 0.2);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 @media (max-width: 900px) {
@@ -2048,14 +2255,12 @@ pre {
 }
 
 .security-action-danger {
-  border-color: rgba(255, 180, 171, 0.4);
-  background: rgba(255, 180, 171, 0.12);
-  color: #ffd8d3;
+  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+  color: var(--danger);
 }
 
 .security-action-danger:hover:not(:disabled) {
-  border-color: rgba(255, 180, 171, 0.6);
-  background: rgba(255, 180, 171, 0.2);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .security-check {
@@ -2185,10 +2390,6 @@ pre {
   /* One measure for every block inside a section, so the sections read as a
      column of decisions rather than stretching to whatever the window is. */
   --sec-measure: 720px;
-}
-
-.sec-header h2 {
-  margin: 0;
 }
 
 /* Content links elsewhere in the app sit inside styled containers; here they
@@ -2899,13 +3100,10 @@ pre {
 
 .contacts-page {
   position: relative;
-  height: calc(100vh - 74px);
+  height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 94% 6%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 40%),
-    linear-gradient(160deg, color-mix(in srgb, var(--panel) 85%, var(--bg)), color-mix(in srgb, var(--panel) 95%, var(--bg)) 46%);
 }
 
 .contacts-header {
@@ -2914,10 +3112,6 @@ pre {
   align-items: flex-start;
   gap: 16px;
   flex-wrap: wrap;
-}
-
-.contacts-header h2 {
-  margin: 0;
 }
 
 .contacts-header-actions {
@@ -2934,13 +3128,9 @@ pre {
 }
 
 .contacts-stat {
-  border: 1px solid color-mix(in srgb, var(--line) 86%, var(--accent));
-  border-radius: 999px;
-  padding: 5px 11px;
-  font-size: 0.8rem;
+  font-size: var(--ky-type-meta);
   white-space: nowrap;
-  color: color-mix(in srgb, var(--ink) 80%, var(--ink-strong));
-  background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+  color: var(--ink);
 }
 
 .contacts-stat strong {
@@ -2970,34 +3160,97 @@ pre {
   font-size: 0.88rem;
 }
 
+/* Title and actions stay put; only the fields between them scroll. */
 .contacts-form-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.contacts-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ky-space-3);
+  padding: var(--ky-space-3) var(--ky-space-3) var(--ky-space-3) var(--ky-space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.contacts-form-head h2 {
+  margin: 0;
+  font-size: var(--ky-type-section);
+  font-weight: 600;
+}
+
+.contacts-form-fields,
+.contacts-form-group-fields {
   display: grid;
-  gap: 12px;
+  gap: var(--ky-space-3);
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.contacts-form-card > h3,
-.contacts-form-card > .contacts-multivalue,
-.contacts-form-card > .contacts-form-actions,
-.contacts-form-card > button,
-.contacts-form-card > .contacts-pgp-fingerprint,
-.contacts-form-card > .contacts-pgp-error,
-.contacts-form-card > label:has(textarea) {
+.contacts-form-fields {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--ky-space-4);
+}
+
+.contacts-form-group-fields {
+  padding: var(--ky-space-1) 0 var(--ky-space-3);
+}
+
+:is(.contacts-form-fields, .contacts-form-group-fields) > :is(.contacts-multivalue, .contacts-form-group, button, .contacts-pgp-fingerprint, .contacts-pgp-error, .notice, label:has(textarea)) {
   grid-column: 1 / -1;
+}
+
+.contacts-form-fields > .notice {
+  margin: 0;
+}
+
+.contacts-form-group {
+  border-top: 1px solid var(--line);
+}
+
+.contacts-form-group:last-of-type {
+  border-bottom: 1px solid var(--line);
+}
+
+.contacts-form-group > summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--ky-control-size);
+  font-size: var(--ky-type-nav);
+  font-weight: 600;
+  color: var(--ink-strong);
+  cursor: pointer;
+  list-style: none;
+}
+
+.contacts-form-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.contacts-form-group > summary .nav-chevron {
+  color: var(--ink);
+}
+
+.contacts-form-group[open] > summary .nav-chevron {
+  transform: rotate(90deg);
 }
 
 .contacts-form-card label {
   display: grid;
-  gap: 6px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px;
-  background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+  align-content: start;
+  gap: var(--ky-space-1);
 }
 
-.contacts-form-card label > div {
+.contacts-form-card label > div,
+.contacts-multivalue-label {
   color: var(--ink-strong);
-  font-size: 0.84rem;
+  font-size: var(--ky-type-meta);
+  font-weight: 600;
 }
 
 .contacts-form-card input,
@@ -3027,18 +3280,30 @@ pre {
 
 .contacts-form-actions {
   display: flex;
-  gap: 8px;
+  justify-content: flex-end;
+  gap: var(--ky-space-2);
+  padding: var(--ky-space-3) var(--ky-space-4);
+  border-top: 1px solid var(--line);
+}
+
+.contacts-form-actions button {
+  min-height: var(--ky-control-size);
+  justify-content: center;
+  font-size: var(--ky-type-nav);
 }
 
 .contacts-create-submit {
-  flex: 1;
-  justify-content: center;
-  text-align: center;
-  font-weight: 700;
+  min-width: 120px;
 }
 
 .contacts-list-card {
-  margin-top: 16px;
+  margin-top: var(--ky-space-4);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  animation: none;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -3052,12 +3317,20 @@ pre {
 }
 
 .contacts-count {
-  border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--line));
-  border-radius: 999px;
-  padding: 2px 9px;
-  font-size: 0.78rem;
-  color: var(--ink-strong);
-  background: color-mix(in srgb, var(--accent-soft) 32%, transparent);
+  font-size: var(--ky-type-meta);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.contacts-list-head h2 {
+  margin: 0;
+  font-size: var(--ky-type-section);
+  font-weight: 600;
+}
+
+.contacts-search {
+  width: 100%;
+  margin-top: var(--ky-space-3);
 }
 
 .contacts-empty {
@@ -3107,17 +3380,8 @@ pre {
   color: var(--accent-contrast);
 }
 
-.contacts-page-tab.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-contrast);
-}
-
 .contacts-table-wrap {
-  margin-top: 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--panel) 90%, var(--bg));
+  margin-top: var(--ky-space-3);
   min-height: 0;
   flex: 1;
   overflow: hidden;
@@ -3136,10 +3400,9 @@ pre {
 
 .contacts-table th {
   text-align: left;
-  font-size: 0.72rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--ink) 72%, var(--ink-strong));
+  font-size: var(--ky-type-meta);
+  font-weight: 600;
+  color: var(--ink);
   padding: 10px 12px;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
@@ -3147,12 +3410,9 @@ pre {
 
 .contacts-table td {
   padding: 10px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  border-bottom: 1px solid var(--line);
   vertical-align: middle;
-}
-
-.contacts-table tbody tr:last-child td {
-  border-bottom: 0;
+  font-size: var(--ky-type-nav);
 }
 
 /* Same story as the inbox's select column (see .inbox-select-hit): a bare 13px
@@ -3187,7 +3447,11 @@ pre {
 }
 
 .contacts-row:hover {
-  background: color-mix(in srgb, var(--accent-soft) 30%, transparent);
+  background: color-mix(in srgb, var(--ink-strong) 4%, transparent);
+}
+
+.contacts-row:has(input:checked) {
+  background: var(--accent-soft);
 }
 
 .contacts-row-busy {
@@ -3218,10 +3482,10 @@ pre {
 }
 
 .contacts-row-chevron {
-  margin-left: 6px;
-  opacity: 0.35;
-  color: var(--accent);
-  font-size: 0.9rem;
+  display: inline-flex;
+  margin-left: auto;
+  opacity: 0.6;
+  color: var(--ink);
   transition: opacity 140ms ease, transform 140ms ease;
 }
 
@@ -3237,11 +3501,10 @@ pre {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  font-weight: 700;
+  font-weight: 600;
   font-size: 0.92rem;
-  color: var(--accent-contrast);
-  background: linear-gradient(180deg, var(--new-email-start), var(--new-email-end));
-  border: 1px solid var(--new-email-border);
+  color: var(--ink-strong);
+  background: color-mix(in srgb, var(--ink-strong) 9%, var(--panel));
   object-fit: cover;
 }
 
@@ -3322,30 +3585,39 @@ pre {
   justify-content: flex-end;
 }
 
+/* Links and buttons share one secondary shape. */
 .contacts-action {
+  display: inline-flex;
+  align-items: center;
   width: auto;
-  padding: 6px 10px;
-  font-size: 0.78rem;
-  border-color: var(--line);
-  background: color-mix(in srgb, var(--panel) 82%, var(--bg));
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--ky-field-border);
+  border-radius: var(--ky-control-radius);
+  font-size: var(--ky-type-nav);
+  line-height: 1.2;
+  text-decoration: none;
+  background: transparent;
   color: var(--ink-strong);
 }
 
 .contacts-action:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent-soft) 40%, var(--panel));
+  background: color-mix(in srgb, var(--ink-strong) 7%, transparent);
   filter: none;
 }
 
+.contacts-actions .contacts-action {
+  min-height: 32px;
+  border-color: transparent;
+}
+
 .contacts-action-danger {
-  border-color: rgba(255, 180, 171, 0.4);
-  background: rgba(255, 180, 171, 0.12);
-  color: #ffd8d3;
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
 }
 
 .contacts-action-danger:hover:not(:disabled) {
-  border-color: rgba(255, 180, 171, 0.6);
-  background: rgba(255, 180, 171, 0.2);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .contacts-dav-url {
@@ -3392,16 +3664,7 @@ pre {
 
 .contacts-multivalue {
   display: grid;
-  gap: 6px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px;
-  background: color-mix(in srgb, var(--panel) 92%, var(--bg));
-}
-
-.contacts-multivalue-label {
-  color: var(--ink-strong);
-  font-size: 0.84rem;
+  gap: var(--ky-space-2);
 }
 
 .contacts-multivalue-row {
@@ -3505,9 +3768,9 @@ pre {
   max-height: 92vh;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 16px;
-  box-shadow: 0 14px 40px var(--modal-shadow);
+  box-shadow: var(--ky-shadow-overlay);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -3519,15 +3782,29 @@ pre {
   max-height: 92vh;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 18px;
-  box-shadow: 0 14px 40px var(--modal-shadow);
-  overflow: auto;
+  border-radius: 12px;
+  box-shadow: var(--ky-shadow-overlay);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 @media (max-width: 700px) {
-  .contacts-form-card {
+  .contacts-form-fields,
+  .contacts-form-group-fields {
     grid-template-columns: 1fr;
+  }
+
+  .contacts-form-fields {
+    padding: var(--ky-space-3);
+  }
+
+  .contacts-form-actions {
+    padding: var(--ky-space-3);
+  }
+
+  .contacts-form-actions button {
+    flex: 1;
   }
 }
 
@@ -3610,6 +3887,47 @@ pre {
   margin: 0;
   color: color-mix(in srgb, var(--ink) 70%, var(--ink-strong));
   font-style: italic;
+}
+
+/* Phones: each contact is a stacked block (identity and actions, then contact
+   info) instead of a table that clips its last columns. */
+@media (max-width: 700px) {
+  .contacts-table {
+    min-width: 0;
+  }
+
+  .contacts-table tr {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    align-items: center;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .contacts-table th,
+  .contacts-table td {
+    border-bottom: 0;
+  }
+
+  .contacts-table th:nth-child(n + 3) {
+    display: none;
+  }
+
+  .contacts-table td:nth-child(3) {
+    grid-row: 2;
+    grid-column: 2 / -1;
+    padding-top: 0;
+    padding-left: 56px;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+
+  .contacts-table .contacts-col-actions {
+    padding-left: 0;
+  }
+
+  .contacts-row-chevron {
+    display: none;
+  }
 }
 
 @media (max-width: 900px) {
@@ -3729,7 +4047,8 @@ pre {
   max-height: 90vh;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
+  box-shadow: var(--ky-shadow-overlay);
   color: var(--ink-strong);
   padding: 16px;
   display: flex;
@@ -3751,26 +4070,6 @@ pre {
   padding-bottom: 10px;
 }
 
-.compose-send {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #24170f;
-  font-weight: 700;
-}
-
-.compose-save-draft {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-  color: var(--ink-strong);
-}
-
-.compose-trash,
-.compose-close,
-.compose-attach {
-  background: transparent;
-  border-color: var(--line);
-  color: var(--ink-strong);
-}
 
 .compose-attachments {
   display: flex;
@@ -3879,11 +4178,17 @@ pre {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  min-height: 34px;
-  padding: 4px 6px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  min-height: var(--ky-control-size);
+  padding: 3px 8px;
+  background: var(--panel);
+  border: 1px solid var(--ky-field-border);
+  border-radius: var(--ky-control-radius);
+}
+
+/* The token input has no edge of its own, so the field shows its focus. */
+.compose-token-field:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .compose-token-pill {
@@ -4003,9 +4308,11 @@ pre {
   flex-wrap: wrap;
 }
 
-.compose-token-input {
+.compose-token-input,
+.compose-field-row .compose-token-input {
   flex: 1 1 120px;
   min-width: 120px;
+  min-height: 0;
   border: none;
   background: transparent;
   color: var(--ink-strong);
@@ -4094,15 +4401,8 @@ pre {
 }
 
 .compose-field-row span {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--ink-strong);
-}
-
-.compose-field-row input,
-.compose-field-row select {
-  background: var(--bg);
-  color: var(--ink-strong);
-  border: 1px solid var(--line);
 }
 
 .compose-mode-bar {
@@ -4147,19 +4447,22 @@ pre {
   flex-direction: column;
 }
 
-.compose-editor-html .ql-toolbar.ql-snow {
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  border-radius: 10px 10px 0 0;
+/* Quill puts its toolbar beside the editor, not inside it, so these rules
+   are scoped to the window. Without them its fixed #444 icons vanish on dark
+   themes. The toolbar and editor read as one field-border box. */
+.compose-window .ql-toolbar.ql-snow {
+  border: 1px solid var(--ky-field-border);
+  border-bottom-color: var(--line);
+  border-radius: var(--ky-control-radius) var(--ky-control-radius) 0 0;
   background: var(--panel);
   color: var(--ink-strong);
   flex: 0 0 auto;
 }
 
-.compose-editor-html .ql-container.ql-snow {
-  border: 0;
-  flex: 1 1 auto;
-  min-height: 0;
+.compose-editor-html.ql-container.ql-snow {
+  border: 1px solid var(--ky-field-border);
+  border-top: 0;
+  border-radius: 0 0 var(--ky-control-radius) var(--ky-control-radius);
   font-family: var(--sans);
   font-size: 0.95rem;
   background: var(--bg);
@@ -4173,33 +4476,32 @@ pre {
   color: var(--ink-strong);
 }
 
-.compose-editor-html .ql-toolbar button,
-.compose-editor-html .ql-toolbar button:hover,
-.compose-editor-html .ql-toolbar button:focus {
-  width: auto;
-  border: 0;
-  background: transparent;
+.compose-window .ql-toolbar.ql-snow button {
+  border-radius: 4px;
   color: var(--ink-strong);
-  padding: 3px 5px;
-  border-radius: 0;
 }
 
-.compose-editor-html .ql-toolbar .ql-stroke {
+.compose-window .ql-toolbar.ql-snow button:hover:not(.ql-active) {
+  background: color-mix(in srgb, var(--ink-strong) 8%, transparent);
+}
+
+.compose-window .ql-toolbar.ql-snow :is(button, .ql-picker-label, .ql-picker-item) .ql-stroke {
   stroke: var(--ink-strong);
 }
 
-.compose-editor-html .ql-toolbar .ql-fill {
+.compose-window .ql-toolbar.ql-snow :is(button, .ql-picker-label, .ql-picker-item) .ql-fill {
   fill: var(--ink-strong);
 }
 
-.compose-editor-html .ql-toolbar .ql-picker {
+.compose-window .ql-toolbar.ql-snow :is(.ql-picker, .ql-picker-label, .ql-picker-item, .ql-picker-label:hover, .ql-picker-item:hover) {
   color: var(--ink-strong);
 }
 
-.compose-editor-html .ql-picker-options {
+.compose-window .ql-toolbar.ql-snow .ql-picker-options {
   background: var(--panel);
   color: var(--ink-strong);
   border: 1px solid var(--line);
+  box-shadow: var(--ky-shadow-overlay);
 }
 
 .compose-editor-html .ql-editor.ql-blank::before {
@@ -4207,18 +4509,15 @@ pre {
   font-style: normal;
 }
 
-.compose-editor-html .ql-toolbar button.ql-active,
-.compose-editor-html .ql-toolbar .ql-picker-label.ql-active {
+.compose-window .ql-toolbar.ql-snow :is(button.ql-active, .ql-picker-label.ql-active, .ql-picker-item.ql-selected) {
   color: var(--accent);
 }
 
-.compose-editor-html .ql-toolbar button.ql-active .ql-stroke,
-.compose-editor-html .ql-toolbar .ql-picker-label.ql-active .ql-stroke {
+.compose-window .ql-toolbar.ql-snow :is(button.ql-active, .ql-picker-label.ql-active, .ql-picker-item.ql-selected) .ql-stroke {
   stroke: var(--accent);
 }
 
-.compose-editor-html .ql-toolbar button.ql-active .ql-fill,
-.compose-editor-html .ql-toolbar .ql-picker-label.ql-active .ql-fill {
+.compose-window .ql-toolbar.ql-snow :is(button.ql-active, .ql-picker-label.ql-active) .ql-fill {
   fill: var(--accent);
 }
 
@@ -4435,8 +4734,14 @@ pre {
   }
 
   .sidebar {
+    position: static;
+    height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+
+  .panel {
+    padding: var(--ky-space-3);
   }
 
   .health-grid {
@@ -4491,66 +4796,121 @@ pre {
 
   .panel {
     padding: 10px;
-    margin-bottom: 10px;
   }
 
+  /* Phone header: brand, New Email and account on one row, then one
+     horizontally scrolling strip of every destination in sidebar order. */
   .sidebar {
-    padding: 8px 10px;
-    max-height: 24vh;
-    overflow: auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: var(--ky-space-2);
+    padding: var(--ky-space-2) var(--ky-space-3) 0;
   }
 
-  .sidebar-logo,
-  .sidebar-app-logo,
-  .sidebar-footer {
+  .sidebar-logo {
+    padding: 0;
+  }
+
+  .sidebar-footer,
+  .sidebar-section-label:not(.mailbox-switcher-label),
+  .sidebar-account-role {
     display: none;
   }
 
   .new-email-button {
-    margin-bottom: 8px;
-    padding: 8px;
-    font-size: 0.82rem;
+    grid-column: 2;
+    grid-row: 1;
+    width: auto;
+    padding: 0 var(--ky-space-3);
   }
 
-  .mobile-quick-nav {
+  .sidebar-account {
+    grid-column: 3;
+    grid-row: 1;
+    margin: 0;
+    padding: 0;
+    border: 0;
     display: flex;
-    flex-wrap: nowrap;
-    gap: 6px;
+    align-items: center;
+    gap: var(--ky-space-1);
+  }
+
+  .sidebar-account-copy {
+    max-width: 6rem;
+    padding: 0 0 0 var(--ky-space-1);
+    font-size: var(--ky-type-meta);
+  }
+
+  .sidebar .sidebar-account .nav-link-button {
+    width: var(--ky-control-size);
+    padding: 0;
+    justify-content: center;
+  }
+
+  .sidebar-logout-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .sidebar > .notice,
+  .sidebar > .mailbox-switcher {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+
+  .sidebar nav {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    gap: 2px;
+    margin: 0 calc(-1 * var(--ky-space-3));
+    padding: var(--ky-space-1) var(--ky-space-3);
     overflow-x: auto;
-    padding-bottom: 4px;
-    margin-bottom: 6px;
+    scroll-padding-inline: var(--ky-space-3);
+    scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
   }
 
-  .mobile-quick-nav a,
-  .mobile-settings-toggle {
-    flex: 0 0 auto;
-    padding: 6px 8px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    font-size: 0.75rem;
-    text-decoration: none;
-    color: var(--ink-strong);
-    background: color-mix(in srgb, var(--panel) 70%, transparent);
+  .mobile-quick-nav,
+  .sidebar .nav-group,
+  .sidebar .nav-subgroup,
+  .sidebar .sidebar-folder-row {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    border: 0;
   }
 
-  .mobile-settings-toggle {
-    min-width: 68px;
-    text-align: center;
-    line-height: 1;
+  .sidebar a,
+  .sidebar nav .nav-heading {
+    flex: none;
+    width: auto;
+    padding: 0 var(--ky-space-3) 0 var(--ky-space-2);
+    gap: 6px;
+    white-space: nowrap;
   }
 
-  .sidebar-section-label {
-    display: none;
+  .sidebar .nav-subheading {
+    margin: 0 0 0 var(--ky-space-2);
+    white-space: nowrap;
   }
 
-  .sidebar-section-label.mailbox-switcher-label {
-    display: block;
+  .sidebar .mobile-settings-toggle {
+    display: flex;
   }
 
-  /* The quick nav stands in for these (and for the Scheduled heading). */
-  .inbox-nav-row,
-  .scheduled-heading,
+  /* The strip stands in for these; Archive and Contacts stay as they are. */
+  .sidebar .inbox-nav-row,
+  .sidebar .scheduled-heading,
+  .sidebar .settings-heading,
   .sidebar-folder-row[data-folder-kind="inbox"],
   .sidebar-folder-row[data-folder-kind="drafts"],
   .sidebar-folder-row[data-folder-kind="junk"],
@@ -4559,56 +4919,11 @@ pre {
     display: none;
   }
 
-  .inbox-expand-button,
-  .archive-toggle,
-  .archive-group,
-  .settings-heading {
-    display: none;
-  }
-
-  .sidebar nav,
-  .sidebar .nav-group {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    gap: 6px;
-  }
-
-  .sidebar nav > .inbox-nav-row,
-  .sidebar nav > .nav-heading {
-    width: auto;
-    margin: 0;
-  }
-
-  .sidebar .inbox-nav-row {
-    grid-template-columns: auto;
-  }
-
-  .sidebar .nav-group {
-    width: 100%;
-    padding-left: 0;
-  }
-
-  .sidebar .sidebar-folder-row {
-    grid-template-columns: auto auto;
-    width: auto;
-  }
-
-  .sidebar a,
-  .sidebar .nav-heading,
-  .sidebar .nav-link-button {
-    padding: 7px 8px;
-    font-size: 0.78rem;
-    border-radius: 8px;
-    /* Wrapped chips need an edge; the desktop base rule has none. */
-    border-color: var(--line);
-  }
-
-  .inbox-expand-button,
-  .sidebar-folder-menu-button {
-    min-width: 34px;
-    padding: 6px;
-    font-size: 0.9rem;
+  /* The strip scrolls, which would clip a menu positioned inside it. */
+  .sidebar-folder-menu {
+    position: fixed;
+    top: auto;
+    right: auto;
   }
 
   .read-page-panel {
@@ -4647,11 +4962,11 @@ pre {
   }
 
   .inbox-action-button {
-    width: 34px;
-    height: 34px;
-    min-width: 34px;
+    width: 36px;
+    min-height: 36px;
+    min-width: 36px;
     padding: 0;
-    border-radius: 9px;
+    border-radius: var(--ky-control-radius);
     display: inline-flex;
     justify-content: center;
     align-items: center;
@@ -4776,26 +5091,12 @@ pre {
     border-radius: 14px;
   }
 
-  .email-reader-head {
-    align-items: flex-start;
-    flex-direction: column;
+  .email-reader-title {
+    font-size: 1.25rem;
   }
 
-  .email-reader-actions {
-    width: 100%;
-    gap: 6px;
-    justify-items: stretch;
-  }
-
-  .email-reader-actions-row {
-    width: 100%;
-    flex-wrap: wrap;
-    justify-content: flex-start;
-  }
-
-  .email-reader-actions button {
-    padding: 6px 8px;
-    font-size: 0.78rem;
+  .email-reader-tools {
+    flex-wrap: nowrap;
   }
 
   .email-reader-content {
@@ -4858,7 +5159,7 @@ pre {
     flex: 1;
   }
 
-  .compose-editor-html .ql-container.ql-snow,
+  .compose-editor-html.ql-container.ql-snow,
   .compose-editor-html .ql-editor {
     min-height: min(38dvh, 300px);
   }
@@ -5387,6 +5688,13 @@ pre {
   margin: 0;
 }
 
+/* Named palettes carry no danger colour, so the shared alias would paint
+   Busnes red on any surface; tie it to the palette's own ink. `html` outranks
+   the alias in ky-ui/tokens.css, which loads after this sheet. */
+html:root:not([data-theme]):not([data-ky-theme]) {
+  --danger: color-mix(in srgb, var(--ky-danger) 50%, var(--ink-strong));
+}
+
 /* Busnes.app fallback before the stored palette is applied. */
 :root {
   --bg: #f8f6f0;
@@ -5441,7 +5749,7 @@ pre {
 .compose-window > .notice, .compose-window > .compose-pgp-warning { padding: 12px 24px; }
 @media (max-width: 600px) { .compose-window { width: 100%; max-height: 100dvh; border-radius: 0; } .compose-topbar, .compose-connection-hint, .compose-security, .compose-actionbar { padding-inline: 16px; } .compose-window > .compose-form-grid { padding-inline: 16px; } .compose-window > .compose-editor-html { margin-inline: 16px; } .compose-form-grid .compose-field-row { grid-template-columns: 48px minmax(0, 1fr); } .compose-actionbar { gap: 6px; } .compose-actionbar .compose-trash { margin-left: 0; } }
 
-.compose-window > .ql-toolbar { margin: 16px 24px 0; width: auto; border-color: var(--line); }
+.compose-window > .ql-toolbar { margin: 16px 24px 0; width: auto; }
 .compose-window > .compose-editor-html .ql-editor { min-height: 180px; }
 .compose-footer { position: sticky; bottom: 0; flex: 0 0 auto; background: var(--panel); z-index: 2; }
 .compose-footer .compose-actionbar { position: static; }
