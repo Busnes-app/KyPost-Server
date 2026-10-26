@@ -1,0 +1,11 @@
+#!/bin/sh
+# Usage: snapshot.sh <repo dir> <out patch> <paths...>: source diff vs HEAD incl. untracked files,
+# via a scratch index (the real index is untouched).
+set -eu
+W=$1; OUT=$2; shift 2
+IDX=$(mktemp /tmp/fleet-appearance-scratch/idx.XXXXXX); rm -f "$IDX"
+GIT_INDEX_FILE="$IDX" git -C "$W" read-tree HEAD
+GIT_INDEX_FILE="$IDX" git -C "$W" add -A -- "$@"
+GIT_INDEX_FILE="$IDX" git -C "$W" diff --cached HEAD -- "$@" > "$OUT"
+rm -f "$IDX"
+echo "$(sha256sum < "$OUT" | cut -c1-64) $(wc -c < "$OUT") $OUT"

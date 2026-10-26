@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Builds docs/ui-fleet-2026-10-26/{manifest.json,captures.csv} for one product.
+
+Usage: manifest.py <product>. Merges every scratch capture record (newest record per file
+wins), re-hashes each PNG on disk and fails if the bytes differ from the record, attaches
+per-stage source patches, binaries and built-asset tree hashes, and copies patches and drivers
+into the evidence directory."""
+import csv, glob, hashlib, json, os, platform, shutil, subprocess, sys
+
+S = '/tmp/fleet-appearance-scratch'
+R = '/home/yoshi/git/busnes.app'
+product = sys.argv[1]
+CFG = json.load(open(f'{S}/stages.json'))[product]
+W = f"{R}/{CFG['repo']}/.claude/worktrees/fleet-appearance"
+OUT = f'{W}/docs/ui-fleet-2026-10-26'
+sha = lambda b: hashlib.sha256(b).hexdigest()
+fsha = lambda p: sha(open(p, 'rb').read())
+
+def tree(path):
+    if not path or not os.path.isdir(path):
+        return None
+    h = hashlib.sha256()
+    for root, _, files in sorted(os.walk(path)):
+        for f in sorted(files):
+            p = os.path.join(root, f)
+            h.update(f'{os.path.relpath(p, path)}\0{fsha(p)}\n'.encode())
+    return h.hexdigest()
+
+def run(*cmd):
+    return subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
+
+records, runs = {}, []
+for path in sorted(glob.glob(f'{S}/{product}/captures-*.json'), key=lambda p: int(p.rsplit('-', 1)[1][:-5])):
+    data = json.load(open(path))
+    meta = {k: v for k, v in data.items() if k != 'files'}
+    runs.append({'record': os.path.basename(path), **meta})
+    for f in data['files']:
+        records[f['file']] = {**f, 'stage': data['stage'], 'run': os.path.basename(path), 'browser': data['browser'], 'captured_run_at': data['captured']}
+
+os.makedirs(f'{OUT}/patches', exist_ok=True)
+os.makedirs(f'{OUT}/drivers', exist_ok=True)
+stages = []
+for st in CFG['stages']:
+    entry = dict(st)
+    if st.get('patch'):
+        dst = f"{OUT}/patches/{os.path.basename(st['patch'])}"
+        shutil.copyfile(st['patch'], dst)
+        entry['patch'] = os.path.relpath(dst, OUT)
+        entry['patch_sha256'] = fsha(dst)
+    if st.get('binary'):
+        entry['binary_sha256'] = fsha(st['binary'])
+    if st.get('assets'):
+        entry['assets_tree_sha256'] = tree(st['assets'])
+    stages.append(entry)
+for d in CFG['drivers']:
+    shutil.copyfile(d, f"{OUT}/drivers/{os.path.basename(d)}.txt")
+
+files, bad = [], []
+for name in sorted(os.listdir(f'{OUT}/screenshots')):
+    rec = records.get(name)
+    disk = fsha(f'{OUT}/screenshots/{name}')
+    if not rec or rec['sha256'] != disk:
+        bad.append(name)
+        continue
+    files.append(rec)
+if bad:
+    sys.exit(f'unrecorded or changed bytes: {bad}')
+
+manifest = {
+    'product': product, 'repository': CFG['repo'], 'branch': run('git', '-C', W, 'branch', '--show-current'),
+    'base_commit': run('git', '-C', W, 'rev-parse', CFG['stages'][0]['commit']), 'generated': run('date', '-u', '+%FT%TZ'),
+    'os': f"{platform.system()} {platform.release()} ({run('sh', '-c', '. /etc/os-release; echo $PRETTY_NAME')}, x86-64)",
+    'node': run(f'{os.path.expanduser("~")}/.local/share/ky-toolchains/node-v26.12.1-linux-x64/bin/node', '-v'),
+    'go': run('go', 'version'),
+    'driver': 'Playwright headless Chromium (T3 preview not used: documented product harness drivers, adapted from ky-ui reviews/2026-10-26-council)',
+    'theme_source': 'OS-following Busnes (context colorScheme, nothing saved) unless the surface name starts with a named theme chosen through the product\'s own Appearance radio',
+    'fixture': CFG['fixture'], 'notes': CFG.get('notes', []), 'pairs': CFG['pairs'],
+    'stages': stages, 'capture_runs': runs, 'files': files,
+}
+json.dump(manifest, open(f'{OUT}/manifest.json', 'w'), indent=2)
+open(f'{OUT}/manifest.json', 'a').write('\n')
+cols = ['file', 'stage', 'surface', 'user', 'os_scheme', 'viewport', 'data_theme', 'checked', 'radios', 'overflow_px', 'inline_style_attrs', 'empty_style_attrs', 'h1', 'sha256', 'browser', 'run']
+with open(f'{OUT}/captures.csv', 'w', newline='') as fh:
+    w = csv.DictWriter(fh, cols, extrasaction='ignore')
+    w.writeheader()
+    for f in files:
+        w.writerow({**f, 'h1': ' | '.join(f.get('h1', []))})
+print(f'{product}: {len(files)} files, {len(stages)} stages, {len(runs)} runs')

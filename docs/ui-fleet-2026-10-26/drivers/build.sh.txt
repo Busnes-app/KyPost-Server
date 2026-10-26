@@ -1,0 +1,15 @@
+#!/bin/sh
+# Usage: build.sh <stage>  -> builds all three products into /tmp/fleet-appearance-scratch/<n>/
+set -u
+export PATH=/home/yoshi/.local/share/ky-toolchains/node-v26.12.1-linux-x64/bin:$PATH
+S=/tmp/fleet-appearance-scratch; R=/home/yoshi/git/busnes.app; st=$1
+cap() { systemd-run --user --scope -q -p MemoryMax=6G -p MemorySwapMax=0 -- "$@"; }
+( cd $R/kypost-server/.claude/worktrees/fleet-appearance/frontend && cap npm run build > $S/kypost/build-$st.log 2>&1; echo "fe exit $?" >> $S/kypost/build-$st.log
+  rm -rf $S/kypost/dist-$st && cp -r dist $S/kypost/dist-$st
+  cd ../backend && cap go build -buildvcs=false -o $S/kypost/server-$st ./cmd >> $S/kypost/build-$st.log 2>&1; echo "be exit $?" >> $S/kypost/build-$st.log ) &
+for pair in KyCalendar:kycalendar KyMessage-Server:kymessages; do r=${pair%%:*}; n=${pair##*:}
+  ( cd $R/$r/.claude/worktrees/fleet-appearance/web && cap npm run build > $S/$n/build-$st.log 2>&1; echo "fe exit $?" >> $S/$n/build-$st.log
+    cd .. && cap go build -o $S/$n/server-$st ./cmd/server >> $S/$n/build-$st.log 2>&1; echo "be exit $?" >> $S/$n/build-$st.log ) &
+done
+wait
+for n in kypost kycalendar kymessages; do echo "== $n"; grep -E "exit|error" $S/$n/build-$st.log | tail -4; done

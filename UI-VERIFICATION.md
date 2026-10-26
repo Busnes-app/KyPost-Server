@@ -90,3 +90,7 @@ A fourth, usability batch (stage 05) followed the acceptance review:
 Browser checks on the stage-05 build: single-row strip with a constant 105px header on every page, every Tab stop fully on screen with a 2px ring, reader and contact-editor focus return on Escape, Quill icons 16.1:1 (light) and 12.7:1 (dark), and no overflow at 1024, 768 and 360 px.
 
 Frontend checks passed: 1189 tests, typecheck, lint with 0 errors and 0 warnings, production build and npm audit. This is not a full accessibility audit, and not every named palette and page combination was captured.
+
+## Fleet Appearance picker — 2026-10-26
+
+KyPost's 17 swatch buttons became ky-ui's native radio cards: Match system plus the 22-theme suite catalog, saved names kept, phone overflow fixed. Staged before/after captures at 1280×900 and 390×844 in OS light and dark, with source patches, binary and asset hashes and per-file measurements, are in [docs/ui-fleet-2026-10-26/](docs/ui-fleet-2026-10-26/README.md) (`manifest.json`, `captures.csv`, `checks.csv`). They are scratch captures with synthetic data and carry no rating.
