@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
+import { createElement } from "react";
+import { ComposeWindow } from "../components/ComposeWindow";
 
 // A scheduled send carries its time to the server and, on the browser PGP
 // path, into every Date header and the encrypted draft copy.
@@ -36,11 +38,13 @@ vi.mock("../lib/keyVault", () => ({ isUnlocked: () => true }));
 
 const buildEncryptedDeliveries = vi.fn(async (_envelope: { date?: Date }) => [{ recipients: ["bob@example.com"], ciphertext: "wire" }]);
 const buildEncryptedDraft = vi.fn(async (_envelope: { date?: Date }) => "draft-ciphertext");
+const sealToSelf = vi.fn(async (_text: string): Promise<string> => "sealed-test");
 vi.mock("../lib/pgpClient", () => ({
   buildEncryptedDeliveries: (envelope: { date?: Date }) => buildEncryptedDeliveries(envelope),
   buildEncryptedDraft: (envelope: { date?: Date }) => buildEncryptedDraft(envelope),
   buildEncryptedSentCopy: async () => "sent-ciphertext",
   buildSignedDelivery: vi.fn(),
+  sealToSelf: (text: string) => sealToSelf(text),
   encryptedAttachmentBudget: () => 1 << 20,
   OUTER_PLACEHOLDER_SUBJECT: "[Encrypted] Email Sent by KyPost"
 }));
@@ -50,6 +54,8 @@ import { useCompose } from "./useCompose";
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
+  window.sessionStorage.clear();
 });
 
 function composeTo(encrypt: boolean) {
@@ -125,5 +131,48 @@ describe("compose error labels", () => {
     const result = composeTo(false);
     await act(() => result.current.sendComposeEmail());
     expect(result.current.composeError).toBe("Send failed: SMTP refused");
+  });
+});
+
+describe("autosave failure notice", () => {
+  it("warns on sealing failure and clears only after a successful save", async () => {
+    vi.useFakeTimers();
+    session.clientProtected = true;
+    sealToSelf.mockRejectedValueOnce(new Error("RSA key is too weak"));
+    const { result } = renderHook(() => useCompose({ userId: "autosave", mailboxes: [] }));
+    act(() => {
+      result.current.openComposeWindow();
+      result.current.setComposeSubject("Keep this private text");
+    });
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(result.current.composeAutosaveFailed).toBe(true);
+    expect(result.current.composeSubject).toBe("Keep this private text");
+    expect(window.sessionStorage.getItem("kypost-compose-draft:autosave")).toBeNull();
+    const view = render(createElement(ComposeWindow, { compose: result.current, mailboxes: [] }));
+    const notice = screen.getByText(/Autosave unavailable/);
+    expect(notice.closest("dialog")?.open).toBe(true);
+    expect(getComputedStyle(notice).display).not.toBe("none");
+    expect(notice.closest('[role="status"]')).not.toBeNull();
+    act(() => result.current.setComposeSubject("Supported save"));
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(result.current.composeAutosaveFailed).toBe(false);
+    view.rerender(createElement(ComposeWindow, { compose: result.current, mailboxes: [] }));
+    expect(screen.queryByText(/Autosave unavailable/)).toBeNull();
+  });
+
+  it("ignores a late failure after the compose window closes", async () => {
+    vi.useFakeTimers();
+    session.clientProtected = true;
+    let fail: (reason: Error) => void = () => {};
+    sealToSelf.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+    const { result } = renderHook(() => useCompose({ userId: "autosave", mailboxes: [] }));
+    act(() => {
+      result.current.openComposeWindow();
+      result.current.setComposeSubject("Pending save");
+    });
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    act(() => result.current.closeComposeWindow());
+    await act(async () => { fail(new Error("late refusal")); });
+    expect(result.current.composeAutosaveFailed).toBe(false);
   });
 });

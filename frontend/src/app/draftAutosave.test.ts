@@ -191,7 +191,7 @@ describe("robustness", () => {
 
     try {
       // A failed autosave must never surface as an exception mid-typing.
-      await expect(saveDraftSnapshot(USER, draft({ subject: "x" }))).resolves.toBeUndefined();
+      await expect(saveDraftSnapshot(USER, draft({ subject: "x" }))).resolves.toBe("failed");
       expect(setItem).toHaveBeenCalled();
     } finally {
       if (original) {
@@ -204,6 +204,14 @@ describe("robustness", () => {
 describe("sealed snapshots on a client-custody account", () => {
   beforeEach(() => {
     vault.clientProtected = true;
+  });
+
+  it("reports sealing failure and retains the previous ciphertext", async () => {
+    await saveDraftSnapshot(USER, draft({ subject: "previous snapshot" }));
+    const previous = window.sessionStorage.getItem(`kypost-compose-draft:${USER}`);
+    vault.sealGate = Promise.reject(new Error("RSA key is too weak"));
+    expect(await saveDraftSnapshot(USER, draft({ subject: "new private text" }))).toBe("failed");
+    expect(window.sessionStorage.getItem(`kypost-compose-draft:${USER}`)).toBe(previous);
   });
 
   it("stores ciphertext, never the fields, and restores them once opened", async () => {

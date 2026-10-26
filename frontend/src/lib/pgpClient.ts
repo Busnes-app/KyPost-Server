@@ -14,6 +14,10 @@ import { parseMimeContent, type BodyMode, type MimeAttachment, type ProtectedHea
 type OpenPGP = typeof import("openpgp");
 type PublicKey = Awaited<ReturnType<OpenPGP["readKey"]>>;
 
+// OpenPGP.js defaults to 2047. Apply a literal 2048-bit floor to new use
+// and signature trust; its decryption path still opens retained historical keys.
+const RSA_POLICY = { minRSABits: 2048 };
+
 async function openpgp(): Promise<OpenPGP> {
   return import("openpgp");
 }
@@ -206,7 +210,7 @@ export async function decryptMessage(
     decryptionKeys: decryptionKeysFor(keyring, message),
     verificationKeys: verificationKeys.length > 0 ? verificationKeys : undefined,
     expectSigned: false,
-    config: { maxDecompressedMessageSize: MAX_DECRYPTED_BYTES }
+    config: { ...RSA_POLICY, maxDecompressedMessageSize: MAX_DECRYPTED_BYTES }
   });
 
   let signed = false;
@@ -333,7 +337,8 @@ export async function verifySignedMessage(
       message: await pgp.createMessage({ binary: bytes }),
       signature: await pgp.readSignature({ armoredSignature }),
       verificationKeys,
-      expectSigned: false
+      expectSigned: false,
+      config: RSA_POLICY
     });
     const wanted = senderAddress.trim().toLowerCase();
     for (const signature of result.signatures ?? []) {
@@ -477,7 +482,8 @@ export async function buildEncryptedDeliveries(
       message: await pgp.createMessage({ text: protectedContent }),
       encryptionKeys,
       signingKeys,
-      format: "armored"
+      format: "armored",
+      config: RSA_POLICY
     });
     deliveries.push({
       recipients: group.recipients,
@@ -513,7 +519,8 @@ export async function buildSignedDelivery(
       message: await pgp.createMessage({ binary: new TextEncoder().encode(signedPart) }),
       signingKeys: signingKey,
       detached: true,
-      format: "armored"
+      format: "armored",
+      config: RSA_POLICY
     })
   );
   const signature = await pgp.readSignature({ armoredSignature });
@@ -564,7 +571,8 @@ export async function buildEncryptedSentCopy(
     message: await pgp.createMessage({ text: buildProtectedContent(contentType, body, { subject: envelope.subject }, attachments) }),
     encryptionKeys: ownKey.toPublic(),
     signingKeys,
-    format: "armored"
+    format: "armored",
+    config: RSA_POLICY
   });
   return wrapAsPGPMime(envelope, String(armored));
 }
@@ -595,7 +603,8 @@ export async function buildEncryptedDraft(
   const armored = await pgp.encrypt({
     message: await pgp.createMessage({ text: content }),
     encryptionKeys: ownKey.toPublic(),
-    format: "armored"
+    format: "armored",
+    config: RSA_POLICY
   });
   return wrapAsPGPMime(envelope, String(armored));
 }
@@ -609,7 +618,7 @@ export async function sealToSelf(text: string): Promise<string> {
   const pgp = await openpgp();
   const ownKey = await pgp.readPrivateKey({ armoredKey: requireUnlockedKey() });
   return String(
-    await pgp.encrypt({ message: await pgp.createMessage({ text }), encryptionKeys: ownKey.toPublic(), format: "armored" })
+    await pgp.encrypt({ message: await pgp.createMessage({ text }), encryptionKeys: ownKey.toPublic(), format: "armored", config: RSA_POLICY })
   );
 }
 
