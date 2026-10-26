@@ -1772,21 +1772,23 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               </div>
               <div className="email-reader-tools">
                 {[
-                  { label: "Archive", icon: <ArchiveIcon />, onClick: () => applyInboxAction("archive", [selected.messageId], { closeModal: true }) },
-                  { label: "Snooze", icon: <ClockIcon />, onClick: () => setSnoozeTarget({ ids: [selected.messageId], fromReader: true }) },
-                  { label: "Mark as Read", icon: <CheckIcon />, onClick: () => applyInboxAction("read", [selected.messageId]) },
-                  { label: "Mark as Spam", icon: <WarningIcon />, onClick: () => applyInboxAction("spam", [selected.messageId], { closeModal: true }) },
-                  { label: "Print", icon: <PrintIcon />, onClick: () => printEmails([selected]) },
+                  { id: "archive", label: "Archive", icon: <ArchiveIcon />, onClick: () => applyInboxAction("archive", [selected.messageId], { closeModal: true }) },
+                  { id: "snooze", label: "Snooze", icon: <ClockIcon />, onClick: () => setSnoozeTarget({ ids: [selected.messageId], fromReader: true }) },
+                  { id: "read", label: "Mark as Read", icon: <CheckIcon />, onClick: () => applyInboxAction("read", [selected.messageId]) },
+                  { id: "spam", label: "Mark as Spam", icon: <WarningIcon />, onClick: () => applyInboxAction("spam", [selected.messageId], { closeModal: true }) },
+                  { id: "print", label: "Print", icon: <PrintIcon />, onClick: () => printEmails([selected]) },
                   {
+                    // Keyed by id, not label: this label flips, and a new key would remount the focused button.
+                    id: "remote-content",
                     label: showImages ? "Hide Remote Content" : "Show Remote Content",
                     icon: <ImageIcon />,
                     onClick: () => setShowImagesFor((current) => (current === selected.messageId ? null : selected.messageId)),
                     always: true
                   },
-                  { label: "Delete", icon: <TrashIcon />, onClick: () => applyInboxAction("delete", [selected.messageId], { closeModal: true }), danger: true }
-                ].map(({ label, icon, onClick, always, danger }) => (
+                  { id: "delete", label: "Delete", icon: <TrashIcon />, onClick: () => applyInboxAction("delete", [selected.messageId], { closeModal: true }), danger: true }
+                ].map(({ id, label, icon, onClick, always, danger }) => (
                   <button
-                    key={label}
+                    key={id}
                     type="button"
                     className={danger ? "inbox-action-button btn-ghost btn-danger" : "inbox-action-button btn-ghost"}
                     aria-label={label}

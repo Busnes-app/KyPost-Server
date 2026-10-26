@@ -440,4 +440,20 @@ describe("reader layout", () => {
       expect.arrayContaining(["Archive", "Snooze", "Mark as Read", "Mark as Spam", "Print", "Show Remote Content", "Delete"])
     );
   });
+
+  it("keeps keyboard focus on the remote-content tool when its label flips", async () => {
+    const user = userEvent.setup();
+    renderReadPage();
+    await user.click(await screen.findByText("Weekly Digest"));
+    await waitFor(() => expect(readerBodyHtml()).toContain("[Image Blocked]"));
+
+    const toggle = screen.getByRole("button", { name: "Show Remote Content" });
+    toggle.focus();
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(readerBodyHtml()).toContain(TRACKER));
+    expect(screen.getByRole("button", { name: "Hide Remote Content" })).toBe(toggle);
+    expect(document.activeElement).toBe(toggle);
+    expect(toggle.getAttribute("title")).toBe("Hide Remote Content");
+  });
 });
