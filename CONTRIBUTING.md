@@ -177,6 +177,12 @@ if a job is genuinely flaky, that is a bug to fix in the job.
 
 Notes that trip people up:
 
+- The relay suite includes a native workerd RSA-key-floor regression. Run
+  `npm ci` in `worker/` first; CI already installs that locked runtime during
+  the Worker typecheck. Its provider fixture uses no real credentials or
+  external networking. Node's experimental type-stripping diagnostic is
+  expected and remains visible.
+
 - **Run the gates locally before pushing.** All of them work on a normal
   machine, including the whole frontend suite. "It only fails in CI" is almost
   always a version difference — check `.nvmrc` and `go.mod`.

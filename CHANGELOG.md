@@ -37,6 +37,12 @@ non-prerelease version.
   `testdata/hpke-cfrg-p256-aes256.json`, `device-envelope-hpke.json`,
   `device-envelope-hpke-browser.json`.
 
+- FCM relay assertions require an actual RSA modulus of at least 2048 bits,
+  including byte-boundary cases that workerd reports as 2048. Undersized keys
+  refuse before OAuth requests; strong signing and valid cached-token delivery
+  remain available. The regression runs the locked native Worker runtime with
+  an isolated provider fixture.
+
 ## 0.4.3 — 2026-10-23
 
 ### Added
