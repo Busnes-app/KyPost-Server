@@ -3,7 +3,7 @@
   "repository": "kypost-server",
   "branch": "ui/fleet-appearance",
   "base_commit": "7aea66f888ec3f251ab1b68b66378bd5c3e144c8",
-  "generated": "2026-10-26T11:40:11Z",
+  "generated": "2026-10-26T11:45:39Z",
   "os": "Linux 7.2.10-1-cachyos (CachyOS, x86-64)",
   "node": "v26.12.1",
   "go": "go version go1.27.1-X:nodwarf5 linux/amd64",
@@ -57,6 +57,15 @@
       "after": "05-after",
       "compare": [
         "appearance only: title-to-description spacing"
+      ]
+    },
+    {
+      "stage": "06",
+      "before": "05-after",
+      "after": "06-after",
+      "compare": [
+        "appearance phone: one column (350px content) -> two columns (358px), same inset as KyCalendar/KyMessages; desktop unchanged",
+        "keyboard-06-after.json: arrow selection, focus outline, reload persistence, 0 overflow at 390x844 light/dark"
       ]
     }
   ],
@@ -130,6 +139,18 @@
       "patch_sha256": "c697f7a15253aa16cb9add4e1c0f89b9ebd92c093f9586c2068c71e576641217",
       "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
       "assets_tree_sha256": "f50564414d764fff5bf8202171f683883aeca73b80b34abcbba9d4be46d8b104"
+    },
+    {
+      "id": "06-after",
+      "phase": "after",
+      "commit": "7aea66f8 + patch",
+      "source": "05 + phone inset 16px on the Appearance panel only (two 173px columns at 390px)",
+      "patch": "patches/kypost-06-after.src.patch",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after06",
+      "assets": "/tmp/fleet-appearance-scratch/kypost/dist-after06",
+      "patch_sha256": "188c9fa474db0e5b176b53a60b80a912654a99e2016af8ada9295006c6314f3c",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "assets_tree_sha256": "e1ea181b47e4b5faa20c251116d906e905cef2364b35eb5431d1b8777aa6f762"
     }
   ],
   "capture_runs": [
@@ -256,6 +277,34 @@
       "locale": "en-US",
       "origin": "http://localhost:5696",
       "binary": "/tmp/fleet-appearance-scratch/kypost/server-after03",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-06-after-1793015111561.json",
+      "product": "kypost",
+      "stage": "06-after",
+      "captured": "2026-10-26T11:45:11.561Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after06",
+      "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
+      "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
+    },
+    {
+      "record": "captures-06-after-1793015115629.json",
+      "product": "kypost",
+      "stage": "06-after",
+      "captured": "2026-10-26T11:45:15.629Z",
+      "browser": "chromium 156.0.8078.4",
+      "playwright": "1.64.1",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "origin": "http://localhost:5696",
+      "binary": "/tmp/fleet-appearance-scratch/kypost/server-after06",
       "binary_sha256": "2706e54d1bd251fd6da5ea27f1004e7ecf1cde55892b2fc42cf14e714b3b8463",
       "fixture": "scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama"
     }
@@ -1302,6 +1351,132 @@
       "run": "captures-05-after-1793014703654.json",
       "browser": "chromium 156.0.8078.4",
       "captured_run_at": "2026-10-26T11:38:23.654Z"
+    },
+    {
+      "file": "kypost-06-after-appearance-desktop-dark.png",
+      "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015111561.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:11.561Z"
+    },
+    {
+      "file": "kypost-06-after-appearance-desktop-light.png",
+      "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015111561.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:11.561Z"
+    },
+    {
+      "file": "kypost-06-after-appearance-mobile-dark.png",
+      "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "dark",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-dark",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015111561.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:11.561Z"
+    },
+    {
+      "file": "kypost-06-after-appearance-mobile-light.png",
+      "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+      "surface": "appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": "busnes-light",
+      "checked": "system",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015111561.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:11.561Z"
+    },
+    {
+      "file": "kypost-06-after-ocean-appearance-desktop-light.png",
+      "sha256": "4a39671f46e15c8f84c82b39b8e7577f033d66376d11e86ee03e126c02d84962",
+      "surface": "ocean-appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "1280x900",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": null,
+      "checked": "Ocean",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015115629.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:15.629Z"
+    },
+    {
+      "file": "kypost-06-after-ocean-appearance-mobile-light.png",
+      "sha256": "37b254c18547a0c90e8f3b3dd4e0396e65da620a9a9614d33615667ff455b506",
+      "surface": "ocean-appearance",
+      "user": "everyday",
+      "os_scheme": "light",
+      "viewport": "390x844",
+      "overflow_px": 0,
+      "h1": [
+        "Appearance"
+      ],
+      "data_theme": null,
+      "checked": "Ocean",
+      "radios": 23,
+      "inline_style_attrs": 0,
+      "empty_style_attrs": 23,
+      "stage": "06-after",
+      "run": "captures-06-after-1793015115629.json",
+      "browser": "chromium 156.0.8078.4",
+      "captured_run_at": "2026-10-26T11:45:15.629Z"
     }
   ]
 }

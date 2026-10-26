@@ -80,8 +80,8 @@ manifest = {
 json.dump(manifest, open(f'{OUT}/manifest.json', 'w'), indent=2)
 open(f'{OUT}/manifest.json', 'a').write('\n')
 cols = ['file', 'stage', 'surface', 'user', 'os_scheme', 'viewport', 'data_theme', 'checked', 'radios', 'overflow_px', 'inline_style_attrs', 'empty_style_attrs', 'h1', 'sha256', 'browser', 'run']
-with open(f'{OUT}/captures.csv', 'w', newline='') as fh:
-    w = csv.DictWriter(fh, cols, extrasaction='ignore')
+with open(f'{OUT}/captures.csv', 'w', newline='') as fh:  # LF rows
+    w = csv.DictWriter(fh, cols, extrasaction='ignore', lineterminator='\n')
     w.writeheader()
     for f in files:
         w.writerow({**f, 'h1': ' | '.join(f.get('h1', []))})

@@ -31,7 +31,8 @@ chosen through the Appearance radios. No auth, CSRF or CSP bypass and no mocked 
 | 02 | `01-after` | `02-after` | `.panel` may shrink in its flex row: phone overflow 0. Inbox unchanged. |
 | 03 | `02-after` | `03-after` | Space between the description and the picker (superseded by 04). |
 | 04 | `03-after` | `04-after` | Owner correction: shared description, preview hairline and wrapping from ky-ui `4f83f34`; the product spacing rule is removed. KyPost had no shell theme select. |
-| 05 | `04-after` | `05-after` | Appearance only: a bare `h1` so the title-to-description gap is the shared one, identical in KyPost, KyCalendar and KyMessages. |
+| 05 | `04-after` | `05-after` | Appearance only: a bare `h1` so the title-to-description gap is the shared one, identical in KyPost, KyCalendar and KyMessages. Phone grid still one column (350px content). |
+| 06 | `05-after` | `06-after` | Phone Appearance inset 16px, as in KyCalendar and KyMessages: two 173px columns at 390px. Other pages unchanged. `keyboard-06-after.json` records arrow-key selection, focus outline, reload persistence and 0 overflow at 390×844. |
 
 The inbox is the main task view; it changes only in stage 01 (shared tokens) and is reused from
 `02-after`. `ocean-*`, `sky-*` and `nord-*` show named themes chosen through the radios.
@@ -43,4 +44,3 @@ old picker; it was overwritten before review and is not evidence (`manifest.json
 
 - Chromium only; KyPost has no product browser suite, so the picker is covered by vitest and these captures.
 - Chromium gives each native radio an empty `style=""`; there are no inline declarations.
-- At 390px KyPost's content box is 350px, 6px short of two 172px cards, so the phone grid is one column.
