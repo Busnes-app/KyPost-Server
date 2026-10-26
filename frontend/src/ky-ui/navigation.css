@@ -1,7 +1,8 @@
 /* State only: products own spacing, orientation and typography. Local aliases
    keep named product palettes usable as well as Busnes Light/Dark. */
-.ky-nav-item:not(:disabled):not([aria-disabled="true"]):hover {
-  background: var(--panel-hover, var(--ky-panel-hover));
+/* Keep hover below selected-state specificity, while excluding disabled controls. */
+.ky-nav-item:where(:not(:disabled):not([aria-disabled="true"])):hover {
+  background: var(--panel-hover, color-mix(in srgb, var(--ink-strong, var(--ky-ink-strong)) 8%, var(--panel, var(--ky-panel))));
   color: var(--ink-strong, var(--ky-ink-strong));
 }
 .ky-nav-item:focus-visible {

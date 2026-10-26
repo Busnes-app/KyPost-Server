@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { toErrorMessage } from "../api/client";
 import {
   bulkDeleteContacts,
@@ -45,6 +45,7 @@ import {
 import { PGPKeyInfo } from "./contacts/PGPKeyInfo";
 import { ContactAvatar } from "./contacts/ContactAvatar";
 import { ContactDetailsDialog } from "./contacts/ContactDetailsDialog";
+import { ChevronIcon, CloseIcon } from "./read/icons";
 
 export function ContactsPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -140,8 +141,9 @@ export function ContactsPage() {
     }
   }
 
+  const refreshOnMount = useEffectEvent(refresh);
   useEffect(() => {
-    void refresh();
+    void refreshOnMount();
     void listGroups()
       .then(setGroups)
       // An empty group list and a group list that failed to load look
@@ -485,11 +487,16 @@ export function ContactsPage() {
   // than this contact's own (unsynced) pgpKey field.
   const selectedContactPgpKey = selectedContact?.isSelf ? myPgpKey : selectedContact?.pgpKey ?? "";
 
+  // The stored contact, not the live form, so a group does not close while it is being cleared.
+  const editingContact = editingUid ? contacts.find((c) => c.uid === editingUid) : undefined;
+  const saved = editingContact ? contactToFormState(editingContact) : emptyFormState;
+  const has = (...values: Array<string | readonly unknown[]>) => values.some((value) => value.length > 0);
+
   return (
     <section className="panel contacts-page">
       <header className="contacts-header">
         <div>
-          <h2>Contacts</h2>
+          <h1>Contacts</h1>
         </div>
         <div className="contacts-header-actions">
           {!loading && contacts.length > 0 ? (
@@ -544,7 +551,7 @@ export function ContactsPage() {
               />
             </>
           ) : null}
-          <button type="button" onClick={openCreateForm}>
+          <button type="button" className="btn-primary" onClick={openCreateForm}>
             New Contact
           </button>
         </div>
@@ -552,7 +559,7 @@ export function ContactsPage() {
 
       <div className="contacts-card contacts-list-card">
         <div className="contacts-list-head">
-          <h3>Address Book</h3>
+          <h2>Address Book</h2>
           {!loading && contacts.length > 0 ? (
             <span className="contacts-count">
               {filteredContacts.length}
@@ -562,21 +569,14 @@ export function ContactsPage() {
         </div>
 
         {!loading && contacts.length > 0 ? (
-          <div style={{ marginBottom: "12px" }}>
-            <input
-              type="text"
-              placeholder="Search by name, email, phone, or organization..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "8px",
-                borderRadius: "4px",
-                border: "1px solid var(--border-color)",
-                backgroundColor: "var(--bg-color)"
-              }}
-            />
-          </div>
+          <input
+            type="text"
+            className="contacts-search"
+            aria-label="Search contacts"
+            placeholder="Search by name, email, phone, or organization..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
         ) : null}
 
         {loading ? <p className="contacts-muted">Loading contacts...</p> : null}
@@ -652,8 +652,8 @@ export function ContactsPage() {
                                 {contact.isSelf ? <span className="contacts-sub">Your contact card</span> : null}
                                 {contact.org ? <span className="contacts-sub">{contact.org}</span> : null}
                               </div>
-                              <span className="contacts-row-chevron" aria-hidden="true">
-                                &rsaquo;
+                              <span className="contacts-row-chevron">
+                                <ChevronIcon />
                               </span>
                             </button>
                           </td>
@@ -662,7 +662,7 @@ export function ContactsPage() {
                             <div className="contacts-actions" onClick={(e) => e.stopPropagation()}>
                               <button
                                 type="button"
-                                className="contacts-action"
+                                className="contacts-action btn-ghost"
                                 onClick={() => openEditForm(contact)}
                                 disabled={busy}
                               >
@@ -670,7 +670,7 @@ export function ContactsPage() {
                               </button>
                               <button
                                 type="button"
-                                className="contacts-action contacts-action-danger"
+                                className="contacts-action btn-ghost btn-danger"
                                 onClick={() => void removeContact(contact)}
                                 disabled={busy}
                               >
@@ -705,481 +705,522 @@ export function ContactsPage() {
         }}
       >
         <div className="contact-form-window" onClick={(e) => e.stopPropagation()}>
-          <form onSubmit={submitForm} className="contacts-form-card">
-            <h3>{editingUid ? "Edit Contact" : "Add Contact"}</h3>
+          {/* Optional groups start open when the saved contact already has data in
+              them. A hidden invalid field would block submit silently, so the
+              browser's invalid event opens its group first. */}
+          <form
+            onSubmit={submitForm}
+            onInvalidCapture={(event) => {
+              const group = (event.target as HTMLElement).closest("details");
+              if (group) group.open = true;
+            }}
+            className="contacts-form-card"
+            aria-labelledby="contact-form-title"
+          >
+            <header className="contacts-form-head">
+              <h2 id="contact-form-title">{editingUid ? "Edit Contact" : "Add Contact"}</h2>
+              <button type="button" className="btn-ghost icon-button" aria-label="Close" title="Close" onClick={closeForm} disabled={saving}>
+                <CloseIcon />
+              </button>
+            </header>
 
-            <div className="contacts-multivalue">
-              <div className="contacts-multivalue-label">Photo</div>
-              <div className="contacts-photo-row">
-                {editingUid && form.photoRef ? (
-                  <img src={contactPhotoUrl(editingUid)} alt="" className="contacts-avatar contacts-photo-preview" />
-                ) : (
-                  <span className="contacts-avatar contacts-photo-preview" aria-hidden="true">
-                    {form.fn.slice(0, 1).toUpperCase() || "?"}
-                  </span>
-                )}
+            <div className="contacts-form-fields">
+              <div className="contacts-multivalue">
+                <div className="contacts-multivalue-label">Photo</div>
+                <div className="contacts-photo-row">
+                  {editingUid && form.photoRef ? (
+                    <img src={contactPhotoUrl(editingUid)} alt="" className="contacts-avatar contacts-photo-preview" />
+                  ) : (
+                    <span className="contacts-avatar contacts-photo-preview" aria-hidden="true">
+                      {form.fn.slice(0, 1).toUpperCase() || "?"}
+                    </span>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={!editingUid || photoUploading}
+                    onChange={(e) => void handlePhotoUpload(e.target.files?.[0])}
+                  />
+                  {form.photoRef ? (
+                    <button
+                      type="button"
+                      className="contacts-action"
+                      onClick={() => void handlePhotoDelete()}
+                      disabled={photoUploading}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+                {!editingUid ? <p className="contacts-muted">Save the contact first to add a photo.</p> : null}
+              </div>
+              <label>
+                <div>Full Name</div>
+                <input value={form.fn} onChange={(e) => setForm({ ...form, fn: e.target.value })} autoComplete="off" />
+              </label>
+              <label>
+                <div>Organization</div>
+                <input value={form.org} onChange={(e) => setForm({ ...form, org: e.target.value })} autoComplete="off" />
+              </label>
+              <label>
+                <div>Given Name</div>
                 <input
-                  type="file"
-                  accept="image/*"
-                  disabled={!editingUid || photoUploading}
-                  onChange={(e) => void handlePhotoUpload(e.target.files?.[0])}
+                  value={form.givenName}
+                  onChange={(e) => setForm({ ...form, givenName: e.target.value })}
+                  autoComplete="off"
                 />
-                {form.photoRef ? (
-                  <button
-                    type="button"
-                    className="contacts-action"
-                    onClick={() => void handlePhotoDelete()}
-                    disabled={photoUploading}
-                  >
-                    Remove
-                  </button>
-                ) : null}
-              </div>
-              {!editingUid ? <p className="contacts-muted">Save the contact first to add a photo.</p> : null}
-            </div>
+              </label>
+              <label>
+                <div>Family Name</div>
+                <input
+                  value={form.familyName}
+                  onChange={(e) => setForm({ ...form, familyName: e.target.value })}
+                  autoComplete="off"
+                />
+              </label>
+              <label>
+                <div>Title</div>
+                <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} autoComplete="off" />
+              </label>
+              <label>
+                <div>Department</div>
+                <input value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} autoComplete="off" />
+              </label>
 
-            <label>
-              <div>Full Name</div>
-              <input value={form.fn} onChange={(e) => setForm({ ...form, fn: e.target.value })} autoComplete="off" />
-            </label>
-            <label>
-              <div>Prefix</div>
-              <input value={form.prefix} onChange={(e) => setForm({ ...form, prefix: e.target.value })} autoComplete="off" />
-            </label>
-            <label>
-              <div>Given Name</div>
-              <input
-                value={form.givenName}
-                onChange={(e) => setForm({ ...form, givenName: e.target.value })}
-                autoComplete="off"
-              />
-            </label>
-            <label>
-              <div>Middle Name</div>
-              <input
-                value={form.middleName}
-                onChange={(e) => setForm({ ...form, middleName: e.target.value })}
-                autoComplete="off"
-              />
-            </label>
-            <label>
-              <div>Family Name</div>
-              <input
-                value={form.familyName}
-                onChange={(e) => setForm({ ...form, familyName: e.target.value })}
-                autoComplete="off"
-              />
-            </label>
-            <label>
-              <div>Suffix</div>
-              <input value={form.suffix} onChange={(e) => setForm({ ...form, suffix: e.target.value })} autoComplete="off" />
-            </label>
-            <label>
-              <div>Nickname</div>
-              <input value={form.nickname} onChange={(e) => setForm({ ...form, nickname: e.target.value })} autoComplete="off" />
-            </label>
-            <label>
-              <div>Phonetic Given Name</div>
-              <input
-                value={form.phoneticGivenName}
-                onChange={(e) => setForm({ ...form, phoneticGivenName: e.target.value })}
-                autoComplete="off"
-              />
-            </label>
-            <label>
-              <div>Phonetic Family Name</div>
-              <input
-                value={form.phoneticFamilyName}
-                onChange={(e) => setForm({ ...form, phoneticFamilyName: e.target.value })}
-                autoComplete="off"
-              />
-            </label>
-            <label>
-              <div>Pronouns</div>
-              <div className="contacts-pronoun-chips">
-                {["He/Him", "She/Her", "They/Them"].map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    className={`contacts-action contacts-pronoun-chip ${form.pronouns === p ? "active" : ""}`}
-                    onClick={() => setForm({ ...form, pronouns: form.pronouns === p ? "" : p })}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-              <input
-                type="text"
-                placeholder="Custom pronouns"
-                value={form.pronouns}
-                onChange={(e) => setForm({ ...form, pronouns: e.target.value })}
-                autoComplete="off"
-              />
-            </label>
-            <label>
-              <div>Organization</div>
-              <input value={form.org} onChange={(e) => setForm({ ...form, org: e.target.value })} autoComplete="off" />
-            </label>
-            <label>
-              <div>Title</div>
-              <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} autoComplete="off" />
-            </label>
-            <label>
-              <div>Department</div>
-              <input value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} autoComplete="off" />
-            </label>
-            <label>
-              <div>Birthday</div>
-              <input type="date" value={form.birthday} onChange={(e) => setForm({ ...form, birthday: e.target.value })} />
-            </label>
-
-            <MultiValueField
-              label="Emails"
-              rows={form.emails}
-              onChange={(emails) => setForm({ ...form, emails })}
-              emptyRow={{ label: "", value: "" }}
-              addLabel="+ Add email"
-              renderRow={(row, update) => (
-                <>
-                  <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
-                    <option value="">Other</option>
-                    <option value="home">Home</option>
-                    <option value="work">Work</option>
-                  </select>
-                  <input
-                    type="email"
-                    placeholder="email@example.com"
-                    value={row.value}
-                    onChange={(e) => update({ value: e.target.value })}
-                    autoComplete="off"
-                  />
-                </>
-              )}
-            />
-
-            <MultiValueField
-              label="Phones"
-              rows={form.phones}
-              onChange={(phones) => setForm({ ...form, phones })}
-              emptyRow={{ label: "", value: "" }}
-              addLabel="+ Add phone"
-              renderRow={(row, update) => (
-                <>
-                  <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
-                    <option value="">Other</option>
-                    <option value="home">Home</option>
-                    <option value="work">Work</option>
-                    <option value="mobile">Mobile</option>
-                    <option value="fax">Fax</option>
-                  </select>
-                  <input
-                    type="text"
-                    placeholder="Phone number"
-                    value={row.value}
-                    onChange={(e) => update({ value: e.target.value })}
-                    autoComplete="off"
-                  />
-                </>
-              )}
-            />
-
-            <div className="contacts-multivalue">
-              <div className="contacts-multivalue-label">Addresses</div>
-              {form.addresses.map((addr, i) => (
-                <div className="contacts-multivalue-row" key={i}>
-                  <div className="contacts-address-row">
-                    <input
-                      type="text"
-                      placeholder="Street"
-                      value={addr.street ?? ""}
-                      onChange={(e) => updateAddress(i, { street: e.target.value })}
-                    />
-                    <select value={addr.label ?? ""} onChange={(e) => updateAddress(i, { label: e.target.value })}>
+              <MultiValueField
+                label="Emails"
+                rows={form.emails}
+                onChange={(emails) => setForm({ ...form, emails })}
+                emptyRow={{ label: "", value: "" }}
+                addLabel="+ Add email"
+                renderRow={(row, update) => (
+                  <>
+                    <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
                       <option value="">Other</option>
                       <option value="home">Home</option>
                       <option value="work">Work</option>
                     </select>
                     <input
-                      type="text"
-                      placeholder="City"
-                      value={addr.city ?? ""}
-                      onChange={(e) => updateAddress(i, { city: e.target.value })}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Region/State"
-                      value={addr.region ?? ""}
-                      onChange={(e) => updateAddress(i, { region: e.target.value })}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Postal code"
-                      value={addr.postalCode ?? ""}
-                      onChange={(e) => updateAddress(i, { postalCode: e.target.value })}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Country"
-                      value={addr.country ?? ""}
-                      onChange={(e) => updateAddress(i, { country: e.target.value })}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    className="contacts-multivalue-remove"
-                    onClick={() => removeAddress(i)}
-                    aria-label="Remove address"
-                  >
-                    &times;
-                  </button>
-                </div>
-              ))}
-              <button type="button" className="contacts-multivalue-add" onClick={addAddress}>
-                + Add address
-              </button>
-            </div>
-
-            <MultiValueField
-              label="IM / Social"
-              rows={form.ims}
-              onChange={(ims) => setForm({ ...form, ims })}
-              emptyRow={{ service: "whatsapp", label: "", value: "" }}
-              addLabel="+ Add IM / social link"
-              renderRow={(row, update) => (
-                <>
-                  <select value={row.service ?? ""} onChange={(e) => update({ service: e.target.value as IMService })}>
-                    {IM_SERVICES.map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
-                  {row.service === "" ? (
-                    <input
-                      type="text"
-                      placeholder="Service name"
-                      value={row.label ?? ""}
-                      onChange={(e) => update({ label: e.target.value })}
-                    />
-                  ) : null}
-                  <input
-                    type="text"
-                    placeholder="Handle / number / URL"
-                    value={row.value}
-                    onChange={(e) => update({ value: e.target.value })}
-                    autoComplete="off"
-                  />
-                </>
-              )}
-            />
-
-            <MultiValueField
-              label="Websites"
-              rows={form.websites}
-              onChange={(websites) => setForm({ ...form, websites })}
-              emptyRow={{ label: "", value: "" }}
-              addLabel="+ Add website"
-              renderRow={(row, update) => (
-                <>
-                  <input
-                    type="text"
-                    placeholder="Label (e.g. homepage)"
-                    value={row.label ?? ""}
-                    onChange={(e) => update({ label: e.target.value })}
-                  />
-                  <input
-                    type="url"
-                    placeholder="https://..."
-                    value={row.value}
-                    onChange={(e) => update({ value: e.target.value })}
-                    autoComplete="off"
-                  />
-                </>
-              )}
-            />
-
-            <MultiValueField
-              label="Relations"
-              rows={form.relations}
-              onChange={(relations) => setForm({ ...form, relations })}
-              emptyRow={{ label: "spouse", name: "" }}
-              addLabel="+ Add relation"
-              renderRow={(row, update) => (
-                <>
-                  <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
-                    {RELATION_LABELS.map((l) => (
-                      <option key={l} value={l}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="text"
-                    placeholder="Name"
-                    value={row.name}
-                    onChange={(e) => update({ name: e.target.value })}
-                    autoComplete="off"
-                  />
-                </>
-              )}
-            />
-
-            <MultiValueField
-              label="Other dates"
-              rows={form.events}
-              onChange={(events) => setForm({ ...form, events })}
-              emptyRow={{ label: "anniversary", date: "" }}
-              addLabel="+ Add date"
-              renderRow={(row, update) => (
-                <>
-                  <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
-                    <option value="anniversary">Anniversary</option>
-                    <option value="other">Other</option>
-                  </select>
-                  <input type="date" value={row.date} onChange={(e) => update({ date: e.target.value })} />
-                </>
-              )}
-            />
-
-            <MultiValueField
-              label="Custom fields"
-              rows={form.customFields}
-              onChange={(customFields) => setForm({ ...form, customFields })}
-              emptyRow={{ label: "", value: "" }}
-              addLabel="+ Add custom field"
-              renderRow={(row, update) => (
-                <>
-                  <input
-                    type="text"
-                    placeholder="Label"
-                    value={row.label}
-                    onChange={(e) => update({ label: e.target.value })}
-                  />
-                  <input
-                    type="text"
-                    placeholder="Value"
-                    value={row.value}
-                    onChange={(e) => update({ value: e.target.value })}
-                  />
-                </>
-              )}
-            />
-
-            <div className="contacts-multivalue">
-              <div className="contacts-multivalue-label">Groups</div>
-              {groups.map((g) =>
-                renamingGroupId === g.id ? (
-                  <div key={g.id} className="contacts-group-row">
-                    <input
-                      type="text"
-                      value={renameGroupName}
-                      onChange={(e) => setRenameGroupName(e.target.value)}
+                      type="email"
+                      placeholder="email@example.com"
+                      value={row.value}
+                      onChange={(e) => update({ value: e.target.value })}
                       autoComplete="off"
                     />
-                    <button
-                      type="button"
-                      className="contacts-action"
-                      onClick={() => void handleRenameGroup(g.id)}
-                      disabled={groupBusyId === g.id || !renameGroupName.trim()}
-                    >
-                      Save
-                    </button>
-                    <button type="button" className="contacts-action" onClick={cancelRenameGroup} disabled={groupBusyId === g.id}>
-                      Cancel
+                  </>
+                )}
+              />
+
+              <MultiValueField
+                label="Phones"
+                rows={form.phones}
+                onChange={(phones) => setForm({ ...form, phones })}
+                emptyRow={{ label: "", value: "" }}
+                addLabel="+ Add phone"
+                renderRow={(row, update) => (
+                  <>
+                    <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
+                      <option value="">Other</option>
+                      <option value="home">Home</option>
+                      <option value="work">Work</option>
+                      <option value="mobile">Mobile</option>
+                      <option value="fax">Fax</option>
+                    </select>
+                    <input
+                      type="text"
+                      placeholder="Phone number"
+                      value={row.value}
+                      onChange={(e) => update({ value: e.target.value })}
+                      autoComplete="off"
+                    />
+                  </>
+                )}
+              />
+
+              <details className="contacts-form-group" open={has(saved.prefix, saved.middleName, saved.suffix, saved.nickname, saved.phoneticGivenName, saved.phoneticFamilyName, saved.pronouns)}>
+                <summary>More name fields<ChevronIcon /></summary>
+                <div className="contacts-form-group-fields">
+                  <label>
+                    <div>Prefix</div>
+                    <input value={form.prefix} onChange={(e) => setForm({ ...form, prefix: e.target.value })} autoComplete="off" />
+                  </label>
+                  <label>
+                    <div>Middle Name</div>
+                    <input
+                      value={form.middleName}
+                      onChange={(e) => setForm({ ...form, middleName: e.target.value })}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label>
+                    <div>Suffix</div>
+                    <input value={form.suffix} onChange={(e) => setForm({ ...form, suffix: e.target.value })} autoComplete="off" />
+                  </label>
+                  <label>
+                    <div>Nickname</div>
+                    <input value={form.nickname} onChange={(e) => setForm({ ...form, nickname: e.target.value })} autoComplete="off" />
+                  </label>
+                  <label>
+                    <div>Phonetic Given Name</div>
+                    <input
+                      value={form.phoneticGivenName}
+                      onChange={(e) => setForm({ ...form, phoneticGivenName: e.target.value })}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label>
+                    <div>Phonetic Family Name</div>
+                    <input
+                      value={form.phoneticFamilyName}
+                      onChange={(e) => setForm({ ...form, phoneticFamilyName: e.target.value })}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label>
+                    <div>Pronouns</div>
+                    <div className="contacts-pronoun-chips">
+                      {["He/Him", "She/Her", "They/Them"].map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          className={`contacts-action contacts-pronoun-chip ${form.pronouns === p ? "active" : ""}`}
+                          onClick={() => setForm({ ...form, pronouns: form.pronouns === p ? "" : p })}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Custom pronouns"
+                      value={form.pronouns}
+                      onChange={(e) => setForm({ ...form, pronouns: e.target.value })}
+                      autoComplete="off"
+                    />
+                  </label>
+                </div>
+              </details>
+              <details className="contacts-form-group" open={has(saved.birthday, saved.events)}>
+                <summary>Birthday and dates<ChevronIcon /></summary>
+                <div className="contacts-form-group-fields">
+                  <label>
+                    <div>Birthday</div>
+                    <input type="date" value={form.birthday} onChange={(e) => setForm({ ...form, birthday: e.target.value })} />
+                  </label>
+                  <MultiValueField
+                    label="Other dates"
+                    rows={form.events}
+                    onChange={(events) => setForm({ ...form, events })}
+                    emptyRow={{ label: "anniversary", date: "" }}
+                    addLabel="+ Add date"
+                    renderRow={(row, update) => (
+                      <>
+                        <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
+                          <option value="anniversary">Anniversary</option>
+                          <option value="other">Other</option>
+                        </select>
+                        <input type="date" value={row.date} onChange={(e) => update({ date: e.target.value })} />
+                      </>
+                    )}
+                  />
+                </div>
+              </details>
+              <details className="contacts-form-group" open={has(saved.addresses, saved.ims, saved.websites, saved.relations)}>
+                <summary>Addresses and links<ChevronIcon /></summary>
+                <div className="contacts-form-group-fields">
+                  <div className="contacts-multivalue">
+                    <div className="contacts-multivalue-label">Addresses</div>
+                    {form.addresses.map((addr, i) => (
+                      <div className="contacts-multivalue-row" key={i}>
+                        <div className="contacts-address-row">
+                          <input
+                            type="text"
+                            placeholder="Street"
+                            value={addr.street ?? ""}
+                            onChange={(e) => updateAddress(i, { street: e.target.value })}
+                          />
+                          <select value={addr.label ?? ""} onChange={(e) => updateAddress(i, { label: e.target.value })}>
+                            <option value="">Other</option>
+                            <option value="home">Home</option>
+                            <option value="work">Work</option>
+                          </select>
+                          <input
+                            type="text"
+                            placeholder="City"
+                            value={addr.city ?? ""}
+                            onChange={(e) => updateAddress(i, { city: e.target.value })}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Region/State"
+                            value={addr.region ?? ""}
+                            onChange={(e) => updateAddress(i, { region: e.target.value })}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Postal code"
+                            value={addr.postalCode ?? ""}
+                            onChange={(e) => updateAddress(i, { postalCode: e.target.value })}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Country"
+                            value={addr.country ?? ""}
+                            onChange={(e) => updateAddress(i, { country: e.target.value })}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="contacts-multivalue-remove"
+                          onClick={() => removeAddress(i)}
+                          aria-label="Remove address"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    ))}
+                    <button type="button" className="contacts-multivalue-add" onClick={addAddress}>
+                      + Add address
                     </button>
                   </div>
-                ) : (
-                  <div key={g.id} className="contacts-group-row">
-                    <label className="contacts-group-checkbox">
+                  <MultiValueField
+                    label="IM / Social"
+                    rows={form.ims}
+                    onChange={(ims) => setForm({ ...form, ims })}
+                    emptyRow={{ service: "whatsapp", label: "", value: "" }}
+                    addLabel="+ Add IM / social link"
+                    renderRow={(row, update) => (
+                      <>
+                        <select value={row.service ?? ""} onChange={(e) => update({ service: e.target.value as IMService })}>
+                          {IM_SERVICES.map((s) => (
+                            <option key={s.value} value={s.value}>
+                              {s.label}
+                            </option>
+                          ))}
+                        </select>
+                        {row.service === "" ? (
+                          <input
+                            type="text"
+                            placeholder="Service name"
+                            value={row.label ?? ""}
+                            onChange={(e) => update({ label: e.target.value })}
+                          />
+                        ) : null}
+                        <input
+                          type="text"
+                          placeholder="Handle / number / URL"
+                          value={row.value}
+                          onChange={(e) => update({ value: e.target.value })}
+                          autoComplete="off"
+                        />
+                      </>
+                    )}
+                  />
+                  <MultiValueField
+                    label="Websites"
+                    rows={form.websites}
+                    onChange={(websites) => setForm({ ...form, websites })}
+                    emptyRow={{ label: "", value: "" }}
+                    addLabel="+ Add website"
+                    renderRow={(row, update) => (
+                      <>
+                        <input
+                          type="text"
+                          placeholder="Label (e.g. homepage)"
+                          value={row.label ?? ""}
+                          onChange={(e) => update({ label: e.target.value })}
+                        />
+                        <input
+                          type="url"
+                          placeholder="https://..."
+                          value={row.value}
+                          onChange={(e) => update({ value: e.target.value })}
+                          autoComplete="off"
+                        />
+                      </>
+                    )}
+                  />
+                  <MultiValueField
+                    label="Relations"
+                    rows={form.relations}
+                    onChange={(relations) => setForm({ ...form, relations })}
+                    emptyRow={{ label: "spouse", name: "" }}
+                    addLabel="+ Add relation"
+                    renderRow={(row, update) => (
+                      <>
+                        <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
+                          {RELATION_LABELS.map((l) => (
+                            <option key={l} value={l}>
+                              {l}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          placeholder="Name"
+                          value={row.name}
+                          onChange={(e) => update({ name: e.target.value })}
+                          autoComplete="off"
+                        />
+                      </>
+                    )}
+                  />
+                </div>
+              </details>
+              <details className="contacts-form-group" open={has(saved.customFields)}>
+                <summary>Custom fields<ChevronIcon /></summary>
+                <div className="contacts-form-group-fields">
+                  <MultiValueField
+                    label="Custom fields"
+                    rows={form.customFields}
+                    onChange={(customFields) => setForm({ ...form, customFields })}
+                    emptyRow={{ label: "", value: "" }}
+                    addLabel="+ Add custom field"
+                    renderRow={(row, update) => (
+                      <>
+                        <input
+                          type="text"
+                          placeholder="Label"
+                          value={row.label}
+                          onChange={(e) => update({ label: e.target.value })}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Value"
+                          value={row.value}
+                          onChange={(e) => update({ value: e.target.value })}
+                        />
+                      </>
+                    )}
+                  />
+                </div>
+              </details>
+              <details className="contacts-form-group" open={has(saved.groupIDs)}>
+                <summary>Groups<ChevronIcon /></summary>
+                <div className="contacts-form-group-fields">
+                  <div className="contacts-multivalue">
+                    <div className="contacts-multivalue-label">Groups</div>
+                    {groups.map((g) =>
+                      renamingGroupId === g.id ? (
+                        <div key={g.id} className="contacts-group-row">
+                          <input
+                            type="text"
+                            value={renameGroupName}
+                            onChange={(e) => setRenameGroupName(e.target.value)}
+                            autoComplete="off"
+                          />
+                          <button
+                            type="button"
+                            className="contacts-action"
+                            onClick={() => void handleRenameGroup(g.id)}
+                            disabled={groupBusyId === g.id || !renameGroupName.trim()}
+                          >
+                            Save
+                          </button>
+                          <button type="button" className="contacts-action" onClick={cancelRenameGroup} disabled={groupBusyId === g.id}>
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div key={g.id} className="contacts-group-row">
+                          <label className="contacts-group-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={form.groupIDs.includes(g.id)}
+                              onChange={() =>
+                                setForm({
+                                  ...form,
+                                  groupIDs: form.groupIDs.includes(g.id)
+                                    ? form.groupIDs.filter((id) => id !== g.id)
+                                    : [...form.groupIDs, g.id]
+                                })
+                              }
+                            />
+                            {g.name}
+                          </label>
+                          <button
+                            type="button"
+                            className="contacts-action"
+                            onClick={() => beginRenameGroup(g)}
+                            disabled={groupBusyId === g.id}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            type="button"
+                            className="contacts-action-danger"
+                            onClick={() => void handleDeleteGroup(g)}
+                            disabled={groupBusyId === g.id}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )
+                    )}
+                    <div className="contacts-multivalue-row">
                       <input
-                        type="checkbox"
-                        checked={form.groupIDs.includes(g.id)}
-                        onChange={() =>
-                          setForm({
-                            ...form,
-                            groupIDs: form.groupIDs.includes(g.id)
-                              ? form.groupIDs.filter((id) => id !== g.id)
-                              : [...form.groupIDs, g.id]
-                          })
-                        }
+                        type="text"
+                        placeholder="New group name"
+                        value={newGroupName}
+                        onChange={(e) => setNewGroupName(e.target.value)}
+                        autoComplete="off"
                       />
-                      {g.name}
-                    </label>
-                    <button
-                      type="button"
-                      className="contacts-action"
-                      onClick={() => beginRenameGroup(g)}
-                      disabled={groupBusyId === g.id}
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      className="contacts-action-danger"
-                      onClick={() => void handleDeleteGroup(g)}
-                      disabled={groupBusyId === g.id}
-                    >
-                      Delete
-                    </button>
+                      <button
+                        type="button"
+                        className="contacts-action"
+                        onClick={() => void handleCreateGroup()}
+                        disabled={creatingGroup || !newGroupName.trim()}
+                      >
+                        + New group
+                      </button>
+                    </div>
                   </div>
-                )
-              )}
-              <div className="contacts-multivalue-row">
-                <input
-                  type="text"
-                  placeholder="New group name"
-                  value={newGroupName}
-                  onChange={(e) => setNewGroupName(e.target.value)}
-                  autoComplete="off"
-                />
-                <button
-                  type="button"
-                  className="contacts-action"
-                  onClick={() => void handleCreateGroup()}
-                  disabled={creatingGroup || !newGroupName.trim()}
-                >
-                  + New group
-                </button>
-              </div>
+                </div>
+              </details>
+              <details className="contacts-form-group" open={has(saved.pgpKey)}>
+                <summary>PGP public key<ChevronIcon /></summary>
+                <div className="contacts-form-group-fields">
+                  <label>
+                    <div>PGP Public Key</div>
+                    <textarea
+                      value={form.pgpKey}
+                      onChange={(e) => setForm({ ...form, pgpKey: e.target.value })}
+                      rows={4}
+                      placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="contacts-action"
+                    onClick={() => void handleLookupPGPKeyserver()}
+                    disabled={pgpLookupBusy}
+                  >
+                    {pgpLookupBusy ? "Looking up…" : "Look up on keyserver"}
+                  </button>
+                  <PGPKeyInfo armoredKey={form.pgpKey} />
+                </div>
+              </details>
+
+              <label>
+                <div>Notes</div>
+                <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} />
+              </label>
+
+              {formError ? (
+                <p className="notice notice-error" role="alert">
+                  {formError}
+                </p>
+              ) : null}
             </div>
 
-            <label>
-              <div>PGP Public Key</div>
-              <textarea
-                value={form.pgpKey}
-                onChange={(e) => setForm({ ...form, pgpKey: e.target.value })}
-                rows={4}
-                placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----"
-              />
-            </label>
-            <button
-              type="button"
-              className="contacts-action"
-              onClick={() => void handleLookupPGPKeyserver()}
-              disabled={pgpLookupBusy}
-            >
-              {pgpLookupBusy ? "Looking up…" : "Look up on keyserver"}
-            </button>
-            <PGPKeyInfo armoredKey={form.pgpKey} />
-
-            <label>
-              <div>Notes</div>
-              <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} />
-            </label>
-
-            {formError ? (
-              <p className="notice notice-error" role="alert">
-                {formError}
-              </p>
-            ) : null}
-            <div className="contacts-form-actions">
-              <button type="submit" className="contacts-create-submit" disabled={saving}>
-                {saving ? "Saving..." : editingUid ? "Save Changes" : "Add Contact"}
-              </button>
+            <footer className="contacts-form-actions">
               <button type="button" className="contacts-action" onClick={closeForm} disabled={saving}>
                 Cancel
               </button>
-            </div>
+              <button type="submit" className="contacts-create-submit" disabled={saving}>
+                {saving ? "Saving..." : editingUid ? "Save Changes" : "Add Contact"}
+              </button>
+            </footer>
           </form>
         </div>
       </dialog>

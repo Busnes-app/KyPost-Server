@@ -95,7 +95,6 @@ export function CaptchaWidget({ provider, siteKey, onToken }: CaptchaWidgetProps
     return () => {
       delete window[callbackName];
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, callbackName]);
 
   if (provider === "pow") {

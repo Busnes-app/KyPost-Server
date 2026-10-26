@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 
@@ -418,5 +418,42 @@ describe("signature status on unencrypted signed mail", () => {
     expect(
       await screen.findByText("signature could not be checked")
     ).toBeDefined();
+  });
+});
+
+describe("reader layout", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEndpoints();
+  });
+
+  it("titles the reader with the subject and leads with Reply", async () => {
+    const user = userEvent.setup();
+    renderReadPage();
+    await user.click(await screen.findByText("Weekly Digest"));
+
+    const dialog = await screen.findByRole("dialog", { name: "Weekly Digest" });
+    expect(within(dialog).getByRole("heading", { level: 2, name: "Weekly Digest" })).toBeDefined();
+    const names = within(dialog).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent);
+    expect(names.slice(0, 4)).toEqual(["Close", "Reply", "Reply All", "Forward"]);
+    expect(names).toEqual(
+      expect.arrayContaining(["Archive", "Snooze", "Mark as Read", "Mark as Spam", "Print", "Show Remote Content", "Delete"])
+    );
+  });
+
+  it("keeps keyboard focus on the remote-content tool when its label flips", async () => {
+    const user = userEvent.setup();
+    renderReadPage();
+    await user.click(await screen.findByText("Weekly Digest"));
+    await waitFor(() => expect(readerBodyHtml()).toContain("[Image Blocked]"));
+
+    const toggle = screen.getByRole("button", { name: "Show Remote Content" });
+    toggle.focus();
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(readerBodyHtml()).toContain(TRACKER));
+    expect(screen.getByRole("button", { name: "Hide Remote Content" })).toBe(toggle);
+    expect(document.activeElement).toBe(toggle);
+    expect(toggle.getAttribute("title")).toBe("Hide Remote Content");
   });
 });

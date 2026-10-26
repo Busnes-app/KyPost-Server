@@ -78,3 +78,9 @@ function installStorage(name: "localStorage" | "sessionStorage"): void {
 
 installStorage("localStorage");
 installStorage("sessionStorage");
+
+// jsdom has no layout, so scrollIntoView is absent. App calls it to keep the
+// current navigation link in view on the phone strip.
+if (typeof Element !== "undefined" && typeof Element.prototype.scrollIntoView !== "function") {
+  Element.prototype.scrollIntoView = () => {};
+}

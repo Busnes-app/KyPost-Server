@@ -153,7 +153,7 @@ export function CardDavClient() {
       </p>
       <div className="config-actions">
         {managed ? null : (
-          <button type="button" onClick={() => void saveCardDAVClient()} disabled={clientBusy}>
+          <button type="button" className="btn-primary" onClick={() => void saveCardDAVClient()} disabled={clientBusy}>
             {clientBusy ? "Saving..." : "Save CardDAV Client"}
           </button>
         )}

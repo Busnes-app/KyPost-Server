@@ -200,7 +200,7 @@ export function SecurityPage() {
   return (
     <section className="panel sec-page">
       <header className="sec-header">
-        <h2>Security</h2>
+        <h1>Security</h1>
         <p>Who can sign in as you, which devices you trust, and who can read your mail.</p>
       </header>
 

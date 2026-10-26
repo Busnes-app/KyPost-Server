@@ -17,7 +17,7 @@ export function AutomationPanel() {
   return (
     <section className="panel">
       <div className="config-header">
-        <h2>Email Labels</h2>
+        <h1>Email Labels</h1>
         <p>How your mail is classified and labelled.</p>
       </div>
       <PanelTabs

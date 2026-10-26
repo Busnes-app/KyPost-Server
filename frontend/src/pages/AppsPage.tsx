@@ -16,7 +16,7 @@ export function AppsPage({ pwa, platforms = CLIENT_PLATFORMS }: { pwa: PwaState;
   return (
     <section className="panel config-page">
       <div className="config-header">
-        <h2>Get KyPost</h2>
+        <h1>Get KyPost</h1>
         <p>Use it here in the browser, or install a client on each of your devices.</p>
       </div>
       <div className="apps-grid">

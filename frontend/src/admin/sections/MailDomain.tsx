@@ -82,6 +82,8 @@ function MailDomainForm() {
     void refresh().catch((e: unknown) => {
       if (live.current && generation === refreshGeneration.current) setError(toErrorMessage(e, "Unable to load mail setup. Reload before changing configuration."));
     });
+    // A generation counter, not a DOM node: cleanup bumps the live value so reads still in flight are dropped.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { live.current = false; refreshGeneration.current++; };
   }, []);
   // target names the domain for domain-set actions; the single-domain view leaves it empty.

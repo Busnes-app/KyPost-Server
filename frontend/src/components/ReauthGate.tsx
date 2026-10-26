@@ -130,7 +130,7 @@ export function ReauthGate({ what, children }: Props) {
     return (
       <section className="panel sec-page">
         <header className="sec-header">
-          <h2>Confirm it is you</h2>
+          <h1>Confirm it is you</h1>
           <p>Unlock {what}.</p>
         </header>
         <div className="sec-card">
@@ -144,7 +144,7 @@ export function ReauthGate({ what, children }: Props) {
             </p>
           ) : null}
           <div className="sec-actions">
-            <button type="button" disabled={busy} onClick={() => void confirmWithSSO()}>
+            <button type="button" className="btn-primary" disabled={busy} onClick={() => void confirmWithSSO()}>
               {busy ? "Confirming…" : "Confirm with KySignOn"}
             </button>
           </div>
@@ -158,7 +158,7 @@ export function ReauthGate({ what, children }: Props) {
     // rather than as a stray form the app dropped the user on.
     <section className="panel sec-page">
       <header className="sec-header">
-        <h2>Confirm it is you</h2>
+        <h1>Confirm it is you</h1>
         <p>Unlock {what}.</p>
       </header>
       <div className="sec-card">

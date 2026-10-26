@@ -270,7 +270,7 @@ export function SystemHealth({ full = false, heading = "Health Dashboard" }: Sys
   return (
     <>
       <div className="health-head">
-        <h2>{heading}</h2>
+        <h1>{heading}</h1>
         <div className="health-controls">
           <label>
             <span>Auto-refresh</span>

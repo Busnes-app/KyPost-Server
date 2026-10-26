@@ -62,9 +62,16 @@ describe("mobile Settings button", () => {
     const user = userEvent.setup();
 
     render(<MemoryRouter initialEntries={["/read"]}><App /></MemoryRouter>);
-    await screen.findByText("Primary inbox");
+    // The first render in this file measures about 1.1s under parallel test load (12 timed
+    // runs), past findBy's 1s default. This asserts mailbox content, not render latency.
+    await screen.findByText("Primary inbox", {}, { timeout: 5000 });
 
     const toggle = screen.getByRole("button", { name: "Toggle settings" });
+    // The current-page link is scrolled into view on load; only the toggle's scroll counts here.
+    scrollIntoView.mockClear();
+    // The phone strip follows sidebar order: the toggle comes after Contacts.
+    const contacts = screen.getByRole("link", { name: "Contacts" });
+    expect(contacts.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Closed to start: no settings link, and the control says so.
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByRole("link", { name: "Appearance" })).toBeNull();
@@ -75,6 +82,6 @@ describe("mobile Settings button", () => {
     // scrolled into view (the fix for the hidden 24vh strip).
     expect(await screen.findByRole("link", { name: "Appearance" })).toBeTruthy();
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(scrollIntoView).toHaveBeenCalled();
+    expect(scrollIntoView.mock.contexts).toContain(document.getElementById("settings-nav-group"));
   });
 });
