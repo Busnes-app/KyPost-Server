@@ -4746,6 +4746,12 @@ pre {
     padding: 10px;
   }
 
+  /* Appearance sits 16px from the screen edge, as in KyCalendar and KyMessages:
+     room for two shared 172px cards at 390px. */
+  .panel.appearance-panel {
+    padding-inline: 6px;
+  }
+
   /* Phone header: brand, New Email and account on one row, then one
      horizontally scrolling strip of every destination in sidebar order. */
   .sidebar {
