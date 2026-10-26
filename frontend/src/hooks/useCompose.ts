@@ -80,6 +80,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   const [composeError, setComposeError] = useState("");
   const [composeSuccess, setComposeSuccess] = useState("");
   const [composeNotice, setComposeNotice] = useState("");
+  const [composeAutosaveFailed, setComposeAutosaveFailed] = useState(false);
   const [composeAttachments, setComposeAttachments] = useState<ComposeAttachment[]>([]);
   const [composeEncrypt, setComposeEncrypt] = useState(false);
   const [composeSign, setComposeSign] = useState(false);
@@ -170,6 +171,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       composeNoticeTimeoutRef.current = null;
     }
     setComposeNotice("");
+    setComposeAutosaveFailed(false);
     setComposeAttachments([]);
     setComposeEncrypt(false);
     setComposeEncryptOverridden(false);
@@ -229,7 +231,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     if (!composeOpen || !userId || composeSnapshotKept.current) {
       return;
     }
-        const timer = setTimeout(() => {
+    let active = true;
+    const timer = setTimeout(() => {
       void saveDraftSnapshot(userId, {
         to: serializeRecipientField(composeTo),
         cc: serializeRecipientField(composeCc),
@@ -239,9 +242,14 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         attachments: composeAttachments,
         mailbox: composeMailbox,
         from: composeFrom
+      }).then((status) => {
+        if (active && status !== "skipped") setComposeAutosaveFailed(status === "failed");
       });
     }, 1000);
-    return () => clearTimeout(timer);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [composeOpen, userId, composeTo, composeCc, composeBcc, composeSubject, composeHtmlBody, composeAttachments, composeMailbox, composeFrom]);
 
   // discardComposeDraft clears both the form and the autosaved snapshot. Used
@@ -905,7 +913,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   }
 
   return {
-    composeOpen, composeSending, composeSavingDraft, composeError, composeSuccess, composeNotice, setComposeNotice,
+    composeOpen, composeSending, composeSavingDraft, composeError, composeSuccess, composeNotice, setComposeNotice, composeAutosaveFailed,
     composeFrom, setComposeFrom, composeFromChoices, sendAsOptions,
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc, addTokenToField,
     composeSubject, setComposeSubject, composeAttachments, removeComposeAttachment, handleAttachmentPick,

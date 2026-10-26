@@ -211,8 +211,8 @@ export function hasContent(draft: Omit<DraftInput, "mailbox" | "from">): boolean
 
 /**
  * saveDraftSnapshot persists a draft, or clears the stored one when the draft
- * is empty. Never throws: a quota error or a browser with storage disabled
- * must not surface as an exception in the middle of typing.
+ * is empty. Reports a failed seal/write so compose can warn without throwing
+ * an exception in the middle of typing. Skipped work preserves that warning.
  *
  * On a client-custody account the fields are sealed to the user's key first.
  * With the vault locked, autosave touches nothing: it can neither seal new
@@ -222,11 +222,11 @@ export function hasContent(draft: Omit<DraftInput, "mailbox" | "from">): boolean
  * the PGP state is still unknown nothing is written either: a plaintext
  * snapshot for what may be a client-custody account is the wrong default.
  */
-export async function saveDraftSnapshot(userId: string, draft: DraftInput): Promise<void> {
-  if (!userId) return;
+export async function saveDraftSnapshot(userId: string, draft: DraftInput): Promise<"saved" | "skipped" | "failed"> {
+  if (!userId) return "skipped";
   const custody = pgpCustody();
-  if (custody === "unknown") return;
-  if (custody === "client" && needsUnlock()) return;
+  if (custody === "unknown") return "skipped";
+  if (custody === "client" && needsUnlock()) return "skipped";
   // Sealing is asynchronous and a clear is not. A clear that lands while
   // the seal is in flight (Save Draft, Trash, logout, all a second after the
   // last keystroke) must win, or the write below resurrects what was just
@@ -236,7 +236,7 @@ export async function saveDraftSnapshot(userId: string, draft: DraftInput): Prom
     if (!hasContent(draft)) {
       bumpClearGeneration(userId);
       draftStorage().removeItem(storageKey(userId));
-      return;
+      return "saved";
     }
     const fields: StoredSnapshot["fields"] = {
       to: draft.to,
@@ -252,15 +252,17 @@ export async function saveDraftSnapshot(userId: string, draft: DraftInput): Prom
     let stored: StoredSnapshot;
     if (custody === "client") {
       const sealed = await sealToSelf(JSON.stringify(fields));
-      if ((clearGeneration.get(userId) ?? 0) !== generation) return;
+      if ((clearGeneration.get(userId) ?? 0) !== generation) return "skipped";
       stored = { version: SNAPSHOT_VERSION, savedAt, sealed };
     } else {
       stored = { version: SNAPSHOT_VERSION, savedAt, fields };
     }
     draftStorage().setItem(storageKey(userId), JSON.stringify(stored));
+    return "saved";
   } catch {
     // Storage full, disabled, or unavailable (private mode). Autosave is a
     // best-effort safety net; losing it must not cost the user their typing.
+    return "failed";
   }
 }
 

@@ -14,7 +14,7 @@ import type { UserMailbox } from "../app/mailboxes";
 /** The compose dialog. All state lives in useCompose, which App owns so pages can open it. */
 export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailboxes: UserMailbox[] }) {
   const {
-    composeOpen, composeSending, composeSavingDraft, composeError, composeSuccess, composeNotice, setComposeNotice,
+    composeOpen, composeSending, composeSavingDraft, composeError, composeSuccess, composeNotice, setComposeNotice, composeAutosaveFailed,
     composeFrom, setComposeFrom, composeFromChoices, sendAsOptions,
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc, addTokenToField,
     composeSubject, setComposeSubject, composeAttachments, removeComposeAttachment, handleAttachmentPick,
@@ -96,6 +96,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
             />
             {composeSuccess ? <p className="notice notice-success" style={{ margin: 0 }}>{composeSuccess}</p> : null}
             {composeNotice ? <p className="notice notice-warning">{composeNotice}</p> : null}
+            <div role="status">{composeAutosaveFailed ? <p className="notice notice-warning">Autosave unavailable. Keep this window open and copy your text somewhere safe before leaving.</p> : null}</div>
 
             <div className="compose-form-grid">
               {mailboxes.length > 1 || composeFromChoices.length > 1 ? (

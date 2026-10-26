@@ -47,6 +47,22 @@ We acknowledge security researchers and community members who help us improve. I
 
 ## Known Limitations & Trust Boundaries
 
+### Browser OpenPGP RSA policy
+
+`frontend/src/lib/pgpClient.ts` supplies a literal 2048-bit RSA minimum to
+OpenPGP.js for encryption, signing and signature verification, including the
+primary key and selected subkeys. This overrides the locked library's 2047-bit
+default. Recipient encryption, Sent copies, drafts and sealed autosaves refuse
+undersized keys; the browser does not omit a weak recipient or downgrade to
+plaintext. Historical decryption and key import/retention remain available;
+old signatures made with undersized RSA keys stay unverified. No private key,
+archive or recovery copy is replaced or discarded by this policy. Retaining
+weak keys for recovery does not make old ciphertext secure against key
+compromise. A failed autosave seal/write leaves the previous snapshot intact
+and displays a warning; newer typing remains only in the open compose window.
+TLS and native-client policies are separate boundaries. See
+[the user-facing key policy](docs/PGP-KEYS.md).
+
 - **Optional Rspamd:** native SMTP filtering gives the operator-local scanner raw MIME and SMTP envelope/peer metadata. A compromised scanner can allow/refuse incoming mail and, through its shared network namespace, reach KyPost's other loopback services; it receives no KyPost filesystem mounts or keys. The pinned nonroot/capability-free, read-only sidecar binds only loopback11333, disables controller/proxy and remote payload/map/AI services, and uses bounded temporary state. SPF/DKIM/DMARC checks make ordinary DNS lookups through the host resolver. False positives at the reject threshold permanently refuse new SMTP mail; outages, unknown/skipped acceptance verdicts and transport errors temporarily refuse it. Rejection never deletes an accepted obligation. Trusted source IP comes from Maddy, while HELO remains sender-asserted. Sender-written authentication/spam headers grant no authority. Raw response text and correspondence are excluded from scanner/application logs. This initial reject-only profile does not implement Junk placement, Bayesian learning, antivirus, PGP-body inspection. The separate hosted pilot is described below. See [operator policy and rollback](docs/RECEIVING_SETUP.md#optional-rspamd-sidecar).
 
 ### Cloudflare receiving pilot

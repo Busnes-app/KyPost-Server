@@ -18,6 +18,15 @@ non-prerelease version.
 
 ## Unreleased
 
+### Security
+
+- Browser OpenPGP operations now enforce a literal RSA-2048 minimum instead
+  of the library's RSA-2047 default. New encryption and signing refuse weak
+  keys, including selected subkeys; weak signatures remain unverified.
+  Imported and retained keys still open historical mail, drafts and autosaves.
+  Compose warns when autosave cannot encrypt or store new typing, preserving
+  the previous snapshot without a plaintext fallback.
+
 ### Added
 
 - **HPKE device envelopes (v4/v5).** The browser seals device enrollments with

@@ -123,6 +123,9 @@ admin grant; the issuer hint states that changing the issuer revokes links.
 
 ## Work Guidance
 
+- Browser OpenPGP encryption, signing and signature trust use `RSA_POLICY` in `lib/pgpClient.ts` (literal RSA modulus minimum 2048 bits, including selected subkeys). Preserve import, complete-ring recovery and historical decrypt access; key retention is not permission for fresh encryption or signing. `pgpClient.keyFloor.test.ts` exercises both refusal and retained-history controls without changing global OpenPGP configuration.
+- `saveDraftSnapshot` reports saved/skipped/failed without throwing during typing. Compose shows a persistent autosave warning after a seal or storage failure, clearing it after a successful save or compose reset; late results from another compose state are ignored. Keep earlier ciphertext and refuse plaintext fallback on a sealing error.
+
 - Ask for the account password with `components/PasswordPrompt.tsx` (`usePasswordPrompt`), never `window.prompt`: the browser prompt shows it in clear text and cannot be filled by a password manager. Components mounted more than once (both `PgpUnlockDialog`s) take input ids from `useId`.
 - The phone layout hides sidebar folder rows whose `data-folder-kind` the quick nav stands in for. `app/mailboxKind.ts` decides the kind from the server's `special` role first, then the alias names mirrored from `backend/internal/adapters/imap/special_folders.go`; change both together. Quick-nav links open the folder of that kind, and the Scheduled heading (`scheduled-heading`) is hidden there too.
 

@@ -79,6 +79,21 @@ user's separate recovery secret, which the server does not receive.
 
 Other PGP boundaries:
 
+- **Browser RSA minimum: 2048 bits.** New recipient encryption, signatures,
+  encrypted Sent copies, drafts and sealed autosaves enforce this minimum on
+  the primary key and selected subkey. A weak recipient causes a refusal;
+  KyPost does not silently leave them out or send plaintext instead. Ask the
+  correspondent for a supported key. Imported and retained private keys stay
+  available to open historical mail, drafts and autosaves, including those
+  encrypted with older RSA keys. A signature made with an undersized RSA key
+  does not receive a verified verdict, even when the text remains readable.
+  Preserve old keys and backups; retaining a key does not make it eligible for
+  new encryption or signing. If autosave cannot seal or store a new draft,
+  compose shows **Autosave unavailable** and preserves the previous snapshot.
+  Keep the window open and copy the current text somewhere safe before leaving.
+  This browser policy does not establish TLS or
+  the independent native clients' policies.
+
 - **Ordinary PGP/MIME does not encrypt subject lines.** Your mail provider sees
   them. KyPost protects the subject inside the encrypted part when
   it can, but the outer header remains.
