@@ -6,6 +6,8 @@ import { applyStoredTheme } from "./theme";
 import "./styles.css";
 import "./ky-ui/tokens.css";
 import "./ky-ui/navigation.css";
+import "./ky-ui/appearance.css";
+import "./ky-ui/appearance-themes.css";
 
 applyStoredTheme();
 

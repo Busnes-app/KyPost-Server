@@ -1,0 +1,106 @@
+// KyPost fleet Appearance captures. Adapted from /tmp/ky-ui-council-post-impl/capture05.mjs:
+// real sign-in (proof-of-work login) as synthetic everyday user, loopback kypost-demo-IMAP fixture
+// (alice@kypost-demo.local), no mocks, no auth/CSRF/CSP bypass, service workers blocked.
+// Theme: no saved choice (OS-following Busnes via context colorScheme) unless a surface picks a named
+// theme through the product's own Appearance control.
+// Usage: node capture-post.mjs <stage e.g. 00-before> <surface,...>
+import { createHash } from 'node:crypto';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+
+const wt = '/home/yoshi/git/busnes.app/kypost-server/.claude/worktrees/fleet-appearance';
+const { chromium } = await import('/home/yoshi/git/busnes.app/KyCalendar/.claude/worktrees/fleet-appearance/web/node_modules/@playwright/test/index.mjs');
+const ORIGIN = 'http://localhost:5696';
+const OUT = `${wt}/docs/ui-fleet-2026-10-26/screenshots`;
+const creds = JSON.parse(await readFile('/tmp/fleet-appearance-scratch/kypost/creds.json', 'utf8'));
+const [stage, surfaceArg] = process.argv.slice(2);
+const VIEWPORTS = process.env.DESKTOP_ONLY ? { desktop: [1280, 900] } : { desktop: [1280, 900], mobile: [390, 844] };
+
+// The fixture drips mail every 15-30 min; reading marks mail read. Restore the seeded state.
+const UNREAD = ['(no body)', 'Re: Sandbox rollout plan', 'Welcome to the KyPost sandbox'];
+async function resetFlags(p) {
+  await p.evaluate(async (unread) => {
+    const csrf = document.cookie.match(/(?:^|; )csrf_token=([^;]*)/)?.[1] ?? '';
+    const body = await (await fetch('/api/inbox?limit=500&bodies=0', { credentials: 'include' })).json();
+    const all = Object.values(body.byTab ?? {}).flat();
+    const items = all.filter((x) => x.atUtc < '2026-10-01');
+    const ids = (want) => items.filter((x) => want(x.subject)).map((x) => x.messageId);
+    const drip = all.filter((x) => x.atUtc >= '2026-10-01').map((x) => x.messageId);
+    for (const [action, messageIds] of [['delete', drip], ['unread', ids((s) => unread.includes(s))], ['read', ids((s) => !unread.includes(s))]]) {
+      if (!messageIds.length) continue;
+      const r = await fetch('/api/inbox/actions', { method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(csrf) },
+        body: JSON.stringify({ action, messageIds, mailbox: 'INBOX' }) });
+      if (!r.ok) throw new Error(`${action} ${r.status}`);
+    }
+  }, UNREAD);
+}
+const inbox = async (p) => {
+  await p.goto(ORIGIN + '/read');
+  await resetFlags(p);
+  await p.goto(ORIGIN + '/read');
+  await p.getByText('Welcome to the KyPost sandbox', { exact: false }).first().waitFor({ timeout: 30000 });
+  await p.waitForTimeout(600);
+};
+const appearance = async (p) => {
+  await p.goto(ORIGIN + '/settings/appearance');
+  await p.getByRole('heading', { level: 1, name: 'Appearance', exact: true }).waitFor();
+  await p.waitForTimeout(400);
+};
+const named = (theme, then) => async (p) => {
+  await appearance(p);
+  await p.getByRole('radio', { name: new RegExp(`^${theme}\\b`) }).check();
+  await p.waitForTimeout(300);
+  if (then) await then(p);
+};
+const SURFACES = {
+  inbox, appearance,
+  'ocean-appearance': named('Ocean'),
+  'ocean-inbox': named('Ocean', inbox),
+  'sky-inbox': named('Sky', inbox),
+  'nord-inbox': named('Nord Slate', inbox),
+};
+
+await mkdir(OUT, { recursive: true });
+const results = [];
+let version = '';
+for (const [vp, [width, height]] of Object.entries(VIEWPORTS)) {
+  for (const scheme of (process.env.SCHEMES ?? 'light,dark').split(',')) {
+    for (const name of surfaceArg.split(',')) {
+      const browser = await chromium.launch();
+      version = browser.version();
+      try {
+        const ctx = await browser.newContext({ viewport: { width, height }, colorScheme: scheme, timezoneId: 'America/New_York', locale: 'en-US', serviceWorkers: 'block' });
+        const page = await ctx.newPage();
+        await page.goto(ORIGIN);
+        await page.getByLabel('Username', { exact: true }).fill(creds.user);
+        await page.getByLabel('Password', { exact: true }).fill(creds.password);
+        await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+        await page.waitForURL('**/read', { timeout: 30000 });
+        await SURFACES[name](page);
+        await page.mouse.move(0, 0);
+        const file = `kypost-${stage}-${name}-${vp}-${scheme}.png`;
+        const buf = await page.screenshot({ path: `${OUT}/${file}` });
+        const m = await page.evaluate(() => ({
+          overflow_px: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          h1: [...document.querySelectorAll('h1')].map((h) => h.textContent.trim()),
+          data_theme: document.documentElement.dataset.theme ?? null,
+          checked: document.querySelector('.ky-appearance-radio:checked')?.value ?? null,
+          radios: document.querySelectorAll('.ky-appearance-radio').length,
+          inline_style_attrs: document.querySelectorAll('.ky-appearance [style]:not([style=""])').length,
+          empty_style_attrs: document.querySelectorAll('.ky-appearance [style=""]').length,
+        }));
+        results.push({ file, sha256: createHash('sha256').update(buf).digest('hex'), surface: name, user: 'everyday', os_scheme: scheme, viewport: `${width}x${height}`, ...m });
+        console.log(file, JSON.stringify(m));
+      } finally { await browser.close(); }
+    }
+  }
+}
+const binary = `/tmp/fleet-appearance-scratch/kypost/server-${process.env.BUILD ?? stage.split('-')[1]}`;
+await writeFile(`/tmp/fleet-appearance-scratch/kypost/captures-${stage}-${Date.now()}.json`, JSON.stringify({
+  product: 'kypost', stage, captured: new Date().toISOString(), browser: `chromium ${version}`, playwright: '1.64.1',
+  timezone: 'America/New_York', locale: 'en-US', origin: ORIGIN, binary,
+  binary_sha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
+  fixture: 'scratch KyPost (copied synthetic council data), everyday user alex; loopback kypost-demo-IMAP alice@kypost-demo.local (TLS, fixture CA via SSL_CERT_DIR); seeded mail restored through /api/inbox/actions; no Ollama',
+  files: results,
+}, null, 2) + '\n');
+console.log(`wrote ${results.length}`);

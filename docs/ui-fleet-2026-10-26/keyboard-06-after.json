@@ -1,0 +1,30 @@
+{
+  "checked_at": "2026-10-26T11:44:58.856Z",
+  "viewport": "390x844",
+  "light": {
+    "system_checked_initially": true,
+    "arrow_selects_next": true,
+    "arrow_moves_focus": true,
+    "focus_outline": "solid",
+    "saved": "Sky",
+    "sky_checked_after_reload": true,
+    "bg_after_reload": "rgb(223, 241, 255)",
+    "columns": "173px 173px",
+    "grid_left_px": 16,
+    "overflow_px": 0,
+    "saved_after_system": "system"
+  },
+  "dark": {
+    "system_checked_initially": true,
+    "arrow_selects_next": true,
+    "arrow_moves_focus": true,
+    "focus_outline": "solid",
+    "saved": "Sky",
+    "sky_checked_after_reload": true,
+    "bg_after_reload": "rgb(223, 241, 255)",
+    "columns": "173px 173px",
+    "grid_left_px": 16,
+    "overflow_px": 0,
+    "saved_after_system": "system"
+  }
+}

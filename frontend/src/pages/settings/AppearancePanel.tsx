@@ -2,11 +2,9 @@ import { Appearance } from "../../settings/sections/Appearance";
 
 export function AppearancePanel() {
   return (
-    <section className="panel">
-      <div className="config-header">
-        <h1>Appearance</h1>
-        <p>Pick a theme. It applies straight away and is remembered by this browser only.</p>
-      </div>
+    <section className="panel appearance-panel">
+      <h1>Appearance</h1>
+      <p className="ky-appearance-description">Pick a theme. It applies straight away and is saved in this browser only. Match system follows your device’s light or dark setting.</p>
       <div id="theme"><Appearance /></div>
     </section>
   );
