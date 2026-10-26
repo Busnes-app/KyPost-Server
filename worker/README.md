@@ -41,6 +41,13 @@ self-hosted Go server  --(Bearer per-server key)-->  this Worker  --(service acc
    ```
    There is no `ADMIN_SECRET`: the relay has no admin API. See
    [Managing keys](#managing-keys).
+
+   The RSA private key must have an actual modulus of at least **2048 bits**.
+   An undersized key is refused before signing a new assertion or contacting
+   Google's token endpoint. Replace it with a supported service-account key;
+   valid cached access tokens keep working until their normal refresh. No key
+   material is included in the refusal. This signing-key rule is separate from
+   Cloudflare's hosted TLS policy.
 4. Deploy:
    ```sh
    npx wrangler deploy

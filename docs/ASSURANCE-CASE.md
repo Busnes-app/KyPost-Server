@@ -68,6 +68,11 @@ Out of scope: an attacker who already runs code in the container or holds both t
 6. **Self-hosted servers → push relays.** The relays store only the SHA-256 of each API key, and
    the first key to deliver to a device token owns it; another key gets `403`
    (`worker/README.md#token-pinning`, `push-relay-shared/push-relay-common.ts`).
+   New FCM service-account assertions require a literal RSA-2048 minimum
+   (`worker/src/fcm.ts`), checked from the public modulus rather than workerd's
+   byte-rounded metadata. The native runtime regression verifies undersized-key
+   refusal before provider requests, strong signing and cached-token continuity
+   (`worker/src/fcm-workerd-key-floor.test.mts`); hosted TLS policy is separate.
 
 ## Secure design principles applied
 

@@ -10,6 +10,8 @@ The Cloudflare Workers that deliver KyPost push notifications for every self-hos
 
 ## Local Contracts
 
+- FCM signs new service-account assertions only with an actual RSA modulus of at least 2048 bits. `worker/src/fcm.ts` measures the exported JWK public modulus because workerd byte-rounds `algorithm.modulusLength`, then reimports a non-extractable signing key. Keep errors credential-free and valid cached-token delivery available; this policy does not establish hosted TLS policy.
+
 - Deployed by the maintainer, not by self-hosters. `worker/wrangler.toml` and `worker-apns/wrangler.toml` are gitignored; the `.example` files are the checked-in truth.
 - Secrets (`FCM_*`, `APNS_*`) are wrangler secrets. Never in a `.toml`, never logged, never returned in a response body.
 - `compatibility_date` is bumped deliberately, not left where it landed. It sat over a year stale once already.
@@ -38,6 +40,12 @@ The Cloudflare Workers that deliver KyPost push notifications for every self-hos
 
 ## Verification
 
+`worker/src/fcm-workerd-key-floor.test.mts` runs actual provider signing under
+the workerd version installed by `npm ci` in `worker/`. Its explicit provider
+service verifies JWT signatures and counts requests without external networking.
+Do not replace literal undersized-key controls with byte-rounded metadata or
+Node-only crypto. The existing discovery command runs it in CI.
+
 ```sh
 cd worker && npm ci && npm run typecheck       # and the same in worker-apns/
 ./scripts/test-relays.sh                       # or `npm test` in either Worker package
@@ -48,4 +56,4 @@ cd worker && npm ci && npm run typecheck       # and the same in worker-apns/
 `*.test.mts` under `push-relay-shared/`, `worker/src/`, and `worker-apns/src/`,
 pruning `node_modules` (which is why `node --test <dir>` cannot be used directly),
 and fails if it finds none. A new test file therefore runs without anyone editing
-a list. Both run in CI as the `ci-relay` job. The test uses node's own runner and type stripping (Node >= 22.18) with no dependencies; it stubs `cloudflare:workers` through a module hook so the Durable Object can run outside workerd. The `.mts` extension is load-bearing: there is no `package.json` above this directory, so a `.ts` file would be ESM only by Node's syntax detection, and adding one later would silently turn the test into a parse error.
+a list. Both run in CI as the `ci-relay` job. The portable tests use node's own runner and type stripping (Node >= 22.18), with `cloudflare:workers` stubbed through a module hook so the Durable Object runs outside workerd. The FCM key-floor test is the native-runtime exception described above. The `.mts` extension is load-bearing: there is no `package.json` above this directory, so a `.ts` file would be ESM only by Node's syntax detection, and adding one later would silently turn the test into a parse error.

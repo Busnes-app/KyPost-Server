@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Canonical relay test command: the Workers and the code they share.
 #
-# There is no test framework and no install step here — node's own runner and
-# type stripping are enough. What this script exists for is discovery. CI used
+# Node's own runner and type stripping execute the suites; the native FCM
+# key-floor fixture also needs the locked workerd from `npm ci` in worker/.
+# What this script exists for is discovery. CI used
 # to list the eight test files by hand, which meant a new test file ran only if
 # whoever added it also remembered to edit the workflow; a forgotten one is
 # indistinguishable from a passing one.
