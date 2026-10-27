@@ -5757,11 +5757,12 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 }
 
 /* Keep repeated controls on one type scale and native selection targets usable. */
-.contacts-header-actions > button, .contacts-form-card button { font-size: var(--ky-type-nav); }
+.contacts-header-actions > button, .contacts-form-card button { min-height: var(--ky-control-size); font-size: var(--ky-type-nav); }
 .inbox-select-hit, .contacts-select-hit { min-height: var(--ky-control-size); min-width: var(--ky-control-size); }
 .inbox-checkbox, .contacts-select-hit input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 .auth-captcha:has(.auth-pow) { justify-content: flex-start; min-height: 24px; }
 .auth-pow { min-height: 24px; font-size: var(--ky-type-meta); }
 @media (max-width: 600px) {
   .contacts-form-head { padding-inline: 16px; }
+  .panel.appearance-panel .ky-appearance-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); }
 }
