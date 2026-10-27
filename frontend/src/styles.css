@@ -4751,12 +4751,6 @@ pre {
     padding: 10px;
   }
 
-  /* Appearance sits 16px from the screen edge, as in KyCalendar and KyMessages:
-     room for two shared 172px cards at 390px. */
-  .panel.appearance-panel {
-    padding-inline: 6px;
-  }
-
   /* Phone header: brand, New Email and account on one row, then one
      horizontally scrolling strip of every destination in sidebar order. */
   .sidebar {
@@ -5567,9 +5561,8 @@ pre {
   }
 }
 
-/* Self-hosted proof-of-work security check. Sized to match the fixed slot
-   LoginPage reserves for the third-party widgets (.auth-captcha), so
-   switching CAPTCHA_PROVIDER does not move the Sign in button. */
+/* Self-hosted proof of work renders immediately and needs only a compact
+   status row. Third-party widgets keep their reserved loading slot. */
 .auth-pow {
   display: flex;
   flex-direction: column;
@@ -5761,4 +5754,15 @@ html:root:not([data-theme]):not([data-ky-theme]) {
   .email-reader-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .email-reader-reply { display: contents; }
   .email-reader-actions > button, .email-reader-reply button { width: 100%; }
+}
+
+/* Keep repeated controls on one type scale and native selection targets usable. */
+.contacts-header-actions > button, .contacts-form-card button { min-height: var(--ky-control-size); font-size: var(--ky-type-nav); }
+.inbox-select-hit, .contacts-select-hit { min-height: var(--ky-control-size); min-width: var(--ky-control-size); }
+.inbox-checkbox, .contacts-select-hit input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.auth-captcha:has(.auth-pow) { justify-content: flex-start; min-height: 24px; }
+.auth-pow { min-height: 24px; font-size: var(--ky-type-meta); }
+@media (max-width: 600px) {
+  .contacts-form-head { padding-inline: 16px; }
+  .panel.appearance-panel .ky-appearance-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); }
 }

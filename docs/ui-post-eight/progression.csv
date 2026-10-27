@@ -1,4 +1,5 @@
 Round,Claude exact,Sol exact,Historical combined exact (not gate),Opus rounded,Accepted by current rule
 1,2169/320,1209/160,4587/640,6.8,False
 2,1221/160,42/5,513/64,7.6,False
-3,Pending,Pending,Pending,Pending,Pending
+3,631/80,277/32,2647/320,7.9,False
+4,1277/160,1369/160,1323/160,8.0,True

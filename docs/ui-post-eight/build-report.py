@@ -7,6 +7,7 @@ from xml.sax.saxutils import escape
 import csv, hashlib, json, re, struct, zipfile
 import xml.etree.ElementTree as ET
 P=Path(__file__).resolve().parent
+delivery=json.loads((P/'delivery.json').read_text()) if (P/'delivery.json').exists() else {}
 WEIGHTS=dict(hierarchy='.20',typography='.15',density_layout='.20',color='.15',visible_affordances='.15',coherence='.15')
 BRAND=['palette_tokens','type_geometry','shell','accent_discipline','suite_cohesion']
 def rounded(n):return str((Decimal(n.numerator)/Decimal(n.denominator)).quantize(Decimal('.1'),rounding=ROUND_HALF_UP))
@@ -29,7 +30,11 @@ for path in sorted(P.glob('*-round*.json')):
  for name,f in files.items():
   assert all(f[k]==pins[name][k] for k in ['sha256','width','height']);assert all(type(f['scores'][k])is int and 0<=f['scores'][k]<=10 for k in WEIGHTS)
   total=Fraction(rounded(sum(Fraction(v)*f['scores'][k]for k,v in WEIGHTS.items())));assert total==Fraction(str(f['total']))
-  values=[f['ky_fit']['scores'][k]for k in BRAND if f['ky_fit']['scores'][k]not in ['N/A',None]];assert values and all(type(v)is int and 0<=v<=10 for v in values);brand=sum(map(Fraction,values))/len(values)
+  brand_scores=f['ky_fit']['scores']if isinstance(f['ky_fit'],dict)else f.get('brand_scores',f.get('brand'))
+  assert isinstance(brand_scores,dict) and set(brand_scores)==set(BRAND)
+  values=[brand_scores[k]for k in BRAND if brand_scores[k]not in ['N/A',None]];assert values and all(type(v)is int and 0<=v<=10 for v in values);brand=sum(map(Fraction,values))/len(values)
+  if not isinstance(f['ky_fit'],dict):
+   shown=Decimal(str(f['ky_fit']));assert (Decimal(brand.numerator)/Decimal(brand.denominator)).quantize(Decimal(1).scaleb(shown.as_tuple().exponent),rounding=ROUND_HALF_UP)==shown
   if not f.get('duplicate_of'):groups[f['cohort']].append(total)
   scores.append([num,who,name,f['cohort'],*[f['scores'][k]for k in WEIGHTS],str(total),str(brand),hashlib.sha256(path.read_bytes()).hexdigest()])
  satisfied=r.get('verdict',{}).get('satisfied');means={c:sum(v)/len(v)for c,v in groups.items()}
@@ -38,6 +43,7 @@ for path in sorted(P.glob('*-round*.json')):
 numbers={n for _,n in reports}
 if (P/'manifest-03-after.json').exists():numbers.add(2)
 if (P/'manifest-04-after.json').exists():numbers.add(3)
+if (P/'manifest-05-after.json').exists():numbers.add(4)
 for num in sorted(numbers):
  a,b=reports.get(('opus',num)),reports.get(('sol',num))
  if a and b:
@@ -51,11 +57,13 @@ for f in sorted(P.glob('round*-audit.json')):
  for n,h in audit.get('raw_reports',{}).items():assert hashlib.sha256((P/n).read_bytes()).hexdigest()==h
  notes.append([f.name,json.dumps(audit)])
 sheets={'Scores':scores,'Cohorts':cohorts,'Progression':progression,'Spreads':spreads,'Notes':notes}
-if (P/'delivery.json').exists():sheets['Delivery']=[['Item','Value'],*[[k,str(v)]for k,v in json.loads((P/'delivery.json').read_text()).items()]]
+if delivery:sheets['Delivery']=[['Item','Value'],*[[k,str(v)]for k,v in delivery.items()]]
 for name,rows in sheets.items():
  with (P/(name.lower()+'.csv')).open('w',newline='')as f:csv.writer(f,lineterminator='\n').writerows(rows)
 lines=['# KyPost Council score history','','Coverage summaries are not rankings. Raw originals and independent satisfaction remain unchanged. The owner clarified the gate: use Opus overall only; the previous R2 combined-score acceptance is superseded.','','| Round | Claude | Sol | Historical combined (not gate) | Opus rounded | Accepted by current rule | Gemini |','| --- | ---: | ---: | ---: | ---: | --- | --- |']
-for row in progression[1:]:lines.append('| '+' | '.join(map(str,row))+' | Unused |')
+for row in progression[1:]:
+ gemini=delivery.get('gemini','Unused') if row[0]==max(numbers) else 'Unused'
+ lines.append('| '+' | '.join(map(str,row))+' | '+gemini+' |')
 lines+=['','R1 includes the original four mid-animation login captures. Supplemental settled login before-views are unscored; do not call a capture correction product improvement.','','| Round | Reviewer | Cohort | n | Sum | Exact mean | Display | Satisfied |','| --- | --- | --- | ---: | ---: | ---: | ---: | --- |']
 for row in cohorts[1:]:lines.append('| '+' | '.join(map(str,row))+' |')
 (P/'COUNCIL.md').write_text('\n'.join(lines)+'\n')

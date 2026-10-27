@@ -1,10 +1,10 @@
 {
-  "source_ui": "2ff40cc2394d1bab8cf14935ba6b219a5f28b8f1",
+  "source_ui": "558761afa10560a5ba9522e6d7603dbf2a17ccfd",
   "unit_tests": {
     "status": "pass",
     "count": 1235,
     "files": 111,
-    "evidence": "checks/r3-web-unit.txt"
+    "evidence": "checks/r4-web-unit.txt"
   },
   "typecheck": "pass",
   "lint": "pass, zero errors/warnings",
@@ -13,9 +13,9 @@
   "browser": {
     "status": "pass",
     "cases": 4,
-    "source": "2ff40cc2",
-    "evidence": "checks/r3-browser.json",
-    "scope": "Busnes light/dark \u00d7 desktop/phone: settled login label/border/success contrast, native menu geometry/keyboard/Escape/focus, per-message remote-content toggle identity/focus, read/unread state in place, raw mono and details disclosure, compose editor/footer and icon geometry, contact actions and named form/focus. Additional checks: phone bulk actions fit without horizontal overflow, uniform reader button type, compose toolbar/editor edges and Space Grotesk picker.",
+    "source": "558761afa10560a5ba9522e6d7603dbf2a17ccfd",
+    "evidence": "checks/r4-browser.json",
+    "scope": "Busnes light/dark × desktop/phone: settled login label/border/success contrast, native menu geometry/keyboard/Escape/focus, per-message remote-content toggle identity/focus, read/unread state in place, raw mono and details disclosure, compose editor/footer and icon geometry, contact actions and named form/focus. Additional checks: phone bulk actions fit without horizontal overflow, uniform reader button type, compose toolbar/editor edges and Space Grotesk picker. Native select-all mixed state and every inbox checkbox label40px target are exercised. Retained2column phone Appearance and min40px NewContact are checked.",
     "contrast_minima": {
       "label": 12.6708,
       "field_border": 3.4768,
@@ -24,7 +24,7 @@
   },
   "impeccable": "Four existing findings audited; owner-pinned font retained, existing print/swipe paths preserved, uncaptured auth-status border deferred. No zero-findings claim.",
   "visual": {
-    "scoring_manifest": "manifest-04-after.json",
+    "scoring_manifest": "manifest-06-after.json",
     "originals": 32,
     "page_overflows": 0,
     "duplicate_comparisons": 240,
@@ -32,15 +32,18 @@
     "parent_individually_viewed": 32,
     "superseded": "manifest-02-after.json",
     "login_before": "Unscored settled stage01; raw scored stage00 fade artifact preserved.",
-    "prior_round": "manifest-03-after.json"
+    "prior_round": "manifest-04-after.json",
+    "initial_round4": "manifest-05-after.json, superseded: parent found37px contact controls and collapsed one-column phone Appearance after20px gutter",
+    "parent_individually_viewed_initial_round4": 32,
+    "superseded_round4": "manifest-05-after.json"
   },
-  "full_required": "Follow-up final-head hosted CI and autonomous security review pending. Prior PR489 cleared head0cc5d31d with truncated reviewer input disclosed.",
+  "full_required": "PR491 final-head whole-repository hostedCI and authenticated security verdict pending; source558761af frontend checks remain valid (no product/dependency/config changes).",
   "limitations": [
     "Everyday-user initial views only; no complete administrator/native/provisioning/other-role matrix.",
     "Full keyboard/focus/contrast/state/assistive-tech coverage and competitors remain untested.",
     "Native popovers require the modern browsers exercised here; Safari/WebKit not exercised."
   ],
-  "gate": "Reopened. Opus R2 overall1221/160 rounds7.6 and fails clarified gate; R3pending. Previous Opus/Sol mean is historical only. Gemini unused.",
+  "gate": "R4 Opus1277/160 =7.98125 rounds8.0, visual progression accepted. Sol1369/160 =8.55625. Both genuinely satisfied; Gemini unavailable due to quota; no score/findings and no retry.",
   "mySlop": "Known401; no board post succeeded; no unchanged-credential retry.",
   "merge_deploy": "Not authorized"
 }

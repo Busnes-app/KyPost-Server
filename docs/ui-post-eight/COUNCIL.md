@@ -6,7 +6,8 @@ Coverage summaries are not rankings. Raw originals and independent satisfaction 
 | --- | ---: | ---: | ---: | ---: | --- | --- |
 | 1 | 2169/320 | 1209/160 | 4587/640 | 6.8 | False | Unused |
 | 2 | 1221/160 | 42/5 | 513/64 | 7.6 | False | Unused |
-| 3 | Pending | Pending | Pending | Pending | Pending | Unused |
+| 3 | 631/80 | 277/32 | 2647/320 | 7.9 | False | Unused |
+| 4 | 1277/160 | 1369/160 | 1323/160 | 8.0 | True | Unavailable: quota reached; no score |
 
 R1 includes the original four mid-animation login captures. Supplemental settled login before-views are unscored; do not call a capture correction product improvement.
 
@@ -26,6 +27,20 @@ R1 includes the original four mid-animation login captures. Supplemental settled
 | 2 | opus | mail-list | 8 | 309/5 | 309/40 | 7.7 | False |
 | 2 | opus | auth | 4 | 156/5 | 39/5 | 7.8 | False |
 | 2 | opus | mail-read | 4 | 147/5 | 147/20 | 7.4 | False |
+| 3 | opus | mail-list | 8 | 62 | 31/4 | 7.8 | False |
+| 3 | opus | mail-read | 4 | 166/5 | 83/10 | 8.3 | False |
+| 3 | opus | contacts-list | 4 | 152/5 | 38/5 | 7.6 | False |
+| 3 | opus | contact-editor | 4 | 30 | 15/2 | 7.5 | False |
+| 3 | opus | settings | 4 | 158/5 | 79/10 | 7.9 | False |
+| 3 | opus | compose | 4 | 162/5 | 81/10 | 8.1 | False |
+| 3 | opus | auth | 4 | 164/5 | 41/5 | 8.2 | False |
+| 4 | opus | settings | 4 | 32 | 8 | 8.0 | True |
+| 4 | opus | compose | 4 | 158/5 | 79/10 | 7.9 | True |
+| 4 | opus | contact-editor | 4 | 32 | 8 | 8.0 | True |
+| 4 | opus | contacts-list | 4 | 154/5 | 77/10 | 7.7 | True |
+| 4 | opus | mail-list | 8 | 64 | 8 | 8.0 | True |
+| 4 | opus | auth | 4 | 168/5 | 42/5 | 8.4 | True |
+| 4 | opus | mail-read | 4 | 157/5 | 157/20 | 7.9 | True |
 | 1 | sol | settings | 4 | 167/5 | 167/20 | 8.4 | False |
 | 1 | sol | compose | 4 | 32 | 8 | 8.0 | False |
 | 1 | sol | contact-editor | 4 | 30 | 15/2 | 7.5 | False |
@@ -40,3 +55,17 @@ R1 includes the original four mid-animation login captures. Supplemental settled
 | 2 | sol | mail-list | 8 | 67 | 67/8 | 8.4 | True |
 | 2 | sol | auth | 4 | 174/5 | 87/10 | 8.7 | True |
 | 2 | sol | mail-read | 4 | 171/5 | 171/20 | 8.6 | True |
+| 3 | sol | settings | 4 | 173/5 | 173/20 | 8.7 | True |
+| 3 | sol | compose | 4 | 169/5 | 169/20 | 8.5 | True |
+| 3 | sol | contact-editor | 4 | 174/5 | 87/10 | 8.7 | True |
+| 3 | sol | contacts-list | 4 | 174/5 | 87/10 | 8.7 | True |
+| 3 | sol | mail-list | 8 | 344/5 | 43/5 | 8.6 | True |
+| 3 | sol | auth | 4 | 176/5 | 44/5 | 8.8 | True |
+| 3 | sol | mail-read | 4 | 35 | 35/4 | 8.8 | True |
+| 4 | sol | settings | 4 | 171/5 | 171/20 | 8.6 | True |
+| 4 | sol | compose | 4 | 164/5 | 41/5 | 8.2 | True |
+| 4 | sol | contact-editor | 4 | 168/5 | 42/5 | 8.4 | True |
+| 4 | sol | contacts-list | 4 | 167/5 | 167/20 | 8.4 | True |
+| 4 | sol | mail-list | 8 | 344/5 | 43/5 | 8.6 | True |
+| 4 | sol | auth | 4 | 36 | 9 | 9.0 | True |
+| 4 | sol | mail-read | 4 | 35 | 35/4 | 8.8 | True |

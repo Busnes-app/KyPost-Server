@@ -1,0 +1,14 @@
+{
+  "reviewer": "Gemini4Argon",
+  "provider": "antigravity",
+  "model": "gemini-4-argon-high",
+  "round": 4,
+  "task_id": "node:delegated-task:command%3Amcp%3A27617469-e7a2-4680-8e45-a055c47cd9fd%3Adelegate-task%3Akypost-final-advisory-gemini-r4-20261027",
+  "invoked_after_both_primaries_genuinely_satisfied": true,
+  "transport_status": "completed",
+  "review_status": "unavailable",
+  "raw_response": "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 6 days, 4 hours.",
+  "score": null,
+  "findings": [],
+  "audit": "No substantive review returned; no visual claims to audit and no score to report. No retry or substitution. Opus-only accepted progression unchanged."
+}
