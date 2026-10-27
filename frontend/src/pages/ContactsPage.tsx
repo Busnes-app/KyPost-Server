@@ -703,6 +703,7 @@ export function ContactsPage() {
       <dialog
         ref={contactFormDialogRef}
         className="contact-details-backdrop"
+        aria-labelledby="contact-form-title"
         onCancel={(event) => {
           event.preventDefault();
           closeForm();
