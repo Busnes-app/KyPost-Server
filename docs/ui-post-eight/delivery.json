@@ -1,0 +1,9 @@
+{
+  "repository": "Busnes-app/KyPost-Server",
+  "url": "https://github.com/Busnes-app/KyPost-Server/pull/489",
+  "branch": "ui/post-eight",
+  "ui_source": "50bbbff5",
+  "evidence": "b6852d8f",
+  "status": "open; whole-repository current-head CI/security and R2 primary scores pending",
+  "merge_deploy_authorized": false
+}

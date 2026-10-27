@@ -50,6 +50,7 @@ for f in sorted(P.glob('round*-audit.json')):
  for n,h in audit.get('raw_reports',{}).items():assert hashlib.sha256((P/n).read_bytes()).hexdigest()==h
  notes.append([f.name,json.dumps(audit)])
 sheets={'Scores':scores,'Cohorts':cohorts,'Progression':progression,'Spreads':spreads,'Notes':notes}
+if (P/'delivery.json').exists():sheets['Delivery']=[['Item','Value'],*[[k,str(v)]for k,v in json.loads((P/'delivery.json').read_text()).items()]]
 for name,rows in sheets.items():
  with (P/(name.lower()+'.csv')).open('w',newline='')as f:csv.writer(f,lineterminator='\n').writerows(rows)
 lines=['# KyPost Council score history','','Coverage summaries are not rankings. Raw originals and independent satisfaction remain unchanged.','','| Round | Claude | Sol | Combined exact | Rounded progression | Accepted | Gemini |','| --- | ---: | ---: | ---: | ---: | --- | --- |']
