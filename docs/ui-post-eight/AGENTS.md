@@ -26,7 +26,8 @@ Preserve staged KyPost web screenshots, independent reviews and evidence for pro
 ## Verification
 
 - Capture driver uses real sign-in and records source, browser, conditions, image hashes and dimensions.
-- Verify every original against manifest/inventory, measure duplicate comparisons and recompute all scores before publishing.
+- `python3 build-report.py` verifies originals, exact weighted scores/progression and workbook XML before exporting CSV/XLSX.
+- Capture waits for finite animations. Stage00 login originals remain scored/frozen; stage01 settled login before-views are supplemental unscored evidence from unchanged product source.
 
 ## Child DOX Index
 

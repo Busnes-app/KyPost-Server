@@ -1,0 +1,26 @@
+# KyPost Council score history
+
+Coverage summaries are not rankings. Raw originals and independent satisfaction remain unchanged.
+
+| Round | Claude | Sol | Combined exact | Rounded progression | Accepted | Gemini |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1 | 2169/320 | 1209/160 | 4587/640 | 7.2 | False | Unused |
+
+R1 includes the original four mid-animation login captures. Supplemental settled login before-views are unscored; do not call a capture correction product improvement.
+
+| Round | Reviewer | Cohort | n | Sum | Exact mean | Display | Satisfied |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| 1 | opus | settings | 4 | 151/5 | 151/20 | 7.6 | False |
+| 1 | opus | compose | 4 | 132/5 | 33/5 | 6.6 | False |
+| 1 | opus | contact-editor | 4 | 30 | 15/2 | 7.5 | False |
+| 1 | opus | contacts-list | 4 | 28 | 7 | 7.0 | False |
+| 1 | opus | mail-list | 8 | 283/5 | 283/40 | 7.1 | False |
+| 1 | opus | auth | 4 | 203/10 | 203/40 | 5.1 | False |
+| 1 | opus | mail-read | 4 | 127/5 | 127/20 | 6.4 | False |
+| 1 | sol | settings | 4 | 167/5 | 167/20 | 8.4 | False |
+| 1 | sol | compose | 4 | 32 | 8 | 8.0 | False |
+| 1 | sol | contact-editor | 4 | 30 | 15/2 | 7.5 | False |
+| 1 | sol | contacts-list | 4 | 157/5 | 157/20 | 7.9 | False |
+| 1 | sol | mail-list | 8 | 316/5 | 79/10 | 7.9 | False |
+| 1 | sol | auth | 4 | 114/5 | 57/10 | 5.7 | False |
+| 1 | sol | mail-read | 4 | 29 | 29/4 | 7.3 | False |

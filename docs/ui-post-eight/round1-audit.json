@@ -1,0 +1,31 @@
+{
+  "round": 1,
+  "raw_reports": {
+    "opus-round1.json": "ea11787a0817c5c1b3c74871a958bfe19fc43ab7c236470eb436e8a31d2cbc1e",
+    "opus-round1.md": "e6dc7a9000a54776761988d52227b020a8288b28db5ef55b25fa1acfc7716d90",
+    "sol-round1.json": "be79dd7ec004fb4a729f08151c60a54b621a4faf641b1e455b2dd0871fb611cb",
+    "sol-round1.md": "501cbc2e7960abc9ed4da6697952f0821ee763ec402144e83e6fe61f6c89baa1"
+  },
+  "combined_progression": {
+    "claude": "2169/320",
+    "sol": "1209/160",
+    "combined_exact": "4587/640",
+    "rounded": "7.2",
+    "accepted": false
+  },
+  "integrity": "Both32-original memberships/image hashes/dimensions and per-file weighted totals validated;240 same-size comparisons with0near duplicates.",
+  "spread_audit": "20dimensions spread>=2 across14originals (Appearance,compose,phone inbox,reader). Parent reopened all14 individually. Both agree on compose crowding and reader overhead; strength/color judgments differ. No raw score changed. Appearance is usable; do not restyle shared cards to resolve taste differences.",
+  "artifact": "Four stage00 login screenshots were mid-fade. Preserve original scores and disclose artifact. Stage01-before has4settled login originals at unchanged product frontend source for matched comparison; no replacement numeric baseline.",
+  "accepted_batch": [
+    "Login contrast/body labels/shared field border/success color; remove decorative glow/fade.",
+    "Phone selection count and labelled controls with narrower gutter; retain padlock signal and full sender address content.",
+    "Reading hierarchy: visible sender, optional metadata/keywords disclosure, labelled native action popover; preserve remote-content opt-in/sandbox/containment and raw monospace.",
+    "Compose editor/footer fit, formatting groups, consistent labels and surfaces; preserve security/send/draft behavior.",
+    "Contacts utility popover/destructive style/email-first input; preserve optional fields and invalid-disclosure handling."
+  ],
+  "deferred": [
+    "Unscored roles,states,full theme/contrast/competitive matrix remain evidence gaps,not assumed defects.",
+    "No broad sidebar/Appearance redesign or backend/provisioning change."
+  ],
+  "gemini": "unused; both primaries unsatisfied"
+}

@@ -8,6 +8,7 @@ const {chromium}=await import(process.env.KY_PLAYWRIGHT??'/home/yoshi/git/busnes
 const credentials=JSON.parse(await readFile(process.argv[2],'utf8'));
 const ORIGIN=credentials.origin;
 const [stage='00',phase='before']=process.argv.slice(3);
+const requested=process.argv[5]?.split(',');
 if(!/^\d{2}$/.test(stage)||!['before','after'].includes(phase))throw Error('Expected two-digit stage and before|after');
 const OUT=path.resolve('docs/ui-post-eight/screenshots');
 const sha=data=>createHash('sha256').update(data).digest('hex');
@@ -81,11 +82,11 @@ await mkdir(OUT,{recursive:true});const shots=[];const browser=await chromium.la
 const source_commit=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
 const sourceFiles=execFileSync('git',['ls-files','frontend/src','frontend/public','frontend/package.json','frontend/package-lock.json'],{encoding:'utf8'}).trim().split('\n');
 const source_files={};for(const f of sourceFiles)source_files[f]=sha(await readFile(f));
-try{for(const [device,width,height]of [['desktop',1280,900],['mobile',390,844]])for(const theme of ['light','dark'])for(const [surface,action]of Object.entries(SURFACES)){
+try{for(const [device,width,height]of [['desktop',1280,900],['mobile',390,844]])for(const theme of ['light','dark'])for(const [surface,action]of Object.entries(SURFACES).filter(([name])=>!requested||requested.includes(name))){
  const ctx=await browser.newContext({viewport:{width,height},colorScheme:theme,locale:'en-US',timezoneId:'America/New_York',deviceScaleFactor:1});
  try{const page=await ctx.newPage();await page.goto(ORIGIN);
  if(surface!=='login'){await page.getByLabel('Username',{exact:true}).fill(credentials.user);await page.getByLabel('Password',{exact:true}).fill(credentials.password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.waitForURL('**/read',{timeout:30000});}
- await action(page);await page.evaluate(()=>document.fonts.ready);await page.mouse.move(0,0);
+ await action(page);await page.evaluate(async()=>{await document.fonts.ready;await Promise.allSettled(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished));});await page.mouse.move(0,0);
  const file=`kypost-${stage}-${phase}-${surface}-${device}-${theme}.png`;const data=await page.screenshot({path:path.join(OUT,file)});
  const facts=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth,h1:[...document.querySelectorAll('h1')].map(x=>x.innerText),route:location.pathname,savedChoice:localStorage.getItem('kypost-theme'),fonts:[...document.fonts].filter(x=>x.status==='loaded').map(x=>x.family)}));
  const cohort={inbox:'mail-list','inbox-selection':'mail-list',reader:'mail-read',compose:'compose',contacts:'contacts-list','contact-editor':'contact-editor',appearance:'settings',login:'auth'}[surface];
