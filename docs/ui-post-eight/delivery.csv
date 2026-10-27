@@ -1,13 +1,15 @@
 Item,Value
 repository,Busnes-app/KyPost-Server
-url,https://github.com/Busnes-app/KyPost-Server/pull/489
-branch,ui/post-eight
-ui_source,50bbbff5
+url,Pending follow-up PR
+branch,ui/post-control-consistency
+ui_source,2ff40cc2394d1bab8cf14935ba6b219a5f28b8f1
 evidence,b6852d8f
-status,open; visual progression accepted8.0; whole-repository current-head CI/security pending
+status,reopened under clarified Opus-only gate; round3 primary reviews pending
 merge_deploy_authorized,False
-council_rounds,2
-combined_exact,513/64
-combined_rounded,8.0
-accepted_visual_progression,True
+council_rounds,"2 complete,3pending"
+combined_exact,"513/64 (historical, not gate)"
+combined_rounded,"8.0 (historical, not gate)"
+accepted_visual_progression,False
 gemini,Unused; both primaries not independently satisfied
+opus_rounded,7.6; previous captured set
+previous_pr,https://github.com/Busnes-app/KyPost-Server/pull/489

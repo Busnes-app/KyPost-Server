@@ -1,0 +1,28 @@
+npm notice run pretest
+npm notice run node src/ky-ui/check-vendor.mjs
+ky-ui 0.4.1: vendor files verified
+npm notice run test
+npm notice run vitest --run
+
+ RUN  v5.0.5 <worktree>/frontend
+
+Not implemented: navigation to another Document
+Not implemented: navigation to another Document
+Not implemented: navigation to another Document
+Not implemented: navigation to another Document
+Not implemented: navigation to another Document
+Not implemented: Window's print() method
+Not implemented: navigation to another Document
+Not implemented: navigation to another Document
+Not implemented: navigation to another Document
+Not implemented: navigation to another Document
+
+ Test Files  111 passed (111)
+      Tests  1235 passed (1235)
+   Start at  14:42:10
+   Duration  14.02s (tests 51%, environment 40%, import 6%, transform 1%, setup 1%)
+
+Environment  jsdom was created 111 times · 95.05s total, 40% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+
