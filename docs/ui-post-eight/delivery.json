@@ -4,15 +4,13 @@
   "branch": "ui/post-control-consistency",
   "ui_source": "558761afa10560a5ba9522e6d7603dbf2a17ccfd",
   "evidence": "f53e76ce",
-  "status": "open; R4Opus/Sol and final-headCI/security pending",
+  "status": "open; visual progression accepted; final-head CI/security pending",
   "merge_deploy_authorized": false,
-  "council_rounds": "3 complete,4pending",
-  "combined_exact": "513/64 (historical, not gate)",
-  "combined_rounded": "8.0 (historical, not gate)",
-  "accepted_visual_progression": false,
-  "gemini": "Unused; both primaries not independently satisfied",
-  "opus_rounded": "7.9",
+  "council_rounds": "4 complete",
+  "accepted_visual_progression": true,
+  "gemini": "Pending advisory",
+  "opus_rounded": "8.0",
   "previous_pr": "https://github.com/Busnes-app/KyPost-Server/pull/490",
-  "opus_exact": "631/80",
-  "sol_exact": "277/32"
+  "opus_exact": "1277/160",
+  "sol_exact": "1369/160"
 }

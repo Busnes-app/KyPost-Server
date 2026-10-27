@@ -1,0 +1,4685 @@
+{
+ "schema": "ky-ui-council-scores/2",
+ "round": 4,
+ "round_label": "kypost-ui-post-eight round4 (stage06 single bounded confirmation)",
+ "reviewer": {
+  "model": "claude-opus-5-5",
+  "name": "Claude Opus 5.5 (independent primary reviewer)"
+ },
+ "rubric": {
+  "version": "ky-suite-v2",
+  "weights": {
+   "hierarchy": 0.2,
+   "typography": 0.15,
+   "density_layout": 0.2,
+   "color": 0.15,
+   "visible_affordances": 0.15,
+   "coherence": 0.15
+  },
+  "rounding": "total = exact Decimal sum(weight*score).quantize(0.1, ROUND_HALF_UP) (float Decimal(str(x)) path checked: identical for all 32); cohort/overall means exact over rounded totals, half-up to 0.1",
+  "brand": "ky_fit: palette_tokens/type_geometry/shell/accent_discipline/suite_cohesion equal weight; N/A excluded and listed per file; suite_cohesion from four verified KyIdentity references, never a quality input"
+ },
+ "inputs": {
+  "worktree": "/home/yoshi/git/busnes.app/kypost-server/.claude/worktrees/post-control-consistency",
+  "worktree_head": "c5efc0474404772226011bb29fbc55e79c47227f",
+  "frozen_evidence_commit": "f53e76ce; only docs/ui-post-eight differs from 558761af (git diff --name-only)",
+  "product_source_commit": "558761afa10560a5ba9522e6d7603dbf2a17ccfd; manifest-06 source_files (295) re-hashed from git, 0 mismatches; capture.mjs sha256 equals manifest capture_driver_sha256",
+  "authority": {
+   "repository": "ky-ui",
+   "commit": "639e5882cada099dd189197beb2a3e3b4c188658",
+   "objects": {
+    "skills/ky-suite-ui/SKILL.md": {
+     "blob": "61c713b7cd428d208a8a8ad40592162886c8bbb2",
+     "sha256": "6010ea39ac6e4e21926eb2a45d8a5a4894cd9e5e6eec07aca4cf60423233dcc2",
+     "bytes": 5854,
+     "verified": true
+    },
+    "skills/ky-suite-ui/references/rubric.md": {
+     "blob": "7c07eacb8eed7b76550a1012665206ebdc47a200",
+     "sha256": "ad3516620420fbdc30f5273f82b7c72c76e1365d1b6296fcaa56be3cbebf2c41",
+     "bytes": 7817,
+     "verified": true
+    },
+    "skills/ky-suite-ui/references/design-contract.md": {
+     "blob": "c169738377879c6122c75b9d537f1ea4919bc62f",
+     "sha256": "392afb88c51fb3cfad6c94d6b841804b194d107a0431c31f35ff81d3a7a444d3",
+     "bytes": 6593,
+     "verified": true
+    },
+    "src/tokens.css": {
+     "blob": "6b6dace6be00465254c1b0c19e6f95dc84f87f67",
+     "sha256": "639f8e73259aca02119b98a5340539d5e8e16d65fd5f6124b939fdfe9c5f86af",
+     "bytes": 3575,
+     "verified": true
+    },
+    "src/navigation.css": {
+     "blob": "30fd31901c2536cf0d7dbd30e79ac108842c87c4",
+     "sha256": "fbd0aea3e45fa818f916ad1bc35832f6ac26e37124208ffde029b809048b4380",
+     "bytes": 1244,
+     "verified": true
+    }
+   }
+  },
+  "metadata_sha256": {
+   "authority.json": "ae7b83acaebc9d3c158a2379e2e21ac42c5507a9fb71a5a6ccb9415d6acdf5b9",
+   "inventory-v4.json": "88013ecd241f4c3350e8660096ca28f7c913d69b3192e1aa400353982cc1818f",
+   "duplicate-audit-v4.json": "27f3d2283b5d9e7d99ceec4b89d6b43e722690d5ebaeb094427ff436ce2f4f3c",
+   "manifest-06-after.json": "f631d2793a91f2c146841e9a7e2525a5329da60dc922a69280094c92c2c7927c",
+   "capture-provenance-r4.json": "29fe0403d1f86a4ff591fb3454dc3e2d60466b0ef73e5d20b0b6590859787384",
+   "artifacts.json": "9fb41cb313e2423ab256efdd14fb75f8bafa7902c08cab60b58247e4dedad588",
+   "brand-references.json": "af51198db9c4e6ed68c0c8c154bfb27e90ee2f999a81e4aa697d57d52ef84228",
+   "AGENTS.md": "269235fe5f65529fcd1fb77ac947630b09c02379891e8a4172b57751fd3c6e18"
+  },
+  "agents_sha256": {
+   "AGENTS.md": "63c366f5a211e9059afeaa37d0486baa9c04bfd90b43a2702d97d7f84441f0c0",
+   "frontend/AGENTS.md": "7e51f1abb3326be36da804b88218de52b5d198cf2c72929307ff9d41dc995664"
+  },
+  "root_agents_sha256": "f2f1b28570b07a3cb380a8ee73640168e2df65df5b8d7b332ea1f3ebe1131935",
+  "post_freeze_inputs_sha256": {
+   "opus-round3.json": "2d60f546a0b69aaffe7b8923d005bf5f7dd7b085023c2262f1e318337bedb74e",
+   "opus-round3.md": "00f86e2985f2a45576931b7acdb5c07f03600728730fb833a1fa7d84ce370040"
+  },
+  "brand_references_sha256": {
+   "brand-references/kyidentity-02-after-users-manage-desktop-light.png": "f13eb7bdc897cf717441dfb5e5ed555efb034eb841fac3bf26f02a7a2de5cfe4",
+   "brand-references/kyidentity-02-after-users-manage-desktop-dark.png": "c88074992215e2e10fbb0518cafb30d9043cc434713fff8fdc3de81687a1c873",
+   "brand-references/kyidentity-02-after-appearance-mobile-light.png": "b82cb35eae6ead72c08291c04eb188a7549a84ce2e2cc27e7fd948698c6037b6",
+   "brand-references/kyidentity-02-after-appearance-mobile-dark.png": "ea7033aea61cc689cc94cb5a362d5c9dd7dfbce798c27ed7ce89e8cbd3198fe1"
+  },
+  "source_read_before_freeze": "frontend/src/App.tsx (phone quick-nav labels) at 558761af-equal HEAD",
+  "scratch_scripts_sha256": {
+   "inventory_check.py": "3474f26a14f91d44e391ce166d1fc530898c85f5800b4342515af751c162d1c0",
+   "freeze.py": "a52398cf1b078d5946b3aa50a46401f390d469c9bce24657739caf92acf85507",
+   "drift.py": "e63037a7923a88441523fa19c2b0493462c757edcbcfbc6a062ece44b982eb06",
+   "publish.py": "43899a2cdda80844375a375264f267b169f4222905e6c1af9cc84891ce2e1ef2"
+  },
+  "capture_conditions": "Playwright, Chromium 153.0.8010.12, DPR1, 1280x900 and 390x844, OS light/dark, no saved theme, en-US, America/New_York, normal service workers, captured 2026-10-27T19:05:13.609Z; private synthetic fixture, real PoW sign-in, owned loopback TLS demo IMAP, no mocks/bypass/external sends, forms unsubmitted (manifest-06-after.json, capture-provenance-r4.json).",
+  "worktree_head_note": "HEAD advanced to c5efc047 during review; git diff --stat f53e76ce..HEAD touches only docs/ui-post-eight/HANDOFF.md and delivery.json (not opened); screenshots, inventory, manifest, audit, artifacts, authority, provenance, brand references, AGENTS.md and frontend/ verified unchanged (git diff --quiet)."
+ },
+ "inventory": {
+  "total_files": 200,
+  "by_role": {
+   "scored round1": 32,
+   "unscored settled login comparison": 4,
+   "superseded initial after; unscored": 32,
+   "round2 scoring input": 32,
+   "brand only; no quality score": 4,
+   "scored round3": 32,
+   "unscored superseded initial round4": 32,
+   "scored round4": 32
+  },
+  "scored_originals": 32,
+  "unique_sha256_in_scored": 32,
+  "exact_duplicates_in_scored": 0,
+  "near_duplicates_in_scored": 0,
+  "same_size_pairs_recomputed": 240,
+  "min_pair": {
+   "a": "screenshots/kypost-06-after-contacts-desktop-light.png",
+   "b": "screenshots/kypost-06-after-inbox-desktop-light.png",
+   "changed_fraction": 0.06542361111111111,
+   "max_channel_delta": 231,
+   "near_duplicate": false
+  },
+  "cross_stage_exact_duplicate_groups": {
+   "0c57b814c03ae25ae5b5bcec15bc54f47ad880a38dd252f4e1578cc62556c8b0": [
+    "screenshots/kypost-02-after-login-mobile-dark.png",
+    "screenshots/kypost-03-after-login-mobile-dark.png",
+    "screenshots/kypost-04-after-login-mobile-dark.png"
+   ],
+   "fe9b1d342f5afa06bb8b0dbb4c9737010752bb3fa46eeece4a0e381dccbf7de1": [
+    "screenshots/kypost-05-after-login-mobile-dark.png",
+    "screenshots/kypost-06-after-login-mobile-dark.png"
+   ],
+   "8383465e72c6f198cf016726d76f66e2da55940f5d69de2715134be72e4861e6": [
+    "screenshots/kypost-02-after-contacts-desktop-light.png",
+    "screenshots/kypost-03-after-contacts-desktop-light.png"
+   ],
+   "a57681f05846870f6cef10403e9422829e2eb1e5025b8641209d9891169a1215": [
+    "screenshots/kypost-04-after-compose-mobile-dark.png",
+    "screenshots/kypost-05-after-compose-mobile-dark.png",
+    "screenshots/kypost-06-after-compose-mobile-dark.png"
+   ],
+   "fb844f02b66eb45f1d92f422e9a89a97e3a649255f8afa043f54a8d329ce5be3": [
+    "screenshots/kypost-05-after-login-mobile-light.png",
+    "screenshots/kypost-06-after-login-mobile-light.png"
+   ],
+   "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034": [
+    "screenshots/kypost-00-before-inbox-desktop-dark.png",
+    "screenshots/kypost-02-after-inbox-desktop-dark.png",
+    "screenshots/kypost-04-after-inbox-desktop-dark.png"
+   ],
+   "4497ecfe9a7e6a6c6be2c67078ee078ef84e6e3aa1f2b9d474205aeb753d82eb": [
+    "screenshots/kypost-02-after-contacts-desktop-dark.png",
+    "screenshots/kypost-03-after-contacts-desktop-dark.png"
+   ],
+   "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a": [
+    "screenshots/kypost-02-after-inbox-desktop-light.png",
+    "screenshots/kypost-03-after-inbox-desktop-light.png",
+    "screenshots/kypost-04-after-inbox-desktop-light.png"
+   ],
+   "af615ed325baf8e656a23a6be6d52149afee0e9008e526af0b8b9a6be54e59c6": [
+    "screenshots/kypost-02-after-login-desktop-light.png",
+    "screenshots/kypost-03-after-login-desktop-light.png",
+    "screenshots/kypost-04-after-login-desktop-light.png"
+   ],
+   "275e79bfcea4e058417de10c0e7f7841443bcba7e21d07c7b295063126709815": [
+    "screenshots/kypost-05-after-login-desktop-light.png",
+    "screenshots/kypost-06-after-login-desktop-light.png"
+   ],
+   "cf35eea92677ad33bc34529668c3c902141004640c3cf268e3237e80807e55d2": [
+    "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+    "screenshots/kypost-03-after-contact-editor-mobile-dark.png"
+   ],
+   "956de9378fa2de5451adc02fb15ddede66878ec7dc437f179356f8483b2eaa12": [
+    "screenshots/kypost-05-after-login-desktop-dark.png",
+    "screenshots/kypost-06-after-login-desktop-dark.png"
+   ],
+   "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a": [
+    "screenshots/kypost-00-before-appearance-desktop-light.png",
+    "screenshots/kypost-02-after-appearance-desktop-light.png",
+    "screenshots/kypost-03-after-appearance-desktop-light.png",
+    "screenshots/kypost-04-after-appearance-desktop-light.png",
+    "screenshots/kypost-05-after-appearance-desktop-light.png",
+    "screenshots/kypost-06-after-appearance-desktop-light.png"
+   ],
+   "8c678fd53e602bb5477bb5b856f566f97d2d631c894b5cbe1446ad7701f0e6b3": [
+    "screenshots/kypost-05-after-inbox-selection-mobile-light.png",
+    "screenshots/kypost-06-after-inbox-selection-mobile-light.png"
+   ],
+   "84b168fd34cf91570b810d291336ff1b179fe2807483c2c1103726fcf165bda3": [
+    "screenshots/kypost-04-after-compose-mobile-light.png",
+    "screenshots/kypost-05-after-compose-mobile-light.png",
+    "screenshots/kypost-06-after-compose-mobile-light.png"
+   ],
+   "5347dd6e69a6c6e63f867d5c321057cdbf729b82cf4e8cd76e155b78de68d746": [
+    "screenshots/kypost-02-after-reader-desktop-light.png",
+    "screenshots/kypost-03-after-reader-desktop-light.png"
+   ],
+   "b23100c68453601a18967788a85151163c72909d2b82ad3e34082077ec467433": [
+    "screenshots/kypost-05-after-compose-desktop-light.png",
+    "screenshots/kypost-06-after-compose-desktop-light.png"
+   ],
+   "3fafaf0e4cead08faf23951878d0dbab8fee6507f6b4bf3a33017b45caf9ae30": [
+    "screenshots/kypost-05-after-reader-desktop-light.png",
+    "screenshots/kypost-06-after-reader-desktop-light.png"
+   ],
+   "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3": [
+    "screenshots/kypost-00-before-appearance-mobile-light.png",
+    "screenshots/kypost-02-after-appearance-mobile-light.png",
+    "screenshots/kypost-03-after-appearance-mobile-light.png",
+    "screenshots/kypost-04-after-appearance-mobile-light.png"
+   ],
+   "ac83fa0ba85d1b6025de73740ff0889496bf9f4d736db99c9ac731d22e821348": [
+    "screenshots/kypost-02-after-login-desktop-dark.png",
+    "screenshots/kypost-03-after-login-desktop-dark.png",
+    "screenshots/kypost-04-after-login-desktop-dark.png"
+   ],
+   "4d857514f04863b6ab2b0bc9f25aafec23c1bc382b46dffc0a8a1060607a7890": [
+    "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+    "screenshots/kypost-03-after-contact-editor-mobile-light.png"
+   ],
+   "8580bd42a8a2a25494e67ddff2e2d293544d485bc615b326fc584dcecc722c67": [
+    "screenshots/kypost-02-after-login-mobile-light.png",
+    "screenshots/kypost-03-after-login-mobile-light.png",
+    "screenshots/kypost-04-after-login-mobile-light.png"
+   ],
+   "6c13b365b601ccbf100c1d45584597a47248210dae82419d6fba4ea20a660ff3": [
+    "screenshots/kypost-02-after-reader-desktop-dark.png",
+    "screenshots/kypost-03-after-reader-desktop-dark.png"
+   ],
+   "da6bfc809414928bd5515ea85b6a2b990b844ace90667cd636d031a5f8f64026": [
+    "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+    "screenshots/kypost-03-after-contact-editor-desktop-light.png"
+   ],
+   "5467b40f578165fe13a164ac3dffafa55afff6c6f615625e39230eb4b9c268f8": [
+    "screenshots/kypost-04-after-reader-mobile-light.png",
+    "screenshots/kypost-05-after-reader-mobile-light.png",
+    "screenshots/kypost-06-after-reader-mobile-light.png"
+   ],
+   "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f": [
+    "screenshots/kypost-00-before-appearance-desktop-dark.png",
+    "screenshots/kypost-02-after-appearance-desktop-dark.png",
+    "screenshots/kypost-03-after-appearance-desktop-dark.png",
+    "screenshots/kypost-04-after-appearance-desktop-dark.png",
+    "screenshots/kypost-05-after-appearance-desktop-dark.png",
+    "screenshots/kypost-06-after-appearance-desktop-dark.png"
+   ],
+   "8b63a30abab907cfe526369e58bb57448e754c9a21509fa022930f33a9215bd6": [
+    "screenshots/kypost-02-after-reader-mobile-light.png",
+    "screenshots/kypost-03-after-reader-mobile-light.png"
+   ],
+   "c2ff3f159d2afe6bbc4911e904ca022272303baec076750fdce017e13c5b45c6": [
+    "screenshots/kypost-02-after-reader-mobile-dark.png",
+    "screenshots/kypost-03-after-reader-mobile-dark.png"
+   ],
+   "13e6a5545630506725916c320fd46e4e8041adfb4e1bf58072881c320400b2f2": [
+    "screenshots/kypost-05-after-inbox-desktop-dark.png",
+    "screenshots/kypost-06-after-inbox-desktop-dark.png"
+   ],
+   "cdaa7c4df5d88e39efcc7cff74bbbfa2484a8d9a9d8eb45d396b7498dd4ae777": [
+    "screenshots/kypost-04-after-reader-mobile-dark.png",
+    "screenshots/kypost-05-after-reader-mobile-dark.png",
+    "screenshots/kypost-06-after-reader-mobile-dark.png"
+   ],
+   "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3": [
+    "screenshots/kypost-00-before-appearance-mobile-dark.png",
+    "screenshots/kypost-02-after-appearance-mobile-dark.png",
+    "screenshots/kypost-03-after-appearance-mobile-dark.png",
+    "screenshots/kypost-04-after-appearance-mobile-dark.png"
+   ],
+   "eadf9eda41709202bea7558a07c2dcd5ccc25181390ee1f7e6d3305d2ab2378c": [
+    "screenshots/kypost-05-after-compose-desktop-dark.png",
+    "screenshots/kypost-06-after-compose-desktop-dark.png"
+   ],
+   "5618074cdf22ddf3156a840467376d28247ac39adbe67eeea5768092a2891f66": [
+    "screenshots/kypost-05-after-inbox-desktop-light.png",
+    "screenshots/kypost-06-after-inbox-desktop-light.png"
+   ],
+   "fbefbcb804bf55ec2668bb203c018595a23ec44332712ca1496d8e2fa9d79630": [
+    "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+    "screenshots/kypost-03-after-contact-editor-desktop-dark.png"
+   ],
+   "6a45300c869cf21854b8f01176a84cfadb15be1c6ece7d48effbb23dfdfa85a2": [
+    "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+    "screenshots/kypost-03-after-inbox-selection-desktop-light.png"
+   ],
+   "36c3093bc0b9b0044d9691a844306959620670f26a893bc62a0fcc500e55976f": [
+    "screenshots/kypost-05-after-reader-desktop-dark.png",
+    "screenshots/kypost-06-after-reader-desktop-dark.png"
+   ]
+  },
+  "cross_stage_note": "Stage06 files share bytes with earlier stages (e.g. appearance desktop = stage00/02/03/04/05; compose and reader mobile = stage04/05; login = stage05). Each stage06 file is scored once as the current original; earlier copies belong to historical roles and are not counted.",
+  "verification": "Independent script: all 200 artifacts.json entries re-hashed from disk (0 mismatches) and equal the on-disk set (196 screenshots + 4 brand references); inventory-v4 and manifest-06-after membership == the 32 \"scored round4\" artifacts with matching sha256/bytes/width/height; brand-references.json hashes match; all 240 same-size pairs recomputed and equal duplicate-audit-v4 (changed_fraction and max_channel_delta).",
+  "files": [
+   {
+    "file": "screenshots/kypost-00-before-inbox-desktop-light.png",
+    "role": "scored round1",
+    "sha256": "69fbc387ed67d3b4b3fef054a375a0ad69c61c4c1fc89987a4a766eec8c2abab",
+    "bytes": 65203,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-selection-desktop-light.png",
+    "role": "scored round1",
+    "sha256": "6000566389c10ac0527a4598aec2a90307ac67ced2eea20a93b0e43fb4d3c478",
+    "bytes": 70982,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-reader-desktop-light.png",
+    "role": "scored round1",
+    "sha256": "6384875e4dbc787925fac27961a92772d17650e38a966f76e75b5bf32335cd8c",
+    "bytes": 58213,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-contacts-desktop-light.png",
+    "role": "scored round1",
+    "sha256": "cf44d96a71b47b8bb74da46b6f84c552b5823bf9831c95cadabccc57ec97735b",
+    "bytes": 69881,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-contact-editor-desktop-light.png",
+    "role": "scored round1",
+    "sha256": "46b8edd7e06a3d9bce92fa2dcea782f52691adeae823c98426600254d48912a0",
+    "bytes": 66596,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-appearance-desktop-light.png",
+    "role": "scored round1",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "bytes": 79855,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-compose-desktop-light.png",
+    "role": "scored round1",
+    "sha256": "94a31a53bcad658b266fde4c644aadea84ca2139a2984a9dbb633499c0cfd12c",
+    "bytes": 65169,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-login-desktop-light.png",
+    "role": "scored round1",
+    "sha256": "803ae1b217c4ebdf4f8c590a8dd846f6de852d0c6a2727dbfdaf23ea5b099ffa",
+    "bytes": 82561,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-desktop-dark.png",
+    "role": "scored round1",
+    "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+    "bytes": 66199,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-selection-desktop-dark.png",
+    "role": "scored round1",
+    "sha256": "8c6fddb5cb417376147211c5a8cb6d2a0e2c32a7786bee17d54bcbc6b2d9d573",
+    "bytes": 71657,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-reader-desktop-dark.png",
+    "role": "scored round1",
+    "sha256": "15d589f2853f8acb35b7ecf720014d9a26b62d3045c5cc0e11dbc92b7f755ec9",
+    "bytes": 57248,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-contacts-desktop-dark.png",
+    "role": "scored round1",
+    "sha256": "228e6a8af400f27ebd935194712bad0ef33d68076bdfdce904dc9095b9302a0b",
+    "bytes": 70689,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-contact-editor-desktop-dark.png",
+    "role": "scored round1",
+    "sha256": "84551c8eb938e3cf8e17da6cadea6c9ac6afe594da961f3da2423e65988ef132",
+    "bytes": 65314,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-appearance-desktop-dark.png",
+    "role": "scored round1",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "bytes": 80562,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-compose-desktop-dark.png",
+    "role": "scored round1",
+    "sha256": "509241a201c823d554e75dec353fe861d1a837d3d7881ebbbf199d8808e1a77b",
+    "bytes": 64113,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-login-desktop-dark.png",
+    "role": "scored round1",
+    "sha256": "d06bcd7e68ce97aff26991db0f7461d3448c2db88c8e9180f99e0b2f3b9c3e96",
+    "bytes": 73221,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-mobile-light.png",
+    "role": "scored round1",
+    "sha256": "3d9a2070364a5c4b39f587e493c75f4c3f534ef9a29ae3747340731c4596ae28",
+    "bytes": 46355,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-selection-mobile-light.png",
+    "role": "scored round1",
+    "sha256": "a0b9ed5e3f633e9508c509d8b8a9531cc3e74f3a2b2e8a034f57d3346a91afb0",
+    "bytes": 48526,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-reader-mobile-light.png",
+    "role": "scored round1",
+    "sha256": "798eb69f1634b96e629ffe0dc3c1e9883799e81ee506d6c766af2c1b16169fd9",
+    "bytes": 35522,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-contacts-mobile-light.png",
+    "role": "scored round1",
+    "sha256": "d9c51cb2eeee385f6a8a6d20022ddda912f51a220894218c63789dea92dcbc48",
+    "bytes": 52287,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-contact-editor-mobile-light.png",
+    "role": "scored round1",
+    "sha256": "c86315220cdfd2a64e0dba681a431e9a44beef584fb1aed22c38f96b3979ef8c",
+    "bytes": 25394,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-appearance-mobile-light.png",
+    "role": "scored round1",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "bytes": 39770,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-compose-mobile-light.png",
+    "role": "scored round1",
+    "sha256": "ab23cb2383aa22eaacf53307fc1205ab76fbfd14ae41c2f5f7cf11110f81539f",
+    "bytes": 29071,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-login-mobile-light.png",
+    "role": "scored round1",
+    "sha256": "0ecc60cb9bd38bfc3f46c0a5ea0da7a205967575f2798c547f9035949b64cbdd",
+    "bytes": 61520,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-mobile-dark.png",
+    "role": "scored round1",
+    "sha256": "15b0c04a94899c43737d4726b27e603e0af5279db3cb28852d61cf41969c2c08",
+    "bytes": 46921,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-selection-mobile-dark.png",
+    "role": "scored round1",
+    "sha256": "b90c85cc83613e96a7d2d4a05aa42fb2c5446f5894ba9d1460544220b6b741cc",
+    "bytes": 48987,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-reader-mobile-dark.png",
+    "role": "scored round1",
+    "sha256": "c182cd1cfd130d39d348b211728d0f6cde4757690ed44cc8b5a33bc6d8c893ac",
+    "bytes": 35897,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-contacts-mobile-dark.png",
+    "role": "scored round1",
+    "sha256": "89930b4f6ad2ce1f477b2a5431187d7ff759b401ae4cfd4e2c949b3d43387f7d",
+    "bytes": 53986,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-contact-editor-mobile-dark.png",
+    "role": "scored round1",
+    "sha256": "084f3b3ff5afcc52d4ba3cdd389a175cc1bb3907c7cf83a7157fc291b945f377",
+    "bytes": 26184,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-appearance-mobile-dark.png",
+    "role": "scored round1",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "bytes": 40664,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-compose-mobile-dark.png",
+    "role": "scored round1",
+    "sha256": "61b25d1063158b643663f9385aac62e4eb6964433bd470c21c3735a63e7175ee",
+    "bytes": 29576,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-00-before-login-mobile-dark.png",
+    "role": "scored round1",
+    "sha256": "83e67dec1d36f58da2460aff63a396c3d463a3fa8b1fdce2eedf6f0ad1341602",
+    "bytes": 52908,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-01-before-login-desktop-light.png",
+    "role": "unscored settled login comparison",
+    "sha256": "636de47de5ed05e81488ea93eee213a6b5d3b40b4c71e96bf8ef6066d7f30431",
+    "bytes": 84954,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-01-before-login-desktop-dark.png",
+    "role": "unscored settled login comparison",
+    "sha256": "adf5c983b1755d7610a888644e42b441f0f2f8c1b5b349d094e7db5a112b548c",
+    "bytes": 73759,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-01-before-login-mobile-light.png",
+    "role": "unscored settled login comparison",
+    "sha256": "dff02fada69c124feaedf5329a1a27fe412dde0459c4b94ea58c5c0add6c8cb2",
+    "bytes": 61063,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-01-before-login-mobile-dark.png",
+    "role": "unscored settled login comparison",
+    "sha256": "c60f57ed4008495d9e70193fe679caa0523509aef7702898579dd0259d97da0f",
+    "bytes": 53913,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-desktop-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+    "bytes": 65201,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "6a45300c869cf21854b8f01176a84cfadb15be1c6ece7d48effbb23dfdfa85a2",
+    "bytes": 71965,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-reader-desktop-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "5347dd6e69a6c6e63f867d5c321057cdbf729b82cf4e8cd76e155b78de68d746",
+    "bytes": 44038,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-contacts-desktop-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "8383465e72c6f198cf016726d76f66e2da55940f5d69de2715134be72e4861e6",
+    "bytes": 68048,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "da6bfc809414928bd5515ea85b6a2b990b844ace90667cd636d031a5f8f64026",
+    "bytes": 64220,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-appearance-desktop-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "bytes": 79855,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-compose-desktop-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "3f13f4d8a780121f1643362185b7035bfc85ef3dea5eac384749976ce6586266",
+    "bytes": 68022,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-login-desktop-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "af615ed325baf8e656a23a6be6d52149afee0e9008e526af0b8b9a6be54e59c6",
+    "bytes": 27650,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+    "bytes": 66199,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "3983db936c1a34b54b43ddcdc58846e9c50c1894618400f78644ca238d1cd26f",
+    "bytes": 72601,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-reader-desktop-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "6c13b365b601ccbf100c1d45584597a47248210dae82419d6fba4ea20a660ff3",
+    "bytes": 43001,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "4497ecfe9a7e6a6c6be2c67078ee078ef84e6e3aa1f2b9d474205aeb753d82eb",
+    "bytes": 68678,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "fbefbcb804bf55ec2668bb203c018595a23ec44332712ca1496d8e2fa9d79630",
+    "bytes": 62954,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "bytes": 80562,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-compose-desktop-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "b7f8bce4d35ed6783783528382fc5767a5d1d7ecc12cd342af96ae91cadb9616",
+    "bytes": 66940,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-login-desktop-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "ac83fa0ba85d1b6025de73740ff0889496bf9f4d736db99c9ac731d22e821348",
+    "bytes": 27854,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-mobile-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "f12752239b21e84e25c88e009202173028912cbff9bfa26341e391ba6468e20c",
+    "bytes": 41871,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "47373cb0d5c1280e9ce564d8f5070797d1ac54243c6d6bc305a81a9d422f223d",
+    "bytes": 46721,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-reader-mobile-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "8b63a30abab907cfe526369e58bb57448e754c9a21509fa022930f33a9215bd6",
+    "bytes": 28327,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-contacts-mobile-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "4a0f96d98877d2827ffd70dd8cfb451685326ccc3dfe5d11798b9752c3415291",
+    "bytes": 49384,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "4d857514f04863b6ab2b0bc9f25aafec23c1bc382b46dffc0a8a1060607a7890",
+    "bytes": 27946,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-appearance-mobile-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "bytes": 39770,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-compose-mobile-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "11b37596a674c06646133a80244daa01962942a55931aba859078f78dc9fd209",
+    "bytes": 31745,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-login-mobile-light.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "8580bd42a8a2a25494e67ddff2e2d293544d485bc615b326fc584dcecc722c67",
+    "bytes": 22132,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "a22dedd816132da8bbc9bcf5a92b9a25c71e96ccab12a315a23fce78879b9dce",
+    "bytes": 42553,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "342b6214410b8c03b458608a0f7a317eb6686eb4dbcb4b420f51648eff5217a2",
+    "bytes": 47353,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-reader-mobile-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "c2ff3f159d2afe6bbc4911e904ca022272303baec076750fdce017e13c5b45c6",
+    "bytes": 27883,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "6bcd20c6deef9d1c249cf8e838d8be37a5db202f3d36b64261387730e2ad4cd2",
+    "bytes": 50879,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "cf35eea92677ad33bc34529668c3c902141004640c3cf268e3237e80807e55d2",
+    "bytes": 28861,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "bytes": 40664,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-compose-mobile-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "fe6b7847a6d177e8a48e57de3ce7fdb1df6a3523ef84629775ee91b9fb42ac11",
+    "bytes": 32461,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-02-after-login-mobile-dark.png",
+    "role": "superseded initial after; unscored",
+    "sha256": "0c57b814c03ae25ae5b5bcec15bc54f47ad880a38dd252f4e1578cc62556c8b0",
+    "bytes": 22423,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-desktop-light.png",
+    "role": "round2 scoring input",
+    "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+    "bytes": 65201,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-selection-desktop-light.png",
+    "role": "round2 scoring input",
+    "sha256": "6a45300c869cf21854b8f01176a84cfadb15be1c6ece7d48effbb23dfdfa85a2",
+    "bytes": 71965,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-reader-desktop-light.png",
+    "role": "round2 scoring input",
+    "sha256": "5347dd6e69a6c6e63f867d5c321057cdbf729b82cf4e8cd76e155b78de68d746",
+    "bytes": 44038,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-contacts-desktop-light.png",
+    "role": "round2 scoring input",
+    "sha256": "8383465e72c6f198cf016726d76f66e2da55940f5d69de2715134be72e4861e6",
+    "bytes": 68048,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-contact-editor-desktop-light.png",
+    "role": "round2 scoring input",
+    "sha256": "da6bfc809414928bd5515ea85b6a2b990b844ace90667cd636d031a5f8f64026",
+    "bytes": 64220,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-appearance-desktop-light.png",
+    "role": "round2 scoring input",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "bytes": 79855,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-compose-desktop-light.png",
+    "role": "round2 scoring input",
+    "sha256": "45e2eded278fabcd84fbeee338db444ec3fc73181c8cefde11da59a608382e02",
+    "bytes": 64865,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-login-desktop-light.png",
+    "role": "round2 scoring input",
+    "sha256": "af615ed325baf8e656a23a6be6d52149afee0e9008e526af0b8b9a6be54e59c6",
+    "bytes": 27650,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-desktop-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "1bb671b6c21304e3ca38de651293083ecd36e82349a7f0ded5b2ceb5e98f3bc4",
+    "bytes": 66194,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-selection-desktop-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "88dc23c10339c415f923067ef8e7439faa97305324c9fa7b1e7a495f8ff2d639",
+    "bytes": 72592,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-reader-desktop-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "6c13b365b601ccbf100c1d45584597a47248210dae82419d6fba4ea20a660ff3",
+    "bytes": 43001,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-contacts-desktop-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "4497ecfe9a7e6a6c6be2c67078ee078ef84e6e3aa1f2b9d474205aeb753d82eb",
+    "bytes": 68678,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-contact-editor-desktop-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "fbefbcb804bf55ec2668bb203c018595a23ec44332712ca1496d8e2fa9d79630",
+    "bytes": 62954,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-appearance-desktop-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "bytes": 80562,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-compose-desktop-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "683dbf0ac37abb0318e4e4556d28a153c57f2e5710feeaf880c843ab5f8418e2",
+    "bytes": 63799,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-login-desktop-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "ac83fa0ba85d1b6025de73740ff0889496bf9f4d736db99c9ac731d22e821348",
+    "bytes": 27854,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-mobile-light.png",
+    "role": "round2 scoring input",
+    "sha256": "ee4899afa314470868b95a11d1ccdea8112326e1d2c7820dd702d128ac09cda9",
+    "bytes": 44074,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-selection-mobile-light.png",
+    "role": "round2 scoring input",
+    "sha256": "904b430bc89d1155df6608ff3018051cc7e0a5ae54ee2c8b691681d5816e3627",
+    "bytes": 48956,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-reader-mobile-light.png",
+    "role": "round2 scoring input",
+    "sha256": "8b63a30abab907cfe526369e58bb57448e754c9a21509fa022930f33a9215bd6",
+    "bytes": 28327,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-contacts-mobile-light.png",
+    "role": "round2 scoring input",
+    "sha256": "bcaa36f72476f6c6923dd47a162443f49b3bacb355a3f3369fe7404521eee5fa",
+    "bytes": 49381,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-contact-editor-mobile-light.png",
+    "role": "round2 scoring input",
+    "sha256": "4d857514f04863b6ab2b0bc9f25aafec23c1bc382b46dffc0a8a1060607a7890",
+    "bytes": 27946,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-appearance-mobile-light.png",
+    "role": "round2 scoring input",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "bytes": 39770,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-compose-mobile-light.png",
+    "role": "round2 scoring input",
+    "sha256": "190d8d03d06da6e7a36a41b3e09003435d17177021ec1d7f15ff5d8c0f270c27",
+    "bytes": 28887,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-login-mobile-light.png",
+    "role": "round2 scoring input",
+    "sha256": "8580bd42a8a2a25494e67ddff2e2d293544d485bc615b326fc584dcecc722c67",
+    "bytes": 22132,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-mobile-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "69fdda7da796fab119f35c84add7bf9d14ef57c69db9658e15fc2af8b3ef56c9",
+    "bytes": 44745,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-selection-mobile-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "d489c23f237559a8327db91b3acb9834dbe3fbc3fac3691b16de35cc20c82b87",
+    "bytes": 49552,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-reader-mobile-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "c2ff3f159d2afe6bbc4911e904ca022272303baec076750fdce017e13c5b45c6",
+    "bytes": 27883,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-contacts-mobile-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "2879455a77fa955a96f463029c6361bfe734ea266e4ee8444a2a6ae52aec0bad",
+    "bytes": 50873,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-contact-editor-mobile-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "cf35eea92677ad33bc34529668c3c902141004640c3cf268e3237e80807e55d2",
+    "bytes": 28861,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-appearance-mobile-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "bytes": 40664,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-compose-mobile-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "96c6b12f048ef61ec7a4c954f580c9a3c1d24f420440f279db87b1a26e2308e9",
+    "bytes": 29538,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-03-after-login-mobile-dark.png",
+    "role": "round2 scoring input",
+    "sha256": "0c57b814c03ae25ae5b5bcec15bc54f47ad880a38dd252f4e1578cc62556c8b0",
+    "bytes": 22423,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "brand-references/kyidentity-02-after-users-manage-desktop-light.png",
+    "role": "brand only; no quality score",
+    "sha256": "f13eb7bdc897cf717441dfb5e5ed555efb034eb841fac3bf26f02a7a2de5cfe4",
+    "bytes": 92667,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "brand-references/kyidentity-02-after-users-manage-desktop-dark.png",
+    "role": "brand only; no quality score",
+    "sha256": "c88074992215e2e10fbb0518cafb30d9043cc434713fff8fdc3de81687a1c873",
+    "bytes": 89973,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "brand-references/kyidentity-02-after-appearance-mobile-light.png",
+    "role": "brand only; no quality score",
+    "sha256": "b82cb35eae6ead72c08291c04eb188a7549a84ce2e2cc27e7fd948698c6037b6",
+    "bytes": 41497,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "brand-references/kyidentity-02-after-appearance-mobile-dark.png",
+    "role": "brand only; no quality score",
+    "sha256": "ea7033aea61cc689cc94cb5a362d5c9dd7dfbce798c27ed7ce89e8cbd3198fe1",
+    "bytes": 42245,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-desktop-light.png",
+    "role": "scored round3",
+    "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+    "bytes": 65201,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-desktop-light.png",
+    "role": "scored round3",
+    "sha256": "45b8752bcb83d496cd17eb8b84672327c9342c73d40ba76ecb8aa64f519751e0",
+    "bytes": 71926,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-desktop-light.png",
+    "role": "scored round3",
+    "sha256": "712e16a214b02685777bfca31bf88c244d79574a293240adf1b6b2c22f711351",
+    "bytes": 43309,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-desktop-light.png",
+    "role": "scored round3",
+    "sha256": "1673ab728501010105efbebeef2b0101fb18983e511fd3ee93955a5a76d5092a",
+    "bytes": 68150,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-desktop-light.png",
+    "role": "scored round3",
+    "sha256": "4f5650093bc2ec074e1166d3c28c4011bcbe0922329ae18a347a867be9c32c3d",
+    "bytes": 66170,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-desktop-light.png",
+    "role": "scored round3",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "bytes": 79855,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-desktop-light.png",
+    "role": "scored round3",
+    "sha256": "c54beeff37a91ce487a474da3c24afd9f187d2f9c17c88d061f889444c8cca9c",
+    "bytes": 64774,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-desktop-light.png",
+    "role": "scored round3",
+    "sha256": "af615ed325baf8e656a23a6be6d52149afee0e9008e526af0b8b9a6be54e59c6",
+    "bytes": 27650,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-desktop-dark.png",
+    "role": "scored round3",
+    "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+    "bytes": 66199,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-desktop-dark.png",
+    "role": "scored round3",
+    "sha256": "56c471e054ef37f51c6966ca75c4314b5feb808ae1edfcc1beea56767e02bfc9",
+    "bytes": 72587,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-desktop-dark.png",
+    "role": "scored round3",
+    "sha256": "12d35ffb60abf3176c61d82f154ed9a3eae70b5e4db263198da32e7171e3880e",
+    "bytes": 42309,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-desktop-dark.png",
+    "role": "scored round3",
+    "sha256": "48a70a17bea3c2de83f011121186d2d7f7fdda5891e0eae3fe2ce8f3321e2d9b",
+    "bytes": 68701,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-desktop-dark.png",
+    "role": "scored round3",
+    "sha256": "803f53ece932359fff3895d346977a3fb3d0b078e2b2ffd50bed64ee605b0563",
+    "bytes": 64790,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-desktop-dark.png",
+    "role": "scored round3",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "bytes": 80562,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-desktop-dark.png",
+    "role": "scored round3",
+    "sha256": "e1308101d34e61e476aca30fac900b202d19ce1c7b13251b47fc824b7a7b1e02",
+    "bytes": 63760,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-desktop-dark.png",
+    "role": "scored round3",
+    "sha256": "ac83fa0ba85d1b6025de73740ff0889496bf9f4d736db99c9ac731d22e821348",
+    "bytes": 27854,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-mobile-light.png",
+    "role": "scored round3",
+    "sha256": "f189c662405b81b71c290ae4829b650af1b3815c53c28f2fba9d7e719a18762a",
+    "bytes": 44072,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-mobile-light.png",
+    "role": "scored round3",
+    "sha256": "4bbbef7481513a6a41335529d5d7849212398f00f4d3d68abc0f6a6345c1d0b7",
+    "bytes": 50359,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-mobile-light.png",
+    "role": "scored round3",
+    "sha256": "5467b40f578165fe13a164ac3dffafa55afff6c6f615625e39230eb4b9c268f8",
+    "bytes": 27517,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-mobile-light.png",
+    "role": "scored round3",
+    "sha256": "9863cbd27b354b076b62159f2a26ebd63ec90510898e45d2e49c7eaaf80737af",
+    "bytes": 46814,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-mobile-light.png",
+    "role": "scored round3",
+    "sha256": "e21b6e3d26e9dcc6ce576daad71372be6489c03e50ab0234f70613f1e9ef7121",
+    "bytes": 28170,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-mobile-light.png",
+    "role": "scored round3",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "bytes": 39770,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-mobile-light.png",
+    "role": "scored round3",
+    "sha256": "84b168fd34cf91570b810d291336ff1b179fe2807483c2c1103726fcf165bda3",
+    "bytes": 28893,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-mobile-light.png",
+    "role": "scored round3",
+    "sha256": "8580bd42a8a2a25494e67ddff2e2d293544d485bc615b326fc584dcecc722c67",
+    "bytes": 22132,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-mobile-dark.png",
+    "role": "scored round3",
+    "sha256": "af79feed150e57a6745eb1e64c9016bd020265464a6b146fb27b467739f0b425",
+    "bytes": 44793,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-mobile-dark.png",
+    "role": "scored round3",
+    "sha256": "fd4f4baff71a77429c5ee44cbe6003518c959b50659b470f01a491eb12844db8",
+    "bytes": 51025,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-mobile-dark.png",
+    "role": "scored round3",
+    "sha256": "cdaa7c4df5d88e39efcc7cff74bbbfa2484a8d9a9d8eb45d396b7498dd4ae777",
+    "bytes": 27099,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-mobile-dark.png",
+    "role": "scored round3",
+    "sha256": "cb417e777415fe4bb21b4f861d25df26181d03c6579f9c96d05f5b241c4b77cd",
+    "bytes": 48283,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-mobile-dark.png",
+    "role": "scored round3",
+    "sha256": "04c6ae493eb07a2a3327ddb849f232bc634c210674fb3fa2b6a8a3d796d902f2",
+    "bytes": 28867,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-mobile-dark.png",
+    "role": "scored round3",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "bytes": 40664,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-mobile-dark.png",
+    "role": "scored round3",
+    "sha256": "a57681f05846870f6cef10403e9422829e2eb1e5025b8641209d9891169a1215",
+    "bytes": 29538,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-mobile-dark.png",
+    "role": "scored round3",
+    "sha256": "0c57b814c03ae25ae5b5bcec15bc54f47ad880a38dd252f4e1578cc62556c8b0",
+    "bytes": 22423,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-inbox-desktop-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "5618074cdf22ddf3156a840467376d28247ac39adbe67eeea5768092a2891f66",
+    "bytes": 65308,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-inbox-selection-desktop-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "deb7c0b786d9c46db06b67ee9bcb57d894cd2aba9beec88e580ba3e941149cc1",
+    "bytes": 72119,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-reader-desktop-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "3fafaf0e4cead08faf23951878d0dbab8fee6507f6b4bf3a33017b45caf9ae30",
+    "bytes": 43321,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-contacts-desktop-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "8124a5c2fc632ef9f25806c5c919b9dac4c275599123f3197e28c85b1f13a7f5",
+    "bytes": 67505,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-contact-editor-desktop-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "dd0d6cd6246cd049d747229a4b33766b72ea5af36c2221954e4c874a7ec6a325",
+    "bytes": 65598,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-appearance-desktop-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "bytes": 79855,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-compose-desktop-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "b23100c68453601a18967788a85151163c72909d2b82ad3e34082077ec467433",
+    "bytes": 64821,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-login-desktop-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "275e79bfcea4e058417de10c0e7f7841443bcba7e21d07c7b295063126709815",
+    "bytes": 27463,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-inbox-desktop-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "13e6a5545630506725916c320fd46e4e8041adfb4e1bf58072881c320400b2f2",
+    "bytes": 66323,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-inbox-selection-desktop-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "5cbc5decd6985fb3961c05249fd07bc4388b8c1695f65df29bfaf3eeac6dc957",
+    "bytes": 72776,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-reader-desktop-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "36c3093bc0b9b0044d9691a844306959620670f26a893bc62a0fcc500e55976f",
+    "bytes": 42311,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-contacts-desktop-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "2645a906f97c4c06286629aec9bfdc3d5c465bf5fca2f56ef7b72c7d0e030a33",
+    "bytes": 68182,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-contact-editor-desktop-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "0048e0b85095979e782f03f81620925d9b9bf8ecba17a07e4146e7c1b1a25b0a",
+    "bytes": 64349,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-appearance-desktop-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "bytes": 80562,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-compose-desktop-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "eadf9eda41709202bea7558a07c2dcd5ccc25181390ee1f7e6d3305d2ab2378c",
+    "bytes": 63764,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-login-desktop-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "956de9378fa2de5451adc02fb15ddede66878ec7dc437f179356f8483b2eaa12",
+    "bytes": 27663,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-05-after-inbox-mobile-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "1de942a7f8c9c07dbb3838df507fab4d3f5b25476931476ff9ac80128ea4eed2",
+    "bytes": 44216,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-inbox-selection-mobile-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "8c678fd53e602bb5477bb5b856f566f97d2d631c894b5cbe1446ad7701f0e6b3",
+    "bytes": 50522,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-reader-mobile-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "5467b40f578165fe13a164ac3dffafa55afff6c6f615625e39230eb4b9c268f8",
+    "bytes": 27517,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-contacts-mobile-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "b74b4331362bfd9f45bacec1949690b89d968bf1513255286fae8f446053a5f2",
+    "bytes": 46172,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-contact-editor-mobile-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "0381d170a22bdf21242aa6b40fbca981554ec9a303dbf068fa0f253b285e69f7",
+    "bytes": 28226,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-appearance-mobile-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "7e8cda92dc9ada1066ed8cc35232bc5d63a11ca446941fc0ce956a2db16eb5f6",
+    "bytes": 34055,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-compose-mobile-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "84b168fd34cf91570b810d291336ff1b179fe2807483c2c1103726fcf165bda3",
+    "bytes": 28893,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-login-mobile-light.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "fb844f02b66eb45f1d92f422e9a89a97e3a649255f8afa043f54a8d329ce5be3",
+    "bytes": 21961,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-inbox-mobile-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "ba9a798dd3eb184c69d98bbe24fd2b10a98d3cda10b8ec382672d0cf1409d386",
+    "bytes": 44874,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-inbox-selection-mobile-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "19ab1d60ded8089eeafacc06b4c665d89c9acd08cde83c644f723c6edb83ae38",
+    "bytes": 51273,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-reader-mobile-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "cdaa7c4df5d88e39efcc7cff74bbbfa2484a8d9a9d8eb45d396b7498dd4ae777",
+    "bytes": 27099,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-contacts-mobile-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "6760836b60fcfc9736492fcf2e3734c487fb23cb4e7749c9b3f6b21c4e9f4f85",
+    "bytes": 47680,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-contact-editor-mobile-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "f56a1645ed388df9fc77f8ca77ba261fa0f0bddfa097639e9966bf9467f463d4",
+    "bytes": 28972,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-appearance-mobile-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "0dd7b3cf5f4e474ed4bfe753dc24facda13ade7d6b13c271c66e02673ef80739",
+    "bytes": 34634,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-compose-mobile-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "a57681f05846870f6cef10403e9422829e2eb1e5025b8641209d9891169a1215",
+    "bytes": 29538,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-05-after-login-mobile-dark.png",
+    "role": "unscored superseded initial round4",
+    "sha256": "fe9b1d342f5afa06bb8b0dbb4c9737010752bb3fa46eeece4a0e381dccbf7de1",
+    "bytes": 22242,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-desktop-light.png",
+    "role": "scored round4",
+    "sha256": "5618074cdf22ddf3156a840467376d28247ac39adbe67eeea5768092a2891f66",
+    "bytes": 65308,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-selection-desktop-light.png",
+    "role": "scored round4",
+    "sha256": "fc2294a686bfc0f40439712ba310cdcf5fd300757215d3697164d3121bcd16ed",
+    "bytes": 72107,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-reader-desktop-light.png",
+    "role": "scored round4",
+    "sha256": "3fafaf0e4cead08faf23951878d0dbab8fee6507f6b4bf3a33017b45caf9ae30",
+    "bytes": 43321,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-contacts-desktop-light.png",
+    "role": "scored round4",
+    "sha256": "b97d162c616848b4b65207dcd2056ec72d55ead9c0027444cf66c38c7eece1d8",
+    "bytes": 67600,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-contact-editor-desktop-light.png",
+    "role": "scored round4",
+    "sha256": "7a1d11f479bfe7fbc33d3880d0fa22d665567bc3baa3f22b4d3e1014aaed9341",
+    "bytes": 65620,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-appearance-desktop-light.png",
+    "role": "scored round4",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "bytes": 79855,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-compose-desktop-light.png",
+    "role": "scored round4",
+    "sha256": "b23100c68453601a18967788a85151163c72909d2b82ad3e34082077ec467433",
+    "bytes": 64821,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-login-desktop-light.png",
+    "role": "scored round4",
+    "sha256": "275e79bfcea4e058417de10c0e7f7841443bcba7e21d07c7b295063126709815",
+    "bytes": 27463,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-desktop-dark.png",
+    "role": "scored round4",
+    "sha256": "13e6a5545630506725916c320fd46e4e8041adfb4e1bf58072881c320400b2f2",
+    "bytes": 66323,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-selection-desktop-dark.png",
+    "role": "scored round4",
+    "sha256": "f5b890fa2e665373391b18f1f0bfb3696fbbce8c606f94c7ffbb302a88c71156",
+    "bytes": 72758,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-reader-desktop-dark.png",
+    "role": "scored round4",
+    "sha256": "36c3093bc0b9b0044d9691a844306959620670f26a893bc62a0fcc500e55976f",
+    "bytes": 42311,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-contacts-desktop-dark.png",
+    "role": "scored round4",
+    "sha256": "e7205aadd01c973ff0850430fbf09eab04e81bcdb78577db5e9bf71215c76707",
+    "bytes": 68272,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-contact-editor-desktop-dark.png",
+    "role": "scored round4",
+    "sha256": "f5eb9fa706d86c4073c785e6b44ce16d1d9a3b844ceeb4ffdd76a1ab4b6c5c28",
+    "bytes": 64431,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-appearance-desktop-dark.png",
+    "role": "scored round4",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "bytes": 80562,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-compose-desktop-dark.png",
+    "role": "scored round4",
+    "sha256": "eadf9eda41709202bea7558a07c2dcd5ccc25181390ee1f7e6d3305d2ab2378c",
+    "bytes": 63764,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-login-desktop-dark.png",
+    "role": "scored round4",
+    "sha256": "956de9378fa2de5451adc02fb15ddede66878ec7dc437f179356f8483b2eaa12",
+    "bytes": 27663,
+    "width": 1280,
+    "height": 900
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-mobile-light.png",
+    "role": "scored round4",
+    "sha256": "df35a4ed8776b3f3199e4c3d1fbcffaed7faad3ae37806a686f2ec5d860625e8",
+    "bytes": 44269,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-selection-mobile-light.png",
+    "role": "scored round4",
+    "sha256": "8c678fd53e602bb5477bb5b856f566f97d2d631c894b5cbe1446ad7701f0e6b3",
+    "bytes": 50522,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-reader-mobile-light.png",
+    "role": "scored round4",
+    "sha256": "5467b40f578165fe13a164ac3dffafa55afff6c6f615625e39230eb4b9c268f8",
+    "bytes": 27517,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-contacts-mobile-light.png",
+    "role": "scored round4",
+    "sha256": "e1c177e7ee43049cefc2e76b125bec214d035c4b637262a2a54f541cffcba739",
+    "bytes": 46142,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-contact-editor-mobile-light.png",
+    "role": "scored round4",
+    "sha256": "82e744e2e893a543d99f511881292ec46a460c151e1e5e6667fd5a6a83c446f6",
+    "bytes": 27918,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-appearance-mobile-light.png",
+    "role": "scored round4",
+    "sha256": "c9e852105c04ddde4e91ab96feac4c8c03372f80d6d4e85ed84f0dba53a10c25",
+    "bytes": 39786,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-compose-mobile-light.png",
+    "role": "scored round4",
+    "sha256": "84b168fd34cf91570b810d291336ff1b179fe2807483c2c1103726fcf165bda3",
+    "bytes": 28893,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-login-mobile-light.png",
+    "role": "scored round4",
+    "sha256": "fb844f02b66eb45f1d92f422e9a89a97e3a649255f8afa043f54a8d329ce5be3",
+    "bytes": 21961,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-mobile-dark.png",
+    "role": "scored round4",
+    "sha256": "e35a70263b5fa2fa466a424f984656aa464619a412fadaf34d4930b4b1429dee",
+    "bytes": 44841,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-selection-mobile-dark.png",
+    "role": "scored round4",
+    "sha256": "73af5d3c8082cae9b609e4dc7d0b92cfb95a79a2ccd29b773b5f2fcb90df3a6e",
+    "bytes": 51290,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-reader-mobile-dark.png",
+    "role": "scored round4",
+    "sha256": "cdaa7c4df5d88e39efcc7cff74bbbfa2484a8d9a9d8eb45d396b7498dd4ae777",
+    "bytes": 27099,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-contacts-mobile-dark.png",
+    "role": "scored round4",
+    "sha256": "1cbf35ba57778e57b99adbd7e76825d4204aef95f5e1e70f2baf6ead4dec1a38",
+    "bytes": 47651,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-contact-editor-mobile-dark.png",
+    "role": "scored round4",
+    "sha256": "ef9a84fcb0930eda16ba50177fdc97a40302a48417ff64a9a07ea7dcc0a55ab1",
+    "bytes": 28653,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-appearance-mobile-dark.png",
+    "role": "scored round4",
+    "sha256": "2f70e0b254245042885df70b9aa219d33affbc5c2a83f953ede6fd6e63e63cac",
+    "bytes": 40674,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-compose-mobile-dark.png",
+    "role": "scored round4",
+    "sha256": "a57681f05846870f6cef10403e9422829e2eb1e5025b8641209d9891169a1215",
+    "bytes": 29538,
+    "width": 390,
+    "height": 844
+   },
+   {
+    "file": "screenshots/kypost-06-after-login-mobile-dark.png",
+    "role": "scored round4",
+    "sha256": "fe9b1d342f5afa06bb8b0dbb4c9737010752bb3fa46eeece4a0e381dccbf7de1",
+    "bytes": 22242,
+    "width": 390,
+    "height": 844
+   }
+  ]
+ },
+ "files": [
+  {
+   "file": "screenshots/kypost-06-after-appearance-desktop-dark.png",
+   "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+   "bytes": 80562,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "appearance",
+   "filename_matches_content": true,
+   "cohort": "settings",
+   "state": "populated (23 theme cards, Match system chosen)",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Appearance h1, one-sentence explanation, Theme label and a card grid; the chosen card is evident; no primary action needed since choice applies immediately.",
+    "typography": "Title, 16px muted description, 13px label, card name/meta steps are consistent.",
+    "density_layout": "Five equal columns with 12px gaps and even rows; last row of three leaves a ragged end; sidebar account region pushed so the © line is below the fold.",
+    "color": "Theme preview swatches are the only hues and are content; selection border and radio in orange.",
+    "visible_affordances": "Radio plus border mark the selection; cards read as choosable.",
+    "coherence": "Every card uses identical geometry; shell unchanged."
+   },
+   "confidence": "high",
+   "caveat": "Theme application and persistence not exercised.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 9,
+     "suite_cohesion": 9
+    },
+    "observations": {
+     "palette_tokens": "Busnes tokens for chrome; preview hues represent named themes (content).",
+     "type_geometry": "Card text 14/13px, 8px radii, consistent grid.",
+     "shell": "Contract sidebar with Settings expanded and Appearance selected; account region pinned but footer clipped.",
+     "accent_discipline": "Orange only on the selected card and selected nav item.",
+     "suite_cohesion": "Card picker is pixel-close to the KyIdentity Appearance reference."
+    },
+    "na_excluded": [],
+    "mean": 8.6,
+    "n": 5,
+    "sum": 43,
+    "mean_exact_fraction": "43/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-appearance-desktop-light.png",
+   "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+   "bytes": 79855,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "appearance",
+   "filename_matches_content": true,
+   "cohort": "settings",
+   "state": "populated (23 theme cards, Match system chosen)",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Appearance h1, one-sentence explanation, Theme label and a card grid; the chosen card is evident; no primary action needed since choice applies immediately.",
+    "typography": "Title, 16px muted description, 13px label, card name/meta steps are consistent.",
+    "density_layout": "Five equal columns with 12px gaps and even rows; last row of three leaves a ragged end; sidebar account region pushed so the © line is below the fold.",
+    "color": "Theme preview swatches are the only hues and are content; selection border and radio in orange.",
+    "visible_affordances": "Radio plus border mark the selection; cards read as choosable.",
+    "coherence": "Every card uses identical geometry; shell unchanged."
+   },
+   "confidence": "high",
+   "caveat": "Theme application and persistence not exercised.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 9,
+     "suite_cohesion": 9
+    },
+    "observations": {
+     "palette_tokens": "Busnes tokens for chrome; preview hues represent named themes (content).",
+     "type_geometry": "Card text 14/13px, 8px radii, consistent grid.",
+     "shell": "Contract sidebar with Settings expanded and Appearance selected; account region pinned but footer clipped.",
+     "accent_discipline": "Orange only on the selected card and selected nav item.",
+     "suite_cohesion": "Card picker is pixel-close to the KyIdentity Appearance reference."
+    },
+    "na_excluded": [],
+    "mean": 8.6,
+    "n": 5,
+    "sum": 43,
+    "mean_exact_fraction": "43/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-appearance-mobile-dark.png",
+   "sha256": "2f70e0b254245042885df70b9aa219d33affbc5c2a83f953ede6fd6e63e63cac",
+   "bytes": 40674,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "appearance",
+   "filename_matches_content": true,
+   "cohort": "settings",
+   "state": "populated (theme cards, Match system chosen)",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Appearance h1, explanation and Theme label above a two-column card grid; selection evident.",
+    "typography": "Same type steps as desktop.",
+    "density_layout": "20px gutter, two equal columns, even 12px gaps; grid continues below the fold.",
+    "color": "Preview swatches are content; orange only on the selected card and nav item.",
+    "visible_affordances": "Radio and border show selection; dark-theme unselected radios render as filled grey discs but still read as radios.",
+    "coherence": "Card geometry identical to desktop."
+   },
+   "confidence": "high",
+   "caveat": "Rest of grid below fold.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 7,
+     "accent_discipline": 9,
+     "suite_cohesion": 9
+    },
+    "observations": {
+     "palette_tokens": "Busnes chrome tokens; previews are content.",
+     "type_geometry": "Shared card geometry, 8px radii.",
+     "shell": "Strip shows a clipped leading chevron and an inline Settings expander; reachable but less tidy than the sidebar.",
+     "accent_discipline": "Orange only on selection.",
+     "suite_cohesion": "Pixel-close to KyIdentity mobile Appearance (20px vs 16px gutter)."
+    },
+    "na_excluded": [],
+    "mean": 8.4,
+    "n": 5,
+    "sum": 42,
+    "mean_exact_fraction": "42/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-appearance-mobile-light.png",
+   "sha256": "c9e852105c04ddde4e91ab96feac4c8c03372f80d6d4e85ed84f0dba53a10c25",
+   "bytes": 39786,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "appearance",
+   "filename_matches_content": true,
+   "cohort": "settings",
+   "state": "populated (theme cards, Match system chosen)",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Appearance h1, explanation and Theme label above a two-column card grid; selection evident.",
+    "typography": "Same type steps as desktop.",
+    "density_layout": "20px gutter, two equal columns, even 12px gaps; grid continues below the fold.",
+    "color": "Preview swatches are content; orange only on the selected card and nav item.",
+    "visible_affordances": "Radio and border show selection; dark-theme unselected radios render as filled grey discs but still read as radios.",
+    "coherence": "Card geometry identical to desktop."
+   },
+   "confidence": "high",
+   "caveat": "Rest of grid below fold.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 7,
+     "accent_discipline": 9,
+     "suite_cohesion": 9
+    },
+    "observations": {
+     "palette_tokens": "Busnes chrome tokens; previews are content.",
+     "type_geometry": "Shared card geometry, 8px radii.",
+     "shell": "Strip shows a clipped leading chevron and an inline Settings expander; reachable but less tidy than the sidebar.",
+     "accent_discipline": "Orange only on selection.",
+     "suite_cohesion": "Pixel-close to KyIdentity mobile Appearance (20px vs 16px gutter)."
+    },
+    "na_excluded": [],
+    "mean": 8.4,
+    "n": 5,
+    "sum": 42,
+    "mean_exact_fraction": "42/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-compose-desktop-dark.png",
+   "sha256": "eadf9eda41709202bea7558a07c2dcd5ccc25181390ee1f7e6d3305d2ab2378c",
+   "bytes": 63764,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "compose",
+   "filename_matches_content": true,
+   "cohort": "compose",
+   "state": "empty unsubmitted form",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over inbox",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "\"New message\" dialog title, Send filled at bottom-left, Schedule…/Save Draft outlined, Attach/Contacts text, Trash in danger at far right.",
+    "typography": "Dialog title ~18px semibold, 13px field labels, 16px placeholders; no stray sizes.",
+    "density_layout": "Field column aligned at 257px, 10px field gaps, editor fills space; five ruled bands (note, fields, editor, security, actions) slightly segment the sheet.",
+    "color": "Orange only on Send; Trash text red; Unsigned is a neutral outline pill.",
+    "visible_affordances": "Inputs, editor toolbar glyphs, Encrypt/Sign checkboxes and button kinds are distinct; placeholders repeat the labels.",
+    "coherence": "One field/button vocabulary; Quill toolbar is themed to match."
+   },
+   "confidence": "high",
+   "caveat": "Unsubmitted empty form; validation, recipient chips and send states unseen.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token panel, field border and accent only.",
+     "type_geometry": "40px inputs/buttons, 8px radius, 13px labels.",
+     "shell": "Contract sidebar visible beneath the scrim.",
+     "accent_discipline": "Orange on Send only; destructive set apart at right in danger.",
+     "suite_cohesion": "Same dialog/button family as contact editor and KyIdentity."
+    },
+    "na_excluded": [],
+    "mean": 8.4,
+    "n": 5,
+    "sum": 42,
+    "mean_exact_fraction": "42/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-compose-desktop-light.png",
+   "sha256": "b23100c68453601a18967788a85151163c72909d2b82ad3e34082077ec467433",
+   "bytes": 64821,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "compose",
+   "filename_matches_content": true,
+   "cohort": "compose",
+   "state": "empty unsubmitted form",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over inbox",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "\"New message\" dialog title, Send filled at bottom-left, Schedule…/Save Draft outlined, Attach/Contacts text, Trash in danger at far right.",
+    "typography": "Dialog title ~18px semibold, 13px field labels, 16px placeholders; no stray sizes.",
+    "density_layout": "Field column aligned at 257px, 10px field gaps, editor fills space; five ruled bands (note, fields, editor, security, actions) slightly segment the sheet.",
+    "color": "Orange only on Send; Trash text red; Unsigned is a neutral outline pill.",
+    "visible_affordances": "Inputs, editor toolbar glyphs, Encrypt/Sign checkboxes and button kinds are distinct; placeholders repeat the labels.",
+    "coherence": "One field/button vocabulary; Quill toolbar is themed to match."
+   },
+   "confidence": "high",
+   "caveat": "Unsubmitted empty form; validation, recipient chips and send states unseen.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token panel, field border and accent only.",
+     "type_geometry": "40px inputs/buttons, 8px radius, 13px labels.",
+     "shell": "Contract sidebar visible beneath the scrim.",
+     "accent_discipline": "Orange on Send only; destructive set apart at right in danger.",
+     "suite_cohesion": "Same dialog/button family as contact editor and KyIdentity."
+    },
+    "na_excluded": [],
+    "mean": 8.4,
+    "n": 5,
+    "sum": 42,
+    "mean_exact_fraction": "42/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-compose-mobile-dark.png",
+   "sha256": "a57681f05846870f6cef10403e9422829e2eb1e5025b8641209d9891169a1215",
+   "bytes": 29538,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "compose",
+   "filename_matches_content": true,
+   "cohort": "compose",
+   "state": "empty unsubmitted form",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Title, fields, editor and Send first in the action row; close X.",
+    "typography": "Same type steps as desktop compose.",
+    "density_layout": "Actions wrap into two rows and Attach text starts ~15px right of Send's edge; close X sits lower than the title baseline; five ruled bands.",
+    "color": "Orange on Send only; Trash red text.",
+    "visible_affordances": "Inputs, editor glyphs and checkboxes clear; Trash sits directly beside Contacts rather than set apart.",
+    "coherence": "One field/button vocabulary."
+   },
+   "confidence": "high",
+   "caveat": "Unsubmitted; keyboard-open layout not shown.",
+   "total": 7.8,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": "N/A",
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token panel, field border, accent.",
+     "type_geometry": "40px fields/buttons, 16px gutter.",
+     "shell": "Full-screen sheet hides the shell.",
+     "accent_discipline": "Orange on Send only.",
+     "suite_cohesion": "Consistent with suite dialogs."
+    },
+    "na_excluded": [
+     "shell"
+    ],
+    "mean": 8.5,
+    "n": 4,
+    "sum": 34,
+    "mean_exact_fraction": "17/2"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-compose-mobile-light.png",
+   "sha256": "84b168fd34cf91570b810d291336ff1b179fe2807483c2c1103726fcf165bda3",
+   "bytes": 28893,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "compose",
+   "filename_matches_content": true,
+   "cohort": "compose",
+   "state": "empty unsubmitted form",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Title, fields, editor and Send first in the action row; close X.",
+    "typography": "Same type steps as desktop compose.",
+    "density_layout": "Actions wrap into two rows and Attach text starts ~15px right of Send's edge; close X sits lower than the title baseline; five ruled bands.",
+    "color": "Orange on Send only; Trash red text.",
+    "visible_affordances": "Inputs, editor glyphs and checkboxes clear; Trash sits directly beside Contacts rather than set apart.",
+    "coherence": "One field/button vocabulary."
+   },
+   "confidence": "high",
+   "caveat": "Unsubmitted; keyboard-open layout not shown.",
+   "total": 7.8,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": "N/A",
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token panel, field border, accent.",
+     "type_geometry": "40px fields/buttons, 16px gutter.",
+     "shell": "Full-screen sheet hides the shell.",
+     "accent_discipline": "Orange on Send only.",
+     "suite_cohesion": "Consistent with suite dialogs."
+    },
+    "na_excluded": [
+     "shell"
+    ],
+    "mean": 8.5,
+    "n": 4,
+    "sum": 34,
+    "mean_exact_fraction": "17/2"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-contact-editor-desktop-dark.png",
+   "sha256": "f5eb9fa706d86c4073c785e6b44ce16d1d9a3b844ceeb4ffdd76a1ab4b6c5c28",
+   "bytes": 64431,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contact editor",
+   "filename_matches_content": true,
+   "cohort": "contact-editor",
+   "state": "empty unsubmitted form",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over contacts",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "\"Add Contact\" dialog title; Full Name first with the two name disclosures directly beneath; Cancel + filled Add Contact bottom-right.",
+    "typography": "Title and section labels share one 14px semibold step; 13px field labels; no 16/14 mix visible.",
+    "density_layout": "Emails and Phones sit as unruled groups between ruled disclosure rows, and \"Save the contact first to add a photo.\" lands between Emails and Phones, unrelated to either.",
+    "color": "Single orange Add Contact; everything else neutral.",
+    "visible_affordances": "Disclosures carry right chevrons; + Add email / + Add phone are 40px outlined buttons; Full Name input clear.",
+    "coherence": "One disclosure/button vocabulary throughout."
+   },
+   "confidence": "high",
+   "caveat": "Scroll position at top; lower sections, validation and filled state unseen.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token panel, field border, accent on primary only.",
+     "type_geometry": "40px controls, 8px radii, 14px control text.",
+     "shell": "Contract sidebar visible beneath the scrim with Contacts selected.",
+     "accent_discipline": "Orange only on Add Contact.",
+     "suite_cohesion": "Dialog footer pattern matches the suite."
+    },
+    "na_excluded": [],
+    "mean": 8.4,
+    "n": 5,
+    "sum": 42,
+    "mean_exact_fraction": "42/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-contact-editor-desktop-light.png",
+   "sha256": "7a1d11f479bfe7fbc33d3880d0fa22d665567bc3baa3f22b4d3e1014aaed9341",
+   "bytes": 65620,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contact editor",
+   "filename_matches_content": true,
+   "cohort": "contact-editor",
+   "state": "empty unsubmitted form",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over contacts",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "\"Add Contact\" dialog title; Full Name first with the two name disclosures directly beneath; Cancel + filled Add Contact bottom-right.",
+    "typography": "Title and section labels share one 14px semibold step; 13px field labels; no 16/14 mix visible.",
+    "density_layout": "Emails and Phones sit as unruled groups between ruled disclosure rows, and \"Save the contact first to add a photo.\" lands between Emails and Phones, unrelated to either.",
+    "color": "Single orange Add Contact; everything else neutral.",
+    "visible_affordances": "Disclosures carry right chevrons; + Add email / + Add phone are 40px outlined buttons; Full Name input clear.",
+    "coherence": "One disclosure/button vocabulary throughout."
+   },
+   "confidence": "high",
+   "caveat": "Scroll position at top; lower sections, validation and filled state unseen.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token panel, field border, accent on primary only.",
+     "type_geometry": "40px controls, 8px radii, 14px control text.",
+     "shell": "Contract sidebar visible beneath the scrim with Contacts selected.",
+     "accent_discipline": "Orange only on Add Contact.",
+     "suite_cohesion": "Dialog footer pattern matches the suite."
+    },
+    "na_excluded": [],
+    "mean": 8.4,
+    "n": 5,
+    "sum": 42,
+    "mean_exact_fraction": "42/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-contact-editor-mobile-dark.png",
+   "sha256": "ef9a84fcb0930eda16ba50177fdc97a40302a48417ff64a9a07ea7dcc0a55ab1",
+   "bytes": 28653,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contact editor",
+   "filename_matches_content": true,
+   "cohort": "contact-editor",
+   "state": "empty unsubmitted form",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Add Contact title, Full Name then adjacent name disclosures; sticky Cancel/Add Contact footer with primary at right.",
+    "typography": "Title now 16px in step with fields; 13px labels; 14px control text.",
+    "density_layout": "Same orphaned photo note between Emails and Phones and ruled/unruled mix; Notes label peeks under the sticky footer as a scroll cue.",
+    "color": "Single orange Add Contact.",
+    "visible_affordances": "Chevrons, 40px add buttons and equal-width footer buttons are clear.",
+    "coherence": "Consistent disclosure vocabulary."
+   },
+   "confidence": "high",
+   "caveat": "Lower sections and validation unseen.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": "N/A",
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token panel and accent.",
+     "type_geometry": "40px controls, 8px radii, 16px gutter.",
+     "shell": "Full-screen sheet hides the shell.",
+     "accent_discipline": "Orange on Add Contact only.",
+     "suite_cohesion": "Consistent with suite forms."
+    },
+    "na_excluded": [
+     "shell"
+    ],
+    "mean": 8.5,
+    "n": 4,
+    "sum": 34,
+    "mean_exact_fraction": "17/2"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-contact-editor-mobile-light.png",
+   "sha256": "82e744e2e893a543d99f511881292ec46a460c151e1e5e6667fd5a6a83c446f6",
+   "bytes": 27918,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contact editor",
+   "filename_matches_content": true,
+   "cohort": "contact-editor",
+   "state": "empty unsubmitted form",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Add Contact title, Full Name then adjacent name disclosures; sticky Cancel/Add Contact footer with primary at right.",
+    "typography": "Title now 16px in step with fields; 13px labels; 14px control text.",
+    "density_layout": "Same orphaned photo note between Emails and Phones and ruled/unruled mix; Notes label peeks under the sticky footer as a scroll cue.",
+    "color": "Single orange Add Contact.",
+    "visible_affordances": "Chevrons, 40px add buttons and equal-width footer buttons are clear.",
+    "coherence": "Consistent disclosure vocabulary."
+   },
+   "confidence": "high",
+   "caveat": "Lower sections and validation unseen.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": "N/A",
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token panel and accent.",
+     "type_geometry": "40px controls, 8px radii, 16px gutter.",
+     "shell": "Full-screen sheet hides the shell.",
+     "accent_discipline": "Orange on Add Contact only.",
+     "suite_cohesion": "Consistent with suite forms."
+    },
+    "na_excluded": [
+     "shell"
+    ],
+    "mean": 8.5,
+    "n": 4,
+    "sum": 34,
+    "mean_exact_fraction": "17/2"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-contacts-desktop-dark.png",
+   "sha256": "e7205aadd01c973ff0850430fbf09eab04e81bcdb78577db5e9bf71215c76707",
+   "bytes": 68272,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contacts",
+   "filename_matches_content": true,
+   "cohort": "contacts-list",
+   "state": "sparse (4 contacts)",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Contacts h1 with filled New Contact and outlined More actions on the right; sidebar New Email correctly demoted to outline.",
+    "typography": "Name 14px semibold over 13px organization; column headers 13px; count \"4 contacts\" and \"Address Book 4\" repeat the same number.",
+    "density_layout": "Rows ~61px, full-bleed dividers, avatar/name/info/actions columns aligned; sparse list would scale.",
+    "color": "Neutral palette; four red Delete links repeat a danger hue down the right edge.",
+    "visible_affordances": "Edit/Delete text actions are readable; a chevron floating mid-row between Name and Contact Info has no evident target or meaning.",
+    "coherence": "Table, search and button styles match the inbox."
+   },
+   "confidence": "high",
+   "caveat": "Row chevron behaviour, hover and focus not visible.",
+   "total": 7.9,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces, neutral avatars; danger only on Delete.",
+     "type_geometry": "40px New Contact/More actions/search, 8px radii.",
+     "shell": "Contract sidebar with Contacts selected rail; account region pinned.",
+     "accent_discipline": "Orange only on New Contact and the nav selection.",
+     "suite_cohesion": "Matches KyIdentity table/page-header pattern."
+    },
+    "na_excluded": [],
+    "mean": 8.4,
+    "n": 5,
+    "sum": 42,
+    "mean_exact_fraction": "42/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-contacts-desktop-light.png",
+   "sha256": "b97d162c616848b4b65207dcd2056ec72d55ead9c0027444cf66c38c7eece1d8",
+   "bytes": 67600,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contacts",
+   "filename_matches_content": true,
+   "cohort": "contacts-list",
+   "state": "sparse (4 contacts)",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Contacts h1 with filled New Contact and outlined More actions on the right; sidebar New Email correctly demoted to outline.",
+    "typography": "Name 14px semibold over 13px organization; column headers 13px; count \"4 contacts\" and \"Address Book 4\" repeat the same number.",
+    "density_layout": "Rows ~61px, full-bleed dividers, avatar/name/info/actions columns aligned; sparse list would scale.",
+    "color": "Neutral palette; four red Delete links repeat a danger hue down the right edge.",
+    "visible_affordances": "Edit/Delete text actions are readable; a chevron floating mid-row between Name and Contact Info has no evident target or meaning.",
+    "coherence": "Table, search and button styles match the inbox."
+   },
+   "confidence": "high",
+   "caveat": "Row chevron behaviour, hover and focus not visible.",
+   "total": 7.9,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces, neutral avatars; danger only on Delete.",
+     "type_geometry": "40px New Contact/More actions/search, 8px radii.",
+     "shell": "Contract sidebar with Contacts selected rail; account region pinned.",
+     "accent_discipline": "Orange only on New Contact and the nav selection.",
+     "suite_cohesion": "Matches KyIdentity table/page-header pattern."
+    },
+    "na_excluded": [],
+    "mean": 8.4,
+    "n": 5,
+    "sum": 42,
+    "mean_exact_fraction": "42/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-contacts-mobile-dark.png",
+   "sha256": "1cbf35ba57778e57b99adbd7e76825d4204aef95f5e1e70f2baf6ead4dec1a38",
+   "bytes": 47651,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contacts",
+   "filename_matches_content": true,
+   "cohort": "contacts-list",
+   "state": "sparse (4 contacts)",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 6,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Contacts h1, filled New Contact beside More actions; header New Email outlined.",
+    "typography": "Name/organization/email steps readable; count repeated as \"4 contacts\" and \"Address Book 4\".",
+    "density_layout": "Each contact stacks name, org, email and Edit/Delete into ~137px, so only three and a half fit; email (72px), Edit (85px) and name (116px) use three different left edges.",
+    "color": "Neutral with red Delete per row.",
+    "visible_affordances": "Search placeholder is cut mid-word (\"organizat\"); Edit/Delete are bare text.",
+    "coherence": "Same controls as desktop."
+   },
+   "confidence": "high",
+   "caveat": "List scrolls below the fold; Sam Okafor row cut by viewport.",
+   "total": 7.5,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 7,
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces; danger only on Delete.",
+     "type_geometry": "40px controls, 20px gutter.",
+     "shell": "Phone strip scrolled to selected Contacts; leading item clipped; same label divergence as mail strip.",
+     "accent_discipline": "Orange on New Contact and selection only.",
+     "suite_cohesion": "Consistent with suite list pages."
+    },
+    "na_excluded": [],
+    "mean": 8.2,
+    "n": 5,
+    "sum": 41,
+    "mean_exact_fraction": "41/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-contacts-mobile-light.png",
+   "sha256": "e1c177e7ee43049cefc2e76b125bec214d035c4b637262a2a54f541cffcba739",
+   "bytes": 46142,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contacts",
+   "filename_matches_content": true,
+   "cohort": "contacts-list",
+   "state": "sparse (4 contacts)",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 6,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Contacts h1, filled New Contact beside More actions; header New Email outlined.",
+    "typography": "Name/organization/email steps readable; count repeated as \"4 contacts\" and \"Address Book 4\".",
+    "density_layout": "Each contact stacks name, org, email and Edit/Delete into ~137px, so only three and a half fit; email (72px), Edit (85px) and name (116px) use three different left edges.",
+    "color": "Neutral with red Delete per row.",
+    "visible_affordances": "Search placeholder is cut mid-word (\"organizat\"); Edit/Delete are bare text.",
+    "coherence": "Same controls as desktop."
+   },
+   "confidence": "high",
+   "caveat": "List scrolls below the fold; Sam Okafor row cut by viewport.",
+   "total": 7.5,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 7,
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces; danger only on Delete.",
+     "type_geometry": "40px controls, 20px gutter.",
+     "shell": "Phone strip scrolled to selected Contacts; leading item clipped; same label divergence as mail strip.",
+     "accent_discipline": "Orange on New Contact and selection only.",
+     "suite_cohesion": "Consistent with suite list pages."
+    },
+    "na_excluded": [],
+    "mean": 8.2,
+    "n": 5,
+    "sum": 41,
+    "mean_exact_fraction": "41/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-inbox-desktop-dark.png",
+   "sha256": "13e6a5545630506725916c320fd46e4e8041adfb4e1bf58072881c320400b2f2",
+   "bytes": 66323,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "sparse (4 messages)",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Inbox h1 top-left with the single filled New Email in the sidebar; search row and table read in order, but the Uncategorized 3 chip and the centred footer \"Updated Just Now\" float without a clear owner.",
+    "typography": "Title/body/meta steps are distinct; unread rows bold subject, sender and date all at once, so three columns shout the same fact.",
+    "density_layout": "Rows ~41px, full-bleed dividers, columns aligned; sender column spends width on full angle-bracket addresses and the Subject→Sender gap is wide; rows would scale cleanly.",
+    "color": "Orange limited to New Email, the Inbox rail and the soft chip fill; text and dividers neutral with apparent good contrast.",
+    "visible_affordances": "Search field, All select, Search button and 16px checkboxes all read as controls; the + beside Inbox is an unlabelled glyph whose purpose is not evident at a glance.",
+    "coherence": "One sidebar/table vocabulary; native select chevron is the only stylistically foreign control."
+   },
+   "confidence": "high",
+   "caveat": "Static capture; hover, focus and keyboard order not visible.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 8,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Cream/charcoal surfaces, charcoal ink, single burnt-orange accent from the token palette.",
+     "type_geometry": "Space Grotesk, ~24px title, 40px search/select/button, 8px radii; nav rows 40px.",
+     "shell": "240px sidebar with stamp+wordmark, Mailboxes section, accent rail on Inbox, alex/Logout pinned bottom; no role shown (product has none visible).",
+     "accent_discipline": "Accent on the primary, selection rail and a soft fill on the category chip; the chip fill is the only borderline use.",
+     "suite_cohesion": "Sidebar, rail and table treatment match the KyIdentity Users reference closely."
+    },
+    "na_excluded": [],
+    "mean": 8.2,
+    "n": 5,
+    "sum": 41,
+    "mean_exact_fraction": "41/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-inbox-desktop-light.png",
+   "sha256": "5618074cdf22ddf3156a840467376d28247ac39adbe67eeea5768092a2891f66",
+   "bytes": 65308,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "sparse (4 messages)",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Inbox h1 top-left with the single filled New Email in the sidebar; search row and table read in order, but the Uncategorized 3 chip and the centred footer \"Updated Just Now\" float without a clear owner.",
+    "typography": "Title/body/meta steps are distinct; unread rows bold subject, sender and date all at once, so three columns shout the same fact.",
+    "density_layout": "Rows ~41px, full-bleed dividers, columns aligned; sender column spends width on full angle-bracket addresses and the Subject→Sender gap is wide; rows would scale cleanly.",
+    "color": "Orange limited to New Email, the Inbox rail and the soft chip fill; text and dividers neutral with apparent good contrast.",
+    "visible_affordances": "Search field, All select, Search button and 16px checkboxes all read as controls; the + beside Inbox is an unlabelled glyph whose purpose is not evident at a glance.",
+    "coherence": "One sidebar/table vocabulary; native select chevron is the only stylistically foreign control."
+   },
+   "confidence": "high",
+   "caveat": "Static capture; hover, focus and keyboard order not visible.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 8,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Cream/charcoal surfaces, charcoal ink, single burnt-orange accent from the token palette.",
+     "type_geometry": "Space Grotesk, ~24px title, 40px search/select/button, 8px radii; nav rows 40px.",
+     "shell": "240px sidebar with stamp+wordmark, Mailboxes section, accent rail on Inbox, alex/Logout pinned bottom; no role shown (product has none visible).",
+     "accent_discipline": "Accent on the primary, selection rail and a soft fill on the category chip; the chip fill is the only borderline use.",
+     "suite_cohesion": "Sidebar, rail and table treatment match the KyIdentity Users reference closely."
+    },
+    "na_excluded": [],
+    "mean": 8.2,
+    "n": 5,
+    "sum": 41,
+    "mean_exact_fraction": "41/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-inbox-mobile-dark.png",
+   "sha256": "e35a70263b5fa2fa466a424f984656aa464619a412fadaf34d4930b4b1429dee",
+   "bytes": 44841,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "sparse (4 messages)",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Header with stamp, filled New Email and account; Inbox selected in the scroll strip; h1 then search.",
+    "typography": "Subject 16px bold over 12–13px sender/date; truncation with ellipsis is clean.",
+    "density_layout": "Space above and below the Inbox title is uneven (~35px vs ~48px); search input squeezed to ~144px beside select and button; rows ~56px scale cleanly.",
+    "color": "Orange on New Email and the Inbox underline rail; chip in accent-soft.",
+    "visible_affordances": "Clipped \"T\" at the strip edge signals horizontal scroll; checkboxes and fields clear.",
+    "coherence": "Same table/field vocabulary as desktop."
+   },
+   "confidence": "high",
+   "caveat": "Strip scroll and overflow behaviour not exercised.",
+   "total": 7.8,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 7,
+     "accent_discipline": 8,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces and accent.",
+     "type_geometry": "40px controls, 20px gutter.",
+     "shell": "Phone strip keeps the nav reachable but its fixed Drafts/Junk/Sent/Trash stand-ins differ from desktop rows (Sent Items, no Junk row), against the same-order-and-labels contract.",
+     "accent_discipline": "Accent on primary and selection; chip fill borderline.",
+     "suite_cohesion": "Header strip pattern shared with KyIdentity mobile."
+    },
+    "na_excluded": [],
+    "mean": 8.0,
+    "n": 5,
+    "sum": 40,
+    "mean_exact_fraction": "8/1"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-inbox-mobile-light.png",
+   "sha256": "df35a4ed8776b3f3199e4c3d1fbcffaed7faad3ae37806a686f2ec5d860625e8",
+   "bytes": 44269,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "sparse (4 messages)",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Header with stamp, filled New Email and account; Inbox selected in the scroll strip; h1 then search.",
+    "typography": "Subject 16px bold over 12–13px sender/date; truncation with ellipsis is clean.",
+    "density_layout": "Space above and below the Inbox title is uneven (~35px vs ~48px); search input squeezed to ~144px beside select and button; rows ~56px scale cleanly.",
+    "color": "Orange on New Email and the Inbox underline rail; chip in accent-soft.",
+    "visible_affordances": "Clipped \"T\" at the strip edge signals horizontal scroll; checkboxes and fields clear.",
+    "coherence": "Same table/field vocabulary as desktop."
+   },
+   "confidence": "high",
+   "caveat": "Strip scroll and overflow behaviour not exercised.",
+   "total": 7.8,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 7,
+     "accent_discipline": 8,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces and accent.",
+     "type_geometry": "40px controls, 20px gutter.",
+     "shell": "Phone strip keeps the nav reachable but its fixed Drafts/Junk/Sent/Trash stand-ins differ from desktop rows (Sent Items, no Junk row), against the same-order-and-labels contract.",
+     "accent_discipline": "Accent on primary and selection; chip fill borderline.",
+     "suite_cohesion": "Header strip pattern shared with KyIdentity mobile."
+    },
+    "na_excluded": [],
+    "mean": 8.0,
+    "n": 5,
+    "sum": 40,
+    "mean_exact_fraction": "8/1"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-inbox-selection-desktop-dark.png",
+   "sha256": "f5b890fa2e665373391b18f1f0bfb3696fbbce8c606f94c7ffbb302a88c71156",
+   "bytes": 72758,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox selection",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "sparse (4 messages, 2 selected)",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 9,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Contextual bar \"2 selected · Delete Archive Spam Snooze Read Print\" sits on the title line; New Email stays the only filled action.",
+    "typography": "Same scale as inbox; toolbar labels at nav size are calm; unread bold repeated across three columns.",
+    "density_layout": "Selected rows tinted without shifting layout; toolbar aligns to the title baseline; sparse list scales cleanly.",
+    "color": "Selection uses accent-soft row fill and orange checks; Delete alone in danger red, paired with an icon.",
+    "visible_affordances": "Header checkbox shows a native indeterminate dash for the partial selection; two checked rows and two unchecked rows are unambiguous.",
+    "coherence": "Bulk actions use the same quiet icon+label vocabulary as the rest; native select remains."
+   },
+   "confidence": "high",
+   "caveat": "Indeterminate/checked state is visible; actual mixed-state semantics and label hit areas are not provable from pixels.",
+   "total": 8.2,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 8,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces; accent-soft selection fill; danger red only on Delete.",
+     "type_geometry": "Space Grotesk; 40px controls; 16px native checkboxes inside larger labels.",
+     "shell": "Same contract sidebar, rail and pinned account region.",
+     "accent_discipline": "Orange marks the primary, the selection checks and selected rows; category chip fill still accent-soft.",
+     "suite_cohesion": "Contextual quiet toolbar matches the suite bulk-action pattern."
+    },
+    "na_excluded": [],
+    "mean": 8.2,
+    "n": 5,
+    "sum": 41,
+    "mean_exact_fraction": "41/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-inbox-selection-desktop-light.png",
+   "sha256": "fc2294a686bfc0f40439712ba310cdcf5fd300757215d3697164d3121bcd16ed",
+   "bytes": 72107,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox selection",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "sparse (4 messages, 2 selected)",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 9,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Contextual bar \"2 selected · Delete Archive Spam Snooze Read Print\" sits on the title line; New Email stays the only filled action.",
+    "typography": "Same scale as inbox; toolbar labels at nav size are calm; unread bold repeated across three columns.",
+    "density_layout": "Selected rows tinted without shifting layout; toolbar aligns to the title baseline; sparse list scales cleanly.",
+    "color": "Selection uses accent-soft row fill and orange checks; Delete alone in danger red, paired with an icon.",
+    "visible_affordances": "Header checkbox shows a native indeterminate dash for the partial selection; two checked rows and two unchecked rows are unambiguous.",
+    "coherence": "Bulk actions use the same quiet icon+label vocabulary as the rest; native select remains."
+   },
+   "confidence": "high",
+   "caveat": "Indeterminate/checked state is visible; actual mixed-state semantics and label hit areas are not provable from pixels.",
+   "total": 8.2,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 8,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces; accent-soft selection fill; danger red only on Delete.",
+     "type_geometry": "Space Grotesk; 40px controls; 16px native checkboxes inside larger labels.",
+     "shell": "Same contract sidebar, rail and pinned account region.",
+     "accent_discipline": "Orange marks the primary, the selection checks and selected rows; category chip fill still accent-soft.",
+     "suite_cohesion": "Contextual quiet toolbar matches the suite bulk-action pattern."
+    },
+    "na_excluded": [],
+    "mean": 8.2,
+    "n": 5,
+    "sum": 41,
+    "mean_exact_fraction": "41/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-inbox-selection-mobile-dark.png",
+   "sha256": "73af5d3c8082cae9b609e4dc7d0b92cfb95a79a2ccd29b773b5f2fcb90df3a6e",
+   "bytes": 51290,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox selection",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "sparse (4 messages, 2 selected)",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 9,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "\"2 selected\" and bulk actions under the title; New Email stays the only filled action.",
+    "typography": "Toolbar labels 14px with icons; list type as inbox.",
+    "density_layout": "Six actions wrap 4+2, leaving Read and Print alone on a second line and pushing search down ~100px.",
+    "color": "Accent-soft selected rows, orange checks, danger Delete only.",
+    "visible_affordances": "Indeterminate header checkbox and checked rows unambiguous.",
+    "coherence": "Toolbar vocabulary matches desktop."
+   },
+   "confidence": "high",
+   "caveat": "Selection semantics and touch targets beyond pixels unproven.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 7,
+     "accent_discipline": 8,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces, accent-soft selection.",
+     "type_geometry": "40px controls; 16px checkboxes.",
+     "shell": "Same phone strip label divergence as inbox.",
+     "accent_discipline": "Orange on primary, checks and selected rows; chip fill borderline.",
+     "suite_cohesion": "Consistent with suite selection pattern."
+    },
+    "na_excluded": [],
+    "mean": 8.0,
+    "n": 5,
+    "sum": 40,
+    "mean_exact_fraction": "8/1"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-inbox-selection-mobile-light.png",
+   "sha256": "8c678fd53e602bb5477bb5b856f566f97d2d631c894b5cbe1446ad7701f0e6b3",
+   "bytes": 50522,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox selection",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "sparse (4 messages, 2 selected)",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 9,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "\"2 selected\" and bulk actions under the title; New Email stays the only filled action.",
+    "typography": "Toolbar labels 14px with icons; list type as inbox.",
+    "density_layout": "Six actions wrap 4+2, leaving Read and Print alone on a second line and pushing search down ~100px.",
+    "color": "Accent-soft selected rows, orange checks, danger Delete only.",
+    "visible_affordances": "Indeterminate header checkbox and checked rows unambiguous.",
+    "coherence": "Toolbar vocabulary matches desktop."
+   },
+   "confidence": "high",
+   "caveat": "Selection semantics and touch targets beyond pixels unproven.",
+   "total": 8.0,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 7,
+     "accent_discipline": 8,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces, accent-soft selection.",
+     "type_geometry": "40px controls; 16px checkboxes.",
+     "shell": "Same phone strip label divergence as inbox.",
+     "accent_discipline": "Orange on primary, checks and selected rows; chip fill borderline.",
+     "suite_cohesion": "Consistent with suite selection pattern."
+    },
+    "na_excluded": [],
+    "mean": 8.0,
+    "n": 5,
+    "sum": 40,
+    "mean_exact_fraction": "8/1"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-login-desktop-dark.png",
+   "sha256": "956de9378fa2de5451adc02fb15ddede66878ec7dc437f179356f8483b2eaa12",
+   "bytes": 27663,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "login",
+   "filename_matches_content": true,
+   "cohort": "auth",
+   "state": "empty sign-in form, security check verified",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Stamp icon, \"Sign in\" title, one-line subtitle and a single full-width Sign in button: one obvious action.",
+    "typography": "Title ~24px, 13px bold labels, 13px status and footer; \"Security check\" label followed by \"Security check verified.\" repeats the phrase.",
+    "density_layout": "Centred 432px card, 16px label/field rhythm, compact left-aligned verification line; even vertical balance.",
+    "color": "Orange primary, green success text, cream fields; restrained.",
+    "visible_affordances": "Fields and button read clearly; the Sign in button is ~47px, taller than the 40px fields.",
+    "coherence": "Icon overlaps the card edge as a badge; otherwise one vocabulary."
+   },
+   "confidence": "high",
+   "caveat": "PoW verification shown as completed; widget loading/failure states and third-party slot unseen.",
+   "total": 8.4,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": "N/A",
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token bg/panel/field border, accent and success.",
+     "type_geometry": "40px fields, 8px radii; button taller than 40px.",
+     "shell": "No application shell on the sign-in page.",
+     "accent_discipline": "Orange only on Sign in.",
+     "suite_cohesion": "Busnes sign-in composition consistent with the suite stamp icon."
+    },
+    "na_excluded": [
+     "shell"
+    ],
+    "mean": 8.5,
+    "n": 4,
+    "sum": 34,
+    "mean_exact_fraction": "17/2"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-login-desktop-light.png",
+   "sha256": "275e79bfcea4e058417de10c0e7f7841443bcba7e21d07c7b295063126709815",
+   "bytes": 27463,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "login",
+   "filename_matches_content": true,
+   "cohort": "auth",
+   "state": "empty sign-in form, security check verified",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Stamp icon, \"Sign in\" title, one-line subtitle and a single full-width Sign in button: one obvious action.",
+    "typography": "Title ~24px, 13px bold labels, 13px status and footer; \"Security check\" label followed by \"Security check verified.\" repeats the phrase.",
+    "density_layout": "Centred 432px card, 16px label/field rhythm, compact left-aligned verification line; even vertical balance.",
+    "color": "Orange primary, green success text, cream fields; restrained.",
+    "visible_affordances": "Fields and button read clearly; the Sign in button is ~47px, taller than the 40px fields.",
+    "coherence": "Icon overlaps the card edge as a badge; otherwise one vocabulary."
+   },
+   "confidence": "high",
+   "caveat": "PoW verification shown as completed; widget loading/failure states and third-party slot unseen.",
+   "total": 8.4,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": "N/A",
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token bg/panel/field border, accent and success.",
+     "type_geometry": "40px fields, 8px radii; button taller than 40px.",
+     "shell": "No application shell on the sign-in page.",
+     "accent_discipline": "Orange only on Sign in.",
+     "suite_cohesion": "Busnes sign-in composition consistent with the suite stamp icon."
+    },
+    "na_excluded": [
+     "shell"
+    ],
+    "mean": 8.5,
+    "n": 4,
+    "sum": 34,
+    "mean_exact_fraction": "17/2"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-login-mobile-dark.png",
+   "sha256": "fe9b1d342f5afa06bb8b0dbb4c9737010752bb3fa46eeece4a0e381dccbf7de1",
+   "bytes": 22242,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "login",
+   "filename_matches_content": true,
+   "cohort": "auth",
+   "state": "empty sign-in form, security check verified",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Single Sign in action, title and subtitle under the stamp.",
+    "typography": "Same steps as desktop; repeated \"Security check\" phrase.",
+    "density_layout": "14px card inset, consistent field rhythm; card top-anchored leaving the lower third empty, appropriate for a phone keyboard.",
+    "color": "Orange primary, green success.",
+    "visible_affordances": "Fields clear; button ~47px vs 40px fields.",
+    "coherence": "Badge icon overlaps card edge; otherwise one vocabulary."
+   },
+   "confidence": "high",
+   "caveat": "PoW loading/failure states unseen.",
+   "total": 8.4,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": "N/A",
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces and accent.",
+     "type_geometry": "40px fields; taller button.",
+     "shell": "No shell on sign-in.",
+     "accent_discipline": "Orange only on Sign in.",
+     "suite_cohesion": "Consistent stamp/sign-in composition."
+    },
+    "na_excluded": [
+     "shell"
+    ],
+    "mean": 8.5,
+    "n": 4,
+    "sum": 34,
+    "mean_exact_fraction": "17/2"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-login-mobile-light.png",
+   "sha256": "fb844f02b66eb45f1d92f422e9a89a97e3a649255f8afa043f54a8d329ce5be3",
+   "bytes": 21961,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "login",
+   "filename_matches_content": true,
+   "cohort": "auth",
+   "state": "empty sign-in form, security check verified",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Single Sign in action, title and subtitle under the stamp.",
+    "typography": "Same steps as desktop; repeated \"Security check\" phrase.",
+    "density_layout": "14px card inset, consistent field rhythm; card top-anchored leaving the lower third empty, appropriate for a phone keyboard.",
+    "color": "Orange primary, green success.",
+    "visible_affordances": "Fields clear; button ~47px vs 40px fields.",
+    "coherence": "Badge icon overlaps card edge; otherwise one vocabulary."
+   },
+   "confidence": "high",
+   "caveat": "PoW loading/failure states unseen.",
+   "total": 8.4,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": "N/A",
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token surfaces and accent.",
+     "type_geometry": "40px fields; taller button.",
+     "shell": "No shell on sign-in.",
+     "accent_discipline": "Orange only on Sign in.",
+     "suite_cohesion": "Consistent stamp/sign-in composition."
+    },
+    "na_excluded": [
+     "shell"
+    ],
+    "mean": 8.5,
+    "n": 4,
+    "sum": 34,
+    "mean_exact_fraction": "17/2"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-reader-desktop-dark.png",
+   "sha256": "36c3093bc0b9b0044d9691a844306959620670f26a893bc62a0fcc500e55976f",
+   "bytes": 42311,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "reader",
+   "filename_matches_content": true,
+   "cohort": "mail-read",
+   "state": "populated (one short message open)",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over inbox",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Subject as dialog title, filled Reply first, Reply All/Forward outlined, More actions isolated at right; close X top-right.",
+    "typography": "Title ~24px, sender label 13px bold with value at body size, body 15px with comfortable leading.",
+    "density_layout": "Near-viewport dialog (40px scrim inset) holds a three-line message; body capped near 560px leaving most of the 1200px dialog empty for this state; a longer message would use the frame.",
+    "color": "Only Reply is orange; scrim dims the shell evenly.",
+    "visible_affordances": "Buttons and the native details disclosure triangle read correctly; \"View raw email\" underlined link is clear.",
+    "coherence": "Dialog uses the same button and divider vocabulary as the app."
+   },
+   "confidence": "high",
+   "caveat": "Scrim hides the list; date and recipient details sit behind the collapsed disclosure and are not visible.",
+   "total": 7.8,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Panel white/charcoal on token scrim; no off-palette hue.",
+     "type_geometry": "Title 24px, 40px buttons, 8px radii.",
+     "shell": "Contract sidebar visible beneath the scrim.",
+     "accent_discipline": "Orange on Reply only.",
+     "suite_cohesion": "Dialog/button treatment consistent with other Ky captures."
+    },
+    "na_excluded": [],
+    "mean": 8.4,
+    "n": 5,
+    "sum": 42,
+    "mean_exact_fraction": "42/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-reader-desktop-light.png",
+   "sha256": "3fafaf0e4cead08faf23951878d0dbab8fee6507f6b4bf3a33017b45caf9ae30",
+   "bytes": 43321,
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "reader",
+   "filename_matches_content": true,
+   "cohort": "mail-read",
+   "state": "populated (one short message open)",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over inbox",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Subject as dialog title, filled Reply first, Reply All/Forward outlined, More actions isolated at right; close X top-right.",
+    "typography": "Title ~24px, sender label 13px bold with value at body size, body 15px with comfortable leading.",
+    "density_layout": "Near-viewport dialog (40px scrim inset) holds a three-line message; body capped near 560px leaving most of the 1200px dialog empty for this state; a longer message would use the frame.",
+    "color": "Only Reply is orange; scrim dims the shell evenly.",
+    "visible_affordances": "Buttons and the native details disclosure triangle read correctly; \"View raw email\" underlined link is clear.",
+    "coherence": "Dialog uses the same button and divider vocabulary as the app."
+   },
+   "confidence": "high",
+   "caveat": "Scrim hides the list; date and recipient details sit behind the collapsed disclosure and are not visible.",
+   "total": 7.8,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": 8,
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Panel white/charcoal on token scrim; no off-palette hue.",
+     "type_geometry": "Title 24px, 40px buttons, 8px radii.",
+     "shell": "Contract sidebar visible beneath the scrim.",
+     "accent_discipline": "Orange on Reply only.",
+     "suite_cohesion": "Dialog/button treatment consistent with other Ky captures."
+    },
+    "na_excluded": [],
+    "mean": 8.4,
+    "n": 5,
+    "sum": 42,
+    "mean_exact_fraction": "42/5"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-reader-mobile-dark.png",
+   "sha256": "cdaa7c4df5d88e39efcc7cff74bbbfa2484a8d9a9d8eb45d396b7498dd4ae777",
+   "bytes": 27099,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "reader",
+   "filename_matches_content": true,
+   "cohort": "mail-read",
+   "state": "populated (one short message open)",
+   "theme": "dark (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 7,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Subject title, filled Reply first in a 2×2 action grid, close X top-right.",
+    "typography": "Body keeps the message's hard line break, leaving \"so the\" short then a full line: a ragged paragraph at this width.",
+    "density_layout": "Full-screen sheet, 16px gutter, even 8px action grid, divider before metadata; empty area is the state.",
+    "color": "Only Reply orange.",
+    "visible_affordances": "Buttons equal-width and clearly bordered; disclosure and raw-email link readable.",
+    "coherence": "Same button vocabulary as desktop reader."
+   },
+   "confidence": "high",
+   "caveat": "Plain-text hard wrap comes from fixture content; reflow behaviour for other mail unknown.",
+   "total": 7.9,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": "N/A",
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token panel and accent.",
+     "type_geometry": "40px buttons, 8px radii; 16px gutter here vs 20px on list pages.",
+     "shell": "Full-screen sheet hides the shell.",
+     "accent_discipline": "Orange on Reply only.",
+     "suite_cohesion": "Consistent sheet pattern."
+    },
+    "na_excluded": [
+     "shell"
+    ],
+    "mean": 8.5,
+    "n": 4,
+    "sum": 34,
+    "mean_exact_fraction": "17/2"
+   }
+  },
+  {
+   "file": "screenshots/kypost-06-after-reader-mobile-light.png",
+   "sha256": "5467b40f578165fe13a164ac3dffafa55afff6c6f615625e39230eb4b9c268f8",
+   "bytes": 27517,
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "reader",
+   "filename_matches_content": true,
+   "cohort": "mail-read",
+   "state": "populated (one short message open)",
+   "theme": "light (OS, no saved choice)",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 7,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Subject title, filled Reply first in a 2×2 action grid, close X top-right.",
+    "typography": "Body keeps the message's hard line break, leaving \"so the\" short then a full line: a ragged paragraph at this width.",
+    "density_layout": "Full-screen sheet, 16px gutter, even 8px action grid, divider before metadata; empty area is the state.",
+    "color": "Only Reply orange.",
+    "visible_affordances": "Buttons equal-width and clearly bordered; disclosure and raw-email link readable.",
+    "coherence": "Same button vocabulary as desktop reader."
+   },
+   "confidence": "high",
+   "caveat": "Plain-text hard wrap comes from fixture content; reflow behaviour for other mail unknown.",
+   "total": 7.9,
+   "ky_fit": {
+    "scores": {
+     "palette_tokens": 9,
+     "type_geometry": 8,
+     "shell": "N/A",
+     "accent_discipline": 9,
+     "suite_cohesion": 8
+    },
+    "observations": {
+     "palette_tokens": "Token panel and accent.",
+     "type_geometry": "40px buttons, 8px radii; 16px gutter here vs 20px on list pages.",
+     "shell": "Full-screen sheet hides the shell.",
+     "accent_discipline": "Orange on Reply only.",
+     "suite_cohesion": "Consistent sheet pattern."
+    },
+    "na_excluded": [
+     "shell"
+    ],
+    "mean": 8.5,
+    "n": 4,
+    "sum": 34,
+    "mean_exact_fraction": "17/2"
+   }
+  }
+ ],
+ "cohort_rankings": {
+  "note": "KyPost only; no competitor captures, so no ranking and no Ky gap. Coverage summary, not a ranking.",
+  "cohorts": {
+   "auth": {
+    "n": 4,
+    "sum": "33.6",
+    "mean_exact_fraction": "42/5",
+    "mean_exact_decimal": "8.4",
+    "mean_half_up_0.1": "8.4",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-06-after-login-desktop-dark.png",
+     "screenshots/kypost-06-after-login-desktop-light.png",
+     "screenshots/kypost-06-after-login-mobile-dark.png",
+     "screenshots/kypost-06-after-login-mobile-light.png"
+    ]
+   },
+   "compose": {
+    "n": 4,
+    "sum": "31.6",
+    "mean_exact_fraction": "79/10",
+    "mean_exact_decimal": "7.9",
+    "mean_half_up_0.1": "7.9",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-06-after-compose-desktop-dark.png",
+     "screenshots/kypost-06-after-compose-desktop-light.png",
+     "screenshots/kypost-06-after-compose-mobile-dark.png",
+     "screenshots/kypost-06-after-compose-mobile-light.png"
+    ]
+   },
+   "contact-editor": {
+    "n": 4,
+    "sum": "32.0",
+    "mean_exact_fraction": "8/1",
+    "mean_exact_decimal": "8",
+    "mean_half_up_0.1": "8.0",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-06-after-contact-editor-desktop-dark.png",
+     "screenshots/kypost-06-after-contact-editor-desktop-light.png",
+     "screenshots/kypost-06-after-contact-editor-mobile-dark.png",
+     "screenshots/kypost-06-after-contact-editor-mobile-light.png"
+    ]
+   },
+   "contacts-list": {
+    "n": 4,
+    "sum": "30.8",
+    "mean_exact_fraction": "77/10",
+    "mean_exact_decimal": "7.7",
+    "mean_half_up_0.1": "7.7",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-06-after-contacts-desktop-dark.png",
+     "screenshots/kypost-06-after-contacts-desktop-light.png",
+     "screenshots/kypost-06-after-contacts-mobile-dark.png",
+     "screenshots/kypost-06-after-contacts-mobile-light.png"
+    ]
+   },
+   "mail-list": {
+    "n": 8,
+    "sum": "64.0",
+    "mean_exact_fraction": "8/1",
+    "mean_exact_decimal": "8",
+    "mean_half_up_0.1": "8.0",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-06-after-inbox-desktop-dark.png",
+     "screenshots/kypost-06-after-inbox-desktop-light.png",
+     "screenshots/kypost-06-after-inbox-mobile-dark.png",
+     "screenshots/kypost-06-after-inbox-mobile-light.png",
+     "screenshots/kypost-06-after-inbox-selection-desktop-dark.png",
+     "screenshots/kypost-06-after-inbox-selection-desktop-light.png",
+     "screenshots/kypost-06-after-inbox-selection-mobile-dark.png",
+     "screenshots/kypost-06-after-inbox-selection-mobile-light.png"
+    ]
+   },
+   "mail-read": {
+    "n": 4,
+    "sum": "31.4",
+    "mean_exact_fraction": "157/20",
+    "mean_exact_decimal": "7.85",
+    "mean_half_up_0.1": "7.9",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-06-after-reader-desktop-dark.png",
+     "screenshots/kypost-06-after-reader-desktop-light.png",
+     "screenshots/kypost-06-after-reader-mobile-dark.png",
+     "screenshots/kypost-06-after-reader-mobile-light.png"
+    ]
+   },
+   "settings": {
+    "n": 4,
+    "sum": "32.0",
+    "mean_exact_fraction": "8/1",
+    "mean_exact_decimal": "8",
+    "mean_half_up_0.1": "8.0",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-06-after-appearance-desktop-dark.png",
+     "screenshots/kypost-06-after-appearance-desktop-light.png",
+     "screenshots/kypost-06-after-appearance-mobile-dark.png",
+     "screenshots/kypost-06-after-appearance-mobile-light.png"
+    ]
+   }
+  }
+ },
+ "drift": {
+  "prior_round": "opus-round3.json (own round3, stage04 originals), opened only after freeze",
+  "freeze": {
+   "frozen_at": "2026-10-27T19:15:17.296138+00:00",
+   "vectors_sha256": "594f1aaf00c920633a3439e7a9df619db01b93ff8ada5ed96680796f078efe87",
+   "hash_method": "sha256 of json.dumps(vectors, sort_keys=True, separators=(',',':'), ensure_ascii=False) over [{file,scores,observations,total,ky_fit}] sorted by file",
+   "frozen_file_sha256": "8fe9a11f471f7fc4efe0557de120ad6313a26a5748472248ec4ee1ab1dc85a97",
+   "frozen_file": "/tmp/opus-r4-review/freeze.json (chmod 444)"
+  },
+  "summary": {
+   "prior_sum": "252.4",
+   "current_sum": "255.4",
+   "sum_delta": "3.0",
+   "mean_drift": "0.09375",
+   "product_weighted_unrounded": "4.80",
+   "reviewer_variance_weighted_unrounded": "-1.50",
+   "note": "All 32 are Ky files; no competitor drift. My reviewer variance is net negative this round, so the result is not lifted by re-judgment of unchanged pixels. Variance attribution is informational and never replaces the raw progression mean."
+  },
+  "abs_delta_ge_0.5": [
+   "screenshots/kypost-06-after-contact-editor-desktop-dark.png",
+   "screenshots/kypost-06-after-contact-editor-desktop-light.png",
+   "screenshots/kypost-06-after-contact-editor-mobile-dark.png",
+   "screenshots/kypost-06-after-contact-editor-mobile-light.png",
+   "screenshots/kypost-06-after-reader-mobile-dark.png",
+   "screenshots/kypost-06-after-reader-mobile-light.png"
+  ],
+  "files": [
+   {
+    "file": "screenshots/kypost-06-after-appearance-desktop-dark.png",
+    "prior_file": "screenshots/kypost-04-after-appearance-desktop-dark.png",
+    "same_bytes": true,
+    "pixel_change": "byte-identical",
+    "prior_total": "7.9",
+    "total": "8.0",
+    "delta": "0.1",
+    "dim_deltas": {
+     "coherence": 1
+    },
+    "cause": "reviewer variance",
+    "explanation": "coherence +1 reviewer variance: Round3 docked coherence for the icon-less Settings sub-nav/strip item; that element is pixel-unchanged and I did not count it this time.",
+    "reviewer_variance_weighted": "0.15",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.40",
+    "ky_fit_mean_exact_fraction": "43/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-appearance-desktop-light.png",
+    "prior_file": "screenshots/kypost-04-after-appearance-desktop-light.png",
+    "same_bytes": true,
+    "pixel_change": "byte-identical",
+    "prior_total": "7.9",
+    "total": "8.0",
+    "delta": "0.1",
+    "dim_deltas": {
+     "coherence": 1
+    },
+    "cause": "reviewer variance",
+    "explanation": "coherence +1 reviewer variance: Round3 docked coherence for the icon-less Settings sub-nav/strip item; that element is pixel-unchanged and I did not count it this time.",
+    "reviewer_variance_weighted": "0.15",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.40",
+    "ky_fit_mean_exact_fraction": "43/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-appearance-mobile-dark.png",
+    "prior_file": "screenshots/kypost-04-after-appearance-mobile-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 5.920% bbox [15, 131, 373, 843]",
+    "prior_total": "7.9",
+    "total": "8.0",
+    "delta": "0.1",
+    "dim_deltas": {
+     "coherence": 1
+    },
+    "cause": "reviewer variance",
+    "explanation": "coherence +1 reviewer variance: Round3 docked coherence for the icon-less Settings sub-nav/strip item; that element is pixel-unchanged and I did not count it this time. Pixels changed (phone gutter 16 -> 20px, two columns kept), but that aligns phone pages with each other rather than changing anything inside this screen I score differently.",
+    "reviewer_variance_weighted": "0.15",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.60",
+    "ky_fit_mean_exact_fraction": "42/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-appearance-mobile-light.png",
+    "prior_file": "screenshots/kypost-04-after-appearance-mobile-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 5.960% bbox [15, 131, 373, 843]",
+    "prior_total": "7.9",
+    "total": "8.0",
+    "delta": "0.1",
+    "dim_deltas": {
+     "coherence": 1
+    },
+    "cause": "reviewer variance",
+    "explanation": "coherence +1 reviewer variance: Round3 docked coherence for the icon-less Settings sub-nav/strip item; that element is pixel-unchanged and I did not count it this time. Pixels changed (phone gutter 16 -> 20px, two columns kept), but that aligns phone pages with each other rather than changing anything inside this screen I score differently.",
+    "reviewer_variance_weighted": "0.15",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.60",
+    "ky_fit_mean_exact_fraction": "42/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-compose-desktop-dark.png",
+    "prior_file": "screenshots/kypost-04-after-compose-desktop-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 0.308% bbox [1120, 192, 1247, 384]",
+    "prior_total": "8.2",
+    "total": "8.0",
+    "delta": "-0.2",
+    "dim_deltas": {
+     "color": -1
+    },
+    "cause": "reviewer variance",
+    "explanation": "color -1 reviewer variance: Dialog pixels unchanged (desktop diffs lie only in the dimmed inbox behind the scrim at x1120-1247; phone byte-identical); I judged color at 8 rather than 9 on the same Send/Trash/Unsigned treatment.",
+    "reviewer_variance_weighted": "-0.15",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.40",
+    "ky_fit_mean_exact_fraction": "42/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-compose-desktop-light.png",
+    "prior_file": "screenshots/kypost-04-after-compose-desktop-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 0.305% bbox [1120, 192, 1247, 384]",
+    "prior_total": "8.2",
+    "total": "8.0",
+    "delta": "-0.2",
+    "dim_deltas": {
+     "color": -1
+    },
+    "cause": "reviewer variance",
+    "explanation": "color -1 reviewer variance: Dialog pixels unchanged (desktop diffs lie only in the dimmed inbox behind the scrim at x1120-1247; phone byte-identical); I judged color at 8 rather than 9 on the same Send/Trash/Unsigned treatment.",
+    "reviewer_variance_weighted": "-0.15",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.40",
+    "ky_fit_mean_exact_fraction": "42/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-compose-mobile-dark.png",
+    "prior_file": "screenshots/kypost-04-after-compose-mobile-dark.png",
+    "same_bytes": true,
+    "pixel_change": "byte-identical",
+    "prior_total": "8.0",
+    "total": "7.8",
+    "delta": "-0.2",
+    "dim_deltas": {
+     "color": -1
+    },
+    "cause": "reviewer variance",
+    "explanation": "color -1 reviewer variance: Dialog pixels unchanged (desktop diffs lie only in the dimmed inbox behind the scrim at x1120-1247; phone byte-identical); I judged color at 8 rather than 9 on the same Send/Trash/Unsigned treatment.",
+    "reviewer_variance_weighted": "-0.15",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.50",
+    "ky_fit_mean_exact_fraction": "17/2",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-compose-mobile-light.png",
+    "prior_file": "screenshots/kypost-04-after-compose-mobile-light.png",
+    "same_bytes": true,
+    "pixel_change": "byte-identical",
+    "prior_total": "8.0",
+    "total": "7.8",
+    "delta": "-0.2",
+    "dim_deltas": {
+     "color": -1
+    },
+    "cause": "reviewer variance",
+    "explanation": "color -1 reviewer variance: Dialog pixels unchanged (desktop diffs lie only in the dimmed inbox behind the scrim at x1120-1247; phone byte-identical); I judged color at 8 rather than 9 on the same Send/Trash/Unsigned treatment.",
+    "reviewer_variance_weighted": "-0.15",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.50",
+    "ky_fit_mean_exact_fraction": "17/2",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-contact-editor-desktop-dark.png",
+    "prior_file": "screenshots/kypost-04-after-contact-editor-desktop-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 2.480% bbox [215, 24, 1247, 789]",
+    "prior_total": "7.5",
+    "total": "8.0",
+    "delta": "0.5",
+    "dim_deltas": {
+     "typography": 1,
+     "color": 1,
+     "coherence": 1
+    },
+    "cause": "product pixels + reviewer variance",
+    "explanation": "typography +1 product: add-email/add-phone labels 16px -> 14px (phone title also 16px and aligned to the 16px field inset) color +1 reviewer variance: Stage04 already had a single orange Add Contact on a neutral sheet; color 8 -> 9 is my re-judgment, not a pixel change. coherence +1 product: both name disclosures now adjacent under Full Name instead of split around Emails/Phones",
+    "reviewer_variance_weighted": "0.15",
+    "product_weighted": "0.30",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "42/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-contact-editor-desktop-light.png",
+    "prior_file": "screenshots/kypost-04-after-contact-editor-desktop-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 2.480% bbox [215, 24, 1247, 789]",
+    "prior_total": "7.5",
+    "total": "8.0",
+    "delta": "0.5",
+    "dim_deltas": {
+     "typography": 1,
+     "color": 1,
+     "coherence": 1
+    },
+    "cause": "product pixels + reviewer variance",
+    "explanation": "typography +1 product: add-email/add-phone labels 16px -> 14px (phone title also 16px and aligned to the 16px field inset) color +1 reviewer variance: Stage04 already had a single orange Add Contact on a neutral sheet; color 8 -> 9 is my re-judgment, not a pixel change. coherence +1 product: both name disclosures now adjacent under Full Name instead of split around Emails/Phones",
+    "reviewer_variance_weighted": "0.15",
+    "product_weighted": "0.30",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "42/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-contact-editor-mobile-dark.png",
+    "prior_file": "screenshots/kypost-04-after-contact-editor-mobile-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 6.079% bbox [16, 29, 373, 770]",
+    "prior_total": "7.5",
+    "total": "8.0",
+    "delta": "0.5",
+    "dim_deltas": {
+     "typography": 1,
+     "color": 1,
+     "coherence": 1
+    },
+    "cause": "product pixels + reviewer variance",
+    "explanation": "typography +1 product: add-email/add-phone labels 16px -> 14px (phone title also 16px and aligned to the 16px field inset) color +1 reviewer variance: Stage04 already had a single orange Add Contact on a neutral sheet; color 8 -> 9 is my re-judgment, not a pixel change. coherence +1 product: both name disclosures now adjacent under Full Name instead of split around Emails/Phones",
+    "reviewer_variance_weighted": "0.15",
+    "product_weighted": "0.30",
+    "prior_ky_fit": "8.25",
+    "ky_fit_mean_exact_fraction": "17/2",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-contact-editor-mobile-light.png",
+    "prior_file": "screenshots/kypost-04-after-contact-editor-mobile-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 6.082% bbox [16, 29, 373, 770]",
+    "prior_total": "7.5",
+    "total": "8.0",
+    "delta": "0.5",
+    "dim_deltas": {
+     "typography": 1,
+     "color": 1,
+     "coherence": 1
+    },
+    "cause": "product pixels + reviewer variance",
+    "explanation": "typography +1 product: add-email/add-phone labels 16px -> 14px (phone title also 16px and aligned to the 16px field inset) color +1 reviewer variance: Stage04 already had a single orange Add Contact on a neutral sheet; color 8 -> 9 is my re-judgment, not a pixel change. coherence +1 product: both name disclosures now adjacent under Full Name instead of split around Emails/Phones",
+    "reviewer_variance_weighted": "0.15",
+    "product_weighted": "0.30",
+    "prior_ky_fit": "8.25",
+    "ky_fit_mean_exact_fraction": "17/2",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-contacts-desktop-dark.png",
+    "prior_file": "screenshots/kypost-04-after-contacts-desktop-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 2.054% bbox [272, 24, 1247, 452]",
+    "prior_total": "7.7",
+    "total": "7.9",
+    "delta": "0.2",
+    "dim_deltas": {
+     "typography": 1
+    },
+    "cause": "product pixels",
+    "explanation": "typography +1 product: New Contact / More actions labels 16px -> 14px, matching shell and row actions",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.15",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "42/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-contacts-desktop-light.png",
+    "prior_file": "screenshots/kypost-04-after-contacts-desktop-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 2.024% bbox [272, 24, 1247, 452]",
+    "prior_total": "7.7",
+    "total": "7.9",
+    "delta": "0.2",
+    "dim_deltas": {
+     "typography": 1
+    },
+    "cause": "product pixels",
+    "explanation": "typography +1 product: New Contact / More actions labels 16px -> 14px, matching shell and row actions",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.15",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "42/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-contacts-mobile-dark.png",
+    "prior_file": "screenshots/kypost-04-after-contacts-mobile-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 2.221% bbox [20, 171, 369, 815]",
+    "prior_total": "7.5",
+    "total": "7.5",
+    "delta": "0.0",
+    "dim_deltas": {
+     "typography": 1,
+     "density_layout": -1
+    },
+    "cause": "product pixels + reviewer variance",
+    "explanation": "typography +1 product: New Contact / More actions labels 16px -> 14px, matching shell and row actions density_layout -1 reviewer variance: Phone contact rows are pixel-identical to stage04 (137px stacked rows, three left edges); I weighed them more harshly (7 -> 6).",
+    "reviewer_variance_weighted": "-0.20",
+    "product_weighted": "0.15",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "41/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-contacts-mobile-light.png",
+    "prior_file": "screenshots/kypost-04-after-contacts-mobile-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 2.171% bbox [20, 171, 369, 815]",
+    "prior_total": "7.5",
+    "total": "7.5",
+    "delta": "0.0",
+    "dim_deltas": {
+     "typography": 1,
+     "density_layout": -1
+    },
+    "cause": "product pixels + reviewer variance",
+    "explanation": "typography +1 product: New Contact / More actions labels 16px -> 14px, matching shell and row actions density_layout -1 reviewer variance: Phone contact rows are pixel-identical to stage04 (137px stacked rows, three left edges); I weighed them more harshly (7 -> 6).",
+    "reviewer_variance_weighted": "-0.20",
+    "product_weighted": "0.15",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "41/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-desktop-dark.png",
+    "prior_file": "screenshots/kypost-04-after-inbox-desktop-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 2.722% bbox [272, 190, 1247, 384]",
+    "prior_total": "7.7",
+    "total": "8.0",
+    "delta": "0.3",
+    "dim_deltas": {
+     "density_layout": 1,
+     "visible_affordances": 1
+    },
+    "cause": "product pixels",
+    "explanation": "density_layout +1 product: row checkboxes now vertically centred in each row (stage04 top-aligned 13px boxes) visible_affordances +1 product: 13px boxes -> 16px native boxes in 40px labels",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.35",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "41/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-desktop-light.png",
+    "prior_file": "screenshots/kypost-04-after-inbox-desktop-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 2.652% bbox [24, 151, 1247, 384]",
+    "prior_total": "7.7",
+    "total": "8.0",
+    "delta": "0.3",
+    "dim_deltas": {
+     "density_layout": 1,
+     "visible_affordances": 1
+    },
+    "cause": "product pixels",
+    "explanation": "density_layout +1 product: row checkboxes now vertically centred in each row (stage04 top-aligned 13px boxes) visible_affordances +1 product: 13px boxes -> 16px native boxes in 40px labels",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.35",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "41/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-mobile-dark.png",
+    "prior_file": "screenshots/kypost-04-after-inbox-mobile-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 6.136% bbox [20, 187, 369, 551]",
+    "prior_total": "7.7",
+    "total": "7.8",
+    "delta": "0.1",
+    "dim_deltas": {
+     "visible_affordances": 1
+    },
+    "cause": "product pixels",
+    "explanation": "visible_affordances +1 product: 13px boxes -> 16px native boxes in 40px labels",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.15",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "8/1",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-mobile-light.png",
+    "prior_file": "screenshots/kypost-04-after-inbox-mobile-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 5.925% bbox [20, 187, 369, 551]",
+    "prior_total": "7.7",
+    "total": "7.8",
+    "delta": "0.1",
+    "dim_deltas": {
+     "visible_affordances": 1
+    },
+    "cause": "product pixels",
+    "explanation": "visible_affordances +1 product: 13px boxes -> 16px native boxes in 40px labels",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.15",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "8/1",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-selection-desktop-dark.png",
+    "prior_file": "screenshots/kypost-04-after-inbox-selection-desktop-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 3.411% bbox [272, 85, 1247, 384]",
+    "prior_total": "7.9",
+    "total": "8.2",
+    "delta": "0.3",
+    "dim_deltas": {
+     "visible_affordances": 2
+    },
+    "cause": "product pixels",
+    "explanation": "visible_affordances +2 product: select-all now shows native indeterminate for 2 of 4 (stage04 empty) and boxes 13px -> 16px",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.30",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "41/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-selection-desktop-light.png",
+    "prior_file": "screenshots/kypost-04-after-inbox-selection-desktop-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 3.377% bbox [272, 190, 1247, 384]",
+    "prior_total": "7.9",
+    "total": "8.2",
+    "delta": "0.3",
+    "dim_deltas": {
+     "visible_affordances": 2
+    },
+    "cause": "product pixels",
+    "explanation": "visible_affordances +2 product: select-all now shows native indeterminate for 2 of 4 (stage04 empty) and boxes 13px -> 16px",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.30",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "41/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-selection-mobile-dark.png",
+    "prior_file": "screenshots/kypost-04-after-inbox-selection-mobile-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 7.000% bbox [20, 402, 369, 656]",
+    "prior_total": "7.7",
+    "total": "8.0",
+    "delta": "0.3",
+    "dim_deltas": {
+     "visible_affordances": 2
+    },
+    "cause": "product pixels",
+    "explanation": "visible_affordances +2 product: select-all now shows native indeterminate for 2 of 4 (stage04 empty) and boxes 13px -> 16px",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.30",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "8/1",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-inbox-selection-mobile-light.png",
+    "prior_file": "screenshots/kypost-04-after-inbox-selection-mobile-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 6.958% bbox [20, 402, 369, 656]",
+    "prior_total": "7.7",
+    "total": "8.0",
+    "delta": "0.3",
+    "dim_deltas": {
+     "visible_affordances": 2
+    },
+    "cause": "product pixels",
+    "explanation": "visible_affordances +2 product: select-all now shows native indeterminate for 2 of 4 (stage04 empty) and boxes 13px -> 16px",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.30",
+    "prior_ky_fit": "8.20",
+    "ky_fit_mean_exact_fraction": "8/1",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-login-desktop-dark.png",
+    "prior_file": "screenshots/kypost-04-after-login-desktop-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 8.254% bbox [424, 185, 855, 749]",
+    "prior_total": "8.2",
+    "total": "8.4",
+    "delta": "0.2",
+    "dim_deltas": {
+     "density_layout": 1
+    },
+    "cause": "product pixels",
+    "explanation": "density_layout +1 product: verification status now compact and left-aligned under its label (stage04 centred in a tall gap)",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.20",
+    "prior_ky_fit": "8.50",
+    "ky_fit_mean_exact_fraction": "17/2",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-login-desktop-light.png",
+    "prior_file": "screenshots/kypost-04-after-login-desktop-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 8.248% bbox [424, 185, 855, 749]",
+    "prior_total": "8.2",
+    "total": "8.4",
+    "delta": "0.2",
+    "dim_deltas": {
+     "density_layout": 1
+    },
+    "cause": "product pixels",
+    "explanation": "density_layout +1 product: verification status now compact and left-aligned under its label (stage04 centred in a tall gap)",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.20",
+    "prior_ky_fit": "8.50",
+    "ky_fit_mean_exact_fraction": "17/2",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-login-mobile-dark.png",
+    "prior_file": "screenshots/kypost-04-after-login-mobile-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 12.649% bbox [14, 408, 375, 597]",
+    "prior_total": "8.2",
+    "total": "8.4",
+    "delta": "0.2",
+    "dim_deltas": {
+     "density_layout": 1
+    },
+    "cause": "product pixels",
+    "explanation": "density_layout +1 product: verification status now compact and left-aligned under its label (stage04 centred in a tall gap)",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.20",
+    "prior_ky_fit": "8.50",
+    "ky_fit_mean_exact_fraction": "17/2",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-login-mobile-light.png",
+    "prior_file": "screenshots/kypost-04-after-login-mobile-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 12.647% bbox [14, 408, 375, 597]",
+    "prior_total": "8.2",
+    "total": "8.4",
+    "delta": "0.2",
+    "dim_deltas": {
+     "density_layout": 1
+    },
+    "cause": "product pixels",
+    "explanation": "density_layout +1 product: verification status now compact and left-aligned under its label (stage04 centred in a tall gap)",
+    "reviewer_variance_weighted": "0",
+    "product_weighted": "0.20",
+    "prior_ky_fit": "8.50",
+    "ky_fit_mean_exact_fraction": "17/2",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-reader-desktop-dark.png",
+    "prior_file": "screenshots/kypost-04-after-reader-desktop-dark.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 0.007% bbox [1240, 214, 1247, 384]",
+    "prior_total": "8.2",
+    "total": "7.8",
+    "delta": "-0.4",
+    "dim_deltas": {
+     "hierarchy": -1,
+     "color": -1
+    },
+    "cause": "reviewer variance",
+    "explanation": "hierarchy -1 reviewer variance: Reader dialog/sheet pixels unchanged (desktop diff 0.007% in the inbox behind the scrim; phone byte-identical); I judged hierarchy at the 8 anchor rather than 9. color -1 reviewer variance: Same unchanged pixels; color judged 8 rather than 9.",
+    "reviewer_variance_weighted": "-0.35",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.40",
+    "ky_fit_mean_exact_fraction": "42/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-reader-desktop-light.png",
+    "prior_file": "screenshots/kypost-04-after-reader-desktop-light.png",
+    "same_bytes": false,
+    "pixel_change": "pixels changed 0.007% bbox [24, 151, 1247, 384]",
+    "prior_total": "8.2",
+    "total": "7.8",
+    "delta": "-0.4",
+    "dim_deltas": {
+     "hierarchy": -1,
+     "color": -1
+    },
+    "cause": "reviewer variance",
+    "explanation": "hierarchy -1 reviewer variance: Reader dialog/sheet pixels unchanged (desktop diff 0.007% in the inbox behind the scrim; phone byte-identical); I judged hierarchy at the 8 anchor rather than 9. color -1 reviewer variance: Same unchanged pixels; color judged 8 rather than 9.",
+    "reviewer_variance_weighted": "-0.35",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.40",
+    "ky_fit_mean_exact_fraction": "42/5",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-reader-mobile-dark.png",
+    "prior_file": "screenshots/kypost-04-after-reader-mobile-dark.png",
+    "same_bytes": true,
+    "pixel_change": "byte-identical",
+    "prior_total": "8.4",
+    "total": "7.9",
+    "delta": "-0.5",
+    "dim_deltas": {
+     "hierarchy": -1,
+     "typography": -1,
+     "color": -1
+    },
+    "cause": "reviewer variance",
+    "explanation": "hierarchy -1 reviewer variance: Reader dialog/sheet pixels unchanged (desktop diff 0.007% in the inbox behind the scrim; phone byte-identical); I judged hierarchy at the 8 anchor rather than 9. typography -1 reviewer variance: Phone only: unchanged pixels; I now count the hard-wrapped \"so the / client's\" body break as a typography slip. color -1 reviewer variance: Same unchanged pixels; color judged 8 rather than 9.",
+    "reviewer_variance_weighted": "-0.50",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.50",
+    "ky_fit_mean_exact_fraction": "17/2",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-06-after-reader-mobile-light.png",
+    "prior_file": "screenshots/kypost-04-after-reader-mobile-light.png",
+    "same_bytes": true,
+    "pixel_change": "byte-identical",
+    "prior_total": "8.4",
+    "total": "7.9",
+    "delta": "-0.5",
+    "dim_deltas": {
+     "hierarchy": -1,
+     "typography": -1,
+     "color": -1
+    },
+    "cause": "reviewer variance",
+    "explanation": "hierarchy -1 reviewer variance: Reader dialog/sheet pixels unchanged (desktop diff 0.007% in the inbox behind the scrim; phone byte-identical); I judged hierarchy at the 8 anchor rather than 9. typography -1 reviewer variance: Phone only: unchanged pixels; I now count the hard-wrapped \"so the / client's\" body break as a typography slip. color -1 reviewer variance: Same unchanged pixels; color judged 8 rather than 9.",
+    "reviewer_variance_weighted": "-0.50",
+    "product_weighted": "0",
+    "prior_ky_fit": "8.50",
+    "ky_fit_mean_exact_fraction": "17/2",
+    "rubric_cause_note": "Rubric causes anchor/cohort/correction/artifact do not apply: same rubric, cohorts and artifact handling; deltas are product pixels or my own reviewer variance."
+   }
+  ]
+ },
+ "gates": {
+  "keyboard": {
+   "result": "untested",
+   "evidence": "Partial live (Chrome 154 DPR2, own incognito tab): Escape closed Add Contact unsubmitted and focus returned to New Contact. Full task paths not traversed."
+  },
+  "focus": {
+   "result": "untested",
+   "evidence": "No focused-state captures; rings not inspected."
+  },
+  "contrast": {
+   "result": "untested",
+   "evidence": "No computed-style contrast measured by me."
+  },
+  "states": {
+   "result": "untested",
+   "evidence": "No empty, loading or error captures."
+  },
+  "responsive": {
+   "result": "untested",
+   "evidence": "Manifest overflow 0 for all 32 at 390/1280; live desktop row/select-all checkboxes 16x16 inside 42x40 labels, contact controls 40px. Phone targets not measured live."
+  },
+  "revision": "558761afa10560a5ba9522e6d7603dbf2a17ccfd",
+  "note": "Screenshots alone cannot pass a gate. Parent-reported checks (1235 tests/111 files, typecheck, lint, runtime audit, build on Node 26.12.1, 4 real-browser cases) were not re-run by me; hosted CI/security on the follow-up PR remain pending."
+ },
+ "unscored": {
+  "policy": "Only the 32 stage06 originals are scored; every other artifact is listed in inventory.files with its role.",
+  "files": [
+   {
+    "glob": "screenshots/kypost-00-before-*.png",
+    "n": 32,
+    "reason": "historical round1 baseline; stage00 login mid-fade; not opened"
+   },
+   {
+    "glob": "screenshots/kypost-01-before-login-*.png",
+    "n": 4,
+    "reason": "supplemental settled login baseline, unscored; not opened"
+   },
+   {
+    "glob": "screenshots/kypost-02-after-*.png",
+    "n": 32,
+    "reason": "superseded stage02; not opened"
+   },
+   {
+    "glob": "screenshots/kypost-03-after-*.png",
+    "n": 32,
+    "reason": "round2 set; not opened"
+   },
+   {
+    "glob": "screenshots/kypost-04-after-*.png",
+    "n": 32,
+    "reason": "round3 set; drift pairing only after freeze (5 viewed, 32 diffed); not rescored"
+   },
+   {
+    "glob": "screenshots/kypost-05-after-*.png",
+    "n": 32,
+    "reason": "superseded initial round4; not opened"
+   },
+   {
+    "glob": "brand-references/*.png",
+    "n": 4,
+    "reason": "KyIdentity brand context only, never a quality input"
+   }
+  ]
+ },
+ "overall_covered_set": {
+  "note": "Coverage summary of all 32 current-round KyPost originals; not a ranking",
+  "n": 32,
+  "sum": "255.4",
+  "mean_exact_fraction": "1277/160",
+  "mean_exact_decimal": "7.98125",
+  "mean_half_up_0.1": "8.0",
+  "ky_fit_mean_exact_fraction": "1337/160",
+  "ky_fit_mean_decimal": "8.35625",
+  "ky_fit_note": "Separate from quality; shell N/A on 10 captures without a visible shell (login x4; phone reader, compose and editor sheets x6)."
+ },
+ "findings": [
+  {
+   "title": "Phone contact rows stack and misalign",
+   "material": true,
+   "scope": "contacts mobile (2)",
+   "observed": "Each contact is ~137px (name, org, email, Edit/Delete), so 3.5 fit; email x=72, Edit x=85, name x=116; search placeholder cut at \"organizat\".",
+   "smallest_fix": "Indent email and Edit/Delete to the name column (x=116) and shorten the placeholder to \"Search contacts\"."
+  },
+  {
+   "title": "Orphaned photo note and mixed dividers in contact editor",
+   "material": true,
+   "scope": "contact-editor (4)",
+   "observed": "\"Save the contact first to add a photo.\" sits between Emails and Phones; Emails/Phones are unruled groups among ruled disclosure rows.",
+   "smallest_fix": "Move the photo note to the form top (or footer) and give Emails and Phones the same top divider as the disclosures."
+  },
+  {
+   "title": "Phone bulk toolbar wraps 4+2",
+   "material": true,
+   "scope": "inbox-selection mobile (2)",
+   "observed": "Read and Print sit alone on a second line, pushing search ~100px down.",
+   "smallest_fix": "Keep one row: let the action row scroll horizontally like the nav strip, or move Read/Print into an overflow."
+  },
+  {
+   "title": "Phone nav labels differ from desktop rows",
+   "material": false,
+   "scope": "phone shell (6 captures; brand shell, not quality)",
+   "observed": "Strip shows Drafts/Junk/Sent/Trash stand-ins (App.tsx:599); desktop shows Sent Items and no Junk row. Contract: same order and labels below the breakpoint.",
+   "smallest_fix": "Label the stand-ins from the account's real folder names, or confirm Junk is intentionally phone-only. Label-only; preserve routing."
+  },
+  {
+   "title": "Duplicate contact count",
+   "material": false,
+   "scope": "contacts (4)",
+   "observed": "\"4 contacts\" in header and \"Address Book 4\".",
+   "smallest_fix": "Keep one count."
+  },
+  {
+   "title": "Detached row chevron",
+   "material": false,
+   "scope": "contacts desktop (2)",
+   "observed": "Chevron at x≈640 floats between Name and Contact Info; live DOM shows it is the trailing icon of the name button that opens the contact.",
+   "smallest_fix": "Drop the chevron (the name already reads as the link) or move it to the row end."
+  },
+  {
+   "title": "Reader dialog height",
+   "material": false,
+   "scope": "reader desktop (2)",
+   "observed": "Near-viewport dialog for a three-line message.",
+   "smallest_fix": "Size the dialog to content up to a max height."
+  },
+  {
+   "title": "Optional taste",
+   "material": false,
+   "scope": "various",
+   "observed": "Unread bold across subject, sender and date; full angle-bracket addresses in the desktop sender column; Sign in button 46px vs 40px fields; phone compose Trash beside Contacts; plain-text hard wraps on phone reader.",
+   "smallest_fix": "None required; consider bolding only the subject/sender for unread and showing display names only."
+  }
+ ],
+ "live_supplement": {
+  "when": "after freeze; not scored, no replacement scoring",
+  "tab": "own incognito tab via preview_open(reuseExistingTab=false), closed with t3_preview_close; no other tabs touched",
+  "browser": "Chrome 154.0.0.0, DPR2, 1280x800 (differs from scored Chromium 153 DPR1 1280x900)",
+  "actions": "Real sign-in with real PoW as the synthetic user (credentials not recorded); clicked two row-checkbox label corners (outside the 16px box) to select, then unselected them; opened Contacts; opened Add Contact and closed it with Escape unsubmitted. No message opened, nothing sent/saved/deleted/configured; read flags not touched by me beyond the app's own inbox load.",
+  "findings": [
+   "Login: verification status left-aligned (text-align start, x=451 = field x); fields 40px, Sign in 46px.",
+   "Inbox: 5 table checkboxes are 16x16 inside 42x40 labels with descriptive names (\"Select email …\").",
+   "Label-corner clicks selected rows 2-3; select-all then reported checked=false, indeterminate=true, \"2 selected\"; after unselecting both, indeterminate=false.",
+   "Contacts: New Contact 14px/600, More actions 14px/400, New Email 14px/600, Edit/Delete 14px/400, all 40px tall.",
+   "Add Contact: title 17px/600; + Add email / + Add phone / Cancel 14px/400 at 40px; field order Full Name, Organization and name details, More name fields, then Emails.",
+   "Escape closed the dialog; focus returned to New Contact."
+  ]
+ },
+ "not_covered": "Other roles/admin, empty/loading/error states, long lists, HTML mail, attachments, menus, phone live behaviour, assistive tech, full keyboard paths, contrast measurement, hosted CI/security. No competitor, ranking or whole-product claim.",
+ "process": {
+  "gemini": "unused",
+  "peer_reports": "not opened",
+  "blind_exposure_audit": {
+   "before_freeze_opened": [
+    "/home/yoshi/git/busnes.app/AGENTS.md",
+    "AGENTS.md",
+    "frontend/AGENTS.md",
+    "docs/ui-post-eight/AGENTS.md",
+    "authority.json + the five pinned ky-ui objects",
+    "inventory-v4.json",
+    "duplicate-audit-v4.json",
+    "manifest-06-after.json",
+    "capture-provenance-r4.json",
+    "artifacts.json (file/sha256/role only)",
+    "brand-references.json + its four images",
+    "the 32 stage06 originals, each individually at native resolution",
+    "frontend/src/App.tsx lines 560-640",
+    "capture.mjs hashed only, not read"
+   ],
+   "directory_listing": "ls of docs/ui-post-eight showed filenames and sizes only (no contents).",
+   "after_freeze_opened": [
+    "opus-round3.md",
+    "opus-round3.json",
+    "stage04 originals viewed: contact-editor-desktop-light, contacts-mobile-light, login-desktop-light, appearance-mobile-light, inbox-selection-desktop-light",
+    "all 32 stage04/stage06 pairs diffed numerically"
+   ],
+   "never_opened": "progression-rule.json, HANDOFF.md, verification.json, delivery.json, round*-audit.json, COUNCIL.md, CSV/XLSX, README.md, galleries, PR description/comments, opus-round1/2, any sol-* report, stage00/01/02/03/05 images.",
+   "incidental_exposure": "After freeze, `git status` listed untracked peer files docs/ui-post-eight/sol-round4.json and sol-round4.md by name only; not opened. A post-freeze diff --stat named HANDOFF.md and delivery.json with line counts only; not opened. The task prompt itself described the round4 responses and the parent stage05 inspection."
+  },
+  "myslop": "not posted (known HTTP 401; no retry)",
+  "dox": "report-only change inside the existing raw-pair boundary; no durable contract change"
+ },
+ "verdict": {
+  "satisfied": true,
+  "genuinely_satisfied": true,
+  "overall_quality": {
+   "n": 32,
+   "sum": "255.4",
+   "mean_exact_fraction": "1277/160",
+   "mean_exact_decimal": "7.98125",
+   "mean_half_up_0.1": "8.0"
+  },
+  "reason": "My frozen Opus overall is 255.4/32 = 7.98125, 8.0 half-up. Every round3 objection is visibly fixed in the stage06 pixels and the ones I could exercise held live: 14px/40px contact controls, adjacent name disclosures, native indeterminate select-all, 16px boxes in 40px labels, compact left-aligned PoW status, 20px phone Appearance gutter with two columns. No screen is broken; the weakest is the phone contacts list (7.5) for its stacked, misaligned rows. Remaining items are small density slips (phone contact rows, editor photo note, phone toolbar wrap) plus optional taste; I do not ask for another round for them. My reviewer variance this round is net negative, so the result is not lifted by re-judging unchanged pixels. Satisfied at the owner's 8.0 bar; not a 9/10 claim. Parent decides progression."
+ }
+}

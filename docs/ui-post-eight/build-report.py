@@ -7,6 +7,7 @@ from xml.sax.saxutils import escape
 import csv, hashlib, json, re, struct, zipfile
 import xml.etree.ElementTree as ET
 P=Path(__file__).resolve().parent
+delivery=json.loads((P/'delivery.json').read_text()) if (P/'delivery.json').exists() else {}
 WEIGHTS=dict(hierarchy='.20',typography='.15',density_layout='.20',color='.15',visible_affordances='.15',coherence='.15')
 BRAND=['palette_tokens','type_geometry','shell','accent_discipline','suite_cohesion']
 def rounded(n):return str((Decimal(n.numerator)/Decimal(n.denominator)).quantize(Decimal('.1'),rounding=ROUND_HALF_UP))
@@ -56,11 +57,13 @@ for f in sorted(P.glob('round*-audit.json')):
  for n,h in audit.get('raw_reports',{}).items():assert hashlib.sha256((P/n).read_bytes()).hexdigest()==h
  notes.append([f.name,json.dumps(audit)])
 sheets={'Scores':scores,'Cohorts':cohorts,'Progression':progression,'Spreads':spreads,'Notes':notes}
-if (P/'delivery.json').exists():sheets['Delivery']=[['Item','Value'],*[[k,str(v)]for k,v in json.loads((P/'delivery.json').read_text()).items()]]
+if delivery:sheets['Delivery']=[['Item','Value'],*[[k,str(v)]for k,v in delivery.items()]]
 for name,rows in sheets.items():
  with (P/(name.lower()+'.csv')).open('w',newline='')as f:csv.writer(f,lineterminator='\n').writerows(rows)
 lines=['# KyPost Council score history','','Coverage summaries are not rankings. Raw originals and independent satisfaction remain unchanged. The owner clarified the gate: use Opus overall only; the previous R2 combined-score acceptance is superseded.','','| Round | Claude | Sol | Historical combined (not gate) | Opus rounded | Accepted by current rule | Gemini |','| --- | ---: | ---: | ---: | ---: | --- | --- |']
-for row in progression[1:]:lines.append('| '+' | '.join(map(str,row))+' | Unused |')
+for row in progression[1:]:
+ gemini=delivery.get('gemini','Unused') if row[0]==max(numbers) else 'Unused'
+ lines.append('| '+' | '.join(map(str,row))+' | '+gemini+' |')
 lines+=['','R1 includes the original four mid-animation login captures. Supplemental settled login before-views are unscored; do not call a capture correction product improvement.','','| Round | Reviewer | Cohort | n | Sum | Exact mean | Display | Satisfied |','| --- | --- | --- | ---: | ---: | ---: | ---: | --- |']
 for row in cohorts[1:]:lines.append('| '+' | '.join(map(str,row))+' |')
 (P/'COUNCIL.md').write_text('\n'.join(lines)+'\n')

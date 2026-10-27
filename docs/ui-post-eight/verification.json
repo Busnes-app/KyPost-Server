@@ -15,7 +15,7 @@
     "cases": 4,
     "source": "558761afa10560a5ba9522e6d7603dbf2a17ccfd",
     "evidence": "checks/r4-browser.json",
-    "scope": "Busnes light/dark \u00d7 desktop/phone: settled login label/border/success contrast, native menu geometry/keyboard/Escape/focus, per-message remote-content toggle identity/focus, read/unread state in place, raw mono and details disclosure, compose editor/footer and icon geometry, contact actions and named form/focus. Additional checks: phone bulk actions fit without horizontal overflow, uniform reader button type, compose toolbar/editor edges and Space Grotesk picker. Native select-all mixed state and every inbox checkbox label40px target are exercised. Retained2column phone Appearance and min40px NewContact are checked.",
+    "scope": "Busnes light/dark × desktop/phone: settled login label/border/success contrast, native menu geometry/keyboard/Escape/focus, per-message remote-content toggle identity/focus, read/unread state in place, raw mono and details disclosure, compose editor/footer and icon geometry, contact actions and named form/focus. Additional checks: phone bulk actions fit without horizontal overflow, uniform reader button type, compose toolbar/editor edges and Space Grotesk picker. Native select-all mixed state and every inbox checkbox label40px target are exercised. Retained2column phone Appearance and min40px NewContact are checked.",
     "contrast_minima": {
       "label": 12.6708,
       "field_border": 3.4768,
@@ -37,13 +37,13 @@
     "parent_individually_viewed_initial_round4": 32,
     "superseded_round4": "manifest-05-after.json"
   },
-  "full_required": "PR490 current-head hostedCI/security pending; UI updated15bc1edb requires new final-head verification.",
+  "full_required": "PR491 final-head whole-repository hostedCI and authenticated security verdict pending; source558761af frontend checks remain valid (no product/dependency/config changes).",
   "limitations": [
     "Everyday-user initial views only; no complete administrator/native/provisioning/other-role matrix.",
     "Full keyboard/focus/contrast/state/assistive-tech coverage and competitors remain untested.",
     "Native popovers require the modern browsers exercised here; Safari/WebKit not exercised."
   ],
-  "gate": "R3 Opus631/80 =7.8875 rounds7.9, improve; R4pending. Sol R3=277/32,8.65625,independently satisfied. Gemini unused.",
+  "gate": "R4 Opus1277/160 =7.98125 rounds8.0, visual progression accepted. Sol1369/160 =8.55625. Both genuinely satisfied; Gemini advisory pending.",
   "mySlop": "Known401; no board post succeeded; no unchanged-credential retry.",
   "merge_deploy": "Not authorized"
 }

@@ -5,6 +5,9 @@
   "round2_opus_exact": "1221/160",
   "round2_opus_rounded": "7.6",
   "round2_passes_current_rule": false,
-  "current_round": 3,
-  "current_status": "reopened; awaiting independent current capture scores"
+  "current_round": 4,
+  "current_status": "accepted; Opus7.98125 rounds8.0",
+  "current_opus_exact": "1277/160",
+  "current_opus_decimal": "7.98125",
+  "current_opus_rounded": "8.0"
 }

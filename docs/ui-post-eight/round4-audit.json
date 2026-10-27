@@ -1,0 +1,68 @@
+{
+  "round": 4,
+  "raw_reports": {
+    "opus-round4.json": "fc9763aefe34753e8fa12601e85ec7f663b16d459c62c20bf16d43e53276c095",
+    "opus-round4.md": "ad917b57e27b922c06751e988b7da8439c23fe93c22c4ed007e22c56ddbd15da",
+    "sol-round4.json": "9e6ebf14198418c5b755dd6671f6ad33eae0ee14094092157b6b76b8830cceb8",
+    "sol-round4.md": "df1a598f2bd5d6f23eecbc19a88f31fe8e4abed926115cf96bbc09e7c7530f90"
+  },
+  "source_ui": "558761afa10560a5ba9522e6d7603dbf2a17ccfd",
+  "frozen_evidence": "f53e76ced2506284b393baffbc3f181ba4549543",
+  "membership": "Both report sets match all32 stage06 originals; hashes and exact weighted totals independently reproduced.",
+  "progression": {
+    "opus_exact": "1277/160",
+    "opus_decimal": "7.98125",
+    "opus_rounded": "8.0",
+    "accepted": true,
+    "sol_exact": "1369/160",
+    "sol_decimal": "8.55625",
+    "rule": "Opus current overall only, half-up to0.1. No pooling with Sol, brand or history."
+  },
+  "independent_satisfaction": {
+    "opus": {
+      "satisfied": true,
+      "genuinely_satisfied": true
+    },
+    "sol": {
+      "satisfied": true,
+      "genuinely_satisfied": true
+    }
+  },
+  "spread_audit": {
+    "dimensions_ge_2": 2,
+    "entries": [
+      {
+        "file": "screenshots/kypost-06-after-contacts-mobile-dark.png",
+        "dimension": "density_layout",
+        "opus": 6,
+        "sol": 8
+      },
+      {
+        "file": "screenshots/kypost-06-after-contacts-mobile-light.png",
+        "dimension": "density_layout",
+        "opus": 6,
+        "sol": 8
+      }
+    ],
+    "inspection": "Parent re-opened both stage06 phone contacts originals individually at native resolution. Approximately137px rows split name, email and action text across different left edges; the search hint clips. Opus6 vsSol8 density is a valid judgment spread, retained unchanged. No broken view or progression veto.",
+    "resolution": "Retain both raw vectors and findings; no averaged replacement or cosmetic round."
+  },
+  "freeze_integrity": {
+    "opus": "Verified persisted checks/opus-r4-freeze.json bytes against publisher hash. Quality vectors, observations, totals, brand vectors/observations/N/A exclusions all unchanged. Final brand records add mean_exact_fraction only (all32); raw full-vector digest therefore differs if derived metadata is included.",
+    "opus_frozen_file_sha256": "8fe9a11f471f7fc4efe0557de120ad6313a26a5748472248ec4ee1ab1dc85a97",
+    "sol": "Full files-array digest reproduces050708ca86dab5500f6bf13595fa14bf7ff4b006d6c08a40a6689ae66c8958e0."
+  },
+  "drift": "Opus raw mean rises0.09375; Sol raw mean falls0.1. Both disclose variance on unchanged images. Never use variance-adjusted estimates as progression scores.",
+  "remaining_findings": [
+    "Phone contacts row density/alignment, clipped search hint and repeated count.",
+    "Contact-editor photo helper placement and disclosure spacing.",
+    "Phone bulk toolbar wrap; optional navigation-label consistency."
+  ],
+  "limitations": [
+    "Everyday-user initial views only; full behavior/roles/states/all named themes/assistive-tech/competitive gates remain untested.",
+    "Opus live supplement uses a different browser/DPR and does not replace scored originals.",
+    "Current-head whole-repository hostedCI and security review remain pending."
+  ],
+  "gemini": "Advisory pending; launched only after both primaries genuinely satisfied. Acceptance is already decided.",
+  "dox_pass": "Evidence records and existing exporter only. Owning AGENTS and parent indexes intentionally unchanged: ownership, structure and progression contracts are unchanged."
+}
