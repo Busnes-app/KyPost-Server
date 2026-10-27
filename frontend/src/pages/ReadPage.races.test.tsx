@@ -158,7 +158,7 @@ describe("ReadPage request ordering", () => {
 
     await user.click(await screen.findByText("Message A"));
     // The reader's own Print, after the toolbar's.
-    const prints = screen.getAllByRole("button", { name: "Print" });
+    const prints = screen.getAllByRole("button", { name: "Print", hidden: true });
     await user.click(prints[prints.length - 1]);
 
     expect(open).not.toHaveBeenCalled();

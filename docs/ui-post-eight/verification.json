@@ -1,0 +1,45 @@
+{
+  "source_ui": "50bbbff5",
+  "unit_tests": {
+    "status": "pass",
+    "count": 1235,
+    "files": 111,
+    "evidence": "checks/r2-web-unit.txt"
+  },
+  "typecheck": "pass",
+  "lint": "pass, zero errors/warnings",
+  "dependency_audit": "pass, zero runtime vulnerabilities",
+  "build": "pass; vendor assets verified",
+  "browser": {
+    "status": "pass",
+    "cases": 4,
+    "source": "50bbbff5",
+    "evidence": "checks/r2-browser.json",
+    "scope": "Busnes light/dark \u00d7 desktop/phone: settled login label/border/success contrast, native menu geometry/keyboard/Escape/focus, per-message remote-content toggle identity/focus, read/unread state in place, raw mono and details disclosure, compose editor/footer and icon geometry, contact actions and named form/focus.",
+    "contrast_minima": {
+      "label": 12.6708,
+      "field_border": 3.4768,
+      "success": 5.7389
+    }
+  },
+  "impeccable": "Four existing findings audited; owner-pinned font retained, existing print/swipe paths preserved, uncaptured auth-status border deferred. No zero-findings claim.",
+  "visual": {
+    "scoring_manifest": "manifest-03-after.json",
+    "originals": 32,
+    "page_overflows": 0,
+    "duplicate_comparisons": 240,
+    "near_duplicates": 0,
+    "parent_individually_viewed": 32,
+    "superseded": "manifest-02-after.json",
+    "login_before": "Unscored settled stage01; raw scored stage00 fade artifact preserved."
+  },
+  "full_required": "Final-head hosted CI and autonomous review pending. No whole-repository pass claimed from frontend checks alone.",
+  "limitations": [
+    "Everyday-user initial views only; no complete administrator/native/provisioning/other-role matrix.",
+    "Full keyboard/focus/contrast/state/assistive-tech coverage and competitors remain untested.",
+    "Native popovers require the modern browsers exercised here; Safari/WebKit not exercised."
+  ],
+  "gate": "R1 combined4587/640 ->7.2; R2 combined513/64 =8.015625 ->8.0, accepted covered visual progression. Sol satisfied; Claude independently unsatisfied, no further round requested. Gemini unused.",
+  "mySlop": "Known401; no board post succeeded; no unchanged-credential retry.",
+  "merge_deploy": "Not authorized"
+}

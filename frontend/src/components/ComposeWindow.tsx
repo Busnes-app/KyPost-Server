@@ -101,7 +101,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
             <div className="compose-form-grid">
               {mailboxes.length > 1 || composeFromChoices.length > 1 ? (
                 <label className="compose-field-row">
-                  <span>FROM:</span>
+                  <span>From</span>
                   <select
                     value={composeFrom}
                     onChange={(event) => setComposeFrom(event.target.value)}
@@ -114,7 +114,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                 </label>
               ) : sendAsOptions.length > 0 ? (
                 <label className="compose-field-row">
-                  <span>FROM:</span>
+                  <span>From</span>
                   <select
                     value={composeFrom}
                     onChange={(event) => setComposeFrom(event.target.value)}
@@ -130,7 +130,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                 </label>
               ) : null}
               <div className="compose-field-row">
-                <span>TO:</span>
+                <span>To</span>
                 <RecipientField
                   label="To"
                   state={composeTo}
@@ -141,7 +141,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                 />
               </div>
               <div className="compose-field-row">
-                <span>CC:</span>
+                <span>Cc</span>
                 <RecipientField
                   label="Cc"
                   state={composeCc}
@@ -152,7 +152,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                 />
               </div>
               <div className="compose-field-row">
-                <span>BCC:</span>
+                <span>Bcc</span>
                 <RecipientField
                   label="Bcc"
                   state={composeBcc}
@@ -163,7 +163,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                 />
               </div>
               <label className="compose-field-row">
-                <span>Subject:</span>
+                <span>Subject</span>
                 <input type="text" value={composeSubject} onChange={(event) => setComposeSubject(event.target.value)} placeholder="Subject" disabled={composeSending || composeSavingDraft} />
               </label>
             </div>

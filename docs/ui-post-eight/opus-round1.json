@@ -1,0 +1,2037 @@
+{
+  "schema": "ky-ui-council-scores/2",
+  "round": "kypost-ui-post-eight round1 (stage 00 baseline)",
+  "reviewer": {
+    "model": "claude-opus-5-5",
+    "name": "Claude Opus 5.5 (opus-round1)",
+    "mode": "Rate, independent, blind to peer and historical scores"
+  },
+  "rubric": {
+    "version": "ky-suite-v2",
+    "weights": {
+      "hierarchy": 0.2,
+      "typography": 0.15,
+      "density_layout": 0.2,
+      "color": 0.15,
+      "visible_affordances": 0.15,
+      "coherence": 0.15
+    },
+    "rounding": "total = sum(weight*score), Decimal(str(x)).quantize(Decimal('0.1'), ROUND_HALF_UP); cohort means exact over rounded totals",
+    "ky_fit": "separate, five equal dimensions, N/A excluded, never added to total"
+  },
+  "inputs": {
+    "evidence_commit": "5503da35",
+    "product_source_commit": "7a83df30019f28a81405deda8c8715c2b73a7cb0",
+    "authority": {
+      "repository": "ky-ui",
+      "commit": "639e5882cada099dd189197beb2a3e3b4c188658",
+      "files_verified_sha256": {
+        "skills/ky-suite-ui/SKILL.md": "6010ea39ac6e4e21926eb2a45d8a5a4894cd9e5e6eec07aca4cf60423233dcc2",
+        "skills/ky-suite-ui/references/rubric.md": "ad3516620420fbdc30f5273f82b7c72c76e1365d1b6296fcaa56be3cbebf2c41",
+        "skills/ky-suite-ui/references/design-contract.md": "392afb88c51fb3cfad6c94d6b841804b194d107a0431c31f35ff81d3a7a444d3",
+        "src/tokens.css": "639f8e73259aca02119b98a5340539d5e8e16d65fd5f6124b939fdfe9c5f86af",
+        "src/navigation.css": "fbd0aea3e45fa818f916ad1bc35832f6ac26e37124208ffde029b809048b4380"
+      },
+      "product_vendor": "frontend/src/ky-ui/VERSION 0.4.1: tokens.css 639f8e73... matches authority; navigation.css cc6dbaa0... matches its own VERSION record (differs from pinned upstream fbd0aea4..., as authority.json notes)"
+    },
+    "inventory-v1.json": "9b23a4c58208f1113acbd98cb4abcfabb8f4fa086d4f967dd25812c7e59dba4b",
+    "manifest-00-before.json": "5adbe6d8d4baa51f23b620357fc0b68bb1a2342a504c994c57e9b51e53ecb792",
+    "duplicate-audit-v1.json": "52d664609dc90335847915a8ee63f9159f5a83d6eb944e74f778e8af26917022",
+    "capture-provenance.json": "92515324dc4507c9963eb50771d68feb810f658bbf32d06ec5d797ec42d5d8fd",
+    "brand-references.json": "af51198db9c4e6ed68c0c8c154bfb27e90ee2f999a81e4aa697d57d52ef84228",
+    "authority.json": "ae7b83acaebc9d3c158a2379e2e21ac42c5507a9fb71a5a6ccb9415d6acdf5b9",
+    "capture.mjs": "8c0f828f461ed0308b8792ae25865cb2abf3f38e59b595a897877458d3c671bd",
+    "frozen_quality_scores_sha256": "a3d766c10e2c45c5d7c9cf99cc54bebe457ce915bf4e44985f0e9003b428f4f3",
+    "capture_conditions": "Playwright 1.63.0, Chromium 153.0.8010.12, DPR1, normal service workers, OS light/dark with no saved theme, en-US, America/New_York, 1280x900 and 390x844; everyday alex, four synthetic seeded messages, synthetic contacts, own TLS demo, unsubmitted Compose/contact editor, no Ollama.",
+    "brand_references": [
+      {
+        "file": "brand-references/kyidentity-02-after-users-manage-desktop-light.png",
+        "sha256": "f13eb7bdc897cf717441dfb5e5ed555efb034eb841fac3bf26f02a7a2de5cfe4",
+        "verified": true,
+        "use": "brand context only, never a quality input"
+      },
+      {
+        "file": "brand-references/kyidentity-02-after-users-manage-desktop-dark.png",
+        "sha256": "c88074992215e2e10fbb0518cafb30d9043cc434713fff8fdc3de81687a1c873",
+        "verified": true,
+        "use": "brand context only, never a quality input"
+      },
+      {
+        "file": "brand-references/kyidentity-02-after-appearance-mobile-light.png",
+        "sha256": "b82cb35eae6ead72c08291c04eb188a7549a84ce2e2cc27e7fd948698c6037b6",
+        "verified": true,
+        "use": "brand context only, never a quality input"
+      },
+      {
+        "file": "brand-references/kyidentity-02-after-appearance-mobile-dark.png",
+        "sha256": "ea7033aea61cc689cc94cb5a362d5c9dd7dfbce798c27ed7ce89e8cbd3198fe1",
+        "verified": true,
+        "use": "brand context only, never a quality input"
+      }
+    ]
+  },
+  "inventory": {
+    "originals": 32,
+    "verified_against": [
+      "inventory-v1.json",
+      "manifest-00-before.json",
+      "files on disk"
+    ],
+    "membership_mismatches": 0,
+    "sha_bytes_dimension_mismatches": 0,
+    "exact_duplicate_groups": 0,
+    "same_size_pairs_recomputed": 240,
+    "pairs_matching_audit": 240,
+    "near_duplicates": 0,
+    "min_changed_fraction": "0.06752 (contacts-desktop-light vs inbox-desktop-light)",
+    "unique_scored": 32
+  },
+  "files": [
+    {
+      "file": "screenshots/kypost-00-before-appearance-desktop-dark.png",
+      "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+      "width": 1280,
+      "height": 900,
+      "bytes": 80562,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "appearance",
+      "cohort": "settings",
+      "state": "populated",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 8,
+        "density_layout": 7,
+        "color": 7,
+        "visible_affordances": 8,
+        "coherence": 8
+      },
+      "observations": {
+        "hierarchy": "h1 Appearance with a one-line lede and a theme grid; immediate apply means no primary is needed.",
+        "typography": "24px title, 15px lede, 15px card names, 13px meta.",
+        "density_layout": "Even five-column card grid; sidebar footer runs off the 900px canvas (copyright not visible).",
+        "color": "Preview swatches carry theme hues as data; chrome stays neutral. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Selected card has accent border and filled radio; unselected radios clear.",
+        "coherence": "Shared Appearance card component, matches the suite reference."
+      },
+      "confidence": "high",
+      "caveat": "No saved choice; only Match system selected; applying a theme not exercised.",
+      "total": 7.7,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 8,
+          "shell": 8,
+          "accent_discipline": 8,
+          "suite_cohesion": 9
+        },
+        "observations": {
+          "palette_tokens": "Neutral chrome; preview hues are theme data.",
+          "type_geometry": "Contract sizes and card geometry.",
+          "shell": "Settings expanded in the one left nav; footer runs off canvas.",
+          "accent_discipline": "Accent on selected card, radio and nav selection only.",
+          "suite_cohesion": "Card grid matches the KyIdentity Appearance reference card for card."
+        },
+        "excluded_na": [],
+        "mean_exact": "41/5",
+        "mean": 8.2
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-appearance-desktop-light.png",
+      "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+      "width": 1280,
+      "height": 900,
+      "bytes": 79855,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "appearance",
+      "cohort": "settings",
+      "state": "populated",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 8,
+        "density_layout": 7,
+        "color": 7,
+        "visible_affordances": 8,
+        "coherence": 8
+      },
+      "observations": {
+        "hierarchy": "h1 Appearance with a one-line lede and a theme grid; immediate apply means no primary is needed.",
+        "typography": "24px title, 15px lede, 15px card names, 13px meta.",
+        "density_layout": "Even five-column card grid; sidebar footer runs off the 900px canvas (copyright not visible).",
+        "color": "Preview swatches carry theme hues as data; chrome stays neutral.",
+        "visible_affordances": "Selected card has accent border and filled radio; unselected radios clear.",
+        "coherence": "Shared Appearance card component, matches the suite reference."
+      },
+      "confidence": "high",
+      "caveat": "No saved choice; only Match system selected; applying a theme not exercised.",
+      "total": 7.7,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 8,
+          "shell": 8,
+          "accent_discipline": 8,
+          "suite_cohesion": 9
+        },
+        "observations": {
+          "palette_tokens": "Neutral chrome; preview hues are theme data.",
+          "type_geometry": "Contract sizes and card geometry.",
+          "shell": "Settings expanded in the one left nav; footer runs off canvas.",
+          "accent_discipline": "Accent on selected card, radio and nav selection only.",
+          "suite_cohesion": "Card grid matches the KyIdentity Appearance reference card for card."
+        },
+        "excluded_na": [],
+        "mean_exact": "41/5",
+        "mean": 8.2
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-appearance-mobile-dark.png",
+      "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+      "width": 390,
+      "height": 844,
+      "bytes": 40664,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "appearance",
+      "cohort": "settings",
+      "state": "populated",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 8,
+        "density_layout": 7,
+        "color": 7,
+        "visible_affordances": 7,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "h1 and lede then a two-column card grid.",
+        "typography": "Same scale as desktop, wraps cleanly.",
+        "density_layout": "16px gutter here vs 20px on other phone pages; cards even.",
+        "color": "Theme hues confined to previews. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Clear selected card; nav strip clips a leading chevron and trailing 'M(ail)'.",
+        "coherence": "Shared cards; Settings expander chevron sits inside the horizontal strip."
+      },
+      "confidence": "high",
+      "caveat": "No saved choice; only Match system selected; applying a theme not exercised.",
+      "total": 7.4,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 8,
+          "shell": 7,
+          "accent_discipline": 8,
+          "suite_cohesion": 9
+        },
+        "observations": {
+          "palette_tokens": "As desktop.",
+          "type_geometry": "As desktop.",
+          "shell": "Strip clips leading chevron and trailing item.",
+          "accent_discipline": "As desktop.",
+          "suite_cohesion": "Matches the KyIdentity phone Appearance reference."
+        },
+        "excluded_na": [],
+        "mean_exact": "8",
+        "mean": 8.0
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-appearance-mobile-light.png",
+      "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+      "width": 390,
+      "height": 844,
+      "bytes": 39770,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "appearance",
+      "cohort": "settings",
+      "state": "populated",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 8,
+        "density_layout": 7,
+        "color": 7,
+        "visible_affordances": 7,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "h1 and lede then a two-column card grid.",
+        "typography": "Same scale as desktop, wraps cleanly.",
+        "density_layout": "16px gutter here vs 20px on other phone pages; cards even.",
+        "color": "Theme hues confined to previews.",
+        "visible_affordances": "Clear selected card; nav strip clips a leading chevron and trailing 'M(ail)'.",
+        "coherence": "Shared cards; Settings expander chevron sits inside the horizontal strip."
+      },
+      "confidence": "high",
+      "caveat": "No saved choice; only Match system selected; applying a theme not exercised.",
+      "total": 7.4,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 8,
+          "shell": 7,
+          "accent_discipline": 8,
+          "suite_cohesion": 9
+        },
+        "observations": {
+          "palette_tokens": "As desktop.",
+          "type_geometry": "As desktop.",
+          "shell": "Strip clips leading chevron and trailing item.",
+          "accent_discipline": "As desktop.",
+          "suite_cohesion": "Matches the KyIdentity phone Appearance reference."
+        },
+        "excluded_na": [],
+        "mean_exact": "8",
+        "mean": 8.0
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-compose-desktop-dark.png",
+      "sha256": "509241a201c823d554e75dec353fe861d1a837d3d7881ebbbf199d8808e1a77b",
+      "width": 1280,
+      "height": 900,
+      "bytes": 64113,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "compose",
+      "cohort": "compose",
+      "state": "empty",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 6,
+        "density_layout": 7,
+        "color": 8,
+        "visible_affordances": 7,
+        "coherence": 6
+      },
+      "observations": {
+        "hierarchy": "'New message' dialog with filled Send bottom-left; Schedule/Save Draft outlines, Attach/Contacts text, Trash danger far right.",
+        "typography": "Field labels mix uppercase 'TO:/CC:/BCC:' with 'Subject:' at ~12px; editor toolbar uses its own 'Normal' select.",
+        "density_layout": "Even 40px fields, but three tinted bands (connection notice, editor, crypto row) stripe the dialog.",
+        "color": "Neutral; accent only on Send; Trash in danger text. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Clear fields and editor; Encrypt/Sign native checkboxes with an 'Unsigned' pill.",
+        "coherence": "Editor toolbar and tinted bands read as separate component families."
+      },
+      "confidence": "high",
+      "caveat": "Unsubmitted empty form; validation, recipient chips, send/error and scheduling states not captured; shell occluded.",
+      "total": 6.9,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 7,
+          "type_geometry": 6,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 6
+        },
+        "observations": {
+          "palette_tokens": "Three tinted bands lean on --ky-bg fills inside a panel.",
+          "type_geometry": "Uppercase 'TO:' labels and mixed label case.",
+          "shell": "N/A: shell occluded by modal backdrop.",
+          "accent_discipline": "Accent only on Send.",
+          "suite_cohesion": "Editor toolbar and striped bands have no reference counterpart."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "27/4",
+        "mean": 6.75
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-compose-desktop-light.png",
+      "sha256": "94a31a53bcad658b266fde4c644aadea84ca2139a2984a9dbb633499c0cfd12c",
+      "width": 1280,
+      "height": 900,
+      "bytes": 65169,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "compose",
+      "cohort": "compose",
+      "state": "empty",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 6,
+        "density_layout": 7,
+        "color": 8,
+        "visible_affordances": 7,
+        "coherence": 6
+      },
+      "observations": {
+        "hierarchy": "'New message' dialog with filled Send bottom-left; Schedule/Save Draft outlines, Attach/Contacts text, Trash danger far right.",
+        "typography": "Field labels mix uppercase 'TO:/CC:/BCC:' with 'Subject:' at ~12px; editor toolbar uses its own 'Normal' select.",
+        "density_layout": "Even 40px fields, but three tinted bands (connection notice, editor, crypto row) stripe the dialog.",
+        "color": "Neutral; accent only on Send; Trash in danger text.",
+        "visible_affordances": "Clear fields and editor; Encrypt/Sign native checkboxes with an 'Unsigned' pill.",
+        "coherence": "Editor toolbar and tinted bands read as separate component families."
+      },
+      "confidence": "high",
+      "caveat": "Unsubmitted empty form; validation, recipient chips, send/error and scheduling states not captured; shell occluded.",
+      "total": 6.9,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 7,
+          "type_geometry": 6,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 6
+        },
+        "observations": {
+          "palette_tokens": "Three tinted bands lean on --ky-bg fills inside a panel.",
+          "type_geometry": "Uppercase 'TO:' labels and mixed label case.",
+          "shell": "N/A: shell occluded by modal backdrop.",
+          "accent_discipline": "Accent only on Send.",
+          "suite_cohesion": "Editor toolbar and striped bands have no reference counterpart."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "27/4",
+        "mean": 6.75
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-compose-mobile-dark.png",
+      "sha256": "61b25d1063158b643663f9385aac62e4eb6964433bd470c21c3735a63e7175ee",
+      "width": 390,
+      "height": 844,
+      "bytes": 29576,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "compose",
+      "cohort": "compose",
+      "state": "empty",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 6,
+        "density_layout": 5,
+        "color": 8,
+        "visible_affordances": 6,
+        "coherence": 6
+      },
+      "observations": {
+        "hierarchy": "Send remains the single filled action.",
+        "typography": "Same mixed-case tiny labels; editor toolbar wraps its clear-format icon onto a second line.",
+        "density_layout": "Editor's lower border is cut by the crypto band; actions wrap to two rows with Trash beside Contacts.",
+        "color": "Restrained. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Orphaned toolbar icon and clipped editor make the writing area's edge ambiguous.",
+        "coherence": "Same band striping as desktop."
+      },
+      "confidence": "high",
+      "caveat": "Unsubmitted empty form; validation, recipient chips, send/error and scheduling states not captured; shell occluded.",
+      "total": 6.3,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 7,
+          "type_geometry": 5,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 6
+        },
+        "observations": {
+          "palette_tokens": "As desktop.",
+          "type_geometry": "Wrapped toolbar icon, clipped editor edge.",
+          "shell": "N/A: full-screen sheet.",
+          "accent_discipline": "Accent only on Send.",
+          "suite_cohesion": "As desktop compose."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "13/2",
+        "mean": 6.5
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-compose-mobile-light.png",
+      "sha256": "ab23cb2383aa22eaacf53307fc1205ab76fbfd14ae41c2f5f7cf11110f81539f",
+      "width": 390,
+      "height": 844,
+      "bytes": 29071,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "compose",
+      "cohort": "compose",
+      "state": "empty",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 6,
+        "density_layout": 5,
+        "color": 8,
+        "visible_affordances": 6,
+        "coherence": 6
+      },
+      "observations": {
+        "hierarchy": "Send remains the single filled action.",
+        "typography": "Same mixed-case tiny labels; editor toolbar wraps its clear-format icon onto a second line.",
+        "density_layout": "Editor's lower border is cut by the crypto band; actions wrap to two rows with Trash beside Contacts.",
+        "color": "Restrained.",
+        "visible_affordances": "Orphaned toolbar icon and clipped editor make the writing area's edge ambiguous.",
+        "coherence": "Same band striping as desktop."
+      },
+      "confidence": "high",
+      "caveat": "Unsubmitted empty form; validation, recipient chips, send/error and scheduling states not captured; shell occluded.",
+      "total": 6.3,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 7,
+          "type_geometry": 5,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 6
+        },
+        "observations": {
+          "palette_tokens": "As desktop.",
+          "type_geometry": "Wrapped toolbar icon, clipped editor edge.",
+          "shell": "N/A: full-screen sheet.",
+          "accent_discipline": "Accent only on Send.",
+          "suite_cohesion": "As desktop compose."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "13/2",
+        "mean": 6.5
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-contact-editor-desktop-dark.png",
+      "sha256": "84551c8eb938e3cf8e17da6cadea6c9ac6afe594da961f3da2423e65988ef132",
+      "width": 1280,
+      "height": 900,
+      "bytes": 65314,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "contact-editor",
+      "cohort": "contact-editor",
+      "state": "empty",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 7,
+        "density_layout": 8,
+        "color": 8,
+        "visible_affordances": 7,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "'Add Contact' dialog with Cancel outline and filled Add Contact bottom-right.",
+        "typography": "13px bold labels above inputs, 17px title; consistent.",
+        "density_layout": "Two-column grid with even 40px fields; expanders with chevrons; clean.",
+        "color": "Accent only on Add Contact. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Native 'Choose File' looks enabled while the text says to save first; required/optional not marked.",
+        "coherence": "Native file control is the only stray style."
+      },
+      "confidence": "high",
+      "caveat": "Unsubmitted empty form; lower expanders and validation not captured; shell occluded.",
+      "total": 7.6,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 7,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Labels above 40px fields, 8px radius.",
+          "shell": "N/A: shell occluded by modal backdrop.",
+          "accent_discipline": "Accent only on Add Contact.",
+          "suite_cohesion": "Form vocabulary fits the suite."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "15/2",
+        "mean": 7.5
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-contact-editor-desktop-light.png",
+      "sha256": "46b8edd7e06a3d9bce92fa2dcea782f52691adeae823c98426600254d48912a0",
+      "width": 1280,
+      "height": 900,
+      "bytes": 66596,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "contact-editor",
+      "cohort": "contact-editor",
+      "state": "empty",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 7,
+        "density_layout": 8,
+        "color": 8,
+        "visible_affordances": 7,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "'Add Contact' dialog with Cancel outline and filled Add Contact bottom-right.",
+        "typography": "13px bold labels above inputs, 17px title; consistent.",
+        "density_layout": "Two-column grid with even 40px fields; expanders with chevrons; clean.",
+        "color": "Accent only on Add Contact.",
+        "visible_affordances": "Native 'Choose File' looks enabled while the text says to save first; required/optional not marked.",
+        "coherence": "Native file control is the only stray style."
+      },
+      "confidence": "high",
+      "caveat": "Unsubmitted empty form; lower expanders and validation not captured; shell occluded.",
+      "total": 7.6,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 7,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Labels above 40px fields, 8px radius.",
+          "shell": "N/A: shell occluded by modal backdrop.",
+          "accent_discipline": "Accent only on Add Contact.",
+          "suite_cohesion": "Form vocabulary fits the suite."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "15/2",
+        "mean": 7.5
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-contact-editor-mobile-dark.png",
+      "sha256": "084f3b3ff5afcc52d4ba3cdd389a175cc1bb3907c7cf83a7157fc291b945f377",
+      "width": 390,
+      "height": 844,
+      "bytes": 26184,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "contact-editor",
+      "cohort": "contact-editor",
+      "state": "empty",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 7,
+        "density_layout": 7,
+        "color": 8,
+        "visible_affordances": 7,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "Full-screen sheet with sticky Cancel / Add Contact footer.",
+        "typography": "Same label/input type as desktop.",
+        "density_layout": "Single column, even rhythm; title inset 24px vs 16px fields; Phones label slides under the footer (scroll).",
+        "color": "Restrained. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Same enabled-looking file control and unmarked required fields.",
+        "coherence": "Consistent with desktop editor."
+      },
+      "confidence": "high",
+      "caveat": "Unsubmitted empty form; lower expanders and validation not captured; shell occluded.",
+      "total": 7.4,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 7,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Contract fields; title inset differs.",
+          "shell": "N/A: full-screen sheet.",
+          "accent_discipline": "Accent only on Add Contact.",
+          "suite_cohesion": "As desktop editor."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "15/2",
+        "mean": 7.5
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-contact-editor-mobile-light.png",
+      "sha256": "c86315220cdfd2a64e0dba681a431e9a44beef584fb1aed22c38f96b3979ef8c",
+      "width": 390,
+      "height": 844,
+      "bytes": 25394,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "contact-editor",
+      "cohort": "contact-editor",
+      "state": "empty",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 7,
+        "density_layout": 7,
+        "color": 8,
+        "visible_affordances": 7,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "Full-screen sheet with sticky Cancel / Add Contact footer.",
+        "typography": "Same label/input type as desktop.",
+        "density_layout": "Single column, even rhythm; title inset 24px vs 16px fields; Phones label slides under the footer (scroll).",
+        "color": "Restrained.",
+        "visible_affordances": "Same enabled-looking file control and unmarked required fields.",
+        "coherence": "Consistent with desktop editor."
+      },
+      "confidence": "high",
+      "caveat": "Unsubmitted empty form; lower expanders and validation not captured; shell occluded.",
+      "total": 7.4,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 7,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Contract fields; title inset differs.",
+          "shell": "N/A: full-screen sheet.",
+          "accent_discipline": "Accent only on Add Contact.",
+          "suite_cohesion": "As desktop editor."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "15/2",
+        "mean": 7.5
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-contacts-desktop-dark.png",
+      "sha256": "228e6a8af400f27ebd935194712bad0ef33d68076bdfdce904dc9095b9302a0b",
+      "width": 1280,
+      "height": 900,
+      "bytes": 70689,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "contacts",
+      "cohort": "contacts-list",
+      "state": "sparse",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 7,
+        "density_layout": 7,
+        "color": 8,
+        "visible_affordances": 7,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "h1 Contacts with one filled New Contact; New Email demoted to outline here.",
+        "typography": "24px title, 17px 'Address Book' section, 15px rows, 13px org meta.",
+        "density_layout": "Header packs a count plus four outline buttons; an orphan chevron floats mid-row; 'Actions' header is left of the Edit/Delete it labels.",
+        "color": "Accent only on New Contact and nav selection; avatars neutral. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Edit/Delete are plain ink text; Delete is not set apart as destructive; chevron purpose unclear.",
+        "coherence": "One button vocabulary; duplicated count (header '4 contacts' and 'Address Book 4')."
+      },
+      "confidence": "high",
+      "caveat": "Synthetic populated list of 4; merge/import/export dialogs not opened.",
+      "total": 7.4,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 7,
+          "shell": 8,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette; neutral avatars.",
+          "type_geometry": "Contract type sizes; ~36px header buttons beside a 40px primary.",
+          "shell": "Shell as inbox.",
+          "accent_discipline": "Accent only on New Contact; New Email correctly demoted.",
+          "suite_cohesion": "Table/header pattern close to KyIdentity Users minus the bordered table and Manage menu."
+        },
+        "excluded_na": [],
+        "mean_exact": "38/5",
+        "mean": 7.6
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-contacts-desktop-light.png",
+      "sha256": "cf44d96a71b47b8bb74da46b6f84c552b5823bf9831c95cadabccc57ec97735b",
+      "width": 1280,
+      "height": 900,
+      "bytes": 69881,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "contacts",
+      "cohort": "contacts-list",
+      "state": "sparse",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 7,
+        "density_layout": 7,
+        "color": 8,
+        "visible_affordances": 7,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "h1 Contacts with one filled New Contact; New Email demoted to outline here.",
+        "typography": "24px title, 17px 'Address Book' section, 15px rows, 13px org meta.",
+        "density_layout": "Header packs a count plus four outline buttons; an orphan chevron floats mid-row; 'Actions' header is left of the Edit/Delete it labels.",
+        "color": "Accent only on New Contact and nav selection; avatars neutral.",
+        "visible_affordances": "Edit/Delete are plain ink text; Delete is not set apart as destructive; chevron purpose unclear.",
+        "coherence": "One button vocabulary; duplicated count (header '4 contacts' and 'Address Book 4')."
+      },
+      "confidence": "high",
+      "caveat": "Synthetic populated list of 4; merge/import/export dialogs not opened.",
+      "total": 7.4,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 7,
+          "shell": 8,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette; neutral avatars.",
+          "type_geometry": "Contract type sizes; ~36px header buttons beside a 40px primary.",
+          "shell": "Shell as inbox.",
+          "accent_discipline": "Accent only on New Contact; New Email correctly demoted.",
+          "suite_cohesion": "Table/header pattern close to KyIdentity Users minus the bordered table and Manage menu."
+        },
+        "excluded_na": [],
+        "mean_exact": "38/5",
+        "mean": 7.6
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-contacts-mobile-dark.png",
+      "sha256": "89930b4f6ad2ce1f477b2a5431187d7ff759b401ae4cfd4e2c949b3d43387f7d",
+      "width": 390,
+      "height": 844,
+      "bytes": 53986,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "contacts",
+      "cohort": "contacts-list",
+      "state": "sparse",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 6,
+        "typography": 7,
+        "density_layout": 6,
+        "color": 8,
+        "visible_affordances": 6,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "Filled New Contact lands last in a three-row wrap of five header buttons.",
+        "typography": "Hierarchy of name/org/email holds at 15/13px.",
+        "density_layout": "Header buttons take ~90px in three ragged rows; search placeholder truncated ('organizat').",
+        "color": "Restrained. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Text Edit/Delete targets are small and Delete is not destructive-styled; nav strip clips items at both edges.",
+        "coherence": "Consistent with desktop contacts."
+      },
+      "confidence": "high",
+      "caveat": "Synthetic populated list of 4; merge/import/export dialogs not opened.",
+      "total": 6.6,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 6,
+          "shell": 7,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Wrapped header buttons, truncated placeholder.",
+          "shell": "Strip clips at both edges.",
+          "accent_discipline": "Accent only on New Contact.",
+          "suite_cohesion": "As desktop contacts."
+        },
+        "excluded_na": [],
+        "mean_exact": "36/5",
+        "mean": 7.2
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-contacts-mobile-light.png",
+      "sha256": "d9c51cb2eeee385f6a8a6d20022ddda912f51a220894218c63789dea92dcbc48",
+      "width": 390,
+      "height": 844,
+      "bytes": 52287,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "contacts",
+      "cohort": "contacts-list",
+      "state": "sparse",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 6,
+        "typography": 7,
+        "density_layout": 6,
+        "color": 8,
+        "visible_affordances": 6,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "Filled New Contact lands last in a three-row wrap of five header buttons.",
+        "typography": "Hierarchy of name/org/email holds at 15/13px.",
+        "density_layout": "Header buttons take ~90px in three ragged rows; search placeholder truncated ('organizat').",
+        "color": "Restrained.",
+        "visible_affordances": "Text Edit/Delete targets are small and Delete is not destructive-styled; nav strip clips items at both edges.",
+        "coherence": "Consistent with desktop contacts."
+      },
+      "confidence": "high",
+      "caveat": "Synthetic populated list of 4; merge/import/export dialogs not opened.",
+      "total": 6.6,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 6,
+          "shell": 7,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Wrapped header buttons, truncated placeholder.",
+          "shell": "Strip clips at both edges.",
+          "accent_discipline": "Accent only on New Contact.",
+          "suite_cohesion": "As desktop contacts."
+        },
+        "excluded_na": [],
+        "mean_exact": "36/5",
+        "mean": 7.2
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-inbox-desktop-dark.png",
+      "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+      "width": 1280,
+      "height": 900,
+      "bytes": 66199,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "inbox",
+      "cohort": "mail-list",
+      "state": "sparse",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 7,
+        "density_layout": 7,
+        "color": 8,
+        "visible_affordances": 7,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "One filled-accent New Email in the sidebar, h1 Inbox top-left; no competing primary.",
+        "typography": "24px h1, 15px rows; unread rows bold subject, sender and date together, so three bold columns compete.",
+        "density_layout": "Four rows over ~480px of empty canvas with 'Updated Just Now' floating at the bottom; the Inbox selection fill stops at 175px to make room for the + button.",
+        "color": "Neutral surfaces; accent only on New Email, selection rail and the Uncategorized chip tint. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "40px search/select/button; native 13px checkboxes and a native select arrow read small and stock.",
+        "coherence": "Shared ky-nav rows and outline buttons; native checkbox/select styling is a second vocabulary."
+      },
+      "confidence": "high",
+      "caveat": "Sparse state (4 messages); unread distinction, sort and refresh are static; checkbox focus/keyboard unknown.",
+      "total": 7.4,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 7,
+          "shell": 8,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token surfaces, but content sits on --ky-panel (#ffffff / #1f2b2e) where the KyIdentity reference uses --ky-bg.",
+          "type_geometry": "40px controls, 8px radius, 24px h1; native checkbox/select off-contract.",
+          "shell": "240px sidebar, wordmark, 40px nav rows with accent rail, account at bottom; Logout is a text row not KyIdentity's icon button.",
+          "accent_discipline": "Accent on New Email, nav selection and focus; Uncategorized chip tinted accent-soft as decoration.",
+          "suite_cohesion": "Recognisably the KyIdentity shell; surface inversion and account region differ."
+        },
+        "excluded_na": [],
+        "mean_exact": "38/5",
+        "mean": 7.6
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-inbox-desktop-light.png",
+      "sha256": "69fbc387ed67d3b4b3fef054a375a0ad69c61c4c1fc89987a4a766eec8c2abab",
+      "width": 1280,
+      "height": 900,
+      "bytes": 65203,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "inbox",
+      "cohort": "mail-list",
+      "state": "sparse",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 7,
+        "density_layout": 7,
+        "color": 8,
+        "visible_affordances": 7,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "One filled-accent New Email in the sidebar, h1 Inbox top-left; no competing primary.",
+        "typography": "24px h1, 15px rows; unread rows bold subject, sender and date together, so three bold columns compete.",
+        "density_layout": "Four rows over ~480px of empty canvas with 'Updated Just Now' floating at the bottom; the Inbox selection fill stops at 175px to make room for the + button.",
+        "color": "Neutral surfaces; accent only on New Email, selection rail and the Uncategorized chip tint.",
+        "visible_affordances": "40px search/select/button; native 13px checkboxes and a native select arrow read small and stock.",
+        "coherence": "Shared ky-nav rows and outline buttons; native checkbox/select styling is a second vocabulary."
+      },
+      "confidence": "high",
+      "caveat": "Sparse state (4 messages); unread distinction, sort and refresh are static; checkbox focus/keyboard unknown.",
+      "total": 7.4,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 7,
+          "shell": 8,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token surfaces, but content sits on --ky-panel (#ffffff / #1f2b2e) where the KyIdentity reference uses --ky-bg.",
+          "type_geometry": "40px controls, 8px radius, 24px h1; native checkbox/select off-contract.",
+          "shell": "240px sidebar, wordmark, 40px nav rows with accent rail, account at bottom; Logout is a text row not KyIdentity's icon button.",
+          "accent_discipline": "Accent on New Email, nav selection and focus; Uncategorized chip tinted accent-soft as decoration.",
+          "suite_cohesion": "Recognisably the KyIdentity shell; surface inversion and account region differ."
+        },
+        "excluded_na": [],
+        "mean_exact": "38/5",
+        "mean": 7.6
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-inbox-mobile-dark.png",
+      "sha256": "15b0c04a94899c43737d4726b27e603e0af5279db3cb28852d61cf41969c2c08",
+      "width": 390,
+      "height": 844,
+      "bytes": 46921,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "inbox",
+      "cohort": "mail-list",
+      "state": "sparse",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 6,
+        "density_layout": 6,
+        "color": 8,
+        "visible_affordances": 6,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "Header New Email primary, h1 Inbox; horizontal mailbox strip shows Inbox selected.",
+        "typography": "Sender and address set at ~12px meta and wrap mid-domain ('kypost-' / 'demo.local>').",
+        "density_layout": "~60px checkbox gutter beside 4 rows; addresses wrap to two lines; search field only 144px wide.",
+        "color": "Same restrained palette; selection is surface + accent underline. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "13px native checkboxes on a touch layout; mailbox strip clips 'T(rash)' at the edge.",
+        "coherence": "Phone strip labels differ from desktop ('Sent' vs 'Sent Items', Junk only here); otherwise one vocabulary."
+      },
+      "confidence": "high",
+      "caveat": "Sparse state (4 messages); unread distinction, sort and refresh are static; checkbox focus/keyboard unknown.",
+      "total": 6.7,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 6,
+          "shell": 7,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Wrapped 12px meta, 13px checkboxes on phone.",
+          "shell": "Horizontal strip pattern like the reference, but clips items without a fade.",
+          "accent_discipline": "Accent on New Email and selected tab.",
+          "suite_cohesion": "Close to the KyIdentity phone header, with New Email instead of the role block."
+        },
+        "excluded_na": [],
+        "mean_exact": "36/5",
+        "mean": 7.2
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-inbox-mobile-light.png",
+      "sha256": "3d9a2070364a5c4b39f587e493c75f4c3f534ef9a29ae3747340731c4596ae28",
+      "width": 390,
+      "height": 844,
+      "bytes": 46355,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "inbox",
+      "cohort": "mail-list",
+      "state": "sparse",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 6,
+        "density_layout": 6,
+        "color": 8,
+        "visible_affordances": 6,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "Header New Email primary, h1 Inbox; horizontal mailbox strip shows Inbox selected.",
+        "typography": "Sender and address set at ~12px meta and wrap mid-domain ('kypost-' / 'demo.local>').",
+        "density_layout": "~60px checkbox gutter beside 4 rows; addresses wrap to two lines; search field only 144px wide.",
+        "color": "Same restrained palette; selection is surface + accent underline.",
+        "visible_affordances": "13px native checkboxes on a touch layout; mailbox strip clips 'T(rash)' at the edge.",
+        "coherence": "Phone strip labels differ from desktop ('Sent' vs 'Sent Items', Junk only here); otherwise one vocabulary."
+      },
+      "confidence": "high",
+      "caveat": "Sparse state (4 messages); unread distinction, sort and refresh are static; checkbox focus/keyboard unknown.",
+      "total": 6.7,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 6,
+          "shell": 7,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Wrapped 12px meta, 13px checkboxes on phone.",
+          "shell": "Horizontal strip pattern like the reference, but clips items without a fade.",
+          "accent_discipline": "Accent on New Email and selected tab.",
+          "suite_cohesion": "Close to the KyIdentity phone header, with New Email instead of the role block."
+        },
+        "excluded_na": [],
+        "mean_exact": "36/5",
+        "mean": 7.2
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-inbox-selection-desktop-dark.png",
+      "sha256": "8c6fddb5cb417376147211c5a8cb6d2a0e2c32a7786bee17d54bcbc6b2d9d573",
+      "width": 1280,
+      "height": 900,
+      "bytes": 71657,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "inbox-selection",
+      "cohort": "mail-list",
+      "state": "sparse",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 7,
+        "density_layout": 7,
+        "color": 8,
+        "visible_affordances": 8,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "Contextual bulk toolbar appears right of the h1 as quiet icon+label actions; New Email remains the only fill.",
+        "typography": "Same row typography as inbox; toolbar labels 15px, Delete in danger text.",
+        "density_layout": "Toolbar sits on the title baseline without moving the list; still a sparse list over empty canvas.",
+        "color": "Selected rows use accent-soft fill; Delete uses danger; restrained. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Checked accent checkboxes plus row fill read clearly; no 'n selected' count is shown.",
+        "coherence": "Toolbar matches the contract's quiet icon-and-label bulk pattern."
+      },
+      "confidence": "high",
+      "caveat": "Two rows checked by the driver with force; keyboard selection, indeterminate header state and toolbar behavior unknown.",
+      "total": 7.5,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 7,
+          "shell": 8,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette; accent-soft selection.",
+          "type_geometry": "Contract geometry with native checkboxes.",
+          "shell": "As inbox.",
+          "accent_discipline": "Accent on primary and selection; Delete uses danger.",
+          "suite_cohesion": "As inbox."
+        },
+        "excluded_na": [],
+        "mean_exact": "38/5",
+        "mean": 7.6
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-inbox-selection-desktop-light.png",
+      "sha256": "6000566389c10ac0527a4598aec2a90307ac67ced2eea20a93b0e43fb4d3c478",
+      "width": 1280,
+      "height": 900,
+      "bytes": 70982,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "inbox-selection",
+      "cohort": "mail-list",
+      "state": "sparse",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 8,
+        "typography": 7,
+        "density_layout": 7,
+        "color": 8,
+        "visible_affordances": 8,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "Contextual bulk toolbar appears right of the h1 as quiet icon+label actions; New Email remains the only fill.",
+        "typography": "Same row typography as inbox; toolbar labels 15px, Delete in danger text.",
+        "density_layout": "Toolbar sits on the title baseline without moving the list; still a sparse list over empty canvas.",
+        "color": "Selected rows use accent-soft fill; Delete uses danger; restrained.",
+        "visible_affordances": "Checked accent checkboxes plus row fill read clearly; no 'n selected' count is shown.",
+        "coherence": "Toolbar matches the contract's quiet icon-and-label bulk pattern."
+      },
+      "confidence": "high",
+      "caveat": "Two rows checked by the driver with force; keyboard selection, indeterminate header state and toolbar behavior unknown.",
+      "total": 7.5,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 7,
+          "shell": 8,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette; accent-soft selection.",
+          "type_geometry": "Contract geometry with native checkboxes.",
+          "shell": "As inbox.",
+          "accent_discipline": "Accent on primary and selection; Delete uses danger.",
+          "suite_cohesion": "As inbox."
+        },
+        "excluded_na": [],
+        "mean_exact": "38/5",
+        "mean": 7.6
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-inbox-selection-mobile-dark.png",
+      "sha256": "b90c85cc83613e96a7d2d4a05aa42fb2c5446f5894ba9d1460544220b6b741cc",
+      "width": 390,
+      "height": 844,
+      "bytes": 48987,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "inbox-selection",
+      "cohort": "mail-list",
+      "state": "sparse",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 6,
+        "density_layout": 6,
+        "color": 8,
+        "visible_affordances": 6,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "Icon-only bulk toolbar beside the h1; New Email primary remains in the header.",
+        "typography": "Same wrapped 12px sender meta as the unselected phone list.",
+        "density_layout": "Checkbox gutter and wrapped addresses as in inbox; toolbar fits one line.",
+        "color": "Accent-soft selected rows, danger trash icon. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Six unlabeled icons (archive, clock, warning, check, print) are ambiguous and there is no selection count.",
+        "coherence": "Consistent with the phone list; labels dropped only here."
+      },
+      "confidence": "high",
+      "caveat": "Two rows checked by the driver with force; keyboard selection, indeterminate header state and toolbar behavior unknown.",
+      "total": 6.7,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 6,
+          "shell": 7,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Icon-only toolbar; small meta.",
+          "shell": "As inbox phone.",
+          "accent_discipline": "Accent on primary and selection.",
+          "suite_cohesion": "As inbox phone."
+        },
+        "excluded_na": [],
+        "mean_exact": "36/5",
+        "mean": 7.2
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-inbox-selection-mobile-light.png",
+      "sha256": "a0b9ed5e3f633e9508c509d8b8a9531cc3e74f3a2b2e8a034f57d3346a91afb0",
+      "width": 390,
+      "height": 844,
+      "bytes": 48526,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "inbox-selection",
+      "cohort": "mail-list",
+      "state": "sparse",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "none",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 6,
+        "density_layout": 6,
+        "color": 8,
+        "visible_affordances": 6,
+        "coherence": 7
+      },
+      "observations": {
+        "hierarchy": "Icon-only bulk toolbar beside the h1; New Email primary remains in the header.",
+        "typography": "Same wrapped 12px sender meta as the unselected phone list.",
+        "density_layout": "Checkbox gutter and wrapped addresses as in inbox; toolbar fits one line.",
+        "color": "Accent-soft selected rows, danger trash icon.",
+        "visible_affordances": "Six unlabeled icons (archive, clock, warning, check, print) are ambiguous and there is no selection count.",
+        "coherence": "Consistent with the phone list; labels dropped only here."
+      },
+      "confidence": "high",
+      "caveat": "Two rows checked by the driver with force; keyboard selection, indeterminate header state and toolbar behavior unknown.",
+      "total": 6.7,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 6,
+          "shell": 7,
+          "accent_discipline": 8,
+          "suite_cohesion": 7
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Icon-only toolbar; small meta.",
+          "shell": "As inbox phone.",
+          "accent_discipline": "Accent on primary and selection.",
+          "suite_cohesion": "As inbox phone."
+        },
+        "excluded_na": [],
+        "mean_exact": "36/5",
+        "mean": 7.2
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-login-desktop-dark.png",
+      "sha256": "d06bcd7e68ce97aff26991db0f7461d3448c2db88c8e9180f99e0b2f3b9c3e96",
+      "width": 1280,
+      "height": 900,
+      "bytes": 73221,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "login",
+      "cohort": "auth",
+      "state": "empty",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "entrance animation captured mid-fade",
+      "scores": {
+        "hierarchy": 6,
+        "typography": 4,
+        "density_layout": 6,
+        "color": 5,
+        "visible_affordances": 4,
+        "coherence": 5
+      },
+      "observations": {
+        "hierarchy": "Centered card with seal, 'Sign in' title and full-width Sign in button; one action.",
+        "typography": "Letter-spaced uppercase IBM Plex Mono 10.88px labels (contract forbids) and a title rendered faded (#909492).",
+        "density_layout": "Empty 'SECURITY CHECK' slot above the status line; otherwise centered and balanced.",
+        "color": "Washed out as captured; 'Security check verified.' uses the accent instead of success. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Fields and button read as disabled in the capture; field borders are 1.57:1 even fully rendered.",
+        "coherence": "Shadowed 18px-radius card, gradient blob and mono eyebrows differ from the app shell."
+      },
+      "confidence": "medium",
+      "caveat": "Captured ~mid 420ms auth-card-in fade (driver takes the shot right after 'Security check verified.'); live Chrome154/DPR2 check shows opacity 1 and full-strength title/button after it finishes. Scored as captured per rubric.",
+      "total": 5.1,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 6,
+          "type_geometry": 4,
+          "shell": "N/A",
+          "accent_discipline": 5,
+          "suite_cohesion": 4
+        },
+        "observations": {
+          "palette_tokens": "Gradient blob and 0.28 drop shadow outside the token surface set.",
+          "type_geometry": "IBM Plex Mono letter-spaced uppercase labels, 1.6rem/700 title, 10px input radius.",
+          "shell": "N/A: standalone auth page has no app shell.",
+          "accent_discipline": "Accent used for the success status line.",
+          "suite_cohesion": "Distinct auth styling not shared with the app or the KyIdentity references."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "19/4",
+        "mean": 4.75
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-login-desktop-light.png",
+      "sha256": "803ae1b217c4ebdf4f8c590a8dd846f6de852d0c6a2727dbfdaf23ea5b099ffa",
+      "width": 1280,
+      "height": 900,
+      "bytes": 82561,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "login",
+      "cohort": "auth",
+      "state": "empty",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "entrance animation captured mid-fade",
+      "scores": {
+        "hierarchy": 6,
+        "typography": 4,
+        "density_layout": 6,
+        "color": 5,
+        "visible_affordances": 4,
+        "coherence": 5
+      },
+      "observations": {
+        "hierarchy": "Centered card with seal, 'Sign in' title and full-width Sign in button; one action.",
+        "typography": "Letter-spaced uppercase IBM Plex Mono 10.88px labels (contract forbids) and a title rendered faded (#909492).",
+        "density_layout": "Empty 'SECURITY CHECK' slot above the status line; otherwise centered and balanced.",
+        "color": "Washed out as captured; 'Security check verified.' uses the accent instead of success.",
+        "visible_affordances": "Fields and button read as disabled in the capture; field borders are 1.57:1 even fully rendered.",
+        "coherence": "Shadowed 18px-radius card, gradient blob and mono eyebrows differ from the app shell."
+      },
+      "confidence": "medium",
+      "caveat": "Captured ~mid 420ms auth-card-in fade (driver takes the shot right after 'Security check verified.'); live Chrome154/DPR2 check shows opacity 1 and full-strength title/button after it finishes. Scored as captured per rubric.",
+      "total": 5.1,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 6,
+          "type_geometry": 4,
+          "shell": "N/A",
+          "accent_discipline": 5,
+          "suite_cohesion": 4
+        },
+        "observations": {
+          "palette_tokens": "Gradient blob and 0.28 drop shadow outside the token surface set.",
+          "type_geometry": "IBM Plex Mono letter-spaced uppercase labels, 1.6rem/700 title, 10px input radius.",
+          "shell": "N/A: standalone auth page has no app shell.",
+          "accent_discipline": "Accent used for the success status line.",
+          "suite_cohesion": "Distinct auth styling not shared with the app or the KyIdentity references."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "19/4",
+        "mean": 4.75
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-login-mobile-dark.png",
+      "sha256": "83e67dec1d36f58da2460aff63a396c3d463a3fa8b1fdce2eedf6f0ad1341602",
+      "width": 390,
+      "height": 844,
+      "bytes": 52908,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "login",
+      "cohort": "auth",
+      "state": "empty",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "entrance animation captured mid-fade",
+      "scores": {
+        "hierarchy": 6,
+        "typography": 4,
+        "density_layout": 6,
+        "color": 4,
+        "visible_affordances": 4,
+        "coherence": 5
+      },
+      "observations": {
+        "hierarchy": "Same card and single Sign in action at phone width.",
+        "typography": "Same faded mono uppercase labels.",
+        "density_layout": "Card fits; empty Security Check slot.",
+        "color": "Washed out as captured; success shown in accent. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Fields and button read as disabled in the capture.",
+        "coherence": "Same separate auth vocabulary."
+      },
+      "confidence": "medium",
+      "caveat": "Captured ~mid 420ms auth-card-in fade (driver takes the shot right after 'Security check verified.'); live Chrome154/DPR2 check shows opacity 1 and full-strength title/button after it finishes. Scored as captured per rubric.",
+      "total": 5.0,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 6,
+          "type_geometry": 4,
+          "shell": "N/A",
+          "accent_discipline": 5,
+          "suite_cohesion": 4
+        },
+        "observations": {
+          "palette_tokens": "As desktop.",
+          "type_geometry": "As desktop.",
+          "shell": "N/A: standalone auth page.",
+          "accent_discipline": "As desktop.",
+          "suite_cohesion": "As desktop."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "19/4",
+        "mean": 4.75
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-login-mobile-light.png",
+      "sha256": "0ecc60cb9bd38bfc3f46c0a5ea0da7a205967575f2798c547f9035949b64cbdd",
+      "width": 390,
+      "height": 844,
+      "bytes": 61520,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "login",
+      "cohort": "auth",
+      "state": "empty",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "entrance animation captured mid-fade",
+      "scores": {
+        "hierarchy": 6,
+        "typography": 4,
+        "density_layout": 6,
+        "color": 5,
+        "visible_affordances": 4,
+        "coherence": 5
+      },
+      "observations": {
+        "hierarchy": "Same card and single Sign in action at phone width.",
+        "typography": "Same faded mono uppercase labels.",
+        "density_layout": "Card fits; empty Security Check slot.",
+        "color": "Washed out as captured; success shown in accent.",
+        "visible_affordances": "Fields and button read as disabled in the capture.",
+        "coherence": "Same separate auth vocabulary."
+      },
+      "confidence": "medium",
+      "caveat": "Captured ~mid 420ms auth-card-in fade (driver takes the shot right after 'Security check verified.'); live Chrome154/DPR2 check shows opacity 1 and full-strength title/button after it finishes. Scored as captured per rubric.",
+      "total": 5.1,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 6,
+          "type_geometry": 4,
+          "shell": "N/A",
+          "accent_discipline": 5,
+          "suite_cohesion": 4
+        },
+        "observations": {
+          "palette_tokens": "As desktop.",
+          "type_geometry": "As desktop.",
+          "shell": "N/A: standalone auth page.",
+          "accent_discipline": "As desktop.",
+          "suite_cohesion": "As desktop."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "19/4",
+        "mean": 4.75
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-reader-desktop-dark.png",
+      "sha256": "15d589f2853f8acb35b7ecf720014d9a26b62d3045c5cc0e11dbc92b7f755ec9",
+      "width": 1280,
+      "height": 900,
+      "bytes": 57248,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "reader",
+      "cohort": "mail-read",
+      "state": "populated",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 6,
+        "density_layout": 6,
+        "color": 8,
+        "visible_affordances": 6,
+        "coherence": 6
+      },
+      "observations": {
+        "hierarchy": "Subject title and filled Reply lead the dialog; eight secondary tools follow in one row.",
+        "typography": "Plain-text body is set in a monospace face while metadata uses Space Grotesk with 13px bold labels.",
+        "density_layout": "Body sits in a bordered, tinted box that leaves ~400px empty for a two-line message; metadata block is cramped.",
+        "color": "Neutral dialog; accent only on Reply, danger only on Delete. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "'Mark as Read' is offered while Status reads 'read' (ReadPage.tsx:1777 has no unread variant); a full-width Keywords input sits above the message.",
+        "coherence": "Boxed body inside the dialog is nested chrome; mono body breaks the type vocabulary."
+      },
+      "confidence": "high",
+      "caveat": "Modal over the inbox; shell occluded by the backdrop; opening marked the message read; HTML mail and attachments not covered.",
+      "total": 6.5,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 5,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 6
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Monospace body text breaks the Space Grotesk contract for prose.",
+          "shell": "N/A: shell occluded by modal backdrop.",
+          "accent_discipline": "Accent only on Reply.",
+          "suite_cohesion": "Boxed mono body has no counterpart in the reference set."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "27/4",
+        "mean": 6.75
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-reader-desktop-light.png",
+      "sha256": "6384875e4dbc787925fac27961a92772d17650e38a966f76e75b5bf32335cd8c",
+      "width": 1280,
+      "height": 900,
+      "bytes": 58213,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "reader",
+      "cohort": "mail-read",
+      "state": "populated",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "desktop 1280x900 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 6,
+        "density_layout": 6,
+        "color": 8,
+        "visible_affordances": 6,
+        "coherence": 6
+      },
+      "observations": {
+        "hierarchy": "Subject title and filled Reply lead the dialog; eight secondary tools follow in one row.",
+        "typography": "Plain-text body is set in a monospace face while metadata uses Space Grotesk with 13px bold labels.",
+        "density_layout": "Body sits in a bordered, tinted box that leaves ~400px empty for a two-line message; metadata block is cramped.",
+        "color": "Neutral dialog; accent only on Reply, danger only on Delete.",
+        "visible_affordances": "'Mark as Read' is offered while Status reads 'read' (ReadPage.tsx:1777 has no unread variant); a full-width Keywords input sits above the message.",
+        "coherence": "Boxed body inside the dialog is nested chrome; mono body breaks the type vocabulary."
+      },
+      "confidence": "high",
+      "caveat": "Modal over the inbox; shell occluded by the backdrop; opening marked the message read; HTML mail and attachments not covered.",
+      "total": 6.5,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 5,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 6
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Monospace body text breaks the Space Grotesk contract for prose.",
+          "shell": "N/A: shell occluded by modal backdrop.",
+          "accent_discipline": "Accent only on Reply.",
+          "suite_cohesion": "Boxed mono body has no counterpart in the reference set."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "27/4",
+        "mean": 6.75
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-reader-mobile-dark.png",
+      "sha256": "c182cd1cfd130d39d348b211728d0f6cde4757690ed44cc8b5a33bc6d8c893ac",
+      "width": 390,
+      "height": 844,
+      "bytes": 35897,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "reader",
+      "cohort": "mail-read",
+      "state": "populated",
+      "theme": "dark (OS dark, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 5,
+        "density_layout": 6,
+        "color": 8,
+        "visible_affordances": 5,
+        "coherence": 6
+      },
+      "observations": {
+        "hierarchy": "Full-screen sheet: title, filled Reply, Reply All/Forward outlines.",
+        "typography": "Monospace body with source hard line breaks reflowed into a ragged 'so the' orphan line.",
+        "density_layout": "10px side gutter (16-20px elsewhere); body box again mostly empty.",
+        "color": "Restrained; danger trash icon. Dark: same composition on charcoal; dark accent on primary.",
+        "visible_affordances": "Seven icon-only tools without labels; same Mark-as-Read/read-status mismatch.",
+        "coherence": "Nested tinted body box and mono text as on desktop."
+      },
+      "confidence": "high",
+      "caveat": "Modal over the inbox; shell occluded by the backdrop; opening marked the message read; HTML mail and attachments not covered.",
+      "total": 6.2,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 5,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 6
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Monospace ragged body; 10px gutter off the 8px rhythm.",
+          "shell": "N/A: full-screen sheet.",
+          "accent_discipline": "Accent only on Reply.",
+          "suite_cohesion": "As desktop reader."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "27/4",
+        "mean": 6.75
+      }
+    },
+    {
+      "file": "screenshots/kypost-00-before-reader-mobile-light.png",
+      "sha256": "798eb69f1634b96e629ffe0dc3c1e9883799e81ee506d6c766af2c1b16169fd9",
+      "width": 390,
+      "height": 844,
+      "bytes": 35522,
+      "duplicate_of": null,
+      "filename_matches_content": true,
+      "observed_product": "KyPost",
+      "observed_surface": "reader",
+      "cohort": "mail-read",
+      "state": "populated",
+      "theme": "light (OS light, no saved choice)",
+      "viewport": "mobile 390x844 DPR1",
+      "artifacts": "modal backdrop over app shell",
+      "scores": {
+        "hierarchy": 7,
+        "typography": 5,
+        "density_layout": 6,
+        "color": 8,
+        "visible_affordances": 5,
+        "coherence": 6
+      },
+      "observations": {
+        "hierarchy": "Full-screen sheet: title, filled Reply, Reply All/Forward outlines.",
+        "typography": "Monospace body with source hard line breaks reflowed into a ragged 'so the' orphan line.",
+        "density_layout": "10px side gutter (16-20px elsewhere); body box again mostly empty.",
+        "color": "Restrained; danger trash icon.",
+        "visible_affordances": "Seven icon-only tools without labels; same Mark-as-Read/read-status mismatch.",
+        "coherence": "Nested tinted body box and mono text as on desktop."
+      },
+      "confidence": "high",
+      "caveat": "Modal over the inbox; shell occluded by the backdrop; opening marked the message read; HTML mail and attachments not covered.",
+      "total": 6.2,
+      "ky_fit": {
+        "scores": {
+          "palette_tokens": 8,
+          "type_geometry": 5,
+          "shell": "N/A",
+          "accent_discipline": 8,
+          "suite_cohesion": 6
+        },
+        "observations": {
+          "palette_tokens": "Token palette.",
+          "type_geometry": "Monospace ragged body; 10px gutter off the 8px rhythm.",
+          "shell": "N/A: full-screen sheet.",
+          "accent_discipline": "Accent only on Reply.",
+          "suite_cohesion": "As desktop reader."
+        },
+        "excluded_na": [
+          "shell"
+        ],
+        "mean_exact": "27/4",
+        "mean": 6.75
+      }
+    }
+  ],
+  "cohort_rankings": {
+    "note": "KyPost only; no competitor captures, so no ranking or Ky gap. Coverage summary, not a ranking.",
+    "cohorts": {
+      "mail-list": {
+        "n": 8,
+        "sum": "56.6",
+        "mean_exact_fraction": "283/40",
+        "mean_exact_decimal": "7.075",
+        "mean_half_up_0.1": "7.1",
+        "product": "KyPost",
+        "matched": true,
+        "competitor": "none in set",
+        "ky_gap": "N/A (no competitor captures)",
+        "members": [
+          "kypost-00-before-inbox-desktop-dark.png",
+          "kypost-00-before-inbox-desktop-light.png",
+          "kypost-00-before-inbox-mobile-dark.png",
+          "kypost-00-before-inbox-mobile-light.png",
+          "kypost-00-before-inbox-selection-desktop-dark.png",
+          "kypost-00-before-inbox-selection-desktop-light.png",
+          "kypost-00-before-inbox-selection-mobile-dark.png",
+          "kypost-00-before-inbox-selection-mobile-light.png"
+        ]
+      },
+      "mail-read": {
+        "n": 4,
+        "sum": "25.4",
+        "mean_exact_fraction": "127/20",
+        "mean_exact_decimal": "6.35",
+        "mean_half_up_0.1": "6.4",
+        "product": "KyPost",
+        "matched": true,
+        "competitor": "none in set",
+        "ky_gap": "N/A (no competitor captures)",
+        "members": [
+          "kypost-00-before-reader-desktop-dark.png",
+          "kypost-00-before-reader-desktop-light.png",
+          "kypost-00-before-reader-mobile-dark.png",
+          "kypost-00-before-reader-mobile-light.png"
+        ]
+      },
+      "compose": {
+        "n": 4,
+        "sum": "26.4",
+        "mean_exact_fraction": "33/5",
+        "mean_exact_decimal": "6.6",
+        "mean_half_up_0.1": "6.6",
+        "product": "KyPost",
+        "matched": true,
+        "competitor": "none in set",
+        "ky_gap": "N/A (no competitor captures)",
+        "members": [
+          "kypost-00-before-compose-desktop-dark.png",
+          "kypost-00-before-compose-desktop-light.png",
+          "kypost-00-before-compose-mobile-dark.png",
+          "kypost-00-before-compose-mobile-light.png"
+        ]
+      },
+      "contacts-list": {
+        "n": 4,
+        "sum": "28.0",
+        "mean_exact_fraction": "7/1",
+        "mean_exact_decimal": "7",
+        "mean_half_up_0.1": "7.0",
+        "product": "KyPost",
+        "matched": true,
+        "competitor": "none in set",
+        "ky_gap": "N/A (no competitor captures)",
+        "members": [
+          "kypost-00-before-contacts-desktop-dark.png",
+          "kypost-00-before-contacts-desktop-light.png",
+          "kypost-00-before-contacts-mobile-dark.png",
+          "kypost-00-before-contacts-mobile-light.png"
+        ]
+      },
+      "contact-editor": {
+        "n": 4,
+        "sum": "30.0",
+        "mean_exact_fraction": "15/2",
+        "mean_exact_decimal": "7.5",
+        "mean_half_up_0.1": "7.5",
+        "product": "KyPost",
+        "matched": true,
+        "competitor": "none in set",
+        "ky_gap": "N/A (no competitor captures)",
+        "members": [
+          "kypost-00-before-contact-editor-desktop-dark.png",
+          "kypost-00-before-contact-editor-desktop-light.png",
+          "kypost-00-before-contact-editor-mobile-dark.png",
+          "kypost-00-before-contact-editor-mobile-light.png"
+        ]
+      },
+      "settings": {
+        "n": 4,
+        "sum": "30.2",
+        "mean_exact_fraction": "151/20",
+        "mean_exact_decimal": "7.55",
+        "mean_half_up_0.1": "7.6",
+        "product": "KyPost",
+        "matched": true,
+        "competitor": "none in set",
+        "ky_gap": "N/A (no competitor captures)",
+        "members": [
+          "kypost-00-before-appearance-desktop-dark.png",
+          "kypost-00-before-appearance-desktop-light.png",
+          "kypost-00-before-appearance-mobile-dark.png",
+          "kypost-00-before-appearance-mobile-light.png"
+        ]
+      },
+      "auth": {
+        "n": 4,
+        "sum": "20.3",
+        "mean_exact_fraction": "203/40",
+        "mean_exact_decimal": "5.075",
+        "mean_half_up_0.1": "5.1",
+        "product": "KyPost",
+        "matched": true,
+        "competitor": "none in set",
+        "ky_gap": "N/A (no competitor captures)",
+        "members": [
+          "kypost-00-before-login-desktop-dark.png",
+          "kypost-00-before-login-desktop-light.png",
+          "kypost-00-before-login-mobile-dark.png",
+          "kypost-00-before-login-mobile-light.png"
+        ]
+      }
+    },
+    "overall_covered_set_not_a_ranking": {
+      "n": 32,
+      "sum": "216.9",
+      "mean_exact_fraction": "2169/320",
+      "mean_exact_decimal": "6.778125",
+      "mean_half_up_0.1": "6.8"
+    },
+    "ky_fit_mean_over_files": {
+      "exact": "2237/320",
+      "decimal": 6.9906
+    }
+  },
+  "drift": {
+    "prior_round": null,
+    "explanation": "First review in this round sequence; no prior KyPost score exists, so no per-file drift. No historical, peer or Council score was read before or after freezing."
+  },
+  "gates": {
+    "keyboard": {
+      "result": "untested",
+      "evidence": "No keyboard traversal run; screenshots cannot pass a gate."
+    },
+    "focus": {
+      "result": "untested",
+      "evidence": "No focused-state captures; mouse parked at 0,0."
+    },
+    "contrast": {
+      "result": "fail",
+      "evidence": "Live http://localhost:18461/login, Chrome154 DPR2 incognito, OS light, after auth-card-in finished (opacity 1): .auth-label rgba(86,100,97,0.62) 10.88px on #ffffff = 2.71:1 (<4.5); .auth-input border rgba(24,35,38,0.22) = 1.57:1 against its fill (<3). Source frontend/src/styles.css .auth-label/.auth-input at 7a83df30. Other surfaces/themes unmeasured."
+    },
+    "states": {
+      "result": "untested",
+      "evidence": "No empty, loading or error captures in the set."
+    },
+    "responsive": {
+      "result": "untested",
+      "evidence": "Manifest records overflow 0 at 390 and 1280 for all 32; navigation reachable via strip is visible; target usability (13px checkboxes, text Edit/Delete) not measured."
+    }
+  },
+  "unscored": [],
+  "not_covered": [
+    "administrator/provisioning/server sections",
+    "native mail",
+    "other roles",
+    "complete state coverage",
+    "competitive comparison",
+    "HTML mail/attachments",
+    "named themes other than OS-following Busnes"
+  ],
+  "verdict": {
+    "satisfied": false,
+    "genuinely_satisfied": false,
+    "reason": "Raw covered-set quality mean 6.778125 (216.9/32) is below 8.0 on its own; mail-read, compose, mail-list phone and auth carry visible defects (reader mono boxed body and read/unread mismatch, compose band striping and clipped phone editor, phone list gutter/wrapping, faded and contract-breaking login). The parent owns the combined Claude/Sol decision."
+  },
+  "live_supplement": {
+    "browser": "T3 preview Chrome 154, DPR2, incognito tab, own tab only, closed after use",
+    "differs_from_scored_source": "Chrome154/DPR2 vs Chromium153/DPR1",
+    "actions": "opened /login, waited for 'Security check verified.', read computed styles; no sign-in, no mail viewed, no edits",
+    "used_for_scores": false
+  }
+}

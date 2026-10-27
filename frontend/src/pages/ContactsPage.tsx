@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
 import { toErrorMessage } from "../api/client";
 import {
   bulkDeleteContacts,
@@ -48,6 +48,7 @@ import { ContactDetailsDialog } from "./contacts/ContactDetailsDialog";
 import { ChevronIcon, CloseIcon } from "./read/icons";
 
 export function ContactsPage() {
+  const contactActionsId = useId();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [newGroupName, setNewGroupName] = useState("");
@@ -506,6 +507,15 @@ export function ContactsPage() {
               </span>
             </div>
           ) : null}
+          <button type="button" className="btn-primary" onClick={openCreateForm}>
+            New Contact
+          </button>
+          <button type="button" popoverTarget={contactActionsId}>More actions</button>
+          <div id={contactActionsId} popover="auto" className="suite-action-menu contacts-utility-menu"
+            onClickCapture={(event) => {
+              if (event.target instanceof Element && event.target.closest("button, a")) event.currentTarget.hidePopover?.();
+            }}>
+            <p className="suite-action-menu-title">Contact actions</p>
           {!loading && contacts.length > 1 ? (
             <button
               type="button"
@@ -551,9 +561,8 @@ export function ContactsPage() {
               />
             </>
           ) : null}
-          <button type="button" className="btn-primary" onClick={openCreateForm}>
-            New Contact
-          </button>
+
+          </div>
         </div>
       </header>
 
@@ -694,6 +703,7 @@ export function ContactsPage() {
       <dialog
         ref={contactFormDialogRef}
         className="contact-details-backdrop"
+        aria-labelledby="contact-form-title"
         onCancel={(event) => {
           event.preventDefault();
           closeForm();
@@ -735,12 +745,12 @@ export function ContactsPage() {
                       {form.fn.slice(0, 1).toUpperCase() || "?"}
                     </span>
                   )}
-                  <input
+                  {editingUid ? <input
                     type="file"
                     accept="image/*"
-                    disabled={!editingUid || photoUploading}
+                    disabled={photoUploading}
                     onChange={(e) => void handlePhotoUpload(e.target.files?.[0])}
-                  />
+                  /> : null}
                   {form.photoRef ? (
                     <button
                       type="button"
@@ -758,6 +768,33 @@ export function ContactsPage() {
                 <div>Full Name</div>
                 <input value={form.fn} onChange={(e) => setForm({ ...form, fn: e.target.value })} autoComplete="off" />
               </label>
+
+
+              <MultiValueField
+                label="Emails"
+                rows={form.emails}
+                onChange={(emails) => setForm({ ...form, emails })}
+                emptyRow={{ label: "", value: "" }}
+                addLabel="+ Add email"
+                renderRow={(row, update) => (
+                  <>
+                    <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
+                      <option value="">Other</option>
+                      <option value="home">Home</option>
+                      <option value="work">Work</option>
+                    </select>
+                    <input
+                      type="email"
+                      placeholder="email@example.com"
+                      value={row.value}
+                      onChange={(e) => update({ value: e.target.value })}
+                      autoComplete="off"
+                    />
+                  </>
+                )}
+              />
+              <details className="contact-identity-details">
+                <summary>Organization and name details</summary>
               <label>
                 <div>Organization</div>
                 <input value={form.org} onChange={(e) => setForm({ ...form, org: e.target.value })} autoComplete="off" />
@@ -786,30 +823,7 @@ export function ContactsPage() {
                 <div>Department</div>
                 <input value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} autoComplete="off" />
               </label>
-
-              <MultiValueField
-                label="Emails"
-                rows={form.emails}
-                onChange={(emails) => setForm({ ...form, emails })}
-                emptyRow={{ label: "", value: "" }}
-                addLabel="+ Add email"
-                renderRow={(row, update) => (
-                  <>
-                    <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
-                      <option value="">Other</option>
-                      <option value="home">Home</option>
-                      <option value="work">Work</option>
-                    </select>
-                    <input
-                      type="email"
-                      placeholder="email@example.com"
-                      value={row.value}
-                      onChange={(e) => update({ value: e.target.value })}
-                      autoComplete="off"
-                    />
-                  </>
-                )}
-              />
+              </details>
 
               <MultiValueField
                 label="Phones"

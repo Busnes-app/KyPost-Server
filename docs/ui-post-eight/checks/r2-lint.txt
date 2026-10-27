@@ -1,0 +1,3 @@
+
+> lint
+> node lint/node_modules/eslint/bin/eslint.js --config lint/eslint.config.js src

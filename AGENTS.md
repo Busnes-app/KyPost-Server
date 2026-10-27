@@ -109,7 +109,7 @@ Default section order:
 
 ## Root-owned files
 
-`Dockerfile`, `docker-compose.yml`, `supervisord.conf`, `.env.example`, `README.md`, `SECURITY.md`, `CHANGELOG.md`, `LICENSE.txt`, `LOGGING.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md` and everything under `docs/` are owned here, not by any child.
+`Dockerfile`, `docker-compose.yml`, `supervisord.conf`, `.env.example`, `README.md`, `SECURITY.md`, `CHANGELOG.md`, `LICENSE.txt`, `LOGGING.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md` and everything under `docs/` except the indexed UI Council evidence boundary are owned here, not by any child.
 
 - **`README.md` is the operator-facing surface, and it is the one that drifts.** Its Features summary and `docs/ARCHITECTURE.md` Project Structure, the full feature list in `docs/FEATURES.md`, the endpoint list in `docs/API.md`, and the environment-variable reference in `docs/CONFIGURATION.md` (plus `.env.example` and the compose passthrough, enforced by `scripts/check-env-example.sh`) each mirror something the code decides. A change that adds a route, an env var, a top-level directory, or a user-visible capability updates them in the same change set — a child `AGENTS.md` being correct does not discharge this, because operators do not read `AGENTS.md`.
 - **`docs/guides/` holds the start-to-finish operator guides** (`NATIVE_MAIL.md`, `IMAP.md`, `CLOUDFLARED.md`). They link the deep docs rather than restating them; a change to a setup step, compose overlay, operator command or the error strings they quote updates the guide in the same change set.
@@ -165,6 +165,8 @@ Default section order:
 - Use the shared JSON logger from ky-primitives. No audit-chain service is part of this integration; supervisord owns stderr capture/rotation (see `LOGGING.md`).
 
 ## Child DOX Index
+
+- `docs/ui-post-eight/` — staged synthetic screenshot evidence, independent Council reviews and progression records; see [docs/ui-post-eight/AGENTS.md](docs/ui-post-eight/AGENTS.md).
 
 - `receiving-worker/` — Independent Cloudflare Email Workers: the one-message pilot and the continuous protocol (signed routing table, R2 queue, authenticated pickup and rotation), with private R2 retention. See [receiving-worker/AGENTS.md](receiving-worker/AGENTS.md).
 

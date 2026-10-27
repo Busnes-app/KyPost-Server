@@ -2,6 +2,8 @@
 
 The full feature list; [README.md](../README.md#features) has the summary.
 
+- Web reader: keep the sender and Reply visible, expand full message details and keywords, and use More actions for archive, snooze, read/unread, spam, print, remote content and delete. Remote content remains blocked until explicitly enabled for that message.
+
 - Repeatable installer setup: runtime-owned `apply-setup --file [--check]` and capability discovery preserves existing SSO/webhook/domain/recovery configuration and returns a secret-free JSON report. Target-held credential file references avoid installer secret copies. `setup-status` lists configuration blockers and external acceptance checks. See [clean installation](INSTALLER_SETUP.md).
 
 - Guided dedicated-domain qualification: `bash scripts/setup-mail.sh <public-KyPost-origin>` walks through native deployment, KyIdentity/DNS proof, operator relay, protected engine/TLS inputs, backups and receiving launch. It requires Docker-operator authority and explicit configuration/start confirmations; live delivery remains an operator check. See [guided setup](RECEIVING_SETUP.md#guided-operator-setup).

@@ -1,0 +1,34 @@
+[
+  {
+    "file": "brand-references/kyidentity-02-after-users-manage-desktop-light.png",
+    "source_repository": "KyIdentity-server",
+    "source_commit": "d7f2a4b67a50c6d36829c3653a8ad5b2eb40e517",
+    "source_file": "docs/ui-identity-eight/screenshots/kyidentity-02-after-users-manage-desktop-light.png",
+    "sha256": "f13eb7bdc897cf717441dfb5e5ed555efb034eb841fac3bf26f02a7a2de5cfe4",
+    "purpose": "brand only, excluded from KyPost quality totals"
+  },
+  {
+    "file": "brand-references/kyidentity-02-after-users-manage-desktop-dark.png",
+    "source_repository": "KyIdentity-server",
+    "source_commit": "d7f2a4b67a50c6d36829c3653a8ad5b2eb40e517",
+    "source_file": "docs/ui-identity-eight/screenshots/kyidentity-02-after-users-manage-desktop-dark.png",
+    "sha256": "c88074992215e2e10fbb0518cafb30d9043cc434713fff8fdc3de81687a1c873",
+    "purpose": "brand only, excluded from KyPost quality totals"
+  },
+  {
+    "file": "brand-references/kyidentity-02-after-appearance-mobile-light.png",
+    "source_repository": "KyIdentity-server",
+    "source_commit": "d7f2a4b67a50c6d36829c3653a8ad5b2eb40e517",
+    "source_file": "docs/ui-identity-eight/screenshots/kyidentity-02-after-appearance-mobile-light.png",
+    "sha256": "b82cb35eae6ead72c08291c04eb188a7549a84ce2e2cc27e7fd948698c6037b6",
+    "purpose": "brand only, excluded from KyPost quality totals"
+  },
+  {
+    "file": "brand-references/kyidentity-02-after-appearance-mobile-dark.png",
+    "source_repository": "KyIdentity-server",
+    "source_commit": "d7f2a4b67a50c6d36829c3653a8ad5b2eb40e517",
+    "source_file": "docs/ui-identity-eight/screenshots/kyidentity-02-after-appearance-mobile-dark.png",
+    "sha256": "ea7033aea61cc689cc94cb5a362d5c9dd7dfbce798c27ed7ce89e8cbd3198fe1",
+    "purpose": "brand only, excluded from KyPost quality totals"
+  }
+]

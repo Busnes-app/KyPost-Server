@@ -1,0 +1,1688 @@
+{
+  "originals": 32,
+  "same_size_pairs": 240,
+  "exact_unique": 32,
+  "near_duplicates": 0,
+  "pairs": [
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "changed_fraction": 0.8476857638888889,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "changed_fraction": 0.5546163194444444,
+      "max_channel_delta": 234,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "changed_fraction": 0.9980555555555556,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "changed_fraction": 0.5365460069444444,
+      "max_channel_delta": 228,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "changed_fraction": 0.9980555555555556,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "changed_fraction": 0.22689930555555557,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "changed_fraction": 0.9973940972222222,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "changed_fraction": 0.22940364583333334,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "changed_fraction": 0.9973940972222222,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "changed_fraction": 0.2645546875,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "changed_fraction": 0.9973940972222222,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.9187039930555555,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.9920720486111112,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 0.33820486111111114,
+      "max_channel_delta": 229,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 0.9980121527777778,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "changed_fraction": 0.9965078125,
+      "max_channel_delta": 244,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "changed_fraction": 0.5990043402777777,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "changed_fraction": 0.9960243055555555,
+      "max_channel_delta": 242,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "changed_fraction": 0.5668116319444445,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "changed_fraction": 0.995896701388889,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "changed_fraction": 0.22565017361111112,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "changed_fraction": 0.9958576388888888,
+      "max_channel_delta": 225,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "changed_fraction": 0.228234375,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "changed_fraction": 0.9958576388888888,
+      "max_channel_delta": 225,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "changed_fraction": 0.2636519097222222,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.993923611111111,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.9137369791666666,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 0.9962517361111111,
+      "max_channel_delta": 241,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 0.46211979166666667,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "changed_fraction": 0.8013002794993316,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "changed_fraction": 0.3267499088589136,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "changed_fraction": 0.32246323976181795,
+      "max_channel_delta": 226,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "changed_fraction": 0.30563859521205494,
+      "max_channel_delta": 240,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "changed_fraction": 0.9978369182160651,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "changed_fraction": 0.3311641754769717,
+      "max_channel_delta": 218,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "changed_fraction": 0.9978369182160651,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "changed_fraction": 0.3911896949811642,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "changed_fraction": 0.9975908372827804,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.7368513792684408,
+      "max_channel_delta": 223,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.999945315348159,
+      "max_channel_delta": 240,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.30843358852837527,
+      "max_channel_delta": 218,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.9998967067687448,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "changed_fraction": 0.9879359581966216,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "changed_fraction": 0.4312462024547332,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "changed_fraction": 0.9887167335034635,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "changed_fraction": 0.4288734961720744,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "changed_fraction": 0.9859855389476243,
+      "max_channel_delta": 240,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "changed_fraction": 0.3138838254951999,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "changed_fraction": 0.9861890873739215,
+      "max_channel_delta": 225,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "changed_fraction": 0.33975270385222994,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "changed_fraction": 0.9953578806659376,
+      "max_channel_delta": 225,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "changed_fraction": 0.390661076680034,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.9877810183497386,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.753925142787702,
+      "max_channel_delta": 240,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.9900261271114351,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-appearance-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.4037671649046057,
+      "max_channel_delta": 255,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "changed_fraction": 0.9992309027777777,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "changed_fraction": 0.4528029513888889,
+      "max_channel_delta": 234,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 244,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "changed_fraction": 0.41760156249999997,
+      "max_channel_delta": 238,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 244,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "changed_fraction": 0.41963107638888886,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 244,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "changed_fraction": 0.47123350694444444,
+      "max_channel_delta": 239,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 244,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.8717039930555556,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.9999973958333334,
+      "max_channel_delta": 237,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 0.4055477430555555,
+      "max_channel_delta": 230,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 244,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 240,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "changed_fraction": 0.4524991319444444,
+      "max_channel_delta": 241,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 229,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "changed_fraction": 0.46200520833333336,
+      "max_channel_delta": 243,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 230,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "changed_fraction": 0.4639444444444444,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 230,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "changed_fraction": 0.5157039930555556,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.9990998263888888,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.8717022569444444,
+      "max_channel_delta": 236,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 0.40527170138888885,
+      "max_channel_delta": 243,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "changed_fraction": 0.9995048000972171,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "changed_fraction": 0.1331237088346093,
+      "max_channel_delta": 218,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "changed_fraction": 0.9999908858913598,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "changed_fraction": 0.1634159679183376,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "changed_fraction": 0.9999726576740794,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "changed_fraction": 0.15159800704824403,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "changed_fraction": 0.9999726576740794,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "changed_fraction": 0.259478672985782,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "changed_fraction": 0.9999726576740794,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.6611283266496537,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.9999939239275732,
+      "max_channel_delta": 225,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.11538461538461539,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "changed_fraction": 0.13208773848584277,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "changed_fraction": 0.255243650504314,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "changed_fraction": 0.23667213513185076,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "changed_fraction": 0.34476242556811276,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.9989701057236602,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.6612376959533358,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-compose-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.11423927573216673,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "changed_fraction": 0.9993819444444444,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "changed_fraction": 0.3991883680555556,
+      "max_channel_delta": 214,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 242,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "changed_fraction": 0.39743055555555556,
+      "max_channel_delta": 230,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 242,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "changed_fraction": 0.45080468749999997,
+      "max_channel_delta": 230,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 242,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.8692604166666668,
+      "max_channel_delta": 221,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.9999973958333334,
+      "max_channel_delta": 235,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 0.37678819444444445,
+      "max_channel_delta": 227,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 242,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "changed_fraction": 0.42887152777777776,
+      "max_channel_delta": 233,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 226,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "changed_fraction": 0.4272855902777778,
+      "max_channel_delta": 241,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 226,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "changed_fraction": 0.48083333333333333,
+      "max_channel_delta": 241,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.9991692708333334,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.8692708333333334,
+      "max_channel_delta": 234,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 0.3813923611111111,
+      "max_channel_delta": 241,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "changed_fraction": 0.16048426297241464,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "changed_fraction": 0.9999939239275732,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "changed_fraction": 0.1477791955280107,
+      "max_channel_delta": 217,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "changed_fraction": 0.9999939239275732,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "changed_fraction": 0.25192003888686354,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "changed_fraction": 0.9999939239275732,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.6525246080933285,
+      "max_channel_delta": 221,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.9999939239275732,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.11287519747235387,
+      "max_channel_delta": 214,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "changed_fraction": 0.2562218981650261,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "changed_fraction": 0.23732531291772996,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "changed_fraction": 0.3413081783934864,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.998332118118848,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.6526339773970106,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.11265342082877629,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "changed_fraction": 0.9993064236111111,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "changed_fraction": 0.066671875,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "changed_fraction": 0.9993810763888888,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "changed_fraction": 0.12673350694444446,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "changed_fraction": 0.9993767361111111,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.8721701388888888,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.9999982638888889,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 0.1739644097222222,
+      "max_channel_delta": 228,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "changed_fraction": 0.9993133680555555,
+      "max_channel_delta": 225,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "changed_fraction": 0.06582899305555555,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "changed_fraction": 0.9993142361111111,
+      "max_channel_delta": 225,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "changed_fraction": 0.12608854166666666,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.998640625,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.8722838541666667,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 241,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 0.30009895833333333,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "changed_fraction": 0.9975877992465669,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "changed_fraction": 0.16138352169157857,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "changed_fraction": 0.9978369182160651,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "changed_fraction": 0.25781079110462995,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "changed_fraction": 0.9978095758901445,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.6785545023696682,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.9999726576740794,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.14207072548304778,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.9999969619637865,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "changed_fraction": 0.9975999513914205,
+      "max_channel_delta": 225,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "changed_fraction": 0.15909588042289463,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "changed_fraction": 0.9975999513914205,
+      "max_channel_delta": 225,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "changed_fraction": 0.25607303439056994,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.9982075586340989,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.6846700692672256,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.9999787337465061,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-contacts-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.22822335642240854,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "changed_fraction": 0.9993689236111111,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "changed_fraction": 0.07066493055555556,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "changed_fraction": 0.9993689236111111,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.8743680555555555,
+      "max_channel_delta": 221,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.9999973958333334,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 0.17361458333333332,
+      "max_channel_delta": 214,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "changed_fraction": 0.9993689236111111,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "changed_fraction": 0.07059635416666667,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.9985572916666667,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.8743932291666667,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 241,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 0.29714236111111114,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "changed_fraction": 0.9977913476728643,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "changed_fraction": 0.18819419127475998,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "changed_fraction": 0.9978369182160651,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.6638655972779195,
+      "max_channel_delta": 221,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.9999939239275732,
+      "max_channel_delta": 225,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.12061915178028922,
+      "max_channel_delta": 218,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.9999635435654393,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "changed_fraction": 0.9978369182160651,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "changed_fraction": 0.18730708470044963,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.999085551099769,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.6713422043990763,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.9999787337465061,
+      "max_channel_delta": 227,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.20682950540770445,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "changed_fraction": 0.9993689236111111,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.8999921875,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.9999973958333334,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 0.23636458333333335,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "changed_fraction": 0.9984635416666666,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.8999965277777777,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 241,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 0.3600303819444445,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "changed_fraction": 0.9977913476728643,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.7400838497994896,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.9999939239275732,
+      "max_channel_delta": 225,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.22603597034876657,
+      "max_channel_delta": 224,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.9999665816016526,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "changed_fraction": 0.9991220075343298,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.747448049580751,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.9999787337465061,
+      "max_channel_delta": 227,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.31237695953335765,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-login-desktop-light.png",
+      "changed_fraction": 0.9935347222222223,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 0.8688350694444444,
+      "max_channel_delta": 221,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-login-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 0.9987239583333333,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-login-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "changed_fraction": 0.9999973958333334,
+      "max_channel_delta": 234,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-login-desktop-light.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 0.8688229166666666,
+      "max_channel_delta": 236,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-login-mobile-light.png",
+      "changed_fraction": 0.9848371612589623,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.6566624134159679,
+      "max_channel_delta": 221,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-login-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.9982500911410864,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-login-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "changed_fraction": 0.9999939239275732,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-login-mobile-light.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 0.6565895005468465,
+      "max_channel_delta": 232,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-reader-desktop-dark.png",
+      "b": "screenshots/kypost-02-after-reader-desktop-light.png",
+      "changed_fraction": 0.9995659722222221,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    },
+    {
+      "a": "screenshots/kypost-02-after-reader-mobile-dark.png",
+      "b": "screenshots/kypost-02-after-reader-mobile-light.png",
+      "changed_fraction": 1.0,
+      "max_channel_delta": 231,
+      "near_duplicate": false
+    }
+  ]
+}
