@@ -21,10 +21,14 @@ try{for(const [device,width,height]of [['desktop',1280,900],['mobile',390,844]])
  await page.getByLabel('Username',{exact:true}).fill(creds.user);await page.getByLabel('Password',{exact:true}).fill(creds.password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.waitForURL('**/read');
  if(device==='mobile'){for(const cell of await page.locator('.inbox-row-meta').all()){const c=await cell.boundingBox(),date=await cell.locator('> span:nth-child(2)').boundingBox();expect(date.x+date.width).toBeLessThanOrEqual(c.x+c.width+1);}}
  await page.getByRole('checkbox',{name:'Select email Re: Sandbox rollout plan'}).check({force:true});
+ const selectAll=page.getByRole('checkbox',{name:'Select all emails in page',exact:true});
+ await expect(selectAll).toHaveJSProperty('indeterminate',true);
+ for(const target of await page.locator('.inbox-select-hit').all()){const box=await target.boundingBox();expect(box.width).toBeGreaterThanOrEqual(40);expect(box.height).toBeGreaterThanOrEqual(40);}
  const bulk=page.locator('.inbox-action-bar');
  expect(await bulk.evaluate(e=>e.scrollWidth-e.clientWidth)).toBe(0);
  for(const b of await bulk.getByRole('button').all())await contained(b,page);
  await page.getByRole('checkbox',{name:'Select email Re: Sandbox rollout plan'}).uncheck({force:true});
+ await expect(selectAll).toHaveJSProperty('indeterminate',false);
  const subject=page.getByRole('button',{name:'Re: Sandbox rollout plan',exact:true});await subject.click();const dialog=page.getByRole('dialog',{name:'Re: Sandbox rollout plan',exact:true});await expect(dialog.getByRole('button',{name:'Reply',exact:true})).toBeEnabled();
  const replyFont=await dialog.getByRole('button',{name:'Reply',exact:true}).evaluate(e=>getComputedStyle(e).fontSize);
  expect(await dialog.getByRole('button',{name:'More actions',exact:true}).evaluate(e=>getComputedStyle(e).fontSize)).toBe(replyFont);

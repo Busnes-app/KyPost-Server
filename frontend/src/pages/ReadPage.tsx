@@ -1601,6 +1601,9 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                           type="checkbox"
                           className="inbox-checkbox"
                           checked={allRowsSelected}
+                          ref={(element) => {
+                            if (element) element.indeterminate = !allRowsSelected && pageRows.some((row) => selectedMessageIds.includes(row.messageId));
+                          }}
                           onChange={(e) => {
                             if (e.target.checked) {
                               const ids = pageRows.map((row) => row.messageId);

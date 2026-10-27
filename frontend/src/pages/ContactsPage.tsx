@@ -768,31 +768,6 @@ export function ContactsPage() {
                 <input value={form.fn} onChange={(e) => setForm({ ...form, fn: e.target.value })} autoComplete="off" />
               </label>
 
-
-              <MultiValueField
-                label="Emails"
-                rows={form.emails}
-                onChange={(emails) => setForm({ ...form, emails })}
-                emptyRow={{ label: "", value: "" }}
-                addLabel="+ Add email"
-                renderRow={(row, update) => (
-                  <>
-                    <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
-                      <option value="">Other</option>
-                      <option value="home">Home</option>
-                      <option value="work">Work</option>
-                    </select>
-                    <input
-                      type="email"
-                      placeholder="email@example.com"
-                      value={row.value}
-                      onChange={(e) => update({ value: e.target.value })}
-                      autoComplete="off"
-                    />
-                  </>
-                )}
-              />
-              {!editingUid ? <p className="contacts-photo-guidance">Save the contact first to add a photo.</p> : null}
               <details className="contacts-form-group contact-identity-details" open={has(saved.org, saved.givenName, saved.familyName, saved.title, saved.department)}>
                 <summary>Organization and name details<ChevronIcon /></summary>
                 <div className="contacts-form-group-fields">
@@ -826,33 +801,6 @@ export function ContactsPage() {
               </label>
                 </div>
               </details>
-
-              <MultiValueField
-                label="Phones"
-                rows={form.phones}
-                onChange={(phones) => setForm({ ...form, phones })}
-                emptyRow={{ label: "", value: "" }}
-                addLabel="+ Add phone"
-                renderRow={(row, update) => (
-                  <>
-                    <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
-                      <option value="">Other</option>
-                      <option value="home">Home</option>
-                      <option value="work">Work</option>
-                      <option value="mobile">Mobile</option>
-                      <option value="fax">Fax</option>
-                    </select>
-                    <input
-                      type="text"
-                      placeholder="Phone number"
-                      value={row.value}
-                      onChange={(e) => update({ value: e.target.value })}
-                      autoComplete="off"
-                    />
-                  </>
-                )}
-              />
-
               <details className="contacts-form-group" open={has(saved.prefix, saved.middleName, saved.suffix, saved.nickname, saved.phoneticGivenName, saved.phoneticFamilyName, saved.pronouns)}>
                 <summary>More name fields<ChevronIcon /></summary>
                 <div className="contacts-form-group-fields">
@@ -916,6 +864,60 @@ export function ContactsPage() {
                   </label>
                 </div>
               </details>
+
+              <MultiValueField
+                label="Emails"
+                rows={form.emails}
+                onChange={(emails) => setForm({ ...form, emails })}
+                emptyRow={{ label: "", value: "" }}
+                addLabel="+ Add email"
+                renderRow={(row, update) => (
+                  <>
+                    <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
+                      <option value="">Other</option>
+                      <option value="home">Home</option>
+                      <option value="work">Work</option>
+                    </select>
+                    <input
+                      type="email"
+                      placeholder="email@example.com"
+                      value={row.value}
+                      onChange={(e) => update({ value: e.target.value })}
+                      autoComplete="off"
+                    />
+                  </>
+                )}
+              />
+              {!editingUid ? <p className="contacts-photo-guidance">Save the contact first to add a photo.</p> : null}
+
+
+              <MultiValueField
+                label="Phones"
+                rows={form.phones}
+                onChange={(phones) => setForm({ ...form, phones })}
+                emptyRow={{ label: "", value: "" }}
+                addLabel="+ Add phone"
+                renderRow={(row, update) => (
+                  <>
+                    <select value={row.label ?? ""} onChange={(e) => update({ label: e.target.value })}>
+                      <option value="">Other</option>
+                      <option value="home">Home</option>
+                      <option value="work">Work</option>
+                      <option value="mobile">Mobile</option>
+                      <option value="fax">Fax</option>
+                    </select>
+                    <input
+                      type="text"
+                      placeholder="Phone number"
+                      value={row.value}
+                      onChange={(e) => update({ value: e.target.value })}
+                      autoComplete="off"
+                    />
+                  </>
+                )}
+              />
+
+
               <details className="contacts-form-group" open={has(saved.birthday, saved.events)}>
                 <summary>Birthday and dates<ChevronIcon /></summary>
                 <div className="contacts-form-group-fields">
