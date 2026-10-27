@@ -7,7 +7,7 @@ Coverage summaries are not rankings. Raw originals and independent satisfaction 
 | 1 | 2169/320 | 1209/160 | 4587/640 | 6.8 | False | Unused |
 | 2 | 1221/160 | 42/5 | 513/64 | 7.6 | False | Unused |
 | 3 | 631/80 | 277/32 | 2647/320 | 7.9 | False | Unused |
-| 4 | 1277/160 | 1369/160 | 1323/160 | 8.0 | True | Pending advisory |
+| 4 | 1277/160 | 1369/160 | 1323/160 | 8.0 | True | Unavailable: quota reached; no score |
 
 R1 includes the original four mid-animation login captures. Supplemental settled login before-views are unscored; do not call a capture correction product improvement.
 

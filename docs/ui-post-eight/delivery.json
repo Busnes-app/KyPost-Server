@@ -8,7 +8,7 @@
   "merge_deploy_authorized": false,
   "council_rounds": "4 complete",
   "accepted_visual_progression": true,
-  "gemini": "Pending advisory",
+  "gemini": "Unavailable: quota reached; no score",
   "opus_rounded": "8.0",
   "previous_pr": "https://github.com/Busnes-app/KyPost-Server/pull/490",
   "opus_exact": "1277/160",

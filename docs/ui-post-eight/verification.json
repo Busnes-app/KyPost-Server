@@ -43,7 +43,7 @@
     "Full keyboard/focus/contrast/state/assistive-tech coverage and competitors remain untested.",
     "Native popovers require the modern browsers exercised here; Safari/WebKit not exercised."
   ],
-  "gate": "R4 Opus1277/160 =7.98125 rounds8.0, visual progression accepted. Sol1369/160 =8.55625. Both genuinely satisfied; Gemini advisory pending.",
+  "gate": "R4 Opus1277/160 =7.98125 rounds8.0, visual progression accepted. Sol1369/160 =8.55625. Both genuinely satisfied; Gemini unavailable due to quota; no score/findings and no retry.",
   "mySlop": "Known401; no board post succeeded; no unchanged-credential retry.",
   "merge_deploy": "Not authorized"
 }
