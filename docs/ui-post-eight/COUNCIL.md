@@ -5,6 +5,7 @@ Coverage summaries are not rankings. Raw originals and independent satisfaction 
 | Round | Claude | Sol | Combined exact | Rounded progression | Accepted | Gemini |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
 | 1 | 2169/320 | 1209/160 | 4587/640 | 7.2 | False | Unused |
+| 2 | Pending | Pending | Pending | Pending | Pending | Unused |
 
 R1 includes the original four mid-animation login captures. Supplemental settled login before-views are unscored; do not call a capture correction product improvement.
 

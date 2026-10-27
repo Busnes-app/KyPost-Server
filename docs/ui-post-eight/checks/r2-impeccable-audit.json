@@ -1,0 +1,25 @@
+{
+  "source_ui": "50bbbff5",
+  "new_findings": 0,
+  "raw_findings": 4,
+  "rulings": [
+    {
+      "finding": "Space Grotesk overused",
+      "decision": "Reject as a design recommendation: owner explicitly pins the suite to this font; existing face retained."
+    },
+    {
+      "finding": "Arial print document",
+      "decision": "Existing isolated print-document styling, outside captured interaction scope; preserve its tested sandbox path."
+    },
+    {
+      "finding": "auth-status3px accent border",
+      "decision": "Valid pre-existing status decoration, not present in the captured initial auth state; defer as optional state polish. Not a compiler/linter warning or a progression veto."
+    },
+    {
+      "finding": "swipe snapback easing",
+      "decision": "Existing swipe gesture advisory; preserve tested gesture behavior in this scoped pass."
+    }
+  ],
+  "limits": "Detector is not a quality score or whole-product acceptance.",
+  "note": "Final-source detector rerun after the bounded cleanup; same four existing findings, individually classified."
+}

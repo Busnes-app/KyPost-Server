@@ -21,6 +21,7 @@ Preserve staged KyPost web screenshots, independent reviews and evidence for pro
 
 - Baseline covers inbox, selected inbox, reader, compose, contacts, contact editor, Appearance and login at1280×900/390×844 in both OS themes, DPR1.
 - Use only the private synthetic mail fixture; no production data or external sending. Forms stay unsubmitted; reader flags are restored through native inbox actions.
+- Stage02 initial after-views are preserved as superseded: oversized Quill glyphs and clipped phone timestamps were found in the parent inspection. Stage03 is the single bounded cleanup confirmation used for round2 scores.
 - Product checks remain owned by root/frontend contracts. Capture evidence alone does not establish full role/state/theme/behavior or competitive acceptance.
 
 ## Verification

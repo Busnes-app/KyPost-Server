@@ -1,0 +1,184 @@
+{
+  "source_commit": "50bbbff59835a7943d58fe8a4f79aff9f1bdce14",
+  "browser": "153.0.8010.12",
+  "dpr": 1,
+  "results": [
+    {
+      "device": "desktop",
+      "theme": "light",
+      "contrast": {
+        "label": 16.06439405204249,
+        "border": 3.47680845097865,
+        "success": 5.738896946730334,
+        "opacity": "1",
+        "labelFont": "\"Space Grotesk\", sans-serif"
+      },
+      "readerMenu": {
+        "x": 955,
+        "y": 153,
+        "width": 260,
+        "height": 355
+      },
+      "contactMenu": {
+        "x": 988,
+        "y": 73,
+        "width": 260,
+        "height": 223
+      },
+      "compose": {
+        "editor": {
+          "x": 185,
+          "y": 488,
+          "width": 910,
+          "height": 191
+        },
+        "footer": {
+          "x": 161,
+          "y": 695,
+          "width": 958,
+          "height": 134
+        },
+        "toolbar": {
+          "x": 185,
+          "y": 430,
+          "width": 910,
+          "height": 58
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "device": "desktop",
+      "theme": "dark",
+      "contrast": {
+        "label": 12.670791034300045,
+        "border": 5.088217855147113,
+        "success": 7.079942481901932,
+        "opacity": "1",
+        "labelFont": "\"Space Grotesk\", sans-serif"
+      },
+      "readerMenu": {
+        "x": 955,
+        "y": 153,
+        "width": 260,
+        "height": 355
+      },
+      "contactMenu": {
+        "x": 988,
+        "y": 73,
+        "width": 260,
+        "height": 223
+      },
+      "compose": {
+        "editor": {
+          "x": 185,
+          "y": 488,
+          "width": 910,
+          "height": 191
+        },
+        "footer": {
+          "x": 161,
+          "y": 695,
+          "width": 958,
+          "height": 134
+        },
+        "toolbar": {
+          "x": 185,
+          "y": 430,
+          "width": 910,
+          "height": 58
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "device": "mobile",
+      "theme": "light",
+      "contrast": {
+        "label": 16.06439405204249,
+        "border": 3.47680845097865,
+        "success": 5.738896946730334,
+        "opacity": "1",
+        "labelFont": "\"Space Grotesk\", sans-serif"
+      },
+      "readerMenu": {
+        "x": 16,
+        "y": 473,
+        "width": 358,
+        "height": 355
+      },
+      "contactMenu": {
+        "x": 16,
+        "y": 605,
+        "width": 358,
+        "height": 223
+      },
+      "compose": {
+        "editor": {
+          "x": 24,
+          "y": 435,
+          "width": 342,
+          "height": 213
+        },
+        "footer": {
+          "x": 0,
+          "y": 664,
+          "width": 390,
+          "height": 180
+        },
+        "toolbar": {
+          "x": 16,
+          "y": 377,
+          "width": 358,
+          "height": 58
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "device": "mobile",
+      "theme": "dark",
+      "contrast": {
+        "label": 12.670791034300045,
+        "border": 5.088217855147113,
+        "success": 7.079942481901932,
+        "opacity": "1",
+        "labelFont": "\"Space Grotesk\", sans-serif"
+      },
+      "readerMenu": {
+        "x": 16,
+        "y": 473,
+        "width": 358,
+        "height": 355
+      },
+      "contactMenu": {
+        "x": 16,
+        "y": 605,
+        "width": 358,
+        "height": 223
+      },
+      "compose": {
+        "editor": {
+          "x": 24,
+          "y": 435,
+          "width": 342,
+          "height": 213
+        },
+        "footer": {
+          "x": 0,
+          "y": 664,
+          "width": 390,
+          "height": 180
+        },
+        "toolbar": {
+          "x": 16,
+          "y": 377,
+          "width": 358,
+          "height": 58
+        }
+      },
+      "status": "pass"
+    }
+  ],
+  "limits": "Four focused synthetic cases; not complete roles/states/all-theme/assistive-tech acceptance."
+}

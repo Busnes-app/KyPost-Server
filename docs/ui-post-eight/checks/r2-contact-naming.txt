@@ -1,0 +1,17 @@
+
+> pretest
+> node src/ky-ui/check-vendor.mjs
+
+ky-ui 0.4.1: vendor files verified
+
+> test
+> vitest --run src/pages/ContactsPage.test.tsx
+
+
+ RUN  v5.0.5 /home/yoshi/git/busnes.app/kypost-server/.claude/worktrees/ui-post-eight/frontend
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  13:00:20
+   Duration  1.34s (tests 42%, environment 33%, transform 18%, import 7%)

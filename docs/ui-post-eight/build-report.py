@@ -35,12 +35,15 @@ for path in sorted(P.glob('*-round*.json')):
  satisfied=r.get('verdict',{}).get('satisfied');means={c:sum(v)/len(v)for c,v in groups.items()}
  for c,v in groups.items():cohorts.append([num,who,c,len(v),str(sum(v)),str(means[c]),rounded(means[c]),satisfied])
  quality=[Fraction(str(f['total']))for f in files.values()if not f.get('duplicate_of')];reports[who,num]={'files':files,'mean':sum(quality)/len(quality),'cohorts':means,'satisfied':satisfied}
-for num in sorted({n for _,n in reports}):
+numbers={n for _,n in reports}
+if (P/'manifest-03-after.json').exists():numbers.add(2)
+for num in sorted(numbers):
  a,b=reports.get(('opus',num)),reports.get(('sol',num))
  if a and b:
   assert a['files'].keys()==b['files'].keys();mean=(a['mean']+b['mean'])/2;progression.append([num,str(a['mean']),str(b['mean']),str(mean),rounded(mean),Decimal(rounded(mean))>=8])
   for name,x in a['files'].items():
    for k,v in x['scores'].items():y=b['files'][name]['scores'][k];spreads.append([num,name,k,v,y,abs(v-y)])
+ if not(a and b):progression.append([num,str(a['mean'])if a else 'Pending',str(b['mean'])if b else 'Pending','Pending','Pending','Pending'])
 notes=[['Topic','Evidence'],['Scope','32 initial-view captures across eight everyday-user surfaces; no competitor/whole-product acceptance.'],['Conditions','Read immutable manifests; desktop1280x900/phone390x844,OSlight/dark,DPR1,normal service workers.'],['Login artifact','R1 preserves four mid-fade login shots; stage01 settled before-shots are supplemental comparison evidence and carry no replacement score.'],['Progression','Same-set Claude/Sol quality mean, half-up to one decimal; >=8.0 accepts. Brand is separate; raw scores/satisfaction retained.'],['Gemini','Unused until both primary reviewers genuinely satisfied; advisory, audited, never delaying accepted progression.']]
 for f in sorted(P.glob('round*-audit.json')):
  audit=json.loads(f.read_text())

@@ -1,0 +1,25 @@
+{
+  "source_ui": "50bbbff59835a7943d58fe8a4f79aff9f1bdce14",
+  "server_sha256": "7c238265e07f01a0fb21122a588343a0fb603054a8c8fb0d712ce24009bb23a1",
+  "driver_sha256": "619b2636fe69b9786e53c6495a4b64d444b8cc4e0134ec57e28b98b892c207d3",
+  "initial_after": "manifest-02-after.json, superseded after parent inspected all32",
+  "confirmation": "manifest-03-after.json, single bounded cleanup for toolbar glyph/phone timestamp defects",
+  "changed_confirmation_files": [
+    "screenshots/kypost-03-after-compose-desktop-light.png",
+    "screenshots/kypost-03-after-inbox-desktop-dark.png",
+    "screenshots/kypost-03-after-inbox-selection-desktop-dark.png",
+    "screenshots/kypost-03-after-compose-desktop-dark.png",
+    "screenshots/kypost-03-after-inbox-mobile-light.png",
+    "screenshots/kypost-03-after-inbox-selection-mobile-light.png",
+    "screenshots/kypost-03-after-contacts-mobile-light.png",
+    "screenshots/kypost-03-after-compose-mobile-light.png",
+    "screenshots/kypost-03-after-inbox-mobile-dark.png",
+    "screenshots/kypost-03-after-inbox-selection-mobile-dark.png",
+    "screenshots/kypost-03-after-contacts-mobile-dark.png",
+    "screenshots/kypost-03-after-compose-mobile-dark.png"
+  ],
+  "parent_review": "All32 initial after originals and all32 confirmation originals opened individually at native resolution. No remaining page overflow, clipped dates, oversized toolbar glyphs or footer overlap observed in the covered set.",
+  "conditions_match": "Same32 surface/device/theme keys as baseline; same synthetic account/mail/contacts,locale/timezone,DPR/browser and normal serviceworker behavior. Login before comparison uses unscored settled stage01; preserve raw scored stage00 login artifact.",
+  "hash_drift_note": "12 confirmation hashes differ. Only the scoped toolbar/phone-table refinements are attributed to code; other raster differences do not imply improvement.",
+  "parent_viewed_confirmation": 32
+}

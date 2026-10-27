@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import path from 'node:path';
-const {chromium}=await import(process.env.KY_PLAYWRIGHT??'/home/yoshi/git/busnes.app/ky-ui/node_modules/@playwright/test/index.mjs');
+const {chromium,expect}=await import(process.env.KY_PLAYWRIGHT??'/home/yoshi/git/busnes.app/ky-ui/node_modules/@playwright/test/index.mjs');
 const credentials=JSON.parse(await readFile(process.argv[2],'utf8'));
 const ORIGIN=credentials.origin;
 const [stage='00',phase='before']=process.argv.slice(3);
@@ -51,7 +51,8 @@ const SURFACES = {
     await p.getByRole('button', { name: 'Re: Sandbox rollout plan', exact: true }).first().click();
     await p.locator('dialog[open]').waitFor();
     if (!(await p.locator('dialog[open]').getByText('Alice Demo').count())) throw new Error('reader fixture drift: not the Alice Demo message');
-    await p.waitForTimeout(1200);
+    await expect(p.getByRole('button', { name: 'Reply', exact: true })).toBeEnabled();
+    await p.locator('.email-reader-body-block').filter({ hasText: 'Agreed on all three points.' }).waitFor();
   },
   contacts: async (p) => {
     await p.goto(ORIGIN + '/contacts');

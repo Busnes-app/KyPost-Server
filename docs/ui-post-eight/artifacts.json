@@ -1,0 +1,522 @@
+[
+  {
+    "file": "screenshots/kypost-00-before-inbox-desktop-light.png",
+    "sha256": "69fbc387ed67d3b4b3fef054a375a0ad69c61c4c1fc89987a4a766eec8c2abab",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-inbox-selection-desktop-light.png",
+    "sha256": "6000566389c10ac0527a4598aec2a90307ac67ced2eea20a93b0e43fb4d3c478",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-reader-desktop-light.png",
+    "sha256": "6384875e4dbc787925fac27961a92772d17650e38a966f76e75b5bf32335cd8c",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-contacts-desktop-light.png",
+    "sha256": "cf44d96a71b47b8bb74da46b6f84c552b5823bf9831c95cadabccc57ec97735b",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-contact-editor-desktop-light.png",
+    "sha256": "46b8edd7e06a3d9bce92fa2dcea782f52691adeae823c98426600254d48912a0",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-appearance-desktop-light.png",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-compose-desktop-light.png",
+    "sha256": "94a31a53bcad658b266fde4c644aadea84ca2139a2984a9dbb633499c0cfd12c",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-login-desktop-light.png",
+    "sha256": "803ae1b217c4ebdf4f8c590a8dd846f6de852d0c6a2727dbfdaf23ea5b099ffa",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-inbox-desktop-dark.png",
+    "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-inbox-selection-desktop-dark.png",
+    "sha256": "8c6fddb5cb417376147211c5a8cb6d2a0e2c32a7786bee17d54bcbc6b2d9d573",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-reader-desktop-dark.png",
+    "sha256": "15d589f2853f8acb35b7ecf720014d9a26b62d3045c5cc0e11dbc92b7f755ec9",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-contacts-desktop-dark.png",
+    "sha256": "228e6a8af400f27ebd935194712bad0ef33d68076bdfdce904dc9095b9302a0b",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-contact-editor-desktop-dark.png",
+    "sha256": "84551c8eb938e3cf8e17da6cadea6c9ac6afe594da961f3da2423e65988ef132",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-appearance-desktop-dark.png",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-compose-desktop-dark.png",
+    "sha256": "509241a201c823d554e75dec353fe861d1a837d3d7881ebbbf199d8808e1a77b",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-login-desktop-dark.png",
+    "sha256": "d06bcd7e68ce97aff26991db0f7461d3448c2db88c8e9180f99e0b2f3b9c3e96",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-inbox-mobile-light.png",
+    "sha256": "3d9a2070364a5c4b39f587e493c75f4c3f534ef9a29ae3747340731c4596ae28",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-inbox-selection-mobile-light.png",
+    "sha256": "a0b9ed5e3f633e9508c509d8b8a9531cc3e74f3a2b2e8a034f57d3346a91afb0",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-reader-mobile-light.png",
+    "sha256": "798eb69f1634b96e629ffe0dc3c1e9883799e81ee506d6c766af2c1b16169fd9",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-contacts-mobile-light.png",
+    "sha256": "d9c51cb2eeee385f6a8a6d20022ddda912f51a220894218c63789dea92dcbc48",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-contact-editor-mobile-light.png",
+    "sha256": "c86315220cdfd2a64e0dba681a431e9a44beef584fb1aed22c38f96b3979ef8c",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-appearance-mobile-light.png",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-compose-mobile-light.png",
+    "sha256": "ab23cb2383aa22eaacf53307fc1205ab76fbfd14ae41c2f5f7cf11110f81539f",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-login-mobile-light.png",
+    "sha256": "0ecc60cb9bd38bfc3f46c0a5ea0da7a205967575f2798c547f9035949b64cbdd",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-inbox-mobile-dark.png",
+    "sha256": "15b0c04a94899c43737d4726b27e603e0af5279db3cb28852d61cf41969c2c08",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-inbox-selection-mobile-dark.png",
+    "sha256": "b90c85cc83613e96a7d2d4a05aa42fb2c5446f5894ba9d1460544220b6b741cc",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-reader-mobile-dark.png",
+    "sha256": "c182cd1cfd130d39d348b211728d0f6cde4757690ed44cc8b5a33bc6d8c893ac",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-contacts-mobile-dark.png",
+    "sha256": "89930b4f6ad2ce1f477b2a5431187d7ff759b401ae4cfd4e2c949b3d43387f7d",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-contact-editor-mobile-dark.png",
+    "sha256": "084f3b3ff5afcc52d4ba3cdd389a175cc1bb3907c7cf83a7157fc291b945f377",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-appearance-mobile-dark.png",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-compose-mobile-dark.png",
+    "sha256": "61b25d1063158b643663f9385aac62e4eb6964433bd470c21c3735a63e7175ee",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-00-before-login-mobile-dark.png",
+    "sha256": "83e67dec1d36f58da2460aff63a396c3d463a3fa8b1fdce2eedf6f0ad1341602",
+    "role": "scored round1"
+  },
+  {
+    "file": "screenshots/kypost-01-before-login-desktop-light.png",
+    "sha256": "636de47de5ed05e81488ea93eee213a6b5d3b40b4c71e96bf8ef6066d7f30431",
+    "role": "unscored settled login comparison"
+  },
+  {
+    "file": "screenshots/kypost-01-before-login-desktop-dark.png",
+    "sha256": "adf5c983b1755d7610a888644e42b441f0f2f8c1b5b349d094e7db5a112b548c",
+    "role": "unscored settled login comparison"
+  },
+  {
+    "file": "screenshots/kypost-01-before-login-mobile-light.png",
+    "sha256": "dff02fada69c124feaedf5329a1a27fe412dde0459c4b94ea58c5c0add6c8cb2",
+    "role": "unscored settled login comparison"
+  },
+  {
+    "file": "screenshots/kypost-01-before-login-mobile-dark.png",
+    "sha256": "c60f57ed4008495d9e70193fe679caa0523509aef7702898579dd0259d97da0f",
+    "role": "unscored settled login comparison"
+  },
+  {
+    "file": "screenshots/kypost-02-after-inbox-desktop-light.png",
+    "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+    "sha256": "6a45300c869cf21854b8f01176a84cfadb15be1c6ece7d48effbb23dfdfa85a2",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-reader-desktop-light.png",
+    "sha256": "5347dd6e69a6c6e63f867d5c321057cdbf729b82cf4e8cd76e155b78de68d746",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-contacts-desktop-light.png",
+    "sha256": "8383465e72c6f198cf016726d76f66e2da55940f5d69de2715134be72e4861e6",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+    "sha256": "da6bfc809414928bd5515ea85b6a2b990b844ace90667cd636d031a5f8f64026",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-appearance-desktop-light.png",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-compose-desktop-light.png",
+    "sha256": "3f13f4d8a780121f1643362185b7035bfc85ef3dea5eac384749976ce6586266",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-login-desktop-light.png",
+    "sha256": "af615ed325baf8e656a23a6be6d52149afee0e9008e526af0b8b9a6be54e59c6",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+    "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+    "sha256": "3983db936c1a34b54b43ddcdc58846e9c50c1894618400f78644ca238d1cd26f",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-reader-desktop-dark.png",
+    "sha256": "6c13b365b601ccbf100c1d45584597a47248210dae82419d6fba4ea20a660ff3",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+    "sha256": "4497ecfe9a7e6a6c6be2c67078ee078ef84e6e3aa1f2b9d474205aeb753d82eb",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+    "sha256": "fbefbcb804bf55ec2668bb203c018595a23ec44332712ca1496d8e2fa9d79630",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-compose-desktop-dark.png",
+    "sha256": "b7f8bce4d35ed6783783528382fc5767a5d1d7ecc12cd342af96ae91cadb9616",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-login-desktop-dark.png",
+    "sha256": "ac83fa0ba85d1b6025de73740ff0889496bf9f4d736db99c9ac731d22e821348",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-inbox-mobile-light.png",
+    "sha256": "f12752239b21e84e25c88e009202173028912cbff9bfa26341e391ba6468e20c",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+    "sha256": "47373cb0d5c1280e9ce564d8f5070797d1ac54243c6d6bc305a81a9d422f223d",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-reader-mobile-light.png",
+    "sha256": "8b63a30abab907cfe526369e58bb57448e754c9a21509fa022930f33a9215bd6",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-contacts-mobile-light.png",
+    "sha256": "4a0f96d98877d2827ffd70dd8cfb451685326ccc3dfe5d11798b9752c3415291",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+    "sha256": "4d857514f04863b6ab2b0bc9f25aafec23c1bc382b46dffc0a8a1060607a7890",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-appearance-mobile-light.png",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-compose-mobile-light.png",
+    "sha256": "11b37596a674c06646133a80244daa01962942a55931aba859078f78dc9fd209",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-login-mobile-light.png",
+    "sha256": "8580bd42a8a2a25494e67ddff2e2d293544d485bc615b326fc584dcecc722c67",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+    "sha256": "a22dedd816132da8bbc9bcf5a92b9a25c71e96ccab12a315a23fce78879b9dce",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+    "sha256": "342b6214410b8c03b458608a0f7a317eb6686eb4dbcb4b420f51648eff5217a2",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-reader-mobile-dark.png",
+    "sha256": "c2ff3f159d2afe6bbc4911e904ca022272303baec076750fdce017e13c5b45c6",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+    "sha256": "6bcd20c6deef9d1c249cf8e838d8be37a5db202f3d36b64261387730e2ad4cd2",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+    "sha256": "cf35eea92677ad33bc34529668c3c902141004640c3cf268e3237e80807e55d2",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-compose-mobile-dark.png",
+    "sha256": "fe6b7847a6d177e8a48e57de3ce7fdb1df6a3523ef84629775ee91b9fb42ac11",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-02-after-login-mobile-dark.png",
+    "sha256": "0c57b814c03ae25ae5b5bcec15bc54f47ad880a38dd252f4e1578cc62556c8b0",
+    "role": "superseded initial after; unscored"
+  },
+  {
+    "file": "screenshots/kypost-03-after-inbox-desktop-light.png",
+    "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-inbox-selection-desktop-light.png",
+    "sha256": "6a45300c869cf21854b8f01176a84cfadb15be1c6ece7d48effbb23dfdfa85a2",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-reader-desktop-light.png",
+    "sha256": "5347dd6e69a6c6e63f867d5c321057cdbf729b82cf4e8cd76e155b78de68d746",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-contacts-desktop-light.png",
+    "sha256": "8383465e72c6f198cf016726d76f66e2da55940f5d69de2715134be72e4861e6",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-contact-editor-desktop-light.png",
+    "sha256": "da6bfc809414928bd5515ea85b6a2b990b844ace90667cd636d031a5f8f64026",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-appearance-desktop-light.png",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-compose-desktop-light.png",
+    "sha256": "45e2eded278fabcd84fbeee338db444ec3fc73181c8cefde11da59a608382e02",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-login-desktop-light.png",
+    "sha256": "af615ed325baf8e656a23a6be6d52149afee0e9008e526af0b8b9a6be54e59c6",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-inbox-desktop-dark.png",
+    "sha256": "1bb671b6c21304e3ca38de651293083ecd36e82349a7f0ded5b2ceb5e98f3bc4",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-inbox-selection-desktop-dark.png",
+    "sha256": "88dc23c10339c415f923067ef8e7439faa97305324c9fa7b1e7a495f8ff2d639",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-reader-desktop-dark.png",
+    "sha256": "6c13b365b601ccbf100c1d45584597a47248210dae82419d6fba4ea20a660ff3",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-contacts-desktop-dark.png",
+    "sha256": "4497ecfe9a7e6a6c6be2c67078ee078ef84e6e3aa1f2b9d474205aeb753d82eb",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-contact-editor-desktop-dark.png",
+    "sha256": "fbefbcb804bf55ec2668bb203c018595a23ec44332712ca1496d8e2fa9d79630",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-appearance-desktop-dark.png",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-compose-desktop-dark.png",
+    "sha256": "683dbf0ac37abb0318e4e4556d28a153c57f2e5710feeaf880c843ab5f8418e2",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-login-desktop-dark.png",
+    "sha256": "ac83fa0ba85d1b6025de73740ff0889496bf9f4d736db99c9ac731d22e821348",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-inbox-mobile-light.png",
+    "sha256": "ee4899afa314470868b95a11d1ccdea8112326e1d2c7820dd702d128ac09cda9",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-inbox-selection-mobile-light.png",
+    "sha256": "904b430bc89d1155df6608ff3018051cc7e0a5ae54ee2c8b691681d5816e3627",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-reader-mobile-light.png",
+    "sha256": "8b63a30abab907cfe526369e58bb57448e754c9a21509fa022930f33a9215bd6",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-contacts-mobile-light.png",
+    "sha256": "bcaa36f72476f6c6923dd47a162443f49b3bacb355a3f3369fe7404521eee5fa",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-contact-editor-mobile-light.png",
+    "sha256": "4d857514f04863b6ab2b0bc9f25aafec23c1bc382b46dffc0a8a1060607a7890",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-appearance-mobile-light.png",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-compose-mobile-light.png",
+    "sha256": "190d8d03d06da6e7a36a41b3e09003435d17177021ec1d7f15ff5d8c0f270c27",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-login-mobile-light.png",
+    "sha256": "8580bd42a8a2a25494e67ddff2e2d293544d485bc615b326fc584dcecc722c67",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-inbox-mobile-dark.png",
+    "sha256": "69fdda7da796fab119f35c84add7bf9d14ef57c69db9658e15fc2af8b3ef56c9",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-inbox-selection-mobile-dark.png",
+    "sha256": "d489c23f237559a8327db91b3acb9834dbe3fbc3fac3691b16de35cc20c82b87",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-reader-mobile-dark.png",
+    "sha256": "c2ff3f159d2afe6bbc4911e904ca022272303baec076750fdce017e13c5b45c6",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-contacts-mobile-dark.png",
+    "sha256": "2879455a77fa955a96f463029c6361bfe734ea266e4ee8444a2a6ae52aec0bad",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-contact-editor-mobile-dark.png",
+    "sha256": "cf35eea92677ad33bc34529668c3c902141004640c3cf268e3237e80807e55d2",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-appearance-mobile-dark.png",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-compose-mobile-dark.png",
+    "sha256": "96c6b12f048ef61ec7a4c954f580c9a3c1d24f420440f279db87b1a26e2308e9",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "screenshots/kypost-03-after-login-mobile-dark.png",
+    "sha256": "0c57b814c03ae25ae5b5bcec15bc54f47ad880a38dd252f4e1578cc62556c8b0",
+    "role": "round2 scoring input"
+  },
+  {
+    "file": "brand-references/kyidentity-02-after-users-manage-desktop-light.png",
+    "sha256": "f13eb7bdc897cf717441dfb5e5ed555efb034eb841fac3bf26f02a7a2de5cfe4",
+    "role": "brand only; no quality score"
+  },
+  {
+    "file": "brand-references/kyidentity-02-after-users-manage-desktop-dark.png",
+    "sha256": "c88074992215e2e10fbb0518cafb30d9043cc434713fff8fdc3de81687a1c873",
+    "role": "brand only; no quality score"
+  },
+  {
+    "file": "brand-references/kyidentity-02-after-appearance-mobile-light.png",
+    "sha256": "b82cb35eae6ead72c08291c04eb188a7549a84ce2e2cc27e7fd948698c6037b6",
+    "role": "brand only; no quality score"
+  },
+  {
+    "file": "brand-references/kyidentity-02-after-appearance-mobile-dark.png",
+    "sha256": "ea7033aea61cc689cc94cb5a362d5c9dd7dfbce798c27ed7ce89e8cbd3198fe1",
+    "role": "brand only; no quality score"
+  }
+]
