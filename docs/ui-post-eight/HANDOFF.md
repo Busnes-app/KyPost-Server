@@ -1,6 +1,6 @@
 # KyPost round4 checkpoint
 
-Repo Busnes-app/KyPost-Server; worktree /home/yoshi/git/busnes.app/kypost-server/.claude/worktrees/post-control-consistency, branch ui/post-control-consistency. PR490 merged at4a573b90dcbf68cc1053d8cbbc2cdecfbc8299eb on2026-10-27T19:04:32Z. Security cleared a06bc788, with truncated input disclosed. A new follow-up PR is being opened for remaining fixes; do not add work to merged490.
+Repo Busnes-app/KyPost-Server; worktree /home/yoshi/git/busnes.app/kypost-server/.claude/worktrees/post-control-consistency, branch ui/post-control-consistency. PR490 merged at4a573b90dcbf68cc1053d8cbbc2cdecfbc8299eb on2026-10-27T19:04:32Z. Security cleared a06bc788, with truncated input disclosed. Current follow-up PR491 https://github.com/Busnes-app/KyPost-Server/pull/491 is open; frozen evidencef53e76ce. Do not add work to merged490.
 
 Progression uses Opus’s overall quality mean over ALL current-round originals, rounded half-up to one decimal; >=8.0 accepts (7.985 counts). Do not average withSol or pool history. R3 Opus631/80 =7.8875 rounds7.9 (not satisfied); Sol277/32 =8.65625 (genuinely satisfied). Current gate remains open; R4 scores pending. R2 combined-score acceptance was superseded by owner clarification; raw reviewer bytes remain immutable. Gemini unused until both primaries genuinely satisfied; advisory only and never delays accepted progression.
 
@@ -13,3 +13,7 @@ Reviewers must freeze current vectors BEFORE reading any prior report/quality im
 Owned synthetic fixture http://localhost:18461; private creds /tmp/kypost-council-flxzw5av/fixture.json; owned processes /tmp/kypost-council-flxzw5av/r3-owned-processes.json. Check PID identities before cleanup. RealPoW and own TLS demo5993/5587/5443 with documented SANDBOX_PRIVATE_HOSTS=localhost; no mocks/bypass/Ollama/external sends/submitted forms. Keep fixture for active reviewers. Captures/flag writes are sequential; review supplements can change read flags only after frozen capture. Never drive delegate tabs or publish credentials/filled-password snapshots.
 
 MySlop credential knownHTTP401; no board post succeeded and unchanged credentials are not retried. Checkpoint pushed to branch. Use event-driven PR watch and task terminal notifications; no polling. Preserve raw reports until terminal publication, then aggregate. Unwatch before final hand-back. Do not move to another app until Opus overall rounds8.0 or owner explicitly accepts it.
+
+Active round4 tasks; wait for terminal before reading partial publisher files or regenerating shared aggregates:
+- Opus: node:delegated-task:command%3Amcp%3A27617469-e7a2-4680-8e45-a055c47cd9fd%3Adelegate-task%3Akypost-contact-selection-opus-r4-20261027
+- Sol: node:delegated-task:command%3Amcp%3A27617469-e7a2-4680-8e45-a055c47cd9fd%3Adelegate-task%3Akypost-contact-selection-sol-r4-20261027

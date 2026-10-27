@@ -1,10 +1,10 @@
 {
   "repository": "Busnes-app/KyPost-Server",
-  "url": "Pending next follow-up PR;490merged",
+  "url": "https://github.com/Busnes-app/KyPost-Server/pull/491",
   "branch": "ui/post-control-consistency",
   "ui_source": "558761afa10560a5ba9522e6d7603dbf2a17ccfd",
-  "evidence": "546cc595",
-  "status": "OpusR3 rounds7.9, improve; R4 scores pending",
+  "evidence": "f53e76ce",
+  "status": "open; R4Opus/Sol and final-headCI/security pending",
   "merge_deploy_authorized": false,
   "council_rounds": "3 complete,4pending",
   "combined_exact": "513/64 (historical, not gate)",
