@@ -1227,11 +1227,13 @@ func (e enrollmentState) applyTo(d *NativeDevice) error {
 // ErrInvalidEnrollmentVersions rejects malformed claims before any key write.
 var ErrInvalidEnrollmentVersions = errors.New("envelopeVersions must contain 1 to 16 distinct integers from 2 to 65535")
 
+// normalizeEnrollmentVersions treats a missing claim as no claim at all,
+// never as the retired v2: such a device is offered nothing to seal.
 func normalizeEnrollmentVersions(versions []int) ([]int, error) {
-	if versions == nil {
-		return []int{2}, nil
+	if len(versions) == 0 {
+		return []int{}, nil
 	}
-	if len(versions) < 1 || len(versions) > 16 {
+	if len(versions) > 16 {
 		return nil, ErrInvalidEnrollmentVersions
 	}
 	out := slices.Clone(versions)
@@ -1276,6 +1278,10 @@ func (s *Store) SetNativeDeviceEnrollmentKey(deviceID, publicKey, at string, ver
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
 		return NativeDevice{}, fmt.Errorf("enrollment key: empty device id")
+	}
+	// Omitting the claim publishes none; an explicit empty list is malformed.
+	if versions != nil && len(versions) == 0 {
+		return NativeDevice{}, ErrInvalidEnrollmentVersions
 	}
 	encodedVersions, err := encodeEnrollmentVersions(versions)
 	if err != nil {
@@ -1414,11 +1420,11 @@ func (s *Store) SetNativeDeviceEncryptionEnrolled(deviceID string, enrolled bool
 func (s *Store) ClearDeviceEnrollments() (int, error) {
 	res, err := s.db.Exec(
 		`UPDATE native_devices
-		 SET enrollment_public_key = '', enrollment_key_at = '', enrollment_envelope_versions = '[2]',
+		 SET enrollment_public_key = '', enrollment_key_at = '', enrollment_envelope_versions = '[]',
 		     encryption_enrolled = 0, enrolled_version = 0, enrolled_generation = 0, enrolled_fingerprint = '',
 		     updated_at = ?
 		 WHERE enrollment_public_key != '' OR enrollment_key_at != ''
-		    OR encryption_enrolled != 0 OR enrollment_envelope_versions != '[2]'
+		    OR encryption_enrolled != 0 OR enrollment_envelope_versions NOT IN ('[]', '[2]')
 		    OR enrolled_version != 0 OR enrolled_generation != 0 OR enrolled_fingerprint != ''`,
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {

@@ -228,8 +228,8 @@ func TestEnrollmentColumnsAreAddedToAnExistingDatabase(t *testing.T) {
 	if len(devices) != 1 || devices[0].DeviceID != "legacy-dev" {
 		t.Fatalf("the pre-existing device did not survive the upgrade: %+v", devices)
 	}
-	if !slices.Equal(devices[0].EnrollmentEnvelopeVersions, []int{2}) {
-		t.Fatal("migration did not default capabilities to v2")
+	if !slices.Equal(devices[0].EnrollmentEnvelopeVersions, []int{}) {
+		t.Fatal("migration defaulted capabilities to a version")
 	}
 	// Absent, not enrolled — and able to become enrolled.
 	if devices[0].EnrollmentPublicKey != "" || devices[0].EncryptionEnrolled {

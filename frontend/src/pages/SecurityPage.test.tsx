@@ -184,7 +184,7 @@ it("refreshes the device key before starting a new enrollment ceremony", async (
   const originalGet = getJSON.getMockImplementation();
   getJSON.mockImplementation((url: string) => url === "/api/notifications/native/devices"
     ? Promise.resolve({ devices: [{ deviceId: "phone", deviceName: "Pixel", platform: "android",
-        pushToken: "tok", enrollmentPublicKey: publishedKey, encryptionEnrolled: false }] })
+        pushToken: "tok", enrollmentPublicKey: publishedKey, enrollmentEnvelopeVersions: [4, 5], encryptionEnrolled: false }] })
     : originalGet?.(url));
   // Stop after the upload so this test does not wait for device acknowledgement.
   putJSON.mockRejectedValueOnce(new Error("upload reached"));

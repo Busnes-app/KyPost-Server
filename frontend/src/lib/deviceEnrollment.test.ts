@@ -7,8 +7,8 @@ import {
   deriveEnrollmentCode,
   explainEnrollmentFailure,
   formatEnrollmentCode,
-  importDevicePublicKey,
   normalizeEnrollmentCode,
+  sealEnvelopeForDevice,
   verifyEnrollmentCode,
 } from "./deviceEnrollment";
 
@@ -114,15 +114,15 @@ describe("normalizeEnrollmentCode", () => {
 });
 
 describe("buildEnvelopeAad", () => {
-  // The SAME assertion exists in kypost-android's DeviceEnvelopeTest
-  // (aad_isTheExactContractBytes). Two implementations of the same prose is how
+  // The v4 HPKE info. kypost-android's DeviceEnvelopeTest
+  // (aad_isTheExactContractBytes) asserts the same layout. Two implementations of the same prose is how
   // the fingerprint-format bug got in -- the spec said "uppercase hex, no spaces"
   // and only one side did it. Assert the bytes on both sides instead.
   it("is the exact contract bytes, length-prefixed", () => {
     const aad = buildEnvelopeAad("dev-1", "ABCD1234");
     const enc = new TextEncoder();
     const expected = new Uint8Array([
-      ...enc.encode("kypost-device-envelope/v2"),
+      ...enc.encode("kypost-device-envelope/v4"),
       0, 5, ...enc.encode("dev-1"),
       0, 8, ...enc.encode("ABCD1234"),
     ]);
@@ -214,8 +214,8 @@ describe("verifyEnrollmentCode", () => {
   });
 });
 
-describe("importDevicePublicKey", () => {
-  it("imports a real P-256 point for ECDH", async () => {
+describe("sealEnvelopeForDevice", () => {
+  it("seals v4 HPKE to a real P-256 point", async () => {
     const pair = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, [
       "deriveBits",
     ])) as CryptoKeyPair;
@@ -223,12 +223,12 @@ describe("importDevicePublicKey", () => {
     expect(raw.length).toBe(65);
     expect(raw[0]).toBe(0x04);
     const b64 = btoa(String.fromCharCode(...raw));
-    await expect(importDevicePublicKey(b64)).resolves.toBeDefined();
+    await expect(sealEnvelopeForDevice(b64, "dev-1", "ABCD1234", "key")).resolves.toMatchObject({ v: 4, alg: "HPKE-Base-P256-SHA256-A256GCM" });
   });
 
   it("rejects a well-formed-looking point that is not on the curve", async () => {
     // Right length and marker, but the coordinates are not a curve point.
-    await expect(importDevicePublicKey(VECTOR_KEY_B64)).rejects.toThrow();
+    await expect(sealEnvelopeForDevice(VECTOR_KEY_B64, "dev-1", "ABCD1234", "key")).rejects.toThrow();
   });
 });
 

@@ -50,18 +50,16 @@ vi.mock("../lib/deviceEnrollment", async (importOriginal) => {
       sealSpy(...args);
       return actual.sealEnvelopeForDevice(...args);
     },
-    // The v3 sealer validates a real complete ring against a real snapshot;
+    // The v5 sealer validates a real complete ring against a real snapshot;
     // what this component owes it is the right inputs, which the spy records.
     sealKeyringForDevice: (args: Parameters<typeof actual.sealKeyringForDevice>[0]) => {
       sealKeyringSpy(args);
-      return Promise.resolve(args.version === 5
-        ? { v: 5, alg: "HPKE-Base-P256-SHA256-A256GCM", enc: "E", ct: "C" }
-        : { v: 3, alg: "ECDH-P256+HKDF-SHA256+A256GCM", epk: "E", iv: "I", ct: "C" });
+      return Promise.resolve({ v: 5, alg: "HPKE-Base-P256-SHA256-A256GCM", enc: "E", ct: "C" });
     }
   };
 });
 
-// A real, valid P-256 point, so sealEnvelopeForDevice's ECDH import succeeds.
+// A real, valid P-256 point, so sealEnvelopeForDevice's HPKE import succeeds.
 // Generated once at module load rather than hard-coded, because a fixed point
 // would have to be checked by hand against the curve.
 const keyPair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, [
@@ -99,6 +97,7 @@ function device(over: Partial<NativeDevice> = {}): NativeDevice {
     pushToken: "tok",
     deviceName: "Pixel",
     encryptionEnrolled: false,
+    enrollmentEnvelopeVersions: [4, 5],
     ...over
   };
 }
@@ -276,7 +275,7 @@ describe("the gate", () => {
     const [deviceId, envelope, password] = putDeviceEnvelope.mock.calls[0];
     expect(deviceId).toBe("d1");
     expect(password).toBe("hunter2");
-    expect(envelope.alg).toBe("ECDH-P256+HKDF-SHA256+A256GCM");
+    expect(envelope).toMatchObject({ v: 4, alg: "HPKE-Base-P256-SHA256-A256GCM" });
   });
 
   // The original attack arriving through the back door of a later render:
@@ -618,30 +617,33 @@ it("enrolls after a recovery commit with different fingerprint casing", async ()
   render(<Harness fingerprint="aaaa1111bbbb2222" />);
   await startCeremony();
   await submitCeremony(await codeFor(HONEST_KEY));
-  await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledExactlyOnceWith("d1", expect.objectContaining({ v: 2 }), "hunter2", 7, HONEST_KEY, "AAAA1111BBBB2222", undefined));
+  await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledExactlyOnceWith("d1", expect.objectContaining({ v: 4 }), "hunter2", 7, HONEST_KEY, "AAAA1111BBBB2222", undefined));
   expect(screen.queryByText(/PGP identity changed/)).toBeNull();
 });
 
-it("seals v4 (HPKE) when the device advertises it, v2 otherwise", async () => {
-  for (const [versions, v, alg] of [[[2, 3, 4, 5], 4, "HPKE-Base-P256-SHA256-A256GCM"], [[2, 3], 2, "ECDH-P256+HKDF-SHA256+A256GCM"]] as const) {
+it("seals v4 (HPKE) and never falls back to v2", async () => {
+  for (const versions of [[2, 3, 4, 5], [4]]) {
     cleanup();
     putDeviceEnvelope.mockClear();
     sealSpy.mockClear();
-    render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [...versions] })} />);
+    render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: versions })} />);
     await startCeremony();
     await submitCeremony(await codeFor(HONEST_KEY));
     await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledTimes(1));
-    expect(sealSpy.mock.calls[0][4]).toBe(v);
-    expect(putDeviceEnvelope.mock.calls[0][1]).toMatchObject({ v, alg });
+    expect(putDeviceEnvelope.mock.calls[0][1]).toMatchObject({ v: 4, alg: "HPKE-Base-P256-SHA256-A256GCM" });
   }
 });
 
-it("refuses legacy enrollment when the device advertises neither v2 nor v4", async () => {
-  render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [3, 5] })} />);
-  await startCeremony();
-  expect(screen.getByText(/format this server does not yet deliver/)).toBeTruthy();
-  expect(screen.queryByLabelText("Account password")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Verify and enroll" })).toBeNull();
+// The [2] default for a missing claim is gone too: absent means no HPKE.
+it("refuses a device without v4, before asking for anything, with an update instruction", async () => {
+  for (const versions of [[2, 3], [2], [3, 5], [], undefined]) {
+    cleanup();
+    render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: versions })} />);
+    await startCeremony();
+    expect(screen.getByText(/Update KyPost on that device/)).toBeTruthy();
+    expect(screen.queryByLabelText("Account password")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Verify and enroll" })).toBeNull();
+  }
   expect(sealSpy).not.toHaveBeenCalled();
   expect(putDeviceEnvelope).not.toHaveBeenCalled();
 });
@@ -658,11 +660,11 @@ describe("a converted account", () => {
     requireUnlockedKey.mockImplementation(() => {
       throw new Error("Keyring writes require the lifecycle upgrade.");
     });
-    putDeviceEnvelope.mockResolvedValue({ ok: true, version: 3 });
+    putDeviceEnvelope.mockResolvedValue({ ok: true, version: 5 });
   });
 
-  it("seals the complete ring as v3 and names the key and generation it sealed for", async () => {
-    render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [2, 3] })} />);
+  it("seals the complete ring as v5 and names the key and generation it sealed for", async () => {
+    render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [2, 3, 4, 5] })} />);
     await startCeremony();
     const code = await codeFor(HONEST_KEY);
     await submitCeremony(code);
@@ -671,32 +673,25 @@ describe("a converted account", () => {
     expect(sealSpy).not.toHaveBeenCalled();
     expect(sealKeyringSpy).toHaveBeenCalledWith({
       publicKeyB64: HONEST_KEY, deviceId: "d1", typedCode: code, raw: ring,
-      snapshot: { fingerprint: "AAAA1111BBBB2222", publicKey: "-----BEGIN PGP PUBLIC KEY BLOCK-----", keyring },
-      version: 3
+      snapshot: { fingerprint: "AAAA1111BBBB2222", publicKey: "-----BEGIN PGP PUBLIC KEY BLOCK-----", keyring }
     });
-    expect(putDeviceEnvelope).toHaveBeenCalledWith("d1", expect.objectContaining({ v: 3 }), "hunter2", 7, HONEST_KEY, "AAAA1111BBBB2222", 4);
-  });
-
-  it("seals v5 to a device that advertises it", async () => {
-    render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [2, 3, 4, 5] })} />);
-    await startCeremony();
-    await submitCeremony(await codeFor(HONEST_KEY));
-    await vi.waitFor(() => expect(putDeviceEnvelope).toHaveBeenCalledTimes(1));
-    expect(sealSpy).not.toHaveBeenCalled();
-    expect(sealKeyringSpy).toHaveBeenCalledWith(expect.objectContaining({ version: 5 }));
     expect(putDeviceEnvelope).toHaveBeenCalledWith("d1", expect.objectContaining({ v: 5 }), "hunter2", 7, HONEST_KEY, "AAAA1111BBBB2222", 4);
   });
 
-  it("refuses a device that has not claimed v3 before asking for anything", async () => {
-    render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [2] })} />);
-    await startCeremony();
-    expect(await screen.findByText(/must be updated before it can hold your complete keyring/)).toBeTruthy();
-    expect(screen.queryByLabelText("Code from your device")).toBeNull();
+  it("refuses a device that has not claimed v5 before asking for anything", async () => {
+    for (const versions of [[2, 3], [2, 3, 4], undefined]) {
+      cleanup();
+      render(<Harness dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: versions })} />);
+      await startCeremony();
+      expect(await screen.findByText(/Update KyPost on that device/)).toBeTruthy();
+      expect(screen.queryByLabelText("Code from your device")).toBeNull();
+    }
+    expect(sealKeyringSpy).not.toHaveBeenCalled();
     expect(putDeviceEnvelope).not.toHaveBeenCalled();
   });
 
   it("offers to enroll again a device that holds retired material", async () => {
-    render(<Harness mailAccess="stale" dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [2, 3], encryptionEnrolled: true, enrolledGeneration: 3 })} />);
+    render(<Harness mailAccess="stale" dev={device({ enrollmentPublicKey: HONEST_KEY, enrollmentEnvelopeVersions: [4, 5], encryptionEnrolled: true, enrolledGeneration: 3 })} />);
     expect(screen.getByText(/holds an older copy of your keys/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Remove sealing" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Enroll again" }));

@@ -179,10 +179,16 @@ minutes **ahead** of the browser will fail every time; that is a device-clock pr
 the error copy should say so, because the alternative reading a user reaches is "my server
 is compromised."
 
-### NORMATIVE: the envelope
+### RETIRED: the v2/v3 envelope
 
-The server never interprets this — it is an opaque, length-bounded string — so the format
-is purely a browser↔device contract and belongs here rather than in any server plan.
+**Retired for new deliveries (2026-10-27).** This composition (ephemeral-static ECDH,
+HKDF with the device key as salt, AES-GCM with a random IV) uses published primitives but is
+not RFC 9180 and has no expert-reviewed construction mapped to it, so it fails the OpenSSF
+`crypto_published` default. The browser never seals it, the server refuses v2/v3 uploads
+(400, "retired"), and current Linux/Mac clients neither advertise nor open it. Slots
+stored before the retirement are served unchanged until their 7-day TTL; nothing is
+rewritten. It stays documented so those slots and the shared v3 vectors remain
+interpretable, and because the HPKE `info` reuses its AAD layout.
 
 ```json
 {
@@ -205,9 +211,14 @@ is purely a browser↔device contract and belongs here rather than in any server
 
 ### NORMATIVE: the HPKE envelope (v4/v5)
 
-v4 and v5 carry the v2 and v3 plaintexts respectively, sealed with RFC 9180 HPKE instead
-of the hand-assembled ECDH/HKDF/AES-GCM above. v2/v3 stay for devices that do not
-advertise 4/5 (Android today); the browser picks the HPKE version whenever it is advertised.
+v4 carries one armored private key, v5 the complete `kypost-pgp-keyring-v1` ring, sealed with
+RFC 9180 HPKE. They are the only formats for new deliveries: v5 for a converted account, v4
+for a legacy one, with no v2/v3 fallback. A device that does not advertise the version its
+account needs, including one with no claim (no longer read as `[2]`), is refused before any
+code or password is asked for, with "Update KyPost on that device".
+
+**Rollout:** KyPost-for-Android advertises only `[2,3]` until its v4/v5 release. A server
+with this rule refuses new Android enrollments until that release is installed.
 
 ```json
 {"v": 4, "alg": "HPKE-Base-P256-SHA256-A256GCM", "enc": "<base64>", "ct": "<base64>"}

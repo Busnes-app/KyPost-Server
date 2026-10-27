@@ -21,18 +21,22 @@ const (
 	deliveryAuth      = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
 
-// sealedEnvelope is a well-formed sealing of the given version; the server
-// never opens one, so zero bytes of the right lengths are all it checks.
+// sealedEnvelope is a well-formed sealing of the given version: HPKE framing
+// for v4/v5, the retired ECDH framing for v2/v3. The server never opens one,
+// so zero bytes of the right lengths are all it checks.
 func sealedEnvelope(version int) string { return sealedEnvelopeFilled(version, 0) }
 
 // sealedEnvelopeFilled is sealedEnvelope with a distinguishable ciphertext.
 func sealedEnvelopeFilled(version int, fill byte) string {
-	epk := make([]byte, 65)
-	epk[0] = 4
-	ct := bytes.Repeat([]byte{fill}, 16)
-	return `{"v":` + string(rune('0'+version)) + `,"alg":"ECDH-P256+HKDF-SHA256+A256GCM","epk":"` +
-		base64.StdEncoding.EncodeToString(epk) + `","iv":"` + base64.StdEncoding.EncodeToString(make([]byte, 12)) +
-		`","ct":"` + base64.StdEncoding.EncodeToString(ct) + `"}`
+	point := make([]byte, 65)
+	point[0] = 4
+	ct := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{fill}, 16))
+	v := `{"v":` + string(rune('0'+version))
+	if version >= 4 {
+		return v + `,"alg":"HPKE-Base-P256-SHA256-A256GCM","enc":"` + base64.StdEncoding.EncodeToString(point) + `","ct":"` + ct + `"}`
+	}
+	return v + `,"alg":"ECDH-P256+HKDF-SHA256+A256GCM","epk":"` + base64.StdEncoding.EncodeToString(point) +
+		`","iv":"` + base64.StdEncoding.EncodeToString(make([]byte, 12)) + `","ct":"` + ct + `"}`
 }
 
 // convertedUser is a client-protected account with a complete keyring at
@@ -117,10 +121,10 @@ func deviceJSON(t *testing.T, srv *Server, auth func(*http.Request), method, pat
 func TestDeviceDeliveryIsBoundToKeyVersionAndGeneration(t *testing.T) {
 	srv := newTestServer(t)
 	u := convertedUser(t, srv)
-	deviceAuth, _ := publishDevice(t, srv, u.ID, "phone", []int{2, 3})
+	deviceAuth, _ := publishDevice(t, srv, u.ID, "phone", []int{4, 5})
 	slot := "/api/pgp/identity/envelope/device:phone"
 	base := func() map[string]any {
-		return map[string]any{"envelope": sealedEnvelope(3), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint,
+		return map[string]any{"envelope": sealedEnvelope(5), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint,
 			"enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}
 	}
 	refused := []struct {
@@ -131,8 +135,10 @@ func TestDeviceDeliveryIsBoundToKeyVersionAndGeneration(t *testing.T) {
 	}{
 		{"no enrollment key", func(m map[string]any) { delete(m, "enrollmentPublicKey") }, 400, "enrollmentPublicKey"},
 		{"replaced enrollment key", func(m map[string]any) { m["enrollmentPublicKey"] = "BOther" }, 409, `"enrollmentChanged":true`},
-		{"legacy v2 on a converted account", func(m map[string]any) { m["envelope"] = sealedEnvelope(2) }, 409, `"deviceEnvelopeVersion":true`},
-		{"malformed envelope", func(m map[string]any) { m["envelope"] = `{"v":3}` }, 400, "well-formed"},
+		{"retired v2", func(m map[string]any) { m["envelope"] = sealedEnvelope(2) }, 400, "retired"},
+		{"retired v3", func(m map[string]any) { m["envelope"] = sealedEnvelope(3) }, 400, "retired"},
+		{"v4 on a converted account", func(m map[string]any) { m["envelope"] = sealedEnvelope(4) }, 409, `"deviceEnvelopeVersion":true`},
+		{"malformed envelope", func(m map[string]any) { m["envelope"] = `{"v":5}` }, 400, "well-formed"},
 		{"stale generation", func(m map[string]any) { m["materialGeneration"] = 0 }, 409, `"pgpStateChanged":true`},
 		{"stale revision", func(m map[string]any) { m["expectedRevision"] = u.PGPRevision + 5 }, 409, "PGP state changed"},
 		{"no fingerprint", func(m map[string]any) { delete(m, "expectedFingerprint") }, 400, "fingerprint"},
@@ -159,21 +165,21 @@ func TestDeviceDeliveryIsBoundToKeyVersionAndGeneration(t *testing.T) {
 		}
 	}
 
-	// A device that never claimed v3 cannot be sent one.
-	v2Auth, _ := publishDevice(t, srv, u.ID, "oldphone", nil)
+	// A device that claimed nothing cannot be sent anything; no claim is not v2.
+	unclaimedAuth, _ := publishDevice(t, srv, u.ID, "oldphone", nil)
 	body := base()
 	rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:oldphone", body)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"envelopeVersions":[2]`) {
-		t.Fatalf("v3 to a v2-only device: %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"envelopeVersions":[]`) {
+		t.Fatalf("v5 to a device with no claim: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := deviceJSON(t, srv, v2Auth, http.MethodGet, "/api/pgp/device/envelope", nil); rec.Code != http.StatusNotFound {
-		t.Fatalf("the v2-only device found an envelope: %d", rec.Code)
+	if rec := deviceJSON(t, srv, unclaimedAuth, http.MethodGet, "/api/pgp/device/envelope", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("the unclaimed device found an envelope: %d", rec.Code)
 	}
 
 	// The real thing: delivered, and the device reads it back with the
 	// snapshot it was prepared from.
 	rec = sessionJSON(t, srv, u.ID, http.MethodPut, slot, base())
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"version":3`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"version":5`) {
 		t.Fatalf("delivery: %d %s", rec.Code, rec.Body.String())
 	}
 	rec = deviceJSON(t, srv, deviceAuth, http.MethodGet, "/api/pgp/device/envelope", nil)
@@ -192,7 +198,7 @@ func TestDeviceDeliveryIsBoundToKeyVersionAndGeneration(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &fetched); err != nil {
 		t.Fatal(err)
 	}
-	if fetched.Envelope != sealedEnvelope(3) || fetched.Version != 3 || fetched.Fingerprint != u.PGPFingerprint || fetched.MaterialGeneration != 1 ||
+	if fetched.Envelope != sealedEnvelope(5) || fetched.Version != 5 || fetched.Fingerprint != u.PGPFingerprint || fetched.MaterialGeneration != 1 ||
 		fetched.Revision != after.PGPRevision || fetched.Keyring == nil || fetched.Keyring.MaterialGeneration != 1 || fetched.PublicKey == "" {
 		t.Fatalf("fetched = %+v", fetched)
 	}
@@ -201,11 +207,11 @@ func TestDeviceDeliveryIsBoundToKeyVersionAndGeneration(t *testing.T) {
 func TestDeviceAcknowledgementIsGenerationAware(t *testing.T) {
 	srv := newTestServer(t)
 	u := convertedUser(t, srv)
-	deviceAuth, _ := publishDevice(t, srv, u.ID, "phone", []int{2, 3})
+	deviceAuth, _ := publishDevice(t, srv, u.ID, "phone", []int{4, 5})
 	ack := "/api/pgp/device/enrollment-state"
 	device := func() state.NativeDevice { return deviceByID(t, srv, u.ID, "phone") }
 
-	// The legacy boolean is not proof of v3 enrollment.
+	// The legacy boolean is not proof of complete-ring enrollment.
 	rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true})
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"generationRequired":true`) {
 		t.Fatalf("bare boolean on a converted account: %d %s", rec.Code, rec.Body.String())
@@ -215,27 +221,27 @@ func TestDeviceAcknowledgementIsGenerationAware(t *testing.T) {
 	}
 	// Nor is knowing the account's current material: nothing was delivered
 	// to this device yet, so there is nothing to confirm.
-	rec = deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": u.PGPFingerprint})
+	rec = deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 5, "materialGeneration": 1, "fingerprint": u.PGPFingerprint})
 	if rec.Code != http.StatusConflict || device().EncryptionEnrolled {
 		t.Fatalf("acknowledgement without a delivery: %d %s", rec.Code, rec.Body.String())
 	}
 	deliver := func() {
 		t.Helper()
-		if rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:phone", map[string]any{"envelope": sealedEnvelope(3), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
+		if rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:phone", map[string]any{"envelope": sealedEnvelope(5), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
 			t.Fatalf("delivery: %d %s", rec.Code, rec.Body.String())
 		}
 	}
 	deliver()
-	if d := device(); d.EncryptionEnrolled || d.EnrolledVersion != 3 || d.EnrolledGeneration != 1 || d.EnrolledFingerprint != u.PGPFingerprint {
+	if d := device(); d.EncryptionEnrolled || d.EnrolledVersion != 5 || d.EnrolledGeneration != 1 || d.EnrolledFingerprint != u.PGPFingerprint {
 		t.Fatalf("delivery did not record an unconfirmed enrollment: %+v", d)
 	}
 	stale := []struct {
 		name string
 		body map[string]any
 	}{
-		{"wrong generation", map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 2, "fingerprint": u.PGPFingerprint}},
-		{"wrong fingerprint", map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": "0000"}},
-		{"version not advertised", map[string]any{"encryptionEnrolled": true, "envelopeVersion": 4, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}},
+		{"wrong generation", map[string]any{"encryptionEnrolled": true, "envelopeVersion": 5, "materialGeneration": 2, "fingerprint": u.PGPFingerprint}},
+		{"wrong fingerprint", map[string]any{"encryptionEnrolled": true, "envelopeVersion": 5, "materialGeneration": 1, "fingerprint": "0000"}},
+		{"version not delivered", map[string]any{"encryptionEnrolled": true, "envelopeVersion": 4, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}},
 	}
 	for _, tc := range stale {
 		rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, tc.body)
@@ -246,11 +252,11 @@ func TestDeviceAcknowledgementIsGenerationAware(t *testing.T) {
 			t.Fatalf("%s marked the device enrolled", tc.name)
 		}
 	}
-	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1}); rec.Code != http.StatusBadRequest {
+	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 5, "materialGeneration": 1}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("partial metadata: %d", rec.Code)
 	}
-	// A converted account only ever delivers v3; an advertised v2 is not an
-	// enrollment this account could have produced.
+	// A converted account only ever delivers v5; a v2 is not an enrollment
+	// this account could have produced.
 	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 2, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}); rec.Code != http.StatusConflict {
 		t.Fatalf("v2 acknowledgement on a converted account: %d %s", rec.Code, rec.Body.String())
 	}
@@ -260,21 +266,21 @@ func TestDeviceAcknowledgementIsGenerationAware(t *testing.T) {
 	// While the delivery is live, the acknowledgement must be of that delivery
 	// to the key the device still publishes.
 	store, _ := srv.userStore(u.ID)
-	if _, err := store.SetNativeDeviceEnrollmentKey("phone", "BReplaced", "2026-09-16T01:00:00Z", []int{2, 3}); err != nil {
+	if _, err := store.SetNativeDeviceEnrollmentKey("phone", "BReplaced", "2026-09-16T01:00:00Z", []int{4, 5}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}); rec.Code != http.StatusConflict {
+	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 5, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}); rec.Code != http.StatusConflict {
 		t.Fatalf("acknowledgement after republishing the key: %d %s", rec.Code, rec.Body.String())
 	}
-	if _, err := store.SetNativeDeviceEnrollmentKey("phone", deliveryDeviceKey, "2026-09-16T02:00:00Z", []int{2, 3}); err != nil {
+	if _, err := store.SetNativeDeviceEnrollmentKey("phone", deliveryDeviceKey, "2026-09-16T02:00:00Z", []int{4, 5}); err != nil {
 		t.Fatal(err)
 	}
 
-	rec = deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": strings.ToLower(u.PGPFingerprint)})
+	rec = deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 5, "materialGeneration": 1, "fingerprint": strings.ToLower(u.PGPFingerprint)})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("acknowledgement: %d %s", rec.Code, rec.Body.String())
 	}
-	if d := device(); !d.EncryptionEnrolled || d.EnrolledVersion != 3 || d.EnrolledGeneration != 1 || d.EnrolledFingerprint != u.PGPFingerprint {
+	if d := device(); !d.EncryptionEnrolled || d.EnrolledVersion != 5 || d.EnrolledGeneration != 1 || d.EnrolledFingerprint != u.PGPFingerprint {
 		t.Fatalf("after acknowledgement: %+v", d)
 	}
 
@@ -295,7 +301,7 @@ func TestDeviceAcknowledgementIsGenerationAware(t *testing.T) {
 	if d := device(); d.EncryptionEnrolled || d.EnrolledGeneration != 0 {
 		t.Fatalf("after un-enroll: %+v", d)
 	}
-	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}); rec.Code != http.StatusConflict || device().EncryptionEnrolled {
+	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, ack, map[string]any{"encryptionEnrolled": true, "envelopeVersion": 5, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}); rec.Code != http.StatusConflict || device().EncryptionEnrolled {
 		t.Fatalf("re-acknowledged after saying no, with no new delivery: %d", rec.Code)
 	}
 
@@ -314,7 +320,7 @@ func TestDeviceAcknowledgementIsGenerationAware(t *testing.T) {
 func TestClientSealedSendRefusesStaleMaterial(t *testing.T) {
 	srv := newTestServer(t)
 	u := convertedUser(t, srv)
-	deviceAuth, _ := publishDevice(t, srv, u.ID, "phone", []int{2, 3})
+	deviceAuth, _ := publishDevice(t, srv, u.ID, "phone", []int{4, 5})
 	delivery := map[string]any{"recipients": []string{"bob@example.com"}, "ciphertext": wellFormedDelivery}
 	send := func(auth func(*http.Request), body map[string]any) *httptest.ResponseRecorder {
 		body["deliveries"] = []any{delivery}
@@ -344,8 +350,8 @@ func TestClientSealedSendRefusesStaleMaterial(t *testing.T) {
 	if rec := send(deviceAuth, map[string]any{"materialGeneration": 1}); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"reenrollmentRequired":true`) {
 		t.Fatalf("unenrolled device: %d %s", rec.Code, rec.Body.String())
 	}
-	acknowledge := map[string]any{"encryptionEnrolled": true, "envelopeVersion": 3, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}
-	if rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:phone", map[string]any{"envelope": sealedEnvelope(3), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
+	acknowledge := map[string]any{"encryptionEnrolled": true, "envelopeVersion": 5, "materialGeneration": 1, "fingerprint": u.PGPFingerprint}
+	if rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:phone", map[string]any{"envelope": sealedEnvelope(5), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint, "enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}); rec.Code != http.StatusOK {
 		t.Fatalf("delivery: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := deviceJSON(t, srv, deviceAuth, http.MethodPost, "/api/pgp/device/enrollment-state", acknowledge); rec.Code != http.StatusOK {
@@ -392,14 +398,6 @@ func TestClientSealedSendRefusesStaleMaterial(t *testing.T) {
 	}
 }
 
-// hpkeSealedEnvelope is a well-formed v4/v5 sealing, framing only.
-func hpkeSealedEnvelope(version int) string {
-	enc := make([]byte, 65)
-	enc[0] = 4
-	return `{"v":` + string(rune('0'+version)) + `,"alg":"HPKE-Base-P256-SHA256-A256GCM","enc":"` +
-		base64.StdEncoding.EncodeToString(enc) + `","ct":"` + base64.StdEncoding.EncodeToString(make([]byte, 16)) + `"}`
-}
-
 // v5 reaches only a device that advertised it, and its acknowledgement
 // enrolls the device at v5; an Android-style [2,3] device is refused it.
 func TestHPKEDeviceDeliveryFollowsAdvertisedVersions(t *testing.T) {
@@ -408,7 +406,7 @@ func TestHPKEDeviceDeliveryFollowsAdvertisedVersions(t *testing.T) {
 	publishDevice(t, srv, u.ID, "android", []int{2, 3})
 	macAuth, _ := publishDevice(t, srv, u.ID, "mac", []int{2, 3, 4, 5})
 	body := func(version int) map[string]any {
-		return map[string]any{"envelope": hpkeSealedEnvelope(version), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint,
+		return map[string]any{"envelope": sealedEnvelope(version), "expectedRevision": u.PGPRevision, "expectedFingerprint": u.PGPFingerprint,
 			"enrollmentPublicKey": deliveryDeviceKey, "materialGeneration": 1, "authSecret": deliveryAuth}
 	}
 	rec := sessionJSON(t, srv, u.ID, http.MethodPut, "/api/pgp/identity/envelope/device:android", body(5))

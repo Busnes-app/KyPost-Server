@@ -27,7 +27,7 @@ func TestEnrollmentCapabilitiesPublishAndListForOwner(t *testing.T) {
 	if own.EnrollmentPublicKey != "KEY" || !slices.Equal(own.EnrollmentEnvelopeVersions, []int{2, 3, 4}) {
 		t.Fatal("own claim missing")
 	}
-	if other.EnrollmentPublicKey != "" || !slices.Equal(other.EnrollmentEnvelopeVersions, []int{2}) {
+	if other.EnrollmentPublicKey != "" || !slices.Equal(other.EnrollmentEnvelopeVersions, []int{}) {
 		t.Fatal("claim reached other device")
 	}
 	req = httptest.NewRequest(http.MethodGet, "/api/notifications/native/devices", nil)
@@ -55,13 +55,13 @@ func TestEnrollmentCapabilitiesPublishAndListForOwner(t *testing.T) {
 	if !found {
 		t.Fatal("owner listing omitted capabilities")
 	}
-	// Omitted and explicit-null claims are legacy publications, not preservation requests.
+	// Omitted and explicit-null claims are no claim (not v2), not preservation requests.
 	for _, body := range []string{`{"publicKey":"SAME","envelopeVersions":null}`, `{"publicKey":"OLD"}`} {
 		req = httptest.NewRequest(http.MethodPost, "/api/pgp/device/enrollment-key", strings.NewReader(body))
 		authDevice(req)
 		rec = httptest.NewRecorder()
 		srv.handlePGPPublishEnrollmentKey(rec, req)
-		if rec.Code != http.StatusOK || !slices.Equal(deviceByID(t, srv, userID, deviceID).EnrollmentEnvelopeVersions, []int{2}) {
+		if rec.Code != http.StatusOK || !slices.Equal(deviceByID(t, srv, userID, deviceID).EnrollmentEnvelopeVersions, []int{}) {
 			t.Fatal("legacy publication failed", rec.Code)
 		}
 	}
