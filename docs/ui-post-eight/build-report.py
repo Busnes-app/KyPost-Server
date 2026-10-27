@@ -19,7 +19,7 @@ for path in sorted(P.glob('inventory-v*.json')):
 scores=[['Round','Reviewer','File','Cohort',*WEIGHTS,'Quality','Brand exact','Report SHA256']]
 cohorts=[['Round','Reviewer','Cohort','n','Sum','Exact mean','Display mean','Satisfied']]
 spreads=[['Round','File','Dimension','Claude','Sol','Spread']]
-progression=[['Round','Claude exact','Sol exact','Combined exact','Rounded','Accepted']]
+progression=[['Round','Claude exact','Sol exact','Historical combined exact (not gate)','Opus rounded','Accepted by current rule']]
 reports={}
 for path in sorted(P.glob('*-round*.json')):
  match=re.fullmatch(r'(opus|sol|gemini)-round(\d+)\.json',path.name)
@@ -37,14 +37,15 @@ for path in sorted(P.glob('*-round*.json')):
  quality=[Fraction(str(f['total']))for f in files.values()if not f.get('duplicate_of')];reports[who,num]={'files':files,'mean':sum(quality)/len(quality),'cohorts':means,'satisfied':satisfied}
 numbers={n for _,n in reports}
 if (P/'manifest-03-after.json').exists():numbers.add(2)
+if (P/'manifest-04-after.json').exists():numbers.add(3)
 for num in sorted(numbers):
  a,b=reports.get(('opus',num)),reports.get(('sol',num))
  if a and b:
-  assert a['files'].keys()==b['files'].keys();mean=(a['mean']+b['mean'])/2;progression.append([num,str(a['mean']),str(b['mean']),str(mean),rounded(mean),Decimal(rounded(mean))>=8])
+  assert a['files'].keys()==b['files'].keys();mean=(a['mean']+b['mean'])/2;progression.append([num,str(a['mean']),str(b['mean']),str(mean),rounded(a['mean']),Decimal(rounded(a['mean']))>=8])
   for name,x in a['files'].items():
    for k,v in x['scores'].items():y=b['files'][name]['scores'][k];spreads.append([num,name,k,v,y,abs(v-y)])
  if not(a and b):progression.append([num,str(a['mean'])if a else 'Pending',str(b['mean'])if b else 'Pending','Pending','Pending','Pending'])
-notes=[['Topic','Evidence'],['Scope','32 initial-view captures across eight everyday-user surfaces; no competitor/whole-product acceptance.'],['Conditions','Read immutable manifests; desktop1280x900/phone390x844,OSlight/dark,DPR1,normal service workers.'],['Login artifact','R1 preserves four mid-fade login shots; stage01 settled before-shots are supplemental comparison evidence and carry no replacement score.'],['Progression','Same-set Claude/Sol quality mean, half-up to one decimal; >=8.0 accepts. Brand is separate; raw scores/satisfaction retained.'],['Gemini','Unused until both primary reviewers genuinely satisfied; advisory, audited, never delaying accepted progression.']]
+notes=[['Topic','Evidence'],['Scope','32 initial-view captures across eight everyday-user surfaces; no competitor/whole-product acceptance.'],['Conditions','Read immutable manifests; desktop1280x900/phone390x844,OSlight/dark,DPR1,normal service workers.'],['Login artifact','R1 preserves four mid-fade login shots; stage01 settled before-shots are supplemental comparison evidence and carry no replacement score.'],['Progression','Opus overall current-round quality mean, half-up to one decimal; >=8.0 accepts. Sol is independent. Prior combined-score acceptance is superseded; historical reports are immutable. Brand is separate.'],['Gemini','Unused until both primary reviewers genuinely satisfied; advisory, audited, never delaying accepted progression.']]
 for f in sorted(P.glob('round*-audit.json')):
  audit=json.loads(f.read_text())
  for n,h in audit.get('raw_reports',{}).items():assert hashlib.sha256((P/n).read_bytes()).hexdigest()==h
@@ -53,7 +54,7 @@ sheets={'Scores':scores,'Cohorts':cohorts,'Progression':progression,'Spreads':sp
 if (P/'delivery.json').exists():sheets['Delivery']=[['Item','Value'],*[[k,str(v)]for k,v in json.loads((P/'delivery.json').read_text()).items()]]
 for name,rows in sheets.items():
  with (P/(name.lower()+'.csv')).open('w',newline='')as f:csv.writer(f,lineterminator='\n').writerows(rows)
-lines=['# KyPost Council score history','','Coverage summaries are not rankings. Raw originals and independent satisfaction remain unchanged.','','| Round | Claude | Sol | Combined exact | Rounded progression | Accepted | Gemini |','| --- | ---: | ---: | ---: | ---: | --- | --- |']
+lines=['# KyPost Council score history','','Coverage summaries are not rankings. Raw originals and independent satisfaction remain unchanged. The owner clarified the gate: use Opus overall only; the previous R2 combined-score acceptance is superseded.','','| Round | Claude | Sol | Historical combined (not gate) | Opus rounded | Accepted by current rule | Gemini |','| --- | ---: | ---: | ---: | ---: | --- | --- |']
 for row in progression[1:]:lines.append('| '+' | '.join(map(str,row))+' | Unused |')
 lines+=['','R1 includes the original four mid-animation login captures. Supplemental settled login before-views are unscored; do not call a capture correction product improvement.','','| Round | Reviewer | Cohort | n | Sum | Exact mean | Display | Satisfied |','| --- | --- | --- | ---: | ---: | ---: | ---: | --- |']
 for row in cohorts[1:]:lines.append('| '+' | '.join(map(str,row))+' |')

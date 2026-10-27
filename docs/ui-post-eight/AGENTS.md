@@ -13,7 +13,7 @@ Preserve staged KyPost web screenshots, independent reviews and evidence for pro
 
 - Preserve mail behavior, security choices, permissions, CSP, named themes and saved browser choices.
 - Use ky-suite-v2 exact quality totals and separate brand fit. Missing evidence stays N/A.
-- Owner progression uses the mean of Claude/Sol quality over the same originals, rounded half-up to one decimal;8.0 accepts. Individual/category deficits are not vetoes.
+- Owner progression uses Opus’s overall quality mean across all current-round reviewed captures, rounded half-up to one decimal; 8.0 accepts (7.985 counts). Sol remains independent; pooling Opus with Sol cannot satisfy the gate. Preserve historical raw scores and mark the earlier combined-score acceptance as superseded. Individual screen/cohort shortfalls do not veto Opus’s rounded overall result.
 - Gemini4Argon stays advisory and unused until both primaries are genuinely satisfied. Record its original findings and audit any claims if used.
 - Display prior/current scores and pending/unused reviewers every round; owner layout rejection reopens the gate.
 

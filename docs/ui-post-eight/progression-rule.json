@@ -1,0 +1,10 @@
+{
+  "clarified_at": "2026-10-27",
+  "rule": "Use the arithmetic mean of Opus file quality totals across all current-round originals, half-up to one decimal. >=8.0 accepts; 7.985 counts as8.0. Sol remains independent; neither the Opus/Sol average nor pooled historical rounds can satisfy the gate.",
+  "supersedes": "R2 combined-score acceptance in round2-audit.json and prior delivery reports. Historical raw reports/score vectors remain byte-preserved.",
+  "round2_opus_exact": "1221/160",
+  "round2_opus_rounded": "7.6",
+  "round2_passes_current_rule": false,
+  "current_round": 3,
+  "current_status": "reopened; awaiting independent current capture scores"
+}

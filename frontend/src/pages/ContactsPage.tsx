@@ -735,7 +735,7 @@ export function ContactsPage() {
             </header>
 
             <div className="contacts-form-fields">
-              <div className="contacts-multivalue">
+              {editingUid ? <div className="contacts-multivalue">
                 <div className="contacts-multivalue-label">Photo</div>
                 <div className="contacts-photo-row">
                   {editingUid && form.photoRef ? (
@@ -762,8 +762,7 @@ export function ContactsPage() {
                     </button>
                   ) : null}
                 </div>
-                {!editingUid ? <p className="contacts-muted">Save the contact first to add a photo.</p> : null}
-              </div>
+              </div> : null}
               <label>
                 <div>Full Name</div>
                 <input value={form.fn} onChange={(e) => setForm({ ...form, fn: e.target.value })} autoComplete="off" />
@@ -793,8 +792,10 @@ export function ContactsPage() {
                   </>
                 )}
               />
-              <details className="contact-identity-details">
-                <summary>Organization and name details</summary>
+              {!editingUid ? <p className="contacts-photo-guidance">Save the contact first to add a photo.</p> : null}
+              <details className="contacts-form-group contact-identity-details" open={has(saved.org, saved.givenName, saved.familyName, saved.title, saved.department)}>
+                <summary>Organization and name details<ChevronIcon /></summary>
+                <div className="contacts-form-group-fields">
               <label>
                 <div>Organization</div>
                 <input value={form.org} onChange={(e) => setForm({ ...form, org: e.target.value })} autoComplete="off" />
@@ -823,6 +824,7 @@ export function ContactsPage() {
                 <div>Department</div>
                 <input value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} autoComplete="off" />
               </label>
+                </div>
               </details>
 
               <MultiValueField

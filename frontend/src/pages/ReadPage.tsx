@@ -1912,7 +1912,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                 );
               })()}
               <div className="email-reader-facts">
-                <p><strong>Sender:</strong> {selected.sender || "-"}</p>
+                <p><strong>Sender:</strong><span className="email-reader-sender">{selected.sender || "-"}</span></p>
               </div>
               <details className="email-reader-details">
                 <summary>Message details and keywords</summary>

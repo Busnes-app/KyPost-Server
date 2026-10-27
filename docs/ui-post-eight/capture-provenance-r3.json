@@ -1,0 +1,23 @@
+{
+  "source_ui": "2ff40cc2394d1bab8cf14935ba6b219a5f28b8f1",
+  "scored_manifest": "manifest-04-after.json",
+  "prior_comparison": "manifest-03-after.json (same synthetic fixture, product50bbbff5, historical R2)",
+  "parent_individually_viewed": 32,
+  "bounded_verification": "One new32-image set; no recapture required after inspection.",
+  "originals": 32,
+  "comparisons": 240,
+  "near_duplicates": 0,
+  "page_overflows": 0,
+  "source_files_checked_against_git": 295,
+  "server": "Same binary sha as prior evidence; backend source unchanged by UI follow-up. Own synthetic fixture restarted with documented SANDBOX_PRIVATE_HOSTS=localhost for TLS demo mail; normal security boundaries and realPoW login.",
+  "capture": {
+    "browser": "153.0.8010.12",
+    "locale": "en-US",
+    "timezone": "America/New_York",
+    "theme_source": "OS light/dark; no saved choice",
+    "fixture": "Private copy of historical synthetic council data; everyday alex; real PoW sign-in; own loopback TLS kypost-demo-IMAP; four seeded messages and populated contacts; no Ollama; no mocks, auth/CSRF/CSP bypass, send or submitted contact edit. Reader changes restored through native inbox actions. Demo drip set86400s.",
+    "captured_at": "2026-10-27T18:41:47.401Z"
+  },
+  "progression": "Opus overall only.7.985 rounds8.0. Previous pooled acceptance superseded; raw reports unchanged.",
+  "limitations": "Everyday initial views only; no complete behavior/roles/states/themes/competitive acceptance."
+}

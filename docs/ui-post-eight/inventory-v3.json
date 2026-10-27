@@ -1,0 +1,806 @@
+[
+  {
+    "file": "screenshots/kypost-04-after-appearance-desktop-dark.png",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "bytes": 80562,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "appearance",
+    "device": "desktop",
+    "theme": "dark",
+    "cohort": "settings",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Appearance"
+    ],
+    "route": "/settings/appearance",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-appearance-desktop-light.png",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "bytes": 79855,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "appearance",
+    "device": "desktop",
+    "theme": "light",
+    "cohort": "settings",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Appearance"
+    ],
+    "route": "/settings/appearance",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-appearance-mobile-dark.png",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "bytes": 40664,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "appearance",
+    "device": "mobile",
+    "theme": "dark",
+    "cohort": "settings",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Appearance"
+    ],
+    "route": "/settings/appearance",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-appearance-mobile-light.png",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "bytes": 39770,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "appearance",
+    "device": "mobile",
+    "theme": "light",
+    "cohort": "settings",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Appearance"
+    ],
+    "route": "/settings/appearance",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-compose-desktop-dark.png",
+    "sha256": "e1308101d34e61e476aca30fac900b202d19ce1c7b13251b47fc824b7a7b1e02",
+    "bytes": 63760,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "compose",
+    "device": "desktop",
+    "theme": "dark",
+    "cohort": "compose",
+    "state": "open unsubmitted form",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-compose-desktop-light.png",
+    "sha256": "c54beeff37a91ce487a474da3c24afd9f187d2f9c17c88d061f889444c8cca9c",
+    "bytes": 64774,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "compose",
+    "device": "desktop",
+    "theme": "light",
+    "cohort": "compose",
+    "state": "open unsubmitted form",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-compose-mobile-dark.png",
+    "sha256": "a57681f05846870f6cef10403e9422829e2eb1e5025b8641209d9891169a1215",
+    "bytes": 29538,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "compose",
+    "device": "mobile",
+    "theme": "dark",
+    "cohort": "compose",
+    "state": "open unsubmitted form",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-compose-mobile-light.png",
+    "sha256": "84b168fd34cf91570b810d291336ff1b179fe2807483c2c1103726fcf165bda3",
+    "bytes": 28893,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "compose",
+    "device": "mobile",
+    "theme": "light",
+    "cohort": "compose",
+    "state": "open unsubmitted form",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-contact-editor-desktop-dark.png",
+    "sha256": "803f53ece932359fff3895d346977a3fb3d0b078e2b2ffd50bed64ee605b0563",
+    "bytes": 64790,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "contact-editor",
+    "device": "desktop",
+    "theme": "dark",
+    "cohort": "contact-editor",
+    "state": "open unsubmitted form",
+    "overflow": 0,
+    "h1": [
+      "Contacts"
+    ],
+    "route": "/contacts",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-contact-editor-desktop-light.png",
+    "sha256": "4f5650093bc2ec074e1166d3c28c4011bcbe0922329ae18a347a867be9c32c3d",
+    "bytes": 66170,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "contact-editor",
+    "device": "desktop",
+    "theme": "light",
+    "cohort": "contact-editor",
+    "state": "open unsubmitted form",
+    "overflow": 0,
+    "h1": [
+      "Contacts"
+    ],
+    "route": "/contacts",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-contact-editor-mobile-dark.png",
+    "sha256": "04c6ae493eb07a2a3327ddb849f232bc634c210674fb3fa2b6a8a3d796d902f2",
+    "bytes": 28867,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "contact-editor",
+    "device": "mobile",
+    "theme": "dark",
+    "cohort": "contact-editor",
+    "state": "open unsubmitted form",
+    "overflow": 0,
+    "h1": [
+      "Contacts"
+    ],
+    "route": "/contacts",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-contact-editor-mobile-light.png",
+    "sha256": "e21b6e3d26e9dcc6ce576daad71372be6489c03e50ab0234f70613f1e9ef7121",
+    "bytes": 28170,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "contact-editor",
+    "device": "mobile",
+    "theme": "light",
+    "cohort": "contact-editor",
+    "state": "open unsubmitted form",
+    "overflow": 0,
+    "h1": [
+      "Contacts"
+    ],
+    "route": "/contacts",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-contacts-desktop-dark.png",
+    "sha256": "48a70a17bea3c2de83f011121186d2d7f7fdda5891e0eae3fe2ce8f3321e2d9b",
+    "bytes": 68701,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "contacts",
+    "device": "desktop",
+    "theme": "dark",
+    "cohort": "contacts-list",
+    "state": "synthetic populated contacts",
+    "overflow": 0,
+    "h1": [
+      "Contacts"
+    ],
+    "route": "/contacts",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-contacts-desktop-light.png",
+    "sha256": "1673ab728501010105efbebeef2b0101fb18983e511fd3ee93955a5a76d5092a",
+    "bytes": 68150,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "contacts",
+    "device": "desktop",
+    "theme": "light",
+    "cohort": "contacts-list",
+    "state": "synthetic populated contacts",
+    "overflow": 0,
+    "h1": [
+      "Contacts"
+    ],
+    "route": "/contacts",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-contacts-mobile-dark.png",
+    "sha256": "cb417e777415fe4bb21b4f861d25df26181d03c6579f9c96d05f5b241c4b77cd",
+    "bytes": 48283,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "contacts",
+    "device": "mobile",
+    "theme": "dark",
+    "cohort": "contacts-list",
+    "state": "synthetic populated contacts",
+    "overflow": 0,
+    "h1": [
+      "Contacts"
+    ],
+    "route": "/contacts",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-contacts-mobile-light.png",
+    "sha256": "9863cbd27b354b076b62159f2a26ebd63ec90510898e45d2e49c7eaaf80737af",
+    "bytes": 46814,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "contacts",
+    "device": "mobile",
+    "theme": "light",
+    "cohort": "contacts-list",
+    "state": "synthetic populated contacts",
+    "overflow": 0,
+    "h1": [
+      "Contacts"
+    ],
+    "route": "/contacts",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-inbox-desktop-dark.png",
+    "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+    "bytes": 66199,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "inbox",
+    "device": "desktop",
+    "theme": "dark",
+    "cohort": "mail-list",
+    "state": "four synthetic messages",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-inbox-desktop-light.png",
+    "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+    "bytes": 65201,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "inbox",
+    "device": "desktop",
+    "theme": "light",
+    "cohort": "mail-list",
+    "state": "four synthetic messages",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-inbox-mobile-dark.png",
+    "sha256": "af79feed150e57a6745eb1e64c9016bd020265464a6b146fb27b467739f0b425",
+    "bytes": 44793,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "inbox",
+    "device": "mobile",
+    "theme": "dark",
+    "cohort": "mail-list",
+    "state": "four synthetic messages",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-inbox-mobile-light.png",
+    "sha256": "f189c662405b81b71c290ae4829b650af1b3815c53c28f2fba9d7e719a18762a",
+    "bytes": 44072,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "inbox",
+    "device": "mobile",
+    "theme": "light",
+    "cohort": "mail-list",
+    "state": "four synthetic messages",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-inbox-selection-desktop-dark.png",
+    "sha256": "56c471e054ef37f51c6966ca75c4314b5feb808ae1edfcc1beea56767e02bfc9",
+    "bytes": 72587,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "inbox-selection",
+    "device": "desktop",
+    "theme": "dark",
+    "cohort": "mail-list",
+    "state": "four synthetic messages",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-inbox-selection-desktop-light.png",
+    "sha256": "45b8752bcb83d496cd17eb8b84672327c9342c73d40ba76ecb8aa64f519751e0",
+    "bytes": 71926,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "inbox-selection",
+    "device": "desktop",
+    "theme": "light",
+    "cohort": "mail-list",
+    "state": "four synthetic messages",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-inbox-selection-mobile-dark.png",
+    "sha256": "fd4f4baff71a77429c5ee44cbe6003518c959b50659b470f01a491eb12844db8",
+    "bytes": 51025,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "inbox-selection",
+    "device": "mobile",
+    "theme": "dark",
+    "cohort": "mail-list",
+    "state": "four synthetic messages",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-inbox-selection-mobile-light.png",
+    "sha256": "4bbbef7481513a6a41335529d5d7849212398f00f4d3d68abc0f6a6345c1d0b7",
+    "bytes": 50359,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "inbox-selection",
+    "device": "mobile",
+    "theme": "light",
+    "cohort": "mail-list",
+    "state": "four synthetic messages",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-login-desktop-dark.png",
+    "sha256": "ac83fa0ba85d1b6025de73740ff0889496bf9f4d736db99c9ac731d22e821348",
+    "bytes": 27854,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "login",
+    "device": "desktop",
+    "theme": "dark",
+    "cohort": "auth",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Sign in"
+    ],
+    "route": "/login",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk",
+      "IBM Plex Mono"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-login-desktop-light.png",
+    "sha256": "af615ed325baf8e656a23a6be6d52149afee0e9008e526af0b8b9a6be54e59c6",
+    "bytes": 27650,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "login",
+    "device": "desktop",
+    "theme": "light",
+    "cohort": "auth",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Sign in"
+    ],
+    "route": "/login",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk",
+      "IBM Plex Mono"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-login-mobile-dark.png",
+    "sha256": "0c57b814c03ae25ae5b5bcec15bc54f47ad880a38dd252f4e1578cc62556c8b0",
+    "bytes": 22423,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "login",
+    "device": "mobile",
+    "theme": "dark",
+    "cohort": "auth",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Sign in"
+    ],
+    "route": "/login",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk",
+      "IBM Plex Mono"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-login-mobile-light.png",
+    "sha256": "8580bd42a8a2a25494e67ddff2e2d293544d485bc615b326fc584dcecc722c67",
+    "bytes": 22132,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "login",
+    "device": "mobile",
+    "theme": "light",
+    "cohort": "auth",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Sign in"
+    ],
+    "route": "/login",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk",
+      "IBM Plex Mono"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-reader-desktop-dark.png",
+    "sha256": "12d35ffb60abf3176c61d82f154ed9a3eae70b5e4db263198da32e7171e3880e",
+    "bytes": 42309,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "reader",
+    "device": "desktop",
+    "theme": "dark",
+    "cohort": "mail-read",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-reader-desktop-light.png",
+    "sha256": "712e16a214b02685777bfca31bf88c244d79574a293240adf1b6b2c22f711351",
+    "bytes": 43309,
+    "width": 1280,
+    "height": 900,
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "surface": "reader",
+    "device": "desktop",
+    "theme": "light",
+    "cohort": "mail-read",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-reader-mobile-dark.png",
+    "sha256": "cdaa7c4df5d88e39efcc7cff74bbbfa2484a8d9a9d8eb45d396b7498dd4ae777",
+    "bytes": 27099,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "reader",
+    "device": "mobile",
+    "theme": "dark",
+    "cohort": "mail-read",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  },
+  {
+    "file": "screenshots/kypost-04-after-reader-mobile-light.png",
+    "sha256": "5467b40f578165fe13a164ac3dffafa55afff6c6f615625e39230eb4b9c268f8",
+    "bytes": 27517,
+    "width": 390,
+    "height": 844,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "surface": "reader",
+    "device": "mobile",
+    "theme": "light",
+    "cohort": "mail-read",
+    "state": "initial view",
+    "overflow": 0,
+    "h1": [
+      "Inbox"
+    ],
+    "route": "/read",
+    "savedChoice": null,
+    "fonts": [
+      "Space Grotesk"
+    ]
+  }
+]

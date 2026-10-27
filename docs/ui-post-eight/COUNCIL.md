@@ -1,11 +1,12 @@
 # KyPost Council score history
 
-Coverage summaries are not rankings. Raw originals and independent satisfaction remain unchanged.
+Coverage summaries are not rankings. Raw originals and independent satisfaction remain unchanged. The owner clarified the gate: use Opus overall only; the previous R2 combined-score acceptance is superseded.
 
-| Round | Claude | Sol | Combined exact | Rounded progression | Accepted | Gemini |
+| Round | Claude | Sol | Historical combined (not gate) | Opus rounded | Accepted by current rule | Gemini |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
-| 1 | 2169/320 | 1209/160 | 4587/640 | 7.2 | False | Unused |
-| 2 | 1221/160 | 42/5 | 513/64 | 8.0 | True | Unused |
+| 1 | 2169/320 | 1209/160 | 4587/640 | 6.8 | False | Unused |
+| 2 | 1221/160 | 42/5 | 513/64 | 7.6 | False | Unused |
+| 3 | Pending | Pending | Pending | Pending | Pending | Unused |
 
 R1 includes the original four mid-animation login captures. Supplemental settled login before-views are unscored; do not call a capture correction product improvement.
 
