@@ -6,6 +6,13 @@ Round,Reviewer,Cohort,n,Sum,Exact mean,Display mean,Satisfied
 1,opus,mail-list,8,283/5,283/40,7.1,False
 1,opus,auth,4,203/10,203/40,5.1,False
 1,opus,mail-read,4,127/5,127/20,6.4,False
+2,opus,settings,4,32,8,8.0,False
+2,opus,compose,4,149/5,149/20,7.5,False
+2,opus,contact-editor,4,30,15/2,7.5,False
+2,opus,contacts-list,4,30,15/2,7.5,False
+2,opus,mail-list,8,309/5,309/40,7.7,False
+2,opus,auth,4,156/5,39/5,7.8,False
+2,opus,mail-read,4,147/5,147/20,7.4,False
 1,sol,settings,4,167/5,167/20,8.4,False
 1,sol,compose,4,32,8,8.0,False
 1,sol,contact-editor,4,30,15/2,7.5,False
@@ -13,3 +20,10 @@ Round,Reviewer,Cohort,n,Sum,Exact mean,Display mean,Satisfied
 1,sol,mail-list,8,316/5,79/10,7.9,False
 1,sol,auth,4,114/5,57/10,5.7,False
 1,sol,mail-read,4,29,29/4,7.3,False
+2,sol,settings,4,173/5,173/20,8.7,True
+2,sol,compose,4,162/5,81/10,8.1,True
+2,sol,contact-editor,4,162/5,81/10,8.1,True
+2,sol,contacts-list,4,167/5,167/20,8.4,True
+2,sol,mail-list,8,67,67/8,8.4,True
+2,sol,auth,4,174/5,87/10,8.7,True
+2,sol,mail-read,4,171/5,171/20,8.6,True

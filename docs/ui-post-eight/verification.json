@@ -39,7 +39,7 @@
     "Full keyboard/focus/contrast/state/assistive-tech coverage and competitors remain untested.",
     "Native popovers require the modern browsers exercised here; Safari/WebKit not exercised."
   ],
-  "gate": "R1 combined4587/640 ->7.2; R2 pending; Gemini unused.",
+  "gate": "R1 combined4587/640 ->7.2; R2 combined513/64 =8.015625 ->8.0, accepted covered visual progression. Sol satisfied; Claude independently unsatisfied, no further round requested. Gemini unused.",
   "mySlop": "Known401; no board post succeeded; no unchanged-credential retry.",
   "merge_deploy": "Not authorized"
 }
