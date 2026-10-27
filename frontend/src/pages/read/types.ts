@@ -110,7 +110,7 @@ export type InboxResponse = {
   byTab: Record<string, InboxEmail[]>;
 };
 
-export type InboxAction = "delete" | "archive" | "spam" | "read" | "snooze";
+export type InboxAction = "delete" | "archive" | "spam" | "read" | "unread" | "snooze";
 
 export type InboxActionResponse = {
   ok: boolean;

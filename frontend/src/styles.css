@@ -997,22 +997,25 @@ body {
 .email-reader-body-block {
   margin: 0;
   max-height: none;
-  min-height: 320px;
-  flex: 1 1 auto;
+  min-height: 0;
+  flex: 0 0 auto;
   overflow: auto;
   /* Containment, independent of the sanitizer: this makes the block a
      containing block for fixed-position descendants and clips painting to it,
      so message content cannot escape into the viewport even if it acquires a
      position:fixed rule. */
   contain: layout paint style;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 8px;
-  padding: 10px 12px;
-  background: var(--bg);
+  padding: 16px 0;
+  background: transparent;
   color: var(--ink-strong);
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: var(--mono);
+  font-family: var(--sans);
+  font-size: var(--ky-type-body);
+  line-height: 1.6;
+  max-width: 75ch;
 }
 
 /* The HTML body, which is an <iframe> (read/EmailBodyFrame.tsx).
@@ -5195,12 +5198,7 @@ pre {
   display: grid;
   place-items: center;
   padding: 32px 20px 40px;
-  /* Two accent glows well off-centre, so the field reads as lit rather than
-     vignetted, and neither sits behind the card where it would muddy the text. */
-  background:
-    radial-gradient(38rem 26rem at 82% 8%, var(--glow), transparent 70%),
-    radial-gradient(30rem 22rem at 12% 96%, rgba(107, 74, 66, 0.16), transparent 72%),
-    var(--bg);
+  background: var(--bg);
 }
 
 .auth-shell {
@@ -5238,17 +5236,7 @@ pre {
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: calc(var(--seal-size) / 2 + 18px) 26px 26px;
-  /* Tuned to read on light themes too, where a heavy black drop turns into a
-     smudge: most of the lift comes from the hairline border, not the shadow. */
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
-  animation: auth-card-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-@keyframes auth-card-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
+  box-shadow: none;
 }
 
 .auth-page .auth-form {
@@ -5280,7 +5268,7 @@ pre {
   margin: 0;
   font-size: 0.9rem;
   line-height: 1.5;
-  color: color-mix(in srgb, var(--ink) 78%, transparent);
+  color: var(--ink);
 }
 
 /* --- Fields ------------------------------------------------------------- */
@@ -5291,19 +5279,18 @@ pre {
 }
 
 .auth-label {
-  font-family: var(--mono);
-  font-size: 0.68rem;
+  font-family: var(--sans);
+  font-size: var(--ky-type-meta);
   font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--ink) 62%, transparent);
+  color: var(--ink-strong);
 }
 
 .auth-input {
   width: 100%;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  min-height: var(--ky-control-size);
+  padding: 8px 12px;
+  border: 1px solid var(--ky-field-border);
+  border-radius: var(--ky-control-radius);
   /* Recessed against the card rather than the same value as it, so the field
      reads as somewhere to type without needing a heavier border. */
   background: color-mix(in srgb, var(--bg) 62%, var(--panel));
@@ -5312,18 +5299,17 @@ pre {
 }
 
 .auth-input::placeholder {
-  color: color-mix(in srgb, var(--ink) 34%, transparent);
+  color: var(--ink);
 }
 
 .auth-input:hover:not(:read-only) {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-color: var(--ky-field-border);
 }
 
 .auth-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--bg) 42%, var(--panel));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-color: var(--ky-field-border);
 }
 
 .auth-input:read-only {
@@ -5596,20 +5582,8 @@ pre {
   height: 6px;
 }
 
-/* --accent is this app's existing success signal: .notice-success (line
-   ~724) tints its background with it for the same reason. There is no
-   dedicated success token, so reuse that one rather than invent one. */
-.auth-pow-done {
-  color: var(--accent);
-}
-
-/* --danger has no :root definition but is already the established pattern
-   for error text elsewhere (.email-attachments-error, .rule-script-error) —
-   each falls back to the same #c0392b when unset. Reused here rather than
-   inventing a new token. */
-.auth-pow-failed {
-  color: var(--danger, #c0392b);
-}
+.auth-pow-done { color: var(--ky-success); }
+.auth-pow-failed { color: var(--danger); }
 
 /* Backup keeps routine actions visible; setup and history expand on demand. */
 .backup-section { min-width: 0; }
@@ -5685,13 +5659,13 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .compose-window { padding: 0; gap: 0; overflow-y: auto; width: min(960px, 96vw); }
 .compose-topbar { padding: 18px 24px; }
 .compose-topbar h2 { margin: 0; font-size: 18px; letter-spacing: -.015em; }
-.compose-connection-hint { padding: 12px 24px; margin: 0; font-size: 12px; color: var(--ink); line-height: 1.5; background: var(--bg); border-bottom: 1px solid var(--line); }
+.compose-connection-hint { padding: 12px 24px; margin: 0; font-size: 12px; color: var(--ink); line-height: 1.5; background: var(--panel); border-bottom: 1px solid var(--line); }
 .compose-window > .compose-form-grid { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: var(--panel); padding: 16px 24px; gap: 10px; }
 .compose-form-grid .compose-field-row { grid-template-columns: 64px minmax(0, 1fr); }
 .compose-field-row > span { font-size: 12px; font-weight: 500; color: var(--ink); }
-.compose-window > .compose-editor-html { margin: 0 24px 16px; width: auto; min-width: 0; min-height: 180px; flex: 1 0 180px; }
+.compose-window > .compose-editor-html.ql-container.ql-snow { margin: 0 24px 16px; width: auto; min-width: 0; min-height: 120px; flex: 1 1 180px; resize: none; background: var(--panel); }
 .compose-window > .compose-attachments { margin: 12px 24px 0; }
-.compose-security { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 24px; border-top: 1px solid var(--line); background: var(--bg); }
+.compose-security { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 24px; border-top: 1px solid var(--line); background: var(--panel); }
 .compose-security label { min-height: 32px; color: var(--ink-strong); }
 .compose-security input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
 .compose-actionbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 16px 24px; border-top: 1px solid var(--line); background: var(--panel); }
@@ -5704,7 +5678,56 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 @media (max-width: 600px) { .compose-window { width: 100%; max-height: 100dvh; border-radius: 0; } .compose-topbar, .compose-connection-hint, .compose-security, .compose-actionbar { padding-inline: 16px; } .compose-window > .compose-form-grid { padding-inline: 16px; } .compose-window > .compose-editor-html { margin-inline: 16px; } .compose-form-grid .compose-field-row { grid-template-columns: 48px minmax(0, 1fr); } .compose-actionbar { gap: 6px; } .compose-actionbar .compose-trash { margin-left: 0; } }
 
 .compose-window > .ql-toolbar { margin: 16px 24px 0; width: auto; }
-.compose-window > .compose-editor-html .ql-editor { min-height: 180px; }
-.compose-footer { position: sticky; bottom: 0; flex: 0 0 auto; background: var(--panel); z-index: 2; }
+.compose-window > .compose-editor-html .ql-editor { min-height: 0; background: var(--panel); }
+.compose-footer { position: static; flex: 0 0 auto; background: var(--panel); z-index: 2; }
 .compose-footer .compose-actionbar { position: static; }
 @media (max-width: 600px) { .compose-window > .ql-toolbar { margin-inline: 16px; } }
+
+/* Product action overlays retain native dismissal and focus behavior. */
+.suite-action-menu[popover] {
+  position: fixed;
+  position-anchor: auto;
+  inset: auto;
+  top: anchor(bottom);
+  right: anchor(right);
+  position-try-fallbacks: flip-block;
+  margin: 8px 0 0;
+  width: 260px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--ky-field-border);
+  border-radius: var(--ky-control-radius);
+  background: var(--panel);
+  color: var(--ink-strong);
+  box-shadow: 0 8px 24px rgb(0 0 0 / .18);
+}
+.suite-action-menu[popover]:popover-open { display: flex; flex-direction: column; gap: 4px; }
+.suite-action-menu[popover]:not(:popover-open) { display: none; }
+.suite-action-menu-title { margin: 4px 8px 8px; font-size: var(--ky-type-meta); color: var(--ink); }
+.suite-action-menu :is(button, a) { justify-content: flex-start; min-height: 40px; width: 100%; }
+.suite-action-menu .inbox-action-text { display: inline; }
+.contacts-actions .btn-danger { color: var(--danger); }
+.contact-identity-details > summary, .email-reader-details > summary { cursor: pointer; padding-block: 8px; font-size: var(--ky-type-meta); color: var(--ink); }
+.contact-identity-details[open] { display: grid; gap: 12px; }
+.email-reader-details .email-keyword-editor { margin-top: 12px; }
+.email-reader-raw { font-family: var(--mono); }
+.inbox-selected-count { white-space: nowrap; font-size: var(--ky-type-meta); color: var(--ink); }
+.auth-title { font-size: var(--ky-type-title); font-weight: 600; }
+.auth-footnote { font-family: var(--sans); font-size: var(--ky-type-meta); text-transform: none; letter-spacing: normal; color: var(--ink); }
+.auth-submit { min-height: var(--ky-control-size); border-radius: var(--ky-control-radius); box-shadow: none; }
+.compose-window .ql-toolbar.ql-snow .ql-formats { margin-right: 4px; }
+.compose-window .ql-toolbar.ql-snow button { width: 32px; height: 40px; }
+.compose-window .ql-toolbar.ql-snow .ql-picker-label { min-height: 40px; display: flex; align-items: center; }
+@media (max-width: 600px) {
+  .suite-action-menu[popover] { inset: auto 16px 16px; margin: 0; width: auto; }
+  .email-reader-window { padding: 16px; }
+  .inbox-action-bar { width: 100%; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .inbox-action-bar > * { flex-shrink: 0; }
+  .inbox-action-bar .inbox-action-text { display: inline; }
+  .inbox-action-bar .inbox-action-button { min-height: 40px; width: auto; font-size: 13px; }
+  .inbox-col-select { width: 40px; min-width: 40px; }
+  .inbox-col-lock { width: 24px; min-width: 24px; }
+  .inbox-row-meta > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}

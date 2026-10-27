@@ -150,7 +150,7 @@ describe("webmail mailbox switcher", () => {
     await user.selectOptions(await switcher(), "team-test@example.com");
     await screen.findByText("Team inbox");
     await user.click(screen.getByRole("button", { name: "New Email" }));
-    const from = screen.getByRole("combobox", { name: "FROM:" }) as HTMLSelectElement;
+    const from = screen.getByRole("combobox", { name: "From" }) as HTMLSelectElement;
     expect(Array.from(from.options).map((o) => o.value)).toEqual(["team-test@example.com", "team-alias@example.com"]);
     expect(from.value).toBe("team-test@example.com");
 
@@ -168,7 +168,7 @@ describe("webmail mailbox switcher", () => {
     renderApp();
     await switcher();
     await user.click(screen.getByRole("button", { name: "New Email" }));
-    const from = screen.getByRole("combobox", { name: "FROM:" }) as HTMLSelectElement;
+    const from = screen.getByRole("combobox", { name: "From" }) as HTMLSelectElement;
     expect(Array.from(from.options).map((o) => o.value)).toEqual(["me@example.com"]);
   });
 
@@ -196,7 +196,7 @@ describe("webmail mailbox switcher", () => {
     await switcher();
     await user.click(screen.getByRole("button", { name: "New Email" }));
     await screen.findByText(/written in team-test@example.com/);
-    const from = screen.getByRole("combobox", { name: "FROM:" }) as HTMLSelectElement;
+    const from = screen.getByRole("combobox", { name: "From" }) as HTMLSelectElement;
     expect(from.value).toBe("team-test@example.com");
     expect(Array.from(from.options).map((o) => o.value)).toEqual(["team-test@example.com", "team-alias@example.com"]);
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -255,7 +255,7 @@ describe("webmail mailbox switcher", () => {
     await user.selectOptions(await switcher(), "me@example.com");
     await screen.findByText("Primary inbox");
     for (const release of pending) release(json(200, { body: "draft body", bodyMode: "plain" }));
-    const from = await screen.findByRole("combobox", { name: "FROM:" }) as HTMLSelectElement;
+    const from = await screen.findByRole("combobox", { name: "From" }) as HTMLSelectElement;
     expect(from.value).toBe("team-test@example.com");
   });
 
@@ -279,7 +279,7 @@ describe("webmail mailbox switcher", () => {
     await screen.findByText("Primary inbox");
     await user.click(screen.getByRole("button", { name: "New Email" }));
     answer(json(200, { mailboxes: [primary, team] }));
-    await screen.findByRole("combobox", { name: "FROM:" });
+    await screen.findByRole("combobox", { name: "From" });
     await user.type(screen.getByLabelText("To recipients"), "x@y.test{Enter}");
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(calls.filter((c) => c.url === "/api/mail/send")).toHaveLength(1));
@@ -348,7 +348,7 @@ describe("webmail mailbox switcher", () => {
     await screen.findByText("Primary inbox");
     await user.click(screen.getByRole("button", { name: "New Email" }));
     expect(screen.queryByRole("combobox", { name: "Your mailboxes" })).toBeNull();
-    expect(screen.queryByRole("combobox", { name: "FROM:" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "From" })).toBeNull();
     expect(calls.every((c) => c.mailbox === null)).toBe(true);
   });
 

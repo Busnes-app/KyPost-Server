@@ -184,6 +184,10 @@ admin grant; the issuer hint states that changing the issuer revokes links.
 
 ## Shared browser UI
 
+- Reader and contact utility actions use native auto popovers: labelled invokers, one-open/light/Escape dismissal and focus return. Remote-content toggle keeps its popover open and retains control identity/focus. Reader read/unread actions update the existing message in place; native-dialog, sanitizer, iframe sandbox and per-message opt-in contracts stay intact.
+- Reader keeps the complete sender visible, with recipients/time/status/keywords in an explicit disclosure. Plain mail uses the body face with preserved whitespace/containment; raw view stays monospace. Contact email precedes optional identity details; invalid inputs still open their disclosure. New-contact photo upload appears only after saving enables it.
+- Compose retains every security and send/draft/attachment action; editor and footer share available height without overlapping, and toolbar groups retain their controls.
+
 - `src/ky-ui/` is generated from Busnes-app/ky-ui, pinned by `VERSION` file hashes. Change shared colors, navigation states and storage helpers upstream, then run its consumer sync with an explicit worktree map; do not hand-edit vendored files.
 - Products own layout, routes, saved choice keys and named palettes. Busnes aliases consume shared tokens; mark primary navigation with `ky-nav-item` while preserving current-page semantics.
 - Verify vendored files with `node src/ky-ui/check-vendor.mjs` from this document's directory. Builds/CI run that check. Rendered evidence and capture limitations are recorded in the repository-root `UI-VERIFICATION.md`.

@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type TouchEvent } from "react";
+import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type TouchEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { escapeHtmlText, processEmailHtml, resolveBodyMode } from "../lib/emailHtml";
 import { EmailBodyFrame, FRAME_SANDBOX } from "./read/EmailBodyFrame";
@@ -65,6 +65,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
+  const readerActionsId = useId();
   const [searchParams, setSearchParams] = useSearchParams();
   // App remounts this page on a switch, so the mailbox read here is fixed for its life.
   const [box] = useState(selectedMailboxId);
@@ -778,20 +779,20 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       if (action === "snooze" && isSnoozedMailbox) {
         // Re-snoozed in place: the rows stay, only their wake times moved.
         void loadInbox();
-      } else if (action === "read") {
+      } else if (action === "read" || action === "unread") {
         const updated = new Set(messageIds);
         setByTab((current) => {
           const next: Record<string, InboxEmail[]> = {};
           Object.entries(current).forEach(([tab, items]) => {
             next[tab] = items.map((item) =>
-              updated.has(item.messageId) ? { ...item, status: "read" } : item
+              updated.has(item.messageId) ? { ...item, status: action } : item
             );
           });
           return next;
         });
         setSelected((current) => {
           if (!current || !updated.has(current.messageId)) return current;
-          return { ...current, status: "read" };
+          return { ...current, status: action };
         });
       } else {
         setSelectedMessageIds((current) => current.filter((id) => !messageIds.includes(id)));
@@ -1411,6 +1412,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             </label>
           ) : null}
           {/* Contextual: every action needs a selection, so the bar shows only with one. */}
+          {selectedMessageIds.length > 0 ? <span className="inbox-selected-count" role="status">{selectedMessageIds.length} selected</span> : null}
           {selectedMessageIds.length > 0 ? batchActions.map((action) => (
             <button
               key={action.key}
@@ -1770,11 +1772,16 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                 <button type="button" onClick={replyAllToSelectedEmail} disabled={actionLoading}>Reply All</button>
                 <button type="button" onClick={forwardSelectedEmail} disabled={actionLoading}>Forward</button>
               </div>
-              <div className="email-reader-tools">
+              <button type="button" popoverTarget={readerActionsId}>More actions</button>
+              <div id={readerActionsId} popover="auto" className="email-reader-tools suite-action-menu"
+                onClickCapture={(event) => {
+                  if (event.target instanceof Element && event.target.closest("button:not([data-keep-open])")) event.currentTarget.hidePopover?.();
+                }}>
+                <p className="suite-action-menu-title">Message actions</p>
                 {[
                   { id: "archive", label: "Archive", icon: <ArchiveIcon />, onClick: () => applyInboxAction("archive", [selected.messageId], { closeModal: true }) },
                   { id: "snooze", label: "Snooze", icon: <ClockIcon />, onClick: () => setSnoozeTarget({ ids: [selected.messageId], fromReader: true }) },
-                  { id: "read", label: "Mark as Read", icon: <CheckIcon />, onClick: () => applyInboxAction("read", [selected.messageId]) },
+                  { id: "read", label: selected.status === "read" ? "Mark as unread" : "Mark as Read", icon: <CheckIcon />, onClick: () => applyInboxAction(selected.status === "read" ? "unread" : "read", [selected.messageId]) },
                   { id: "spam", label: "Mark as Spam", icon: <WarningIcon />, onClick: () => applyInboxAction("spam", [selected.messageId], { closeModal: true }) },
                   { id: "print", label: "Print", icon: <PrintIcon />, onClick: () => printEmails([selected]) },
                   {
@@ -1790,6 +1797,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                   <button
                     key={id}
                     type="button"
+                    data-keep-open={always || undefined}
                     className={danger ? "inbox-action-button btn-ghost btn-danger" : "inbox-action-button btn-ghost"}
                     aria-label={label}
                     title={label}
@@ -1905,6 +1913,10 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               })()}
               <div className="email-reader-facts">
                 <p><strong>Sender:</strong> {selected.sender || "-"}</p>
+              </div>
+              <details className="email-reader-details">
+                <summary>Message details and keywords</summary>
+                <div className="email-reader-facts">
                 <p><strong>Sent To:</strong> {selected.sentTo || "-"}</p>
                 <p><strong>Time:</strong> {formatTimestamp(selected.atUtc)}</p>
                 <p><strong>Status:</strong> {selected.status || "-"}</p>
@@ -1952,6 +1964,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                   ))}
                 </datalist>
               </div>
+              </details>
               {(() => {
                 // Once a verified view exists, its attachment list replaces
                 // the server's: it covers only the parts inside the signature
@@ -2024,7 +2037,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                 {showRawEmail ? (
                   <pre
                     key="raw"
-                    className="email-reader-body-block"
+                    className="email-reader-body-block email-reader-raw"
                   >
                     {displayBody(selected, decrypted[decryptedKey(selected.messageId)]).body || emptyBodyText}
                   </pre>

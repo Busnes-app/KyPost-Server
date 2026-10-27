@@ -137,7 +137,7 @@ describe("remote-content opt-in is per message (run-4 M7)", () => {
     await user.click(await screen.findByText("Weekly Digest"));
     await waitFor(() => expect(readerBodyHtml()).toContain("[Image Blocked]"));
 
-    await user.click(screen.getByRole("button", { name: "Show Remote Content" }));
+    await user.click(screen.getByRole("button", { name: "Show Remote Content", hidden: true }));
     await waitFor(() => expect(readerBodyHtml()).toContain(TRACKER));
 
     await user.click(screen.getByRole("button", { name: "Close" }));
@@ -151,7 +151,7 @@ describe("remote-content opt-in is per message (run-4 M7)", () => {
     await waitFor(() => expect(readerBodyHtml()).toContain("Pay now"));
     expect(readerBodyHtml()).not.toContain(TRACKER);
     expect(readerBodyHtml()).toContain("[Image Blocked]");
-    expect(screen.getByRole("button", { name: "Show Remote Content" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Show Remote Content", hidden: true })).toBeDefined();
   });
 
   it("re-blocks a message that was unblocked earlier in the session", async () => {
@@ -159,7 +159,7 @@ describe("remote-content opt-in is per message (run-4 M7)", () => {
     renderReadPage();
 
     await user.click(await screen.findByText("Weekly Digest"));
-    await user.click(screen.getByRole("button", { name: "Show Remote Content" }));
+    await user.click(screen.getByRole("button", { name: "Show Remote Content", hidden: true }));
     await waitFor(() => expect(readerBodyHtml()).toContain(TRACKER));
     await user.click(screen.getByRole("button", { name: "Close" }));
 
@@ -179,7 +179,7 @@ describe("remote-content opt-in is per message (run-4 M7)", () => {
     await user.click(await screen.findByText("Invoice attached"));
 
     await waitFor(() => expect(readerBodyHtml()).toContain("[Image Blocked]"));
-    await user.click(screen.getByRole("button", { name: "Show Remote Content" }));
+    await user.click(screen.getByRole("button", { name: "Show Remote Content", hidden: true }));
     await waitFor(() => expect(readerBodyHtml()).toContain(TRACKER));
   });
 });
@@ -434,26 +434,40 @@ describe("reader layout", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Weekly Digest" });
     expect(within(dialog).getByRole("heading", { level: 2, name: "Weekly Digest" })).toBeDefined();
-    const names = within(dialog).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent);
+    // JSDOM lacks native popover operations; real-browser checks cover visibility/dismissal.
+    const names = within(dialog).getAllByRole("button", { hidden: true }).map((b) => b.getAttribute("aria-label") ?? b.textContent);
     expect(names.slice(0, 4)).toEqual(["Close", "Reply", "Reply All", "Forward"]);
     expect(names).toEqual(
-      expect.arrayContaining(["Archive", "Snooze", "Mark as Read", "Mark as Spam", "Print", "Show Remote Content", "Delete"])
+      expect.arrayContaining(["Archive", "Snooze", "Mark as unread", "Mark as Spam", "Print", "Show Remote Content", "Delete"])
     );
   });
 
-  it("keeps keyboard focus on the remote-content tool when its label flips", async () => {
+  it("updates read status in place in both directions without dropping the message", async () => {
+    postJSON.mockResolvedValue({ ok: true, failed: [], processed: 1 });
+    const user = userEvent.setup();
+    renderReadPage();
+    await user.click(await screen.findByText("Weekly Digest"));
+    await user.click(screen.getByRole("button", { name: "Mark as unread", hidden: true }));
+    await waitFor(() => expect(postJSON).toHaveBeenCalledWith("/api/inbox/actions", expect.objectContaining({ action: "unread", messageIds: [newsletter.messageId] })));
+    const read = await screen.findByRole("button", { name: "Mark as Read", hidden: true });
+    expect(screen.getByRole("dialog", { name: "Weekly Digest" })).toBeDefined();
+    await user.click(read);
+    await waitFor(() => expect(postJSON).toHaveBeenCalledWith("/api/inbox/actions", expect.objectContaining({ action: "read", messageIds: [newsletter.messageId] })));
+    expect(await screen.findByRole("button", { name: "Mark as unread", hidden: true })).toBeDefined();
+  });
+
+  it("keeps the remote-content tool identity when its label flips", async () => {
     const user = userEvent.setup();
     renderReadPage();
     await user.click(await screen.findByText("Weekly Digest"));
     await waitFor(() => expect(readerBodyHtml()).toContain("[Image Blocked]"));
 
-    const toggle = screen.getByRole("button", { name: "Show Remote Content" });
-    toggle.focus();
-    await user.keyboard("{Enter}");
+    const toggle = screen.getByRole("button", { name: "Show Remote Content", hidden: true });
+    // Native popover keyboard/focus is verified in the real-browser regression.
+    await user.click(toggle);
 
     await waitFor(() => expect(readerBodyHtml()).toContain(TRACKER));
-    expect(screen.getByRole("button", { name: "Hide Remote Content" })).toBe(toggle);
-    expect(document.activeElement).toBe(toggle);
+    expect(screen.getByRole("button", { name: "Hide Remote Content", hidden: true })).toBe(toggle);
     expect(toggle.getAttribute("title")).toBe("Hide Remote Content");
   });
 });
