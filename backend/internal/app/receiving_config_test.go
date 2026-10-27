@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/asn1"
@@ -133,5 +134,39 @@ func TestNativeReceivingConfigRejectsCertificatePurpose(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "server authentication") || output.Len() != 0 {
 			t.Fatalf("known=%v certificate purpose reached DNS or output: %v %s", known, err, output.String())
 		}
+	}
+}
+
+func TestNativeReceivingConfigRefusesRSACertificateBelow2048(t *testing.T) {
+	r, _ := receivingFixture(t)
+	t.Setenv("CONFIG_DIR", r.configDir)
+	t.Setenv("STATE_DIR", r.stateDir)
+	t.Setenv("KYPOST_NATIVE_MAIL", "true")
+	t.Setenv("KYPOST_NATIVE_RECEIVING", "true")
+	cert, key, leaf := receivingTestCertificate(t, t.TempDir())
+	weak, err := rsa.GenerateKey(rand.Reader, 2047)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := *leaf
+	template.PublicKey = nil
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &weak.PublicKey, weak)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(weak)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err = runReceivingConfig([]string{"127.0.0.1:2525", leaf.DNSNames[0], cert, key}, &output)
+	if err == nil || !strings.Contains(err.Error(), "at least 2048 bits") || output.Len() != 0 {
+		t.Fatalf("RSA-2047 receiving certificate: %v %s", err, output.String())
 	}
 }

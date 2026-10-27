@@ -28,6 +28,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 )
 
 // tlsFilesFromEnv reads the configured certificate and key paths.
@@ -113,6 +115,9 @@ func (rc *reloadingCertificate) reload() error {
 	cert, err := tls.LoadX509KeyPair(rc.certFile, rc.keyFile)
 	if err != nil {
 		return fmt.Errorf("load TLS keypair (%s, %s): %w", rc.certFile, rc.keyFile, err)
+	}
+	if err := cryptutil.RequireStrongCertificateKey(cert); err != nil {
+		return fmt.Errorf("TLS certificate %s: %w", rc.certFile, err)
 	}
 	rc.mu.Lock()
 	rc.cert = &cert

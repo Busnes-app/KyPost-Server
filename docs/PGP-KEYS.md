@@ -90,6 +90,10 @@ Other PGP boundaries:
   Preserve old keys and backups; retaining a key does not make it eligible for
   new encryption or signing. If autosave cannot seal or store a new draft,
   compose shows **Autosave unavailable** and preserves the previous snapshot.
+- **Server RSA minimum: 2048 bits.** Server-side encryption (legacy
+  server-held keys and incoming encryption) and signing refuse an RSA primary
+  or selected subkey below 2048 bits and name the key. Incoming encryption
+  leaves the original message in place. See [key strength](STRONG-CRYPTO.md).
   Keep the window open and copy the current text somewhere safe before leaving.
   This browser policy does not establish TLS or
   the independent native clients' policies.

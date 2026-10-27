@@ -63,6 +63,17 @@ and displays a warning; newer typing remains only in the open compose window.
 TLS and native-client policies are separate boundaries. See
 [the user-facing key policy](docs/PGP-KEYS.md).
 
+### Key strength
+
+KyPost's own code refuses RSA keys below 2048 bits in OIDC provider JWKS,
+server-side OpenPGP encryption and signing, and TLS certificates it serves or
+hands to the receiver; operator secrets have minimum lengths. Setting
+`GODEBUG=fips140=on` (`docker-compose.strong-crypto.yml`) restricts every TLS
+client in KyPost to RSA-2048+, P-256+ and Ed25519 certificate chains. Upstream
+components (Maddy, Rspamd, Ollama, restic, remote mail servers, identity
+providers, push services, proxies and browsers) keep their own policies. The
+key table and enable steps are in [key strength](docs/STRONG-CRYPTO.md).
+
 - **Optional Rspamd:** native SMTP filtering gives the operator-local scanner raw MIME and SMTP envelope/peer metadata. A compromised scanner can allow/refuse incoming mail and, through its shared network namespace, reach KyPost's other loopback services; it receives no KyPost filesystem mounts or keys. The pinned nonroot/capability-free, read-only sidecar binds only loopback11333, disables controller/proxy and remote payload/map/AI services, and uses bounded temporary state. SPF/DKIM/DMARC checks make ordinary DNS lookups through the host resolver. False positives at the reject threshold permanently refuse new SMTP mail; outages, unknown/skipped acceptance verdicts and transport errors temporarily refuse it. Rejection never deletes an accepted obligation. Trusted source IP comes from Maddy, while HELO remains sender-asserted. Sender-written authentication/spam headers grant no authority. Raw response text and correspondence are excluded from scanner/application logs. This initial reject-only profile does not implement Junk placement, Bayesian learning, antivirus, PGP-body inspection. The separate hosted pilot is described below. See [operator policy and rollback](docs/RECEIVING_SETUP.md#optional-rspamd-sidecar).
 
 ### Cloudflare receiving pilot
@@ -414,6 +425,7 @@ Security-sensitive PRs should include:
 - [README Security Section](docs/PGP-KEYS.md#where-your-pgp-private-key-lives) — PGP key custody, session behavior, users and roles
 - [Reverse Proxy Networking](docs/Reverse_Proxy_Networking.md) — Setting up a proxy on `kypost-net`
 - [TLS setup](docs/TLS.md) — TLS termination and proxy configuration
+- [Key strength](docs/STRONG-CRYPTO.md) — key sizes, the `GODEBUG=fips140=on` profile and its scope
 - [docs/VERIFYING-RELEASES.md](docs/VERIFYING-RELEASES.md) — verify a release image and rebuild its binary
 - [docs/ASSURANCE-CASE.md](docs/ASSURANCE-CASE.md) — threat model and the argument that the protections above hold
 - OWASP guidelines on secure development practices

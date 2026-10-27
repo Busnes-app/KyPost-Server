@@ -55,6 +55,7 @@ Classification flow:
 
 ## Project Structure
 
+- `docker-compose.strong-crypto.yml`: optional strong-key profile, `GODEBUG=fips140=on` only; see [STRONG-CRYPTO.md](STRONG-CRYPTO.md).
 - `docker-compose.rspamd.yml`: optional pinned private scanner sidecar; fixed configuration in `scripts/rspamd/rspamd.conf`.
 - `docker-compose.receiving.yml`: optional controlled receiver supervision and explicit SMTP publish with operator-supplied read-only engine/TLS mounts.
 

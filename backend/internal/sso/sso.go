@@ -532,6 +532,9 @@ func discoverProvider(ctx context.Context, cfg SSOSettings, redirectURI string) 
 		}
 	}
 
+	jwksClient := *client
+	jwksClient.Transport = strongJWKSTransport{base: client.Transport}
+
 	return &Provider{
 		logout: logout,
 		oauth: &oauth2.Config{
@@ -541,7 +544,7 @@ func discoverProvider(ctx context.Context, cfg SSOSettings, redirectURI string) 
 			RedirectURL:  redirectURI,
 			Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
 		},
-		verifier: provider.VerifierContext(ctx, &oidc.Config{
+		verifier: provider.VerifierContext(oidc.ClientContext(ctx, &jwksClient), &oidc.Config{
 			ClientID:             cfg.ClientID,
 			SupportedSigningAlgs: allowedSigningAlgs,
 		}),

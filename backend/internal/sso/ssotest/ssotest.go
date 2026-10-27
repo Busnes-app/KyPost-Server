@@ -88,6 +88,10 @@ func New(t *testing.T, clientID string) *IdP {
 	return idp
 }
 
+// UseSigningKey replaces the published and signing key before first use, so a
+// test can serve an undersized RSA key.
+func (i *IdP) UseSigningKey(key *rsa.PrivateKey) { i.signKey = key }
+
 // URL is the issuer URL, an https loopback address.
 func (i *IdP) URL() string { return i.Server.URL }
 

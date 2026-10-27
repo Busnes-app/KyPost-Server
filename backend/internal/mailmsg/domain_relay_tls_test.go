@@ -35,7 +35,14 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 		c := DomainRelay{Generation: "12345678-1234-4234-8234-123456789abc", Domains: []string{"example.test"}, Issuer: "https://idp.example", Host: host, Port: port, Username: "operator-relay-login", Password: "operator-relay-secret"}
 		mode := os.Getenv("KYPOST_RELAY_TLS_PROOF_CASE")
 		if strings.HasPrefix(mode, "check-") {
-			ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+			// Cases that must complete get room for a fresh process's first handshake (FIPS
+			// self-tests, race detector, a busy runner); the rest prove the 150ms budget holds.
+			budget := 150 * time.Millisecond
+			completes := mode == "check-accepted" || mode == "check-no-auth" || mode == "check-auth-echo"
+			if completes {
+				budget = 5 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), budget)
 			if mode == "check-cancel-auth" {
 				cancel()
 				ctx, cancel = context.WithCancel(context.Background())
@@ -45,8 +52,11 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 			defer cancel()
 			start := time.Now()
 			err = c.Check(ctx)
-			if time.Since(start) > 2*time.Second {
+			if !completes && time.Since(start) > 2*time.Second {
 				t.Fatal("check ignored absolute cancellation budget")
+			}
+			if err != nil {
+				t.Logf("check cause: %v", errors.Unwrap(err))
 			}
 		} else {
 			err = c.Deliver("mailbox@example.test", []string{"visible@example.test", "hidden@example.test"}, []byte(relayProofMIME))
