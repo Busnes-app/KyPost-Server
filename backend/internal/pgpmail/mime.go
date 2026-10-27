@@ -168,6 +168,9 @@ func encryptMIME(plaintext []byte, recipientArmoredPubKeys []string, signer *Ide
 		if err != nil {
 			return nil, fmt.Errorf("pgpmail: parse recipient key: %w", err)
 		}
+		if err := requireStrongRSA(key, false); err != nil {
+			return nil, err
+		}
 		if err := recipients.AddKey(key); err != nil {
 			return nil, fmt.Errorf("pgpmail: add recipient key: %w", err)
 		}
@@ -175,6 +178,9 @@ func encryptMIME(plaintext []byte, recipientArmoredPubKeys []string, signer *Ide
 
 	builder := crypto.PGP().Encryption().Recipients(recipients)
 	if signer != nil {
+		if err := requireStrongRSA(signer.key, true); err != nil {
+			return nil, err
+		}
 		builder = builder.SigningKey(signer.key)
 	}
 	encHandle, err := builder.New()

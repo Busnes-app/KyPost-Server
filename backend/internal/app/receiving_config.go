@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
@@ -93,6 +94,9 @@ func (r *receivingRuntime) writeConfig(ctx context.Context, executable, address,
 	pair, err := tls.X509KeyPair(certificate, key)
 	if err != nil {
 		return errors.New("receiving certificate and private key must form a valid TLS pair")
+	}
+	if err := cryptutil.RequireStrongCertificateKey(pair); err != nil {
+		return fmt.Errorf("receiving %w", err)
 	}
 	leaf, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil || leaf.VerifyHostname(host) != nil || time.Now().Before(leaf.NotBefore) || !time.Now().Before(leaf.NotAfter) {

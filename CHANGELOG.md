@@ -20,6 +20,15 @@ non-prerelease version.
 
 ### Security
 
+- RSA keys below 2048 bits are refused in an OIDC provider's JWKS (sign-in,
+  step-up and native sign-on fail until the provider rotates), for server-side
+  OpenPGP encryption and signing (the error names the key; stored keys and mail
+  are unchanged), and for the `TLS_CERT_FILE` and receiving certificates (startup
+  or `receiving config` refuses; a renewal to a weak certificate keeps the
+  current one). Optional `docker-compose.strong-crypto.yml` sets
+  `GODEBUG=fips140=on`, restricting KyPost's TLS clients to RSA-2048+, P-256+
+  and Ed25519 chains. CI runs the backend suite under both modes. See
+  [key strength](docs/STRONG-CRYPTO.md).
 - Native-device key delivery is RFC 9180 HPKE only for new enrollments:
   mode_base, DHKEM(P-256, HKDF-SHA256) 0x0010, HKDF-SHA256 0x0001,
   AES-256-GCM 0x0002, with `info` binding the version, device ID and OpenPGP

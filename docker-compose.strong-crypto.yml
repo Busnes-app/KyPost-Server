@@ -1,0 +1,6 @@
+# Append last to the Compose chain you already use; it changes nothing else.
+# See docs/STRONG-CRYPTO.md.
+services:
+  kypost-server:
+    environment:
+      GODEBUG: fips140=on

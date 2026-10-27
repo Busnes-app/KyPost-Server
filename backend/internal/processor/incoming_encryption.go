@@ -123,6 +123,9 @@ func (p *Poller) encryptIncomingMessage(ctx context.Context, uc userCtx, msg ima
 		return err
 	}
 	encrypted, err := pgpmail.EncryptStoredMIME(source.Raw, u.PGPPublicKey)
+	if errors.Is(err, pgpmail.ErrWeakRSAKey) {
+		return fmt.Errorf("original mail preserved; replace your PGP key: %w", err)
+	}
 	if err != nil {
 		return errors.New("public-key encryption failed; original mail preserved, check your PGP key")
 	}

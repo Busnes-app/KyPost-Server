@@ -42,7 +42,9 @@ TLS?" is answered by the connection itself rather than by a header, so
 `TRUSTED_PROXY_CIDRS` does not apply at all. Renewals are picked up without a
 restart, which matters because a restart logs everyone out. Setting only one
 of the two paths is a startup error, not a fallback to cleartext.
-Certificates are deliberately never baked into the image.
+Certificates are deliberately never baked into the image. An RSA certificate
+key below 2048 bits is refused at startup, and a renewal to one keeps the
+current certificate; see [key strength](STRONG-CRYPTO.md).
 
 **2. Cloudflare Tunnel.** cloudflared gives the browser a real HTTPS origin,
 which is all the login proof-of-work needs, with no TLS configuration of your

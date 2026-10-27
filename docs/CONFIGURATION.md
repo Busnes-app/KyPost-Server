@@ -33,6 +33,7 @@ Common variables:
 - `TRUSTED_PROXY_HEADER` (default `x-forwarded-for`): the one header a trusted proxy names the client in, `x-forwarded-for` (nginx, Caddy; right-most element) or `cf-connecting-ip` (cloudflared). The other is never read. Any other value refuses startup.
 - `WEB_PORT` (default `5866`)
 - `TZ` (default `America/New_York`)
+- `GODEBUG` (unset by default): `fips140=on`, set by `docker-compose.strong-crypto.yml`, restricts KyPost's TLS clients to RSA-2048+, P-256+ and Ed25519 certificate keys. See [key strength](STRONG-CRYPTO.md).
 - `SECRET_DIR` (default `/kypost/private`. Every `*_KEY_FILE` / `*_SECRET_FILE` default below is derived from this, so moving it moves all of them together.)
 - Domain relay configuration uses `$CONFIG_DIR/native-relay.json` and `$SECRET_DIR/native-relay.key`, with no individual path overrides or environment credentials. Its retained key also derives owner/job-bound outbox encryption keys. Configure through the protected admin API; primary native compose/client-PGP sending uses fresh authority and the durable outbox.
 - `KYPOST_DISABLE_AI_SORTING` (default `false`): `true` turns off automatic labels for every account, overriding each user's auto-apply setting. Filter rules still run; everything else gets the fallback label (Primary), unless it already carries one of the account's labels. Neither the embedding sorter nor Ollama runs, the bundled Ollama and its model pull are not started, and the Ollama version check and update email stop. Other values refuse startup.
