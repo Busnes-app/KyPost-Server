@@ -29,7 +29,11 @@ for path in sorted(P.glob('*-round*.json')):
  for name,f in files.items():
   assert all(f[k]==pins[name][k] for k in ['sha256','width','height']);assert all(type(f['scores'][k])is int and 0<=f['scores'][k]<=10 for k in WEIGHTS)
   total=Fraction(rounded(sum(Fraction(v)*f['scores'][k]for k,v in WEIGHTS.items())));assert total==Fraction(str(f['total']))
-  values=[f['ky_fit']['scores'][k]for k in BRAND if f['ky_fit']['scores'][k]not in ['N/A',None]];assert values and all(type(v)is int and 0<=v<=10 for v in values);brand=sum(map(Fraction,values))/len(values)
+  brand_scores=f['ky_fit']['scores']if isinstance(f['ky_fit'],dict)else f.get('brand_scores',f.get('brand'))
+  assert isinstance(brand_scores,dict) and set(brand_scores)==set(BRAND)
+  values=[brand_scores[k]for k in BRAND if brand_scores[k]not in ['N/A',None]];assert values and all(type(v)is int and 0<=v<=10 for v in values);brand=sum(map(Fraction,values))/len(values)
+  if not isinstance(f['ky_fit'],dict):
+   shown=Decimal(str(f['ky_fit']));assert (Decimal(brand.numerator)/Decimal(brand.denominator)).quantize(Decimal(1).scaleb(shown.as_tuple().exponent),rounding=ROUND_HALF_UP)==shown
   if not f.get('duplicate_of'):groups[f['cohort']].append(total)
   scores.append([num,who,name,f['cohort'],*[f['scores'][k]for k in WEIGHTS],str(total),str(brand),hashlib.sha256(path.read_bytes()).hexdigest()])
  satisfied=r.get('verdict',{}).get('satisfied');means={c:sum(v)/len(v)for c,v in groups.items()}
@@ -38,6 +42,7 @@ for path in sorted(P.glob('*-round*.json')):
 numbers={n for _,n in reports}
 if (P/'manifest-03-after.json').exists():numbers.add(2)
 if (P/'manifest-04-after.json').exists():numbers.add(3)
+if (P/'manifest-05-after.json').exists():numbers.add(4)
 for num in sorted(numbers):
  a,b=reports.get(('opus',num)),reports.get(('sol',num))
  if a and b:

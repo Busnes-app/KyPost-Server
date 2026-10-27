@@ -1,15 +1,17 @@
 Item,Value
 repository,Busnes-app/KyPost-Server
-url,Pending follow-up PR
+url,Pending next follow-up PR;490merged
 branch,ui/post-control-consistency
-ui_source,2ff40cc2394d1bab8cf14935ba6b219a5f28b8f1
-evidence,b6852d8f
-status,reopened under clarified Opus-only gate; round3 primary reviews pending
+ui_source,558761afa10560a5ba9522e6d7603dbf2a17ccfd
+evidence,546cc595
+status,"OpusR3 rounds7.9, improve; R4 scores pending"
 merge_deploy_authorized,False
-council_rounds,"2 complete,3pending"
+council_rounds,"3 complete,4pending"
 combined_exact,"513/64 (historical, not gate)"
 combined_rounded,"8.0 (historical, not gate)"
 accepted_visual_progression,False
 gemini,Unused; both primaries not independently satisfied
-opus_rounded,7.6; previous captured set
-previous_pr,https://github.com/Busnes-app/KyPost-Server/pull/489
+opus_rounded,7.9
+previous_pr,https://github.com/Busnes-app/KyPost-Server/pull/490
+opus_exact,631/80
+sol_exact,277/32

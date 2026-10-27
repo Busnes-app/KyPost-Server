@@ -1,0 +1,3624 @@
+{
+ "schema": "ky-ui-council-scores/2",
+ "round": 3,
+ "round_label": "kypost-ui-post-eight round3 (stage04 after, control consistency)",
+ "reviewer": {
+  "model": "claude-opus-5-5",
+  "name": "Claude Opus 5.5 (independent primary reviewer)"
+ },
+ "rubric": {
+  "version": "ky-suite-v2",
+  "weights": {
+   "hierarchy": 0.2,
+   "typography": 0.15,
+   "density_layout": 0.2,
+   "color": 0.15,
+   "visible_affordances": 0.15,
+   "coherence": 0.15
+  },
+  "rounding": "total = Decimal sum(weight*score).quantize(0.1, ROUND_HALF_UP); cohort/overall means exact over rounded totals, half-up to 0.1",
+  "brand": "ky_fit = mean of applicable palette_tokens/type_geometry/shell/accent_discipline/suite_cohesion (0.20 each); N/A excluded and listed per file; suite_cohesion scored from four KyIdentity references"
+ },
+ "inputs": {
+  "worktree": "/home/yoshi/git/busnes.app/kypost-server/.claude/worktrees/post-control-consistency",
+  "worktree_head": "917f3f6e (only trims a blank line in checks/r3-web-unit.txt vs 546cc595)",
+  "frozen_evidence_commit": "546cc595; screenshots/ equal at 546cc595 (git diff --quiet)",
+  "product_source_commit": "2ff40cc2394d1bab8cf14935ba6b219a5f28b8f1; no frontend/src diff 2ff40cc2..546cc595",
+  "product_vendor": "frontend/src/ky-ui/VERSION 0.4.1; tokens.css 639f8e73... equals authority",
+  "authority": {
+   "repository": "ky-ui",
+   "commit": "639e5882cada099dd189197beb2a3e3b4c188658",
+   "objects": {
+    "skills/ky-suite-ui/SKILL.md": [
+     "61c713b7cd428d208a8a8ad40592162886c8bbb2",
+     "6010ea39ac6e4e21926eb2a45d8a5a4894cd9e5e6eec07aca4cf60423233dcc2",
+     5854
+    ],
+    "skills/ky-suite-ui/references/rubric.md": [
+     "7c07eacb8eed7b76550a1012665206ebdc47a200",
+     "ad3516620420fbdc30f5273f82b7c72c76e1365d1b6296fcaa56be3cbebf2c41",
+     7817
+    ],
+    "skills/ky-suite-ui/references/design-contract.md": [
+     "c169738377879c6122c75b9d537f1ea4919bc62f",
+     "392afb88c51fb3cfad6c94d6b841804b194d107a0431c31f35ff81d3a7a444d3",
+     6593
+    ],
+    "src/tokens.css": [
+     "6b6dace6be00465254c1b0c19e6f95dc84f87f67",
+     "639f8e73259aca02119b98a5340539d5e8e16d65fd5f6124b939fdfe9c5f86af",
+     3575
+    ],
+    "src/navigation.css": [
+     "30fd31901c2536cf0d7dbd30e79ac108842c87c4",
+     "fbd0aea3e45fa818f916ad1bc35832f6ac26e37124208ffde029b809048b4380",
+     1244
+    ]
+   },
+   "object_format": "[git blob, sha256, bytes]; all five sha256 equal authority.json"
+  },
+  "metadata_sha256": {
+   "authority.json": "ae7b83acaebc9d3c158a2379e2e21ac42c5507a9fb71a5a6ccb9415d6acdf5b9",
+   "inventory-v3.json": "d548488fb70e553772ef75476e635a5ccf652054f2e6f7fb489b3f094d68d13f",
+   "duplicate-audit-v3.json": "9ff72401490001bf9034a80bd351e824b72e997f3709e3a578c231da1f5a8c34",
+   "manifest-04-after.json": "00fc2b3ff9db81208cf094dd42f7e39fb730e395bae5fe410cc2e177835fed39",
+   "capture-provenance-r3.json": "fef4bf421e2708f77ce4891f9c4dd87dc80306ab7da5780361562bdd487235cf",
+   "brand-references.json": "af51198db9c4e6ed68c0c8c154bfb27e90ee2f999a81e4aa697d57d52ef84228",
+   "progression-rule.json": "080f0f4586a7f821cc5d61aae3a2f8e8ff986f05c6aca409b6dc427d70941a78",
+   "manifest-03-after.json": "48f1eab5c12b76f59889456cd8d7830c706df72add9f2dc5b442654fb95485be",
+   "opus-round2.json": "a94c90731efb227e3d1961fe8b6a0c1835ff2def5e3af9d9d7009c351e4931da",
+   "AGENTS.md": "583535700463fc963ddaea08d33ef5645c2f47608ebed532b3aca53d7df32327"
+  },
+  "metadata_order": "authority/inventory/duplicate/manifest-04/provenance/brand/progression-rule read before freeze; manifest-03-after and opus-round2 only after freeze. progression-rule.json states the round2 Opus aggregate (1221/160); I read it before freezing and disclose that exposure. No peer report, COUNCIL.md, workbook, CSV, audits, gallery, historical quality image or prior per-file score was opened before the freeze.",
+  "reviewer_scripts_sha256": {
+   "inventory.py": "2db36e9928b1d764ed29cbbce4abd77637b6091a96aadf179d5f865b17635c59",
+   "freeze.py": "ed7efe796019ab7c19ff9dedb65698a02423393312c64d7ef155ce099f7d6a97",
+   "drift.py": "05d2af3f61ce77f451f411fb1c54f83aa1f2ff214c8647ed3f769f7a8d039281",
+   "publish.py": "18d3185328d0f06914b972b9dbb90f34b9500450e8673ce1174f6c78d39501a3"
+  },
+  "capture": {
+   "browser": "Chromium 153.0.8010.12 / Playwright 1.63",
+   "dpr": 1,
+   "viewports": [
+    "1280x900",
+    "390x844"
+   ],
+   "theme_source": "OS light/dark; no saved choice",
+   "locale": "en-US",
+   "timezone": "America/New_York",
+   "captured_at": "2026-10-27T18:41:47.401Z",
+   "fixture": "private synthetic everyday user, four seeded messages, populated contacts, real PoW sign-in, owned TLS sandbox demo; no mocks/auth bypass/Ollama/sends; forms unsubmitted"
+  },
+  "pinned_typeface": "Space Grotesk (owner-pinned); manifest fonts list Space Grotesk for all 32 and IBM Plex Mono additionally on login"
+ },
+ "inventory": {
+  "total_files": 136,
+  "by_role": {
+   "brand-reference": 4,
+   "historical-r2-scored (paired drift only)": 32,
+   "historical-stage00-baseline": 32,
+   "scored-stage04-original": 32,
+   "superseded-stage02": 32,
+   "supplemental-settled-login-before (unscored)": 4
+  },
+  "scored_originals": 32,
+  "unique_sha256": 32,
+  "exact_duplicates": 0,
+  "near_duplicates": 0,
+  "same_size_pairs_recomputed": 240,
+  "min_changed_fraction": 0.06626128472222222,
+  "min_pair": {
+   "a": "screenshots/kypost-04-after-contacts-desktop-light.png",
+   "b": "screenshots/kypost-04-after-inbox-desktop-light.png",
+   "changed_fraction": 0.06626128472222222,
+   "max_channel_delta": 231,
+   "near_duplicate": false
+  },
+  "verification": "Independent script: membership of inventory-v3 == manifest-04-after (32); sha256/bytes/width/height re-read from disk match both; brand files match brand-references.json; all 240 same-size pair changed_fraction/max_channel_delta recomputed with numpy equal duplicate-audit-v3; 0 problems.",
+  "cross_stage_exact_matches": [
+   [
+    "screenshots/kypost-02-after-inbox-desktop-light.png",
+    "screenshots/kypost-03-after-inbox-desktop-light.png",
+    "screenshots/kypost-04-after-inbox-desktop-light.png"
+   ],
+   [
+    "screenshots/kypost-00-before-appearance-mobile-dark.png",
+    "screenshots/kypost-02-after-appearance-mobile-dark.png",
+    "screenshots/kypost-03-after-appearance-mobile-dark.png",
+    "screenshots/kypost-04-after-appearance-mobile-dark.png"
+   ],
+   [
+    "screenshots/kypost-02-after-reader-mobile-light.png",
+    "screenshots/kypost-03-after-reader-mobile-light.png"
+   ],
+   [
+    "screenshots/kypost-02-after-reader-mobile-dark.png",
+    "screenshots/kypost-03-after-reader-mobile-dark.png"
+   ],
+   [
+    "screenshots/kypost-02-after-contacts-desktop-light.png",
+    "screenshots/kypost-03-after-contacts-desktop-light.png"
+   ],
+   [
+    "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+    "screenshots/kypost-03-after-contact-editor-desktop-dark.png"
+   ],
+   [
+    "screenshots/kypost-02-after-login-mobile-light.png",
+    "screenshots/kypost-03-after-login-mobile-light.png",
+    "screenshots/kypost-04-after-login-mobile-light.png"
+   ],
+   [
+    "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+    "screenshots/kypost-03-after-inbox-selection-desktop-light.png"
+   ],
+   [
+    "screenshots/kypost-02-after-login-desktop-dark.png",
+    "screenshots/kypost-03-after-login-desktop-dark.png",
+    "screenshots/kypost-04-after-login-desktop-dark.png"
+   ],
+   [
+    "screenshots/kypost-00-before-appearance-desktop-dark.png",
+    "screenshots/kypost-02-after-appearance-desktop-dark.png",
+    "screenshots/kypost-03-after-appearance-desktop-dark.png",
+    "screenshots/kypost-04-after-appearance-desktop-dark.png"
+   ],
+   [
+    "screenshots/kypost-02-after-login-desktop-light.png",
+    "screenshots/kypost-03-after-login-desktop-light.png",
+    "screenshots/kypost-04-after-login-desktop-light.png"
+   ],
+   [
+    "screenshots/kypost-02-after-reader-desktop-dark.png",
+    "screenshots/kypost-03-after-reader-desktop-dark.png"
+   ],
+   [
+    "screenshots/kypost-00-before-inbox-desktop-dark.png",
+    "screenshots/kypost-02-after-inbox-desktop-dark.png",
+    "screenshots/kypost-04-after-inbox-desktop-dark.png"
+   ],
+   [
+    "screenshots/kypost-02-after-login-mobile-dark.png",
+    "screenshots/kypost-03-after-login-mobile-dark.png",
+    "screenshots/kypost-04-after-login-mobile-dark.png"
+   ],
+   [
+    "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+    "screenshots/kypost-03-after-contact-editor-desktop-light.png"
+   ],
+   [
+    "screenshots/kypost-00-before-appearance-desktop-light.png",
+    "screenshots/kypost-02-after-appearance-desktop-light.png",
+    "screenshots/kypost-03-after-appearance-desktop-light.png",
+    "screenshots/kypost-04-after-appearance-desktop-light.png"
+   ],
+   [
+    "screenshots/kypost-00-before-appearance-mobile-light.png",
+    "screenshots/kypost-02-after-appearance-mobile-light.png",
+    "screenshots/kypost-03-after-appearance-mobile-light.png",
+    "screenshots/kypost-04-after-appearance-mobile-light.png"
+   ],
+   [
+    "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+    "screenshots/kypost-03-after-contact-editor-mobile-dark.png"
+   ],
+   [
+    "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+    "screenshots/kypost-03-after-contact-editor-mobile-light.png"
+   ],
+   [
+    "screenshots/kypost-02-after-contacts-desktop-dark.png",
+    "screenshots/kypost-03-after-contacts-desktop-dark.png"
+   ],
+   [
+    "screenshots/kypost-02-after-reader-desktop-light.png",
+    "screenshots/kypost-03-after-reader-desktop-light.png"
+   ]
+  ],
+  "cross_stage_note": "Cross-stage identical bytes are historical copies, not duplicates within the scored set; stage04 login x4, appearance x4 and inbox-desktop-light equal stage03.",
+  "files": [
+   {
+    "file": "brand-references/kyidentity-02-after-appearance-mobile-dark.png",
+    "sha256": "ea7033aea61cc689cc94cb5a362d5c9dd7dfbce798c27ed7ce89e8cbd3198fe1",
+    "bytes": 42245,
+    "width": 390,
+    "height": 844,
+    "role": "brand-reference"
+   },
+   {
+    "file": "brand-references/kyidentity-02-after-appearance-mobile-light.png",
+    "sha256": "b82cb35eae6ead72c08291c04eb188a7549a84ce2e2cc27e7fd948698c6037b6",
+    "bytes": 41497,
+    "width": 390,
+    "height": 844,
+    "role": "brand-reference"
+   },
+   {
+    "file": "brand-references/kyidentity-02-after-users-manage-desktop-dark.png",
+    "sha256": "c88074992215e2e10fbb0518cafb30d9043cc434713fff8fdc3de81687a1c873",
+    "bytes": 89973,
+    "width": 1280,
+    "height": 900,
+    "role": "brand-reference"
+   },
+   {
+    "file": "brand-references/kyidentity-02-after-users-manage-desktop-light.png",
+    "sha256": "f13eb7bdc897cf717441dfb5e5ed555efb034eb841fac3bf26f02a7a2de5cfe4",
+    "bytes": 92667,
+    "width": 1280,
+    "height": 900,
+    "role": "brand-reference"
+   },
+   {
+    "file": "screenshots/kypost-00-before-appearance-desktop-dark.png",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "bytes": 80562,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-appearance-desktop-light.png",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "bytes": 79855,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-appearance-mobile-dark.png",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "bytes": 40664,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-appearance-mobile-light.png",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "bytes": 39770,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-compose-desktop-dark.png",
+    "sha256": "509241a201c823d554e75dec353fe861d1a837d3d7881ebbbf199d8808e1a77b",
+    "bytes": 64113,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-compose-desktop-light.png",
+    "sha256": "94a31a53bcad658b266fde4c644aadea84ca2139a2984a9dbb633499c0cfd12c",
+    "bytes": 65169,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-compose-mobile-dark.png",
+    "sha256": "61b25d1063158b643663f9385aac62e4eb6964433bd470c21c3735a63e7175ee",
+    "bytes": 29576,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-compose-mobile-light.png",
+    "sha256": "ab23cb2383aa22eaacf53307fc1205ab76fbfd14ae41c2f5f7cf11110f81539f",
+    "bytes": 29071,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-contact-editor-desktop-dark.png",
+    "sha256": "84551c8eb938e3cf8e17da6cadea6c9ac6afe594da961f3da2423e65988ef132",
+    "bytes": 65314,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-contact-editor-desktop-light.png",
+    "sha256": "46b8edd7e06a3d9bce92fa2dcea782f52691adeae823c98426600254d48912a0",
+    "bytes": 66596,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-contact-editor-mobile-dark.png",
+    "sha256": "084f3b3ff5afcc52d4ba3cdd389a175cc1bb3907c7cf83a7157fc291b945f377",
+    "bytes": 26184,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-contact-editor-mobile-light.png",
+    "sha256": "c86315220cdfd2a64e0dba681a431e9a44beef584fb1aed22c38f96b3979ef8c",
+    "bytes": 25394,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-contacts-desktop-dark.png",
+    "sha256": "228e6a8af400f27ebd935194712bad0ef33d68076bdfdce904dc9095b9302a0b",
+    "bytes": 70689,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-contacts-desktop-light.png",
+    "sha256": "cf44d96a71b47b8bb74da46b6f84c552b5823bf9831c95cadabccc57ec97735b",
+    "bytes": 69881,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-contacts-mobile-dark.png",
+    "sha256": "89930b4f6ad2ce1f477b2a5431187d7ff759b401ae4cfd4e2c949b3d43387f7d",
+    "bytes": 53986,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-contacts-mobile-light.png",
+    "sha256": "d9c51cb2eeee385f6a8a6d20022ddda912f51a220894218c63789dea92dcbc48",
+    "bytes": 52287,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-desktop-dark.png",
+    "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+    "bytes": 66199,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-desktop-light.png",
+    "sha256": "69fbc387ed67d3b4b3fef054a375a0ad69c61c4c1fc89987a4a766eec8c2abab",
+    "bytes": 65203,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-mobile-dark.png",
+    "sha256": "15b0c04a94899c43737d4726b27e603e0af5279db3cb28852d61cf41969c2c08",
+    "bytes": 46921,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-mobile-light.png",
+    "sha256": "3d9a2070364a5c4b39f587e493c75f4c3f534ef9a29ae3747340731c4596ae28",
+    "bytes": 46355,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-selection-desktop-dark.png",
+    "sha256": "8c6fddb5cb417376147211c5a8cb6d2a0e2c32a7786bee17d54bcbc6b2d9d573",
+    "bytes": 71657,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-selection-desktop-light.png",
+    "sha256": "6000566389c10ac0527a4598aec2a90307ac67ced2eea20a93b0e43fb4d3c478",
+    "bytes": 70982,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-selection-mobile-dark.png",
+    "sha256": "b90c85cc83613e96a7d2d4a05aa42fb2c5446f5894ba9d1460544220b6b741cc",
+    "bytes": 48987,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-inbox-selection-mobile-light.png",
+    "sha256": "a0b9ed5e3f633e9508c509d8b8a9531cc3e74f3a2b2e8a034f57d3346a91afb0",
+    "bytes": 48526,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-login-desktop-dark.png",
+    "sha256": "d06bcd7e68ce97aff26991db0f7461d3448c2db88c8e9180f99e0b2f3b9c3e96",
+    "bytes": 73221,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-login-desktop-light.png",
+    "sha256": "803ae1b217c4ebdf4f8c590a8dd846f6de852d0c6a2727dbfdaf23ea5b099ffa",
+    "bytes": 82561,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-login-mobile-dark.png",
+    "sha256": "83e67dec1d36f58da2460aff63a396c3d463a3fa8b1fdce2eedf6f0ad1341602",
+    "bytes": 52908,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-login-mobile-light.png",
+    "sha256": "0ecc60cb9bd38bfc3f46c0a5ea0da7a205967575f2798c547f9035949b64cbdd",
+    "bytes": 61520,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-reader-desktop-dark.png",
+    "sha256": "15d589f2853f8acb35b7ecf720014d9a26b62d3045c5cc0e11dbc92b7f755ec9",
+    "bytes": 57248,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-reader-desktop-light.png",
+    "sha256": "6384875e4dbc787925fac27961a92772d17650e38a966f76e75b5bf32335cd8c",
+    "bytes": 58213,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-reader-mobile-dark.png",
+    "sha256": "c182cd1cfd130d39d348b211728d0f6cde4757690ed44cc8b5a33bc6d8c893ac",
+    "bytes": 35897,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-00-before-reader-mobile-light.png",
+    "sha256": "798eb69f1634b96e629ffe0dc3c1e9883799e81ee506d6c766af2c1b16169fd9",
+    "bytes": 35522,
+    "width": 390,
+    "height": 844,
+    "role": "historical-stage00-baseline"
+   },
+   {
+    "file": "screenshots/kypost-01-before-login-desktop-dark.png",
+    "sha256": "adf5c983b1755d7610a888644e42b441f0f2f8c1b5b349d094e7db5a112b548c",
+    "bytes": 73759,
+    "width": 1280,
+    "height": 900,
+    "role": "supplemental-settled-login-before (unscored)"
+   },
+   {
+    "file": "screenshots/kypost-01-before-login-desktop-light.png",
+    "sha256": "636de47de5ed05e81488ea93eee213a6b5d3b40b4c71e96bf8ef6066d7f30431",
+    "bytes": 84954,
+    "width": 1280,
+    "height": 900,
+    "role": "supplemental-settled-login-before (unscored)"
+   },
+   {
+    "file": "screenshots/kypost-01-before-login-mobile-dark.png",
+    "sha256": "c60f57ed4008495d9e70193fe679caa0523509aef7702898579dd0259d97da0f",
+    "bytes": 53913,
+    "width": 390,
+    "height": 844,
+    "role": "supplemental-settled-login-before (unscored)"
+   },
+   {
+    "file": "screenshots/kypost-01-before-login-mobile-light.png",
+    "sha256": "dff02fada69c124feaedf5329a1a27fe412dde0459c4b94ea58c5c0add6c8cb2",
+    "bytes": 61063,
+    "width": 390,
+    "height": 844,
+    "role": "supplemental-settled-login-before (unscored)"
+   },
+   {
+    "file": "screenshots/kypost-02-after-appearance-desktop-dark.png",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "bytes": 80562,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-appearance-desktop-light.png",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "bytes": 79855,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-appearance-mobile-dark.png",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "bytes": 40664,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-appearance-mobile-light.png",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "bytes": 39770,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-compose-desktop-dark.png",
+    "sha256": "b7f8bce4d35ed6783783528382fc5767a5d1d7ecc12cd342af96ae91cadb9616",
+    "bytes": 66940,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-compose-desktop-light.png",
+    "sha256": "3f13f4d8a780121f1643362185b7035bfc85ef3dea5eac384749976ce6586266",
+    "bytes": 68022,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-compose-mobile-dark.png",
+    "sha256": "fe6b7847a6d177e8a48e57de3ce7fdb1df6a3523ef84629775ee91b9fb42ac11",
+    "bytes": 32461,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-compose-mobile-light.png",
+    "sha256": "11b37596a674c06646133a80244daa01962942a55931aba859078f78dc9fd209",
+    "bytes": 31745,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-contact-editor-desktop-dark.png",
+    "sha256": "fbefbcb804bf55ec2668bb203c018595a23ec44332712ca1496d8e2fa9d79630",
+    "bytes": 62954,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-contact-editor-desktop-light.png",
+    "sha256": "da6bfc809414928bd5515ea85b6a2b990b844ace90667cd636d031a5f8f64026",
+    "bytes": 64220,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-contact-editor-mobile-dark.png",
+    "sha256": "cf35eea92677ad33bc34529668c3c902141004640c3cf268e3237e80807e55d2",
+    "bytes": 28861,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-contact-editor-mobile-light.png",
+    "sha256": "4d857514f04863b6ab2b0bc9f25aafec23c1bc382b46dffc0a8a1060607a7890",
+    "bytes": 27946,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-contacts-desktop-dark.png",
+    "sha256": "4497ecfe9a7e6a6c6be2c67078ee078ef84e6e3aa1f2b9d474205aeb753d82eb",
+    "bytes": 68678,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-contacts-desktop-light.png",
+    "sha256": "8383465e72c6f198cf016726d76f66e2da55940f5d69de2715134be72e4861e6",
+    "bytes": 68048,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-contacts-mobile-dark.png",
+    "sha256": "6bcd20c6deef9d1c249cf8e838d8be37a5db202f3d36b64261387730e2ad4cd2",
+    "bytes": 50879,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-contacts-mobile-light.png",
+    "sha256": "4a0f96d98877d2827ffd70dd8cfb451685326ccc3dfe5d11798b9752c3415291",
+    "bytes": 49384,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-desktop-dark.png",
+    "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+    "bytes": 66199,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-desktop-light.png",
+    "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+    "bytes": 65201,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-mobile-dark.png",
+    "sha256": "a22dedd816132da8bbc9bcf5a92b9a25c71e96ccab12a315a23fce78879b9dce",
+    "bytes": 42553,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-mobile-light.png",
+    "sha256": "f12752239b21e84e25c88e009202173028912cbff9bfa26341e391ba6468e20c",
+    "bytes": 41871,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-selection-desktop-dark.png",
+    "sha256": "3983db936c1a34b54b43ddcdc58846e9c50c1894618400f78644ca238d1cd26f",
+    "bytes": 72601,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-selection-desktop-light.png",
+    "sha256": "6a45300c869cf21854b8f01176a84cfadb15be1c6ece7d48effbb23dfdfa85a2",
+    "bytes": 71965,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-selection-mobile-dark.png",
+    "sha256": "342b6214410b8c03b458608a0f7a317eb6686eb4dbcb4b420f51648eff5217a2",
+    "bytes": 47353,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-inbox-selection-mobile-light.png",
+    "sha256": "47373cb0d5c1280e9ce564d8f5070797d1ac54243c6d6bc305a81a9d422f223d",
+    "bytes": 46721,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-login-desktop-dark.png",
+    "sha256": "ac83fa0ba85d1b6025de73740ff0889496bf9f4d736db99c9ac731d22e821348",
+    "bytes": 27854,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-login-desktop-light.png",
+    "sha256": "af615ed325baf8e656a23a6be6d52149afee0e9008e526af0b8b9a6be54e59c6",
+    "bytes": 27650,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-login-mobile-dark.png",
+    "sha256": "0c57b814c03ae25ae5b5bcec15bc54f47ad880a38dd252f4e1578cc62556c8b0",
+    "bytes": 22423,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-login-mobile-light.png",
+    "sha256": "8580bd42a8a2a25494e67ddff2e2d293544d485bc615b326fc584dcecc722c67",
+    "bytes": 22132,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-reader-desktop-dark.png",
+    "sha256": "6c13b365b601ccbf100c1d45584597a47248210dae82419d6fba4ea20a660ff3",
+    "bytes": 43001,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-reader-desktop-light.png",
+    "sha256": "5347dd6e69a6c6e63f867d5c321057cdbf729b82cf4e8cd76e155b78de68d746",
+    "bytes": 44038,
+    "width": 1280,
+    "height": 900,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-reader-mobile-dark.png",
+    "sha256": "c2ff3f159d2afe6bbc4911e904ca022272303baec076750fdce017e13c5b45c6",
+    "bytes": 27883,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-02-after-reader-mobile-light.png",
+    "sha256": "8b63a30abab907cfe526369e58bb57448e754c9a21509fa022930f33a9215bd6",
+    "bytes": 28327,
+    "width": 390,
+    "height": 844,
+    "role": "superseded-stage02"
+   },
+   {
+    "file": "screenshots/kypost-03-after-appearance-desktop-dark.png",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "bytes": 80562,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-appearance-desktop-light.png",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "bytes": 79855,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-appearance-mobile-dark.png",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "bytes": 40664,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-appearance-mobile-light.png",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "bytes": 39770,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-compose-desktop-dark.png",
+    "sha256": "683dbf0ac37abb0318e4e4556d28a153c57f2e5710feeaf880c843ab5f8418e2",
+    "bytes": 63799,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-compose-desktop-light.png",
+    "sha256": "45e2eded278fabcd84fbeee338db444ec3fc73181c8cefde11da59a608382e02",
+    "bytes": 64865,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-compose-mobile-dark.png",
+    "sha256": "96c6b12f048ef61ec7a4c954f580c9a3c1d24f420440f279db87b1a26e2308e9",
+    "bytes": 29538,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-compose-mobile-light.png",
+    "sha256": "190d8d03d06da6e7a36a41b3e09003435d17177021ec1d7f15ff5d8c0f270c27",
+    "bytes": 28887,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-contact-editor-desktop-dark.png",
+    "sha256": "fbefbcb804bf55ec2668bb203c018595a23ec44332712ca1496d8e2fa9d79630",
+    "bytes": 62954,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-contact-editor-desktop-light.png",
+    "sha256": "da6bfc809414928bd5515ea85b6a2b990b844ace90667cd636d031a5f8f64026",
+    "bytes": 64220,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-contact-editor-mobile-dark.png",
+    "sha256": "cf35eea92677ad33bc34529668c3c902141004640c3cf268e3237e80807e55d2",
+    "bytes": 28861,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-contact-editor-mobile-light.png",
+    "sha256": "4d857514f04863b6ab2b0bc9f25aafec23c1bc382b46dffc0a8a1060607a7890",
+    "bytes": 27946,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-contacts-desktop-dark.png",
+    "sha256": "4497ecfe9a7e6a6c6be2c67078ee078ef84e6e3aa1f2b9d474205aeb753d82eb",
+    "bytes": 68678,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-contacts-desktop-light.png",
+    "sha256": "8383465e72c6f198cf016726d76f66e2da55940f5d69de2715134be72e4861e6",
+    "bytes": 68048,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-contacts-mobile-dark.png",
+    "sha256": "2879455a77fa955a96f463029c6361bfe734ea266e4ee8444a2a6ae52aec0bad",
+    "bytes": 50873,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-contacts-mobile-light.png",
+    "sha256": "bcaa36f72476f6c6923dd47a162443f49b3bacb355a3f3369fe7404521eee5fa",
+    "bytes": 49381,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-desktop-dark.png",
+    "sha256": "1bb671b6c21304e3ca38de651293083ecd36e82349a7f0ded5b2ceb5e98f3bc4",
+    "bytes": 66194,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-desktop-light.png",
+    "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+    "bytes": 65201,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-mobile-dark.png",
+    "sha256": "69fdda7da796fab119f35c84add7bf9d14ef57c69db9658e15fc2af8b3ef56c9",
+    "bytes": 44745,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-mobile-light.png",
+    "sha256": "ee4899afa314470868b95a11d1ccdea8112326e1d2c7820dd702d128ac09cda9",
+    "bytes": 44074,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-selection-desktop-dark.png",
+    "sha256": "88dc23c10339c415f923067ef8e7439faa97305324c9fa7b1e7a495f8ff2d639",
+    "bytes": 72592,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-selection-desktop-light.png",
+    "sha256": "6a45300c869cf21854b8f01176a84cfadb15be1c6ece7d48effbb23dfdfa85a2",
+    "bytes": 71965,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-selection-mobile-dark.png",
+    "sha256": "d489c23f237559a8327db91b3acb9834dbe3fbc3fac3691b16de35cc20c82b87",
+    "bytes": 49552,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-inbox-selection-mobile-light.png",
+    "sha256": "904b430bc89d1155df6608ff3018051cc7e0a5ae54ee2c8b691681d5816e3627",
+    "bytes": 48956,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-login-desktop-dark.png",
+    "sha256": "ac83fa0ba85d1b6025de73740ff0889496bf9f4d736db99c9ac731d22e821348",
+    "bytes": 27854,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-login-desktop-light.png",
+    "sha256": "af615ed325baf8e656a23a6be6d52149afee0e9008e526af0b8b9a6be54e59c6",
+    "bytes": 27650,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-login-mobile-dark.png",
+    "sha256": "0c57b814c03ae25ae5b5bcec15bc54f47ad880a38dd252f4e1578cc62556c8b0",
+    "bytes": 22423,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-login-mobile-light.png",
+    "sha256": "8580bd42a8a2a25494e67ddff2e2d293544d485bc615b326fc584dcecc722c67",
+    "bytes": 22132,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-reader-desktop-dark.png",
+    "sha256": "6c13b365b601ccbf100c1d45584597a47248210dae82419d6fba4ea20a660ff3",
+    "bytes": 43001,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-reader-desktop-light.png",
+    "sha256": "5347dd6e69a6c6e63f867d5c321057cdbf729b82cf4e8cd76e155b78de68d746",
+    "bytes": 44038,
+    "width": 1280,
+    "height": 900,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-reader-mobile-dark.png",
+    "sha256": "c2ff3f159d2afe6bbc4911e904ca022272303baec076750fdce017e13c5b45c6",
+    "bytes": 27883,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-03-after-reader-mobile-light.png",
+    "sha256": "8b63a30abab907cfe526369e58bb57448e754c9a21509fa022930f33a9215bd6",
+    "bytes": 28327,
+    "width": 390,
+    "height": 844,
+    "role": "historical-r2-scored (paired drift only)"
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-desktop-dark.png",
+    "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+    "bytes": 80562,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-desktop-light.png",
+    "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+    "bytes": 79855,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-mobile-dark.png",
+    "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+    "bytes": 40664,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-mobile-light.png",
+    "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+    "bytes": 39770,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-desktop-dark.png",
+    "sha256": "e1308101d34e61e476aca30fac900b202d19ce1c7b13251b47fc824b7a7b1e02",
+    "bytes": 63760,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-desktop-light.png",
+    "sha256": "c54beeff37a91ce487a474da3c24afd9f187d2f9c17c88d061f889444c8cca9c",
+    "bytes": 64774,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-mobile-dark.png",
+    "sha256": "a57681f05846870f6cef10403e9422829e2eb1e5025b8641209d9891169a1215",
+    "bytes": 29538,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-mobile-light.png",
+    "sha256": "84b168fd34cf91570b810d291336ff1b179fe2807483c2c1103726fcf165bda3",
+    "bytes": 28893,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-desktop-dark.png",
+    "sha256": "803f53ece932359fff3895d346977a3fb3d0b078e2b2ffd50bed64ee605b0563",
+    "bytes": 64790,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-desktop-light.png",
+    "sha256": "4f5650093bc2ec074e1166d3c28c4011bcbe0922329ae18a347a867be9c32c3d",
+    "bytes": 66170,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-mobile-dark.png",
+    "sha256": "04c6ae493eb07a2a3327ddb849f232bc634c210674fb3fa2b6a8a3d796d902f2",
+    "bytes": 28867,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-mobile-light.png",
+    "sha256": "e21b6e3d26e9dcc6ce576daad71372be6489c03e50ab0234f70613f1e9ef7121",
+    "bytes": 28170,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-desktop-dark.png",
+    "sha256": "48a70a17bea3c2de83f011121186d2d7f7fdda5891e0eae3fe2ce8f3321e2d9b",
+    "bytes": 68701,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-desktop-light.png",
+    "sha256": "1673ab728501010105efbebeef2b0101fb18983e511fd3ee93955a5a76d5092a",
+    "bytes": 68150,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-mobile-dark.png",
+    "sha256": "cb417e777415fe4bb21b4f861d25df26181d03c6579f9c96d05f5b241c4b77cd",
+    "bytes": 48283,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-mobile-light.png",
+    "sha256": "9863cbd27b354b076b62159f2a26ebd63ec90510898e45d2e49c7eaaf80737af",
+    "bytes": 46814,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-desktop-dark.png",
+    "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+    "bytes": 66199,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-desktop-light.png",
+    "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+    "bytes": 65201,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-mobile-dark.png",
+    "sha256": "af79feed150e57a6745eb1e64c9016bd020265464a6b146fb27b467739f0b425",
+    "bytes": 44793,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-mobile-light.png",
+    "sha256": "f189c662405b81b71c290ae4829b650af1b3815c53c28f2fba9d7e719a18762a",
+    "bytes": 44072,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-desktop-dark.png",
+    "sha256": "56c471e054ef37f51c6966ca75c4314b5feb808ae1edfcc1beea56767e02bfc9",
+    "bytes": 72587,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-desktop-light.png",
+    "sha256": "45b8752bcb83d496cd17eb8b84672327c9342c73d40ba76ecb8aa64f519751e0",
+    "bytes": 71926,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-mobile-dark.png",
+    "sha256": "fd4f4baff71a77429c5ee44cbe6003518c959b50659b470f01a491eb12844db8",
+    "bytes": 51025,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-mobile-light.png",
+    "sha256": "4bbbef7481513a6a41335529d5d7849212398f00f4d3d68abc0f6a6345c1d0b7",
+    "bytes": 50359,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-desktop-dark.png",
+    "sha256": "ac83fa0ba85d1b6025de73740ff0889496bf9f4d736db99c9ac731d22e821348",
+    "bytes": 27854,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-desktop-light.png",
+    "sha256": "af615ed325baf8e656a23a6be6d52149afee0e9008e526af0b8b9a6be54e59c6",
+    "bytes": 27650,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-mobile-dark.png",
+    "sha256": "0c57b814c03ae25ae5b5bcec15bc54f47ad880a38dd252f4e1578cc62556c8b0",
+    "bytes": 22423,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-mobile-light.png",
+    "sha256": "8580bd42a8a2a25494e67ddff2e2d293544d485bc615b326fc584dcecc722c67",
+    "bytes": 22132,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-desktop-dark.png",
+    "sha256": "12d35ffb60abf3176c61d82f154ed9a3eae70b5e4db263198da32e7171e3880e",
+    "bytes": 42309,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-desktop-light.png",
+    "sha256": "712e16a214b02685777bfca31bf88c244d79574a293240adf1b6b2c22f711351",
+    "bytes": 43309,
+    "width": 1280,
+    "height": 900,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-mobile-dark.png",
+    "sha256": "cdaa7c4df5d88e39efcc7cff74bbbfa2484a8d9a9d8eb45d396b7498dd4ae777",
+    "bytes": 27099,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-mobile-light.png",
+    "sha256": "5467b40f578165fe13a164ac3dffafa55afff6c6f615625e39230eb4b9c268f8",
+    "bytes": 27517,
+    "width": 390,
+    "height": 844,
+    "role": "scored-stage04-original"
+   }
+  ]
+ },
+ "files": [
+  {
+   "file": "screenshots/kypost-04-after-inbox-desktop-light.png",
+   "sha256": "fc5306ae3256121b65996e6a14d16bf30c03872218c569ae63e97cee6606a15a",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "four synthetic messages",
+   "theme": "light",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Sparse four-message state; hover, focus, keyboard and long-list scrolling not visible. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "h1 Inbox top-left, single filled New Email in sidebar, search row then table: one obvious primary and scannable grouping.",
+    "typography": "Space Grotesk throughout; unread rows bold, read row (weekly digest) regular muted; 13px column headers; but subject and sender both bold so unread rows carry two equal-weight columns.",
+    "density_layout": "Four rows on even 41px rhythm and aligned columns; sparse list leaves ~60% of the pane blank above a centered 'Updated Just Now' footer; Time column right block aligned.",
+    "color": "Neutral cream/white with orange limited to New Email, selected Inbox rail/tint and a peach 'Uncategorized 3' chip; muted read row still legible.",
+    "visible_affordances": "Inputs/buttons 40px with clear borders; native 13px checkboxes are small targets; native select chevron styled differently from the adjacent input/button.",
+    "coherence": "One vocabulary of outlined controls and quiet dividers; selected Inbox highlight stops short at the + button, otherwise consistent."
+   },
+   "total": "7.7",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 8,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "240px sidebar, wordmark+stamp, 40px nav rows with accent rail, account region bottom; peach chip tint is accent on a category/count; native checkboxes off-geometry.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 65201
+  },
+  {
+   "file": "screenshots/kypost-04-after-inbox-selection-desktop-light.png",
+   "sha256": "45b8752bcb83d496cd17eb8b84672327c9342c73d40ba76ecb8aa64f519751e0",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox-selection",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "four synthetic messages",
+   "theme": "light",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Static selection only; whether actions are keyboard-reachable or confirm destructive deletes is unknown. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Contextual toolbar beside the h1: '2 selected' plus six quiet icon+label actions right of the h1; New Email remains the single filled primary.",
+    "typography": "Toolbar labels 15px with the 13px muted count on one shared baseline.",
+    "density_layout": "Toolbar fits on the title row at matching baseline; selected rows keep the same 41px rhythm; ample but unused lower pane.",
+    "color": "Selected rows use a soft accent tint with accent checkboxes; Delete is danger-red text with icon; rest neutral.",
+    "visible_affordances": "Selection state unambiguous via tint+checkmarks; header select-all shows plain unchecked, no visible mixed state for 2 of 4.",
+    "coherence": "Toolbar buttons share one quiet icon-label treatment matching sidebar icons."
+   },
+   "total": "7.9",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 8,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Selection tint and checkbox accent are allowed selection uses; row fill plus chip tint adds accent area.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 71926
+  },
+  {
+   "file": "screenshots/kypost-04-after-reader-desktop-light.png",
+   "sha256": "712e16a214b02685777bfca31bf88c244d79574a293240adf1b6b2c22f711351",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "reader",
+   "filename_matches_content": true,
+   "cohort": "mail-read",
+   "state": "initial view",
+   "theme": "light",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over inbox",
+   "confidence": "high",
+   "caveat": "Modal reader over list; long bodies, HTML mail, attachments and More actions menu contents not shown. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Subject as dialog title, one filled Reply, quiet Reply All/Forward, More actions isolated right, then sender, details disclosure and body: unmistakable order.",
+    "typography": "24px subject, 13px bold 'Sender:' label, 15px body at comfortable measure; disclosure label 13px muted; restrained weights.",
+    "density_layout": "Dialog fixed near full viewport (40px inset) holds two lines of body; action row spans 1150px while body column wraps at ~560px, leaving a large empty lower dialog.",
+    "color": "Orange only on Reply; underlined 'View raw email' neutral; scrim dims shell evenly.",
+    "visible_affordances": "Buttons 40px with clear outlines, close X top-right, native disclosure triangle small but recognisable, link underlined.",
+    "coherence": "Buttons, divider and disclosure share the shell vocabulary; More actions now same type as sibling buttons."
+   },
+   "total": "8.2",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Shell visible but dimmed behind scrim; accent used once.",
+   "ky_fit": "8.40",
+   "ky_fit_n": 5,
+   "bytes": 43309
+  },
+  {
+   "file": "screenshots/kypost-04-after-contacts-desktop-light.png",
+   "sha256": "1673ab728501010105efbebeef2b0101fb18983e511fd3ee93955a5a76d5092a",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contacts",
+   "filename_matches_content": true,
+   "cohort": "contacts-list",
+   "state": "synthetic populated contacts",
+   "theme": "light",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Four contacts only; row expansion behind the chevron, More actions menu and delete confirmation not shown. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 7,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "h1 Contacts left with count, New Contact primary and More actions right; sidebar New Email correctly demoted to outline; but count shown twice ('4 contacts' and 'Address Book 4').",
+    "typography": "New Contact/More actions labels render ~17px while sidebar New Email is ~14px and row actions ~15px: three button text sizes in one view.",
+    "density_layout": "Avatar, name/org stack, email and Edit/Delete aligned on even 61px rows; full-width search; Actions header right-aligned over action block.",
+    "color": "Neutral rows, grey initial avatars (no decorative colour), danger text for Delete, single orange primary.",
+    "visible_affordances": "Mid-row chevron after each name has no stated meaning; per-row Delete sits 30px from Edit with no visual separation beyond colour; native small checkboxes.",
+    "coherence": "Text actions, outlined buttons and dividers match the inbox vocabulary."
+   },
+   "total": "7.7",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 7,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Button label size differs from contract 15px body/14px nav pairing; otherwise shell matches KyIdentity reference.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 68150
+  },
+  {
+   "file": "screenshots/kypost-04-after-contact-editor-desktop-light.png",
+   "sha256": "4f5650093bc2ec074e1166d3c28c4011bcbe0922329ae18a347a867be9c32c3d",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contact-editor",
+   "filename_matches_content": true,
+   "cohort": "contact-editor",
+   "state": "open unsubmitted form",
+   "theme": "light",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over contacts",
+   "confidence": "high",
+   "caveat": "Unsubmitted empty form; validation, expanded disclosures and photo upload states not shown. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 7,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 7
+   },
+   "observations": {
+    "hierarchy": "Dialog titled 'Add Contact' with Cancel and filled Add Contact bottom-right; Full Name first.",
+    "typography": "'+ Add email'/'+ Add phone' labels render visibly larger (~17px regular) than footer Cancel/Add Contact (~14-15px); 13px bold field labels.",
+    "density_layout": "Name-related content split: 'Organization and name details' disclosure sits between Emails and Phones while 'More name fields' sits after Phones; list scrolls with no visible continuation cue above the footer.",
+    "color": "Neutral dialog, orange only on Add Contact; save-first photo guidance muted grey.",
+    "visible_affordances": "Plain bordered Full Name input, outlined add buttons, uniform chevron disclosure rows, clear footer buttons.",
+    "coherence": "Disclosure rows consistent, but add-button type size and the split name groups read as two patterns."
+   },
+   "total": "7.5",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 7,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Dialog title is the action, primary right of cancel as contract states; add buttons off type scale.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 66170
+  },
+  {
+   "file": "screenshots/kypost-04-after-appearance-desktop-light.png",
+   "sha256": "a18563dff3908f1e5c74b59da7ceedc1a70c81447cd26dec927bcbfdc1d63e0a",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "appearance",
+   "filename_matches_content": true,
+   "cohort": "settings",
+   "state": "initial view",
+   "theme": "light",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Theme switching behaviour and saved-choice persistence not exercised; sidebar below 900px not visible. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 7
+   },
+   "observations": {
+    "hierarchy": "h1 Appearance, one-sentence explanation, 'Theme' label, then 23-card grid with Match system selected first; no primary needed for apply-on-select.",
+    "typography": "24px h1, 15px muted description at readable measure, 13px labels/meta; even weights.",
+    "density_layout": "Five-column grid with equal 12px gutters and consistent card internals; last row of three left-aligned.",
+    "color": "UI chrome neutral; theme thumbnails carry their own hues as data; selection uses accent border and radio.",
+    "visible_affordances": "Selected card has accent border plus filled radio; unselected radios clear; nav shows Settings expanded with Appearance selected.",
+    "coherence": "Settings sub-items are icon-less and flush at a different indent while Mailboxes sub-items keep icons: two sub-nav treatments in one sidebar."
+   },
+   "total": "7.9",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 7,
+    "accent_discipline": 9,
+    "suite_cohesion": 9
+   },
+   "brand_na": [],
+   "brand_note": "Account region pushed so the license row falls below the fold; card grid matches KyIdentity Appearance reference.",
+   "ky_fit": "8.40",
+   "ky_fit_n": 5,
+   "bytes": 79855
+  },
+  {
+   "file": "screenshots/kypost-04-after-compose-desktop-light.png",
+   "sha256": "c54beeff37a91ce487a474da3c24afd9f187d2f9c17c88d061f889444c8cca9c",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "compose",
+   "filename_matches_content": true,
+   "cohort": "compose",
+   "state": "open unsubmitted form",
+   "theme": "light",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over inbox",
+   "confidence": "high",
+   "caveat": "Unsubmitted blank compose; recipient chips, validation, attachment and send/error states unknown. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "'New message' title, connection notice, recipients, editor, security toggles, then Send filled at footer start; secondary actions quieter.",
+    "typography": "Normal picker now in the shared face and aligned with toolbar icons; 13px field labels, 15px placeholders; Send/Schedule/Save Draft same label size.",
+    "density_layout": "Inline To/Cc/Bcc/Subject labels in a 72px gutter with full-width inputs on an even 50px rhythm; five divider bands slightly segment the dialog.",
+    "color": "Orange only on Send, danger text on Trash set far right, neutral elsewhere; 'Unsigned' as neutral pill.",
+    "visible_affordances": "Inputs, editor frame, checkboxes and buttons read clearly; Schedule… ellipsis signals a follow-up; Attach/Contacts text-only.",
+    "coherence": "Outlined secondary, text tertiary and danger text follow one button system."
+   },
+   "total": "8.2",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Send primary sits left in the footer rather than right; shell dimmed behind scrim.",
+   "ky_fit": "8.40",
+   "ky_fit_n": 5,
+   "bytes": 64774
+  },
+  {
+   "file": "screenshots/kypost-04-after-login-desktop-light.png",
+   "sha256": "af615ed325baf8e656a23a6be6d52149afee0e9008e526af0b8b9a6be54e59c6",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "login",
+   "filename_matches_content": true,
+   "cohort": "auth",
+   "state": "initial view",
+   "theme": "light",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Security check already verified; empty-field, error and in-progress PoW states not shown. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Stamp, 'Sign in' title, tagline, two fields and one full-width Sign in: one obvious action.",
+    "typography": "24px title, 15px tagline, 13px bold labels; clean and restrained.",
+    "density_layout": "'Security check' label is left-aligned but its status line is centred in an ~80px gap, breaking the left edge rhythm before the button.",
+    "color": "Neutral card, orange Sign in, success text green paired with words.",
+    "visible_affordances": "Bordered fields read as inputs; Sign in button 46px tall (taller than 40px peers) but obvious.",
+    "coherence": "Single card with stamp overlapping its top edge; consistent fields."
+   },
+   "total": "8.2",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": null,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [
+    "shell"
+   ],
+   "brand_note": "Auth view has no app shell (shell N/A); stamp present, wordmark only in footer text.",
+   "ky_fit": "8.50",
+   "ky_fit_n": 4,
+   "bytes": 27650
+  },
+  {
+   "file": "screenshots/kypost-04-after-inbox-desktop-dark.png",
+   "sha256": "0ab391920f511403d97584ed51214b028ee975eba311ebf471717a8ebb5dc034",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "four synthetic messages",
+   "theme": "dark",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Sparse four-message state; hover, focus, keyboard and long-list scrolling not visible. Dark OS theme, no saved choice; judged against charcoal background. Dark 'Uncategorized' chip is low-contrast brown on charcoal but legible.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "h1 Inbox top-left, single filled New Email in sidebar, search row then table: one obvious primary and scannable grouping.",
+    "typography": "Space Grotesk throughout; unread rows bold, read row (weekly digest) regular muted; 13px column headers; but subject and sender both bold so unread rows carry two equal-weight columns.",
+    "density_layout": "Four rows on even 41px rhythm and aligned columns; sparse list leaves ~60% of the pane blank above a centered 'Updated Just Now' footer; Time column right block aligned.",
+    "color": "Neutral cream/white with orange limited to New Email, selected Inbox rail/tint and a peach 'Uncategorized 3' chip; muted read row still legible.",
+    "visible_affordances": "Inputs/buttons 40px with clear borders; native 13px checkboxes are small targets; native select chevron styled differently from the adjacent input/button.",
+    "coherence": "One vocabulary of outlined controls and quiet dividers; selected Inbox highlight stops short at the + button, otherwise consistent."
+   },
+   "total": "7.7",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 8,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "240px sidebar, wordmark+stamp, 40px nav rows with accent rail, account region bottom; peach chip tint is accent on a category/count; native checkboxes off-geometry.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 66199
+  },
+  {
+   "file": "screenshots/kypost-04-after-inbox-selection-desktop-dark.png",
+   "sha256": "56c471e054ef37f51c6966ca75c4314b5feb808ae1edfcc1beea56767e02bfc9",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox-selection",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "four synthetic messages",
+   "theme": "dark",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Static selection only; whether actions are keyboard-reachable or confirm destructive deletes is unknown. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Contextual toolbar beside the h1: '2 selected' plus six quiet icon+label actions right of the h1; New Email remains the single filled primary.",
+    "typography": "Toolbar labels 15px with the 13px muted count on one shared baseline.",
+    "density_layout": "Toolbar fits on the title row at matching baseline; selected rows keep the same 41px rhythm; ample but unused lower pane.",
+    "color": "Selected rows use a soft accent tint with accent checkboxes; Delete is danger-red text with icon; rest neutral.",
+    "visible_affordances": "Selection state unambiguous via tint+checkmarks; header select-all shows plain unchecked, no visible mixed state for 2 of 4.",
+    "coherence": "Toolbar buttons share one quiet icon-label treatment matching sidebar icons."
+   },
+   "total": "7.9",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 8,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Selection tint and checkbox accent are allowed selection uses; row fill plus chip tint adds accent area.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 72587
+  },
+  {
+   "file": "screenshots/kypost-04-after-reader-desktop-dark.png",
+   "sha256": "12d35ffb60abf3176c61d82f154ed9a3eae70b5e4db263198da32e7171e3880e",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "reader",
+   "filename_matches_content": true,
+   "cohort": "mail-read",
+   "state": "initial view",
+   "theme": "dark",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over inbox",
+   "confidence": "high",
+   "caveat": "Modal reader over list; long bodies, HTML mail, attachments and More actions menu contents not shown. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Subject as dialog title, one filled Reply, quiet Reply All/Forward, More actions isolated right, then sender, details disclosure and body: unmistakable order.",
+    "typography": "24px subject, 13px bold 'Sender:' label, 15px body at comfortable measure; disclosure label 13px muted; restrained weights.",
+    "density_layout": "Dialog fixed near full viewport (40px inset) holds two lines of body; action row spans 1150px while body column wraps at ~560px, leaving a large empty lower dialog.",
+    "color": "Orange only on Reply; underlined 'View raw email' neutral; scrim dims shell evenly.",
+    "visible_affordances": "Buttons 40px with clear outlines, close X top-right, native disclosure triangle small but recognisable, link underlined.",
+    "coherence": "Buttons, divider and disclosure share the shell vocabulary; More actions now same type as sibling buttons."
+   },
+   "total": "8.2",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Shell visible but dimmed behind scrim; accent used once.",
+   "ky_fit": "8.40",
+   "ky_fit_n": 5,
+   "bytes": 42309
+  },
+  {
+   "file": "screenshots/kypost-04-after-contacts-desktop-dark.png",
+   "sha256": "48a70a17bea3c2de83f011121186d2d7f7fdda5891e0eae3fe2ce8f3321e2d9b",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contacts",
+   "filename_matches_content": true,
+   "cohort": "contacts-list",
+   "state": "synthetic populated contacts",
+   "theme": "dark",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Four contacts only; row expansion behind the chevron, More actions menu and delete confirmation not shown. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 7,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "h1 Contacts left with count, New Contact primary and More actions right; sidebar New Email correctly demoted to outline; but count shown twice ('4 contacts' and 'Address Book 4').",
+    "typography": "New Contact/More actions labels render ~17px while sidebar New Email is ~14px and row actions ~15px: three button text sizes in one view.",
+    "density_layout": "Avatar, name/org stack, email and Edit/Delete aligned on even 61px rows; full-width search; Actions header right-aligned over action block.",
+    "color": "Neutral rows, grey initial avatars (no decorative colour), danger text for Delete, single orange primary.",
+    "visible_affordances": "Mid-row chevron after each name has no stated meaning; per-row Delete sits 30px from Edit with no visual separation beyond colour; native small checkboxes.",
+    "coherence": "Text actions, outlined buttons and dividers match the inbox vocabulary."
+   },
+   "total": "7.7",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 7,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Button label size differs from contract 15px body/14px nav pairing; otherwise shell matches KyIdentity reference.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 68701
+  },
+  {
+   "file": "screenshots/kypost-04-after-contact-editor-desktop-dark.png",
+   "sha256": "803f53ece932359fff3895d346977a3fb3d0b078e2b2ffd50bed64ee605b0563",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contact-editor",
+   "filename_matches_content": true,
+   "cohort": "contact-editor",
+   "state": "open unsubmitted form",
+   "theme": "dark",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over contacts",
+   "confidence": "high",
+   "caveat": "Unsubmitted empty form; validation, expanded disclosures and photo upload states not shown. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 7,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 7
+   },
+   "observations": {
+    "hierarchy": "Dialog titled 'Add Contact' with Cancel and filled Add Contact bottom-right; Full Name first.",
+    "typography": "'+ Add email'/'+ Add phone' labels render visibly larger (~17px regular) than footer Cancel/Add Contact (~14-15px); 13px bold field labels.",
+    "density_layout": "Name-related content split: 'Organization and name details' disclosure sits between Emails and Phones while 'More name fields' sits after Phones; list scrolls with no visible continuation cue above the footer.",
+    "color": "Neutral dialog, orange only on Add Contact; save-first photo guidance muted grey.",
+    "visible_affordances": "Plain bordered Full Name input, outlined add buttons, uniform chevron disclosure rows, clear footer buttons.",
+    "coherence": "Disclosure rows consistent, but add-button type size and the split name groups read as two patterns."
+   },
+   "total": "7.5",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 7,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Dialog title is the action, primary right of cancel as contract states; add buttons off type scale.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 64790
+  },
+  {
+   "file": "screenshots/kypost-04-after-appearance-desktop-dark.png",
+   "sha256": "ddb937a93dea5127d5532c858a82d415dd7101e5c0f06c8850dce1235a70fe3f",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "appearance",
+   "filename_matches_content": true,
+   "cohort": "settings",
+   "state": "initial view",
+   "theme": "dark",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Theme switching behaviour and saved-choice persistence not exercised; sidebar below 900px not visible. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 7
+   },
+   "observations": {
+    "hierarchy": "h1 Appearance, one-sentence explanation, 'Theme' label, then 23-card grid with Match system selected first; no primary needed for apply-on-select.",
+    "typography": "24px h1, 15px muted description at readable measure, 13px labels/meta; even weights.",
+    "density_layout": "Five-column grid with equal 12px gutters and consistent card internals; last row of three left-aligned.",
+    "color": "UI chrome neutral; theme thumbnails carry their own hues as data; selection uses accent border and radio.",
+    "visible_affordances": "Selected card has accent border plus filled radio; unselected radios clear; nav shows Settings expanded with Appearance selected.",
+    "coherence": "Settings sub-items are icon-less and flush at a different indent while Mailboxes sub-items keep icons: two sub-nav treatments in one sidebar."
+   },
+   "total": "7.9",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 7,
+    "accent_discipline": 9,
+    "suite_cohesion": 9
+   },
+   "brand_na": [],
+   "brand_note": "Account region pushed so the license row falls below the fold; card grid matches KyIdentity Appearance reference.",
+   "ky_fit": "8.40",
+   "ky_fit_n": 5,
+   "bytes": 80562
+  },
+  {
+   "file": "screenshots/kypost-04-after-compose-desktop-dark.png",
+   "sha256": "e1308101d34e61e476aca30fac900b202d19ce1c7b13251b47fc824b7a7b1e02",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "compose",
+   "filename_matches_content": true,
+   "cohort": "compose",
+   "state": "open unsubmitted form",
+   "theme": "dark",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "modal scrim over inbox",
+   "confidence": "high",
+   "caveat": "Unsubmitted blank compose; recipient chips, validation, attachment and send/error states unknown. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "'New message' title, connection notice, recipients, editor, security toggles, then Send filled at footer start; secondary actions quieter.",
+    "typography": "Normal picker now in the shared face and aligned with toolbar icons; 13px field labels, 15px placeholders; Send/Schedule/Save Draft same label size.",
+    "density_layout": "Inline To/Cc/Bcc/Subject labels in a 72px gutter with full-width inputs on an even 50px rhythm; five divider bands slightly segment the dialog.",
+    "color": "Orange only on Send, danger text on Trash set far right, neutral elsewhere; 'Unsigned' as neutral pill.",
+    "visible_affordances": "Inputs, editor frame, checkboxes and buttons read clearly; Schedule… ellipsis signals a follow-up; Attach/Contacts text-only.",
+    "coherence": "Outlined secondary, text tertiary and danger text follow one button system."
+   },
+   "total": "8.2",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Send primary sits left in the footer rather than right; shell dimmed behind scrim.",
+   "ky_fit": "8.40",
+   "ky_fit_n": 5,
+   "bytes": 63760
+  },
+  {
+   "file": "screenshots/kypost-04-after-login-desktop-dark.png",
+   "sha256": "ac83fa0ba85d1b6025de73740ff0889496bf9f4d736db99c9ac731d22e821348",
+   "width": 1280,
+   "height": 900,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "login",
+   "filename_matches_content": true,
+   "cohort": "auth",
+   "state": "initial view",
+   "theme": "dark",
+   "viewport": "desktop 1280x900 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Security check already verified; empty-field, error and in-progress PoW states not shown. Dark OS theme, no saved choice; judged against charcoal background. Dark stamp tile nearly merges with the page background.",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Stamp, 'Sign in' title, tagline, two fields and one full-width Sign in: one obvious action.",
+    "typography": "24px title, 15px tagline, 13px bold labels; clean and restrained.",
+    "density_layout": "'Security check' label is left-aligned but its status line is centred in an ~80px gap, breaking the left edge rhythm before the button.",
+    "color": "Neutral card, orange Sign in, success text green paired with words.",
+    "visible_affordances": "Bordered fields read as inputs; Sign in button 46px tall (taller than 40px peers) but obvious.",
+    "coherence": "Single card with stamp overlapping its top edge; consistent fields."
+   },
+   "total": "8.2",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": null,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [
+    "shell"
+   ],
+   "brand_note": "Auth view has no app shell (shell N/A); stamp present, wordmark only in footer text.",
+   "ky_fit": "8.50",
+   "ky_fit_n": 4,
+   "bytes": 27854
+  },
+  {
+   "file": "screenshots/kypost-04-after-inbox-mobile-light.png",
+   "sha256": "f189c662405b81b71c290ae4829b650af1b3815c53c28f2fba9d7e719a18762a",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "four synthetic messages",
+   "theme": "light",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Scroll of tab strip and swipe behaviours unknown; sender domains truncated by design. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Top bar with wordmark, New Email primary, user and sign-out; scrollable mailbox tabs; h1 Inbox and list.",
+    "typography": "Two-line rows: bold subject, 13px sender truncated with ellipsis, 13px date; consistent scale.",
+    "density_layout": "~48px gaps above and below the h1 push the list down; 58px checkbox gutter before subjects; rows even.",
+    "color": "Neutral with orange primary and selected tab underline/tint.",
+    "visible_affordances": "Small native checkboxes on a touch viewport; right tab clipped mid-glyph as scroll cue; Search/select 40px.",
+    "coherence": "Tabs, inputs and rows share the desktop vocabulary."
+   },
+   "total": "7.7",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 8,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Responsive horizontal nav keeps order/labels; chip tint accent.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 44072
+  },
+  {
+   "file": "screenshots/kypost-04-after-inbox-selection-mobile-light.png",
+   "sha256": "4bbbef7481513a6a41335529d5d7849212398f00f4d3d68abc0f6a6345c1d0b7",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox-selection",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "four synthetic messages",
+   "theme": "light",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Static selection; action menu overflow behaviour unknown. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "'2 selected' under the h1 then all six actions visible; New Email still single primary.",
+    "typography": "Action labels 15px with icons; count 13px muted.",
+    "density_layout": "Actions wrap 4+2 with a ragged second row and 44px row gap, pushing search and list ~105px down.",
+    "color": "Selected rows accent-tinted, Delete danger text, otherwise neutral.",
+    "visible_affordances": "All six actions now readable, none clipped; header checkbox has no visible mixed state; small native checkboxes.",
+    "coherence": "Same quiet icon-label action treatment as desktop."
+   },
+   "total": "7.7",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 8,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "As inbox mobile; selection tint permitted.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 50359
+  },
+  {
+   "file": "screenshots/kypost-04-after-reader-mobile-light.png",
+   "sha256": "5467b40f578165fe13a164ac3dffafa55afff6c6f615625e39230eb4b9c268f8",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "reader",
+   "filename_matches_content": true,
+   "cohort": "mail-read",
+   "state": "initial view",
+   "theme": "light",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "full-screen dialog",
+   "confidence": "high",
+   "caveat": "Close X sits ~8px below the title baseline; long subjects and HTML bodies unknown. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Title, balanced 2x2 action grid with Reply filled first, then sender, details, body.",
+    "typography": "Matching button type across the grid; 13px label over full sender value on one line.",
+    "density_layout": "Equal-width 2x2 buttons with 8px gaps and 16px margins; body hard line break after 'so the' comes from message text.",
+    "color": "Orange only on Reply; neutral sheet.",
+    "visible_affordances": "Clear 40px buttons, close X, disclosure and underlined link.",
+    "coherence": "Same button and divider vocabulary as desktop reader."
+   },
+   "total": "8.4",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": null,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [
+    "shell"
+   ],
+   "brand_note": "Full-screen sheet hides shell (shell N/A).",
+   "ky_fit": "8.50",
+   "ky_fit_n": 4,
+   "bytes": 27517
+  },
+  {
+   "file": "screenshots/kypost-04-after-contacts-mobile-light.png",
+   "sha256": "9863cbd27b354b076b62159f2a26ebd63ec90510898e45d2e49c7eaaf80737af",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contacts",
+   "filename_matches_content": true,
+   "cohort": "contacts-list",
+   "state": "synthetic populated contacts",
+   "theme": "light",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Fourth contact cut at fold; long names/orgs and More actions menu unknown. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 7,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "h1 Contacts, count, New Contact primary, More actions; top-bar New Email demoted to outline.",
+    "typography": "New Contact/More actions ~17px vs New Email ~14px directly above; 13px meta legible.",
+    "density_layout": "Full-width identity rows with email and Edit/Delete stacked make 137px rows (3.5 contacts per screen); search placeholder hard-clipped at 'organizat'.",
+    "color": "Grey initials, danger Delete text, single orange primary.",
+    "visible_affordances": "Placeholder clipped without ellipsis; Archive tab shows a stray chevron in the horizontal strip; small native checkboxes.",
+    "coherence": "Rows and buttons consistent with desktop vocabulary."
+   },
+   "total": "7.5",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 7,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Button label sizes vary; nav strip shows previous tab clipped at left.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 46814
+  },
+  {
+   "file": "screenshots/kypost-04-after-contact-editor-mobile-light.png",
+   "sha256": "e21b6e3d26e9dcc6ce576daad71372be6489c03e50ab0234f70613f1e9ef7121",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contact-editor",
+   "filename_matches_content": true,
+   "cohort": "contact-editor",
+   "state": "open unsubmitted form",
+   "theme": "light",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "full-screen dialog",
+   "confidence": "high",
+   "caveat": "Empty unsubmitted form; expanded sections unknown. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 7,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 7
+   },
+   "observations": {
+    "hierarchy": "Add Contact title, full-width equal Cancel/Add Contact footer, Full Name first.",
+    "typography": "'+ Add email/phone' larger than footer labels as on desktop.",
+    "density_layout": "Title starts at x=24 while every field starts at x=16; split name disclosures; Notes row peeks under footer as a scroll cue.",
+    "color": "Neutral sheet, single orange Add Contact.",
+    "visible_affordances": "Inputs, add buttons and chevron disclosures read clearly; 40px footer buttons.",
+    "coherence": "Disclosures consistent; title inset and add-button type break the pattern."
+   },
+   "total": "7.5",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 7,
+    "shell": null,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [
+    "shell"
+   ],
+   "brand_note": "Full-screen sheet hides shell (shell N/A).",
+   "ky_fit": "8.25",
+   "ky_fit_n": 4,
+   "bytes": 28170
+  },
+  {
+   "file": "screenshots/kypost-04-after-appearance-mobile-light.png",
+   "sha256": "7d9e5dc9a6d9a1727fbb8860603ce08853dd0039f3f7d4334722eb971e5ea0e3",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "appearance",
+   "filename_matches_content": true,
+   "cohort": "settings",
+   "state": "initial view",
+   "theme": "light",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Only first eight cards visible; persistence not exercised. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 7
+   },
+   "observations": {
+    "hierarchy": "h1, description, Theme label, two-column card grid with Match system selected.",
+    "typography": "Same scale as desktop; card labels 15px with 13px meta.",
+    "density_layout": "Even two-column grid with 12px gutters; page uses 16px inset while Inbox/Contacts phone pages use 20px.",
+    "color": "Neutral chrome, accent only on selected card/radio and tab.",
+    "visible_affordances": "Selected card unmistakable; radios clear.",
+    "coherence": "Tab strip mixes icon tabs (Contacts, Settings with chevron) and an icon-less Appearance sub-tab; left tab clipped to a lone chevron."
+   },
+   "total": "7.9",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 9
+   },
+   "brand_na": [],
+   "brand_note": "Closely matches KyIdentity Appearance mobile reference.",
+   "ky_fit": "8.60",
+   "ky_fit_n": 5,
+   "bytes": 39770
+  },
+  {
+   "file": "screenshots/kypost-04-after-compose-mobile-light.png",
+   "sha256": "84b168fd34cf91570b810d291336ff1b179fe2807483c2c1103726fcf165bda3",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "compose",
+   "filename_matches_content": true,
+   "cohort": "compose",
+   "state": "open unsubmitted form",
+   "theme": "light",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "full-screen dialog",
+   "confidence": "high",
+   "caveat": "Close X sits below title baseline; keyboard-open layout unknown. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Title, notice, fields, editor, toggles, Send filled first in footer.",
+    "typography": "Normal picker matches shared face; label/placeholder scale consistent with desktop.",
+    "density_layout": "Margins now identical at 16px; inline labels still take a 56px gutter on 390px; footer wraps so Trash sits beside Contacts rather than apart.",
+    "color": "Orange only on Send; danger Trash; neutral else.",
+    "visible_affordances": "Inputs and controls clear; checkboxes and 'Unsigned' pill readable.",
+    "coherence": "Same system as desktop compose."
+   },
+   "total": "8.0",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": null,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [
+    "shell"
+   ],
+   "brand_note": "Full-screen sheet hides shell (shell N/A).",
+   "ky_fit": "8.50",
+   "ky_fit_n": 4,
+   "bytes": 28893
+  },
+  {
+   "file": "screenshots/kypost-04-after-login-mobile-light.png",
+   "sha256": "8580bd42a8a2a25494e67ddff2e2d293544d485bc615b326fc584dcecc722c67",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "login",
+   "filename_matches_content": true,
+   "cohort": "auth",
+   "state": "initial view",
+   "theme": "light",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Verified security-check state only. Light OS theme, no saved choice.",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Stamp, Sign in, tagline, fields, one primary.",
+    "typography": "Same restrained scale as desktop.",
+    "density_layout": "Card fills width with 14px outer margin; same centred status under left label with uneven gap.",
+    "color": "Neutral card, orange Sign in, green verified text.",
+    "visible_affordances": "Fields and 46px button obvious.",
+    "coherence": "Consistent card treatment."
+   },
+   "total": "8.2",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": null,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [
+    "shell"
+   ],
+   "brand_note": "Auth view has no shell.",
+   "ky_fit": "8.50",
+   "ky_fit_n": 4,
+   "bytes": 22132
+  },
+  {
+   "file": "screenshots/kypost-04-after-inbox-mobile-dark.png",
+   "sha256": "af79feed150e57a6745eb1e64c9016bd020265464a6b146fb27b467739f0b425",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "four synthetic messages",
+   "theme": "dark",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Scroll of tab strip and swipe behaviours unknown; sender domains truncated by design. Dark OS theme, no saved choice; judged against charcoal background. Dark 'Uncategorized' chip is low-contrast brown on charcoal but legible.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Top bar with wordmark, New Email primary, user and sign-out; scrollable mailbox tabs; h1 Inbox and list.",
+    "typography": "Two-line rows: bold subject, 13px sender truncated with ellipsis, 13px date; consistent scale.",
+    "density_layout": "~48px gaps above and below the h1 push the list down; 58px checkbox gutter before subjects; rows even.",
+    "color": "Neutral with orange primary and selected tab underline/tint.",
+    "visible_affordances": "Small native checkboxes on a touch viewport; right tab clipped mid-glyph as scroll cue; Search/select 40px.",
+    "coherence": "Tabs, inputs and rows share the desktop vocabulary."
+   },
+   "total": "7.7",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 8,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Responsive horizontal nav keeps order/labels; chip tint accent.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 44793
+  },
+  {
+   "file": "screenshots/kypost-04-after-inbox-selection-mobile-dark.png",
+   "sha256": "fd4f4baff71a77429c5ee44cbe6003518c959b50659b470f01a491eb12844db8",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "inbox-selection",
+   "filename_matches_content": true,
+   "cohort": "mail-list",
+   "state": "four synthetic messages",
+   "theme": "dark",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Static selection; action menu overflow behaviour unknown. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "'2 selected' under the h1 then all six actions visible; New Email still single primary.",
+    "typography": "Action labels 15px with icons; count 13px muted.",
+    "density_layout": "Actions wrap 4+2 with a ragged second row and 44px row gap, pushing search and list ~105px down.",
+    "color": "Selected rows accent-tinted, Delete danger text, otherwise neutral.",
+    "visible_affordances": "All six actions now readable, none clipped; header checkbox has no visible mixed state; small native checkboxes.",
+    "coherence": "Same quiet icon-label action treatment as desktop."
+   },
+   "total": "7.7",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 8,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "As inbox mobile; selection tint permitted.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 51025
+  },
+  {
+   "file": "screenshots/kypost-04-after-reader-mobile-dark.png",
+   "sha256": "cdaa7c4df5d88e39efcc7cff74bbbfa2484a8d9a9d8eb45d396b7498dd4ae777",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "reader",
+   "filename_matches_content": true,
+   "cohort": "mail-read",
+   "state": "initial view",
+   "theme": "dark",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "full-screen dialog",
+   "confidence": "high",
+   "caveat": "Close X sits ~8px below the title baseline; long subjects and HTML bodies unknown. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Title, balanced 2x2 action grid with Reply filled first, then sender, details, body.",
+    "typography": "Matching button type across the grid; 13px label over full sender value on one line.",
+    "density_layout": "Equal-width 2x2 buttons with 8px gaps and 16px margins; body hard line break after 'so the' comes from message text.",
+    "color": "Orange only on Reply; neutral sheet.",
+    "visible_affordances": "Clear 40px buttons, close X, disclosure and underlined link.",
+    "coherence": "Same button and divider vocabulary as desktop reader."
+   },
+   "total": "8.4",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": null,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [
+    "shell"
+   ],
+   "brand_note": "Full-screen sheet hides shell (shell N/A).",
+   "ky_fit": "8.50",
+   "ky_fit_n": 4,
+   "bytes": 27099
+  },
+  {
+   "file": "screenshots/kypost-04-after-contacts-mobile-dark.png",
+   "sha256": "cb417e777415fe4bb21b4f861d25df26181d03c6579f9c96d05f5b241c4b77cd",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contacts",
+   "filename_matches_content": true,
+   "cohort": "contacts-list",
+   "state": "synthetic populated contacts",
+   "theme": "dark",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Fourth contact cut at fold; long names/orgs and More actions menu unknown. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 7,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 7,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "h1 Contacts, count, New Contact primary, More actions; top-bar New Email demoted to outline.",
+    "typography": "New Contact/More actions ~17px vs New Email ~14px directly above; 13px meta legible.",
+    "density_layout": "Full-width identity rows with email and Edit/Delete stacked make 137px rows (3.5 contacts per screen); search placeholder hard-clipped at 'organizat'.",
+    "color": "Grey initials, danger Delete text, single orange primary.",
+    "visible_affordances": "Placeholder clipped without ellipsis; Archive tab shows a stray chevron in the horizontal strip; small native checkboxes.",
+    "coherence": "Rows and buttons consistent with desktop vocabulary."
+   },
+   "total": "7.5",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 7,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [],
+   "brand_note": "Button label sizes vary; nav strip shows previous tab clipped at left.",
+   "ky_fit": "8.20",
+   "ky_fit_n": 5,
+   "bytes": 48283
+  },
+  {
+   "file": "screenshots/kypost-04-after-contact-editor-mobile-dark.png",
+   "sha256": "04c6ae493eb07a2a3327ddb849f232bc634c210674fb3fa2b6a8a3d796d902f2",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "contact-editor",
+   "filename_matches_content": true,
+   "cohort": "contact-editor",
+   "state": "open unsubmitted form",
+   "theme": "dark",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "full-screen dialog",
+   "confidence": "high",
+   "caveat": "Empty unsubmitted form; expanded sections unknown. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 7,
+    "density_layout": 7,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 7
+   },
+   "observations": {
+    "hierarchy": "Add Contact title, full-width equal Cancel/Add Contact footer, Full Name first.",
+    "typography": "'+ Add email/phone' larger than footer labels as on desktop.",
+    "density_layout": "Title starts at x=24 while every field starts at x=16; split name disclosures; Notes row peeks under footer as a scroll cue.",
+    "color": "Neutral sheet, single orange Add Contact.",
+    "visible_affordances": "Inputs, add buttons and chevron disclosures read clearly; 40px footer buttons.",
+    "coherence": "Disclosures consistent; title inset and add-button type break the pattern."
+   },
+   "total": "7.5",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 7,
+    "shell": null,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [
+    "shell"
+   ],
+   "brand_note": "Full-screen sheet hides shell (shell N/A).",
+   "ky_fit": "8.25",
+   "ky_fit_n": 4,
+   "bytes": 28867
+  },
+  {
+   "file": "screenshots/kypost-04-after-appearance-mobile-dark.png",
+   "sha256": "ebe55576bb4024e992509fe7dbbd87a9d6b98d021326fdfe15432ab28f9ec2c3",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "appearance",
+   "filename_matches_content": true,
+   "cohort": "settings",
+   "state": "initial view",
+   "theme": "dark",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Only first eight cards visible; persistence not exercised. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 8,
+    "color": 8,
+    "visible_affordances": 8,
+    "coherence": 7
+   },
+   "observations": {
+    "hierarchy": "h1, description, Theme label, two-column card grid with Match system selected.",
+    "typography": "Same scale as desktop; card labels 15px with 13px meta.",
+    "density_layout": "Even two-column grid with 12px gutters; page uses 16px inset while Inbox/Contacts phone pages use 20px.",
+    "color": "Neutral chrome, accent only on selected card/radio and tab.",
+    "visible_affordances": "Selected card unmistakable; radios clear.",
+    "coherence": "Tab strip mixes icon tabs (Contacts, Settings with chevron) and an icon-less Appearance sub-tab; left tab clipped to a lone chevron."
+   },
+   "total": "7.9",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": 8,
+    "accent_discipline": 9,
+    "suite_cohesion": 9
+   },
+   "brand_na": [],
+   "brand_note": "Closely matches KyIdentity Appearance mobile reference.",
+   "ky_fit": "8.60",
+   "ky_fit_n": 5,
+   "bytes": 40664
+  },
+  {
+   "file": "screenshots/kypost-04-after-compose-mobile-dark.png",
+   "sha256": "a57681f05846870f6cef10403e9422829e2eb1e5025b8641209d9891169a1215",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "compose",
+   "filename_matches_content": true,
+   "cohort": "compose",
+   "state": "open unsubmitted form",
+   "theme": "dark",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "full-screen dialog",
+   "confidence": "high",
+   "caveat": "Close X sits below title baseline; keyboard-open layout unknown. Dark OS theme, no saved choice; judged against charcoal background.",
+   "scores": {
+    "hierarchy": 8,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Title, notice, fields, editor, toggles, Send filled first in footer.",
+    "typography": "Normal picker matches shared face; label/placeholder scale consistent with desktop.",
+    "density_layout": "Margins now identical at 16px; inline labels still take a 56px gutter on 390px; footer wraps so Trash sits beside Contacts rather than apart.",
+    "color": "Orange only on Send; danger Trash; neutral else.",
+    "visible_affordances": "Inputs and controls clear; checkboxes and 'Unsigned' pill readable.",
+    "coherence": "Same system as desktop compose."
+   },
+   "total": "8.0",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": null,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [
+    "shell"
+   ],
+   "brand_note": "Full-screen sheet hides shell (shell N/A).",
+   "ky_fit": "8.50",
+   "ky_fit_n": 4,
+   "bytes": 29538
+  },
+  {
+   "file": "screenshots/kypost-04-after-login-mobile-dark.png",
+   "sha256": "0c57b814c03ae25ae5b5bcec15bc54f47ad880a38dd252f4e1578cc62556c8b0",
+   "width": 390,
+   "height": 844,
+   "duplicate_of": null,
+   "observed_product": "KyPost",
+   "observed_surface": "login",
+   "filename_matches_content": true,
+   "cohort": "auth",
+   "state": "initial view",
+   "theme": "dark",
+   "viewport": "mobile 390x844 DPR1",
+   "artifacts": "none",
+   "confidence": "high",
+   "caveat": "Verified security-check state only. Dark OS theme, no saved choice; judged against charcoal background. Dark stamp tile nearly merges with the page background.",
+   "scores": {
+    "hierarchy": 9,
+    "typography": 8,
+    "density_layout": 7,
+    "color": 9,
+    "visible_affordances": 8,
+    "coherence": 8
+   },
+   "observations": {
+    "hierarchy": "Stamp, Sign in, tagline, fields, one primary.",
+    "typography": "Same restrained scale as desktop.",
+    "density_layout": "Card fills width with 14px outer margin; same centred status under left label with uneven gap.",
+    "color": "Neutral card, orange Sign in, green verified text.",
+    "visible_affordances": "Fields and 46px button obvious.",
+    "coherence": "Consistent card treatment."
+   },
+   "total": "8.2",
+   "brand": {
+    "palette_tokens": 9,
+    "type_geometry": 8,
+    "shell": null,
+    "accent_discipline": 9,
+    "suite_cohesion": 8
+   },
+   "brand_na": [
+    "shell"
+   ],
+   "brand_note": "Auth view has no shell.",
+   "ky_fit": "8.50",
+   "ky_fit_n": 4,
+   "bytes": 22423
+  }
+ ],
+ "cohort_rankings": {
+  "note": "KyPost only; no competitor captures, so no ranking and no Ky gap. Coverage summary, not a ranking.",
+  "cohorts": {
+   "auth": {
+    "n": 4,
+    "sum": "32.8",
+    "mean_exact_fraction": "41/5",
+    "mean_exact_decimal": "8.2",
+    "mean_half_up_0.1": "8.2",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-04-after-login-desktop-dark.png",
+     "screenshots/kypost-04-after-login-desktop-light.png",
+     "screenshots/kypost-04-after-login-mobile-dark.png",
+     "screenshots/kypost-04-after-login-mobile-light.png"
+    ]
+   },
+   "compose": {
+    "n": 4,
+    "sum": "32.4",
+    "mean_exact_fraction": "81/10",
+    "mean_exact_decimal": "8.1",
+    "mean_half_up_0.1": "8.1",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-04-after-compose-desktop-dark.png",
+     "screenshots/kypost-04-after-compose-desktop-light.png",
+     "screenshots/kypost-04-after-compose-mobile-dark.png",
+     "screenshots/kypost-04-after-compose-mobile-light.png"
+    ]
+   },
+   "contact-editor": {
+    "n": 4,
+    "sum": "30.0",
+    "mean_exact_fraction": "15/2",
+    "mean_exact_decimal": "7.5",
+    "mean_half_up_0.1": "7.5",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-04-after-contact-editor-desktop-dark.png",
+     "screenshots/kypost-04-after-contact-editor-desktop-light.png",
+     "screenshots/kypost-04-after-contact-editor-mobile-dark.png",
+     "screenshots/kypost-04-after-contact-editor-mobile-light.png"
+    ]
+   },
+   "contacts-list": {
+    "n": 4,
+    "sum": "30.4",
+    "mean_exact_fraction": "38/5",
+    "mean_exact_decimal": "7.6",
+    "mean_half_up_0.1": "7.6",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-04-after-contacts-desktop-dark.png",
+     "screenshots/kypost-04-after-contacts-desktop-light.png",
+     "screenshots/kypost-04-after-contacts-mobile-dark.png",
+     "screenshots/kypost-04-after-contacts-mobile-light.png"
+    ]
+   },
+   "mail-list": {
+    "n": 8,
+    "sum": "62.0",
+    "mean_exact_fraction": "31/4",
+    "mean_exact_decimal": "7.75",
+    "mean_half_up_0.1": "7.8",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-04-after-inbox-desktop-dark.png",
+     "screenshots/kypost-04-after-inbox-desktop-light.png",
+     "screenshots/kypost-04-after-inbox-mobile-dark.png",
+     "screenshots/kypost-04-after-inbox-mobile-light.png",
+     "screenshots/kypost-04-after-inbox-selection-desktop-dark.png",
+     "screenshots/kypost-04-after-inbox-selection-desktop-light.png",
+     "screenshots/kypost-04-after-inbox-selection-mobile-dark.png",
+     "screenshots/kypost-04-after-inbox-selection-mobile-light.png"
+    ]
+   },
+   "mail-read": {
+    "n": 4,
+    "sum": "33.2",
+    "mean_exact_fraction": "83/10",
+    "mean_exact_decimal": "8.3",
+    "mean_half_up_0.1": "8.3",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-04-after-reader-desktop-dark.png",
+     "screenshots/kypost-04-after-reader-desktop-light.png",
+     "screenshots/kypost-04-after-reader-mobile-dark.png",
+     "screenshots/kypost-04-after-reader-mobile-light.png"
+    ]
+   },
+   "settings": {
+    "n": 4,
+    "sum": "31.6",
+    "mean_exact_fraction": "79/10",
+    "mean_exact_decimal": "7.9",
+    "mean_half_up_0.1": "7.9",
+    "product": "KyPost",
+    "matched": true,
+    "competitor": "none in set",
+    "ky_gap": "N/A (no competitor captures)",
+    "members": [
+     "screenshots/kypost-04-after-appearance-desktop-dark.png",
+     "screenshots/kypost-04-after-appearance-desktop-light.png",
+     "screenshots/kypost-04-after-appearance-mobile-dark.png",
+     "screenshots/kypost-04-after-appearance-mobile-light.png"
+    ]
+   }
+  }
+ },
+ "drift": {
+  "prior_round": "opus-round2.json (own round2, stage03 originals), opened only after freeze",
+  "freeze": {
+   "frozen_at": "2026-10-27T18:51:16+00:00",
+   "vectors_sha256": "e26dc76cebc73ba7a8f31220417dd16ff09a81dd38dd0bfce8c5078e76a418af",
+   "hash_method": "sha256 of json.dumps(files, sort_keys=True, separators=(',',':'), ensure_ascii=False) UTF-8",
+   "frozen_file_sha256": "59fef7994d76f43e595b70563fb61e9bbf52c8b3bd4912a331ec405148f2aebc"
+  },
+  "files": [
+   {
+    "file": "screenshots/kypost-04-after-inbox-desktop-light.png",
+    "prior_file": "screenshots/kypost-03-after-inbox-desktop-light.png",
+    "same_pixels": true,
+    "prior_total": "7.7",
+    "total": "7.7",
+    "delta": "0.0",
+    "dim_deltas": {},
+    "cause": "unchanged/near-identical",
+    "explanation": "Light byte-identical, dark differs in 0.001% of pixels in the selected Inbox nav row; scores identical.",
+    "reviewer_variance_weighted": "0",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-desktop-light.png",
+    "prior_file": "screenshots/kypost-03-after-inbox-selection-desktop-light.png",
+    "same_pixels": false,
+    "prior_total": "7.8",
+    "total": "7.9",
+    "delta": "0.1",
+    "dim_deltas": {
+     "density_layout": 1,
+     "visible_affordances": -1
+    },
+    "cause": "pixels changed (0.06%) + reviewer variance",
+    "explanation": "Selected-count baseline now aligns with actions (density +1, product); affordance -1 because I now count the select-all box showing no mixed state (variance on unchanged pixels).",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-desktop-light.png",
+    "prior_file": "screenshots/kypost-03-after-reader-desktop-light.png",
+    "same_pixels": false,
+    "prior_total": "7.5",
+    "total": "8.2",
+    "delta": "0.7",
+    "dim_deltas": {
+     "hierarchy": 1,
+     "color": 1,
+     "visible_affordances": 1,
+     "coherence": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "More actions now matches sibling button type (coherence +1, +0.15); hierarchy, color and affordance +1 each (+0.50) are re-judgment of regions whose pixels did not change (More actions still has no menu chevron), so +0.50 of +0.65 exact is reviewer variance.",
+    "reviewer_variance_weighted": "0.50",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-desktop-light.png",
+    "prior_file": "screenshots/kypost-03-after-contacts-desktop-light.png",
+    "same_pixels": false,
+    "prior_total": "7.7",
+    "total": "7.7",
+    "delta": "0.0",
+    "dim_deltas": {
+     "typography": -1,
+     "density_layout": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Right-aligned Actions header and row geometry changes (density +1, product); typography -1 for the 16px page buttons versus 14px New Email, which was already present (variance).",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-desktop-light.png",
+    "prior_file": "screenshots/kypost-03-after-contact-editor-desktop-light.png",
+    "same_pixels": false,
+    "prior_total": "7.5",
+    "total": "7.5",
+    "delta": "0.0",
+    "dim_deltas": {
+     "typography": -1,
+     "visible_affordances": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Native matching disclosures and compact save-first guidance (affordance +1, product); typography -1 for the 16px add buttons that round2 already noted but scored 8 (variance).",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-desktop-light.png",
+    "prior_file": "screenshots/kypost-03-after-appearance-desktop-light.png",
+    "same_pixels": true,
+    "prior_total": "8.0",
+    "total": "7.9",
+    "delta": "-0.1",
+    "dim_deltas": {
+     "coherence": -1
+    },
+    "cause": "reviewer variance (byte-identical to stage03)",
+    "explanation": "Identical bytes; coherence 8->7 because I now count the icon-less Settings sub-nav against the icon-bearing Mailboxes sub-nav.",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-desktop-light.png",
+    "prior_file": "screenshots/kypost-03-after-compose-desktop-light.png",
+    "same_pixels": false,
+    "prior_total": "7.7",
+    "total": "8.2",
+    "delta": "0.5",
+    "dim_deltas": {
+     "typography": 1,
+     "color": 1,
+     "coherence": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Only the Normal picker changed (0.05% of pixels): shared face and baseline lift typography and coherence +1 each (+0.30); color +1 (+0.15) is reviewer variance on identical pixels.",
+    "reviewer_variance_weighted": "0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-desktop-light.png",
+    "prior_file": "screenshots/kypost-03-after-login-desktop-light.png",
+    "same_pixels": true,
+    "prior_total": "7.8",
+    "total": "8.2",
+    "delta": "0.4",
+    "dim_deltas": {
+     "hierarchy": 1,
+     "color": 1
+    },
+    "cause": "reviewer variance (byte-identical to stage03)",
+    "explanation": "Identical bytes; hierarchy 8->9 and color 8->9 are my re-judgment that one-primary sign-in with semantic green status meets the 9 anchor for those two dimensions. Not a product change.",
+    "reviewer_variance_weighted": "0.35",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-desktop-dark.png",
+    "prior_file": "screenshots/kypost-03-after-inbox-desktop-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.7",
+    "total": "7.7",
+    "delta": "0.0",
+    "dim_deltas": {},
+    "cause": "unchanged/near-identical",
+    "explanation": "Light byte-identical, dark differs in 0.001% of pixels in the selected Inbox nav row; scores identical.",
+    "reviewer_variance_weighted": "0",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-desktop-dark.png",
+    "prior_file": "screenshots/kypost-03-after-inbox-selection-desktop-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.8",
+    "total": "7.9",
+    "delta": "0.1",
+    "dim_deltas": {
+     "density_layout": 1,
+     "visible_affordances": -1
+    },
+    "cause": "pixels changed (0.06%) + reviewer variance",
+    "explanation": "Selected-count baseline now aligns with actions (density +1, product); affordance -1 because I now count the select-all box showing no mixed state (variance on unchanged pixels).",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-desktop-dark.png",
+    "prior_file": "screenshots/kypost-03-after-reader-desktop-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.5",
+    "total": "8.2",
+    "delta": "0.7",
+    "dim_deltas": {
+     "hierarchy": 1,
+     "color": 1,
+     "visible_affordances": 1,
+     "coherence": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "More actions now matches sibling button type (coherence +1, +0.15); hierarchy, color and affordance +1 each (+0.50) are re-judgment of regions whose pixels did not change (More actions still has no menu chevron), so +0.50 of +0.65 exact is reviewer variance.",
+    "reviewer_variance_weighted": "0.50",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-desktop-dark.png",
+    "prior_file": "screenshots/kypost-03-after-contacts-desktop-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.7",
+    "total": "7.7",
+    "delta": "0.0",
+    "dim_deltas": {
+     "typography": -1,
+     "density_layout": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Right-aligned Actions header and row geometry changes (density +1, product); typography -1 for the 16px page buttons versus 14px New Email, which was already present (variance).",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-desktop-dark.png",
+    "prior_file": "screenshots/kypost-03-after-contact-editor-desktop-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.5",
+    "total": "7.5",
+    "delta": "0.0",
+    "dim_deltas": {
+     "typography": -1,
+     "visible_affordances": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Native matching disclosures and compact save-first guidance (affordance +1, product); typography -1 for the 16px add buttons that round2 already noted but scored 8 (variance).",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-desktop-dark.png",
+    "prior_file": "screenshots/kypost-03-after-appearance-desktop-dark.png",
+    "same_pixels": true,
+    "prior_total": "8.0",
+    "total": "7.9",
+    "delta": "-0.1",
+    "dim_deltas": {
+     "coherence": -1
+    },
+    "cause": "reviewer variance (byte-identical to stage03)",
+    "explanation": "Identical bytes; coherence 8->7 because I now count the icon-less Settings sub-nav against the icon-bearing Mailboxes sub-nav.",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-desktop-dark.png",
+    "prior_file": "screenshots/kypost-03-after-compose-desktop-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.7",
+    "total": "8.2",
+    "delta": "0.5",
+    "dim_deltas": {
+     "typography": 1,
+     "color": 1,
+     "coherence": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Only the Normal picker changed (0.05% of pixels): shared face and baseline lift typography and coherence +1 each (+0.30); color +1 (+0.15) is reviewer variance on identical pixels.",
+    "reviewer_variance_weighted": "0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-desktop-dark.png",
+    "prior_file": "screenshots/kypost-03-after-login-desktop-dark.png",
+    "same_pixels": true,
+    "prior_total": "7.8",
+    "total": "8.2",
+    "delta": "0.4",
+    "dim_deltas": {
+     "hierarchy": 1,
+     "color": 1
+    },
+    "cause": "reviewer variance (byte-identical to stage03)",
+    "explanation": "Identical bytes; hierarchy 8->9 and color 8->9 are my re-judgment that one-primary sign-in with semantic green status meets the 9 anchor for those two dimensions. Not a product change.",
+    "reviewer_variance_weighted": "0.35",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-mobile-light.png",
+    "prior_file": "screenshots/kypost-03-after-inbox-mobile-light.png",
+    "same_pixels": false,
+    "prior_total": "7.7",
+    "total": "7.7",
+    "delta": "0.0",
+    "dim_deltas": {},
+    "cause": "pixels changed (7% in search/list region)",
+    "explanation": "Scores identical to round2.",
+    "reviewer_variance_weighted": "0",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-mobile-light.png",
+    "prior_file": "screenshots/kypost-03-after-inbox-selection-mobile-light.png",
+    "same_pixels": false,
+    "prior_total": "7.7",
+    "total": "7.7",
+    "delta": "0.0",
+    "dim_deltas": {},
+    "cause": "pixels changed",
+    "explanation": "All six actions are now visible, wrapping 4+2; my dimension scores equal round2, so the product fix offsets a ragged 4+2 wrap that I still count.",
+    "reviewer_variance_weighted": "0",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-mobile-light.png",
+    "prior_file": "screenshots/kypost-03-after-reader-mobile-light.png",
+    "same_pixels": false,
+    "prior_total": "7.2",
+    "total": "8.4",
+    "delta": "1.2",
+    "dim_deltas": {
+     "hierarchy": 1,
+     "typography": 1,
+     "density_layout": 2,
+     "color": 1,
+     "visible_affordances": 1,
+     "coherence": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Balanced 2x2 actions replace the lonely More actions row (density +2, +0.40), the full sender value no longer breaks mid-domain (typography +1, +0.15) and button type matches (coherence +1, +0.15); hierarchy, color and affordance +1 each (+0.50) are reviewer variance on unchanged elements.",
+    "reviewer_variance_weighted": "0.50",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-mobile-light.png",
+    "prior_file": "screenshots/kypost-03-after-contacts-mobile-light.png",
+    "same_pixels": false,
+    "prior_total": "7.3",
+    "total": "7.5",
+    "delta": "0.2",
+    "dim_deltas": {
+     "density_layout": 1
+    },
+    "cause": "pixels changed",
+    "explanation": "Full-width identity rows with actions beneath remove the squeezed, uneven rows (density 6->7); tall 137px rows and the clipped placeholder keep it at 7.",
+    "reviewer_variance_weighted": "0",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-mobile-light.png",
+    "prior_file": "screenshots/kypost-03-after-contact-editor-mobile-light.png",
+    "same_pixels": false,
+    "prior_total": "7.5",
+    "total": "7.5",
+    "delta": "0.0",
+    "dim_deltas": {
+     "typography": -1,
+     "visible_affordances": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Same as desktop: disclosure unification is product (+0.15), add-button type re-judged (-0.15).",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-mobile-light.png",
+    "prior_file": "screenshots/kypost-03-after-appearance-mobile-light.png",
+    "same_pixels": true,
+    "prior_total": "8.0",
+    "total": "7.9",
+    "delta": "-0.1",
+    "dim_deltas": {
+     "coherence": -1
+    },
+    "cause": "reviewer variance (byte-identical to stage03)",
+    "explanation": "Identical bytes; coherence 8->7 for the mixed icon/no-icon tab strip.",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-mobile-light.png",
+    "prior_file": "screenshots/kypost-03-after-compose-mobile-light.png",
+    "same_pixels": false,
+    "prior_total": "7.2",
+    "total": "8.0",
+    "delta": "0.8",
+    "dim_deltas": {
+     "typography": 1,
+     "density_layout": 1,
+     "color": 1,
+     "visible_affordances": 1,
+     "coherence": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Shared picker face (typography +1), aligned toolbar/editor margins removing the stepped inset (density +1) and coherence +1 are product pixels (+0.50); color and affordance +1 each (+0.30) are reviewer variance, Trash still sits beside Contacts.",
+    "reviewer_variance_weighted": "0.30",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-mobile-light.png",
+    "prior_file": "screenshots/kypost-03-after-login-mobile-light.png",
+    "same_pixels": true,
+    "prior_total": "7.8",
+    "total": "8.2",
+    "delta": "0.4",
+    "dim_deltas": {
+     "hierarchy": 1,
+     "color": 1
+    },
+    "cause": "reviewer variance (byte-identical to stage03)",
+    "explanation": "Identical bytes; same hierarchy and color re-judgment as desktop login. Not a product change.",
+    "reviewer_variance_weighted": "0.35",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-mobile-dark.png",
+    "prior_file": "screenshots/kypost-03-after-inbox-mobile-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.7",
+    "total": "7.7",
+    "delta": "0.0",
+    "dim_deltas": {},
+    "cause": "pixels changed (7% in search/list region)",
+    "explanation": "Scores identical to round2.",
+    "reviewer_variance_weighted": "0",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-inbox-selection-mobile-dark.png",
+    "prior_file": "screenshots/kypost-03-after-inbox-selection-mobile-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.7",
+    "total": "7.7",
+    "delta": "0.0",
+    "dim_deltas": {},
+    "cause": "pixels changed",
+    "explanation": "All six actions are now visible, wrapping 4+2; my dimension scores equal round2, so the product fix offsets a ragged 4+2 wrap that I still count.",
+    "reviewer_variance_weighted": "0",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-reader-mobile-dark.png",
+    "prior_file": "screenshots/kypost-03-after-reader-mobile-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.2",
+    "total": "8.4",
+    "delta": "1.2",
+    "dim_deltas": {
+     "hierarchy": 1,
+     "typography": 1,
+     "density_layout": 2,
+     "color": 1,
+     "visible_affordances": 1,
+     "coherence": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Balanced 2x2 actions replace the lonely More actions row (density +2, +0.40), the full sender value no longer breaks mid-domain (typography +1, +0.15) and button type matches (coherence +1, +0.15); hierarchy, color and affordance +1 each (+0.50) are reviewer variance on unchanged elements.",
+    "reviewer_variance_weighted": "0.50",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-contacts-mobile-dark.png",
+    "prior_file": "screenshots/kypost-03-after-contacts-mobile-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.3",
+    "total": "7.5",
+    "delta": "0.2",
+    "dim_deltas": {
+     "density_layout": 1
+    },
+    "cause": "pixels changed",
+    "explanation": "Full-width identity rows with actions beneath remove the squeezed, uneven rows (density 6->7); tall 137px rows and the clipped placeholder keep it at 7.",
+    "reviewer_variance_weighted": "0",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-contact-editor-mobile-dark.png",
+    "prior_file": "screenshots/kypost-03-after-contact-editor-mobile-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.5",
+    "total": "7.5",
+    "delta": "0.0",
+    "dim_deltas": {
+     "typography": -1,
+     "visible_affordances": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Same as desktop: disclosure unification is product (+0.15), add-button type re-judged (-0.15).",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-appearance-mobile-dark.png",
+    "prior_file": "screenshots/kypost-03-after-appearance-mobile-dark.png",
+    "same_pixels": true,
+    "prior_total": "8.0",
+    "total": "7.9",
+    "delta": "-0.1",
+    "dim_deltas": {
+     "coherence": -1
+    },
+    "cause": "reviewer variance (byte-identical to stage03)",
+    "explanation": "Identical bytes; coherence 8->7 for the mixed icon/no-icon tab strip.",
+    "reviewer_variance_weighted": "-0.15",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-compose-mobile-dark.png",
+    "prior_file": "screenshots/kypost-03-after-compose-mobile-dark.png",
+    "same_pixels": false,
+    "prior_total": "7.2",
+    "total": "8.0",
+    "delta": "0.8",
+    "dim_deltas": {
+     "typography": 1,
+     "density_layout": 1,
+     "color": 1,
+     "visible_affordances": 1,
+     "coherence": 1
+    },
+    "cause": "pixels changed + reviewer variance",
+    "explanation": "Shared picker face (typography +1), aligned toolbar/editor margins removing the stepped inset (density +1) and coherence +1 are product pixels (+0.50); color and affordance +1 each (+0.30) are reviewer variance, Trash still sits beside Contacts.",
+    "reviewer_variance_weighted": "0.30",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   },
+   {
+    "file": "screenshots/kypost-04-after-login-mobile-dark.png",
+    "prior_file": "screenshots/kypost-03-after-login-mobile-dark.png",
+    "same_pixels": true,
+    "prior_total": "7.8",
+    "total": "8.2",
+    "delta": "0.4",
+    "dim_deltas": {
+     "hierarchy": 1,
+     "color": 1
+    },
+    "cause": "reviewer variance (byte-identical to stage03)",
+    "explanation": "Identical bytes; same hierarchy and color re-judgment as desktop login. Not a product change.",
+    "reviewer_variance_weighted": "0.35",
+    "rubric_cause_note": "Rubric causes (anchor/cohort/correction/artifact) assume unchanged images; pixel changes here come from product source 2ff40cc2, labelled separately from reviewer variance."
+   }
+  ],
+  "summary": {
+   "n": 32,
+   "mean_drift": "0.25625",
+   "prior_sum": "244.2",
+   "current_sum": "252.4",
+   "byte_identical_to_stage03": 9,
+   "byte_identical_mean_drift": "0.1333333333333333333333333333",
+   "near_identical_to_stage03": [
+    "inbox-desktop-dark (0.001%)",
+    "compose-desktop light/dark (0.05%, picker only)",
+    "inbox-selection-desktop light/dark (0.06%)"
+   ],
+   "reviewer_variance_weighted_sum": "2.50",
+   "sum_with_variance_removed": "249.90",
+   "mean_with_variance_removed": "7.809375",
+   "mean_with_variance_removed_half_up": "7.8",
+   "note": "Variance attribution is my post-freeze judgement and does not alter the frozen vectors. Positive variance (reader, compose, login) partly offsets negative variance (appearance, contacts, editor, selection). With it removed the overall would be 7.8; with it kept 7.9. Neither reaches 8.0. Competitor drift N/A (no competitor files)."
+  }
+ },
+ "gates": {
+  "keyboard": {
+   "result": "untested",
+   "evidence": "Partial live check (Chrome 154 DPR2, own incognito tab, localhost:18461): Escape closed the Contacts More actions menu with focus on More actions; Escape closed the Add Contact dialog with focus on New Contact. Full task paths not traversed."
+  },
+  "focus": {
+   "result": "untested",
+   "evidence": "No focused-state captures; rings not inspected."
+  },
+  "contrast": {
+   "result": "untested",
+   "evidence": "No computed-style contrast measured this round; parent checks not re-run by me."
+  },
+  "states": {
+   "result": "untested",
+   "evidence": "No empty, loading or error captures."
+  },
+  "responsive": {
+   "result": "untested",
+   "evidence": "Manifest overflow 0 for all 32 at 390/1280; live select-all and row checkboxes measure 13x13 CSS px, so target usability is unproven."
+  },
+  "revision": "2ff40cc2394d1bab8cf14935ba6b219a5f28b8f1",
+  "note": "Screenshots alone cannot pass a gate. Parent-reported checks (1235 tests/111 files, typecheck, lint, runtime audit, build, 4 real-browser cases) were not re-run by this reviewer."
+ },
+ "unscored": {
+  "policy": "Only the 32 stage04 originals are scored; all others listed in inventory.files with role.",
+  "files": [
+   {
+    "glob": "screenshots/kypost-00-before-*.png",
+    "n": 32,
+    "reason": "historical baseline; stage00 login mid-fade; not opened"
+   },
+   {
+    "glob": "screenshots/kypost-01-before-login-*.png",
+    "n": 4,
+    "reason": "supplemental settled baseline, unscored; not opened"
+   },
+   {
+    "glob": "screenshots/kypost-02-after-*.png",
+    "n": 32,
+    "reason": "superseded stage02; not opened"
+   },
+   {
+    "glob": "screenshots/kypost-03-after-*.png",
+    "n": 32,
+    "reason": "round2 set; compared only by pixel diff after freeze, not rescored"
+   },
+   {
+    "glob": "brand-references/*.png",
+    "n": 4,
+    "reason": "KyIdentity brand context only, never a quality input"
+   }
+  ]
+ },
+ "overall_covered_set": {
+  "note": "Coverage summary of all 32 current-round KyPost originals; not a ranking",
+  "n": 32,
+  "sum": "252.4",
+  "mean_exact_fraction": "631/80",
+  "mean_exact_decimal": "7.8875",
+  "mean_half_up_0.1": "7.9",
+  "ky_fit_mean_exact_fraction": "2669/320",
+  "ky_fit_mean_decimal": "8.340625",
+  "ky_fit_note": "Separate from quality; shell N/A on 10 captures without a visible shell (login x4; phone reader, compose and editor sheets x6)."
+ },
+ "findings": [
+  {
+   "title": "Mixed button label sizes",
+   "observed": "contacts header 16px, editor add buttons 16px, shell/footer/menu 14px",
+   "smallest_fix": "Use the 14px control label token for New Contact, More actions and '+ Add email/phone'.",
+   "scope": "contacts, contact-editor (8 files)"
+  },
+  {
+   "title": "Split name disclosures",
+   "observed": "'Organization and name details' sits between Emails and Phones; 'More name fields' after Phones",
+   "smallest_fix": "Merge into one disclosure or place both directly under Full Name.",
+   "scope": "contact-editor (4)"
+  },
+  {
+   "title": "No mixed select-all state",
+   "observed": "2 of 4 selected shows an empty header checkbox (live: indeterminate=false)",
+   "smallest_fix": "Set input.indeterminate when 0 < selected < total.",
+   "scope": "inbox-selection (4)"
+  },
+  {
+   "title": "13px checkboxes",
+   "observed": "native checkboxes in inbox/contacts tables, also on phone",
+   "smallest_fix": "Give the cell a 40px label hit area (keep native box).",
+   "scope": "inbox, selection, contacts (12)"
+  },
+  {
+   "title": "Phone editor title inset",
+   "observed": "title x=24 while fields x=16",
+   "smallest_fix": "Use the same 16px inline padding for the phone dialog header.",
+   "scope": "contact-editor mobile (2)"
+  },
+  {
+   "title": "Phone page inset mismatch",
+   "observed": "Appearance 16px vs Inbox/Contacts 20px",
+   "smallest_fix": "Pick one phone page padding token.",
+   "scope": "appearance mobile (2) vs inbox, selection and contacts mobile"
+  },
+  {
+   "title": "Login status alignment",
+   "observed": "left 'Security check' label over a centred status in a tall gap",
+   "smallest_fix": "Left-align the status under its label and drop the extra gap.",
+   "scope": "login (4)"
+  },
+  {
+   "title": "Desktop reader dialog height",
+   "observed": "fixed near-full dialog with two-line body",
+   "smallest_fix": "Let the dialog size to content up to max height.",
+   "scope": "reader desktop (2)"
+  },
+  {
+   "title": "Contacts duplicate count",
+   "observed": "'4 contacts' in header and 'Address Book 4'",
+   "smallest_fix": "Keep one count.",
+   "scope": "contacts (4)"
+  }
+ ],
+ "live_supplement": {
+  "when": "after freeze",
+  "tab": "own incognito tab via preview_open(reuseExistingTab=false), closed with t3_preview_close; no other tabs touched",
+  "browser": "Chrome 154.0.0.0, DPR2, 1280x800 (differs from scored Chromium 153 DPR1 1280x900)",
+  "actions": "real login as the synthetic user (credentials not recorded); checked and unchecked two inbox rows (client selection only); opened/closed Contacts More actions; opened Add Contact and closed it with Escape unsubmitted. No message opened, nothing sent/saved/deleted/configured. The app's own inbox load requested message bodies 1-4 (as on any load); I did not inspect or reset read flags.",
+  "findings": [
+   "Select-all with 2 of 4 rows selected: checked=false, indeterminate=false (confirms no mixed state)",
+   "Row/select-all checkboxes 13x13 CSS px",
+   "New Contact 16px/600 and More actions 16px/400 vs sidebar New Email 14px/600 (confirms mixed button type)",
+   "Add Contact: '+ Add email' 16px/400 vs Cancel 14px/400 and Add Contact 14px/600; dialog title 17px; all seven section toggles are native <summary>",
+   "Contacts utility menu items are quiet 14px/400 rows at 40px in a shadowed overlay; consistent with the quiet item treatment the parent describes (reader menu not opened this round)",
+   "Escape closes menu and dialog with focus returned to the trigger"
+  ],
+  "limits": "No replacement scoring; Chrome 154/DPR2 conditions; console 404 on /api/pgp/identity seen on Contacts load (fixture has no PGP identity; not judged)."
+ },
+ "not_covered": "Other roles/admin, empty/loading/error states, long lists, HTML mail, attachments, menus beyond those listed, assistive tech, full keyboard paths, hosted CI/security. No competitor, ranking or whole-product claim.",
+ "process": {
+  "gemini": "unused",
+  "peer_reports": "not opened",
+  "myslop": "not posted (known HTTP 401; no retry)",
+  "dox": "report-only change inside the existing raw-pair boundary; no durable contract change"
+ },
+ "verdict": {
+  "satisfied": false,
+  "genuinely_satisfied": false,
+  "overall_quality": {
+   "n": 32,
+   "sum": "252.4",
+   "mean_exact_fraction": "631/80",
+   "mean_exact_decimal": "7.8875",
+   "mean_half_up_0.1": "7.9"
+  },
+  "reason": "My frozen Opus overall is 252.4/32 = 7.8875, 7.9 half-up, below 8.0. The round3 fixes are real and visible (reader phone 2x2 + full sender, compose picker face and aligned phone margins, contacts phone rows, all six selection actions visible), but the set still shows small repeated slips: 16px page-header and editor add-button labels beside 14px shell, footer and menu labels; split name disclosures in the contact editor; 13px native checkboxes with no mixed select-all state; uneven security-check status on login; an 8px title inset on the phone editor and 16 vs 20px page insets on phone. None is broken; I do not ask for scope beyond these small fixes. Parent decides progression."
+ }
+}

@@ -1,0 +1,40 @@
+{
+  "round": 3,
+  "raw_reports": {
+    "sol-round3.json": "943d336b8f63aad50c7a6ec5cb9b4dff26375d5e11cd745592ef41d388c5b51c",
+    "sol-round3.md": "86ed4eea6bd0522e65bf64f7cf153f13098437f5b74f44e541a248c5b27e63e8",
+    "opus-round3.json": "2d60f546a0b69aaffe7b8923d005bf5f7dd7b085023c2262f1e318337bedb74e",
+    "opus-round3.md": "00f86e2985f2a45576931b7acdb5c07f03600728730fb833a1fa7d84ce370040"
+  },
+  "progression": {
+    "opus_exact": "631/80",
+    "opus_decimal": "7.8875",
+    "opus_rounded": "7.9",
+    "accepted": false,
+    "sol_exact": "277/32",
+    "sol_decimal": "8.65625",
+    "rule": "Opus current overall only, half-up to0.1. No pooling withSol or prior rounds."
+  },
+  "independent_satisfaction": {
+    "opus": false,
+    "sol": true
+  },
+  "spread_audit": {
+    "dimensions_ge_2": 22,
+    "originals": 18,
+    "facts": "Parent individually viewed all32current originals at native resolution. Spread concerns inbox density, selection mixed-state affordance, contact button typography/field grouping and Appearance coherence. Visible defects checked against relevant CSS/JSX and independent live measurements; both sets of raw judgments retained. No averaging away discrepancies.",
+    "findings": "Contacts New Contact/More actions/add-field buttons are16px against14px menu/footer buttons. Name groups interrupt email/phone sequence. Inbox native header lacks indeterminate state. Existing label wrappers already enlarge checkbox hit areas, so input13x13 alone is not the hit-target measurement; the existing33px contact/header height remains short of40px. Phone Appearance gutter16vs20 and editor title24vs16 are real."
+  },
+  "review_limitations": [
+    "Opus read progression-rule.json and thus prior overall score before freezing; no prior per-file/peer score exposure reported. Preserve and disclose this limitation.",
+    "Opus estimates a variance-adjusted mean; do not use that estimate for progression. Gate uses the immutable raw7.8875.",
+    "Full behavior/role/state/theme/competitive acceptance remains unproven."
+  ],
+  "next_batch": [
+    "Uniform14px contact control text; adjacent name groups beneath Full Name.",
+    "Native mixed select-all and40px label hit areas; keep native input controls.",
+    "Align phone editor title and standardize Appearance gutter.",
+    "Compact and left-align self-hosted PoW status, preserving third-party slots and validation."
+  ],
+  "gemini": "Unused; Opus independently unsatisfied."
+}

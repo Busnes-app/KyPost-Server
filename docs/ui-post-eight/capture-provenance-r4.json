@@ -1,0 +1,24 @@
+{
+  "source_ui": "558761afa10560a5ba9522e6d7603dbf2a17ccfd",
+  "initial_after": "manifest-05-after.json; superseded (37px contact controls and collapsed phone Appearance column found in parent inspection)",
+  "scored_manifest": "manifest-06-after.json; single bounded confirmation",
+  "parent_individually_viewed_initial": 32,
+  "parent_individually_viewed_confirmation": 32,
+  "originals": 32,
+  "duplicate_comparisons": 240,
+  "near_duplicates": 0,
+  "page_overflows": 0,
+  "source_files_checked_against_git": 295,
+  "prior_comparison": "manifest-04-after.json",
+  "conditions": {
+    "browser": "153.0.8010.12",
+    "locale": "en-US",
+    "timezone": "America/New_York",
+    "theme_source": "OS light/dark; no saved choice",
+    "fixture": "Private copy of historical synthetic council data; everyday alex; real PoW sign-in; own loopback TLS kypost-demo-IMAP; four seeded messages and populated contacts; no Ollama; no mocks, auth/CSRF/CSP bypass, send or submitted contact edit. Reader changes restored through native inbox actions. Demo drip set86400s.",
+    "captured_at": "2026-10-27T19:05:13.609Z"
+  },
+  "server": "Unchanged owned fixture server binary; backend unchanged by UI work. Real PoW, documented localhost sandbox TLS demo; no security bypass/mocks or external sends.",
+  "round4_response": "Contact control type14px/min40px; adjacent name disclosures; native partial selection;40px checkbox labels; aligned phone title/page gutters with retained2column Appearance cards; compact left-aligned self-hosted PoW, third-party slot preserved.",
+  "limits": "No complete behavior/role/state/all-theme/competitive acceptance."
+}
