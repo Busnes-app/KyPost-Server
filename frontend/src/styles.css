@@ -5719,6 +5719,7 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .auth-submit { min-height: var(--ky-control-size); border-radius: var(--ky-control-radius); box-shadow: none; }
 .compose-window .ql-toolbar.ql-snow .ql-formats { margin-right: 4px; }
 .compose-window .ql-toolbar.ql-snow button { width: 32px; height: 40px; }
+.compose-window .ql-toolbar.ql-snow button svg { width: 18px; height: 18px; margin: auto; }
 .compose-window .ql-toolbar.ql-snow .ql-picker-label { min-height: 40px; display: flex; align-items: center; }
 @media (max-width: 600px) {
   .suite-action-menu[popover] { inset: auto 16px 16px; margin: 0; width: auto; }
@@ -5729,5 +5730,9 @@ html:root:not([data-theme]):not([data-ky-theme]) {
   .inbox-action-bar .inbox-action-button { min-height: 40px; width: auto; font-size: 13px; }
   .inbox-col-select { width: 40px; min-width: 40px; }
   .inbox-col-lock { width: 24px; min-width: 24px; }
+  .inbox-table { table-layout: fixed; width: 100%; }
+  .inbox-row-meta { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .inbox-row-meta > span:nth-child(2) { white-space: nowrap; }
+  .inbox-row-meta .inbox-keyword-chip { grid-column: 1 / -1; justify-self: start; }
   .inbox-row-meta > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
