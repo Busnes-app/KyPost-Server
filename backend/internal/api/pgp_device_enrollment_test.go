@@ -118,7 +118,7 @@ func TestPublishEnrollmentKeyRejectsEmptyKey(t *testing.T) {
 func TestDeviceEnvelopeServesOnlyTheCallersOwnSlot(t *testing.T) {
 	srv, userID, deviceID, authDevice := newPairedDeviceForTest(t)
 
-	mine, theirs := sealedEnvelopeFilled(2, 1), sealedEnvelopeFilled(2, 2)
+	mine, theirs := sealedEnvelopeFilled(4, 1), sealedEnvelopeFilled(4, 2)
 	if _, _, err := srv.users.SetPGPDeviceEnvelope(userID, users.DeviceDelivery{DeviceID: deviceID, Envelope: mine, EnrollmentKey: "K", ExpectedFingerprint: "FPR123"}); err != nil {
 		t.Fatalf("seed own slot: %v", err)
 	}

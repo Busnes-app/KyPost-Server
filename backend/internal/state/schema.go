@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS native_devices (
 	-- from additiveColumns below, which is the path that actually matters.
 	enrollment_public_key TEXT NOT NULL DEFAULT '',
 	enrollment_key_at     TEXT NOT NULL DEFAULT '',
-	enrollment_envelope_versions TEXT NOT NULL DEFAULT '[2]',
+	enrollment_envelope_versions TEXT NOT NULL DEFAULT '[]',
 	encryption_enrolled   INTEGER NOT NULL DEFAULT 0,
 	enrolled_version      INTEGER NOT NULL DEFAULT 0,
 	enrolled_generation   INTEGER NOT NULL DEFAULT 0,
@@ -337,7 +337,7 @@ func openDB(path, existingSource string) (*sql.DB, error) {
 var additiveColumns = []struct{ table, column, ddl string }{
 	{"native_devices", "enrollment_public_key", "TEXT NOT NULL DEFAULT ''"},
 	{"native_devices", "enrollment_key_at", "TEXT NOT NULL DEFAULT ''"},
-	{"native_devices", "enrollment_envelope_versions", "TEXT NOT NULL DEFAULT '[2]'"},
+	{"native_devices", "enrollment_envelope_versions", "TEXT NOT NULL DEFAULT '[]'"},
 	{"native_devices", "encryption_enrolled", "INTEGER NOT NULL DEFAULT 0"},
 	// What the device last acknowledged holding. 0 and "" are the truth for a
 	// device that acknowledged only the legacy boolean, or nothing.

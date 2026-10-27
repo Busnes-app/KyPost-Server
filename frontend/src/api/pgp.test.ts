@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { deleteDeviceEnvelope, putDeviceEnvelope, putRecoveryEnvelope, getRecoveryBackup, getPasswordSnapshot, rewrapPGPKeyring, putPGPKeyringRecovery } from "./pgp";
-import type { DeviceEnvelope } from "../lib/deviceEnrollment";
+import type { HpkeDeviceEnvelope } from "../lib/deviceEnrollment";
 
 const getJSON = vi.fn();
 const putJSON = vi.fn();
@@ -22,11 +22,10 @@ vi.mock("./auth", () => ({
   credentialFields: () => ({ password: "hunter2" })
 }));
 
-const ENVELOPE: DeviceEnvelope = {
-  v: 2,
-  alg: "ECDH-P256+HKDF-SHA256+A256GCM",
-  epk: "EPK",
-  iv: "IV",
+const ENVELOPE: HpkeDeviceEnvelope = {
+  v: 4,
+  alg: "HPKE-Base-P256-SHA256-A256GCM",
+  enc: "ENC",
   ct: "CT"
 };
 
@@ -51,7 +50,7 @@ describe("putDeviceEnvelope", () => {
   });
 
   it("names the material generation it sealed on a converted account", async () => {
-    const envelope = { ...ENVELOPE, v: 3 } as const;
+    const envelope = { ...ENVELOPE, v: 5 } as const;
     await putDeviceEnvelope("dev:1", envelope, "hunter2", 4, "DEVKEY", "FPR", 2);
 
     expect(putJSON).toHaveBeenCalledWith("/api/pgp/identity/envelope/device:dev%3A1", {

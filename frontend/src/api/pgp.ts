@@ -2,7 +2,7 @@ import { withSSOStepUp } from "./stepup";
 import { parseKeyringMetadata, type KeyringMetadata } from "../lib/pgpKeyring";
 import { getJSON, postJSON, putJSON, deleteJSON } from "./client";
 import { credentialFields, deriveCredential } from "./auth";
-import type { DeviceEnvelope, HpkeDeviceEnvelope, KeyringDeviceEnvelope } from "../lib/deviceEnrollment";
+import type { HpkeDeviceEnvelope } from "../lib/deviceEnrollment";
 import { parseEnvelope, type RecoveryBackup, type WrappedKeyEnvelope } from "../lib/keyVault";
 
 export type PGPIdentity = {
@@ -447,7 +447,7 @@ export function createSealedPickup(
  */
 export async function putDeviceEnvelope(
   deviceId: string,
-  envelope: DeviceEnvelope | KeyringDeviceEnvelope | HpkeDeviceEnvelope,
+  envelope: HpkeDeviceEnvelope,
   password: string,
   expectedRevision: number,
   /** The device key the envelope was sealed to; the server refuses a delivery for a key the device has since replaced. */

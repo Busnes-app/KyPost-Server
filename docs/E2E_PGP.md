@@ -34,10 +34,10 @@ where explicitly labeled; they do not re-enable this retired mode.
 
 ### Device keyring preparation (gated)
 
-The browser has a validated complete-ring device-envelope v3 preparation helper
-and shared WebCrypto/Go vectors. The [v3 contract](PGP_KEY_LIFECYCLE.md#v3-framing-and-interoperability-vectors)
-specifies its separate HKDF/AAD domain and exact framing. Production enrollment
-still uses v2 single-key delivery; native v3 persistence,
+The browser has a validated complete-ring preparation helper, now sealing only
+v5 (RFC 9180 HPKE); the retired [v3 contract](PGP_KEY_LIFECYCLE.md#v3-framing-and-interoperability-vectors)
+stays as the reference for its shared vectors. New enrollment delivers v4/v5
+only; native complete-ring persistence,
 server delivery and account conversion are not enabled by this helper. Devices
 can publish envelope-version support as described below; a claim does not prove
 that a client durably imported a ring.
@@ -388,13 +388,15 @@ Implemented:
   keyring's current generation, else `409 {"pgpStateChanged": true,
   "materialGeneration": <current>}`. The envelope's own `v` selects the
   version and the server checks its framing without decrypting, refusing
-  anything else with 400: v2/v3 are exactly `{v, alg, epk, iv, ct}` (a 65-byte
-  P-256 point, a 12-byte IV, at least a tag of ciphertext); v4/v5 are exactly
+  anything else with 400: only v4/v5, exactly
   `{v, alg:"HPKE-Base-P256-SHA256-A256GCM", enc, ct}` in canonical padded
   base64 (`enc` 65 bytes starting `0x04`, `ct` at least 16 bytes; see
   [DEVICE_ENROLLMENT.md](DEVICE_ENROLLMENT.md#normative-the-hpke-envelope-v4v5)).
-  It accepts only `v: 3` or `5` on a converted account and only `v: 2` or `4`
-  on a legacy one (`409 {"deviceEnvelopeVersion": true}` otherwise), and
+  Retired v2/v3 are refused with 400 and a "retired … update KyPost on that
+  device" message; v2/v3 slots stored before the retirement are served
+  unchanged until their TTL. It accepts only `v: 5` on a converted account
+  and only `v: 4` on a legacy one (`409 {"deviceEnvelopeVersion": true}`
+  otherwise), and
   refuses a version the
   device did not advertise (`409 {"enrollmentChanged": true,
   "envelopeVersions": [...]}`). The stored slot records `version`,
@@ -417,38 +419,41 @@ Implemented:
     to, which is precisely the substitution the verification code exists to
     catch.
     The optional `envelopeVersions` field publishes codec support with that key:
-    `{"publicKey":"<base64 SEC1 point>","envelopeVersions":[2,3,4,5]}`. Omitted or
-    `null` means `[2]`, including on re-publication of the same key; this resets
-    a stale v3 claim when an older client republishes. Explicit lists contain
+    `{"publicKey":"<base64 SEC1 point>","envelopeVersions":[4,5]}`. Omitted or
+    `null` means no claim (`[]`, never `[2]`), including on re-publication of
+    the same key; this resets a stale claim when an older client republishes.
+    Explicit lists contain
     1–16 distinct integers from 2 through 65535 and are stored sorted. Empty,
     duplicate, fractional or out-of-range lists return 400 without changing the
     key or capabilities. Future version numbers are retained, not interpreted
-    as support by this server. The browser seals the HPKE version when the
-    device advertises it: a converted account gets v5, else v3; a legacy
-    account v4, else v2. A device opens by the server-recorded delivery
-    `version`. While v2/v3 remain, a hostile server can downgrade a device to
-    them by trimming its list. The entire JSON request is bounded to 4 KiB;
+    as support by this server. The browser seals only RFC 9180 HPKE: v5 for a
+    converted account, v4 for a legacy one, with no v2/v3 fallback; a device
+    that does not advertise it is told to update KyPost on that device. A
+    device opens by the server-recorded delivery `version`, and current clients
+    advertise and open only `[4,5]`, so trimming the list cannot downgrade them
+    to a custom construction. The entire JSON request is bounded to 4 KiB;
     trailing JSON or oversized padding is refused.
 
     Key and versions are written together. Push registration cannot set them
     and preserves both existing-device matching paths; identity enrollment reset
-    clears the key and returns versions to `[2]`. Existing SQLite rows and legacy
-    JSON migration default to `[2]`. Browser-session publication is refused;
+    clears the key and the claim (`[]`). Rows that never had the column default
+    to `[]`; a `[2]` already stored stays as stored and selects nothing.
+    Browser-session publication is refused;
     publication requires the device's own verified pairing credential.
 
     `GET /api/notifications/native/devices` exposes the sorted list as
     `enrollmentEnvelopeVersions` on each redacted device in the signed-in user's
-    inventory. Browsers treat an absent/null field from older servers as `[2]`
-    and reject malformed lists. Webmail delivers the complete ring as v3 to a
-    device on a converted account (`sealKeyringForDevice`) and v2 on a legacy
-    one, and refuses setup before requesting a code or password when the
+    inventory. Browsers treat an absent/null field as `[]` and reject malformed
+    lists. Webmail delivers the complete ring as v5 to a device on a converted
+    account (`sealKeyringForDevice`) and the single key as v4 on a legacy one,
+    and refuses setup before requesting a code or password when the
     device's list excludes the version the account needs. Claims are
     compatibility metadata, not proof of key possession, durable import or
     freshness at a later upload; retain SAS.
     The server binds each delivery to the published key, the snapshot revision
     and the material generation, and each acknowledgement to the same (the
     `device:` slot `PUT` and `POST .../enrollment-state` entries here). Only
-    advertise v3 after native complete-ring persistence checks pass.
+    advertise v5 after native complete-ring persistence checks pass.
   - `GET .../envelope` serves the one envelope sealed for the calling device and
     takes **no slot parameter** — the slot name is built from the verified
     device record, so there is no input to abuse. This is safe where the general

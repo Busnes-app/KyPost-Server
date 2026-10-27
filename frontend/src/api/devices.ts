@@ -40,7 +40,7 @@ export type NativeDevice = {
    */
   enrollmentPublicKey?: string;
   enrollmentKeyAt?: string;
-  /** Published with the enrollment key. Missing/null on older servers means v2 only. */
+  /** Published with the enrollment key. Missing/null means no claim: nothing can be sealed. */
   enrollmentEnvelopeVersions?: number[];
   /**
    * DEVICE-REPORTED: whether it can still open its local envelope. Not the
@@ -84,8 +84,8 @@ export async function listNativeDevices(): Promise<{
 }
 
 function enrollmentVersions(value: unknown): number[] {
-  if (value === undefined || value === null) return [2];
-  if (!Array.isArray(value) || value.length < 1 || value.length > 16 ||
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 16 ||
       !value.every((v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 2 && v <= 65535) ||
       new Set(value).size !== value.length) {
     throw new Error("Invalid device enrollment versions. Refresh the device list.");

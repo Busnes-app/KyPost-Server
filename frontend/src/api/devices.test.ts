@@ -43,12 +43,13 @@ describe("listNativeDevices", () => {
     const { devices } = await listNativeDevices();
 
     expect(devices[0].enrollmentPublicKey).toBeUndefined();
-    expect(devices[0].enrollmentEnvelopeVersions).toEqual([2]);
+    // No claim is no capability; it is not read as the retired v2.
+    expect(devices[0].enrollmentEnvelopeVersions).toEqual([]);
     expect(devices[0].encryptionEnrolled).toBe(false);
   });
 });
 
-it.each([[], [2, 2], [1], [65536], [2.5], ["3"], false, Array.from({ length: 17 }, (_, i) => i + 2)])("rejects malformed enrollment versions %j", async value => {
+it.each([[2, 2], [1], [65536], [2.5], ["3"], false, Array.from({ length: 17 }, (_, i) => i + 2)])("rejects malformed enrollment versions %j", async value => {
   getJSON.mockResolvedValue({ devices: [{ deviceId: "d", enrollmentEnvelopeVersions: value }] });
   await expect(listNativeDevices()).rejects.toThrow(/Invalid device enrollment versions/);
 });

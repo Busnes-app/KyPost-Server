@@ -233,7 +233,7 @@ func TestSetPGPWrappedEnvelopeEnforcesCapOnAddNotReplace(t *testing.T) {
 	}
 	owner, _ := store.Get(id)
 	deliver := func(deviceID string) error {
-		_, _, err := store.SetPGPDeviceEnvelope(id, DeviceDelivery{DeviceID: deviceID, Envelope: deviceEnvelope(2), EnrollmentKey: "K", ExpectedFingerprint: owner.PGPFingerprint})
+		_, _, err := store.SetPGPDeviceEnvelope(id, DeviceDelivery{DeviceID: deviceID, Envelope: hpkeDeviceEnvelope(4), EnrollmentKey: "K", ExpectedFingerprint: owner.PGPFingerprint})
 		return err
 	}
 	for i := 0; i < maxWrappedEnvelopeSlots-1; i++ {
@@ -308,7 +308,7 @@ func TestDeletePGPWrappedEnvelopeLeavesOtherSlotsIntact(t *testing.T) {
 		t.Fatalf("SetPGPWrappedEnvelope recovery: %v", err)
 	}
 	owner, _ := store.Get(id)
-	if _, _, err := store.SetPGPDeviceEnvelope(id, DeviceDelivery{DeviceID: "abc123", Envelope: deviceEnvelope(2), AddedAt: "2026-08-04T00:00:00Z", EnrollmentKey: "K", ExpectedFingerprint: owner.PGPFingerprint}); err != nil {
+	if _, _, err := store.SetPGPDeviceEnvelope(id, DeviceDelivery{DeviceID: "abc123", Envelope: hpkeDeviceEnvelope(4), AddedAt: "2026-08-04T00:00:00Z", EnrollmentKey: "K", ExpectedFingerprint: owner.PGPFingerprint}); err != nil {
 		t.Fatalf("SetPGPDeviceEnvelope: %v", err)
 	}
 
@@ -323,7 +323,7 @@ func TestDeletePGPWrappedEnvelopeLeavesOtherSlotsIntact(t *testing.T) {
 	if len(got.PGPWrappedEnvelopes) != 1 {
 		t.Fatalf("len = %d, want 1: %+v", len(got.PGPWrappedEnvelopes), got.PGPWrappedEnvelopes)
 	}
-	if got.PGPWrappedEnvelopes[0].Slot != "device:abc123" || got.PGPWrappedEnvelopes[0].Envelope != deviceEnvelope(2) {
+	if got.PGPWrappedEnvelopes[0].Slot != "device:abc123" || got.PGPWrappedEnvelopes[0].Envelope != hpkeDeviceEnvelope(4) {
 		t.Fatalf("surviving slot corrupted or wrong: %+v", got.PGPWrappedEnvelopes[0])
 	}
 	// The password envelope is untouched by a slot delete.

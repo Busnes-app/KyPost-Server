@@ -192,9 +192,10 @@ V3 uses the existing installed ECDH/HKDF/AEAD primitives, with a distinct
 `kypost-device-envelope/v3` HKDF/AAD domain and authenticated device ID and active
 fingerprint, carrying the complete versioned ring. Retain the existing SAS check
 before sealing; a capability advertisement is not proof of key ownership.
-The preparation helper and shared vectors below pin the framing. The server-side
-upload, delivery and acknowledgement contract and the browser's v3 ceremony
-exist; native consumers and conversion remain gated.
+**V3 is retired for new deliveries (2026-10-27):** the complete ring is delivered only
+as v5 (RFC 9180 HPKE, same plaintext and `info` layout). The browser no longer seals v3
+and the server refuses v3 uploads; the framing below stays as the reference for the
+shared vectors and for slots stored before the retirement.
 
 ### V3 framing and interoperability vectors
 
@@ -226,7 +227,7 @@ revocation certificate. Do not re-export a parsed key to construct it. Apply the
 ring bounds above and a 128 KiB UTF-8 limit on the serialized sealed envelope;
 base64 expansion can reject a ring that fits the reader's 128 KiB plaintext cap.
 
-The browser's `sealKeyringForDevice` requires caller-supplied current snapshot
+The browser's `sealKeyringForDevice` (now v5 only) requires caller-supplied current snapshot
 metadata/public material, validates the entire ring, and verifies the existing
 SAS against the same device key/ID immediately before sealing. It only returns
 ciphertext. It does not upload, persist, install keys or establish that a native
@@ -237,9 +238,9 @@ its original revision and recheck session liveness before writing.
 public test-only scalars, exact plaintext, ECDH/HKDF/AAD intermediate bytes and
 v2/v3 ciphertext. The v3 ID includes multibyte UTF-8 and a pipe to catch character
 counts and delimiter framing. V2 pins legacy byte compatibility. Fixed scalars
-and IVs belong only in tests. WebCrypto sealing is checked by
-`frontend/src/lib/deviceEnvelopeV3.test.ts`; an independent Go stdlib verifier
-checks both directions and every intermediate in backend CI:
+and IVs belong only in tests. The browser no longer seals v2/v3; an independent Go
+stdlib verifier checks the vectors and every intermediate in backend CI, and native
+clients use them as refusal inputs:
 
 ```sh
 cd backend

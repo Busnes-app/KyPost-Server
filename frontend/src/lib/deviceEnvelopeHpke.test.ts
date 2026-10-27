@@ -1,12 +1,12 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createECDH } from "node:crypto";
+import * as pgp from "openpgp";
 import { writeFileSync } from "node:fs";
 import { Aes256Gcm, CipherSuite, DhkemP256HkdfSha256, HkdfSha256 } from "@hpke/core";
 import cfrg from "../../../testdata/hpke-cfrg-p256-aes256.json";
 import fixture from "../../../testdata/device-envelope-hpke.json";
 import browser from "../../../testdata/device-envelope-hpke-browser.json";
-import legacy from "../../../testdata/device-envelope-v3.json";
 import { parseKeyring } from "./pgpKeyring";
 import { bucketFor, deriveEnrollmentCode, deviceEnvelopeVersion, sealEnvelopeForDevice, sealKeyringForDevice } from "./deviceEnrollment";
 
@@ -61,8 +61,8 @@ async function fixedEphemeral() {
 async function sealBoth() {
   const [v4, v5] = fixture.vectors;
   return [
-    await sealEnvelopeForDevice(fixture.devicePublicKey, v4.deviceId, v4.fingerprint, v4.plaintext, 4),
-    await sealKeyringForDevice({ ...await keyringInput(v5), version: 5 }),
+    await sealEnvelopeForDevice(fixture.devicePublicKey, v4.deviceId, v4.fingerprint, v4.plaintext),
+    await sealKeyringForDevice(await keyringInput(v5)),
   ];
 }
 
@@ -120,14 +120,36 @@ describe("HPKE device envelopes (v4/v5)", () => {
   it("refuses a substituted key before generating an ephemeral", async () => {
     const generate = vi.spyOn(crypto.subtle, "generateKey");
     const input = await keyringInput(fixture.vectors[1]);
-    await expect(sealKeyringForDevice({ ...input, version: 5, publicKeyB64: fixture.vectors[1].envelope.enc })).rejects.toThrow(/code/);
+    await expect(sealKeyringForDevice({ ...input, publicKeyB64: fixture.vectors[1].envelope.enc })).rejects.toThrow(/code/);
+    await expect(sealKeyringForDevice({ ...input, typedCode: await deriveEnrollmentCode(input.publicKeyB64, input.deviceId, bucketFor(Math.floor(Date.now() / 1000)) - 2) })).rejects.toThrow(/code/);
+    for (const deviceId of ["", "試".repeat(22000)]) await expect(sealKeyringForDevice({ ...input, deviceId })).rejects.toThrow(/device ID/);
     expect(generate).not.toHaveBeenCalled();
   });
 
-  it("picks HPKE when advertised, the legacy version otherwise", () => {
+  it("seals the original full ring, which opens historical mail", async () => {
+    const v5 = fixture.vectors[1];
+    const ring = await parseKeyring(await open(await sealKeyringForDevice(await keyringInput(v5)) as Envelope, 5, v5.deviceId, v5.fingerprint));
+    expect(ring.keys).toHaveLength(2);
+    const message = await pgp.encrypt({ message: await pgp.createMessage({ text: "retained history" }), encryptionKeys: ring.keys[1].toPublic() });
+    expect((await pgp.decrypt({ message: await pgp.readMessage({ armoredMessage: message }), decryptionKeys: ring.keys })).data).toBe("retained history");
+  });
+
+  it("refuses incomplete, stale, single-key or oversized ring material", async () => {
+    const input = await keyringInput(fixture.vectors[1]);
+    const ring = await parseKeyring(input.raw);
+    for (const material of [fixture.vectors[0].plaintext, input.raw.replace(ring.keys[1].getFingerprint().toUpperCase(), "0".repeat(40)), input.raw + " ".repeat(128 << 10)]) {
+      await expect(sealKeyringForDevice({ ...input, raw: material })).rejects.toThrow(/keyring is invalid or unsupported/);
+    }
+    await expect(sealKeyringForDevice({ ...input, snapshot: { ...input.snapshot, keyring: { ...input.snapshot.keyring, materialGeneration: 3 } } })).rejects.toThrow(/complete keyring/);
+    // The parser accepts up to 128 KiB; base64 expansion makes storage admission tighter.
+    await expect(sealKeyringForDevice({ ...input, raw: input.raw.padEnd(100 << 10) })).rejects.toThrow(/128 KiB/);
+  });
+
+  // v2/v3 are retired: a device that advertises only them gets nothing sealed.
+  it("picks HPKE when advertised and never falls back to v2/v3", () => {
     const cases: [boolean, number[], number | null][] = [
-      [true, [2, 3, 4, 5], 5], [true, [3, 5], 5], [true, [2, 3], 3], [true, [3], 3], [true, [2, 4], null], [true, [2], null],
-      [false, [2, 3, 4, 5], 4], [false, [2, 4], 4], [false, [4], 4], [false, [2, 3], 2], [false, [2], 2], [false, [3, 5], null],
+      [true, [2, 3, 4, 5], 5], [true, [3, 5], 5], [true, [5], 5], [true, [2, 3], null], [true, [3], null], [true, [2, 4], null], [true, [], null],
+      [false, [2, 3, 4, 5], 4], [false, [2, 4], 4], [false, [4], 4], [false, [2, 3], null], [false, [2], null], [false, [3, 5], null], [false, [], null],
     ];
     for (const [converted, advertised, want] of cases) expect(deviceEnvelopeVersion(converted, advertised), `${converted} ${advertised}`).toBe(want);
   });

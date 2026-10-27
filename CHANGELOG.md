@@ -20,6 +20,16 @@ non-prerelease version.
 
 ### Security
 
+- Native-device key delivery is RFC 9180 HPKE only for new enrollments:
+  mode_base, DHKEM(P-256, HKDF-SHA256) 0x0010, HKDF-SHA256 0x0001,
+  AES-256-GCM 0x0002, with `info` binding the version, device ID and OpenPGP
+  fingerprint. The browser no longer seals the custom v2/v3 envelopes, the
+  server refuses v2/v3 uploads, and a device that does not advertise v4/v5,
+  including one with no claim (no longer read as `[2]`), is told to update
+  KyPost on that device. Stored deliveries, keys and history are unchanged.
+  **Upgrade order:** KyPost-for-Android supports only v2/v3 until its v4/v5
+  release; install that before this server, or new Android enrollments are
+  refused. Current Linux and Mac clients already take v4/v5.
 - Browser OpenPGP operations now enforce a literal RSA-2048 minimum instead
   of the library's RSA-2047 default. New encryption and signing refuse weak
   keys, including selected subkeys; weak signatures remain unverified.
