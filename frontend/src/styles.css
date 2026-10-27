@@ -560,6 +560,7 @@ body {
 
 .inbox-action-bar {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: var(--ky-space-1);
 }
@@ -944,7 +945,8 @@ body {
   flex-wrap: wrap;
 }
 
-.email-reader-reply button {
+.email-reader-reply button,
+.email-reader-actions > button {
   min-height: var(--ky-control-size);
   padding: 0 var(--ky-space-3);
   font-size: var(--ky-type-nav);
@@ -5675,7 +5677,7 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .compose-actionbar .compose-attach { border-color: transparent; }
 .compose-actionbar .compose-trash { margin-left: auto; }
 .compose-window > .notice, .compose-window > .compose-pgp-warning { padding: 12px 24px; }
-@media (max-width: 600px) { .compose-window { width: 100%; max-height: 100dvh; border-radius: 0; } .compose-topbar, .compose-connection-hint, .compose-security, .compose-actionbar { padding-inline: 16px; } .compose-window > .compose-form-grid { padding-inline: 16px; } .compose-window > .compose-editor-html { margin-inline: 16px; } .compose-form-grid .compose-field-row { grid-template-columns: 48px minmax(0, 1fr); } .compose-actionbar { gap: 6px; } .compose-actionbar .compose-trash { margin-left: 0; } }
+@media (max-width: 600px) { .compose-window { width: 100%; max-height: 100dvh; border-radius: 0; } .compose-topbar, .compose-connection-hint, .compose-security, .compose-actionbar { padding-inline: 16px; } .compose-window > .compose-form-grid { padding-inline: 16px; } .compose-window > .compose-editor-html.ql-container.ql-snow { margin-inline: 16px; } .compose-form-grid .compose-field-row { grid-template-columns: 48px minmax(0, 1fr); } .compose-actionbar { gap: 6px; } .compose-actionbar .compose-trash { margin-left: 0; } }
 
 .compose-window > .ql-toolbar { margin: 16px 24px 0; width: auto; }
 .compose-window > .compose-editor-html .ql-editor { min-height: 0; background: var(--panel); }
@@ -5709,22 +5711,25 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .suite-action-menu :is(button, a) { justify-content: flex-start; min-height: 40px; width: 100%; }
 .suite-action-menu .inbox-action-text { display: inline; }
 .contacts-actions .btn-danger { color: var(--danger); }
-.contact-identity-details > summary, .email-reader-details > summary { cursor: pointer; padding-block: 8px; font-size: var(--ky-type-meta); color: var(--ink); }
-.contact-identity-details[open] { display: grid; gap: 12px; }
+.email-reader-details > summary { cursor: pointer; padding-block: 8px; font-size: var(--ky-type-meta); color: var(--ink); }
+
 .email-reader-details .email-keyword-editor { margin-top: 12px; }
 .email-reader-raw { font-family: var(--mono); }
 .inbox-selected-count { white-space: nowrap; font-size: var(--ky-type-meta); color: var(--ink); }
 .auth-title { font-size: var(--ky-type-title); font-weight: 600; }
 .auth-footnote { font-family: var(--sans); font-size: var(--ky-type-meta); text-transform: none; letter-spacing: normal; color: var(--ink); }
 .auth-submit { min-height: var(--ky-control-size); border-radius: var(--ky-control-radius); box-shadow: none; }
-.compose-window .ql-toolbar.ql-snow .ql-formats { margin-right: 4px; }
+.compose-window .ql-toolbar.ql-snow { display: flex; align-items: center; flex-wrap: wrap; }
+.compose-window .ql-toolbar.ql-snow .ql-formats { display: inline-flex; align-items: center; margin-right: 4px; }
 .compose-window .ql-toolbar.ql-snow button { width: 32px; height: 40px; }
 .compose-window .ql-toolbar.ql-snow button svg { width: 18px; height: 18px; margin: auto; }
-.compose-window .ql-toolbar.ql-snow .ql-picker-label { min-height: 40px; display: flex; align-items: center; }
+.compose-window .ql-toolbar.ql-snow .ql-picker { height: 40px; font-family: var(--sans); font-size: var(--ky-type-nav); }
+.compose-window .ql-toolbar.ql-snow .ql-picker-label { height: 40px; display: flex; align-items: center; }
 @media (max-width: 600px) {
   .suite-action-menu[popover] { inset: auto 16px 16px; margin: 0; width: auto; }
   .email-reader-window { padding: 16px; }
-  .inbox-action-bar { width: 100%; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .inbox-action-bar { width: 100%; flex-wrap: wrap; gap: 4px 8px; }
+  .inbox-selected-count { flex-basis: 100%; }
   .inbox-action-bar > * { flex-shrink: 0; }
   .inbox-action-bar .inbox-action-text { display: inline; }
   .inbox-action-bar .inbox-action-button { min-height: 40px; width: auto; font-size: 13px; }
@@ -5735,4 +5740,25 @@ html:root:not([data-theme]):not([data-ky-theme]) {
   .inbox-row-meta > span:nth-child(2) { white-space: nowrap; }
   .inbox-row-meta .inbox-keyword-chip { grid-column: 1 / -1; justify-self: start; }
   .inbox-row-meta > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+/* Align the same controls across reading, contact and compose task views. */
+.email-reader-sender { display: block; }
+.contacts-table th.contacts-col-actions { text-align: right; }
+.contacts-actions .contacts-action { min-height: var(--ky-control-size); }
+.contacts-form-fields > label { grid-column: 1 / -1; }
+.contacts-photo-guidance { grid-column: 1 / -1; margin: 0; font-size: var(--ky-type-meta); color: var(--ink); }
+.contacts-utility-menu :is(button, a) { border-color: transparent; background: transparent; font-size: var(--ky-type-nav); }
+.contacts-utility-menu :is(button, a):hover { background: color-mix(in srgb, var(--ink-strong) 7%, transparent); }
+.contacts-utility-menu .contacts-action-danger { color: var(--danger); }
+@media (max-width: 700px) {
+  .contacts-table tr { grid-template-columns: 40px minmax(0, 1fr); }
+  .contacts-table td:nth-child(3) { grid-column: 2; padding-left: 12px; }
+  .contacts-table td.contacts-col-actions { grid-column: 2; padding: 0 12px 12px; }
+  .contacts-actions { display: flex; justify-content: flex-start; }
+}
+@media (max-width: 600px) {
+  .email-reader-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .email-reader-reply { display: contents; }
+  .email-reader-actions > button, .email-reader-reply button { width: 100%; }
 }
