@@ -1,0 +1,14 @@
+{
+  "repository": "/home/yoshi/git/busnes.app/ky-ui",
+  "commit": "639e5882cada099dd189197beb2a3e3b4c188658",
+  "files": {
+    "skills/ky-suite-ui/SKILL.md": "6010ea39ac6e4e21926eb2a45d8a5a4894cd9e5e6eec07aca4cf60423233dcc2",
+    "skills/ky-suite-ui/references/rubric.md": "ad3516620420fbdc30f5273f82b7c72c76e1365d1b6296fcaa56be3cbebf2c41",
+    "skills/ky-suite-ui/references/design-contract.md": "392afb88c51fb3cfad6c94d6b841804b194d107a0431c31f35ff81d3a7a444d3",
+    "src/tokens.css": "639f8e73259aca02119b98a5340539d5e8e16d65fd5f6124b939fdfe9c5f86af",
+    "src/navigation.css": "fbd0aea3e45fa818f916ad1bc35832f6ac26e37124208ffde029b809048b4380"
+  },
+  "note": "Pinned historical authority contains the fixed ky-suite-v2 skill/rubric. Root checkout HEAD does not contain these skill files; do not treat its incidental current branch as the authority. Product vendor tokens match; navigation.css records its own vendor hash.",
+  "product_vendor": "frontend/src/ky-ui/VERSION",
+  "brand_references": "brand-references.json"
+}

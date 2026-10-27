@@ -1,0 +1,9 @@
+{
+  "playwright_version": "1.63.0",
+  "playwright_module": "/home/yoshi/git/busnes.app/ky-ui/node_modules/@playwright/test/index.mjs",
+  "source_commit": "7a83df30019f28a81405deda8c8715c2b73a7cb0",
+  "capture_driver_sha256": "8c0f828f461ed0308b8792ae25865cb2abf3f38e59b595a897877458d3c671bd",
+  "manifest_sha256": "5adbe6d8d4baa51f23b620357fc0b68bb1a2342a504c994c57e9b51e53ecb792",
+  "conditions": "DPR1; normal service workers; OS light/dark; no saved theme; en-US; America/New_York; real PoW login; own synthetic fixture",
+  "parent_live_browser": "T3 collaborative Chrome154/DPR2, separate from scored captures; real sign-in/inbox inspected"
+}
