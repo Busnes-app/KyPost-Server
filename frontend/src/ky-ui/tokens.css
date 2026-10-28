@@ -14,8 +14,15 @@
   --ky-control-radius: 0.5rem;
   --ky-sidebar-size: 15rem;
   /* Product ink/bg aliases preserve existing named palettes as well as Busnes. */
-  --ky-field-border: color-mix(in srgb, var(--ink) 75%, var(--bg));
+  --ky-field-border: color-mix(in srgb, var(--ink-strong) 60%, var(--bg));
   --ky-shadow-overlay: 0 18px 48px rgb(0 0 0 / 0.26), 0 2px 8px rgb(0 0 0 / 0.12);
+  /* Named palettes select these by their own scheme, independently of the OS. */
+  --ky-danger-light: #b42318;
+  --ky-danger-dark: #ff8176;
+  --ky-success-light: #267442;
+  --ky-success-dark: #7bc49c;
+  --ky-warning-light: #875b12;
+  --ky-warning-dark: #e0b775;
 }
 
 /* Busnes Light/Dark tokens. Product layouts should consume these, not redefine them. */
@@ -34,9 +41,9 @@
   --ky-accent-soft: #fbf0ec;
   --ky-line: rgba(24, 35, 38, 0.22);
   --ky-line-strong: rgba(24, 35, 38, 0.38);
-  --ky-danger: #b42318;
-  --ky-success: #267442;
-  --ky-warning: #875b12;
+  --ky-danger: var(--ky-danger-light);
+  --ky-success: var(--ky-success-light);
+  --ky-warning: var(--ky-warning-light);
   --ky-sidebar-start: #f2efe7;
   --ky-sidebar-end: #f2efe7;
   --ky-button-text: #ffffff;
@@ -58,9 +65,9 @@
   --ky-accent-soft: #2b2622;
   --ky-line: rgba(242, 239, 232, 0.24);
   --ky-line-strong: rgba(242, 239, 232, 0.42);
-  --ky-danger: #ff8176;
-  --ky-success: #7bc49c;
-  --ky-warning: #d8a657;
+  --ky-danger: var(--ky-danger-dark);
+  --ky-success: var(--ky-success-dark);
+  --ky-warning: var(--ky-warning-dark);
   --ky-sidebar-start: #1f2b2e;
   --ky-sidebar-end: #1f2b2e;
   --ky-button-text: #182326;
@@ -79,9 +86,9 @@
     --ky-accent-soft: #2b2622;
     --ky-line: rgba(242, 239, 232, 0.24);
     --ky-line-strong: rgba(242, 239, 232, 0.42);
-    --ky-danger: #ff8176;
-    --ky-success: #7bc49c;
-    --ky-warning: #d8a657;
+    --ky-danger: var(--ky-danger-dark);
+    --ky-success: var(--ky-success-dark);
+    --ky-warning: var(--ky-warning-dark);
     --ky-sidebar-start: #1f2b2e;
     --ky-sidebar-end: #1f2b2e;
     --ky-button-text: #182326;

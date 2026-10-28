@@ -36,6 +36,6 @@ export interface ThemePalette {
 export const SYSTEM_THEME: SystemTheme;
 export const THEME_CATALOG: readonly CatalogTheme[];
 export const THEME_PALETTES: Readonly<Record<NamedThemeId, ThemePalette>>;
-export const THEME_VARIABLES: Readonly<Record<keyof ThemePalette, string>>;
+export const THEME_VARIABLES: Readonly<Record<keyof ThemePalette | 'warning', string>>;
 export function findTheme(value: unknown): CatalogTheme | SystemTheme | undefined;
 export function applyThemeVariables(value: unknown, root?: HTMLElement): 'light' | 'dark' | null;
