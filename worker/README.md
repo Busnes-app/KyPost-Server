@@ -29,9 +29,11 @@ self-hosted Go server  --(Bearer per-server key)-->  this Worker  --(service acc
    npx wrangler kv namespace create API_KEYS
    npx wrangler kv namespace create OAUTH_CACHE
    ```
-   The `RELAY_COORDINATOR` Durable Object needs no setup step — the
-   `[[migrations]]` block in the template creates it on your first deploy. See
-   [Token pinning](#token-pinning) for why it is required.
+   `API_KEYS` is read-only legacy (see [Managing keys](#managing-keys)) but
+   must stay bound. The `RELAY_COORDINATOR` Durable Object, which holds the key
+   records, needs no setup step — the `[[migrations]]` block in the template
+   creates it on your first deploy. See [Token pinning](#token-pinning) for why
+   it is required.
 3. Set secrets from your Firebase service-account JSON (the same file the Go
    backend used as `FCM_SERVICE_ACCOUNT_FILE`):
    ```sh
@@ -77,6 +79,12 @@ curl -X POST https://<your-worker>.workers.dev/register \
 **invalidates the previous one** — so a server that loses its key file just
 re-registers and keeps working, and a single IP can't accumulate keys. Servers
 behind the same public IP therefore share one key slot (the latest wins).
+The slot is per relay: each relay Worker keeps its own keys, so a key here does
+not displace one at another product's relay. The displaced key's `/send` answers
+401 `{"code":"key_superseded"}`, a key the relay has no record of answers 401
+`{"code":"key_unknown"}`, and on either KyPost re-registers once and retries
+(self-registered keys only). A key you revoke gets a plain 401 and stays
+revoked.
 
 Self-registered keys never expire and are tagged `"source":"self"` (with the
 registering IP bucket) in the stored record, so you can audit and revoke abusers
@@ -91,34 +99,49 @@ There is no admin API, and no admin credential. The relay used to serve
 — the Go server uses `/register` and `/send`, the apps never touch the relay,
 and the endpoints existed so the maintainer could curl them. That made the
 highest-value credential in the deployment permanently guessable by anyone who
-found the hostname, to save the CLI commands below. The routes are gone.
+found the hostname, to save the queries below. The routes are gone.
 
-Everything lives in the `API_KEYS` KV namespace under three prefixes: `key:<sha256
-of the raw key>` holds the record, `keyid:<id>` maps an id to that hash, and
-`ipkey:<bucket>` remembers which key an IP bucket currently holds.
+Key records live in the `RELAY_COORDINATOR` Durable Object, in one instance
+named `relay-keys`, table `keys`: `hash` (SHA-256 of the raw key), `id`,
+`label`, `ip` (registering IP bucket), `created_at` (ms), `expires_at`,
+`source`, `from_kv`, `status` (`active`, `superseded` or `revoked`) and
+`ended_at`. Open it in the Cloudflare dashboard: Durable Objects → this Worker's
+`RelayCoordinator` namespace → Data Studio → object name `relay-keys`. [Data
+Studio](https://developers.cloudflare.com/durable-objects/observability/data-studio/)
+is in beta, needs the Workers Platform Admin role, and audit-logs every query.
 
-```sh
-NS=<your API_KEYS namespace id>       # from wrangler.toml
+```sql
+-- who has a key
+SELECT id, label, ip, status, datetime(created_at/1000,'unixepoch') AS created
+FROM keys ORDER BY created_at DESC;
 
-# who has a key
-npx wrangler kv key list --namespace-id $NS --prefix "key:"
-npx wrangler kv key get  --namespace-id $NS "key:<hash>"
-# -> {"id":"…","label":"alice-server","enabled":true,"createdAt":"…",
-#     "expiresAt":null,"source":"self","registeredIp":"203.0.113.7"}
-
-# revoke one, by the id in that record
-HASH=$(npx wrangler kv key get --namespace-id $NS "keyid:<id>")
-npx wrangler kv key delete --namespace-id $NS "key:$HASH"
-npx wrangler kv key delete --namespace-id $NS "keyid:<id>"
-npx wrangler kv key delete --namespace-id $NS "ipkey:<registeredIp>"   # if it still names this id
+-- revoke one
+UPDATE keys SET status = 'revoked', ended_at = unixepoch()*1000 WHERE id = '<id>';
 ```
 
-Deleting the record is what revokes the key: `/send` looks the presented key up
-by hash on every request. It also releases that key's device-token claims for
-re-claiming, because a claim is only protected while its owner's key is still
-active — so the self-hoster can re-register and their devices come back.
+A revocation reaches every isolate within 30 seconds (`/send` caches active keys
+that long). It also releases that key's device-token claims for re-claiming,
+because a claim is only protected while its owner's key is still active — so the
+self-hoster can re-register and their devices come back.
 
-Send counts and last-seen are not in KV at all; they are in Analytics Engine
+Keys used to live in the `API_KEYS` KV namespace (`key:<hash>` record,
+`keyid:<id>` → hash). Nothing writes it now; `/send` copies a key it has never
+seen from KV into `keys` on first use (`from_kv = 1`) and consults only the
+registry for it from then on. A key not used since then exists only in KV, and
+`wrangler kv key get/list` still reads it. To revoke one, insert a revoked row —
+do **not** delete it from KV, which makes it unknown, and its server
+re-registers:
+
+```sh
+npx wrangler kv key get --namespace-id <API_KEYS namespace id> "keyid:<id>"   # prints <hash>
+```
+
+```sql
+INSERT INTO keys (hash, id, label, ip, created_at, source, from_kv, status, ended_at)
+VALUES ('<hash>', '<id>', 'revoked', NULL, 0, 'self', 1, 'revoked', unixepoch()*1000);
+```
+
+Send counts and last-seen are not in key records at all; they are in Analytics Engine
 (see [Usage](#usage)).
 
 ## Endpoints
@@ -141,8 +164,10 @@ the `/admin/keys` endpoints that used to be here.
 Responses: `200 {"ok":true}` on delivery; `403` when the token is already
 claimed by a different active key (see Token pinning below); `410 {"stale":true}`
 when the token is no longer registered (the Go server then removes the
-device); `401` for a bad or expired key; `413` when the body exceeds 16 KiB;
-`400` for a malformed one; `429` when the per-key rate limit is exceeded (body
+device); `401` for a bad or expired key; `401 {"code":"key_superseded"}` or
+`401 {"code":"key_unknown"}` when the server should re-register (see
+Self-registration); `503` when the key registry binding is missing; `413` when
+the body exceeds 16 KiB; `400` for a malformed one; `429` when the per-key rate limit is exceeded (body
 has `"window":"minute"` and a `Retry-After` header); `502 {"error":"push
 delivery failed"}` for every other upstream FCM error. Error bodies include a
 `requestId` that matches the `X-Request-Id` response header and the structured
@@ -158,7 +183,7 @@ Body limits, applied before the payload reaches FCM:
 | Field   | Limit                    | Over the limit                |
 | ------- | ------------------------ | ----------------------------- |
 | body    | 16 KiB total             | `413`                         |
-| `token` | 512 chars, string, `[A-Za-z0-9_.:-]` only | `400`        |
+| `token` | up to 512 chars of `A-Za-z0-9_:-` | `400`                  |
 | `title` | 256 chars, string        | clipped                       |
 | `body`  | 1024 chars, string       | clipped                       |
 | `data`  | 16 entries, string values; keys 64 chars | `400`         |
@@ -189,18 +214,21 @@ Two details that are load-bearing rather than tuning:
   the meantime keeps the claim, because releasing it there would hand a device
   you legitimately own to the next key that asks.
 - **A claim younger than 60 seconds is never taken over.** "Is the current
-  owner's key still active?" is answered from KV, which converges globally in
-  about a minute, so a key you registered seconds ago can read as deleted
-  elsewhere in the network. The only cost is that reclaiming a token whose key
-  you just revoked takes a minute.
+  owner's key still active?" is answered by the key registry, which is
+  consistent, but for a key not yet copied out of KV it falls back to KV, which
+  converges globally in about a minute, so a key written seconds ago can read as
+  absent elsewhere in the network. The grace stays only as long as that fallback
+  does. The cost is that reclaiming a token whose key you just revoked takes a
+  minute.
 
 Ownership is held by the `RELAY_COORDINATOR` Durable Object, not by KV. "Is this
 token already claimed?" followed by "claim it" is a check-then-write, and KV is
 eventually consistent — two keys racing the first send to one token could both
 be told it was free, which is exactly the spoofing this rule exists to stop. All
 requests for one token route to the same Durable Object instance and are handled
-one at a time, so the check and the write cannot be interleaved. The same object
-enforces one active self-registered key per IP on `/register`.
+one at a time, so the check and the write cannot be interleaved. The same class
+holds the key records (the `relay-keys` instance), where `/register` supersedes
+the IP's active keys and inserts the new one in one transaction.
 
 The binding is **required**: `/send` and `/register` both return `503` without
 it, rather than silently falling back to the racy path. `/register` also returns
@@ -280,8 +308,8 @@ SELECT blob1 AS key_id, sum(_sample_interval * double1) AS sends, max(timestamp)
 FROM kypost_push_usage GROUP BY key_id ORDER BY sends DESC
 ```
 
-Usage counts and `lastUsedAt` are not in KV, so the key records you read with
-`wrangler kv key get` don't carry them — this is the only place they live.
+Usage counts and `lastUsedAt` are not in the key records — this is the only
+place they live.
 
 ## Observability
 
@@ -295,12 +323,14 @@ Usage counts and `lastUsedAt` are not in KV, so the key records you read with
 
 ## Notes
 
-- Only the SHA-256 hash of each API key is stored in KV; the raw key is shown
-  once at creation.
+- Only the SHA-256 hash of each API key is stored; the raw key is shown once at
+  creation.
 - The Google OAuth access token is cached in the `OAUTH_CACHE` KV namespace and
-  refreshed ~1 minute before expiry. Key records and the `ipkey:<ip>` indexes
-  (one key per IP) live in `API_KEYS`.
-- An accepted send performs **no KV writes**: the minute limiter uses the native
-  binding, usage goes to Analytics Engine, and the hour/day KV log is gone. The
-  remaining per-send KV cost is reads (key lookup + OAuth cache), so the free
-  tier now scales to tens of thousands of pushes/day.
+  refreshed ~1 minute before expiry. Key records live in the `RELAY_COORDINATOR`
+  Durable Object (see [Managing keys](#managing-keys)); `API_KEYS` is read-only
+  legacy, kept bound for the copy-on-use fallback.
+- Neither `/register` nor an accepted send performs **any KV writes**: keys go
+  to the Durable Object, the minute limiter uses the native binding, usage goes
+  to Analytics Engine, and the hour/day KV log is gone. The remaining per-send
+  KV cost is reads (OAuth cache, and the key lookup for a key not yet copied out
+  of KV), so the free tier scales to tens of thousands of pushes/day.

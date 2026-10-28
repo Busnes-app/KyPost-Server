@@ -24,9 +24,11 @@ self-hosted Go server  --(Bearer per-server key)-->  this Worker  --(APNs provid
    npx wrangler kv namespace create APNS_TOKEN_CACHE
    # Paste the returned namespace IDs into wrangler.toml for their respective bindings
    ```
-   The `RELAY_COORDINATOR` Durable Object needs no setup step — the
-   `[[migrations]]` block in the template creates it on your first deploy. See
-   [Token pinning](#token-pinning) for why it is required.
+   `API_KEYS` is read-only legacy (see [Managing keys](#managing-keys)) but
+   must stay bound. The `RELAY_COORDINATOR` Durable Object, which holds the key
+   records, needs no setup step — the `[[migrations]]` block in the template
+   creates it on your first deploy. See [Token pinning](#token-pinning) for why
+   it is required.
 
 3. Obtain an APNs Auth Key from the Apple Developer portal:
    - Log in to https://developer.apple.com/account
@@ -80,31 +82,37 @@ curl -X POST https://<your-worker>.workers.dev/register \
 # -> {"id":"...","label":"alice-server","key":"<RAW KEY>","expiresAt":null}
 ```
 
-**One active key per IP.** Registering from an IP that already holds a key invalidates the previous one — so a server that loses its key file can re-register and keep working.
+**One active key per IP.** Registering from an IP that already holds a key invalidates the previous one — so a server that loses its key file can re-register and keep working. The slot is per relay: each relay Worker keeps its own keys, so a key here does not displace one at another product's relay. The displaced key's `/send` answers 401 `{"code":"key_superseded"}`, a key the relay has no record of answers 401 `{"code":"key_unknown"}`, and on either KyPost re-registers once and retries (self-registered keys only). A key you revoke gets a plain 401 and stays revoked.
 
 ## Managing keys
 
-There is no admin API, and no admin credential. The relay used to serve `/admin/keys` (mint, list, revoke) behind a bearer secret, and nothing called it — the Go server uses `/register` and `/send`, the apps never touch the relay, and the endpoints existed so the maintainer could curl them. That made the highest-value credential in the deployment permanently guessable by anyone who found the hostname, to save the CLI commands below. The routes are gone.
+There is no admin API, and no admin credential. The relay used to serve `/admin/keys` (mint, list, revoke) behind a bearer secret, and nothing called it — the Go server uses `/register` and `/send`, the apps never touch the relay, and the endpoints existed so the maintainer could curl them. That made the highest-value credential in the deployment permanently guessable by anyone who found the hostname, to save the queries below. The routes are gone.
 
-Everything lives in the `API_KEYS` KV namespace under three prefixes: `key:<sha256 of the raw key>` holds the record, `keyid:<id>` maps an id to that hash, and `ipkey:<bucket>` remembers which key an IP bucket currently holds.
+Key records live in the `RELAY_COORDINATOR` Durable Object, in one instance named `relay-keys`, table `keys`: `hash` (SHA-256 of the raw key), `id`, `label`, `ip` (registering IP bucket), `created_at` (ms), `expires_at`, `source`, `from_kv`, `status` (`active`, `superseded` or `revoked`) and `ended_at`. Open it in the Cloudflare dashboard: Durable Objects → this Worker's `RelayCoordinator` namespace → Data Studio → object name `relay-keys`. [Data Studio](https://developers.cloudflare.com/durable-objects/observability/data-studio/) is in beta, needs the Workers Platform Admin role, and audit-logs every query.
 
-```sh
-NS=<your API_KEYS namespace id>       # from wrangler.toml
+```sql
+-- who has a key
+SELECT id, label, ip, status, datetime(created_at/1000,'unixepoch') AS created
+FROM keys ORDER BY created_at DESC;
 
-# who has a key
-npx wrangler kv key list --namespace-id $NS --prefix "key:"
-npx wrangler kv key get  --namespace-id $NS "key:<hash>"
-
-# revoke one, by the id in that record
-HASH=$(npx wrangler kv key get --namespace-id $NS "keyid:<id>")
-npx wrangler kv key delete --namespace-id $NS "key:$HASH"
-npx wrangler kv key delete --namespace-id $NS "keyid:<id>"
-npx wrangler kv key delete --namespace-id $NS "ipkey:<registeredIp>"   # if it still names this id
+-- revoke one
+UPDATE keys SET status = 'revoked', ended_at = unixepoch()*1000 WHERE id = '<id>';
 ```
 
-Deleting the record is what revokes the key: `/send` looks the presented key up by hash on every request. It also releases that key's device-token claims for re-claiming, because a claim is only protected while its owner's key is still active — so the self-hoster can re-register and their devices come back.
+A revocation reaches every isolate within 30 seconds (`/send` caches active keys that long). It also releases that key's device-token claims for re-claiming, because a claim is only protected while its owner's key is still active — so the self-hoster can re-register and their devices come back.
 
-Send counts and last-seen are not in KV at all; they are in Analytics Engine.
+Keys used to live in the `API_KEYS` KV namespace (`key:<hash>` record, `keyid:<id>` → hash). Nothing writes it now; `/send` copies a key it has never seen from KV into `keys` on first use (`from_kv = 1`) and consults only the registry for it from then on. A key not used since then exists only in KV, and `wrangler kv key get/list` still reads it. To revoke one, insert a revoked row — do **not** delete it from KV, which makes it unknown, and its server re-registers:
+
+```sh
+npx wrangler kv key get --namespace-id <API_KEYS namespace id> "keyid:<id>"   # prints <hash>
+```
+
+```sql
+INSERT INTO keys (hash, id, label, ip, created_at, source, from_kv, status, ended_at)
+VALUES ('<hash>', '<id>', 'revoked', NULL, 0, 'self', 1, 'revoked', unixepoch()*1000);
+```
+
+Send counts and last-seen are not in key records at all; they are in Analytics Engine.
 
 ## Environment-specific deployment
 
@@ -146,7 +154,8 @@ Responses:
 - `200 {"ok":true}` on delivery
 - `403` when the token is already claimed by a different active key (see Token pinning below) — distinct from Apple's own auth-key `403` in the troubleshooting table, which surfaces through this relay as a `502`, not a top-level `403`
 - `410 {"stale":true}` when the token is no longer registered (Go server then removes the device)
-- `401` for a bad or expired key
+- `401` for a bad or expired key; `401 {"code":"key_superseded"}` or `401 {"code":"key_unknown"}` when the server should re-register (see Self-registration)
+- `503` when the key registry binding is missing
 - `429` when the per-key rate limit is exceeded (body has `"window":"minute"` and a `Retry-After` header)
 - `413` when the body exceeds 16 KiB, `400` when it is malformed or a field has the wrong type
 - `502 {"error":"push delivery failed"}` for upstream APNs errors or transient failures. Deliberately coarse: Apple's own error text describes *this relay's* topic, auth key, and routing state, so it stays in the operator logs (as a bare status code) rather than going to every key holder. Quote the `requestId` when you need the operator to look one up
@@ -157,7 +166,7 @@ Body limits, applied before the payload reaches APNs:
 | Field   | Limit                    | Over the limit                |
 | ------- | ------------------------ | ----------------------------- |
 | body    | 16 KiB total             | `413`                         |
-| `token` | 512 chars, string, `[A-Za-z0-9_.:-]` only | `400`        |
+| `token` | 64-200 hex chars, case-insensitive (pinned lowercase) | `400` |
 | `title` | 256 chars, string        | clipped                       |
 | `body`  | 1024 chars, string       | clipped                       |
 | `data`  | 16 entries, string values; keys 64 chars | `400`         |
@@ -188,18 +197,21 @@ Two details that are load-bearing rather than tuning:
   the meantime keeps the claim, because releasing it there would hand a device
   you legitimately own to the next key that asks.
 - **A claim younger than 60 seconds is never taken over.** "Is the current
-  owner's key still active?" is answered from KV, which converges globally in
-  about a minute, so a key you registered seconds ago can read as deleted
-  elsewhere in the network. The only cost is that reclaiming a token whose key
-  you just revoked takes a minute.
+  owner's key still active?" is answered by the key registry, which is
+  consistent, but for a key not yet copied out of KV it falls back to KV, which
+  converges globally in about a minute, so a key written seconds ago can read as
+  absent elsewhere in the network. The grace stays only as long as that fallback
+  does. The cost is that reclaiming a token whose key you just revoked takes a
+  minute.
 
 Ownership is held by the `RELAY_COORDINATOR` Durable Object, not by KV. "Is this
 token already claimed?" followed by "claim it" is a check-then-write, and KV is
 eventually consistent — two keys racing the first send to one token could both
 be told it was free, which is exactly the spoofing this rule exists to stop. All
 requests for one token route to the same Durable Object instance and are handled
-one at a time, so the check and the write cannot be interleaved. The same object
-enforces one active self-registered key per IP on `/register`.
+one at a time, so the check and the write cannot be interleaved. The same class
+holds the key records (the `relay-keys` instance), where `/register` supersedes
+the IP's active keys and inserts the new one in one transaction.
 
 The binding is **required**: `/send` and `/register` both return `503` without
 it, rather than silently falling back to the racy path. `/register` also returns

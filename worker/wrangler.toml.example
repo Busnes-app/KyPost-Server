@@ -46,10 +46,9 @@ RATE_LIMIT_PER_MINUTE = "10"  # display only; keep equal to PUSH_RATE_LIMITER.si
 # Public self-registration (POST /register). Set to "true" ONLY if you intend to
 # run an unauthenticated key-minting endpoint on the public internet: anyone who
 # can reach this Worker can then mint a key and send through it on your
-# Cloudflare account. Each call also spends KV writes, which the free plan caps
-# per day and then refuses until 00:00 UTC. Left "false"
-# here so a copied-unchanged config is closed; there is no admin API to mint keys
-# with instead, so flip this on deliberately. When open, self-hosted servers mint their
+# Cloudflare account. Each call also writes Durable Object rows, which the free
+# plan caps per day. Left "false" here so a copied-unchanged config is closed;
+# there is no admin API to mint keys with instead, so flip this on deliberately. When open, self-hosted servers mint their
 # own key with no maintainer involvement, and per-IP request rate is capped by the
 # REGISTER_RATE_LIMITER binding below (independent of PUSH_RATE_LIMITER, which
 # only governs /send).
@@ -59,6 +58,9 @@ REGISTRATION_ENABLED = "false"
 #   npx wrangler kv namespace create API_KEYS
 #   npx wrangler kv namespace create OAUTH_CACHE
 # then paste the returned ids below.
+# API_KEYS is read-only legacy: key records moved to RELAY_COORDINATOR and
+# nothing writes here. Keep it bound; /send still copies a key it has never seen
+# out of it on first use, until that fallback is removed.
 [[kv_namespaces]]
 binding = "API_KEYS"
 id = "REPLACE_WITH_API_KEYS_NAMESPACE_ID"
@@ -96,14 +98,16 @@ dataset = "kypost_push_usage"
 #   FCM_PROJECT_ID     - project_id from the service-account JSON
 #
 # There is no ADMIN_SECRET: the relay has no admin API. Keys are listed and
-# revoked with `npx wrangler kv key` against API_KEYS — see the README.
+# revoked in the dashboard's Durable Objects Data Studio (object `relay-keys`) —
+# see the README.
 
 # Durable Object holding the two ownership rules KV cannot hold atomically:
 # device-token pinning (first key to deliver to a token owns it) and one active
 # self-registered key per IP. Both were check-then-write against eventually
 # consistent KV, so concurrent requests could both win. Every request for one
-# token (or one IP) routes to the same instance by name and is handled one at a
-# time — see push-relay-shared/relay-coordinator.ts.
+# token routes to the same instance by name and is handled one at a time; the
+# key records themselves live in one instance, `relay-keys`, in a SQLite table
+# the code creates on first use — see push-relay-shared/relay-coordinator.ts.
 #
 # Both /send and /register FAIL CLOSED without this binding, so it is required,
 # not optional. SQLite-backed and available on the Workers Free plan.
@@ -111,6 +115,7 @@ dataset = "kypost_push_usage"
 name = "RELAY_COORDINATOR"
 class_name = "RelayCoordinator"
 
+# The keys table is created by code on first use; it needs no migration of its own.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RelayCoordinator"]
