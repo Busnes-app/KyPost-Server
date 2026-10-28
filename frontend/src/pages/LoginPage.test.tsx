@@ -269,3 +269,21 @@ it("signs in with the derived secret only, never the typed password", async () =
   expect(body.authSecret).toMatch(/^[0-9a-f]{64}$/);
   expect(loginBodies[0]).not.toContain("whatever");
 });
+
+describe("single sign-on button", () => {
+  it("names Single Sign On once, on the button", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          String(input).startsWith("/api/auth/sso-config") ? jsonResponse(200, { enabled: true }) : jsonResponse(404, {})
+        )
+      )
+    );
+    renderLoginPage();
+
+    const link = await screen.findByRole("link", { name: "Continue with Single Sign On" });
+    expect(link.getAttribute("href")).toBe("/api/auth/oidc/login");
+    expect(screen.getAllByText(/single sign[- ]on/i)).toHaveLength(1);
+  });
+});
