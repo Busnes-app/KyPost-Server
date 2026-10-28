@@ -36,7 +36,8 @@ const THEME_CATALOG = Object.freeze([
 
 // Suite palettes never defined hover or strong lines; derive them as Busnes does
 // (panel a step toward ink, line strengthened). Base themes pass their actual values,
-// plus status colours; products keep their own status colours for the others.
+// plus status colours. Palettes without status colours use the shared semantic
+// defaults for their own scheme, including when it differs from the OS scheme.
 const p = (bg, panel, ink, inkStrong, accent, accentSoft, line, glow, sidebarStart, sidebarEnd, buttonText,
   panelHover = `color-mix(in srgb, ${panel} 93%, ${inkStrong})`, lineStrong = `color-mix(in srgb, ${line} 60%, ${inkStrong})`, danger, success) =>
   Object.freeze({ bg, panel, ink, inkStrong, accent, accentSoft, line, glow, sidebarStart, sidebarEnd, buttonText, panelHover, lineStrong, ...(danger && { danger, success }) });
@@ -58,16 +59,16 @@ const THEME_PALETTES = Object.freeze({
   sun: p('#fff3dc', '#fff9ec', '#5a4024', '#392611', '#e0ab4f', '#f1d9a2', '#d4b27a', 'rgba(224, 171, 79, 0.28)', '#f8e7c5', '#f2dab1', '#2a1808'),
   'patina-ky': p('#0d0f14', '#161a22', '#94a3b8', '#e2e8f0', '#4deeea', '#0e4a48', '#1e293b', 'rgba(77, 238, 234, 0.22)', '#0d0f14', '#1b212c', '#04120d'),
   'polished-ky': p('#eef2f6', '#ffffff', '#475569', '#0f172a', '#0891b2', '#cffafe', '#cbd5e1', 'rgba(8, 145, 178, 0.18)', '#f1f5f9', '#e2e8f0', '#042f2e'),
-  patina: p('#0d0f14', '#161a22', '#94a3b8', '#f1f5f9', '#4deeea', 'rgba(77, 238, 234, 0.15)', '#1e293b', 'transparent', '#161a22', '#161a22', '#0d0f14', '#1c222c', '#334155', '#ef4444', '#10b981'),
-  cyber: p('#05070a', '#0d121d', '#aab7c8', '#eef6f5', '#00d9bd', 'rgba(0, 255, 204, 0.18)', '#1e293b', 'transparent', '#0d121d', '#0d121d', '#0d0f14', '#131b2a', '#00ffcc44', '#ff0055', '#00ff66'),
-  nord: p('#2e3440', '#3b4252', '#d8dee9', '#eceff4', '#88c0d0', 'rgba(136, 192, 208, 0.2)', '#4c566a', 'transparent', '#3b4252', '#3b4252', '#0d0f14', '#434c5e', '#5e81ac', '#bf616a', '#a3be8c'),
-  paper: p('#f8fafc', '#ffffff', '#64748b', '#0f172a', '#0284c7', 'rgba(2, 132, 199, 0.12)', '#e2e8f0', 'transparent', '#ffffff', '#ffffff', '#0d0f14', '#f1f5f9', '#cbd5e1', '#dc2626', '#16a34a'),
+  patina: p('#0d0f14', '#161a22', '#94a3b8', '#f1f5f9', '#4deeea', 'rgba(77, 238, 234, 0.15)', '#1e293b', 'transparent', '#161a22', '#161a22', '#0d0f14', '#1c222c', '#334155', '#f15757', '#10b981'),
+  cyber: p('#05070a', '#0d121d', '#aab7c8', '#eef6f5', '#00d9bd', 'rgba(0, 255, 204, 0.18)', '#1e293b', 'transparent', '#0d121d', '#0d121d', '#0d0f14', '#131b2a', '#00ffcc44', '#ff1a66', '#00ff66'),
+  nord: p('#2e3440', '#3b4252', '#d8dee9', '#eceff4', '#88c0d0', 'rgba(136, 192, 208, 0.2)', '#4c566a', 'transparent', '#3b4252', '#3b4252', '#0d0f14', '#434c5e', '#5e81ac', '#dfb0b5', '#acc598'),
+  paper: p('#f8fafc', '#ffffff', '#64748b', '#0f172a', '#0284c7', 'rgba(2, 132, 199, 0.12)', '#e2e8f0', 'transparent', '#ffffff', '#ffffff', '#0d0f14', '#f1f5f9', '#cbd5e1', '#d12424', '#117a38'),
   oled: p('#000000', '#111111', '#a1a1aa', '#fafafa', '#4deeea', 'rgba(77, 238, 234, 0.15)', '#222222', 'transparent', '#111111', '#111111', '#0d0f14', '#1a1a1a', '#333333', '#ef4444', '#10b981'),
 });
 
-// The product custom properties each palette key sets.
+// Product properties managed by palette application, including scheme-bound warning.
 const THEME_VARIABLES = Object.freeze(Object.fromEntries(
-  Object.keys(THEME_PALETTES.patina).map(key => [key, '--' + key.replace(/[A-Z]/g, c => '-' + c.toLowerCase())]),
+  [...Object.keys(THEME_PALETTES.patina), 'warning'].map(key => [key, '--' + key.replace(/[A-Z]/g, c => '-' + c.toLowerCase())]),
 ));
 
 /** Returns the catalog entry for a saved ID, name or legacy alias, or undefined. */
@@ -88,6 +89,9 @@ function applyThemeVariables(value, root = globalThis.document?.documentElement)
   root.style.colorScheme = '';
   if (!palette) return null;
   for (const [key, name] of Object.entries(THEME_VARIABLES)) if (palette[key]) root.style.setProperty(name, palette[key]);
+  root.style.setProperty('--danger', palette.danger ?? `var(--ky-danger-${theme.scheme})`);
+  root.style.setProperty('--success', palette.success ?? `var(--ky-success-${theme.scheme})`);
+  root.style.setProperty('--warning', `var(--ky-warning-${theme.scheme})`);
   root.style.colorScheme = theme.scheme;
   return theme.scheme;
 }
