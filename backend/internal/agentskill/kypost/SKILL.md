@@ -1,7 +1,7 @@
 ---
 name: kypost
 description: Read, search and organize the user's KyPost mail through the kypost MCP tools, and save drafts for the user to send. Use when the user asks about their email, wants messages found, summarised, labelled, moved or archived, or wants a reply drafted.
-version: "0.4.3"
+version: "0.5.0"
 ---
 
 # KyPost
