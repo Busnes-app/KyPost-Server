@@ -62,6 +62,10 @@ non-prerelease version.
   remain available. The regression runs the locked native Worker runtime with
   an isolated provider fixture.
 
+### Changes
+
+- Label the sign-in page's SSO button "Continue with Single Sign On".
+
 ## 0.4.3 — 2026-10-23
 
 ### Added
