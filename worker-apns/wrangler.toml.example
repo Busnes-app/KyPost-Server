@@ -45,6 +45,9 @@ REGISTRATION_ENABLED = "false"
 #   npx wrangler kv namespace create API_KEYS
 #   npx wrangler kv namespace create APNS_TOKEN_CACHE
 # then paste the returned ids below. These MUST be distinct from the FCM worker's namespaces.
+# API_KEYS is read-only legacy: key records moved to RELAY_COORDINATOR and
+# nothing writes here. Keep it bound; /send still copies a key it has never seen
+# out of it on first use, until that fallback is removed.
 [[kv_namespaces]]
 binding = "API_KEYS"
 id = "REPLACE_WITH_API_KEYS_NAMESPACE_ID"
@@ -86,14 +89,16 @@ dataset = "kypost_push_usage_apns"
 #                        refuses, rather than the relay guessing a host.
 #
 # There is no ADMIN_SECRET: the relay has no admin API. Keys are listed and
-# revoked with `npx wrangler kv key` against API_KEYS — see the README.
+# revoked in the dashboard's Durable Objects Data Studio (object `relay-keys`) —
+# see the README.
 
 # Durable Object holding the two ownership rules KV cannot hold atomically:
 # device-token pinning (first key to deliver to a token owns it) and one active
 # self-registered key per IP. Both were check-then-write against eventually
 # consistent KV, so concurrent requests could both win. Every request for one
-# token (or one IP) routes to the same instance by name and is handled one at a
-# time — see push-relay-shared/relay-coordinator.ts.
+# token routes to the same instance by name and is handled one at a time; the
+# key records themselves live in one instance, `relay-keys`, in a SQLite table
+# the code creates on first use — see push-relay-shared/relay-coordinator.ts.
 #
 # Both /send and /register FAIL CLOSED without this binding, so it is required,
 # not optional. SQLite-backed and available on the Workers Free plan.
@@ -101,6 +106,7 @@ dataset = "kypost_push_usage_apns"
 name = "RELAY_COORDINATOR"
 class_name = "RelayCoordinator"
 
+# The keys table is created by code on first use; it needs no migration of its own.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RelayCoordinator"]

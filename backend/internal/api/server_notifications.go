@@ -63,7 +63,9 @@ const (
 )
 
 // Every character an FCM or APNs device token can contain, and nothing that is
-// URL syntax. Mirrors TOKEN_CHARSET in push-relay-shared/push-relay-common.ts;
+// URL syntax. A superset of the relays' per-provider formats (apnsToken,
+// fcmToken in push-relay-shared/push-relay-common.ts), which are stricter: no
+// `.`, and hex only for APNs;
 // UnifiedPush endpoints are URLs and are validated by their own check instead.
 var nativePushTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 

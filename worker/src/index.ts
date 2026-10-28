@@ -13,9 +13,10 @@
  *   POST   /send            (Bearer <per-server API key>)  -> deliver one push
  *
  * That is the whole surface. There is no admin API: listing and revoking keys
- * is `wrangler kv key` against the API_KEYS namespace (see README), because an
- * always-on bearer-secret endpoint on the public internet is a worse trade than
- * a CLI command the maintainer runs a few times a year.
+ * is a query in the dashboard's Durable Objects Data Studio against the
+ * `relay-keys` RelayCoordinator instance (see README), because an always-on
+ * bearer-secret endpoint on the public internet is a worse trade than a query
+ * the maintainer runs a few times a year.
  *
  * Per-key controls:
  *   - Expiry:        keys may carry an expiresAt; expired keys are rejected.
@@ -32,13 +33,12 @@
  * ../../push-relay-shared/push-relay-common.ts.
  */
 
-import { FcmConfig, FcmMessage, sendFcmMessage } from "./fcm";
+// `import type` so node --test's type stripping can load this module too.
+import type { FcmConfig, FcmMessage } from "./fcm";
+import { sendFcmMessage } from "./fcm";
+import type { CommonEnv, RequestContext } from "../../push-relay-shared/push-relay-common";
 import {
-  ApiKeyRecord,
-  CommonEnv,
   DEFAULT_LIMIT_PER_MINUTE,
-  KEY_PREFIX,
-  RequestContext,
   bearer,
   checkMinuteLimit,
   checkDailyBudget,
@@ -49,8 +49,10 @@ import {
   errorMessage,
   fail,
   failDelivery,
-  isExpired,
   json,
+  lookupKey,
+  denyKey,
+  fcmToken,
   readSendPayload,
   recordUsageAnalytics,
   resolveLimit,
@@ -86,15 +88,11 @@ async function handleSend(request: Request, rc: RequestContext<Env>): Promise<Re
     return fail(rc, 401, "missing api key");
   }
   const hash = await sha256Hex(presented);
-  const record = await env.API_KEYS.get<ApiKeyRecord>(KEY_PREFIX + hash, "json");
-  if (!record || !record.enabled) {
-    rc.log({ level: "warn", event: "send.denied", reason: "invalid_key" });
-    return fail(rc, 401, "invalid api key");
+  const key = await lookupKey(rc, hash);
+  if (key.status !== "active") {
+    return denyKey(rc, key);
   }
-  if (isExpired(record, Date.now())) {
-    rc.log({ level: "warn", event: "send.denied", reason: "expired", keyId: record.id });
-    return fail(rc, 401, "api key expired", { expiresAt: record.expiresAt });
-  }
+  const record = key.record;
 
   // Validate the request before it counts against the rolling quota, so
   // malformed (400) or misconfigured (500) calls don't consume a self-hoster's
@@ -102,7 +100,7 @@ async function handleSend(request: Request, rc: RequestContext<Env>): Promise<Re
   // readSendPayload): the body is refused at MAX_SEND_BODY_BYTES before it is
   // parsed, so an authenticated key cannot spend its per-minute quota on
   // multi-megabyte allocations here.
-  const parsed = await readSendPayload(request);
+  const parsed = await readSendPayload(request, fcmToken);
   if (!parsed.ok) {
     return fail(rc, parsed.status, parsed.error);
   }
@@ -243,8 +241,9 @@ async function handleSend(request: Request, rc: RequestContext<Env>): Promise<Re
 // createRelayFetchHandler in push-relay-common.ts.
 
 // Re-exported so the runtime can find the class named by the RELAY_COORDINATOR
-// binding in wrangler.toml. It holds device-token ownership and the one-active-
-// key-per-IP rule, which KV cannot hold atomically — see relay-coordinator.ts.
+// binding in wrangler.toml. It holds device-token ownership and the key records
+// (with the one-active-key-per-IP rule), which KV cannot hold atomically — see
+// relay-coordinator.ts.
 export { RelayCoordinator } from "../../push-relay-shared/relay-coordinator";
 
 export default {
