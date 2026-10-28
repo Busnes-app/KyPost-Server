@@ -117,8 +117,57 @@ jobs:
           echo "::group::strong-key profile: exit $sx"; cat "$RUNNER_TEMP/strong.log"; echo "::endgroup::"
           [ "$dx" = 0 ] && [ "$sx" = 0 ]
 
+  # The required name: green only when both profile legs passed. In one job the two passes
+  # shared the runner's cores and took 735 s against 532 s in turn (runs 40708712908,
+  # 40615381503), so each profile has its own job.
   backend-other:
     name: ci-backend-other
+    needs: [backend-other-default, backend-other-strong]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') }}" = true
+
+  backend-other-strong:
+    name: ci-backend-other (strong-key profile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # No cache: finishing first, this job would save one without the default leg's tools.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      # As the default leg: the model's pins come from the Dockerfile.
+      - name: fetch the pinned embedding model
+        run: |
+          set -eu
+          pin() { sed -n "s/^ARG $1=//p" ../Dockerfile | tr -d '\r'; }
+          dir="$RUNNER_TEMP/potion-base-8M"
+          base="https://huggingface.co/minishlab/potion-base-8M/resolve/$(pin EMBED_MODEL_REVISION)"
+          mkdir -p "$dir"
+          curl -fsSL -o "$dir/model.safetensors" "$base/model.safetensors"
+          curl -fsSL -o "$dir/tokenizer.json" "$base/tokenizer.json"
+          printf '%s  %s\n%s  %s\n' \
+            "$(pin EMBED_MODEL_SHA256)" "$dir/model.safetensors" \
+            "$(pin EMBED_TOKENIZER_SHA256)" "$dir/tokenizer.json" | sha256sum -c -
+          echo "EMBED_MODEL_DIR=$dir" >> "$GITHUB_ENV"
+
+      - name: install restic
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends restic
+
+      - name: go test -race (all packages except api, strong-key profile)
+        env:
+          GODEBUG: fips140=on
+        run: go list ./... | grep -v "^github.com/Busnes-app/kypost-server/backend/internal/api$" | xargs go test -race -count=1 -timeout=20m
+
+  backend-other-default:
+    name: ci-backend-other (default profile)
     runs-on: ubuntu-latest
     timeout-minutes: 35
     defaults:
@@ -186,20 +235,8 @@ jobs:
       - name: install restic
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends restic
 
-      # The default and strong-key (GODEBUG=fips140=on) passes run side by
-      # side, each to its own log; the step fails if either does.
-      - name: go test -race (all packages except api; default and strong-key profiles)
-        run: |
-          set -eo pipefail
-          list="$(go list ./... | grep -v "^github.com/Busnes-app/kypost-server/backend/internal/api$")"
-          mapfile -t pkgs <<< "$list"
-          set +e
-          go test -race -count=1 -timeout=20m "${pkgs[@]}" > "$RUNNER_TEMP/default.log" 2>&1 & d=$!
-          GODEBUG=fips140=on go test -race -count=1 -timeout=20m "${pkgs[@]}" > "$RUNNER_TEMP/strong.log" 2>&1 & s=$!
-          wait "$d"; dx=$?; wait "$s"; sx=$?
-          echo "::group::default profile: exit $dx"; cat "$RUNNER_TEMP/default.log"; echo "::endgroup::"
-          echo "::group::strong-key profile: exit $sx"; cat "$RUNNER_TEMP/strong.log"; echo "::endgroup::"
-          [ "$dx" = 0 ] && [ "$sx" = 0 ]
+      - name: go test -race (all packages except api)
+        run: go list ./... | grep -v "^github.com/Busnes-app/kypost-server/backend/internal/api$" | xargs go test -race -count=1 -timeout=20m
 
       # Seed corpora already ran as tests above; this mutates past them. A
       # failure prints the input: commit it under that package's testdata/fuzz.
