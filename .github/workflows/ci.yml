@@ -104,15 +104,18 @@ jobs:
 
       # internal/api package tests run serially due to global hashParams state
       # managed by TestMain. This job runs only the api package tests, which
-      # are dominated by Argon2id derivations.
-      - name: go test -race (api package only)
-        run: go test -race -count=1 -timeout=20m ./internal/api/...
-
-      # docs/STRONG-CRYPTO.md: the supported strong-key profile.
-      - name: go test -race (api package, strong-key profile)
-        env:
-          GODEBUG: fips140=on
-        run: go test -race -count=1 -timeout=20m ./internal/api/...
+      # are dominated by Argon2id derivations. The default and strong-key
+      # (docs/STRONG-CRYPTO.md, GODEBUG=fips140=on) passes run side by side,
+      # each to its own log; the step fails if either does.
+      - name: go test -race (api package; default and strong-key profiles)
+        run: |
+          set +e
+          go test -race -count=1 -timeout=20m ./internal/api/... > "$RUNNER_TEMP/default.log" 2>&1 & d=$!
+          GODEBUG=fips140=on go test -race -count=1 -timeout=20m ./internal/api/... > "$RUNNER_TEMP/strong.log" 2>&1 & s=$!
+          wait "$d"; dx=$?; wait "$s"; sx=$?
+          echo "::group::default profile: exit $dx"; cat "$RUNNER_TEMP/default.log"; echo "::endgroup::"
+          echo "::group::strong-key profile: exit $sx"; cat "$RUNNER_TEMP/strong.log"; echo "::endgroup::"
+          [ "$dx" = 0 ] && [ "$sx" = 0 ]
 
   backend-other:
     name: ci-backend-other
@@ -183,13 +186,20 @@ jobs:
       - name: install restic
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends restic
 
-      - name: go test -race (all packages except api)
-        run: go list ./... | grep -v "^github.com/Busnes-app/kypost-server/backend/internal/api$" | xargs go test -race -count=1 -timeout=20m
-
-      - name: go test -race (all packages except api, strong-key profile)
-        env:
-          GODEBUG: fips140=on
-        run: go list ./... | grep -v "^github.com/Busnes-app/kypost-server/backend/internal/api$" | xargs go test -race -count=1 -timeout=20m
+      # The default and strong-key (GODEBUG=fips140=on) passes run side by
+      # side, each to its own log; the step fails if either does.
+      - name: go test -race (all packages except api; default and strong-key profiles)
+        run: |
+          set -eo pipefail
+          list="$(go list ./... | grep -v "^github.com/Busnes-app/kypost-server/backend/internal/api$")"
+          mapfile -t pkgs <<< "$list"
+          set +e
+          go test -race -count=1 -timeout=20m "${pkgs[@]}" > "$RUNNER_TEMP/default.log" 2>&1 & d=$!
+          GODEBUG=fips140=on go test -race -count=1 -timeout=20m "${pkgs[@]}" > "$RUNNER_TEMP/strong.log" 2>&1 & s=$!
+          wait "$d"; dx=$?; wait "$s"; sx=$?
+          echo "::group::default profile: exit $dx"; cat "$RUNNER_TEMP/default.log"; echo "::endgroup::"
+          echo "::group::strong-key profile: exit $sx"; cat "$RUNNER_TEMP/strong.log"; echo "::endgroup::"
+          [ "$dx" = 0 ] && [ "$sx" = 0 ]
 
       # Seed corpora already ran as tests above; this mutates past them. A
       # failure prints the input: commit it under that package's testdata/fuzz.
