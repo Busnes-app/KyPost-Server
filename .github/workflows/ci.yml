@@ -21,15 +21,15 @@ on:
 permissions:
   contents: read
 
-# Supersede an in-flight run when the same ref is pushed again. Without this,
-# three quick pushes to a PR branch keep three full matrices alive — including
-# three `docker build`s, the most expensive job here — reporting on two commits
-# nobody is waiting for. main is excluded from cancellation: a green tick
-# against a specific main commit is the record of whether that commit built,
-# and cancelling it destroys that record.
+# Supersede an in-flight run when a PR is pushed again. Without this, three
+# quick pushes to a PR branch keep three full matrices alive — including three
+# `docker build`s, the most expensive job here — reporting on two commits
+# nobody is waiting for. Every other run gets its own group (run_id): a green
+# tick against a specific main commit is the record of whether that commit
+# built, and a shared group would cancel a queued main run and destroy it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every action below is pinned to a commit SHA rather than a tag. A tag is a
 # mutable pointer: whoever controls it controls a job running in this

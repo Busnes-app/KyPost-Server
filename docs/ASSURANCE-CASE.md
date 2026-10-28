@@ -133,7 +133,7 @@ and native receiving is still in qualification. Each is in
   `security_headers_test.go`, `hardening_test.go` and `log_privacy_test.go`; CONTRIBUTING requires
   attack-path coverage for security changes. CI runs every backend package under the race
   detector on every push and pull request, plainly and again with `GODEBUG=fips140=on`.
-- **Static analysis:** CodeQL for Go, JavaScript/TypeScript and Actions on push, pull request and
+- **Static analysis:** CodeQL for Go, JavaScript/TypeScript, Python and Actions on push, pull request and
   a weekly schedule; `go vet`, `golangci-lint` (staticcheck included), `deadcode` and
   `govulncheck`.
 - **Dynamic analysis:** the race detector on the full suite, four Go fuzz targets run for 20
