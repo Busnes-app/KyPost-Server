@@ -421,7 +421,7 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
               marginBottom: "1rem",
             }}
           >
-            login with Single Sign On
+            Continue with Single Sign On
           </a>
           <div
             style={{
