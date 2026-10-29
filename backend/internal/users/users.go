@@ -2219,14 +2219,22 @@ func mapBusy(err error) error {
 // verifyHash checks candidate against an Argon2id PHC hash. Any other value
 // (empty, or a retired scrypt$ hash) is checked against dummyHash and reported
 // false, so it costs exactly what a wrong password does: timing must not reveal
-// whether an account exists or what format it holds. An unreadable hash is a
-// wrong credential, never an error; an error means "not checked".
+// whether an account exists or what format it holds. A failure against an
+// older-cost hash also verifies the dummy, so it costs at least a current-cost
+// verify under any load. An unreadable hash is a wrong credential, never an
+// error; an error means "not checked".
 func verifyHash(ctx context.Context, encoded, candidate string) (bool, error) {
 	known := IsArgon2idHash(encoded)
-	if !known {
-		var err error
-		if encoded, err = dummyHash(ctx); err != nil {
+	var pad string
+	if !known || NeedsRehash(encoded) {
+		h, err := dummyHash(ctx)
+		if err != nil {
 			return false, err
+		}
+		if known {
+			pad = h
+		} else {
+			encoded = h
 		}
 	}
 	var (
@@ -2235,6 +2243,9 @@ func verifyHash(ctx context.Context, encoded, candidate string) (bool, error) {
 	)
 	if slotErr := withKDFSlot(ctx, func() {
 		ok, err = password.Verify(candidate, encoded)
+		if pad != "" && !ok {
+			_, _ = password.Verify(candidate, pad)
+		}
 	}); slotErr != nil {
 		return false, slotErr
 	}

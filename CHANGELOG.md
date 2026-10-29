@@ -24,6 +24,9 @@ non-prerelease version.
   the background every few seconds, not to one measurement taken at startup. Under rising load
   the stale floor let an account whose password hash predates the last cost raise answer
   faster than every other account.
+- A failed sign-in against a password hash that predates the last cost raise now also runs one
+  current-cost check, so it takes at least as long as any other failure under any load. The
+  re-measured floor alone still lagged behind load changes.
 
 ### Changes
 
