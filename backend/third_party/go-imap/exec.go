@@ -78,6 +78,15 @@ func readLiterals(r *bufio.Reader, line []byte) ([]byte, error) {
 	}
 }
 
+// traceCommand logs credential commands by verb only: an escaped password or
+// an OAuth token would slip past substring redaction.
+func traceCommand(tag, command string) string {
+	if verb, _, _ := strings.Cut(command, " "); strings.EqualFold(verb, "LOGIN") || strings.EqualFold(verb, "AUTHENTICATE") {
+		return tag + " " + verb + " ****"
+	}
+	return strings.TrimSpace(tag + " " + command)
+}
+
 // execOnce runs a single attempt of an IMAP command
 func (d *Dialer) execOnce(command string, buildResponse bool, processLine func(line []byte) error) (resp strings.Builder, err error) {
 	tag := []byte(strings.ToUpper(xid.New().String()))
@@ -90,8 +99,7 @@ func (d *Dialer) execOnce(command string, buildResponse bool, processLine func(l
 	c := fmt.Sprintf("%s %s\r\n", tag, command)
 
 	if Verbose {
-		sanitized := strings.ReplaceAll(strings.TrimSpace(c), fmt.Sprintf(`"%s"`, d.Password), `"****"`)
-		debugLog(d.ConnNum, d.Folder, "sending command", "command", sanitized)
+		debugLog(d.ConnNum, d.Folder, "sending command", "command", traceCommand(string(tag), command))
 	}
 
 	if _, err := d.conn.Write([]byte(c)); err != nil {

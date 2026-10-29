@@ -17,3 +17,14 @@ func TestLogEscapesProtocolLineBreaks(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestTraceCommandHidesCredentials(t *testing.T) {
+	for _, command := range []string{`LOGIN "user" "pa\"ss"`, "AUTHENTICATE XOAUTH2 dG9rZW4="} {
+		if got := traceCommand("T1", command); strings.Contains(got, "pa") || strings.Contains(got, "dG9r") || !strings.HasSuffix(got, " ****") {
+			t.Fatalf("traceCommand(%q) = %q", command, got)
+		}
+	}
+	if got := traceCommand("T1", `SELECT "INBOX"`); got != `T1 SELECT "INBOX"` {
+		t.Fatal(got)
+	}
+}
