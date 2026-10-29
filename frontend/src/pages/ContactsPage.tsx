@@ -36,7 +36,6 @@ import {
   contactToFormState,
   formStateToInput,
   contactDisplayLine,
-  safeWebsiteHref,
   emptyFormState,
   CONTACTS_PER_PAGE,
   RELATION_LABELS,
@@ -738,19 +737,19 @@ export function ContactsPage() {
               {editingUid ? <div className="contacts-multivalue">
                 <div className="contacts-multivalue-label">Photo</div>
                 <div className="contacts-photo-row">
-                  {editingUid && form.photoRef ? (
+                  {form.photoRef ? (
                     <img src={contactPhotoUrl(editingUid)} alt="" className="contacts-avatar contacts-photo-preview" />
                   ) : (
                     <span className="contacts-avatar contacts-photo-preview" aria-hidden="true">
                       {form.fn.slice(0, 1).toUpperCase() || "?"}
                     </span>
                   )}
-                  {editingUid ? <input
+                  <input
                     type="file"
                     accept="image/*"
                     disabled={photoUploading}
                     onChange={(e) => void handlePhotoUpload(e.target.files?.[0])}
-                  /> : null}
+                  />
                   {form.photoRef ? (
                     <button
                       type="button"

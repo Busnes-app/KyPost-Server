@@ -1,6 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
 import { credentialFields, deriveCredential } from "../api/auth";
-import { toErrorMessage } from "../api/client";
 import { useNavigate } from "react-router";
 import { getJSON, HttpError, postJSON } from "../api/client";
 import type { AuthState } from "../auth";
