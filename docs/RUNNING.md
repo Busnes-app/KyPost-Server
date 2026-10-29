@@ -36,7 +36,7 @@ Optional for local development (outside Docker):
    ```
 
    This runs `ghcr.io/busnes-app/kypost-server:stable`. To pin a release, set
-   `KYPOST_VERSION=0.4.3` (no `v`) in `.env` first. Verify the image before
+   `KYPOST_VERSION=0.5.0` (no `v`) in `.env` first. Verify the image before
    relying on it: [Verifying an image by hand](OPERATIONS.md#verifying-an-image-by-hand).
    Building from source (`docker compose up --build -d`) still works, but
    `scripts/update-host.sh` refuses a locally built image; see

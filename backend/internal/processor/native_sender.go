@@ -592,29 +592,101 @@ func (s *RelaySender) Send(ctx context.Context, device state.NativeDevice, messa
 		return err
 	}
 
-	sendURL := s.relayURL + "/send"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sendURL, bytes.NewReader(body))
+	code, trimmed, header, err := s.post(ctx, apiKey, body)
 	if err != nil {
 		return err
+	}
+	if relayKeyRenewable(code, trimmed) {
+		renewed, rerr := s.renewKey(apiKey)
+		if rerr != nil {
+			return &relayStatusError{Code: code, Body: trimmed, RetryAfter: parseRetryAfter(header), err: fmt.Errorf("push relay send failed: status=%d response=%s; re-registration: %w", code, trimmed, rerr)}
+		}
+		if code, trimmed, header, err = s.post(ctx, renewed, body); err != nil {
+			return err
+		}
+	}
+	if code >= 200 && code < 300 {
+		return nil
+	}
+	if isRelayStaleResponse(code, trimmed) {
+		return &relayStatusError{Code: code, Body: trimmed, RetryAfter: parseRetryAfter(header), err: fmt.Errorf("%w: status=%d response=%s", ErrNativeDeviceStale, code, trimmed)}
+	}
+	return &relayStatusError{Code: code, Body: trimmed, RetryAfter: parseRetryAfter(header), err: fmt.Errorf("push relay send failed: status=%d response=%s", code, trimmed)}
+}
+
+// post sends one /send request and returns the status, the trimmed body and the headers.
+func (s *RelaySender) post(ctx context.Context, apiKey string, body []byte) (int, string, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.relayURL+"/send", bytes.NewReader(body))
+	if err != nil {
+		return 0, "", nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return 0, "", nil, err
 	}
 	defer resp.Body.Close()
-
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
-	trimmed := strings.TrimSpace(string(respBody))
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
+	return resp.StatusCode, strings.TrimSpace(string(respBody)), resp.Header, nil
+}
+
+// relayKeyRenewable reports the relay's 401 for a key that registering again may replace:
+// key_superseded (a later /register from this address replaced it) or key_unknown (the relay
+// has no record of it). A plain 401 is a revocation and is not renewable.
+func relayKeyRenewable(code int, body string) bool {
+	if code != http.StatusUnauthorized {
+		return false
 	}
-	if isRelayStaleResponse(resp.StatusCode, trimmed) {
-		return &relayStatusError{Code: resp.StatusCode, Body: trimmed, RetryAfter: parseRetryAfter(resp.Header), err: fmt.Errorf("%w: status=%d response=%s", ErrNativeDeviceStale, resp.StatusCode, trimmed)}
+	var parsed struct {
+		Code string `json:"code"`
 	}
-	return &relayStatusError{Code: resp.StatusCode, Body: trimmed, RetryAfter: parseRetryAfter(resp.Header), err: fmt.Errorf("push relay send failed: status=%d response=%s", resp.StatusCode, trimmed)}
+	if json.Unmarshal([]byte(body), &parsed) != nil {
+		return false
+	}
+	return parsed.Code == "key_superseded" || parsed.Code == "key_unknown"
+}
+
+// renewKey replaces a self-registered key the relay refused as superseded or unknown. A key
+// another send already replaced, here or in the sibling process's key file, is reused rather
+// than registered over: each registration supersedes the last. An operator-supplied
+// {prefix}_KEY is never replaced, and registration keeps its registerRetryInterval throttle.
+func (s *RelaySender) renewKey(stale string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if strings.TrimSpace(os.Getenv(s.prefix+"_KEY")) != "" {
+		return "", fmt.Errorf("%s_KEY is operator-supplied; not re-registering", s.prefix)
+	}
+	if s.apiKey != "" && s.apiKey != stale {
+		return s.apiKey, nil
+	}
+	path := relayKeyFilePathWithPrefix(s.prefix)
+	if b, err := os.ReadFile(path); err == nil {
+		if key := strings.TrimSpace(string(b)); key != "" && key != stale {
+			s.apiKey = key
+			return key, nil
+		}
+	}
+	if !s.lastRegAttempt.IsZero() && time.Since(s.lastRegAttempt) < registerRetryInterval {
+		return "", fmt.Errorf("%s relay re-registration backing off", s.prefix)
+	}
+	s.lastRegAttempt = time.Now()
+	key, err := registerWithRelay(s.relayURL, s.client)
+	if err != nil {
+		return "", fmt.Errorf("%s relay re-registration failed: %w", s.prefix, err)
+	}
+	// The relay no longer honours the old key, so keep the new one even if persisting fails.
+	s.apiKey = key
+	if werr := fsutil.AtomicWriteFile(path, []byte(key+"\n"), 0o600); werr != nil {
+		if s.log != nil {
+			s.log.Error("failed to persist re-registered relay key", "prefix", s.prefix, "path", path, "error", werr.Error())
+		}
+	} else if s.log != nil {
+		s.log.Info("re-registered with relay after its key was refused", "prefix", s.prefix, "key_file", path)
+	}
+	return key, nil
 }
 
 // isRelayStaleResponse reports whether the relay signalled that the device

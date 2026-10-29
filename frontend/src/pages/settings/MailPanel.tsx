@@ -21,7 +21,7 @@ export function MailPanel() {
     <section className="panel">
       <div className="config-header">
         <h1>Mail</h1>
-        <p>Your mail server, mailbox storage, the addresses you send as, KyCalendar, contact sync and mailbox rules.</p>
+        <p>Your mail server, mailbox storage, the addresses you send as, KyCalendar invitations, contact sync and mailbox rules.</p>
       </div>
       <PanelTabs
         ariaLabel="Mail sections"
