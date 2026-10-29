@@ -38,6 +38,7 @@ registerHooks({
 
 const worker = await import("./index.ts");
 const { RelayCoordinator } = await import("../../push-relay-shared/relay-coordinator.ts");
+const { durableStorage } = await import("../../push-relay-shared/durable-storage.mts");
 const { KEY_PREFIX, KEY_INDEX_PREFIX, BOUND_TOKEN_PREFIX, sha256Hex } = await import(
   "../../push-relay-shared/push-relay-common.ts"
 );
@@ -45,25 +46,8 @@ const { KEY_PREFIX, KEY_INDEX_PREFIX, BOUND_TOKEN_PREFIX, sha256Hex } = await im
 const AUTH_KEY = "-----BEGIN PRIVATE KEY-----\nMHc=\n-----END PRIVATE KEY-----";
 const API_KEY = "relay-key-under-test";
 
-function storage() {
-  const cells = new Map();
-  return {
-    cells,
-    async get(key) {
-      return cells.get(key);
-    },
-    async put(keyOrEntries, value) {
-      if (typeof keyOrEntries === "string") {
-        cells.set(keyOrEntries, value);
-        return;
-      }
-      for (const [k, v] of Object.entries(keyOrEntries)) cells.set(k, v);
-    },
-    async delete(keys) {
-      for (const key of Array.isArray(keys) ? keys : [keys]) cells.delete(key);
-    },
-  };
-}
+// Durable Object storage with a real SQLite behind `sql`, as the key registry needs.
+const storage = durableStorage;
 
 /** A fully configured APNs env with a budget of exactly one send. */
 async function env(kvEntries: [string, unknown][] = []) {
@@ -135,7 +119,7 @@ async function ownedByAnother(token: string): Promise<[string, unknown][]> {
 }
 
 test("a send refused at the ownership claim does not spend the daily budget", async () => {
-  const taken = "device-token-owned-by-someone-else";
+  const taken = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
   const e = await env(await ownedByAnother(taken));
 
   // Stub Apple so a send that DOES get through can be told apart from one that
@@ -155,7 +139,7 @@ test("a send refused at the ownership claim does not spend the daily budget", as
     // The budget is 1. If the refusal above consumed it, this legitimate send
     // to a free token is refused 429 and the relay is down for the day on
     // traffic that delivered nothing.
-    const allowed = await send(e, "a-free-device-token");
+    const allowed = await send(e, "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2");
     assert.equal(
       allowed.status,
       200,
@@ -176,9 +160,9 @@ test("the budget still bounds sends that do reach the provider", async () => {
   globalThis.fetch = (async () => new Response("", { status: 200 })) as typeof fetch;
 
   try {
-    assert.equal((await send(e, "token-one")).status, 200);
+    assert.equal((await send(e, "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3")).status, 200);
 
-    const over = await send(e, "token-two");
+    const over = await send(e, "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4");
     assert.equal(over.status, 429, "the budget did not bound a second delivering send");
     assert.equal(over.headers.get("Retry-After") !== null, true, "429 carried no Retry-After");
   } finally {
@@ -236,7 +220,7 @@ test("a send that never reaches Apple gives its budget draw back", async () => {
     );
 
   try {
-    const failed = await sendWith("token-one");
+    const failed = await sendWith("c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3");
     assert.equal(failed.status, 502, "expected a delivery failure before Apple");
     assert.equal(appleCalls, 0, "the send reached Apple after all; this test proves nothing");
     await Promise.all(deferred);
@@ -245,7 +229,7 @@ test("a send that never reaches Apple gives its budget draw back", async () => {
     // kept its draw, the relay is still down for the day having delivered
     // nothing, and no amount of fixing brings it back before UTC midnight.
     e.APNS_TOKEN_CACHE = workingCache;
-    const allowed = await sendWith("token-two");
+    const allowed = await sendWith("d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4");
     assert.equal(
       allowed.status,
       200,
@@ -280,13 +264,13 @@ test("a token Apple rejected keeps its budget draw", async () => {
     );
 
   try {
-    assert.equal((await sendWith("garbage-one")).status, 502);
+    assert.equal((await sendWith("e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5")).status, 502);
     assert.equal(appleCalls, 1, "the rejected send did not reach Apple");
     await Promise.all(deferred);
 
     // That request spent Apple's quota, so the budget of 1 is gone. Refunding
     // it would make an endless stream of invented device tokens free.
-    const over = await sendWith("garbage-two");
+    const over = await sendWith("f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6");
     assert.equal(over.status, 429, "a rejected device token was refunded the quota it spent");
   } finally {
     globalThis.fetch = realFetch;
