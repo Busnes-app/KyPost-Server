@@ -12,11 +12,11 @@ name: CodeQL
 # exclusion down somewhere reviewable. .github/codeql/codeql-config.yml is that
 # place, and it carries the reasoning with it.
 #
-# Everything else matches what default setup was doing: the same three
-# languages, the default query suite, and a weekly scheduled scan on top of the
-# per-push and per-PR runs. Dropping the schedule would mean main is only
-# rescanned when someone pushes, so a query added to a newer CodeQL bundle
-# would never be applied to code that had stopped changing.
+# Everything else matches what default setup was doing: the same languages
+# plus Python for scripts/, the default query suite, and a weekly scheduled
+# scan on top of the per-push and per-PR runs. Dropping the schedule would mean
+# main is only rescanned when someone pushes, so a query added to a newer
+# CodeQL bundle would never be applied to code that had stopped changing.
 
 on:
   push:
@@ -30,12 +30,12 @@ on:
 permissions:
   contents: read
 
-# Same reasoning as ci.yml: supersede an in-flight run when a PR branch is
-# pushed again, but never cancel main, where a completed analysis is the record
-# of what that commit contained.
+# Same reasoning as ci.yml: supersede an in-flight run when a PR is pushed
+# again, but give every other run its own group, so no main analysis — the
+# record of what that commit contained — is cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Actions are pinned to commit SHAs for the reason ci.yml spells out: a tag is
 # a mutable pointer, and this workflow holds security-events: write. Dependabot
@@ -62,6 +62,9 @@ jobs:
           - language: go
             build-mode: autobuild
           - language: javascript-typescript
+            build-mode: none
+          # The CI check scripts under scripts/.
+          - language: python
             build-mode: none
 
     steps:

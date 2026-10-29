@@ -1,37 +1,35 @@
 /**
- * RelayCoordinator — the strongly-consistent half of the relay's ownership
- * rules, shared by both relay Workers (worker/ and worker-apns/).
+ * RelayCoordinator — the strongly-consistent half of the relay, shared by both
+ * relay Workers (FCM and APNs).
  *
- * Two invariants in this relay are check-then-write, and KV cannot hold either
- * of them. KV is eventually consistent: two concurrent requests both read "no
- * owner yet" and both write themselves in as the owner, and the loser's write
- * simply wins or loses by timing.
+ * Every instance routes by name, and one instance handles its requests one at a
+ * time, so a read and the write that depends on it cannot be interleaved by
+ * anyone else. KV cannot offer that: two concurrent requests both read "no owner
+ * yet" and both write themselves in. Three kinds of instance:
  *
- *   1. Device-token ownership ("the first key to deliver to a token owns it").
- *      Two relay keys racing the first send to one device token both saw it
- *      unclaimed, so both were allowed through — which is exactly the spoofed-
- *      notification path the pinning exists to close.
+ *   1. `token:<sha256(device token)>` — device-token ownership ("the first key to
+ *      deliver to a token owns it"). Without serialization, two keys racing the
+ *      first send to one token were both let through: the spoofed-notification
+ *      path the pinning exists to close.
  *
- *   2. One active key per registering IP. The prior-key lookup, the revoke, the
- *      mint and the index update were four separate KV operations, so concurrent
- *      /register calls from one address left several permanent active keys.
+ *   2. KEY_REGISTRY — every key record, in a SQLite `keys` table. Registration
+ *      and the supersede it implies are one transaction, and one active key per
+ *      IP is a query on the `ip` column. Records used to live in KV, where a
+ *      registration cost four writes against the free plan's 1,000 a day; on
+ *      2026-10-26 test servers registering spent that quota and Android push
+ *      stopped. See the key-records section of push-relay-common.ts.
  *
- * A Durable Object fixes both because every request for one token (or one IP)
- * routes to the same instance by name, and that instance handles them one at a
- * time — the read and the write cannot be interleaved by anyone else. This is
- * the "needs a strongly-consistent store (Durable Object)" that claimTokenForSend
- * previously only documented.
+ *   3. `relay-daily-budget` — the relay-wide daily send counter.
  *
- * Nearly dumb: it stores an owner id plus the bookkeeping that makes releasing a
- * claim safe (see settleToken). Whether an owning key is still *active* is a KV
- * question (the key records live there), so the caller answers it and comes back
- * with a compare-and-swap (`takeoverFrom`) rather than this class reaching into
- * KV. That keeps the serialized section to a couple of storage operations.
+ * The token instances stay nearly dumb: an owner id plus the bookkeeping that
+ * makes releasing a claim safe (see settleToken). Whether an owning key is still
+ * active is the registry's answer, so the caller asks it and comes back with a
+ * compare-and-swap (`takeoverFrom`) rather than one instance calling another.
  */
 
 import { DurableObject } from "cloudflare:workers";
 
-/** Storage keys inside one instance. The instance IS the token/IP, so these are fixed. */
+/** Storage keys inside one token instance. The instance IS the token, so these are fixed. */
 const OWNER_KEY = "owner";
 const SEEDED_KEY = "seeded";
 /** A send under the CURRENT claim actually delivered — see settleToken. */
@@ -40,19 +38,43 @@ const CONFIRMED_KEY = "confirmed";
 const INFLIGHT_KEY = "inflight";
 /** When the current claim was taken (ms epoch), for the caller's takeover guard. */
 const CLAIMED_AT_KEY = "claimedAt";
-/**
- * Keys the CURRENT registration must revoke once it commits — see
- * claimRegistrationIp. Carried across claims, because a registration that never
- * commits still displaced whoever it took the IP from.
- */
-const REG_DEBT_KEY = "registrationDebt";
-/**
- * Ceiling on that list. Each registration that claims and then never commits
- * adds one id, and /register is public, so the list needs a bound. The oldest
- * entry is the one that matters — it is the last key that actually committed,
- * and so the only one with a record to revoke — so the cap drops the newest.
- */
-const MAX_REG_DEBT = 16;
+
+export type KeyStatus = "active" | "superseded" | "revoked";
+
+/** One row of the registry's `keys` table, as findKey returns it. */
+export type KeyRow = {
+  hash: string;
+  id: string;
+  label: string;
+  ip: string | null;
+  createdAt: number;
+  /** Only on keys from the admin API that used to exist; self-registered keys never expire. */
+  expiresAt: number | null;
+  source: string;
+  status: KeyStatus;
+};
+
+const KEY_COLUMNS = "hash, id, label, ip, created_at AS createdAt, expires_at AS expiresAt, source, status";
+
+export interface NewKey {
+  hash: string;
+  id: string;
+  label: string;
+  ip: string;
+  createdAt: number;
+}
+
+/** A key record read from the pre-registry KV namespace. */
+export interface LegacyKey {
+  hash: string;
+  id: string;
+  label: string;
+  ip: string | null;
+  createdAt: number;
+  expiresAt: number | null;
+  source: string;
+  enabled: boolean;
+}
 /** UTC day (YYYY-MM-DD) the relay-wide budget count below belongs to. */
 const BUDGET_DAY_KEY = "budgetDay";
 /** Sends drawn from the relay-wide budget during BUDGET_DAY_KEY. */
@@ -83,8 +105,8 @@ export interface ClaimTokenResult {
   /**
    * When `owner` took the claim (ms epoch). The caller refuses to take over a
    * claim younger than KV's convergence window, because the "is the owner still
-   * active?" answer it would base the takeover on comes from KV — see
-   * claimTokenForSend. A claim whose age is unknown (adopted from the legacy KV
+   * active?" answer can still come from KV for a key not yet copied into the
+   * registry — see claimTokenForSend. A claim whose age is unknown (adopted from the legacy KV
    * index, or written before this field existed) is stamped on first sight and
    * so counts as fresh once — see RelayCoordinator.claimedAt.
    */
@@ -229,70 +251,117 @@ export class RelayCoordinator extends DurableObject {
     return true;
   }
 
-  /**
-   * Records newKeyId as the one active key for this IP and returns every key the
-   * caller must revoke once it commits. Swap-and-return in one turn, so
-   * concurrent registrations from one address serialize into a chain.
-   *
-   * The swap alone is NOT enough to leave one key standing, which is what this
-   * comment used to claim. The mint happens outside this turn, so a registration
-   * paused between the swap and the mint has nothing in KV for its successor to
-   * revoke — the successor's revoke is a no-op against an id that does not exist
-   * yet, and the pauser then mints a second permanently active key. Every caller
-   * must therefore come back through confirmRegistrationIp after minting.
-   *
-   * Nor is returning the immediate predecessor enough, which is what this
-   * comment claimed next. That made the revoke a chain of single links, and a
-   * link that never commits — a mint that threw, a registration displaced while
-   * minting — breaks it in the middle and strands everything behind it:
-   *
-   *   1. P holds the IP.
-   *   2. A claims, is handed P to revoke, and its mint fails (or it is displaced
-   *      before it can commit). A revokes nothing.
-   *   3. B claims and is handed A — an id with no record. Revoking it is a
-   *      no-op, so P is never revoked and never expires.
-   *
-   * So the obligation is inherited, not just passed on: an uncommitted claim's
-   * debt is added to its successor's. It is discharged only by a commit, so
-   * whichever registration finally wins revokes everything its predecessors
-   * displaced and did not clean up. Dangling ids ride along harmlessly —
-   * revokeKeyById reports an unknown id as already gone.
-   */
-  async claimRegistrationIp(newKeyId: string, legacyKeyId?: string | null): Promise<string[]> {
-    const prior = await this.currentOwner(legacyKeyId);
-    const inherited = (await this.ctx.storage.get<string[]>(REG_DEBT_KEY)) ?? [];
-    // Oldest first: the inherited debt predates the owner being displaced now,
-    // and MAX_REG_DEBT drops from the far end.
-    const debt = [...new Set([...inherited, prior])]
-      .filter((id): id is string => !!id && id !== newKeyId)
-      .slice(0, MAX_REG_DEBT);
-    await this.ctx.storage.put({ [OWNER_KEY]: newKeyId, [REG_DEBT_KEY]: debt });
-    return debt;
+  // ---- key registry (the KEY_REGISTRY instance only) -------------------------
+  //
+  // Statuses: `active`; `superseded`, by a later /register from the same IP;
+  // `revoked`, by an operator (an UPDATE in the dashboard's Data Studio — there
+  // is no admin API) or a KV record that was already disabled. A key with no
+  // row and no KV record is unknown: /send says `key_unknown`, so a server whose
+  // key the relay lost re-registers, while a revoked key stays refused.
+
+  private keysReady = false;
+
+  private keysTable(): SqlStorage {
+    const sql = this.ctx.storage.sql;
+    if (!this.keysReady) {
+      sql.exec(
+        `CREATE TABLE IF NOT EXISTS keys (
+          hash       TEXT PRIMARY KEY,
+          id         TEXT NOT NULL UNIQUE,
+          label      TEXT NOT NULL,
+          ip         TEXT,
+          created_at INTEGER NOT NULL,
+          expires_at INTEGER,
+          source     TEXT NOT NULL,
+          from_kv    INTEGER NOT NULL DEFAULT 0,
+          status     TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'revoked')),
+          ended_at   INTEGER
+        )`,
+      );
+      sql.exec("CREATE INDEX IF NOT EXISTS keys_by_ip ON keys (ip, status)");
+      this.keysReady = true;
+    }
+    return sql;
+  }
+
+  /** The row for one key, by hash (a presented key) or id (a token's owner). */
+  findKey(by: { hash: string } | { id: string }): KeyRow | null {
+    const sql = this.keysTable();
+    const [column, value] = "hash" in by ? ["hash", by.hash] : ["id", by.id];
+    const [row] = sql.exec<KeyRow>(`SELECT ${KEY_COLUMNS} FROM keys WHERE ${column} = ?`, value).toArray();
+    return row ?? null;
   }
 
   /**
-   * The commit half of claimRegistrationIp: reports whether keyId is STILL this
-   * IP's registration, now that its record exists in KV, and discharges the debt
-   * it was handed at claim time.
-   *
-   * False means a concurrent registration displaced it while it was minting. The
-   * successor already tried to revoke this id and found nothing, so nothing else
-   * will ever clean it up — the caller must delete the key it just minted and
-   * hand out nothing. That is the whole reason this exists: it is the only
-   * moment at which a superseded registration can still be told it lost. Its
-   * debt is not cleared on that path: the successor inherited it and is now the
-   * one that owes it.
-   *
-   * Deliberately not a compare-and-delete of the owner. Clearing the owner here
-   * would unclaim the IP for the winner that legitimately holds it.
+   * Records a freshly minted key as the one active key for its IP, superseding
+   * every other, in one transaction. Returns the keys it displaced.
    */
-  async confirmRegistrationIp(keyId: string): Promise<boolean> {
-    if ((await this.ctx.storage.get<string>(OWNER_KEY)) !== keyId) {
-      return false;
-    }
-    await this.ctx.storage.delete(REG_DEBT_KEY);
-    return true;
+  registerKey(key: NewKey): { id: string; hash: string }[] {
+    const sql = this.keysTable();
+    return this.ctx.storage.transactionSync(() => {
+      const displaced = sql
+        .exec<{ id: string; hash: string }>("SELECT id, hash FROM keys WHERE ip = ? AND status = 'active'", key.ip)
+        .toArray();
+      sql.exec(
+        "UPDATE keys SET status = 'superseded', ended_at = ? WHERE ip = ? AND status = 'active'",
+        key.createdAt,
+        key.ip,
+      );
+      sql.exec(
+        "INSERT INTO keys (hash, id, label, ip, created_at, source, status) VALUES (?, ?, ?, ?, ?, 'self', 'active')",
+        key.hash,
+        key.id,
+        key.label,
+        key.ip,
+        key.createdAt,
+      );
+      return displaced;
+    });
   }
+
+  /**
+   * Copies a key record found in KV into the table, the first time it is used,
+   * and returns the row now on file. An existing row always wins: once a key is
+   * here, KV no longer has a say in it.
+   *
+   * A KV key is imported as superseded when its IP has registered here since it
+   * was created. Under KV, that registration would have revoked it; without this
+   * rule a lost-key server's old key, still in KV, would come back to life next
+   * to its replacement, and a token pinned to it could not be taken over.
+   */
+  importKey(key: LegacyKey): KeyRow | null {
+    const sql = this.keysTable();
+    return this.ctx.storage.transactionSync(() => {
+      const existing = this.findKey({ hash: key.hash });
+      if (existing) {
+        return existing;
+      }
+      let status: KeyStatus = key.enabled ? "active" : "revoked";
+      if (
+        status === "active" &&
+        key.ip &&
+        sql
+          .exec("SELECT 1 FROM keys WHERE ip = ? AND from_kv = 0 AND created_at > ? LIMIT 1", key.ip, key.createdAt)
+          .toArray().length > 0
+      ) {
+        status = "superseded";
+      }
+      sql.exec(
+        `INSERT OR IGNORE INTO keys (hash, id, label, ip, created_at, expires_at, source, from_kv, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        key.hash,
+        key.id,
+        key.label,
+        key.ip,
+        key.createdAt,
+        key.expiresAt,
+        key.source,
+        status,
+      );
+      return this.findKey({ hash: key.hash });
+    });
+  }
+
 
   /**
    * Draw one unit from the relay-wide daily budget, returning whether it was

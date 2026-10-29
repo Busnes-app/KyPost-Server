@@ -10,7 +10,7 @@
  * No test framework and no fixtures: `node --test` with the runtime's own type
  * stripping (Node >= 22.18). The one piece of machinery is the module hook
  * below, which stands in for `cloudflare:workers` so the Durable Object class
- * can be constructed outside workerd against a Map.
+ * can be constructed outside workerd (see durable-storage.mts).
  *
  *   node --test push-relay-shared/
  */
@@ -45,35 +45,18 @@ const {
   KEY_INDEX_PREFIX,
   KEY_PREFIX,
   BOUND_TOKEN_PREFIX,
-  handleRegister,
+  apnsToken,
+  fcmToken,
+  keyRegistry,
 } = await import("./push-relay-common.ts");
+
+// Real-shaped device tokens: 32 bytes of hex, and FCM's `<id>:APA91b…`.
+const APNS = "0123456789abcdef".repeat(4);
+const FCM = "dTxbVurMB3E:APA91b" + "x_-Y".repeat(35);
 
 // ---- doubles ---------------------------------------------------------------
 
-/** Durable Object storage: the get/put/delete shapes relay-coordinator uses. */
-function storage() {
-  const cells = new Map();
-  return {
-    cells,
-    async get(key) {
-      return cells.get(key);
-    },
-    async put(keyOrEntries, value) {
-      if (typeof keyOrEntries === "string") {
-        cells.set(keyOrEntries, value);
-        return;
-      }
-      for (const [k, v] of Object.entries(keyOrEntries)) {
-        cells.set(k, v);
-      }
-    },
-    async delete(keys) {
-      for (const key of Array.isArray(keys) ? keys : [keys]) {
-        cells.delete(key);
-      }
-    },
-  };
-}
+const { durableStorage: storage } = await import("./durable-storage.mts");
 
 function coordinator() {
   return new RelayCoordinator({ storage: storage() }, {});
@@ -248,7 +231,11 @@ test("an aged claim whose key is gone is taken over, one whose key is active is 
   assert.equal(whileActive.allowed, false);
   assert.equal(whileActive.logReason, "token_bound_to_other_key");
 
-  env.API_KEYS.get = async () => null; // key-a revoked
+  // key-a was copied into the registry by the check above, so KV no longer has
+  // a say: revoking it means revoking it there.
+  env.API_KEYS.get = async () => null;
+  assert.equal((await claimTokenForSend(rc, "device-token", "key-b")).allowed, false, "KV deletion overrode the registry");
+  keyRegistry(env).ctx.storage.sql.exec("UPDATE keys SET status = 'revoked' WHERE id = ?", "key-a");
   assert.deepEqual(await claimTokenForSend(rc, "device-token", "key-b"), { allowed: true });
   assert.equal(owner(instance), "key-b");
 });
@@ -307,8 +294,8 @@ function sendRequest(body, headers = {}) {
 test("a /send body over the ceiling is refused before it is parsed", async () => {
   // Valid JSON, and a body that would be accepted if it were smaller — so the
   // refusal can only be the byte ceiling.
-  const huge = JSON.stringify({ token: "device-token", title: "t", body: "x".repeat(MAX_SEND_BODY_BYTES) });
-  const refused = await readSendPayload(sendRequest(huge));
+  const huge = JSON.stringify({ token: APNS, title: "t", body: "x".repeat(MAX_SEND_BODY_BYTES) });
+  const refused = await readSendPayload(sendRequest(huge), apnsToken);
   assert.equal(refused.ok, false);
   assert.equal(refused.status, 413);
 });
@@ -318,10 +305,10 @@ test("an oversized Content-Length is refused without reading the body at all", a
   // is what catches a body that lies about (or omits) its length.
   const lying = new Request("https://relay.example/send", {
     method: "POST",
-    body: JSON.stringify({ token: "device-token" }),
+    body: JSON.stringify({ token: APNS }),
     headers: { "Content-Length": String(MAX_SEND_BODY_BYTES + 1) },
   });
-  const refused = await readSendPayload(lying);
+  const refused = await readSendPayload(lying, apnsToken);
   assert.equal(refused.ok, false);
   assert.equal(refused.status, 413);
 });
@@ -336,60 +323,26 @@ test("/send fields are type-checked, not coerced", async () => {
     [JSON.stringify({ token: 42 }), "invalid token"],
     [JSON.stringify({ token: "x".repeat(MAX_TOKEN_LENGTH + 1) }), "invalid token"],
     // Coerced, these became the string "[object Object]" in a delivered push.
-    [JSON.stringify({ token: "t", title: { a: 1 } }), "invalid title"],
-    [JSON.stringify({ token: "t", body: ["x"] }), "invalid body"],
-    [JSON.stringify({ token: "t", data: "x" }), "invalid data"],
-    [JSON.stringify({ token: "t", data: [1, 2] }), "invalid data"],
+    [JSON.stringify({ token: APNS, title: { a: 1 } }), "invalid title"],
+    [JSON.stringify({ token: APNS, body: ["x"] }), "invalid body"],
+    [JSON.stringify({ token: APNS, data: "x" }), "invalid data"],
+    [JSON.stringify({ token: APNS, data: [1, 2] }), "invalid data"],
     // data was forwarded to the provider unexamined: any JSON value at all
     // could ride into an FCM/APNs request under a key holder's quota.
-    [JSON.stringify({ token: "t", data: { k: { nested: true } } }), "invalid data value"],
-    [JSON.stringify({ token: "t", data: { ["k".repeat(65)]: "v" } }), "invalid data key"],
+    [JSON.stringify({ token: APNS, data: { k: { nested: true } } }), "invalid data value"],
+    [JSON.stringify({ token: APNS, data: { ["k".repeat(65)]: "v" } }), "invalid data key"],
     [
       JSON.stringify({
-        token: "t",
+        token: APNS,
         data: Object.fromEntries(Array.from({ length: MAX_DATA_ENTRIES + 1 }, (_, i) => ["k" + i, "v"])),
       }),
       "too many data entries",
     ],
   ]) {
-    const refused = await readSendPayload(sendRequest(body));
+    const refused = await readSendPayload(sendRequest(body), apnsToken);
     assert.equal(refused.ok, false, `accepted ${body.slice(0, 40)}`);
     assert.equal(refused.status, 400);
     assert.equal(refused.error, error);
-  }
-});
-
-test("a device token carrying URL syntax is refused before any claim or send", async () => {
-  // worker-apns interpolates the token into APNs' /3/device/<token> path, and
-  // WHATWG URL parsing removes dot-segments: `../../3/device/<victim>` addresses
-  // the victim while the claim pins the sha256 of the literal string, so token
-  // ownership never sees the token that was actually delivered to. readSendPayload
-  // runs before claimTokenForSend in both Workers, so 400 here is 400 before a claim.
-  for (const token of [
-    "../../3/device/VICTIMTOKEN",
-    "%2e%2e/%2e%2e/3/device/VICTIMTOKEN",
-    "abc/../def",
-    "abc?apns-topic=x",
-    "abc#frag",
-    "abc def",
-    "https://evil.example/3/device/VICTIMTOKEN",
-  ]) {
-    const refused = await readSendPayload(sendRequest(JSON.stringify({ token, title: "t", body: "b" })));
-    assert.equal(refused.ok, false, `accepted ${token}`);
-    assert.equal(refused.status, 400);
-    assert.equal(refused.error, "invalid token");
-  }
-
-  // Both transports the shared reader serves still pass: an APNs hex token and
-  // an FCM registration token (`<instance id>:APA91b<base64url>`).
-  for (const token of [
-    "a".repeat(64),
-    "3f2b9c1d".repeat(8),
-    "fMEQEXaMPLe_iD-1:APA91bH-tok3n_wIth.Dots-and_Underscores",
-  ]) {
-    const accepted = await readSendPayload(sendRequest(JSON.stringify({ token, title: "t", body: "b" })));
-    assert.equal(accepted.ok, true, `refused ${token}`);
-    assert.equal(accepted.value.token, token);
   }
 });
 
@@ -401,16 +354,17 @@ test("/send text fields are clamped rather than refused, and unknown fields are 
   const accepted = await readSendPayload(
     sendRequest(
       JSON.stringify({
-        token: "  device-token  ",
+        token: `  ${APNS}  `,
         title: "T".repeat(MAX_TITLE_LENGTH + 50),
         body: "B".repeat(5_000),
         data: { subject: "S".repeat(5_000) },
         platform: "android",
       }),
     ),
+    apnsToken,
   );
   assert.equal(accepted.ok, true);
-  assert.equal(accepted.value.token, "device-token");
+  assert.equal(accepted.value.token, APNS);
   assert.equal(accepted.value.title.length, MAX_TITLE_LENGTH);
   assert.equal(accepted.value.body.length, 1024);
   assert.equal(accepted.value.data.subject.length, 1024);
@@ -422,10 +376,64 @@ test("clamping a text field never splits a surrogate pair", async () => {
   // leave a lone high surrogate — an unpaired surrogate is not valid text and
   // JSON.stringify of it produces a replacement character upstream.
   const accepted = await readSendPayload(
-    sendRequest(JSON.stringify({ token: "t", title: "😀".repeat(MAX_TITLE_LENGTH) })),
+    sendRequest(JSON.stringify({ token: APNS, title: "😀".repeat(MAX_TITLE_LENGTH) })),
+    apnsToken,
   );
   assert.equal(accepted.ok, true);
   assert.equal(/[\ud800-\udbff]$/.test(accepted.value.title), false, "clamped mid-pair");
+});
+
+// ---- one spelling per device token ------------------------------------------
+//
+// The pin is sha256(token). APNs puts the token in a URL path, which fetch
+// normalizes, so `a/../VICTIM` hashed to a fresh, unpinned claim and was then
+// delivered to VICTIM. Every alias must be refused or fold to the same token.
+
+async function tokenOf(raw, format) {
+  const parsed = await readSendPayload(sendRequest(JSON.stringify({ token: raw })), format);
+  return parsed.ok ? parsed.value.token : parsed.error;
+}
+
+const aliases = (t) => [
+  `a/../${t}`,
+  `%2e%2e/${t}`,
+  `../${t}`,
+  `${t}#x`,
+  `${t}?x`,
+  `${t}/`,
+  `${t.slice(0, 32)} ${t.slice(32)}`,
+  `${t.slice(0, 32)}\t${t.slice(32)}`,
+  `${t.slice(0, 32)}%20${t.slice(32)}`,
+];
+
+test("an APNs token has one spelling: aliases are refused, case and padding fold", async () => {
+  for (const bad of [...aliases(APNS), APNS.slice(1), "a".repeat(201), "g".repeat(64), `${APNS}é`]) {
+    assert.equal(await tokenOf(bad, apnsToken), "invalid token", `accepted ${JSON.stringify(bad)}`);
+  }
+  assert.equal(await tokenOf("a".repeat(200), apnsToken), "a".repeat(200));
+  for (const same of [APNS, APNS.toUpperCase(), ` ${APNS}\n`, `\t${APNS.toUpperCase()} `]) {
+    assert.equal(await tokenOf(same, apnsToken), APNS, `${JSON.stringify(same)} did not fold`);
+  }
+});
+
+test("an FCM token has one spelling: aliases are refused, case is preserved", async () => {
+  for (const bad of [...aliases(FCM), "a".repeat(513), `${FCM}.`, `${FCM}é`]) {
+    assert.equal(await tokenOf(bad, fcmToken), "invalid token", `accepted ${JSON.stringify(bad)}`);
+  }
+  assert.equal(await tokenOf(` ${FCM}\n`, fcmToken), FCM);
+  // FCM tokens are case-sensitive: a different case is a different device, not this one.
+  assert.equal(await tokenOf(FCM.toUpperCase(), fcmToken), FCM.toUpperCase());
+});
+
+test("every spelling of one APNs token lands on the same pin", async () => {
+  const env = relayEnv();
+  const rc = requestContext(env);
+  assert.deepEqual(await claimTokenForSend(rc, await tokenOf(APNS, apnsToken), "key-a"), { allowed: true });
+  for (const same of [APNS.toUpperCase(), ` ${APNS} `]) {
+    const stolen = await claimTokenForSend(rc, await tokenOf(same, apnsToken), "key-b");
+    assert.equal(stolen.allowed, false, `${JSON.stringify(same)} escaped the pin`);
+  }
+  assert.equal(env.instances.size, 1, "an alias created a second coordinator");
 });
 
 // ---- no admin surface -------------------------------------------------------
@@ -454,260 +462,4 @@ test("the admin routes are gone, for every method and with any credential", asyn
     const response = await handler(request, env, ctx);
     assert.equal(response.status, 404, `${method} ${path} answered ${response.status}`);
   }
-});
-
-// ---- registration: claim, mint, commit --------------------------------------
-//
-// The one-active-key-per-IP rule is enforced across THREE steps that are not
-// one atomic operation: the coordinator swaps the IP's owner, KV mints the key,
-// and the coordinator is asked again whether the minted key is still the owner.
-// Only the first and third are serialized. Everything below is written as an
-// explicit interleaving of the second, because that is where the bug was.
-
-/** KV double with a hook that can stall a specific put mid-flight. */
-function registerKv() {
-  const cells = new Map();
-  const kv = {
-    cells,
-    /** Called before every put; return a promise to stall the caller there. */
-    beforePut: async (_key) => {},
-    async get(key, type) {
-      const value = cells.get(key);
-      if (value === undefined) return null;
-      return type === "json" && typeof value === "string" ? JSON.parse(value) : value;
-    },
-    async put(key, value) {
-      await kv.beforePut(key);
-      cells.set(key, value);
-    },
-    async delete(key) {
-      cells.delete(key);
-    },
-  };
-  return kv;
-}
-
-function registerEnv(kv) {
-  const instances = new Map();
-  return {
-    instances,
-    REGISTRATION_ENABLED: "true",
-    REGISTER_RATE_LIMITER: { async limit() { return { success: true }; } },
-    API_KEYS: kv,
-    RELAY_COORDINATOR: {
-      idFromName: (name) => name,
-      get(name) {
-        if (!instances.has(name)) {
-          instances.set(name, coordinator());
-        }
-        return instances.get(name);
-      },
-    },
-  };
-}
-
-function registerRequest(ip = "203.0.113.7") {
-  return new Request("https://relay.example/register", {
-    method: "POST",
-    body: JSON.stringify({ label: "server" }),
-    headers: { "CF-Connecting-IP": ip, "Content-Type": "application/json" },
-  });
-}
-
-/** Every key record currently in KV, by id. */
-function activeKeyIds(kv) {
-  const ids = [];
-  for (const [cell, value] of kv.cells) {
-    if (!cell.startsWith(KEY_PREFIX)) continue;
-    const record = typeof value === "string" ? JSON.parse(value) : value;
-    if (record.enabled) ids.push(record.id);
-  }
-  return ids.sort();
-}
-
-test("a registration displaced while minting leaves no second active key", async () => {
-  const kv = registerKv();
-  const env = registerEnv(kv);
-
-  // Stall the FIRST key-record write — request A, inside mintKey — after it has
-  // already claimed the IP from the coordinator. This is the exact window: A
-  // owns the IP, and A's key does not exist in KV for anyone to revoke.
-  let releaseA;
-  const aIsMinting = new Promise((resolveReached) => {
-    const held = new Promise((r) => { releaseA = r; });
-    let stalled = false;
-    kv.beforePut = async (cell) => {
-      if (stalled || !cell.startsWith(KEY_PREFIX)) return;
-      stalled = true;
-      resolveReached();
-      await held;
-    };
-  });
-
-  const a = handleRegister(registerRequest(), requestContext(env));
-  await aIsMinting;
-
-  // B registers start to finish while A is parked. B is handed A as its
-  // predecessor and revokes it — a no-op, because A has written nothing yet.
-  const bResponse = await handleRegister(registerRequest(), requestContext(env));
-  assert.equal(bResponse.status, 201);
-  const b = await bResponse.json();
-
-  releaseA();
-  const aResponse = await a;
-
-  // A must find out it lost and clean up after itself. Before the commit step
-  // it answered 201 and left its key enabled in KV forever.
-  assert.equal(aResponse.status, 503, "a superseded registration was handed a usable key");
-  assert.deepEqual(
-    activeKeyIds(kv),
-    [b.id],
-    "more than one active key survived a concurrent registration from one address",
-  );
-});
-
-test("the surviving key is the last to claim, whichever order the mints finish in", async () => {
-  // Same race with the stall moved: A mints fully, THEN B claims and mints. A's
-  // record exists by the time B revokes it, so the cleanup happens on B's side.
-  const kv = registerKv();
-  const env = registerEnv(kv);
-
-  const first = await handleRegister(registerRequest(), requestContext(env));
-  const second = await handleRegister(registerRequest(), requestContext(env));
-  assert.equal(first.status, 201);
-  assert.equal(second.status, 201);
-
-  const b = await second.json();
-  assert.deepEqual(activeKeyIds(kv), [b.id], "the superseded key was left active");
-});
-
-test("three racing registrations from one address leave exactly one key", async () => {
-  const kv = registerKv();
-  const env = registerEnv(kv);
-
-  // Stall every mint until all three have claimed, so all three are inside the
-  // window at once and each one's predecessor is un-minted.
-  let releaseAll;
-  const held = new Promise((r) => { releaseAll = r; });
-  let reached = 0;
-  let resolveAllReached;
-  const allReached = new Promise((r) => { resolveAllReached = r; });
-  const seen = new Set();
-  kv.beforePut = async (cell) => {
-    if (!cell.startsWith(KEY_PREFIX) || seen.has(cell)) return;
-    seen.add(cell);
-    if (++reached === 3) resolveAllReached();
-    await held;
-  };
-
-  const responses = [
-    handleRegister(registerRequest(), requestContext(env)),
-    handleRegister(registerRequest(), requestContext(env)),
-    handleRegister(registerRequest(), requestContext(env)),
-  ];
-  await allReached;
-  releaseAll();
-
-  const settled = await Promise.all(responses);
-  const issued = settled.filter((r) => r.status === 201);
-  assert.equal(issued.length, 1, `${issued.length} of three racing registrations were issued a key`);
-  const winner = await issued[0].json();
-  assert.deepEqual(activeKeyIds(kv), [winner.id]);
-});
-
-// An IPv6 caller rotating addresses inside one /64 must land on ONE coordinator,
-// or the whole chain above is per-address and the rule is unenforced. ipBucket
-// is what guarantees it; this pins that handleRegister actually applies it.
-test("registrations from one IPv6 /64 share a coordinator and so share the one key", async () => {
-  const kv = registerKv();
-  const env = registerEnv(kv);
-
-  const firstResponse = await handleRegister(registerRequest("2001:db8:1:2:3:4:5:6"), requestContext(env));
-  const secondResponse = await handleRegister(registerRequest("2001:db8:1:2:aaaa:bbbb:cccc:dddd"), requestContext(env));
-  assert.equal(firstResponse.status, 201);
-  assert.equal(secondResponse.status, 201);
-
-  assert.equal(env.instances.size, 1, "one /64 was given more than one registration coordinator");
-  const second = await secondResponse.json();
-  assert.deepEqual(activeKeyIds(kv), [second.id]);
-});
-
-// A registration that claims the IP and then FAILS to mint is the other half of
-// the same window. Its predecessor is still the IP's only usable key — nothing
-// revoked it, because the revoke happens after a commit that never came — so
-// the claim it made must not swallow the debt of revoking that predecessor. If
-// it does, the next registration is handed a dangling id to revoke, the real
-// predecessor is never revoked, and one address holds two permanent keys.
-test("a registration whose mint fails does not strand the key it displaced", async () => {
-  const kv = registerKv();
-  const env = registerEnv(kv);
-
-  const firstResponse = await handleRegister(registerRequest(), requestContext(env));
-  assert.equal(firstResponse.status, 201);
-  const first = await firstResponse.json();
-
-  // Second registration claims the IP, then its mint throws.
-  kv.beforePut = async (cell) => {
-    if (cell.startsWith(KEY_PREFIX)) throw new Error("KV write failed");
-  };
-  await assert.rejects(handleRegister(registerRequest(), requestContext(env)));
-
-  // The failed mint handed out nothing, so the first key is still the IP's one
-  // key and must still work.
-  assert.deepEqual(activeKeyIds(kv), [first.id], "the failed mint disturbed the existing key");
-
-  // A third registration succeeds. It must revoke the FIRST key — the only one
-  // that ever existed — not just the dangling id the failed mint left behind.
-  kv.beforePut = async () => {};
-  const thirdResponse = await handleRegister(registerRequest(), requestContext(env));
-  assert.equal(thirdResponse.status, 201);
-  const third = await thirdResponse.json();
-
-  assert.deepEqual(
-    activeKeyIds(kv),
-    [third.id],
-    "a failed mint left one address holding two permanently active keys",
-  );
-});
-
-// The same debt, lost the other way: a registration displaced WHILE minting
-// deletes its own key and answers 503, but it was also carrying the obligation
-// to revoke its predecessor. The winner is handed only the displaced id, which
-// has no record, so the revoke chain breaks in the middle and the predecessor
-// survives alongside the winner.
-test("a registration displaced while minting hands its predecessor on to the winner", async () => {
-  const kv = registerKv();
-  const env = registerEnv(kv);
-
-  const firstResponse = await handleRegister(registerRequest(), requestContext(env));
-  assert.equal(firstResponse.status, 201);
-
-  // A claims the IP (predecessor: the first key) and stalls inside mintKey.
-  let releaseA;
-  const aIsMinting = new Promise((resolveReached) => {
-    const held = new Promise((r) => { releaseA = r; });
-    let stalled = false;
-    kv.beforePut = async (cell) => {
-      if (stalled || !cell.startsWith(KEY_PREFIX)) return;
-      stalled = true;
-      resolveReached();
-      await held;
-    };
-  });
-  const a = handleRegister(registerRequest(), requestContext(env));
-  await aIsMinting;
-
-  // B registers start to finish while A is parked, displacing A.
-  const bResponse = await handleRegister(registerRequest(), requestContext(env));
-  assert.equal(bResponse.status, 201);
-  const b = await bResponse.json();
-
-  releaseA();
-  assert.equal((await a).status, 503);
-
-  assert.deepEqual(
-    activeKeyIds(kv),
-    [b.id],
-    "the predecessor of a displaced registration was never revoked",
-  );
 });
