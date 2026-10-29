@@ -2288,21 +2288,37 @@ func DummyVerifyCost(ctx context.Context) (time.Duration, error) {
 	return cost, nil
 }
 
-// sampleFloor measures one verify of the dummy and folds it into the floor. A
-// busy KDF skips the sample; the next failed check asks again.
+// sampleFloor measures one verify of the dummy and folds it into the floor. It
+// holds every KDF slot while it measures, so the sample sees the host's load but
+// never a credential check it would otherwise slow and be slowed by. Slots not
+// all free within KDFMaxQueueWait skip the sample; the next failed check asks
+// again.
 func sampleFloor(h string) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), KDFMaxQueueWait)
 	defer cancel()
+	held := 0
+	defer func() {
+		for ; held > 0; held-- {
+			<-kdfSlots
+		}
+	}()
+	for held < MaxConcurrentKDF && ctx.Err() == nil {
+		select {
+		case kdfSlots <- struct{}{}:
+			held++
+		case <-ctx.Done():
+		}
+	}
 	var d time.Duration
-	slotErr := withKDFSlot(ctx, func() {
+	if held == MaxConcurrentKDF {
 		start := time.Now()
 		_, _ = password.Verify("probe", h)
 		d = time.Since(start)
-	})
+	}
 	dummy.Lock()
 	defer dummy.Unlock()
 	dummy.sampling = false
-	if slotErr == nil && dummy.hash == h {
+	if held == MaxConcurrentKDF && dummy.hash == h {
 		foldFloorSample(d)
 	}
 }
