@@ -6,7 +6,7 @@ services:
     environment:
       KYPOST_RECEIVING_RSPAMD: "true"
   rspamd:
-    image: rspamd/rspamd:4.2.2@sha256:33526f94cfbb5ab5485805ad9d6eddb6a52aca6529aad0ce99b67b01c2e756de
+    image: rspamd/rspamd:4.2.3@sha256:47e00f62105f8a60009a30a590ebcf3bfd0b992d45468222d34afa5ca2103690
     # Loopback scan channel; scanner has no KyPost files or credentials.
     network_mode: service:kypost-server
     user: "11333:11333"
