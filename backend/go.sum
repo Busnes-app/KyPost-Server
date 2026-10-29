@@ -1,5 +1,5 @@
-github.com/Busnes-app/ky-primitives v0.10.0 h1:CMgfkyGErsNHMLq6BYH+S6fW6fXEJX/Ukdk4rN4bK/o=
-github.com/Busnes-app/ky-primitives v0.10.0/go.mod h1:NeTIy9iMaswE+N7T4wAzCruUe54LoHgLdowwAqTjSpE=
+github.com/Busnes-app/ky-primitives v0.10.1 h1:ZwEem4SUokQz8OmMUzUHZM5fHU2iKSsQjsqFPTMoCQA=
+github.com/Busnes-app/ky-primitives v0.10.1/go.mod h1:LCDCdz9jpoNNehLQRytkI4qZ/a9J33DeJAnr5BalcgU=
 github.com/ProtonMail/go-crypto v1.5.2 h1:cucYnvqcY7UOXVD//mSyjeaPY0SSN3v5cDkYPxumINk=
 github.com/ProtonMail/go-crypto v1.5.2/go.mod h1:/RaSu30DaKO4RY+XdV/ACcCcZkGr7AhUIduq5sjzzCo=
 github.com/ProtonMail/gopenpgp/v3 v3.5.2 h1:XZ+sUVQbwFuXKW/dMyjvg8l3soRx/+HQ1XEzbBpsMxg=
