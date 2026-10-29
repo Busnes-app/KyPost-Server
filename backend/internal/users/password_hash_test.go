@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/ky-primitives/password"
 )
@@ -81,5 +82,25 @@ func TestBusyIsKDFBusy(t *testing.T) {
 	}
 	if mapBusy(nil) != nil {
 		t.Fatal("nil error changed")
+	}
+}
+
+// The padding floor follows load: one slow current-cost verify raises it at once, and faster
+// ones bring it back down gradually rather than to a single lucky measurement.
+func TestVerifyCostFloorFollowsCurrentCostVerifies(t *testing.T) {
+	defer SetHashParamsForTest(fastParams())()
+	ctx := context.Background()
+	start, err := DummyVerifyCost(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slow := start + time.Second
+	observeVerifyCost(slow)
+	if got, _ := DummyVerifyCost(ctx); got != slow {
+		t.Fatalf("floor after a slower verify = %v, want %v", got, slow)
+	}
+	observeVerifyCost(0)
+	if got, _ := DummyVerifyCost(ctx); got != slow-slow/8 {
+		t.Fatalf("floor after a faster verify = %v, want %v", got, slow-slow/8)
 	}
 }

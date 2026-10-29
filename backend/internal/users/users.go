@@ -2230,23 +2230,29 @@ func verifyHash(ctx context.Context, encoded, candidate string) (bool, error) {
 		}
 	}
 	var (
-		ok  bool
-		err error
+		ok      bool
+		err     error
+		elapsed time.Duration
 	)
 	if slotErr := withKDFSlot(ctx, func() {
+		start := time.Now()
 		ok, err = password.Verify(candidate, encoded)
+		elapsed = time.Since(start)
 	}); slotErr != nil {
 		return false, slotErr
 	}
 	if errors.Is(err, password.ErrMalformed) {
 		return false, nil
 	}
+	if err == nil && !NeedsRehash(encoded) {
+		observeVerifyCost(elapsed)
+	}
 	return known && ok, mapBusy(err)
 }
 
 // dummy caches a throwaway Argon2id hash at the current hashParams (nothing
-// verifies against it) and how long one verify of it took. Re-derived when
-// hashParams changes, so it always costs what a current-cost hash does.
+// verifies against it) and what one verify at that cost takes now. Re-derived
+// when hashParams changes, so it always costs what a current-cost hash does.
 var dummy struct {
 	sync.Mutex
 	hash   string
@@ -2259,12 +2265,29 @@ func dummyHash(ctx context.Context) (string, error) {
 	return h, err
 }
 
-// DummyVerifyCost is the measured duration of one Argon2id verify at the
-// current cost: the floor a failed credential check is padded to, so an
-// account holding a cheaper (older-cost) hash cannot be told apart by timing.
+// DummyVerifyCost is what one Argon2id verify at the current cost takes now:
+// the floor a failed credential check is padded to, so an account holding a
+// cheaper (older-cost) hash cannot be told apart by timing.
 func DummyVerifyCost(ctx context.Context) (time.Duration, error) {
 	_, cost, err := loadDummy(ctx)
 	return cost, err
+}
+
+// observeVerifyCost folds one current-cost verify into the floor. A single
+// startup measurement goes stale as soon as load rises, and every verify gets
+// slower except the padded older-cost one, so the floor jumps to a slower
+// verify at once and decays toward faster ones by an eighth of the gap.
+func observeVerifyCost(d time.Duration) {
+	dummy.Lock()
+	defer dummy.Unlock()
+	if dummy.hash == "" || dummy.params != hashParams {
+		return // loadDummy measures a fresh floor first
+	}
+	if d > dummy.cost {
+		dummy.cost = d
+	} else {
+		dummy.cost -= (dummy.cost - d) / 8
+	}
 }
 
 // loadDummy derives outside the mutex so a cold cache leaves every caller
