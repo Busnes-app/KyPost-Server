@@ -74,6 +74,41 @@ func TestMalformedHashIsFalseNotError(t *testing.T) {
 	}
 }
 
+// A failure against an older-cost hash does a current-cost verify's work, so it
+// stays hidden without relying on the measured floor, which lags under load.
+func TestOlderCostFailureCostsACurrentVerify(t *testing.T) {
+	ctx := context.Background()
+	older, err := password.HashWith("right", fastParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := password.HashWith("right", password.DefaultParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !NeedsRehash(older) || NeedsRehash(current) {
+		t.Fatal("fixtures are not older-cost and current-cost")
+	}
+	fastestFailure := func(h string) time.Duration {
+		best := time.Duration(1<<63 - 1)
+		for range 3 {
+			start := time.Now()
+			if ok, err := VerifySecretHash(ctx, h, "wrong"); ok || err != nil {
+				t.Fatalf("wrong password: ok=%v err=%v", ok, err)
+			}
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	cur, old := fastestFailure(current), fastestFailure(older)
+	if old < cur*2/3 {
+		t.Fatalf("older-cost failure took %v, current-cost %v: timing marks the older hash", old, cur)
+	}
+	if ok, err := VerifySecretHash(ctx, older, "right"); !ok || err != nil {
+		t.Fatalf("right password on older-cost hash: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestBusyIsKDFBusy(t *testing.T) {
 	// password.ErrBusy from the library must surface as ErrKDFBusy so callers
 	// answer 503 and spend no lockout strike.
