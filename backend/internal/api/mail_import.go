@@ -15,6 +15,7 @@ import (
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -566,5 +567,5 @@ func (s *Server) auditImport(j importJob, result, reason string) {
 	if j.Host != "" {
 		source = "imap"
 	}
-	slog.New(s.logger.Handler()).Info("mail import", "actor", j.user, "action", "mail_import", "target", cmp.Or(j.Mailbox, j.user), "source", source, "host", j.Host, "folder", j.Folder, "messages", int64(j.Imported), "duplicates", int64(j.Duplicates), "skipped", int64(j.Skipped), "bytes", j.Bytes, "result", result, "reason", reason, "correlation_id", j.correlation)
+	slog.New(s.logger.Handler()).Info("mail import", "actor", j.user, "action", "mail_import", "target", cmp.Or(j.Mailbox, j.user), "source", source, "host", logging.Escape(j.Host), "folder", logging.Escape(j.Folder), "messages", int64(j.Imported), "duplicates", int64(j.Duplicates), "skipped", int64(j.Skipped), "bytes", j.Bytes, "result", result, "reason", reason, "correlation_id", j.correlation)
 }

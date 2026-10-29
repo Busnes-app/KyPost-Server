@@ -78,7 +78,8 @@ class Pickup(socketserver.StreamRequestHandler):
 def main():
     binary = pathlib.Path(sys.argv[1]).resolve()
     assert hashlib.sha256(binary.read_bytes()).hexdigest() == BINARY_SHA256, "unqualified binary"
-    assert "0.9.5" in subprocess.check_output([str(binary), "version"], text=True)
+    version = subprocess.check_output([str(binary), "version"], text=True)
+    assert "0.9.5" in version
     processes = []
     with tempfile.TemporaryDirectory(prefix="kypost-gateway-check-") as directory:
         root = pathlib.Path(directory)
@@ -160,7 +161,7 @@ smtp tcp://127.0.0.1:{port} {{
                 process.wait(timeout=5)
                 assert metadata_files[0].exists(), "unacknowledged message lost at crash"
                 pickup.received.clear()
-                process = start()
+                start()
                 wait_for(lambda: len(pickup.deliveries) >= 2, "restart did not replay unacknowledged pickup")
                 assert json.loads(metadata_files[0].read_text())["MsgMeta"]["ID"] == delivery_id
                 for sender, recipients, delivered in pickup.deliveries:

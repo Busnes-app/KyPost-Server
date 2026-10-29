@@ -42,6 +42,7 @@ with tempfile.TemporaryDirectory(prefix="kypost-strong-crypto-") as directory:
         baseline = render(files)
         configured = render([*files, "docker-compose.strong-crypto.yml"])
         assert "GODEBUG" not in baseline["services"]["kypost-server"].get("environment", {}), files
-        assert configured["services"]["kypost-server"]["environment"].pop("GODEBUG") == "fips140=on", files
+        godebug = configured["services"]["kypost-server"]["environment"].pop("GODEBUG", None)
+        assert godebug == "fips140=on", files
         assert configured == baseline, f"the strong-key overlay changed another setting in {files}"
 print(f"All {len(chains)} Compose chains keep data, keys, image, network, DNS, receiving and Rspamd settings.")

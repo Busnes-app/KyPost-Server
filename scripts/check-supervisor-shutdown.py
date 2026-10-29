@@ -100,7 +100,7 @@ while True:
                                 try:
                                     os.killpg(row["pid"], signal.SIGKILL)
                                 except ProcessLookupError:
-                                    pass
+                                    pass  # Group already exited.
 
 
 if __name__ == "__main__":

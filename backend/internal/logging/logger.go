@@ -163,9 +163,14 @@ func (l *Logger) Error(msg string, kv ...string) {
 func stringsToArgs(kv []string) []any {
 	args := make([]any, 0, len(kv))
 	for i := 0; i+1 < len(kv); i += 2 {
-		args = append(args, kv[i], redactValue(kv[i], kv[i+1]))
+		args = append(args, Escape(kv[i]), Escape(redactValue(kv[i], kv[i+1])))
 	}
 	return args
+}
+
+// Escape makes CR/LF visible so a logged value cannot forge or split a line.
+func Escape(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r", `\r`), "\n", `\n`)
 }
 
 // redactValue keeps the Logger's convenient flat-string API from turning a

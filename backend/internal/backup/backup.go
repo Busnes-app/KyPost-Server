@@ -407,7 +407,8 @@ func (s *Service) InspectStatus() (Status, error) {
 // The API and daemon must not mutate a pairing or prune local copies under an
 // in-flight backup. A busy caller retries; no request queues behind a long upload.
 func (s *Service) lock() (func(), error) {
-	f, err := os.OpenFile(filepath.Join(s.dirs.State, "backup-operation.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	// Read-only: flock needs no write access and the lock file holds no data.
+	f, err := os.OpenFile(filepath.Join(s.dirs.State, "backup-operation.lock"), os.O_CREATE|os.O_RDONLY, 0600)
 	if err != nil {
 		return nil, err
 	}
