@@ -85,22 +85,86 @@ func TestBusyIsKDFBusy(t *testing.T) {
 	}
 }
 
-// The padding floor follows load: one slow current-cost verify raises it at once, and faster
-// ones bring it back down gradually rather than to a single lucky measurement.
-func TestVerifyCostFloorFollowsCurrentCostVerifies(t *testing.T) {
+// The padding floor follows load: one slow sample raises it at once, and faster ones bring it
+// back down gradually rather than to a single lucky measurement.
+func TestFloorSampleRaisesAtOnceAndDecaysSlowly(t *testing.T) {
 	defer SetHashParamsForTest(fastParams())()
+	if _, err := DummyVerifyCost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	dummy.Lock()
+	defer dummy.Unlock()
+	slow := dummy.cost + time.Second
+	foldFloorSample(slow)
+	if dummy.cost != slow {
+		t.Fatalf("floor after a slower sample = %v, want %v", dummy.cost, slow)
+	}
+	foldFloorSample(0)
+	if want := slow - slow/8; dummy.cost != want {
+		t.Fatalf("floor after a faster sample = %v, want %v", dummy.cost, want)
+	}
+}
+
+// What a failed check verified must not move the floor: from a raised floor, an unknown
+// username (the dummy at current cost) and an older-cost hash leave it exactly where it was,
+// so the padding that follows cannot tell them apart.
+func TestFailedChecksDoNotMoveTheFloor(t *testing.T) {
+	defer SetHashParamsForTest(password.Params{Memory: 16 * 1024, Time: 1, Threads: 1})()
 	ctx := context.Background()
-	start, err := DummyVerifyCost(ctx)
+	older, err := password.HashWith("older secret", fastParams())
 	if err != nil {
 		t.Fatal(err)
 	}
-	slow := start + time.Second
-	observeVerifyCost(slow)
-	if got, _ := DummyVerifyCost(ctx); got != slow {
-		t.Fatalf("floor after a slower verify = %v, want %v", got, slow)
+	if _, err := DummyVerifyCost(ctx); err != nil {
+		t.Fatal(err)
 	}
-	observeVerifyCost(0)
-	if got, _ := DummyVerifyCost(ctx); got != slow-slow/8 {
-		t.Fatalf("floor after a faster verify = %v, want %v", got, slow-slow/8)
+	waitFloorSampled(t)
+	dummy.Lock()
+	raised := dummy.cost + time.Second
+	dummy.cost, dummy.sampled = raised, time.Now()
+	dummy.Unlock()
+	for name, encoded := range map[string]string{"unknown username": "", "older-cost hash": older} {
+		if ok, err := VerifySecretHash(ctx, encoded, "wrong"); ok || err != nil {
+			t.Fatalf("%s: ok=%v err=%v", name, ok, err)
+		}
+		if got, err := DummyVerifyCost(ctx); err != nil || got != raised {
+			t.Fatalf("floor after a failed %s check = %v (%v), want %v", name, got, err, raised)
+		}
 	}
+}
+
+// A stale floor is re-measured in the background by the next caller.
+func TestStaleFloorIsResampled(t *testing.T) {
+	defer SetHashParamsForTest(fastParams())()
+	if _, err := DummyVerifyCost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFloorSampled(t)
+	dummy.Lock()
+	stale := time.Now().Add(-floorSampleEvery)
+	dummy.sampled = stale
+	dummy.Unlock()
+	if _, err := DummyVerifyCost(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFloorSampled(t)
+	dummy.Lock()
+	defer dummy.Unlock()
+	if !dummy.sampled.After(stale) {
+		t.Fatal("a stale floor was not re-measured")
+	}
+}
+
+// waitFloorSampled waits for a background floor sample to finish.
+func waitFloorSampled(t *testing.T) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		dummy.Lock()
+		busy := dummy.sampling
+		dummy.Unlock()
+		if !busy {
+			return
+		}
+	}
+	t.Fatal("floor sample did not finish")
 }

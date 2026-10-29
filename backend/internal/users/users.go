@@ -2230,22 +2230,16 @@ func verifyHash(ctx context.Context, encoded, candidate string) (bool, error) {
 		}
 	}
 	var (
-		ok      bool
-		err     error
-		elapsed time.Duration
+		ok  bool
+		err error
 	)
 	if slotErr := withKDFSlot(ctx, func() {
-		start := time.Now()
 		ok, err = password.Verify(candidate, encoded)
-		elapsed = time.Since(start)
 	}); slotErr != nil {
 		return false, slotErr
 	}
 	if errors.Is(err, password.ErrMalformed) {
 		return false, nil
-	}
-	if err == nil && !NeedsRehash(encoded) {
-		observeVerifyCost(elapsed)
 	}
 	return known && ok, mapBusy(err)
 }
@@ -2255,10 +2249,16 @@ func verifyHash(ctx context.Context, encoded, candidate string) (bool, error) {
 // when hashParams changes, so it always costs what a current-cost hash does.
 var dummy struct {
 	sync.Mutex
-	hash   string
-	cost   time.Duration
-	params password.Params
+	hash     string
+	cost     time.Duration
+	params   password.Params
+	sampled  time.Time // when cost was last measured
+	sampling bool
 }
+
+// floorSampleEvery is how stale the floor may get before the next failed check
+// re-measures it.
+const floorSampleEvery = 5 * time.Second
 
 func dummyHash(ctx context.Context) (string, error) {
 	h, _, err := loadDummy(ctx)
@@ -2267,27 +2267,57 @@ func dummyHash(ctx context.Context) (string, error) {
 
 // DummyVerifyCost is what one Argon2id verify at the current cost takes now:
 // the floor a failed credential check is padded to, so an account holding a
-// cheaper (older-cost) hash cannot be told apart by timing.
+// cheaper (older-cost) hash cannot be told apart by timing. A floor older than
+// floorSampleEvery is re-measured in the background. Every caller asks the same
+// way whatever account it checked, so how the floor moves reveals nothing
+// about that account.
 func DummyVerifyCost(ctx context.Context) (time.Duration, error) {
-	_, cost, err := loadDummy(ctx)
-	return cost, err
+	h, cost, err := loadDummy(ctx)
+	if err != nil {
+		return 0, err
+	}
+	dummy.Lock()
+	start := !dummy.sampling && time.Since(dummy.sampled) >= floorSampleEvery
+	if start {
+		dummy.sampling = true
+	}
+	dummy.Unlock()
+	if start {
+		go sampleFloor(h)
+	}
+	return cost, nil
 }
 
-// observeVerifyCost folds one current-cost verify into the floor. A single
-// startup measurement goes stale as soon as load rises, and every verify gets
-// slower except the padded older-cost one, so the floor jumps to a slower
-// verify at once and decays toward faster ones by an eighth of the gap.
-func observeVerifyCost(d time.Duration) {
+// sampleFloor measures one verify of the dummy and folds it into the floor. A
+// busy KDF skips the sample; the next failed check asks again.
+func sampleFloor(h string) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	var d time.Duration
+	slotErr := withKDFSlot(ctx, func() {
+		start := time.Now()
+		_, _ = password.Verify("probe", h)
+		d = time.Since(start)
+	})
 	dummy.Lock()
 	defer dummy.Unlock()
-	if dummy.hash == "" || dummy.params != hashParams {
-		return // loadDummy measures a fresh floor first
+	dummy.sampling = false
+	if slotErr == nil && dummy.hash == h {
+		foldFloorSample(d)
 	}
+}
+
+// foldFloorSample folds one current-cost measurement into the floor; the caller
+// holds dummy's lock. A startup measurement goes stale as soon as load rises,
+// so the floor jumps to a slower sample at once and decays toward faster ones
+// by an eighth of the gap.
+func foldFloorSample(d time.Duration) {
 	if d > dummy.cost {
 		dummy.cost = d
 	} else {
 		dummy.cost -= (dummy.cost - d) / 8
 	}
+	dummy.sampled = time.Now()
 }
 
 // loadDummy derives outside the mutex so a cold cache leaves every caller
@@ -2316,7 +2346,7 @@ func loadDummy(ctx context.Context) (string, time.Duration, error) {
 		return "", 0, mapBusy(err)
 	}
 	dummy.Lock()
-	dummy.hash, dummy.cost, dummy.params = h, cost, params
+	dummy.hash, dummy.cost, dummy.params, dummy.sampled = h, cost, params, time.Now()
 	dummy.Unlock()
 	return h, cost, nil
 }

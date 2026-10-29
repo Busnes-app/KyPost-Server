@@ -20,9 +20,10 @@ non-prerelease version.
 
 ### Security
 
-- A failed sign-in is padded to what a current-cost password check takes now, not to one
-  measurement taken at startup. Under rising load the stale floor let an account whose
-  password hash predates the last cost raise answer faster than every other account.
+- A failed sign-in is padded to what a current-cost password check takes now, re-measured in
+  the background every few seconds, not to one measurement taken at startup. Under rising load
+  the stale floor let an account whose password hash predates the last cost raise answer
+  faster than every other account.
 
 ### Changes
 
