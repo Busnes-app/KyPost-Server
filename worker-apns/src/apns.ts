@@ -181,8 +181,9 @@ export async function sendApnsMessage(
   // ApnsEnvironment, so "not production" really does mean sandbox here — when
   // this read a raw string, any typo in APNS_ENVIRONMENT landed in this branch.
   // The token goes into the PATH here, so it must already be free of URL
-  // syntax: TOKEN_CHARSET in readSendPayload is what keeps `../../3/device/x`
-  // out. Do not relax that check without moving this off interpolation.
+  // syntax: the apnsToken format (hex only) that readSendPayload applies is what
+  // keeps `../../3/device/x` out. Do not relax that check without moving this
+  // off interpolation.
   const host = config.environment === "production" ? APNS_PRODUCTION_HOST : APNS_SANDBOX_HOST;
   const url = `https://${host}/3/device/${token}`;
 
