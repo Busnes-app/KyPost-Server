@@ -78,17 +78,8 @@ func readLiterals(r *bufio.Reader, line []byte) ([]byte, error) {
 	}
 }
 
-// traceCommand logs credential commands by verb only: an escaped password or
-// an OAuth token would slip past substring redaction.
-func traceCommand(tag, command string) string {
-	if verb, _, _ := strings.Cut(command, " "); strings.EqualFold(verb, "LOGIN") || strings.EqualFold(verb, "AUTHENTICATE") {
-		return tag + " " + verb + " ****"
-	}
-	return strings.TrimSpace(tag + " " + command)
-}
-
 // execOnce runs a single attempt of an IMAP command
-func (d *Dialer) execOnce(command string, buildResponse bool, processLine func(line []byte) error) (resp strings.Builder, err error) {
+func (d *Dialer) execOnce(command, trace string, buildResponse bool, processLine func(line []byte) error) (resp strings.Builder, err error) {
 	tag := []byte(strings.ToUpper(xid.New().String()))
 
 	if CommandTimeout != 0 {
@@ -99,7 +90,7 @@ func (d *Dialer) execOnce(command string, buildResponse bool, processLine func(l
 	c := fmt.Sprintf("%s %s\r\n", tag, command)
 
 	if Verbose {
-		debugLog(d.ConnNum, d.Folder, "sending command", "command", traceCommand(string(tag), command))
+		debugLog(d.ConnNum, d.Folder, "sending command", "command", strings.TrimSpace(string(tag)+" "+trace))
 	}
 
 	if _, err := d.conn.Write([]byte(c)); err != nil {
@@ -161,9 +152,15 @@ func (d *Dialer) execOnce(command string, buildResponse bool, processLine func(l
 
 // Exec executes an IMAP command with retry logic and response building
 func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, processLine func(line []byte) error) (response string, err error) {
+	return d.exec(command, command, buildResponse, retryCount, processLine)
+}
+
+// exec is Exec with a separate verbose-trace text, so credential commands
+// never reach the log.
+func (d *Dialer) exec(command, trace string, buildResponse bool, retryCount int, processLine func(line []byte) error) (response string, err error) {
 	var resp strings.Builder
 	err = retry.Retry(func() (err error) {
-		resp, err = d.execOnce(command, buildResponse, processLine)
+		resp, err = d.execOnce(command, trace, buildResponse, processLine)
 		return err
 	}, retryCount, func(err error) error {
 		if Verbose {

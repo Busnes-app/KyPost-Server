@@ -2,7 +2,9 @@ package imap
 
 import (
 	"bytes"
+	"crypto/tls"
 	"log/slog"
+	"net"
 	"strings"
 	"testing"
 )
@@ -18,13 +20,18 @@ func TestLogEscapesProtocolLineBreaks(t *testing.T) {
 	}
 }
 
-func TestTraceCommandHidesCredentials(t *testing.T) {
-	for _, command := range []string{`LOGIN "user" "pa\"ss"`, "AUTHENTICATE XOAUTH2 dG9rZW4="} {
-		if got := traceCommand("T1", command); strings.Contains(got, "pa") || strings.Contains(got, "dG9r") || !strings.HasSuffix(got, " ****") {
-			t.Fatalf("traceCommand(%q) = %q", command, got)
-		}
-	}
-	if got := traceCommand("T1", `SELECT "INBOX"`); got != `T1 SELECT "INBOX"` {
+func TestVerboseAuthNeverLogsCredentials(t *testing.T) {
+	var out bytes.Buffer
+	SetSlogLogger(slog.New(slog.NewTextHandler(&out, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer SetLogger(nil)
+	Verbose = true
+	defer func() { Verbose = false }()
+	client, server := net.Pipe()
+	_ = server.Close()
+	d := &Dialer{conn: tls.Client(client, &tls.Config{InsecureSkipVerify: true})}
+	_ = d.Login("user", `pa"ss-secret`)
+	_ = d.Authenticate("user", "token-secret")
+	if got := out.String(); strings.Contains(got, "secret") || !strings.Contains(got, "LOGIN ****") || !strings.Contains(got, "AUTHENTICATE XOAUTH2 ****") {
 		t.Fatal(got)
 	}
 }
