@@ -1,8 +1,10 @@
 package imap
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync/atomic"
 )
 
@@ -68,6 +70,21 @@ func (s slogAdapter) WithAttrs(args ...any) Logger {
 	return slogAdapter{logger: s.logger.With(args...)}
 }
 
+// escapeLog makes CR/LF visible: protocol traces carry CRLF by nature and must
+// not split or forge log lines.
+func escapeLog(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r", `\r`), "\n", `\n`)
+}
+
+// escapeArgs renders each argument as escaped text.
+func escapeArgs(args []any) []any {
+	out := make([]any, len(args))
+	for i, a := range args {
+		out[i] = escapeLog(fmt.Sprint(a))
+	}
+	return out
+}
+
 // getLogger returns the currently configured logger.
 func getLogger() Logger {
 	if v := globalLogger.Load(); v != nil {
@@ -92,7 +109,7 @@ func connectionLogger(connNum int, folder string) Logger {
 
 	args := []any{"conn", connNum}
 	if folder != "" {
-		args = append(args, "mailbox", folder)
+		args = append(args, "mailbox", escapeLog(folder))
 	}
 	return logger.WithAttrs(args...)
 }
@@ -102,13 +119,13 @@ func debugLog(connNum int, folder string, msg string, args ...any) {
 	if !Verbose {
 		return
 	}
-	connectionLogger(connNum, folder).Debug(msg, args...)
+	connectionLogger(connNum, folder).Debug(msg, escapeArgs(args)...)
 }
 
 func warnLog(connNum int, folder string, msg string, args ...any) {
-	connectionLogger(connNum, folder).Warn(msg, args...)
+	connectionLogger(connNum, folder).Warn(msg, escapeArgs(args)...)
 }
 
 func errorLog(connNum int, folder string, msg string, args ...any) {
-	connectionLogger(connNum, folder).Error(msg, args...)
+	connectionLogger(connNum, folder).Error(msg, escapeArgs(args)...)
 }

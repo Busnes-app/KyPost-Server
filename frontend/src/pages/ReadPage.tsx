@@ -7,7 +7,7 @@ import { EncryptionCell } from "./read/EncryptionCell";
 import { SignatureBadge } from "./read/SignatureBadge";
 import { OtpCard } from "./read/OtpCard";
 import { displayBody } from "./read/body";
-import { firstAddressFromText, listAddressesFromText } from "../lib/addressText";
+import { firstAddressFromText } from "../lib/addressText";
 import { isFlaggedPhishing } from "../lib/phishing";
 import { decryptMessage, verifySignedMessage } from "../lib/pgpClient";
 import { getPGPMessagePayload } from "../api/pgp";

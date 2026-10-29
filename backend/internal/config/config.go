@@ -746,7 +746,8 @@ func loadOrCreateNotificationPrivateKey(path string) (*ecdsa.PrivateKey, error) 
 		return nil, fmt.Errorf("mkdir notification key dir: %w", err)
 	}
 
-	lockFile, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	// Read-only: flock needs no write access and the lock file holds no data.
+	lockFile, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open notification key lock: %w", err)
 	}

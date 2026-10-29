@@ -6,7 +6,7 @@
 // renders conditionally — do not.
 
 import type { MutableRefObject } from "react";
-import { contactPhotoUrl, IM_SERVICES, type Contact } from "../../api/contacts";
+import { IM_SERVICES, type Contact } from "../../api/contacts";
 import type { Group } from "../../api/groups";
 import { PGPKeyInfo } from "./PGPKeyInfo";
 import { ContactAvatar } from "./ContactAvatar";

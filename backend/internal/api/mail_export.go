@@ -14,6 +14,7 @@ import (
 	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
@@ -306,7 +307,7 @@ func (s *Server) endExport(user string) {
 // auditExport records the export without correspondence: never subjects or
 // addresses. The correlation ID is random per grant, never the token.
 func (s *Server) auditExport(g exportGrant, result string, messages int, bytes int64) {
-	slog.New(s.logger.Handler()).Info("mail export", "actor", g.user, "action", "mail_export", "target", cmp.Or(g.mailbox, g.user), "folder", cmp.Or(g.folder, "(all)"), "format", g.format, "messages", int64(messages), "bytes", bytes, "result", result, "correlation_id", g.correlation)
+	slog.New(s.logger.Handler()).Info("mail export", "actor", g.user, "action", "mail_export", "target", cmp.Or(g.mailbox, g.user), "folder", cmp.Or(logging.Escape(g.folder), "(all)"), "format", logging.Escape(g.format), "messages", int64(messages), "bytes", bytes, "result", result, "correlation_id", g.correlation)
 }
 
 type countingWriter struct {

@@ -72,3 +72,20 @@ func TestAdmittedFieldsStillRedactCorrespondence(t *testing.T) {
 		t.Fatal("server bind address lost")
 	}
 }
+
+func TestLoggerEscapesLineBreaksInValues(t *testing.T) {
+	t.Setenv("KY_LOG_LEVEL", "info")
+	var out bytes.Buffer
+	logger, err := NewWithOutput(&out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger.Info("import", "folder", "INBOX\r\n{\"forged\":true}")
+	var line map[string]any
+	if err := json.Unmarshal(out.Bytes(), &line); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := line["folder"], `INBOX\r\n{"forged":true}`; got != want {
+		t.Fatalf("folder = %q, want %q", got, want)
+	}
+}

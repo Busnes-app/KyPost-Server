@@ -3,7 +3,6 @@
 // unit-testable without rendering the page.
 
 import {
-  IM_SERVICES,
   type Contact,
   type ContactAddress,
   type ContactCustomField,

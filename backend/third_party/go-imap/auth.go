@@ -10,13 +10,13 @@ import (
 func (d *Dialer) Authenticate(user string, accessToken string) (err error) {
 	b64 := xoauth2.XOAuth2String(user, accessToken)
 	// Don't retry authentication - auth failures should not trigger reconnection
-	_, err = d.Exec(fmt.Sprintf("AUTHENTICATE XOAUTH2 %s", b64), false, 0, nil)
+	_, err = d.exec(fmt.Sprintf("AUTHENTICATE XOAUTH2 %s", b64), "AUTHENTICATE XOAUTH2 ****", false, 0, nil)
 	return err
 }
 
 // Login performs LOGIN authentication using username and password
 func (d *Dialer) Login(username string, password string) (err error) {
 	// Don't retry authentication - auth failures should not trigger reconnection
-	_, err = d.Exec(fmt.Sprintf(`LOGIN "%s" "%s"`, AddSlashes.Replace(username), AddSlashes.Replace(password)), false, 0, nil)
+	_, err = d.exec(fmt.Sprintf(`LOGIN "%s" "%s"`, AddSlashes.Replace(username), AddSlashes.Replace(password)), "LOGIN ****", false, 0, nil)
 	return err
 }
