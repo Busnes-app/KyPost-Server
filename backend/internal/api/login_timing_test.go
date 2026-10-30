@@ -91,21 +91,38 @@ func TestRetiredScryptAccountFailsLikeAWrongPassword(t *testing.T) {
 // least polluted by a scheduler hiccup.
 const timingSamples = 3
 
-// fastest runs attempt timingSamples times and returns the shortest.
-// Each call gets its own source address so the per-(username, IP) lockout
+// timingCase is one kind of failed credential check: a name for the report and
+// the attempt to time.
+type timingCase struct {
+	name    string
+	attempt func(remoteAddr string)
+}
+
+// fastestEach runs every case timingSamples times, ROUND-ROBIN, and returns
+// each case's shortest. Interleaved because the failure floor
+// (users.DummyVerifyCost) follows host load: timed back to back, a case
+// measured after a load spike is padded to a higher floor than one measured
+// before it, and that drift reads as a spread between accounts. Each round
+// starts one case later, so no case is always first. Each round gets its own source address so the per-(username, IP) lockout
 // (three strikes) never fires and never becomes the thing being measured.
-func fastest(t *testing.T, name string, attempt func(remoteAddr string)) time.Duration {
+func fastestEach(t *testing.T, cases []timingCase) map[string]time.Duration {
 	t.Helper()
-	best := time.Duration(1<<63 - 1)
+	best := make(map[string]time.Duration, len(cases))
 	for i := range timingSamples {
 		addr := fmt.Sprintf("203.0.113.%d:40000", 100+i)
-		start := time.Now()
-		attempt(addr)
-		if d := time.Since(start); d < best {
-			best = d
+		for j := range cases {
+			c := cases[(i+j)%len(cases)]
+			start := time.Now()
+			c.attempt(addr)
+			d := time.Since(start)
+			if prev, ok := best[c.name]; !ok || d < prev {
+				best[c.name] = d
+			}
 		}
 	}
-	t.Logf("%s: %v", name, best)
+	for _, c := range cases {
+		t.Logf("%s: %v", c.name, best[c.name])
+	}
 	return best
 }
 
@@ -173,13 +190,13 @@ func TestLoginTimingDoesNotRevealUnknownUsernames(t *testing.T) {
 			}
 		}
 	}
-	assertTimingSpread(t, map[string]time.Duration{
-		"argon2id account":       fastest(t, "argon2id account", wrongPassword(modern.Username)),
-		"retired scrypt account": fastest(t, "retired scrypt account", wrongPassword(legacy.Username)),
-		"older-cost argon2id":    fastest(t, "older-cost argon2id", wrongPassword(older.Username)),
-		"legacy plaintext hash":  fastest(t, "legacy plaintext hash", wrongPassword(plaintext.Username)),
-		"unknown username":       fastest(t, "unknown username", wrongPassword("no-such-user-anywhere")),
-	})
+	assertTimingSpread(t, fastestEach(t, []timingCase{
+		{"argon2id account", wrongPassword(modern.Username)},
+		{"retired scrypt account", wrongPassword(legacy.Username)},
+		{"older-cost argon2id", wrongPassword(older.Username)},
+		{"legacy plaintext hash", wrongPassword(plaintext.Username)},
+		{"unknown username", wrongPassword("no-such-user-anywhere")},
+	}))
 }
 
 // olderCostArgon2Hash mints a still-supported Argon2id hash at the library's
@@ -229,11 +246,11 @@ func TestReviewPairingTimingDoesNotRevealTheConfiguredAccount(t *testing.T) {
 			}
 		}
 	}
-	assertTimingSpread(t, map[string]time.Duration{
-		"configured review account": fastest(t, "configured review account", wrongPassword(modern.Username)),
-		"other existing account":    fastest(t, "other existing account", wrongPassword(legacy.Username)),
-		"unknown username":          fastest(t, "unknown username", wrongPassword("no-such-user-anywhere")),
-	})
+	assertTimingSpread(t, fastestEach(t, []timingCase{
+		{"configured review account", wrongPassword(modern.Username)},
+		{"other existing account", wrongPassword(legacy.Username)},
+		{"unknown username", wrongPassword("no-such-user-anywhere")},
+	}))
 }
 
 // TestDAVAuthTimingDoesNotRevealUsernames is the same oracle on the CardDAV
@@ -286,13 +303,13 @@ func TestDAVAuthTimingDoesNotRevealUsernames(t *testing.T) {
 			}
 		}
 	}
-	assertTimingSpread(t, map[string]time.Duration{
-		"argon2id app password":   fastest(t, "argon2id app password", wrongPassword(modern.Username)),
-		"retired app password":    fastest(t, "retired app password", wrongPassword(legacy.Username)),
-		"older-cost app password": fastest(t, "older-cost app password", wrongPassword(older.Username)),
-		"unknown username":        fastest(t, "unknown username", wrongPassword("no-such-user-anywhere")),
-		"no app password":         fastest(t, "no app password", wrongPassword("admin")),
-	})
+	assertTimingSpread(t, fastestEach(t, []timingCase{
+		{"argon2id app password", wrongPassword(modern.Username)},
+		{"retired app password", wrongPassword(legacy.Username)},
+		{"older-cost app password", wrongPassword(older.Username)},
+		{"unknown username", wrongPassword("no-such-user-anywhere")},
+		{"no app password", wrongPassword("admin")},
+	}))
 }
 
 // TestSettleCredentialTimingStopsWhenTheClientLeaves: the floor must not hold a
