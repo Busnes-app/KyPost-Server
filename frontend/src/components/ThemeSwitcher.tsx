@@ -10,7 +10,7 @@ export function ThemeSwitcher() {
     return () => window.removeEventListener("storage", sync);
   }, []);
   return (
-    <select className="theme-selector" aria-label="Color theme" value={choice} onChange={(event) => {
+    <select aria-label="Color theme" value={choice} onChange={(event) => {
       setChoice(event.target.value);
       applyTheme(event.target.value);
     }}>

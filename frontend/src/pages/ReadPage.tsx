@@ -18,7 +18,7 @@ import { usePagination } from "../hooks/usePagination";
 import { mailboxName, useMailboxes } from "../app/mailboxes";
 import type { DraftComposePayload } from "../app/types";
 import { PageTabs } from "../components/PageTabs";
-import { ArchiveIcon, CheckIcon, ClockIcon, CloseIcon, ImageIcon, PrintIcon, RefreshIcon, TrashIcon, WarningIcon } from "./read/icons";
+import { ArchiveIcon, CheckIcon, ClockIcon, CloseIcon, ImageIcon, PlusIcon, PrintIcon, RefreshIcon, TrashIcon, WarningIcon } from "./read/icons";
 import { SnoozeDialog } from "./read/SnoozeDialog";
 import { sortTime } from "../lib/snooze";
 
@@ -1431,9 +1431,10 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
 
   return (
     <section className="panel read-page-panel">
-      <div className="inbox-header">
+      <header className="ky-page-head">
         <div>
-          <h1>{mailbox ? mailbox : "Inbox"}</h1>
+          <h1 className="ky-page-title">{mailbox ? mailbox : "Inbox"}</h1>
+          {isInboxMailbox ? <p className="ky-page-lede">New mail lands here, newest first.</p> : null}
           {boxName ? <p className="read-mailbox-name">{mailboxName(boxName)}</p> : null}
         </div>
         <div className="inbox-action-bar">
@@ -1448,8 +1449,14 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               <span>Haptics</span>
             </label>
           ) : null}
+          {onCompose ? (
+            <button type="button" className="ky-page-action" onClick={onCompose}>
+              <PlusIcon />
+              New email
+            </button>
+          ) : null}
         </div>
-      </div>
+      </header>
 
       {error ? <p className="notice notice-error">Failed to load inbox: {error}</p> : null}
       {actionError ? <p className="notice notice-error">Inbox action failed: {actionError}</p> : null}

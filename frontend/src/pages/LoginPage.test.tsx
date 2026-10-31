@@ -287,3 +287,20 @@ describe("single sign-on button", () => {
     expect(screen.getAllByText(/single sign[- ]on/i)).toHaveLength(1);
   });
 });
+
+describe("sign-in screen", () => {
+  it("focuses an empty Username and keeps an empty check line when no check runs", async () => {
+    stubFetch(jsonResponse(200, {}));
+    renderLoginPage();
+
+    const username = (await screen.findByLabelText("Username")) as HTMLInputElement;
+    expect(document.activeElement).toBe(username);
+    expect(username.value).toBe("");
+    expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("");
+    const check = document.querySelector(".ky-auth-card .ky-auth-check");
+    expect(check?.textContent).toBe("");
+    expect(check?.hasAttribute("data-ky-state")).toBe(false);
+    expect(document.querySelectorAll(".ky-auth-help")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /MIT License/ })).toBeNull();
+  });
+});

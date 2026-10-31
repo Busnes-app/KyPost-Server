@@ -98,7 +98,7 @@ async function openCompose() {
       <App />
     </MemoryRouter>
   );
-  await user.click(await screen.findByRole("button", { name: "New Email" }));
+  await user.click(await screen.findByRole("button", { name: "New email" }));
   await screen.findByText("An unsent draft is waiting. Unlock your PGP key to restore it.");
   return user;
 }
@@ -113,7 +113,7 @@ describe("save draft before the PGP bootstrap has answered", () => {
         <App />
       </MemoryRouter>
     );
-    await user.click(await screen.findByRole("button", { name: "New Email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }));
     await user.type(screen.getByLabelText("To recipients"), "a@b.test{Enter}");
     await user.type(screen.getByPlaceholderText("Subject"), "secret subject");
     await user.click(screen.getByRole("button", { name: "Save Draft" }));

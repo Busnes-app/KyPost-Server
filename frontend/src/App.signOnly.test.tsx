@@ -67,7 +67,7 @@ const bootstrap: PGPBootstrap = {
 async function openComposer() {
   const user = userEvent.setup();
   render(<MemoryRouter initialEntries={["/read"]}><App /></MemoryRouter>);
-  await user.click(await screen.findByRole("button", { name: "New Email" }));
+  await user.click(await screen.findByRole("button", { name: "New email" }));
   return user;
 }
 
@@ -107,7 +107,7 @@ describe("sign without encrypt on a client-custody account", () => {
         <App />
       </MemoryRouter>
     );
-    await user.click(await screen.findByRole("button", { name: "New Email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }));
     await user.type(screen.getByLabelText("To recipients"), "a@b.test{Enter}");
     await user.type(screen.getByLabelText("Bcc recipients"), "hidden@b.test{Enter}");
     await user.type(screen.getByPlaceholderText("Subject"), "signed only");
@@ -139,7 +139,7 @@ describe("compose signing default", () => {
     act(() => { lock(); unlockWithArmoredKey("test key"); });
     expect(signChecked()).toBe(false);
     await user.click(screen.getByRole("button", { name: /^Trash$/ }));
-    await user.click(screen.getByRole("button", { name: "New Email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }));
     expect(signChecked()).toBe(true);
   });
 

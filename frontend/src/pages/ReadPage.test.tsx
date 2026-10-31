@@ -471,3 +471,36 @@ describe("reader layout", () => {
     expect(toggle.getAttribute("title")).toBe("Hide Remote Content");
   });
 });
+
+describe("page head", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEndpoints();
+  });
+
+  it("leads the Inbox with one line and New email as its primary action", async () => {
+    const user = userEvent.setup();
+    const onCompose = vi.fn();
+    render(
+      <MemoryRouter>
+        <ReadPage onCompose={onCompose} />
+      </MemoryRouter>
+    );
+
+    const head = (await screen.findByRole("heading", { level: 1, name: "Inbox" })).closest("header.ky-page-head") as HTMLElement;
+    expect(within(head).getByText("New mail lands here, newest first.")).toBeTruthy();
+    await user.click(within(head).getByRole("button", { name: "New email" }));
+    expect(onCompose).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives other folders no Inbox lede", async () => {
+    render(
+      <MemoryRouter initialEntries={["/read?mailbox=Sent"]}>
+        <ReadPage onCompose={() => {}} />
+      </MemoryRouter>
+    );
+
+    await screen.findByRole("heading", { level: 1, name: "Sent" });
+    expect(screen.queryByText("New mail lands here, newest first.")).toBeNull();
+  });
+});

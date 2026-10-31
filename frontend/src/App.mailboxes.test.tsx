@@ -149,7 +149,7 @@ describe("webmail mailbox switcher", () => {
     renderApp();
     await user.selectOptions(await switcher(), "team-test@example.com");
     await screen.findByText("Team inbox");
-    await user.click(screen.getByRole("button", { name: "New Email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }));
     const from = screen.getByRole("combobox", { name: "From" }) as HTMLSelectElement;
     expect(Array.from(from.options).map((o) => o.value)).toEqual(["team-test@example.com", "team-alias@example.com"]);
     expect(from.value).toBe("team-test@example.com");
@@ -167,7 +167,7 @@ describe("webmail mailbox switcher", () => {
     const user = userEvent.setup();
     renderApp();
     await switcher();
-    await user.click(screen.getByRole("button", { name: "New Email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }));
     const from = screen.getByRole("combobox", { name: "From" }) as HTMLSelectElement;
     expect(Array.from(from.options).map((o) => o.value)).toEqual(["me@example.com"]);
   });
@@ -177,7 +177,7 @@ describe("webmail mailbox switcher", () => {
     renderApp();
     await user.selectOptions(await switcher(), "team-test@example.com");
     await screen.findByText("Team inbox");
-    await user.click(screen.getByRole("button", { name: "New Email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }));
     await user.type(screen.getByLabelText("To recipients"), "x@y.test{Enter}");
     // A background read refused for the mailbox moves the selection to the primary.
     goneMailbox = TEAM;
@@ -194,7 +194,7 @@ describe("webmail mailbox switcher", () => {
     const user = userEvent.setup();
     renderApp();
     await switcher();
-    await user.click(screen.getByRole("button", { name: "New Email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }));
     await screen.findByText(/written in team-test@example.com/);
     const from = screen.getByRole("combobox", { name: "From" }) as HTMLSelectElement;
     expect(from.value).toBe("team-test@example.com");
@@ -211,7 +211,7 @@ describe("webmail mailbox switcher", () => {
     renderApp();
     await screen.findByText("Primary inbox");
     await waitFor(() => expect(sent("/api/mailboxes")).toHaveLength(1));
-    await user.click(screen.getByRole("button", { name: "New Email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }));
     await screen.findByText(/An unsent draft from team-test@example.com is kept/);
     expect((screen.getByPlaceholderText("Subject") as HTMLInputElement).value).toBe("");
     await user.type(screen.getByPlaceholderText("Subject"), "new");
@@ -277,7 +277,7 @@ describe("webmail mailbox switcher", () => {
     const user = userEvent.setup();
     renderApp();
     await screen.findByText("Primary inbox");
-    await user.click(screen.getByRole("button", { name: "New Email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }));
     answer(json(200, { mailboxes: [primary, team] }));
     await screen.findByRole("combobox", { name: "From" });
     await user.type(screen.getByLabelText("To recipients"), "x@y.test{Enter}");
@@ -346,7 +346,7 @@ describe("webmail mailbox switcher", () => {
     const user = userEvent.setup();
     renderApp();
     await screen.findByText("Primary inbox");
-    await user.click(screen.getByRole("button", { name: "New Email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }));
     expect(screen.queryByRole("combobox", { name: "Your mailboxes" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "From" })).toBeNull();
     expect(calls.every((c) => c.mailbox === null)).toBe(true);
