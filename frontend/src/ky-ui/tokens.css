@@ -13,6 +13,9 @@
   --ky-control-size: 2.5rem;
   --ky-control-radius: 0.5rem;
   --ky-sidebar-size: 15rem;
+  /* Content starts this far from the sidebar (x=272 at 1440px) and shares one max width. */
+  --ky-content-inset: var(--ky-space-5);
+  --ky-content-max: 72rem;
   /* Product ink/bg aliases preserve existing named palettes as well as Busnes. */
   --ky-field-border: color-mix(in srgb, var(--ink-strong) 60%, var(--bg));
   --ky-shadow-overlay: 0 18px 48px rgb(0 0 0 / 0.26), 0 2px 8px rgb(0 0 0 / 0.12);
@@ -23,6 +26,10 @@
   --ky-success-dark: #7bc49c;
   --ky-warning-light: #875b12;
   --ky-warning-dark: #e0b775;
+}
+
+@media (max-width: 720px) {
+  :root { --ky-content-inset: var(--ky-space-3); }
 }
 
 /* Busnes Light/Dark tokens. Product layouts should consume these, not redefine them. */

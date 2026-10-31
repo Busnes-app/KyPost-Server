@@ -1,5 +1,6 @@
-/* Suite shell: sign-in, sidebar user block, licence line, About dialog and page head.
-   Geometry follows KyCalendar. Product aliases come first so named palettes apply. */
+/* Suite shell: app frame (sidebar, brand, content, phone header), sign-in, user block, licence
+   line, About dialog and page head. Geometry follows KyCalendar. Product aliases come first so
+   named palettes apply. */
 
 /* ---------- Sign-in ---------- */
 .ky-auth {
@@ -12,13 +13,37 @@
   background: var(--bg, var(--ky-bg));
   color: var(--ink-strong, var(--ky-ink-strong));
 }
-.ky-auth-theme { justify-self: end; }
+/* The picker row keeps its height when empty, so the brand below never moves. */
+.ky-auth-theme { justify-self: end; min-height: var(--ky-control-size); }
+/* KyCalendar's picker: the field look with a filled caret drawn from two gradients. */
+.ky-auth-theme select {
+  box-sizing: border-box;
+  width: auto;
+  max-width: 100%;
+  min-height: var(--ky-control-size);
+  margin: 0;
+  padding: var(--ky-space-2) 2.5rem var(--ky-space-2) 0.75rem;
+  border: 1px solid var(--ky-field-border);
+  border-radius: var(--ky-control-radius);
+  background-color: var(--panel, var(--ky-panel));
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink, var(--ky-ink)) 50%), linear-gradient(135deg, var(--ink, var(--ky-ink)) 50%, transparent 50%);
+  background-position: calc(100% - 1.15rem) 52%, calc(100% - 0.8rem) 52%;
+  background-size: 0.35rem 0.35rem;
+  background-repeat: no-repeat;
+  color: var(--ink-strong, var(--ky-ink-strong));
+  font: inherit;
+  font-size: var(--ky-type-nav);
+  appearance: none;
+  cursor: pointer;
+}
+.ky-auth-theme select:hover { border-color: var(--ink, var(--ky-ink)); }
+/* A fixed top offset, not centred: a one-field card or a help line leaves the brand in place. */
 .ky-auth-body {
-  align-self: center;
+  align-self: start;
   width: 100%;
   max-width: 22.5rem;
   margin-inline: auto;
-  padding-block: var(--ky-space-5) 3rem;
+  padding-block: calc(16vh + 2.5rem) 3rem;
 }
 .ky-auth-brand {
   display: grid;
@@ -152,6 +177,91 @@
   line-height: 1.5;
   text-align: center;
   text-wrap: balance;
+}
+
+/* ---------- App frame: sidebar, brand, navigation, content ---------- */
+.ky-app {
+  display: grid;
+  grid-template-columns: var(--ky-sidebar-size) minmax(0, 1fr);
+  min-height: 100vh;
+}
+.ky-sidebar {
+  box-sizing: border-box;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ky-space-4);
+  height: 100vh;
+  padding: var(--ky-space-4) var(--ky-space-3) var(--ky-space-3);
+  border-right: 1px solid var(--line, var(--ky-line));
+  background: linear-gradient(180deg, var(--sidebar-start, var(--panel, var(--ky-panel))), var(--sidebar-end, var(--panel, var(--ky-panel))));
+}
+/* The brand row; on phones it also holds the icon-only Sign out. */
+.ky-mobile-head { display: flex; align-items: center; justify-content: space-between; gap: var(--ky-space-3); }
+.ky-mobile-head > form { margin: 0; }
+.ky-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--ky-space-2);
+  min-width: 0;
+  min-height: var(--ky-control-size);
+  margin: 0;
+  padding-inline: var(--ky-space-2);
+  color: var(--ink-strong, var(--ky-ink-strong));
+  font-size: var(--ky-type-section);
+  font-weight: 700;
+  line-height: 1.25;
+}
+.ky-brand > img,
+.ky-brand > svg { flex: none; width: 28px; height: 28px; border-radius: var(--ky-control-radius); }
+.ky-mobile-signout {
+  box-sizing: border-box;
+  display: none;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--ky-control-size);
+  height: var(--ky-control-size);
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--ky-control-radius);
+  background: transparent;
+  color: var(--ink, var(--ky-ink));
+  cursor: pointer;
+}
+.ky-mobile-signout > svg { width: 16px; height: 16px; }
+.ky-mobile-signout:hover {
+  background: var(--panel-hover, var(--ky-panel-hover));
+  color: var(--ink-strong, var(--ky-ink-strong));
+}
+.ky-sidebar-foot { display: grid; gap: var(--ky-space-3); margin-top: auto; }
+.ky-content {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: calc(var(--ky-content-max) + 2 * var(--ky-content-inset));
+  padding: var(--ky-content-inset) var(--ky-content-inset) 3rem;
+}
+/* Phones only: the licence line closes the page. */
+.ky-content-foot { display: none; }
+.ky-content-foot .ky-license-link { margin-left: 0; }
+@media (max-width: 720px) {
+  .ky-app { display: block; }
+  .ky-sidebar {
+    height: auto;
+    gap: var(--ky-space-2);
+    padding: var(--ky-space-2) var(--ky-space-3) 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line, var(--ky-line));
+  }
+  .ky-sidebar .ky-brand { padding-inline: 0; }
+  .ky-mobile-signout { display: inline-flex; }
+  .ky-sidebar-foot { display: none; }
+  .ky-content { padding: var(--ky-space-4) var(--ky-content-inset) 0; }
+  .ky-content-foot { display: block; padding-block: var(--ky-space-5) var(--ky-space-4); }
 }
 
 /* ---------- Sidebar user block and licence line ---------- */
@@ -307,14 +417,15 @@
 
 /* ---------- Shared states ---------- */
 :is(.ky-auth, .ky-user, .ky-about, .ky-page-head) :focus-visible,
-.ky-license-link:focus-visible {
+.ky-license-link:focus-visible,
+.ky-mobile-signout:focus-visible {
   outline: 2px solid var(--accent, var(--ky-accent));
   outline-offset: 2px;
 }
 /* Fields already draw a border: put the ring on it, not 2px outside, so it reads as one ring. */
 .ky-auth-field > input:focus-visible { outline-offset: -1px; }
 @media (prefers-reduced-motion: no-preference) {
-  :is(.ky-auth-submit, .ky-page-action, .ky-auth-sso, .ky-about-close, .ky-user-signout, .ky-auth-field > input) {
+  :is(.ky-auth-submit, .ky-page-action, .ky-auth-sso, .ky-about-close, .ky-user-signout, .ky-mobile-signout, .ky-auth-field > input, .ky-auth-theme select) {
     transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
   .ky-about[open] { animation: ky-about-in 0.2s cubic-bezier(0.16, 1, 0.3, 1); }

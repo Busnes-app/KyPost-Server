@@ -48,10 +48,6 @@
   --glow: rgba(107, 74, 66, 0.25);
   --sidebar-start: #1f1f24;
   --sidebar-end: #2a2530;
-  --new-email-border: #8f6b4a;
-  --new-email-start: #c29a72;
-  --new-email-end: #9a7450;
-  --new-email-text: #24170f;
   --button-text: #24170f;
   --link-border: #d8dde6;
   --accent-contrast: #24170f;
@@ -73,40 +69,6 @@ body {
   font-size: var(--ky-type-body);
   color: var(--ink);
   background: radial-gradient(circle at top right, var(--glow), transparent 45%), var(--bg);
-}
-
-.shell {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: var(--ky-sidebar-size) minmax(0, 1fr);
-}
-
-/* The sidebar stays in view so the account region is always at its foot. */
-.sidebar {
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow-y: auto;
-  border-right: 1px solid var(--line);
-  padding: var(--ky-space-3);
-  background: linear-gradient(180deg, var(--sidebar-start), var(--sidebar-end));
-  display: flex;
-  flex-direction: column;
-  gap: var(--ky-space-3);
-  font-size: var(--ky-type-nav);
-}
-
-.new-email-button {
-  width: 100%;
-  min-height: var(--ky-control-size);
-  border-color: var(--ky-field-border);
-  background: transparent;
-  color: var(--ink-strong);
-  font-weight: 600;
-}
-
-.new-email-button:hover {
-  background: color-mix(in srgb, var(--ink-strong) 7%, transparent);
 }
 
 /* A square control holding one icon; its name comes from aria-label. */
@@ -139,81 +101,6 @@ body {
   text-decoration-thickness: 2px;
 }
 
-.sidebar-logo {
-  display: flex;
-  align-items: center;
-  gap: var(--ky-space-2);
-  padding: var(--ky-space-1) var(--ky-space-2) 0;
-}
-
-.sidebar-wordmark {
-  font-size: 1.15rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--ink-strong);
-}
-
-.sidebar nav {
-  flex: 1;
-}
-
-.sidebar-footer {
-  font-size: 0.75rem;
-  color: var(--ink);
-  padding-left: var(--ky-space-2);
-  white-space: nowrap;
-}
-
-.sidebar-footer p {
-  margin: 0;
-}
-
-.sidebar h1 {
-  margin: 0 0 16px;
-  font-size: 1.6rem;
-}
-
-.sidebar nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-/* One row geometry for links, disclosure buttons and Logout: 40px, 8px radius,
-   icon then label. Selected, hover and focus states come from ky-ui/navigation.css. */
-.sidebar a,
-.sidebar .nav-heading,
-.sidebar .nav-link-button {
-  display: flex;
-  align-items: center;
-  gap: var(--ky-space-2);
-  min-height: var(--ky-control-size);
-  width: 100%;
-  padding: 0 var(--ky-space-2);
-  border: 0;
-  border-radius: var(--ky-control-radius);
-  background: transparent;
-  color: var(--ink-strong);
-  font: inherit;
-  font-weight: 500;
-  text-align: left;
-  text-decoration: none;
-  transition: background-color 150ms ease, color 150ms ease;
-}
-
-.sidebar a:hover,
-.sidebar .nav-heading:hover,
-.sidebar .nav-link-button:hover {
-  background: color-mix(in srgb, var(--ink-strong) 6%, transparent);
-  filter: none;
-}
-
-.sidebar a svg,
-.sidebar .nav-heading svg,
-.sidebar .nav-link-button svg {
-  flex: none;
-  color: var(--ink);
-}
 
 .nav-chevron {
   margin-left: auto;
@@ -224,22 +111,55 @@ body {
   transform: rotate(90deg);
 }
 
-.sidebar-section-label {
-  margin: var(--ky-space-2) 0 var(--ky-space-1);
-  padding: 0 var(--ky-space-2);
+/* The frame, brand, rows, user block and phone header are ky-ui shell.css.
+   What follows is KyPost's own: the mailbox switcher, the Inbox "+", folder
+   rows with their menus, drop targets and the phone quick links. */
+@media (min-width: 721px) {
+  /* Long folder lists scroll the sidebar; the user block stays at its foot. */
+  .ky-sidebar { overflow-y: auto; }
+}
+
+.mailbox-switcher-label {
+  padding: 0 var(--ky-space-3);
   font-size: var(--ky-type-meta);
   font-weight: 600;
   color: var(--ink);
 }
 
-
-.mailbox-switcher .sidebar-section-label {
-  margin: 0;
-}
-
 .mailbox-switcher select {
   width: 100%;
   min-width: 0;
+}
+
+/* Rows inside product wrappers take the shared .ky-nav row exactly (:where keeps
+   hover and the selected state from navigation.css on top). */
+:where(.ky-nav) :where(.mobile-quick-nav, .inbox-nav-row, .nav-group) .ky-nav-item {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--ky-space-2);
+  width: 100%;
+  min-height: var(--ky-control-size);
+  margin: 0;
+  padding: 0 var(--ky-space-2) 0 var(--ky-space-3);
+  border: 0;
+  border-radius: var(--ky-control-radius);
+  background: transparent;
+  color: var(--ink, var(--ky-ink));
+  font: inherit;
+  font-size: var(--ky-type-nav);
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+:where(.ky-nav) :where(.mobile-quick-nav, .inbox-nav-row, .nav-group) .ky-nav-item > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: inherit;
 }
 
 /* The Inbox link spans the row like every item; "+" sits inside it and shows on hover or focus. */
@@ -251,41 +171,29 @@ body {
   padding-right: calc(var(--ky-control-size) + var(--ky-space-1));
 }
 
-.sidebar .inbox-nav-row > .inbox-expand-button {
+.inbox-nav-row > .inbox-expand-button {
   position: absolute;
   top: 0;
   right: 0;
   opacity: 0;
 }
 
-.sidebar .inbox-nav-row:hover > .inbox-expand-button,
-.sidebar .inbox-nav-row > .inbox-expand-button:focus-visible,
-.sidebar .inbox-nav-row > .inbox-expand-button[aria-expanded="true"] {
+.inbox-nav-row:hover > .inbox-expand-button,
+.inbox-nav-row > .inbox-expand-button:focus-visible,
+.inbox-nav-row > .inbox-expand-button[aria-expanded="true"] {
   opacity: 1;
 }
 
 @media (hover: none) {
-  .sidebar .inbox-nav-row > .inbox-expand-button { opacity: 1; }
+  .inbox-nav-row > .inbox-expand-button { opacity: 1; }
 }
 
-.inbox-expand-button {
-  width: var(--ky-control-size);
-  padding: 0;
-  display: inline-grid;
-  place-items: center;
-}
-
-.sidebar .nav-group {
+/* Folders sit at Inbox's indent, so every mailbox icon lines up. */
+.nav-group {
   display: grid;
-  gap: 2px;
-  padding-left: var(--ky-space-3);
+  gap: var(--ky-space-1);
 }
 
-/* One group per audience. A non-admin sees a single unheaded group, so the
-   subgroup is invisible to them and only the spacing above applies. */
-/* Separates a group that is not one of the settings panels — the apps link —
-   from the panel groups above it, so it does not read as belonging to
-   whichever heading happens to come last. */
 .sidebar-folder-form {
   display: grid;
   gap: 8px;
@@ -316,23 +224,22 @@ body {
   position: relative;
 }
 
-.sidebar-folder-menu-button {
-  width: var(--ky-control-size);
-  padding: 0;
-}
-
-/* Quiet by default: these sit beside every folder row, so a filled accent
+/* Quiet square buttons: they sit beside every folder row, so a filled accent
    button on each one outshouted the folders themselves. */
-.sidebar .inbox-expand-button,
-.sidebar .sidebar-folder-menu-button {
+.inbox-expand-button,
+.sidebar-folder-menu-button {
+  display: inline-grid;
+  place-items: center;
+  width: var(--ky-control-size);
   min-height: var(--ky-control-size);
+  padding: 0;
   background: transparent;
   border-color: transparent;
   color: var(--ink);
 }
 
-.sidebar .inbox-expand-button:hover,
-.sidebar .sidebar-folder-menu-button:hover {
+.inbox-expand-button:hover,
+.sidebar-folder-menu-button:hover {
   color: var(--ink-strong);
   background: color-mix(in srgb, var(--ink-strong) 6%, transparent);
 }
@@ -360,8 +267,8 @@ body {
   color: var(--danger);
 }
 
-.sidebar .nav-group > span {
-  padding: var(--ky-space-2);
+.nav-group > span {
+  padding: var(--ky-space-2) var(--ky-space-3);
   color: var(--ink);
 }
 
@@ -369,17 +276,10 @@ body {
   display: none;
 }
 
-/* Pages sit on the canvas; the sidebar and raised surfaces carry the other tones. */
-.content {
-  min-width: 0;
-  background: var(--bg);
-}
-
-/* Pages sit flat on one content surface; only overlays carry a shadow. */
+/* Pages sit flat on .ky-content, which owns the inset; only overlays carry a shadow. */
 .panel {
   /* A flex item: without this, wide intrinsic content (the Appearance grid) widens the page. */
   min-inline-size: 0;
-  padding: var(--ky-space-4) var(--ky-space-5);
 }
 
 .panel h1 {
@@ -390,20 +290,30 @@ body {
   letter-spacing: -0.01em;
 }
 
-.read-page-panel {
+/* The mail and contacts workspaces fill the viewport, full-bleed: their .ky-content becomes the column. */
+.ky-content:has(> .read-page-panel, > .contacts-page) {
+  display: flex;
+  flex-direction: column;
+  max-width: none;
   height: 100vh;
+  height: 100dvh;
+  padding-bottom: var(--ky-space-4);
+}
+
+.read-page-panel {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.inbox-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--ky-space-3);
-  flex-wrap: wrap;
-  min-height: var(--ky-control-size);
+.read-page-panel > .ky-page-head {
+  margin-bottom: var(--ky-space-3);
+}
+
+.ky-page-head > .inbox-action-bar {
+  flex: none;
 }
 
 .inbox-search {
@@ -2961,7 +2871,8 @@ pre {
 
 .contacts-page {
   position: relative;
-  height: 100vh;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -4447,21 +4358,6 @@ pre {
 }
 
 @media (max-width: 900px) {
-  .shell {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .sidebar {
-    position: static;
-    height: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .panel {
-    padding: var(--ky-space-3);
-  }
-
   .health-grid {
     grid-template-columns: 1fr;
   }
@@ -4494,163 +4390,60 @@ pre {
   }
 }
 
-@media (max-width: 900px) and (max-aspect-ratio: 10/9) {
-  .shell {
-    height: 100dvh;
-    min-height: 100dvh;
-    grid-template-rows: auto 1fr;
-  }
-
-  .content {
-    padding: 10px;
-    min-height: 0;
-    display: flex;
-  }
-
-  .content > * {
-    flex: 1;
-    min-height: 0;
-  }
-
-  .panel {
-    padding: 10px;
-  }
-
-  /* Phone header: brand, New Email and account on one row, then one
-     horizontally scrolling strip of every destination in sidebar order. */
-  .sidebar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: center;
-    gap: var(--ky-space-2);
-    padding: var(--ky-space-2) var(--ky-space-3) 0;
-  }
-
-  .sidebar-logo {
-    padding: 0;
-  }
-
-  .sidebar-footer,
-  .sidebar-section-label:not(.mailbox-switcher-label),
-  .ky-user-role {
-    display: none;
-  }
-
-  .new-email-button {
-    grid-column: 2;
-    grid-row: 1;
-    width: auto;
-    padding: 0 var(--ky-space-3);
-  }
-
-  /* Phone header: the user block shrinks to name and an icon-only Sign out. */
-  .sidebar .ky-user {
-    grid-column: 3;
-    grid-row: 1;
-    margin: 0;
-    padding: 0;
-    border: 0;
-    display: flex;
-    align-items: center;
-    gap: var(--ky-space-1);
-  }
-
-  .sidebar .ky-user-copy {
-    max-width: 6rem;
-    padding: 0 0 0 var(--ky-space-1);
-  }
-
-  .sidebar .ky-user-name {
-    font-size: var(--ky-type-meta);
-  }
-
-  .sidebar .ky-user-signout {
-    width: var(--ky-control-size);
-    padding: 0;
-    justify-content: center;
-  }
-
-  .sidebar-logout-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  .sidebar > .notice,
-  .sidebar > .mailbox-switcher {
-    grid-column: 1 / -1;
-    margin: 0;
-  }
-
-  .sidebar nav {
-    grid-column: 1 / -1;
-    flex-direction: row;
-    align-items: center;
-    gap: 2px;
-    margin: 0 calc(-1 * var(--ky-space-3));
-    padding: var(--ky-space-1) var(--ky-space-3);
-    overflow-x: auto;
-    scroll-padding-inline: var(--ky-space-3);
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-  }
-
+/* Phones: ky-ui's header and tab row. The tabs open with quick links for the
+   standard folders, which stand in for their rows; custom folders, Archive,
+   Contacts, Appearance and Settings follow. */
+@media (max-width: 720px) {
   .mobile-quick-nav,
-  .sidebar .nav-group,
-  .sidebar .sidebar-folder-row {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: 2px;
-    margin: 0;
-    padding: 0;
-    border: 0;
+  .ky-nav .nav-group,
+  .ky-nav .sidebar-folder-row {
+    display: contents;
   }
 
-  .sidebar a,
-  .sidebar nav .nav-heading {
+  :where(.ky-nav) :where(.mobile-quick-nav, .inbox-nav-row, .nav-group) .ky-nav-item {
     flex: none;
     width: auto;
-    padding: 0 var(--ky-space-3) 0 var(--ky-space-2);
-    gap: 6px;
+    padding-inline: var(--ky-space-3);
     white-space: nowrap;
   }
 
-  /* The strip stands in for these; Archive and Contacts stay as they are. */
-  .sidebar .inbox-nav-row,
-  .sidebar .scheduled-heading,
-  .sidebar-folder-row[data-folder-kind="inbox"],
-  .sidebar-folder-row[data-folder-kind="drafts"],
-  .sidebar-folder-row[data-folder-kind="junk"],
-  .sidebar-folder-row[data-folder-kind="sent"],
-  .sidebar-folder-row[data-folder-kind="trash"] {
+  .inbox-nav-row,
+  .ky-nav .scheduled-heading,
+  .ky-nav .sidebar-folder-row:is([data-folder-kind="inbox"], [data-folder-kind="drafts"], [data-folder-kind="junk"], [data-folder-kind="sent"], [data-folder-kind="trash"]) {
     display: none;
   }
 
-  /* The strip scrolls, which would clip a menu positioned inside it. */
+  /* The row scrolls, which would clip a menu positioned inside it. */
   .sidebar-folder-menu {
     position: fixed;
     top: auto;
     right: auto;
   }
 
-  .read-page-panel {
-    height: 100%;
-    min-height: 0;
-    overflow: hidden;
+  /* The workspaces keep the screen under the header; the licence line closes it. */
+  .ky-app:has(> .ky-content > :is(.read-page-panel, .contacts-page)) {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
   }
 
-  .health-page-panel,
-  .logs-page-panel {
-    height: 100%;
-    min-height: 0;
-    overflow: auto;
-    -webkit-overflow-scrolling: touch;
+  .ky-app:has(> .ky-content > :is(.read-page-panel, .contacts-page)) > .ky-sidebar {
+    flex: none;
   }
 
+  .ky-content:has(> .read-page-panel, > .contacts-page) {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+    padding-bottom: 0;
+  }
+
+  .ky-content:has(> .read-page-panel, > .contacts-page) > .ky-content-foot {
+    padding-block: var(--ky-space-2);
+  }
+}
+
+@media (max-width: 900px) and (max-aspect-ratio: 10/9) {
   .inbox-list-region {
     min-height: 0;
     flex: 1;
@@ -5426,8 +5219,6 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .app-mark-glyph { fill: var(--bg); }
 .app-mark-fold { stroke: var(--ink-strong); }
 
-.sidebar-footer { padding: 0; }
-.theme-selector { width: auto; max-width: 100%; font-size: var(--ky-type-nav); }
 
 /* Inbox: one scannable line per message, about 40px. */
 .inbox-unit {
@@ -5543,12 +5334,11 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 }
 
 /* Settings: one page; its sections are one row of tabs above the open panel. */
-.settings-layout > .ky-page-head { margin: 0; padding: var(--ky-space-4) var(--ky-space-5) 0; margin-bottom: var(--ky-space-3); }
+.settings-layout > .ky-page-head { margin-bottom: var(--ky-space-3); }
 .settings-sections {
   display: flex;
   align-items: stretch;
   gap: var(--ky-space-1);
-  margin: 0 var(--ky-space-5);
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
   scrollbar-width: none;
@@ -5568,14 +5358,7 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 }
 .settings-section-link:hover { color: var(--ink-strong); }
 .settings-section-link[aria-current="page"] { border-bottom-color: var(--accent); color: var(--ink-strong); font-weight: 600; }
-.settings-about { display: none; flex: none; align-self: center; margin: 0; padding-inline: var(--ky-space-2); }
-.settings-about .ky-license-link { margin: 0; }
-@media (max-width: 900px) {
-  .settings-layout { display: flex; flex-direction: column; overflow-y: auto; }
-  .settings-layout > .ky-page-head { padding: 10px 10px 0; }
-  .settings-layout > .settings-sections { flex: none; margin: 0 10px; }
-  .settings-about { display: block; }
-}
+.settings-layout > .panel { padding-top: var(--ky-space-4); }
 
 /* Settings forms: body-size pills and fields, one status line. */
 .config-tab { padding: 6px 14px; font-size: var(--ky-type-body); }

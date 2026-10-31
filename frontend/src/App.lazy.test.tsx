@@ -70,7 +70,7 @@ describe("lazy loading", () => {
     const user = userEvent.setup();
     const { container } = renderAt("/read");
 
-    await user.click(await screen.findByRole("button", { name: "New Email" }));
+    await user.click(await screen.findByRole("button", { name: "New email" }));
 
     // .ql-editor is Quill's own doing: it exists only if the module loaded and
     // the constructor ran against the compose div.

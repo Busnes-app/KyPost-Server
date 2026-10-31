@@ -496,7 +496,7 @@ export function App() {
   const isAdmin = auth.role === "admin";
 
   // Sign-in gets its own full-page layout rather than the app shell. Everything
-  // in that shell — New Email, the mailbox list, the folder tree — is mail
+  // in that shell — the mailbox list, the folder tree — is mail
   // chrome a signed-out visitor cannot use, and wrapping the one thing they CAN
   // do inside it made the front door read as a broken mail client. /password is
   // deliberately NOT here: that route is reached from inside the app and stays
@@ -520,8 +520,6 @@ export function App() {
 
   // Settings is one page: the shared page head, then its sections as one row of
   // tabs above the open panel, so the sidebar stays the only side column.
-  // On phones the row scrolls and also carries the licence line, which the
-  // phone header hides.
   function settingsPage(panel: ReactElement) {
     return (
       <div className="settings-layout">
@@ -550,11 +548,6 @@ export function App() {
               Get the apps
             </Link>
           </div>
-          <p className="settings-about">
-            <button type="button" className="ky-license-link" onClick={() => setLicenseOpen(true)}>
-              &copy; {new Date().getFullYear()} &middot; MIT License
-            </button>
-          </p>
         </nav>
         {panel}
       </div>
@@ -564,16 +557,19 @@ export function App() {
   return (
     <AuthContext.Provider value={auth}>
     <MailboxContext.Provider value={{ mailboxes, selected: selectedMailbox }}>
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="sidebar-logo">
-          <AppMark size={28} />
-          <span className="sidebar-wordmark">KyPost</span>
+    <div className="ky-app">
+      <header className="ky-sidebar">
+        <div className="ky-mobile-head">
+          <div className="ky-brand">
+            <AppMark size={28} />
+            <span>KyPost</span>
+          </div>
+          {auth.authenticated ? (
+            <button type="button" className="ky-mobile-signout" aria-label="Sign out" onClick={logout}>
+              <LogoutIcon />
+            </button>
+          ) : null}
         </div>
-        {/* Outlined on every page: each page has its own primary action. */}
-        <button type="button" className="new-email-button" onClick={compose.openComposeWindow}>
-          New Email
-        </button>
         {navBlockedNotice ? (
           <p className="notice notice-error" role="alert">
             {navBlockedNotice}
@@ -581,7 +577,7 @@ export function App() {
         ) : null}
         {mailboxes.length > 1 ? (
           <label className="mailbox-switcher">
-            <span className="sidebar-section-label mailbox-switcher-label">Your mailboxes</span>
+            <span className="mailbox-switcher-label">Your mailboxes</span>
             <select
               value={selectedMailbox}
               onChange={(event) => {
@@ -607,10 +603,12 @@ export function App() {
         {/* Browsers leave a partly visible item clipped when it takes focus, which the phone strip makes common. */}
         <nav
           ref={navRef}
+          className="ky-nav"
+          aria-label="Primary"
           onClickCapture={guardNavigation}
           onFocus={(event) => event.target.scrollIntoView({ block: "nearest", inline: "nearest" })}
         >
-          <p className="sidebar-section-label">Mailboxes</p>
+          <p className="ky-nav-section">Mailboxes</p>
           <div className="mobile-quick-nav" aria-label="Mobile mailboxes">
             <Link className={onReadPage && currentMailbox === "" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to="/read">
               <InboxIcon />
@@ -754,7 +752,7 @@ export function App() {
 
           <button
             type="button"
-            className="nav-heading archive-toggle"
+            className="ky-nav-item archive-toggle"
             aria-expanded={archiveOpen}
             onClick={() => setArchiveOpen((open) => !open)}
           >
@@ -795,47 +793,46 @@ export function App() {
 
           <Link
             to="/scheduled"
-            className={["nav-heading scheduled-heading", location.pathname === "/scheduled" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"].join(" ")}
+            className={location.pathname === "/scheduled" ? "ky-nav-item scheduled-heading sidebar-link-active" : "ky-nav-item scheduled-heading"}
           >
             <ClockIcon />
             Scheduled
           </Link>
-          <Link
-            to="/contacts"
-            className={["nav-heading", location.pathname === "/contacts" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"].filter(Boolean).join(" ")}
-          >
+          <Link to="/contacts" className={location.pathname === "/contacts" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}>
             <ContactsIcon />
             Contacts
           </Link>
 
-          <Link to="/settings/appearance" className={onAppearance ? "nav-heading ky-nav-item sidebar-link-active" : "nav-heading ky-nav-item"}>
+          <Link to="/settings/appearance" className={onAppearance ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}>
             <PaletteIcon />
             Appearance
           </Link>
-          <Link to="/settings" className={onSettings ? "nav-heading ky-nav-item sidebar-link-active" : "nav-heading ky-nav-item"}>
+          <Link to="/settings" className={onSettings ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}>
             <SettingsIcon />
             Settings
           </Link>
         </nav>
-        {auth.authenticated ? (
-          <div className="ky-user">
-            <div className="ky-user-copy">
-              <p className="ky-user-name">{auth.username}</p>
-              <p className="ky-user-role">{isAdmin ? "Administrator" : "Everyday account"}</p>
+        <div className="ky-sidebar-foot">
+          {auth.authenticated ? (
+            <div className="ky-user">
+              <div className="ky-user-copy">
+                <p className="ky-user-name">{auth.username}</p>
+                <p className="ky-user-role">{isAdmin ? "Administrator" : "Everyday account"}</p>
+              </div>
+              <button type="button" className="ky-user-signout" onClick={logout}>
+                <LogoutIcon />
+                Sign out
+              </button>
             </div>
-            <button type="button" className="ky-user-signout" onClick={logout}>
-              <LogoutIcon />
-              <span className="sidebar-logout-label">Sign out</span>
+          ) : null}
+          <footer>
+            <button type="button" className="ky-license-link" onClick={() => setLicenseOpen(true)}>
+              &copy; {new Date().getFullYear()} &middot; MIT License
             </button>
-          </div>
-        ) : null}
-        <footer className="sidebar-footer">
-          <button type="button" className="ky-license-link" onClick={() => setLicenseOpen(true)}>
-            &copy; {new Date().getFullYear()} &middot; MIT License
-          </button>
-        </footer>
-      </aside>
-      <main className="content">
+          </footer>
+        </div>
+      </header>
+      <main className="ky-content">
         {/* One boundary for every lazy page. The fallback is deliberately
             quiet: the chunks are same-origin and small, and a spinner that
             flashes for 30 ms is worse than nothing. */}
@@ -899,6 +896,11 @@ export function App() {
           <Route path="/admin/diagnostics" element={protect(settingsPage(<DiagnosticsPanel />), true)} />
         </Routes>
         </Suspense>
+        <footer className="ky-content-foot">
+          <button type="button" className="ky-license-link" onClick={() => setLicenseOpen(true)}>
+            &copy; {new Date().getFullYear()} &middot; MIT License
+          </button>
+        </footer>
       </main>
       <dialog
         ref={licenseDialogRef}

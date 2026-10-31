@@ -411,6 +411,7 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
           autoComplete="username"
           autoCapitalize="none"
           spellCheck={false}
+          autoFocus
         />
       </div>
       <div className="ky-auth-field">
@@ -435,7 +436,10 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
             onToken={setCaptchaToken}
           />
         </div>
-      ) : null}
+      ) : (
+        // No check runs: the empty line keeps the card's height.
+        <p className="ky-auth-check" />
+      )}
 
       <button type="submit" className="ky-auth-submit" disabled={busy}>
         <LoginIcon />

@@ -62,7 +62,8 @@ describe("Settings and Appearance in the nav", () => {
     render(<MemoryRouter initialEntries={["/read"]}><App /></MemoryRouter>);
     await screen.findByText("Primary inbox", {}, { timeout: 5000 });
 
-    const nav = document.querySelector(".sidebar nav") as HTMLElement;
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    expect(nav.closest(".ky-sidebar")).toBeTruthy();
     expect(within(nav).getByRole("link", { name: "Appearance" }).getAttribute("href")).toBe("/settings/appearance");
     const settings = within(nav).getByRole("link", { name: "Settings" });
     expect(within(nav).queryByRole("link", { name: "Mail" })).toBeNull();
@@ -70,13 +71,15 @@ describe("Settings and Appearance in the nav", () => {
     await user.click(settings);
 
     const sections = await screen.findByRole("navigation", { name: "Settings" });
-    expect(sections.closest(".sidebar")).toBeNull();
+    expect(sections.closest(".ky-sidebar")).toBeNull();
     expect(within(sections).getByRole("link", { name: "Mail" }).getAttribute("aria-current")).toBe("page");
     expect(within(sections).getByRole("link", { name: "Get the apps" })).toBeTruthy();
     expect(within(sections).queryByRole("link", { name: "Appearance" })).toBeNull();
     // One active item in the sidebar: Settings, not Appearance or a folder.
     expect([...nav.querySelectorAll(".sidebar-link-active")].map((el) => el.textContent?.trim())).toEqual(["Settings"]);
-    // The phone header hides the sidebar footer, so the licence line is here too.
-    expect(within(sections).getByRole("button", { name: /MIT License/ })).toBeTruthy();
+    // The phone header hides the sidebar foot, so the licence line also closes the page.
+    const contentFoot = document.querySelector(".ky-content > footer.ky-content-foot") as HTMLElement;
+    expect(within(contentFoot).getByRole("button", { name: /MIT License/ })).toBeTruthy();
+    expect(within(sections).queryByRole("button", { name: /MIT License/ })).toBeNull();
   });
 });
