@@ -506,7 +506,6 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
           {body}
           {notice}
         </div>
-        <p className="ky-auth-help">Your password stays in this browser; only a key derived from it is sent.</p>
       </div>
     </main>
   );

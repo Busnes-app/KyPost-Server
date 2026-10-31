@@ -300,7 +300,6 @@ describe("sign-in screen", () => {
     const check = document.querySelector(".ky-auth-card .ky-auth-check");
     expect(check?.textContent).toBe("");
     expect(check?.hasAttribute("data-ky-state")).toBe(false);
-    expect(document.querySelectorAll(".ky-auth-help")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /MIT License/ })).toBeNull();
   });
 });
