@@ -911,8 +911,10 @@ body {
   padding: 16px 0;
   background: transparent;
   color: var(--ink-strong);
+  /* The sender's line breaks stay; long lines and URLs wrap, never scroll sideways. */
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   font-family: var(--sans);
   font-size: var(--ky-type-body);
   line-height: 1.6;
@@ -5507,8 +5509,6 @@ html:root:not([data-theme]):not([data-ky-theme]) {
   .inbox-bulk-bar .inbox-selected-count { margin-inline-end: var(--ky-space-1); }
   .inbox-bulk-bar .inbox-action-button { padding-inline: 6px; }
   .inbox-bulk-bar .inbox-action-button:not([data-action="snooze"], [data-action="read"]) { width: 32px; }
-  /* Plain mail keeps its own line breaks in the pane; a longer line scrolls rather than reflowing. */
-  .email-reader-backdrop:not(:modal) .email-reader-body-block { white-space: pre; word-break: normal; overflow-x: auto; max-width: none; }
   .reading-pane-empty {
     display: grid;
     place-items: center;
