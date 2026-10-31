@@ -3839,6 +3839,61 @@ pre {
   opacity: 0.75;
 }
 
+.invite-card {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.invite-card-title {
+  color: var(--ink-strong);
+  overflow-wrap: anywhere;
+}
+
+.invite-card-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0;
+}
+
+.invite-card-facts dt {
+  color: var(--ink);
+}
+
+.invite-card-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.invite-card p {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.invite-card-warning {
+  color: var(--danger);
+}
+
+.invite-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.invite-card-note {
+  flex-basis: 100%;
+}
+
+.invite-card > button {
+  justify-self: start;
+}
+
 .email-attachments-error {
   color: var(--danger, #c0392b);
 }

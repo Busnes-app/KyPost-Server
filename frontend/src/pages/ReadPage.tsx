@@ -6,12 +6,14 @@ import { DecryptedAttachments, inlineImageMap } from "./read/DecryptedAttachment
 import { EncryptionCell } from "./read/EncryptionCell";
 import { SignatureBadge } from "./read/SignatureBadge";
 import { OtpCard } from "./read/OtpCard";
+import { InviteCard } from "./read/InviteCard";
+import { inviteAttachment } from "./read/invite";
 import { displayBody } from "./read/body";
 import { firstAddressFromText } from "../lib/addressText";
 import { isFlaggedPhishing } from "../lib/phishing";
 import { decryptMessage, verifySignedMessage } from "../lib/pgpClient";
 import { getPGPMessagePayload } from "../api/pgp";
-import { isClientProtected, needsUnlock, subscribePGPSession, type PGPSessionState } from "../lib/pgpSession";
+import { accountAddress, isClientProtected, needsUnlock, subscribePGPSession, type PGPSessionState } from "../lib/pgpSession";
 import { PgpUnlockDialog } from "../components/PgpUnlockDialog";
 import { downloadFile, getJSON, postJSON, selectedMailboxId, toErrorMessage } from "../api/client";
 import { usePagination } from "../hooks/usePagination";
@@ -2093,6 +2095,24 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                   </div>
                 </div>
               ) : null}
+              {(() => {
+                const invitePart = decrypted[decryptedKey(selected.messageId)]?.bodyFromVerifiedPart ? undefined : inviteAttachment(attachments);
+                if (!invitePart) return null;
+                // The primary's own address list may be empty on an IMAP account; the bootstrap knows it.
+                const own = mailboxes.find((m) => (box ? m.id === box : m.kind === "primary"))?.addresses ?? [];
+                return (
+                  <InviteCard
+                    key={`${decryptedKey(selected.messageId)}:${invitePart.index}`}
+                    attachment={invitePart}
+                    query={attachmentQuery(selected)}
+                    messageId={selected.messageId}
+                    folder={mailbox}
+                    sender={firstAddressFromText(selected.sender || "")}
+                    phishing={isFlaggedPhishing(selected)}
+                    ownAddresses={box ? own : [...own, accountAddress()]}
+                  />
+                );
+              })()}
               {(() => {
                 // Inbox only and never on flagged mail: no copy shortcut for
                 // a message already judged suspicious.
