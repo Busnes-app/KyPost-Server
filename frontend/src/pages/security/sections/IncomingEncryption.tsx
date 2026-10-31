@@ -4,7 +4,9 @@ import { useAuth } from "../../../auth";
 import { toErrorMessage } from "../../../api/client";
 
 export function IncomingEncryption({ identity, clientProtected }: { identity: PGPIdentity | null; clientProtected: boolean }) {
-  const { ssoSession } = useAuth();
+  // The server asks for the password whenever the account has one, whichever
+  // way this session signed in; an account without one confirms with KySignOn.
+  const needsPassword = useAuth().hasPassword !== false;
   const [preference, setPreference] = useState<IncomingEncryptionPreference | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -56,11 +58,11 @@ export function IncomingEncryption({ identity, clientProtected }: { identity: PG
           <input type="checkbox" checked={acknowledged} disabled={busy} onChange={(event) => setAcknowledged(event.target.checked)} />
           I saved a private-key recovery backup and understand that plaintext originals will be removed.
         </label> : null}
-        {!ssoSession ? <label className="sec-label">
+        {needsPassword ? <label className="sec-label">
           <span>Account password</span>
           <input className="sec-input" type="password" autoComplete="current-password" value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} required />
         </label> : <p className="sec-muted">Confirm this change through KySignOn when prompted.</p>}
-        <button type="submit" className="btn" disabled={busy || !preference || (!ssoSession && !password) || (enabled && !acknowledged)}>{busy ? "Saving…" : "Save incoming encryption"}</button>
+        <button type="submit" className="btn" disabled={busy || !preference || (needsPassword && !password) || (enabled && !acknowledged)}>{busy ? "Saving…" : "Save incoming encryption"}</button>
       </form>
       {message ? <p role="status">{message}</p> : null}
     </section>

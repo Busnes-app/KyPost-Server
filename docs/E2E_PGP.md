@@ -124,7 +124,8 @@ uses two substitutes:
 
 The passphrase is not an account credential and the server never checks it:
 for an account with no password `requirePGPStepUp` ignores `authSecret`, and
-the web client sends none on the flows that only step up. `GET /api/auth/me`
+the web client sends none, so nothing derived from the passphrase is
+transmitted beyond the sealed envelope itself. `GET /api/auth/me`
 reports `hasPassword: false` so the UI can say "passphrase". Native clients
 that unwrap the `password` slot must likewise ask an SSO-only user for the
 encryption passphrase, not a password.

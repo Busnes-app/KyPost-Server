@@ -3,13 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IncomingEncryption } from "./IncomingEncryption";
 import { getIncomingEncryption, setIncomingEncryption, type PGPIdentity } from "../../../api/pgp";
 
-const auth = vi.hoisted(() => ({ ssoSession: false }));
+const auth = vi.hoisted(() => ({ ssoSession: false, hasPassword: true as boolean | undefined }));
 vi.mock("../../../auth", () => ({ useAuth: () => auth }));
 vi.mock("../../../api/pgp", () => ({ getIncomingEncryption: vi.fn(), setIncomingEncryption: vi.fn() }));
 const identity: PGPIdentity = { pgpRevision: 4, fingerprint: "fingerprint", keyId: "key", publicKey: "public", source: "generated", createdAt: "now" };
 afterEach(cleanup);
 beforeEach(() => {
-  vi.clearAllMocks(); auth.ssoSession = false;
+  vi.clearAllMocks(); auth.ssoSession = false; auth.hasPassword = true;
   vi.mocked(getIncomingEncryption).mockResolvedValue({ enabled: false, pending: false });
   vi.mocked(setIncomingEncryption).mockResolvedValue(undefined);
 });
@@ -28,8 +28,16 @@ describe("incoming encryption opt-in", () => {
     await screen.findByText("Incoming encryption enabled.");
     expect((screen.getByLabelText("Account password") as HTMLInputElement).value).toBe("");
   });
-  it("lets SSO accounts confirm without an account password", async () => {
+  // The server asks for a password whenever the account has one, so a KySignOn
+  // session on such an account must still show the field.
+  it("asks a password account for its password even in a KySignOn session", async () => {
     auth.ssoSession = true;
+    render(<IncomingEncryption identity={identity} clientProtected />);
+    expect(await screen.findByLabelText("Account password")).toBeTruthy();
+  });
+  it("lets SSO-only accounts confirm without an account password", async () => {
+    auth.ssoSession = true;
+    auth.hasPassword = false;
     render(<IncomingEncryption identity={identity} clientProtected />);
     const enabled = await screen.findByLabelText("Encrypt incoming mail after classification");
     await waitFor(() => expect((enabled as HTMLInputElement).disabled).toBe(false));

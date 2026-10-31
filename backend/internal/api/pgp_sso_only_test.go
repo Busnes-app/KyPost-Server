@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -44,7 +45,7 @@ func TestSSOOnlyAccountMintsAPGPIdentityThroughKySignOn(t *testing.T) {
 	if rec := gatedCall(t, srv, cookie, http.MethodPost, "/api/pgp/identity/client", strings.Replace(body, `"generated"`, `"imported"`, 1), challenge); rec.Code != http.StatusForbidden {
 		t.Fatalf("grant spent on a different request: status %d: %s", rec.Code, rec.Body.String())
 	}
-	// The refused attempt above did not consume it, but it minted a new
+	// The grant is still unspent, but asking again without it mints a fresh
 	// challenge for the session, which replaces the old one.
 	challenge = challengeFrom(t, gatedCall(t, srv, cookie, http.MethodPost, "/api/pgp/identity/client", body, ""))
 	if rec := proveStepUp(t, srv, idp, cookie, challenge, freshClaims("alice", "sid-3")); rec.Code != http.StatusOK {
@@ -109,5 +110,54 @@ func TestSSOOnlyGenericProviderAccountIsToldKySignOnIsNeeded(t *testing.T) {
 	rec := gatedCall(t, srv, cookie, http.MethodDelete, "/api/pgp/identity", `{}`, "")
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "kysignon_required") {
 		t.Fatalf("generic-provider SSO-only step-up: status %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// pgpStepUpRoutes is every route that reaches requirePGPStepUp, with the
+// smallest body that gets each handler as far as its step-up.
+var pgpStepUpRoutes = []struct{ method, path, body string }{
+	{http.MethodPost, "/api/pgp/identity/client", `{"publicKey":"x","wrapped":"x"}`},
+	{http.MethodPost, "/api/pgp/identity/rewrap", `{"wrapped":"x"}`},
+	{http.MethodPut, "/api/pgp/identity/envelope/recovery", `{"envelope":"x"}`},
+	{http.MethodDelete, "/api/pgp/identity/envelope/recovery", `{}`},
+	{http.MethodDelete, "/api/pgp/identity", `{}`},
+	{http.MethodPut, "/api/pgp/incoming", `{"enabled":false}`},
+}
+
+// Every gated route is wrapped in an action digest, so an SSO-only KySignOn
+// session gets a challenge there rather than the 500 an unwrapped route gives.
+func TestSSOOnlyAccountIsChallengedOnEveryPGPStepUpRoute(t *testing.T) {
+	srv, idp := setupSSOTestServer(t)
+	cookie := ssoSignIn(t, srv, idp, "alice", "sid-1")
+	for _, route := range pgpStepUpRoutes {
+		rec := gatedCall(t, srv, cookie, route.method, route.path, route.body, "")
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "sso_step_up_required") {
+			t.Errorf("%s %s: status %d, want a KySignOn challenge: %s", route.method, route.path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// The KySignOn arm is for accounts with no password only. An account that has
+// one keeps proving it, even in a KySignOn session: the password is also what
+// its key is wrapped under, and a session alone must not replace that.
+func TestPasswordAccountInAKySignOnSessionStillNeedsThePassword(t *testing.T) {
+	srv, idp := setupSSOTestServer(t)
+	cookie := ssoSignIn(t, srv, idp, "bob", "sid-1")
+	bob, err := srv.users.GetBySSOSub("bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.users.SetPassword(context.Background(), bob.ID, "bob-local-password-123", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	clearMustChangePassword(t, srv, bob.ID)
+	for _, route := range pgpStepUpRoutes {
+		rec := gatedCall(t, srv, cookie, route.method, route.path, route.body, "")
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "invalid credentials") {
+			t.Errorf("%s %s without the password: status %d, want the credential refusal: %s", route.method, route.path, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "sso_step_up_required") {
+			t.Errorf("%s %s offered KySignOn to an account with a password", route.method, route.path)
+		}
 	}
 }

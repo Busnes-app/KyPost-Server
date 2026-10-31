@@ -85,12 +85,16 @@ export function MailKeys({
   recoverySecret = "",
   setRecoverySecret = noop
 }: MailKeysProps = {}) {
-  const { userId, hasPassword } = useAuth();
+  const { userId, hasPassword, ssoSession } = useAuth();
   const [askPassword, passwordPrompt] = usePasswordPrompt();
   // An SSO-only account seals its key under an encryption passphrase, and the
   // server confirms key changes with KySignOn rather than asking for a secret.
   const passphraseMode = hasPassword === false;
   const secretName = passphraseMode ? "encryption passphrase" : "account password";
+  // The step-up credential for a secret the user typed. An encryption
+  // passphrase is not one: KySignOn confirms instead, and nothing derived from
+  // the passphrase is sent.
+  const stepUpSecret = (secret: string) => (passphraseMode ? "" : secret);
 
   /**
    * Asks an account with no password to choose the encryption passphrase that
@@ -98,6 +102,11 @@ export function MailKeys({
    * secret nobody knows, and the server cannot help.
    */
   async function askNewPassphrase(): Promise<string | null> {
+    if (!ssoSession) {
+      // Only KySignOn can confirm a key change for an account with no password.
+      setPgpStatus("This account has no password. Sign in with KySignOn to set up email encryption.");
+      return null;
+    }
     const first = await askPassword(
       `Choose an encryption passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters.\n\n` +
         "Your account signs in with KySignOn and has no password, so this passphrase encrypts your private key before it " +
@@ -146,6 +155,7 @@ export function MailKeys({
   const [drillDate, setDrillDate] = useState("");
   const [restoreSecret, setRestoreSecret] = useState("");
   const [restorePassword, setRestorePassword] = useState("");
+  const [restoreConfirm, setRestoreConfirm] = useState("");
   const [selfContact, setSelfContact] = useState<Contact | null>(null);
 
   // PGP key-discovery settings.
@@ -260,7 +270,7 @@ export function MailKeys({
         generated.armoredPublicKey,
         JSON.stringify(wrapped),
         "generated",
-        password,
+        stepUpSecret(password),
         expectedRevision
       );
       // Hold the fresh key for this page so the user is not immediately asked
@@ -337,7 +347,7 @@ export function MailKeys({
       // Unlock with the OLD password — this only touches memory.
       await unlockPGPSession(recoverOldPassword);
       // Then re-seal under the current one and upload.
-      await rewrapUnlockedKeyUnder(recoverCurrentPassword);
+      await rewrapUnlockedKeyUnder(recoverCurrentPassword, stepUpSecret(recoverCurrentPassword));
       setRecoverOpen(false);
       setRecoverOldPassword("");
       setRecoverCurrentPassword("");
@@ -489,6 +499,7 @@ export function MailKeys({
     setDrillDate("");
     setRestoreSecret("");
     setRestorePassword("");
+    setRestoreConfirm("");
     setPgpStatus("");
   }
 
@@ -497,6 +508,7 @@ export function MailKeys({
     setDrillDate("");
     setRestoreSecret("");
     setRestorePassword("");
+    setRestoreConfirm("");
   }
 
   async function openServerRecovery() {
@@ -540,7 +552,7 @@ export function MailKeys({
         await validateKeyringSnapshot(restored.privateKey, { ...current, keyring: current.keyring });
         if (!drill) {
           if (!mounted.current) return;
-          await restorePGPKeyring(restored.privateKey, restorePassword, current, () => mounted.current);
+          await restorePGPKeyring(restored.privateKey, restorePassword, current, () => mounted.current, stepUpSecret(restorePassword));
           if (!mounted.current) return;
           cancelRestore();
           await loadPGPSession();
@@ -551,6 +563,7 @@ export function MailKeys({
           publicKey: restored.publicKey, envelope: restored.envelope, keyring: restored.keyring };
         setRestoreSecret("");
         setRestorePassword("");
+        setRestoreConfirm("");
         try {
           setDrillDate(await recordRecoveryDrill(userId ?? "", backup));
           setPgpStatus("Recovery drill passed. Every retained key and the current public identity match; the date was saved in this browser. No keys were changed.");
@@ -568,6 +581,7 @@ export function MailKeys({
         const backup: RecoveryBackup = { format: restored.format, fingerprint: restored.fingerprint, publicKey: restored.publicKey, envelope: restored.envelope };
         setRestoreSecret("");
         setRestorePassword("");
+        setRestoreConfirm("");
         try {
           setDrillDate(await recordRecoveryDrill(userId ?? "", backup));
           setPgpStatus("Recovery drill passed. The key opened and matches your identity; the date was saved in this browser.");
@@ -578,7 +592,7 @@ export function MailKeys({
       }
       const expectedRevision = requirePGPRevision(current);
       const wrapped = await wrapPrivateKey(imported.armoredPrivateKey, restorePassword);
-      const committed = await rewrapPGPPrivateKey(JSON.stringify(wrapped), restorePassword, expected, expectedRevision);
+      const committed = await rewrapPGPPrivateKey(JSON.stringify(wrapped), stepUpSecret(restorePassword), expected, expectedRevision);
       if (mounted.current) acceptCommittedPGPKey(imported.armoredPrivateKey, { fingerprint: expected, pgpRevision: committed.pgpRevision });
       cancelRestore();
       await loadPGPSession();
@@ -613,7 +627,7 @@ export function MailKeys({
         imported.armoredPublicKey,
         JSON.stringify(wrapped),
         "imported",
-        password,
+        stepUpSecret(password),
         expectedRevision
       );
       acceptCommittedPGPKey(imported.armoredPrivateKey, id);
@@ -853,8 +867,31 @@ export function MailKeys({
                         autoComplete={passphraseMode ? "new-password" : "current-password"}
                       />
                     </label>
+                    {passphraseMode ? (
+                      <label className="sec-label">
+                        Encryption passphrase again (at least {MIN_PASSPHRASE_LENGTH} characters)
+                        <input
+                          type="password"
+                          className="sec-input"
+                          value={restoreConfirm}
+                          onChange={(e) => setRestoreConfirm(e.target.value)}
+                          autoComplete="new-password"
+                        />
+                      </label>
+                    ) : null}
                     <div className="sec-actions">
-                      <button type="submit" disabled={pgpBusy || !restoreSecret || !restorePassword}>Restore</button>
+                      <button
+                        type="submit"
+                        disabled={
+                          pgpBusy ||
+                          !restoreSecret ||
+                          !restorePassword ||
+                          // Nothing on the server checks a passphrase, so a typo would seal the key under it.
+                          (passphraseMode && (restorePassword.length < MIN_PASSPHRASE_LENGTH || restoreConfirm !== restorePassword))
+                        }
+                      >
+                        Restore
+                      </button>
                       <button type="button" disabled={pgpBusy || !restoreSecret} onClick={(e) => void handleRestoreSubmit(e, true)}>Run recovery drill</button>
                       <button type="button" className="sec-action-quiet" disabled={pgpBusy} onClick={cancelRestore}>
                         Cancel

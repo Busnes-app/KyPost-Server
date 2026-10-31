@@ -782,7 +782,7 @@ describe("complete keyring recovery UI gates", () => {
     await userEvent.type(screen.getByLabelText("Current account password (restore only)"), "account-password");
     await userEvent.click(screen.getByRole("button", { name: "Restore" }));
     await screen.findByText(/Complete keyring restored and confirmed/);
-    expect(restorePGPKeyring).toHaveBeenCalledWith("RING","account-password",expect.objectContaining({keyring}),expect.any(Function));
+    expect(restorePGPKeyring).toHaveBeenCalledWith("RING","account-password",expect.objectContaining({keyring}),expect.any(Function),"account-password");
     expect(importIdentity).not.toHaveBeenCalled();
   });
   it("keeps the source and secret without installing an unconfirmed restore", async () => {
