@@ -335,9 +335,8 @@ export function Users() {
                           <span className={`users-badge users-badge-${user.role}`}>{user.role}</span>
                         </td>
                         <td>
-                          <span className={`users-badge users-status-${user.active ? "active" : "inactive"}`}>
-                            <span className="users-dot" aria-hidden="true" />
-                            {user.active ? "active" : "deactivated"}
+                          <span className="ky-status" data-ky-status={user.active ? "success" : undefined}>
+                            {user.active ? "Active" : "Deactivated"}
                           </span>
                         </td>
                         <td className="users-col-actions">

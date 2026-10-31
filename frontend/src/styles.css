@@ -1972,25 +1972,6 @@ pre {
   color: color-mix(in srgb, var(--ink) 84%, var(--ink-strong));
 }
 
-.users-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.users-status-active {
-  border-color: color-mix(in srgb, #7bbf7b 55%, var(--line));
-  background: color-mix(in srgb, #7bbf7b 16%, transparent);
-  color: color-mix(in srgb, #a5dca5 82%, var(--ink-strong));
-}
-
-.users-status-inactive {
-  border-color: color-mix(in srgb, var(--line) 90%, transparent);
-  background: color-mix(in srgb, var(--panel) 84%, var(--bg));
-  color: color-mix(in srgb, var(--ink) 62%, var(--ink-strong));
-}
-
 .users-col-actions {
   text-align: right;
 }
@@ -2147,37 +2128,6 @@ pre {
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px dashed var(--line);
-}
-
-.security-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 0.76rem;
-  white-space: nowrap;
-  color: var(--ink-strong);
-}
-
-.security-badge-on {
-  border-color: color-mix(in srgb, #7bbf7b 55%, var(--line));
-  background: color-mix(in srgb, #7bbf7b 16%, transparent);
-  color: color-mix(in srgb, #a5dca5 82%, var(--ink-strong));
-}
-
-.security-badge-off {
-  border-color: color-mix(in srgb, var(--line) 90%, transparent);
-  background: color-mix(in srgb, var(--panel) 84%, var(--bg));
-  color: color-mix(in srgb, var(--ink) 62%, var(--ink-strong));
-}
-
-.security-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
 }
 
 /* The key-custody question. Each option carries its consequence inline rather than behind a
@@ -3331,49 +3281,6 @@ pre {
   flex-wrap: wrap;
   font-size: 0.76rem;
   color: color-mix(in srgb, var(--ink) 68%, var(--ink-strong));
-}
-
-.contacts-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 0.76rem;
-  white-space: nowrap;
-  color: var(--ink-strong);
-}
-
-.contacts-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.contacts-status-active {
-  border-color: color-mix(in srgb, #7bbf7b 55%, var(--line));
-  background: color-mix(in srgb, #7bbf7b 16%, transparent);
-  color: color-mix(in srgb, #a5dca5 82%, var(--ink-strong));
-}
-
-.contacts-status-inactive {
-  border-color: color-mix(in srgb, var(--line) 90%, transparent);
-  background: color-mix(in srgb, var(--panel) 84%, var(--bg));
-  color: color-mix(in srgb, var(--ink) 62%, var(--ink-strong));
-}
-
-.contacts-status-pending {
-  border-color: color-mix(in srgb, #d9a441 55%, var(--line));
-  background: color-mix(in srgb, #d9a441 16%, transparent);
-  color: color-mix(in srgb, #e8c67a 82%, var(--ink-strong));
-}
-
-.contacts-status-failed {
-  border-color: color-mix(in srgb, #d97878 55%, var(--line));
-  background: color-mix(in srgb, #d97878 16%, transparent);
-  color: color-mix(in srgb, #e8a5a5 82%, var(--ink-strong));
 }
 
 .contacts-col-actions {

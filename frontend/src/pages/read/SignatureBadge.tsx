@@ -1,5 +1,12 @@
-import { signatureLabel, signatureState } from "./signature";
+import { signatureLabel, signatureState, type SignatureState } from "./signature";
 import type { DecryptedView, InboxEmail } from "./types";
+
+// Unlisted states (checking, unchecked, encrypted but unsigned) are neutral.
+const STATUS: Partial<Record<SignatureState, "danger" | "warning" | "success">> = {
+  verified: "success",
+  conflicted: "warning",
+  mismatched: "danger",
+};
 
 /**
  * The reading pane's signature badge.
@@ -32,10 +39,10 @@ export function SignatureBadge({
   return (
     <>
       <span
-        className={`security-badge ${state === "verified" ? "security-badge-on" : "security-badge-off"}`}
+        className="ky-status"
+        data-ky-status={STATUS[state]}
         style={{ marginLeft: 6 }}
       >
-        <span className="security-dot" aria-hidden="true" />
         {signatureLabel(state)}
       </span>
       {state === "mismatched" && fingerprint ? (

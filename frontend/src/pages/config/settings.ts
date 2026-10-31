@@ -95,22 +95,22 @@ export function formatWhen(value?: string): string {
 export function sendAsStatusLabel(status: SendAsAlias["status"]): string {
   switch (status) {
     case "verified":
-      return "verified";
+      return "Verified";
     case "failed":
-      return "verification failed";
+      return "Verification failed";
     default:
-      return "verifying…";
+      return "Verifying…";
   }
 }
 
-export function sendAsStatusClass(status: SendAsAlias["status"]): string {
+export function sendAsStatusTone(status: SendAsAlias["status"]): "success" | "danger" | "warning" {
   switch (status) {
     case "verified":
-      return "contacts-status-active";
+      return "success";
     case "failed":
-      return "contacts-status-failed";
+      return "danger";
     default:
-      return "contacts-status-pending";
+      return "warning";
   }
 }
 

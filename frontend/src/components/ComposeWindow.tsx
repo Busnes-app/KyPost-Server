@@ -217,7 +217,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                   }} />
                   Sign
                 </label>
-                {!composeSign ? <span className="security-badge security-badge-off">Unsigned</span> : null}
+                {!composeSign ? <span className="ky-status">Unsigned</span> : null}
                 {composeEncrypt ? (
                   <label
                     style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.85rem" }}

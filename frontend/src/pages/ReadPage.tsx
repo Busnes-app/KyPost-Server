@@ -1938,8 +1938,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                 return (
                   <p style={{ margin: 0 }}>
                     {selected.pgpEncrypted ? (
-                      <span className={`security-badge ${decryptFailed ? "security-badge-off" : "security-badge-on"}`}>
-                        <span className="security-dot" aria-hidden="true" />
+                      <span className="ky-status" data-ky-status={decryptingNow ? undefined : decryptFailed ? "danger" : "success"}>
                         {decryptingNow
                           ? "PGP: decrypting…"
                           : decryptFailed

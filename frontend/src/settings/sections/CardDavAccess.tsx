@@ -176,14 +176,12 @@ export function CardDavAccess({ setConfigStatus, onRevealedPasswordChange }: Car
       ) : null}
       <div className="contacts-dav-status">
         {davStatus?.configured ? (
-          <span className="contacts-badge contacts-status-active">
-            <span className="contacts-dot" aria-hidden="true" />
-            app password configured
+          <span className="ky-status" data-ky-status="success">
+            App password configured
           </span>
         ) : (
-          <span className="contacts-badge contacts-status-inactive">
-            <span className="contacts-dot" aria-hidden="true" />
-            no app password yet
+          <span className="ky-status">
+            No app password yet
           </span>
         )}
       </div>

@@ -97,7 +97,7 @@ export function PgpUnlockDialog({ open, reason, onUnlocked, onCancel }: Props) {
               style={{ width: "100%" }}
             />
             {error ? (
-              <p className="security-badge security-badge-off" style={{ marginTop: 8 }} role="alert">
+              <p className="notice notice-error" style={{ marginTop: 8 }} role="alert">
                 {error}
               </p>
             ) : null}

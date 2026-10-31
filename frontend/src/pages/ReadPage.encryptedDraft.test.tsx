@@ -161,7 +161,8 @@ describe("encrypted message signature badge", () => {
     await user.click(await screen.findByText("[Encrypted] Email Sent by KyPost"));
     const label = signed ? "signature verified" : "encrypted but unsigned";
     const badge = await screen.findByText(label);
-    expect(badge.classList.contains(signed ? "security-badge-on" : "security-badge-off")).toBe(true);
+    expect(badge.classList.contains("ky-status")).toBe(true);
+    expect(badge.dataset.kyStatus).toBe(signed ? "success" : undefined);
     expect(screen.queryByText(signed ? "encrypted but unsigned" : "signature verified")).toBeNull();
   });
 });
