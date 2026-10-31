@@ -70,6 +70,7 @@
 body {
   margin: 0;
   font-family: var(--sans);
+  font-size: var(--ky-type-body);
   color: var(--ink);
   background: radial-gradient(circle at top right, var(--glow), transparent 45%), var(--bg);
 }
@@ -98,19 +99,13 @@ body {
 .new-email-button {
   width: 100%;
   min-height: var(--ky-control-size);
-  border: 1px solid var(--new-email-border);
-  background: linear-gradient(180deg, var(--new-email-start), var(--new-email-end));
-  color: var(--new-email-text);
-  font-weight: 600;
-}
-
-.new-email-button.new-email-button-quiet {
   border-color: var(--ky-field-border);
   background: transparent;
   color: var(--ink-strong);
+  font-weight: 600;
 }
 
-.new-email-button.new-email-button-quiet:hover {
+.new-email-button:hover {
   background: color-mix(in srgb, var(--ink-strong) 7%, transparent);
 }
 
@@ -247,11 +242,30 @@ body {
   min-width: 0;
 }
 
+/* The Inbox link spans the row like every item; "+" sits inside it and shows on hover or focus. */
 .inbox-nav-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: stretch;
+  position: relative;
+}
+
+.inbox-nav-row > a {
+  padding-right: calc(var(--ky-control-size) + var(--ky-space-1));
+}
+
+.sidebar .inbox-nav-row > .inbox-expand-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  opacity: 0;
+}
+
+.sidebar .inbox-nav-row:hover > .inbox-expand-button,
+.sidebar .inbox-nav-row > .inbox-expand-button:focus-visible,
+.sidebar .inbox-nav-row > .inbox-expand-button[aria-expanded="true"] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .sidebar .inbox-nav-row > .inbox-expand-button { opacity: 1; }
 }
 
 .inbox-expand-button {
@@ -559,7 +573,7 @@ body {
 }
 
 .inbox-col-select {
-  width: 42px;
+  width: 36px;
   text-align: center;
 }
 
@@ -568,7 +582,8 @@ body {
    than the signal is worth. The <th> carries an aria-label instead. Phones keep
    it: a padlock is exactly the thing worth keeping, and it costs almost nothing. */
 .inbox-col-lock {
-  width: 34px;
+  width: 22px;
+  padding-inline: 0 !important;
   text-align: center;
 }
 
@@ -5362,6 +5377,8 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 
 /* Align the same controls across reading, contact and compose task views. */
 .email-reader-sender { display: block; }
+.email-reader-from { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--ky-space-3); }
+.email-reader-from > time { flex: none; color: var(--ink); font-size: var(--ky-type-meta); white-space: nowrap; }
 .contacts-table th.contacts-col-actions { text-align: right; }
 .contacts-actions .contacts-action { min-height: var(--ky-control-size); }
 .contacts-form-fields > label { grid-column: 1 / -1; }
@@ -5467,7 +5484,8 @@ html:root:not([data-theme]):not([data-ky-theme]) {
   background: var(--accent-soft);
 }
 .inbox-bulk-bar .inbox-selected-count { margin-inline-end: var(--ky-space-2); color: var(--ink-strong); font-weight: 600; }
-.inbox-bulk-clear { margin-inline-start: auto; }
+.inbox-bulk-clear { margin-inline-start: auto; padding-inline: var(--ky-space-2); font-size: var(--ky-type-meta); }
+.inbox-bulk-bar .inbox-action-button { font-size: var(--ky-type-meta); }
 
 /* List and reading pane share the content area; below 1100px the reader is a modal. */
 .read-layout {
@@ -5479,11 +5497,18 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .read-list { min-height: 0; display: flex; flex-direction: column; }
 .reading-pane-empty { display: none; }
 @media (min-width: 1100px) {
-  .read-layout { grid-template-columns: minmax(26rem, 1.25fr) minmax(0, 1fr); column-gap: var(--ky-space-4); }
-  .read-list .inbox-unit { grid-template-columns: minmax(0, 8.5rem) minmax(0, 1fr) auto; gap: var(--ky-space-2); }
-  /* The list column is narrow: bulk actions keep their verbs as names and tooltips. */
-  .inbox-bulk-bar .inbox-action-text { display: none; }
-  .inbox-bulk-bar .inbox-action-button { width: var(--ky-control-size); padding: 0; justify-content: center; }
+  /* Equal halves: the pane keeps a plain-text line of about 80 characters unwrapped. */
+  .read-layout { grid-template-columns: minmax(26rem, 1fr) minmax(35rem, 1.06fr); column-gap: var(--ky-space-3); }
+  .read-list .inbox-unit { grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr) auto; gap: var(--ky-space-2); }
+  /* The list column is narrow: icons whose meaning is plain stay icon-only, named by their verbs. */
+  .inbox-bulk-bar .inbox-action-button:not([data-action="snooze"], [data-action="read"]) .inbox-action-text { display: none; }
+  .inbox-bulk-bar .inbox-action-button:not([data-action="snooze"], [data-action="read"]) { width: 36px; padding: 0; justify-content: center; }
+  .inbox-bulk-bar { flex-wrap: nowrap; gap: 2px; padding-inline: 12px var(--ky-space-1); }
+  .inbox-bulk-bar .inbox-selected-count { margin-inline-end: var(--ky-space-1); }
+  .inbox-bulk-bar .inbox-action-button { padding-inline: 6px; }
+  .inbox-bulk-bar .inbox-action-button:not([data-action="snooze"], [data-action="read"]) { width: 32px; }
+  /* Plain mail keeps its own line breaks in the pane; a longer line scrolls rather than reflowing. */
+  .email-reader-backdrop:not(:modal) .email-reader-body-block { white-space: pre; word-break: normal; overflow-x: auto; max-width: none; }
   .reading-pane-empty {
     display: grid;
     place-items: center;
@@ -5500,7 +5525,7 @@ html:root:not([data-theme]):not([data-ky-theme]) {
     height: auto;
     min-height: 0;
     margin-top: var(--ky-space-3);
-    padding: 0 0 0 var(--ky-space-4);
+    padding: 0 0 0 var(--ky-space-3);
     border-left: 1px solid var(--line);
     background: none;
     display: flex;
@@ -5517,60 +5542,43 @@ html:root:not([data-theme]):not([data-ky-theme]) {
   }
 }
 
-/* Settings: one page, its sections listed inside the content. */
-.settings-layout {
-  display: grid;
-  grid-template-columns: 12rem minmax(0, 1fr);
-  align-items: start;
-}
+/* Settings: one page; its sections are one row of tabs above the open panel. */
 .settings-sections {
-  position: sticky;
-  top: 0;
-  display: grid;
-  gap: var(--ky-space-3);
-  padding: var(--ky-space-4) 0 var(--ky-space-4) var(--ky-space-4);
+  display: flex;
+  align-items: stretch;
+  gap: var(--ky-space-1);
+  margin: 0 var(--ky-space-5);
+  padding-top: var(--ky-space-3);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-.settings-section-group { display: grid; gap: 2px; }
-.settings-section-heading {
-  margin: 0 0 var(--ky-space-1);
-  padding: 0 var(--ky-space-3);
-  color: var(--ink);
-  font-size: var(--ky-type-meta);
-  font-weight: 600;
-}
+.settings-section-group { display: flex; flex: none; gap: var(--ky-space-1); }
+.settings-section-detached { margin-inline-start: var(--ky-space-2); padding-inline-start: var(--ky-space-2); border-inline-start: 1px solid var(--line); }
 .settings-section-link {
   display: flex;
   align-items: center;
-  min-height: 36px;
+  min-height: var(--ky-control-size);
   padding: 0 var(--ky-space-3);
-  border-radius: var(--ky-control-radius);
+  border-bottom: 2px solid transparent;
   color: var(--ink);
   font-size: var(--ky-type-nav);
+  white-space: nowrap;
   text-decoration: none;
 }
-.settings-section-link:hover { background: var(--panel-hover); color: var(--ink-strong); }
-.settings-section-link[aria-current="page"] { background: var(--panel-hover); color: var(--ink-strong); font-weight: 600; }
-.settings-section-detached { padding-top: var(--ky-space-3); border-top: 1px solid var(--line); }
-.settings-about { display: none; margin: 0; }
+.settings-section-link:hover { color: var(--ink-strong); }
+.settings-section-link[aria-current="page"] { border-bottom-color: var(--accent); color: var(--ink-strong); font-weight: 600; }
+.settings-about { display: none; flex: none; align-self: center; margin: 0; padding-inline: var(--ky-space-2); }
+.settings-about .ky-license-link { margin: 0; }
 @media (max-width: 900px) {
   .settings-layout { display: flex; flex-direction: column; overflow-y: auto; }
-  .settings-layout > .settings-sections {
-    position: static;
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    padding: var(--ky-space-2) var(--ky-space-3) 0;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .settings-section-group { display: flex; flex: none; gap: 2px; }
-  .settings-section-heading { display: none; }
-  .settings-section-link { flex: none; white-space: nowrap; }
-  .settings-section-detached { padding: 0; border: 0; }
-  .settings-about { display: block; flex: none; padding-inline: var(--ky-space-2); }
-  .settings-about .ky-license-link { margin: 0; }
+  .settings-layout > .settings-sections { flex: none; margin: 0 var(--ky-space-3); }
+  .settings-about { display: block; }
 }
+
+/* Settings forms: body-size pills and fields, one status line. */
+.config-tab { padding: 6px 14px; font-size: var(--ky-type-body); }
+.config-status-line { margin: var(--ky-space-3) 0 0; color: var(--ink); font-size: var(--ky-type-nav); }
 
 /* Contacts: page head actions, search with its count, and a row menu. */
 .ky-page-head > .contacts-header-actions { flex: none; }

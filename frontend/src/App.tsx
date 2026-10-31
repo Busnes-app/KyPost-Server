@@ -90,7 +90,6 @@ export function App() {
   const [appVersion, setAppVersion] = useState("");
   const currentMailbox = new URLSearchParams(location.search).get("mailbox")?.trim() ?? "";
   const onReadPage = location.pathname === "/read";
-  const onMailView = onReadPage || location.pathname === "/scheduled";
   const onAppearance = location.pathname === "/settings/appearance";
   // Every settings and admin panel, and the apps page, sits under the one Settings item.
   const onSettings = !onAppearance && ["/settings", "/admin", "/apps"].some((prefix) => location.pathname.startsWith(prefix));
@@ -519,16 +518,17 @@ export function App() {
     return element;
   }
 
-  // Settings is one page: its sections are listed inside the content, beside the
-  // open panel, so the sidebar never grows. On phones the list is a strip above
-  // the panel and also carries the licence line, which the phone header hides.
+  // Settings is one page: its sections are one row of tabs at the top of the
+  // content, above the open panel, so the sidebar stays the only side column.
+  // On phones the row scrolls and also carries the licence line, which the
+  // phone header hides.
   function settingsPage(panel: ReactElement) {
     return (
       <div className="settings-layout">
         <nav className="settings-sections" aria-label="Settings" onClickCapture={guardNavigation}>
           {visibleSettingsGroups(isAdmin).map((group) => (
             <div key={group.heading ?? "settings"} className="settings-section-group">
-              {group.heading ? <p className="settings-section-heading">{group.heading}</p> : null}
+              {group.heading ? <span className="visually-hidden">{group.heading}</span> : null}
               {group.items.map(({ to, label }) => (
                 <Link key={to} to={to} className="settings-section-link" aria-current={to === location.pathname ? "page" : undefined}>
                   {label}
@@ -536,7 +536,7 @@ export function App() {
               ))}
             </div>
           ))}
-          {/* Not a settings panel: its own group below a rule. */}
+          {/* Not a settings panel: its own group after a divider. */}
           <div className="settings-section-group settings-section-detached">
             <Link to="/apps" className="settings-section-link" aria-current={location.pathname === "/apps" ? "page" : undefined}>
               Get the apps
@@ -562,12 +562,8 @@ export function App() {
           <AppMark size={28} />
           <span className="sidebar-wordmark">KyPost</span>
         </div>
-        {/* Outside mail views the page's own primary leads, so this steps down to secondary. */}
-        <button
-          type="button"
-          className={onMailView ? "new-email-button" : "new-email-button new-email-button-quiet"}
-          onClick={compose.openComposeWindow}
-        >
+        {/* Outlined on every page: each page has its own primary action. */}
+        <button type="button" className="new-email-button" onClick={compose.openComposeWindow}>
           New Email
         </button>
         {navBlockedNotice ? (

@@ -46,7 +46,7 @@ import {
 } from "./read/types";
 import type { InboxDeltaResponse } from "./read/inboxDelta";
 import { applyInboxDelta, messageIDsIn, withoutMessages } from "./read/inboxDelta";
-import { formatBytes, formatTimestamp, formatInboxListTime, formatUpdatedLabel, senderName } from "./read/format";
+import { formatBytes, formatTimestamp, formatInboxListTime, formatReaderTime, formatUpdatedLabel, senderName } from "./read/format";
 import {
   ensureSubjectPrefix,
   escapeHtml,
@@ -1467,6 +1467,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               onClick={action.onClick}
               disabled={action.disabled}
               className="inbox-action-button btn-ghost"
+              data-action={action.key}
               aria-label={action.label}
               title={action.label}
             >
@@ -1770,7 +1771,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             </div>
             <div className="email-reader-actions">
               <div className="email-reader-reply">
-                <button type="button" className="btn-primary" onClick={replyToSelectedEmail} disabled={actionLoading}>Reply</button>
+                <button type="button" onClick={replyToSelectedEmail} disabled={actionLoading}>Reply</button>
                 <button type="button" onClick={replyAllToSelectedEmail} disabled={actionLoading}>Reply All</button>
                 <button type="button" onClick={forwardSelectedEmail} disabled={actionLoading}>Forward</button>
               </div>
@@ -1913,8 +1914,9 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                   </p>
                 );
               })()}
-              <div className="email-reader-facts">
+              <div className="email-reader-facts email-reader-from">
                 <p><strong>Sender:</strong><span className="email-reader-sender">{selected.sender || "-"}</span></p>
+                <time dateTime={selected.atUtc}>{formatReaderTime(selected.atUtc)}</time>
               </div>
               <details className="email-reader-details">
                 <summary>Message details and keywords</summary>

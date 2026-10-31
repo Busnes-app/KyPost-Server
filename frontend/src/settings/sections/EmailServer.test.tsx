@@ -39,7 +39,7 @@ describe("EmailServer", () => {
     render(<EmailServer />);
     await waitFor(() => expect(screen.getByDisplayValue("imap.example.com")).toBeTruthy());
     await userEvent.type(screen.getByLabelText(/password/i), "app-password");
-    await userEvent.click(screen.getByRole("button", { name: /save email settings/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     // Pin the actual save request, not just "postJSON ran" — that would
     // still pass if Save posted to the wrong endpoint or an empty body.
@@ -80,10 +80,10 @@ describe("EmailServer", () => {
     render(<EmailServer />);
     await waitFor(() => expect(screen.getByText(/managed by your administrator/i)).toBeTruthy());
     expect((screen.getByDisplayValue("imap.example.com") as HTMLInputElement).disabled).toBe(true);
-    expect(screen.queryByRole("button", { name: /save email settings/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /delete stored email settings/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete stored settings" })).toBeNull();
     // Testing the connection stays available; it only reads stored credentials.
-    const testButton = screen.getByRole("button", { name: /test email settings/i });
+    const testButton = screen.getByRole("button", { name: "Test connection" });
     expect(testButton).toBeTruthy();
 
     await userEvent.click(testButton);
@@ -98,7 +98,7 @@ describe("EmailServer", () => {
     render(<EmailServer />);
     await waitFor(() => expect(screen.getByDisplayValue("imap.example.com")).toBeTruthy());
     await userEvent.type(screen.getByLabelText(/password/i), "app-password");
-    await userEvent.click(screen.getByRole("button", { name: /test email settings/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Test connection" }));
 
     await waitFor(() =>
       expect(postJSON).toHaveBeenCalledWith(
@@ -112,5 +112,15 @@ describe("EmailServer", () => {
         })
       )
     );
+  });
+});
+
+describe("EmailServer status", () => {
+  it("states the saved account on one line with a readable date", async () => {
+    getJSON.mockResolvedValue({ configured: true, host: "imap.example.com", port: 993, username: "gwen", mailbox: "INBOX", updatedAt: "2026-10-31T07:12:29Z" });
+    render(<EmailServer />);
+    const line = await screen.findByText(/^Saved: gwen on imap\.example\.com:993, INBOX\./);
+    expect(line.textContent).not.toContain("2026-10-31T");
+    expect(line.textContent).toMatch(/Updated .*2026/);
   });
 });
