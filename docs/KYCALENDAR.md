@@ -7,23 +7,55 @@ half is already built; change both sides together.
 
 ## Pairing
 
+KyPost pairs through KyIdentity on its own, or by environment.
+
+**Environment.** Set, these win entirely and KyIdentity is never asked:
+
 | Variable | Meaning |
 |---|---|
 | `KYPOST_KYCALENDAR_URL` | KyCalendar's `https://host[:port]`, no path, query or credentials. |
 | `KYPOST_KYCALENDAR_SECRET_FILE` | File holding the shared secret: at least 32 bytes after trimming whitespace. Never an environment value. |
-| `KYPOST_KYCALENDAR_ALLOW_PRIVATE` | `true` lets KyPost reach KyCalendar at a private LAN, CGNAT or reserved address. Default `false`. |
+| `KYPOST_KYCALENDAR_ALLOW_PRIVATE` | `true` lets KyPost reach KyCalendar at a private LAN, CGNAT or reserved address. Default `false`. Applies to both ways of pairing. |
 
-Both unset is off: `POST /api/calendar/itip/send` answers 404
-`kycalendar_off` and nothing is forwarded. One set without the other, a URL
-that is not `https://host`, a loopback URL, or a missing or short secret
-refuses startup. Outbound calls are HTTPS only, never follow a redirect, and
+One set without the other, a URL that is not `https://host`, a loopback
+URL, or a missing or short secret refuses startup.
+
+**KyIdentity.** With both unset and KyPost's SSO enabled with a client
+secret (Server → Single Sign-On, or the installer), each KyPost process asks
+KyIdentity's suite directory, `GET {issuer}/api/suite/peer?client=kycalendar`
+with KyPost's own client credentials (KyIdentity's `docs/SUITE-DIRECTORY.md`,
+client `ky-primitives/suitedir`), for KyCalendar's URL and the 32-byte
+secret KyIdentity also gives KyCalendar. The answer must pass the URL rules
+above, and its host must not resolve to an address the private rule
+refuses. The secret is held in memory only, never written or logged.
+
+It asks at startup, every 15 minutes, within 15 seconds of an SSO settings
+change, and at most once a minute after a bad signature either way (KyCalendar
+answered `bad_signature`, or a request to KyPost failed verification), which
+is how a rotated secret is picked up without a restart. A failure leaves
+KyCalendar unpaired and is retried after 30 seconds, doubling to 15 minutes.
+One exception: when KyIdentity is unreachable or erroring, a pairing the same
+SSO settings produced is kept, so a KyIdentity outage alone does not unpair a
+working KyCalendar. `no_peer`, refused client credentials, a bad answer or
+changed settings unpair at once. SSO off, or no pairing either way, is off.
+
+Off: `POST /api/calendar/itip/send` answers 404 `kycalendar_off` and nothing
+is forwarded. Outbound calls are HTTPS only, never follow a redirect, and
 never reach loopback, unspecified, link-local or multicast addresses; the
 host is resolved once and the checked address dialled.
 
-Each user opts in under Settings → Mail → KyCalendar ("Let KyCalendar send
-invitations from this mailbox", `kyCalendar` in their settings, default
-off). The one switch covers both directions. Only accounts with a live SSO
-link (subject and issuer) take part.
+`GET /api/admin/kycalendar` (administrators) reports `{source, connected,
+url, reason}`: `source` is `kyidentity`, `env` or empty; never the secret.
+The web admin shows it under Server → KyCalendar.
+
+Each user has one switch under Settings → Mail → KyCalendar ("Let KyCalendar
+send invitations from this mailbox"). It covers both directions. A user who
+has not chosen follows the pairing: on when KyIdentity paired KyCalendar, off
+when the environment did. A stored choice, `kyCalendar: true` or `false` in
+their settings, always wins. Earlier versions wrote `kyCalendar: false` for
+every user who saved any setting; it cannot be told from a deliberate opt-out,
+so it is kept as off and such a user turns it on once. Only
+accounts with a live SSO link (subject and issuer) take part.
 
 ## Signing
 

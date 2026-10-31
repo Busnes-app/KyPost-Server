@@ -120,7 +120,8 @@ Mail:
 - `GET /api/mail/attachments?mailbox=&messageId=` (lists the attachment metadata of a message; a calendar invite sent as a message body part appears as `invite.ics` with `calendarMethod`)
 - `GET /api/mail/attachment?mailbox=&messageId=&index=` (downloads one attachment)
 - `POST /api/calendar/rsvp` `{messageId, mailbox?, index, partstat, recurrenceId?}` — answers the invitation at attachment `index` (`ACCEPTED`, `TENTATIVE` or `DECLINED`) through KyCalendar. The server reads the invitation from the message; a client never sends the ics. `200 {"outcome":"answered"}`; KyCalendar's `no_event` (404), `not_invited` (422), `bad_partstat` (400), `conflict` (409) and `quota` (507) pass through as `{"error","code"}`; `502 kycalendar_unavailable` otherwise. `409 kycalendar_off` when the server is not paired or the user's KyCalendar switch is off: send `calendarReply` on `POST /api/mail/send` instead. See [KYCALENDAR.md](KYCALENDAR.md#respond-kypost--kycalendar).
-- `GET|PUT /api/settings/kycalendar` — the caller's KyCalendar switch: `{"available","enabled"}`; `PUT {"enabled":true|false}`. `available` is false when the server is not paired.
+- `GET|PUT /api/settings/kycalendar` — the caller's KyCalendar switch: `{"available","enabled"}`; `PUT {"enabled":true|false}`. `available` is false when the server is not paired. `enabled` with no stored choice is on when KyIdentity paired KyCalendar, off when the environment did.
+- `GET /api/admin/kycalendar` (admin) — how KyCalendar is paired: `{"source":"kyidentity"|"env"|absent,"connected","url"?,"reason"?}`. Never the secret.
 - `GET|POST /api/mail/send-as`, `POST /api/mail/send-as/{id}/confirm` and `DELETE /api/mail/send-as/{id}` (alias addresses. A new alias is unusable until the user confirms the mailed code or a DKIM-signed copy from its own domain reaches the inbox; only the DKIM proof makes it publishable. The list never returns the code.)
 
 Filter Rules (the caller's own rules):

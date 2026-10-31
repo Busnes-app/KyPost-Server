@@ -22,6 +22,6 @@ it("turns KyCalendar sending on", async () => {
 it("says when invitation mail is not set up on the server", async () => {
   vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => json({ available: false, enabled: false })));
   render(<KyCalendar />);
-  expect(await screen.findByText("Invitation mail with KyCalendar is not set up on this server. Your administrator can turn it on (KyPost docs: KYCALENDAR.md). It lets KyCalendar send and receive meeting invitations through your mailbox; it does not sync your calendars.")).toBeTruthy();
+  expect(await screen.findByText("Invitation mail with KyCalendar is not connected on this server. Your administrator can see why under Server → KyCalendar. It lets KyCalendar send and receive meeting invitations through your mailbox; it does not sync your calendars.")).toBeTruthy();
   expect(screen.queryByRole("checkbox")).toBeNull();
 });

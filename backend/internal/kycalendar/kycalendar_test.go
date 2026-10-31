@@ -55,14 +55,16 @@ func TestFromEnv(t *testing.T) {
 			t.Setenv("KYPOST_KYCALENDAR_SECRET_FILE", tc.file)
 			t.Setenv("KYPOST_KYCALENDAR_ALLOW_PRIVATE", tc.private)
 			c, err := FromEnv()
-			if (err != nil) != tc.fails || (c != nil) != tc.on {
+			if (err != nil) != tc.fails || c.Available() != tc.on || (err == nil) != (c != nil) {
 				t.Fatalf("FromEnv() = %v, %v; want on=%v fails=%v", c, err, tc.on, tc.fails)
 			}
 			if err != nil && strings.Contains(err.Error(), string(testSecret)) {
 				t.Fatal("error carries the secret")
 			}
-			if c != nil && (string(c.secret) != string(testSecret) || c.base.String() != "https://cal.example.com") {
-				t.Fatalf("secret not trimmed or base not normalised: %q %s", c.secret, c.base)
+			if c.Available() {
+				if l := c.link.Load(); string(l.secret) != string(testSecret) || l.base.String() != "https://cal.example.com" || c.DefaultOn() {
+					t.Fatalf("secret not trimmed, base not normalised or default on: %q %s", l.secret, l.base)
+				}
 			}
 		})
 	}

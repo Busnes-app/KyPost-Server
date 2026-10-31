@@ -176,11 +176,24 @@ type NotificationKeys struct {
 // CONFIG_DIR/users/<userID>/config.yaml.
 type UserSettings struct {
 	EncryptIncoming bool `yaml:"encryptIncoming" json:"encryptIncoming"`
-	// KyCalendar lets the paired KyCalendar send invitations from this
-	// mailbox and receive the DKIM-verified invitations it gets (default off).
-	KyCalendar    bool                     `yaml:"kyCalendar" json:"kyCalendar"`
+	// KyCalendar is the user's KyCalendar switch (KyCalendarOn); nil when
+	// they have never chosen. A stored false is always an off: the earlier
+	// code wrote it for everyone who saved any setting, so it cannot be told
+	// from a deliberate opt-out and is kept as one.
+	KyCalendar    *bool                    `yaml:"kyCalendar,omitempty" json:"-"`
 	Notifications UserNotificationSettings `yaml:"notifications" json:"notifications"`
 	Labels        UserLabelSettings        `yaml:"labels" json:"labels"`
+}
+
+// KyCalendarOn reports whether the paired KyCalendar may send invitations from
+// this mailbox and receive the DKIM-verified invitations it gets. With no
+// choice stored it follows defaultOn: on when KyIdentity paired KyCalendar,
+// off when the environment did.
+func (s UserSettings) KyCalendarOn(defaultOn bool) bool {
+	if s.KyCalendar != nil {
+		return *s.KyCalendar
+	}
+	return defaultOn
 }
 
 type UserNotificationSettings struct {
