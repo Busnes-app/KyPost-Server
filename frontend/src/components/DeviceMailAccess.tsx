@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { toErrorMessage } from "../api/client";
+import { useAuth } from "../auth";
 import { waitForDeviceEnrollment, type NativeDevice } from "../api/devices";
 import { deleteDeviceEnvelope, putDeviceEnvelope, requirePGPRevision } from "../api/pgp";
 import { pgpSessionState, unlockedPGPIdentity } from "../lib/pgpSession";
@@ -213,6 +214,8 @@ function EnrollPanel({
   const [versions] = useState(() => device.enrollmentEnvelopeVersions ?? []);
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
+  // An SSO-only account has no password; KySignOn confirms the delivery.
+  const hasPassword = useAuth().hasPassword !== false;
   // Sentinels only — never server- or exception-derived text. `failure` gates
   // the submit button ("mismatch" locks it) and selects the alarming
   // substituted-key copy, so the space it can hold must stay closed to whatever
@@ -382,10 +385,12 @@ function EnrollPanel({
           }}
         />
       </label>
-      <label>
-        Account password
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      </label>
+      {hasPassword ? (
+        <label>
+          Account password
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </label>
+      ) : null}
       {failure === "locked" ? (
         <p className="sec-muted">Unlock your key before enrolling this device. Nothing was sent.</p>
       ) : failure === "malformed" ? (
@@ -451,6 +456,7 @@ function RemovePanel({
 }) {
   const [snapshot] = useState(() => pgpSessionState().bootstrap);
   const [removePassword, setRemovePassword] = useState("");
+  const hasPassword = useAuth().hasPassword !== false;
   const [removeError, setRemoveError] = useState("");
   const [busy, setBusy] = useState(false);
   const [removed, setRemoved] = useState(false);
@@ -509,14 +515,16 @@ function RemovePanel({
         the Encryption tab. That invalidates every device's sealing, and each one you still use has
         to enroll again.
       </p>
-      <label>
-        Account password
-        <input
-          type="password"
-          value={removePassword}
-          onChange={(e) => setRemovePassword(e.target.value)}
-        />
-      </label>
+      {hasPassword ? (
+        <label>
+          Account password
+          <input
+            type="password"
+            value={removePassword}
+            onChange={(e) => setRemovePassword(e.target.value)}
+          />
+        </label>
+      ) : null}
       {removeError ? <p className="sec-verdict sec-verdict-risk">{removeError}</p> : null}
       <div className="sec-actions">
         <button type="button" disabled={busy} onClick={() => void removeSealing()}>

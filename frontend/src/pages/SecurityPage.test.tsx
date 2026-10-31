@@ -17,7 +17,9 @@ vi.mock("../api/client", () => ({
   postJSON: (url: string, body: unknown) => postJSON(url, body),
   putJSON: (url: string, body: unknown) => putJSON(url, body),
   deleteJSON: (url: string, body?: unknown) => deleteJSON(url, body),
-  toErrorMessage: (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback)
+  toErrorMessage: (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback),
+  // withSSOStepUp tells a KySignOn challenge from any other refusal by class.
+  HttpError: class HttpError extends Error {}
 }));
 
 const SESSION = {
@@ -166,10 +168,10 @@ async function enterAccountPassword() {
   await userEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
 }
 
-function renderPage(tab = "mail") {
+function renderPage(tab = "mail", auth: { hasPassword?: boolean } = {}) {
   return render(
     <MemoryRouter initialEntries={[`/security?tab=${tab}`]}>
-      <AuthContext.Provider value={{ authenticated: true, userId: "user-1" }}><SecurityPage /></AuthContext.Provider>
+      <AuthContext.Provider value={{ authenticated: true, userId: "user-1", ...auth }}><SecurityPage /></AuthContext.Provider>
     </MemoryRouter>
   );
 }
@@ -723,6 +725,17 @@ it("starts a delayed recovery PUT only after secret-save acknowledgement", async
   finish();
 });
 
+
+// An SSO-only account has no password to type; KySignOn confirms the write.
+it("stores the recovery copy on an SSO-only account without asking for a password", async () => {
+  renderPage("mail", { hasPassword: false });
+  expect(await screen.findByText(/encrypted with your encryption passphrase/)).toBeTruthy();
+  await userEvent.click(await screen.findByRole("button", { name: "Download recovery backup" }));
+  await screen.findByText("SECRET-ABCD-1234");
+  await userEvent.click(screen.getByRole("button", { name: "I saved the secret — store server copy" }));
+  await waitFor(() => expect(putJSON).toHaveBeenCalledTimes(1));
+  expect(screen.queryByRole("dialog", { name: "Enter your account password" })).toBeNull();
+});
 
 it("retains a prepared recovery revision across refresh, tab switch and rejected upload", async () => {
   renderPage();

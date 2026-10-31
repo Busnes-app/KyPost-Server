@@ -761,7 +761,7 @@ func (s *Server) routesPGP(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/pgp/identity/import", s.withAuth(s.handlePGPIdentityImport))
 	mux.HandleFunc("GET /api/pgp/identity", s.withAuth(s.handlePGPIdentity))
 	mux.HandleFunc("GET /api/pgp/incoming", s.withAuth(s.handlePGPIncoming))
-	mux.HandleFunc("PUT /api/pgp/incoming", s.withAuth(s.handlePGPIncoming))
+	mux.HandleFunc("PUT /api/pgp/incoming", s.withAuth(withActionDigest(s.handlePGPIncoming)))
 	// End-to-end key handling: the browser wraps and unwraps the private half, the
 	// server only stores an opaque envelope. See pgp_client_keys.go.
 	//
@@ -777,16 +777,18 @@ func (s *Server) routesPGP(mux *http.ServeMux) {
 	// below is — a device secret is not a re-verified password — and a stolen
 	// device secret could otherwise substitute the key all future mail is encrypted
 	// to, or wipe the private half irrecoverably.
-	mux.HandleFunc("POST /api/pgp/identity/client", s.withAuth(s.handlePGPIdentityClient))
-	mux.HandleFunc("POST /api/pgp/identity/rewrap", s.withAuth(s.handlePGPRewrapKey))
+	// withPGPActionDigest: an account with no password confirms these writes
+	// with KySignOn, whose grant is bound to the exact request. pgp_stepup.go.
+	mux.HandleFunc("POST /api/pgp/identity/client", s.withAuth(withPGPActionDigest(s.handlePGPIdentityClient)))
+	mux.HandleFunc("POST /api/pgp/identity/rewrap", s.withAuth(withPGPActionDigest(s.handlePGPRewrapKey)))
 	// Envelope slots (recovery code today, enrolled devices later): write, read
 	// and delete one non-password sealing of the private key. Session-only for
 	// the same reason as the two routes above — a device secret must not be able
 	// to mint a sealing of the account key, which is the enforcement point the
 	// planned passphrase-only tier depends on.
-	mux.HandleFunc("PUT /api/pgp/identity/envelope/{slot}", s.withAuth(s.handlePGPPutEnvelopeSlot))
+	mux.HandleFunc("PUT /api/pgp/identity/envelope/{slot}", s.withAuth(withPGPActionDigest(s.handlePGPPutEnvelopeSlot)))
 	mux.HandleFunc("GET /api/pgp/identity/envelope/{slot}", s.withAuth(s.handlePGPGetEnvelopeSlot))
-	mux.HandleFunc("DELETE /api/pgp/identity/envelope/{slot}", s.withAuth(s.handlePGPDeleteEnvelopeSlot))
+	mux.HandleFunc("DELETE /api/pgp/identity/envelope/{slot}", s.withAuth(withPGPActionDigest(s.handlePGPDeleteEnvelopeSlot)))
 	// Device-authenticated, not session-authenticated: neither withAuth nor
 	// withMailAuth fits a caller that IS a device. Both scope themselves to the
 	// verified device record rather than to anything in the request. See
@@ -799,7 +801,7 @@ func (s *Server) routesPGP(mux *http.ServeMux) {
 	// password before doing so — a device secret is not that password, and a
 	// paired device must not be able to exchange itself for the key.
 	mux.HandleFunc("POST /api/pgp/identity/export-legacy", s.withAuth(s.handlePGPExportLegacyKey))
-	mux.HandleFunc("DELETE /api/pgp/identity", s.withAuth(s.handlePGPIdentity))
+	mux.HandleFunc("DELETE /api/pgp/identity", s.withAuth(withPGPActionDigest(s.handlePGPIdentity)))
 	mux.HandleFunc("GET /api/pgp/keyserver/lookup", s.withAuth(s.handlePGPKeyserverLookup))
 	// withMailAuth: mobile compose calls this to warn about keyless recipients
 	// before sending. It reads the caller's own contacts to answer the same

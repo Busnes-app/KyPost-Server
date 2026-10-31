@@ -13,7 +13,7 @@ Auth:
 - `GET /api/auth/captcha-config`
 - `GET /api/auth/pow-challenge` (`CAPTCHA_PROVIDER=pow` only)
 - `GET /api/auth/csrf`
-- `GET /api/auth/me`
+- `GET /api/auth/me` (includes `hasPassword`, false for an SSO-only account)
 - `POST /api/auth/logout`
 - `GET|POST /api/auth/password` (read a private password-change snapshot, then atomically commit credential and optional PGP rewrap; forced resets preserve the previous sealed key for recovery)
 - `POST /api/auth/step-up` (body `{authSecret, code}`: re-confirms the account credential, and a second factor when one is enrolled, before the Security page renders; a session signed in through KySignOn confirms with KySignOn instead, see below)

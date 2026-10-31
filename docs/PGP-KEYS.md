@@ -56,6 +56,11 @@ Keep these recovery and unlock requirements in mind:
   deleting the identity removes the server copy, and a server loss removes it
   as well. **Run recovery drill** tests your copy and secret without changing
   the key; its date is recorded only in this browser, for the copy tested.
+- **An account that signs in only through KySignOn has no password.** It
+  chooses a separate encryption passphrase when it creates or imports its key,
+  and enters that to unlock. Key changes are confirmed with a KySignOn sign-in.
+  Nobody can recover a forgotten passphrase: keep a recovery copy and its
+  secret. **Change passphrase** under Security → Encryption re-encrypts the key.
 - **You unlock the key once for each browser session.** The browser holds the
   unwrapped key in page memory only, never in localStorage or sessionStorage.
   After a reload you must enter your password again.

@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useDialogOpen } from "../hooks/useDialogOpen";
 import { unlockPGPSession } from "../lib/pgpSession";
 import { toErrorMessage } from "../api/client";
+import { useAuth } from "../auth";
 
 type Props = {
   open: boolean;
@@ -12,7 +13,8 @@ type Props = {
 };
 
 /**
- * Prompts for the account password to unwrap the PGP private key.
+ * Prompts for the account password to unwrap the PGP private key — or, on an
+ * SSO-only account, the encryption passphrase that stands in for it.
  *
  * This appears on demand rather than at login: a user who never opens an
  * encrypted message should never be asked. It also appears again after every
@@ -27,6 +29,7 @@ export function PgpUnlockDialog({ open, reason, onUnlocked, onCancel }: Props) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const secretName = useAuth().hasPassword === false ? "encryption passphrase" : "account password";
 
   useDialogOpen(dialogRef, open);
 
@@ -76,13 +79,13 @@ export function PgpUnlockDialog({ open, reason, onUnlocked, onCancel }: Props) {
         </div>
         <div className="rules-help-body">
           <p className="contacts-muted">
-            {reason ? `Your password is needed ${reason}. ` : ""}
-            Your private key is encrypted with your account password, and this server cannot open it — so it has to be
+            {reason ? `Your ${secretName} is needed ${reason}. ` : ""}
+            Your private key is encrypted with your {secretName}, and this server cannot open it — so it has to be
             unlocked here each time the page loads.
           </p>
           <form onSubmit={submit}>
             <label htmlFor={passwordId} style={{ display: "block", marginBottom: 4 }}>
-              Account password
+              {secretName === "account password" ? "Account password" : "Encryption passphrase"}
             </label>
             <input
               id={passwordId}
