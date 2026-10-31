@@ -18,6 +18,12 @@ non-prerelease version.
 
 ## Unreleased
 
+### Added
+
+- Suite app rail. Accounts signed in through KyIdentity get icons for the other suite apps
+  at the foot of the sidebar; each opens through the existing KyIdentity session. Backed by
+  `GET /api/suite/apps`. Shared UI assets move to ky-ui 0.9.0.
+
 ### Security
 
 - The frontend lint toolchain (`frontend/lint`, development only, not shipped) forces `minimatch`

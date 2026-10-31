@@ -1,19 +1,21 @@
 {
-  "version": "0.7.0",
+  "version": "0.9.0",
   "source": "https://github.com/Busnes-app/ky-ui",
   "files": {
-    "tokens.css": "130249c68336dab27c9338b8c3b489e2d776e20ba9907a4d24fdc94e157803fa",
-    "navigation.css": "241d9015468e7712cf9e58b563d7b42f26dcd15d59f9f4747aaffd331722f420",
-    "shell.css": "a3b7084c1f0e975292442274aa50ccb09dd9ee5b260e3d98470858ef4a3b0709",
+    "tokens.css": "9790d18239c1f4c9e48a32850f2a1480da038454251b5d93506b6b81849ee1ce",
+    "navigation.css": "ab6bbf8397ef5d0af04263d017ca7298629d30d9ae35b02ce92a922125be031c",
+    "shell.css": "8b9f25d11328da8b97ec324e75966aa14542c222b1e352a6bae944502462f0f6",
     "appearance.css": "891ca83ec13d8f9d1d83e2707b14d0e6652150f90be46852e246e9e2c275be1c",
     "appearance-themes.css": "25440167f1897152f97de8ae58fc0da33c98fc6b660e145379cbdbd0c1927382",
-    "themes.js": "84fef1d275da9ade9e2e11ef4362f126a9bf649b1b53ccfcf8390179139346d1",
+    "themes.js": "6a4852b5c5e990818404a7eb189790e371d6e033b798712f38a6e14f13db75f5",
     "themes.d.ts": "0cc2f64ac7791432ecfb1080f9500ea966c536a80fe29fb2d5b3c533cfda9860",
     "theme.js": "7ef7a273203468d0c5fd5292219f940fafa02df35dd974c59a4d98acadc2ec05",
     "theme.d.ts": "cb4531828970899ba232a3321403f08a1251813adbb8906b391789d5b0771fba",
+    "appmarks.js": "e9aa6df70b24f133e00eb1290855163d409f61ff04f45f3b74d754067be62efd",
+    "appmarks.d.ts": "e786d8a6faf3d00a42e03977a417392665da69f0a90a8cdc0838737f01d7b3e1",
     "check-vendor.mjs": "1fdca377e486e52d9e660893ebfc2f1a90ddb6578eca24d8f844bb5485f3e053",
     "palettes.ts": "334a6881a5c6cc051a9eae024dbbb75756493c483c98c72eddbeb84a5392b447",
     "palettes-browser.js": "1d0eefa32f87773162bcc21dd7419d077c99ac133d01afe637a4e3acc738c532",
-    "themes-browser.js": "981cef188fe0c5998ebea65477a5bee0ca01ce6f9008ba51d67dabca60222b20"
+    "themes-browser.js": "29be9423733580dc9f9d43b85e5407af420aacdbeb8b9823036bd65e7f0e8bc9"
   }
 }

@@ -6,7 +6,7 @@ toolchain go1.27.3
 
 require (
 	github.com/BrianLeishman/go-imap v0.1.28
-	github.com/Busnes-app/ky-primitives v0.10.1
+	github.com/Busnes-app/ky-primitives v0.10.2-0.20261031161215-6478a44aaa9d
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/ProtonMail/gopenpgp/v3 v3.5.2
 	github.com/SherClockHolmes/webpush-go v1.4.0
