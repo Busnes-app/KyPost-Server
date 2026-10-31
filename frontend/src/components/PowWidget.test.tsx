@@ -68,7 +68,7 @@ describe("PowWidget", () => {
   it("reports a completed check to the user", async () => {
     stubFetch(await challengeFor(3));
     render(<PowWidget onToken={vi.fn()} />);
-    await waitFor(() => expect(screen.getByText(/verified/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/check passed/i)).toBeTruthy());
   });
 
   it("asks for HTTPS instead of throwing when the page is not a secure context", async () => {

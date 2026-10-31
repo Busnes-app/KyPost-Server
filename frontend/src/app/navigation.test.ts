@@ -7,7 +7,6 @@ describe("visibleSettingsGroups", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].heading).toBeUndefined();
     expect(groups[0].items.map((i) => i.label)).toEqual([
-      "Appearance",
       "Mail",
       "Security",
       "Notifications",

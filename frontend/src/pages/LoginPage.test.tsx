@@ -282,7 +282,7 @@ describe("single sign-on button", () => {
     );
     renderLoginPage();
 
-    const link = await screen.findByRole("link", { name: "Continue with Single Sign On" });
+    const link = await screen.findByRole("link", { name: "Continue with single sign-on" });
     expect(link.getAttribute("href")).toBe("/api/auth/oidc/login");
     expect(screen.getAllByText(/single sign[- ]on/i)).toHaveLength(1);
   });

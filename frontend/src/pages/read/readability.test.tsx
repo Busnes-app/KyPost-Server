@@ -67,13 +67,13 @@ function frameColours(): { ink: string; bg: string } {
   return { ink, bg };
 }
 
-// Light and dark are not a boolean in this app — there are fifteen themes and
-// several sit between the two. These four are named explicitly because a test
+// Light and dark are not a boolean in this app — there are twelve themes in six
+// pairs. These four are named explicitly because a test
 // that says "dark mode" should be checking a theme that is actually dark, and
 // because the light/dark split is exactly what the old system-colour-keyword bug
 // was invisible in: it only broke on the dark ones.
-const DARK_THEMES: ThemeName[] = ["Dark Matter", "Tropic Night"];
-const LIGHT_THEMES: ThemeName[] = ["Light Matter", "White Cliffs"];
+const DARK_THEMES: ThemeName[] = ["Matter Dark", "Ocean Dark"];
+const LIGHT_THEMES: ThemeName[] = ["Matter Light", "Ocean Light"];
 
 function isDark(theme: ThemeName): boolean {
   applyTheme(theme);

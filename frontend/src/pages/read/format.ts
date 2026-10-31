@@ -31,16 +31,24 @@ export function formatInboxListTime(value: string): string {
     return "Yesterday";
   }
   if (diffDays > 1 && diffDays <= 6) {
-    return date.toLocaleDateString([], { weekday: "long" });
+    return date.toLocaleDateString([], { weekday: "short" });
   }
-  return date.toLocaleDateString();
+  return date.toLocaleDateString([], date.getFullYear() === now.getFullYear()
+    ? { month: "short", day: "numeric" }
+    : { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** The display name from `Name <address>`, else the bare address. */
+export function senderName(sender: string): string {
+  const named = sender.match(/^\s*"?([^"<]*?)"?\s*<[^>]*>\s*$/)?.[1]?.trim();
+  return named || sender.replace(/[<>]/g, "").trim() || "-";
 }
 
 export function formatUpdatedLabel(lastLoadedAt: Date | null, now: number): string {
-  if (!lastLoadedAt) return "Updated Never";
+  if (!lastLoadedAt) return "Not updated yet";
   const elapsedMs = now - lastLoadedAt.getTime();
   if (elapsedMs < 3 * 60 * 1000) {
-    return "Updated Just Now";
+    return "Updated just now";
   }
   return `Updated ${lastLoadedAt.toLocaleTimeString([], {
     hour: "numeric",

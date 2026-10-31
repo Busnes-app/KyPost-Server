@@ -17,9 +17,8 @@ import { downloadFile, getJSON, postJSON, selectedMailboxId, toErrorMessage } fr
 import { usePagination } from "../hooks/usePagination";
 import { mailboxName, useMailboxes } from "../app/mailboxes";
 import type { DraftComposePayload } from "../app/types";
-import { useDialogOpen } from "../hooks/useDialogOpen";
 import { PageTabs } from "../components/PageTabs";
-import { ArchiveIcon, CheckIcon, ClockIcon, CloseIcon, ImageIcon, PrintIcon, TrashIcon, WarningIcon } from "./read/icons";
+import { ArchiveIcon, CheckIcon, ClockIcon, CloseIcon, ImageIcon, PrintIcon, RefreshIcon, TrashIcon, WarningIcon } from "./read/icons";
 import { SnoozeDialog } from "./read/SnoozeDialog";
 import { sortTime } from "../lib/snooze";
 
@@ -42,11 +41,12 @@ import {
   SWIPE_ACTIVATE_THRESHOLD,
   SWIPE_DISMISS_RATIO,
   SWIPE_MAX_OFFSET_RATIO,
-  SWIPE_HAPTICS_STORAGE_KEY
+  SWIPE_HAPTICS_STORAGE_KEY,
+  READING_PANE_QUERY
 } from "./read/types";
 import type { InboxDeltaResponse } from "./read/inboxDelta";
 import { applyInboxDelta, messageIDsIn, withoutMessages } from "./read/inboxDelta";
-import { formatBytes, formatTimestamp, formatInboxListTime, formatUpdatedLabel } from "./read/format";
+import { formatBytes, formatTimestamp, formatInboxListTime, formatUpdatedLabel, senderName } from "./read/format";
 import {
   ensureSubjectPrefix,
   escapeHtml,
@@ -149,7 +149,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   const [sortKey, setSortKey] = useState<SortKey>("time");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
-  // Re-renders every 30s so relative times such as "Updated Just Now" stay current.
+  // Re-renders every 30s so relative times (row times, the refresh tooltip) stay current.
   const [, setClockTick] = useState(0);
   const [swipeRows, setSwipeRows] = useState<Record<string, SwipeRowState>>({});
   const [searchMode, setSearchMode] = useState(false);
@@ -452,12 +452,15 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       // at least `limit` entries — so at limit=500 every mailbox under 500
       // messages missed the cache on every single load, including the one this
       // page fires after each delete and every 15 seconds besides.
+      //
+      // preview=1: a short plain-text snippet per row, only for bodies the
+      // server already holds and never for encrypted mail (server_inbox.go).
       // Alongside the list; failing costs only the "until" labels.
       const snoozes = isSnoozedMailbox
         ? getJSON<{ snoozes: Array<{ messageId: string; wakeAt: string }> }>("/api/snoozes").catch(() => null)
         : null;
       const data = await getJSON<InboxDeltaResponse>(
-        `/api/inbox?limit=500&bodies=0&since=${cursorRef.current}${mailboxQuery}`
+        `/api/inbox?limit=500&bodies=0&preview=1&since=${cursorRef.current}${mailboxQuery}`
       );
       if (loadId !== loadIdRef.current) return;
       setLastLoadedAt(new Date());
@@ -542,7 +545,20 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     return () => clearInterval(timer);
   }, [mailbox]);
 
-  useDialogOpen(emailReaderDialogRef, selected);
+  // Wide screens read in a pane beside the list (a non-modal dialog the layout
+  // places); narrower ones keep the modal reader.
+  const readerModalRef = useRef(false);
+  useEffect(() => {
+    const dialog = emailReaderDialogRef.current;
+    if (!dialog) return;
+    if (selected && !dialog.open) {
+      readerModalRef.current = !window.matchMedia?.(READING_PANE_QUERY).matches;
+      if (readerModalRef.current) dialog.showModal();
+      else dialog.show();
+    } else if (!selected && dialog.open) {
+      dialog.close();
+    }
+  }, [selected]);
 
   const openLinkedEmail = useEffectEvent(openEmailDetails);
 
@@ -704,7 +720,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     },
     {
       key: "read",
-      label: "Read",
+      label: "Mark read",
       icon: <CheckIcon />,
       onClick: () => applyInboxAction("read", selectedMessageIds),
       disabled: selectedMessageIds.length === 0 || actionLoading
@@ -721,6 +737,27 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   useEffect(() => {
     setCurrentPage(1);
   }, [mailbox, activeTab, sortKey, sortDirection, setCurrentPage]);
+
+  // One scannable line per message: sender name (address on hover), subject and
+  // snippet, then the time. Unread weight lands on sender and subject only.
+  function messageUnit(item: InboxEmail, open: () => void) {
+    return (
+      <button type="button" className="inbox-unit" onClick={open}>
+        <span className="inbox-from" title={item.sender || undefined}>{senderName(item.sender)}</span>
+        <span className="inbox-line">
+          {item.hasAttachments ? <span className="inbox-attachment-icon" title="Has attachments" aria-label="Has attachments">📎 </span> : null}
+          <span className="inbox-subject">{item.subject || "(no subject)"}</span>
+          {(item.keywords ?? []).map((kw) => (
+            <span key={kw} className="inbox-keyword-chip">{kw}</span>
+          ))}
+          {item.preview ? <span className="inbox-snippet">{item.preview}</span> : null}
+        </span>
+        <time className="inbox-time" dateTime={item.atUtc} title={formatTimestamp(item.atUtc)}>
+          {formatInboxListTime(item.atUtc)}{snoozeBadge(item)}
+        </time>
+      </button>
+    );
+  }
 
   // Woken mail is marked; the Snoozed folder shows when each row wakes.
   function snoozeBadge(item: InboxEmail) {
@@ -1411,28 +1448,37 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               <span>Haptics</span>
             </label>
           ) : null}
-          {/* Contextual: every action needs a selection, so the bar shows only with one. */}
-          {selectedMessageIds.length > 0 ? <span className="inbox-selected-count" role="status">{selectedMessageIds.length} selected</span> : null}
-          {selectedMessageIds.length > 0 ? batchActions.map((action) => (
-            <button
-              key={action.key}
-              type="button"
-              onClick={action.onClick}
-              disabled={action.disabled}
-              className={action.key === "delete" ? "inbox-action-button btn-ghost btn-danger" : "inbox-action-button btn-ghost"}
-              aria-label={action.label}
-              title={action.label}
-            >
-              <span className="inbox-action-icon" aria-hidden="true">{action.icon}</span>
-              <span className="inbox-action-text">{action.label}</span>
-            </button>
-          )) : null}
         </div>
       </div>
 
       {error ? <p className="notice notice-error">Failed to load inbox: {error}</p> : null}
       {actionError ? <p className="notice notice-error">Inbox action failed: {actionError}</p> : null}
 
+      <div className="read-layout">
+      <div className="read-list">
+      {selectedMessageIds.length > 0 ? (
+        // Contextual: every action needs a selection, so the bar replaces search only while one exists.
+        <div className="inbox-bulk-bar" role="toolbar" aria-label="Selected messages">
+          <span className="inbox-selected-count" role="status">{selectedMessageIds.length} selected</span>
+          {batchActions.map((action) => (
+            <button
+              key={action.key}
+              type="button"
+              onClick={action.onClick}
+              disabled={action.disabled}
+              className="inbox-action-button btn-ghost"
+              aria-label={action.label}
+              title={action.label}
+            >
+              <span className="inbox-action-icon" aria-hidden="true">{action.icon}</span>
+              <span className="inbox-action-text">{action.label}</span>
+            </button>
+          ))}
+          <button type="button" className="btn-ghost inbox-bulk-clear" onClick={() => setSelectedMessageIds([])}>
+            Clear selection
+          </button>
+        </div>
+      ) : (
       <div className="inbox-search">
           <input
             type="text"
@@ -1468,7 +1514,19 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               Clear
             </button>
           ) : null}
+          {/* The list refreshes itself every 15 seconds; this is the manual nudge. */}
+          <button
+            type="button"
+            onClick={loadInbox}
+            disabled={loading || actionLoading}
+            className="btn-ghost icon-button inbox-refresh"
+            aria-label="Refresh inbox"
+            title={`${updatedLabel}. Refresh`}
+          >
+            <RefreshIcon />
+          </button>
       </div>
+      )}
 
       {searchMode ? (
         <div className="inbox-list-region">
@@ -1488,57 +1546,27 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                   <thead>
                     <tr>
                       <th className="inbox-col-heading inbox-col-lock" aria-label="Encrypted" />
-                      <th className="inbox-col-heading">Subject</th>
-                      <th className="inbox-col-heading inbox-desktop-col">Sender</th>
-                      <th className="inbox-col-heading inbox-col-time inbox-desktop-col">Time</th>
+                      <th className="inbox-col-heading"><span className="visually-hidden">Message</span></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {searchResults.map((item) => {
-                      const isRead = item.status === "read";
-                      const displayTime = formatInboxListTime(item.atUtc);
-                      return (
-                        <tr
-                          key={item.messageId}
-                          className={`inbox-row ${isRead ? "" : "inbox-row-unread"}`.trim()}
-                          // Not setSelected: opening a message is more than
-                          // assigning it. openEmailDetails also clears the
-                          // previous message's attachment list — otherwise a
-                          // link labelled invoice.pdf downloads attachment #N
-                          // of whatever was open before — and marks it read.
-                          onClick={() => void openEmailDetails(item)}
-                          style={{ cursor: "pointer" }}
-                        >
-                          <EncryptionCell email={item} local={decrypted[decryptedKey(item.messageId)]} clientProtected={isClientProtected()} />
-                          <td className="inbox-cell">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void openEmailDetails(item);
-                              }}
-                              style={{
-                                background: "none",
-                                border: "none",
-                                cursor: "pointer",
-                                textAlign: "left",
-                                padding: 0,
-                                fontSize: "0.95rem",
-                                fontWeight: isRead ? "normal" : "600"
-                              }}
-                            >
-                              {item.subject || "(no subject)"}
-                            </button>
-                          </td>
-                          <td className="inbox-cell inbox-desktop-col" style={{ fontSize: "0.9rem", color: "var(--ink-weaker)" }}>
-                            {item.sender}
-                          </td>
-                          <td className="inbox-cell inbox-col-time inbox-desktop-col" style={{ fontSize: "0.85rem", color: "var(--ink-weaker)" }}>
-                            {displayTime}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {searchResults.map((item) => (
+                      <tr
+                        key={item.messageId}
+                        className={`inbox-row ${item.status === "read" ? "" : "inbox-row-unread"}`.trim()}
+                        data-open={selected?.messageId === item.messageId || undefined}
+                      >
+                        <EncryptionCell email={item} local={decrypted[decryptedKey(item.messageId)]} clientProtected={isClientProtected()} />
+                        <td className="inbox-cell">
+                          {/* Not setSelected: opening a message is more than
+                              assigning it. openEmailDetails also clears the
+                              previous message's attachment list — otherwise a
+                              link labelled invoice.pdf downloads attachment #N
+                              of whatever was open before — and marks it read. */}
+                          {messageUnit(item, () => void openEmailDetails(item))}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -1622,27 +1650,25 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                       </label>
                     </th>
                     <th className="inbox-col-heading inbox-col-lock" aria-label="Encrypted" />
+                    {/* One cell, laid out on the row's own columns: sender, subject, time. */}
                     <th className="inbox-col-heading">
-                      <button type="button" onClick={() => updateSort("subject")} className="inbox-sort-button">
-                        {sortLabel("subject", "Subject")}
-                      </button>
-                    </th>
-                    <th className="inbox-col-heading inbox-desktop-col">
-                      <button type="button" onClick={() => updateSort("sender")} className="inbox-sort-button">
-                        {sortLabel("sender", "Sender")}
-                      </button>
-                    </th>
-                    <th className="inbox-col-heading inbox-col-time inbox-desktop-col">
-                      <button type="button" onClick={() => updateSort("time")} className="inbox-sort-button">
-                        {sortLabel("time", "Time")}
-                      </button>
+                      <div className="inbox-unit inbox-unit-head">
+                        <button type="button" onClick={() => updateSort("sender")} className="inbox-sort-button inbox-from">
+                          {sortLabel("sender", "Sender")}
+                        </button>
+                        <button type="button" onClick={() => updateSort("subject")} className="inbox-sort-button inbox-line">
+                          {sortLabel("subject", "Subject")}
+                        </button>
+                        <button type="button" onClick={() => updateSort("time")} className="inbox-sort-button inbox-time">
+                          {sortLabel("time", "Time")}
+                        </button>
+                      </div>
                     </th>
                   </tr>
                 </thead>
                 <tbody className={`inbox-body-refill-${refillAnimationTick % 2}`}>
                   {pageRows.map((item) => {
                     const isRead = item.status === "read";
-                    const displayTime = formatInboxListTime(item.atUtc);
                     const swipeState = swipeRows[item.messageId];
                     const swipeClass = swipeState
                       ? [
@@ -1668,6 +1694,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                       onTouchEnd={() => void handleSwipeEnd()}
                       onTouchCancel={() => void handleSwipeEnd()}
                       className={`inbox-row ${isRead ? "" : "inbox-row-unread"} ${swipeClass}`.trim()}
+                      data-open={selected?.messageId === item.messageId || undefined}
                       style={swipeState ? { transform: `translateX(${swipeState.offset}px)` } : undefined}
                     >
                       <td className="inbox-cell inbox-col-select">
@@ -1697,29 +1724,13 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                             {swipeState.tone === "delete" ? "Delete" : "Archive"}
                           </span>
                         ) : null}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (swipeClickSuppressRef.current.has(item.messageId)) {
-                              return;
-                            }
-                            void openEmailDetails(item);
-                          }}
-                          className={`inbox-subject-button ${isRead ? "" : "inbox-subject-unread"}`}
-                        >
-                          {item.hasAttachments ? <span className="inbox-attachment-icon" title="Has attachments" aria-label="Has attachments">📎 </span> : null}
-                          {item.subject || "(no subject)"}
-                        </button>
-                        <div className="inbox-row-meta">
-                          <span>{item.sender || "-"}</span>
-                          <span>{displayTime}{snoozeBadge(item)}</span>
-                          {(item.keywords ?? []).map((kw) => (
-                            <span key={kw} className="inbox-keyword-chip">{kw}</span>
-                          ))}
-                        </div>
+                        {messageUnit(item, () => {
+                          if (swipeClickSuppressRef.current.has(item.messageId)) {
+                            return;
+                          }
+                          void openEmailDetails(item);
+                        })}
                       </td>
-                      <td className="inbox-cell inbox-sender-cell inbox-desktop-col">{item.sender || "-"}</td>
-                      <td className="inbox-cell inbox-time-cell inbox-desktop-col">{displayTime}{snoozeBadge(item)}</td>
                     </tr>
                   )})}
                 </tbody>
@@ -1729,19 +1740,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         </div>
       )}
 
-      <div className="inbox-updated-footer">
-        <button
-          type="button"
-          onClick={loadInbox}
-          disabled={loading || actionLoading}
-          className="inbox-updated-button"
-          aria-label="Refresh inbox"
-          title="Refresh inbox"
-        >
-          {updatedLabel}
-        </button>
       </div>
-
       <dialog
         ref={emailReaderDialogRef}
         className="email-reader-backdrop"
@@ -1751,7 +1750,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
           setSelected(null);
         }}
         onClick={(event) => {
-          if (event.target === emailReaderDialogRef.current) {
+          if (readerModalRef.current && event.target === emailReaderDialogRef.current) {
             setSelected(null);
           }
         }}
@@ -2083,6 +2082,8 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
           </div>
         ) : null}
       </dialog>
+      {selected ? null : <p className="reading-pane-empty">Select a message to read it here.</p>}
+      </div>
       <SnoozeDialog
         open={snoozeTarget !== null}
         busy={actionLoading}

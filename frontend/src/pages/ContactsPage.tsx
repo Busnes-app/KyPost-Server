@@ -44,7 +44,7 @@ import {
 import { PGPKeyInfo } from "./contacts/PGPKeyInfo";
 import { ContactAvatar } from "./contacts/ContactAvatar";
 import { ContactDetailsDialog } from "./contacts/ContactDetailsDialog";
-import { ChevronIcon, CloseIcon } from "./read/icons";
+import { ChevronIcon, CloseIcon, MoreIcon, PlusIcon } from "./read/icons";
 
 export function ContactsPage() {
   const contactActionsId = useId();
@@ -494,22 +494,17 @@ export function ContactsPage() {
 
   return (
     <section className="panel contacts-page">
-      <header className="contacts-header">
+      <header className="ky-page-head">
         <div>
-          <h1>Contacts</h1>
+          <h1 className="ky-page-title">Contacts</h1>
+          <p className="ky-page-lede">Your address book. Phones and mail apps can sync it over CardDAV.</p>
         </div>
         <div className="contacts-header-actions">
-          {!loading && contacts.length > 0 ? (
-            <div className="contacts-stats">
-              <span className="contacts-stat">
-                <strong>{contacts.length}</strong> contact{contacts.length === 1 ? "" : "s"}
-              </span>
-            </div>
-          ) : null}
-          <button type="button" className="btn-primary" onClick={openCreateForm}>
-            New Contact
-          </button>
           <button type="button" popoverTarget={contactActionsId}>More actions</button>
+          <button type="button" className="ky-page-action" onClick={openCreateForm}>
+            <PlusIcon />
+            New contact
+          </button>
           <div id={contactActionsId} popover="auto" className="suite-action-menu contacts-utility-menu"
             onClickCapture={(event) => {
               if (event.target instanceof Element && event.target.closest("button, a")) event.currentTarget.hidePopover?.();
@@ -566,25 +561,20 @@ export function ContactsPage() {
       </header>
 
       <div className="contacts-card contacts-list-card">
-        <div className="contacts-list-head">
-          <h2>Address Book</h2>
-          {!loading && contacts.length > 0 ? (
-            <span className="contacts-count">
-              {filteredContacts.length}
-              {search.trim() ? ` of ${contacts.length}` : ""}
-            </span>
-          ) : null}
-        </div>
-
         {!loading && contacts.length > 0 ? (
-          <input
-            type="text"
-            className="contacts-search"
-            aria-label="Search contacts"
-            placeholder="Search by name, email, phone, or organization..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <div className="contacts-list-head">
+            <input
+              type="text"
+              className="contacts-search"
+              aria-label="Search contacts"
+              placeholder="Search by name, email, phone, or organization..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <span className="contacts-count" role="status">
+              {search.trim() ? `${filteredContacts.length} of ${contacts.length}` : contacts.length} contact{contacts.length === 1 ? "" : "s"}
+            </span>
+          </div>
         ) : null}
 
         {loading ? <p className="contacts-muted">Loading contacts...</p> : null}
@@ -624,8 +614,8 @@ export function ContactsPage() {
                         </label>
                       </th>
                       <th>Name</th>
-                      <th>Contact Info</th>
-                      <th className="contacts-col-actions">Actions</th>
+                      <th>Contact info</th>
+                      <th className="contacts-col-actions"><span className="visually-hidden">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -660,9 +650,6 @@ export function ContactsPage() {
                                 {contact.isSelf ? <span className="contacts-sub">Your contact card</span> : null}
                                 {contact.org ? <span className="contacts-sub">{contact.org}</span> : null}
                               </div>
-                              <span className="contacts-row-chevron">
-                                <ChevronIcon />
-                              </span>
                             </button>
                           </td>
                           <td>{contactDisplayLine(contact) || <span className="contacts-muted">—</span>}</td>
@@ -670,20 +657,21 @@ export function ContactsPage() {
                             <div className="contacts-actions" onClick={(e) => e.stopPropagation()}>
                               <button
                                 type="button"
-                                className="contacts-action btn-ghost"
-                                onClick={() => openEditForm(contact)}
+                                className="btn-ghost icon-button contacts-row-menu"
+                                popoverTarget={`${contactActionsId}-${contact.uid}`}
+                                aria-label={`Actions for ${contact.fn}`}
+                                title="Actions"
                                 disabled={busy}
                               >
-                                Edit
+                                <MoreIcon />
                               </button>
-                              <button
-                                type="button"
-                                className="contacts-action btn-ghost btn-danger"
-                                onClick={() => void removeContact(contact)}
-                                disabled={busy}
-                              >
-                                {busy ? "Deleting..." : "Delete"}
-                              </button>
+                              <div id={`${contactActionsId}-${contact.uid}`} popover="auto" className="suite-action-menu contacts-row-actions"
+                                onClickCapture={(event) => {
+                                  if (event.target instanceof Element && event.target.closest("button")) event.currentTarget.hidePopover?.();
+                                }}>
+                                <button type="button" className="btn-ghost" onClick={() => openEditForm(contact)}>Edit</button>
+                                <button type="button" className="btn-ghost" onClick={() => void removeContact(contact)}>Delete</button>
+                              </div>
                             </div>
                           </td>
                         </tr>
@@ -727,7 +715,7 @@ export function ContactsPage() {
             aria-labelledby="contact-form-title"
           >
             <header className="contacts-form-head">
-              <h2 id="contact-form-title">{editingUid ? "Edit Contact" : "Add Contact"}</h2>
+              <h2 id="contact-form-title">{editingUid ? "Edit contact" : "Add contact"}</h2>
               <button type="button" className="btn-ghost icon-button" aria-label="Close" title="Close" onClick={closeForm} disabled={saving}>
                 <CloseIcon />
               </button>
@@ -1235,7 +1223,7 @@ export function ContactsPage() {
                 Cancel
               </button>
               <button type="submit" className="contacts-create-submit" disabled={saving}>
-                {saving ? "Saving..." : editingUid ? "Save Changes" : "Add Contact"}
+                {saving ? "Saving…" : editingUid ? "Save changes" : "Add contact"}
               </button>
             </footer>
           </form>
