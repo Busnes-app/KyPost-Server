@@ -28,7 +28,7 @@ export function ServerPanel() {
   return (
     <section className="panel">
       <div className="config-header">
-        <h1>Server</h1>
+        <h2 className="visually-hidden">Server</h2>
         <p>Runtime behaviour, updates, verified mail domains, and user accounts.</p>
       </div>
       <PanelTabs

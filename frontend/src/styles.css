@@ -70,6 +70,7 @@
 body {
   margin: 0;
   font-family: var(--sans);
+  font-size: var(--ky-type-body);
   color: var(--ink);
   background: radial-gradient(circle at top right, var(--glow), transparent 45%), var(--bg);
 }
@@ -98,19 +99,13 @@ body {
 .new-email-button {
   width: 100%;
   min-height: var(--ky-control-size);
-  border: 1px solid var(--new-email-border);
-  background: linear-gradient(180deg, var(--new-email-start), var(--new-email-end));
-  color: var(--new-email-text);
-  font-weight: 600;
-}
-
-.new-email-button.new-email-button-quiet {
   border-color: var(--ky-field-border);
   background: transparent;
   color: var(--ink-strong);
+  font-weight: 600;
 }
 
-.new-email-button.new-email-button-quiet:hover {
+.new-email-button:hover {
   background: color-mix(in srgb, var(--ink-strong) 7%, transparent);
 }
 
@@ -151,11 +146,6 @@ body {
   padding: var(--ky-space-1) var(--ky-space-2) 0;
 }
 
-.sidebar-app-logo {
-  border-radius: 7px;
-  flex: none;
-}
-
 .sidebar-wordmark {
   font-size: 1.15rem;
   font-weight: 700;
@@ -167,35 +157,6 @@ body {
   flex: 1;
 }
 
-.sidebar-account {
-  margin-top: auto;
-  padding-top: var(--ky-space-3);
-  border-top: 1px solid var(--line);
-  display: grid;
-  gap: var(--ky-space-2);
-}
-
-.sidebar-account-copy {
-  min-width: 0;
-  padding: 0 var(--ky-space-2);
-  line-height: 1.35;
-}
-
-.sidebar-account-name {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  color: var(--ink-strong);
-}
-
-.sidebar-account-role {
-  display: block;
-  font-size: var(--ky-type-meta);
-  color: var(--ink);
-}
-
 .sidebar-footer {
   font-size: 0.75rem;
   color: var(--ink);
@@ -205,17 +166,6 @@ body {
 
 .sidebar-footer p {
   margin: 0;
-}
-
-.license-link {
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  text-decoration: underline;
 }
 
 .sidebar h1 {
@@ -292,11 +242,30 @@ body {
   min-width: 0;
 }
 
+/* The Inbox link spans the row like every item; "+" sits inside it and shows on hover or focus. */
 .inbox-nav-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: stretch;
+  position: relative;
+}
+
+.inbox-nav-row > a {
+  padding-right: calc(var(--ky-control-size) + var(--ky-space-1));
+}
+
+.sidebar .inbox-nav-row > .inbox-expand-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  opacity: 0;
+}
+
+.sidebar .inbox-nav-row:hover > .inbox-expand-button,
+.sidebar .inbox-nav-row > .inbox-expand-button:focus-visible,
+.sidebar .inbox-nav-row > .inbox-expand-button[aria-expanded="true"] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .sidebar .inbox-nav-row > .inbox-expand-button { opacity: 1; }
 }
 
 .inbox-expand-button {
@@ -314,28 +283,9 @@ body {
 
 /* One group per audience. A non-admin sees a single unheaded group, so the
    subgroup is invisible to them and only the spacing above applies. */
-.sidebar .nav-subgroup {
-  display: grid;
-  gap: 4px;
-}
-
 /* Separates a group that is not one of the settings panels — the apps link —
    from the panel groups above it, so it does not read as belonging to
    whichever heading happens to come last. */
-.sidebar .nav-subgroup-detached {
-  margin-top: 0.5rem;
-  padding-top: 0.6rem;
-  border-top: 1px solid var(--line);
-}
-
-.sidebar .nav-subheading {
-  margin: var(--ky-space-2) 0 var(--ky-space-1);
-  padding: 0 var(--ky-space-2);
-  font-size: var(--ky-type-meta);
-  font-weight: 600;
-  color: var(--ink);
-}
-
 .sidebar-folder-form {
   display: grid;
   gap: 8px;
@@ -419,13 +369,10 @@ body {
   display: none;
 }
 
-.sidebar .mobile-settings-toggle {
-  display: none;
-}
-
+/* Pages sit on the canvas; the sidebar and raised surfaces carry the other tones. */
 .content {
   min-width: 0;
-  background: var(--panel);
+  background: var(--bg);
 }
 
 /* Pages sit flat on one content surface; only overlays carry a shadow. */
@@ -626,17 +573,17 @@ body {
 }
 
 .inbox-col-select {
-  width: 42px;
+  width: 36px;
   text-align: center;
 }
 
 /* The encryption column. Narrow and unlabelled: its header would have to read
    "Encrypted" over a 34px column of mostly-empty cells, which costs more room
-   than the signal is worth. The <th> carries an aria-label instead. Not marked
-   inbox-desktop-col — a padlock is exactly the thing worth keeping on a phone,
-   and at this width it costs almost nothing. */
+   than the signal is worth. The <th> carries an aria-label instead. Phones keep
+   it: a padlock is exactly the thing worth keeping, and it costs almost nothing. */
 .inbox-col-lock {
-  width: 34px;
+  width: 22px;
+  padding-inline: 0 !important;
   text-align: center;
 }
 
@@ -658,7 +605,7 @@ body {
   font-size: var(--ky-type-meta);
   font-weight: 600;
   color: var(--ink);
-  background: var(--panel);
+  background: var(--bg);
   position: sticky;
   top: 0;
   z-index: 2;
@@ -673,10 +620,6 @@ body {
    left of every row checkbox under it. */
 .inbox-col-heading.inbox-col-select {
   text-align: center;
-}
-
-.inbox-col-time {
-  min-width: 130px;
 }
 
 .inbox-sort-button {
@@ -781,7 +724,7 @@ body {
 .inbox-cell {
   border-bottom: 1px solid var(--line);
   padding: var(--inbox-cell-pad);
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 .inbox-checkbox {
@@ -822,50 +765,6 @@ body {
 .inbox-col-heading.inbox-col-select .inbox-select-hit {
   margin: -9px -10px;
   padding: 9px 10px;
-}
-
-.inbox-subject-button {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-  text-decoration: none;
-  font-weight: 400;
-  line-height: 1.35;
-}
-
-.inbox-subject-button:hover {
-  color: var(--ink-strong);
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--ink-strong) 45%, transparent);
-}
-
-.inbox-subject-unread {
-  color: var(--ink-strong);
-  font-weight: 650;
-}
-
-.inbox-sender-cell,
-.inbox-time-cell {
-  color: var(--ink);
-  font-size: var(--ky-type-nav);
-  font-variant-numeric: tabular-nums;
-}
-
-.inbox-row-unread .inbox-sender-cell,
-.inbox-row-unread .inbox-time-cell {
-  color: var(--ink-strong);
-  font-weight: 600;
-}
-
-.inbox-time-cell {
-  white-space: nowrap;
-}
-
-.inbox-row-meta {
-  display: none;
 }
 
 .email-reader-backdrop {
@@ -1012,8 +911,10 @@ body {
   padding: 16px 0;
   background: transparent;
   color: var(--ink-strong);
+  /* The sender's line breaks stay; long lines and URLs wrap, never scroll sideways. */
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   font-family: var(--sans);
   font-size: var(--ky-type-body);
   line-height: 1.6;
@@ -1185,6 +1086,13 @@ a:focus-visible,
   outline-offset: 2px;
 }
 
+/* Fields already draw a border: the ring sits on it, so it reads as one ring. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline-offset: -1px;
+}
+
 pre {
   font-family: var(--mono);
   white-space: pre-wrap;
@@ -1217,7 +1125,7 @@ pre {
 
 .health-head {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
@@ -3059,35 +2967,11 @@ pre {
   overflow: hidden;
 }
 
-.contacts-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
 .contacts-header-actions {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-}
-
-.contacts-stats {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.contacts-stat {
-  font-size: var(--ky-type-meta);
-  white-space: nowrap;
-  color: var(--ink);
-}
-
-.contacts-stat strong {
-  color: var(--ink-strong);
 }
 
 .contacts-card {
@@ -3275,12 +3159,6 @@ pre {
   font-variant-numeric: tabular-nums;
 }
 
-.contacts-list-head h2 {
-  margin: 0;
-  font-size: var(--ky-type-section);
-  font-weight: 600;
-}
-
 .contacts-search {
   width: 100%;
   margin-top: var(--ky-space-3);
@@ -3432,19 +3310,6 @@ pre {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 8px;
-}
-
-.contacts-row-chevron {
-  display: inline-flex;
-  margin-left: auto;
-  opacity: 0.6;
-  color: var(--ink);
-  transition: opacity 140ms ease, transform 140ms ease;
-}
-
-.contacts-row:hover .contacts-row-chevron {
-  opacity: 0.9;
-  transform: translateX(2px);
 }
 
 .contacts-avatar {
@@ -3877,10 +3742,6 @@ pre {
   .contacts-table .contacts-col-actions {
     padding-left: 0;
   }
-
-  .contacts-row-chevron {
-    display: none;
-  }
 }
 
 @media (max-width: 900px) {
@@ -3919,79 +3780,6 @@ pre {
 
 .compose-backdrop:not([open]) {
   display: none;
-}
-
-.license-window {
-  width: min(720px, 96vw);
-  max-height: 90vh;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  color: var(--ink-strong);
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.license-window-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.license-window-title {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.license-title-main {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.license-app-name {
-  font-size: 1.35rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  line-height: 1.1;
-}
-
-.license-version-badge {
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  padding: 2px 8px;
-  border-radius: 999px;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
-}
-
-.license-title-sub {
-  margin: 0;
-  font-size: 0.82rem;
-  opacity: 0.7;
-}
-
-.license-text {
-  width: 100%;
-  flex: 1;
-  min-height: 320px;
-  resize: vertical;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
-  line-height: 1.4;
-  white-space: pre;
-  background: var(--panel);
-  color: var(--ink-strong);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 12px;
 }
 
 .compose-window {
@@ -4658,29 +4446,6 @@ pre {
   border-color: color-mix(in srgb, #7bbf7b 70%, var(--line));
 }
 
-.inbox-updated-footer {
-  margin-top: auto;
-  padding-top: 16px;
-  display: flex;
-  justify-content: center;
-}
-
-.inbox-updated-button {
-  border: 0;
-  background: transparent;
-  color: var(--ink-strong);
-  font: inherit;
-  font-size: 0.85rem;
-  opacity: 0.75;
-  padding: 0;
-  cursor: pointer;
-}
-
-.inbox-updated-button:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
-
 @media (max-width: 900px) {
   .shell {
     grid-template-columns: minmax(0, 1fr);
@@ -4767,7 +4532,7 @@ pre {
 
   .sidebar-footer,
   .sidebar-section-label:not(.mailbox-switcher-label),
-  .sidebar-account-role {
+  .ky-user-role {
     display: none;
   }
 
@@ -4778,7 +4543,8 @@ pre {
     padding: 0 var(--ky-space-3);
   }
 
-  .sidebar-account {
+  /* Phone header: the user block shrinks to name and an icon-only Sign out. */
+  .sidebar .ky-user {
     grid-column: 3;
     grid-row: 1;
     margin: 0;
@@ -4789,13 +4555,16 @@ pre {
     gap: var(--ky-space-1);
   }
 
-  .sidebar-account-copy {
+  .sidebar .ky-user-copy {
     max-width: 6rem;
     padding: 0 0 0 var(--ky-space-1);
+  }
+
+  .sidebar .ky-user-name {
     font-size: var(--ky-type-meta);
   }
 
-  .sidebar .sidebar-account .nav-link-button {
+  .sidebar .ky-user-signout {
     width: var(--ky-control-size);
     padding: 0;
     justify-content: center;
@@ -4831,7 +4600,6 @@ pre {
 
   .mobile-quick-nav,
   .sidebar .nav-group,
-  .sidebar .nav-subgroup,
   .sidebar .sidebar-folder-row {
     display: flex;
     flex: none;
@@ -4851,19 +4619,9 @@ pre {
     white-space: nowrap;
   }
 
-  .sidebar .nav-subheading {
-    margin: 0 0 0 var(--ky-space-2);
-    white-space: nowrap;
-  }
-
-  .sidebar .mobile-settings-toggle {
-    display: flex;
-  }
-
   /* The strip stands in for these; Archive and Contacts stay as they are. */
   .sidebar .inbox-nav-row,
   .sidebar .scheduled-heading,
-  .sidebar .settings-heading,
   .sidebar-folder-row[data-folder-kind="inbox"],
   .sidebar-folder-row[data-folder-kind="drafts"],
   .sidebar-folder-row[data-folder-kind="junk"],
@@ -4910,10 +4668,6 @@ pre {
     -webkit-overflow-scrolling: touch;
   }
 
-  .inbox-action-bar {
-    gap: 6px;
-  }
-
   .inbox-action-button {
     width: 36px;
     min-height: 36px;
@@ -4940,22 +4694,8 @@ pre {
     display: none;
   }
 
-  .inbox-desktop-col {
-    display: none;
-  }
-
   .inbox-table {
     --inbox-cell-pad: 8px;
-  }
-
-  .inbox-row-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 4px;
-    gap: 10px;
-    font-size: 0.74rem;
-    opacity: 0.82;
   }
 
   .inbox-page-tab {
@@ -5172,9 +4912,9 @@ pre {
 /* ==========================================================================
    Sign-in
    --------------------------------------------------------------------------
-   The signed-out front door. Scoped entirely under .auth-page so none of it
-   reaches the app shell, which shares the same element selectors (input,
-   button, label) at a lower specificity.
+   The steps inside the shared ky-auth card (ky-ui shell.css owns the page,
+   brand, card, fields and Sign in button): two-factor, push approval and the
+   forced password change. The change form also renders in-app at /password.
 
    The signature is the postmark: a double-ring plate that breaks the top edge
    of the card, and returns once more as the frame around the push-approval
@@ -5187,55 +4927,7 @@ pre {
    hue, and shadows are kept light enough to survive a light background.
    ========================================================================== */
 
-.auth-page {
-  --seal-size: 88px;
-  min-height: 100vh;
-  min-height: 100dvh;
-  display: grid;
-  place-items: center;
-  padding: 32px 20px 40px;
-  background: var(--bg);
-}
-
-.auth-shell {
-  width: 100%;
-  max-width: 27rem;
-  display: grid;
-  justify-items: center;
-  /* Room for the seal to overhang the card. */
-  padding-top: calc(var(--seal-size) / 2);
-}
-
-/* --- The postmark ------------------------------------------------------- */
-
-/* Keep the shared square stamp intact at the card edge. */
-.auth-seal {
-  width: var(--seal-size);
-  height: var(--seal-size);
-  position: relative;
-  z-index: 1;
-  margin-bottom: calc(var(--seal-size) / -2);
-}
-
-.auth-seal-mark {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: contain;
-}
-
-/* --- The card ----------------------------------------------------------- */
-
-.auth-card {
-  width: 100%;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: calc(var(--seal-size) / 2 + 18px) 26px 26px;
-  box-shadow: none;
-}
-
-.auth-page .auth-form {
+.ky-auth .auth-form {
   display: grid;
   gap: 16px;
   max-width: none;
@@ -5248,7 +4940,7 @@ pre {
 
 /* Centred only on the standalone page; inside the app panel the heading lines
    up with the fields under it like every other page. */
-.auth-page .auth-head {
+.ky-auth .auth-head {
   text-align: center;
 }
 
@@ -5287,9 +4979,7 @@ pre {
   padding: 8px 12px;
   border: 1px solid var(--ky-field-border);
   border-radius: var(--ky-control-radius);
-  /* Recessed against the card rather than the same value as it, so the field
-     reads as somewhere to type without needing a heavier border. */
-  background: color-mix(in srgb, var(--bg) 62%, var(--panel));
+  background: var(--panel);
   color: var(--ink-strong);
   transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
@@ -5304,13 +4994,12 @@ pre {
 
 .auth-input:focus {
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline-offset: -1px;
   border-color: var(--ky-field-border);
 }
 
 .auth-input:read-only {
-  color: color-mix(in srgb, var(--ink) 72%, transparent);
-  background: color-mix(in srgb, var(--bg) 30%, var(--panel));
+  color: var(--ink);
 }
 
 /* Mono for the values that are identifiers or codes — the characters people
@@ -5345,7 +5034,7 @@ pre {
   box-shadow: none;
 }
 
-.auth-page .auth-submit {
+.ky-auth .auth-submit {
   width: 100%;
 }
 
@@ -5515,27 +5204,7 @@ pre {
   line-height: 1.5;
 }
 
-.auth-footnote {
-  margin: 20px 0 0;
-  font-family: var(--mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--ink) 40%, transparent);
-}
-
 @media (max-width: 480px) {
-  .auth-page {
-    --seal-size: 72px;
-    padding: 20px 14px 28px;
-    place-items: start center;
-  }
-
-  .auth-card {
-    padding: calc(var(--seal-size) / 2 + 14px) 18px 22px;
-    border-radius: 16px;
-  }
-
   .auth-title {
     font-size: 1.4rem;
   }
@@ -5551,34 +5220,13 @@ pre {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .auth-card {
-    animation: none;
-  }
-
   .auth-waiting span {
     animation: none;
     opacity: 0.6;
   }
 }
 
-/* Self-hosted proof of work renders immediately and needs only a compact
-   status row. Third-party widgets keep their reserved loading slot. */
-.auth-pow {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  justify-content: center;
-  min-height: 65px;
-  font-size: 0.9rem;
-}
 
-.auth-pow-bar {
-  width: 100%;
-  height: 6px;
-}
-
-.auth-pow-done { color: var(--ky-success); }
-.auth-pow-failed { color: var(--danger); }
 
 /* Backup keeps routine actions visible; setup and history expand on demand. */
 .backup-section { min-width: 0; }
@@ -5703,14 +5351,12 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .suite-action-menu-title { margin: 4px 8px 8px; font-size: var(--ky-type-meta); color: var(--ink); }
 .suite-action-menu :is(button, a) { justify-content: flex-start; min-height: 40px; width: 100%; }
 .suite-action-menu .inbox-action-text { display: inline; }
-.contacts-actions .btn-danger { color: var(--danger); }
 .email-reader-details > summary { cursor: pointer; padding-block: 8px; font-size: var(--ky-type-meta); color: var(--ink); }
 
 .email-reader-details .email-keyword-editor { margin-top: 12px; }
 .email-reader-raw { font-family: var(--mono); }
 .inbox-selected-count { white-space: nowrap; font-size: var(--ky-type-meta); color: var(--ink); }
-.auth-title { font-size: var(--ky-type-title); font-weight: 600; }
-.auth-footnote { font-family: var(--sans); font-size: var(--ky-type-meta); text-transform: none; letter-spacing: normal; color: var(--ink); }
+.auth-title { font-size: var(--ky-type-section); font-weight: 600; }
 .auth-submit { min-height: var(--ky-control-size); border-radius: var(--ky-control-radius); box-shadow: none; }
 .compose-window .ql-toolbar.ql-snow { display: flex; align-items: center; flex-wrap: wrap; }
 .compose-window .ql-toolbar.ql-snow .ql-formats { display: inline-flex; align-items: center; margin-right: 4px; }
@@ -5721,22 +5367,20 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 @media (max-width: 600px) {
   .suite-action-menu[popover] { inset: auto 16px 16px; margin: 0; width: auto; }
   .email-reader-window { padding: 16px; }
-  .inbox-action-bar { width: 100%; flex-wrap: wrap; gap: 4px 8px; }
+  .inbox-bulk-bar { gap: 4px 8px; padding-block: var(--ky-space-1); }
   .inbox-selected-count { flex-basis: 100%; }
-  .inbox-action-bar > * { flex-shrink: 0; }
-  .inbox-action-bar .inbox-action-text { display: inline; }
-  .inbox-action-bar .inbox-action-button { min-height: 40px; width: auto; font-size: 13px; }
+  .inbox-bulk-bar > * { flex-shrink: 0; }
+  .inbox-bulk-bar .inbox-action-text { display: inline; }
+  .inbox-bulk-bar .inbox-action-button { min-height: 40px; width: auto; font-size: 13px; }
   .inbox-col-select { width: 40px; min-width: 40px; }
   .inbox-col-lock { width: 24px; min-width: 24px; }
   .inbox-table { table-layout: fixed; width: 100%; }
-  .inbox-row-meta { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
-  .inbox-row-meta > span:nth-child(2) { white-space: nowrap; }
-  .inbox-row-meta .inbox-keyword-chip { grid-column: 1 / -1; justify-self: start; }
-  .inbox-row-meta > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 /* Align the same controls across reading, contact and compose task views. */
 .email-reader-sender { display: block; }
+.email-reader-from { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--ky-space-3); }
+.email-reader-from > time { flex: none; color: var(--ink); font-size: var(--ky-type-meta); white-space: nowrap; }
 .contacts-table th.contacts-col-actions { text-align: right; }
 .contacts-actions .contacts-action { min-height: var(--ky-control-size); }
 .contacts-form-fields > label { grid-column: 1 / -1; }
@@ -5760,9 +5404,221 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .contacts-header-actions > button, .contacts-form-card button { min-height: var(--ky-control-size); font-size: var(--ky-type-nav); }
 .inbox-select-hit, .contacts-select-hit { min-height: var(--ky-control-size); min-width: var(--ky-control-size); }
 .inbox-checkbox, .contacts-select-hit input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
-.auth-captcha:has(.auth-pow) { justify-content: flex-start; min-height: 24px; }
-.auth-pow { min-height: 24px; font-size: var(--ky-type-meta); }
+.ky-auth-check .auth-pow-bar { flex: 1; height: 4px; }
 @media (max-width: 600px) {
   .contacts-form-head { padding-inline: 16px; }
-  .panel.appearance-panel .ky-appearance-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); }
+}
+
+/* ---------- Suite pass (2026-10-31) ---------- */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The mark inverts with the scheme: dark tile in light mode, light tile in dark. */
+.app-mark { flex: none; display: block; }
+.app-mark-tile { fill: var(--ink-strong); }
+.app-mark-glyph { fill: var(--bg); }
+.app-mark-fold { stroke: var(--ink-strong); }
+
+.sidebar-footer { padding: 0; }
+.theme-selector { width: auto; max-width: 100%; font-size: var(--ky-type-nav); }
+
+/* Inbox: one scannable line per message, about 40px. */
+.inbox-unit {
+  display: grid;
+  grid-template-columns: minmax(0, 10rem) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--ky-space-3);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--ky-type-nav);
+  line-height: 1.4;
+  text-align: left;
+}
+:where(.inbox-unit):hover:not(:disabled) { background: transparent; }
+.inbox-unit:active:not(:disabled) { transform: none; }
+.inbox-from,
+.inbox-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-from,
+.inbox-subject { color: var(--ink-strong); }
+.inbox-snippet { margin-inline-start: 0.6em; color: var(--ink); }
+.inbox-line .inbox-keyword-chip { margin-inline-start: 0.4em; }
+.inbox-time {
+  color: var(--ink);
+  font-size: var(--ky-type-meta);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: right;
+}
+.inbox-row-unread .inbox-from,
+.inbox-row-unread .inbox-subject { font-weight: 600; }
+.inbox-row-unread .inbox-time { color: var(--ink-strong); }
+.inbox-row[data-open] { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.inbox-unit-head { font-size: var(--ky-type-meta); }
+.inbox-unit-head .inbox-sort-button { text-align: left; }
+.inbox-unit-head .inbox-time { text-align: right; color: inherit; }
+
+.inbox-refresh { color: var(--ink); }
+.inbox-bulk-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ky-space-1);
+  margin-top: var(--ky-space-3);
+  padding-inline: var(--ky-space-3) var(--ky-space-1);
+  min-height: var(--ky-control-size);
+  border-radius: var(--ky-control-radius);
+  background: var(--accent-soft);
+}
+.inbox-bulk-bar .inbox-selected-count { margin-inline-end: var(--ky-space-2); color: var(--ink-strong); font-weight: 600; }
+.inbox-bulk-clear { margin-inline-start: auto; padding-inline: var(--ky-space-2); font-size: var(--ky-type-meta); }
+.inbox-bulk-bar .inbox-action-button { font-size: var(--ky-type-meta); }
+
+/* List and reading pane share the content area; below 1100px the reader is a modal. */
+.read-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.read-list { min-height: 0; display: flex; flex-direction: column; }
+.reading-pane-empty { display: none; }
+@media (min-width: 1100px) {
+  /* Equal halves: the pane keeps a plain-text line of about 80 characters unwrapped. */
+  .read-layout { grid-template-columns: minmax(26rem, 1fr) minmax(35rem, 1.06fr); column-gap: var(--ky-space-3); }
+  .read-list .inbox-unit { grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr) auto; gap: var(--ky-space-2); }
+  /* The list column is narrow: icons whose meaning is plain stay icon-only, named by their verbs. */
+  .inbox-bulk-bar .inbox-action-button:not([data-action="snooze"], [data-action="read"]) .inbox-action-text { display: none; }
+  .inbox-bulk-bar .inbox-action-button:not([data-action="snooze"], [data-action="read"]) { width: 36px; padding: 0; justify-content: center; }
+  .inbox-bulk-bar { flex-wrap: nowrap; gap: 2px; padding-inline: 12px var(--ky-space-1); }
+  .inbox-bulk-bar .inbox-selected-count { margin-inline-end: var(--ky-space-1); }
+  .inbox-bulk-bar .inbox-action-button { padding-inline: 6px; }
+  .inbox-bulk-bar .inbox-action-button:not([data-action="snooze"], [data-action="read"]) { width: 32px; }
+  .reading-pane-empty {
+    display: grid;
+    place-items: center;
+    margin: var(--ky-space-3) 0 0;
+    border-left: 1px solid var(--line);
+    color: var(--ink);
+    font-size: var(--ky-type-nav);
+  }
+  .email-reader-backdrop[open]:not(:modal) {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    margin-top: var(--ky-space-3);
+    padding: 0 0 0 var(--ky-space-3);
+    border-left: 1px solid var(--line);
+    background: none;
+    display: flex;
+  }
+  .email-reader-backdrop:not(:modal) .email-reader-window {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+}
+
+/* Settings: one page; its sections are one row of tabs above the open panel. */
+.settings-layout > .ky-page-head { margin: 0; padding: var(--ky-space-4) var(--ky-space-5) 0; margin-bottom: var(--ky-space-3); }
+.settings-sections {
+  display: flex;
+  align-items: stretch;
+  gap: var(--ky-space-1);
+  margin: 0 var(--ky-space-5);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.settings-section-group { display: flex; flex: none; gap: var(--ky-space-1); }
+.settings-section-detached { margin-inline-start: var(--ky-space-2); padding-inline-start: var(--ky-space-2); border-inline-start: 1px solid var(--line); }
+.settings-section-link {
+  display: flex;
+  align-items: center;
+  min-height: var(--ky-control-size);
+  padding: 0 var(--ky-space-3);
+  border-bottom: 2px solid transparent;
+  color: var(--ink);
+  font-size: var(--ky-type-nav);
+  white-space: nowrap;
+  text-decoration: none;
+}
+.settings-section-link:hover { color: var(--ink-strong); }
+.settings-section-link[aria-current="page"] { border-bottom-color: var(--accent); color: var(--ink-strong); font-weight: 600; }
+.settings-about { display: none; flex: none; align-self: center; margin: 0; padding-inline: var(--ky-space-2); }
+.settings-about .ky-license-link { margin: 0; }
+@media (max-width: 900px) {
+  .settings-layout { display: flex; flex-direction: column; overflow-y: auto; }
+  .settings-layout > .ky-page-head { padding: 10px 10px 0; }
+  .settings-layout > .settings-sections { flex: none; margin: 0 10px; }
+  .settings-about { display: block; }
+}
+
+/* Settings forms: body-size pills and fields, one status line. */
+.config-tab { padding: 6px 14px; font-size: var(--ky-type-body); }
+.config-status-line { margin: var(--ky-space-3) 0 0; color: var(--ink); font-size: var(--ky-type-nav); }
+
+/* Contacts: page head actions, search with its count, and a row menu. */
+.ky-page-head > .contacts-header-actions { flex: none; }
+.contacts-list-head .contacts-search { flex: 1; min-width: 0; }
+.contacts-count { white-space: nowrap; }
+.contacts-row-menu { color: var(--ink); }
+.contacts-row-actions[popover] { width: 160px; }
+.contacts-row-actions button { font-size: var(--ky-type-nav); text-align: left; }
+.contacts-list-card { margin-top: 0; }
+.contacts-list-head .contacts-search { margin-top: 0; }
+
+/* Appearance: six pairs, one native radio group; a segment is a radio over its label. */
+.ky-appearance .ky-appearance-grid.appearance-pairs { grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr)); gap: var(--ky-space-3); }
+.appearance-pair { display: grid; gap: var(--ky-space-3); min-width: 0; padding: var(--ky-space-3); border: 1px solid var(--line-strong); border-radius: var(--ky-radius); background: var(--panel); }
+.appearance-pair:has(:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.appearance-pair-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0 var(--ky-space-2); }
+.appearance-pair-name { margin: 0; font-size: 1rem; font-weight: 600; color: var(--ink-strong); }
+.appearance-pair-halves { color: var(--ink); font-size: var(--ky-type-meta); }
+.appearance-pair .ky-appearance-preview { block-size: 56px; }
+.appearance-modes { display: flex; border: 1px solid var(--line-strong); border-radius: var(--ky-control-radius); overflow: hidden; }
+.appearance-mode { position: relative; flex: 1 1 auto; display: flex; align-items: center; justify-content: center; gap: .3rem; min-height: 40px; padding: 0 var(--ky-space-2); color: var(--ink); font-size: .85rem; white-space: nowrap; cursor: pointer; }
+.appearance-mode + .appearance-mode { border-left: 1px solid var(--line-strong); }
+.appearance-mode > input[type="radio"] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.appearance-mode > svg { width: 14px; height: 14px; stroke-width: 2.5; }
+.appearance-mode:hover { background: var(--panel-hover); color: var(--ink-strong); }
+.appearance-mode:has(:checked) { background: var(--accent); color: var(--button-text); font-weight: 600; }
+.appearance-mode:has(:focus-visible) { outline: 2px solid var(--ink-strong); outline-offset: -4px; }
+.appearance-mode > input[type="radio"]:focus-visible { outline: none; }
+@media (forced-colors: active) {
+  .appearance-pair:has(:checked) { border-color: Highlight; }
+  .appearance-mode:has(:checked) { outline: 2px solid Highlight; outline-offset: -3px; }
+}
+
+/* Phones: two lines per message, sender and time over subject and snippet. */
+@media (max-width: 700px) {
+  .inbox-unit { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "from time" "line line"; gap: 2px var(--ky-space-2); }
+  .inbox-from { grid-area: from; }
+  .inbox-line { grid-area: line; }
+  .inbox-time { grid-area: time; }
+  .inbox-unit-head { grid-template-areas: "from time"; }
+  .inbox-unit-head .inbox-line { display: none; }
 }

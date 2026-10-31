@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { SYSTEM_THEME, THEME_CATALOG } from "../../ky-ui/themes";
-import { applyTheme, getStoredChoice, type ThemeName } from "../../theme";
-
-const MODE = { system: "Follows device", light: "Light", dark: "Dark" };
+import { findTheme } from "../../ky-ui/themes";
+import { CheckIcon } from "../../pages/read/icons";
+import { THEME_CHOICES, applyTheme, getStoredChoice, type ThemeName } from "../../theme";
 
 /**
- * One native radio card per theme, previewed in that theme's own colours by
- * ky-ui (no inline styles), applied as soon as it is chosen.
+ * Six palette pairs, each offering Match system, Light and Dark, as one native
+ * radio group so arrow keys move through every choice. Previews come from ky-ui
+ * (no inline styles); a choice applies as soon as it is made.
  */
 export function Appearance() {
   const [choice, setChoice] = useState<ThemeName>(getStoredChoice);
@@ -16,27 +16,29 @@ export function Appearance() {
     return () => window.removeEventListener("storage", sync);
   }, []);
 
-  function choose(value: ThemeName) {
-    setChoice(value);
-    applyTheme(value);
-  }
-
   return (
     <fieldset className="ky-appearance">
       <legend className="ky-appearance-legend">Theme</legend>
-      <div className="ky-appearance-grid">
-        {[SYSTEM_THEME, ...THEME_CATALOG].map((theme) => {
-          const value = theme === SYSTEM_THEME ? theme.id : theme.name;
-          return (
-            <label key={theme.id} className="ky-appearance-option">
-              <input className="ky-appearance-radio" type="radio" name="kypost-theme" value={value}
-                checked={choice === value} onChange={() => choose(value)} />
-              <span className="ky-appearance-preview" data-ky-preview={theme.id} aria-hidden="true" />
-              <span className="ky-appearance-name">{theme.name}</span>
-              <small className="ky-appearance-mode">{MODE[theme.scheme]}</small>
-            </label>
-          );
-        })}
+      <div className="ky-appearance-grid appearance-pairs">
+        {THEME_CHOICES.map(({ pair, choices }) => (
+          <div key={pair.id} role="group" aria-labelledby={`${pair.id}-name`} className="appearance-pair">
+            <div className="appearance-pair-head">
+              <h2 id={`${pair.id}-name`} className="appearance-pair-name">{pair.name}</h2>
+              <span className="appearance-pair-halves">{findTheme(pair.light)?.name} · {findTheme(pair.dark)?.name}</span>
+            </div>
+            <span className="ky-appearance-preview" data-ky-preview={pair.id} aria-hidden="true" />
+            <div className="appearance-modes">
+              {choices.map(({ mode, label, value }) => (
+                <label key={mode} className="appearance-mode">
+                  <input type="radio" name="kypost-theme" value={value} checked={choice === value}
+                    onChange={() => { setChoice(value); applyTheme(value); }} />
+                  {choice === value ? <CheckIcon /> : null}
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </fieldset>
   );

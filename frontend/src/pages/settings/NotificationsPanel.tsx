@@ -4,7 +4,7 @@ export function NotificationsPanel() {
   return (
     <section className="panel">
       <div className="config-header">
-        <h1>Notifications</h1>
+        <h2 className="visually-hidden">Notifications</h2>
         <p>How and when this device tells you about new mail.</p>
       </div>
       <div id="notification-prefs"><NotificationPrefs /></div>

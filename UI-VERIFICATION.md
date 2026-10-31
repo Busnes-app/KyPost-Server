@@ -94,3 +94,11 @@ Frontend checks passed: 1189 tests, typecheck, lint with 0 errors and 0 warnings
 ## Fleet Appearance picker — 2026-10-26
 
 KyPost's 17 swatch buttons became ky-ui's native radio cards: Match system plus the 22-theme suite catalog, saved names kept, phone overflow fixed. Staged before/after captures at 1280×900 and 390×844 in OS light and dark, with source patches, binary and asset hashes and per-file measurements, are in [docs/ui-fleet-2026-10-26/](docs/ui-fleet-2026-10-26/README.md) (`manifest.json`, `captures.csv`, `checks.csv`). They are scratch captures with synthetic data and carry no rating.
+
+## Suite design pass — 2026-10-31
+
+ky-ui 0.6.0 (shell and six palette pairs) with the council's KyPost fixes: one-line inbox rows with snippets, a reading pane beside the list from 1100px, the bulk bar in place of search while messages are selected, Settings as its own page with its sections inside the content, Appearance as a direct nav link, the shared user block ("Sign out"), About dialog and sign-in card, and contact row actions in a ⋯ menu. Captures (desktop 1440×900 Busnes Light/Dark, phone 390×844 light) come from a scratch server signed in for real against the kypost-demo-IMAP fixture with synthetic contacts; before and after images are in [docs/ui-suite-2026-10-31/screenshots/](docs/ui-suite-2026-10-31/screenshots/). The driver is `captures/drivers/kypost-after.mjs` in the suite redesign workspace.
+
+Council round 2 follow-up: Settings sections are one row of tabs above the panel (no second side column), Mail's six sections are the only second level, the Email settings form has sentence-case actions and one status line, New Email is outlined everywhere, the Inbox nav link spans its row, the reader shows the sent time beside the sender with an outlined Reply and keeps plain-text line breaks in the pane, and the bulk bar labels Snooze and Mark read.
+
+Frontend checks passed: 1189 tests, typecheck, lint with 0 errors and 0 warnings, production build, `npm audit --omit=dev` and the ky-ui vendor check. Run on Node 22.23.1, not CI's Node 26. Only the Busnes pair was captured; the other five pairs were checked by the readability tests, not by eye.

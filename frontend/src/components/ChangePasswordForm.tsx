@@ -22,13 +22,16 @@ export type ChangePasswordFormProps = {
   lede: string;
   /** Called after the password and re-wrapped PGP envelope have both committed. */
   onSuccess: () => void | Promise<void>;
+  /** h2 on the sign-in screen, where the app name is the page's h1. */
+  titleTag?: "h1" | "h2";
 };
 
 export function ChangePasswordForm({
   username,
   initialCurrentPassword,
   lede,
-  onSuccess
+  onSuccess,
+  titleTag: Title = "h1"
 }: ChangePasswordFormProps) {
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -116,7 +119,7 @@ export function ChangePasswordForm({
     <>
       <form onSubmit={submitPasswordChange} className="auth-form">
         <header className="auth-head">
-          <h1 className="auth-title">Choose a new password</h1>
+          <Title className="auth-title">Choose a new password</Title>
           <p className="auth-lede">{lede}</p>
         </header>
 

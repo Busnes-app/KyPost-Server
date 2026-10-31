@@ -9,11 +9,12 @@ export function readChoice(key) {
 export function saveChoice(key, value) {
   try { globalThis.localStorage.setItem(key, value); } catch { /* Choice still applies in memory. */ }
 }
-export function watchChoice(key, apply, hasChoice) {
+// Every OS scheme change re-applies, since a saved pair follows the OS; apply must be idempotent.
+export function watchChoice(key, apply) {
   const target = globalThis.window ?? globalThis;
   const storage = event => { if (event.key === key || event.key === null) apply(); };
   const media = target.matchMedia?.('(prefers-color-scheme: dark)');
-  const change = () => { if (!hasChoice()) apply(); };
+  const change = () => apply();
   target.addEventListener?.('storage', storage);
   media?.addEventListener('change', change);
   return () => {

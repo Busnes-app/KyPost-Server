@@ -20,18 +20,18 @@ export function MailPanel() {
   return (
     <section className="panel">
       <div className="config-header">
-        <h1>Mail</h1>
+        <h2 className="visually-hidden">Mail</h2>
         <p>Your mail server, mailbox storage, the addresses you send as, KyCalendar invitations, contact sync and mailbox rules.</p>
       </div>
       <PanelTabs
         ariaLabel="Mail sections"
         tabs={[
-          { id: "email-server", label: "Email Settings", body: <EmailServer /> },
+          { id: "email-server", label: "Email settings", body: <EmailServer /> },
           { id: "storage", label: "Storage", body: <MailStorage /> },
-          { id: "send-as", label: "Send-As Addresses", body: <SendAs /> },
+          { id: "send-as", label: "Send-as addresses", body: <SendAs /> },
           { id: "kycalendar", label: "KyCalendar", body: <KyCalendar /> },
-          { id: "carddav-client", label: "CardDAV Client", body: <CardDavClient /> },
-          { id: "rules", label: "Mailbox Rules", body: <Filters /> }
+          { id: "carddav-client", label: "CardDAV client", body: <CardDavClient /> },
+          { id: "rules", label: "Mailbox rules", body: <Filters /> }
         ]}
       />
     </section>

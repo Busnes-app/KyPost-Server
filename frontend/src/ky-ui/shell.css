@@ -1,0 +1,324 @@
+/* Suite shell: sign-in, sidebar user block, licence line, About dialog and page head.
+   Geometry follows KyCalendar. Product aliases come first so named palettes apply. */
+
+/* ---------- Sign-in ---------- */
+.ky-auth {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: var(--ky-space-3);
+  background: var(--bg, var(--ky-bg));
+  color: var(--ink-strong, var(--ky-ink-strong));
+}
+.ky-auth-theme { justify-self: end; }
+.ky-auth-body {
+  align-self: center;
+  width: 100%;
+  max-width: 22.5rem;
+  margin-inline: auto;
+  padding-block: var(--ky-space-5) 3rem;
+}
+.ky-auth-brand {
+  display: grid;
+  justify-items: center;
+  gap: var(--ky-space-2);
+  margin-bottom: var(--ky-space-4);
+  text-align: center;
+}
+.ky-auth-brand > img,
+.ky-auth-brand > svg { width: 56px; height: 56px; border-radius: 14px; }
+.ky-auth-brand h1 {
+  margin: 0;
+  font-size: var(--ky-type-title);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+.ky-auth-brand p { margin: 0; color: var(--ink, var(--ky-ink)); font-size: var(--ky-type-body); }
+.ky-auth-card {
+  box-sizing: border-box;
+  padding: var(--ky-space-4);
+  border: 1px solid var(--line, var(--ky-line));
+  border-radius: var(--ky-radius, 10px);
+  background: var(--panel, var(--ky-panel));
+}
+.ky-auth-card,
+.ky-auth-card > form { display: grid; gap: var(--ky-space-3); margin: 0; }
+.ky-auth-card h2 { margin: 0; font-size: var(--ky-type-section); font-weight: 600; }
+.ky-auth-field { display: grid; gap: var(--ky-space-2); min-width: 0; }
+.ky-auth-field > label { font-size: var(--ky-type-meta); font-weight: 600; color: var(--ink-strong, var(--ky-ink-strong)); }
+.ky-auth-field > input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--ky-control-size);
+  margin: 0;
+  padding: var(--ky-space-2) 0.75rem;
+  border: 1px solid var(--ky-field-border);
+  border-radius: var(--ky-control-radius);
+  background: var(--panel, var(--ky-panel));
+  color: var(--ink-strong, var(--ky-ink-strong));
+  font: inherit;
+  font-size: var(--ky-type-body);
+}
+.ky-auth-field > input::placeholder { color: var(--ink, var(--ky-ink)); opacity: 1; }
+.ky-auth-field > input:hover:not(:disabled) { border-color: var(--ink, var(--ky-ink)); }
+.ky-auth-check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 1.25rem;
+  margin: 0;
+  color: var(--ink, var(--ky-ink));
+  font-size: var(--ky-type-meta);
+}
+.ky-auth-check > svg { flex: none; width: 14px; height: 14px; }
+.ky-auth-check[data-ky-state="passed"] { color: var(--success, var(--ky-success)); }
+.ky-auth-check[data-ky-state="failed"] { color: var(--danger, var(--ky-danger)); }
+
+/* Primary actions: sign in, and a page's main action. */
+.ky-auth-submit,
+.ky-page-action,
+.ky-auth-sso,
+.ky-about-close {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ky-space-2);
+  min-height: var(--ky-control-size);
+  margin: 0;
+  padding: var(--ky-space-2) 1.05rem;
+  border: 1px solid transparent;
+  border-radius: var(--ky-control-radius);
+  background: var(--accent, var(--ky-accent));
+  color: var(--button-text, var(--ky-button-text));
+  font: inherit;
+  font-size: var(--ky-type-nav);
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.ky-auth-submit, .ky-auth-sso { width: 100%; }
+.ky-auth-submit:hover:not(:disabled),
+.ky-page-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, var(--ky-accent)) 86%, var(--ink-strong, var(--ky-ink-strong)));
+}
+.ky-auth-submit:disabled,
+.ky-page-action:disabled {
+  border-color: var(--line, var(--ky-line));
+  background: var(--panel-hover, var(--ky-panel-hover));
+  color: var(--ink, var(--ky-ink));
+  cursor: not-allowed;
+}
+/* Outline buttons: SSO and Close. */
+.ky-auth-sso,
+.ky-about-close {
+  border-color: var(--ky-field-border);
+  background: var(--panel, var(--ky-panel));
+  color: var(--ink-strong, var(--ky-ink-strong));
+}
+.ky-auth-sso:hover,
+.ky-about-close:hover {
+  border-color: var(--ink, var(--ky-ink));
+  background: var(--panel-hover, var(--ky-panel-hover));
+}
+.ky-auth-sso > svg, .ky-auth-submit > svg, .ky-page-action > svg { flex: none; width: 16px; height: 16px; }
+.ky-auth-divider { width: 100%; margin: 0; border: 0; border-top: 1px solid var(--line, var(--ky-line)); }
+.ky-auth-link {
+  justify-self: center;
+  min-height: 0;
+  margin: 0;
+  padding: var(--ky-space-1);
+  border: 0;
+  background: none;
+  color: var(--accent, var(--ky-accent));
+  font: inherit;
+  font-size: var(--ky-type-meta);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.ky-auth-link:hover { color: var(--ink-strong, var(--ky-ink-strong)); }
+.ky-auth-help {
+  margin: var(--ky-space-3) 0 0;
+  color: var(--ink, var(--ky-ink));
+  font-size: var(--ky-type-meta);
+  line-height: 1.5;
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* ---------- Sidebar user block and licence line ---------- */
+.ky-user {
+  display: grid;
+  gap: var(--ky-space-2);
+  padding-top: var(--ky-space-3);
+  border-top: 1px solid var(--line, var(--ky-line));
+}
+.ky-user > form { margin: 0; }
+.ky-user-copy { min-width: 0; padding-inline: var(--ky-space-3) var(--ky-space-2); line-height: 1.4; }
+.ky-user-name {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-strong, var(--ky-ink-strong));
+  font-size: var(--ky-type-nav);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ky-user-role { margin: 0; color: var(--ink, var(--ky-ink)); font-size: var(--ky-type-meta); }
+/* Sign out takes a navigation row's geometry so the sidebar reads as one list. */
+.ky-user-signout {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--ky-space-2);
+  width: 100%;
+  min-height: var(--ky-control-size);
+  margin: 0;
+  padding: 0 var(--ky-space-2) 0 var(--ky-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--ky-control-radius);
+  background: transparent;
+  color: var(--ink, var(--ky-ink));
+  font: inherit;
+  font-size: var(--ky-type-nav);
+  font-weight: 500;
+  justify-content: flex-start;
+  text-align: start;
+  cursor: pointer;
+}
+.ky-user-signout > svg { flex: none; width: 16px; height: 16px; }
+.ky-user-signout:hover {
+  background: var(--panel-hover, var(--ky-panel-hover));
+  color: var(--ink-strong, var(--ky-ink-strong));
+}
+.ky-license-link {
+  min-height: 1.5rem;
+  margin: 0 0 0 var(--ky-space-3);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink, var(--ky-ink));
+  font: inherit;
+  font-size: 0.75rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ky-license-link:hover { color: var(--ink-strong, var(--ky-ink-strong)); }
+
+/* ---------- About dialog ---------- */
+.ky-about {
+  box-sizing: border-box;
+  width: min(45rem, calc(100vw - 2rem));
+  max-width: none;
+  max-height: 90vh;
+  margin: auto;
+  padding: var(--ky-space-3);
+  border: 1px solid var(--line, var(--ky-line));
+  border-radius: 14px;
+  background: var(--panel, var(--ky-panel));
+  color: var(--ink-strong, var(--ky-ink-strong));
+  box-shadow: var(--ky-shadow-overlay);
+}
+.ky-about[open] { display: flex; flex-direction: column; gap: 0.75rem; }
+.ky-about::backdrop { background: rgb(12 12 18 / 0.68); }
+.ky-about-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+.ky-about-head > div { display: grid; gap: var(--ky-space-1); min-width: 0; }
+.ky-about-head form { margin: 0; flex: none; }
+.ky-about-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.625rem;
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+.ky-about-version {
+  padding: 2px var(--ky-space-2);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--ky-accent)) 35%, transparent);
+  border-radius: 999px;
+  background: var(--accent-soft, var(--ky-accent-soft));
+  color: var(--accent, var(--ky-accent));
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.ky-about-meta { margin: 0; color: var(--ink, var(--ky-ink)); font-size: 0.82rem; }
+.ky-about-license {
+  box-sizing: border-box;
+  flex: 1;
+  width: 100%;
+  min-height: min(20rem, 50vh);
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line, var(--ky-line));
+  border-radius: var(--ky-radius, 10px);
+  background: var(--panel, var(--ky-panel));
+  color: var(--ink-strong, var(--ky-ink-strong));
+  font-family: var(--ky-font-mono);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  resize: vertical;
+}
+
+/* ---------- Page head ---------- */
+.ky-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ky-space-3) var(--ky-space-4);
+  margin-bottom: var(--ky-space-5);
+}
+.ky-page-head > div { flex: 1 1 24rem; min-width: 0; }
+.ky-page-title {
+  margin: 0;
+  color: var(--ink-strong, var(--ky-ink-strong));
+  font-size: var(--ky-type-title);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.ky-page-lede {
+  max-width: 68ch;
+  margin: var(--ky-space-2) 0 0;
+  color: var(--ink, var(--ky-ink));
+  font-size: var(--ky-type-body);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+@media (max-width: 720px) {
+  .ky-page-head { margin-bottom: var(--ky-space-4); }
+}
+
+/* ---------- Shared states ---------- */
+:is(.ky-auth, .ky-user, .ky-about, .ky-page-head) :focus-visible,
+.ky-license-link:focus-visible {
+  outline: 2px solid var(--accent, var(--ky-accent));
+  outline-offset: 2px;
+}
+/* Fields already draw a border: put the ring on it, not 2px outside, so it reads as one ring. */
+.ky-auth-field > input:focus-visible { outline-offset: -1px; }
+@media (prefers-reduced-motion: no-preference) {
+  :is(.ky-auth-submit, .ky-page-action, .ky-auth-sso, .ky-about-close, .ky-user-signout, .ky-auth-field > input) {
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+  .ky-about[open] { animation: ky-about-in 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+}
+@keyframes ky-about-in {
+  from { opacity: 0.6; transform: translateY(6px); }
+}

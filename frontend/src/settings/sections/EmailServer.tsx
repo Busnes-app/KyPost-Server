@@ -110,7 +110,6 @@ export function EmailServer() {
 
   return (
     <div className="config-card">
-      <h3>Email Settings</h3>
       <p className="config-muted">Stored mail credentials are encrypted at rest. SMTP host/port are optional overrides.</p>
       {managed ? (
         <p className="notice notice-success">
@@ -184,33 +183,33 @@ export function EmailServer() {
       <div className="config-actions">
         {managed ? null : (
           <button type="button" className="btn-primary" onClick={saveIMAPConfig} disabled={imapBusy}>
-            {imapBusy ? "Saving..." : "Save Email Settings"}
+            {imapBusy ? "Saving…" : "Save"}
           </button>
         )}
         <button type="button" onClick={testIMAPConfig} disabled={imapBusy}>
-          {imapBusy ? "Testing..." : "Test Email Settings"}
+          {imapBusy ? "Testing…" : "Test connection"}
         </button>
         {managed ? null : (
-          <button type="button" onClick={deleteIMAPConfig} disabled={imapBusy}>
-            Delete Stored Email Settings
+          <button type="button" className="btn-ghost btn-danger" onClick={deleteIMAPConfig} disabled={imapBusy}>
+            Delete stored settings
           </button>
         )}
       </div>
 
-      {imapStatus ? (
-        <div className="config-status-card">
-          <p>Configured: {imapStatus.configured ? "Yes" : "No"}</p>
-          {imapStatus.host ? <p>Host: {imapStatus.host}</p> : null}
-          {imapStatus.port ? <p>Port: {imapStatus.port}</p> : null}
-          {imapStatus.username ? <p>Username: {imapStatus.username}</p> : null}
-          {imapStatus.mailbox ? <p>Mailbox: {imapStatus.mailbox}</p> : null}
-          {imapStatus.smtpHost ? <p>SMTP Host: {imapStatus.smtpHost}</p> : null}
-          {imapStatus.smtpPort ? <p>SMTP Port: {imapStatus.smtpPort}</p> : null}
-          {imapStatus.updatedAt ? <p>Updated: {imapStatus.updatedAt}</p> : null}
-        </div>
-      ) : null}
+      {imapStatus ? <p className="config-status-line">{imapStatusLine(imapStatus)}</p> : null}
 
       {imapMessage ? <p className="config-muted">{imapMessage}</p> : null}
     </div>
   );
+}
+
+/** One line for the stored settings: what is saved and when, with a readable date. */
+function imapStatusLine(status: IMAPConfigStatus): string {
+  if (!status.configured) return "No mail account saved.";
+  const where = [status.username, status.host ? `${status.host}${status.port ? `:${status.port}` : ""}` : ""].filter(Boolean).join(" on ");
+  const smtp = status.smtpHost ? `, sending through ${status.smtpHost}${status.smtpPort ? `:${status.smtpPort}` : ""}` : "";
+  const updated = status.updatedAt && !Number.isNaN(new Date(status.updatedAt).getTime())
+    ? ` Updated ${new Date(status.updatedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}.`
+    : "";
+  return `Saved: ${where || "mail account"}${status.mailbox ? `, ${status.mailbox}` : ""}${smtp}.${updated}`;
 }

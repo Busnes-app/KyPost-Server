@@ -107,6 +107,31 @@
   opacity: .65;
 }
 
+/* A pair preview: light half, then dark half, each with its sidebar and accent. */
+.ky-appearance .ky-appearance-preview[data-ky-preview$="-pair"] {
+  background: linear-gradient(90deg,
+    var(--ky-preview-sidebar) 15%, var(--ky-preview-bg) 15% 50%,
+    var(--ky-preview-dark-sidebar) 50% 65%, var(--ky-preview-dark-bg) 65%);
+}
+
+.ky-appearance .ky-appearance-preview[data-ky-preview$="-pair"]::before,
+.ky-appearance .ky-appearance-preview[data-ky-preview$="-pair"]::after {
+  inline-size: 26%;
+  opacity: 1;
+}
+
+.ky-appearance .ky-appearance-preview[data-ky-preview$="-pair"]::before {
+  inset-inline-start: 20%;
+  box-shadow: 0 11px 0 color-mix(in srgb, var(--ky-preview-ink) 65%, transparent);
+}
+
+.ky-appearance .ky-appearance-preview[data-ky-preview$="-pair"]::after {
+  inset-block-start: 10px;
+  inset-inline-start: 70%;
+  background: var(--ky-preview-dark-accent);
+  box-shadow: 0 11px 0 color-mix(in srgb, var(--ky-preview-dark-ink) 65%, transparent);
+}
+
 .ky-appearance .ky-appearance-name {
   display: block;
   margin-block: 8px;

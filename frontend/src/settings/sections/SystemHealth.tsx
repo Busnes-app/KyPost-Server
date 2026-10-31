@@ -8,11 +8,7 @@ export type SystemHealthProps = {
    * Presentational only — the server enforces both regardless of what this says.
    */
   full?: boolean;
-  /**
-   * The panel's own title. It lives inside `.health-head`, which is a
-   * space-between flex row, so it cannot simply be dropped: without it the
-   * controls collapse to the left.
-   */
+  /** The panel's title, for screen readers: the Settings tab names it on screen. */
   heading?: string;
 };
 
@@ -270,7 +266,7 @@ export function SystemHealth({ full = false, heading = "Health Dashboard" }: Sys
   return (
     <>
       <div className="health-head">
-        <h1>{heading}</h1>
+        <h2 className="visually-hidden">{heading}</h2>
         <div className="health-controls">
           <label>
             <span>Auto-refresh</span>

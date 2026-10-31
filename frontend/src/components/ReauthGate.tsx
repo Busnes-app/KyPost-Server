@@ -130,7 +130,7 @@ export function ReauthGate({ what, children }: Props) {
     return (
       <section className="panel sec-page">
         <header className="sec-header">
-          <h1>Confirm it is you</h1>
+          <h2>Confirm it is you</h2>
           <p>Unlock {what}.</p>
         </header>
         <div className="sec-card">
@@ -158,7 +158,7 @@ export function ReauthGate({ what, children }: Props) {
     // rather than as a stray form the app dropped the user on.
     <section className="panel sec-page">
       <header className="sec-header">
-        <h1>Confirm it is you</h1>
+        <h2>Confirm it is you</h2>
         <p>Unlock {what}.</p>
       </header>
       <div className="sec-card">

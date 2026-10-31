@@ -57,7 +57,7 @@ function renderAt(path = "/") {
 }
 
 const subjects = () =>
-  screen.getAllByRole("button").map((b) => b.textContent ?? "").filter((t) => t.endsWith(" Mail"));
+  [...document.querySelectorAll(".inbox-subject")].map((el) => el.textContent ?? "").filter((t) => t.endsWith(" Mail"));
 
 describe("snooze", () => {
   beforeEach(() => {

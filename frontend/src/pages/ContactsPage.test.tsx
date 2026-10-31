@@ -25,20 +25,20 @@ afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 describe("ContactsPage", () => {
   it("shows a refused key inside the open form, where the user can see it", async () => {
     render(<ContactsPage />);
-    await userEvent.click(await screen.findByRole("button", { name: "New Contact" }));
-    const form = screen.getByRole("heading", { name: "Add Contact" }).closest("form")!;
+    await userEvent.click(await screen.findByRole("button", { name: "New contact" }));
+    const form = screen.getByRole("heading", { name: "Add contact" }).closest("form")!;
     await userEvent.type(within(form).getByLabelText("Full Name"), "Bob");
-    await userEvent.click(within(form).getByRole("button", { name: "Add Contact" }));
+    await userEvent.click(within(form).getByRole("button", { name: "Add contact" }));
     expect((await within(form).findByRole("alert")).textContent).toContain("private key");
   });
 
   it("keeps Close in the header and Cancel beside the primary in the footer", async () => {
     render(<ContactsPage />);
-    await userEvent.click(await screen.findByRole("button", { name: "New Contact" }));
-    const form = screen.getByRole("form", { name: "Add Contact" });
+    await userEvent.click(await screen.findByRole("button", { name: "New contact" }));
+    const form = screen.getByRole("form", { name: "Add contact" });
     const dialog = form.closest("dialog")!;
     const footerButtons = within(form.querySelector("footer")!).getAllByRole("button").map((b) => b.textContent);
-    expect(footerButtons).toEqual(["Cancel", "Add Contact"]);
+    expect(footerButtons).toEqual(["Cancel", "Add contact"]);
     await userEvent.click(within(form.querySelector("header")!).getByRole("button", { name: "Close" }));
     expect(dialog.open).toBe(false);
   });
@@ -52,8 +52,10 @@ describe("ContactsPage", () => {
       return json({});
     });
     render(<ContactsPage />);
-    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    const form = screen.getByRole("form", { name: "Edit Contact" });
+    // Row actions live in the row's ⋯ menu (a native popover).
+    expect(await screen.findByRole("button", { name: "Actions for Dana Ops" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Edit", hidden: true }));
+    const form = screen.getByRole("form", { name: "Edit contact" });
     const group = (summary: string) => within(form).getByText(summary).closest("details")!;
     expect(group("More name fields").open).toBe(true);
     expect(group("Addresses and links").open).toBe(false);
@@ -63,13 +65,13 @@ describe("ContactsPage", () => {
 
   it("opens a collapsed group whose field blocks submit", async () => {
     render(<ContactsPage />);
-    await userEvent.click(await screen.findByRole("button", { name: "New Contact" }));
-    const form = screen.getByRole("form", { name: "Add Contact" });
+    await userEvent.click(await screen.findByRole("button", { name: "New contact" }));
+    const form = screen.getByRole("form", { name: "Add contact" });
     const links = within(form).getByText("Addresses and links").closest("details")!;
     await userEvent.click(within(links).getByRole("button", { name: "+ Add website" }));
     await userEvent.type(within(links).getByPlaceholderText("https://..."), "not a url");
     expect(links.open).toBe(false);
-    await userEvent.click(within(form).getByRole("button", { name: "Add Contact" }));
+    await userEvent.click(within(form).getByRole("button", { name: "Add contact" }));
     expect(links.open).toBe(true);
   });
 });

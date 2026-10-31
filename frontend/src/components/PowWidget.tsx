@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getJSON, toErrorMessage } from "../api/client";
 import { solvePowChallenge, type PowChallenge } from "../lib/pow";
+import { ShieldCheckIcon } from "../pages/read/icons";
 
 // PowWidget is the self-hosted alternative to CaptchaWidget's two
 // third-party providers: it fetches a challenge from this same server and
@@ -75,22 +76,23 @@ export function PowWidget({ onToken }: PowWidgetProps) {
   // plain HTTP produces the same missing crypto.subtle every time.
   if (phase === "failed") {
     return (
-      <div className="auth-pow auth-pow-failed" role="alert">
+      <p className="ky-auth-check" data-ky-state="failed" role="alert">
         {error}
-      </div>
+      </p>
     );
   }
   if (phase === "done") {
     return (
-      <div className="auth-pow auth-pow-done" role="status">
-        Security check verified.
-      </div>
+      <p className="ky-auth-check" data-ky-state="passed" role="status">
+        <ShieldCheckIcon />
+        <span>Browser check passed</span>
+      </p>
     );
   }
   return (
-    <div className="auth-pow" role="status" aria-live="polite">
-      <span className="auth-pow-label">Running security check…</span>
+    <p className="ky-auth-check" role="status" aria-live="polite">
+      <span>Running browser check…</span>
       <progress className="auth-pow-bar" value={progress} max={1} />
-    </div>
+    </p>
   );
 }

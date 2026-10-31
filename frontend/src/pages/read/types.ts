@@ -33,6 +33,8 @@ export type InboxEmail = {
   pgpVerified?: boolean;
   pgpSignerFingerprint?: string;
   pgpDecryptError?: string;
+  /** Plain-text excerpt, sent with preview=1 for unencrypted bodies the server holds. */
+  preview?: string;
   /**
    * Only ever set on a `since=` delta response: "new" means the entry carries a
    * body and the client should insert it, "updated" means flags or label moved
@@ -146,3 +148,6 @@ export type SwipeRowState = {
   armed: boolean;
 };
 
+
+/** Wide enough for the list and a reading pane side by side; below it the reader is a modal. */
+export const READING_PANE_QUERY = "(min-width: 1100px)";

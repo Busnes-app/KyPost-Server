@@ -27,7 +27,7 @@ import type {
 import { clearDraftSnapshot } from "./app/draftAutosave";
 import { mailboxLabel, standardMailboxKind, standardMailboxPath, type StandardMailboxKind } from "./app/mailboxKind";
 import {
-  ArchiveIcon, ChevronIcon, ClockIcon, ContactsIcon, DraftIcon, FolderIcon, InboxIcon, LogoutIcon, PlusIcon, SendIcon, SettingsIcon, TrashIcon, WarningIcon
+  AppMark, ArchiveIcon, ChevronIcon, ClockIcon, ContactsIcon, DraftIcon, FolderIcon, InboxIcon, LogoutIcon, PaletteIcon, PlusIcon, SendIcon, SettingsIcon, TrashIcon, WarningIcon
 } from "./pages/read/icons";
 
 const FOLDER_ICONS: Record<StandardMailboxKind | "custom", () => ReactElement> = {
@@ -76,17 +76,6 @@ export function App() {
   const [renameFolderLoading, setRenameFolderLoading] = useState("");
   const [deleteFolderError, setDeleteFolderError] = useState("");
   const [dragOverFolder, setDragOverFolder] = useState("");
-  // Open when the page loads inside a panel, so a reload or a deep link does
-  // not hide the group the user is standing in.
-  const [settingsOpen, setSettingsOpen] = useState(() =>
-    ["/settings", "/admin", "/apps"].some((prefix) => location.pathname.startsWith(prefix))
-  );
-  // On a phone the sidebar is a short (24vh) scrolling strip and the Settings
-  // links render at its bottom, past the folder list, so opening them changed
-  // nothing on screen and the mobile "Settings" button looked dead (#456).
-  // Scroll the group into view whenever it opens; block "nearest" is a no-op on
-  // desktop, where it is already in view.
-  const settingsNavRef = useRef<HTMLDivElement | null>(null);
   // On a phone the nav is one sideways-scrolling strip; keep the current page's link in view.
   const navRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -94,11 +83,6 @@ export function App() {
       ?.querySelectorAll(".sidebar-link-active")
       .forEach((link) => link.scrollIntoView({ block: "nearest", inline: "nearest" }));
   }, [location.pathname, location.search, auth?.authenticated, mailboxFolders]);
-  useEffect(() => {
-    if (settingsOpen) {
-      settingsNavRef.current?.scrollIntoView({ block: "nearest" });
-    }
-  }, [settingsOpen]);
   const [pwaInstallPrompt, setPwaInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [pwaInstalled, setPwaInstalled] = useState(false);
   const [licenseOpen, setLicenseOpen] = useState(false);
@@ -106,7 +90,9 @@ export function App() {
   const [appVersion, setAppVersion] = useState("");
   const currentMailbox = new URLSearchParams(location.search).get("mailbox")?.trim() ?? "";
   const onReadPage = location.pathname === "/read";
-  const onMailView = onReadPage || location.pathname === "/scheduled";
+  const onAppearance = location.pathname === "/settings/appearance";
+  // Every settings and admin panel, and the apps page, sits under the one Settings item.
+  const onSettings = !onAppearance && ["/settings", "/admin", "/apps"].some((prefix) => location.pathname.startsWith(prefix));
 
   // Navigation hold. A section showing a value the server issues once and
   // cannot reissue (a generated CardDAV app password) registers a hold; any
@@ -126,8 +112,8 @@ export function App() {
     if (!secretHold) {
       return;
     }
-    // Links only. The buttons inside this nav (Settings disclosure, Logout)
-    // either do not navigate or are a deliberate exit, and
+    // Links only. The buttons inside this nav (folder and Archive disclosures,
+    // Sign out) either do not navigate or are a deliberate exit, and
     // trapping someone signing out would be worse than the loss it prevents.
     if (!(event.target as HTMLElement).closest("a")) {
       return;
@@ -498,11 +484,12 @@ export function App() {
     // Same field as the sign-in page, so resolving the session does not flash a
     // differently-coloured screen on the way to it.
     return (
-      <div className="auth-page">
-        <div className="auth-shell">
-          <p className="auth-footnote">Checking your session…</p>
+      <main className="ky-auth">
+        <div className="ky-auth-theme" />
+        <div className="ky-auth-body">
+          <p className="ky-auth-help">Checking your session…</p>
         </div>
-      </div>
+      </main>
     );
   }
 
@@ -515,11 +502,7 @@ export function App() {
   // deliberately NOT here: that route is reached from inside the app and stays
   // an ordinary in-app panel.
   if (location.pathname === "/login") {
-    return (
-      <div className="auth-page">
-        <LoginPage auth={auth} onAuthChanged={refreshAuth} />
-      </div>
-    );
+    return <LoginPage auth={auth} onAuthChanged={refreshAuth} />;
   }
 
   // ReactElement, not the global JSX.Element: @types/react 19 stopped
@@ -535,21 +518,60 @@ export function App() {
     return element;
   }
 
+  // Settings is one page: the shared page head, then its sections as one row of
+  // tabs above the open panel, so the sidebar stays the only side column.
+  // On phones the row scrolls and also carries the licence line, which the
+  // phone header hides.
+  function settingsPage(panel: ReactElement) {
+    return (
+      <div className="settings-layout">
+        <header className="ky-page-head">
+          <div>
+            <h1 className="ky-page-title">Settings</h1>
+            <p className="ky-page-lede">
+              {isAdmin ? "Your mail account, sign-in security and notifications, and this server." : "Your mail account, sign-in security, notifications and labels."}
+            </p>
+          </div>
+        </header>
+        <nav className="settings-sections" aria-label="Settings" onClickCapture={guardNavigation}>
+          {visibleSettingsGroups(isAdmin).map((group) => (
+            <div key={group.heading ?? "settings"} className="settings-section-group">
+              {group.heading ? <span className="visually-hidden">{group.heading}</span> : null}
+              {group.items.map(({ to, label }) => (
+                <Link key={to} to={to} className="settings-section-link" aria-current={to === location.pathname ? "page" : undefined}>
+                  {label}
+                </Link>
+              ))}
+            </div>
+          ))}
+          {/* Not a settings panel: its own group after a divider. */}
+          <div className="settings-section-group settings-section-detached">
+            <Link to="/apps" className="settings-section-link" aria-current={location.pathname === "/apps" ? "page" : undefined}>
+              Get the apps
+            </Link>
+          </div>
+          <p className="settings-about">
+            <button type="button" className="ky-license-link" onClick={() => setLicenseOpen(true)}>
+              &copy; {new Date().getFullYear()} &middot; MIT License
+            </button>
+          </p>
+        </nav>
+        {panel}
+      </div>
+    );
+  }
+
   return (
     <AuthContext.Provider value={auth}>
     <MailboxContext.Provider value={{ mailboxes, selected: selectedMailbox }}>
     <div className="shell">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <img className="sidebar-app-logo" src="/apple-touch-icon.png" alt="" width="28" height="28" />
+          <AppMark size={28} />
           <span className="sidebar-wordmark">KyPost</span>
         </div>
-        {/* Outside mail views the page's own primary leads, so this steps down to secondary. */}
-        <button
-          type="button"
-          className={onMailView ? "new-email-button" : "new-email-button new-email-button-quiet"}
-          onClick={compose.openComposeWindow}
-        >
+        {/* Outlined on every page: each page has its own primary action. */}
+        <button type="button" className="new-email-button" onClick={compose.openComposeWindow}>
           New Email
         </button>
         {navBlockedNotice ? (
@@ -786,72 +808,32 @@ export function App() {
             Contacts
           </Link>
 
-          <button
-            type="button"
-            className="nav-heading mobile-settings-toggle"
-            aria-label="Toggle settings"
-            aria-expanded={settingsOpen}
-            aria-controls="settings-nav-group"
-            title="Settings"
-            onClick={() => setSettingsOpen((open) => !open)}
-          >
+          <Link to="/settings/appearance" className={onAppearance ? "nav-heading ky-nav-item sidebar-link-active" : "nav-heading ky-nav-item"}>
+            <PaletteIcon />
+            Appearance
+          </Link>
+          <Link to="/settings" className={onSettings ? "nav-heading ky-nav-item sidebar-link-active" : "nav-heading ky-nav-item"}>
             <SettingsIcon />
             Settings
-            <ChevronIcon />
-          </button>
-          <button
-            type="button"
-            className="nav-heading settings-heading"
-            aria-expanded={settingsOpen}
-            aria-controls="settings-nav-group"
-            onClick={() => setSettingsOpen((open) => !open)}
-          >
-            <SettingsIcon />
-            Settings
-            <ChevronIcon />
-          </button>
-
-          {settingsOpen ? (
-            <div className="nav-group" id="settings-nav-group" ref={settingsNavRef}>
-              {visibleSettingsGroups(isAdmin).map((group) => (
-                <div key={group.heading ?? "settings"} className="nav-subgroup">
-                  {group.heading ? <p className="nav-subheading">{group.heading}</p> : null}
-                  {group.items.map(({ to, label }) => (
-                    <Link key={to} className={to === location.pathname ? "ky-nav-item sidebar-link-active" : "ky-nav-item"} to={to}>
-                      {label}
-                    </Link>
-                  ))}
-                </div>
-              ))}
-              {/* Its own group, below a rule: it is not a settings panel and
-                  must not read as one, nor as an Admin item for an admin. */}
-              <div className="nav-subgroup nav-subgroup-detached">
-                <Link to="/apps" className={location.pathname === "/apps" ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}>
-                  Get the apps
-                </Link>
-              </div>
-            </div>
-          ) : null}
+          </Link>
         </nav>
         {auth.authenticated ? (
-          <div className="sidebar-account">
-            <div className="sidebar-account-copy">
-              <span className="sidebar-account-name">{auth.username}</span>
-              {isAdmin ? <span className="sidebar-account-role">Admin</span> : null}
+          <div className="ky-user">
+            <div className="ky-user-copy">
+              <p className="ky-user-name">{auth.username}</p>
+              <p className="ky-user-role">{isAdmin ? "Administrator" : "Everyday account"}</p>
             </div>
-            <button type="button" className="nav-link-button" onClick={logout}>
+            <button type="button" className="ky-user-signout" onClick={logout}>
               <LogoutIcon />
-              <span className="sidebar-logout-label">Logout</span>
+              <span className="sidebar-logout-label">Sign out</span>
             </button>
           </div>
         ) : null}
-        <div className="sidebar-footer">
-          <p>
-            <button type="button" className="license-link" onClick={() => setLicenseOpen(true)}>
-              &copy; {new Date().getFullYear()} &middot; MIT License
-            </button>
-          </p>
-        </div>
+        <footer className="sidebar-footer">
+          <button type="button" className="ky-license-link" onClick={() => setLicenseOpen(true)}>
+            &copy; {new Date().getFullYear()} &middot; MIT License
+          </button>
+        </footer>
       </aside>
       <main className="content">
         {/* One boundary for every lazy page. The fallback is deliberately
@@ -890,61 +872,56 @@ export function App() {
           {/* The new panels. Both these and the old routes above resolve until
               the retired paths become redirects. */}
           <Route path="/settings/appearance" element={protect(<AppearancePanel />)} />
-          <Route path="/settings/mail" element={protect(<MailPanel />)} />
-          <Route path="/settings/status" element={protect(<StatusPanel />)} />
-          <Route path="/settings/automation" element={protect(<AutomationPanel />)} />
-          <Route path="/settings/notifications" element={protect(<NotificationsPanel />)} />
+          <Route path="/settings" element={<Navigate to={visibleSettingsGroups(isAdmin)[0].items[0].to} replace />} />
+          <Route path="/settings/mail" element={protect(settingsPage(<MailPanel />))} />
+          <Route path="/settings/status" element={protect(settingsPage(<StatusPanel />))} />
+          <Route path="/settings/automation" element={protect(settingsPage(<AutomationPanel />))} />
+          <Route path="/settings/notifications" element={protect(settingsPage(<NotificationsPanel />))} />
           <Route
             path="/settings/security"
-            element={protect(
+            element={protect(settingsPage(
               <ReauthGate what="your security settings">
                 <SecurityPage />
               </ReauthGate>
-            )}
+            ))}
           />
           <Route path="/contacts" element={protect(<ContactsPage />)} />
           <Route path="/scheduled" element={protect(<ScheduledPage key={selectedMailbox} />)} />
           <Route
             path="/apps"
-            element={protect(
+            element={protect(settingsPage(
               <AppsPage pwa={{ installed: pwaInstalled, canInstall: pwaInstallPrompt !== null, install: () => void installPwa() }} />
-            )}
+            ))}
           />
           {/* The admin panels. protect(..., true) redirects non-admins to
               /read; the server enforces every one of these regardless. */}
-          <Route path="/admin/server" element={protect(<ServerPanel />, true)} />
-          <Route path="/admin/diagnostics" element={protect(<DiagnosticsPanel />, true)} />
+          <Route path="/admin/server" element={protect(settingsPage(<ServerPanel />), true)} />
+          <Route path="/admin/diagnostics" element={protect(settingsPage(<DiagnosticsPanel />), true)} />
         </Routes>
         </Suspense>
       </main>
       <dialog
         ref={licenseDialogRef}
-        className="compose-backdrop"
-        onCancel={() => setLicenseOpen(false)}
+        className="ky-about"
+        aria-label="About KyPost"
+        onClose={() => setLicenseOpen(false)}
         onClick={(event) => {
           if (event.target === licenseDialogRef.current) {
             setLicenseOpen(false);
           }
         }}
       >
-        <div className="license-window">
-          <div className="license-window-header">
-            <div className="license-window-title">
-              <div className="license-title-main">
-                <span className="license-app-name">KyPost</span>
-                {appVersion ? <span className="license-version-badge">v{appVersion}</span> : null}
-              </div>
-              <p className="license-title-sub">Developed by Busnes.app</p>
-              <p className="license-title-sub">
-                &copy; {new Date().getFullYear()} &middot; Licensed under the MIT License
-              </p>
-            </div>
-            <button type="button" className="nav-link-button" onClick={() => setLicenseOpen(false)}>
-              Close
-            </button>
+        <div className="ky-about-head">
+          <div>
+            <h2 className="ky-about-name">KyPost {appVersion ? <span className="ky-about-version">v{appVersion}</span> : null}</h2>
+            <p className="ky-about-meta">Developed by Busnes.app</p>
+            <p className="ky-about-meta">&copy; {new Date().getFullYear()} &middot; Licensed under the MIT License</p>
           </div>
-          <textarea className="license-text" readOnly value={mitLicenseText} />
+          <button type="button" className="ky-about-close" onClick={() => setLicenseOpen(false)}>
+            Close
+          </button>
         </div>
+        <textarea className="ky-about-license" readOnly aria-label="MIT License" value={mitLicenseText} />
       </dialog>
       <ComposeWindow compose={compose} mailboxes={mailboxes} />
     </div>

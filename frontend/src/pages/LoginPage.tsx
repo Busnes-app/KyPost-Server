@@ -1,10 +1,12 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useId, useState } from "react";
 import { credentialFields, deriveCredential } from "../api/auth";
 import { useNavigate } from "react-router";
 import { getJSON, HttpError, postJSON } from "../api/client";
 import type { AuthState } from "../auth";
 import { CaptchaWidget, type CaptchaProvider } from "../components/CaptchaWidget";
 import { ChangePasswordForm } from "../components/ChangePasswordForm";
+import { ThemeSwitcher } from "../components/ThemeSwitcher";
+import { AppMark, LoginIcon } from "./read/icons";
 
 // /api/auth/login's 401 body is always one of: "invalid credentials",
 // "captcha verification failed", "security check expired, please try
@@ -71,6 +73,7 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
   const [captchaToken, setCaptchaToken] = useState("");
   const [captchaNonce, setCaptchaNonce] = useState(0);
   const passwordMode = mode === "password";
+  const fieldId = useId();
 
   useEffect(() => {
     if (passwordMode) {
@@ -278,7 +281,7 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
     mfaMode === "push" ? (
       <div className="auth-form">
         <header className="auth-head">
-          <h1 className="auth-title">Approve on your device</h1>
+          <h2 className="auth-title">Approve on your device</h2>
           <p className="auth-lede">
             {mfaMatchDigits
               ? "Tap this number on your paired device."
@@ -330,7 +333,7 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
     ) : (
       <form onSubmit={submitMfa} className="auth-form">
         <header className="auth-head">
-          <h1 className="auth-title">{useRecoveryCode ? "Use a recovery code" : "Enter your code"}</h1>
+          <h2 className="auth-title">{useRecoveryCode ? "Use a recovery code" : "Enter your code"}</h2>
           <p className="auth-lede">
             {useRecoveryCode
               ? "Any one of the codes you saved when you set up two-factor sign-in."
@@ -398,90 +401,57 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
       </form>
     )
   ) : !needsPasswordChange ? (
-    <form onSubmit={submitLogin} className="auth-form">
-      <header className="auth-head">
-        <h1 className="auth-title">Sign in</h1>
-        <p className="auth-lede">Your mail, on your own server.</p>
-      </header>
-
-      {ssoConfig?.enabled ? (
-        <div style={{ marginBottom: "1.25rem" }}>
-          <a
-            href="/api/auth/oidc/login"
-            className="auth-submit"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              textDecoration: "none",
-              background: "var(--accent)",
-              color: "var(--button-text)",
-              fontWeight: "bold",
-              marginBottom: "1rem",
-            }}
-          >
-            Continue with Single Sign On
-          </a>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              textAlign: "center",
-              color: "var(--color-muted, #888)",
-              fontSize: "0.8rem",
-              margin: "1rem 0",
-            }}
-          >
-            <div style={{ flex: 1, borderBottom: "1px solid rgba(255,255,255,0.1)" }} />
-            <span style={{ padding: "0 0.5rem" }}>or sign in with password</span>
-            <div style={{ flex: 1, borderBottom: "1px solid rgba(255,255,255,0.1)" }} />
-          </div>
-        </div>
-      ) : null}
-
-      <label className="auth-field">
-        <span className="auth-label">Username</span>
+    <form onSubmit={submitLogin}>
+      <div className="ky-auth-field">
+        <label htmlFor={`${fieldId}-username`}>Username</label>
         <input
-          className="auth-input auth-input-code"
+          id={`${fieldId}-username`}
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           autoComplete="username"
+          autoCapitalize="none"
+          spellCheck={false}
         />
-      </label>
-      <label className="auth-field">
-        <span className="auth-label">Password</span>
+      </div>
+      <div className="ky-auth-field">
+        <label htmlFor={`${fieldId}-password`}>Password</label>
         <input
-          className="auth-input"
+          id={`${fieldId}-password`}
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
         />
-      </label>
+      </div>
 
       {captchaConfig?.provider ? (
-        <div className="auth-field">
-          <span className="auth-label">Security check</span>
-          {/* Fixed slot: the widget arrives from a third-party script well after
-              first paint, and an unreserved box made the Sign in button jump
-              out from under the pointer as it loaded. */}
-          <div className="auth-captcha">
-            <CaptchaWidget
-              key={captchaNonce}
-              provider={captchaConfig.provider}
-              siteKey={captchaConfig.siteKey}
-              onToken={setCaptchaToken}
-            />
-          </div>
+        // Fixed slot: a third-party widget arrives from its script well after
+        // first paint, and an unreserved box made Sign in jump as it loaded.
+        <div className={captchaConfig.provider === "pow" ? undefined : "auth-captcha"}>
+          <CaptchaWidget
+            key={captchaNonce}
+            provider={captchaConfig.provider}
+            siteKey={captchaConfig.siteKey}
+            onToken={setCaptchaToken}
+          />
         </div>
       ) : null}
 
-      <button type="submit" className="auth-submit" disabled={busy}>
+      <button type="submit" className="ky-auth-submit" disabled={busy}>
+        <LoginIcon />
         {busy ? "Signing in…" : "Sign in"}
       </button>
+
+      {ssoConfig?.enabled ? (
+        <>
+          <hr className="ky-auth-divider" />
+          <a href="/api/auth/oidc/login" className="ky-auth-sso">Continue with single sign-on</a>
+        </>
+      ) : null}
     </form>
   ) : (
     <ChangePasswordForm
+      titleTag={passwordMode ? "h1" : "h2"}
       username={username}
       initialCurrentPassword={password}
       lede={
@@ -520,15 +490,19 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
   }
 
   return (
-    <div className="auth-shell">
-      <div className="auth-seal">
-        <img className="auth-seal-mark" src="/ky.png" alt="KyPost" />
+    <main className="ky-auth">
+      <div className="ky-auth-theme"><ThemeSwitcher /></div>
+      <div className="ky-auth-body">
+        <div className="ky-auth-brand">
+          <AppMark size={56} />
+          <h1>KyPost</h1>
+          <p>Your mail, on your own server.</p>
+        </div>
+        <div className="ky-auth-card">
+          {body}
+          {notice}
+        </div>
       </div>
-      <section className="auth-card">
-        {body}
-        {notice}
-      </section>
-      <p className="auth-footnote">Self-hosted KyPost</p>
-    </div>
+    </main>
   );
 }

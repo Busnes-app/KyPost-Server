@@ -4,7 +4,7 @@
 // (#456). Opening them must scroll the group into view and mark the control
 // expanded.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { App } from "./App";
@@ -55,33 +55,28 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
-describe("mobile Settings button", () => {
-  it("opens the settings links, scrolls them into view, and marks itself expanded", async () => {
-    const scrollIntoView = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoView;
+describe("Settings and Appearance in the nav", () => {
+  it("are direct links, and Settings opens a page whose sections sit inside the content", async () => {
     const user = userEvent.setup();
 
     render(<MemoryRouter initialEntries={["/read"]}><App /></MemoryRouter>);
-    // The first render in this file measures about 1.1s under parallel test load (12 timed
-    // runs), past findBy's 1s default. This asserts mailbox content, not render latency.
     await screen.findByText("Primary inbox", {}, { timeout: 5000 });
 
-    const toggle = screen.getByRole("button", { name: "Toggle settings" });
-    // The current-page link is scrolled into view on load; only the toggle's scroll counts here.
-    scrollIntoView.mockClear();
-    // The phone strip follows sidebar order: the toggle comes after Contacts.
-    const contacts = screen.getByRole("link", { name: "Contacts" });
-    expect(contacts.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // Closed to start: no settings link, and the control says so.
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByRole("link", { name: "Appearance" })).toBeNull();
+    const nav = document.querySelector(".sidebar nav") as HTMLElement;
+    expect(within(nav).getByRole("link", { name: "Appearance" }).getAttribute("href")).toBe("/settings/appearance");
+    const settings = within(nav).getByRole("link", { name: "Settings" });
+    expect(within(nav).queryByRole("link", { name: "Mail" })).toBeNull();
 
-    await user.click(toggle);
+    await user.click(settings);
 
-    // The links are now present, the control is expanded, and the group was
-    // scrolled into view (the fix for the hidden 24vh strip).
-    expect(await screen.findByRole("link", { name: "Appearance" })).toBeTruthy();
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(scrollIntoView.mock.contexts).toContain(document.getElementById("settings-nav-group"));
+    const sections = await screen.findByRole("navigation", { name: "Settings" });
+    expect(sections.closest(".sidebar")).toBeNull();
+    expect(within(sections).getByRole("link", { name: "Mail" }).getAttribute("aria-current")).toBe("page");
+    expect(within(sections).getByRole("link", { name: "Get the apps" })).toBeTruthy();
+    expect(within(sections).queryByRole("link", { name: "Appearance" })).toBeNull();
+    // One active item in the sidebar: Settings, not Appearance or a folder.
+    expect([...nav.querySelectorAll(".sidebar-link-active")].map((el) => el.textContent?.trim())).toEqual(["Settings"]);
+    // The phone header hides the sidebar footer, so the licence line is here too.
+    expect(within(sections).getByRole("button", { name: /MIT License/ })).toBeTruthy();
   });
 });

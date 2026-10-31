@@ -1,5 +1,6 @@
-// The settings sidebar's groups. Data, not behaviour — kept out of App.tsx so
-// adding a panel is a one-line edit in an obvious place.
+// The Settings page's section list (inside the content, not the sidebar). Data,
+// not behaviour — kept out of App.tsx so adding a panel is a one-line edit in an
+// obvious place. Appearance is not here: it is its own sidebar item.
 //
 // ponytail: version is no longer a frontend constant — About and Admin > Server
 // both read the backend's appversion.String() (via GET /api/status `version`),
@@ -16,7 +17,6 @@ export type SettingsNavGroup = {
 
 /** Panels anyone can reach. Status is the trimmed health view. */
 const CONFIG_ITEMS: ReadonlyArray<SettingsNavItem> = [
-  { to: "/settings/appearance", label: "Appearance" },
   { to: "/settings/mail", label: "Mail" },
   { to: "/settings/security", label: "Security" },
   { to: "/settings/notifications", label: "Notifications" },

@@ -253,3 +253,27 @@ it("renders a status whose localCopies is null", async () => {
   await screen.findByText("Recovery key: null-copies-key");
   expect(screen.getByText(/Local copies: 0/)).toBeTruthy();
 });
+
+it("says what a schedule waits for instead of a next run it cannot make", async () => {
+  const blocked = {
+    paired: false,
+    localCopies: [],
+    intervalSec: 900,
+    nextRun: "2026-10-31T12:00:00Z",
+    recent: [],
+    excluded: "IMAP mail excluded",
+  };
+  vi.mocked(getJSON).mockResolvedValue(blocked);
+  render(<Backup />);
+  expect(await screen.findByText("Waiting for recovery key")).toBeTruthy();
+  expect(screen.queryByText(/^Next run/)).toBeNull();
+  cleanup();
+  vi.mocked(getJSON).mockResolvedValue({ ...blocked, keyId: "k1" });
+  render(<Backup />);
+  expect(await screen.findByText("Waiting for a destination")).toBeTruthy();
+  expect(screen.queryByText(/^Next run/)).toBeNull();
+  cleanup();
+  vi.mocked(getJSON).mockResolvedValue({ ...blocked, keyId: "k1", localDir: "/backups" });
+  render(<Backup />);
+  expect(await screen.findByText("Next run: 2026-10-31T12:00:00Z")).toBeTruthy();
+});
