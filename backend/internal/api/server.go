@@ -576,6 +576,7 @@ func (s *Server) routesAuth(mux *http.ServeMux) {
 // the pre-login setup hint.
 func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/backup/status", s.withAdmin(s.handleBackupStatus))
+	mux.HandleFunc("GET /api/admin/kycalendar", s.withAdmin(s.handleAdminKyCalendar))
 	mux.HandleFunc("GET /api/admin/native-recovery/status", s.withAdmin(s.handleNativeRecoveryStatus))
 	mux.HandleFunc("POST /api/admin/native-recovery/repair", s.withAdmin(withActionDigest(s.handleNativeRecoveryRepair)))
 	mux.HandleFunc("POST /api/admin/native-recovery/release", s.withAdmin(withActionDigest(s.handleNativeRecoveryRelease)))

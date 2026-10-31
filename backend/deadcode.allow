@@ -24,3 +24,7 @@ github.com/Busnes-app/kypost-server/backend/internal/sso.WriteNativeV1ForTest
 
 # Points the Ollama release check at an httptest server for api's tests.
 github.com/Busnes-app/kypost-server/backend/internal/ollamaupdate.SetReleasesURLForTest
+
+# Marks a test pairing as KyIdentity's for api's per-user default tests;
+# panics outside a test binary.
+github.com/Busnes-app/kypost-server/backend/internal/kycalendar.NewKyIdentityForTest

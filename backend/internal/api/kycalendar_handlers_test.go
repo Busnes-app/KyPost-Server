@@ -13,7 +13,9 @@ import (
 	"net/http/httptest"
 	"net/mail"
 	"net/url"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +25,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 var kycalSecret = []byte(strings.Repeat("k", kycalendar.MinSecretBytes))
@@ -137,7 +140,7 @@ func newKyCalFixture(t *testing.T) *kycalFixture {
 func (f *kycalFixture) setEnabled(t *testing.T, on bool) {
 	t.Helper()
 	if err := config.UpdateUserSettings(f.srv.userSettingsPath(f.userID), func(s *config.UserSettings) error {
-		s.KyCalendar = on
+		s.KyCalendar = &on
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -421,6 +424,97 @@ func TestKyCalendarSettings(t *testing.T) {
 	f.srv.SetKyCalendar(nil)
 	if v := do(http.MethodGet, ""); v["available"] != false {
 		t.Fatalf("unpaired: %v", v)
+	}
+}
+
+// Paired through KyIdentity, a user who never chose is on; any stored choice
+// wins, including the false the earlier code wrote, which may be a deliberate
+// opt-out. Paired by the environment, no choice stays off, as before.
+func TestKyCalendarPerUserDefault(t *testing.T) {
+	f := newKyCalFixture(t)
+	base, _ := url.Parse("https://cal.example.com")
+	env := kycalendar.New(base, kycalSecret, http.DefaultTransport)
+	viaIdentity := kycalendar.NewKyIdentityForTest(base, kycalSecret, http.DefaultTransport)
+	path := f.srv.userSettingsPath(f.userID)
+	enabled := func() any {
+		req := httptest.NewRequest(http.MethodGet, "/api/settings/kycalendar", nil)
+		authRequestAs(f.srv, req, f.userID)
+		rec := httptest.NewRecorder()
+		f.srv.routes().ServeHTTP(rec, req)
+		var v map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &v)
+		return v["enabled"]
+	}
+	for i, tc := range []struct {
+		file   string
+		client *kycalendar.Client
+		want   bool
+		send   string
+	}{
+		{"", viaIdentity, true, "sent"},
+		{"kyCalendar: false\n", viaIdentity, false, "sending_off"},
+		{"kyCalendar: true\n", env, true, "sent"},
+		{"", env, false, "sending_off"},
+		{"kyCalendar: false\n", env, false, "sending_off"},
+		{"notifications:\n  mode: none\n", viaIdentity, true, "sent"},
+		{"kyCalendar: true\n", viaIdentity, true, "sent"},
+	} {
+		if err := os.WriteFile(path, []byte(tc.file), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.srv.SetKyCalendar(tc.client)
+		if got := enabled(); got != tc.want {
+			t.Errorf("%d: %q via %v: enabled = %v", i, tc.file, tc.client.DefaultOn(), got)
+		}
+		rec := signedSend(t, f.srv, kycalSecret, kycalendar.EventSend, "ev-default-"+strconv.Itoa(i), sendBody(nil))
+		if answerCode(rec) != tc.send {
+			t.Errorf("%d: send = %d %s", i, rec.Code, rec.Body.String())
+		}
+		if tc.send == "sent" {
+			<-f.delivered
+		}
+	}
+	// A PUT stores the choice; an unrelated save keeps no choice as none.
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.srv.SetKyCalendar(viaIdentity)
+	if err := config.UpdateUserSettings(path, func(s *config.UserSettings) error { s.EncryptIncoming = false; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "kyCalendar") || enabled() != true {
+		t.Fatalf("an unrelated save recorded a choice: %s", raw)
+	}
+	f.setEnabled(t, false)
+	if raw, _ := os.ReadFile(path); !strings.Contains(string(raw), "kyCalendar: false") || enabled() != false {
+		t.Fatalf("explicit off not kept: %s", raw)
+	}
+}
+
+// The admin status says how KyCalendar is paired, to administrators only,
+// and never carries the secret.
+func TestAdminKyCalendarStatus(t *testing.T) {
+	f := newKyCalFixture(t)
+	other, err := f.srv.users.Create(t.Context(), "bob", "pw-bob-testpassword", users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(userID string) (int, string) {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/kycalendar", nil)
+		authRequestAs(f.srv, req, userID)
+		rec := httptest.NewRecorder()
+		f.srv.routes().ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	if code, body := get(f.userID); code != 200 || body != `{"source":"env","connected":true,"url":"https://cal.example.com"}`+"\n" {
+		t.Fatalf("env status: %d %s", code, body)
+	}
+	if code, _ := get(other.ID); code != http.StatusForbidden {
+		t.Fatalf("non-admin got %d", code)
+	}
+	f.srv.SetKyCalendar(nil)
+	if code, body := get(f.userID); code != 200 || !strings.Contains(body, `"connected":false`) {
+		t.Fatalf("unpaired status: %d %s", code, body)
 	}
 }
 

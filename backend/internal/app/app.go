@@ -27,6 +27,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/processor"
 	"github.com/Busnes-app/kypost-server/backend/internal/sorter"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"github.com/Busnes-app/kypost-server/backend/internal/wkdpublish"
@@ -198,6 +199,7 @@ func Run(args []string) error {
 	// lets tests drive shutdown without signalling the whole process.
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignals()
+	go kycal.Run(ctx, kyIdentityDirectory(configDir), logger)
 
 	switch *mode {
 	case "daemon":
@@ -801,5 +803,18 @@ func awaitWarmup(logger *logging.Logger, done <-chan struct{}) {
 	case <-done:
 	case <-time.After(shutdownTimeout):
 		logger.Error("startup warmup did not finish within the shutdown timeout; exiting anyway")
+	}
+}
+
+// kyIdentityDirectory reads KyPost's SSO client for kycalendar.Run, which
+// rereads it so a settings change needs no restart. Zero unless SSO is on.
+func kyIdentityDirectory(configDir string) func() kycalendar.Directory {
+	store := sso.NewStore(configDir)
+	return func() kycalendar.Directory {
+		d, ok := store.Load().SuiteDirectory()
+		if !ok {
+			return kycalendar.Directory{}
+		}
+		return kycalendar.Directory{Issuer: d.Issuer, ClientID: d.ClientID, ClientSecret: d.ClientSecret}
 	}
 }

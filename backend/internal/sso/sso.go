@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/oidcverify"
+	"github.com/Busnes-app/ky-primitives/suitedir"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
@@ -56,6 +57,15 @@ type SSOSettings struct {
 	// AdminGroup is the exact group or realm role that makes a generic
 	// provider's new account an administrator. Empty: none does.
 	AdminGroup string `json:"adminGroup,omitempty"`
+}
+
+// SuiteDirectory is KyPost's own OAuth client at the issuer, which KyIdentity's
+// suite directory authenticates; ok is false unless SSO is on and complete.
+func (s SSOSettings) SuiteDirectory() (dir suitedir.Client, ok bool) {
+	if !s.Enabled || s.IssuerURL == "" || s.ClientID == "" || s.ClientSecret == "" {
+		return suitedir.Client{}, false
+	}
+	return suitedir.Client{Issuer: s.IssuerURL, ClientID: s.ClientID, ClientSecret: s.ClientSecret}, true
 }
 
 // Store handles persisting SSOSettings to disk.
