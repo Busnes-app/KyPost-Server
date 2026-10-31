@@ -323,9 +323,60 @@ body {
   margin-top: var(--ky-space-3);
 }
 
-.inbox-search input {
+.inbox-search-field {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--ky-space-2);
+  min-height: var(--ky-control-size);
+  padding: 3px 3px 3px 12px;
+  border: 1px solid var(--ky-field-border);
+  border-radius: var(--ky-control-radius);
+  background: var(--panel);
+  color: var(--ink);
+}
+.inbox-search-field:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -1px; }
+.inbox-search-field > svg { flex: none; }
+.inbox-search-field input {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.inbox-search-field input:focus-visible { outline: none; }
+.inbox-search-field input::-webkit-search-cancel-button { appearance: none; }
+.inbox-search-clear.icon-button { width: 32px; min-height: 32px; }
+.inbox-search-scope {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: calc(var(--ky-control-radius) - 2px);
+  background: color-mix(in srgb, var(--ink-strong) 6%, transparent);
+}
+.inbox-scope {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: calc(var(--ky-control-radius) - 4px);
+  color: var(--ink);
+  font-size: var(--ky-type-meta);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.inbox-scope > input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.inbox-scope:hover { color: var(--ink-strong); }
+.inbox-scope:has(:checked) { background: var(--accent); color: var(--button-text); font-weight: 600; }
+.inbox-scope:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.inbox-scope > input:focus-visible { outline: none; }
+@media (forced-colors: active) {
+  .inbox-scope:has(:checked) { outline: 2px solid Highlight; outline-offset: -2px; }
 }
 
 .inbox-tabs {
@@ -5247,7 +5298,22 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 }
 .inbox-from,
 .inbox-subject { color: var(--ink-strong); }
+.inbox-from { font-weight: 600; }
+/* The unread dot hangs in the cell's padding, so names stay aligned with subjects. */
+.inbox-unit { position: relative; }
+.inbox-row-unread .inbox-unit::before {
+  content: "";
+  position: absolute;
+  top: calc(0.5lh - 3px);
+  left: -9px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
 .inbox-snippet { margin-inline-start: 0.6em; color: var(--ink); }
+.inbox-attachment-icon { display: inline-flex; margin-inline-end: 4px; color: var(--ink); vertical-align: -0.15em; }
+.inbox-attachment-icon > svg { width: 14px; height: 14px; }
 .inbox-line .inbox-keyword-chip { margin-inline-start: 0.4em; }
 .inbox-time {
   color: var(--ink);
@@ -5256,7 +5322,6 @@ html:root:not([data-theme]):not([data-ky-theme]) {
   white-space: nowrap;
   text-align: right;
 }
-.inbox-row-unread .inbox-from,
 .inbox-row-unread .inbox-subject { font-weight: 600; }
 .inbox-row-unread .inbox-time { color: var(--ink-strong); }
 .inbox-row[data-open] { background: color-mix(in srgb, var(--accent) 7%, transparent); }
@@ -5265,20 +5330,20 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .inbox-unit-head .inbox-time { text-align: right; color: inherit; }
 
 .inbox-refresh { color: var(--ink); }
+.inbox-table th.inbox-bulk-head { padding-block: 0; background: var(--accent-soft); }
+thead:has(.inbox-bulk-head) th { background: var(--accent-soft); }
 .inbox-bulk-bar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--ky-space-1);
-  margin-top: var(--ky-space-3);
-  padding-inline: var(--ky-space-3) var(--ky-space-1);
+  gap: 2px;
   min-height: var(--ky-control-size);
-  border-radius: var(--ky-control-radius);
-  background: var(--accent-soft);
+  font-weight: 400;
 }
 .inbox-bulk-bar .inbox-selected-count { margin-inline-end: var(--ky-space-2); color: var(--ink-strong); font-weight: 600; }
-.inbox-bulk-clear { margin-inline-start: auto; padding-inline: var(--ky-space-2); font-size: var(--ky-type-meta); }
-.inbox-bulk-bar .inbox-action-button { font-size: var(--ky-type-meta); }
+.inbox-bulk-bar .inbox-action-button { width: auto; min-height: 32px; padding-inline: 5px; color: var(--ink-strong); font-size: var(--ky-type-meta); }
+.inbox-bulk-bar .inbox-action-text { display: inline; }
+.inbox-bulk-clear.icon-button { width: 32px; min-height: 32px; margin-inline-start: auto; }
 
 /* List and reading pane share the content area; below 1100px the reader is a modal. */
 .read-layout {
@@ -5287,24 +5352,49 @@ html:root:not([data-theme]):not([data-ky-theme]) {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
 }
-.read-list { min-height: 0; display: flex; flex-direction: column; }
-.reading-pane-empty { display: none; }
+.read-list { min-height: 0; display: flex; flex-direction: column; container: read-list / inline-size; }
+.reading-pane-empty, .read-split, .email-reader-back { display: none; }
 @media (min-width: 1100px) {
-  /* Equal halves: the pane keeps a plain-text line of about 80 characters unwrapped. */
-  .read-layout { grid-template-columns: minmax(26rem, 1fr) minmax(35rem, 1.06fr); column-gap: var(--ky-space-3); }
-  .read-list .inbox-unit { grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr) auto; gap: var(--ky-space-2); }
-  /* The list column is narrow: icons whose meaning is plain stay icon-only, named by their verbs. */
-  .inbox-bulk-bar .inbox-action-button:not([data-action="snooze"], [data-action="read"]) .inbox-action-text { display: none; }
-  .inbox-bulk-bar .inbox-action-button:not([data-action="snooze"], [data-action="read"]) { width: 36px; padding: 0; justify-content: center; }
-  .inbox-bulk-bar { flex-wrap: nowrap; gap: 2px; padding-inline: 12px var(--ky-space-1); }
-  .inbox-bulk-bar .inbox-selected-count { margin-inline-end: var(--ky-space-1); }
-  .inbox-bulk-bar .inbox-action-button { padding-inline: 6px; }
-  .inbox-bulk-bar .inbox-action-button:not([data-action="snooze"], [data-action="read"]) { width: 32px; }
+  /* Settings › Mail › Reading pane. Right: the list takes its saved share of the width (52% by default)
+     and the pane keeps at least 35rem, so an 80-character plain-text line stays unwrapped. Below: the list takes its share of the
+     height. Off: the open reader covers the list, which keeps its scroll position underneath. */
+  .read-layout[data-pane="right"] { grid-template-columns: minmax(20rem, min(var(--read-list-size, 52%), 100% - 35rem - 2rem)) 2rem minmax(0, 1fr); }
+  .read-layout[data-pane="below"] { grid-template-rows: minmax(8rem, var(--read-list-size, 45%)) 2rem minmax(0, 1fr); }
+  .read-layout > * { grid-area: 1 / 1; }
+  .read-layout[data-pane="right"] > .read-split { grid-area: 1 / 2; }
+  .read-layout[data-pane="right"] > :is(.email-reader-backdrop, .reading-pane-empty) { grid-area: 1 / 3; }
+  .read-layout[data-pane="below"] > .read-split { grid-area: 2 / 1; }
+  .read-layout[data-pane="below"] > :is(.email-reader-backdrop, .reading-pane-empty) { grid-area: 3 / 1; margin-top: 0; }
+  .read-layout[data-pane="off"]:has(> .email-reader-backdrop[open]) > .read-list { visibility: hidden; }
+  .read-layout[data-pane="off"] > .reading-pane-empty { display: none; }
+  .read-layout[data-pane="off"] .email-reader-backdrop:not(:modal) .email-reader-back { display: inline-flex; align-self: flex-start; gap: var(--ky-space-2); margin: 0 0 var(--ky-space-2) calc(-1 * var(--ky-space-2)); padding-inline: var(--ky-space-2); }
+  .read-layout[data-pane="off"] .email-reader-backdrop:not(:modal) .email-reader-close { display: none; }
+  .read-split {
+    display: block;
+    position: relative;
+    margin-top: var(--ky-space-3);
+    cursor: col-resize;
+    touch-action: none;
+  }
+  .read-layout[data-pane="below"] > .read-split { margin-top: 0; cursor: row-resize; }
+  .read-layout[data-pane="below"] > .read-split::before { inset: 50% 0 auto; width: auto; height: 1px; transform: translateY(-50%); }
+  .read-layout[data-pane="below"] > .read-split:is(:hover, :focus-visible)::before { width: auto; height: 3px; }
+  .read-split::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--line);
+    transform: translateX(-50%);
+    transition: width 120ms ease-out, background-color 120ms ease-out;
+  }
+  .read-split:is(:hover, :focus-visible)::before { width: 3px; background: var(--accent); }
+  .read-split:focus-visible { outline: none; }
   .reading-pane-empty {
     display: grid;
     place-items: center;
     margin: var(--ky-space-3) 0 0;
-    border-left: 1px solid var(--line);
     color: var(--ink);
     font-size: var(--ky-type-nav);
   }
@@ -5316,8 +5406,8 @@ html:root:not([data-theme]):not([data-ky-theme]) {
     height: auto;
     min-height: 0;
     margin-top: var(--ky-space-3);
-    padding: 0 0 0 var(--ky-space-3);
-    border-left: 1px solid var(--line);
+    padding: 0;
+    border: 0;
     background: none;
     display: flex;
   }
@@ -5396,12 +5486,32 @@ html:root:not([data-theme]):not([data-ky-theme]) {
   .appearance-mode:has(:checked) { outline: 2px solid Highlight; outline-offset: -3px; }
 }
 
-/* Phones: two lines per message, sender and time over subject and snippet. */
-@media (max-width: 700px) {
+/* A narrow list (phones, or beside the reading pane): two lines per message, sender and time over subject and snippet. */
+@container read-list (max-width: 40rem) {
   .inbox-unit { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "from time" "line line"; gap: 2px var(--ky-space-2); }
   .inbox-from { grid-area: from; }
   .inbox-line { grid-area: line; }
   .inbox-time { grid-area: time; }
-  .inbox-unit-head { grid-template-areas: "from time"; }
+  .inbox-unit-head { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "from line time"; }
+  .inbox-bulk-bar .inbox-action-icon { display: none; }
+}
+/* Phones sort by sender and time only. */
+@media (max-width: 700px) {
+  .inbox-unit-head { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "from time"; }
   .inbox-unit-head .inbox-line { display: none; }
+}
+.reading-pane-setting { margin: var(--ky-space-4) 0 0; padding: 0; border: 0; }
+.reading-pane-setting > legend { padding: 0; }
+.reading-pane-setting h3 { margin: 0; }
+.reading-pane-setting p { margin: var(--ky-space-2) 0 var(--ky-space-3); }
+.reading-pane-setting .appearance-modes { max-width: 32rem; }
+/* A narrow list puts the search scope under the query. */
+@container read-list (max-width: 30rem) {
+  .inbox-search-field { flex-wrap: wrap; padding-block: 3px; }
+  .inbox-search-scope { flex: 1 0 100%; margin-inline-start: -9px; }
+  .inbox-scope { flex: 1; }
+}
+@media (max-width: 600px) {
+  .inbox-bulk-bar .inbox-action-button { min-height: 40px; }
+  .inbox-bulk-clear.icon-button { width: 40px; min-height: 40px; }
 }

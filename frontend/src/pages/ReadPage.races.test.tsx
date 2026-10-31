@@ -98,7 +98,7 @@ describe("ReadPage request ordering", () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByText("Message A");
-    const input = screen.getByRole("textbox", { name: "Search mail" });
+    const input = screen.getByRole("searchbox", { name: "Search mail" });
 
     await user.type(input, "old{Enter}");
     await user.clear(input);
@@ -109,7 +109,7 @@ describe("ReadPage request ordering", () => {
 
     await user.clear(input);
     await user.type(input, "late{Enter}");
-    await user.click(screen.getByRole("button", { name: "Clear" }));
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
     await act(async () => pending.late.resolve({ results: [msgA] }));
     expect(screen.queryByText(/^Found/)).toBeNull();
   });
@@ -121,7 +121,7 @@ describe("ReadPage request ordering", () => {
     renderPage();
     await screen.findByText("Message A");
 
-    await user.type(screen.getByRole("textbox", { name: "Search mail" }), "q{Enter}");
+    await user.type(screen.getByRole("searchbox", { name: "Search mail" }), "q{Enter}");
     await user.click(screen.getByRole("button", { name: "Go to Archive" }));
     await waitFor(() => expect(getJSON).toHaveBeenCalledWith(expect.stringMatching(/^\/api\/inbox.*Archive/)));
     await act(async () => inboxSearch.resolve({ results: [msgA] }));

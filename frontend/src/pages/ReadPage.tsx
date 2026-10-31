@@ -18,7 +18,9 @@ import { usePagination } from "../hooks/usePagination";
 import { mailboxName, useMailboxes } from "../app/mailboxes";
 import type { DraftComposePayload } from "../app/types";
 import { PageTabs } from "../components/PageTabs";
-import { ArchiveIcon, CheckIcon, ClockIcon, CloseIcon, ImageIcon, PlusIcon, PrintIcon, RefreshIcon, TrashIcon, WarningIcon } from "./read/icons";
+import { ArchiveIcon, ArrowLeftIcon, CheckIcon, ClockIcon, CloseIcon, ImageIcon, PaperclipIcon, PlusIcon, PrintIcon, RefreshIcon, SearchIcon, TrashIcon, WarningIcon } from "./read/icons";
+import { ListSplitter } from "./read/ListSplitter";
+import { readReadingPane } from "./read/readingPane";
 import { SnoozeDialog } from "./read/SnoozeDialog";
 import { sortTime } from "../lib/snooze";
 
@@ -55,6 +57,14 @@ import {
   buildReplyAllRecipients
 } from "./read/compose";
 
+const SEARCH_FIELDS = [
+  ["all", "All"],
+  ["sender", "Sender"],
+  ["subject", "Subject"],
+  ["body", "Body"]
+] as const;
+type SearchField = (typeof SEARCH_FIELDS)[number][0];
+
 /** Base64 of decoded bytes, chunked so a large attachment does not blow the call stack. */
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -66,6 +76,10 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   const readerActionsId = useId();
+  const searchScopeName = useId();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [readingPane] = useState(readReadingPane);
+  const readerMenuOpenRef = useRef(false);
   const [searchParams, setSearchParams] = useSearchParams();
   // App remounts this page on a switch, so the mailbox read here is fixed for its life.
   const [box] = useState(selectedMailboxId);
@@ -154,7 +168,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   const [swipeRows, setSwipeRows] = useState<Record<string, SwipeRowState>>({});
   const [searchMode, setSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchField, setSearchField] = useState<"all" | "sender" | "subject" | "body">("all");
+  const [searchField, setSearchField] = useState<SearchField>("all");
   const [searchResults, setSearchResults] = useState<InboxEmail[]>([]);
   const [searching, setSearching] = useState(false);
   const [swipeRemovedIds, setSwipeRemovedIds] = useState<string[]>([]);
@@ -545,9 +559,22 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     return () => clearInterval(timer);
   }, [mailbox]);
 
-  // Wide screens read in a pane beside the list (a non-modal dialog the layout
-  // places); narrower ones keep the modal reader.
+  // Wide screens read in a pane (a non-modal dialog the layout places beside or
+  // below the list, or over it when the pane is off); narrower ones keep the modal reader.
   const readerModalRef = useRef(false);
+  // With the pane off the reader covers the list, so Escape goes back to it, unless
+  // the reader's menu or another dialog is the one being dismissed.
+  const backOnEscape = useEffectEvent((event: KeyboardEvent) => {
+    if (event.key !== "Escape" || event.defaultPrevented || !selected || readerModalRef.current || readerMenuOpenRef.current) return;
+    if (event.target instanceof Element && event.target.closest("dialog:not(.email-reader-backdrop)")) return;
+    setSelected(null);
+  });
+  useEffect(() => {
+    if (readingPane !== "off") return;
+    const listener = (event: KeyboardEvent) => backOnEscape(event);
+    document.addEventListener("keydown", listener);
+    return () => document.removeEventListener("keydown", listener);
+  }, [readingPane]);
   useEffect(() => {
     const dialog = emailReaderDialogRef.current;
     if (!dialog) return;
@@ -738,14 +765,15 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     setCurrentPage(1);
   }, [mailbox, activeTab, sortKey, sortDirection, setCurrentPage]);
 
-  // One scannable line per message: sender name (address on hover), subject and
-  // snippet, then the time. Unread weight lands on sender and subject only.
+  // Sender name (address on hover), subject and snippet, then the time: one line,
+  // or two beside the reading pane and on phones. Unread rows mark the sender and
+  // bold the subject.
   function messageUnit(item: InboxEmail, open: () => void) {
     return (
       <button type="button" className="inbox-unit" onClick={open}>
         <span className="inbox-from" title={item.sender || undefined}>{senderName(item.sender)}</span>
         <span className="inbox-line">
-          {item.hasAttachments ? <span className="inbox-attachment-icon" title="Has attachments" aria-label="Has attachments">📎 </span> : null}
+          {item.hasAttachments ? <span className="inbox-attachment-icon" title="Has attachments" role="img" aria-label="Has attachments"><PaperclipIcon /></span> : null}
           <span className="inbox-subject">{item.subject || "(no subject)"}</span>
           {(item.keywords ?? []).map((kw) => (
             <span key={kw} className="inbox-keyword-chip">{kw}</span>
@@ -927,8 +955,11 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
 
   // Only the newest search (or clear) may write results.
   const searchIdRef = useRef(0);
+  const searchKey = searchQuery.trim() ? `${searchField}\n${searchQuery}` : "";
+  const lastSearchKeyRef = useRef("");
   async function performSearch() {
     const searchId = ++searchIdRef.current;
+    lastSearchKeyRef.current = searchKey;
     if (!searchQuery.trim()) {
       setSearching(false);
       setSearchMode(false);
@@ -953,8 +984,17 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     }
   }
 
+  // Search as you type: a query runs once typing pauses; Enter runs it at once.
+  const runSearch = useEffectEvent(() => void performSearch());
+  useEffect(() => {
+    if (searchKey === lastSearchKeyRef.current) return;
+    const timer = setTimeout(() => runSearch(), 300);
+    return () => clearTimeout(timer);
+  }, [searchKey]);
+
   function clearSearch() {
     searchIdRef.current++;
+    lastSearchKeyRef.current = "";
     setSearching(false);
     setSearchMode(false);
     setSearchQuery("");
@@ -1461,36 +1501,16 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       {error ? <p className="notice notice-error">Failed to load inbox: {error}</p> : null}
       {actionError ? <p className="notice notice-error">Inbox action failed: {actionError}</p> : null}
 
-      <div className="read-layout">
+      <div className="read-layout" data-pane={readingPane}>
       <div className="read-list">
-      {selectedMessageIds.length > 0 ? (
-        // Contextual: every action needs a selection, so the bar replaces search only while one exists.
-        <div className="inbox-bulk-bar" role="toolbar" aria-label="Selected messages">
-          <span className="inbox-selected-count" role="status">{selectedMessageIds.length} selected</span>
-          {batchActions.map((action) => (
-            <button
-              key={action.key}
-              type="button"
-              onClick={action.onClick}
-              disabled={action.disabled}
-              className="inbox-action-button btn-ghost"
-              data-action={action.key}
-              aria-label={action.label}
-              title={action.label}
-            >
-              <span className="inbox-action-icon" aria-hidden="true">{action.icon}</span>
-              <span className="inbox-action-text">{action.label}</span>
-            </button>
-          ))}
-          <button type="button" className="btn-ghost inbox-bulk-clear" onClick={() => setSelectedMessageIds([])}>
-            Clear selection
-          </button>
-        </div>
-      ) : (
       <div className="inbox-search">
+        <div className="inbox-search-field" role="search" aria-busy={searching || undefined}>
+          <SearchIcon />
           <input
-            type="text"
-            placeholder="Search..."
+            ref={searchInputRef}
+            type="search"
+            enterKeyHint="search"
+            placeholder="Search mail"
             aria-label="Search mail"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -1500,28 +1520,35 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               }
             }}
           />
-          <select
-            value={searchField}
-            aria-label="Search in"
-            onChange={(e) => setSearchField(e.target.value as any)}
-          >
-            <option value="all">All</option>
-            <option value="sender">Sender</option>
-            <option value="subject">Subject</option>
-            <option value="body">Body</option>
-          </select>
-          <button
-            type="button"
-            onClick={() => void performSearch()}
-            disabled={searching}
-          >
-            {searching ? "Searching..." : "Search"}
-          </button>
-          {searchMode ? (
-            <button type="button" className="btn-ghost" onClick={clearSearch}>
-              Clear
+          {searchQuery ? (
+            <button
+              type="button"
+              className="btn-ghost icon-button inbox-search-clear"
+              aria-label="Clear search"
+              title="Clear search"
+              onClick={() => {
+                clearSearch();
+                searchInputRef.current?.focus();
+              }}
+            >
+              <CloseIcon />
             </button>
           ) : null}
+          <div className="inbox-search-scope" role="radiogroup" aria-label="Search in">
+            {SEARCH_FIELDS.map(([value, label]) => (
+              <label key={value} className="inbox-scope">
+                <input
+                  type="radio"
+                  name={searchScopeName}
+                  value={value}
+                  checked={searchField === value}
+                  onChange={() => setSearchField(value)}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
           {/* The list refreshes itself every 15 seconds; this is the manual nudge. */}
           <button
             type="button"
@@ -1534,7 +1561,6 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             <RefreshIcon />
           </button>
       </div>
-      )}
 
       {searchMode ? (
         <div className="inbox-list-region">
@@ -1602,7 +1628,8 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         </div>
       ) : null}
 
-      {visibleRows.length === 0 && !loading ? (
+      {/* Results replace the list while a search is open. */}
+      {searchMode ? null : visibleRows.length === 0 && !loading ? (
         <div className="inbox-list-region">
           <div className="inbox-empty-state">
             <img src="/apple-touch-icon.png" alt="" width="96" height="96" />
@@ -1658,19 +1685,50 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                       </label>
                     </th>
                     <th className="inbox-col-heading inbox-col-lock" aria-label="Encrypted" />
-                    {/* One cell, laid out on the row's own columns: sender, subject, time. */}
-                    <th className="inbox-col-heading">
-                      <div className="inbox-unit inbox-unit-head">
-                        <button type="button" onClick={() => updateSort("sender")} className="inbox-sort-button inbox-from">
-                          {sortLabel("sender", "Sender")}
-                        </button>
-                        <button type="button" onClick={() => updateSort("subject")} className="inbox-sort-button inbox-line">
-                          {sortLabel("subject", "Subject")}
-                        </button>
-                        <button type="button" onClick={() => updateSort("time")} className="inbox-sort-button inbox-time">
-                          {sortLabel("time", "Time")}
-                        </button>
-                      </div>
+                    {/* One cell, laid out on the row's own columns: sender, subject, time. Every bulk
+                        action needs a selection, so the bar takes the cell only while one exists. */}
+                    <th className={`inbox-col-heading${selectedMessageIds.length > 0 ? " inbox-bulk-head" : ""}`}>
+                      {selectedMessageIds.length > 0 ? (
+                        <div className="inbox-bulk-bar" role="toolbar" aria-label="Selected messages">
+                          <span className="inbox-selected-count" role="status">{selectedMessageIds.length} selected</span>
+                          {batchActions.map((action) => (
+                            <button
+                              key={action.key}
+                              type="button"
+                              onClick={action.onClick}
+                              disabled={action.disabled}
+                              className="inbox-action-button btn-ghost"
+                              data-action={action.key}
+                              aria-label={action.label}
+                              title={action.label}
+                            >
+                              <span className="inbox-action-icon" aria-hidden="true">{action.icon}</span>
+                              <span className="inbox-action-text">{action.label}</span>
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            className="btn-ghost icon-button inbox-bulk-clear"
+                            aria-label="Clear selection"
+                            title="Clear selection"
+                            onClick={() => setSelectedMessageIds([])}
+                          >
+                            <CloseIcon />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="inbox-unit inbox-unit-head">
+                          <button type="button" onClick={() => updateSort("sender")} className="inbox-sort-button inbox-from">
+                            {sortLabel("sender", "Sender")}
+                          </button>
+                          <button type="button" onClick={() => updateSort("subject")} className="inbox-sort-button inbox-line">
+                            {sortLabel("subject", "Subject")}
+                          </button>
+                          <button type="button" onClick={() => updateSort("time")} className="inbox-sort-button inbox-time">
+                            {sortLabel("time", "Time")}
+                          </button>
+                        </div>
+                      )}
                     </th>
                   </tr>
                 </thead>
@@ -1749,6 +1807,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       )}
 
       </div>
+      {readingPane === "off" ? null : <ListSplitter pane={readingPane} />}
       <dialog
         ref={emailReaderDialogRef}
         className="email-reader-backdrop"
@@ -1768,11 +1827,17 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             className="email-reader-window"
             onClick={(e) => e.stopPropagation()}
           >
+            {readingPane === "off" ? (
+              <button type="button" className="btn-ghost email-reader-back" onClick={() => setSelected(null)}>
+                <ArrowLeftIcon />
+                Back
+              </button>
+            ) : null}
             <div className="email-reader-head">
               <h2 id="email-reader-title" className="email-reader-title">
                 {decrypted[decryptedKey(selected.messageId)]?.subject ?? selected.subject ?? "(no subject)"}
               </h2>
-              <button type="button" className="btn-ghost icon-button" aria-label="Close" title="Close" onClick={() => setSelected(null)}>
+              <button type="button" className="btn-ghost icon-button email-reader-close" aria-label="Close" title="Close" onClick={() => setSelected(null)}>
                 <CloseIcon />
               </button>
             </div>
@@ -1784,6 +1849,9 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
               </div>
               <button type="button" popoverTarget={readerActionsId}>More actions</button>
               <div id={readerActionsId} popover="auto" className="email-reader-tools suite-action-menu"
+                onToggle={(event) => {
+                  readerMenuOpenRef.current = event.newState === "open";
+                }}
                 onClickCapture={(event) => {
                   if (event.target instanceof Element && event.target.closest("button:not([data-keep-open])")) event.currentTarget.hidePopover?.();
                 }}>

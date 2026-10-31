@@ -24,13 +24,17 @@ if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
     }) as MediaQueryList;
 }
 
-// jsdom parses <dialog> but implements none of its behaviour, so showModal and
-// close are missing. The reader opens in a dialog (useDialogOpen), so without
+// jsdom parses <dialog> but implements none of its behaviour, so showModal, show
+// and close are missing. The reader opens in a dialog (useDialogOpen), so without
 // these no message can be opened in a test. Toggling the `open` property is
 // what the real methods do that this codebase depends on — it is what
 // useDialogOpen reads back to avoid double-opening.
 if (typeof HTMLDialogElement !== "undefined" && typeof HTMLDialogElement.prototype.showModal !== "function") {
   HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
+    this.open = true;
+  };
+  // The non-modal reading pane on wide screens.
+  HTMLDialogElement.prototype.show = function show(this: HTMLDialogElement) {
     this.open = true;
   };
   HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
