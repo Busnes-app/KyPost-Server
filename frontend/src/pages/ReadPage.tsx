@@ -1915,7 +1915,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                 );
               })()}
               <div className="email-reader-facts email-reader-from">
-                <p><strong>Sender:</strong><span className="email-reader-sender">{selected.sender || "-"}</span></p>
+                <p><strong>Sender</strong><span className="email-reader-sender">{selected.sender || "-"}</span></p>
                 <time dateTime={selected.atUtc}>{formatReaderTime(selected.atUtc)}</time>
               </div>
               <details className="email-reader-details">

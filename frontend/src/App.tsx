@@ -518,13 +518,21 @@ export function App() {
     return element;
   }
 
-  // Settings is one page: its sections are one row of tabs at the top of the
-  // content, above the open panel, so the sidebar stays the only side column.
+  // Settings is one page: the shared page head, then its sections as one row of
+  // tabs above the open panel, so the sidebar stays the only side column.
   // On phones the row scrolls and also carries the licence line, which the
   // phone header hides.
   function settingsPage(panel: ReactElement) {
     return (
       <div className="settings-layout">
+        <header className="ky-page-head">
+          <div>
+            <h1 className="ky-page-title">Settings</h1>
+            <p className="ky-page-lede">
+              {isAdmin ? "Your mail account, sign-in security and notifications, and this server." : "Your mail account, sign-in security, notifications and labels."}
+            </p>
+          </div>
+        </header>
         <nav className="settings-sections" aria-label="Settings" onClickCapture={guardNavigation}>
           {visibleSettingsGroups(isAdmin).map((group) => (
             <div key={group.heading ?? "settings"} className="settings-section-group">

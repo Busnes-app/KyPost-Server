@@ -20,7 +20,7 @@ export function MailPanel() {
   return (
     <section className="panel">
       <div className="config-header">
-        <h1>Mail</h1>
+        <h2 className="visually-hidden">Mail</h2>
         <p>Your mail server, mailbox storage, the addresses you send as, KyCalendar invitations, contact sync and mailbox rules.</p>
       </div>
       <PanelTabs

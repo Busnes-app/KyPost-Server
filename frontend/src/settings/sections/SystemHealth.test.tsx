@@ -447,11 +447,11 @@ describe("SystemHealth admin controls", () => {
     await screen.findByText("Client Address");
   });
 
-  it("titles itself from the caller, since the heading anchors a space-between row", async () => {
+  it("titles itself from the caller for screen readers; the Settings tab names it on screen", async () => {
     mockEndpoints();
     render(<SystemHealth full={false} heading="Status" />);
 
     const heading = await screen.findByRole("heading", { name: "Status" });
-    expect(heading.tagName).toBe("H1");
+    expect(heading.tagName).toBe("H2");
   });
 });

@@ -1125,7 +1125,7 @@ pre {
 
 .health-head {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
@@ -5543,12 +5543,12 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 }
 
 /* Settings: one page; its sections are one row of tabs above the open panel. */
+.settings-layout > .ky-page-head { margin: 0; padding: var(--ky-space-4) var(--ky-space-5) 0; margin-bottom: var(--ky-space-3); }
 .settings-sections {
   display: flex;
   align-items: stretch;
   gap: var(--ky-space-1);
   margin: 0 var(--ky-space-5);
-  padding-top: var(--ky-space-3);
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
   scrollbar-width: none;
@@ -5572,7 +5572,8 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .settings-about .ky-license-link { margin: 0; }
 @media (max-width: 900px) {
   .settings-layout { display: flex; flex-direction: column; overflow-y: auto; }
-  .settings-layout > .settings-sections { flex: none; margin: 0 var(--ky-space-3); }
+  .settings-layout > .ky-page-head { padding: 10px 10px 0; }
+  .settings-layout > .settings-sections { flex: none; margin: 0 10px; }
   .settings-about { display: block; }
 }
 
