@@ -27,8 +27,8 @@ import (
 // maxITIPRequestBytes bounds a send request: a 1 MiB object, JSON-escaped.
 const maxITIPRequestBytes = 4 << 20
 
-// SetKyCalendar pairs KyCalendar (docs/KYCALENDAR.md). Startup-only; nil
-// leaves the feature off.
+// SetKyCalendar pairs KyCalendar (docs/KYCALENDAR.md). Startup-only; nil or
+// an unpaired Client leaves the feature off.
 func (s *Server) SetKyCalendar(c *kycalendar.Client) { s.kycal = c }
 
 // itipRefusal is a contract answer: KyCalendar records code.
@@ -49,7 +49,7 @@ func writeITIP(w http.ResponseWriter, status int, code, msg string) {
 // mailbox. Signature only; every check below is a refusal KyCalendar records.
 func (s *Server) handleITIPSend(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if s.kycal == nil {
+	if !s.kycal.Available() {
 		writeITIP(w, http.StatusNotFound, "kycalendar_off", "KyCalendar is not configured on this server")
 		return
 	}
@@ -129,7 +129,7 @@ func (s *Server) sendITIP(ctx context.Context, eventID string, body []byte) *iti
 	if err != nil {
 		return errUnavailable
 	}
-	if !settings.KyCalendar {
+	if !settings.KyCalendarOn(s.kycal.DefaultOn()) {
 		return refuse(http.StatusConflict, "sending_off", "the user has not let KyCalendar send from their mailbox")
 	}
 	if u.NativeMailboxIssuer != "" || u.NativeMailboxSource != "" {
@@ -224,6 +224,12 @@ var itipBody = map[string]string{
 	"REPLY":   "This is an answer to your invitation. Your calendar app records it from the attached reply.\r\n",
 }
 
+// handleAdminKyCalendar reports how KyCalendar is paired: through KyIdentity,
+// by the environment, or not, and why. Never the secret.
+func (s *Server) handleAdminKyCalendar(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.kycal.Status())
+}
+
 // handleKyCalendarSettings reads and sets the caller's KyCalendar switch.
 // available reports whether this server is paired with KyCalendar at all.
 func (s *Server) handleKyCalendarSettings(w http.ResponseWriter, r *http.Request) {
@@ -242,7 +248,7 @@ func (s *Server) handleKyCalendarSettings(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if err := config.UpdateUserSettings(path, func(st *config.UserSettings) error {
-			st.KyCalendar = *req.Enabled
+			st.SetKyCalendar(*req.Enabled)
 			return nil
 		}); err != nil {
 			http.Error(w, "failed to save settings", http.StatusInternalServerError)
@@ -254,7 +260,7 @@ func (s *Server) handleKyCalendarSettings(w http.ResponseWriter, r *http.Request
 		http.Error(w, "failed to read settings", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"available": s.kycal != nil, "enabled": settings.KyCalendar})
+	writeJSON(w, http.StatusOK, map[string]any{"available": s.kycal.Available(), "enabled": settings.KyCalendarOn(s.kycal.DefaultOn())})
 }
 
 // handleCalendarRSVP answers an invitation in the caller's mailbox through
@@ -294,7 +300,7 @@ func (s *Server) handleCalendarRSVP(w http.ResponseWriter, r *http.Request) {
 		writeITIP(w, http.StatusServiceUnavailable, "unavailable", "settings unavailable")
 		return
 	}
-	if s.kycal == nil || !settings.KyCalendar || u.SSOSub == "" || u.SSOIssuer == "" || u.SSOLinkRevokedAt != 0 {
+	if !s.kycal.Available() || !settings.KyCalendarOn(s.kycal.DefaultOn()) || u.SSOSub == "" || u.SSOIssuer == "" || u.SSOLinkRevokedAt != 0 {
 		writeITIP(w, http.StatusConflict, "kycalendar_off", "KyCalendar is not in use for this account; send the reply by mail")
 		return
 	}

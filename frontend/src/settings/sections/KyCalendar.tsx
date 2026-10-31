@@ -30,13 +30,13 @@ export function KyCalendar() {
     <h3>KyCalendar</h3>
     {error && <p className="notice notice-error" role="alert">{error}</p>}
     {!state && !error && <p>Loading…</p>}
-    {state && !state.available && <p>Invitation mail with KyCalendar is not set up on this server. Your administrator can turn it on (KyPost docs: KYCALENDAR.md). It lets KyCalendar send and receive meeting invitations through your mailbox; it does not sync your calendars.</p>}
+    {state && !state.available && <p>Invitation mail with KyCalendar is not connected on this server. Your administrator can see why under Server → KyCalendar. It lets KyCalendar send and receive meeting invitations through your mailbox; it does not sync your calendars.</p>}
     {state?.available && <>
       <label>
         <input type="checkbox" checked={state.enabled} disabled={saving} onChange={e => save(e.target.checked)} />
         {" "}Let KyCalendar send invitations from this mailbox
       </label>
-      <p>KyCalendar can then mail invitations, cancellations and replies as you, through your own mail server, to the people each event names, and receives the signed invitations you get here.</p>
+      <p>KyCalendar can then mail invitations, cancellations and replies as you, through your own mail server, to the people each event names, and receives the signed invitations you get here. When your server pairs KyCalendar through KyIdentity, this is on until you turn it off.</p>
     </>}
   </div>;
 }

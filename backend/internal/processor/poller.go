@@ -909,7 +909,7 @@ func (p *Poller) mailboxTickContext(u users.User, mailboxID string, imapConfigMo
 		rules:            p.runnableRules(u.ID),
 		guesses:          map[string]sortGuess{},
 	}
-	uc.kycalSub, uc.kycalIssuer = p.kyCalendarIdentity(u, settings.KyCalendar)
+	uc.kycalSub, uc.kycalIssuer = p.kyCalendarIdentity(u, settings)
 
 	boundCache, err := p.mailboxCacheStore(u.ID, a)
 	if err != nil {
