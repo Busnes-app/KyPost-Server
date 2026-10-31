@@ -11,6 +11,7 @@ import (
 	"time"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -41,8 +42,8 @@ type pendingForward struct {
 	attempts        int
 }
 
-// SetKyCalendar pairs KyCalendar. Startup-only, before Start; nil leaves
-// forwarding off.
+// SetKyCalendar pairs KyCalendar. Startup-only, before Start; nil or an
+// unpaired Client leaves forwarding off.
 func (p *Poller) SetKyCalendar(c *kycalendar.Client) {
 	if c != nil {
 		p.itip = &itipForwarder{client: c}
@@ -52,8 +53,8 @@ func (p *Poller) SetKyCalendar(c *kycalendar.Client) {
 // kyCalendarIdentity is the subject and issuer KyCalendar knows the user by,
 // or "" when forwarding is off for them: the server is not paired, the user
 // has not turned KyCalendar on, or the account has no live SSO link.
-func (p *Poller) kyCalendarIdentity(u users.User, enabled bool) (string, string) {
-	if p.itip == nil || !enabled || u.SSOSub == "" || u.SSOIssuer == "" || u.SSOLinkRevokedAt != 0 {
+func (p *Poller) kyCalendarIdentity(u users.User, settings config.UserSettings) (string, string) {
+	if p.itip == nil || !p.itip.client.Available() || !settings.KyCalendarOn(p.itip.client.DefaultOn()) || u.SSOSub == "" || u.SSOIssuer == "" || u.SSOLinkRevokedAt != 0 {
 		return "", ""
 	}
 	return u.SSOSub, u.SSOIssuer

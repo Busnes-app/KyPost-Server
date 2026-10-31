@@ -1,6 +1,7 @@
 import { PanelTabs } from "../../components/PanelTabs";
 import { ApplicationRuntime } from "../../admin/sections/ApplicationRuntime";
 import { SSOConfig } from "../../admin/sections/SSOConfig";
+import { KyCalendarStatus } from "../../admin/sections/KyCalendarStatus";
 import { WkdDomains } from "../../admin/sections/WkdDomains";
 import { LabelRules } from "../../admin/sections/LabelRules";
 import { MailDefaults } from "../../admin/sections/MailDefaults";
@@ -37,6 +38,7 @@ export function ServerPanel() {
           { id: "runtime", label: "Application", body: <ApplicationRuntime /> },
           { id: "backup", label: "Backup", body: <Backup /> },
           { id: "sso", label: "Single Sign-On (SSO)", body: <SSOConfig /> },
+          { id: "kycalendar", label: "KyCalendar", body: <KyCalendarStatus /> },
           { id: "mail-domain", label: "Mail domain", body: <MailDomain /> },
           { id: "mail-addresses", label: "Mail addresses", body: <MailAddresses /> },
           { id: "quarantine", label: "Quarantine", body: <Quarantine /> },
