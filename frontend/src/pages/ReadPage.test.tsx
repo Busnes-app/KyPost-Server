@@ -143,8 +143,7 @@ describe("remote-content opt-in is per message (run-4 M7)", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
 
     // 2. Find the hostile message by search and open it from the results.
-    await user.type(screen.getByPlaceholderText("Search..."), "invoice");
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.type(await screen.findByRole("searchbox", { name: "Search mail" }), "invoice{Enter}");
     await user.click(await screen.findByText("Invoice attached"));
 
     // 3. It must render blocked. The user never opted in for THIS message.
@@ -174,8 +173,7 @@ describe("remote-content opt-in is per message (run-4 M7)", () => {
     const user = userEvent.setup();
     renderReadPage();
 
-    await user.type(screen.getByPlaceholderText("Search..."), "invoice");
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.type(await screen.findByRole("searchbox", { name: "Search mail" }), "invoice{Enter}");
     await user.click(await screen.findByText("Invoice attached"));
 
     await waitFor(() => expect(readerBodyHtml()).toContain("[Image Blocked]"));
@@ -225,8 +223,7 @@ describe("opening from search goes through openEmailDetails (run-4 M7)", () => {
     await waitFor(() => expect(screen.getByText(/statement\.pdf/)).toBeDefined());
     await user.click(screen.getByRole("button", { name: "Close" }));
 
-    await user.type(screen.getByPlaceholderText("Search..."), "invoice");
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.type(await screen.findByRole("searchbox", { name: "Search mail" }), "invoice{Enter}");
     await user.click(await screen.findByText("Invoice attached"));
 
     await waitFor(() => expect(screen.getByText(/payload\.exe/)).toBeDefined());
@@ -239,8 +236,7 @@ describe("opening from search goes through openEmailDetails (run-4 M7)", () => {
     const user = userEvent.setup();
     renderReadPage();
 
-    await user.type(screen.getByPlaceholderText("Search..."), "invoice");
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.type(await screen.findByRole("searchbox", { name: "Search mail" }), "invoice{Enter}");
     await user.click(await screen.findByText("Invoice attached"));
 
     await waitFor(() =>
@@ -271,14 +267,91 @@ describe("search scope", () => {
     const user = userEvent.setup();
     renderReadPage();
 
-    await user.type(await screen.findByPlaceholderText("Search..."), "invoice");
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.type(await screen.findByRole("searchbox", { name: "Search mail" }), "invoice{Enter}");
 
     await waitFor(() => {
       const searchCall = getJSON.mock.calls.map(([url]) => url).find((url: string) => url.startsWith("/api/mail/search"));
       expect(searchCall).toBeDefined();
       expect(searchCall).toContain("mailbox=");
     });
+  });
+});
+
+describe("message list toolbar", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEndpoints();
+  });
+
+  const searchCalls = () => getJSON.mock.calls.map(([url]) => url as string).filter((url) => url.startsWith("/api/mail/search"));
+
+  it("searches once typing pauses, in the chosen field, and Enter reruns it once", async () => {
+    const user = userEvent.setup();
+    renderReadPage();
+
+    await user.click(await screen.findByRole("radio", { name: "Subject" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search mail" }), "invoice");
+    expect(await screen.findByText("Found 1 result")).toBeDefined();
+    expect(searchCalls()).toHaveLength(1);
+    expect(searchCalls()[0]).toContain("q=invoice&field=subject");
+
+    await user.keyboard("{Enter}");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(searchCalls()).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.queryByText(/^Found/)).toBeNull();
+    expect(screen.getByRole("searchbox", { name: "Search mail" })).toBe(document.activeElement);
+  });
+
+  it("puts labelled bulk actions in the list header while rows are selected", async () => {
+    const user = userEvent.setup();
+    renderReadPage();
+
+    await user.click(await screen.findByRole("checkbox", { name: "Select email Weekly Digest" }));
+    const bar = screen.getByRole("toolbar", { name: "Selected messages" });
+    expect(bar.closest("thead")).not.toBeNull();
+    expect(within(bar).getByText("1 selected")).toBeDefined();
+    for (const label of ["Delete", "Archive", "Spam", "Snooze", "Mark read", "Print"]) {
+      expect(within(bar).getByRole("button", { name: label }).textContent).toBe(label);
+    }
+
+    await user.click(within(bar).getByRole("button", { name: "Clear selection" }));
+    expect(screen.queryByRole("toolbar", { name: "Selected messages" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Sender/ })).toBeDefined();
+  });
+});
+
+describe("reading pane off", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEndpoints();
+    localStorage.setItem("kypost-reading-pane", "off");
+    // A wide screen: the reader opens in the layout, not as a pop-up.
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({ matches: query === "(min-width: 1100px)" }) as MediaQueryList);
+  });
+  afterEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("opens the message over the list and goes back on Back or Escape", async () => {
+    const user = userEvent.setup();
+    renderReadPage();
+
+    await user.click(await screen.findByText("Weekly Digest"));
+    expect(document.querySelector(".read-layout")?.getAttribute("data-pane")).toBe("off");
+    expect(screen.queryByRole("separator")).toBeNull();
+    const reader = document.querySelector<HTMLDialogElement>(".email-reader-backdrop");
+    expect(reader?.open).toBe(true);
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(reader?.open).toBe(false));
+
+    await user.click(await screen.findByText("Weekly Digest"));
+    await waitFor(() => expect(reader?.open).toBe(true));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(reader?.open).toBe(false));
   });
 });
 

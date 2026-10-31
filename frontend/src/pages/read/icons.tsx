@@ -26,6 +26,10 @@ export const ShieldCheckIcon = icon("M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-
 export const RefreshIcon = icon("M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5");
 export const PlusIcon = icon("M12 5v14M5 12h14");
 export const CloseIcon = icon("M6 6l12 12M18 6 6 18");
+// lucide Search, Paperclip and ArrowLeft.
+export const ArrowLeftIcon = icon("m12 19-7-7 7-7M19 12H5");
+export const SearchIcon = icon("M11 3a8 8 0 1 0 0 16a8 8 0 1 0 0-16zM21 21l-4.3-4.3");
+export const PaperclipIcon = icon("m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551");
 export const ImageIcon = icon("M3 5h18v14H3zM3 16l5-5 4 4 3-3 6 6M15.5 9.5h.01");
 export const ChevronIcon = () => (
   <svg className="nav-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

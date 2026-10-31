@@ -165,8 +165,7 @@ describe("the inbox list no longer carries message bodies", () => {
     renderReadPage();
     await screen.findByText("Weekly Digest");
 
-    await user.type(screen.getByPlaceholderText("Search..."), "invoice");
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.type(await screen.findByRole("searchbox", { name: "Search mail" }), "invoice{Enter}");
     await user.click(await screen.findByText("Invoice attached"));
 
     await waitFor(() => expect(readerBodyHtml()).toContain("Hello"));
