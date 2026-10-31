@@ -1,6 +1,7 @@
 export function readChoice(key: string): string | null;
 export function saveChoice(key: string, value: string): void;
-export function watchChoice(key: string, apply: () => void, hasChoice: () => boolean): () => void;
+/** Re-applies on storage and every OS scheme change. `hasChoice` is ignored since 0.5.0. */
+export function watchChoice(key: string, apply: () => void, hasChoice?: () => boolean): () => void;
 export type ThemeChoice = 'system' | 'busnes-light' | 'busnes-dark';
 export const THEMES: readonly ThemeChoice[];
 export const THEME_STORAGE_KEY: 'ky-theme';
