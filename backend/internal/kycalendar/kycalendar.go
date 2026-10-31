@@ -18,6 +18,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
@@ -39,19 +41,30 @@ const MinSecretBytes = 32
 // maxResponseBytes caps a KyCalendar answer; they are a few bytes of JSON.
 const maxResponseBytes = 64 << 10
 
-// Client signs requests to KyCalendar and verifies requests from it. A nil
-// *Client is the feature turned off.
+// ErrOff is a request made while KyCalendar is not paired.
+var ErrOff = errors.New("kycalendar: not paired")
+
+// Client signs requests to KyCalendar and verifies requests from it. It is
+// paired by the environment for the life of the process, or through
+// KyIdentity by Run; Available reports whether it is paired right now.
 type Client struct {
-	base   *url.URL
-	secret []byte
+	link   atomic.Pointer[link]
 	http   *http.Client
 	replay *guard
+	dir    *directory // nil when the environment paired it
+}
+
+// link is one pairing: where KyCalendar is and the secret both sides sign with.
+type link struct {
+	base   *url.URL
+	secret []byte
+	source string
 }
 
 // FromEnv reads KYPOST_KYCALENDAR_URL, KYPOST_KYCALENDAR_SECRET_FILE and
-// KYPOST_KYCALENDAR_ALLOW_PRIVATE. Both unset is (nil, nil): the feature is
-// off. Anything else that is not a usable configuration is an error, so the
-// process refuses to start rather than run half paired.
+// KYPOST_KYCALENDAR_ALLOW_PRIVATE. Both unset returns a Client that Run pairs
+// through KyIdentity. Anything else that is not a usable configuration is an
+// error, so the process refuses to start rather than run half paired.
 func FromEnv() (*Client, error) {
 	rawURL := strings.TrimSpace(os.Getenv("KYPOST_KYCALENDAR_URL"))
 	file := strings.TrimSpace(os.Getenv("KYPOST_KYCALENDAR_SECRET_FILE"))
@@ -60,7 +73,7 @@ func FromEnv() (*Client, error) {
 		return nil, err
 	}
 	if rawURL == "" && file == "" {
-		return nil, nil
+		return newDirectoryClient(allowPrivate), nil
 	}
 	if rawURL == "" || file == "" {
 		return nil, errors.New("KYPOST_KYCALENDAR_URL and KYPOST_KYCALENDAR_SECRET_FILE must be set together")
@@ -96,12 +109,27 @@ func parseBase(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// New builds a Client over rt. FromEnv passes the guarded transport; tests
-// pass an httptest server's.
+// New builds a Client paired with base and secret over rt. FromEnv passes the
+// guarded transport; tests pass an httptest server's.
 func New(base *url.URL, secret []byte, rt http.RoundTripper) *Client {
+	c := newClient(rt)
+	c.link.Store(&link{base: base, secret: secret, source: SourceEnv})
+	return c
+}
+
+// NewKyIdentityForTest is New with the pairing marked as KyIdentity's, for
+// other packages' tests of the per-user default. Panics outside a test binary.
+func NewKyIdentityForTest(base *url.URL, secret []byte, rt http.RoundTripper) *Client {
+	if !testing.Testing() {
+		panic("kycalendar.NewKyIdentityForTest is test-only")
+	}
+	c := newClient(rt)
+	c.link.Store(&link{base: base, secret: secret, source: SourceKyIdentity})
+	return c
+}
+
+func newClient(rt http.RoundTripper) *Client {
 	return &Client{
-		base:   base,
-		secret: secret,
 		http: &http.Client{
 			Transport: &netguard.BoundedTransport{Base: rt, Limit: maxResponseBytes},
 			Timeout:   30 * time.Second,
@@ -161,19 +189,38 @@ func refused(ip net.IP, allowPrivate bool) bool {
 	return !allowPrivate && netguard.IsPrivateOrReserved(ip)
 }
 
+// Available reports whether KyCalendar is paired right now. Nil-safe.
+func (c *Client) Available() bool { return c != nil && c.link.Load() != nil }
+
+// DefaultOn is a user's KyCalendar switch when they have not chosen: on when
+// KyIdentity paired KyCalendar, so the suite works without per-user setup;
+// off when the environment did, as it always was there.
+func (c *Client) DefaultOn() bool {
+	if c == nil {
+		return false
+	}
+	l := c.link.Load()
+	return l != nil && l.source == SourceKyIdentity
+}
+
 // Post signs body as eventType/eventID and POSTs it to path on KyCalendar,
 // returning the status and the response body. eventID must be stable across
-// retries of the same message.
+// retries of the same message. A bad_signature answer asks Run to re-resolve
+// the pairing: KyCalendar may hold a rotated secret.
 func (c *Client) Post(ctx context.Context, path, eventType, eventID string, body any) (int, []byte, error) {
+	l := c.link.Load()
+	if l == nil {
+		return 0, nil, ErrOff
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return 0, nil, err
 	}
-	h, err := syncauth.Sign(c.secret, time.Now(), eventType, eventID, payload)
+	h, err := syncauth.Sign(l.secret, time.Now(), eventType, eventID, payload)
 	if err != nil {
 		return 0, nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base.JoinPath(path).String(), bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.base.JoinPath(path).String(), bytes.NewReader(payload))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -187,6 +234,9 @@ func (c *Client) Post(ctx context.Context, path, eventType, eventID string, body
 	out, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized && Outcome(out) == "bad_signature" {
+		c.Refresh()
 	}
 	return resp.StatusCode, out, nil
 }
@@ -208,15 +258,23 @@ func Outcome(body []byte) string {
 
 // Verify checks a request KyCalendar sent to the route for eventType. A
 // signed request whose event ID was already accepted returns its event and an
-// error wrapping syncauth.ErrReplay: answer 2xx without acting again.
+// error wrapping syncauth.ErrReplay: answer 2xx without acting again. A bad
+// signature asks Run to re-resolve the pairing, like Post's.
 func (c *Client) Verify(r *http.Request, eventType string, body []byte) (syncauth.Event, error) {
+	l := c.link.Load()
+	if l == nil {
+		return syncauth.Event{}, ErrOff
+	}
 	h := syncauth.FromRequest(r)
 	if h.EventType != eventType {
 		return syncauth.Event{}, errors.New("event type does not match the route")
 	}
-	ev, err := syncauth.Verify(c.secret, h, body, syncauth.Options{Replay: c.replay})
+	ev, err := syncauth.Verify(l.secret, h, body, syncauth.Options{Replay: c.replay})
 	if errors.Is(err, syncauth.ErrReplay) {
 		ev = syncauth.Event{Type: h.EventType, ID: h.EventID}
+	}
+	if errors.Is(err, syncauth.ErrBadSignature) {
+		c.Refresh()
 	}
 	return ev, err
 }

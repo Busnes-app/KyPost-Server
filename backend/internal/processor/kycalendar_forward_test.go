@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
+	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -114,7 +115,7 @@ func TestForwardInvitation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			p, fake := newForwardPoller(t)
 			uc := userCtx{id: "u1", mail: inviteMailClient{&noopMailClient{}, map[int][]byte{7: tc.raw}}}
-			uc.kycalSub, uc.kycalIssuer = p.kyCalendarIdentity(tc.user, tc.enabled)
+			uc.kycalSub, uc.kycalIssuer = p.kyCalendarIdentity(tc.user, config.UserSettings{KyCalendarChoice: map[bool]string{true: "on", false: "off"}[tc.enabled]})
 			p.forwardInvitation(t.Context(), uc, imapadapter.Message{ID: "7", HasAttachments: true})
 			if got := len(fake.bodies) == 1; got != tc.forwarded {
 				t.Fatalf("forwarded = %v (%d), want %v", got, len(fake.bodies), tc.forwarded)
