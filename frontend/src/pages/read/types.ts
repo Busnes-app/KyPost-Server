@@ -99,6 +99,8 @@ export type AttachmentInfo = {
   name: string;
   mimeType: string;
   size: number;
+  /** iTIP METHOD of a text/calendar part; absent otherwise. */
+  calendarMethod?: string;
 };
 
 export type ReadPageProps = {

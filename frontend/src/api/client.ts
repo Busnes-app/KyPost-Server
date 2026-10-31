@@ -52,7 +52,7 @@ const MAILBOX_HEADER = "X-KyPost-Mailbox";
 // The webmail routes the server wraps with withMailbox (server.go routesMail,
 // routesRules). /api/decisions and /api/export/folders honour it too, but
 // their Settings screens choose a mailbox themselves or show the primary.
-const mailboxScoped = /^\/api\/(inbox(\/folders|\/actions)?|snoozes|mail\/(search|draft|send|send-pgp|body|pgp-payload|attachments?|outbox\/[^/?]+)|rules\/run)(\?|$)/;
+const mailboxScoped = /^\/api\/(inbox(\/folders|\/actions)?|snoozes|mail\/(search|draft|send|send-pgp|body|pgp-payload|attachments?|outbox\/[^/?]+)|calendar\/rsvp|rules\/run)(\?|$)/;
 // The webmail's selected extra mailbox; "" is the primary, which sends no header.
 let selectedMailbox = "";
 let mailboxGone: (id: string) => void = () => {};
@@ -212,6 +212,11 @@ export async function postBlob(path: string, body: unknown, headers: Record<stri
     body: JSON.stringify(body)
   });
   return response.blob();
+}
+
+/** A GET answer's bytes, held in memory. */
+export async function getBytes(path: string): Promise<Uint8Array> {
+  return new Uint8Array(await (await requestResponse(path)).arrayBuffer());
 }
 
 // downloadFile saves a GET answer as a file. An <a href> download cannot carry
