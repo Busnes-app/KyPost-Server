@@ -15,24 +15,24 @@ export const CLIENT_PLATFORMS: ReadonlyArray<ClientPlatform> = [
     name: "Android",
     blurb: "Native app with push notifications and device pairing.",
     channels: [
-      { label: "Google Play" },
+      { label: "Google Play", href: "https://play.google.com/store/apps/details?id=org.kysecurity.mail" },
       { label: "F-Droid" },
       { label: "GitHub Releases", href: `${GITHUB}/KyPost-for-Android/releases` }
     ]
   },
   {
-    name: "iPhone & iPad",
+    name: "iPhone",
     blurb: "Native app with Secure Enclave key protection.",
-    channels: [{ label: "App Store" }, { label: "TestFlight" }]
+    channels: [{ label: "App Store" }]
   },
   {
     name: "macOS",
     blurb: "The same app as iOS, built for the desktop.",
-    channels: [{ label: "Mac App Store" }, { label: "GitHub Releases", href: `${GITHUB}/KyPost-for-Mac/releases` }]
+    channels: [{ label: "GitHub Releases", href: `${GITHUB}/KyPost-for-Mac/releases` }]
   },
   {
     name: "Linux",
     blurb: "Qt desktop app, distributed as a signed Flatpak.",
-    channels: [{ label: "Flatpak remote" }, { label: "GitHub Releases", href: `${GITHUB}/KyPost-for-Linux/releases` }]
+    channels: [{ label: "GitHub Releases", href: `${GITHUB}/KyPost-for-Linux/releases` }]
   }
 ];

@@ -14,13 +14,13 @@ export type PwaState = {
  */
 export function AppsPage({ pwa, platforms = CLIENT_PLATFORMS }: { pwa: PwaState; platforms?: typeof CLIENT_PLATFORMS }) {
   return (
-    <section className="panel config-page">
+    <section className="panel config-page apps-page">
       <div className="config-header">
         <h2 className="visually-hidden">Get KyPost</h2>
         <p>Use it here in the browser, or install a client on each of your devices.</p>
       </div>
       <div className="apps-grid">
-        <article className="config-card app-card">
+        <article className="config-card app-card app-card-web">
           <h3>Web app</h3>
           <p className="config-muted">Install this site as an app for a window of its own and offline access.</p>
           <div className="app-channels">
