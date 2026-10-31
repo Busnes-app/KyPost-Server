@@ -744,6 +744,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"username":           u.Username,
 		"role":               ac.Role,
 		"mustChangePassword": u.MustChangePassword,
+		"hasPassword":        u.HasLocalCredential(),
 		"ssoSession":         ac.SSOSession,
 		"subscriberId":       subscriberID,
 		"ssoSub":             u.SSOSub,

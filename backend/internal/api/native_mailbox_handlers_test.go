@@ -479,11 +479,13 @@ func TestNativeExtraMailboxExcludesIncomingEncryption(t *testing.T) {
 		t.Fatal("incoming encryption enabled beside an extra mailbox", w.Code, w.Body)
 	}
 	// Disabling every extra mailbox lifts the rule: the request passes the
-	// mailbox gate and stops at step-up.
+	// mailbox gate and stops at step-up. This directory account has no
+	// password and this is not a KySignOn session, so step-up answers 409
+	// kysignon_required; only the mailbox refusal counts as a block.
 	if _, err := srv.ssoLifecycle.SetNativeMailboxState(ctx, srv.stateDir, extra.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if w := enable(); w.Code == 409 || strings.Contains(w.Body.String(), "additional mailbox") {
+	if w := enable(); strings.TrimSpace(w.Body.String()) == want || !strings.Contains(w.Body.String(), "kysignon_required") {
 		t.Fatal("a disabled extra mailbox still blocks incoming encryption", w.Code, w.Body)
 	}
 	toggle := func(action string) *httptest.ResponseRecorder {
@@ -528,7 +530,7 @@ func TestNativeExtraMailboxExcludesIncomingEncryption(t *testing.T) {
 	if w.Code != 200 || strings.Contains(w.Body.String(), extra.ID) {
 		t.Fatal("unprepared mailbox listed", w.Code, w.Body)
 	}
-	if w := enable(); w.Code == 409 || strings.Contains(w.Body.String(), "additional mailbox") {
+	if w := enable(); strings.TrimSpace(w.Body.String()) == want || !strings.Contains(w.Body.String(), "kysignon_required") {
 		t.Fatal("an unfinished extra mailbox blocks incoming encryption", w.Code, w.Body)
 	}
 	// A promoted subject selecting a mailbox gets the administrator 403.

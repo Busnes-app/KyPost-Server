@@ -20,6 +20,13 @@ non-prerelease version.
 
 ### Security
 
+- SSO-only accounts can use email encryption. An account that signs in only through KySignOn has
+  no password, so it could neither create a PGP key nor unlock one. It now chooses a separate
+  encryption passphrase that seals the key in the browser, and every key change (create, import,
+  recovery copy, restore, delete, device delivery, incoming encryption) is confirmed with KySignOn
+  instead of a password. Accounts with a password are unchanged; SSO-only accounts on a generic
+  OIDC provider are told encryption setup needs KySignOn.
+
 - A failed sign-in is padded to what a current-cost password check takes now, re-measured in
   the background every few seconds, not to one measurement taken at startup. Under rising load
   the stale floor let an account whose password hash predates the last cost raise answer

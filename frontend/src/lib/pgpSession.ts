@@ -237,22 +237,22 @@ export async function rewrappedEnvelopeFor(
  * step-up credential the server now requires before overwriting an envelope it
  * cannot itself inspect.
  */
-export async function rewrapUnlockedKeyUnder(password: string): Promise<void> {
+export async function rewrapUnlockedKeyUnder(password: string, credential = password): Promise<void> {
   const armored = requireUnlockedKey();
   const snapshot = unlockedPGPIdentity();
-  await rewrapPGPPrivateKey(JSON.stringify(await wrapPrivateKey(armored, password)), password, snapshot.fingerprint, snapshot.pgpRevision);
+  await rewrapPGPPrivateKey(JSON.stringify(await wrapPrivateKey(armored, password)), credential, snapshot.fingerprint, snapshot.pgpRevision);
   lockPGPSession();
   await loadPGPSession();
 }
 
 /** Confirm the exact prepared write and operation liveness before installing plaintext. */
-export async function restorePGPKeyring(raw: string, password: string, snapshot: PGPBootstrap, isActive: () => boolean): Promise<number> {
+export async function restorePGPKeyring(raw: string, secret: string, snapshot: PGPBootstrap, isActive: () => boolean, password = secret): Promise<number> {
   const generation = sessionGeneration;
   const isCurrent = () => generation === sessionGeneration && isActive();
   const expectedRevision = requirePGPRevision(snapshot);
   if (snapshot.protection !== "client") throw new Error("This account does not use a complete client keyring.");
   await validateKeyringSnapshot(raw, { ...snapshot, keyring: snapshot.keyring });
-  const wrapped = JSON.stringify(await wrapPrivateKey(raw, password));
+  const wrapped = JSON.stringify(await wrapPrivateKey(raw, secret));
   if (new TextEncoder().encode(wrapped).length > (128 << 10)) throw new Error("The complete keyring exceeds storage capacity.");
   if (!isCurrent()) throw new Error("The signed-in session changed. Reload before restoring.");
   try {

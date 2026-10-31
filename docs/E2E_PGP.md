@@ -103,6 +103,40 @@ close and are readable by any script that achieves XSS, which is exactly what
 this protects against. A reload means re-entering the password. There is a
 test asserting nothing lands in either store.
 
+### SSO-only accounts
+
+An account auto-provisioned by Single Sign-On has no password
+(`users.User.HasLocalCredential()` is false), so there is nothing to derive
+the wrapping key from and nothing to re-enter for a step-up. Such an account
+uses two substitutes:
+
+- **Wrapping:** the user chooses an *encryption passphrase* when the key is
+  minted or imported. It seals the same `password` envelope slot, with the same
+  v2 PBKDF2/AES-GCM construction; the server stores it as opaquely as ever and
+  cannot tell the two apart. Unlock, restore and rewrap ask for the passphrase.
+  Changing it is a rewrap, after unlocking with the old one.
+- **Step-up:** `requirePGPStepUp` confirms every PGP key write (identity
+  create/replace, rewrap, envelope slot `PUT`/`DELETE`, identity `DELETE`)
+  with a KySignOn action-bound confirmation of that exact request instead of a
+  credential (`403 {error: "sso_step_up_required", challenge}`, see the backend
+  `AGENTS.md`). A session from a generic OIDC provider cannot confirm and gets
+  `409 {error: "kysignon_required"}`. Accounts with a password are unchanged.
+
+The passphrase is not an account credential and the server never checks it:
+for an account with no password `requirePGPStepUp` ignores `authSecret`, and
+the web client sends none, so nothing derived from the passphrase is
+transmitted beyond the sealed envelope itself. `GET /api/auth/me`
+reports `hasPassword: false` so the UI can say "passphrase". Native clients
+that unwrap the `password` slot must likewise ask an SSO-only user for the
+encryption passphrase, not a password.
+
+Not covered: the legacy server-custody export (`export-legacy`) still
+re-verifies a password, so an SSO-only account cannot migrate a server-held
+key; server custody can no longer be created, so only accounts that once had a
+password can hold one. If an administrator later sets a password on an
+SSO-only account, step-ups switch to that password while the envelope stays
+sealed under the passphrase; "Key won't unlock?" re-encrypts it.
+
 ## What this costs, honestly
 
 - **Admin password reset can strand the password envelope.** Recovery needs

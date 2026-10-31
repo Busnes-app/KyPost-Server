@@ -8,6 +8,10 @@ export type AuthState = {
   username?: string;
   role?: Role;
   mustChangePassword?: boolean;
+  // False for an SSO-only account. Its PGP key is sealed under a separate
+  // encryption passphrase, and key changes are confirmed with KySignOn.
+  // Absent (older server) means a password account.
+  hasPassword?: boolean;
   // True for a session signed in through KySignOn. It has no password to
   // re-enter, so sensitive actions are confirmed with KySignOn instead.
   ssoSession?: boolean;

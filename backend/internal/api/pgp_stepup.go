@@ -35,7 +35,8 @@ import (
 //
 // The onboarding cost the carve-out was avoiding turns out not to exist: every
 // client-custody path already had the password in hand, because it wraps the
-// private key with it.
+// private key with it. An account with no password confirms with KySignOn
+// instead; see requirePGPStepUp.
 
 // confirmAccountCredential verifies a re-entered account credential, writing
 // the response and returning false if it does not check out.
@@ -110,10 +111,41 @@ func (s *Server) confirmAccountCredentialNoRecord(w http.ResponseWriter, r *http
 }
 
 // requirePGPStepUp gates an operation that creates, replaces or destroys a PGP
-// identity. It returns true when the caller may proceed, which now means only
-// one thing: they just proved the account credential.
+// identity. It returns true when the caller may proceed, which means they just
+// proved the account credential — or, for an account that has none, confirmed
+// this exact request with KySignOn.
+//
+// An SSO-only account has no password to re-enter, so without the second arm
+// it could never mint, back up or delete a key at all. Its private key is
+// sealed under a separate encryption passphrase, which is not an account
+// credential and is never checked here. Only a KySignOn session can confirm:
+// FreshProof speaks KySignOn's vocabulary and nothing else (see confirmActor),
+// so an SSO-only account on another provider is told so rather than answered
+// "invalid credentials" forever.
 func (s *Server) requirePGPStepUp(w http.ResponseWriter, r *http.Request, userID, authSecret string) bool {
-	return s.confirmAccountCredential(w, r, userID, authSecret)
+	u, err := s.users.Get(userID)
+	if err != nil {
+		http.Error(w, "user unavailable", http.StatusInternalServerError)
+		return false
+	}
+	if u.HasLocalCredential() {
+		return s.confirmAccountCredential(w, r, userID, authSecret)
+	}
+	if sess, token, ok := s.sessionOf(r); ok && sess.SSOKySignOn {
+		return s.confirmSSOStepUp(w, r, token)
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":   "kysignon_required",
+		"message": "This account has no password. Sign in with KySignOn to set up or change email encryption.",
+	})
+	return false
+}
+
+// withPGPActionDigest binds a PGP key write to itself for requirePGPStepUp's
+// KySignOn arm, at the largest body any of those routes accepts (a keyring
+// rewrap or recovery slot: envelope plus JSON quoting and step-up fields).
+func withPGPActionDigest(next http.HandlerFunc) http.HandlerFunc {
+	return withActionDigestLimit(3*maxWrappedKeyBytes, next)
 }
 
 // clearDeviceEnrollmentsFor resets every paired device's enrollment state after

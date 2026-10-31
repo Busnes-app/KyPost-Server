@@ -64,6 +64,9 @@ export function getPGPIdentity(): Promise<PGPIdentity> {
  * That includes the FIRST identity, which the server used to leave ungated on
  * the reasoning that a keyless account has nothing to lose. It has: the key the
  * operation publishes. Every caller here must send a credential.
+ *
+ * An account with no password confirms these writes with KySignOn instead, so
+ * every one goes through withSSOStepUp.
  */
 async function stepUp(password: string): Promise<Record<string, string>> {
   if (!password) return {};
@@ -77,7 +80,8 @@ async function stepUp(password: string): Promise<Record<string, string>> {
 // storeClientPGPIdentity below.
 
 export async function deletePGPIdentity(password: string, expectedRevision: number): Promise<{ ok: boolean }> {
-  return deleteJSON<{ ok: boolean }>("/api/pgp/identity", { expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password)) });
+  const body = { expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password)) };
+  return withSSOStepUp((h) => deleteJSON<{ ok: boolean }>("/api/pgp/identity", body, h));
 }
 
 export function checkPGPRecipients(addresses: string[]): Promise<{ results: PGPRecipientStatus[] }> {
@@ -266,13 +270,14 @@ export async function storeClientPGPIdentity(
   password: string,
   expectedRevision: number
 ): Promise<PGPIdentity> {
-  return postJSON<PGPIdentity>("/api/pgp/identity/client", {
+  const body = {
     expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }),
     publicKey,
     wrapped,
     source,
     ...(await stepUp(password))
-  });
+  };
+  return withSSOStepUp((h) => postJSON<PGPIdentity>("/api/pgp/identity/client", body, h));
 }
 
 /**
@@ -288,21 +293,24 @@ export async function storeClientPGPIdentity(
  * already (see LoginPage).
  */
 export async function rewrapPGPPrivateKey(wrapped: string, password: string, expectedFingerprint: string, expectedRevision: number): Promise<{ ok: boolean; pgpRevision: number }> {
-  return postJSON<{ ok: boolean; pgpRevision: number }>("/api/pgp/identity/rewrap", { wrapped, expectedFingerprint, expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password)) });
+  const body = { wrapped, expectedFingerprint, expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password)) };
+  return withSSOStepUp((h) => postJSON<{ ok: boolean; pgpRevision: number }>("/api/pgp/identity/rewrap", body, h));
 }
 
 /** Explicit complete-ring writer; older servers reject it through their legacy guard. */
 export async function rewrapPGPKeyring(input: { wrapped: string; password: string; expectedFingerprint: string; expectedRevision: number; isCurrent: () => boolean }): Promise<void> {
   const credential = await stepUp(input.password);
   if (!input.isCurrent()) throw new Error("The restore session changed. Reload before restoring.");
-  await postJSON<unknown>("/api/pgp/identity/rewrap", { wrapped: input.wrapped, expectedFingerprint: input.expectedFingerprint,
-    expectedRevision: requirePGPRevision({ pgpRevision: input.expectedRevision }), keyringVersion: 1, ...credential });
+  const body = { wrapped: input.wrapped, expectedFingerprint: input.expectedFingerprint,
+    expectedRevision: requirePGPRevision({ pgpRevision: input.expectedRevision }), keyringVersion: 1, ...credential };
+  await withSSOStepUp((h) => postJSON<unknown>("/api/pgp/identity/rewrap", body, h));
 }
 
 export async function putRecoveryEnvelope(envelope: WrappedKeyEnvelope, password: string, expectedFingerprint: string, expectedRevision: number): Promise<void> {
-  await putJSON("/api/pgp/identity/envelope/recovery", {
+  const body = {
     envelope: JSON.stringify(envelope), expectedFingerprint, expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password))
-  });
+  };
+  await withSSOStepUp((h) => putJSON("/api/pgp/identity/envelope/recovery", body, h));
 }
 
 /** A single versioned write followed by an exact-slot confirmation read. */
@@ -310,8 +318,9 @@ export async function putPGPKeyringRecovery(input: { envelope: string; password:
   const credential = await stepUp(input.password);
   if (!input.isCurrent()) throw new Error("The recovery session changed. Reload before storing this copy.");
   try {
-    await putJSON("/api/pgp/identity/envelope/recovery", { envelope: input.envelope, expectedFingerprint: input.expectedFingerprint,
-      expectedRevision: requirePGPRevision({ pgpRevision: input.expectedRevision }), keyringVersion: 1, ...credential });
+    const body = { envelope: input.envelope, expectedFingerprint: input.expectedFingerprint,
+      expectedRevision: requirePGPRevision({ pgpRevision: input.expectedRevision }), keyringVersion: 1, ...credential };
+    await withSSOStepUp((h) => putJSON("/api/pgp/identity/envelope/recovery", body, h));
   } catch {
     // A lost response may follow a commit; confirm by read, never retry the write.
   }
@@ -457,14 +466,15 @@ export async function putDeviceEnvelope(
   /** The keyring generation the sealing was prepared from; required on a converted account. */
   materialGeneration?: number
 ): Promise<{ ok: boolean; version?: number }> {
-  return putJSON<{ ok: boolean; version?: number }>(`/api/pgp/identity/envelope/device:${encodeURIComponent(deviceId)}`, {
+  const body = {
     envelope: JSON.stringify(envelope),
     expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }),
     enrollmentPublicKey,
     expectedFingerprint,
     ...(materialGeneration !== undefined ? { materialGeneration } : {}),
     ...(await stepUp(password))
-  });
+  };
+  return withSSOStepUp((h) => putJSON<{ ok: boolean; version?: number }>(`/api/pgp/identity/envelope/device:${encodeURIComponent(deviceId)}`, body, h));
 }
 
 /**
@@ -476,10 +486,8 @@ export async function putDeviceEnvelope(
  * all, and revoking that device means rotating the identity.
  */
 export async function deleteDeviceEnvelope(deviceId: string, password: string, expectedRevision: number): Promise<{ ok: boolean }> {
-  return deleteJSON<{ ok: boolean }>(
-    `/api/pgp/identity/envelope/device:${encodeURIComponent(deviceId)}`,
-    { expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password)) }
-  );
+  const body = { expectedRevision: requirePGPRevision({ pgpRevision: expectedRevision }), ...(await stepUp(password)) };
+  return withSSOStepUp((h) => deleteJSON<{ ok: boolean }>(`/api/pgp/identity/envelope/device:${encodeURIComponent(deviceId)}`, body, h));
 }
 
 export type IncomingEncryptionPreference = { enabled: boolean; pending: boolean };
