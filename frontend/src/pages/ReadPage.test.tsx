@@ -509,10 +509,30 @@ describe("reader layout", () => {
     expect(within(dialog).getByRole("heading", { level: 2, name: "Weekly Digest" })).toBeDefined();
     // JSDOM lacks native popover operations; real-browser checks cover visibility/dismissal.
     const names = within(dialog).getAllByRole("button", { hidden: true }).map((b) => b.getAttribute("aria-label") ?? b.textContent);
-    expect(names.slice(0, 4)).toEqual(["Close", "Reply", "Reply All", "Forward"]);
+    expect(names.slice(0, 6)).toEqual(["Close", "Reply", "Reply All", "Forward", "Delete", "More actions"]);
     expect(names).toEqual(
-      expect.arrayContaining(["Archive", "Snooze", "Mark as unread", "Mark as Spam", "Print", "Show Remote Content", "Delete"])
+      expect.arrayContaining(["Archive", "Snooze", "Mark as unread", "Mark as Spam", "Print", "Show Remote Content"])
     );
+  });
+
+  it("shows Delete in the action row, not in More actions, and deletes and closes from there", async () => {
+    postJSON.mockResolvedValue({ ok: true, failed: [], processed: 1 });
+    const user = userEvent.setup();
+    renderReadPage();
+    await user.click(await screen.findByText("Weekly Digest"));
+
+    const dialog = await screen.findByRole("dialog", { name: "Weekly Digest" });
+    const menu = dialog.querySelector<HTMLElement>("[popover]");
+    expect(menu).not.toBeNull();
+    expect(within(menu!).queryByRole("button", { name: /delete/i, hidden: true })).toBeNull();
+    const del = within(dialog).getByRole("button", { name: "Delete" });
+    expect(menu!.contains(del)).toBe(false);
+    expect(del.closest(".email-reader-actions")).not.toBeNull();
+    expect(del.querySelector("svg")).not.toBeNull();
+
+    await user.click(del);
+    await waitFor(() => expect(postJSON).toHaveBeenCalledWith("/api/inbox/actions", expect.objectContaining({ action: "delete", messageIds: [newsletter.messageId] })));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Weekly Digest" })).toBeNull());
   });
 
   it("updates read status in place in both directions without dropping the message", async () => {

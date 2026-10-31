@@ -1849,6 +1849,10 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                 <button type="button" onClick={replyAllToSelectedEmail} disabled={actionLoading}>Reply All</button>
                 <button type="button" onClick={forwardSelectedEmail} disabled={actionLoading}>Forward</button>
               </div>
+              <button type="button" className="btn-danger email-reader-delete" onClick={() => applyInboxAction("delete", [selected.messageId], { closeModal: true })} disabled={actionLoading}>
+                <TrashIcon />
+                Delete
+              </button>
               <button type="button" popoverTarget={readerActionsId}>More actions</button>
               <div id={readerActionsId} popover="auto" className="email-reader-tools suite-action-menu"
                 onToggle={(event) => {
@@ -1871,14 +1875,13 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                     icon: <ImageIcon />,
                     onClick: () => setShowImagesFor((current) => (current === selected.messageId ? null : selected.messageId)),
                     always: true
-                  },
-                  { id: "delete", label: "Delete", icon: <TrashIcon />, onClick: () => applyInboxAction("delete", [selected.messageId], { closeModal: true }), danger: true }
-                ].map(({ id, label, icon, onClick, always, danger }) => (
+                  }
+                ].map(({ id, label, icon, onClick, always }) => (
                   <button
                     key={id}
                     type="button"
                     data-keep-open={always || undefined}
-                    className={danger ? "inbox-action-button btn-ghost btn-danger" : "inbox-action-button btn-ghost"}
+                    className="inbox-action-button btn-ghost"
                     aria-label={label}
                     title={label}
                     onClick={onClick}

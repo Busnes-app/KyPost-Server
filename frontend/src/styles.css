@@ -812,6 +812,14 @@ body {
   font-size: var(--ky-type-nav);
 }
 
+/* Destructive, so it stands apart from the reply group; More actions stays at the end. */
+.email-reader-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ky-space-2);
+  margin-inline: var(--ky-space-3) auto;
+}
+
 .email-reader-facts {
   display: grid;
   gap: 2px;
@@ -5226,6 +5234,7 @@ html:root:not([data-theme]):not([data-ky-theme]) {
   .email-reader-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .email-reader-reply { display: contents; }
   .email-reader-actions > button, .email-reader-reply button { width: 100%; }
+  .email-reader-delete { justify-content: center; margin-inline: 0; }
 }
 
 /* Keep repeated controls on one type scale and native selection targets usable. */
