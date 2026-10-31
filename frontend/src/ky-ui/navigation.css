@@ -57,6 +57,8 @@
 }
 /* Icons follow the label colour; only the bar and tint mark the selected row. */
 :where(.ky-nav) > .ky-nav-item > svg { flex: none; width: 16px; height: 16px; color: inherit; }
+/* A status pill in a row (a count, Down) sits at the row's end. */
+:where(.ky-nav) > .ky-nav-item > .ky-status { margin-inline-start: auto; }
 /* A plain group label: no chevron, nothing collapses. */
 .ky-nav-section {
   margin: var(--ky-space-3) 0 var(--ky-space-1);
@@ -82,6 +84,8 @@
   }
   .ky-nav:focus-within { mask-image: none; }
   :where(.ky-nav) > .ky-nav-item { flex: none; width: auto; padding-inline: var(--ky-space-3); white-space: nowrap; }
+  /* The row scrolls, so it clips anything drawn outside a tab: keep the focus ring inside. */
+  .ky-nav > .ky-nav-item:focus-visible { outline-offset: -2px; }
   .ky-nav-section { display: none; }
 }
 @keyframes ky-nav-fade {

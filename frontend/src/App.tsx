@@ -2,6 +2,7 @@ import { type DragEvent, type MouseEvent as ReactMouseEvent, type ReactElement, 
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import { deleteJSON, getJSON, onMailboxGone, postJSON, putJSON, selectedMailboxId, selectMailbox, toErrorMessage } from "./api/client";
 import { AuthContext, type AuthState } from "./auth";
+import { AppRail, loadSuiteApps, type SuiteApp } from "./components/AppRail";
 import { ComposeWindow } from "./components/ComposeWindow";
 import { useCompose } from "./hooks/useCompose";
 import { useDialogOpen } from "./hooks/useDialogOpen";
@@ -59,6 +60,7 @@ export function App() {
   const [selectedMailbox, setSelectedMailbox] = useState("");
   const [mailboxesVersion, setMailboxesVersion] = useState(0);
   const [mailboxNotice, setMailboxNotice] = useState("");
+  const [suiteApps, setSuiteApps] = useState<SuiteApp[]>([]);
   const compose = useCompose({ userId: auth?.userId, mailboxes });
   // Folder URLs name their mailbox, so one replayed after a switch is recognised (ReadPage).
   const boxQuery = selectedMailbox ? `&box=${selectedMailbox}` : "";
@@ -185,6 +187,19 @@ export function App() {
       live = false;
     };
   }, [auth?.authenticated, auth?.userId, mailboxesVersion]);
+
+  // The app rail's list, once per sign-in; empty hides the rail.
+  useEffect(() => {
+    setSuiteApps([]);
+    if (!auth?.authenticated) return;
+    let live = true;
+    void loadSuiteApps().then((apps) => {
+      if (live) setSuiteApps(apps);
+    });
+    return () => {
+      live = false;
+    };
+  }, [auth?.authenticated, auth?.userId]);
 
   // Any mail request refused with 404 "mailbox not found" lands here.
   useEffect(() => {
@@ -813,6 +828,7 @@ export function App() {
           </Link>
         </nav>
         <div className="ky-sidebar-foot">
+          <AppRail apps={suiteApps} />
           {auth.authenticated ? (
             <div className="ky-user">
               <div className="ky-user-copy">
@@ -897,6 +913,7 @@ export function App() {
         </Routes>
         </Suspense>
         <footer className="ky-content-foot">
+          <AppRail apps={suiteApps} />
           <button type="button" className="ky-license-link" onClick={() => setLicenseOpen(true)}>
             &copy; {new Date().getFullYear()} &middot; MIT License
           </button>

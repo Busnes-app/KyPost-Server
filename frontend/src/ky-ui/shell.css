@@ -1,5 +1,5 @@
-/* Suite shell: app frame (sidebar, brand, content, phone header), sign-in, user block, licence
-   line, About dialog and page head. Geometry follows KyCalendar. Product aliases come first so
+/* Suite shell: app frame (sidebar, brand, content, phone header), sign-in, app rail, user block,
+   licence line, About dialog, page head and status pills. Geometry follows KyCalendar. Product aliases come first so
    named palettes apply. */
 
 /* ---------- Sign-in ---------- */
@@ -325,6 +325,37 @@
 }
 .ky-license-link:hover { color: var(--ink-strong, var(--ky-ink-strong)); }
 
+/* ---------- App rail: one icon link per suite app, above the user block ---------- */
+.ky-app-rail { display: grid; gap: var(--ky-space-1); }
+/* Matches .ky-nav-section. */
+.ky-app-rail-label {
+  margin: 0;
+  padding-inline: var(--ky-space-3);
+  color: var(--ink, var(--ky-ink));
+  font-size: var(--ky-type-meta);
+  font-weight: 600;
+  line-height: 1.5;
+}
+.ky-app-rail ul { display: flex; flex-wrap: wrap; gap: var(--ky-space-1); margin: 0; padding: 0 0 0 var(--ky-space-2); list-style: none; }
+.ky-app-rail a {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--ky-control-radius);
+}
+.ky-app-rail a > :is(img, svg) { display: block; width: 24px; height: 24px; }
+.ky-app-rail a:hover { background: var(--panel-hover, var(--ky-panel-hover)); }
+/* The current app: an accent ring, not colour alone; the only link with a border, so forced colours keep it. */
+.ky-app-rail a[aria-current="page"] { border: 2px solid var(--accent, var(--ky-accent)); background: var(--accent-soft, var(--ky-accent-soft)); }
+/* Phones: the sidebar foot is hidden, so the rail repeats in .ky-content-foot. */
+.ky-content-foot .ky-app-rail { margin-bottom: var(--ky-space-3); }
+.ky-content-foot :is(.ky-app-rail-label, .ky-app-rail ul) { padding-inline: 0; }
+@media (max-width: 720px) {
+  .ky-app-rail a { width: var(--ky-control-size); height: var(--ky-control-size); }
+}
+
 /* ---------- About dialog ---------- */
 .ky-about {
   box-sizing: border-box;
@@ -415,17 +446,49 @@
   .ky-page-head { margin-bottom: var(--ky-space-4); }
 }
 
+/* ---------- Status pills ---------- */
+/* Status never borrows the accent: the accent means "act here". A pill is a word on its
+   status tint with a leading dot, or an icon in place of the dot, so colour is never the
+   only signal. Without data-ky-status it is neutral (paused, unknown). */
+.ky-status {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 1.5rem;
+  padding: 0 0.625rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--panel-hover, var(--ky-panel-hover));
+  color: var(--ink-strong, var(--ky-ink-strong));
+  font-size: var(--ky-type-meta);
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.ky-status::before { content: ""; flex: none; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: currentColor; }
+.ky-status:has(> svg)::before { display: none; }
+.ky-status > svg { flex: none; width: 14px; height: 14px; }
+.ky-status[data-ky-status="danger"] { background: var(--ky-danger-soft); color: var(--danger, var(--ky-danger)); }
+.ky-status[data-ky-status="warning"] { background: var(--ky-warning-soft); color: var(--warning, var(--ky-warning)); }
+.ky-status[data-ky-status="success"] { background: var(--ky-success-soft); color: var(--success, var(--ky-success)); }
+@media (forced-colors: active) {
+  .ky-status { border-color: CanvasText; }
+  .ky-status::before { background: CanvasText; }
+}
+
 /* ---------- Shared states ---------- */
 :is(.ky-auth, .ky-user, .ky-about, .ky-page-head) :focus-visible,
 .ky-license-link:focus-visible,
-.ky-mobile-signout:focus-visible {
+.ky-mobile-signout:focus-visible,
+.ky-app-rail a:focus-visible {
   outline: 2px solid var(--accent, var(--ky-accent));
   outline-offset: 2px;
 }
 /* Fields already draw a border: put the ring on it, not 2px outside, so it reads as one ring. */
 .ky-auth-field > input:focus-visible { outline-offset: -1px; }
 @media (prefers-reduced-motion: no-preference) {
-  :is(.ky-auth-submit, .ky-page-action, .ky-auth-sso, .ky-about-close, .ky-user-signout, .ky-mobile-signout, .ky-auth-field > input, .ky-auth-theme select) {
+  :is(.ky-auth-submit, .ky-page-action, .ky-auth-sso, .ky-about-close, .ky-user-signout, .ky-mobile-signout, .ky-auth-field > input, .ky-auth-theme select, .ky-app-rail a) {
     transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
   .ky-about[open] { animation: ky-about-in 0.2s cubic-bezier(0.16, 1, 0.3, 1); }

@@ -19,13 +19,18 @@
   /* Product ink/bg aliases preserve existing named palettes as well as Busnes. */
   --ky-field-border: color-mix(in srgb, var(--ink-strong) 60%, var(--bg));
   --ky-shadow-overlay: 0 18px 48px rgb(0 0 0 / 0.26), 0 2px 8px rgb(0 0 0 / 0.12);
-  /* Named palettes select these by their own scheme, independently of the OS. */
-  --ky-danger-light: #b42318;
-  --ky-danger-dark: #ff8176;
+  /* Named palettes select these by their own scheme, independently of the OS. Danger is a
+     cool crimson, well away from every accent; scripts/check-status-colours.mjs proves it. */
+  --ky-danger-light: #a8174e;
+  --ky-danger-dark: #ff8fb1;
   --ky-success-light: #267442;
-  --ky-success-dark: #7bc49c;
-  --ky-warning-light: #875b12;
-  --ky-warning-dark: #e0b775;
+  --ky-success-dark: #86efac;
+  --ky-warning-light: #7a5f00;
+  --ky-warning-dark: #ffd25e;
+  /* Status pill fills: a tint of the status over the panel, so every palette gets its own. */
+  --ky-danger-soft: color-mix(in srgb, var(--danger, var(--ky-danger)) 12%, var(--panel, var(--ky-panel)));
+  --ky-warning-soft: color-mix(in srgb, var(--warning, var(--ky-warning)) 12%, var(--panel, var(--ky-panel)));
+  --ky-success-soft: color-mix(in srgb, var(--success, var(--ky-success)) 12%, var(--panel, var(--ky-panel)));
 }
 
 @media (max-width: 720px) {

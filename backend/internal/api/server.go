@@ -239,6 +239,7 @@ type Server struct {
 	nativeDomains *sso.NativeDomainStore
 	nativeMail    bool
 	kycal         *kycalendar.Client
+	suiteApps     sync.Map // user ID -> suiteAppsEntry
 	aiDisabled    bool
 	ssoLifecycle  *sso.LifecycleStore
 	ollamaMu      sync.Mutex
@@ -630,6 +631,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/calendar/rsvp", s.withMailAuth(s.withMailbox(s.handleCalendarRSVP)))
 	mux.HandleFunc("GET /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
 	mux.HandleFunc("PUT /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
+	mux.HandleFunc("GET /api/suite/apps", s.withAuth(s.handleSuiteApps))
 	mux.HandleFunc("GET /api/labels", s.withAuth(s.handleLabels))
 	mux.HandleFunc("GET /api/decisions", s.withAuth(s.withMailbox(s.handleDecisions)))
 	mux.HandleFunc("GET /api/logs", s.withAdmin(s.handleLogs))

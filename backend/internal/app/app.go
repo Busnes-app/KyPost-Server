@@ -811,10 +811,10 @@ func awaitWarmup(logger *logging.Logger, done <-chan struct{}) {
 func kyIdentityDirectory(configDir string) func() kycalendar.Directory {
 	store := sso.NewStore(configDir)
 	return func() kycalendar.Directory {
-		s := store.Load()
-		if !s.Enabled || s.IssuerURL == "" || s.ClientID == "" || s.ClientSecret == "" {
+		d, ok := store.Load().SuiteDirectory()
+		if !ok {
 			return kycalendar.Directory{}
 		}
-		return kycalendar.Directory{Issuer: s.IssuerURL, ClientID: s.ClientID, ClientSecret: s.ClientSecret}
+		return kycalendar.Directory{Issuer: d.Issuer, ClientID: d.ClientID, ClientSecret: d.ClientSecret}
 	}
 }
