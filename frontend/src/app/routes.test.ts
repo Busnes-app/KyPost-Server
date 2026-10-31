@@ -5,7 +5,8 @@ describe("legacySettingsRedirect", () => {
   it("sends every retired path somewhere real", () => {
     expect(legacySettingsRedirect("/config", false)).toBe("/settings/mail");
     expect(legacySettingsRedirect("/notifications", false)).toBe("/settings/notifications");
-    expect(legacySettingsRedirect("/security", false)).toBe("/settings/security");
+    expect(legacySettingsRedirect("/security", false)).toBe("/settings/account");
+    expect(legacySettingsRedirect("/settings/security", false)).toBe("/settings/account");
     expect(legacySettingsRedirect("/rules", false)).toBe("/settings/mail?tab=rules");
     expect(legacySettingsRedirect("/tuning", true)).toBe("/settings/automation?tab=prompt-tuning");
     expect(legacySettingsRedirect("/users", true)).toBe("/admin/server?tab=users");

@@ -542,14 +542,21 @@ export function App() {
             <h1 className="ky-page-title">Settings</h1>
             <p className="ky-page-lede">
               {isAdmin
-                ? "Your apps, appearance, mail, security and notifications, and this server."
-                : "Your apps, appearance, mail, security, notifications and labels."}
+                ? "Your account, apps, appearance, mail and notifications, and this server."
+                : "Your account, apps, appearance, mail, notifications and labels."}
             </p>
           </div>
         </header>
         <nav className="ky-settings-tabs" aria-label="Settings sections" onClickCapture={guardNavigation}>
           {visibleSettingsTabs(isAdmin).map(({ to, label }) => (
-            <Link key={to} to={to} className="ky-nav-item" aria-current={to === location.pathname ? "page" : undefined}>
+            <Link
+              key={to}
+              to={to}
+              className="ky-nav-item"
+              aria-current={to === location.pathname ? "page" : undefined}
+              // On phones the row scrolls: keep the open tab in view.
+              ref={to === location.pathname ? (el) => el?.scrollIntoView?.({ block: "nearest", inline: "nearest" }) : undefined}
+            >
               {label}
             </Link>
           ))}
@@ -859,21 +866,19 @@ export function App() {
           {/* Retired settings paths. They redirect rather than 404: they appear
               in docs and bookmarks, and in service workers cached inside
               installed PWAs, which can send a notification tap here long after
-              the deploy. /security carries ?tab=, which Navigate would drop. */}
-          {LEGACY_SETTINGS_PATHS.map((path) => (
-            <Route
-              key={path}
-              path={path}
-              element={
-                <Navigate
-                  to={`${legacySettingsRedirect(path, isAdmin) ?? "/read"}${
-                    path === "/security" ? location.search : ""
-                  }`}
-                  replace
-                />
-              }
-            />
-          ))}
+              the deploy. Sub-paths redirect too. A target without its own ?tab=
+              keeps the old query (Security's ?tab=, mail export's &export=),
+              which Navigate would drop. */}
+          {LEGACY_SETTINGS_PATHS.map((path) => {
+            const target = legacySettingsRedirect(path, isAdmin) ?? "/read";
+            return (
+              <Route
+                key={path}
+                path={`${path}/*`}
+                element={<Navigate to={target.includes("?") ? target : `${target}${location.search}`} replace />}
+              />
+            );
+          })}
           {/* The Settings tabs, in visibleSettingsTabs order. */}
           <Route
             path="/settings/apps"
@@ -888,7 +893,7 @@ export function App() {
           <Route path="/settings/automation" element={protect(settingsPage(<AutomationPanel />))} />
           <Route path="/settings/notifications" element={protect(settingsPage(<NotificationsPanel />))} />
           <Route
-            path="/settings/security"
+            path="/settings/account"
             element={protect(settingsPage(
               <ReauthGate what="your security settings">
                 <SecurityPage />

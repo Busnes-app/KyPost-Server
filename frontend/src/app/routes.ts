@@ -7,7 +7,9 @@
 const REDIRECTS: Record<string, string> = {
   "/config": "/settings/mail",
   "/notifications": "/settings/notifications",
-  "/security": "/settings/security",
+  "/security": "/settings/account",
+  // Security became the Account tab. Mail export links still land here with ?tab=export.
+  "/settings/security": "/settings/account",
   // Panels are tabbed, so these point at a ?tab= rather than a #hash: the
   // section only exists in the DOM while its tab is the active one.
   "/rules": "/settings/mail?tab=rules",

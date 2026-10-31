@@ -4,10 +4,10 @@ import { visibleSettingsTabs } from "./navigation";
 describe("visibleSettingsTabs", () => {
   it("puts the personal sections first, then KyPost's own, then Status for a non-admin", () => {
     expect(visibleSettingsTabs(false).map((t) => t.label)).toEqual([
+      "Account",
       "Phones & apps",
       "Appearance",
       "Mail",
-      "Security",
       "Notifications",
       "Email Labels",
       "Status"

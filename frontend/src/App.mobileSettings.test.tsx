@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { App } from "./App";
 
 vi.mock("./lib/pgpSession", () => ({
@@ -79,8 +79,9 @@ describe("Settings behind the account footer's gear", () => {
 
     const sections = await screen.findByRole("navigation", { name: "Settings sections" });
     expect(sections.closest(".ky-sidebar")).toBeNull();
-    expect([...sections.querySelectorAll("a")].slice(0, 3).map((a) => a.textContent)).toEqual(["Phones & apps", "Appearance", "Mail"]);
-    expect(within(sections).getByRole("link", { name: "Phones & apps" }).getAttribute("aria-current")).toBe("page");
+    expect([...sections.querySelectorAll("a")].slice(0, 4).map((a) => a.textContent)).toEqual(["Account", "Phones & apps", "Appearance", "Mail"]);
+    expect(within(sections).getByRole("link", { name: "Account" }).getAttribute("aria-current")).toBe("page");
+    expect(within(sections).queryByRole("link", { name: "Security" })).toBeNull();
     expect(within(footer).getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
     // No nav row is current while Settings is open.
     expect(nav.querySelectorAll(".sidebar-link-active")).toHaveLength(0);
@@ -88,6 +89,17 @@ describe("Settings behind the account footer's gear", () => {
     const contentFoot = document.querySelector(".ky-content > footer.ky-content-foot") as HTMLElement;
     expect(within(contentFoot).getByRole("button", { name: /MIT License/ })).toBeTruthy();
     expect(within(sections).queryByRole("button", { name: /MIT License/ })).toBeNull();
+  });
+
+  it("sends the old Security URL, sub-paths and query included, to the Account tab", async () => {
+    function Where() {
+      const { pathname, search } = useLocation();
+      return <output data-testid="where">{pathname + search}</output>;
+    }
+    render(<MemoryRouter initialEntries={["/settings/security/x?tab=export&export=proxy"]}><App /><Where /></MemoryRouter>);
+    const sections = await screen.findByRole("navigation", { name: "Settings sections" }, { timeout: 5000 });
+    expect(within(sections).getByRole("link", { name: "Account" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByTestId("where").textContent).toBe("/settings/account?tab=export&export=proxy");
   });
 
   it("sends the retired /apps page to Settings > Phones & apps", async () => {

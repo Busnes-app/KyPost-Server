@@ -9,8 +9,9 @@
 
 export type SettingsTab = { to: string; label: string };
 
-/** The suite's personal sections, first and in the suite's order. KyPost has no separate Account page. */
+/** The suite's personal sections, first and in the suite's order. Account is sign-in security, behind re-authentication. */
 const PERSONAL_TABS: ReadonlyArray<SettingsTab> = [
+  { to: "/settings/account", label: "Account" },
   { to: "/settings/apps", label: "Phones & apps" },
   { to: "/settings/appearance", label: "Appearance" }
 ];
@@ -18,7 +19,6 @@ const PERSONAL_TABS: ReadonlyArray<SettingsTab> = [
 /** KyPost's own panels anyone can reach. */
 const MAIL_TABS: ReadonlyArray<SettingsTab> = [
   { to: "/settings/mail", label: "Mail" },
-  { to: "/settings/security", label: "Security" },
   { to: "/settings/notifications", label: "Notifications" },
   // Per-user, not Admin: everything on it is each account's own TUNING.md,
   // auto-apply preference and decision log, all behind withAuth endpoints.
