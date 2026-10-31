@@ -291,7 +291,13 @@ export function Backup() {
           <summary>Schedule</summary>
           <div className="config-grid">
             {status?.intervalSec ? (
-              <p>Next run: {status.nextRun || "Pending"}</p>
+              <p>
+                {!status.keyId
+                  ? "Waiting for recovery key"
+                  : !status.paired && !status.localDir
+                    ? "Waiting for a destination"
+                    : `Next run: ${status.nextRun || "Pending"}`}
+              </p>
             ) : (
               <p>Automatic backups are off.</p>
             )}
