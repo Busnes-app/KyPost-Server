@@ -102,3 +102,8 @@ ky-ui 0.6.0 (shell and six palette pairs) with the council's KyPost fixes: one-l
 Council round 2 follow-up: Settings sections are one row of tabs above the panel (no second side column), Mail's six sections are the only second level, the Email settings form has sentence-case actions and one status line, New Email is outlined everywhere, the Inbox nav link spans its row, the reader shows the sent time beside the sender with an outlined Reply and keeps plain-text line breaks in the pane, and the bulk bar labels Snooze and Mark read.
 
 Frontend checks passed: 1189 tests, typecheck, lint with 0 errors and 0 warnings, production build, `npm audit --omit=dev` and the ky-ui vendor check. Run on Node 22.23.1, not CI's Node 26. Only the Busnes pair was captured; the other five pairs were checked by the readability tests, not by eye.
+
+## Message list and reading pane — 2026-10-31
+
+Captured with `captures/drivers/kypost-round4.mjs` (Playwright Chromium, 1440×900 and 390×844, Busnes Light and Dark) against a disposable KyPost server and the kypost-demo-IMAP fixture, through real sign-in. Before/after images are `docs/ui-suite-2026-10-31/screenshots/kypost-03-*`. The driver asserts no sideways page scroll in each view, that dragging the split handle narrows the list and the width survives a reload, and that with the reading pane off both Escape and Back return to the list. Only desktop light covers the three reading-pane modes and the narrowed split.
+
