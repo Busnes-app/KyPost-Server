@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { toErrorMessage } from "../../api/client";
 import { confirmSendAsAlias, createSendAsAlias, deleteSendAsAlias, listSendAsAliases, type SendAsAlias } from "../../api/sendas";
-import { formatWhen, sendAsStatusClass, sendAsStatusLabel } from "../../pages/config/settings";
+import { formatWhen, sendAsStatusLabel, sendAsStatusTone } from "../../pages/config/settings";
 
 export function SendAs() {
   const [sendAsAliases, setSendAsAliases] = useState<SendAsAlias[]>([]);
@@ -164,8 +164,7 @@ export function SendAs() {
                     </button>
                   </>
                 ) : null}
-                <span className={`contacts-badge ${sendAsStatusClass(alias.status)}`}>
-                  <span className="contacts-dot" aria-hidden="true" />
+                <span className="ky-status" data-ky-status={sendAsStatusTone(alias.status)}>
                   {sendAsStatusLabel(alias.status)}
                 </span>
                 <button type="button" onClick={() => void removeSendAsAlias(alias)} disabled={sendAsBusy}>

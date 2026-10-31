@@ -85,7 +85,7 @@ describe("sanitizeEmailHtml", () => {
 
     it("does not let an unblocked message hide the impersonation banner", () => {
       const out = sanitizeEmailHtml(
-        '<p>hi</p><style>.notice-error,.security-badge-off{display:none!important}</style>' +
+        '<p>hi</p><style>.notice-error,.ky-status{display:none!important}</style>' +
           '<div style="position:fixed;inset:0;background:#fff">overlay</div>',
         false
       );
@@ -348,11 +348,11 @@ describe("run-5 audit regressions", () => {
     // full-viewport, click-intercepting overlay with no script and no remote
     // content.
     const out = processEmailHtml(
-      '<div class="rules-help-backdrop" id="x" open><span class="security-badge security-badge-on">PGP signature verified</span></div>',
+      '<div class="rules-help-backdrop" id="x" open><span class="ky-status" data-ky-status="success">PGP signature verified</span></div>',
       false,
     );
     expect(out).not.toContain("rules-help-backdrop");
-    expect(out).not.toContain("security-badge");
+    expect(out).not.toContain('class="ky-status"');
     expect(out).not.toContain("class=");
     expect(out).not.toContain(" id=");
     expect(out).not.toContain("open");

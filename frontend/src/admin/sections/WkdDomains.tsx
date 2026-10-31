@@ -117,9 +117,8 @@ export function WkdDomains() {
               <div key={d.domain} style={{ padding: "10px 0" }}>
                 <div className="security-card-head">
                   <span>{d.domain}</span>
-                  <span className={`security-badge ${d.verified ? "security-badge-on" : "security-badge-off"}`}>
-                    <span className="security-dot" aria-hidden="true" />
-                    {d.verified ? "verified" : "unverified"}
+                  <span className="ky-status" data-ky-status={d.verified ? "success" : "warning"}>
+                    {d.verified ? "Verified" : "Unverified"}
                   </span>
                 </div>
                 {d.verified ? (

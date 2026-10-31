@@ -15,10 +15,10 @@ function retireWarning(domain: string) {
 const at = (seconds: number) => new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 function domainStatus(d: MailDomainEntry, now: number) {
-  if (d.retired) return { label: "Retired", detail: "Nothing routed or sent; address records kept" };
-  if (d.established) return { label: "Established", detail: d.verifiedUntil > now ? `DNS matched; holds until ${at(d.verifiedUntil)}` : "Rechecked before each use" };
-  if (d.expiresAt > now) return { label: "Awaiting verification", detail: `Publish the TXT record, then verify before ${at(d.expiresAt)}` };
-  return { label: "Lapsed", detail: "Challenge expired; start a new one" };
+  if (d.retired) return { label: "Retired", tone: undefined, detail: "Nothing routed or sent; address records kept" };
+  if (d.established) return { label: "Established", tone: "success", detail: d.verifiedUntil > now ? `DNS matched; holds until ${at(d.verifiedUntil)}` : "Rechecked before each use" };
+  if (d.expiresAt > now) return { label: "Awaiting verification", tone: "warning", detail: `Publish the TXT record, then verify before ${at(d.expiresAt)}` };
+  return { label: "Lapsed", tone: "danger", detail: "Challenge expired; start a new one" };
 }
 
 // Domains waiting on the operator first, retired ones last.
@@ -208,7 +208,7 @@ function MailDomainForm() {
                 {d.domain === domainSet.founding && <span className="mail-domain-tag">founding</span>}
                 {relayed && <span className="mail-domain-tag">relay</span>}
               </th>
-              <td><span className={`security-badge ${d.established ? "security-badge-on" : "security-badge-off"}`}><span className="security-dot" aria-hidden="true" />{status.label}</span></td>
+              <td><span className="ky-status" data-ky-status={status.tone}>{status.label}</span></td>
               <td className="config-muted">{status.detail}</td>
               <td className="mail-domain-actions">
                 {d.retired
