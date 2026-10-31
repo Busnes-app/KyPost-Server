@@ -176,36 +176,24 @@ type NotificationKeys struct {
 // CONFIG_DIR/users/<userID>/config.yaml.
 type UserSettings struct {
 	EncryptIncoming bool `yaml:"encryptIncoming" json:"encryptIncoming"`
-	// KyCalendarChoice is the user's own KyCalendar switch (KyCalendarOn):
-	// "on", "off", or empty for no choice yet.
-	KyCalendarChoice string `yaml:"kyCalendarChoice,omitempty" json:"-"`
-	// LegacyKyCalendar is the switch before choices were recorded. That code
-	// wrote false for every user who saved any setting, so only true is a choice.
-	LegacyKyCalendar bool                     `yaml:"kyCalendar,omitempty" json:"-"`
-	Notifications    UserNotificationSettings `yaml:"notifications" json:"notifications"`
-	Labels           UserLabelSettings        `yaml:"labels" json:"labels"`
+	// KyCalendar is the user's KyCalendar switch (KyCalendarOn); nil when
+	// they have never chosen. A stored false is always an off: the earlier
+	// code wrote it for everyone who saved any setting, so it cannot be told
+	// from a deliberate opt-out and is kept as one.
+	KyCalendar    *bool                    `yaml:"kyCalendar,omitempty" json:"-"`
+	Notifications UserNotificationSettings `yaml:"notifications" json:"notifications"`
+	Labels        UserLabelSettings        `yaml:"labels" json:"labels"`
 }
 
 // KyCalendarOn reports whether the paired KyCalendar may send invitations from
 // this mailbox and receive the DKIM-verified invitations it gets. With no
-// choice recorded it follows defaultOn: on when KyIdentity paired KyCalendar,
+// choice stored it follows defaultOn: on when KyIdentity paired KyCalendar,
 // off when the environment did.
 func (s UserSettings) KyCalendarOn(defaultOn bool) bool {
-	switch {
-	case s.KyCalendarChoice == "off":
-		return false
-	case s.KyCalendarChoice == "on" || s.LegacyKyCalendar:
-		return true
+	if s.KyCalendar != nil {
+		return *s.KyCalendar
 	}
 	return defaultOn
-}
-
-// SetKyCalendar records the user's explicit choice.
-func (s *UserSettings) SetKyCalendar(on bool) {
-	s.KyCalendarChoice, s.LegacyKyCalendar = "off", false
-	if on {
-		s.KyCalendarChoice = "on"
-	}
 }
 
 type UserNotificationSettings struct {

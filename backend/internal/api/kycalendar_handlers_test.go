@@ -140,7 +140,7 @@ func newKyCalFixture(t *testing.T) *kycalFixture {
 func (f *kycalFixture) setEnabled(t *testing.T, on bool) {
 	t.Helper()
 	if err := config.UpdateUserSettings(f.srv.userSettingsPath(f.userID), func(s *config.UserSettings) error {
-		s.SetKyCalendar(on)
+		s.KyCalendar = &on
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -427,9 +427,9 @@ func TestKyCalendarSettings(t *testing.T) {
 	}
 }
 
-// Paired through KyIdentity, a user who never chose is on and an explicit off
-// stays off; the old code's stored kyCalendar: false is no choice. Paired by
-// the environment, no choice stays off, as before.
+// Paired through KyIdentity, a user who never chose is on; any stored choice
+// wins, including the false the earlier code wrote, which may be a deliberate
+// opt-out. Paired by the environment, no choice stays off, as before.
 func TestKyCalendarPerUserDefault(t *testing.T) {
 	f := newKyCalFixture(t)
 	base, _ := url.Parse("https://cal.example.com")
@@ -452,12 +452,12 @@ func TestKyCalendarPerUserDefault(t *testing.T) {
 		send   string
 	}{
 		{"", viaIdentity, true, "sent"},
-		{"kyCalendar: false\n", viaIdentity, true, "sent"},
+		{"kyCalendar: false\n", viaIdentity, false, "sending_off"},
 		{"kyCalendar: true\n", env, true, "sent"},
 		{"", env, false, "sending_off"},
 		{"kyCalendar: false\n", env, false, "sending_off"},
-		{"kyCalendarChoice: \"off\"\n", viaIdentity, false, "sending_off"},
-		{"kyCalendarChoice: \"on\"\n", env, true, "sent"},
+		{"notifications:\n  mode: none\n", viaIdentity, true, "sent"},
+		{"kyCalendar: true\n", viaIdentity, true, "sent"},
 	} {
 		if err := os.WriteFile(path, []byte(tc.file), 0o600); err != nil {
 			t.Fatal(err)
@@ -474,15 +474,20 @@ func TestKyCalendarPerUserDefault(t *testing.T) {
 			<-f.delivered
 		}
 	}
-	// A PUT records an explicit choice the KyIdentity default cannot override.
-	f.srv.SetKyCalendar(viaIdentity)
-	f.setEnabled(t, false)
-	if got := enabled(); got != false {
-		t.Fatalf("explicit off read as %v", got)
+	// A PUT stores the choice; an unrelated save keeps no choice as none.
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	raw, _ := os.ReadFile(path)
-	if !strings.Contains(string(raw), `kyCalendarChoice: "off"`) && !strings.Contains(string(raw), "kyCalendarChoice: off") {
-		t.Fatalf("choice not stored: %s", raw)
+	f.srv.SetKyCalendar(viaIdentity)
+	if err := config.UpdateUserSettings(path, func(s *config.UserSettings) error { s.EncryptIncoming = false; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "kyCalendar") || enabled() != true {
+		t.Fatalf("an unrelated save recorded a choice: %s", raw)
+	}
+	f.setEnabled(t, false)
+	if raw, _ := os.ReadFile(path); !strings.Contains(string(raw), "kyCalendar: false") || enabled() != false {
+		t.Fatalf("explicit off not kept: %s", raw)
 	}
 }
 

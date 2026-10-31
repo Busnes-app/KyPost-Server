@@ -51,10 +51,10 @@ The web admin shows it under Server → KyCalendar.
 Each user has one switch under Settings → Mail → KyCalendar ("Let KyCalendar
 send invitations from this mailbox"). It covers both directions. A user who
 has not chosen follows the pairing: on when KyIdentity paired KyCalendar, off
-when the environment did. An explicit choice, on or off, is stored as
-`kyCalendarChoice` in their settings and always wins. The earlier
-`kyCalendar: true` still reads as on; `kyCalendar: false` reads as no
-choice, because KyPost wrote it for every user who saved any setting. Only
+when the environment did. A stored choice, `kyCalendar: true` or `false` in
+their settings, always wins. Earlier versions wrote `kyCalendar: false` for
+every user who saved any setting; it cannot be told from a deliberate opt-out,
+so it is kept as off and such a user turns it on once. Only
 accounts with a live SSO link (subject and issuer) take part.
 
 ## Signing

@@ -44,7 +44,8 @@ non-prerelease version.
   and `KYPOST_KYCALENDAR_URL`/`KYPOST_KYCALENDAR_SECRET_FILE` unset, it asks KyIdentity's suite
   directory for KyCalendar's address and shared secret, re-checks every 15 minutes and after a
   bad signature, and follows SSO changes without a restart. The environment variables still win.
-  Users who have not chosen are on by default when KyIdentity paired it; an explicit off is kept.
+  Users with no stored choice are on by default when KyIdentity paired it; any stored off is kept,
+  including the `kyCalendar: false` earlier versions saved for everyone who changed a setting.
   Server → KyCalendar shows how it is paired, or why not.
 - Web reader: a calendar invitation card with Accept, Maybe and Decline. It answers through
   KyCalendar (`POST /api/calendar/rsvp`) and, when KyCalendar is not in use, mails an iTIP REPLY

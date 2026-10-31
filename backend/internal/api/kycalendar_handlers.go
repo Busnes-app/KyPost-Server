@@ -248,7 +248,7 @@ func (s *Server) handleKyCalendarSettings(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if err := config.UpdateUserSettings(path, func(st *config.UserSettings) error {
-			st.SetKyCalendar(*req.Enabled)
+			st.KyCalendar = req.Enabled
 			return nil
 		}); err != nil {
 			http.Error(w, "failed to save settings", http.StatusInternalServerError)
