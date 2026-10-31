@@ -106,7 +106,7 @@ export function InviteCard({ attachment, query, messageId, folder, sender, phish
           <p className="invite-card-note">
             KyCalendar is not in use for this mailbox, so your answer goes to {e.organizer} as an unencrypted, unsigned email.
           </p>
-          <button type="button" className="btn-primary" onClick={() => void sendByMail()}>Send answer</button>
+          <button type="button" onClick={() => void sendByMail()}>Send answer</button>
           <button type="button" onClick={() => setPhase("idle")}>Cancel</button>
         </div>
       ) : offersRsvp && phase !== "done" ? (
