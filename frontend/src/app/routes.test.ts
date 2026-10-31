@@ -10,6 +10,7 @@ describe("legacySettingsRedirect", () => {
     expect(legacySettingsRedirect("/tuning", true)).toBe("/settings/automation?tab=prompt-tuning");
     expect(legacySettingsRedirect("/users", true)).toBe("/admin/server?tab=users");
     expect(legacySettingsRedirect("/logs", true)).toBe("/admin/diagnostics?tab=logs");
+    expect(legacySettingsRedirect("/apps", false)).toBe("/settings/apps");
   });
 
   it("keeps the pre-move Automation path working, since it shipped once", () => {

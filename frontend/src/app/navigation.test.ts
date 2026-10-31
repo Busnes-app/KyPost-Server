@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { visibleSettingsGroups } from "./navigation";
+import { visibleSettingsTabs } from "./navigation";
 
-describe("visibleSettingsGroups", () => {
-  it("gives a non-admin one unheaded group, so no header labels a lone list", () => {
-    const groups = visibleSettingsGroups(false);
-    expect(groups).toHaveLength(1);
-    expect(groups[0].heading).toBeUndefined();
-    expect(groups[0].items.map((i) => i.label)).toEqual([
+describe("visibleSettingsTabs", () => {
+  it("puts the personal sections first, then KyPost's own, then Status for a non-admin", () => {
+    expect(visibleSettingsTabs(false).map((t) => t.label)).toEqual([
+      "Phones & apps",
+      "Appearance",
       "Mail",
       "Security",
       "Notifications",
@@ -15,21 +14,15 @@ describe("visibleSettingsGroups", () => {
     ]);
   });
 
-  it("gives an admin two headed groups", () => {
-    const groups = visibleSettingsGroups(true);
-    expect(groups.map((g) => g.heading)).toEqual(["Config", "Admin"]);
-    expect(groups[1].items.map((i) => i.label)).toEqual(["Server", "Diagnostics"]);
-  });
-
-  it("hides Status from admins, who have Diagnostics instead", () => {
-    const labels = visibleSettingsGroups(true).flatMap((g) => g.items.map((i) => i.label));
+  it("gives an admin Server and Diagnostics instead of Status", () => {
+    const labels = visibleSettingsTabs(true).map((t) => t.label);
+    expect(labels.slice(-2)).toEqual(["Server", "Diagnostics"]);
     expect(labels).not.toContain("Status");
-    expect(labels).toContain("Diagnostics");
   });
 
   it("drops the Login entry, which redirected signed-in users to the inbox", () => {
     for (const isAdmin of [true, false]) {
-      const routes = visibleSettingsGroups(isAdmin).flatMap((g) => g.items.map((i) => i.to));
+      const routes = visibleSettingsTabs(isAdmin).map((t) => t.to);
       expect(routes).not.toContain("/login");
       expect(routes).not.toContain("/password");
     }
@@ -37,17 +30,15 @@ describe("visibleSettingsGroups", () => {
 
   it("routes every item under /settings or /admin", () => {
     for (const isAdmin of [true, false]) {
-      for (const group of visibleSettingsGroups(isAdmin)) {
-        for (const item of group.items) {
-          expect(item.to).toMatch(/^\/(settings|admin)\//);
-        }
+      for (const tab of visibleSettingsTabs(isAdmin)) {
+        expect(tab.to).toMatch(/^\/(settings|admin)\//);
       }
     }
   });
 
 });
 
-// The sidebar renders whatever this module returns, so an entry with no matching
+// The Settings tabs render whatever this module returns, so an entry with no matching
 // route in App.tsx is a dead link — which is exactly what shipped once during
 // this restructure, when the nav pointed at panels that did not exist yet.
 // Reading the router source is blunt, but it is the only thing that actually
@@ -61,7 +52,7 @@ describe("every nav target is routed", () => {
 
     const targets = new Set(
       [true, false].flatMap((isAdmin) =>
-        visibleSettingsGroups(isAdmin).flatMap((group) => group.items.map((item) => item.to))
+        visibleSettingsTabs(isAdmin).map((tab) => tab.to)
       )
     );
 
@@ -77,15 +68,13 @@ describe("every nav target is routed", () => {
 // of their own settings. Nothing on the panel is role-gated.
 describe("Email Labels placement", () => {
   it("is reachable by a non-admin", () => {
-    const routes = visibleSettingsGroups(false).flatMap((g) => g.items.map((i) => i.to));
+    const routes = visibleSettingsTabs(false).map((t) => t.to);
     expect(routes).toContain("/settings/automation");
   });
 
   it("is not under /admin, which would imply a gate it does not have", () => {
     for (const isAdmin of [true, false]) {
-      const automation = visibleSettingsGroups(isAdmin)
-        .flatMap((g) => g.items)
-        .find((i) => i.label === "Email Labels");
+      const automation = visibleSettingsTabs(isAdmin).find((t) => t.label === "Email Labels");
       expect(automation?.to).toBe("/settings/automation");
     }
   });

@@ -11,7 +11,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { ReauthGate, clearReauth } from "./components/ReauthGate";
 import mitLicenseText from "./mit.txt?raw";
 
-import { visibleSettingsGroups } from "./app/navigation";
+import { visibleSettingsTabs } from "./app/navigation";
 import { loadMailboxSelection, MailboxContext, mailboxName, readMailboxes, saveMailboxSelection, type UserMailbox } from "./app/mailboxes";
 import { LEGACY_SETTINGS_PATHS, legacySettingsRedirect } from "./app/routes";
 import { useFolderList } from "./hooks/useFolderList";
@@ -28,7 +28,7 @@ import type {
 import { clearDraftSnapshot } from "./app/draftAutosave";
 import { mailboxLabel, standardMailboxKind, standardMailboxPath, type StandardMailboxKind } from "./app/mailboxKind";
 import {
-  AppMark, ArchiveIcon, ChevronIcon, ClockIcon, ContactsIcon, DraftIcon, FolderIcon, InboxIcon, LogoutIcon, PaletteIcon, PlusIcon, SendIcon, SettingsIcon, TrashIcon, WarningIcon
+  AppMark, ArchiveIcon, ChevronIcon, ClockIcon, ContactsIcon, DraftIcon, FolderIcon, InboxIcon, LogoutIcon, PlusIcon, SendIcon, SettingsIcon, TrashIcon, WarningIcon
 } from "./pages/read/icons";
 
 const FOLDER_ICONS: Record<StandardMailboxKind | "custom", () => ReactElement> = {
@@ -92,9 +92,8 @@ export function App() {
   const [appVersion, setAppVersion] = useState("");
   const currentMailbox = new URLSearchParams(location.search).get("mailbox")?.trim() ?? "";
   const onReadPage = location.pathname === "/read";
-  const onAppearance = location.pathname === "/settings/appearance";
-  // Every settings and admin panel, and the apps page, sits under the one Settings item.
-  const onSettings = !onAppearance && ["/settings", "/admin", "/apps"].some((prefix) => location.pathname.startsWith(prefix));
+  // Every settings and admin panel is a tab of the one Settings page.
+  const onSettings = ["/settings", "/admin"].some((prefix) => location.pathname.startsWith(prefix));
 
   // Navigation hold. A section showing a value the server issues once and
   // cannot reissue (a generated CardDAV app password) registers a hold; any
@@ -537,37 +536,40 @@ export function App() {
   // tabs above the open panel, so the sidebar stays the only side column.
   function settingsPage(panel: ReactElement) {
     return (
-      <div className="settings-layout">
+      <>
         <header className="ky-page-head">
           <div>
             <h1 className="ky-page-title">Settings</h1>
             <p className="ky-page-lede">
-              {isAdmin ? "Your mail account, sign-in security and notifications, and this server." : "Your mail account, sign-in security, notifications and labels."}
+              {isAdmin
+                ? "Your apps, appearance, mail, security and notifications, and this server."
+                : "Your apps, appearance, mail, security, notifications and labels."}
             </p>
           </div>
         </header>
-        <nav className="settings-sections" aria-label="Settings" onClickCapture={guardNavigation}>
-          {visibleSettingsGroups(isAdmin).map((group) => (
-            <div key={group.heading ?? "settings"} className="settings-section-group">
-              {group.heading ? <span className="visually-hidden">{group.heading}</span> : null}
-              {group.items.map(({ to, label }) => (
-                <Link key={to} to={to} className="settings-section-link" aria-current={to === location.pathname ? "page" : undefined}>
-                  {label}
-                </Link>
-              ))}
-            </div>
-          ))}
-          {/* Not a settings panel: its own group after a divider. */}
-          <div className="settings-section-group settings-section-detached">
-            <Link to="/apps" className="settings-section-link" aria-current={location.pathname === "/apps" ? "page" : undefined}>
-              Get the apps
+        <nav className="ky-settings-tabs" aria-label="Settings sections" onClickCapture={guardNavigation}>
+          {visibleSettingsTabs(isAdmin).map(({ to, label }) => (
+            <Link key={to} to={to} className="ky-nav-item" aria-current={to === location.pathname ? "page" : undefined}>
+              {label}
             </Link>
-          </div>
+          ))}
         </nav>
         {panel}
-      </div>
+      </>
     );
   }
+
+  // Personal settings and sign out: the account footer, and the phone header in its place.
+  const accountActions = (
+    <>
+      <Link className="ky-icon-button" to="/settings" aria-label="Settings" title="Settings" aria-current={onSettings ? "page" : undefined}>
+        <SettingsIcon />
+      </Link>
+      <button type="button" className="ky-icon-button" aria-label="Sign out" title="Sign out" onClick={logout}>
+        <LogoutIcon />
+      </button>
+    </>
+  );
 
   return (
     <AuthContext.Provider value={auth}>
@@ -580,9 +582,9 @@ export function App() {
             <span>KyPost</span>
           </div>
           {auth.authenticated ? (
-            <button type="button" className="ky-mobile-signout" aria-label="Sign out" onClick={logout}>
-              <LogoutIcon />
-            </button>
+            <div className="ky-mobile-actions" onClickCapture={guardNavigation}>
+              {accountActions}
+            </div>
           ) : null}
         </div>
         {navBlockedNotice ? (
@@ -817,15 +819,6 @@ export function App() {
             <ContactsIcon />
             Contacts
           </Link>
-
-          <Link to="/settings/appearance" className={onAppearance ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}>
-            <PaletteIcon />
-            Appearance
-          </Link>
-          <Link to="/settings" className={onSettings ? "ky-nav-item sidebar-link-active" : "ky-nav-item"}>
-            <SettingsIcon />
-            Settings
-          </Link>
         </nav>
         <div className="ky-sidebar-foot">
           <AppRail apps={suiteApps} />
@@ -835,10 +828,9 @@ export function App() {
                 <p className="ky-user-name">{auth.username}</p>
                 <p className="ky-user-role">{isAdmin ? "Administrator" : "Everyday account"}</p>
               </div>
-              <button type="button" className="ky-user-signout" onClick={logout}>
-                <LogoutIcon />
-                Sign out
-              </button>
+              <div className="ky-user-actions" onClickCapture={guardNavigation}>
+                {accountActions}
+              </div>
             </div>
           ) : null}
           <footer>
@@ -882,10 +874,15 @@ export function App() {
               }
             />
           ))}
-          {/* The new panels. Both these and the old routes above resolve until
-              the retired paths become redirects. */}
-          <Route path="/settings/appearance" element={protect(<AppearancePanel />)} />
-          <Route path="/settings" element={<Navigate to={visibleSettingsGroups(isAdmin)[0].items[0].to} replace />} />
+          {/* The Settings tabs, in visibleSettingsTabs order. */}
+          <Route
+            path="/settings/apps"
+            element={protect(settingsPage(
+              <AppsPage pwa={{ installed: pwaInstalled, canInstall: pwaInstallPrompt !== null, install: () => void installPwa() }} />
+            ))}
+          />
+          <Route path="/settings/appearance" element={protect(settingsPage(<AppearancePanel />))} />
+          <Route path="/settings" element={<Navigate to={visibleSettingsTabs(isAdmin)[0].to} replace />} />
           <Route path="/settings/mail" element={protect(settingsPage(<MailPanel />))} />
           <Route path="/settings/status" element={protect(settingsPage(<StatusPanel />))} />
           <Route path="/settings/automation" element={protect(settingsPage(<AutomationPanel />))} />
@@ -900,12 +897,6 @@ export function App() {
           />
           <Route path="/contacts" element={protect(<ContactsPage />)} />
           <Route path="/scheduled" element={protect(<ScheduledPage key={selectedMailbox} />)} />
-          <Route
-            path="/apps"
-            element={protect(settingsPage(
-              <AppsPage pwa={{ installed: pwaInstalled, canInstall: pwaInstallPrompt !== null, install: () => void installPwa() }} />
-            ))}
-          />
           {/* The admin panels. protect(..., true) redirects non-admins to
               /read; the server enforces every one of these regardless. */}
           <Route path="/admin/server" element={protect(settingsPage(<ServerPanel />), true)} />

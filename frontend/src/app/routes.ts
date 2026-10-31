@@ -16,7 +16,9 @@ const REDIRECTS: Record<string, string> = {
   "/logs": "/admin/diagnostics?tab=logs",
   // Automation shipped under /admin before it moved to Config. Prompt tuning
   // is per-user, so an admin-only path was wrong for it.
-  "/admin/automation": "/settings/automation"
+  "/admin/automation": "/settings/automation",
+  // "Get the apps" was its own page; it is now Settings > Phones & apps.
+  "/apps": "/settings/apps"
 };
 
 /** Every path this table retires, for wiring the Routes. */

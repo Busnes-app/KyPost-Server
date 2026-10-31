@@ -46,6 +46,11 @@ non-prerelease version.
 
 ### Changes
 
+- Web: Settings moves out of the sidebar to a gear button beside Sign out in the account
+  footer (and the phone header); Sign out is now an icon button. Appearance and "Get the apps",
+  renamed Phones & apps, become the first two Settings tabs, ahead of Mail, Security,
+  Notifications, Email Labels and Status. `/apps` redirects to `/settings/apps`. Shared UI
+  assets move to ky-ui 0.10.0.
 - KyPost pairs with KyCalendar through KyIdentity on its own: with SSO pointing at KyIdentity
   and `KYPOST_KYCALENDAR_URL`/`KYPOST_KYCALENDAR_SECRET_FILE` unset, it asks KyIdentity's suite
   directory for KyCalendar's address and shared secret, re-checks every 15 minutes and after a
