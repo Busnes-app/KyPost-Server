@@ -20,6 +20,9 @@ non-prerelease version.
 
 ### Security
 
+- The frontend lint toolchain (`frontend/lint`, development only, not shipped) forces `minimatch`
+  11.0.3, past the denial-of-service advisory GHSA-g3hv-75wg-m249 that ESLint's dependencies
+  still pin below. Lint covers the same 269 files with the same results.
 - SSO-only accounts can use email encryption. An account that signs in only through KySignOn has
   no password, so it could neither create a PGP key nor unlock one. It now chooses a separate
   encryption passphrase that seals the key in the browser, and every key change (create, import,
