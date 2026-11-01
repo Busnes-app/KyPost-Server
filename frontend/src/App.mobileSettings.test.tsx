@@ -1,12 +1,9 @@
-// The phone navigation strip's "Settings" button must actually reveal the
-// settings links. On a phone the sidebar is a short scrolling strip and the
-// links render at its bottom, so tapping the button looked like it did nothing
-// (#456). Opening them must scroll the group into view and mark the control
-// expanded.
+// Settings is the account footer's gear (and the phone header's), not a nav
+// row: the nav holds mail only, and Settings opens on its personal sections.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { App } from "./App";
 
 vi.mock("./lib/pgpSession", () => ({
@@ -55,8 +52,8 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
-describe("Settings and Appearance in the nav", () => {
-  it("are direct links, and Settings opens a page whose sections sit inside the content", async () => {
+describe("Settings behind the account footer's gear", () => {
+  it("leaves the nav to mail, and opens Settings with the personal sections first", async () => {
     const user = userEvent.setup();
 
     render(<MemoryRouter initialEntries={["/read"]}><App /></MemoryRouter>);
@@ -64,22 +61,50 @@ describe("Settings and Appearance in the nav", () => {
 
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(nav.closest(".ky-sidebar")).toBeTruthy();
-    expect(within(nav).getByRole("link", { name: "Appearance" }).getAttribute("href")).toBe("/settings/appearance");
-    const settings = within(nav).getByRole("link", { name: "Settings" });
-    expect(within(nav).queryByRole("link", { name: "Mail" })).toBeNull();
+    for (const name of ["Settings", "Appearance", "Mail"]) {
+      expect(within(nav).queryByRole("link", { name })).toBeNull();
+    }
 
-    await user.click(settings);
+    // Footer: icon-only buttons, gear first; the words "Sign out" never show.
+    const footer = document.querySelector(".ky-sidebar-foot .ky-user-actions") as HTMLElement;
+    const buttons = [...footer.querySelectorAll(".ky-icon-button")];
+    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual(["Settings", "Sign out"]);
+    expect(buttons.map((b) => b.getAttribute("title"))).toEqual(["Settings", "Sign out"]);
+    expect(footer.textContent?.trim()).toBe("");
+    // The phone header carries the same two buttons.
+    const phone = document.querySelector(".ky-mobile-head .ky-mobile-actions") as HTMLElement;
+    expect([...phone.querySelectorAll(".ky-icon-button")].map((b) => b.getAttribute("aria-label"))).toEqual(["Settings", "Sign out"]);
 
-    const sections = await screen.findByRole("navigation", { name: "Settings" });
+    await user.click(within(footer).getByRole("link", { name: "Settings" }));
+
+    const sections = await screen.findByRole("navigation", { name: "Settings sections" });
     expect(sections.closest(".ky-sidebar")).toBeNull();
-    expect(within(sections).getByRole("link", { name: "Mail" }).getAttribute("aria-current")).toBe("page");
-    expect(within(sections).getByRole("link", { name: "Get the apps" })).toBeTruthy();
-    expect(within(sections).queryByRole("link", { name: "Appearance" })).toBeNull();
-    // One active item in the sidebar: Settings, not Appearance or a folder.
-    expect([...nav.querySelectorAll(".sidebar-link-active")].map((el) => el.textContent?.trim())).toEqual(["Settings"]);
+    expect([...sections.querySelectorAll("a")].slice(0, 4).map((a) => a.textContent)).toEqual(["Account", "Phones & apps", "Appearance", "Mail"]);
+    expect(within(sections).getByRole("link", { name: "Account" }).getAttribute("aria-current")).toBe("page");
+    expect(within(sections).queryByRole("link", { name: "Security" })).toBeNull();
+    expect(within(footer).getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
+    // No nav row is current while Settings is open.
+    expect(nav.querySelectorAll(".sidebar-link-active")).toHaveLength(0);
     // The phone header hides the sidebar foot, so the licence line also closes the page.
     const contentFoot = document.querySelector(".ky-content > footer.ky-content-foot") as HTMLElement;
     expect(within(contentFoot).getByRole("button", { name: /MIT License/ })).toBeTruthy();
     expect(within(sections).queryByRole("button", { name: /MIT License/ })).toBeNull();
+  });
+
+  it("sends the old Security URL, sub-paths and query included, to the Account tab", async () => {
+    function Where() {
+      const { pathname, search } = useLocation();
+      return <output data-testid="where">{pathname + search}</output>;
+    }
+    render(<MemoryRouter initialEntries={["/settings/security/x?tab=export&export=proxy"]}><App /><Where /></MemoryRouter>);
+    const sections = await screen.findByRole("navigation", { name: "Settings sections" }, { timeout: 5000 });
+    expect(within(sections).getByRole("link", { name: "Account" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByTestId("where").textContent).toBe("/settings/account?tab=export&export=proxy");
+  });
+
+  it("sends the retired /apps page to Settings > Phones & apps", async () => {
+    render(<MemoryRouter initialEntries={["/apps"]}><App /></MemoryRouter>);
+    const sections = await screen.findByRole("navigation", { name: "Settings sections" }, { timeout: 5000 });
+    expect(within(sections).getByRole("link", { name: "Phones & apps" }).getAttribute("aria-current")).toBe("page");
   });
 });

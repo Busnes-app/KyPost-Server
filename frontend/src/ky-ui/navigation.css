@@ -69,20 +69,53 @@
   line-height: 1.5;
 }
 .ky-nav-section:first-child { margin-top: 0; }
+/* ---------- Settings section tabs (.ky-settings-tabs) ---------- */
+/* One row of links under the Settings page head. The open section takes the current-row tint
+   with the bar along its bottom edge, over the row's 1px rule. */
+.ky-settings-tabs {
+  display: flex;
+  gap: var(--ky-space-1);
+  margin: 0 0 var(--ky-space-5);
+  overflow-x: auto;
+  box-shadow: inset 0 -1px var(--line, var(--ky-line));
+}
+:where(.ky-settings-tabs) > .ky-nav-item {
+  box-sizing: border-box;
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-height: var(--ky-control-size);
+  margin: 0;
+  padding: 0 var(--ky-space-3);
+  border: 0;
+  border-radius: var(--ky-control-radius) var(--ky-control-radius) 0 0;
+  background: transparent;
+  color: var(--ink, var(--ky-ink));
+  font: inherit;
+  font-size: var(--ky-type-nav);
+  font-weight: 500;
+  line-height: 1.25;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ky-settings-tabs > [class].ky-nav-item[aria-current="page"] { box-shadow: inset 0 -3px var(--accent, var(--ky-accent)); }
+/* The row scrolls, so it clips anything drawn outside a tab: keep the focus ring inside. */
+.ky-settings-tabs > .ky-nav-item:focus-visible { outline-offset: -2px; }
 @property --ky-fade-start { syntax: "<length>"; inherits: false; initial-value: 0px; }
 @property --ky-fade-end { syntax: "<length>"; inherits: false; initial-value: 0px; }
 /* Phones: one row of icon-and-label tabs that scrolls sideways. A scroll-driven animation
-   fades whichever edge hides tabs; without support the row still scrolls, unfaded. */
+   fades whichever edge hides tabs, Settings tabs included; without support the row still
+   scrolls, unfaded. */
 @media (max-width: 720px) {
-  .ky-nav {
-    flex-direction: row;
-    overflow-x: auto;
+  .ky-nav { flex-direction: row; overflow-x: auto; }
+  :is(.ky-nav, .ky-settings-tabs) {
     scroll-padding-inline: 3.5rem;
     mask-image: linear-gradient(to right, transparent, #000 var(--ky-fade-start), #000 calc(100% - var(--ky-fade-end)), transparent);
     animation: ky-nav-fade linear both;
     animation-timeline: scroll(self inline);
   }
-  .ky-nav:focus-within { mask-image: none; }
+  :is(.ky-nav, .ky-settings-tabs):focus-within { mask-image: none; }
   :where(.ky-nav) > .ky-nav-item { flex: none; width: auto; padding-inline: var(--ky-space-3); white-space: nowrap; }
   /* The row scrolls, so it clips anything drawn outside a tab: keep the focus ring inside. */
   .ky-nav > .ky-nav-item:focus-visible { outline-offset: -2px; }
