@@ -32,10 +32,16 @@ const NUMERIC = new RegExp(`${BEFORE}(?:\\d{5,8}|\\d{3}[ -]\\d{3}|\\d{4}[ -]\\d{
 // code beats a footer PO box. O(keywords x numbers), bounded by MAX_TEXT.
 const MAX_DISTANCE = 100;
 
+const BLOCKS = "address, article, aside, blockquote, br, dd, div, dl, dt, footer, h1, h2, h3, h4, h5, h6, header, hr, li, ol, p, pre, section, table, td, th, tr, ul";
+
 function textOf(body: string, mode: "html" | "plain" | undefined): string {
   if (mode !== "html") return body.slice(0, MAX_TEXT);
   const doc = new DOMParser().parseFromString(body.slice(0, MAX_HTML), "text/html");
   doc.querySelectorAll("style, script, title").forEach((el) => el.remove());
+  // textContent joins blocks with no gap, so "code: 110398</h1><p>This" would
+  // read as one token. Inline tags stay joined: some senders split a code
+  // across <span>s.
+  doc.querySelectorAll(BLOCKS).forEach((el) => el.after(" "));
   return (doc.body.textContent ?? "").replace(/\s+/g, " ").slice(0, MAX_TEXT);
 }
 
