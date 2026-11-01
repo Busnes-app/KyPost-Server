@@ -7,7 +7,9 @@
 const REDIRECTS: Record<string, string> = {
   "/config": "/settings/mail",
   "/notifications": "/settings/notifications",
-  "/security": "/settings/security",
+  "/security": "/settings/account",
+  // Security became the Account tab. Mail export links still land here with ?tab=export.
+  "/settings/security": "/settings/account",
   // Panels are tabbed, so these point at a ?tab= rather than a #hash: the
   // section only exists in the DOM while its tab is the active one.
   "/rules": "/settings/mail?tab=rules",
@@ -16,7 +18,9 @@ const REDIRECTS: Record<string, string> = {
   "/logs": "/admin/diagnostics?tab=logs",
   // Automation shipped under /admin before it moved to Config. Prompt tuning
   // is per-user, so an admin-only path was wrong for it.
-  "/admin/automation": "/settings/automation"
+  "/admin/automation": "/settings/automation",
+  // "Get the apps" was its own page; it is now Settings > Phones & apps.
+  "/apps": "/settings/apps"
 };
 
 /** Every path this table retires, for wiring the Routes. */
