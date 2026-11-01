@@ -9,9 +9,10 @@ import { useDialogOpen } from "./hooks/useDialogOpen";
 import { clearPGPSession, loadPGPSession } from "./lib/pgpSession";
 import { LoginPage } from "./pages/LoginPage";
 import { ReauthGate, clearReauth } from "./components/ReauthGate";
+import { SettingsMenu } from "./components/SettingsMenu";
 import mitLicenseText from "./mit.txt?raw";
 
-import { visibleSettingsTabs } from "./app/navigation";
+import { SETTINGS_LANDING, visibleSettingsTabs } from "./app/navigation";
 import { loadMailboxSelection, MailboxContext, mailboxName, readMailboxes, saveMailboxSelection, type UserMailbox } from "./app/mailboxes";
 import { LEGACY_SETTINGS_PATHS, legacySettingsRedirect } from "./app/routes";
 import { useFolderList } from "./hooks/useFolderList";
@@ -567,11 +568,10 @@ export function App() {
   }
 
   // Personal settings and sign out: the account footer, and the phone header in its place.
-  const accountActions = (
+  // Each placement has its own menu id; the gear opens a menu of the Settings tabs.
+  const accountActions = (menuId: string) => (
     <>
-      <Link className="ky-icon-button" to="/settings" aria-label="Settings" title="Settings" aria-current={onSettings ? "page" : undefined}>
-        <SettingsIcon />
-      </Link>
+      <SettingsMenu id={menuId} tabs={visibleSettingsTabs(isAdmin)} pathname={location.pathname} onSettings={onSettings} icon={<SettingsIcon />} />
       <button type="button" className="ky-icon-button" aria-label="Sign out" title="Sign out" onClick={logout}>
         <LogoutIcon />
       </button>
@@ -590,7 +590,7 @@ export function App() {
           </div>
           {auth.authenticated ? (
             <div className="ky-mobile-actions" onClickCapture={guardNavigation}>
-              {accountActions}
+              {accountActions("settings-menu-header")}
             </div>
           ) : null}
         </div>
@@ -836,7 +836,7 @@ export function App() {
                 <p className="ky-user-role">{isAdmin ? "Administrator" : "Everyday account"}</p>
               </div>
               <div className="ky-user-actions" onClickCapture={guardNavigation}>
-                {accountActions}
+                {accountActions("settings-menu-footer")}
               </div>
             </div>
           ) : null}
@@ -887,7 +887,8 @@ export function App() {
             ))}
           />
           <Route path="/settings/appearance" element={protect(settingsPage(<AppearancePanel />))} />
-          <Route path="/settings" element={<Navigate to={visibleSettingsTabs(isAdmin)[0].to} replace />} />
+          {/* A bare /settings (old links, bookmarks) skips Account's password check. */}
+          <Route path="/settings" element={<Navigate to={SETTINGS_LANDING} replace />} />
           <Route path="/settings/mail" element={protect(settingsPage(<MailPanel />))} />
           <Route path="/settings/status" element={protect(settingsPage(<StatusPanel />))} />
           <Route path="/settings/automation" element={protect(settingsPage(<AutomationPanel />))} />
