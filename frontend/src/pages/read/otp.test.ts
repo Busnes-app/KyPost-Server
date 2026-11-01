@@ -12,6 +12,15 @@ describe("extractOtp", () => {
     expect(extractOtp("One-time verification code", stateFarm, "html")).toBe("726343");
   });
 
+  it("does not run a code into the next block when the HTML has no whitespace between tags", () => {
+    const peco = `<h1>Here's your six-digit verification code: 110398</h1><hr><p>This code will only be active for <b>20 minutes</b>.</p>`;
+    expect(extractOtp("PECO Verification Code", peco, "html")).toBe("110398");
+  });
+
+  it("keeps a code split across inline elements together", () => {
+    expect(extractOtp("Sign in", "<p>Your code is <b>48</b><b>21</b></p>", "html")).toBe("4821");
+  });
+
   it("finds a plain-text code", () => {
     expect(extractOtp("Sign in", "Your verification code is 4821.\nIt expires soon.", "plain")).toBe("4821");
   });
