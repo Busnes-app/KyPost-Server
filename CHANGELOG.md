@@ -46,6 +46,10 @@ non-prerelease version.
 
 ### Changes
 
+- Web: the Settings gear opens a menu of the Settings sections (Account, Phones & apps,
+  Appearance, Mail, Notifications, Email Labels, then Status, or Server and Diagnostics for an
+  administrator) instead of going straight to Account, so it no longer asks for the password
+  every time. A bare `/settings` now opens Phones & apps. Shared UI assets move to ky-ui 0.11.0.
 - Web: Settings moves out of the sidebar to a gear button beside Sign out in the account
   footer (and the phone header); Sign out is now an icon button. Settings tabs follow the
   suite's order: Account (was Security, unchanged and still behind re-authentication), Phones &

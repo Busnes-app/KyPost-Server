@@ -1,6 +1,6 @@
 // The Settings page's section tabs (inside the content, not the sidebar). Data,
 // not behaviour — kept out of App.tsx so adding a panel is a one-line edit in an
-// obvious place. The footer's gear button opens the first one.
+// obvious place. The footer's gear opens a menu listing them in this order.
 //
 // ponytail: version is no longer a frontend constant — About and Admin > Server
 // both read the backend's appversion.String() (via GET /api/status `version`),
@@ -15,6 +15,9 @@ const PERSONAL_TABS: ReadonlyArray<SettingsTab> = [
   { to: "/settings/apps", label: "Phones & apps" },
   { to: "/settings/appearance", label: "Appearance" }
 ];
+
+/** Where a bare /settings lands: the first tab without Account's password check. */
+export const SETTINGS_LANDING = "/settings/apps";
 
 /** KyPost's own panels anyone can reach. */
 const MAIL_TABS: ReadonlyArray<SettingsTab> = [
