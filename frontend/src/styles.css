@@ -2690,6 +2690,36 @@ pre {
   word-break: break-all;
 }
 
+.sec-pending {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sec-pending-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+
+.sec-pending-item p {
+  margin: 4px 0 0;
+}
+
+.sec-pending-code {
+  font-family: var(--mono);
+  font-size: 1.1rem;
+  letter-spacing: 0.12em;
+  color: var(--ink-strong);
+}
+
 .sec-qr-timer-track {
   height: 4px;
   border-radius: 999px;

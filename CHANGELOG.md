@@ -16,7 +16,7 @@ image. `:stable` is moved to that image only after its build attestation has
 been published *and* verified, and only when the release is the newest published
 non-prerelease version.
 
-## 0.6.0 — 2026-11-01
+## 0.6.0 — 2026-11-02
 
 ### Added
 
@@ -26,6 +26,15 @@ non-prerelease version.
 
 ### Security
 
+- New devices must be approved (#516). A device that pairs with the QR code or the web
+  pairing link is now pending. It gets no mail, push or App Pull access until you approve it
+  on the page that showed the code, which shows the device model, OS, request address and a
+  code that the device also shows. Deny removes it at once; an unanswered request expires
+  after five minutes. Before this, whichever app redeemed a leaked pairing link first got
+  full mail access. Devices paired through KyIdentity sign-on or review pairing are not
+  affected, because their token goes straight back to the app that signed in. There is no
+  setting to turn approval off. Apps that predate this show a failed pairing until they
+  are updated. Client contract: `docs/device-approval.md`.
 - The frontend lint toolchain (`frontend/lint`, development only, not shipped) forces `minimatch`
   11.0.3, past the denial-of-service advisory GHSA-g3hv-75wg-m249 that ESLint's dependencies
   still pin below. Lint covers the same 269 files with the same results.
@@ -69,6 +78,14 @@ non-prerelease version.
 - Push relays keep key records in their `RelayCoordinator` Durable Object instead of the `API_KEYS` KV namespace. Registering no longer writes KV, whose free-plan quota of 1,000 writes a day ran out on 2026-10-26 and stopped Android push. Each relay keeps its own keys, so the KyPost and KyIdentity Android relays no longer share one key per public IP. Existing keys keep working: a relay copies a key out of KV the first time it is used. Operators list and revoke keys with SQL in the dashboard's Durable Objects Data Studio (object `relay-keys`); see the relay READMEs. (#487)
 - Native push recovers by itself when the relay refuses this server's self-registered key as superseded or unknown: KyPost re-registers once (at most once a minute, and reusing a key the other KyPost process already renewed) and retries the send. Before, it kept the refused key until someone deleted the key file and restarted. A revoked key or an operator-set `PUSH_RELAY_KEY`/`APNS_RELAY_KEY` is never replaced.
 - The push relays accept each device token in one canonical form only: APNs tokens are hex (folded to lowercase), FCM tokens no longer accept `.`. The same rule KyIdentity's relays already applied.
+
+### Fixed
+
+- `GET /api/inbox` without `since` no longer serves messages that were expunged on the mail
+  server. The warm cache only ever gained messages, so expunged ones stayed listed, across
+  restarts, until `mailcache.json` was deleted (#449). Each such call now checks the cached
+  messages against the server's UID list (one `UID SEARCH`) and, only when one is gone,
+  re-reads the envelopes and drops it. An unchanged mailbox is still served from the cache.
 
 ## 0.5.0 — 2026-10-28
 

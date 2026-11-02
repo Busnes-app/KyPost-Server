@@ -961,6 +961,7 @@ func (s *Server) revokeUserCredentials(u users.User, keepSessionToken string, pr
 	if err := s.revokeUserDevices(u.ID); err != nil {
 		errs = append(errs, err)
 	}
+	s.dropPendingDevicesLocked(u.ID)
 	// Delete the credential, not just the cache entry. invalidateUser clears an
 	// in-memory verification cache, but the hash lives in carddav-auth.json,
 	// so readDAVPassword loaded it again on the next request and minted a fresh

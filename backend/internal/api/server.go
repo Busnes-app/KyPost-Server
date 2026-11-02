@@ -91,6 +91,9 @@ type Server struct {
 	// Native sign-on holds it from its account recheck through the subscriber
 	// read, so revocation lands wholly before (refused) or after (id rotated).
 	pairingMu sync.Mutex
+	// pendingDevices holds devices awaiting approval, keyed by device id;
+	// guarded by pairingMu. See native_pending.go.
+	pendingDevices map[string]*pendingDevice
 	// Test seams, nil in production. handleNativeSignOn: BeforeAdmit before it
 	// takes the directory lock, AfterAdmit after the fence read, BeforeIssue
 	// before pairingMu. ssoCallbackAfterResolve: after resolveSSOUser.
@@ -865,6 +868,10 @@ func (s *Server) routesNotifications(mux *http.ServeMux) {
 	// single-use signed pairing token from the scanned QR, verified by
 	// decodeAndVerifyPairingToken.
 	mux.HandleFunc("POST /api/notifications/native/register", withTokenAuth(s.handleNotificationNativeRegister))
+	mux.HandleFunc("GET /api/notifications/native/pairing-status", withDeviceAuth(s.handleNativePairingStatus))
+	mux.HandleFunc("GET /api/notifications/native/pending", s.withAuth(s.handleNativePendingDevices))
+	mux.HandleFunc("POST /api/notifications/native/pending/{deviceId}/approve", s.withAuth(s.handleNativePendingApprove))
+	mux.HandleFunc("POST /api/notifications/native/pending/{deviceId}/deny", s.withAuth(s.handleNativePendingDeny))
 	mux.HandleFunc("GET /api/notifications/native/devices", s.withAuth(s.handleNotificationNativeDevices))
 	mux.HandleFunc("DELETE /api/notifications/native/devices", s.withAuth(s.handleNotificationNativeDevices))
 	mux.HandleFunc("POST /api/notifications/native/unpair", s.withAuth(s.handleNotificationNativeUnpair))

@@ -40,7 +40,7 @@ func (s *Server) handleNativeSignOn(w http.ResponseWriter, r *http.Request) {
 	store, subscriberID, ok := s.admitNativeSignOn(w, claims, settings)
 	release() // before the response: its SPKI probe may dial out
 	if ok {
-		s.writePairingResponse(w, store, subscriberID)
+		s.writePairingResponse(w, store, subscriberID, true)
 	}
 }
 

@@ -6,7 +6,7 @@ Per-user, per-mailbox metadata cache for `GET /api/inbox`: UIDs, flags,
 envelope headers, and (only via the daemon's opportunistic warm path) a
 message's body — so a polling client doesn't force a live IMAP fetch on
 every call, and the classic (no-`since`) response can usually be served with
-zero IMAP round trips once the background poller has warmed it.
+one `UID SEARCH` and no fetch once the background poller has warmed it.
 
 ## Ownership
 
@@ -98,6 +98,13 @@ All code under `backend/internal/mailcache/`. Consumed by both `api/`
   warmed lazily, the same way INBOX gets warmed for a brand-new user: the
   first `Snapshot` miss in `handleInbox` falls back to a live fetch and then
   calls `Upsert` itself. This is expected, not a bug.
+- **`Upsert` never removes, so the classic path reconciles before serving.**
+  `handleInbox`'s `reconcileWarmInbox` asks the IMAP client for the newest
+  `maxInboxLimit` UIDs (`ListUIDs`, an optional method only `APIClient` has;
+  native mail is always on the cursor path). Only when a served UID is missing
+  above the server's oldest listed UID does it fetch envelopes and `Sync` the
+  base window at `maxInboxLimit`, carrying the woken pins so unchanged entries
+  keep their `Rev`. A probe failure serves the window as it is.
 
 ## Work Guidance
 

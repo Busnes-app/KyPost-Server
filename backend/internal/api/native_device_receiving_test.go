@@ -47,8 +47,12 @@ func qualifyNativeDeviceReceiving(t *testing.T, s *Server, userID string, sessio
 		ID     string `json:"deviceId"`
 		Secret string `json:"deviceSecret"`
 	}
-	if register.Code != 200 || json.Unmarshal(register.Body.Bytes(), &device) != nil || device.ID != "native-roundtrip-device" || device.Secret == "" {
+	if register.Code != 202 || json.Unmarshal(register.Body.Bytes(), &device) != nil || device.ID != "native-roundtrip-device" || device.Secret == "" {
 		t.Fatal("native registration failed", register.Code)
+	}
+	// A web-minted code leaves the device pending until the session approves it.
+	if approve := sessionRequest("POST", "/api/notifications/native/pending/"+device.ID+"/approve", nil); approve.Code != 200 {
+		t.Fatal("native device approval failed", approve.Code, approve.Body.String())
 	}
 	unauthorized := httptest.NewRecorder()
 	wrongSecret := httptest.NewRequest("GET", "/api/inbox?mailbox=INBOX", nil)

@@ -59,7 +59,7 @@ all, so pairing refuses rather than guessing one from the request.
 
 Native registration behavior:
 
-- `POST /api/notifications/native/register` validates the pairing token. It stores the native device metadata and token in the backend state.
+- `POST /api/notifications/native/register` validates the pairing token. A device that pairs from the QR code or web link is **pending**: it has no mail, push or App Pull access until you approve it on the page that showed the code, which lists the device model, OS, request IP and a code the device also shows. Deny removes it at once; an unanswered request expires after five minutes. Devices paired through KyIdentity sign-on or review pairing are stored at once. See [device approval](device-approval.md).
 - `GET /api/notifications/native/devices` lists the paired native devices and their reported enrollment envelope versions. Older devices default to v2; webmail refuses setup for devices that require a newer format. V3 delivery and conversion remain gated.
 - `DELETE /api/notifications/native/devices` removes one paired native device by `deviceId`.
 - `POST /api/notifications/native/unpair` revokes all paired native devices for the signed-in user.

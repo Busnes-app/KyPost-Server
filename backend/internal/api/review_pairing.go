@@ -39,5 +39,5 @@ func (s *Server) handleReviewPairing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "review account requires an interactive sign-in", http.StatusForbidden)
 		return
 	}
-	s.writeNotificationPairing(w, u.ID)
+	s.writeNotificationPairing(w, u.ID, true)
 }
