@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/processor"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -353,15 +354,18 @@ func (s *Server) handleNotificationPairing(w http.ResponseWriter, r *http.Reques
 	if !s.confirmActor(w, r, ac.UserID, cred.AuthSecret) {
 		return
 	}
-	s.writeNotificationPairing(w, ac.UserID)
+	s.writeNotificationPairing(w, ac.UserID, false)
 }
 
-func (s *Server) writeNotificationPairing(w http.ResponseWriter, userID string) {
+// writeNotificationPairing mints a native pairing token for userID. direct is
+// true only when the token goes back in the response to the client that proved
+// the credential itself; see pairingTokenClaims.Direct.
+func (s *Server) writeNotificationPairing(w http.ResponseWriter, userID string, direct bool) {
 	store, subscriberID, ok := s.pairingSubscriber(w, userID)
 	if !ok {
 		return
 	}
-	s.writePairingResponse(w, store, subscriberID)
+	s.writePairingResponse(w, store, subscriberID, direct)
 }
 
 // pairingSubscriber returns the subscriber id a pairing token is minted for.
@@ -385,7 +389,7 @@ func (s *Server) pairingSubscriber(w http.ResponseWriter, userID string) (*state
 	return store, subscriberID, true
 }
 
-func (s *Server) writePairingResponse(w http.ResponseWriter, store *state.Store, subscriberID string) {
+func (s *Server) writePairingResponse(w http.ResponseWriter, store *state.Store, subscriberID string, direct bool) {
 	// Both halves are required, and an unconfigured server mints no token:
 	// PAIRING_SECRET is what signs it, SERVER_BASE_URL is where the device
 	// sends it. See pairingBaseURL for why the request cannot supply the
@@ -430,7 +434,7 @@ func (s *Server) writePairingResponse(w http.ResponseWriter, store *state.Store,
 		resp["configurationError"] = configurationError
 	}
 	if configured {
-		token, expiresAt, err := s.createPairingToken(subscriberID, pairingPurposeNativeDevice, time.Duration(pairingTTLSeconds)*time.Second)
+		token, expiresAt, err := s.mintPairingToken(subscriberID, pairingPurposeNativeDevice, time.Duration(pairingTTLSeconds)*time.Second, direct)
 		if err != nil {
 			s.logger.Error("failed to create pairing token", "subscriber_id", subscriberID, "error", err.Error())
 			http.Error(w, "failed to prepare mobile pairing", http.StatusInternalServerError)
@@ -468,6 +472,8 @@ type nativeRegisterRequest struct {
 	// have the marker cleared out from under it, while a client that sends false
 	// is reporting that its keystore key is gone.
 	EncryptionEnrolled *bool `json:"encryptionEnrolled,omitempty"`
+	// OSVersion is shown in the approval prompt, e.g. "Android 16". Display only.
+	OSVersion string `json:"osVersion,omitempty"`
 }
 
 func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http.Request) {
@@ -628,22 +634,6 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 		return
 	}
 
-	// A device id is global (the deviceIndex maps it to exactly one owner), but
-	// the id is client-supplied. Reserve it atomically (check-and-set under
-	// one lock, not a separate check followed by a later write) so a caller
-	// can't hijack a victim's device-index entry and deny that device
-	// service, even under concurrent registration requests.
-	// release is armed immediately and unconditionally: every return between
-	// here and commitDeviceID below is a path that reserved an ID and then did
-	// not write a device under it. See reserveDeviceID for what one of those
-	// costs if it survives.
-	reservation, reserved := s.reserveDeviceID(ownerID, strings.TrimSpace(req.DeviceID))
-	if !reserved {
-		http.Error(w, "device id already registered", http.StatusConflict)
-		return
-	}
-	defer reservation.Release()
-
 	// Mint this device's own pairing secret. Only its hash is ever persisted
 	// (see state.NativeDevice.SecretHash); the raw value is returned once
 	// below and never retrievable again.
@@ -667,6 +657,66 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 		UserID:     ownerID,
 		SecretHash: secretHash, // not an approver until the owner opts in with step-up
 	}
+
+	// A web-minted token is a bearer link that may have reached another app, so
+	// the device waits for the signed-in user's approval (native_pending.go).
+	// Only the signed `direct` claim, minted by sign-on and review pairing,
+	// registers at once; there is no other way past this.
+	if !claims.Direct {
+		if device.DeviceID == "" {
+			id, err := fsutil.NewUUIDv4()
+			if err != nil {
+				http.Error(w, "failed to mint device id", http.StatusInternalServerError)
+				return
+			}
+			device.DeviceID = id
+		}
+		if owner, found := s.lookupUserByDevice(device.DeviceID); found && owner != ownerID {
+			http.Error(w, "device id already registered", http.StatusConflict)
+			return
+		}
+		s.holdPendingDevice(w, r, ownerID, subscriberID, device, rawSecret, req)
+		return
+	}
+
+	registeredDeviceID, devices, ok := s.persistNativeDevice(w, r, store, ownerID, device, req.EncryptionEnrolled)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"synced":       true,
+		"status":       "approved",
+		"deviceId":     registeredDeviceID,
+		"deviceSecret": rawSecret,
+		"devices":      devices,
+		"deliveryMode": store.NativeDeliveryMode(),
+		"pullEndpoint": s.nativeEndpoint("/api/notifications/native/pull"),
+		"transport":    transport,
+	})
+}
+
+// persistNativeDevice writes device to ownerID's account and returns the id it
+// was stored under and the account's device count. Used by direct registration
+// and by approval of a pending device. On ok=false it has written the response.
+// Caller holds pairingMu.
+func (s *Server) persistNativeDevice(w http.ResponseWriter, r *http.Request, store *state.Store, ownerID string, device state.NativeDevice, encryptionEnrolled *bool) (string, int, bool) {
+	// A device id is global (the deviceIndex maps it to exactly one owner), but
+	// the id is client-supplied. Reserve it atomically (check-and-set under
+	// one lock, not a separate check followed by a later write) so a caller
+	// can't hijack a victim's device-index entry and deny that device
+	// service, even under concurrent registration requests.
+	// release is armed immediately and unconditionally: every return between
+	// here and commitDeviceID below is a path that reserved an ID and then did
+	// not write a device under it. See reserveDeviceID for what one of those
+	// costs if it survives.
+	reservation, reserved := s.reserveDeviceID(ownerID, device.DeviceID)
+	if !reserved {
+		http.Error(w, "device id already registered", http.StatusConflict)
+		return "", 0, false
+	}
+	defer reservation.Release()
+
 	if err := store.UpsertNativeDevice(device); err != nil {
 		// See the same branch on the web-push subscription handler: at the cap
 		// the request is refused, not failed. Re-pairing a device that is
@@ -675,10 +725,10 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"error": fmt.Sprintf("this account already has the maximum of %d paired devices; unpair one first", state.MaxNativeDevices),
 			})
-			return
+			return "", 0, false
 		}
 		http.Error(w, "failed to persist native device", http.StatusInternalServerError)
-		return
+		return "", 0, false
 	}
 
 	// Resolve the canonical device ID by token: the upsert may have merged
@@ -687,11 +737,11 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 	devices, err := store.ListNativeDevicesStrict()
 	if err != nil {
 		http.Error(w, "failed to read paired devices", http.StatusServiceUnavailable)
-		return
+		return "", 0, false
 	}
 	registeredDeviceID := device.DeviceID
 	for i := len(devices) - 1; i >= 0; i-- {
-		if strings.TrimSpace(devices[i].PushToken) == deviceToken && devices[i].Platform == device.Platform {
+		if strings.TrimSpace(devices[i].PushToken) == device.PushToken && devices[i].Platform == device.Platform {
 			registeredDeviceID = devices[i].DeviceID
 			break
 		}
@@ -705,31 +755,15 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 
 	// Written against registeredDeviceID rather than the requested id, because
 	// the upsert may have merged this registration into an existing row.
-	if req.EncryptionEnrolled != nil {
-		if err := store.SetNativeDeviceEncryptionEnrolled(registeredDeviceID, *req.EncryptionEnrolled); err != nil {
+	if encryptionEnrolled != nil {
+		if err := store.SetNativeDeviceEncryptionEnrolled(registeredDeviceID, *encryptionEnrolled); err != nil {
 			// Not fatal to registration: push must keep working even if the
 			// enrollment marker cannot be written.
 			s.logger.Error("could not record device encryption state",
 				"device_id", registeredDeviceID, "error", err.Error())
 		}
 	}
-
-	serverBaseURL := s.pairingBaseURL()
-	pullEndpoint := ""
-	if serverBaseURL != "" {
-		pullEndpoint = strings.TrimRight(serverBaseURL, "/") + "/api/notifications/native/pull"
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":           true,
-		"synced":       true,
-		"deviceId":     registeredDeviceID,
-		"deviceSecret": rawSecret,
-		"devices":      len(devices),
-		"deliveryMode": store.NativeDeliveryMode(),
-		"pullEndpoint": pullEndpoint,
-		"transport":    transport,
-	})
+	return registeredDeviceID, len(devices), true
 }
 
 func (s *Server) handleNotificationNativeDevices(w http.ResponseWriter, r *http.Request) {
@@ -976,9 +1010,18 @@ type pairingTokenClaims struct {
 	Exp     int64  `json:"exp"`
 	Nonce   string `json:"n"`
 	Purpose string `json:"purpose"`
+	// Direct marks a native-device token returned in the HTTP response to the
+	// client that just proved the account credential (native sign-on, review
+	// pairing), never rendered as a QR code or link. Only such a token
+	// registers a device without approval. Signed, so it cannot be added.
+	Direct bool `json:"direct,omitempty"`
 }
 
 func (s *Server) createPairingToken(subscriberID, purpose string, ttl time.Duration) (string, time.Time, error) {
+	return s.mintPairingToken(subscriberID, purpose, ttl, false)
+}
+
+func (s *Server) mintPairingToken(subscriberID, purpose string, ttl time.Duration, direct bool) (string, time.Time, error) {
 	if ttl <= 0 {
 		ttl = 90 * time.Second
 	}
@@ -993,6 +1036,7 @@ func (s *Server) createPairingToken(subscriberID, purpose string, ttl time.Durat
 		Exp:     expiresAt.Unix(),
 		Nonce:   hex.EncodeToString(nonceBytes),
 		Purpose: purpose,
+		Direct:  direct,
 	}
 	payload, err := json.Marshal(claims)
 	if err != nil {

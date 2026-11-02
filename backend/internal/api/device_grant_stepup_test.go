@@ -68,9 +68,12 @@ func TestPairingTokenRequiresStepUp(t *testing.T) {
 		t.Fatalf("stepped-up pairing: status %d body %s", rec.Code, rec.Body.String())
 	}
 
-	// The app side is unchanged: the token registers a device, which is not an approver.
-	if reg := registerWithPairingToken(t, srv, out.DeepLink); reg.Code != http.StatusOK {
+	// The token registers a pending device; once approved it is not an approver.
+	if reg := registerWithPairingToken(t, srv, out.DeepLink); reg.Code != http.StatusAccepted {
 		t.Fatalf("register: status %d body %s", reg.Code, reg.Body.String())
+	}
+	if rec := decide(t, srv, u.ID, "device-signon", "approve"); rec.Code != http.StatusOK {
+		t.Fatalf("approve: status %d body %s", rec.Code, rec.Body.String())
 	}
 	store, err := srv.userStore(u.ID)
 	if err != nil {
