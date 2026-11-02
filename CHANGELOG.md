@@ -70,6 +70,14 @@ non-prerelease version.
 - Native push recovers by itself when the relay refuses this server's self-registered key as superseded or unknown: KyPost re-registers once (at most once a minute, and reusing a key the other KyPost process already renewed) and retries the send. Before, it kept the refused key until someone deleted the key file and restarted. A revoked key or an operator-set `PUSH_RELAY_KEY`/`APNS_RELAY_KEY` is never replaced.
 - The push relays accept each device token in one canonical form only: APNs tokens are hex (folded to lowercase), FCM tokens no longer accept `.`. The same rule KyIdentity's relays already applied.
 
+### Fixed
+
+- `GET /api/inbox` without `since` no longer serves messages that were expunged on the mail
+  server. The warm cache only ever gained messages, so expunged ones stayed listed, across
+  restarts, until `mailcache.json` was deleted (#449). Each such call now checks the cached
+  messages against the server's UID list (one `UID SEARCH`) and, only when one is gone,
+  re-reads the envelopes and drops it. An unchanged mailbox is still served from the cache.
+
 ## 0.5.0 — 2026-10-28
 
 ### Security

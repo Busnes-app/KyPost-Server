@@ -586,11 +586,18 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 	if !cursorSync {
 		// Cache-first: if the background poller (or an earlier request)
 		// has already warmed a full window of `limit` messages with
-		// bodies, serve it with zero IMAP calls.
+		// bodies, serve it with no fetch beyond reconcileWarmInbox's UID
+		// probe.
 		entries, warmed, err := cache.Snapshot(cacheKey, limit)
 		if err != nil {
 			http.Error(w, "failed to read mail cache", http.StatusInternalServerError)
 			return
+		}
+		if warmed && s.reconcileWarmInbox(ctx, userID, mailClient, cache, cacheKey, mailbox, entries, pins) {
+			if entries, warmed, err = cache.Snapshot(cacheKey, limit); err != nil {
+				http.Error(w, "failed to read mail cache", http.StatusInternalServerError)
+				return
+			}
 		}
 		if warmed {
 			for _, e := range entries {
@@ -936,6 +943,52 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 // IMAP server itself rejected (502). Both used to be 502, which told a user who
 // typed a folder name containing a stray control character that their mail
 // provider was at fault.
+// reconcileWarmInbox drops messages expunged on the server from a warm cache
+// window before the classic path serves it. The poller only Upserts, which
+// never removes, so without this an expunged UID was served until the cache
+// file was deleted (#449). One UID SEARCH decides; only when a served UID is
+// gone does it pay for envelopes and Sync the base window, carrying the woken
+// pins so unchanged entries keep their Rev. A probe failure serves the cache
+// as before. Reports whether the window was rewritten.
+func (s *Server) reconcileWarmInbox(ctx context.Context, userID string, mailClient imapadapter.Client, cache *mailcache.Store, cacheKey, mailbox string, served []mailcache.Entry, pins map[int]state.Snooze) bool {
+	lister, ok := mailClient.(interface {
+		ListUIDs(ctx context.Context, mailbox string, limit int) ([]int, error)
+	})
+	if !ok {
+		return false
+	}
+	uids, err := lister.ListUIDs(ctx, mailbox, maxInboxLimit)
+	if err != nil {
+		s.logger.Error("failed to check warm mail cache against the server", "user_id", userID, "error", err.Error())
+		return false
+	}
+	// Below the newest maxInboxLimit UIDs a message aged out, not expunged; it
+	// is still on the server and the poller's next Upsert moves the window on.
+	full := len(uids) >= maxInboxLimit
+	if !slices.ContainsFunc(served, func(e mailcache.Entry) bool {
+		_, found := slices.BinarySearch(uids, e.UID)
+		return !found && (!full || e.UID >= uids[0])
+	}) {
+		return false
+	}
+	overviews, err := mailClient.ListOverviews(ctx, mailbox, maxInboxLimit)
+	if err != nil {
+		s.logger.Error("failed to reconcile warm mail cache", "user_id", userID, "error", err.Error())
+		return false
+	}
+	live := make([]mailcache.Overview, 0, len(overviews))
+	for _, ov := range overviews {
+		entry := mailCacheEntryFromOverview(ov)
+		entry.WokenAt = pinnedAt(pins, ov.UID)
+		live = append(live, entry)
+	}
+	if _, err := cache.Sync(cacheKey, maxInboxLimit, live, 0); err != nil {
+		s.logger.Error("failed to reconcile warm mail cache", "user_id", userID, "error", err.Error())
+		return false
+	}
+	return true
+}
+
 func writeMailboxError(w http.ResponseWriter, err error) {
 	if errors.Is(err, imapadapter.ErrUnsafeMailbox) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
