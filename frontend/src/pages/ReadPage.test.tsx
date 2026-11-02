@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 
@@ -52,6 +52,7 @@ vi.mock("../components/PgpUnlockDialog", () => ({
 }));
 
 import { ReadPage } from "./ReadPage";
+import { ReadingPane } from "../settings/sections/ReadingPane";
 
 // Testing Library only registers auto-cleanup when vitest runs with globals
 // enabled, which this project does not. Without it each test inherits the
@@ -352,6 +353,64 @@ describe("reading pane off", () => {
     await waitFor(() => expect(reader?.open).toBe(true));
     await user.click(screen.getByRole("button", { name: "Back" }));
     await waitFor(() => expect(reader?.open).toBe(false));
+  });
+});
+
+describe("reading pane setting applies to an open inbox", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEndpoints();
+    localStorage.setItem("kypost-read-list-width", "60");
+    localStorage.setItem("kypost-read-list-height", "30");
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({ matches: query === "(min-width: 1100px)" }) as MediaQueryList);
+  });
+  afterEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  const layout = () => document.querySelector(".read-layout");
+
+  it("follows Settings in this tab without remounting the inbox", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <ReadingPane />
+        <ReadPage />
+      </MemoryRouter>
+    );
+    await screen.findByText("Weekly Digest");
+    const mounted = layout();
+    expect(mounted?.getAttribute("data-pane")).toBe("right");
+    expect(screen.getByRole("separator").getAttribute("aria-valuenow")).toBe("60");
+
+    await user.click(screen.getByRole("radio", { name: "Below list" }));
+    expect(layout()).toBe(mounted);
+    expect(mounted?.getAttribute("data-pane")).toBe("below");
+    expect(screen.getByRole("separator").getAttribute("aria-orientation")).toBe("horizontal");
+    // The height's own saved share, not the width's carried over.
+    expect(screen.getByRole("separator").getAttribute("aria-valuenow")).toBe("30");
+
+    await user.click(screen.getByRole("radio", { name: "Off" }));
+    expect(layout()).toBe(mounted);
+    expect(mounted?.getAttribute("data-pane")).toBe("off");
+    expect(screen.queryByRole("separator")).toBeNull();
+  });
+
+  it("follows a change saved in another tab", async () => {
+    renderReadPage();
+    await screen.findByText("Weekly Digest");
+    const mounted = layout();
+    expect(mounted?.getAttribute("data-pane")).toBe("right");
+
+    // Another tab's save: this tab sees the new value and a storage event, never its own event.
+    act(() => {
+      localStorage.setItem("kypost-reading-pane", "off");
+      window.dispatchEvent(new StorageEvent("storage", { key: "kypost-reading-pane", newValue: "off" }));
+    });
+    expect(layout()).toBe(mounted);
+    expect(mounted?.getAttribute("data-pane")).toBe("off");
+    expect(screen.queryByRole("separator")).toBeNull();
   });
 });
 

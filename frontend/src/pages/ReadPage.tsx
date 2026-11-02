@@ -22,7 +22,7 @@ import type { DraftComposePayload } from "../app/types";
 import { PageTabs } from "../components/PageTabs";
 import { ArchiveIcon, ArrowLeftIcon, CheckIcon, ClockIcon, CloseIcon, ImageIcon, PaperclipIcon, PlusIcon, PrintIcon, RefreshIcon, SearchIcon, TrashIcon, WarningIcon } from "./read/icons";
 import { ListSplitter } from "./read/ListSplitter";
-import { readReadingPane } from "./read/readingPane";
+import { useReadingPane } from "./read/readingPane";
 import { SnoozeDialog } from "./read/SnoozeDialog";
 import { sortTime } from "../lib/snooze";
 
@@ -80,7 +80,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
   const readerActionsId = useId();
   const searchScopeName = useId();
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [readingPane] = useState(readReadingPane);
+  const readingPane = useReadingPane();
   const readerMenuOpenRef = useRef(false);
   const [searchParams, setSearchParams] = useSearchParams();
   // App remounts this page on a switch, so the mailbox read here is fixed for its life.
@@ -1809,7 +1809,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       )}
 
       </div>
-      {readingPane === "off" ? null : <ListSplitter pane={readingPane} />}
+      {readingPane === "off" ? null : <ListSplitter key={readingPane} pane={readingPane} />}
       <dialog
         ref={emailReaderDialogRef}
         className="email-reader-backdrop"
