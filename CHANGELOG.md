@@ -26,6 +26,15 @@ non-prerelease version.
 
 ### Security
 
+- New devices must be approved (#516). A device that pairs with the QR code or the web
+  pairing link is now pending. It gets no mail, push or App Pull access until you approve it
+  on the page that showed the code, which shows the device model, OS, request address and a
+  code that the device also shows. Deny removes it at once; an unanswered request expires
+  after five minutes. Before this, whichever app redeemed a leaked pairing link first got
+  full mail access. Devices paired through KyIdentity sign-on or review pairing are not
+  affected, because their token goes straight back to the app that signed in. There is no
+  setting to turn approval off. Apps that predate this show a failed pairing until they
+  are updated. Client contract: `docs/device-approval.md`.
 - The frontend lint toolchain (`frontend/lint`, development only, not shipped) forces `minimatch`
   11.0.3, past the denial-of-service advisory GHSA-g3hv-75wg-m249 that ESLint's dependencies
   still pin below. Lint covers the same 269 files with the same results.

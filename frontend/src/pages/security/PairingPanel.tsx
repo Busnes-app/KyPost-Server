@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import QRCode from "qrcode";
 import { toErrorMessage } from "../../api/client";
-import { mintPairing } from "../../api/devices";
+import { decidePendingDevice, listPendingDevices, mintPairing, type PendingDevice } from "../../api/devices";
 import { useAuth } from "../../auth";
 import {
   DEFAULT_PAIRING_TTL_SECONDS,
@@ -20,11 +20,21 @@ import { buildNativePairingLink } from "./pairingLink";
  * confirmation) is re-proved: the device it pairs outlives the session. A code
  * that runs out is not replaced on its own; the user confirms again.
  *
+ * A device that redeems the code waits for approval here (#516): while a code
+ * is open, and for the five minutes a pending device lives after it, the panel
+ * polls the pending list and shows each request with Approve / Deny. The code
+ * on the phone must match the one shown, which is how the user tells their own
+ * device from another app that redeemed the same link.
+ *
  * (React tracks hook order per component instance, so a conditionally *rendered*
  * child is fine — see the hook rule in frontend/AGENTS.md.)
  */
 
 type NativeDeliveryMode = "push" | "pull";
+
+/** Pending devices live five minutes after registering; the code itself lives 90 s. */
+const PENDING_WINDOW_MS = 5 * 60_000;
+const PENDING_POLL_MS = 3_000;
 
 type PairingStatusResponse = {
   subscriberId: string;
@@ -58,6 +68,9 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
   const [ttlMs, setTtlMs] = useState(DEFAULT_PAIRING_TTL_SECONDS * 1000);
   const [clockMs, setClockMs] = useState<number>(() => Date.now());
   const [busy, setBusy] = useState(false);
+  const [pollUntilMs, setPollUntilMs] = useState(0);
+  const [pending, setPending] = useState<PendingDevice[]>([]);
+  const [deciding, setDeciding] = useState("");
 
   function applyPairingStatus(next: PairingStatusResponse | null) {
     setPairingStatus(next);
@@ -82,7 +95,10 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
     const confirm = { ssoSession, accountPassword: password };
     setPassword("");
     try {
-      applyPairingStatus(await mintPairing<PairingStatusResponse>(confirm));
+      const minted = await mintPairing<PairingStatusResponse>(confirm);
+      applyPairingStatus(minted);
+      const ttlSeconds = minted.pairingTtlSeconds ?? DEFAULT_PAIRING_TTL_SECONDS;
+      if (minted.pairingToken) setPollUntilMs(Date.now() + ttlSeconds * 1000 + PENDING_WINDOW_MS);
     } catch (error: unknown) {
       onStatus(`Could not show a pairing code: ${toErrorMessage(error, "unknown error")}`);
     } finally {
@@ -130,6 +146,81 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
     };
   }, [pairingStatus]);
 
+  useEffect(() => {
+    if (!pollUntilMs) return;
+    let cancelled = false;
+    const poll = () => {
+      if (Date.now() >= pollUntilMs) {
+        setPollUntilMs(0);
+        setPending([]);
+        return;
+      }
+      listPendingDevices()
+        .then((next) => {
+          if (!cancelled) setPending(next);
+        })
+        .catch(() => {
+          // A missed poll is retried on the next tick; the device is still pending.
+        });
+    };
+    poll();
+    const timer = window.setInterval(poll, PENDING_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [pollUntilMs]);
+
+  async function decide(device: PendingDevice, decision: "approve" | "deny") {
+    setDeciding(device.deviceId);
+    const name = device.deviceName || "The device";
+    try {
+      await decidePendingDevice(device.deviceId, decision);
+      onStatus(decision === "approve" ? `${name} is paired.` : `${name} was denied and removed.`);
+      if (decision === "approve") applyPairingStatus(null);
+    } catch (error: unknown) {
+      onStatus(`Could not ${decision} ${name}: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setPending((list) => list.filter((d) => d.deviceId !== device.deviceId));
+      setDeciding("");
+    }
+    onDevicesMayHaveChanged();
+  }
+
+  const approvals = pending.length ? (
+    <ul className="sec-pending" aria-label="Devices waiting for approval">
+      {pending.map((device) => (
+        <li key={device.deviceId} className="sec-pending-item">
+          <strong>{device.deviceName || "A device"} wants to pair</strong>
+          <span className="sec-muted">
+            {[device.osVersion || device.platform, device.appVersion].filter(Boolean).join(" · ")}
+          </span>
+          <span className="sec-muted">From {device.requestIp || "an unknown address"}</span>
+          <span>
+            Code on the device: <strong className="sec-pending-code">{device.approvalCode}</strong>
+          </span>
+          <p className="sec-muted">
+            Approve only if this is your device and it shows the same code. If you did not just
+            scan the code, deny it.
+          </p>
+          <div className="sec-actions">
+            <button
+              type="button"
+              className="sec-action-quiet"
+              disabled={deciding !== ""}
+              onClick={() => void decide(device, "deny")}
+            >
+              Deny
+            </button>
+            <button type="button" disabled={deciding !== ""} onClick={() => void decide(device, "approve")}>
+              Approve
+            </button>
+          </div>
+        </li>
+      ))}
+    </ul>
+  ) : null;
+
   function pairThisDevice(next: PairingStatusResponse) {
     // Desktop apps pair over the same native flow as mobile (sub/hash relay
     // auth): one pairing contract for every client, and the desktop app needs
@@ -157,33 +248,36 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
 
   if (!pairingStatus) {
     return (
-      <form className="sec-pairing" onSubmit={(event) => void showCode(event)}>
-        <p className="sec-muted">
-          A paired device keeps access after you sign out, so confirm it is you first. The code
-          is good for ninety seconds and works once.
-        </p>
-        {ssoSession ? (
-          <p className="sec-muted">You will confirm with KySignOn.</p>
-        ) : (
-          <label className="sec-label">
-            <span>Account password</span>
-            <input
-              className="sec-input"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              disabled={busy}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
-          </label>
-        )}
-        <div className="sec-actions">
-          <button type="submit" disabled={busy || (!ssoSession && !password)}>
-            {busy ? "Confirming…" : "Show pairing code"}
-          </button>
-        </div>
-      </form>
+      <>
+        {approvals}
+        <form className="sec-pairing" onSubmit={(event) => void showCode(event)}>
+          <p className="sec-muted">
+            A paired device keeps access after you sign out, so confirm it is you first. The code
+            is good for ninety seconds and works once.
+          </p>
+          {ssoSession ? (
+            <p className="sec-muted">You will confirm with KySignOn.</p>
+          ) : (
+            <label className="sec-label">
+              <span>Account password</span>
+              <input
+                className="sec-input"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                disabled={busy}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+              />
+            </label>
+          )}
+          <div className="sec-actions">
+            <button type="submit" disabled={busy || (!ssoSession && !password)}>
+              {busy ? "Confirming…" : "Show pairing code"}
+            </button>
+          </div>
+        </form>
+      </>
     );
   }
 
@@ -197,9 +291,11 @@ export function PairingPanel({ onDevicesMayHaveChanged, onStatus }: PairingPanel
 
   return (
     <div className="sec-pairing">
+      {approvals}
       <p className="sec-muted">
         Scan this from the KyPost app to pair a device. The app receives the server URL automatically.
-        This code is good for {Math.round(ttlMs / 1000)} seconds and works once.
+        This code is good for {Math.round(ttlMs / 1000)} seconds and works once. The device can
+        read mail only after you approve it here.
       </p>
 
       <div className="sec-pairing-scan">

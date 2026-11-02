@@ -15,7 +15,7 @@ import (
 // transport and WebPush key material, and returns the recorder.
 func registerWithKeys(t *testing.T, srv *Server, subscriberID, deviceID, transport, p256dh, auth string) *httptest.ResponseRecorder {
 	t.Helper()
-	token, _, err := srv.createPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute)
+	token, _, err := srv.mintPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute, true)
 	if err != nil {
 		t.Fatalf("createPairingToken: %v", err)
 	}

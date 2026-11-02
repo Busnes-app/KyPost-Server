@@ -21,7 +21,7 @@ Auth:
 Single Sign-On (OpenID Connect):
 
 - `GET /api/auth/sso-config` — public `{enabled, issuerUrl, clientId}` that gates the sign-in button and native sign-on. Never returns the client secret.
-- `POST /api/auth/native/signon` — body `{idToken}`: a KyIdentity device-grant ID token, refused unless its `origin` claim matches `SERVER_BASE_URL`. Requires SSO plus `PAIRING_SECRET` and `SERVER_BASE_URL`, otherwise 503. Answers the same single-use 90-second pairing deep link as review-pairing.
+- `POST /api/auth/native/signon` — body `{idToken}`: a KyIdentity device-grant ID token, refused unless its `origin` claim matches `SERVER_BASE_URL`. Requires SSO plus `PAIRING_SECRET` and `SERVER_BASE_URL`, otherwise 503. Answers the same single-use 90-second pairing deep link as review-pairing. Its token is returned to the app directly, so the device it registers needs no [approval](device-approval.md).
 - `GET /api/auth/oidc/login` (alias `/auth/sso/login`) — starts the authorization-code flow for signing in.
 - `POST /api/settings/sso/link` — links the provider identity to the *caller's own* account. Requires the account credential (`authSecret`, and the two-factor code, when one is enrolled) re-entered now, because a linked identity is a way to sign in.
 - `GET /api/auth/oidc/callback` (alias `/auth/sso/callback`) — verifies the ID token, including a positive issuance timestamp no more than 30 seconds ahead of the server, then signs in, auto-provisions, or links by `sub`. Keep issuer/server clocks synchronized. The session remembers the provider's `sid`, so the provider can end it.
@@ -207,13 +207,15 @@ Notifications (scoped to the signed-in user unless noted):
 - `POST|DELETE /api/notifications/subscriptions`
 - `POST /api/notifications/test`
 - `POST /api/notifications/pairing` (step-up: `authSecret` or KySignOn; mints a 90-second single-use pairing token)
-- `POST /api/notifications/native/register` and `POST /api/notifications/native/deregister`
+- `POST /api/notifications/native/register` and `POST /api/notifications/native/deregister`. A device registered with a web-minted pairing token is pending (202) until approved; see [device approval](device-approval.md)
+- `GET /api/notifications/native/pairing-status` (device credentials): 202 pending, 200 approved, 410 denied or expired
+- `GET /api/notifications/native/pending`, `POST /api/notifications/native/pending/{deviceId}/approve` and `POST /api/notifications/native/pending/{deviceId}/deny`: the signed-in user's devices waiting for approval
 - `GET|DELETE /api/notifications/native/devices`
 - `PUT /api/notifications/native/mode` (relay push vs. app pull)
 - `PUT /api/notifications/native/devices/{deviceId}/mfa` (allow a device to approve sign-ins; step-up as above; a new device is not an approver)
 - `GET /api/notifications/native/pull` (every notification is queued here in both modes, addressed to the devices it was sent to, so a device that stops hearing from the relay can poll and catch up)
 - `POST /api/notifications/native/unpair`
-- `POST /api/notifications/review-pairing` — public, and 404 unless `REVIEW_PAIRING_USERNAME` is set. Body `{username, authSecret, captchaToken?}`; the username must match exactly. Same protections as login (CAPTCHA/PoW, per-IP and per-account lockouts, KDF budget, restore hold; its per-account lockout is a separate table); MFA and forced-password-change accounts get 403. Answers the single-use 90-second pairing deep link.
+- `POST /api/notifications/review-pairing` — public, and 404 unless `REVIEW_PAIRING_USERNAME` is set. Body `{username, authSecret, captchaToken?}`; the username must match exactly. Same protections as login (CAPTCHA/PoW, per-IP and per-account lockouts, KDF budget, restore hold; its per-account lockout is a separate table); MFA and forced-password-change accounts get 403. Answers the single-use 90-second pairing deep link; like native sign-on, its device needs no [approval](device-approval.md).
 
 Logs (admin only):
 
