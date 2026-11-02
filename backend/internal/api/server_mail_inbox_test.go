@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -357,6 +358,90 @@ func TestServeInbox_ClassicFallsBackAndSelfWarms(t *testing.T) {
 	emails := allEmails(resp)
 	if len(emails) != 1 || emails[0].Body != "body-1" {
 		t.Fatalf("expected the self-warmed body to be served, got %+v", emails)
+	}
+}
+
+// uidFakeMailClient adds the UID probe the real IMAP client offers.
+type uidFakeMailClient struct {
+	*fakeMailClient
+	uids     []int
+	uidCalls int
+}
+
+func (f *uidFakeMailClient) ListUIDs(context.Context, string, int) ([]int, error) {
+	f.uidCalls++
+	return f.uids, nil
+}
+
+// #449: the poller only Upserts, so a message expunged on the server stayed in
+// the warm window and the classic path served it, across restarts too.
+func TestServeInbox_ClassicDropsExpungedUIDFromWarmCache(t *testing.T) {
+	srv := newTestServer(t)
+	all, err := srv.users.List()
+	if err != nil || len(all) == 0 {
+		t.Fatalf("no test user available: %v", err)
+	}
+	userID := all[0].ID
+	dir := t.TempDir()
+	cache, err := mailcache.New(dir)
+	if err != nil {
+		t.Fatalf("mailcache.New: %v", err)
+	}
+	cfg := config.Default()
+
+	const at = "2026-01-01T00:00:00Z"
+	if err := cache.Upsert("INBOX", []mailcache.Entry{
+		{UID: 1, MessageID: "1", Subject: "a", Sender: "a@example.com", Status: "unread", AtUTC: at, Body: "body-1", PGPClassified: true},
+		{UID: 2, MessageID: "2", Subject: "b", Sender: "b@example.com", Status: "unread", AtUTC: at, Body: "body-2", PGPClassified: true},
+		{UID: 3, MessageID: "3", Subject: "c", Sender: "c@example.com", Status: "unread", AtUTC: at, Body: "body-3", PGPClassified: true},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	// UID 2 was expunged on the server.
+	fake := &uidFakeMailClient{
+		fakeMailClient: &fakeMailClient{overviews: []imapadapter.Overview{
+			{UID: 3, Subject: "c", Sender: "c@example.com", Status: "unread", AtUTC: at},
+			{UID: 1, Subject: "a", Sender: "a@example.com", Status: "unread", AtUTC: at},
+		}},
+		uids: []int{1, 3},
+	}
+	serve := func(cache *mailcache.Store) []string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 2, 0, false, true, false)
+		if rec.Code != 200 {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		var ids []string
+		for _, e := range allEmails(decodeInboxResponse(t, rec)) {
+			if e.Body == "" {
+				t.Fatalf("expected the warm body to survive reconciliation, got %+v", e)
+			}
+			ids = append(ids, e.MessageID)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+
+	if got := serve(cache); !slices.Equal(got, []string{"1", "3"}) {
+		t.Fatalf("served %v, want [1 3] without the expunged UID 2", got)
+	}
+	if fake.overviewCalls != 1 || fake.unreadCalls != 0 || fake.bodiesCalls != 0 {
+		t.Fatalf("expected one envelope fetch and no body fetch, got overviews=%d unread=%d bodies=%d", fake.overviewCalls, fake.unreadCalls, fake.bodiesCalls)
+	}
+
+	// After a restart the reconciled window is what is on disk, and an
+	// unchanged UID set takes the cheap path: the probe and nothing else.
+	restarted, err := mailcache.New(dir)
+	if err != nil {
+		t.Fatalf("mailcache.New after restart: %v", err)
+	}
+	if got := serve(restarted); !slices.Equal(got, []string{"1", "3"}) {
+		t.Fatalf("after restart served %v, want [1 3]", got)
+	}
+	if fake.uidCalls != 2 || fake.overviewCalls != 1 || fake.unreadCalls != 0 || fake.bodiesCalls != 0 {
+		t.Fatalf("expected only the UID probe on an unchanged mailbox, got uids=%d overviews=%d unread=%d bodies=%d", fake.uidCalls, fake.overviewCalls, fake.unreadCalls, fake.bodiesCalls)
 	}
 }
 
