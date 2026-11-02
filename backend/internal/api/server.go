@@ -1506,6 +1506,8 @@ func (s *Server) handleFrontend(w http.ResponseWriter, r *http.Request) {
 					// assets/ is immutable by construction.
 					if strings.HasPrefix(relPath, "assets/") {
 						w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+					} else if relPath == "index.html" {
+						w.Header().Set("Cache-Control", "no-cache")
 					}
 					// http.ServeContent falls back to mime.TypeByExtension,
 					// whose builtin table has no .woff2 and whose only other
@@ -1522,7 +1524,10 @@ func (s *Server) handleFrontend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// index.html names the current hashed bundles: browsers revalidate it, so a
+	// tab opened after an upgrade loads the new build.
 	if _, err := os.Stat(indexPath); err == nil {
+		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFile(w, r, indexPath)
 		return
 	}

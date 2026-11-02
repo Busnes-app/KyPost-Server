@@ -16,6 +16,12 @@ image. `:stable` is moved to that image only after its build attestation has
 been published *and* verified, and only when the release is the newest published
 non-prerelease version.
 
+## Unreleased
+
+### Changes
+
+- A tab left open across an upgrade now says so: "KyPost was updated. Reload to use the new version.", with Reload and Dismiss (ky-ui's update notice; it never reloads by itself, so a draft stays). It checks at most every five minutes, on focus or when the tab becomes visible, by re-reading `index.html`, and stays quiet offline. `index.html` and the SPA fallback are sent with `Cache-Control: no-cache`, so a reload or a new tab always gets the current build; `assets/` keeps its year-long immutable caching.
+
 ## 0.6.0 — 2026-11-02
 
 ### Added
