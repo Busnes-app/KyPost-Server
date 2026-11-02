@@ -82,6 +82,10 @@ Client requirements:
 from `pt` rather than by a device credential — registration is what creates the
 device, so there is no device secret yet (`server.go:651-655`).
 
+Since 0.6.0 a QR or web-link pairing answers 202 and the device stays pending
+until the user approves it on the web page; the client polls a status endpoint.
+The full contract is [device-approval.md](device-approval.md).
+
 The response carries `subscriberId`, `serverBaseUrl`, `registerEndpoint`,
 `pullEndpoint`, `deliveryMode`, `pairingTtlSeconds` and `configured`
 (`server_notifications.go:378-386`).

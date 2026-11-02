@@ -144,6 +144,33 @@ export function mintPairing<T>(confirm: DeviceConfirm): Promise<T> {
   return confirmed(confirm, {}, (b, h) => postJSON<T>("/api/notifications/pairing", b, h));
 }
 
+/**
+ * A device that redeemed a pairing code and waits for the user's decision, as
+ * GET /api/notifications/native/pending serves it. Every string but requestIp,
+ * approvalCode and the timestamps is device-supplied. See docs/device-approval.md.
+ */
+export type PendingDevice = {
+  deviceId: string;
+  deviceName?: string;
+  platform?: string;
+  osVersion?: string;
+  appVersion?: string;
+  userAgent?: string;
+  requestIp?: string;
+  approvalCode: string;
+  requestedAt?: string;
+  expiresAt?: string;
+};
+
+export async function listPendingDevices(): Promise<PendingDevice[]> {
+  const result = await getJSON<{ pending?: PendingDevice[] }>("/api/notifications/native/pending");
+  return result.pending ?? [];
+}
+
+export function decidePendingDevice(deviceId: string, decision: "approve" | "deny"): Promise<unknown> {
+  return postJSON(`/api/notifications/native/pending/${encodeURIComponent(deviceId)}/${decision}`, {});
+}
+
 export function setPushApproval(confirm: DeviceConfirm, enabled: boolean): Promise<unknown> {
   return confirmed(confirm, { enabled }, (b, h) => putJSON("/api/mfa/push/enabled", b, h));
 }

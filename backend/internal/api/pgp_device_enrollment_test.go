@@ -226,7 +226,7 @@ func newNativeRegisterForTest(t *testing.T) (srv *Server, userID, deviceID strin
 	secret := ""
 	register = func(t *testing.T, extra string) int {
 		t.Helper()
-		token, _, err := srv.createPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute)
+		token, _, err := srv.mintPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute, true)
 		if err != nil {
 			t.Fatalf("createPairingToken: %v", err)
 		}
@@ -338,7 +338,7 @@ func TestNativeRegisterRefusesToRebindADeviceWithoutItsSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateSubscriberID: %v", err)
 	}
-	token, _, err := srv.createPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute)
+	token, _, err := srv.mintPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute, true)
 	if err != nil {
 		t.Fatalf("createPairingToken: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestARefusedRebindLeavesThePairingTokenUsable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateSubscriberID: %v", err)
 	}
-	token, _, err := srv.createPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute)
+	token, _, err := srv.mintPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute, true)
 	if err != nil {
 		t.Fatalf("createPairingToken: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestRevocationInvalidatesAnAlreadyMintedPairingToken(t *testing.T) {
 		t.Fatal("subscriber index did not resolve before revocation")
 	}
 
-	token, _, err := srv.createPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute)
+	token, _, err := srv.mintPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute, true)
 	if err != nil {
 		t.Fatalf("createPairingToken: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestNativeRegisterRejectsStaleSubscriberIndex(t *testing.T) {
 	if _, ok := srv.lookupUserBySubscriber(subscriberID); !ok {
 		t.Fatal("subscriber index did not resolve before rotation")
 	}
-	token, _, err := srv.createPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute)
+	token, _, err := srv.mintPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute, true)
 	if err != nil {
 		t.Fatalf("createPairingToken: %v", err)
 	}
@@ -639,7 +639,7 @@ func TestAnAlreadyRegisteredDeviceIDIsNotStrandedByTheCharsetBound(t *testing.T)
 	if err != nil {
 		t.Fatalf("GetOrCreateSubscriberID: %v", err)
 	}
-	token, _, err := srv.createPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute)
+	token, _, err := srv.mintPairingToken(subscriberID, pairingPurposeNativeDevice, time.Minute, true)
 	if err != nil {
 		t.Fatalf("createPairingToken: %v", err)
 	}
