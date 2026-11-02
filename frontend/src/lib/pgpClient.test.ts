@@ -621,3 +621,104 @@ describe("detached MIME signatures inside encryption", () => {
     }
   });
 });
+
+// Issue #450: a key that arrives in the message must never make that message's
+// signature read as verified. A forger signs with their own key and attaches it
+// (Autocrypt header, or gossip inside the ciphertext); checking the signature
+// against it proves only that the attached key made the signature.
+//
+// Two ways such a key can reach the reader:
+//  - Not pinned (no DKIM over Autocrypt, or harvest off): the server never
+//    offers it as a signer key, so there is nothing to verify against.
+//  - Pinned by the DKIM-gated harvest: the server sends it with
+//    source "autocrypt" and verified false. It is the sender's domain vouching,
+//    which is continuity at best, so the badge says "a key you have not
+//    confirmed" — never "signature verified" — until a person confirms it.
+describe("a key that arrives in the message never counts as verified (#450)", () => {
+  function harvested(key: TestKey, ...addresses: string[]) {
+    return { addresses, publicKey: key.publicKey, source: "autocrypt", verified: false };
+  }
+
+  it("cannot verify against a key the message carries but the address book does not hold", async () => {
+    const forger = await generateTestKey("Bob", "bob@example.com");
+    const victim = await generateTestKey("Victim", "victim@example.com");
+    const ciphertext = await encryptSignedFor(victim.publicKey, forger.privateKey, "hello");
+
+    unlockWithArmoredKey(victim.privateKey);
+    try {
+      // The server ships only address-book keys; the attached key is not one.
+      const result = await decryptMessage(ciphertext, [], "bob@example.com");
+      expect(result.signed).toBe(true);
+      expect(result.verified).toBe(false);
+      expect(result.signerUnconfirmed).toBe(false);
+      expect(signatureState({ messageId: "1", sender: "bob@example.com", subject: "", status: "unread", atUtc: "", pgpEncrypted: true }, { ...result, error: "", bodyFromVerifiedPart: true }, false)).toBe("unchecked");
+    } finally {
+      lock();
+    }
+  }, 30000);
+
+  it("does not report verified for an encrypted message signed by an unconfirmed Autocrypt key", async () => {
+    const forger = await generateTestKey("Bob", "bob@example.com");
+    const victim = await generateTestKey("Victim", "victim@example.com");
+    const ciphertext = await encryptSignedFor(victim.publicKey, forger.privateKey, "hello");
+
+    unlockWithArmoredKey(victim.privateKey);
+    try {
+      const result = await decryptMessage(ciphertext, [harvested(forger, "bob@example.com")], "bob@example.com");
+      expect(result.signed).toBe(true);
+      expect(result.verified).toBe(false);
+      expect(result.signerUnconfirmed).toBe(true);
+      const state = signatureState(
+        { messageId: "1", sender: "bob@example.com", subject: "", status: "unread", atUtc: "", pgpEncrypted: true },
+        { ...result, error: "", bodyFromVerifiedPart: true },
+        false
+      );
+      expect(state).toBe("unconfirmed");
+    } finally {
+      lock();
+    }
+  }, 30000);
+
+  it("does not report verified for a signed-only message signed by an unconfirmed Autocrypt key", async () => {
+    const forger = await generateTestKey("Sender", "sender@example.com");
+    const { signedPartBase64, armoredSignature } = await signedPartWith(forger.privateKey, SIGNED_PART);
+
+    const result = await verifySignedMessage(
+      signedPartBase64,
+      armoredSignature,
+      [harvested(forger, "sender@example.com")],
+      "sender@example.com"
+    );
+    expect(result.verified).toBe(false);
+    expect(result.signerUnconfirmed).toBe(true);
+  }, 30000);
+
+  it("reports verified once a person has confirmed the harvested key", async () => {
+    const sender = await generateTestKey("Sender", "sender@example.com");
+    const { signedPartBase64, armoredSignature } = await signedPartWith(sender.privateKey, SIGNED_PART);
+
+    const result = await verifySignedMessage(
+      signedPartBase64,
+      armoredSignature,
+      [{ ...harvested(sender, "sender@example.com"), verified: true }],
+      "sender@example.com"
+    );
+    expect(result.verified).toBe(true);
+    expect(result.signerUnconfirmed).toBe(false);
+  }, 30000);
+
+  it("still names a mismatch when an unconfirmed key bound to someone else signed", async () => {
+    const mallory = await generateTestKey("Mallory", "mallory@evil.example");
+    const { signedPartBase64, armoredSignature } = await signedPartWith(mallory.privateKey, SIGNED_PART);
+
+    const result = await verifySignedMessage(
+      signedPartBase64,
+      armoredSignature,
+      [harvested(mallory, "mallory@evil.example")],
+      "bob@example.com"
+    );
+    expect(result.verified).toBe(false);
+    expect(result.signerUnconfirmed).toBe(false);
+    expect(result.signerFingerprint).not.toBe("");
+  }, 30000);
+});
