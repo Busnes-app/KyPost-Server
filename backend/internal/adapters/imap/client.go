@@ -1192,6 +1192,31 @@ func (c *APIClient) ListOverviews(ctx context.Context, mailbox string, limit int
 	return overviewsNewestFirst(ctx, d, uids)
 }
 
+// ListUIDs returns the newest limit UIDs in mailbox, ascending: one UID
+// SEARCH, no FETCH. The inbox handler uses it to notice an expunge in a warm
+// cache window without paying for envelopes when nothing was removed.
+func (c *APIClient) ListUIDs(ctx context.Context, mailbox string, limit int) ([]int, error) {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	d, err := c.ensureConnectedLocked()
+	if err != nil {
+		return nil, err
+	}
+	if err := c.selectMailboxLocked(d, strings.TrimSpace(mailbox)); err != nil {
+		return nil, err
+	}
+	uids, err := d.GetLastNUIDs(limit)
+	if err != nil {
+		return nil, fmt.Errorf("imap list message uids: %w", err)
+	}
+	sort.Ints(uids)
+	return uids, nil
+}
+
 // ListOverviewsBefore pages older mail: the newest limit UIDs below before,
 // found by a server-side UID SEARCH rather than listing the whole mailbox.
 func (c *APIClient) ListOverviewsBefore(ctx context.Context, mailbox string, before, limit int) ([]Overview, bool, error) {
