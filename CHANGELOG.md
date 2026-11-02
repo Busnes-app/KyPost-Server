@@ -16,7 +16,7 @@ image. `:stable` is moved to that image only after its build attestation has
 been published *and* verified, and only when the release is the newest published
 non-prerelease version.
 
-## Unreleased
+## 0.6.0 — 2026-11-01
 
 ### Added
 
