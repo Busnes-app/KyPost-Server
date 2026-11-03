@@ -28,6 +28,13 @@ non-prerelease version.
   you have edited it, and never adds one to a saved draft. Signatures are plain text only:
   markup typed into one is shown as text, never run. Client contract: `docs/SIGNATURES.md`.
 
+### Security
+
+- A signature made by an Autocrypt key that nobody has confirmed no longer reads as
+  "signature verified" (#450). Such a key came in mail, and a key that arrives in a message
+  cannot vouch for that message's sender. The reader now says "signed by a key you have
+  not confirmed" until you confirm the key. `docs/E2E_PGP.md` states the rule for clients.
+
 ## 0.6.0 — 2026-11-02
 
 ### Added

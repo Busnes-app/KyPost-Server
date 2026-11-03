@@ -1032,12 +1032,24 @@ nothing on the server to decrypt with.
    document said the payload arrived inline; it never did.
 
    **A signature is verified only by a key the ADDRESS BOOK binds to the
-   sender.** Each entry in `signerKeys` is `{addresses, publicKey}`, where
+   sender.** Each entry in `signerKeys` is `{addresses, publicKey}` (plus
+   `source`, `verified` and `conflict`), where
    `addresses` are the owning contact's own email addresses and the key has
    been checked against that contact's TOFU fingerprint pin. Offer them all to
    the OpenPGP library so the actual signer can be identified, then report
    "verified" only when the key that produced the signature is bound to the
    sender you are displaying.
+
+   **A key that arrives in the message never makes that message verified.**
+   Anyone can sign with their own key and attach it, so the reader never
+   verifies against an `Autocrypt:` header or gossip key from the message it
+   is reading. The server pins an `Autocrypt:` key only when a DKIM signature
+   from the From domain covers `Autocrypt` and `Date`; without that, the key is
+   not in `signerKeys` and the signature reads "could not be checked". A
+   pinned Autocrypt key is still only the domain's word: its entry carries
+   `source: "autocrypt"` and no `verified: true`. A good signature from such a
+   key, bound to the sender, must render as "signed by a key you have not
+   confirmed", not as "verified", until the user confirms the key.
 
    Do **not** re-derive that binding from the keys themselves. A User ID is
    free-form and self-certified, and a key may carry arbitrarily many, so "this
