@@ -22,11 +22,12 @@ non-prerelease version.
 
 - Email signatures (#440). Settings → Mail → Signatures holds up to ten plain-text
   signatures, a default, a choice per sending address, and whether replies and forwards get
-  one (both on by default). They are stored on the server (`GET|PUT /api/mail/signatures`),
-  so the web app and the native apps insert the same ones. Compose adds the signature below
-  the line you type on and above any quoted message, swaps it when you change From unless
-  you have edited it, and never adds one to a saved draft. Signatures are plain text only:
-  markup typed into one is shown as text, never run. Client contract: `docs/SIGNATURES.md`.
+  one (both on by default). They are stored on the server (`GET|PUT /api/mail/signatures`)
+  and inserted by the web app; the Android and iOS/Mac apps keep their own signature on the
+  device. Compose adds the signature below the line you type on and above any quoted
+  message, swaps it when you change From unless you have edited it, and never adds one to a
+  saved draft. Signatures are plain text only: markup typed into one is shown as text, never
+  run. Client contract: `docs/SIGNATURES.md`.
 
 ### Changes
 
