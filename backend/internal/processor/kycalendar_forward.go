@@ -34,11 +34,13 @@ type itipForwarder struct {
 	client  *kycalendar.Client
 	mu      sync.Mutex
 	pending []pendingForward
-	// forwarded holds event IDs already handed to postForward. A message the
-	// poller defers (rate limit, incoming encryption, retryable failure)
-	// stays unseen and comes back every tick; it is forwarded once.
-	// ponytail: in memory and reset when full, like pending.
+	// forwarded holds event IDs already decided: handed to postForward, or
+	// holding no invitation. A message the poller defers (rate limit,
+	// incoming encryption, retryable failure) stays unseen and comes back
+	// every tick; it is forwarded once. ponytail: in memory, oldest evicted
+	// first, so a restart may forward again (KyCalendar dedupes by event ID).
 	forwarded map[string]struct{}
+	order     []string
 }
 
 // maxForwarded bounds itipForwarder.forwarded.
@@ -52,14 +54,22 @@ func (f *itipForwarder) wasForwarded(eventID string) bool {
 	return done
 }
 
-// markForwarded records eventID.
+// markForwarded records eventID, evicting the oldest past maxForwarded.
 func (f *itipForwarder) markForwarded(eventID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.forwarded == nil || len(f.forwarded) >= maxForwarded {
+	if f.forwarded == nil {
 		f.forwarded = map[string]struct{}{}
 	}
+	if _, done := f.forwarded[eventID]; done {
+		return
+	}
+	if len(f.order) >= maxForwarded {
+		delete(f.forwarded, f.order[0])
+		f.order = f.order[1:]
+	}
 	f.forwarded[eventID] = struct{}{}
+	f.order = append(f.order, eventID)
 }
 
 type pendingForward struct {
@@ -106,10 +116,9 @@ func (p *Poller) forwardInvitation(ctx context.Context, uc userCtx, msg imapadap
 	if err != nil || len(raw) == 0 {
 		return // transient: the next tick tries again
 	}
-	// Decided from these bytes, so the next tick would decide the same.
-	p.itip.markForwarded(eventID)
 	parsed, err := imapadapter.ParseRawContent(raw)
 	if err != nil {
+		p.itip.markForwarded(eventID) // these bytes never will parse
 		return
 	}
 	var it mailmsg.ITIP
@@ -125,12 +134,16 @@ func (p *Poller) forwardInvitation(ctx context.Context, uc userCtx, msg imapadap
 		}
 	}
 	if ics == nil {
+		p.itip.markForwarded(eventID) // no invitation in these bytes
 		return
 	}
+	// Not recorded on a failed check: a DNS outage must not stop a later
+	// tick from verifying and forwarding.
 	from := dkimAlignedFrom(raw)
 	if from == "" {
 		return
 	}
+	p.itip.markForwarded(eventID)
 	// Provenance for a later REPLY: only an organizer who signed the mail
 	// themselves can be answered, so a third party's invitation cannot aim
 	// the user's replies at an arbitrary address.

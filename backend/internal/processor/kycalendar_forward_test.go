@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -210,5 +211,34 @@ func TestDeferredInvitationIsNotForwarded(t *testing.T) {
 	}
 	if len(fake.bodies) != 1 {
 		t.Fatalf("an invitation seen on several ticks was forwarded %d times", len(fake.bodies))
+	}
+}
+
+// A failed alignment check (a DNS outage looks the same) is not a decision:
+// once it verifies on a later tick, the invitation is forwarded.
+func TestInvitationForwardedOnceAlignmentRecovers(t *testing.T) {
+	stubAlignment(t, map[string]string{})
+	p, fake := newForwardPoller(t)
+	uc := userCtx{id: "u1", kycalSub: "sub-1", kycalIssuer: "iss", mail: inviteMailClient{&noopMailClient{}, map[int][]byte{7: inviteMail("alice@example.com", forwardICS)}}}
+	p.forwardInvitation(t.Context(), uc, imapadapter.Message{ID: "7", HasAttachments: true})
+	if len(fake.bodies) != 0 {
+		t.Fatal("forwarded without alignment")
+	}
+	stubAlignment(t, map[string]string{"From: alice@example.com": "alice@example.com"})
+	p.forwardInvitation(t.Context(), uc, imapadapter.Message{ID: "7", HasAttachments: true})
+	if len(fake.bodies) != 1 {
+		t.Fatalf("forwarded %d times after alignment recovered, want 1", len(fake.bodies))
+	}
+}
+
+// The record evicts oldest first, so a burst of new invitations cannot reset
+// it and let a recent one forward again.
+func TestForwardedRecordEvictsOldestFirst(t *testing.T) {
+	var f itipForwarder
+	for i := range maxForwarded + 1 {
+		f.markForwarded(strconv.Itoa(i))
+	}
+	if f.wasForwarded("0") || !f.wasForwarded("1") || !f.wasForwarded(strconv.Itoa(maxForwarded)) || len(f.forwarded) != maxForwarded {
+		t.Fatalf("eviction kept %d entries", len(f.forwarded))
 	}
 }
