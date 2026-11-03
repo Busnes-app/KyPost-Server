@@ -61,6 +61,9 @@ type Session struct {
 	// SSOEpoch is Server.ssoEpoch when the callback began, so a callback that
 	// read settings before a trust change cannot mint under them.
 	SSOEpoch uint64
+	// revocations is Server.revocations+1 as read before a password sign-in
+	// checked the credential; zero skips the check.
+	revocations uint64
 	// SSOLinkGrantedAt is when this session last proved its credential and
 	// second factor at handleSSOLinkStart. It authorizes exactly one SSO link
 	// and is cleared when that link is written, so it cannot be replayed.
@@ -356,6 +359,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	revocations := s.revocations.Load() // before verifyLogin reads the credential
 	u, ok := s.verifyLogin(w, r, s.loginLockout, req.Username, req.AuthSecret, req.CaptchaToken, nil)
 	if !ok {
 		return
@@ -439,7 +443,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.startSession(w, r, u.ID); err != nil {
+	if err := s.mintSession(w, r, Session{UserID: u.ID, revocations: revocations + 1}); err != nil {
 		http.Error(w, "session creation failed", http.StatusInternalServerError)
 		return
 	}
@@ -522,6 +526,10 @@ func (s *Server) mintSession(w http.ResponseWriter, r *http.Request, sess Sessio
 	if sess.SSO.Subject != "" && sess.SSOEpoch != s.ssoEpoch.Load() {
 		s.sessMu.Unlock()
 		return errors.New("SSO settings changed during sign-in")
+	}
+	if sess.revocations != 0 && sess.revocations != s.revocations.Load()+1 {
+		s.sessMu.Unlock()
+		return errors.New("account credentials were revoked during sign-in")
 	}
 	s.sessions[token] = sess
 	s.sessMu.Unlock()
@@ -712,6 +720,7 @@ func currentSessionToken(r *http.Request) string {
 func (s *Server) revokeUserSessions(userID, keepToken string) {
 	s.sessMu.Lock()
 	defer s.sessMu.Unlock()
+	s.revocations.Add(1)
 	for token, sess := range s.sessions {
 		if sess.UserID == userID && token != keepToken {
 			delete(s.sessions, token)

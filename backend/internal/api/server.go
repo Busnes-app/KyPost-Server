@@ -82,6 +82,12 @@ type Server struct {
 
 	// sessMu guards sessions only.
 	sessMu sync.RWMutex
+	// revocations counts revokeUserSessions calls, bumped under sessMu. A
+	// password sign-in reads it before it reads the credential, and
+	// mintSession refuses under sessMu if a revocation ran in between: a
+	// login verified against a password the owner just changed would
+	// otherwise insert its session after the purge and survive it.
+	revocations atomic.Uint64
 	// ssoEpoch counts SSO trust changes (endSSOSessions); an SSO session
 	// minted under an older epoch is dead.
 	ssoEpoch atomic.Uint64
