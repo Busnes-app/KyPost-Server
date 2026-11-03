@@ -34,6 +34,32 @@ type itipForwarder struct {
 	client  *kycalendar.Client
 	mu      sync.Mutex
 	pending []pendingForward
+	// forwarded holds event IDs already handed to postForward. A message the
+	// poller defers (rate limit, incoming encryption, retryable failure)
+	// stays unseen and comes back every tick; it is forwarded once.
+	// ponytail: in memory and reset when full, like pending.
+	forwarded map[string]struct{}
+}
+
+// maxForwarded bounds itipForwarder.forwarded.
+const maxForwarded = 4096
+
+// wasForwarded reports whether eventID was already handed to postForward.
+func (f *itipForwarder) wasForwarded(eventID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, done := f.forwarded[eventID]
+	return done
+}
+
+// markForwarded records eventID.
+func (f *itipForwarder) markForwarded(eventID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.forwarded == nil || len(f.forwarded) >= maxForwarded {
+		f.forwarded = map[string]struct{}{}
+	}
+	f.forwarded[eventID] = struct{}{}
 }
 
 type pendingForward struct {
@@ -71,10 +97,17 @@ func (p *Poller) forwardInvitation(ctx context.Context, uc userCtx, msg imapadap
 	if err != nil {
 		return
 	}
-	raw, err := uc.mail.FetchRawMessage(ctx, "", uid)
-	if err != nil || len(raw) == 0 {
+	sum := sha256.Sum256([]byte(uc.id + "\x00" + uc.mailbox + "\x00" + msg.ID))
+	eventID := "kypost-inbound-" + hex.EncodeToString(sum[:16])
+	if p.itip.wasForwarded(eventID) {
 		return
 	}
+	raw, err := uc.mail.FetchRawMessage(ctx, "", uid)
+	if err != nil || len(raw) == 0 {
+		return // transient: the next tick tries again
+	}
+	// Decided from these bytes, so the next tick would decide the same.
+	p.itip.markForwarded(eventID)
 	parsed, err := imapadapter.ParseRawContent(raw)
 	if err != nil {
 		return
@@ -106,10 +139,9 @@ func (p *Poller) forwardInvitation(ctx context.Context, uc userCtx, msg imapadap
 			p.log.Error("kycalendar invitation not recorded", "user_id", uc.id, "message_id", msg.ID)
 		}
 	}
-	sum := sha256.Sum256([]byte(uc.id + "\x00" + uc.mailbox + "\x00" + msg.ID))
 	p.postForward(ctx, pendingForward{
 		userID:  uc.id,
-		eventID: "kypost-inbound-" + hex.EncodeToString(sum[:16]),
+		eventID: eventID,
 		body:    map[string]any{"sub": uc.kycalSub, "issuer": uc.kycalIssuer, "from": from, "dkim_aligned": true, "ics": string(ics)},
 	})
 }

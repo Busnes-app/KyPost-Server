@@ -203,4 +203,12 @@ func TestDeferredInvitationIsNotForwarded(t *testing.T) {
 	if len(fake.bodies) != 0 {
 		t.Fatalf("a deferred invitation was forwarded %d times", len(fake.bodies))
 	}
+	// Deferred later (rate limit or incoming encryption inside handleMessage):
+	// every tick that reaches the forward again sends nothing more.
+	for range 3 {
+		p.forwardInvitation(t.Context(), uc, imapadapter.Message{ID: "7", HasAttachments: true})
+	}
+	if len(fake.bodies) != 1 {
+		t.Fatalf("an invitation seen on several ticks was forwarded %d times", len(fake.bodies))
+	}
 }
