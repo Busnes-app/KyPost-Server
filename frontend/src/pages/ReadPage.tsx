@@ -7,7 +7,7 @@ import { EncryptionCell } from "./read/EncryptionCell";
 import { SignatureBadge } from "./read/SignatureBadge";
 import { OtpCard } from "./read/OtpCard";
 import { InviteCard } from "./read/InviteCard";
-import { inviteAttachment } from "./read/invite";
+import { inviteAttachment, partType } from "./read/invite";
 import { displayBody } from "./read/body";
 import { firstAddressFromText } from "../lib/addressText";
 import { isFlaggedPhishing } from "../lib/phishing";
@@ -837,9 +837,14 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
   // Delete in Trash expunges, while the same control is reversible everywhere
   // else. Trash is the folder with that RFC 6154 role, else by its name.
   function confirmPermanentDelete(count: number): boolean {
-    const folder = folders.find((f) => f.path === mailbox) ?? { path: mailbox, deletable: false };
-    if (standardMailboxKind(folder) !== "trash") return true;
-    return window.confirm(`Permanently delete ${count === 1 ? "this message" : `${count} messages`}? This cannot be undone.`);
+    const what = count === 1 ? "this message" : `${count} messages`;
+    const folder = folders.find((f) => f.path === mailbox);
+    const kind = standardMailboxKind(folder ?? { path: mailbox, deletable: false });
+    if (kind === "trash") return window.confirm(`Permanently delete ${what}? This cannot be undone.`);
+    // Folder roles not loaded (or failed): a Trash named otherwise cannot be
+    // told apart, so ask for any named folder that is not a known kind.
+    if (!folder && mailbox && kind === "custom") return window.confirm(`Delete ${what}? If this folder is your Trash, this cannot be undone.`);
+    return true;
   }
 
   async function applyInboxAction(action: InboxAction, messageIds: string[], options?: { closeModal?: boolean; wakeAt?: string; confirmed?: boolean }): Promise<boolean> {
@@ -1412,7 +1417,11 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
         `/api/mail/attachments?${attachmentQuery(item)}`
       );
       if (loadId !== attachmentsLoadRef.current) return;
-      setAttachments(data.attachments ?? []);
+      const listed = data.attachments ?? [];
+      // A PGP/MIME message's outer parts (the version part, encrypted.asc) are
+      // its ciphertext, not attachments: the list view never asks for them,
+      // but a search hit carries no encryption flag and does.
+      setAttachments(listed.some((a) => partType(a) === "application/pgp-encrypted") ? [] : listed);
     } catch (e) {
       if (loadId !== attachmentsLoadRef.current) return;
       setAttachmentsError(toErrorMessage(e, "failed to load attachments"));

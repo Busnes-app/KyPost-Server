@@ -49,12 +49,12 @@ non-prerelease version.
   `scripts/update-host.sh` keeps the compose overlays the container runs with, moves the
   local image tag to the deployed digest so a later `docker compose up -d` cannot
   downgrade, and recognises an already-current image. Re-pairing a device by push token no
-  longer inherits the sign-in approver right. `/mcp` refuses JSON-RPC batches, labels the
-  requested label, and bounds `search_messages`. Search uses the account's configured
-  folder. KyCalendar invitations are forwarded once, not on every deferred poll. A second
-  copy of a snoozed Message-ID is refused. The entrypoint no longer follows a symlink when
+  longer inherits the sign-in approver right. `/mcp` refuses JSON-RPC batches and labels the
+  requested label. Search uses the account's configured
+  folder. KyCalendar invitations are forwarded once, not on every deferred poll. Every
+  snoozed copy sharing a Message-ID wakes, not only the newest. The entrypoint no longer follows a symlink when
   it chowns `ollama-models`. Webmail: reopened drafts keep their attachments; notification
-  links survive the first load; tab changes clear the selection; Delete in Trash asks
+  links survive the first load; tab changes clear the selection; Delete in Trash (by its server role) asks
   first; search hits show attachments; bulk Print prints bodies; invitations KyCalendar
   never received can be answered by mail.
 

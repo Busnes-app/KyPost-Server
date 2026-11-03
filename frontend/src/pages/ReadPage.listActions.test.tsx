@@ -121,6 +121,38 @@ describe("ReadPage list actions", () => {
     expect(postJSON).not.toHaveBeenCalledWith("/api/inbox/actions", expect.anything());
   });
 
+  it("asks for an unrecognised folder while folder roles are unknown", async () => {
+    inbox = Promise.resolve({ tabs: ["Papierkorb"], byTab: { Papierkorb: [row("t1", "Binned")] } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    renderAt("/?mailbox=Papierkorb");
+    await user.click(await screen.findByRole("checkbox", { name: "Select email Binned" }));
+    await user.click(within(screen.getByRole("toolbar", { name: "Selected messages" })).getByRole("button", { name: "Delete" }));
+    expect(confirm).toHaveBeenCalledWith("Delete this message? If this folder is your Trash, this cannot be undone.");
+    expect(postJSON).not.toHaveBeenCalledWith("/api/inbox/actions", expect.anything());
+  });
+
+  it("hides a PGP/MIME hit's ciphertext parts from its attachment list", async () => {
+    getJSON.mockImplementation((url: string) => {
+      if (url.startsWith("/api/inbox")) return inbox;
+      if (url.startsWith("/api/labels")) return Promise.resolve({ configured: [], imap: [] });
+      if (url.startsWith("/api/mail/body")) return Promise.resolve({ body: "", bodyMode: "plain" });
+      if (url.startsWith("/api/mail/attachments")) return Promise.resolve({ ok: true, attachments: [
+        { index: 1, name: "version.txt", mimeType: "application/pgp-encrypted", size: 10 },
+        { index: 2, name: "encrypted.asc", mimeType: "application/octet-stream", size: 900 }
+      ] });
+      if (url.startsWith("/api/mail/search")) return Promise.resolve({ results: [row("m9", "Found")] });
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    renderAt("/");
+    await user.type(await screen.findByRole("searchbox", { name: "Search mail" }), "invoice{Enter}");
+    await user.click(await screen.findByText("Found"));
+    await waitFor(() => expect(urls()).toContainEqual(expect.stringMatching(/^\/api\/mail\/attachments\?messageId=m9/)));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText(/encrypted\.asc/)).toBeNull();
+  });
+
   it("deletes without asking outside Trash", async () => {
     const confirm = vi.spyOn(window, "confirm");
     const user = userEvent.setup();
