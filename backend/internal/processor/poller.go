@@ -1098,6 +1098,7 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 		if harvestEnabled {
 			p.harvestAutocrypt(ctx, uc, msg, harvestSuppressed)
 		}
+		p.forwardInvitation(ctx, uc, msg)
 		if headersErr != nil {
 			res.deferredIDs = append(res.deferredIDs, msg.ID)
 			if res.ledgerErr == nil {
@@ -1132,10 +1133,6 @@ func (p *Poller) processBatch(ctx context.Context, uc userCtx, messages []imapad
 			res.deferFrom(messages[i:])
 			break
 		}
-		// After every deferral above, which leaves the message unseen for the next
-		// tick, so a deferred invitation is not forwarded again each poll; before
-		// handleMessage, whose rules may move it away from this UID.
-		p.forwardInvitation(ctx, uc, msg)
 		messageCtx, messageCancel := context.WithTimeout(ctx, perMessageTimeout)
 		err = p.handleMessage(messageCtx, uc, msg)
 		messageCancel()

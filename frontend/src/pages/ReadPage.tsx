@@ -7,7 +7,7 @@ import { EncryptionCell } from "./read/EncryptionCell";
 import { SignatureBadge } from "./read/SignatureBadge";
 import { OtpCard } from "./read/OtpCard";
 import { InviteCard } from "./read/InviteCard";
-import { inviteAttachment, partType } from "./read/invite";
+import { inviteAttachment } from "./read/invite";
 import { displayBody } from "./read/body";
 import { firstAddressFromText } from "../lib/addressText";
 import { isFlaggedPhishing } from "../lib/phishing";
@@ -1394,9 +1394,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
     setAttachmentsError("");
     setAttachmentsLoading(false);
     const attachmentsLoad = ++attachmentsLoadRef.current;
-    // A search hit carries no attachment flag (search returns overviews), so
-    // ask: a hit without attachments answers with an empty list.
-    if (item.hasAttachments || searchMode) {
+    if (item.hasAttachments) {
       void loadAttachments(item, attachmentsLoad);
     }
     if (item.status !== "read") {
@@ -1417,11 +1415,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
         `/api/mail/attachments?${attachmentQuery(item)}`
       );
       if (loadId !== attachmentsLoadRef.current) return;
-      const listed = data.attachments ?? [];
-      // A PGP/MIME message's outer parts (the version part, encrypted.asc) are
-      // its ciphertext, not attachments: the list view never asks for them,
-      // but a search hit carries no encryption flag and does.
-      setAttachments(listed.some((a) => partType(a) === "application/pgp-encrypted") ? [] : listed);
+      setAttachments(data.attachments ?? []);
     } catch (e) {
       if (loadId !== attachmentsLoadRef.current) return;
       setAttachmentsError(toErrorMessage(e, "failed to load attachments"));
@@ -2125,7 +2119,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
                 }
                 return null;
               })()}
-              {(selected.hasAttachments || attachments.length > 0) && !decrypted[decryptedKey(selected.messageId)]?.bodyFromVerifiedPart ? (
+              {selected.hasAttachments && !decrypted[decryptedKey(selected.messageId)]?.bodyFromVerifiedPart ? (
                 <div className="email-attachments">
                   <strong>Attachments:</strong>
                   {attachmentsLoading ? <span className="email-attachments-status"> loading…</span> : null}

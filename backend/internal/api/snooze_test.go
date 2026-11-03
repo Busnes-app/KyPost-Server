@@ -51,15 +51,13 @@ func TestSnoozeMessage(t *testing.T) {
 		t.Fatalf("ListSnoozes = %+v", rows)
 	}
 
-	// A failed move keeps the row: another copy with this Message-ID may sleep
-	// under it (a list copy plus a direct Cc), and the wake drops a row whose
-	// message is not in Snoozed.
-	fake.headerLines[8] = []string{"Message-ID: <m7@example.com>"}
-	if err := snoozeMessage(ctx, failingMoveClient{fake}, st, "8", "", 100); err == nil {
+	// A failed move must not leave a row that would later "wake" a message
+	// that never left the inbox.
+	if err := snoozeMessage(ctx, failingMoveClient{fake}, st, "7", "", 200); err == nil {
 		t.Fatal("failed move reported success")
 	}
-	if rows, _ := st.ListSnoozes(); len(rows) != 1 || rows[0].MessageID != "<m7@example.com>" {
-		t.Fatalf("a failed second snooze dropped the first copy's row: %+v", rows)
+	if rows, _ := st.ListSnoozes(); len(rows) != 0 {
+		t.Fatalf("row kept after failed move: %+v", rows)
 	}
 
 	fake.headerLines = map[int][]string{7: {}}

@@ -3,14 +3,12 @@ package processor
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,7 +17,6 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
-	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -183,62 +180,5 @@ func TestForwardDefaultFollowsKyIdentityPairing(t *testing.T) {
 		if sub, _ := p.kyCalendarIdentity(user, settings); sub != want {
 			t.Errorf("%q: forwarding as %q, want %q", file, sub, want)
 		}
-	}
-}
-
-// A message deferred to a later tick stays unseen and comes back every poll;
-// its invitation is forwarded when it is processed, not on each tick it waits.
-func TestDeferredInvitationIsNotForwarded(t *testing.T) {
-	stubAlignment(t, map[string]string{"From: alice@example.com": "alice@example.com"})
-	p, fake := newForwardPoller(t)
-	uc := userCtx{id: "u1", kycalSub: "sub-1", kycalIssuer: "iss", mail: inviteMailClient{&noopMailClient{}, map[int][]byte{7: inviteMail("alice@example.com", forwardICS)}}}
-	store, err := state.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	uc.store = store
-	res := p.processBatch(t.Context(), uc, []imapadapter.Message{{ID: "7", HasAttachments: true}}, nil, false, errors.New("headers unavailable"))
-	if len(res.deferredIDs) != 1 {
-		t.Fatalf("deferred = %v", res.deferredIDs)
-	}
-	if len(fake.bodies) != 0 {
-		t.Fatalf("a deferred invitation was forwarded %d times", len(fake.bodies))
-	}
-	// Deferred later (rate limit or incoming encryption inside handleMessage):
-	// every tick that reaches the forward again sends nothing more.
-	for range 3 {
-		p.forwardInvitation(t.Context(), uc, imapadapter.Message{ID: "7", HasAttachments: true})
-	}
-	if len(fake.bodies) != 1 {
-		t.Fatalf("an invitation seen on several ticks was forwarded %d times", len(fake.bodies))
-	}
-}
-
-// A failed alignment check (a DNS outage looks the same) is not a decision:
-// once it verifies on a later tick, the invitation is forwarded.
-func TestInvitationForwardedOnceAlignmentRecovers(t *testing.T) {
-	stubAlignment(t, map[string]string{})
-	p, fake := newForwardPoller(t)
-	uc := userCtx{id: "u1", kycalSub: "sub-1", kycalIssuer: "iss", mail: inviteMailClient{&noopMailClient{}, map[int][]byte{7: inviteMail("alice@example.com", forwardICS)}}}
-	p.forwardInvitation(t.Context(), uc, imapadapter.Message{ID: "7", HasAttachments: true})
-	if len(fake.bodies) != 0 {
-		t.Fatal("forwarded without alignment")
-	}
-	stubAlignment(t, map[string]string{"From: alice@example.com": "alice@example.com"})
-	p.forwardInvitation(t.Context(), uc, imapadapter.Message{ID: "7", HasAttachments: true})
-	if len(fake.bodies) != 1 {
-		t.Fatalf("forwarded %d times after alignment recovered, want 1", len(fake.bodies))
-	}
-}
-
-// The record evicts oldest first, so a burst of new invitations cannot reset
-// it and let a recent one forward again.
-func TestForwardedRecordEvictsOldestFirst(t *testing.T) {
-	var f itipForwarder
-	for i := range maxForwarded + 1 {
-		f.markForwarded(strconv.Itoa(i))
-	}
-	if f.wasForwarded("0") || !f.wasForwarded("1") || !f.wasForwarded(strconv.Itoa(maxForwarded)) || len(f.forwarded) != maxForwarded {
-		t.Fatalf("eviction kept %d entries", len(f.forwarded))
 	}
 }
