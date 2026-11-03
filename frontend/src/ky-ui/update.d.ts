@@ -1,5 +1,5 @@
-/** The script and stylesheet URLs an HTML document names, in order. */
-export function buildAssets(html: string): string[];
+/** The script and stylesheet URLs an HTML document names, in order, parsed with DOMParser. */
+export function buildAssets(html: string, parser?: Pick<DOMParser, 'parseFromString'>): string[];
 /** The same list from a live document; read it at start-up. */
 export function pageAssets(doc?: Document): string[];
 export interface WatchForUpdateOptions {

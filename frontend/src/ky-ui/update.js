@@ -2,27 +2,20 @@
 // a reload. It never reloads by itself: the page may hold unsaved work.
 // The build is the list of scripts and stylesheets the entry document names; Vite hashes their
 // file names, so a new release changes it. Dependency-free and CSP-safe: one same-origin GET of
-// the entry document, parsed as text, no inline script or style.
+// the entry document, parsed by the browser's inert DOMParser (no script runs, nothing loads),
+// no inline script or style.
 
-const tag = /<(script|link)\b([^>]*)>/gi;
-const attr = name => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`, 'i');
-const value = (attrs, name) => { const match = attrs.match(attr(name)); return match ? match[1] ?? match[2] ?? match[3] : null; };
-
-// The script and stylesheet URLs an HTML document names, in order.
-export function buildAssets(html) {
-  const assets = [];
-  for (const [, name, attrs] of html.replace(/<!--[\s\S]*?-->/g, '').matchAll(tag)) {
-    const url = name.toLowerCase() === 'script' ? value(attrs, 'src')
-      : /(^|\s)stylesheet(\s|$)/i.test(value(attrs, 'rel') ?? '') ? value(attrs, 'href') : null;
-    if (url) assets.push(url);
-  }
-  return assets;
+// The script and stylesheet URLs an HTML document names, in order. Parsed, not pattern-matched,
+// so it reads the fetched page exactly as pageAssets reads the live one; comments are not elements.
+export function buildAssets(html, parser = new DOMParser()) {
+  return pageAssets(parser.parseFromString(html, 'text/html'));
 }
 
 // The same list from a live document. Read it at start-up, before code adds stylesheets.
 export function pageAssets(doc = globalThis.document) {
   return [...doc.querySelectorAll('script[src], link[rel~="stylesheet"][href]')]
-    .map(node => node.getAttribute(node.localName === 'script' ? 'src' : 'href'));
+    .map(node => node.getAttribute(node.localName === 'script' ? 'src' : 'href'))
+    .filter(Boolean);
 }
 
 // Checks on focus and when the tab becomes visible, and while visible on a timer, at most once
@@ -43,7 +36,7 @@ export function watchForUpdate({ name = 'This app', url = '/', interval = 5 * 60
     try {
       const response = await fetch(url, { cache: 'no-store', credentials: 'same-origin', redirect: 'manual', headers: { Accept: 'text/html' } });
       if (!response.ok || !/text\/html/i.test(response.headers.get('content-type') ?? '')) return;
-      const served = buildAssets(await response.text());
+      const served = buildAssets(await response.text(), new view.DOMParser());
       if (served.length && loaded && served.join('\n') !== loaded) show();
     } catch { /* Offline or the server is restarting: try again later. */ } finally { busy = false; }
   };
