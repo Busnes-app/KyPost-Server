@@ -189,6 +189,7 @@ smtp tcp://%s {
             code 4 reject 550 5.7.1 "Message rejected by spam policy"
             code 5 reject 451 4.7.0 "Spam check temporarily deferred; retry later"
             code 9 reject 452 4.2.2 "Mailbox full"
+            code 11 reject 554 5.6.0 "Message headers cannot be stored"
             code 10 reject 452 4.3.1 "Insufficient system storage"
         }
     }

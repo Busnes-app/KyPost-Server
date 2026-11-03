@@ -622,6 +622,7 @@ the container `/kypost/logs/api.err.log`, `daemon.err.log`, `receiver.log`,
 | `native mail is held after restore; …` | Restore hold present | Section 12; never delete the hold |
 | Senders get `451 4.3.0 Receiving storage unavailable` (Maddy) | Domain proof lapsed (TXT removed, changed or DNS failing), spool or storage unavailable, or a restore hold | Restore the TXT record and **Recheck**; check `daemon.err.log` |
 | `452 4.2.2 Mailbox full` / `452 4.3.1 Insufficient system storage` | Mailbox quota reached / drive reserve reached | Free space or raise the quota; senders retry |
+| `554 5.6.0 Message headers cannot be stored` | A header field over 64 KiB; permanent refusal | None needed; the sender's mail is malformed or hostile |
 | `451 4.3.0 Sender blocks unreadable` | Damaged sender block list | Restore it from backup; senders retry |
 | Receiver `FATAL`, container restarting | Launcher refused; see `receiver.err.log` for `native receiver refused:` followed by `engine hash differs from the qualified Maddy 0.9.5 binary`, `mount the qualified executable read-only as a regular nonsymlink file`, `only the qualified Linux x86_64 engine is supported`, or `enable all three native receiver flags after domain setup and receiving init`; or a configuration error such as `receiving certificate must currently be valid for the explicit hostname` | Fix the binary, certificate, hostname or spool; a persistent failure stops the container on purpose |
 | Cloudflare `status` shows `uninitialized` | No Worker credentials | `receiving cloudflare init` (section 8) |

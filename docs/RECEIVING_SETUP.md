@@ -303,6 +303,11 @@ reception and provider cleanup are not implemented.
   (exit 10). Both are temporary, so senders retry; size the volume for
   `KYPOST_MAILBOX_QUOTA_BYTES` × mailboxes plus that reserve (Server → Mail
   addresses warns above 80%).
+- A message mailbox storage cannot index (a From, To, Cc, Bcc, Subject or
+  Date header over 64 KiB) answers `554 5.6.0 Message headers cannot be
+  stored` (exit 11) at DATA. One accepted before this check is quarantined on
+  import, where Server → Quarantine can discard it; Cloudflare pickup
+  quarantines such mail too.
 - Four active transactions overall, two per IP; bursts of 30/minute overall
   and 10/minute per IP. Limit waits are bounded by the engine's five-second
   acquisition timeout. Read/write/shutdown timeouts are 30 seconds. Active
