@@ -1,8 +1,9 @@
 # Email signatures
 
-Each account keeps its email signatures on the server, so every KyPost client
-inserts the same ones. This file is the contract the web app and the native
-clients (Android, Mac, Linux) implement against.
+Each account keeps its web email signatures on the server. This file is the
+contract the web app, and KyPost for Linux if it inserts them, implement
+against. The Android and iOS/Mac apps keep their own signature on the device,
+separate from these, and never read this API.
 
 ## Storage and API
 
