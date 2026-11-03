@@ -258,6 +258,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             // This body came out of the ciphertext this browser opened.
             bodyFromVerifiedPart: true,
             signerConflict: result.signerConflict,
+            signerUnconfirmed: result.signerUnconfirmed,
             attachments: result.attachments,
             attachmentsOmitted: result.attachmentsOmitted,
             subject: result.protectedHeaders.subject
@@ -348,6 +349,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
             // empty, which is what an attachment-only signed part yields.
             bodyFromVerifiedPart: true,
             signerConflict: result.signerConflict,
+            signerUnconfirmed: result.signerUnconfirmed,
             attachments: result.attachments,
             attachmentsOmitted: result.attachmentsOmitted
           }

@@ -128,3 +128,19 @@ describe("encrypted but unsigned", () => {
     expect(signatureState(email({ pgpEncrypted: true }), view({ signed: true, verified: true }), false)).toBe("verified");
   });
 });
+
+// Issue #450: a good signature from a key the address book binds to the sender
+// but that only ever arrived in mail (Autocrypt harvest, never confirmed) is
+// neither a pass nor an accusation.
+describe("a signature from an unconfirmed harvested key", () => {
+  it("is its own state, not verified and not mismatched", () => {
+    const local = view({ signed: true, verified: false, signerFingerprint: "ABC", signerUnconfirmed: true });
+    expect(signatureState(email({ pgpSigned: true }), local, false)).toBe("unconfirmed");
+    expect(signatureLabel("unconfirmed")).toBe("signed by a key you have not confirmed");
+  });
+
+  it("never outranks a changed key", () => {
+    const local = view({ signed: true, verified: false, signerFingerprint: "ABC", signerUnconfirmed: true, signerConflict: true });
+    expect(signatureState(email({ pgpSigned: true }), local, false)).toBe("conflicted");
+  });
+});

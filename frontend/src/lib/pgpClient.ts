@@ -13,6 +13,7 @@ import { parseMimeContent, type BodyMode, type MimeAttachment, type ProtectedHea
 
 type OpenPGP = typeof import("openpgp");
 type PublicKey = Awaited<ReturnType<OpenPGP["readKey"]>>;
+type VerificationResult = Awaited<ReturnType<OpenPGP["verify"]>>["signatures"][number];
 
 // OpenPGP.js defaults to 2047. Apply a literal 2048-bit floor to new use
 // and signature trust; its decryption path still opens retained historical keys.
@@ -115,6 +116,13 @@ export type DecryptedMessage = {
   verified: boolean;
   signerFingerprint: string;
   /**
+   * A good signature from a key the address book binds to this sender, but one
+   * that only ever arrived in mail (Autocrypt harvest) and no person confirmed.
+   * `verified` stays false: such a key came from a message, and a key that
+   * arrives in a message proves nothing about who sent it. See issue #450.
+   */
+  signerUnconfirmed: boolean;
+  /**
    * The address book binds a key to this sender but it fails its TOFU pin, so
    * the server withheld the key material and nothing could be checked. Distinct
    * from having no key at all — see read/signature.ts.
@@ -135,6 +143,9 @@ export type DecryptedMessage = {
  * the library instead of after the allocation it was aiming for.
  */
 export const MAX_DECRYPTED_BYTES = 25 * 1024 * 1024;
+
+/** What the address book says about one signer key: who it is bound to, and whether a person confirmed it. */
+type SignerBinding = { addresses: string[]; unconfirmed: boolean };
 
 /**
  * Reads the bound signer keys and indexes each one's bound addresses by
@@ -157,9 +168,9 @@ export const MAX_DECRYPTED_BYTES = 25 * 1024 * 1024;
 async function readBoundSignerKeys(
   pgp: OpenPGP,
   signerKeys: BoundSignerKey[]
-): Promise<{ keys: PublicKey[]; addressesByFingerprint: Map<string, string[]> }> {
+): Promise<{ keys: PublicKey[]; bindingByFingerprint: Map<string, SignerBinding> }> {
   const keys: PublicKey[] = [];
-  const addressesByFingerprint = new Map<string, string[]>();
+  const bindingByFingerprint = new Map<string, SignerBinding>();
   for (const entry of signerKeys) {
     const trimmed = entry?.publicKey?.trim();
     if (!trimmed) {
@@ -168,16 +179,62 @@ async function readBoundSignerKeys(
     try {
       const key = await pgp.readKey({ armoredKey: trimmed });
       keys.push(key);
-      addressesByFingerprint.set(
-        key.getFingerprint().toUpperCase(),
-        (entry.addresses ?? []).map((a) => a.trim().toLowerCase())
-      );
+      bindingByFingerprint.set(key.getFingerprint().toUpperCase(), {
+        addresses: (entry.addresses ?? []).map((a) => a.trim().toLowerCase()),
+        // An Autocrypt key was taken from a message. The DKIM gate on the
+        // harvest makes it the sender DOMAIN's word, not a person's, so until
+        // someone confirms it, it can never make a signature read as verified.
+        unconfirmed: entry.source === "autocrypt" && entry.verified !== true
+      });
     } catch {
       // One unparseable contact key must not cost every other signer their
       // verification.
     }
   }
-  return { keys, addressesByFingerprint };
+  return { keys, bindingByFingerprint };
+}
+
+/**
+ * Finds the first signature that checks out and judges it against the address
+ * book binding. Shared by the encrypted and signed-only paths so the two can
+ * never disagree about what "verified" means.
+ *
+ * A cryptographically valid signature from SOME key in the address book proves
+ * only that someone signed this. The badge claims the SENDER signed it, so the
+ * key that actually produced the signature must be one the address book binds
+ * to the sender's address. Without this, an attacker whose key the reader had
+ * auto-pinned (Autocrypt harvest and WKD auto-trust both pin without asking)
+ * could sign a message, put anyone in the From header, and be vouched for.
+ */
+async function judgeSignatures(
+  signatures: VerificationResult[],
+  verificationKeys: PublicKey[],
+  bindingByFingerprint: Map<string, SignerBinding>,
+  senderAddress: string
+): Promise<{ verified: boolean; signerUnconfirmed: boolean; signerFingerprint: string }> {
+  const wanted = senderAddress.trim().toLowerCase();
+  for (const signature of signatures) {
+    try {
+      // `verified` rejects rather than returning false on a bad signature.
+      await signature.verified;
+    } catch {
+      // Try the next signature; an unverifiable one is not fatal.
+      continue;
+    }
+    const keyID = signature.keyID.toHex().toUpperCase();
+    const match = verificationKeys.find((k) =>
+      k.getKeys().some((sub) => sub.getKeyID().toHex().toUpperCase() === keyID)
+    );
+    const signerFingerprint = match ? match.getFingerprint().toUpperCase() : keyID;
+    const binding = match ? bindingByFingerprint.get(signerFingerprint) : undefined;
+    const bound = Boolean(wanted && binding?.addresses.includes(wanted));
+    return {
+      verified: bound && !binding?.unconfirmed,
+      signerUnconfirmed: bound && Boolean(binding?.unconfirmed),
+      signerFingerprint
+    };
+  }
+  return { verified: false, signerUnconfirmed: false, signerFingerprint: "" };
 }
 
 /**
@@ -188,7 +245,8 @@ async function readBoundSignerKeys(
  * addresses the address book binds it to. Which one signed is not known in
  * advance, so all are offered and whichever actually produced the signature is
  * identified — but `verified` is true only when that key is bound to
- * senderAddress. `verified` means "the sender signed this", not "somebody did".
+ * senderAddress and is not an unconfirmed Autocrypt key (`signerUnconfirmed`).
+ * `verified` means "the sender signed this", not "somebody did".
  */
 export async function decryptMessage(
   payload: string,
@@ -201,7 +259,7 @@ export async function decryptMessage(
   const armored = extractArmoredMessage(payload);
   const message = await pgp.readMessage({ armoredMessage: armored });
 
-  const { keys: verificationKeys, addressesByFingerprint } = await readBoundSignerKeys(
+  const { keys: verificationKeys, bindingByFingerprint } = await readBoundSignerKeys(
     pgp,
     signerKeys
   );
@@ -213,39 +271,9 @@ export async function decryptMessage(
     config: { ...RSA_POLICY, maxDecompressedMessageSize: MAX_DECRYPTED_BYTES }
   });
 
-  let signed = false;
-  let verified = false;
-  let signerFingerprint = "";
   const signatures = result.signatures ?? [];
-  if (signatures.length > 0) {
-    signed = true;
-    const wanted = senderAddress.trim().toLowerCase();
-    for (const signature of signatures) {
-      try {
-        // `verified` rejects rather than returning false on a bad signature.
-        await signature.verified;
-        const keyID = signature.keyID.toHex().toUpperCase();
-        const match = verificationKeys.find((k) =>
-          k.getKeys().some((sub) => sub.getKeyID().toHex().toUpperCase() === keyID)
-        );
-        signerFingerprint = match ? match.getFingerprint().toUpperCase() : keyID;
-        // A cryptographically valid signature from SOME key in the address
-        // book proves only that someone signed this. The badge claims the
-        // SENDER signed it, so the key that actually produced the signature
-        // must be one the address book binds to the sender's address. Without
-        // this, an attacker whose key the reader had auto-pinned — Autocrypt
-        // harvest and WKD auto-trust both pin without asking — could sign a
-        // message, put anyone in the From header, and be vouched for by the UI.
-        const bound = match
-          ? addressesByFingerprint.get(match.getFingerprint().toUpperCase())
-          : undefined;
-        verified = Boolean(wanted && bound?.includes(wanted));
-        break;
-      } catch {
-        // Try the next signature; an unverifiable one is not fatal.
-      }
-    }
-  }
+  const signed = signatures.length > 0;
+  const verdict = await judgeSignatures(signatures, verificationKeys, bindingByFingerprint, senderAddress);
 
   // The decrypted payload is a MIME entity, not display text: headers,
   // boundaries and an encoded body. Parsing it here keeps the reader from
@@ -262,8 +290,7 @@ export async function decryptMessage(
     // MIME detached signatures are present but unchecked; only the packet
     // verification above can establish a sender-bound verification result.
     signed: signed || Boolean(parsed?.hasDetachedSignature),
-    verified,
-    signerFingerprint,
+    ...verdict,
     signerConflict: hasSignerConflict(signerKeys),
     attachments: parsed?.attachments ?? [],
     attachmentsOmitted: parsed?.attachmentsOmitted ?? 0,
@@ -315,13 +342,12 @@ export async function verifySignedMessage(
   const body = parsed ? parsed.body : partText;
   const bodyMode = parsed?.mode;
 
-  const { keys: verificationKeys, addressesByFingerprint } = await readBoundSignerKeys(
+  const { keys: verificationKeys, bindingByFingerprint } = await readBoundSignerKeys(
     pgp,
     signerKeys
   );
 
-  let verified = false;
-  let signerFingerprint = "";
+  let verdict = { verified: false, signerUnconfirmed: false, signerFingerprint: "" };
   try {
     // No bound key means nothing to check the signature against. Short-circuit
     // rather than calling verify with an empty key list: the outcome is the
@@ -340,25 +366,7 @@ export async function verifySignedMessage(
       expectSigned: false,
       config: RSA_POLICY
     });
-    const wanted = senderAddress.trim().toLowerCase();
-    for (const signature of result.signatures ?? []) {
-      try {
-        // `verified` rejects rather than returning false on a bad signature.
-        await signature.verified;
-        const keyID = signature.keyID.toHex().toUpperCase();
-        const match = verificationKeys.find((k) =>
-          k.getKeys().some((sub) => sub.getKeyID().toHex().toUpperCase() === keyID)
-        );
-        signerFingerprint = match ? match.getFingerprint().toUpperCase() : keyID;
-        const boundAddresses = match
-          ? addressesByFingerprint.get(match.getFingerprint().toUpperCase())
-          : undefined;
-        verified = Boolean(wanted && boundAddresses?.includes(wanted));
-        break;
-      } catch {
-        // Try the next signature; an unverifiable one is not fatal.
-      }
-    }
+    verdict = await judgeSignatures(result.signatures ?? [], verificationKeys, bindingByFingerprint, senderAddress);
   } catch {
     // An unreadable signature, or no key to check it with. The message stays
     // readable and the badge says it could not be checked — never that it
@@ -371,8 +379,7 @@ export async function verifySignedMessage(
     // The caller only reaches this function for a message the server flagged as
     // carrying a detached signature, so `signed` is what got us here.
     signed: true,
-    verified,
-    signerFingerprint,
+    ...verdict,
     signerConflict: hasSignerConflict(signerKeys),
     attachments: parsed?.attachments ?? [],
     attachmentsOmitted: parsed?.attachmentsOmitted ?? 0,
