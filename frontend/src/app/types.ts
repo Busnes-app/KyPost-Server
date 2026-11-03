@@ -61,6 +61,8 @@ export type DraftComposePayload = {
   attachments?: ComposeAttachment[];
   /** The mailbox the draft was opened from ("" is the primary). */
   mailbox?: string;
+  /** Set for a reply or forward, which may get a signature; absent for a saved draft. */
+  intent?: "reply" | "forward";
 };
 
 // ComposeAttachment mirrors the backend's attachment wire shape

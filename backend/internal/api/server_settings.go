@@ -331,3 +331,49 @@ func (s *Server) handleTuning(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+// handleSignatures reads/writes the CALLING account's email signatures, the
+// one copy every client (web, Android, Mac, Linux) inserts from. GET is on
+// withMailAuth so a paired device reads the same set; PUT stays on withAuth,
+// like the other settings writes, and replaces the whole document.
+//
+// Signatures are plain text (see config.Signature): nothing here stores or
+// returns markup, so there is no HTML to sanitize on either side.
+func (s *Server) handleSignatures(w http.ResponseWriter, r *http.Request) {
+	ac, ok := authFromContext(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	path := s.userSettingsPath(ac.UserID)
+	switch r.Method {
+	case http.MethodGet:
+		settings, err := config.LoadUserSettings(path)
+		if err != nil {
+			http.Error(w, "failed to read signatures", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, settings.Signatures)
+	case http.MethodPut:
+		var prefs config.UserSignatureSettings
+		dec := json.NewDecoder(io.LimitReader(r.Body, 256<<10))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&prefs); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid signatures payload"})
+			return
+		}
+		prefs, err := config.NormalizeSignatureSettings(prefs)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := config.UpdateUserSettings(path, func(settings *config.UserSettings) error {
+			settings.Signatures = prefs
+			return nil
+		}); err != nil {
+			http.Error(w, "failed to save signatures", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, prefs)
+	}
+}

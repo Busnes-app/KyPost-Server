@@ -708,6 +708,8 @@ func (s *Server) routesMail(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mail/send-as", s.withAuth(s.handleSendAs))
 	mux.HandleFunc("DELETE /api/mail/send-as/{id}", s.withAuth(s.handleSendAsByID))
 	mux.HandleFunc("POST /api/mail/send-as/{id}/confirm", s.withAuth(s.handleSendAsConfirm))
+	mux.HandleFunc("GET /api/mail/signatures", s.withMailAuth(s.handleSignatures))
+	mux.HandleFunc("PUT /api/mail/signatures", s.withAuth(s.handleSignatures))
 	mux.HandleFunc("GET /api/mail/attachments", s.withMailAuth(s.withMailbox(s.handleMailAttachmentList)))
 	mux.HandleFunc("GET /api/mail/attachment", s.withMailAuth(s.withMailbox(s.handleMailAttachmentDownload)))
 }

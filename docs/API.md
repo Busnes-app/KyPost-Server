@@ -123,6 +123,7 @@ Mail:
 - `GET|PUT /api/settings/kycalendar` — the caller's KyCalendar switch: `{"available","enabled"}`; `PUT {"enabled":true|false}`. `available` is false when the server is not paired. `enabled` with no stored choice is on when KyIdentity paired KyCalendar, off when the environment did.
 - `GET /api/admin/kycalendar` (admin) — how KyCalendar is paired: `{"source":"kyidentity"|"env"|absent,"connected","url"?,"reason"?}`. Never the secret.
 - `GET /api/suite/apps` — the suite apps the caller may open, for the sidebar app rail: `{"apps":[{"id","name","url"}]}`, asked of KyIdentity's suite directory (KyIdentity-server `docs/SUITE-DIRECTORY.md`) with the caller's linked SSO subject and cached for a minute per user. Always 200; the list is empty for accounts not signed in through the configured SSO provider and whenever KyIdentity cannot answer.
+- `GET|PUT /api/mail/signatures` (the caller's email signatures, plain text, with the default, per-address choices and whether replies and forwards get one. GET also takes a paired device's credentials; PUT replaces the whole set and needs a web session. Contract: [SIGNATURES.md](SIGNATURES.md))
 - `GET|POST /api/mail/send-as`, `POST /api/mail/send-as/{id}/confirm` and `DELETE /api/mail/send-as/{id}` (alias addresses. A new alias is unusable until the user confirms the mailed code or a DKIM-signed copy from its own domain reaches the inbox; only the DKIM proof makes it publishable. The list never returns the code.)
 
 Filter Rules (the caller's own rules):

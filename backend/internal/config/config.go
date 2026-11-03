@@ -183,6 +183,8 @@ type UserSettings struct {
 	KyCalendar    *bool                    `yaml:"kyCalendar,omitempty" json:"-"`
 	Notifications UserNotificationSettings `yaml:"notifications" json:"notifications"`
 	Labels        UserLabelSettings        `yaml:"labels" json:"labels"`
+	// Signatures is served only by /api/mail/signatures.
+	Signatures UserSignatureSettings `yaml:"signatures" json:"-"`
 }
 
 // KyCalendarOn reports whether the paired KyCalendar may send invitations from
@@ -265,6 +267,7 @@ func DefaultUserSettings() UserSettings {
 	s.Labels.Allowlist = []string{}
 	s.Labels.KeywordMappings = map[string][]string{}
 	s.Labels.Descriptions = map[string]string{}
+	s.Signatures = DefaultUserSignatureSettings()
 	return s
 }
 
@@ -374,6 +377,12 @@ func LoadUserSettings(path string) (UserSettings, error) {
 	}
 	if s.Labels.Descriptions == nil {
 		s.Labels.Descriptions = map[string]string{}
+	}
+	if s.Signatures.Signatures == nil {
+		s.Signatures.Signatures = []Signature{}
+	}
+	if s.Signatures.ByAddress == nil {
+		s.Signatures.ByAddress = map[string]string{}
 	}
 	return s, nil
 }
