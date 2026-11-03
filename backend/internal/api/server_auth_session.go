@@ -527,7 +527,7 @@ func (s *Server) mintSession(w http.ResponseWriter, r *http.Request, sess Sessio
 		s.sessMu.Unlock()
 		return errors.New("SSO settings changed during sign-in")
 	}
-	if sess.revocations != 0 && sess.revocations != s.revocations.Load()+1 {
+	if sess.revocations != 0 && s.revokedAt[sess.UserID] >= sess.revocations {
 		s.sessMu.Unlock()
 		return errors.New("account credentials were revoked during sign-in")
 	}
@@ -720,7 +720,10 @@ func currentSessionToken(r *http.Request) string {
 func (s *Server) revokeUserSessions(userID, keepToken string) {
 	s.sessMu.Lock()
 	defer s.sessMu.Unlock()
-	s.revocations.Add(1)
+	if s.revokedAt == nil {
+		s.revokedAt = map[string]uint64{}
+	}
+	s.revokedAt[userID] = s.revocations.Add(1)
 	for token, sess := range s.sessions {
 		if sess.UserID == userID && token != keepToken {
 			delete(s.sessions, token)

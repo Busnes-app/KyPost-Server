@@ -622,4 +622,13 @@ func TestLoginOvertakenByRevocationMintsNoSession(t *testing.T) {
 	if code := login(); code != http.StatusOK {
 		t.Fatalf("ordinary sign-in = %d", code)
 	}
+
+	// Another account's revocation during the derivation is no reason to fail.
+	loginKDFBilledSeconds = func(d time.Duration) float64 {
+		srv.revokeUserSessions("someone-else", "")
+		return orig(d)
+	}
+	if code := login(); code != http.StatusOK {
+		t.Fatalf("sign-in during another account's revocation = %d", code)
+	}
 }
