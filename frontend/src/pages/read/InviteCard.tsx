@@ -39,6 +39,7 @@ export function InviteCard({ attachment, query, messageId, folder, sender, phish
   const [phase, setPhase] = useState<"idle" | "busy" | "confirm" | "conflict" | "done" | "stuck">("idle");
   const [choice, setChoice] = useState<Partstat>("ACCEPTED");
   const [status, setStatus] = useState("");
+  const [noEvent, setNoEvent] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -65,6 +66,7 @@ export function InviteCard({ attachment, query, messageId, folder, sender, phish
       setPhase("done");
       setStatus("Answered through KyCalendar.");
     } else if (result.kind === "off") {
+      setNoEvent(result.noEvent === true);
       setPhase("confirm");
     } else {
       setPhase(result.kind);
@@ -104,7 +106,7 @@ export function InviteCard({ attachment, query, messageId, folder, sender, phish
       {offersRsvp && phase === "confirm" ? (
         <div className="invite-card-actions">
           <p className="invite-card-note">
-            KyCalendar is not in use for this mailbox, so your answer goes to {e.organizer} as an unencrypted, unsigned email.
+            {noEvent ? "KyCalendar has no event for this invitation" : "KyCalendar is not in use for this mailbox"}, so your answer goes to {e.organizer} as an unencrypted, unsigned email.
           </p>
           <button type="button" onClick={() => void sendByMail()}>Send answer</button>
           <button type="button" onClick={() => setPhase("idle")}>Cancel</button>

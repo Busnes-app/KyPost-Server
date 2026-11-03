@@ -76,6 +76,16 @@ describe("InviteCard", () => {
     expect(body.calendarReply.ics).toContain("ATTENDEE;PARTSTAT=DECLINED:mailto:bob@example.net\r\n");
   });
 
+  it("offers the mail REPLY when KyCalendar has no event for the invitation", async () => {
+    client.postJSON.mockRejectedValueOnce(refusal(404, "no_event")).mockResolvedValueOnce({ ok: true, calendarReply: true });
+    render(<InviteCard {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Accept" }));
+    expect(await screen.findByText(/KyCalendar has no event for this invitation, so your answer goes to alice@example.com/)).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+    expect(await screen.findByText("Your answer was sent to alice@example.com.")).toBeDefined();
+    expect(client.postJSON.mock.calls[1][0]).toBe("/api/mail/send");
+  });
+
   it("re-enables the buttons when KyCalendar is unavailable", async () => {
     client.postJSON.mockRejectedValueOnce(refusal(502, "kycalendar_unavailable"));
     render(<InviteCard {...props} />);

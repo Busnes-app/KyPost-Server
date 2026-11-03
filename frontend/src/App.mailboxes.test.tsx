@@ -71,7 +71,7 @@ beforeEach(() => {
       return json(200, { tabs: ["Primary"], byTab: { Primary: [{ ...message(subject), hasAttachments: true }] }, cursor: 1 });
     }
     if (url.startsWith("/api/mail/attachments?")) return json(200, { ok: true, attachments: [{ index: 0, name: "plan.pdf", mimeType: "application/pdf", size: 3 }] });
-    if (url.startsWith("/api/mail/attachment?")) return { ok: true, status: 200, headers: { get: () => "application/pdf" }, blob: async () => new Blob(["pdf"]) } as unknown as Response;
+    if (url.startsWith("/api/mail/attachment?")) return { ok: true, status: 200, headers: { get: () => "application/pdf" }, blob: async () => new Blob(["pdf"]), arrayBuffer: async () => new TextEncoder().encode("pdf").buffer } as unknown as Response;
     if (url.startsWith("/api/mail/body?")) return json(200, { body: "draft body", bodyMode: "plain" });
     if (url === "/api/mail/send") return json(200, { ok: true });
     if (url.startsWith("/api/contacts/search?")) return json(200, { contacts: [] });
@@ -257,6 +257,9 @@ describe("webmail mailbox switcher", () => {
     for (const release of pending) release(json(200, { body: "draft body", bodyMode: "plain" }));
     const from = await screen.findByRole("combobox", { name: "From" }) as HTMLSelectElement;
     expect(from.value).toBe("team-test@example.com");
+    // Its attachments come from the mailbox it was read in, not the one now selected.
+    expect(sent("/api/mail/attachments?").map((c) => c.mailbox)).toEqual([TEAM]);
+    expect(sent("/api/mail/attachment?").map((c) => c.mailbox)).toEqual([TEAM]);
   });
 
   it("ignores a folder list answered for a mailbox no longer selected", async () => {

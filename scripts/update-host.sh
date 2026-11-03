@@ -45,7 +45,26 @@ if ! flock -n 9; then
   exit 0
 fi
 
-mapfile -t images < <(docker compose config --images)
+# Update and roll back with the compose files the running container was
+# created from, so overlays (receiving, Rspamd, strong crypto, LAN DNS) are
+# kept. Compose records them on the container; with none running, use what a
+# plain `docker compose` would: COMPOSE_FILE, else the base file.
+files=()
+running="$(docker compose ps -aq kypost-server 2>/dev/null | head -n 1)"
+if [[ -n "$running" ]]; then
+  IFS=, read -ra files <<<"$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$running")"
+fi
+if [[ ${#files[@]} -eq 0 ]]; then
+  IFS="${COMPOSE_PATH_SEPARATOR:-:}" read -ra files <<<"${COMPOSE_FILE:-$repo_dir/docker-compose.yml}"
+fi
+base=(docker compose)
+for file in "${files[@]}"; do
+  # The previous run's own image override is recorded too, and deleted.
+  [[ "$(basename -- "$file")" == .kypost-update.*.yml ]] && continue
+  base+=(-f "$file")
+done
+
+mapfile -t images < <("${base[@]}" config --images kypost-server)
 if [[ ${#images[@]} -ne 1 || -z "${images[0]}" ]]; then
   echo "expected exactly one Compose image; check docker-compose.yml" >&2
   exit 65
@@ -56,7 +75,7 @@ if [[ "$image_repo" != "$official_image" ]]; then
   echo "this updater only supports the official image: $official_image" >&2
   exit 65
 fi
-previous_id="$(docker compose images -q kypost-server | head -n 1)"
+previous_id="$("${base[@]}" images -q kypost-server | head -n 1)"
 previous_image=""
 if [[ -n "$previous_id" ]]; then
   previous_image="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$previous_id" | grep -m1 "^${official_image}@sha256:" || true)"
@@ -94,7 +113,9 @@ fi
 log pull info started
 docker pull "$candidate_image"
 candidate_id="$(docker image inspect --format '{{.Id}}' "$candidate_image")"
-if [[ -n "$previous_id" && "$candidate_id" == "$previous_id" ]]; then
+# `compose images -q` prints the bare hex; `image inspect` prefixes sha256:.
+if [[ -n "$previous_id" && "${candidate_id#sha256:}" == "${previous_id#sha256:}" ]]; then
+  docker tag "$candidate_image" "$image"
   log update info already-current
   exit 0
 fi
@@ -102,10 +123,14 @@ fi
 update_override="$(mktemp "$repo_dir/.kypost-update.XXXXXX.yml")"
 trap 'rm -f "$update_override"' EXIT
 printf 'services:\n  kypost-server:\n    image: %s\n' "$candidate_image" >"$update_override"
-compose=(docker compose -f "$repo_dir/docker-compose.yml" -f "$update_override")
+compose=("${base[@]}" -f "$update_override")
 
+# A digest pull leaves the local tag on the old image, so a later plain
+# `docker compose up -d` would recreate onto it: a downgrade over state the
+# new version may already have migrated. Point the tag at what now runs.
 log update info started
 if "${compose[@]}" up -d --no-build --wait --wait-timeout "$wait_timeout" kypost-server; then
+  docker tag "$candidate_image" "$image"
   log update info healthy
   exit 0
 fi
@@ -118,6 +143,7 @@ fi
 log rollback warning started
 printf 'services:\n  kypost-server:\n    image: %s\n' "$previous_image" >"$update_override"
 if "${compose[@]}" up -d --no-build --force-recreate --wait --wait-timeout "$wait_timeout" kypost-server; then
+  docker tag "$previous_image" "$image"
   log rollback warning healthy
 else
   log rollback error failed

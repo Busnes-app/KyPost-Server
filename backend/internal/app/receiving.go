@@ -36,6 +36,11 @@ var errMailboxMessageLimit = fmt.Errorf("%w: the message exceeds a recipient mai
 // is not ErrCapacity: hosted pickup leaves only this message waiting in R2.
 var errMailboxFull = errors.New("recipient mailbox is full")
 
+// errUnimportable is a message permanent storage would refuse on every import
+// (for example a header field over its metadata limit): exit 11, 554 5.6.0,
+// so it is refused at DATA instead of holding receiving capacity forever.
+var errUnimportable = &receivingCommandError{err: mailbox.ErrUnimportable, code: 11}
+
 // mailboxRoom refuses a message of size bytes that a's mailbox cannot hold,
 // counting accepted mail still waiting to import into it. Acceptance runs
 // under the directory fence, so concurrent deliveries see each other.
@@ -551,6 +556,9 @@ func (r *receivingRuntime) commitAccept(ctx context.Context, d ingress.Delivery,
 			if int64(len(raw)) > a.Limits.MessageBytes {
 				return errMailboxMessageLimit
 			}
+			if mailbox.ImportValid(raw, a.Limits.MessageBytes) != nil {
+				return errUnimportable
+			}
 			if err := r.mailboxRoom(ctx, a, int64(len(raw))); err != nil {
 				return err
 			}
@@ -579,6 +587,14 @@ func (r *receivingRuntime) importDeliveryTo(ctx context.Context, id, folder stri
 	// A lost pickup response may repeat a completed local obligation.
 	if d.State == "archived" {
 		return nil
+	}
+	// Accepted before acceptance checked importability: it can never import,
+	// so quarantine it (before any claim) where an administrator can discard it.
+	if d.State == "pending" && mailbox.ImportValid(d.Raw, receivingLimits.MessageBytes) != nil {
+		if err := r.holding.QuarantinePending(ctx, r.gatewayID(), d.ID); err != nil {
+			return err
+		}
+		return ingress.ErrRoute
 	}
 	err = r.importFrozen(ctx, d, folder)
 	if err != nil && d.State == "pending" && !errors.Is(err, ingress.ErrRoute) && !errors.Is(err, sso.ErrNativeRestoreHold) {

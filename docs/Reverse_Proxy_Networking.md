@@ -134,10 +134,12 @@ networks:
     ipam: !reset {}
 ```
 
-`scripts/update-host.sh` and the manual digest start in
-[the README](OPERATIONS.md#verifying-an-image-by-hand) pass `-f docker-compose.yml`
-and never read the override; with an existing network they rely on the warning
-behaviour above.
+`scripts/update-host.sh` recreates with the compose files the running container
+was created from (Compose records them on the container), so an override you
+started with stays in force. The manual digest start in
+[the README](OPERATIONS.md#verifying-an-image-by-hand) passes
+`-f docker-compose.yml` and never reads the override; with an existing network it
+relies on the warning behaviour above.
 
 Older Compose releases refuse a network without Compose's labels:
 

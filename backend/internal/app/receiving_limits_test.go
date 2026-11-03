@@ -7,10 +7,12 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 )
 
@@ -179,5 +181,38 @@ func TestNativeReceivingQuotaCountsHeldMail(t *testing.T) {
 	}
 	if err := r.bind(ctx, "p3", "", "two@example.test"); err != nil {
 		t.Fatalf("another recipient of the same transaction: %v", err)
+	}
+}
+
+// A message permanent storage would refuse (a header field over the 64 KiB
+// metadata limit, which Maddy's 128 KiB header limit admits) is refused at
+// DATA with exit 11 (554 5.6.0), and one already accepted by an older build
+// is quarantined on import instead of retrying forever in the shared buffer.
+func TestNativeReceivingRefusesUnimportableMessage(t *testing.T) {
+	r, _ := receivingFixture(t)
+	ctx := context.Background()
+	raw := []byte("From: a@outside.test\r\nSubject: " + strings.Repeat("x", 70<<10) + "\r\n\r\nbody\r\n")
+	if err := r.bind(ctx, "huge-subject", "", "one@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.accept(ctx, "huge-subject", "", bytes.NewReader(raw)); receivingExit(err) != 11 {
+		t.Fatalf("DATA with an unstorable header: %v", err)
+	}
+	if d, err := r.holding.Get(ctx, receivingGateway, "huge-subject"); err != nil || d.State != "staged" || len(d.Raw) != 0 {
+		t.Fatalf("refused DATA stored bytes: %+v %v", d, err)
+	}
+
+	// As an older build accepted it: straight into holding, past commitAccept.
+	if err := r.bind(ctx, "stuck", "", "one@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.holding.Accept(ctx, receivingGateway, "stuck", "", bytes.NewReader(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.importDelivery(ctx, "stuck"); !errors.Is(err, ingress.ErrRoute) {
+		t.Fatalf("import of an unimportable delivery: %v", err)
+	}
+	if d, err := r.holding.Get(ctx, receivingGateway, "stuck"); err != nil || d.State != "quarantined" {
+		t.Fatalf("unimportable delivery not quarantined: state=%s err=%v", d.State, err)
 	}
 }

@@ -588,3 +588,47 @@ func TestSessionSlideIsQuantized(t *testing.T) {
 		t.Error("a session past its absolute cap was not reclaimed")
 	}
 }
+
+// A sign-in whose credential check a revocation overtook (the owner changed
+// the password while the derivation ran) must not mint a session after the
+// purge: it would survive the revocation it raced.
+func TestLoginOvertakenByRevocationMintsNoSession(t *testing.T) {
+	srv, u := newTestServerWithUser(t)
+	orig := loginKDFBilledSeconds
+	t.Cleanup(func() { loginKDFBilledSeconds = orig })
+	login := func() int {
+		body, _ := json.Marshal(map[string]string{"username": u.Username, "authSecret": testAuthSecret(srv, u.Username, "session-tester-testpassword")})
+		rec := httptest.NewRecorder()
+		srv.handleLogin(rec, httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body)))
+		return rec.Code
+	}
+	// Runs after the derivation and before the session is minted.
+	loginKDFBilledSeconds = func(d time.Duration) float64 {
+		srv.revokeUserSessions(u.ID, "")
+		return orig(d)
+	}
+	if code := login(); code == http.StatusOK {
+		t.Fatal("a sign-in overtaken by a revocation was answered 200")
+	}
+	srv.sessMu.RLock()
+	for _, sess := range srv.sessions {
+		if sess.UserID == u.ID {
+			t.Error("a sign-in overtaken by a revocation left a session")
+		}
+	}
+	srv.sessMu.RUnlock()
+
+	loginKDFBilledSeconds = orig
+	if code := login(); code != http.StatusOK {
+		t.Fatalf("ordinary sign-in = %d", code)
+	}
+
+	// Another account's revocation during the derivation is no reason to fail.
+	loginKDFBilledSeconds = func(d time.Duration) float64 {
+		srv.revokeUserSessions("someone-else", "")
+		return orig(d)
+	}
+	if code := login(); code != http.StatusOK {
+		t.Fatalf("sign-in during another account's revocation = %d", code)
+	}
+}

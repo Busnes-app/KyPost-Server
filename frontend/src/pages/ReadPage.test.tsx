@@ -264,16 +264,18 @@ describe("search scope", () => {
     mockEndpoints();
   });
 
-  it("scopes the search request to a single mailbox", async () => {
+  it("scopes the search request to the listed mailbox", async () => {
     const user = userEvent.setup();
     renderReadPage();
 
     await user.type(await screen.findByRole("searchbox", { name: "Search mail" }), "invoice{Enter}");
 
+    // The list sends no mailbox (the account's configured folder), so search
+    // must not either: a literal INBOX searched a different folder.
     await waitFor(() => {
       const searchCall = getJSON.mock.calls.map(([url]) => url).find((url: string) => url.startsWith("/api/mail/search"));
       expect(searchCall).toBeDefined();
-      expect(searchCall).toContain("mailbox=");
+      expect(searchCall).not.toContain("mailbox=");
     });
   });
 });

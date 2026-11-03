@@ -77,7 +77,10 @@ chown -R kypost:kypost /kypost/config /kypost/private /kypost/logs /kypost/state
 # how much is already cached there. If the host bind mount is read-only or
 # owned by another user this is allowed to fail: a pre-populated, read-only
 # model cache is a legitimate setup, and Ollama only needs to read it.
-chown kypost:kypost /kypost/ollama-models 2>/dev/null \
+# -h: without the bind mount the runtime user owns /kypost and could replace
+# this directory with a symlink to /opt/kypost, which a dereferencing chown
+# would hand to it, and entrypoint.sh runs as root on the next start.
+chown -h kypost:kypost /kypost/ollama-models 2>/dev/null \
 	|| echo "note: could not chown /kypost/ollama-models; continuing (read-only or externally owned mount)"
 
 # Convert native mail storage to the current format before any service reads

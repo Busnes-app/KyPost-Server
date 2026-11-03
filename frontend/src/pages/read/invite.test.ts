@@ -139,6 +139,7 @@ describe("answer flow", () => {
 
   it("maps kycalendar_off, conflict and unavailability", async () => {
     expect(await answerThroughKyCalendar(refuse(409, "kycalendar_off"), req)).toEqual({ kind: "off" });
+    expect(await answerThroughKyCalendar(refuse(404, "no_event"), req)).toEqual({ kind: "off", noEvent: true });
     expect((await answerThroughKyCalendar(refuse(409, "conflict"), req)).kind).toBe("conflict");
     expect(await answerThroughKyCalendar(refuse(502, "kycalendar_unavailable"), req)).toEqual({ kind: "idle", message: "says kycalendar_unavailable" });
     expect((await answerThroughKyCalendar(vi.fn().mockRejectedValue(new TypeError("offline")), req)).kind).toBe("idle");

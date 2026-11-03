@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"mime"
 	"net/http"
 	"net/textproto"
@@ -213,6 +214,19 @@ func (s *Server) withMCPAuth(next http.Handler) http.Handler {
 		if now.Unix()-tok.LastActive() > 60 {
 			_ = s.globalStore.TouchAgentToken(ctx, tok.ID, now.Unix())
 		}
+		// One JSON-RPC message per request. The SDK still accepts a batch from a
+		// pre-2025-06-18 client and runs its calls in parallel, all under the one
+		// limiter unit and in-flight slot spent above.
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+		if err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if trimmed := bytes.TrimLeft(body, " \t\r\n"); len(trimmed) > 0 && trimmed[0] == '[' {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON-RPC batches are not accepted; send one message per request"})
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		ctx = context.WithValue(ctx, authContextKey{}, AuthContext{UserID: user.ID, Username: user.Username, Role: user.Role})
 		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, mcpCallerKey{}, mcpCaller{user: user, token: tok})))
 	})
@@ -1021,11 +1035,14 @@ func (t mcpTools) label(ctx context.Context, in labelIn, action string) (*mcp.Ca
 	if err != nil {
 		return nil, actionOut{}, err
 	}
-	i := slices.IndexFunc(t.userLabels(), func(l string) bool { return strings.EqualFold(l, strings.TrimSpace(in.Label)) })
+	// One read: the list's order comes from ranging a map, so a second call
+	// can put a different label at the same index.
+	labels := t.userLabels()
+	i := slices.IndexFunc(labels, func(l string) bool { return strings.EqualFold(l, strings.TrimSpace(in.Label)) })
 	if i < 0 {
 		return nil, actionOut{}, errors.New(msgUnknownLabel)
 	}
-	label := t.userLabels()[i]
+	label := labels[i]
 	// An IMAP account sets keywords on its default folder whatever the id came
 	// from, so an id from another folder would label a different message.
 	if folder, _ := agentFolder(in.Folder); imapadapter.MailSourceIdentity(client) == "imap" && !strings.EqualFold(folder, "INBOX") {

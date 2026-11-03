@@ -559,6 +559,28 @@ func TestUpsertNativeDevicePreservesRevokedMFAApprover(t *testing.T) {
 	}
 }
 
+// A push token is no proof of holding a device (the owner's sessions can read
+// it), so re-pairing by push token alone must not inherit the right to approve
+// sign-ins, which otherwise takes a step-up to grant.
+func TestUpsertNativeDeviceTokenMatchDoesNotInheritApprover(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := s.UpsertNativeDevice(NativeDevice{DeviceID: "dev-1", Platform: "android", PushToken: "tok-1", UserID: "user-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if updated, err := s.SetNativeDeviceMFAApprover("dev-1", true); err != nil || !updated {
+		t.Fatalf("SetNativeDeviceMFAApprover: updated=%v err=%v", updated, err)
+	}
+	if err := s.UpsertNativeDevice(NativeDevice{Platform: "android", PushToken: "tok-1", UserID: "user-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := s.GetNativeDevice("dev-1"); !ok || got.MFAApprover {
+		t.Fatalf("token-match re-pair inherited the approver right: %+v ok=%v", got, ok)
+	}
+}
+
 // TestDecisionsSortByInstantNotString pins that ordering survives a
 // timestamp written with a non-UTC offset — string comparison of RFC3339
 // silently scrambles that case, parsed-instant comparison does not.

@@ -1319,10 +1319,9 @@ func (s *Server) handleMailSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Empty is the account's configured folder, as on every other mail route:
+	// a hit's UID must name the message the follow-up body/action calls open.
 	mailbox := strings.TrimSpace(r.URL.Query().Get("mailbox"))
-	if mailbox == "" {
-		mailbox = "INBOX"
-	}
 
 	limitStr := r.URL.Query().Get("limit")
 	limit := 50

@@ -619,7 +619,7 @@ func (l *cfLoop) capture(ctx context.Context, env cfreceiving.Envelope, raw []by
 // admission) leaves the mail waiting in R2 with a backoff.
 func (l *cfLoop) unbound(ctx context.Context, env cfreceiving.Envelope, raw []byte, b ingress.Binding, err error) (bool, error) {
 	switch {
-	case errors.Is(err, ingress.ErrRoute) || errors.Is(err, errMailboxMessageLimit) || l.r.bindingsRetired(ctx, []ingress.Binding{b}):
+	case errors.Is(err, ingress.ErrRoute) || errors.Is(err, errMailboxMessageLimit) || errors.Is(err, mailbox.ErrUnimportable) || l.r.bindingsRetired(ctx, []ingress.Binding{b}):
 		return l.quarantine(ctx, env, raw, b)
 	case errors.Is(err, ingress.ErrCapacity):
 		return false, errCFStop

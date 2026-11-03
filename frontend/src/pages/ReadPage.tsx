@@ -15,9 +15,10 @@ import { decryptMessage, verifySignedMessage } from "../lib/pgpClient";
 import { getPGPMessagePayload } from "../api/pgp";
 import { accountAddress, isClientProtected, needsUnlock, subscribePGPSession, type PGPSessionState } from "../lib/pgpSession";
 import { PgpUnlockDialog } from "../components/PgpUnlockDialog";
-import { downloadFile, getJSON, postJSON, selectedMailboxId, toErrorMessage } from "../api/client";
+import { downloadFile, getBytes, getJSON, mailboxHeaders, postJSON, selectedMailboxId, toErrorMessage } from "../api/client";
 import { usePagination } from "../hooks/usePagination";
 import { mailboxName, useMailboxes } from "../app/mailboxes";
+import { standardMailboxKind } from "../app/mailboxKind";
 import type { DraftComposePayload } from "../app/types";
 import { PageTabs } from "../components/PageTabs";
 import { ArchiveIcon, ArrowLeftIcon, CheckIcon, ClockIcon, CloseIcon, ImageIcon, PaperclipIcon, PlusIcon, PrintIcon, RefreshIcon, SearchIcon, TrashIcon, WarningIcon } from "./read/icons";
@@ -76,7 +77,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
+export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps) {
   const readerActionsId = useId();
   const searchScopeName = useId();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -618,6 +619,9 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         setActiveTab(matchTab);
       }
       void openLinkedEmail(match);
+    } else if (!lastLoadedAt && !error) {
+      // The first load has not landed yet: keep the target until it does.
+      return;
     }
 
     setSearchParams(
@@ -629,7 +633,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       },
       { replace: true }
     );
-  }, [byTab, tabs, searchParams, isInboxMailbox, setSearchParams]);
+  }, [byTab, tabs, searchParams, isInboxMailbox, setSearchParams, lastLoadedAt, error]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -760,7 +764,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       key: "print",
       label: "Print",
       icon: <PrintIcon />,
-      onClick: () => printEmails(selectedInTab),
+      onClick: () => void printListed(selectedInTab),
       disabled: selectedInTab.length === 0 || actionLoading
     }
   ] as const;
@@ -830,8 +834,22 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     });
   }
 
-  async function applyInboxAction(action: InboxAction, messageIds: string[], options?: { closeModal?: boolean; wakeAt?: string }): Promise<boolean> {
+  // Delete in Trash expunges, while the same control is reversible everywhere
+  // else. Trash is the folder with that RFC 6154 role, else by its name.
+  function confirmPermanentDelete(count: number): boolean {
+    const what = count === 1 ? "this message" : `${count} messages`;
+    const folder = folders.find((f) => f.path === mailbox);
+    const kind = standardMailboxKind(folder ?? { path: mailbox, deletable: false });
+    if (kind === "trash") return window.confirm(`Permanently delete ${what}? This cannot be undone.`);
+    // Folder roles not loaded (or failed): a Trash named otherwise cannot be
+    // told apart, so ask for any named folder that is not a known kind.
+    if (!folder && mailbox && kind === "custom") return window.confirm(`Delete ${what}? If this folder is your Trash, this cannot be undone.`);
+    return true;
+  }
+
+  async function applyInboxAction(action: InboxAction, messageIds: string[], options?: { closeModal?: boolean; wakeAt?: string; confirmed?: boolean }): Promise<boolean> {
     if (messageIds.length === 0 || actionLoading) return false;
+    if (action === "delete" && !options?.confirmed && !confirmPermanentDelete(messageIds.length)) return false;
     setActionLoading(true);
     setActionError("");
     try {
@@ -872,6 +890,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         // poll that was in flight before the delete), it just no longer
         // stands between the click and the row leaving.
         setByTab((current) => withoutMessages(current, messageIds));
+        setSearchResults((current) => current.filter((item) => !messageIds.includes(item.messageId)));
         void loadInbox();
       }
       if (options?.closeModal) {
@@ -974,7 +993,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     setActionError("");
     try {
       const response = await getJSON<{ results: InboxEmail[] }>(
-        `/api/mail/search?q=${encodeURIComponent(searchQuery)}&field=${encodeURIComponent(searchField)}&mailbox=${encodeURIComponent(mailbox || "INBOX")}&limit=100`
+        `/api/mail/search?q=${encodeURIComponent(searchQuery)}&field=${encodeURIComponent(searchField)}${mailbox ? `&mailbox=${encodeURIComponent(mailbox)}` : ""}&limit=100`
       );
       if (searchId !== searchIdRef.current) return;
       setSearchResults(response.results ?? []);
@@ -1135,7 +1154,8 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       }, 280);
     }
 
-    if (!state.armed) {
+    // Ask before the row animates away: a declined Trash delete must snap back.
+    if (!state.armed || (state.tone === "delete" && !confirmPermanentDelete(1))) {
       setSwipeRows((current) => ({
         ...current,
         [session.messageId]: {
@@ -1165,7 +1185,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     }, 170);
 
     const action: InboxAction = state.tone === "delete" ? "delete" : "archive";
-    const ok = await applyInboxAction(action, [session.messageId]);
+    const ok = await applyInboxAction(action, [session.messageId], { confirmed: true });
     if (!ok) {
       markSwipeRemoved(session.messageId, false);
       setSwipeRows((current) => ({
@@ -1321,7 +1341,23 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         }
       }
       const draft = displayBody(withBody, decrypted[decryptedKey(item.messageId)]);
+      // The attachments are parts of the stored draft. Reopen them too, or Send
+      // goes out without them; refuse to open a partial draft. Pinned to this
+      // page's mailbox: the user may have switched mailboxes since the click.
+      let attachments: NonNullable<DraftComposePayload["attachments"]>;
+      try {
+        const pinned = mailboxHeaders(box);
+        const listed = await getJSON<{ attachments?: AttachmentInfo[] }>(`/api/mail/attachments?${attachmentQuery(item)}`, pinned);
+        attachments = await Promise.all((listed.attachments ?? []).map(async (a) => {
+          const bytes = await getBytes(`/api/mail/attachment?${attachmentQuery(item)}&index=${a.index}`, pinned);
+          return { name: a.name, mimeType: a.mimeType, dataBase64: bytesToBase64(bytes), size: bytes.length };
+        }));
+      } catch (e) {
+        setActionError(toErrorMessage(e, "could not load this draft's attachments"));
+        return;
+      }
       openDraft({
+        attachments,
         sentTo: item.sentTo,
         cc: item.cc,
         bcc: item.bcc,
@@ -1421,6 +1457,19 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       body: buildReplyBody(selected, decrypted[decryptedKey(selected.messageId)])
     });
     setSelected(null);
+  }
+
+  // List rows are loaded without bodies (bodies=0): fetch each one first, or
+  // every page prints "No message body available". Encrypted rows stay as
+  // they are; only the reader shows their decrypted text.
+  async function printListed(items: InboxEmail[]) {
+    try {
+      printEmails(await Promise.all(items.map(async (item) =>
+        item.body !== undefined || item.pgpEncrypted ? item : { ...item, ...(await fetchMessageBody(item)) }
+      )));
+    } catch (e) {
+      setActionError(toErrorMessage(e, "could not load the messages to print"));
+    }
   }
 
   function printEmails(items: InboxEmail[]) {
@@ -1625,7 +1674,12 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                 type="button"
                 className="inbox-tab"
                 aria-pressed={isActive}
-                onClick={() => setActiveTab(tab)}
+                onClick={() => {
+                  // Batch actions act on the whole selection, so a selection
+                  // must not follow the user into a tab where it is hidden.
+                  setActiveTab(tab);
+                  setSelectedMessageIds([]);
+                }}
               >
                 <span>{tab}</span>
                 <span className="inbox-tab-count">{unreadCount}</span>

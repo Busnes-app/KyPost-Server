@@ -198,7 +198,7 @@ AI agents (MCP):
 - `PUT /api/agent-tokens/{id}` (step-up; `{scope}`, changes the access level)
 - POST, PUT and DELETE above also need the session's CSRF token and refuse a foreign or opaque `Origin` or `Sec-Fetch-Site: cross-site` with 403
 - `DELETE /api/agent-tokens/{id}` (revokes the token)
-- `POST /mcp` (MCP Streamable HTTP, stateless JSON responses; `Authorization: Bearer kp_<id>_<secret>` only, refused with any `Origin` and never sends CORS headers; 401 with `WWW-Authenticate: Bearer` for a missing, wrong, revoked or idle token; 10 failures per address and 50 per owner in 15 minutes give 429)
+- `POST /mcp` (MCP Streamable HTTP, stateless JSON responses; `Authorization: Bearer kp_<id>_<secret>` only, refused with any `Origin` and never sends CORS headers; 401 with `WWW-Authenticate: Bearer` for a missing, wrong, revoked or idle token; 10 failures per address and 50 per owner in 15 minutes give 429; a JSON-RPC batch is refused with 400, one message per request)
 - `GET /agent/skills/kypost/SKILL.md` (public; the agent skill matching this instance's tools)
 
 Notifications (scoped to the signed-in user unless noted):

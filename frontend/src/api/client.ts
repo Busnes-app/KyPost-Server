@@ -214,9 +214,9 @@ export async function postBlob(path: string, body: unknown, headers: Record<stri
   return response.blob();
 }
 
-/** A GET answer's bytes, held in memory. */
-export async function getBytes(path: string): Promise<Uint8Array> {
-  return new Uint8Array(await (await requestResponse(path)).arrayBuffer());
+/** A GET answer's bytes, held in memory. headers may pin the mailbox (mailboxHeaders). */
+export async function getBytes(path: string, headers?: Record<string, string>): Promise<Uint8Array> {
+  return new Uint8Array(await (await requestResponse(path, headers && { headers })).arrayBuffer());
 }
 
 // downloadFile saves a GET answer as a file. An <a href> download cannot carry

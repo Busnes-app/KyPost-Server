@@ -329,7 +329,8 @@ type Post = <T>(path: string, body: unknown) => Promise<T>;
 
 export type CalendarAnswer =
   | { kind: "answered" }
-  | { kind: "off" }
+  /** Answer by mail instead: KyCalendar is off, or holds no event for this invitation. */
+  | { kind: "off"; noEvent?: boolean }
   | { kind: "conflict"; message: string }
   | { kind: "idle"; message: string };
 
@@ -350,6 +351,9 @@ export async function answerThroughKyCalendar(
   } catch (e) {
     const code = codeOf(e);
     if (code === "kycalendar_off") return { kind: "off" };
+    // Never forwarded (unaligned DKIM, arrived before KyCalendar was on, or
+    // encrypted): the organizer can still be answered by mail.
+    if (code === "no_event") return { kind: "off", noEvent: true };
     if (code === "conflict") return { kind: "conflict", message: "The event changed since this invitation. Reload it and answer again." };
     return { kind: "idle", message: errorOf(e, "KyCalendar could not be reached; try again.") };
   }

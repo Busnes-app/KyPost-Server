@@ -862,7 +862,7 @@ export function App() {
             <Route path="/" element={<Navigate to={auth.authenticated ? "/read" : "/login"} replace />} />
           <Route path="/login" element={<LoginPage auth={auth} onAuthChanged={refreshAuth} />} />
           <Route path="/password" element={protect(<LoginPage auth={auth} onAuthChanged={refreshAuth} mode="password" />)} />
-              <Route path="/read" element={protect(<ReadPage key={selectedMailbox} onOpenDraft={compose.openDraftInCompose} onCompose={compose.openComposeWindow} />)} />
+              <Route path="/read" element={protect(<ReadPage key={selectedMailbox} onOpenDraft={compose.openDraftInCompose} onCompose={compose.openComposeWindow} folders={mailboxFolders} />)} />
           {/* Retired settings paths. They redirect rather than 404: they appear
               in docs and bookmarks, and in service workers cached inside
               installed PWAs, which can send a notification tap here long after
