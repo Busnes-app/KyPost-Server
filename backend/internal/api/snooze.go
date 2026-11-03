@@ -36,6 +36,8 @@ func (s *Server) mailStateFor(r *http.Request) (*state.Store, error) {
 	return s.mailboxStore(r.Context(), ac.UserID, ac.Mailbox)
 }
 
+var errAlreadySnoozed = errors.New("another copy of this message is already snoozed")
+
 // snoozeMessage records the snooze before moving, so a crash between the two
 // leaves a row that the wake drops, never a message stranded in Snoozed.
 func snoozeMessage(ctx context.Context, c imapadapter.Client, store *state.Store, internalID, mailbox string, wakeAt int64) error {
@@ -46,6 +48,16 @@ func snoozeMessage(ctx context.Context, c imapadapter.Client, store *state.Store
 	messageID, err := imapadapter.MessageIDOf(ctx, c, mailbox, uid)
 	if err != nil {
 		return err
+	}
+	// Snoozes are keyed by Message-ID and a wake returns one message, so a
+	// second copy (a list copy plus a direct Cc) would stay in Snoozed for
+	// good, and its failed move would drop the row the first copy relies on.
+	if mailbox != imapadapter.SnoozedFolder {
+		if snoozed, err := store.Snoozed(messageID); err != nil {
+			return err
+		} else if snoozed {
+			return errAlreadySnoozed
+		}
 	}
 	if err := store.Snooze(messageID, wakeAt); err != nil {
 		return err

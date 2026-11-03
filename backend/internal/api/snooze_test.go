@@ -51,12 +51,27 @@ func TestSnoozeMessage(t *testing.T) {
 		t.Fatalf("ListSnoozes = %+v", rows)
 	}
 
+	// A second copy with the same Message-ID is refused: one row wakes one
+	// message, so it would stay in Snoozed for good.
+	fake.headerLines[8] = []string{"Message-ID: <m7@example.com>"}
+	if err := snoozeMessage(ctx, fake, st, "8", "", 100); !errors.Is(err, errAlreadySnoozed) {
+		t.Fatalf("second copy: err=%v", err)
+	}
+	// ...and its failure leaves the first copy's row alone.
+	if err := snoozeMessage(ctx, failingMoveClient{fake}, st, "8", "", 200); err == nil {
+		t.Fatal("second copy reported success")
+	}
+	if rows, _ := st.ListSnoozes(); len(rows) != 1 || rows[0].WakeAt != 100 {
+		t.Fatalf("first copy's row changed: %+v", rows)
+	}
+
 	// A failed move must not leave a row that would later "wake" a message
 	// that never left the inbox.
-	if err := snoozeMessage(ctx, failingMoveClient{fake}, st, "7", "", 200); err == nil {
+	fake.headerLines[9] = []string{"Message-ID: <m9@example.com>"}
+	if err := snoozeMessage(ctx, failingMoveClient{fake}, st, "9", "", 200); err == nil {
 		t.Fatal("failed move reported success")
 	}
-	if rows, _ := st.ListSnoozes(); len(rows) != 0 {
+	if rows, _ := st.ListSnoozes(); len(rows) != 1 {
 		t.Fatalf("row kept after failed move: %+v", rows)
 	}
 

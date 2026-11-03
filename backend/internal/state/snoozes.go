@@ -75,6 +75,15 @@ func (s *Store) MarkWoken(messageID, inboxID string, at int64) error {
 	return nil
 }
 
+// Snoozed reports whether messageID is snoozed and not yet woken.
+func (s *Store) Snoozed(messageID string) (bool, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM snoozes WHERE message_id = ? AND woken_at = 0`, messageID).Scan(&n); err != nil {
+		return false, fmt.Errorf("read snooze (%s): %w", s.baseDir, err)
+	}
+	return n > 0, nil
+}
+
 // DropSnooze forgets messageID.
 func (s *Store) DropSnooze(messageID string) error {
 	if _, err := s.db.Exec(`DELETE FROM snoozes WHERE message_id = ?`, messageID); err != nil {
