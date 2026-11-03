@@ -1393,6 +1393,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     openDraft({
       sentTo: firstAddressFromText(selected.sender || ""),
       subject: ensureSubjectPrefix(selected.subject, "Re:"),
+      intent: "reply",
       body: buildReplyBody(selected, decrypted[decryptedKey(selected.messageId)])
     });
     setSelected(null);
@@ -1403,6 +1404,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     openDraft({
       sentTo: "",
       subject: ensureSubjectPrefix(selected.subject, "Fwd:"),
+      intent: "forward",
       body: buildForwardBody(selected, decrypted[decryptedKey(selected.messageId)])
     });
     setSelected(null);
@@ -1415,6 +1417,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       sentTo: recipients.to,
       cc: recipients.cc,
       subject: ensureSubjectPrefix(selected.subject, "Re:"),
+      intent: "reply",
       body: buildReplyBody(selected, decrypted[decryptedKey(selected.messageId)])
     });
     setSelected(null);

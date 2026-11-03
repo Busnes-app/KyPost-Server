@@ -5125,6 +5125,29 @@ pre {
   margin: 0;
 }
 
+/* Settings → Mail → Signatures: one bordered group per signature. */
+.signature-item {
+  margin: 12px 0 0;
+  padding: 12px;
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.signature-item .config-actions { margin-top: 0; }
+
+.signature-text { font-family: inherit; white-space: pre-wrap; }
+
+.signature-switches {
+  display: grid;
+  gap: 8px;
+  align-content: end;
+}
+
+.signature-address { overflow-wrap: anywhere; }
+
 /* Named palettes carry no danger colour, so the shared alias would paint
    Busnes red on any surface; tie it to the palette's own ink. `html` outranks
    the alias in ky-ui/tokens.css, which loads after this sheet. */

@@ -14,6 +14,8 @@ import {
   type PGPRecipientTier
 } from "../api/pgp";
 import { listSendAsAliases, type SendAsAlias } from "../api/sendas";
+import { getSignatures, type SignatureSettings } from "../api/signatures";
+import { insertSignature, signatureBlock, signatureTextFor, swapSignature, type ComposeKind } from "../app/signatures";
 import { isDuplicateInField, parseRecipientField, pickupFallbackFlag, serializeRecipientField, splitAddressList } from "../lib/recipients";
 import type { RecipientFieldState, RecipientToken } from "../lib/recipients";
 import { accountAddress, isClientProtected, needsUnlock, pgpCustody, pgpSessionState, subscribePGPSession } from "../lib/pgpSession";
@@ -94,6 +96,14 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   const [quillCtor, setQuillCtor] = useState<typeof Quill | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const composeNoticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The signature this compose window placed in the body, if it manages one:
+  // null for an opened draft or restored snapshot (their body carries its own)
+  // and once the user has edited the inserted block. signatureLoad discards a
+  // fetch that resolves after the window moved on.
+  const signatureRef = useRef<{ kind: ComposeKind; block: string } | null>(null);
+  const signatureSettingsRef = useRef<SignatureSettings | null>(null);
+  const signatureLoad = useRef(0);
+  const composeFromRef = useRef("");
 
   // Enforce the compose autosave's 24-hour bound. The snapshot is unencrypted
   // plaintext of a message that may have been headed for PGP encryption, and
@@ -157,6 +167,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   }, [composeOpen, composeHtmlBody, quillCtor]);
 
   function resetComposeForm() {
+    stopSignature();
     setComposeFrom("");
     setComposeTo({ tokens: [], draft: "" });
     setComposeCc({ tokens: [], draft: "" });
@@ -233,13 +244,21 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     }
     let active = true;
     const timer = setTimeout(() => {
-      void saveDraftSnapshot(userId, {
+      const fields = {
         to: serializeRecipientField(composeTo),
         cc: serializeRecipientField(composeCc),
         bcc: serializeRecipientField(composeBcc),
         subject: composeSubject,
-        body: quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody,
-        attachments: composeAttachments,
+        attachments: composeAttachments
+      };
+      const body = quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody;
+      // A window holding only its inserted signature is still blank: saving it
+      // would offer a signature back as an "unsent draft" next time.
+      const signature = signatureRef.current?.block;
+      const blank = !hasContent({ ...fields, body: signature ? body.replace(signature, "") : body });
+      void saveDraftSnapshot(userId, {
+        ...fields,
+        body: blank ? "" : body,
         mailbox: composeMailbox,
         from: composeFrom
       }).then((status) => {
@@ -251,6 +270,61 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       clearTimeout(timer);
     };
   }, [composeOpen, userId, composeTo, composeCc, composeBcc, composeSubject, composeHtmlBody, composeAttachments, composeMailbox, composeFrom]);
+
+  function stopSignature() {
+    signatureLoad.current += 1;
+    signatureRef.current = null;
+  }
+
+  /**
+   * Inserts the account's signature for the current From address, fetched
+   * fresh so a change saved on another client shows up here. A failed fetch
+   * leaves the message without one rather than blocking compose.
+   */
+  function startSignature(kind: ComposeKind) {
+    const load = ++signatureLoad.current;
+    signatureRef.current = { kind, block: "" };
+    // Until this fetch lands, a From change has nothing to swap: settings left
+    // from an earlier window would insert a second copy.
+    signatureSettingsRef.current = null;
+    Promise.resolve()
+      .then(getSignatures)
+      .then((settings) => {
+        if (load !== signatureLoad.current || !signatureRef.current) return;
+        signatureSettingsRef.current = settings;
+        const block = signatureBlock(signatureTextFor(settings, composeFromRef.current, kind));
+        signatureRef.current = { kind, block };
+        if (block) setComposeHtmlBody((body) => insertSignature(body, block));
+      })
+      .catch(() => undefined);
+  }
+
+  /** The body without the signature compose inserted, for "has the user written anything" checks. */
+  function withoutInsertedSignature(body: string): string {
+    const block = signatureRef.current?.block;
+    return block ? body.replace(block, "") : body;
+  }
+
+  // Changing From moves to that address's signature, unless the user has
+  // edited the inserted one, which then stays exactly as they left it.
+  const followFromSignature = useEffectEvent((from: string) => {
+    composeFromRef.current = from;
+    const current = signatureRef.current;
+    const settings = signatureSettingsRef.current;
+    if (!composeOpen || !current || !settings) return;
+    const block = signatureBlock(signatureTextFor(settings, from, current.kind));
+    if (block === current.block) return;
+    const body = quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody;
+    if (current.block && !body.includes(current.block)) {
+      signatureRef.current = null;
+      return;
+    }
+    signatureRef.current = { kind: current.kind, block };
+    setComposeHtmlBody(swapSignature(body, current.block, block));
+  });
+  useEffect(() => {
+    followFromSignature(composeFrom);
+  }, [composeFrom]);
 
   // discardComposeDraft clears both the form and the autosaved snapshot. Used
   // wherever the work is finished or deliberately abandoned; closing the
@@ -288,6 +362,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     setComposeNotice("");
     setComposeOpen(true);
     loadSendAsOptions();
+    startSignature("new");
     // Recover anything the last session left behind. Only on a blank compose:
     // openDraftInCompose has explicit content and must never be overwritten by
     // a stale snapshot.
@@ -309,7 +384,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       cc: serializeRecipientField(composeCc),
       bcc: serializeRecipientField(composeBcc),
       subject: composeSubject,
-      body: quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody,
+      body: withoutInsertedSignature(quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody),
       attachments: composeAttachments
     });
   }
@@ -343,6 +418,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         setComposeNotice(`An unsent draft from ${snapshot.from || "another mailbox"} is kept for when that mailbox is available again; this message is not saved automatically.`);
         return;
       }
+      // The snapshot's body carries whatever signature it was written with.
+      stopSignature();
       pinComposeMailbox(snapshot.mailbox);
       if (box) setComposeFrom(box.addresses.includes(snapshot.from) ? snapshot.from : box.addresses[0] ?? "");
       setComposeTo(parseRecipientField(snapshot.to));
@@ -369,6 +446,10 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     setComposeSuccess("");
     setComposeOpen(true);
     loadSendAsOptions();
+    // A reply or forward gets the signature (if the account wants one there);
+    // a saved draft already has whatever its author left in it.
+    if (payload.intent) startSignature(payload.intent);
+    else stopSignature();
   }
 
   function trashComposeDraft() {

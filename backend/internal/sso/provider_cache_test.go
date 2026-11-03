@@ -156,3 +156,20 @@ func TestProviderCacheIsBounded(t *testing.T) {
 		t.Fatalf("cache holds %d entries, want at most %d", n, providerCacheEntries)
 	}
 }
+
+// A cached Provider keeps the client it was built with, so a transport change
+// must not let an earlier test's Provider answer for the same issuer URL: a
+// reused httptest port would otherwise get a Provider that trusts only the old
+// certificate.
+func TestSetTransportDropsCachedProviders(t *testing.T) {
+	resetProviderCache(t)
+
+	key := providerCacheKey(testSettings("https://auth.example.com"), "https://mail.example.com/cb")
+	cacheProvider(key, &Provider{issuer: "https://auth.example.com"})
+	previous := SetTransport(http.DefaultTransport)
+	t.Cleanup(func() { SetTransport(previous) })
+
+	if p := cachedProviderFor(key); p != nil {
+		t.Fatal("a Provider cached before SetTransport is still served after it")
+	}
+}

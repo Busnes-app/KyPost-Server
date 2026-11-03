@@ -155,13 +155,23 @@ var (
 // returns the previous one. It exists because oidcverify refuses a cleartext
 // issuer, so the test provider must serve TLS; outside a test binary it
 // panics, so nothing shipped can install a transport that skips verification.
+//
+// It also empties the provider cache. A cached Provider keeps the client it was
+// built with, and the cache key does not cover the transport: each test provider
+// is an httptest server on a random loopback port with its own certificate, so
+// a later test whose provider reuses a port would otherwise get the earlier
+// test's Provider, which trusts only the old certificate and fails every JWKS
+// fetch.
 func SetTransport(rt http.RoundTripper) (previous http.RoundTripper) {
 	if !testing.Testing() {
 		panic("sso.SetTransport is test-only")
 	}
 	transportMu.Lock()
-	defer transportMu.Unlock()
 	previous, baseTransport = baseTransport, rt
+	transportMu.Unlock()
+	providerCacheMu.Lock()
+	clear(providerCache)
+	providerCacheMu.Unlock()
 	return previous
 }
 
