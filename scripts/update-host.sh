@@ -58,7 +58,11 @@ if [[ ${#files[@]} -eq 0 ]]; then
   IFS="${COMPOSE_PATH_SEPARATOR:-:}" read -ra files <<<"${COMPOSE_FILE:-$repo_dir/docker-compose.yml}"
 fi
 base=(docker compose)
-for file in "${files[@]}"; do base+=(-f "$file"); done
+for file in "${files[@]}"; do
+  # The previous run's own image override is recorded too, and deleted.
+  [[ "$(basename -- "$file")" == .kypost-update.*.yml ]] && continue
+  base+=(-f "$file")
+done
 
 mapfile -t images < <("${base[@]}" config --images kypost-server)
 if [[ ${#images[@]} -ne 1 || -z "${images[0]}" ]]; then
@@ -111,6 +115,7 @@ docker pull "$candidate_image"
 candidate_id="$(docker image inspect --format '{{.Id}}' "$candidate_image")"
 # `compose images -q` prints the bare hex; `image inspect` prefixes sha256:.
 if [[ -n "$previous_id" && "${candidate_id#sha256:}" == "${previous_id#sha256:}" ]]; then
+  docker tag "$candidate_image" "$image"
   log update info already-current
   exit 0
 fi
