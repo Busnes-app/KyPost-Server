@@ -40,6 +40,24 @@ non-prerelease version.
   cannot vouch for that message's sender. The reader now says "signed by a key you have
   not confirmed" until you confirm the key. `docs/E2E_PGP.md` states the rule for clients.
 
+### Fixed
+
+- Hostile-review pass 1 fixes. Native receiving refuses (`554 5.6.0`) mail whose From,
+  To, Cc, Bcc, Subject or Date header is over 64 KiB, and quarantines such mail already
+  accepted, instead of retrying it forever in the shared receiving buffer. A sign-in that a
+  password change or other credential revocation overtook no longer keeps a session.
+  `scripts/update-host.sh` keeps the compose overlays the container runs with, moves the
+  local image tag to the deployed digest so a later `docker compose up -d` cannot
+  downgrade, and recognises an already-current image. Re-pairing a device by push token no
+  longer inherits the sign-in approver right. `/mcp` refuses JSON-RPC batches, labels the
+  requested label, and bounds `search_messages`. Search uses the account's configured
+  folder. KyCalendar invitations are forwarded once, not on every deferred poll. A second
+  copy of a snoozed Message-ID is refused. The entrypoint no longer follows a symlink when
+  it chowns `ollama-models`. Webmail: reopened drafts keep their attachments; notification
+  links survive the first load; tab changes clear the selection; Delete in Trash asks
+  first; search hits show attachments; bulk Print prints bodies; invitations KyCalendar
+  never received can be answered by mail.
+
 ## 0.6.0 — 2026-11-02
 
 ### Added
