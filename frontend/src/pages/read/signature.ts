@@ -8,6 +8,10 @@ import type { DecryptedView, InboxEmail } from "./types";
  * - `checking` — the browser is fetching the signed bytes and verifying them.
  * - `verified` — a key the address book binds to this sender produced this
  *   signature. The strong claim, and the only one that reads as a pass.
+ * - `unconfirmed` — a good signature from a key the address book binds to this
+ *   sender, but one that arrived in mail (Autocrypt harvest) and no person has
+ *   confirmed. A key that arrives in a message cannot vouch for that message's
+ *   sender (issue #450), so this is neither a pass nor an accusation.
  * - `mismatched` — a signature that checks out cryptographically, from a key
  *   that is NOT bound to the sender. Someone signed this; not the person the
  *   From header names.
@@ -25,6 +29,7 @@ export type SignatureState =
   | "unsigned"
   | "checking"
   | "verified"
+  | "unconfirmed"
   | "mismatched"
   | "conflicted"
   | "unchecked";
@@ -58,6 +63,10 @@ export function signatureState(
   if (verified) {
     return "verified";
   }
+  if (local?.signerUnconfirmed) {
+    // A changed key still ranks above it: that is the event TOFU announces.
+    return local.signerConflict ? "conflicted" : "unconfirmed";
+  }
   const fingerprint = local ? local.signerFingerprint : email.pgpSignerFingerprint;
   if (fingerprint) {
     return "mismatched";
@@ -76,6 +85,8 @@ export function signatureLabel(state: SignatureState): string {
       return "encrypted but unsigned";
     case "verified":
       return "signature verified";
+    case "unconfirmed":
+      return "signed by a key you have not confirmed";
     case "mismatched":
       return "signature does not match sender";
     case "conflicted":

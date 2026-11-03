@@ -82,6 +82,12 @@ export type DecryptedView = {
    */
   signerConflict: boolean;
   /**
+   * The signature is good and its key is bound to the sender, but that key
+   * only ever arrived in mail and nobody confirmed it — see read/signature.ts.
+   * Optional: every failure path leaves it unset, which reads as false.
+   */
+  signerUnconfirmed?: boolean;
+  /**
    * Attachments decoded out of the same bytes as `body`. Held in memory here
    * and handed to the user as blob downloads; never posted back to the server,
    * which for a client-protected account has no business seeing them.

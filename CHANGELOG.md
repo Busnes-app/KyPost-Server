@@ -22,6 +22,13 @@ non-prerelease version.
 
 - A tab left open across an upgrade now says so: "KyPost was updated. Reload to use the new version.", with Reload and Dismiss (ky-ui's update notice; it never reloads by itself, so a draft stays). It checks at most every five minutes, on focus or when the tab becomes visible, by re-reading `index.html`, and stays quiet offline. `index.html` and the SPA fallback are sent with `Cache-Control: no-cache`, so a reload or a new tab always gets the current build; `assets/` keeps its year-long immutable caching.
 
+### Security
+
+- A signature made by an Autocrypt key that nobody has confirmed no longer reads as
+  "signature verified" (#450). Such a key came in mail, and a key that arrives in a message
+  cannot vouch for that message's sender. The reader now says "signed by a key you have
+  not confirmed" until you confirm the key. `docs/E2E_PGP.md` states the rule for clients.
+
 ## 0.6.0 — 2026-11-02
 
 ### Added
