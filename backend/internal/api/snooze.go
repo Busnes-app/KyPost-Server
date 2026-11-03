@@ -36,8 +36,9 @@ func (s *Server) mailStateFor(r *http.Request) (*state.Store, error) {
 	return s.mailboxStore(r.Context(), ac.UserID, ac.Mailbox)
 }
 
-// snoozeMessage records the snooze before moving, so a crash between the two
-// leaves a row that the wake drops, never a message stranded in Snoozed.
+// snoozeMessage records the snooze before moving, so a crash or failed move
+// between the two leaves a row that the wake drops, never a message stranded
+// in Snoozed.
 func snoozeMessage(ctx context.Context, c imapadapter.Client, store *state.Store, internalID, mailbox string, wakeAt int64) error {
 	uid, err := strconv.Atoi(internalID)
 	if err != nil {
@@ -47,18 +48,15 @@ func snoozeMessage(ctx context.Context, c imapadapter.Client, store *state.Store
 	if err != nil {
 		return err
 	}
-	fresh, err := store.SnoozeFresh(messageID, wakeAt)
-	if err != nil {
+	if err := store.Snooze(messageID, wakeAt); err != nil {
 		return err
 	}
 	if mailbox == imapadapter.SnoozedFolder {
 		return nil
 	}
+	// A failed move keeps the row: another copy with this Message-ID may sleep
+	// under it, and the wake drops a row whose message is not in Snoozed.
 	if err := c.ApplyInboxAction(ctx, internalID, "move", mailbox, imapadapter.SnoozedFolder); err != nil {
-		// Another copy with this Message-ID may already sleep under the row.
-		if fresh {
-			_ = store.DropSnooze(messageID)
-		}
 		return err
 	}
 	return nil

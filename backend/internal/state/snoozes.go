@@ -27,20 +27,7 @@ type Snooze struct {
 // Snooze records messageID as snoozed until wakeAt. Snoozing again replaces the
 // time and clears any earlier wake.
 func (s *Store) Snooze(messageID string, wakeAt int64) error {
-	_, err := s.SnoozeFresh(messageID, wakeAt)
-	return err
-}
-
-// SnoozeFresh is Snooze that also reports whether no unwoken row existed
-// before, in the same transaction: only such a caller may drop the row again
-// (another copy with this Message-ID may be snoozed under it).
-func (s *Store) SnoozeFresh(messageID string, wakeAt int64) (fresh bool, err error) {
-	err = s.tx(func(tx *sql.Tx) error {
-		var active int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM snoozes WHERE message_id = ? AND woken_at = 0`, messageID).Scan(&active); err != nil {
-			return err
-		}
-		fresh = active == 0
+	err := s.tx(func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM snoozes WHERE message_id <> ?`, messageID).Scan(&n); err != nil {
 			return err
@@ -54,9 +41,9 @@ func (s *Store) SnoozeFresh(messageID string, wakeAt int64) (fresh bool, err err
 		return err
 	})
 	if err != nil {
-		return false, fmt.Errorf("snooze (%s): %w", s.baseDir, err)
+		return fmt.Errorf("snooze (%s): %w", s.baseDir, err)
 	}
-	return fresh, nil
+	return nil
 }
 
 // DueSnoozes lists still-snoozed messages whose wake time is at or before now.
