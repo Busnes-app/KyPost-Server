@@ -15,9 +15,10 @@ import { decryptMessage, verifySignedMessage } from "../lib/pgpClient";
 import { getPGPMessagePayload } from "../api/pgp";
 import { accountAddress, isClientProtected, needsUnlock, subscribePGPSession, type PGPSessionState } from "../lib/pgpSession";
 import { PgpUnlockDialog } from "../components/PgpUnlockDialog";
-import { downloadFile, getBytes, getJSON, postJSON, selectedMailboxId, toErrorMessage } from "../api/client";
+import { downloadFile, getBytes, getJSON, mailboxHeaders, postJSON, selectedMailboxId, toErrorMessage } from "../api/client";
 import { usePagination } from "../hooks/usePagination";
 import { mailboxName, useMailboxes } from "../app/mailboxes";
+import { standardMailboxKind } from "../app/mailboxKind";
 import type { DraftComposePayload } from "../app/types";
 import { PageTabs } from "../components/PageTabs";
 import { ArchiveIcon, ArrowLeftIcon, CheckIcon, ClockIcon, CloseIcon, ImageIcon, PaperclipIcon, PlusIcon, PrintIcon, RefreshIcon, SearchIcon, TrashIcon, WarningIcon } from "./read/icons";
@@ -618,6 +619,9 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         setActiveTab(matchTab);
       }
       void openLinkedEmail(match);
+    } else if (!lastLoadedAt && !error) {
+      // The first load has not landed yet: keep the target until it does.
+      return;
     }
 
     setSearchParams(
@@ -629,7 +633,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       },
       { replace: true }
     );
-  }, [byTab, tabs, searchParams, isInboxMailbox, setSearchParams]);
+  }, [byTab, tabs, searchParams, isInboxMailbox, setSearchParams, lastLoadedAt, error]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -760,7 +764,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       key: "print",
       label: "Print",
       icon: <PrintIcon />,
-      onClick: () => printEmails(selectedInTab),
+      onClick: () => void printListed(selectedInTab),
       disabled: selectedInTab.length === 0 || actionLoading
     }
   ] as const;
@@ -832,6 +836,11 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
 
   async function applyInboxAction(action: InboxAction, messageIds: string[], options?: { closeModal?: boolean; wakeAt?: string }): Promise<boolean> {
     if (messageIds.length === 0 || actionLoading) return false;
+    // Delete in Trash expunges: the same control is reversible everywhere else.
+    if (action === "delete" && standardMailboxKind({ path: mailbox, deletable: false }) === "trash") {
+      const count = messageIds.length === 1 ? "this message" : `${messageIds.length} messages`;
+      if (!window.confirm(`Permanently delete ${count}? This cannot be undone.`)) return false;
+    }
     setActionLoading(true);
     setActionError("");
     try {
@@ -872,6 +881,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         // poll that was in flight before the delete), it just no longer
         // stands between the click and the row leaving.
         setByTab((current) => withoutMessages(current, messageIds));
+        setSearchResults((current) => current.filter((item) => !messageIds.includes(item.messageId)));
         void loadInbox();
       }
       if (options?.closeModal) {
@@ -974,7 +984,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     setActionError("");
     try {
       const response = await getJSON<{ results: InboxEmail[] }>(
-        `/api/mail/search?q=${encodeURIComponent(searchQuery)}&field=${encodeURIComponent(searchField)}&mailbox=${encodeURIComponent(mailbox || "INBOX")}&limit=100`
+        `/api/mail/search?q=${encodeURIComponent(searchQuery)}&field=${encodeURIComponent(searchField)}${mailbox ? `&mailbox=${encodeURIComponent(mailbox)}` : ""}&limit=100`
       );
       if (searchId !== searchIdRef.current) return;
       setSearchResults(response.results ?? []);
@@ -1322,12 +1332,14 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       }
       const draft = displayBody(withBody, decrypted[decryptedKey(item.messageId)]);
       // The attachments are parts of the stored draft. Reopen them too, or Send
-      // goes out without them; refuse to open a partial draft.
+      // goes out without them; refuse to open a partial draft. Pinned to this
+      // page's mailbox: the user may have switched mailboxes since the click.
       let attachments: NonNullable<DraftComposePayload["attachments"]>;
       try {
-        const listed = await getJSON<{ attachments?: AttachmentInfo[] }>(`/api/mail/attachments?${attachmentQuery(item)}`);
+        const pinned = mailboxHeaders(box);
+        const listed = await getJSON<{ attachments?: AttachmentInfo[] }>(`/api/mail/attachments?${attachmentQuery(item)}`, pinned);
         attachments = await Promise.all((listed.attachments ?? []).map(async (a) => {
-          const bytes = await getBytes(`/api/mail/attachment?${attachmentQuery(item)}&index=${a.index}`);
+          const bytes = await getBytes(`/api/mail/attachment?${attachmentQuery(item)}&index=${a.index}`, pinned);
           return { name: a.name, mimeType: a.mimeType, dataBase64: bytesToBase64(bytes), size: bytes.length };
         }));
       } catch (e) {
@@ -1372,7 +1384,9 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     setAttachmentsError("");
     setAttachmentsLoading(false);
     const attachmentsLoad = ++attachmentsLoadRef.current;
-    if (item.hasAttachments) {
+    // A search hit carries no attachment flag (search returns overviews), so
+    // ask: a hit without attachments answers with an empty list.
+    if (item.hasAttachments || searchMode) {
       void loadAttachments(item, attachmentsLoad);
     }
     if (item.status !== "read") {
@@ -1435,6 +1449,19 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       body: buildReplyBody(selected, decrypted[decryptedKey(selected.messageId)])
     });
     setSelected(null);
+  }
+
+  // List rows are loaded without bodies (bodies=0): fetch each one first, or
+  // every page prints "No message body available". Encrypted rows stay as
+  // they are; only the reader shows their decrypted text.
+  async function printListed(items: InboxEmail[]) {
+    try {
+      printEmails(await Promise.all(items.map(async (item) =>
+        item.body !== undefined || item.pgpEncrypted ? item : { ...item, ...(await fetchMessageBody(item)) }
+      )));
+    } catch (e) {
+      setActionError(toErrorMessage(e, "could not load the messages to print"));
+    }
   }
 
   function printEmails(items: InboxEmail[]) {
@@ -1639,7 +1666,12 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                 type="button"
                 className="inbox-tab"
                 aria-pressed={isActive}
-                onClick={() => setActiveTab(tab)}
+                onClick={() => {
+                  // Batch actions act on the whole selection, so a selection
+                  // must not follow the user into a tab where it is hidden.
+                  setActiveTab(tab);
+                  setSelectedMessageIds([]);
+                }}
               >
                 <span>{tab}</span>
                 <span className="inbox-tab-count">{unreadCount}</span>
@@ -2079,7 +2111,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
                 }
                 return null;
               })()}
-              {selected.hasAttachments && !decrypted[decryptedKey(selected.messageId)]?.bodyFromVerifiedPart ? (
+              {(selected.hasAttachments || attachments.length > 0) && !decrypted[decryptedKey(selected.messageId)]?.bodyFromVerifiedPart ? (
                 <div className="email-attachments">
                   <strong>Attachments:</strong>
                   {attachmentsLoading ? <span className="email-attachments-status"> loading…</span> : null}

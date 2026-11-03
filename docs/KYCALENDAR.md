@@ -191,4 +191,7 @@ The route's own refusals: 400 `bad_request`/`bad_partstat` (partstat must be
 `ACCEPTED`, `TENTATIVE` or `DECLINED`), 404 `not_found`, 422
 `not_invitation`, 409 `kycalendar_off`. On `kycalendar_off` — KyPost not
 paired, the user's switch off, or no SSO link — the client sends the RSVP
-the old way: `calendarReply` on `POST /api/mail/send`.
+the old way: `calendarReply` on `POST /api/mail/send`. The web client does
+the same, after the same confirmation, on 404 `no_event`: an invitation
+KyCalendar never received (unaligned, encrypted, or older than pairing) can
+still be answered.
