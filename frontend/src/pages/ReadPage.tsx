@@ -77,7 +77,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
+export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps) {
   const readerActionsId = useId();
   const searchScopeName = useId();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -834,13 +834,17 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     });
   }
 
-  async function applyInboxAction(action: InboxAction, messageIds: string[], options?: { closeModal?: boolean; wakeAt?: string }): Promise<boolean> {
+  // Delete in Trash expunges, while the same control is reversible everywhere
+  // else. Trash is the folder with that RFC 6154 role, else by its name.
+  function confirmPermanentDelete(count: number): boolean {
+    const folder = folders.find((f) => f.path === mailbox) ?? { path: mailbox, deletable: false };
+    if (standardMailboxKind(folder) !== "trash") return true;
+    return window.confirm(`Permanently delete ${count === 1 ? "this message" : `${count} messages`}? This cannot be undone.`);
+  }
+
+  async function applyInboxAction(action: InboxAction, messageIds: string[], options?: { closeModal?: boolean; wakeAt?: string; confirmed?: boolean }): Promise<boolean> {
     if (messageIds.length === 0 || actionLoading) return false;
-    // Delete in Trash expunges: the same control is reversible everywhere else.
-    if (action === "delete" && standardMailboxKind({ path: mailbox, deletable: false }) === "trash") {
-      const count = messageIds.length === 1 ? "this message" : `${messageIds.length} messages`;
-      if (!window.confirm(`Permanently delete ${count}? This cannot be undone.`)) return false;
-    }
+    if (action === "delete" && !options?.confirmed && !confirmPermanentDelete(messageIds.length)) return false;
     setActionLoading(true);
     setActionError("");
     try {
@@ -1145,7 +1149,8 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
       }, 280);
     }
 
-    if (!state.armed) {
+    // Ask before the row animates away: a declined Trash delete must snap back.
+    if (!state.armed || (state.tone === "delete" && !confirmPermanentDelete(1))) {
       setSwipeRows((current) => ({
         ...current,
         [session.messageId]: {
@@ -1175,7 +1180,7 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
     }, 170);
 
     const action: InboxAction = state.tone === "delete" ? "delete" : "archive";
-    const ok = await applyInboxAction(action, [session.messageId]);
+    const ok = await applyInboxAction(action, [session.messageId], { confirmed: true });
     if (!ok) {
       markSwipeRemoved(session.messageId, false);
       setSwipeRows((current) => ({

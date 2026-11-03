@@ -1,5 +1,5 @@
 import type { MimeAttachment } from "../../lib/mimeContent";
-import type { DraftComposePayload } from "../../app/types";
+import type { DraftComposePayload, InboxFolder } from "../../app/types";
 
 // Shared shapes for the read view: the message record the inbox API returns,
 // its decrypted counterpart, and the list's sort/swipe state.
@@ -113,6 +113,8 @@ export type ReadPageProps = {
   onOpenDraft?: (payload: DraftComposePayload) => void;
   /** Empty-state call to action. Absent hides the button. */
   onCompose?: () => void;
+  /** The account's folders, for their RFC 6154 roles (a Trash not named "Trash"). */
+  folders?: InboxFolder[];
 };
 
 export type InboxResponse = {

@@ -54,10 +54,10 @@ beforeEach(() => {
   postJSON.mockResolvedValue({ ok: true, results: [], failed: [] });
 });
 
-function renderAt(path: string) {
+function renderAt(path: string, folders?: { path: string; deletable: boolean; special?: string }[]) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <ReadPage />
+      <ReadPage folders={folders} />
     </MemoryRouter>
   );
 }
@@ -108,6 +108,27 @@ describe("ReadPage list actions", () => {
     await user.click(within(screen.getByRole("toolbar", { name: "Selected messages" })).getByRole("button", { name: "Delete" }));
     expect(confirm).toHaveBeenCalledWith("Permanently delete this message? This cannot be undone.");
     expect(postJSON).not.toHaveBeenCalledWith("/api/inbox/actions", expect.anything());
+  });
+
+  it("recognises Trash by its server role, whatever it is called", async () => {
+    inbox = Promise.resolve({ tabs: ["Papierkorb"], byTab: { Papierkorb: [row("t1", "Binned")] } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    renderAt("/?mailbox=Papierkorb", [{ path: "Papierkorb", deletable: false, special: "trash" }]);
+    await user.click(await screen.findByRole("checkbox", { name: "Select email Binned" }));
+    await user.click(within(screen.getByRole("toolbar", { name: "Selected messages" })).getByRole("button", { name: "Delete" }));
+    expect(confirm).toHaveBeenCalled();
+    expect(postJSON).not.toHaveBeenCalledWith("/api/inbox/actions", expect.anything());
+  });
+
+  it("deletes without asking outside Trash", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    const user = userEvent.setup();
+    renderAt("/");
+    await user.click(await screen.findByRole("checkbox", { name: "Select email First" }));
+    await user.click(within(screen.getByRole("toolbar", { name: "Selected messages" })).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(postJSON).toHaveBeenCalledWith("/api/inbox/actions", expect.objectContaining({ action: "delete" })));
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it("fetches each selected message's body before printing", async () => {
