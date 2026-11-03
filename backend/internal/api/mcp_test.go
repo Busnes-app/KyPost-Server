@@ -1330,3 +1330,47 @@ Content-Type: text/plain
 		t.Errorf("thread %+v, want the original then an unavailable placeholder", thread.Messages)
 	}
 }
+
+// A JSON-RPC batch would run its calls in parallel under the one limiter unit
+// and in-flight slot a request spends, so /mcp takes one message per request.
+func TestMCPRefusesBatches(t *testing.T) {
+	w := newMCPWorld(t)
+	_, tok := seedAgentToken(t, w.srv, w.user.ID, state.AgentScopeRead, time.Now())
+	if rec := rawMCP(t, w.srv, " ["+listToolsRPC+","+listToolsRPC+"]", bearerHeader(tok)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("batch: %d %s", rec.Code, rec.Body)
+	}
+	if rec := rawMCP(t, w.srv, listToolsRPC, bearerHeader(tok)); rec.Code != http.StatusOK {
+		t.Fatalf("single message: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// The label list comes from ranging a map, so apply_label must index the same
+// read it searched or it can write a neighbour's keyword.
+func TestMCPApplyLabelWritesTheRequestedLabel(t *testing.T) {
+	w := newMCPWorld(t)
+	mappings := map[string][]string{}
+	for _, l := range []string{"A", "B", "C", "D", "E", "F", "G", "H"} {
+		mappings[l] = []string{"Key" + l}
+	}
+	if err := config.UpdateUserSettings(w.srv.userSettingsPath(w.user.ID), func(us *config.UserSettings) error {
+		us.Labels = config.UserLabelSettings{Seeded: true, Allowlist: []string{"Work"}, KeywordMappings: mappings}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	id := w.deliver(t, plainMail)
+	_, tok := seedAgentToken(t, w.srv, w.user.ID, state.AgentScopeOrganize, time.Now())
+	cs := agent(t, w.srv, tok, nil)
+	for range 10 {
+		if msg := callTool(t, cs, "apply_label", map[string]any{"message_ids": []string{id}, "label": "KeyD"}, nil); msg != "" {
+			t.Fatal(msg)
+		}
+		var out messageOut
+		if msg := callTool(t, cs, "read_message", map[string]any{"message_id": id}, &out); msg != "" {
+			t.Fatal(msg)
+		}
+		if len(out.Message.Labels) != 1 || out.Message.Labels[0] != "KeyD" {
+			t.Fatalf("apply_label KeyD left labels %v", out.Message.Labels)
+		}
+	}
+}

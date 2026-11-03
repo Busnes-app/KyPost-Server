@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"mime"
 	"net/http"
 	"net/textproto"
@@ -54,6 +55,9 @@ const (
 	maxAgentThreadBody = 8 << 10
 	maxAgentThread     = 10
 	maxAgentList       = 25
+	// maxAgentSearchPasses bounds search_messages to this many pages of
+	// maxAgentList hits.
+	maxAgentSearchPasses = 8
 	// Every tool call, reads included, spends one from the token's bucket.
 	mcpCallBurst        = 120
 	mcpCallRefillPerSec = 2.0
@@ -213,6 +217,19 @@ func (s *Server) withMCPAuth(next http.Handler) http.Handler {
 		if now.Unix()-tok.LastActive() > 60 {
 			_ = s.globalStore.TouchAgentToken(ctx, tok.ID, now.Unix())
 		}
+		// One JSON-RPC message per request. The SDK still accepts a batch from a
+		// pre-2025-06-18 client and runs its calls in parallel, all under the one
+		// limiter unit and in-flight slot spent above.
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+		if err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if trimmed := bytes.TrimLeft(body, " \t\r\n"); len(trimmed) > 0 && trimmed[0] == '[' {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "JSON-RPC batches are not accepted; send one message per request"})
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		ctx = context.WithValue(ctx, authContextKey{}, AuthContext{UserID: user.ID, Username: user.Username, Role: user.Role})
 		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, mcpCallerKey{}, mcpCaller{user: user, token: tok})))
 	})
@@ -540,9 +557,11 @@ func (t mcpTools) searchMessages(ctx context.Context, _ *mcp.CallToolRequest, in
 	// occur in one, and the server searched what the agent may not read. Paging
 	// on past them until the limit is filled or the search runs out keeps them
 	// from displacing a readable result, so neither count nor IDs betray them.
+	// Bounded: a folder full of encrypted hits would otherwise be walked to
+	// its end for one call's charge, holding the account's one request slot.
 	limit := agentLimit(in.Limit)
 	var msgs []mcpMessage
-	for before := 0; len(msgs) < limit; {
+	for before, pass := 0, 0; len(msgs) < limit && pass < maxAgentSearchPasses; pass++ {
 		results, err := client.SearchMessages(ctx, folder, field, query, maxAgentList, before)
 		if err != nil {
 			return nil, messagesOut{}, errors.New(msgMailUnavailable)
@@ -1021,11 +1040,14 @@ func (t mcpTools) label(ctx context.Context, in labelIn, action string) (*mcp.Ca
 	if err != nil {
 		return nil, actionOut{}, err
 	}
-	i := slices.IndexFunc(t.userLabels(), func(l string) bool { return strings.EqualFold(l, strings.TrimSpace(in.Label)) })
+	// One read: the list's order comes from ranging a map, so a second call
+	// can put a different label at the same index.
+	labels := t.userLabels()
+	i := slices.IndexFunc(labels, func(l string) bool { return strings.EqualFold(l, strings.TrimSpace(in.Label)) })
 	if i < 0 {
 		return nil, actionOut{}, errors.New(msgUnknownLabel)
 	}
-	label := t.userLabels()[i]
+	label := labels[i]
 	// An IMAP account sets keywords on its default folder whatever the id came
 	// from, so an id from another folder would label a different message.
 	if folder, _ := agentFolder(in.Folder); imapadapter.MailSourceIdentity(client) == "imap" && !strings.EqualFold(folder, "INBOX") {

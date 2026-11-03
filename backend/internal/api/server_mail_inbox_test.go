@@ -36,6 +36,7 @@ type fakeMailClient struct {
 	searchResults []imapadapter.Overview
 	searchErr     error
 	searchCalls   int
+	searchMailbox string
 
 	bodies map[int]string
 	// headerLines is what FetchHeaderFields returns; headerFields records
@@ -101,8 +102,9 @@ func (f *fakeMailClient) ListOverviewsBefore(_ context.Context, _ string, before
 	return f.olderOverviews, f.olderHasMore, f.overviewsErr
 }
 
-func (f *fakeMailClient) SearchMessages(_ context.Context, _ string, _ string, _ string, _, _ int) ([]imapadapter.Overview, error) {
+func (f *fakeMailClient) SearchMessages(_ context.Context, mailbox string, _ string, _ string, _, _ int) ([]imapadapter.Overview, error) {
 	f.searchCalls++
+	f.searchMailbox = mailbox
 	if f.searchErr != nil {
 		return nil, f.searchErr
 	}
@@ -1019,6 +1021,11 @@ func TestHandleMailSearch_PopulatesKeywords(t *testing.T) {
 	}
 	if fake.searchCalls != 1 {
 		t.Fatalf("expected exactly one SearchMessages call, got %d", fake.searchCalls)
+	}
+	// No mailbox is the account's configured folder, as on the body and action
+	// routes a hit is opened through; a literal INBOX searched another folder.
+	if fake.searchMailbox != "" {
+		t.Fatalf("search without a mailbox searched %q, want the configured folder", fake.searchMailbox)
 	}
 
 	var resp struct {
