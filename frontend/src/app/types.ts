@@ -57,7 +57,7 @@ export type DraftComposePayload = {
   bcc?: string;
   subject?: string;
   body?: string;
-  /** Decoded in the browser from an encrypted draft; never fetched from the server. */
+  /** The saved draft's attachments: decoded in the browser from an encrypted draft, fetched for an ordinary one. */
   attachments?: ComposeAttachment[];
   /** The mailbox the draft was opened from ("" is the primary). */
   mailbox?: string;

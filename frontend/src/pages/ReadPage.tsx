@@ -15,7 +15,7 @@ import { decryptMessage, verifySignedMessage } from "../lib/pgpClient";
 import { getPGPMessagePayload } from "../api/pgp";
 import { accountAddress, isClientProtected, needsUnlock, subscribePGPSession, type PGPSessionState } from "../lib/pgpSession";
 import { PgpUnlockDialog } from "../components/PgpUnlockDialog";
-import { downloadFile, getJSON, postJSON, selectedMailboxId, toErrorMessage } from "../api/client";
+import { downloadFile, getBytes, getJSON, postJSON, selectedMailboxId, toErrorMessage } from "../api/client";
 import { usePagination } from "../hooks/usePagination";
 import { mailboxName, useMailboxes } from "../app/mailboxes";
 import type { DraftComposePayload } from "../app/types";
@@ -1321,7 +1321,21 @@ export function ReadPage({ onOpenDraft, onCompose }: ReadPageProps) {
         }
       }
       const draft = displayBody(withBody, decrypted[decryptedKey(item.messageId)]);
+      // The attachments are parts of the stored draft. Reopen them too, or Send
+      // goes out without them; refuse to open a partial draft.
+      let attachments: NonNullable<DraftComposePayload["attachments"]>;
+      try {
+        const listed = await getJSON<{ attachments?: AttachmentInfo[] }>(`/api/mail/attachments?${attachmentQuery(item)}`);
+        attachments = await Promise.all((listed.attachments ?? []).map(async (a) => {
+          const bytes = await getBytes(`/api/mail/attachment?${attachmentQuery(item)}&index=${a.index}`);
+          return { name: a.name, mimeType: a.mimeType, dataBase64: bytesToBase64(bytes), size: bytes.length };
+        }));
+      } catch (e) {
+        setActionError(toErrorMessage(e, "could not load this draft's attachments"));
+        return;
+      }
       openDraft({
+        attachments,
         sentTo: item.sentTo,
         cc: item.cc,
         bcc: item.bcc,
