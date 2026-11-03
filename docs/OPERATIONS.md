@@ -41,7 +41,12 @@ checkout, apply the current `stable` image with health-gated rollback:
 
 The script resolves `stable` to an immutable digest, verifies its GitHub build
 attestation with `gh attestation verify`, and preserves that exact digest for
-rollback. It requires Docker Compose v2, Docker Buildx, and the GitHub CLI
+rollback. It recreates the container with the compose files it is running
+from, so overlays such as `docker-compose.receiving.yml`,
+`docker-compose.rspamd.yml` or `docker-compose.strong-crypto.yml` stay in force,
+and afterwards points the local `stable` (or `KYPOST_VERSION`) tag at the image
+it deployed, so a later plain `docker compose up -d` does not fall back to the
+older image. It requires Docker Compose v2, Docker Buildx, and the GitHub CLI
 (`gh`), and checks for each up front; it fails closed
 when either verification or the health check fails. To stay on a specific
 release instead, set `KYPOST_VERSION=0.6.0` in `.env` before running it.
