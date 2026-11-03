@@ -55,9 +55,6 @@ const (
 	maxAgentThreadBody = 8 << 10
 	maxAgentThread     = 10
 	maxAgentList       = 25
-	// maxAgentSearchPasses bounds search_messages to this many pages of
-	// maxAgentList hits.
-	maxAgentSearchPasses = 8
 	// Every tool call, reads included, spends one from the token's bucket.
 	mcpCallBurst        = 120
 	mcpCallRefillPerSec = 2.0
@@ -557,11 +554,9 @@ func (t mcpTools) searchMessages(ctx context.Context, _ *mcp.CallToolRequest, in
 	// occur in one, and the server searched what the agent may not read. Paging
 	// on past them until the limit is filled or the search runs out keeps them
 	// from displacing a readable result, so neither count nor IDs betray them.
-	// Bounded: a folder full of encrypted hits would otherwise be walked to
-	// its end for one call's charge, holding the account's one request slot.
 	limit := agentLimit(in.Limit)
 	var msgs []mcpMessage
-	for before, pass := 0, 0; len(msgs) < limit && pass < maxAgentSearchPasses; pass++ {
+	for before := 0; len(msgs) < limit; {
 		results, err := client.SearchMessages(ctx, folder, field, query, maxAgentList, before)
 		if err != nil {
 			return nil, messagesOut{}, errors.New(msgMailUnavailable)
