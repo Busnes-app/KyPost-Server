@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import { App } from "./App";
 import { applyStoredTheme } from "./theme";
+import { watchForUpdate } from "./ky-ui/update.js";
 import "./styles.css";
 import "./ky-ui/tokens.css";
 import "./ky-ui/shell.css";
@@ -11,6 +12,7 @@ import "./ky-ui/appearance.css";
 import "./ky-ui/appearance-themes.css";
 
 applyStoredTheme();
+watchForUpdate({ name: "KyPost" });
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {

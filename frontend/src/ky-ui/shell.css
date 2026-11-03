@@ -107,7 +107,8 @@
 .ky-auth-submit,
 .ky-page-action,
 .ky-auth-sso,
-.ky-about-close {
+.ky-about-close,
+.ky-update-reload {
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
@@ -130,7 +131,8 @@
 }
 .ky-auth-submit, .ky-auth-sso { width: 100%; }
 .ky-auth-submit:hover:not(:disabled),
-.ky-page-action:hover:not(:disabled) {
+.ky-page-action:hover:not(:disabled),
+.ky-update-reload:hover {
   background: color-mix(in srgb, var(--accent, var(--ky-accent)) 86%, var(--ink-strong, var(--ky-ink-strong)));
 }
 .ky-auth-submit:disabled,
@@ -561,25 +563,79 @@
   .ky-status::before { background: CanvasText; }
 }
 
+/* ---------- Update notice: a newer build is being served ---------- */
+/* Quiet and out of the way: a small panel in the bottom corner (full width on phones), never a
+   modal and never a reload by itself, since the page may hold unsaved work. */
+.ky-update {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 30;
+  inset-inline-end: var(--ky-space-4);
+  bottom: var(--ky-space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--ky-space-2);
+  max-width: min(30rem, calc(100vw - 2 * var(--ky-space-3)));
+  margin: 0;
+  padding: var(--ky-space-2) var(--ky-space-2) var(--ky-space-2) var(--ky-space-3);
+  border: 1px solid var(--line, var(--ky-line));
+  border-radius: var(--ky-radius, 10px);
+  background: var(--panel, var(--ky-panel));
+  color: var(--ink-strong, var(--ky-ink-strong));
+  box-shadow: var(--ky-shadow-overlay);
+  font-size: var(--ky-type-nav);
+  line-height: 1.4;
+}
+.ky-update-text { flex: 1 1 auto; min-width: 0; margin: 0; }
+.ky-update-reload { flex: none; }
+.ky-update-dismiss {
+  box-sizing: border-box;
+  flex: none;
+  width: var(--ky-control-size);
+  height: var(--ky-control-size);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ky-control-radius);
+  background: transparent;
+  color: var(--ink, var(--ky-ink));
+  font: inherit;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.ky-update-dismiss:hover { background: var(--panel-hover, var(--ky-panel-hover)); color: var(--ink-strong, var(--ky-ink-strong)); }
+@media (max-width: 720px) {
+  .ky-update { inset-inline: var(--ky-space-3); bottom: var(--ky-space-3); max-width: none; }
+}
+@media (pointer: coarse) {
+  .ky-update-dismiss { width: 44px; height: 44px; }
+}
+@media (forced-colors: active) {
+  .ky-update { border-color: CanvasText; }
+}
+
 /* ---------- Shared states ---------- */
 :is(.ky-auth, .ky-user, .ky-about, .ky-page-head) :focus-visible,
 .ky-license-link:focus-visible,
 .ky-icon-button:focus-visible,
 .ky-mobile-signout:focus-visible,
-.ky-app-rail a:focus-visible {
+.ky-app-rail a:focus-visible,
+.ky-update :focus-visible {
   outline: 2px solid var(--accent, var(--ky-accent));
   outline-offset: 2px;
 }
 /* Fields already draw a border: put the ring on it, not 2px outside, so it reads as one ring. */
 .ky-auth-field > input:focus-visible { outline-offset: -1px; }
 @media (prefers-reduced-motion: no-preference) {
-  :is(.ky-auth-submit, .ky-page-action, .ky-auth-sso, .ky-about-close, .ky-user-signout, .ky-icon-button, .ky-mobile-signout, .ky-auth-field > input, .ky-auth-theme select, .ky-app-rail a) {
+  :is(.ky-auth-submit, .ky-page-action, .ky-auth-sso, .ky-about-close, .ky-update-reload, .ky-update-dismiss, .ky-user-signout, .ky-icon-button, .ky-mobile-signout, .ky-auth-field > input, .ky-auth-theme select, .ky-app-rail a) {
     transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
   .ky-about[open] { animation: ky-about-in 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
   .ky-menu-list:not([hidden]) { animation: ky-menu-in 0.14s cubic-bezier(0.16, 1, 0.3, 1); }
   .ky-user .ky-menu-list:not([hidden]) { --ky-menu-from: 4px; }
   .ky-menu-list > [role="menuitem"] { transition: background-color 0.15s ease, color 0.15s ease; }
+  .ky-update { animation: ky-about-in 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
 }
 /* Slides from its gear: down from the phone header, up from the footer. */
 @keyframes ky-menu-in {
