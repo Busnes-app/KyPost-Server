@@ -3,6 +3,7 @@ package processor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
+	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -180,5 +182,25 @@ func TestForwardDefaultFollowsKyIdentityPairing(t *testing.T) {
 		if sub, _ := p.kyCalendarIdentity(user, settings); sub != want {
 			t.Errorf("%q: forwarding as %q, want %q", file, sub, want)
 		}
+	}
+}
+
+// A message deferred to a later tick stays unseen and comes back every poll;
+// its invitation is forwarded when it is processed, not on each tick it waits.
+func TestDeferredInvitationIsNotForwarded(t *testing.T) {
+	stubAlignment(t, map[string]string{"From: alice@example.com": "alice@example.com"})
+	p, fake := newForwardPoller(t)
+	uc := userCtx{id: "u1", kycalSub: "sub-1", kycalIssuer: "iss", mail: inviteMailClient{&noopMailClient{}, map[int][]byte{7: inviteMail("alice@example.com", forwardICS)}}}
+	store, err := state.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc.store = store
+	res := p.processBatch(t.Context(), uc, []imapadapter.Message{{ID: "7", HasAttachments: true}}, nil, false, errors.New("headers unavailable"))
+	if len(res.deferredIDs) != 1 {
+		t.Fatalf("deferred = %v", res.deferredIDs)
+	}
+	if len(fake.bodies) != 0 {
+		t.Fatalf("a deferred invitation was forwarded %d times", len(fake.bodies))
 	}
 }
