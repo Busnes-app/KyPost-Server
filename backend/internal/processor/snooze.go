@@ -32,46 +32,66 @@ func (p *Poller) wakeSnoozed(ctx context.Context, uc userCtx) {
 		}
 		return
 	}
-	refs, complete, err := imapadapter.MessageIDRefs(ctx, uc.mail, imapadapter.SnoozedFolder, state.MaxSnoozes)
-	if err != nil {
-		p.log.Warn("snoozed mail lookup failed", "user_id", uc.id, "error", err.Error())
-		return
-	}
 	native := imapadapter.MailSourceIdentity(uc.mail) != "imap"
 	woke := false
-	for _, z := range due {
-		uid, ok := refs[z.MessageID]
-		if !ok {
-			if complete {
-				// Moved out of Snoozed by the user, so it is already awake.
-				_ = uc.store.DropSnooze(z.MessageID)
-			}
-			continue
-		}
-		id := strconv.Itoa(uid)
-		err := uc.mail.ApplyInboxAction(ctx, id, "unread", imapadapter.SnoozedFolder, "")
-		if err == nil {
-			err = uc.mail.ApplyInboxAction(ctx, id, "move", imapadapter.SnoozedFolder, "INBOX")
-		}
+	// A row wakes the newest copy with its Message-ID; repeat for rows that
+	// woke one, so a second copy (a list copy plus a direct Cc) is not left in
+	// Snoozed under a row already marked woken.
+	for round := 0; len(due) > 0 && round < maxWakeRounds; round++ {
+		refs, complete, err := imapadapter.MessageIDRefs(ctx, uc.mail, imapadapter.SnoozedFolder, state.MaxSnoozes)
 		if err != nil {
-			p.log.Warn("snooze wake move failed", "user_id", uc.id, "error", err.Error())
-			continue
+			p.log.Warn("snoozed mail lookup failed", "user_id", uc.id, "error", err.Error())
+			break
 		}
-		inboxID := ""
-		if native {
-			inboxID = id
+		var again []state.Snooze
+		for _, z := range due {
+			if p.wakeOne(ctx, uc, z, refs, complete && round == 0, native, now) {
+				woke = true
+				again = append(again, z)
+			}
 		}
-		if err := uc.store.MarkWoken(z.MessageID, inboxID, now.Unix()); err != nil {
-			p.log.Error("snooze wake record failed", "user_id", uc.id, "error", err.Error())
-		}
-		woke = true
-		if native && !p.arrivalPending(uc, uid) {
-			p.notifyWoken(ctx, uc, uid)
-		}
+		due = again
 	}
 	if woke && !native {
 		p.pinWoken(ctx, uc)
 	}
+}
+
+// maxWakeRounds bounds how many copies sharing one Message-ID wake per tick.
+const maxWakeRounds = 8
+
+// wakeOne returns the newest copy of z in Snoozed to INBOX as unread and
+// reports whether it woke one. A row whose message is confirmed gone from
+// Snoozed (dropGone) is dropped: the user moved it out, so it is awake.
+func (p *Poller) wakeOne(ctx context.Context, uc userCtx, z state.Snooze, refs map[string]int, dropGone, native bool, now time.Time) bool {
+	uid, ok := refs[z.MessageID]
+	if !ok {
+		if dropGone {
+			// Moved out of Snoozed by the user, so it is already awake.
+			_ = uc.store.DropSnooze(z.MessageID)
+		}
+		return false
+	}
+	id := strconv.Itoa(uid)
+	err := uc.mail.ApplyInboxAction(ctx, id, "unread", imapadapter.SnoozedFolder, "")
+	if err == nil {
+		err = uc.mail.ApplyInboxAction(ctx, id, "move", imapadapter.SnoozedFolder, "INBOX")
+	}
+	if err != nil {
+		p.log.Warn("snooze wake move failed", "user_id", uc.id, "error", err.Error())
+		return false
+	}
+	inboxID := ""
+	if native {
+		inboxID = id
+	}
+	if err := uc.store.MarkWoken(z.MessageID, inboxID, now.Unix()); err != nil {
+		p.log.Error("snooze wake record failed", "user_id", uc.id, "error", err.Error())
+	}
+	if native && !p.arrivalPending(uc, uid) {
+		p.notifyWoken(ctx, uc, uid)
+	}
+	return true
 }
 
 // pinWoken finds the INBOX UID of woken IMAP mail not yet pinned: just woken,

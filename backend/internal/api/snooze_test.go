@@ -51,28 +51,30 @@ func TestSnoozeMessage(t *testing.T) {
 		t.Fatalf("ListSnoozes = %+v", rows)
 	}
 
-	// A second copy with the same Message-ID is refused: one row wakes one
-	// message, so it would stay in Snoozed for good.
-	fake.headerLines[8] = []string{"Message-ID: <m7@example.com>"}
-	if err := snoozeMessage(ctx, fake, st, "8", "", 100); !errors.Is(err, errAlreadySnoozed) {
-		t.Fatalf("second copy: err=%v", err)
-	}
-	// ...and its failure leaves the first copy's row alone.
-	if err := snoozeMessage(ctx, failingMoveClient{fake}, st, "8", "", 200); err == nil {
-		t.Fatal("second copy reported success")
-	}
-	if rows, _ := st.ListSnoozes(); len(rows) != 1 || rows[0].WakeAt != 100 {
-		t.Fatalf("first copy's row changed: %+v", rows)
-	}
-
 	// A failed move must not leave a row that would later "wake" a message
 	// that never left the inbox.
-	fake.headerLines[9] = []string{"Message-ID: <m9@example.com>"}
+	if err := st.DropSnooze("<m7@example.com>"); err != nil {
+		t.Fatal(err)
+	}
+	if err := snoozeMessage(ctx, failingMoveClient{fake}, st, "7", "", 200); err == nil {
+		t.Fatal("failed move reported success")
+	}
+	if rows, _ := st.ListSnoozes(); len(rows) != 0 {
+		t.Fatalf("row kept after failed move: %+v", rows)
+	}
+
+	// A second copy with the same Message-ID shares the row; its failed move
+	// must leave the row the first copy sleeps under.
+	fake.headerLines[8] = []string{"Message-ID: <m8@example.com>"}
+	fake.headerLines[9] = []string{"Message-ID: <m8@example.com>"}
+	if err := snoozeMessage(ctx, fake, st, "8", "", 100); err != nil {
+		t.Fatal(err)
+	}
 	if err := snoozeMessage(ctx, failingMoveClient{fake}, st, "9", "", 200); err == nil {
 		t.Fatal("failed move reported success")
 	}
-	if rows, _ := st.ListSnoozes(); len(rows) != 1 {
-		t.Fatalf("row kept after failed move: %+v", rows)
+	if rows, _ := st.ListSnoozes(); len(rows) != 1 || rows[0].MessageID != "<m8@example.com>" {
+		t.Fatalf("a failed second snooze dropped the first copy's row: %+v", rows)
 	}
 
 	fake.headerLines = map[int][]string{7: {}}

@@ -303,3 +303,24 @@ func TestWakeSnoozedLeavesUnprocessedNativeMailToArrival(t *testing.T) {
 		t.Fatalf("arrival poll does not see the unprocessed woken message: %+v", unread)
 	}
 }
+
+// Two copies sharing a Message-ID (a list copy plus a direct Cc) sleep under
+// one row; the wake returns both, not only the newest.
+func TestWakeSnoozedReturnsEveryCopyOfAMessageID(t *testing.T) {
+	f := newSnoozeFixture(t)
+	ctx := context.Background()
+	msg := mailmsg.Message{From: "sender@outside.test", To: []string{"one@example.test"}, Subject: "twice", Body: "b"}.Stamp()
+	first := f.snoozeRaw(t, "copy-1", msg.MessageID, msg.Build(), time.Now().Unix()-1)
+	second := f.snoozeRaw(t, "copy-2", msg.MessageID, msg.Build(), time.Now().Unix()-1)
+
+	f.p.wakeSnoozed(ctx, f.uc)
+
+	for _, uid := range []int{first, second} {
+		if _, ok, _ := imapadapter.OverviewByID(ctx, f.uc.mail, imapadapter.SnoozedFolder, uid); ok {
+			t.Fatalf("copy %d stayed in Snoozed", uid)
+		}
+		if _, ok, _ := imapadapter.OverviewByID(ctx, f.uc.mail, "INBOX", uid); !ok {
+			t.Fatalf("copy %d did not return to INBOX", uid)
+		}
+	}
+}
