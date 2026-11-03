@@ -1058,7 +1058,9 @@ func (s *Store) GetNativeDevice(deviceID string) (NativeDevice, bool) {
 //     choice made through SetNativeDeviceMFAApprover, so the stored value wins
 //     over whatever the caller passed.
 //   - by push token + platform: the same physical device re-pairing without its
-//     device id is one device, not two, so that row is updated in place.
+//     device id is one device, not two, so that row is updated in place. It
+//     does not keep MFAApprover: a push token proves nothing about holding
+//     the old device, and granting the approver right takes a step-up.
 //
 // Both matching branches rebuild the whole row from the caller's struct, so
 // anything the device does not resend has to be carried forward explicitly —
@@ -1128,15 +1130,14 @@ func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
 	if device.PushToken != "" {
 		var matchID, matchRegistered, matchUserID string
 		var matchSeq sql.NullInt64
-		var matchApprover int
 		var match enrollmentState
 		err := tx.QueryRow(
-			`SELECT device_id, registered_at, seq, mfa_approver, user_id,
+			`SELECT device_id, registered_at, seq, user_id,
 			        enrollment_public_key, enrollment_key_at, encryption_enrolled, enrollment_envelope_versions,
 			        enrolled_version, enrolled_generation, enrolled_fingerprint
 			 FROM native_devices
 			 WHERE push_token = ? AND platform = ? ORDER BY seq LIMIT 1`,
-			device.PushToken, device.Platform).Scan(&matchID, &matchRegistered, &matchSeq, &matchApprover, &matchUserID,
+			device.PushToken, device.Platform).Scan(&matchID, &matchRegistered, &matchSeq, &matchUserID,
 			&match.publicKey, &match.keyAt, &match.enrolled, &match.versions,
 			&match.version, &match.generation, &match.fingerprint)
 		if err == nil {
@@ -1145,7 +1146,11 @@ func (s *Store) upsertNativeDeviceTx(tx *sql.Tx, device NativeDevice) error {
 			}
 			device.DeviceID = matchID
 			device.RegisteredAt = matchRegistered
-			device.MFAApprover = matchApprover == 1
+			// Never inherited here: this branch matches on a push token, which
+			// proves nothing about holding the old device (the owner's sessions
+			// can read it), and granting the approver right otherwise takes a
+			// step-up. A re-paired phone is made an approver again explicitly.
+			device.MFAApprover = false
 			// Carry the owner forward too. Every other field the merge preserves
 			// is listed above; user_id was not, so a caller that omitted it
 			// blanked the row's owner. Harmless today because the single caller
