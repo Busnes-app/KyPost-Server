@@ -909,12 +909,12 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     }
   }
 
-  async function saveComposeDraft() {
-    if (composeSavingDraft) return;
+  async function saveComposeDraft(): Promise<boolean> {
+    if (composeSavingDraft) return false;
     const to = serializeRecipientField(composeTo);
     if (!to) {
       setComposeError("TO is required.");
-      return;
+      return false;
     }
     setComposeSavingDraft(true);
     setComposeError("");
@@ -974,8 +974,10 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         clearDraftSnapshot(userId);
       }
       setComposeSuccess("Draft saved.");
+      return true;
     } catch (e) {
       setComposeError(`Draft not saved: ${toErrorMessage(e, "failed to save draft")}`);
+      return false;
     } finally {
       setComposeSavingDraft(false);
     }
@@ -1013,6 +1015,6 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning,
     composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot,
     quillEditorRef, attachmentInputRef,
-    openComposeWindow, openDraftInCompose, closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft
+    openComposeWindow, openDraftInCompose, closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft, composeIsBlank
   };
 }

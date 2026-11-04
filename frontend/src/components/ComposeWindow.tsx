@@ -22,9 +22,20 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
     composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning,
     composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot,
     quillEditorRef, attachmentInputRef,
-    closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft
+    closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft, composeIsBlank
   } = compose;
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
+  // Leaving a window with content asks first; it never discards silently.
+  const [leaveAsk, setLeaveAsk] = useState(false);
+  function requestClose() {
+    if (composeSending || composeSavingDraft) return;
+    if (composeIsBlank()) {
+      setLeaveAsk(false);
+      closeComposeWindow();
+    } else {
+      setLeaveAsk(true);
+    }
+  }
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const composeDialogRef = useRef<HTMLDialogElement | null>(null);
   useDialogOpen(composeDialogRef, composeOpen);
@@ -36,15 +47,13 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
         className="compose-backdrop"
         aria-labelledby="compose-window-title"
         onCancel={(event) => {
-          if (composeSending) {
-            event.preventDefault();
-            return;
-          }
-          closeComposeWindow();
+          event.preventDefault();
+          requestClose();
         }}
+        onClose={() => setLeaveAsk(false)}
         onClick={(event) => {
-          if (event.target === composeDialogRef.current && !composeSending) {
-            closeComposeWindow();
+          if (event.target === composeDialogRef.current) {
+            requestClose();
           }
         }}
       >
@@ -59,12 +68,47 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                 className="compose-close btn-ghost icon-button"
                 aria-label="Close"
                 title="Close"
-                onClick={closeComposeWindow}
+                onClick={requestClose}
                 disabled={composeSending || composeSavingDraft}
               >
                 <CloseIcon />
               </button>
             </div>
+            {leaveAsk ? (
+              <div className="notice notice-warning" role="alertdialog" aria-label="Leave this message?">
+                <p style={{ margin: 0 }}>Leave this message?</p>
+                <div className="config-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={composeSavingDraft}
+                    onClick={() => {
+                      void saveComposeDraft().then((saved) => {
+                        if (!saved) return;
+                        setLeaveAsk(false);
+                        closeComposeWindow();
+                      });
+                    }}
+                  >
+                    Save draft
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-danger"
+                    disabled={composeSavingDraft}
+                    onClick={() => {
+                      setLeaveAsk(false);
+                      trashComposeDraft();
+                    }}
+                  >
+                    Discard
+                  </button>
+                  <button type="button" disabled={composeSavingDraft} onClick={() => setLeaveAsk(false)}>
+                    Keep writing
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <p className="compose-connection-hint">Send and Save Draft use this mailbox's mail connection. Check your mail account settings if the connection is unavailable.</p>
             {composeRecipientKeyWarning ? (
               <p className="compose-pgp-warning">{composeRecipientKeyWarning}</p>

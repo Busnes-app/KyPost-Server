@@ -179,3 +179,38 @@ describe("compose signatures", () => {
     expect(body()).toBe("<p><br></p>");
   });
 });
+
+// Leaving a window with content asks Save draft / Discard / Keep writing.
+describe("leaving a compose window", () => {
+  it("asks before closing one with content, and closes a blank one at once", async () => {
+    const result = compose();
+    act(() => result.current.openComposeWindow());
+    await waitFor(() => expect(body()).toContain("Alice"));
+    // Only the signature: nothing to lose.
+    act(() => (document.querySelector(".compose-close") as HTMLButtonElement).click());
+    expect(result.current.composeOpen).toBe(false);
+
+    act(() => result.current.openComposeWindow());
+    await waitFor(() => expect(body()).toContain("Alice"));
+    act(() => result.current.setComposeSubject("Quarterly numbers"));
+    const dialog = document.querySelector("dialog.compose-backdrop") as HTMLDialogElement;
+    act(() => {
+      dialog.dispatchEvent(new Event("cancel", { cancelable: true }));
+    });
+    const ask = document.querySelector('[role="alertdialog"]') as HTMLElement;
+    expect(ask?.textContent).toContain("Leave this message?");
+    expect(result.current.composeOpen).toBe(true);
+
+    const button = (name: string) =>
+      [...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === name) as HTMLButtonElement;
+    act(() => button("Keep writing").click());
+    expect(result.current.composeOpen).toBe(true);
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+
+    // A click on the backdrop asks too; Discard then closes.
+    act(() => dialog.click());
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+    act(() => button("Discard").click());
+    expect(result.current.composeOpen).toBe(false);
+  });
+});
