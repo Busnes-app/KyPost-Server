@@ -230,7 +230,27 @@ describe("leaving a compose window", () => {
     act(() => save.click());
     const editor = document.querySelector(".ql-editor") as HTMLElement;
     await waitFor(() => expect(editor.getAttribute("contenteditable")).toBe("false"));
+    expect((document.querySelector('input[aria-label="To recipients"]') as HTMLInputElement).disabled).toBe(true);
     await act(async () => finish({ ok: true }));
     await waitFor(() => expect(result.current.composeOpen).toBe(false));
+  });
+
+  it("does not let the leave prompt discard a message while it is sending", async () => {
+    const { postJSON } = await import("../api/client");
+    vi.mocked(postJSON).mockReturnValue(new Promise(() => {}));
+    const result = compose();
+    act(() => result.current.openComposeWindow());
+    await waitFor(() => expect(body()).toContain("Alice"));
+    act(() => {
+      result.current.setComposeTo({ tokens: [], draft: "bob@example.com" });
+      result.current.setComposeSubject("Quarterly numbers");
+    });
+    act(() => (document.querySelector(".compose-close") as HTMLButtonElement).click());
+    act(() => (document.querySelector(".compose-send") as HTMLButtonElement).click());
+    await waitFor(() => expect(result.current.composeSending).toBe(true));
+    const button = (name: string) =>
+      [...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === name) as HTMLButtonElement;
+    expect(button("Discard").disabled).toBe(true);
+    expect(button("Save draft").disabled).toBe(true);
   });
 });

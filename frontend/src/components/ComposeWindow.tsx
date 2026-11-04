@@ -81,7 +81,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                   <button
                     type="button"
                     className="btn-primary"
-                    disabled={composeSavingDraft}
+                    disabled={composeSavingDraft || composeSending}
                     onClick={() => {
                       void saveComposeDraft().then((saved) => {
                         if (!saved) return;
@@ -95,7 +95,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                   <button
                     type="button"
                     className="btn-danger"
-                    disabled={composeSavingDraft}
+                    disabled={composeSavingDraft || composeSending}
                     onClick={() => {
                       setLeaveAsk(false);
                       trashComposeDraft();
@@ -182,6 +182,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                   onAddToken={(token) => addTokenToField("to", token)}
                   onRemoveToken={(index) => setComposeTo((prev) => ({ ...prev, tokens: prev.tokens.filter((_, i) => i !== index) }))}
                   tiers={composeRecipientTiers}
+                  disabled={composeSending || composeSavingDraft}
                 />
               </div>
               <div className="compose-field-row">
@@ -193,6 +194,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                   onAddToken={(token) => addTokenToField("cc", token)}
                   onRemoveToken={(index) => setComposeCc((prev) => ({ ...prev, tokens: prev.tokens.filter((_, i) => i !== index) }))}
                   tiers={composeRecipientTiers}
+                  disabled={composeSending || composeSavingDraft}
                 />
               </div>
               <div className="compose-field-row">
@@ -204,6 +206,7 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                   onAddToken={(token) => addTokenToField("bcc", token)}
                   onRemoveToken={(index) => setComposeBcc((prev) => ({ ...prev, tokens: prev.tokens.filter((_, i) => i !== index) }))}
                   tiers={composeRecipientTiers}
+                  disabled={composeSending || composeSavingDraft}
                 />
               </div>
               <label className="compose-field-row">
