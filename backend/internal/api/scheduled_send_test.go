@@ -86,7 +86,9 @@ func (s *scriptedSMTP) serve(conn net.Conn, reply string) {
 		case inData:
 			data.WriteString(line)
 		case strings.HasPrefix(line, "QUIT"):
-			_, _ = conn.Write([]byte("221 bye\r\n"))
+			if reply != smtpDropsQuit {
+				_, _ = conn.Write([]byte("221 bye\r\n"))
+			}
 			return
 		case line == "DATA\r\n":
 			inData = true
@@ -96,6 +98,9 @@ func (s *scriptedSMTP) serve(conn net.Conn, reply string) {
 		}
 	}
 }
+
+// smtpDropsQuit accepts the message, then hangs up on QUIT unanswered.
+const smtpDropsQuit = "250 queued, then no answer to QUIT"
 
 func (s *scriptedSMTP) counts() (dials, data int) {
 	s.mu.Lock()
@@ -651,5 +656,25 @@ func TestScheduledSweepReadsClockPerRow(t *testing.T) {
 	}
 	if _, data := f.smtp.counts(); data != 1 || len(f.fake.savedDrafts) != 1 {
 		t.Fatalf("%d messages delivered, %d drafts; want 1 and 1", data, len(f.fake.savedDrafts))
+	}
+}
+
+// A relay that accepted the message and then dropped QUIT delivered it: the
+// send reports success with its Sent copy, so nobody retries into a duplicate.
+func TestSendAcceptedThenQuitFailedIsSent(t *testing.T) {
+	f := newScheduledFixture(t, smtpDropsQuit)
+	rec := f.post("/api/mail/send", map[string]any{"to": "bob@example.com", "subject": "now", "body": "hello", "mode": "plain"})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"sentSaved":true`) {
+		t.Fatalf("send: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, data := f.smtp.counts(); data != 1 {
+		t.Fatalf("delivered %d messages, want 1", data)
+	}
+
+	at := sendTime()
+	id := f.schedule(t, at, nil)
+	f.srv.sweepScheduledSends(context.Background(), clockAt(at))
+	if row := f.row(t, id); row.Status != "sent" || row.Reason != "" {
+		t.Fatalf("scheduled row: %+v", row)
 	}
 }

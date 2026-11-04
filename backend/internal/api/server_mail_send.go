@@ -931,7 +931,7 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	s.finishMailSend(w, r, ac.UserID, smtpHost, smtpPort, addr, payload.Username, payload.Password, envelopeFrom, toList, ccList, bccList, mainRecipients, mainCiphertext, sentCopy, copyWarning, func() string {
 		bccFailed := 0
 		for _, delivery := range bccDeliveries {
-			if err := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, payload.Username, payload.Password, envelopeFrom, delivery.Recipients, delivery.Ciphertext); err != nil {
+			if err := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, payload.Username, payload.Password, envelopeFrom, delivery.Recipients, delivery.Ciphertext); err != nil && !errors.Is(err, mailmsg.ErrSMTPAcceptedThenFailed) {
 				s.logger.Error("bcc pgp send failed", "recipient_count", strconv.Itoa(len(delivery.Recipients)), "error", err.Error())
 				bccFailed++
 			}
@@ -1013,7 +1013,9 @@ func (s *Server) finishMailSend(w http.ResponseWriter, r *http.Request, userID, 
 	s.logger.Info("mail send requested", "smtp_host", smtpHost, "smtp_port", strconv.Itoa(smtpPort), "recipient_count", strconv.Itoa(len(recipients)))
 
 	if len(recipients) > 0 {
-		if sendErr := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, smtpUsername, smtpPassword, from, recipients, msg); sendErr != nil {
+		// Accepted, then the session failed at QUIT: the message is delivered,
+		// so a 502 here would invite a retry that duplicates it.
+		if sendErr := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, smtpUsername, smtpPassword, from, recipients, msg); sendErr != nil && !errors.Is(sendErr, mailmsg.ErrSMTPAcceptedThenFailed) {
 			s.logger.Error("mail send failed", "smtp_host", smtpHost, "smtp_port", strconv.Itoa(smtpPort), "error", sendErr.Error())
 			http.Error(w, fmt.Sprintf("failed to send email: %s", sendErr.Error()), http.StatusBadGateway)
 			return false

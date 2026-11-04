@@ -475,8 +475,6 @@ func (s *Server) dispatchScheduled(ctx context.Context, j scheduledJob, now func
 			warning = joinWarnings(warning, "the Sent copy could not be saved")
 		}
 		return "sent", warning
-	case errors.Is(err, mailmsg.ErrSMTPAcceptedThenFailed):
-		return "sent", "the relay accepted it but the session failed; blind copies and the Sent copy were not completed"
 	case errors.Is(err, mailmsg.ErrSMTPAcceptanceUncertain):
 		return "uncertain", "delivery could not be confirmed; check with your recipients before sending again"
 	}

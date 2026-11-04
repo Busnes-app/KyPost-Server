@@ -320,7 +320,9 @@ type smtpGroup struct {
 func (s *Server) deliverIMAP(ctx context.Context, userID string, a smtpAccount, from string, groups []smtpGroup, sent *imapadapter.DraftMessage) (failed int, sentSaved bool, err error) {
 	for i, g := range groups {
 		sendErr := mailmsg.SMTPDeliverPrepared(a.host, a.port, a.addr, a.username, a.password, from, g.recipients, g.msg)
-		if sendErr == nil {
+		// Accepted, then the session failed at QUIT: delivered, so the blind
+		// copies and the Sent copy still follow.
+		if sendErr == nil || errors.Is(sendErr, mailmsg.ErrSMTPAcceptedThenFailed) {
 			continue
 		}
 		if i == 0 {
