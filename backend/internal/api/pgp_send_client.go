@@ -178,10 +178,15 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// Refused before anything is delivered, so Sent never disagrees with
+		// what the recipients got.
 		if sent := strings.TrimSpace(req.SentCopy); sent != "" {
-			if threaded, err := threadClientMessage(sent, inReplyTo, references); err == nil {
-				req.SentCopy = threaded
+			threaded, err := threadClientMessage(sent, inReplyTo, references)
+			if err != nil {
+				http.Error(w, "sentCopy: "+err.Error(), http.StatusBadRequest)
+				return
 			}
+			req.SentCopy = threaded
 		}
 	}
 	if req.SendAt != "" {

@@ -190,6 +190,13 @@ func TestMailSendPGPReplyThreading(t *testing.T) {
 			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body.String())
 		}
 	}
+	// A Sent copy naming another thread is refused before delivery, so Sent
+	// never disagrees with what the recipients got.
+	req.ReplyToMessageID = "42"
+	req.SentCopy, req.SentCopyEncrypted = "In-Reply-To: <other@x.test>\r\n"+delivery, true
+	if rec := f.post("/api/mail/send-pgp", req); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "sentCopy") {
+		t.Fatalf("threaded Sent copy: %d %s", rec.Code, rec.Body.String())
+	}
 	if _, n := f.smtp.counts(); n != 1 {
 		t.Fatalf("a refused reply was delivered: %d messages", n)
 	}
