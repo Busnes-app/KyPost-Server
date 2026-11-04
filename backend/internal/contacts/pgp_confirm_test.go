@@ -48,4 +48,17 @@ func TestConfirmPGPKeyAndRemovedAutocryptKey(t *testing.T) {
 	if c, _ := store.Upsert(Contact{UID: bob.UID, FormattedName: "Bob", Emails: bob.Emails, PGPKey: other}); c.PGPKeySource != "" {
 		t.Fatalf("a different pasted key took the Autocrypt source: %+v", c)
 	}
+
+	// A rotated Autocrypt key keeps its old pin; removing and re-pasting the
+	// new key must not trust it either.
+	rotated, err := store.Upsert(Contact{FormattedName: "Carol", Emails: []ContactValue{{Value: "carol@example.com"}}, PGPKey: other, PGPKeyFingerprint: fp, PGPKeySource: PGPSourceAutocrypt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upsert(Contact{UID: rotated.UID, FormattedName: "Carol", Emails: rotated.Emails}); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := store.Upsert(Contact{UID: rotated.UID, FormattedName: "Carol", Emails: rotated.Emails, PGPKey: other}); c.PGPKeySource != PGPSourceAutocrypt || c.PGPKeyVerified {
+		t.Fatalf("a re-pasted rotated Autocrypt key was promoted: %+v", c)
+	}
 }

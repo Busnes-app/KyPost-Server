@@ -286,11 +286,13 @@ func carryPGPProvenance(c *Contact, existing Contact) {
 // keepUnconfirmedAutocrypt stops "remove the key, save, paste it back" from
 // turning an unconfirmed Autocrypt key into a trusted one. Removing such a key
 // remembers its fingerprint; the same key written back without provenance is
-// still the unconfirmed Autocrypt key. Any other key clears the memory.
+// still the unconfirmed Autocrypt key. Any other key clears the memory. It
+// remembers the stored key's own fingerprint, not the pin: a rotated
+// Autocrypt key keeps its old pin.
 func keepUnconfirmedAutocrypt(c *Contact, existing Contact) {
 	remembered := existing.PGPKeyRemovedAutocrypt
 	if existing.PGPKey != "" && existing.PGPKeySource == PGPSourceAutocrypt && !existing.PGPKeyVerified {
-		remembered = existing.PGPKeyFingerprint
+		remembered = pgpKeyFingerprint(existing.PGPKey)
 	}
 	c.PGPKeyRemovedAutocrypt = ""
 	if c.PGPKey == "" {
