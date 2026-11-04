@@ -57,12 +57,13 @@ non-prerelease version.
   counting their full size against the mailbox quota. An admin reset that lands during a
   password change is no longer undone by it, and a pending two-factor sign-in no longer
   survives a credential revocation. Delete in Trash now really removes the message on servers
-  that do not expunge by themselves. Labels apply to the message in the folder it was opened
+  that do not expunge by themselves; a server without UIDPLUS gets a clear refusal instead. Labels apply to the message in the folder it was opened
   from, and drag and drop moves the dragged message when the default folder is not INBOX. A
   message the relay accepted before a failed QUIT counts as sent. Drafts folders are
   recognised by their role. Closing a message with content asks Save draft / Discard / Keep
-  writing, and a draft that loads late no longer replaces a message being written. An
-  approved re-pair stays readable for five minutes after approval.
+  writing, the message is read-only while it saves or sends, and a draft that loads late no
+  longer replaces a message being written. An encrypted draft with attachments that cannot be
+  read is not reopened without them. An approved re-pair stays readable for five minutes after approval.
 
 - Hostile-review pass 1 fixes. Native receiving refuses (`554 5.6.0`) mail whose From,
   To, Cc, Bcc, Subject or Date header is over 64 KiB, and quarantines such mail already
