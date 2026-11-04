@@ -44,7 +44,8 @@ The user creates a new one the same way.
   with its `id`. An `id` belongs to its folder and changes when a message moves: after a move,
   list or search again.
 - `list_messages` and `search_messages` return no bodies; `search_messages` never returns
-  encrypted messages. Use `read_message` for one message and `read_thread` for its
+  encrypted messages. A search costs like `list_messages` for each page of 25 matches it
+  walks, so a broad one in a large folder costs more: narrow it with `field` or `folder`. Use `read_message` for one message and `read_thread` for its
   conversation (its folder and Sent, at most 10, in thread order). Dates are what each sender
   claimed, and anyone can make a message look like part of a thread; a member with
   `unavailable: true` could not be read here.
@@ -79,6 +80,6 @@ The user creates a new one the same way.
 | this account's PGP key is end-to-end protected, so an agent cannot save drafts | Drafts would be stored unencrypted | Tell the user; they write it in KyPost |
 | this account has no mail set up | No mailbox | Tell the user to set up mail in KyPost |
 | the mail server is unavailable; try again later | Mail server problem | Try once more later; do not loop |
-| too many requests, slow down | The account's request budget is spent | Wait a minute; ask for less |
+| too many requests, slow down (a search adds "; retry in N seconds") | The account's request budget is spent | Wait that long, or a minute; ask for less |
 | another request from this account's agents is still running | One request at a time per account | Wait for the previous call, then retry once |
 | anything else | Server problem | Report it; do not retry more than once |

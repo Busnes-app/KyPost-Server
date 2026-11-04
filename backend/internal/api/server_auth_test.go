@@ -632,3 +632,9 @@ func TestLoginOvertakenByRevocationMintsNoSession(t *testing.T) {
 		t.Fatalf("sign-in during another account's revocation = %d", code)
 	}
 }
+
+// startSession signs userID in with no revocation fence, for tests that need
+// a session cookie without going through a login.
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID string) error {
+	return s.mintSession(w, r, Session{UserID: userID})
+}

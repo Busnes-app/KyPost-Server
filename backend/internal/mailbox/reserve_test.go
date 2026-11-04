@@ -27,7 +27,7 @@ func TestMailboxWritesKeepTheDriveReserve(t *testing.T) {
 	must(t, s.QueueOutbound(ctx, outboxMaster, outboxTestID, outboxTestJob()))
 	_, claim, err := s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, outboxGeneration)
 	must(t, err)
-	must(t, s.CompleteOutbound(ctx, outboxTestID, 0, claim, nil))
+	must(t, s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, nil))
 
 	defer func(orig func(string) (uint64, uint64, error)) { fsutil.DiskSpace = orig }(fsutil.DiskSpace)
 	fsutil.DiskSpace = func(string) (uint64, uint64, error) { return 10<<30 + 1<<20, 100 << 30, nil } // 1 MiB beyond the reserve

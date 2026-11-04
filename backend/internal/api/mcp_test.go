@@ -1149,6 +1149,58 @@ Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundar
 	}
 }
 
+// Search pays for every page of matches it walks past encrypted hits, so the
+// exhaustive walk is bounded by the caller's own meter; a one-page search
+// still costs what it always did, and a refusal says when to retry.
+func TestMCPSearchIsChargedPerPage(t *testing.T) {
+	w := newMCPWorld(t)
+	const encrypted = `From: sender@outside.test
+To: one@example.test
+Subject: marigold
+Date: Tue, 20 Oct 2026 09:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="b"
+
+--b--
+`
+	// Oldest first: one readable match behind two pages of encrypted ones.
+	w.deliver(t, strings.Replace(plainMail, "Readable plan body.", "Codeword marigold.", 1))
+	for range 2 * maxAgentList {
+		w.deliver(t, encrypted)
+	}
+	w.srv.mcpCallLimiter = newKeyedLimiter(1000, 0)
+	_, tok := seedAgentToken(t, w.srv, w.user.ID, state.AgentScopeRead, time.Now())
+	cs := agent(t, w.srv, tok, nil)
+	balance := func() float64 {
+		l := w.srv.mcpCallLimiter
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.refillLocked(w.user.ID, l.now()).tokens
+	}
+	cost := func(query string) (float64, int) {
+		before := balance()
+		var found messagesOut
+		if msg := callTool(t, cs, "search_messages", map[string]any{"query": query}, &found); msg != "" {
+			t.Fatal(msg)
+		}
+		return before - balance(), len(found.Messages)
+	}
+	if spent, n := cost("Codeword"); spent != 1+costList || n != 1 {
+		t.Errorf("one-page search cost %v and found %d, want %v and 1", spent, n, 1+costList)
+	}
+	if spent, n := cost("marigold"); spent != 1+3*costList || n != 1 {
+		t.Errorf("three-page search cost %v and found %d, want %v and 1", spent, n, 1+3*costList)
+	}
+
+	// Enough for the request and two pages, not the third.
+	w.srv.mcpCallLimiter.mu.Lock()
+	w.srv.mcpCallLimiter.entries[w.user.ID].tokens = 1 + costList + 1
+	w.srv.mcpCallLimiter.mu.Unlock()
+	if msg := callTool(t, cs, "search_messages", map[string]any{"query": "marigold"}, nil); !strings.Contains(msg, "retry in 1 seconds") {
+		t.Errorf("an exhausted walk answered %q, want a refusal that says when to retry", msg)
+	}
+}
+
 // A conventional Junk name the adapter falls back on is Junk here too, with no
 // special-use attribute to say so.
 func TestMCPBulkMailIsJunk(t *testing.T) {

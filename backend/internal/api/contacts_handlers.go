@@ -319,6 +319,44 @@ func (s *Server) handleContactByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleContactPGPKeyConfirm records that the user compared the contact's
+// pinned key fingerprint with its owner, so that key's signatures read as
+// verified. It is a trust grant, so it takes the same step-up as one.
+func (s *Server) handleContactPGPKeyConfirm(w http.ResponseWriter, r *http.Request) {
+	ac, ok := authFromContext(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		Fingerprint string `json:"fingerprint"`
+		AuthSecret  string `json:"authSecret"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Fingerprint) == "" {
+		http.Error(w, "fingerprint is required", http.StatusBadRequest)
+		return
+	}
+	if !s.confirmActor(w, r, ac.UserID, req.AuthSecret) {
+		return
+	}
+	store, err := s.contactsFor(r)
+	if err != nil {
+		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
+		return
+	}
+	c, found, err := store.ConfirmPGPKey(r.PathValue("id"), req.Fingerprint)
+	switch {
+	case errors.Is(err, contacts.ErrPGPKeyMismatch):
+		http.Error(w, "the fingerprint does not match this contact's current key", http.StatusConflict)
+	case err != nil:
+		http.Error(w, "failed to update contact", http.StatusInternalServerError)
+	case !found:
+		http.Error(w, "contact not found", http.StatusNotFound)
+	default:
+		writeJSON(w, http.StatusOK, c)
+	}
+}
+
 // handleContactsBulkDelete deletes multiple contacts in the caller's own
 // address book, returning a report of successes and failures.
 func (s *Server) handleContactsBulkDelete(w http.ResponseWriter, r *http.Request) {
@@ -436,7 +474,7 @@ func (s *Server) writeDAVPassword(userID string, f davPasswordFile) error {
 
 // handleContactsDAVPassword manages the caller's app-specific CardDAV
 // password: GET reports whether one is configured, POST (re)generates one
-// (returning the raw secret exactly once), DELETE revokes it.
+// after a step-up (returning the raw secret exactly once), DELETE revokes it.
 func (s *Server) handleContactsDAVPassword(w http.ResponseWriter, r *http.Request) {
 	ac, ok := authFromContext(r)
 	if !ok {
@@ -456,6 +494,19 @@ func (s *Server) handleContactsDAVPassword(w http.ResponseWriter, r *http.Reques
 		}
 		writeJSON(w, http.StatusOK, resp)
 	case http.MethodPost:
+		// The password outlives this session and logout, so minting it takes
+		// the same step-up as an agent token: a stolen cookie alone must not
+		// turn into a lasting contacts credential.
+		var req struct {
+			AuthSecret string `json:"authSecret"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if !s.confirmActor(w, r, ac.UserID, req.AuthSecret) {
+			return
+		}
 		raw, err := randomToken(24)
 		if err != nil {
 			http.Error(w, "failed to generate password", http.StatusInternalServerError)

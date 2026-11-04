@@ -381,9 +381,20 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		ch, err := s.mfaChallenges.Create(u.ID)
+		ch, err := s.mfaChallenges.CreateFenced(u.ID, revocations+1)
 		if err != nil {
 			http.Error(w, "session creation failed", http.StatusInternalServerError)
+			return
+		}
+		// The same fence mintSession applies to a password-only sign-in: a
+		// revocation since the credential was read drops this challenge, and
+		// one after this check purges it (revokeUserSessions).
+		s.sessMu.RLock()
+		revoked := s.revokedAt[u.ID] >= revocations+1
+		s.sessMu.RUnlock()
+		if revoked {
+			s.mfaChallenges.Delete(ch.ID)
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
 			return
 		}
 		methods := make([]string, 0, 2)
@@ -491,15 +502,10 @@ func (s *Server) handleCSRFToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"csrfToken": sess.CSRFToken})
 }
 
-// startSession mints a session token for userID, records it, and sets the
-// kypost_session cookie with exactly the flags the legacy password-only login
-// used. Shared by handleLogin and the second-factor endpoints.
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID string) error {
-	return s.mintSession(w, r, Session{UserID: userID})
-}
-
-// mintSession is startSession for a caller that has more to record than the
-// user id: the SSO callback stores the provider login the session came from.
+// mintSession mints a session token for sess, records it, and sets the
+// kypost_session and csrf_token cookies. A nonzero sess.revocations is the
+// sign-in's revocation fence: a revocation since then refuses the session.
+// The SSO callback also records the provider login the session came from.
 func (s *Server) mintSession(w http.ResponseWriter, r *http.Request, sess Session) error {
 	u, err := s.users.Get(sess.UserID)
 	if err != nil {
@@ -627,7 +633,7 @@ func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
 	s.mfaLockout.recordSuccess(ch.UserID)
 
 	s.mfaChallenges.Delete(ch.ID)
-	if err := s.startSession(w, r, u.ID); err != nil {
+	if err := s.mintSession(w, r, Session{UserID: u.ID, revocations: ch.Fence}); err != nil {
 		http.Error(w, "session creation failed", http.StatusInternalServerError)
 		return
 	}
@@ -680,7 +686,7 @@ func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
 	s.mfaLockout.recordSuccess(ch.UserID)
 
 	s.mfaChallenges.Delete(ch.ID)
-	if err := s.startSession(w, r, u.ID); err != nil {
+	if err := s.mintSession(w, r, Session{UserID: u.ID, revocations: ch.Fence}); err != nil {
 		http.Error(w, "session creation failed", http.StatusInternalServerError)
 		return
 	}
@@ -729,6 +735,10 @@ func (s *Server) revokeUserSessions(userID, keepToken string) {
 			delete(s.sessions, token)
 		}
 	}
+	// A pending second-factor challenge is a session not yet minted. Purged
+	// after the fence is bumped, so handleLogin's check catches any created
+	// before it and this catches any created after.
+	s.mfaChallenges.DeleteByUser(userID)
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -896,15 +906,21 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	s.passwordChangeLockout.recordSuccess(lockKey)
 
-	if req.KeyringVersion != nil {
-		if req.ExpectedRevision == nil || *req.ExpectedRevision == 0 {
-			writeUserStoreError(w, users.ErrInvalidPGPRevision)
-			return
-		}
-		if *req.ExpectedRevision != u.PGPRevision {
-			writeUserStoreError(w, users.ErrPGPRevisionChanged)
-			return
-		}
+	if req.KeyringVersion != nil && (req.ExpectedRevision == nil || *req.ExpectedRevision == 0) {
+		writeUserStoreError(w, users.ErrInvalidPGPRevision)
+		return
+	}
+	// Bind the write to the record the old credential was checked against. A
+	// reset or revocation that lands while the new hash is derived changes the
+	// credential, which bumps the revision, so this write is refused instead of
+	// undoing it. A keyring account without a revision is refused by the store.
+	if req.ExpectedRevision != nil && *req.ExpectedRevision != u.PGPRevision {
+		writeUserStoreError(w, users.ErrPGPRevisionChanged)
+		return
+	}
+	if req.ExpectedRevision == nil && u.PGPKeyring == nil {
+		verified := u.PGPRevision
+		req.ExpectedRevision = &verified
 	}
 	if req.KeyringVersion != nil && (*req.KeyringVersion != 1 || req.NewAuthSecret == "" || req.RewrappedPGPKey == "") {
 		http.Error(w, "keyringVersion 1 requires a complete rewrapped keyring and derived credential", http.StatusBadRequest)

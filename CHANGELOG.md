@@ -28,6 +28,15 @@ non-prerelease version.
   message, swaps it when you change From unless you have edited it, and never adds one to a
   saved draft. Signatures are plain text only: markup typed into one is shown as text, never
   run. Client contract: `docs/SIGNATURES.md`.
+- `POST /api/notifications/native/refresh`: a paired device replaces its push token with its
+  own device credential, no pairing token. Only that device changes; nothing is granted.
+  Clients fall back to re-pairing on 404.
+- Contact details offer "Confirm key" for a key learned from a correspondent's mail
+  (Autocrypt): compare the fingerprint with them, enter your password, and their
+  signatures then read as verified (`POST /api/contacts/{id}/pgp-key/confirm`). Removing
+  such a key and pasting it back no longer confirms it silently.
+- `POST /api/mail/send-pgp` threads replies: `replyToMessageId`/`replyToMailbox` as on
+  `/api/mail/send`, with the outer `In-Reply-To`/`References` added by the server.
 
 ### Changes
 
@@ -41,6 +50,19 @@ non-prerelease version.
   not confirmed" until you confirm the key. `docs/E2E_PGP.md` states the rule for clients.
 
 ### Fixed
+
+- Hostile-review pass 2 fixes. Generating a CardDAV app password takes the account password
+  (or a KyIdentity confirmation). An AI agent's search is charged per page it walks, and a
+  refusal says how long to wait. Finished native sends shrink to a small receipt instead of
+  counting their full size against the mailbox quota. An admin reset that lands during a
+  password change is no longer undone by it, and a pending two-factor sign-in no longer
+  survives a credential revocation. Delete in Trash now really removes the message on servers
+  that do not expunge by themselves; a server without UIDPLUS gets a clear refusal instead. Labels apply to the message in the folder it was opened
+  from, and drag and drop moves the dragged message when the default folder is not INBOX. A
+  message the relay accepted before a failed QUIT counts as sent. Drafts folders are
+  recognised by their role. A draft that loads late no longer replaces a message being
+  written. An encrypted draft with attachments that cannot be
+  read is not reopened without them. An approved re-pair stays readable for five minutes after approval.
 
 - Hostile-review pass 1 fixes. Native receiving refuses (`554 5.6.0`) mail whose From,
   To, Cc, Bcc, Subject or Date header is over 64 KiB, and quarantines such mail already

@@ -1591,8 +1591,22 @@ func (c *APIClient) ApplyInboxAction(ctx context.Context, messageID, action, mai
 		return nil
 	case "delete":
 		if isTrashMailbox(mailbox) {
+			// Delete in Trash is permanent. \Deleted alone leaves the message
+			// on any server that does not expunge by itself, listed again on
+			// the next refresh; only this UID is expunged, because a
+			// mailbox-wide EXPUNGE also removes what other clients marked.
+			ok, err := supportsUIDExpunge(d)
+			if err != nil {
+				return fmt.Errorf("imap capability: %w", err)
+			}
+			if !ok {
+				return errors.New("this mail server cannot permanently delete one message (no UIDPLUS); empty Trash with your mail provider")
+			}
 			if err := d.DeleteEmail(uid); err != nil {
 				return fmt.Errorf("imap delete uid %d from Trash: %w", uid, err)
+			}
+			if err := uidExpunge(d, uid); err != nil {
+				return fmt.Errorf("imap expunge uid %d from Trash: %w", uid, err)
 			}
 			return nil
 		}
@@ -1614,6 +1628,39 @@ func (c *APIClient) ApplyInboxAction(ctx context.Context, messageID, action, mai
 	default:
 		return fmt.Errorf("unsupported inbox action %q", action)
 	}
+}
+
+// supportsUIDExpunge reports whether the server can expunge one UID (UIDPLUS
+// or IMAP4rev2).
+func supportsUIDExpunge(d *goimap.Dialer) (bool, error) {
+	capability, err := d.Exec("CAPABILITY", true, 0, nil)
+	if err != nil {
+		return false, err
+	}
+	for _, atom := range strings.Fields(strings.ToUpper(capability)) {
+		if atom == "UIDPLUS" || atom == "IMAP4REV2" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// uidExpunge removes one message already flagged \Deleted, from a read-write
+// selection like DeleteEmail's.
+func uidExpunge(d *goimap.Dialer, uid int) error {
+	readOnly := d.ReadOnly
+	if readOnly {
+		if err := d.SelectFolder(d.Folder); err != nil {
+			return err
+		}
+	}
+	_, err := d.Exec(fmt.Sprintf("UID EXPUNGE %d", uid), false, 0, nil)
+	if readOnly {
+		if e := d.ExamineFolder(d.Folder); e != nil && err == nil {
+			err = e
+		}
+	}
+	return err
 }
 
 // inboxBodies splits one parsed email into the two body views ListUnreadInbox

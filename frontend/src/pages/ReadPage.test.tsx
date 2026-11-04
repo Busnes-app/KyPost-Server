@@ -21,6 +21,7 @@ const postJSON = vi.fn();
 vi.mock("../api/client", () => ({
   getJSON: (url: string) => getJSON(url),
   selectedMailboxId: () => "",
+  mailboxHeaders: () => ({}),
   postJSON: (url: string, body: unknown) => postJSON(url, body),
   toErrorMessage: (_e: unknown, fallback: string) => fallback
 }));
@@ -278,6 +279,47 @@ describe("search scope", () => {
       expect(searchCall).not.toContain("mailbox=");
     });
   });
+});
+
+describe("drag source folder", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEndpoints();
+  });
+
+  it("names the listed folder as listed, so the server resolves the account's default", async () => {
+    renderReadPage();
+    const row = (await screen.findByRole("checkbox", { name: "Select email Weekly Digest" })).closest("tr")!;
+    const data: Record<string, string> = {};
+    const dataTransfer = { setData: (type: string, value: string) => { data[type] = value; }, effectAllowed: "" };
+    row.dispatchEvent(Object.assign(new Event("dragstart", { bubbles: true }), { dataTransfer }));
+    // A literal "INBOX" moved INBOX's same UID when the default is another folder.
+    expect(JSON.parse(data["application/x-kypost-mailbox"])).toEqual({ messageIds: ["msg-newsletter"], mailbox: "" });
+  });
+});
+
+describe("drafts folder by role", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEndpoints();
+  });
+
+  for (const [path, special, opens] of [
+    ["Brouillons", "drafts", true],
+    ["Old drafts correspondence", undefined, false]
+  ] as const) {
+    it(`${opens ? "opens" : "does not open"} a message in "${path}" in the composer`, async () => {
+      const onOpenDraft = vi.fn();
+      render(
+        <MemoryRouter initialEntries={[`/?mailbox=${encodeURIComponent(path)}`]}>
+          <ReadPage onOpenDraft={onOpenDraft} folders={[{ path, special, deletable: true }]} />
+        </MemoryRouter>
+      );
+      await userEvent.click(await screen.findByText("Weekly Digest"));
+      await waitFor(() => expect(onOpenDraft).toHaveBeenCalledTimes(opens ? 1 : 0));
+      if (!opens) expect(onOpenDraft).not.toHaveBeenCalled();
+    });
+  }
 });
 
 describe("message list toolbar", () => {

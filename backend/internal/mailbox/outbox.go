@@ -42,7 +42,26 @@ type OutboundJob struct {
 	FromGeneration     int64
 	RequiresEnrollment bool
 	ExpiresAt          int64
+	// intent is set only on a compacted job (see compactOutbound): the
+	// SHA-256 of its original intent. Such a job has no MIME, recipients,
+	// Sent copy or frozen authority left, and is never claimable.
+	intent []byte
 }
+
+// outboundReceipt replaces a finished job's sealed intent. Receipt leads the
+// JSON, so a sealed OutboundJob (which starts with "From") never matches
+// outboundReceiptPrefix. Sent is the filed Sent copy's messages.digest, if any.
+type outboundReceipt struct {
+	Receipt         int
+	From            string
+	RelayGeneration string
+	Deliveries      int
+	Intent          []byte
+	Sent            string
+}
+
+var outboundReceiptPrefix = []byte(`{"Receipt":1,`)
+
 type OutboundDelivery struct {
 	Recipients []string
 	Raw        []byte
@@ -163,6 +182,10 @@ func (s *Store) QueueOutbound(ctx context.Context, master []byte, id string, job
 			return err
 		}
 		old, _ := json.Marshal(prior)
+		if prior.intent != nil {
+			sum := sha256.Sum256(plain)
+			old, plain = prior.intent, sum[:]
+		}
 		if !bytes.Equal(old, plain) {
 			return ErrConflict
 		}
@@ -212,16 +235,29 @@ func (s *Store) readOutbound(ctx context.Context, tx *sql.Tx, master []byte, id 
 		return OutboundJob{}, nil, 0, ErrOutbound
 	}
 	plain, err := cryptutil.Open(envelope, key)
-	var job OutboundJob
-	if err != nil || json.Unmarshal(plain, &job) != nil || s.validateOutbound(job) != nil {
+	if err != nil {
 		return OutboundJob{}, nil, 0, ErrOutbound
 	}
-	if sentID.Valid {
-		if sentBytes != 0 || sentReserved != 0 || len(job.Sent) == 0 {
+	var job OutboundJob
+	filed := func(digest string) bool {
+		var hash string
+		return tx.QueryRowContext(ctx, "SELECT digest FROM messages WHERE id=?", sentID.Int64).Scan(&hash) == nil && hash == digest
+	}
+	if bytes.HasPrefix(plain, outboundReceiptPrefix) {
+		var r outboundReceipt
+		if json.Unmarshal(plain, &r) != nil {
 			return OutboundJob{}, nil, 0, ErrOutbound
 		}
-		var hash string
-		if tx.QueryRowContext(ctx, "SELECT digest FROM messages WHERE id=?", sentID.Int64).Scan(&hash) != nil || hash != hashIncoming(job.Sent) {
+		from, err := mail.ParseAddress(r.From)
+		// A receipt has no reservation left; it names its filed Sent copy, if any.
+		if r.Receipt != 1 || err != nil || from.Address != r.From || !strings.Contains(r.From, "@") || !outboundID(r.RelayGeneration) || r.Deliveries < 1 || r.Deliveries > 100 || len(r.Intent) != sha256.Size || sentBytes != 0 || sentReserved != 0 || sentID.Valid != (r.Sent != "") || (sentID.Valid && !filed(r.Sent)) {
+			return OutboundJob{}, nil, 0, ErrOutbound
+		}
+		job = OutboundJob{From: r.From, RelayGeneration: r.RelayGeneration, Deliveries: make([]OutboundDelivery, r.Deliveries), intent: r.Intent}
+	} else if json.Unmarshal(plain, &job) != nil || s.validateOutbound(job) != nil {
+		return OutboundJob{}, nil, 0, ErrOutbound
+	} else if sentID.Valid {
+		if sentBytes != 0 || sentReserved != 0 || len(job.Sent) == 0 || !filed(hashIncoming(job.Sent)) {
 			return OutboundJob{}, nil, 0, ErrOutbound
 		}
 	} else if sentBytes != int64(len(job.Sent)) || (len(job.Sent) > 0 && sentReserved != 1) || (len(job.Sent) == 0 && sentReserved != 0) {
@@ -243,7 +279,11 @@ func (s *Store) readOutbound(ctx context.Context, tx *sql.Tx, master []byte, id 
 			return OutboundJob{}, nil, 0, ErrOutbound
 		}
 		switch status.State {
-		case "queued", "submitting", "accepted", "retryable", "failed", "uncertain", "quarantined":
+		case "accepted", "failed":
+		case "queued", "submitting", "retryable", "uncertain", "quarantined":
+			if job.intent != nil {
+				return OutboundJob{}, nil, 0, ErrOutbound
+			}
 		default:
 			return OutboundJob{}, nil, 0, ErrOutbound
 		}
@@ -255,6 +295,8 @@ func (s *Store) readOutbound(ctx context.Context, tx *sql.Tx, master []byte, id 
 	return job, statuses, sentID.Int64, nil
 }
 
+// ReadOutbound reads a whole or compacted job. A compacted job carries only
+// From, RelayGeneration and one empty OutboundDelivery per delivery.
 func (s *Store) ReadOutbound(ctx context.Context, master []byte, id string) (OutboundJob, []OutboundStatus, int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -279,7 +321,7 @@ func (s *Store) ClaimOutbound(ctx context.Context, master []byte, id string, seq
 	}
 	defer func() { _ = tx.Rollback() }()
 	job, statuses, _, err := s.readOutbound(ctx, tx, master, id)
-	if err != nil || sequence < 0 || sequence >= len(statuses) || job.RelayGeneration != generation {
+	if err != nil || sequence < 0 || sequence >= len(statuses) || job.RelayGeneration != generation || job.intent != nil {
 		return OutboundDelivery{}, "", ErrOutbound
 	}
 	status := statuses[sequence]
@@ -298,8 +340,9 @@ func (s *Store) ClaimOutbound(ctx context.Context, master []byte, id string, seq
 
 // CompleteOutbound fences late/duplicate completions by the immutable attempt
 // token. Generic failures are conservatively uncertain. Only definite 4xx can
-// retry automatically, with six total attempts and bounded backoff.
-func (s *Store) CompleteOutbound(ctx context.Context, id string, sequence int, claim string, submission error) error {
+// retry automatically, with six total attempts and bounded backoff. A definite
+// outcome may finish the job, which is then compacted with master.
+func (s *Store) CompleteOutbound(ctx context.Context, master []byte, id string, sequence int, claim string, submission error) error {
 	if !outboundID(id) || !outboundID(claim) {
 		return ErrOutbound
 	}
@@ -330,7 +373,53 @@ func (s *Store) CompleteOutbound(ctx context.Context, id string, sequence int, c
 	if _, err = tx.ExecContext(ctx, "UPDATE outbox_deliveries SET state=?,next_attempt=? WHERE job=? AND sequence=?", outcome, retryAt, id, sequence); err != nil {
 		return err
 	}
+	if outcome == "accepted" || outcome == "failed" {
+		s.compactOutbound(ctx, tx, master, id)
+	}
 	return tx.Commit()
+}
+
+// compactOutbound replaces a finished job's sealed intent with a sealed
+// receipt, so mail nobody can see or resend stops filling the quota. Finished
+// means every delivery is accepted or failed and the Sent copy is filed (or
+// there never was one). failed counts: it is a definite relay refusal (5xx, or
+// the sixth 4xx) that is never retried, so its MIME has no further use.
+// queued, submitting, retryable, uncertain and quarantined jobs stay whole for
+// delivery or reconciliation. The receipt keeps the intent digest, so exact
+// replay still succeeds and a different intent is still refused, and the Sent
+// digest that readOutbound checks. Any failure keeps the job whole: it never
+// blocks the outcome or Sent filing it follows.
+func (s *Store) compactOutbound(ctx context.Context, tx *sql.Tx, master []byte, id string) {
+	job, statuses, sent, err := s.readOutbound(ctx, tx, master, id)
+	if err != nil || job.intent != nil || (len(job.Sent) > 0 && sent == 0) {
+		return
+	}
+	for _, status := range statuses {
+		if status.State != "accepted" && status.State != "failed" {
+			return
+		}
+	}
+	plain, err := json.Marshal(job)
+	if err != nil {
+		return
+	}
+	intent := sha256.Sum256(plain)
+	receipt := outboundReceipt{Receipt: 1, From: job.From, RelayGeneration: job.RelayGeneration, Deliveries: len(job.Deliveries), Intent: intent[:]}
+	if sent > 0 {
+		receipt.Sent = hashIncoming(job.Sent)
+	}
+	plain, err = json.Marshal(receipt)
+	key, keyErr := s.outboundKey(master, id)
+	if err != nil || keyErr != nil {
+		return
+	}
+	envelope, err := cryptutil.Seal(plain, key)
+	if err != nil {
+		return
+	}
+	if sealed, err := json.Marshal(envelope); err == nil {
+		_, _ = tx.ExecContext(ctx, "UPDATE outbox SET ciphertext=? WHERE id=?", sealed, id)
+	}
 }
 
 // FileOutboundSent commits the reserved exact copy and receipt together. Retry
@@ -373,6 +462,7 @@ func (s *Store) FileOutboundSent(ctx context.Context, master []byte, id string) 
 	if err = change(ctx, tx, sent, "Sent", false); err != nil {
 		return 0, err
 	}
+	s.compactOutbound(ctx, tx, master, id)
 	return sent, tx.Commit()
 }
 

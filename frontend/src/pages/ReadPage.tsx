@@ -183,7 +183,10 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
     }
   });
   const [refillAnimationTick, setRefillAnimationTick] = useState(0);
-  const isDraftMailbox = mailbox.toLowerCase().includes("drafts");
+  // By the folder's \Drafts role, else its name: "Brouillons" is Drafts and
+  // "Old drafts correspondence" is not.
+  const isDraftMailbox =
+    mailbox !== "" && standardMailboxKind(folders.find((f) => f.path === mailbox) ?? { path: mailbox, deletable: false }) === "drafts";
   // The server's fixed snooze folder (adapters/imap/snooze.go).
   const isSnoozedMailbox = mailbox === "Snoozed";
   const [snoozeTarget, setSnoozeTarget] = useState<{ ids: string[]; fromReader: boolean } | null>(null);
@@ -197,16 +200,13 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
   // configured folder's UID N — a different message.
   const listedMailbox = mailbox;
 
-  // A concrete label, only for the drag payload: App.tsx's same-mailbox guard
-  // compares these strings and cannot resolve "" to a folder itself.
-  const sourceMailbox = mailbox || "INBOX";
 
   // An IMAP UID is unique within ONE mailbox, and `messageId` is a bare UID
   // (adapters/imap/client.go:657). Keying the local-verdict map on it alone let
   // a verdict computed for one mailbox's UID 7 be served for a DIFFERENT
   // message at UID 7 in another — including its green "signature verified"
-  // badge. Qualify with `mailbox`, not `sourceMailbox`: the latter maps "" and
-  // "INBOX" onto one key while they select different folders.
+  // badge. Qualify with `mailbox` as listed: "" and "INBOX" select different
+  // folders when the account's default is another folder.
   const decryptedKey = (messageId: string) => `${mailbox}\u0000${messageId}`;
   const selectedAttachments = selected ? decrypted[decryptedKey(selected.messageId)]?.attachments : undefined;
   // cid: images a decrypted body references, built once per decrypted message.
@@ -828,9 +828,11 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
 
   function dragMessagePayload(item: InboxEmail): string {
     const dragged = selectedMessageIds.includes(item.messageId) ? selectedMessageIds : [item.messageId];
+    // The folder exactly as listed: "" is the account's default folder, which
+    // the server resolves. A literal "INBOX" there moved INBOX's same UID.
     return JSON.stringify({
       messageIds: dragged,
-      mailbox: sourceMailbox
+      mailbox: listedMailbox
     });
   }
 
@@ -1312,6 +1314,8 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
         try {
           const payload = await getPGPMessagePayload(listedMailbox, item.messageId);
           const result = await decryptMessage(payload.encryptedPayload, payload.signerKeys ?? [], "");
+          // Like an ordinary draft: never open one that would send without some of its attachments.
+          if (result.attachmentsOmitted > 0) throw new Error("this draft has attachments that cannot be reopened here");
           const h = result.protectedHeaders;
           openDraft({
             sentTo: h.to ?? item.sentTo,

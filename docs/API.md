@@ -151,7 +151,7 @@ PGP:
 - `POST /api/pgp/recipients/resolve` (resolves the key actually used for each recipient)
 - `GET /api/pgp/qr/token` and `GET /api/pgp/qr/key` (public key exchange through a QR code)
 - `POST /api/pgp/pickup` (creates a sealed pickup for a recipient with no usable key, so a client-protected sender can still use the secure-link fallback)
-- `GET /api/mail/pgp-payload` and `POST /api/mail/send-pgp` (fetch a ciphertext for local decryption; submit a locally encrypted message. On a converted account the send carries `materialGeneration` and is refused with 409 when it is stale, and a paired device must be enrolled at that generation)
+- `GET /api/mail/pgp-payload` and `POST /api/mail/send-pgp` (fetch a ciphertext for local decryption; submit a locally encrypted message. On a converted account the send carries `materialGeneration` and is refused with 409 when it is stale, and a paired device must be enrolled at that generation. Optional `replyToMessageId` (and `replyToMailbox`) threads a reply as on `/api/mail/send`, with the same refusals: the server adds the outer `In-Reply-To`/`References` to every delivery and the Sent copy; a delivery or Sent copy already carrying either, or whose headers do not parse, is refused with 400 before anything is delivered)
 
 PGP key discovery and device enrollment:
 
@@ -175,10 +175,11 @@ Contacts:
 - `GET /api/contacts/search`
 - `POST /api/contacts/bulk-delete`
 - `GET /api/contacts/export` and `POST /api/contacts/import`
-- `GET|POST|DELETE /api/contacts/dav-password` (app-specific CardDAV password)
+- `GET|POST|DELETE /api/contacts/dav-password` (app-specific CardDAV password; `POST` takes step-up: `authSecret`, or a KyIdentity confirmation for an SSO session)
 - `GET|POST|DELETE /api/contacts/carddav-client/config` and `POST /api/contacts/carddav-client/sync` (sync from an external CardDAV server), returns 403 while `managed`
 - `POST|GET|DELETE /api/contacts/{id}/photo`
 - `POST /api/contacts/{id}/self`
+- `POST /api/contacts/{id}/pgp-key/confirm` (`{fingerprint, authSecret}`: marks the contact's pinned key confirmed after the user compared fingerprints; step-up as above; 409 when the fingerprint is not the pinned key)
 - `GET|POST /api/contacts/sync` (mobile two-way sync. A pairing token authenticates the call.)
 
 Groups:
@@ -209,6 +210,7 @@ Notifications (scoped to the signed-in user unless noted):
 - `POST /api/notifications/test`
 - `POST /api/notifications/pairing` (step-up: `authSecret` or KySignOn; mints a 90-second single-use pairing token)
 - `POST /api/notifications/native/register` and `POST /api/notifications/native/deregister`. A device registered with a web-minted pairing token is pending (202) until approved; see [device approval](device-approval.md)
+- `POST /api/notifications/native/refresh`: a paired device replaces its push token with its own `X-Kypost-Device-Id`/`X-Kypost-Device-Secret`, no pairing token. Body: `deviceToken`, and `transport`, `p256dh`, `auth` as on register. Only that device's row changes; nothing is granted (the sign-in approver right stays as it was). 401 for an unknown or revoked device, 400 for a token register would refuse. A client that gets 404 from an older server falls back to re-pairing
 - `GET /api/notifications/native/pairing-status` (device credentials): 202 pending, 200 approved, 410 denied or expired
 - `GET /api/notifications/native/pending`, `POST /api/notifications/native/pending/{deviceId}/approve` and `POST /api/notifications/native/pending/{deviceId}/deny`: the signed-in user's devices waiting for approval
 - `GET|DELETE /api/notifications/native/devices`

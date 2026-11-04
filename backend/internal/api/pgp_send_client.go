@@ -78,6 +78,11 @@ type clientEncryptedSendRequest struct {
 	SendAt    string `json:"sendAt,omitempty"`
 	DraftCopy string `json:"draftCopy,omitempty"`
 	sendAt    time.Time
+	// ReplyToMessageID and ReplyToMailbox thread a reply exactly as on
+	// /api/mail/send: the server reads the original and adds the outer
+	// In-Reply-To and References to every delivery and the Sent copy.
+	ReplyToMessageID string `json:"replyToMessageId,omitempty"`
+	ReplyToMailbox   string `json:"replyToMailbox,omitempty"`
 }
 
 type clientEncryptedDelivery struct {
@@ -151,6 +156,38 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 	if total == 0 {
 		http.Error(w, "no deliveries supplied", http.StatusBadRequest)
 		return
+	}
+	inReplyTo, references, ok := s.replyThreadingFor(w, r, strings.TrimSpace(req.ReplyToMessageID), strings.TrimSpace(req.ReplyToMailbox))
+	if !ok {
+		return
+	}
+	if inReplyTo != "" {
+		for i, delivery := range req.Deliveries {
+			raw := strings.TrimSpace(delivery.Ciphertext)
+			if raw == "" {
+				continue
+			}
+			threaded, err := threadClientMessage(raw, inReplyTo, references)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("delivery %d: %s", i, err), http.StatusBadRequest)
+				return
+			}
+			req.Deliveries[i].Ciphertext = threaded
+			if prepared[i], err = mailmsg.PrepareSMTPMessage([]byte(threaded)); err != nil {
+				http.Error(w, fmt.Sprintf("delivery %d: %s", i, err), http.StatusBadRequest)
+				return
+			}
+		}
+		// Refused before anything is delivered, so Sent never disagrees with
+		// what the recipients got.
+		if sent := strings.TrimSpace(req.SentCopy); sent != "" {
+			threaded, err := threadClientMessage(sent, inReplyTo, references)
+			if err != nil {
+				http.Error(w, "sentCopy: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			req.SentCopy = threaded
+		}
 	}
 	if req.SendAt != "" {
 		if msg := validateScheduledPGP(&req, time.Now()); msg != "" {
@@ -320,7 +357,9 @@ type smtpGroup struct {
 func (s *Server) deliverIMAP(ctx context.Context, userID string, a smtpAccount, from string, groups []smtpGroup, sent *imapadapter.DraftMessage) (failed int, sentSaved bool, err error) {
 	for i, g := range groups {
 		sendErr := mailmsg.SMTPDeliverPrepared(a.host, a.port, a.addr, a.username, a.password, from, g.recipients, g.msg)
-		if sendErr == nil {
+		// Accepted, then the session failed at QUIT: delivered, so the blind
+		// copies and the Sent copy still follow.
+		if sendErr == nil || errors.Is(sendErr, mailmsg.ErrSMTPAcceptedThenFailed) {
 			continue
 		}
 		if i == 0 {
@@ -426,6 +465,29 @@ var forbiddenDeliveryHeaders = []string{"Received", "Authentication-Results", "R
 // plaintext to this server by nature; it is still refused everywhere the
 // server would STORE the bytes for the account (drafts, the Sent copy), which
 // keep validatePGPMimeDeliveryShape.
+// threadClientMessage puts a reply's In-Reply-To and References at the top of
+// a browser-built message. Outer headers sit outside the PGP/MIME signature
+// and ciphertext, so nothing the recipient verifies changes. A message that
+// already names its own refuses, rather than carrying two answers.
+func threadClientMessage(raw, inReplyTo string, references []string) (string, error) {
+	hdr, err := deliveryHeaders(raw)
+	if err != nil {
+		return "", err
+	}
+	if len(hdr["In-Reply-To"]) > 0 || len(hdr["References"]) > 0 {
+		return "", errors.New("already carries In-Reply-To or References; send replyToMessageId only")
+	}
+	eol := "\n"
+	if strings.Contains(raw, "\r\n") {
+		eol = "\r\n"
+	}
+	head := "In-Reply-To: " + inReplyTo + eol
+	if len(references) > 0 {
+		head += "References: " + strings.Join(references, eol+" ") + eol
+	}
+	return head + raw, nil
+}
+
 func validateClientDeliveryShape(delivery string) error {
 	hdr, err := deliveryHeaders(delivery)
 	if err != nil {

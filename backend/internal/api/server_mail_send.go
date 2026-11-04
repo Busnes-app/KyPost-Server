@@ -549,6 +549,26 @@ func replyThreading(ctx context.Context, mailClient imapadapter.Client, referenc
 	return inReplyTo, references, 0, ""
 }
 
+// replyThreadingFor is replyThreading for a send request, shared by send and
+// send-pgp so both refuse alike. No reference means no threading; on ok=false
+// the response is written.
+func (s *Server) replyThreadingFor(w http.ResponseWriter, r *http.Request, reference, mailbox string) (string, []string, bool) {
+	if reference == "" {
+		return "", nil, true
+	}
+	mailClient, err := s.mailFor(r)
+	if err != nil {
+		http.Error(w, "could not open the mailbox holding the message being replied to", http.StatusServiceUnavailable)
+		return "", nil, false
+	}
+	inReplyTo, references, status, msg := replyThreading(r.Context(), mailClient, reference, mailbox)
+	if status != 0 {
+		http.Error(w, msg, status)
+		return "", nil, false
+	}
+	return inReplyTo, references, true
+}
+
 func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	req, errMsg, err := decodeMailRequest(r)
 	if err != nil {
@@ -636,20 +656,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var inReplyTo string
-	var references []string
-	if req.ReplyToMessageID != "" {
-		mailClient, err := s.mailFor(r)
-		if err != nil {
-			http.Error(w, "could not open the mailbox holding the message being replied to", http.StatusServiceUnavailable)
-			return
-		}
-		var status int
-		var msg string
-		if inReplyTo, references, status, msg = replyThreading(r.Context(), mailClient, req.ReplyToMessageID, req.ReplyToMailbox); status != 0 {
-			http.Error(w, msg, status)
-			return
-		}
+	inReplyTo, references, ok := s.replyThreadingFor(w, r, req.ReplyToMessageID, req.ReplyToMailbox)
+	if !ok {
+		return
 	}
 
 	// A scheduled message is dated when it goes out; Stamp keeps a set Date.
@@ -931,7 +940,7 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	s.finishMailSend(w, r, ac.UserID, smtpHost, smtpPort, addr, payload.Username, payload.Password, envelopeFrom, toList, ccList, bccList, mainRecipients, mainCiphertext, sentCopy, copyWarning, func() string {
 		bccFailed := 0
 		for _, delivery := range bccDeliveries {
-			if err := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, payload.Username, payload.Password, envelopeFrom, delivery.Recipients, delivery.Ciphertext); err != nil {
+			if err := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, payload.Username, payload.Password, envelopeFrom, delivery.Recipients, delivery.Ciphertext); err != nil && !errors.Is(err, mailmsg.ErrSMTPAcceptedThenFailed) {
 				s.logger.Error("bcc pgp send failed", "recipient_count", strconv.Itoa(len(delivery.Recipients)), "error", err.Error())
 				bccFailed++
 			}
@@ -1013,7 +1022,9 @@ func (s *Server) finishMailSend(w http.ResponseWriter, r *http.Request, userID, 
 	s.logger.Info("mail send requested", "smtp_host", smtpHost, "smtp_port", strconv.Itoa(smtpPort), "recipient_count", strconv.Itoa(len(recipients)))
 
 	if len(recipients) > 0 {
-		if sendErr := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, smtpUsername, smtpPassword, from, recipients, msg); sendErr != nil {
+		// Accepted, then the session failed at QUIT: the message is delivered,
+		// so a 502 here would invite a retry that duplicates it.
+		if sendErr := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, smtpUsername, smtpPassword, from, recipients, msg); sendErr != nil && !errors.Is(sendErr, mailmsg.ErrSMTPAcceptedThenFailed) {
 			s.logger.Error("mail send failed", "smtp_host", smtpHost, "smtp_port", strconv.Itoa(smtpPort), "error", sendErr.Error())
 			http.Error(w, fmt.Sprintf("failed to send email: %s", sendErr.Error()), http.StatusBadGateway)
 			return false

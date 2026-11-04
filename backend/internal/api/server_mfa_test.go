@@ -679,3 +679,57 @@ func TestTOTPConfirmCodeCannotReplayAgainstLoginChallenge(t *testing.T) {
 		t.Fatalf("later code after replay rejection: status=%d body=%s", laterRec.Code, laterRec.Body.String())
 	}
 }
+
+// A pending second-factor challenge must not outlive a credential revocation:
+// finishing it later would mint a session the revocation was meant to stop.
+// Covers both orders: revoked while the password was checked, and after.
+func TestMFAChallengeDoesNotSurviveRevocation(t *testing.T) {
+	srv := newTestServer(t)
+	u, err := srv.users.Create(context.Background(), "erin", "pw-erin-testpassword", users.RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	secret, _ := enrollTOTP(t, srv, u.ID)
+	login := func() *httptest.ResponseRecorder {
+		return doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
+			map[string]string{"username": "erin", "authSecret": testAuthSecret(srv, "erin", "pw-erin-testpassword")})
+	}
+	rec := login()
+	var ch struct {
+		ChallengeID string `json:"challengeId"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &ch) != nil || ch.ChallengeID == "" {
+		t.Fatalf("login: %d %s", rec.Code, rec.Body.String())
+	}
+	srv.revokeUserSessions(u.ID, "")
+	finish := doJSON(srv, srv.handleMFATOTP, http.MethodPost, "/api/auth/mfa/totp",
+		map[string]string{"challengeId": ch.ChallengeID, "code": totpCodeForTest(t, secret, time.Now())})
+	if finish.Code == http.StatusOK || findCookie(finish.Result().Cookies(), "kypost_session") != nil {
+		t.Fatalf("a challenge from before the revocation finished: %d %s", finish.Code, finish.Body.String())
+	}
+
+	orig := loginKDFBilledSeconds
+	t.Cleanup(func() { loginKDFBilledSeconds = orig })
+	loginKDFBilledSeconds = func(d time.Duration) float64 {
+		srv.revokeUserSessions(u.ID, "")
+		return orig(d)
+	}
+	if rec := login(); rec.Code == http.StatusOK || bytes.Contains(rec.Body.Bytes(), []byte("challengeId")) {
+		t.Fatalf("a sign-in overtaken by a revocation got a challenge: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// A revocation whose purge misses the challenge (the finish already took
+	// it) still refuses the session: the challenge carries the sign-in's fence.
+	loginKDFBilledSeconds = orig
+	if rec = login(); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &ch) != nil || ch.ChallengeID == "" {
+		t.Fatalf("login: %d %s", rec.Code, rec.Body.String())
+	}
+	srv.sessMu.Lock()
+	srv.revokedAt[u.ID] = srv.revocations.Add(1)
+	srv.sessMu.Unlock()
+	finish = doJSON(srv, srv.handleMFATOTP, http.MethodPost, "/api/auth/mfa/totp",
+		map[string]string{"challengeId": ch.ChallengeID, "code": totpCodeForTest(t, secret, time.Now())})
+	if finish.Code == http.StatusOK || findCookie(finish.Result().Cookies(), "kypost_session") != nil {
+		t.Fatalf("a finish overtaken by a revocation minted a session: %d %s", finish.Code, finish.Body.String())
+	}
+}

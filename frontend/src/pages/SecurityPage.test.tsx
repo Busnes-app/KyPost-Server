@@ -587,6 +587,7 @@ describe("CardDAV password blocks tab switches", () => {
     renderPage("carddav");
 
     const generate = await screen.findByRole("button", { name: /generate/i });
+    await user.type(screen.getByLabelText(/account password to generate/i), "account-password");
     await user.click(generate);
     await screen.findByText("generated-app-password");
 

@@ -481,7 +481,7 @@ func qualifyNativeFollowOnRecovery(t *testing.T, s *Server, userID string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = box.CompleteOutbound(ctx, id, 0, claim, nil); err != nil {
+	if err = box.CompleteOutbound(ctx, key, id, 0, claim, nil); err != nil {
 		t.Fatal(err)
 	}
 	db, err := sql.Open("sqlite", filepath.Join(s.userStateDir(userID), "mailbox", "mailbox.db"))

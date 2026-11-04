@@ -427,37 +427,20 @@ func (c *APIClient) EnsureLabel(ctx context.Context, label string) error {
 }
 
 func (c *APIClient) ApplyLabel(ctx context.Context, messageID, label string) error {
-	c.opMu.Lock()
-	defer c.opMu.Unlock()
-
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	uid, err := strconv.Atoi(strings.TrimSpace(messageID))
-	if err != nil || uid <= 0 {
-		return fmt.Errorf("invalid message id %q", messageID)
-	}
-	label = strings.TrimSpace(label)
-	if err := ValidateKeyword(label); err != nil {
-		return err
-	}
-
-	d, err := c.ensureConnectedLocked()
-	if err != nil {
-		return err
-	}
-
-	flags := goimap.Flags{Keywords: map[string]bool{label: true}}
-	if err := d.SetFlags(uid, flags); err != nil {
-		return fmt.Errorf("imap set keyword %q on uid %d: %w", label, uid, err)
-	}
-	return nil
+	return c.LabelIn(ctx, "", messageID, label, true)
 }
 
 // RemoveLabel clears one IMAP keyword flag from a message — the mirror of
 // ApplyLabel, using Keywords[label]=false so SetFlags emits -FLAGS (label)
 // in the same UID STORE shape ApplyLabel uses for +FLAGS.
 func (c *APIClient) RemoveLabel(ctx context.Context, messageID, label string) error {
+	return c.LabelIn(ctx, "", messageID, label, false)
+}
+
+// LabelIn sets (add) or clears one keyword on messageID in mailbox; "" is the
+// account's default folder, which ApplyLabel and RemoveLabel always use. A UID
+// belongs to its folder, so a message listed elsewhere must be labelled there.
+func (c *APIClient) LabelIn(ctx context.Context, mailbox, messageID, label string, add bool) error {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
 
@@ -477,10 +460,19 @@ func (c *APIClient) RemoveLabel(ctx context.Context, messageID, label string) er
 	if err != nil {
 		return err
 	}
+	if mailbox = strings.TrimSpace(mailbox); mailbox != "" {
+		if err := c.selectMailboxLocked(d, mailbox); err != nil {
+			return err
+		}
+	}
 
-	flags := goimap.Flags{Keywords: map[string]bool{label: false}}
+	flags := goimap.Flags{Keywords: map[string]bool{label: add}}
 	if err := d.SetFlags(uid, flags); err != nil {
-		return fmt.Errorf("imap clear keyword %q on uid %d: %w", label, uid, err)
+		verb := "clear"
+		if add {
+			verb = "set"
+		}
+		return fmt.Errorf("imap %s keyword %q on uid %d: %w", verb, label, uid, err)
 	}
 	return nil
 }

@@ -296,6 +296,10 @@ func (s *Server) handleNativePendingApprove(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	p.approvedID = registeredID
+	// The outcome stays readable for a full window after approval. A merge
+	// into an existing row (same push token) gives the device another id, and
+	// this entry is the only place the device can learn it.
+	p.expiresAt = time.Now().UTC().Add(pendingDeviceTTL)
 	s.logger.Info("native device pairing approved", "user_id", ac.UserID, "device_id", registeredID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deviceId": registeredID, "devices": devices})
 }

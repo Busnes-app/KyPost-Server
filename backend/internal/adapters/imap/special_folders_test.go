@@ -334,3 +334,55 @@ func TestSpecialUseFolders_KeysMatchListedPaths(t *testing.T) {
 		}
 	}
 }
+
+// Delete in Trash is permanent: \Deleted alone survives on a server that does
+// not expunge by itself. Only that UID is expunged, never the whole mailbox.
+func TestDeleteInTrashExpungesOnlyThatMessage(t *testing.T) {
+	quietRetries(t, 0)
+	s := newFakeIMAPServer(t, "/", true, []fakeFolder{
+		inboxFolder(),
+		{name: "Trash", attrs: `\Trash`},
+	})
+	if err := s.client(inbox).ApplyInboxAction(context.Background(), "5", "delete", "Trash", ""); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	var stored, expunged bool
+	for _, c := range s.commandsMatching("") {
+		u := strings.ToUpper(c)
+		stored = stored || (strings.HasPrefix(u, "UID STORE 5 ") && strings.Contains(u, `\DELETED`))
+		expunged = expunged || u == "UID EXPUNGE 5"
+		if u == "EXPUNGE" {
+			t.Fatalf("mailbox-wide EXPUNGE issued: %v", s.commandsMatching(""))
+		}
+	}
+	if !stored || !expunged {
+		t.Fatalf("stored=%v expunged=%v; commands: %v", stored, expunged, s.commandsMatching(""))
+	}
+	if moves := s.uidMoves(); len(moves) != 0 {
+		t.Fatalf("a delete in Trash moved instead: %v", moves)
+	}
+}
+
+// A UID belongs to its folder: labelling a message listed in Archive must
+// select Archive first, or the default folder's same UID is changed instead.
+func TestLabelInSelectsTheMessagesFolder(t *testing.T) {
+	quietRetries(t, 0)
+	s := newFakeIMAPServer(t, "/", true, []fakeFolder{inboxFolder(), {name: "Archive", attrs: `\Archive`}})
+	if err := s.client(inbox).LabelIn(context.Background(), "Archive", "42", "VIP", true); err != nil {
+		t.Fatalf("label: %v", err)
+	}
+	cmds := s.commandsMatching("")
+	last := ""
+	for _, c := range cmds {
+		if u := strings.ToUpper(c); strings.HasPrefix(u, "SELECT") || strings.HasPrefix(u, "EXAMINE") {
+			last = c
+		}
+		if strings.HasPrefix(strings.ToUpper(c), "UID STORE 42 +FLAGS") {
+			if !strings.Contains(last, `"Archive"`) {
+				t.Fatalf("stored while %q was selected; commands: %v", last, cmds)
+			}
+			return
+		}
+	}
+	t.Fatalf("no keyword was stored; commands: %v", cmds)
+}

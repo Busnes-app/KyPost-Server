@@ -283,6 +283,56 @@ func carryPGPProvenance(c *Contact, existing Contact) {
 	c.PGPKeyAutocryptDate = existing.PGPKeyAutocryptDate
 }
 
+// keepUnconfirmedAutocrypt stops "remove the key, save, paste it back" from
+// turning an unconfirmed Autocrypt key into a trusted one. Removing such a key
+// remembers its fingerprint; the same key written back without provenance is
+// still the unconfirmed Autocrypt key. Any other key clears the memory. It
+// remembers the stored key's own fingerprint, not the pin: a rotated
+// Autocrypt key keeps its old pin.
+func keepUnconfirmedAutocrypt(c *Contact, existing Contact) {
+	remembered := existing.PGPKeyRemovedAutocrypt
+	if existing.PGPKey != "" && existing.PGPKeySource == PGPSourceAutocrypt && !existing.PGPKeyVerified {
+		remembered = pgpKeyFingerprint(existing.PGPKey)
+	}
+	c.PGPKeyRemovedAutocrypt = ""
+	if c.PGPKey == "" {
+		c.PGPKeyRemovedAutocrypt = remembered
+	} else if existing.PGPKey == "" && remembered != "" && c.PGPKeySource == "" && !c.PGPKeyVerified && strings.EqualFold(pgpKeyFingerprint(c.PGPKey), remembered) {
+		c.PGPKeySource, c.PGPKeyFingerprint = PGPSourceAutocrypt, remembered
+	}
+}
+
+// ErrPGPKeyMismatch refuses a confirmation whose fingerprint is not the
+// contact's pinned key, or whose stored key no longer matches its pin.
+var ErrPGPKeyMismatch = errors.New("the fingerprint does not match this contact's key")
+
+// ConfirmPGPKey records that the user compared the contact's pinned key with
+// its owner. fingerprint must equal the pin, spaces ignored; ok is false when
+// there is no such live contact.
+func (s *Store) ConfirmPGPKey(uid, fingerprint string) (c Contact, ok bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	release, err := fsutil.LockFile(s.path())
+	if err != nil {
+		return Contact{}, false, err
+	}
+	defer release()
+	if err := s.refreshFromDiskLocked(); err != nil {
+		return Contact{}, false, err
+	}
+	c, ok = s.getLocked(uid)
+	if !ok || c.Deleted {
+		return Contact{}, false, nil
+	}
+	pin := c.PGPKeyFingerprint
+	if pin == "" || !strings.EqualFold(strings.ReplaceAll(fingerprint, " ", ""), pin) || !strings.EqualFold(pgpKeyFingerprint(c.PGPKey), pin) {
+		return Contact{}, true, ErrPGPKeyMismatch
+	}
+	c.PGPKeyVerified = true
+	c, err = s.upsertLocked(c)
+	return c, true, err
+}
+
 func (s *Store) upsertLocked(c Contact) (Contact, error) {
 	out, err := s.applyUpsertLocked(c)
 	if err != nil {
@@ -328,6 +378,7 @@ func (s *Store) applyUpsertLocked(c Contact) (Contact, error) {
 	// explicit provenance and silently re-pin a key the stored pin disputes.
 	if existing, ok := s.getLocked(c.UID); ok {
 		carryPGPProvenance(&c, existing)
+		keepUnconfirmedAutocrypt(&c, existing)
 	}
 
 	// Pin the TOFU fingerprint here, where EVERY write path passes, rather than

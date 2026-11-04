@@ -64,8 +64,12 @@ const (
 // The same struct serves both TOTP and push: TOTP uses TOTPAttempts/
 // UsedTOTPStep; push uses PushStatus/RespondedBy. A challenge may offer both.
 type Challenge struct {
-	ID           string
-	UserID       string
+	ID     string
+	UserID string
+	// Fence is the caller's session-revocation fence for the sign-in that
+	// created the challenge (0: none). Finishing mints the session with it,
+	// so a revocation after that sign-in read the credential still wins.
+	Fence        uint64
 	CreatedAt    time.Time
 	ExpiresAt    time.Time
 	TOTPAttempts int
@@ -162,6 +166,11 @@ func (s *Store) Len() int {
 // Create mints a new challenge for userID with a fresh random ID and a fresh
 // random FinishSecret.
 func (s *Store) Create(userID string) (Challenge, error) {
+	return s.CreateFenced(userID, 0)
+}
+
+// CreateFenced is Create with the sign-in's revocation fence (see Challenge.Fence).
+func (s *Store) CreateFenced(userID string, fence uint64) (Challenge, error) {
 	idBytes := make([]byte, 24)
 	if _, err := rand.Read(idBytes); err != nil {
 		return Challenge{}, err
@@ -178,6 +187,7 @@ func (s *Store) Create(userID string) (Challenge, error) {
 	ch := Challenge{
 		ID:           hex.EncodeToString(idBytes),
 		UserID:       userID,
+		Fence:        fence,
 		CreatedAt:    now,
 		ExpiresAt:    now.Add(challengeTTL),
 		MatchDigits:  matchDigits,

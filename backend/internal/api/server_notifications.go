@@ -925,6 +925,73 @@ func (s *Server) handleNotificationNativeDeregister(w http.ResponseWriter, r *ht
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// handleNotificationNativeRefresh lets a paired device replace its push token
+// (and transport and WebPush keys) with its own credential, no pairing token.
+// Only that device's row changes; nothing is granted, and an unknown or
+// revoked device gets 401.
+func (s *Server) handleNotificationNativeRefresh(w http.ResponseWriter, r *http.Request) {
+	userID, device, ok, retryAfter := s.deviceAuthFromRequest(r)
+	if !ok {
+		writeDeviceAuthFailure(w, retryAfter)
+		return
+	}
+	if !s.meterDeviceWrite(w, r, userID) {
+		return
+	}
+	var req nativeRegisterRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	deviceToken := strings.TrimSpace(req.DeviceToken)
+	if deviceToken == "" || len(deviceToken) > maxDeviceTokenLen {
+		http.Error(w, "deviceToken is required and at most 4096 characters", http.StatusBadRequest)
+		return
+	}
+	transport, err := normalizeNativeTransport(req.Transport, device.Platform)
+	if err != nil {
+		http.Error(w, "invalid transport: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// The same checks as register: an endpoint URL that could reach internal
+	// services is refused, and an opaque token must look like one.
+	p256dh, auth := "", ""
+	if transport == "unifiedpush" {
+		if processor.ValidateUnifiedPushEndpointURL(deviceToken) != nil {
+			http.Error(w, "invalid unifiedpush deviceToken", http.StatusBadRequest)
+			return
+		}
+		if processor.ValidateWebPushKeys(req.P256DH, req.Auth) != nil {
+			http.Error(w, "invalid unifiedpush webpush keys", http.StatusBadRequest)
+			return
+		}
+		p256dh, auth = strings.TrimSpace(req.P256DH), strings.TrimSpace(req.Auth)
+	} else if !nativePushTokenPattern.MatchString(deviceToken) {
+		http.Error(w, "invalid deviceToken", http.StatusBadRequest)
+		return
+	}
+	store, err := s.userStore(userID)
+	if err != nil {
+		http.Error(w, "failed to open user state", http.StatusInternalServerError)
+		return
+	}
+	// Under the lock revocation holds while it removes devices, so a refresh
+	// cannot land on a row a concurrent revocation is deleting; the secret
+	// hash keeps it off a row a re-pair gave a new secret after we checked ours.
+	s.pairingMu.Lock()
+	updated, err := store.SetNativeDevicePush(device.DeviceID, device.SecretHash, transport, deviceToken, p256dh, auth)
+	s.pairingMu.Unlock()
+	if err != nil {
+		http.Error(w, "failed to update device", http.StatusInternalServerError)
+		return
+	}
+	if !updated {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deviceId": device.DeviceID, "transport": transport})
+}
+
 // handleNotificationNativeMode switches native delivery between the relay-backed
 // push mode and App Pull mode for the signed-in user.
 func (s *Server) handleNotificationNativeMode(w http.ResponseWriter, r *http.Request) {

@@ -89,6 +89,11 @@ derived from it must be invalidated by a mechanism the daemon can reach — see
   stripped them (logs a count only).
 - `ContactPrecondition.KeepAbsentPGPKey` (CardDAV PUT) keeps the stored key and
   pin when the write carries none; many CardDAV clients drop KEY.
+- `PGPKeyVerified` becomes true only through `ConfirmPGPKey` (fingerprint must
+  equal the pin, and the key must still match it) or a writer's explicit
+  provenance. `keepUnconfirmedAutocrypt` remembers a removed unconfirmed
+  Autocrypt key's fingerprint (`PGPKeyRemovedAutocrypt`), so pasting the same
+  key back stays Autocrypt and unconfirmed (`TestConfirmPGPKeyAndRemovedAutocryptKey`).
 - Conflict/concurrency policy (e.g. CardDAV `If-Match`, mobile-sync
   last-write-wins) is decided by callers in `api/`, not by `Store` itself —
   `Store.Upsert`/`Store.Delete` always apply the write unconditionally. Read

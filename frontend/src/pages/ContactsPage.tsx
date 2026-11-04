@@ -290,6 +290,16 @@ export function ContactsPage() {
     }
   }
 
+  async function handlePGPKeyConfirmed(contact: Contact) {
+    setStatus(`${contact.fn}'s key is confirmed.`);
+    try {
+      const next = await loadContacts();
+      setSelectedContact(next.find((c) => c.uid === contact.uid) ?? null);
+    } catch (error: unknown) {
+      setStatus(`${contact.fn}'s key is confirmed, but contacts could not reload: ${toErrorMessage(error, "unknown error")}`);
+    }
+  }
+
   async function deleteBulk() {
     if (!window.confirm(`Delete ${selectedUids.length} contact${selectedUids.length === 1 ? "" : "s"}?`)) {
       return;
@@ -1241,6 +1251,7 @@ export function ContactsPage() {
         removeContact={removeContact}
         toggleSelfContact={toggleSelfContact}
         handleSuppressContactDiscovery={handleSuppressContactDiscovery}
+        onPGPKeyConfirmed={handlePGPKeyConfirmed}
       />
     </section>
   );

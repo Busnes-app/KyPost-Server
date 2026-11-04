@@ -2,10 +2,13 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -71,5 +74,46 @@ func TestInboxActionsLabelAndUnlabel(t *testing.T) {
 	srv.routes().ServeHTTP(missingRec, missingReq)
 	if missingRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for missing keyword, got %d", missingRec.Code)
+	}
+}
+
+// folderLabelClient is an IMAP-shaped client that labels per folder.
+type folderLabelClient struct {
+	*fakeMailClient
+	labelled []string
+}
+
+func (f *folderLabelClient) LabelIn(_ context.Context, mailbox, id, label string, add bool) error {
+	f.labelled = append(f.labelled, fmt.Sprintf("%s/%s/%s/%v", mailbox, id, label, add))
+	return nil
+}
+
+// The folder the message was listed in reaches the label write.
+func TestInboxActionsLabelUsesTheMessagesFolder(t *testing.T) {
+	srv := newTestServer(t)
+	srv.imapConfigKeyPath = filepath.Join(t.TempDir(), "imap-config.key")
+	all, _ := srv.users.List()
+	userID := all[0].ID
+	if err := writeIMAPConfigPayload(srv.userIMAPConfigPath(userID), srv.imapConfigKeyPath, imapConfigPayload{
+		Host: "imap.example.com", Port: 993, Username: "alice@example.com", Password: "pw", Mailbox: "INBOX", UpdatedAt: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fake := &folderLabelClient{fakeMailClient: &fakeMailClient{}}
+	srv.userMu.Lock()
+	srv.userMail[userID] = &serverMailEntry{client: fake, updatedAt: "test"}
+	srv.userMu.Unlock()
+	for _, action := range []string{"label", "unlabel"} {
+		body, _ := json.Marshal(map[string]any{"action": action, "messageIds": []string{"42"}, "keyword": "VIP", "mailbox": "Archive"})
+		req := httptest.NewRequest(http.MethodPost, "/api/inbox/actions", bytes.NewReader(body))
+		authRequest(srv, req)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", action, rec.Code, rec.Body.String())
+		}
+	}
+	if want := []string{"Archive/42/VIP/true", "Archive/42/VIP/false"}; !slices.Equal(fake.labelled, want) || len(fake.appliedLabels)+len(fake.removedLabels) != 0 {
+		t.Fatalf("labelled %v (default-folder calls %d), want %v", fake.labelled, len(fake.appliedLabels)+len(fake.removedLabels), want)
 	}
 }

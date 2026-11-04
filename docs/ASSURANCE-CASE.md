@@ -89,8 +89,10 @@ Out of scope: an attacker who already runs code in the container or holds both t
 - **Economy of mechanism.** One container, the standard library for HTTP and crypto primitives,
   twenty direct Go modules, four of them `golang.org/x` (`backend/go.mod`).
 - **Separation of privilege.** TOTP, recovery codes and push approval as second factors;
-  step-up re-authentication for sensitive changes; KyPost refuses to remove the last active
-  administrator.
+  step-up re-authentication for sensitive changes, including every credential that outlives
+  the session (agent tokens, CardDAV app passwords) and confirming a contact's PGP key
+  (`confirmActor` in `backend/internal/api/contacts_handlers.go`); KyPost refuses to remove
+  the last active administrator.
 - **Open design.** Only published algorithms: Argon2id, PBKDF2-SHA256, HKDF, AES-256-GCM and
   OpenPGP through ProtonMail's go-crypto. The code and this argument are public.
 - **Psychological acceptability.** Every place where security yields to convenience is

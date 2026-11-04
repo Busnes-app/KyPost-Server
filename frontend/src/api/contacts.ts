@@ -1,4 +1,6 @@
+import { credentialFields, deriveCredential } from "./auth";
 import { getJSON, postJSON, putJSON, deleteJSON, postFormData } from "./client";
+import { withSSOStepUp } from "./stepup";
 
 export type ContactValue = {
   label?: string;
@@ -171,8 +173,33 @@ export type DAVPasswordGenerated = {
   createdAt: string;
 };
 
-export function generateDAVPassword(): Promise<DAVPasswordGenerated> {
-  return postJSON<DAVPasswordGenerated>("/api/contacts/dav-password", {});
+/**
+ * The password outlives the session, so the server re-proves the caller: the
+ * account password, or a KyIdentity confirmation for an SSO session.
+ */
+export async function generateDAVPassword(confirm: { ssoSession: boolean; accountPassword: string }): Promise<DAVPasswordGenerated> {
+  const body = confirm.ssoSession ? {} : credentialFields(await deriveCredential("", confirm.accountPassword));
+  return withSSOStepUp(
+    (headers) => postJSON<DAVPasswordGenerated>("/api/contacts/dav-password", body, headers),
+    "Create a CardDAV app password with full access to your contacts."
+  );
+}
+
+/**
+ * Confirms a contact's pinned key after the user compared its fingerprint with
+ * the correspondent. It changes which signatures read as verified, so the
+ * server re-proves the caller like any other trust grant.
+ */
+export async function confirmContactPGPKey(
+  uid: string,
+  fingerprint: string,
+  confirm: { ssoSession: boolean; accountPassword: string }
+): Promise<Contact> {
+  const body = { fingerprint, ...(confirm.ssoSession ? {} : credentialFields(await deriveCredential("", confirm.accountPassword))) };
+  return withSSOStepUp(
+    (headers) => postJSON<Contact>(`/api/contacts/${encodeURIComponent(uid)}/pgp-key/confirm`, body, headers),
+    "Confirm this contact's PGP key, so their signatures read as verified."
+  );
 }
 
 export function revokeDAVPassword(): Promise<{ ok: boolean }> {
