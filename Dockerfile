@@ -13,7 +13,7 @@
 # matches its tag is a silent lie about what is being built, so re-resolve with:
 #
 #   docker buildx imagetools inspect golang:<tag> --format '{{.Manifest.Digest}}'
-FROM golang:1.27.3@sha256:f20d83a83e18dbd2a4714b8ffd4b30b287b6243962dd75608e86abcc63ba4efc AS backend-builder
+FROM golang:1.27.3@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS backend-builder
 WORKDIR /app
 COPY backend/go.mod backend/go.sum* ./backend/
 # go.mod replaces go-imap with this directory; download needs it present.
