@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"net/textproto"
@@ -254,7 +256,7 @@ func (s *Server) mcpServer(caller mcpCaller) *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_messages", Annotations: read,
 		Description: "List messages in a folder, newest first, without bodies. Pass next_before from the previous page to read older ones." + contentNote}, t.listMessages)
 	mcp.AddTool(srv, &mcp.Tool{Name: "search_messages", Annotations: read,
-		Description: "Search one folder by sender, subject, body or all of them; newest matches first, without bodies. Encrypted messages are never returned." + contentNote}, t.searchMessages)
+		Description: "Search one folder by sender, subject, body or all of them; newest matches first, without bodies. Encrypted messages are never returned. Costs like list_messages for each page of 25 matches walked, so a broad search in a large folder costs more; narrow it with field or folder." + contentNote}, t.searchMessages)
 	mcp.AddTool(srv, &mcp.Tool{Name: "read_message", Annotations: read,
 		Description: "Read one message as plain text. End-to-end encrypted messages return metadata only." + contentNote}, t.readMessage)
 	mcp.AddTool(srv, &mcp.Tool{Name: "read_thread", Annotations: read,
@@ -290,10 +292,8 @@ const (
 // Reads are metered too: each one is mail-server work on the user's own
 // connection, and an agent loops.
 func (t mcpTools) mail(cost float64) (imapadapter.Client, error) {
-	if cost > 0 {
-		if ok, _ := t.s.mcpCallLimiter.admitCost(t.caller.user.ID, cost); !ok {
-			return nil, errors.New(msgSlowDown)
-		}
+	if err := t.charge(cost); err != nil {
+		return nil, err
 	}
 	client, err := t.s.userMailClient(t.caller.user.ID)
 	if errors.Is(err, errIMAPNotConfigured) {
@@ -303,6 +303,17 @@ func (t mcpTools) mail(cost float64) (imapadapter.Client, error) {
 		return nil, errors.New(msgMailUnavailable)
 	}
 	return client, nil
+}
+
+// charge spends cost from the caller's meter, and a refusal says when to retry.
+func (t mcpTools) charge(cost float64) error {
+	if cost <= 0 {
+		return nil
+	}
+	if ok, wait := t.s.mcpCallLimiter.admitCost(t.caller.user.ID, cost); !ok {
+		return fmt.Errorf("%s; retry in %d seconds", msgSlowDown, int(math.Ceil(wait.Seconds())))
+	}
+	return nil
 }
 
 // organizer is mail() for a write tool: organize scope, and the account write meter.
@@ -482,7 +493,7 @@ func agentLimit(limit int) int {
 
 type listMessagesIn struct {
 	Folder string `json:"folder,omitempty" jsonschema:"folder path from list_folders; default INBOX"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"at most 50; default 50"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"at most 25; default 25"`
 	Before string `json:"before,omitempty" jsonschema:"next_before from the previous page, for older messages"`
 }
 
@@ -526,7 +537,7 @@ type searchMessagesIn struct {
 	Query  string `json:"query"`
 	Field  string `json:"field,omitempty" jsonschema:"all (default), from, subject or body"`
 	Folder string `json:"folder,omitempty" jsonschema:"folder path from list_folders; default INBOX"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"at most 50; default 50"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"at most 25; default 25"`
 }
 
 func (t mcpTools) searchMessages(ctx context.Context, _ *mcp.CallToolRequest, in searchMessagesIn) (*mcp.CallToolResult, messagesOut, error) {
@@ -554,6 +565,9 @@ func (t mcpTools) searchMessages(ctx context.Context, _ *mcp.CallToolRequest, in
 	// occur in one, and the server searched what the agent may not read. Paging
 	// on past them until the limit is filled or the search runs out keeps them
 	// from displacing a readable result, so neither count nor IDs betray them.
+	// The walk is not capped, so every page of matches after the first costs
+	// what the first did: the work is paid for, and a mailbox full of encrypted
+	// hits drains the caller's own meter rather than the server.
 	limit := agentLimit(in.Limit)
 	var msgs []mcpMessage
 	for before := 0; len(msgs) < limit; {
@@ -563,6 +577,11 @@ func (t mcpTools) searchMessages(ctx context.Context, _ *mcp.CallToolRequest, in
 		}
 		if len(results) == 0 {
 			break
+		}
+		if before > 0 {
+			if err := t.charge(costList); err != nil {
+				return nil, messagesOut{}, err
+			}
 		}
 		page, err := messagesOf(ctx, client, folder, results)
 		if err != nil {
