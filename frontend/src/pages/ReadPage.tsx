@@ -1314,6 +1314,8 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
         try {
           const payload = await getPGPMessagePayload(listedMailbox, item.messageId);
           const result = await decryptMessage(payload.encryptedPayload, payload.signerKeys ?? [], "");
+          // Like an ordinary draft: never open one that would send without some of its attachments.
+          if (result.attachmentsOmitted > 0) throw new Error("this draft has attachments that cannot be reopened here");
           const h = result.protectedHeaders;
           openDraft({
             sentTo: h.to ?? item.sentTo,
