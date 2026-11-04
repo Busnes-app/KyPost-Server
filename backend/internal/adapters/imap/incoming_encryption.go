@@ -40,15 +40,9 @@ func incomingMailbox(d *goimap.Dialer) (uint64, error) {
 		return 0, errors.New("cannot select inbox for encryption; check IMAP connection")
 	}
 	d.Folder, d.ReadOnly = "INBOX", false
-	capability, err := d.Exec("CAPABILITY", true, 0, nil)
+	supports, err := supportsUIDExpunge(d)
 	if err != nil {
 		return 0, errors.New("cannot check IMAP capabilities; retry after connection recovers")
-	}
-	supports := false
-	for _, atom := range strings.Fields(strings.ToUpper(capability)) {
-		if atom == "UIDPLUS" || atom == "IMAP4REV2" {
-			supports = true
-		}
 	}
 	if !supports {
 		return 0, errors.New("incoming encryption requires IMAP UIDPLUS or IMAP4rev2 for targeted deletion")
