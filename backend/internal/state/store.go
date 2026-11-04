@@ -1456,6 +1456,20 @@ func (s *Store) SetNativeDeviceMFAApprover(deviceID string, approver bool) (bool
 	return n > 0, err
 }
 
+// SetNativeDevicePush replaces one device's push destination in place. Its
+// secret, approver right, enrollment and id stay as they are. updated=false
+// means no device matches deviceID.
+func (s *Store) SetNativeDevicePush(deviceID, transport, pushToken, p256dh, auth string) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE native_devices SET transport = ?, push_token = ?, p256dh = ?, auth = ?, updated_at = ? WHERE device_id = ?`,
+		transport, strings.TrimSpace(pushToken), p256dh, auth, time.Now().UTC().Format(time.RFC3339), strings.TrimSpace(deviceID))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // ---- AI credits / ollama version ------------------------------------------
 
 // SetAICreditsExhausted marks that the classifier reported the weekly chat

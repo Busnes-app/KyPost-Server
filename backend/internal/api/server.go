@@ -886,6 +886,7 @@ func (s *Server) routesNotifications(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/notifications/native/devices", s.withAuth(s.handleNotificationNativeDevices))
 	mux.HandleFunc("POST /api/notifications/native/unpair", s.withAuth(s.handleNotificationNativeUnpair))
 	mux.HandleFunc("POST /api/notifications/native/deregister", withDeviceAuth(s.handleNotificationNativeDeregister))
+	mux.HandleFunc("POST /api/notifications/native/refresh", withDeviceAuth(s.handleNotificationNativeRefresh))
 	mux.HandleFunc("PUT /api/notifications/native/mode", s.withAuth(s.handleNotificationNativeMode))
 	mux.HandleFunc("GET /api/notifications/native/pull", withDeviceAuth(s.handleNotificationNativePull))
 }

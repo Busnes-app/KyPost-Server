@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -557,4 +558,47 @@ func mustNativeDevices(t testing.TB, s *state.Store) []state.NativeDevice {
 		t.Fatalf("ListNativeDevicesStrict: %v", err)
 	}
 	return d
+}
+
+// A paired device replaces its own push token with its device credential: only
+// its row changes, nothing is granted, and an unknown or revoked device is 401.
+func TestNativeRefreshReplacesOnlyThePushToken(t *testing.T) {
+	srv := newTestServer(t)
+	userID := srv.mustBootstrapUserID(t)
+	id, secret := pairNativeDevice(t, srv, userID, "phone-refresh")
+	store, err := srv.userStore(userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetNativeDeviceMFAApprover(id, false); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := store.GetNativeDevice(id)
+	refresh := func(deviceID, deviceSecret, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/notifications/native/refresh", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		setDeviceHeaders(req, deviceID, deviceSecret)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := refresh(id, secret, `{"deviceToken":"new-fcm-token-123","transport":"fcm"}`); rec.Code != http.StatusOK {
+		t.Fatalf("refresh: %d %s", rec.Code, rec.Body.String())
+	}
+	after, _ := store.GetNativeDevice(id)
+	if after.PushToken != "new-fcm-token-123" || after.MFAApprover || after.SecretHash != before.SecretHash || after.DeviceID != id {
+		t.Fatalf("after refresh: %+v", after)
+	}
+	if rec := refresh(id, secret, `{"deviceToken":"../../3/device/victim"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("forged token: %d", rec.Code)
+	}
+	if rec := refresh(id, "wrong-secret", `{"deviceToken":"other-token"}`); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong secret: %d", rec.Code)
+	}
+	if _, err := store.RemoveNativeDevice(id); err != nil {
+		t.Fatal(err)
+	}
+	if rec := refresh(id, secret, `{"deviceToken":"other-token"}`); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked device: %d %s", rec.Code, rec.Body.String())
+	}
 }
