@@ -60,9 +60,8 @@ non-prerelease version.
   that do not expunge by themselves; a server without UIDPLUS gets a clear refusal instead. Labels apply to the message in the folder it was opened
   from, and drag and drop moves the dragged message when the default folder is not INBOX. A
   message the relay accepted before a failed QUIT counts as sent. Drafts folders are
-  recognised by their role. Closing a message with content asks Save draft / Discard / Keep
-  writing, the message is read-only while it saves or sends, and a draft that loads late no
-  longer replaces a message being written. An encrypted draft with attachments that cannot be
+  recognised by their role. A draft that loads late no longer replaces a message being
+  written. An encrypted draft with attachments that cannot be
   read is not reopened without them. An approved re-pair stays readable for five minutes after approval.
 
 - Hostile-review pass 1 fixes. Native receiving refuses (`554 5.6.0`) mail whose From,

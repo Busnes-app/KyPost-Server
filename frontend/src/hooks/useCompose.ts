@@ -168,12 +168,6 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     }
   }, [composeOpen, composeHtmlBody, quillCtor]);
 
-  // Read-only while a save or send is in flight, like every other field, so
-  // nothing typed meanwhile is lost when that save or send closes the window.
-  useEffect(() => {
-    quillInstanceRef.current?.enable(!composeSavingDraft && !composeSending);
-  }, [composeOpen, quillCtor, composeSavingDraft, composeSending]);
-
   function resetComposeForm() {
     stopSignature();
     setComposeFrom("");
@@ -915,12 +909,12 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     }
   }
 
-  async function saveComposeDraft(): Promise<boolean> {
-    if (composeSavingDraft) return false;
+  async function saveComposeDraft() {
+    if (composeSavingDraft) return;
     const to = serializeRecipientField(composeTo);
     if (!to) {
       setComposeError("TO is required.");
-      return false;
+      return;
     }
     setComposeSavingDraft(true);
     setComposeError("");
@@ -980,10 +974,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
         clearDraftSnapshot(userId);
       }
       setComposeSuccess("Draft saved.");
-      return true;
     } catch (e) {
       setComposeError(`Draft not saved: ${toErrorMessage(e, "failed to save draft")}`);
-      return false;
     } finally {
       setComposeSavingDraft(false);
     }
@@ -1021,6 +1013,6 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning,
     composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot,
     quillEditorRef, attachmentInputRef,
-    openComposeWindow, openDraftInCompose, closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft, composeIsBlank
+    openComposeWindow, openDraftInCompose, closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft
   };
 }

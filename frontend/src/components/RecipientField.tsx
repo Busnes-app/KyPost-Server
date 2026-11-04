@@ -38,11 +38,9 @@ type RecipientFieldProps = {
   // response while encryption is enabled in compose. Omitted/empty when the
   // check hasn't run (e.g. encryption is off) — no badges render then.
   tiers?: Record<string, PGPRecipientTier>;
-  // Read-only while a save or send is in flight, like the other compose fields.
-  disabled?: boolean;
 };
 
-export function RecipientField({ label, state, onDraftChange, onAddToken, onRemoveToken, tiers, disabled }: RecipientFieldProps) {
+export function RecipientField({ label, state, onDraftChange, onAddToken, onRemoveToken, tiers }: RecipientFieldProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const [fieldError, setFieldError] = useState("");
@@ -149,7 +147,6 @@ export function RecipientField({ label, state, onDraftChange, onAddToken, onRemo
                 type="button"
                 className="compose-token-pill-remove"
                 aria-label={`Remove ${token.email}`}
-                disabled={disabled}
                 onClick={() => onRemoveToken(index)}
               >
                 &times;
@@ -163,7 +160,6 @@ export function RecipientField({ label, state, onDraftChange, onAddToken, onRemo
           value={state.draft}
           placeholder={state.tokens.length === 0 ? `${label} recipients` : ""}
           aria-label={`${label} recipients`}
-          disabled={disabled}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           onBlur={handleBlur}
