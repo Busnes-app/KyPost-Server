@@ -175,7 +175,7 @@ Contacts:
 - `GET /api/contacts/search`
 - `POST /api/contacts/bulk-delete`
 - `GET /api/contacts/export` and `POST /api/contacts/import`
-- `GET|POST|DELETE /api/contacts/dav-password` (app-specific CardDAV password)
+- `GET|POST|DELETE /api/contacts/dav-password` (app-specific CardDAV password; `POST` takes step-up: `authSecret`, or a KyIdentity confirmation for an SSO session)
 - `GET|POST|DELETE /api/contacts/carddav-client/config` and `POST /api/contacts/carddav-client/sync` (sync from an external CardDAV server), returns 403 while `managed`
 - `POST|GET|DELETE /api/contacts/{id}/photo`
 - `POST /api/contacts/{id}/self`

@@ -436,7 +436,7 @@ func (s *Server) writeDAVPassword(userID string, f davPasswordFile) error {
 
 // handleContactsDAVPassword manages the caller's app-specific CardDAV
 // password: GET reports whether one is configured, POST (re)generates one
-// (returning the raw secret exactly once), DELETE revokes it.
+// after a step-up (returning the raw secret exactly once), DELETE revokes it.
 func (s *Server) handleContactsDAVPassword(w http.ResponseWriter, r *http.Request) {
 	ac, ok := authFromContext(r)
 	if !ok {
@@ -456,6 +456,19 @@ func (s *Server) handleContactsDAVPassword(w http.ResponseWriter, r *http.Reques
 		}
 		writeJSON(w, http.StatusOK, resp)
 	case http.MethodPost:
+		// The password outlives this session and logout, so minting it takes
+		// the same step-up as an agent token: a stolen cookie alone must not
+		// turn into a lasting contacts credential.
+		var req struct {
+			AuthSecret string `json:"authSecret"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if !s.confirmActor(w, r, ac.UserID, req.AuthSecret) {
+			return
+		}
 		raw, err := randomToken(24)
 		if err != nil {
 			http.Error(w, "failed to generate password", http.StatusInternalServerError)

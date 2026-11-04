@@ -199,3 +199,25 @@ func TestDeviceGrantsRejectAccountPassword(t *testing.T) {
 		}
 	}
 }
+
+// A CardDAV app password outlives the session, so a cookie alone must not mint one.
+func TestDAVPasswordCreateRequiresStepUp(t *testing.T) {
+	srv, u := newDeviceGrantServer(t)
+	for name, body := range map[string]string{"no body": ``, "no credential": `{}`, "wrong credential": `{"authSecret":"wrong-secret"}`} {
+		rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/contacts/dav-password", body)
+		if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "password\"") {
+			t.Fatalf("%s: status %d body %s, want 403 and no password", name, rec.Code, rec.Body.String())
+		}
+	}
+	if _, exists, _ := srv.readDAVPassword(u.ID); exists {
+		t.Fatal("a session-only request stored a CardDAV password")
+	}
+	rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/contacts/dav-password", `{"authSecret":"`+userAuthSecret(srv, u.ID, deviceGrantPassword)+`"}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"password"`) {
+		t.Fatalf("stepped-up create: status %d body %s", rec.Code, rec.Body.String())
+	}
+	// Revoking stays session-only: removing a credential is never the risk.
+	if rec := deviceGrantCall(t, srv, u.ID, http.MethodDelete, "/api/contacts/dav-password", ""); rec.Code != http.StatusOK {
+		t.Fatalf("revoke: status %d body %s", rec.Code, rec.Body.String())
+	}
+}

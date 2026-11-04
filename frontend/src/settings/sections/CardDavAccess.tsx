@@ -29,6 +29,8 @@ export function CardDavAccess({ setConfigStatus, onRevealedPasswordChange }: Car
   const [passwordAcknowledged, setPasswordAcknowledged] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
   const [davMessage, setDavMessage] = useState("");
+  const [accountPassword, setAccountPassword] = useState("");
+  const ssoSession = auth.ssoSession ?? false;
   const davURL = auth.username ? `${window.location.origin}/dav/${encodeURIComponent(auth.username)}/contacts/` : "";
 
   // Read inside the clipboard promise, which can settle after a newer password
@@ -76,7 +78,7 @@ export function CardDavAccess({ setConfigStatus, onRevealedPasswordChange }: Car
     setCopyStatus("");
     setDavMessage("");
     try {
-      const generated = await generateDAVPassword();
+      const generated = await generateDAVPassword({ ssoSession, accountPassword });
       setRevealedPassword(generated.password);
       setPasswordAcknowledged(false);
       await refreshDavStatus();
@@ -85,6 +87,8 @@ export function CardDavAccess({ setConfigStatus, onRevealedPasswordChange }: Car
       setDavMessage(message);
       setConfigStatus?.(message);
     } finally {
+      // The password confirms one generation, never a session of them.
+      setAccountPassword("");
       setDavBusy(false);
     }
   }
@@ -206,8 +210,23 @@ export function CardDavAccess({ setConfigStatus, onRevealedPasswordChange }: Car
           {copyStatus ? <p className="config-muted">{copyStatus}</p> : null}
         </div>
       ) : null}
+      {ssoSession ? (
+        <p className="config-muted">Generating a password is confirmed with KyIdentity.</p>
+      ) : (
+        <label className="sec-label">
+          <span>Account password to generate an app password</span>
+          <input
+            className="sec-input"
+            type="password"
+            autoComplete="current-password"
+            value={accountPassword}
+            disabled={davBusy}
+            onChange={(e) => setAccountPassword(e.target.value)}
+          />
+        </label>
+      )}
       <div className="config-actions">
-        <button type="button" onClick={() => void generateDavPassword()} disabled={davBusy}>
+        <button type="button" onClick={() => void generateDavPassword()} disabled={davBusy || (!ssoSession && !accountPassword)}>
           {davBusy ? "Working..." : davStatus?.configured ? "Regenerate Password" : "Generate Password"}
         </button>
         {davStatus?.configured ? (

@@ -1,4 +1,6 @@
+import { credentialFields, deriveCredential } from "./auth";
 import { getJSON, postJSON, putJSON, deleteJSON, postFormData } from "./client";
+import { withSSOStepUp } from "./stepup";
 
 export type ContactValue = {
   label?: string;
@@ -171,8 +173,16 @@ export type DAVPasswordGenerated = {
   createdAt: string;
 };
 
-export function generateDAVPassword(): Promise<DAVPasswordGenerated> {
-  return postJSON<DAVPasswordGenerated>("/api/contacts/dav-password", {});
+/**
+ * The password outlives the session, so the server re-proves the caller: the
+ * account password, or a KyIdentity confirmation for an SSO session.
+ */
+export async function generateDAVPassword(confirm: { ssoSession: boolean; accountPassword: string }): Promise<DAVPasswordGenerated> {
+  const body = confirm.ssoSession ? {} : credentialFields(await deriveCredential("", confirm.accountPassword));
+  return withSSOStepUp(
+    (headers) => postJSON<DAVPasswordGenerated>("/api/contacts/dav-password", body, headers),
+    "Create a CardDAV app password with full access to your contacts."
+  );
 }
 
 export function revokeDAVPassword(): Promise<{ ok: boolean }> {

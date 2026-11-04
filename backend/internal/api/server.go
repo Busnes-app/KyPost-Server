@@ -745,7 +745,7 @@ func (s *Server) routesContacts(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/contacts/export", s.withAuth(s.handleContactsExport))
 	mux.HandleFunc("POST /api/contacts/import", withUploadDeadline(s.withAuth(s.handleContactsImport)))
 	mux.HandleFunc("GET /api/contacts/dav-password", s.withAuth(s.handleContactsDAVPassword))
-	mux.HandleFunc("POST /api/contacts/dav-password", s.withAuth(s.handleContactsDAVPassword))
+	mux.HandleFunc("POST /api/contacts/dav-password", s.withAuth(s.withSameOrigin(withActionDigest(s.handleContactsDAVPassword))))
 	mux.HandleFunc("DELETE /api/contacts/dav-password", s.withAuth(s.handleContactsDAVPassword))
 	mux.HandleFunc("GET /api/contacts/carddav-client/config", s.withAuth(s.handleContactsCardDAVClientConfig))
 	mux.HandleFunc("POST /api/contacts/carddav-client/config", s.withAuth(s.handleContactsCardDAVClientConfig))

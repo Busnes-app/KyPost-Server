@@ -15,6 +15,17 @@ vi.mock("../../api/client", () => ({
   toErrorMessage: (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback)
 }));
 
+vi.mock("../../api/auth", () => ({
+  deriveCredential: async () => ({ authSecret: "derived-account-credential" }),
+  credentialFields: (c: { authSecret: string }) => ({ authSecret: c.authSecret })
+}));
+
+// Generating takes the account password: the app password outlives the session.
+async function generate() {
+  await userEvent.type(screen.getByLabelText(/account password/i), "account-password");
+  await userEvent.click(screen.getByRole("button", { name: /generate/i }));
+}
+
 afterEach(() => {
   cleanup();
   releaseSecretHold();
@@ -29,10 +40,22 @@ beforeEach(() => {
 });
 
 describe("CardDavAccess", () => {
+  it("sends the derived account credential, and keeps Generate off until a password is typed", async () => {
+    render(<CardDavAccess />);
+    await waitFor(() => expect(getJSON).toHaveBeenCalled());
+    expect((screen.getByRole("button", { name: /generate/i }) as HTMLButtonElement).disabled).toBe(true);
+    await generate();
+    await screen.findByText("generated-app-password");
+    expect(postJSON).toHaveBeenCalledWith("/api/contacts/dav-password", { authSecret: "derived-account-credential" });
+    // The password confirms one generation, never a session of them.
+    expect((screen.getByLabelText(/account password/i) as HTMLInputElement).value).toBe("");
+  });
+
+
   it("reveals a generated password, and never asks the server to hand it back", async () => {
     render(<CardDavAccess setConfigStatus={vi.fn()} />);
     await waitFor(() => expect(getJSON).toHaveBeenCalled());
-    await userEvent.click(screen.getByRole("button", { name: /generate/i }));
+    await generate();
 
     expect(await screen.findByText("generated-app-password")).toBeTruthy();
     // The status endpoint (GET /api/contacts/dav-password) shares its base
@@ -62,7 +85,7 @@ describe("CardDavAccess navigation hold", () => {
     await waitFor(() => expect(getJSON).toHaveBeenCalled());
 
     expect(secretHoldReason()).toBe("");
-    await userEvent.click(screen.getByRole("button", { name: /generate/i }));
+    await generate();
     await screen.findByText("generated-app-password");
 
     expect(secretHoldReason()).toContain("before leaving");
@@ -72,7 +95,7 @@ describe("CardDavAccess navigation hold", () => {
     postJSON.mockResolvedValue({ password: "generated-app-password" });
     const view = render(<CardDavAccess />);
     await waitFor(() => expect(getJSON).toHaveBeenCalled());
-    await userEvent.click(screen.getByRole("button", { name: /generate/i }));
+    await generate();
     await screen.findByText("generated-app-password");
 
     view.unmount();
@@ -94,7 +117,7 @@ describe("CardDavAccess copy edge cases", () => {
       postJSON.mockResolvedValue({ password: "generated-app-password" });
       render(<CardDavAccess />);
       await waitFor(() => expect(getJSON).toHaveBeenCalled());
-      await userEvent.click(screen.getByRole("button", { name: /generate/i }));
+      await generate();
       await screen.findByText("generated-app-password");
 
       await userEvent.click(screen.getByRole("button", { name: "Copy" }));
@@ -121,14 +144,14 @@ describe("CardDavAccess copy edge cases", () => {
       postJSON.mockResolvedValueOnce({ password: "password-one" });
       render(<CardDavAccess />);
       await waitFor(() => expect(getJSON).toHaveBeenCalled());
-      await userEvent.click(screen.getByRole("button", { name: /generate/i }));
+      await generate();
       await screen.findByText("password-one");
 
       await userEvent.click(screen.getByRole("button", { name: "Copy" }));
 
       // A second password arrives before the clipboard promise settles.
       postJSON.mockResolvedValueOnce({ password: "password-two" });
-      await userEvent.click(screen.getByRole("button", { name: /generate/i }));
+      await generate();
       await screen.findByText("password-two");
 
       settleCopy();

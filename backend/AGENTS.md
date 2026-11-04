@@ -312,7 +312,7 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 | `GET\|POST /api/contacts` | yes | List / create in the caller's address book |
 | `GET /api/contacts/search` | yes | Compose-autocomplete search (`?q=&limit=`) over the caller's address book; `limit` defaults to 5, capped at 25 |
 | `GET\|PUT\|DELETE /api/contacts/{id}` | yes | Read / update / tombstone-delete a single contact by `uid` |
-| `GET\|POST\|DELETE /api/contacts/dav-password` | yes | Manage the caller's app-specific CardDAV Basic Auth password (separate from their login password); `POST` returns the raw secret exactly once |
+| `GET\|POST\|DELETE /api/contacts/dav-password` | yes | Manage the caller's app-specific CardDAV Basic Auth password (separate from their login password); `POST` takes step-up (`authSecret`, or a KyIdentity confirmation for an SSO session) and returns the raw secret exactly once |
 | `GET /api/agent-tokens` | yes (not admin) | The caller's AI agent tokens (`label`, `scope`, `lastUsedAt`, `revokeAfter`); never the token or its hash |
 | `POST /api/agent-tokens` | yes (not admin) | `withActionDigest` + `confirmActor`; `{label, scope, authSecret}`, `scope` required (`mcp:read` or `mcp:organize`); returns the token once; 409 past 20 per user. Re-checks the session after the insert so a racing `revokeUserCredentials` cannot leave a token behind |
 | `PUT\|DELETE /api/agent-tokens/{id}` | yes (not admin) | `PUT {scope, authSecret}` changes the access level behind step-up; another user's ID is 404 |
