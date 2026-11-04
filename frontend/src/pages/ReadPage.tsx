@@ -183,7 +183,10 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
     }
   });
   const [refillAnimationTick, setRefillAnimationTick] = useState(0);
-  const isDraftMailbox = mailbox.toLowerCase().includes("drafts");
+  // By the folder's \Drafts role, else its name: "Brouillons" is Drafts and
+  // "Old drafts correspondence" is not.
+  const isDraftMailbox =
+    mailbox !== "" && standardMailboxKind(folders.find((f) => f.path === mailbox) ?? { path: mailbox, deletable: false }) === "drafts";
   // The server's fixed snooze folder (adapters/imap/snooze.go).
   const isSnoozedMailbox = mailbox === "Snoozed";
   const [snoozeTarget, setSnoozeTarget] = useState<{ ids: string[]; fromReader: boolean } | null>(null);
