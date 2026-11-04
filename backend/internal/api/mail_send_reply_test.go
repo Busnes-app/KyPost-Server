@@ -158,3 +158,39 @@ func TestMailSendReplyThreading(t *testing.T) {
 		}
 	})
 }
+
+// send-pgp threads a reply exactly as send does: the server reads the original
+// and adds the outer headers; the same reference refusals send nothing.
+func TestMailSendPGPReplyThreading(t *testing.T) {
+	f := newScheduledFixture(t, "250 queued")
+	clearMustChangePassword(t, f.srv, f.userID)
+	f.fake.headerLines = map[int][]string{42: {"Message-ID: <orig@x.test>", "References: <root@x.test>"}}
+	delivery := scheduledPGPDelivery("alice@example.com", time.Now())
+	req := clientEncryptedSendRequest{
+		Deliveries:       []clientEncryptedDelivery{{Recipients: []string{"bob@example.com"}, Ciphertext: delivery}},
+		To:               []string{"bob@example.com"},
+		ReplyToMessageID: "42",
+	}
+	if rec := f.post("/api/mail/send-pgp", req); rec.Code != http.StatusOK {
+		t.Fatalf("send-pgp: %d %s", rec.Code, rec.Body.String())
+	}
+	f.smtp.mu.Lock()
+	data := strings.Join(f.smtp.data, "")
+	f.smtp.mu.Unlock()
+	if !strings.Contains(data, "In-Reply-To: <orig@x.test>\r\n") || !strings.Contains(data, "References: <root@x.test>\r\n <orig@x.test>\r\n") {
+		t.Fatalf("threading headers missing:\n%s", data)
+	}
+
+	for name, tc := range map[string]struct {
+		id   string
+		code int
+	}{"malformed reference": {"05", http.StatusBadRequest}, "original not found": {"5", http.StatusNotFound}} {
+		req.ReplyToMessageID = tc.id
+		if rec := f.post("/api/mail/send-pgp", req); rec.Code != tc.code {
+			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	if _, n := f.smtp.counts(); n != 1 {
+		t.Fatalf("a refused reply was delivered: %d messages", n)
+	}
+}

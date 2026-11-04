@@ -325,8 +325,10 @@ that message's `Message-ID`, `References` and `In-Reply-To` and writes
 cannot supply header text. A malformed/stale reference answers 400, a missing
 message 404, a mailbox read failure 502 — all before anything is sent; drop
 the field to send unthreaded. An original with no usable `Message-ID` is sent
-unthreaded. Client-encrypted sends (`/api/mail/send-pgp`) build their own MIME
-and are not covered.
+unthreaded. Client-encrypted sends (`/api/mail/send-pgp`) take the same two
+fields with the same refusals; the server adds the outer `In-Reply-To` and
+`References` to every delivery and the Sent copy (outside the signature and
+ciphertext). A delivery that already carries either header is refused (400).
 
 **Calendar invites.** `GET /api/mail/attachments` lists every `text/calendar`
 part. An iMIP invite carried as an undisposed `multipart/alternative` part
