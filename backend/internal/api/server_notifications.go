@@ -976,9 +976,10 @@ func (s *Server) handleNotificationNativeRefresh(w http.ResponseWriter, r *http.
 		return
 	}
 	// Under the lock revocation holds while it removes devices, so a refresh
-	// cannot land on a row a concurrent revocation is deleting.
+	// cannot land on a row a concurrent revocation is deleting; the secret
+	// hash keeps it off a row a re-pair gave a new secret after we checked ours.
 	s.pairingMu.Lock()
-	updated, err := store.SetNativeDevicePush(device.DeviceID, transport, deviceToken, p256dh, auth)
+	updated, err := store.SetNativeDevicePush(device.DeviceID, device.SecretHash, transport, deviceToken, p256dh, auth)
 	s.pairingMu.Unlock()
 	if err != nil {
 		http.Error(w, "failed to update device", http.StatusInternalServerError)

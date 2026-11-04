@@ -1457,12 +1457,14 @@ func (s *Store) SetNativeDeviceMFAApprover(deviceID string, approver bool) (bool
 }
 
 // SetNativeDevicePush replaces one device's push destination in place. Its
-// secret, approver right, enrollment and id stay as they are. updated=false
-// means no device matches deviceID.
-func (s *Store) SetNativeDevicePush(deviceID, transport, pushToken, p256dh, auth string) (bool, error) {
+// secret, approver right, enrollment and id stay as they are. secretHash is
+// the hash the caller's secret was verified against, so a re-pair that
+// replaced the secret meanwhile is not updated. updated=false means no device
+// matches deviceID and secretHash.
+func (s *Store) SetNativeDevicePush(deviceID, secretHash, transport, pushToken, p256dh, auth string) (bool, error) {
 	res, err := s.db.Exec(
-		`UPDATE native_devices SET transport = ?, push_token = ?, p256dh = ?, auth = ?, updated_at = ? WHERE device_id = ?`,
-		transport, strings.TrimSpace(pushToken), p256dh, auth, time.Now().UTC().Format(time.RFC3339), strings.TrimSpace(deviceID))
+		`UPDATE native_devices SET transport = ?, push_token = ?, p256dh = ?, auth = ?, updated_at = ? WHERE device_id = ? AND secret_hash = ?`,
+		transport, strings.TrimSpace(pushToken), p256dh, auth, time.Now().UTC().Format(time.RFC3339), strings.TrimSpace(deviceID), secretHash)
 	if err != nil {
 		return false, err
 	}

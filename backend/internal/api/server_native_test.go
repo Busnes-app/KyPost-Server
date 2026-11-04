@@ -595,6 +595,11 @@ func TestNativeRefreshReplacesOnlyThePushToken(t *testing.T) {
 	if rec := refresh(id, "wrong-secret", `{"deviceToken":"other-token"}`); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong secret: %d", rec.Code)
 	}
+	// A re-pair that gave the row a new secret after the refresh checked the
+	// old one is never updated by that refresh.
+	if ok, err := store.SetNativeDevicePush(id, "stale-secret-hash", "fcm", "late-token", "", ""); err != nil || ok {
+		t.Fatalf("a stale secret hash updated the row: %v %v", ok, err)
+	}
 	if _, err := store.RemoveNativeDevice(id); err != nil {
 		t.Fatal(err)
 	}
