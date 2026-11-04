@@ -358,3 +358,22 @@ func TestPendingDevicesPerUserAreCapped(t *testing.T) {
 		t.Fatalf("over the cap = %d, want 409", rec.Code)
 	}
 }
+
+// An approval near the end of the window keeps the outcome readable for a
+// full window: a merged device learns its new id only here.
+func TestApprovedOutcomeOutlivesThePendingWindow(t *testing.T) {
+	srv, u := newPendingServer(t)
+	_, reg := webPairAndRegister(t, srv, u.ID, "phone-1")
+	srv.pairingMu.Lock()
+	srv.pendingDevices[reg.DeviceID].expiresAt = time.Now().Add(time.Second)
+	srv.pairingMu.Unlock()
+	if rec := decide(t, srv, u.ID, reg.DeviceID, "approve"); rec.Code != http.StatusOK {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
+	}
+	srv.pairingMu.Lock()
+	left := time.Until(srv.pendingDevices[reg.DeviceID].expiresAt)
+	srv.pairingMu.Unlock()
+	if left < pendingDeviceTTL-time.Minute {
+		t.Fatalf("approved outcome readable for %v more, want about %v", left, pendingDeviceTTL)
+	}
+}

@@ -57,8 +57,8 @@ Times:
 
 - The pairing token expires 90 s after it is minted. That is unchanged.
 - A pending device expires **5 minutes** after it registers (`expiresAt`).
-- An approved outcome stays readable through the pending entry until that same
-  `expiresAt`. After that, the status endpoint answers from the paired-device list.
+- An approved outcome stays readable through the pending entry for 5 minutes
+  after approval. After that, the status endpoint answers from the paired-device list.
 
 ## Device side
 
@@ -140,11 +140,13 @@ and stop at `expiresAt` or on any final answer. Responses:
 Denied, expired and unknown credentials are deliberately the same 410. After
 `expiresAt`, an approved device still gets 200 from this endpoint, because it falls back to the
 paired-device list. A device that was offline during approval can therefore
-still find out it was approved.
+still find out it was approved. The exception is a merge: a registration merged
+into an existing row keeps working only under that row's `deviceId`, which this
+endpoint reports for 5 minutes after approval. After that the pending id gets 410.
 
 A client may also skip polling and simply retry its first real device call. A
-pending device gets 401 on every other route, and an approved one succeeds.
-Polling is the supported way to show progress.
+pending device gets 401 on every other route, and an approved one succeeds,
+unless it was merged into another row. Polling is the supported way to show progress.
 
 ### Old clients against a 0.6.0 server
 
