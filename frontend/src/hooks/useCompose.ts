@@ -70,6 +70,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   const composeSnapshotPending = useRef(false);
   // Set while this compose window leaves another mailbox's snapshot in place; autosave must not replace it.
   const composeSnapshotKept = useRef(false);
+  // composeOpen as of the last render, for callers holding an older closure.
+  const composeOpenNow = useRef(false);
   // Opt-in: send keyless recipients a one-time pickup link rather than
   // failing the send. Off by default because it is weaker than PGP. For
   // client-custody accounts this drives a browser-side sealed-pickup flow;
@@ -432,6 +434,11 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   }
 
   function openDraftInCompose(payload: DraftComposePayload) {
+    // A draft or reply resolves after its fetches, through the closure its
+    // click captured. If a window opened meanwhile, the user is writing in it:
+    // replacing it would lose that text (and autosave would bury it).
+    if (composeOpenNow.current) return;
+    composeOpenNow.current = true;
     composeSnapshotKept.current = false;
     composeSignOverridden.current = false;
     setComposeSign(isClientProtected() && isUnlocked());
@@ -461,6 +468,10 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     setComposeOpen(false);
     resetComposeForm();
   }
+
+  useEffect(() => {
+    composeOpenNow.current = composeOpen;
+  }, [composeOpen]);
 
   useEffect(() => {
     if (!composeOpen) return;

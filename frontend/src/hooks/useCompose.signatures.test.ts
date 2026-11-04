@@ -144,6 +144,15 @@ describe("compose signatures", () => {
     expect(body()).toBe(REPLY_SHOWN);
   });
 
+  it("does not let a draft that finished loading late replace an open window", async () => {
+    const result = compose();
+    act(() => result.current.openComposeWindow());
+    await waitFor(() => expect(body()).toContain("Alice"));
+    act(() => result.current.openDraftInCompose({ body: "<p>late draft</p>" }));
+    await act(async () => {});
+    expect(body()).not.toContain("late draft");
+  });
+
   it("never adds one to a saved draft", async () => {
     const result = compose();
     act(() => result.current.openDraftInCompose({ body: "<p>my draft</p>" }));
