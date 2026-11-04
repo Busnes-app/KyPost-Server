@@ -427,7 +427,7 @@ func TestNativeOutboundFromExtraMailbox(t *testing.T) {
 	}
 	_, claim, err := box.ClaimOutbound(ctx, key, id, 0, relay.Generation)
 	if err == nil {
-		err = box.CompleteOutbound(ctx, id, 0, claim, nil)
+		err = box.CompleteOutbound(ctx, key, id, 0, claim, nil)
 	}
 	_ = box.Close()
 	if err != nil {

@@ -50,7 +50,7 @@ func TestNativeRetiredRelayDomainKeepsHistoricalJobsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.CompleteOutbound(ctx, id, 0, claim, &textproto.Error{Code: 550, Msg: "permanent rejection"}); err != nil {
+	if err = store.CompleteOutbound(ctx, master, id, 0, claim, &textproto.Error{Code: 550, Msg: "permanent rejection"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = mailmsg.SetDomainRelayDomains(ctx, configPath, keyPath, []string{"example.test"}); err != nil {

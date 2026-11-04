@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -101,7 +102,7 @@ func TestNativeOutboxEncryptedRestartClaimsAndSent(t *testing.T) {
 	if _, _, err = s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, outboxGeneration); err == nil {
 		t.Fatal("reclaimed interrupted submission")
 	}
-	must(t, s.CompleteOutbound(ctx, outboxTestID, 0, claim, mailmsg.ErrSMTPAcceptedThenFailed))
+	must(t, s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, mailmsg.ErrSMTPAcceptedThenFailed))
 	pending, err = s.PendingOutbound(ctx, 10)
 	must(t, err)
 	if len(pending) != 1 {
@@ -154,7 +155,7 @@ func TestNativeOutboxUncertainRetryAndCorruption(t *testing.T) {
 			must(t, s.QueueOutbound(ctx, outboxMaster, outboxTestID, outboxTestJob()))
 			_, claim, err := s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, outboxGeneration)
 			must(t, err)
-			must(t, s.CompleteOutbound(ctx, outboxTestID, 0, claim, tc.submission))
+			must(t, s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, tc.submission))
 			_, states, _, err := s.ReadOutbound(ctx, outboxMaster, outboxTestID)
 			must(t, err)
 			if states[0].State != tc.want {
@@ -169,7 +170,7 @@ func TestNativeOutboxUncertainRetryAndCorruption(t *testing.T) {
 					must(t, err)
 					_, claim, err = s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, outboxGeneration)
 					must(t, err)
-					must(t, s.CompleteOutbound(ctx, outboxTestID, 0, claim, tc.submission))
+					must(t, s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, tc.submission))
 				}
 				_, states, _, err = s.ReadOutbound(ctx, outboxMaster, outboxTestID)
 				must(t, err)
@@ -188,7 +189,7 @@ func TestNativeOutboxUncertainRetryAndCorruption(t *testing.T) {
 	must(t, err)
 	_, err = s.db.Exec("UPDATE outbox_deliveries SET attempts=0")
 	must(t, err)
-	if err = s.CompleteOutbound(ctx, outboxTestID, 0, claim, &textproto.Error{Code: 451, Msg: "retry"}); err == nil {
+	if err = s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, &textproto.Error{Code: 451, Msg: "retry"}); err == nil {
 		t.Fatal("corrupt attempts accepted")
 	}
 	var sealed []byte
@@ -231,12 +232,13 @@ func TestNativeOutboxQuotaBackfillAndSharedCapacity(t *testing.T) {
 	}
 	_, claim, err := s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, outboxGeneration)
 	must(t, err)
-	must(t, s.CompleteOutbound(ctx, outboxTestID, 0, claim, nil))
+	must(t, s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, nil))
 	_, err = s.FileOutboundSent(ctx, outboxMaster, outboxTestID)
 	must(t, err)
 	must(t, s.db.QueryRow("SELECT records,payload_bytes FROM usage").Scan(&afterCount, &afterUsed))
-	if afterCount != count || afterUsed != used {
-		t.Fatal("Sent did not consume its reservation")
+	// Filing Sent consumes its reservation and compacts the finished job.
+	if afterCount != count || afterUsed >= used {
+		t.Fatal("Sent did not consume its reservation", afterCount, afterUsed, count, used)
 	}
 	malformed := outboxTestJob()
 	malformed.Deliveries[0].Raw = []byte("From: alice@example.test\r\nBcc: hidden@outside.test\r\n\r\nbody\r\n")
@@ -338,7 +340,7 @@ func TestNativeOutboxDiscoveryRequiresAcceptedPrimary(t *testing.T) {
 	if len(pending) != 0 {
 		t.Fatal("follow-ons scheduled behind submitting primary", pending)
 	}
-	must(t, s.CompleteOutbound(ctx, outboxTestID, 0, claim, nil))
+	must(t, s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, nil))
 	pending, err = s.PendingOutbound(ctx, 10)
 	must(t, err)
 	if len(pending) != 1 || pending[0] != outboxTestID {
@@ -358,5 +360,183 @@ func TestNativeOutboxSnapshotAcceptsUsageAboveLoweredQuota(t *testing.T) {
 	relay := mailmsg.DomainRelay{Generation: outboxGeneration, Domains: []string{"example.test"}, Issuer: testOwner.Issuer, Host: "smtp.provider.test", Port: 465, Username: "operator", Password: "secret"}
 	if has, err := ValidateOutboundSnapshot(ctx, filepath.Join(dir, "mailbox.db"), outboxMaster, relay); err != nil || !has {
 		t.Fatalf("over-quota snapshot refused: %v %v", has, err)
+	}
+}
+
+// outboxUsage returns usage.payload_bytes after checking it against the
+// equation ValidateOutboundSnapshot and the open-time backfill use.
+func outboxUsage(t *testing.T, s *Store) int64 {
+	t.Helper()
+	var used, want int64
+	must(t, s.db.QueryRow(`SELECT (SELECT payload_bytes FROM usage WHERE id=1),
+ (SELECT coalesce(sum(length(raw)),0) FROM messages)+(SELECT coalesce(sum(length(ciphertext)+sent_bytes),0) FROM outbox)`).Scan(&used, &want))
+	if used != want {
+		t.Fatalf("usage %d, recomputed %d", used, want)
+	}
+	return used
+}
+
+func outboxCiphertext(t *testing.T, s *Store, id string) int64 {
+	t.Helper()
+	var size int64
+	must(t, s.db.QueryRow("SELECT length(ciphertext) FROM outbox WHERE id=?", id).Scan(&size))
+	return size
+}
+
+// A finished job (every delivery accepted, Sent filed) shrinks to a sealed
+// receipt; status, Sent retry, replay and snapshot validation keep working.
+func TestNativeOutboxCompactsFinishedJob(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "mailbox")
+	s := openTest(t, dir, testOwner, testLimits)
+	job := outboxTestJob()
+	job.Deliveries[0].Raw = append(job.Deliveries[0].Raw[:len(job.Deliveries[0].Raw)-len("--signature--\r\n")], []byte(strings.Repeat("PRIVATE-SIGNED-ONLY-WIRE\r\n", 2000)+"--signature--\r\n")...)
+	must(t, s.QueueOutbound(ctx, outboxMaster, outboxTestID, job))
+	whole := outboxCiphertext(t, s, outboxTestID)
+	queued := outboxUsage(t, s)
+	_, claim, err := s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, outboxGeneration)
+	must(t, err)
+	must(t, s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, nil))
+	if outboxCiphertext(t, s, outboxTestID) != whole {
+		t.Fatal("compacted before Sent was filed")
+	}
+	sent, err := s.FileOutboundSent(ctx, outboxMaster, outboxTestID)
+	must(t, err)
+	receipt := outboxCiphertext(t, s, outboxTestID)
+	if receipt >= 1024 || receipt >= whole {
+		t.Fatal("finished job not compacted", whole, receipt)
+	}
+	if used := outboxUsage(t, s); used != int64(len(job.Sent))+receipt || used >= queued {
+		t.Fatal("usage after compaction", queued, used, receipt)
+	}
+	var sealed []byte
+	must(t, s.db.QueryRow("SELECT ciphertext FROM outbox").Scan(&sealed))
+	for _, secret := range []string{job.From, "visible@outside.test", "hidden@outside.test", "PRIVATE-SIGNED-ONLY-WIRE"} {
+		if bytes.Contains(sealed, []byte(secret)) {
+			t.Fatal("receipt plaintext escaped encryption")
+		}
+	}
+	got, statuses, gotSent, err := s.ReadOutbound(ctx, outboxMaster, outboxTestID)
+	must(t, err)
+	if got.From != job.From || got.RelayGeneration != outboxGeneration || len(got.Deliveries) != 1 || got.Deliveries[0].Raw != nil || got.Deliveries[0].Recipients != nil || got.Sent != nil || gotSent != sent || len(statuses) != 1 || statuses[0].State != "accepted" {
+		t.Fatalf("compacted read %+v %+v %d", got, statuses, gotSent)
+	}
+	if again, err := s.FileOutboundSent(ctx, outboxMaster, outboxTestID); err != nil || again != sent {
+		t.Fatal("Sent retry after compaction", again, err)
+	}
+	must(t, s.QueueOutbound(ctx, outboxMaster, outboxTestID, job))
+	changed := outboxTestJob()
+	if !errors.Is(s.QueueOutbound(ctx, outboxMaster, outboxTestID, changed), ErrConflict) {
+		t.Fatal("compacted job adopted a different intent")
+	}
+	if _, _, err = s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, outboxGeneration); err == nil {
+		t.Fatal("compacted job claimable")
+	}
+	if s.QuarantineOutbound(ctx, outboxTestID, 0) == nil {
+		t.Fatal("compacted delivery quarantined")
+	}
+	if pending, err := s.PendingOutbound(ctx, 10); err != nil || len(pending) != 0 {
+		t.Fatal("compacted job scheduled", pending, err)
+	}
+	if from, err := s.QueuedOutboundFrom(ctx, outboxMaster); err != nil || len(from) != 0 {
+		t.Fatal("compacted job counted as queued", from, err)
+	}
+	if outboxCiphertext(t, s, outboxTestID) != receipt {
+		t.Fatal("receipt rewritten")
+	}
+	// The Sent copy may move or go; the receipt still answers.
+	must(t, s.Move(ctx, "Sent", sent, "Archive"))
+	must(t, s.Delete(ctx, "Archive", sent))
+	if again, err := s.FileOutboundSent(ctx, outboxMaster, outboxTestID); err != nil || again != sent {
+		t.Fatal("Sent retry after deletion", again, err)
+	}
+	if _, err := s.db.Exec("DELETE FROM usage"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, s.Close())
+	s = openTest(t, dir, testOwner, testLimits)
+	outboxUsage(t, s)
+	must(t, s.Close())
+	relay := mailmsg.DomainRelay{Generation: outboxGeneration, Domains: []string{"example.test"}, Issuer: testOwner.Issuer, Host: "smtp.provider.test", Port: 465, Username: "operator", Password: "secret"}
+	if has, err := ValidateOutboundSnapshot(ctx, filepath.Join(dir, "mailbox.db"), outboxMaster, relay); err != nil || !has {
+		t.Fatalf("snapshot with a compacted job refused: %v %v", has, err)
+	}
+	s = openTest(t, dir, testOwner, testLimits)
+	if _, err := s.db.Exec("UPDATE outbox_deliveries SET state='uncertain'"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, s.Close())
+	if _, err := ValidateOutboundSnapshot(ctx, filepath.Join(dir, "mailbox.db"), outboxMaster, relay); err == nil {
+		t.Fatal("receipt with an unfinished delivery accepted")
+	}
+}
+
+// Only definite outcomes with Sent filed (or no Sent copy) finish a job.
+func TestNativeOutboxKeepsUnfinishedJobsWhole(t *testing.T) {
+	ctx := context.Background()
+	noSent := outboxTestJob()
+	noSent.Sent = nil
+	for _, tc := range []struct {
+		name       string
+		submission error
+		compacted  bool
+	}{{"uncertain", mailmsg.ErrSMTPAcceptanceUncertain, false}, {"unknown", errors.New("lost"), false}, {"retryable", &textproto.Error{Code: 451, Msg: "later"}, false}, {"failed", &textproto.Error{Code: 550, Msg: "no"}, true}, {"accepted", nil, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTest(t, filepath.Join(t.TempDir(), "mailbox"), testOwner, testLimits)
+			must(t, s.QueueOutbound(ctx, outboxMaster, outboxTestID, noSent))
+			whole := outboxCiphertext(t, s, outboxTestID)
+			_, claim, err := s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, outboxGeneration)
+			must(t, err)
+			must(t, s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, tc.submission))
+			outboxUsage(t, s)
+			job, _, _, err := s.ReadOutbound(ctx, outboxMaster, outboxTestID)
+			must(t, err)
+			if (outboxCiphertext(t, s, outboxTestID) < whole) != tc.compacted || (job.Deliveries[0].Raw == nil) != tc.compacted {
+				t.Fatal("compaction", tc.compacted, job.Deliveries[0].Raw == nil)
+			}
+			if _, err = s.FileOutboundSent(ctx, outboxMaster, outboxTestID); err == nil {
+				t.Fatal("filed a Sent copy the job never had")
+			}
+			must(t, s.QueueOutbound(ctx, outboxMaster, outboxTestID, noSent))
+		})
+	}
+	// Two deliveries with Sent: filing after the primary, an uncertain or
+	// quarantined follow-on keeps the job whole; an accepted one finishes it.
+	two := outboxTestJob()
+	two.Deliveries = append(two.Deliveries, OutboundDelivery{Recipients: []string{"other@outside.test"}, Raw: two.Deliveries[0].Raw})
+	two.Deliveries[0].Recipients = two.Deliveries[0].Recipients[:1]
+	for _, follow := range []string{"uncertain", "quarantined", "accepted"} {
+		t.Run("follow-on "+follow, func(t *testing.T) {
+			s := openTest(t, filepath.Join(t.TempDir(), "mailbox"), testOwner, testLimits)
+			must(t, s.QueueOutbound(ctx, outboxMaster, outboxTestID, two))
+			whole := outboxCiphertext(t, s, outboxTestID)
+			_, claim, err := s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, outboxGeneration)
+			must(t, err)
+			must(t, s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, nil))
+			_, err = s.FileOutboundSent(ctx, outboxMaster, outboxTestID)
+			must(t, err)
+			if outboxCiphertext(t, s, outboxTestID) != whole {
+				t.Fatal("compacted with a queued follow-on")
+			}
+			if follow == "quarantined" {
+				must(t, s.QuarantineOutbound(ctx, outboxTestID, 1))
+			} else {
+				_, claim, err = s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 1, outboxGeneration)
+				must(t, err)
+				var submission error
+				if follow == "uncertain" {
+					submission = mailmsg.ErrSMTPAcceptanceUncertain
+				}
+				must(t, s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 1, claim, submission))
+			}
+			outboxUsage(t, s)
+			if compacted := outboxCiphertext(t, s, outboxTestID) < whole; compacted != (follow == "accepted") {
+				t.Fatal("compaction", follow, compacted)
+			}
+			if _, _, sent, err := s.ReadOutbound(ctx, outboxMaster, outboxTestID); err != nil || sent == 0 {
+				t.Fatal("read", sent, err)
+			}
+			must(t, s.QueueOutbound(ctx, outboxMaster, outboxTestID, two))
+		})
 	}
 }

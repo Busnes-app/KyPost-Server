@@ -101,8 +101,14 @@ states; a different intent under that ID is refused. One transaction commits all
 deliveries and reserves both bytes and a record for Sent, within the same quota
 as incoming mail and retained tombstones. Mailbox counters include queued
 ciphertext, delivery records and Sent reservations, including reconstruction.
-No automatic mail/job eviction occurs. Retained completed jobs still consume
-quota; representative capacity and explicit retention remain operating gates.
+A finished job, every delivery `accepted` or `failed` and its Sent copy filed
+(or none), is compacted in that transaction: its ciphertext becomes a sealed
+receipt under the same key holding only `From`, relay generation, delivery
+count, the intent digest and the Sent copy's digest, so exact replay, status,
+Sent retry and snapshot validation still work and no MIME or recipients remain.
+`queued`, `submitting`, `retryable`, `uncertain` and `quarantined` jobs, and
+jobs whose Sent copy is unfiled, stay whole. Jobs finished before compaction
+existed are not rewritten. No mail is evicted; representative capacity remains an operating gate.
 
 Wire MIME, envelope addresses and Sent intent are encrypted together using
 AES-GCM. A domain-separated HKDF key derives from the retained
@@ -158,8 +164,9 @@ No existing client response is changed to mean merely queued.
 
 The existing SQLite snapshots carry job ciphertext, claims, statuses and Sent
 receipts together with committed WAL rows. Collection/drills decrypt the actual
-snapshot, validate historical owner/domain bindings, bounded job/state shape,
-Sent digests, foreign keys and quota accounting. Partial outbox schemas and orphan
+snapshot, validate historical owner/domain bindings, bounded job/state shape
+(whole jobs and compacted receipts, which must have only `accepted`/`failed`
+deliveries), Sent digests, foreign keys and quota accounting. Partial outbox schemas and orphan
 claims are refused. Old databases with neither queue table remain compatible.
 A nonempty queue requires version-1 recipe evidence
 `outbox:encrypted-jobs-claims-and-sent` plus the relay config and matching key.

@@ -35,7 +35,7 @@ func TestNativeOutboxSMTPProcess(t *testing.T) {
 	delivery, claim, err := s.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, relay.Generation)
 	must(t, err)
 	submission := relay.Deliver(job.From, delivery.Recipients, delivery.Raw)
-	must(t, s.CompleteOutbound(ctx, outboxTestID, 0, claim, submission))
+	must(t, s.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, submission))
 	_, statuses, _, err := s.ReadOutbound(ctx, outboxMaster, outboxTestID)
 	must(t, err)
 	if os.Getenv("KYPOST_OUTBOX_SMTP_MODE") == "lost-ack" {

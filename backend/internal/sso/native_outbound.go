@@ -348,11 +348,13 @@ func (s NativeOutbound) deliver(ctx context.Context, c nativeOutboundClaim) (Nat
 		return result, mailbox.ErrOutbound
 	}
 	defer box.Close()
-	if err := box.CompleteOutbound(finish, c.id, c.sequence, c.token, submission); err != nil {
+	// Without the key the outcome is still recorded; only compaction and Sent wait.
+	key, keyErr := cryptutil.LoadKey(s.keyPath())
+	if err := box.CompleteOutbound(finish, key, c.id, c.sequence, c.token, submission); err != nil {
 		return result, mailbox.ErrOutbound
 	}
 	if result.Accepted {
-		key, err := cryptutil.LoadKey(s.keyPath())
+		err := keyErr
 		if err == nil {
 			_, err = box.FileOutboundSent(finish, key, c.id)
 		}
@@ -397,8 +399,9 @@ func (s NativeOutbound) Status(ctx context.Context, mailboxID, id string) ([]mai
 		return nil, false, err
 	}
 	defer box.Close()
-	job, statuses, sent, err := box.ReadOutbound(ctx, key, id)
-	return statuses, len(job.Sent) > 0 && sent > 0, err
+	// A filed Sent copy is sent > 0 for whole and compacted jobs alike.
+	_, statuses, sent, err := box.ReadOutbound(ctx, key, id)
+	return statuses, sent > 0, err
 }
 func (s NativeOutbound) Pending(ctx context.Context, mailboxID string, limit int) ([]string, error) {
 	box, _, err := s.openStorage(mailboxID)

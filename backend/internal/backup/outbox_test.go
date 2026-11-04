@@ -65,12 +65,12 @@ func TestNativeOutboxSealedClaimsSentAndDependencies(t *testing.T) {
 			failed:    &textproto.Error{Code: 550, Msg: "permanent rejection"},
 		}
 		if outcome, ok := outcomes[id]; ok {
-			if err = store.CompleteOutbound(ctx, id, 0, claim, outcome); err != nil {
+			if err = store.CompleteOutbound(ctx, master, id, 0, claim, outcome); err != nil {
 				t.Fatal(err)
 			}
 		}
 		if id == accepted {
-			if err = store.CompleteOutbound(ctx, id, 0, claim, nil); err != nil {
+			if err = store.CompleteOutbound(ctx, master, id, 0, claim, nil); err != nil {
 				t.Fatal(err)
 			}
 			if _, err = store.FileOutboundSent(ctx, master, id); err != nil {
@@ -97,7 +97,7 @@ func TestNativeOutboxSealedClaimsSentAndDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.CompleteOutbound(ctx, queued, 0, claim, nil); err != nil {
+	if err = store.CompleteOutbound(ctx, master, queued, 0, claim, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = store.FileOutboundSent(ctx, master, queued); err != nil {
@@ -133,7 +133,9 @@ func TestNativeOutboxSealedClaimsSentAndDependencies(t *testing.T) {
 	defer restoredStore.Close()
 	for id, want := range map[string]string{interrupted: "submitting", accepted: "accepted", queued: "quarantined", retryable: "quarantined", uncertain: "uncertain", failed: "failed"} {
 		got, statuses, sentID, err := restoredStore.ReadOutbound(ctx, master, id)
-		if err != nil || len(statuses) != 1 || statuses[0].State != want || !bytes.Equal(got.Sent, raw) || !bytes.Equal(got.Deliveries[0].Raw, raw) || (sentID != 0) != (id == accepted) {
+		// The finished job was compacted to a receipt; every other job stays whole.
+		whole := id != accepted
+		if err != nil || len(statuses) != 1 || statuses[0].State != want || bytes.Equal(got.Sent, raw) != whole || bytes.Equal(got.Deliveries[0].Raw, raw) != whole || (sentID != 0) != (id == accepted) {
 			t.Fatalf("restored %s: states=%+v sent=%d err=%v", id, statuses, sentID, err)
 		}
 		if id == queued || id == retryable {
