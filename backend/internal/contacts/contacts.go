@@ -171,6 +171,7 @@ func (c *Contact) tombstone() {
 	c.GroupIDs = nil
 	c.PGPKey = ""
 	c.PGPKeyAutocryptDate = ""
+	c.PGPKeyRemovedAutocrypt = ""
 	c.IMs = nil
 	c.Websites = nil
 	c.Relations = nil

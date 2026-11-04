@@ -61,4 +61,15 @@ func TestConfirmPGPKeyAndRemovedAutocryptKey(t *testing.T) {
 	if c, _ := store.Upsert(Contact{UID: rotated.UID, FormattedName: "Carol", Emails: rotated.Emails, PGPKey: other}); c.PGPKeySource != PGPSourceAutocrypt || c.PGPKeyVerified {
 		t.Fatalf("a re-pasted rotated Autocrypt key was promoted: %+v", c)
 	}
+
+	// A deleted contact keeps no remembered fingerprint.
+	if _, err := store.Upsert(Contact{UID: rotated.UID, FormattedName: "Carol", Emails: rotated.Emails}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Delete(rotated.UID); err != nil {
+		t.Fatal(err)
+	}
+	if c, _, _ := store.Get(rotated.UID); c.PGPKeyRemovedAutocrypt != "" {
+		t.Fatalf("a tombstone kept the removed key's fingerprint: %+v", c)
+	}
 }
