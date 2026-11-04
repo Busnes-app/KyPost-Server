@@ -386,6 +386,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "session creation failed", http.StatusInternalServerError)
 			return
 		}
+		// The same fence mintSession applies to a password-only sign-in: a
+		// revocation since the credential was read drops this challenge, and
+		// one after this check purges it (revokeUserSessions).
+		s.sessMu.RLock()
+		revoked := s.revokedAt[u.ID] >= revocations+1
+		s.sessMu.RUnlock()
+		if revoked {
+			s.mfaChallenges.Delete(ch.ID)
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			return
+		}
 		methods := make([]string, 0, 2)
 		if u.TOTPEnabled {
 			methods = append(methods, "totp")
@@ -729,6 +740,10 @@ func (s *Server) revokeUserSessions(userID, keepToken string) {
 			delete(s.sessions, token)
 		}
 	}
+	// A pending second-factor challenge is a session not yet minted. Purged
+	// after the fence is bumped, so handleLogin's check catches any created
+	// before it and this catches any created after.
+	s.mfaChallenges.DeleteByUser(userID)
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -896,15 +911,21 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	s.passwordChangeLockout.recordSuccess(lockKey)
 
-	if req.KeyringVersion != nil {
-		if req.ExpectedRevision == nil || *req.ExpectedRevision == 0 {
-			writeUserStoreError(w, users.ErrInvalidPGPRevision)
-			return
-		}
-		if *req.ExpectedRevision != u.PGPRevision {
-			writeUserStoreError(w, users.ErrPGPRevisionChanged)
-			return
-		}
+	if req.KeyringVersion != nil && (req.ExpectedRevision == nil || *req.ExpectedRevision == 0) {
+		writeUserStoreError(w, users.ErrInvalidPGPRevision)
+		return
+	}
+	// Bind the write to the record the old credential was checked against. A
+	// reset or revocation that lands while the new hash is derived changes the
+	// credential, which bumps the revision, so this write is refused instead of
+	// undoing it. A keyring account without a revision is refused by the store.
+	if req.ExpectedRevision != nil && *req.ExpectedRevision != u.PGPRevision {
+		writeUserStoreError(w, users.ErrPGPRevisionChanged)
+		return
+	}
+	if req.ExpectedRevision == nil && u.PGPKeyring == nil {
+		verified := u.PGPRevision
+		req.ExpectedRevision = &verified
 	}
 	if req.KeyringVersion != nil && (*req.KeyringVersion != 1 || req.NewAuthSecret == "" || req.RewrappedPGPKey == "") {
 		http.Error(w, "keyringVersion 1 requires a complete rewrapped keyring and derived credential", http.StatusBadRequest)

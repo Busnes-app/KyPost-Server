@@ -461,3 +461,39 @@ func hkdfExtract(salt, ikm []byte) []byte {
 	mac.Write(ikm)
 	return mac.Sum(nil)
 }
+
+// An admin reset that lands while a password change derives its new hash wins:
+// the change was checked against the old credential and must not undo the
+// reset. Racing the two is the only way in; the bug lost most rounds.
+func TestPasswordChangeCannotUndoAConcurrentReset(t *testing.T) {
+	srv := newTestServer(t)
+	const oldPw = "correct-horse-battery-staple"
+	u, err := srv.users.Create(context.Background(), "reset-race", oldPw, users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := range 8 {
+		if _, err := srv.users.SetPassword(context.Background(), u.ID, oldPw, false, nil); err != nil {
+			t.Fatal(err)
+		}
+		body, _ := json.Marshal(map[string]any{
+			"oldAuthSecret": testAuthSecret(srv, u.Username, oldPw),
+			"newAuthSecret": "aa" + strings0(62),
+			"newLoginSalt":  "bmV3LXNhbHQtc2l4dGVlbg==",
+		})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			req := httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(body))
+			srv.handleChangePassword(httptest.NewRecorder(), req.WithContext(context.WithValue(req.Context(), authContextKey{},
+				AuthContext{UserID: u.ID, Username: u.Username, Role: users.RoleUser})))
+		}()
+		if _, err := srv.users.SetPassword(context.Background(), u.ID, "admin-chosen-temporary-pw", true, nil); err != nil {
+			t.Fatal(err)
+		}
+		<-done
+		if after, _ := srv.users.Get(u.ID); !after.MustChangePassword {
+			t.Fatalf("round %d: a password change overwrote the admin reset that landed during it", round)
+		}
+	}
+}
