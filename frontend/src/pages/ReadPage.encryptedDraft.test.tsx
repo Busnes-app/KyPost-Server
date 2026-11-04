@@ -134,6 +134,29 @@ describe("opening an encrypted draft", () => {
     expect(onOpenDraft.mock.calls[0][0]).toMatchObject({ sentTo: "outer@example.com", subject: "Only subject", body: "plain body" });
   });
 
+  it("refuses to open a draft some of whose attachments could not be read", async () => {
+    decryptMessage.mockResolvedValue({
+      body: "<p>draft body</p>",
+      bodyMode: "html",
+      signed: false,
+      verified: false,
+      signerFingerprint: "",
+      signerConflict: false,
+      attachments: [],
+      attachmentsOmitted: 1,
+      protectedHeaders: { subject: "Plans", to: "a@example.com" }
+    });
+    const onOpenDraft = vi.fn();
+    const user = userEvent.setup();
+    renderDrafts(onOpenDraft);
+
+    await user.click(await screen.findByText("[Encrypted] Email Sent by KyPost"));
+
+    // This file maps every error to its fallback text.
+    expect((await screen.findAllByText(/could not decrypt this draft/)).length).toBeGreaterThan(0);
+    expect(onOpenDraft).not.toHaveBeenCalled();
+  });
+
   it("asks for an unlock instead of opening anything while the vault is locked", async () => {
     vault.locked = true;
     const onOpenDraft = vi.fn();

@@ -213,4 +213,24 @@ describe("leaving a compose window", () => {
     act(() => button("Discard").click());
     expect(result.current.composeOpen).toBe(false);
   });
+
+  it("keeps the editor read-only while Save draft saves before closing", async () => {
+    const { postJSON } = await import("../api/client");
+    let finish: (value: unknown) => void = () => {};
+    vi.mocked(postJSON).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const result = compose();
+    act(() => result.current.openComposeWindow());
+    await waitFor(() => expect(body()).toContain("Alice"));
+    act(() => {
+      result.current.setComposeTo({ tokens: [], draft: "bob@example.com" });
+      result.current.setComposeSubject("Quarterly numbers");
+    });
+    act(() => (document.querySelector(".compose-close") as HTMLButtonElement).click());
+    const save = [...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === "Save draft") as HTMLButtonElement;
+    act(() => save.click());
+    const editor = document.querySelector(".ql-editor") as HTMLElement;
+    await waitFor(() => expect(editor.getAttribute("contenteditable")).toBe("false"));
+    await act(async () => finish({ ok: true }));
+    await waitFor(() => expect(result.current.composeOpen).toBe(false));
+  });
 });

@@ -168,6 +168,12 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     }
   }, [composeOpen, composeHtmlBody, quillCtor]);
 
+  // Read-only while a save or send is in flight, like every other field, so
+  // nothing typed meanwhile is lost when that save or send closes the window.
+  useEffect(() => {
+    quillInstanceRef.current?.enable(!composeSavingDraft && !composeSending);
+  }, [composeOpen, quillCtor, composeSavingDraft, composeSending]);
+
   function resetComposeForm() {
     stopSignature();
     setComposeFrom("");
