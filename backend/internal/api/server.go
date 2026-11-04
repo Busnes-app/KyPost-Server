@@ -761,6 +761,7 @@ func (s *Server) routesContacts(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/contacts/{id}/photo", s.withMailAuth(s.handleContactPhoto))
 	mux.HandleFunc("DELETE /api/contacts/{id}/photo", s.withAuth(s.handleContactPhoto))
 	mux.HandleFunc("POST /api/contacts/{id}/self", s.withAuth(s.handleContactSelf))
+	mux.HandleFunc("POST /api/contacts/{id}/pgp-key/confirm", s.withAuth(s.withSameOrigin(withActionDigest(s.handleContactPGPKeyConfirm))))
 	mux.HandleFunc("GET /api/groups", s.withMailAuth(s.handleGroups))
 	mux.HandleFunc("POST /api/groups", s.withAuth(s.handleGroups))
 	mux.HandleFunc("PUT /api/groups/{id}", s.withAuth(s.handleGroupByID))

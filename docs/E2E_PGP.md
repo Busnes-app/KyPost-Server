@@ -1049,7 +1049,11 @@ nothing on the server to decrypt with.
    pinned Autocrypt key is still only the domain's word: its entry carries
    `source: "autocrypt"` and no `verified: true`. A good signature from such a
    key, bound to the sender, must render as "signed by a key you have not
-   confirmed", not as "verified", until the user confirms the key.
+   confirmed", not as "verified", until the user confirms the key with
+   `POST /api/contacts/{id}/pgp-key/confirm` (`{fingerprint}` plus step-up),
+   which sets `pgpKeyVerified: true` only for the pinned fingerprint. Removing
+   such a key and pasting the same key back keeps it unconfirmed
+   (`pgpKeyRemovedAutocrypt` remembers its fingerprint).
 
    Do **not** re-derive that binding from the keys themselves. A User ID is
    free-form and self-certified, and a key may carry arbitrarily many, so "this

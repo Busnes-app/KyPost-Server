@@ -179,6 +179,7 @@ Contacts:
 - `GET|POST|DELETE /api/contacts/carddav-client/config` and `POST /api/contacts/carddav-client/sync` (sync from an external CardDAV server), returns 403 while `managed`
 - `POST|GET|DELETE /api/contacts/{id}/photo`
 - `POST /api/contacts/{id}/self`
+- `POST /api/contacts/{id}/pgp-key/confirm` (`{fingerprint, authSecret}`: marks the contact's pinned key confirmed after the user compared fingerprints; step-up as above; 409 when the fingerprint is not the pinned key)
 - `GET|POST /api/contacts/sync` (mobile two-way sync. A pairing token authenticates the call.)
 
 Groups:

@@ -185,6 +185,23 @@ export async function generateDAVPassword(confirm: { ssoSession: boolean; accoun
   );
 }
 
+/**
+ * Confirms a contact's pinned key after the user compared its fingerprint with
+ * the correspondent. It changes which signatures read as verified, so the
+ * server re-proves the caller like any other trust grant.
+ */
+export async function confirmContactPGPKey(
+  uid: string,
+  fingerprint: string,
+  confirm: { ssoSession: boolean; accountPassword: string }
+): Promise<Contact> {
+  const body = { fingerprint, ...(confirm.ssoSession ? {} : credentialFields(await deriveCredential("", confirm.accountPassword))) };
+  return withSSOStepUp(
+    (headers) => postJSON<Contact>(`/api/contacts/${encodeURIComponent(uid)}/pgp-key/confirm`, body, headers),
+    "Confirm this contact's PGP key, so their signatures read as verified."
+  );
+}
+
 export function revokeDAVPassword(): Promise<{ ok: boolean }> {
   return deleteJSON<{ ok: boolean }>("/api/contacts/dav-password");
 }

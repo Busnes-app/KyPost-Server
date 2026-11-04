@@ -67,6 +67,11 @@ type Contact struct {
 	CustomFields        []ContactCustomField `json:"customFields,omitempty"`
 	Pronouns            string               `json:"pronouns,omitempty"`
 
+	// PGPKeyRemovedAutocrypt is the fingerprint of an unconfirmed Autocrypt
+	// key the user removed, so pasting that same key back stays unconfirmed
+	// (see keepUnconfirmedAutocrypt).
+	PGPKeyRemovedAutocrypt string `json:"pgpKeyRemovedAutocrypt,omitempty"`
+
 	// Server-side-only provenance from deduplication. MergedUIDs lists the
 	// UIDs a survivor absorbed; MergedInto points a loser's tombstone at the
 	// survivor it was folded into. Both ride existing CardDAV/mobile sync as

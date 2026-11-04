@@ -9,6 +9,7 @@ import type { MutableRefObject } from "react";
 import { IM_SERVICES, type Contact } from "../../api/contacts";
 import type { Group } from "../../api/groups";
 import { PGPKeyInfo } from "./PGPKeyInfo";
+import { ConfirmPGPKey } from "./ConfirmPGPKey";
 import { ContactAvatar } from "./ContactAvatar";
 import { safeWebsiteHref } from "./formState";
 
@@ -28,6 +29,8 @@ type ContactDetailsDialogProps = {
   removeContact: (contact: Contact) => void | Promise<void>;
   toggleSelfContact: (contact: Contact) => void | Promise<void>;
   handleSuppressContactDiscovery: (contact: Contact) => void | Promise<void>;
+  /** Reloads the card after its key was confirmed. */
+  onPGPKeyConfirmed: (contact: Contact) => void | Promise<void>;
 };
 
 export function ContactDetailsDialog({
@@ -40,7 +43,8 @@ export function ContactDetailsDialog({
   openEditForm,
   removeContact,
   toggleSelfContact,
-  handleSuppressContactDiscovery
+  handleSuppressContactDiscovery,
+  onPGPKeyConfirmed
 }: ContactDetailsDialogProps) {
   return (
         <dialog
@@ -316,6 +320,16 @@ export function ContactDetailsDialog({
                       >
                         Remove key &amp; stop rediscovering
                       </button>
+                    ) : null}
+                    {!selectedContact.isSelf &&
+                    selectedContact.pgpKeySource === "autocrypt" &&
+                    !selectedContact.pgpKeyVerified &&
+                    selectedContact.pgpKeyFingerprint ? (
+                      <ConfirmPGPKey
+                        key={selectedContact.uid}
+                        contact={selectedContact}
+                        onConfirmed={() => onPGPKeyConfirmed(selectedContact)}
+                      />
                     ) : null}
                     <details>
                       <summary className="contacts-muted">Show raw key</summary>

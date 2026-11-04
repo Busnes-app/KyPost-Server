@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ProtonMail/gopenpgp/v3/crypto"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -219,5 +222,43 @@ func TestDAVPasswordCreateRequiresStepUp(t *testing.T) {
 	// Revoking stays session-only: removing a credential is never the risk.
 	if rec := deviceGrantCall(t, srv, u.ID, http.MethodDelete, "/api/contacts/dav-password", ""); rec.Code != http.StatusOK {
 		t.Fatalf("revoke: status %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Confirming a contact's key changes which signatures read as verified, so it
+// takes a step-up and only the pinned fingerprint confirms.
+func TestContactPGPKeyConfirmRequiresStepUpAndThePin(t *testing.T) {
+	srv, u := newDeviceGrantServer(t)
+	store, err := srv.userContactsStore(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.PGP().KeyGeneration().AddUserId("Bob", "bob@example.com").New().GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	armored, _ := key.GetArmoredPublicKey()
+	fp := key.GetFingerprint()
+	bob, err := store.Upsert(contacts.Contact{FormattedName: "Bob", Emails: []contacts.ContactValue{{Value: "bob@example.com"}}, PGPKey: armored, PGPKeyFingerprint: fp, PGPKeySource: contacts.PGPSourceAutocrypt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/contacts/" + bob.UID + "/pgp-key/confirm"
+	secret := userAuthSecret(srv, u.ID, deviceGrantPassword)
+	if rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, path, `{"fingerprint":"`+fp+`"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("no step-up: status %d body %s", rec.Code, rec.Body.String())
+	}
+	if rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, path, `{"fingerprint":"DEADBEEF","authSecret":"`+secret+`"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("wrong fingerprint: status %d body %s", rec.Code, rec.Body.String())
+	}
+	if c, _, _ := store.Get(bob.UID); c.PGPKeyVerified {
+		t.Fatal("a refused confirmation marked the key verified")
+	}
+	if rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, "/api/contacts/nobody/pgp-key/confirm", `{"fingerprint":"`+fp+`","authSecret":"`+secret+`"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing contact: status %d", rec.Code)
+	}
+	rec := deviceGrantCall(t, srv, u.ID, http.MethodPost, path, `{"fingerprint":"`+fp+`","authSecret":"`+secret+`"}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"pgpKeyVerified":true`) {
+		t.Fatalf("confirm: status %d body %s", rec.Code, rec.Body.String())
 	}
 }
