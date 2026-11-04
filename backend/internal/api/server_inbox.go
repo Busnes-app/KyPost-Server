@@ -1128,6 +1128,21 @@ func serveInboxFolders(w http.ResponseWriter, r *http.Request, mailClient imapad
 // on pages it, exactly as the mobile-sync push does.
 const maxInboxActionIDs = 500
 
+// setLabelIn labels a message in the folder it was listed from. An IMAP UID
+// belongs to its folder, so the default-folder ApplyLabel would change another
+// message; a native id is global, so its ApplyLabel already finds the message.
+func setLabelIn(ctx context.Context, c imapadapter.Client, mailbox, id, label string, add bool) error {
+	if f, ok := c.(interface {
+		LabelIn(ctx context.Context, mailbox, id, label string, add bool) error
+	}); ok {
+		return f.LabelIn(ctx, mailbox, id, label, add)
+	}
+	if add {
+		return c.ApplyLabel(ctx, id, label)
+	}
+	return c.RemoveLabel(ctx, id, label)
+}
+
 func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 	mailClient, err := s.mailFor(r)
 	if err != nil {
@@ -1257,10 +1272,8 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		switch action {
-		case "label":
-			err = mailClient.ApplyLabel(r.Context(), internalID, keyword)
-		case "unlabel":
-			err = mailClient.RemoveLabel(r.Context(), internalID, keyword)
+		case "label", "unlabel":
+			err = setLabelIn(r.Context(), mailClient, mailbox, internalID, keyword, action == "label")
 		case "snooze":
 			err = snoozeMessage(r.Context(), mailClient, snoozeStore, internalID, mailbox, wakeAt)
 		default:
@@ -1276,8 +1289,10 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Labelling a message is how a user tells the sorter it was wrong. Sorter
-	// state is the primary's; extra mailbox IDs would collide in it.
-	if ac, ok := authFromContext(r); ok && len(labelled) > 0 && ac.Mailbox == "" {
+	// state is the primary's inbox; extra mailbox IDs and other folders' UIDs
+	// would collide in it.
+	inbox := mailbox == "" || strings.EqualFold(mailbox, "INBOX")
+	if ac, ok := authFromContext(r); ok && len(labelled) > 0 && ac.Mailbox == "" && inbox {
 		s.learnFromLabelAction(ac.UserID, keyword, labelled)
 	}
 

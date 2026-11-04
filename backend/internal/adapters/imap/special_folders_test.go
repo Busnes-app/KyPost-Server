@@ -362,3 +362,27 @@ func TestDeleteInTrashExpungesOnlyThatMessage(t *testing.T) {
 		t.Fatalf("a delete in Trash moved instead: %v", moves)
 	}
 }
+
+// A UID belongs to its folder: labelling a message listed in Archive must
+// select Archive first, or the default folder's same UID is changed instead.
+func TestLabelInSelectsTheMessagesFolder(t *testing.T) {
+	quietRetries(t, 0)
+	s := newFakeIMAPServer(t, "/", true, []fakeFolder{inboxFolder(), {name: "Archive", attrs: `\Archive`}})
+	if err := s.client(inbox).LabelIn(context.Background(), "Archive", "42", "VIP", true); err != nil {
+		t.Fatalf("label: %v", err)
+	}
+	cmds := s.commandsMatching("")
+	last := ""
+	for _, c := range cmds {
+		if u := strings.ToUpper(c); strings.HasPrefix(u, "SELECT") || strings.HasPrefix(u, "EXAMINE") {
+			last = c
+		}
+		if strings.HasPrefix(strings.ToUpper(c), "UID STORE 42 +FLAGS") {
+			if !strings.Contains(last, `"Archive"`) {
+				t.Fatalf("stored while %q was selected; commands: %v", last, cmds)
+			}
+			return
+		}
+	}
+	t.Fatalf("no keyword was stored; commands: %v", cmds)
+}
