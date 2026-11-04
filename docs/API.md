@@ -151,7 +151,7 @@ PGP:
 - `POST /api/pgp/recipients/resolve` (resolves the key actually used for each recipient)
 - `GET /api/pgp/qr/token` and `GET /api/pgp/qr/key` (public key exchange through a QR code)
 - `POST /api/pgp/pickup` (creates a sealed pickup for a recipient with no usable key, so a client-protected sender can still use the secure-link fallback)
-- `GET /api/mail/pgp-payload` and `POST /api/mail/send-pgp` (fetch a ciphertext for local decryption; submit a locally encrypted message. On a converted account the send carries `materialGeneration` and is refused with 409 when it is stale, and a paired device must be enrolled at that generation. Optional `replyToMessageId` (and `replyToMailbox`) threads a reply as on `/api/mail/send`, with the same refusals: the server adds the outer `In-Reply-To`/`References` to every delivery and the Sent copy; a delivery already carrying either is refused with 400)
+- `GET /api/mail/pgp-payload` and `POST /api/mail/send-pgp` (fetch a ciphertext for local decryption; submit a locally encrypted message. On a converted account the send carries `materialGeneration` and is refused with 409 when it is stale, and a paired device must be enrolled at that generation. Optional `replyToMessageId` (and `replyToMailbox`) threads a reply as on `/api/mail/send`, with the same refusals: the server adds the outer `In-Reply-To`/`References` to every delivery and the Sent copy; a delivery or Sent copy already carrying either, or whose headers do not parse, is refused with 400 before anything is delivered)
 
 PGP key discovery and device enrollment:
 
