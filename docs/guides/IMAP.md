@@ -175,6 +175,11 @@ markings. If the server publishes none, it looks for the usual names (for exampl
 `Trash`, `Deleted Items`, `Junk`, `Spam`, `Sent`, `Sent Items`, `Drafts`) and only
 creates a folder when none exists.
 
+Delete in Trash removes that one message for good with `UID EXPUNGE`, which needs a
+server with UIDPLUS (or IMAP4rev2); nearly all do. On one without it, KyPost refuses
+with "this mail server cannot permanently delete one message (no UIDPLUS); empty Trash
+with your mail provider" rather than expunge the whole folder.
+
 ### How credentials are stored
 
 - Saved credentials are encrypted at rest with AES-GCM in

@@ -80,6 +80,6 @@ The user creates a new one the same way.
 | this account's PGP key is end-to-end protected, so an agent cannot save drafts | Drafts would be stored unencrypted | Tell the user; they write it in KyPost |
 | this account has no mail set up | No mailbox | Tell the user to set up mail in KyPost |
 | the mail server is unavailable; try again later | Mail server problem | Try once more later; do not loop |
-| too many requests, slow down; retry in N seconds | The account's request budget is spent | Wait that long; ask for less |
+| too many requests, slow down (a search adds "; retry in N seconds") | The account's request budget is spent | Wait that long, or a minute; ask for less |
 | another request from this account's agents is still running | One request at a time per account | Wait for the previous call, then retry once |
 | anything else | Server problem | Report it; do not retry more than once |
