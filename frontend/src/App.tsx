@@ -426,8 +426,10 @@ export function App() {
       const parsed = JSON.parse(raw) as DragMessagePayload;
       if (!Array.isArray(parsed.messageIds) || parsed.messageIds.length === 0) return null;
       const messageIds = parsed.messageIds.map((value) => String(value).trim()).filter(Boolean);
-      const mailbox = String(parsed.mailbox || "").trim();
-      if (messageIds.length === 0 || mailbox === "") return null;
+      // "" is the account's default folder, resolved by the server.
+      if (typeof parsed.mailbox !== "string") return null;
+      const mailbox = parsed.mailbox.trim();
+      if (messageIds.length === 0) return null;
       return { messageIds, mailbox };
     } catch {
       return null;
@@ -439,7 +441,9 @@ export function App() {
     setDragOverFolder("");
     const payload = parseDragPayload(event.dataTransfer.getData("application/x-kypost-mailbox"));
     if (!payload) return;
-    if (payload.mailbox.toLowerCase() === targetMailbox.toLowerCase()) return;
+    // Only the guard reads "" as INBOX: dropping a default-folder message on
+    // INBOX is refused even when the default is another folder, never misfiled.
+    if ((payload.mailbox || "INBOX").toLowerCase() === targetMailbox.toLowerCase()) return;
 
     setDeleteFolderError("");
     setCreateFolderError("");

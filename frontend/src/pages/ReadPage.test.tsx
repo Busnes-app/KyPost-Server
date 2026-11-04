@@ -280,6 +280,23 @@ describe("search scope", () => {
   });
 });
 
+describe("drag source folder", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEndpoints();
+  });
+
+  it("names the listed folder as listed, so the server resolves the account's default", async () => {
+    renderReadPage();
+    const row = (await screen.findByRole("checkbox", { name: "Select email Weekly Digest" })).closest("tr")!;
+    const data: Record<string, string> = {};
+    const dataTransfer = { setData: (type: string, value: string) => { data[type] = value; }, effectAllowed: "" };
+    row.dispatchEvent(Object.assign(new Event("dragstart", { bubbles: true }), { dataTransfer }));
+    // A literal "INBOX" moved INBOX's same UID when the default is another folder.
+    expect(JSON.parse(data["application/x-kypost-mailbox"])).toEqual({ messageIds: ["msg-newsletter"], mailbox: "" });
+  });
+});
+
 describe("message list toolbar", () => {
   beforeEach(() => {
     vi.clearAllMocks();

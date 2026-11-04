@@ -197,16 +197,13 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
   // configured folder's UID N — a different message.
   const listedMailbox = mailbox;
 
-  // A concrete label, only for the drag payload: App.tsx's same-mailbox guard
-  // compares these strings and cannot resolve "" to a folder itself.
-  const sourceMailbox = mailbox || "INBOX";
 
   // An IMAP UID is unique within ONE mailbox, and `messageId` is a bare UID
   // (adapters/imap/client.go:657). Keying the local-verdict map on it alone let
   // a verdict computed for one mailbox's UID 7 be served for a DIFFERENT
   // message at UID 7 in another — including its green "signature verified"
-  // badge. Qualify with `mailbox`, not `sourceMailbox`: the latter maps "" and
-  // "INBOX" onto one key while they select different folders.
+  // badge. Qualify with `mailbox` as listed: "" and "INBOX" select different
+  // folders when the account's default is another folder.
   const decryptedKey = (messageId: string) => `${mailbox}\u0000${messageId}`;
   const selectedAttachments = selected ? decrypted[decryptedKey(selected.messageId)]?.attachments : undefined;
   // cid: images a decrypted body references, built once per decrypted message.
@@ -828,9 +825,11 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
 
   function dragMessagePayload(item: InboxEmail): string {
     const dragged = selectedMessageIds.includes(item.messageId) ? selectedMessageIds : [item.messageId];
+    // The folder exactly as listed: "" is the account's default folder, which
+    // the server resolves. A literal "INBOX" there moved INBOX's same UID.
     return JSON.stringify({
       messageIds: dragged,
-      mailbox: sourceMailbox
+      mailbox: listedMailbox
     });
   }
 
