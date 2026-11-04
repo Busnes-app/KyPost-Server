@@ -355,6 +355,11 @@ func (s *Server) handlePushFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	// The fence is fixed at creation; read it before the challenge is consumed.
+	var fence uint64
+	if ch, ok := s.mfaChallenges.Get(strings.TrimSpace(req.ChallengeID)); ok {
+		fence = ch.Fence
+	}
 	userID, err := s.mfaChallenges.ConsumePushApproval(strings.TrimSpace(req.ChallengeID), strings.TrimSpace(req.FinishSecret))
 	if err != nil {
 		if errors.Is(err, mfa.ErrPushNotApproved) {
@@ -380,7 +385,7 @@ func (s *Server) handlePushFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
 		return
 	}
-	if err := s.startSession(w, r, u.ID); err != nil {
+	if err := s.mintSession(w, r, Session{UserID: u.ID, revocations: fence}); err != nil {
 		http.Error(w, "session creation failed", http.StatusInternalServerError)
 		return
 	}

@@ -381,7 +381,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		ch, err := s.mfaChallenges.Create(u.ID)
+		ch, err := s.mfaChallenges.CreateFenced(u.ID, revocations+1)
 		if err != nil {
 			http.Error(w, "session creation failed", http.StatusInternalServerError)
 			return
@@ -502,15 +502,10 @@ func (s *Server) handleCSRFToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"csrfToken": sess.CSRFToken})
 }
 
-// startSession mints a session token for userID, records it, and sets the
-// kypost_session cookie with exactly the flags the legacy password-only login
-// used. Shared by handleLogin and the second-factor endpoints.
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID string) error {
-	return s.mintSession(w, r, Session{UserID: userID})
-}
-
-// mintSession is startSession for a caller that has more to record than the
-// user id: the SSO callback stores the provider login the session came from.
+// mintSession mints a session token for sess, records it, and sets the
+// kypost_session and csrf_token cookies. A nonzero sess.revocations is the
+// sign-in's revocation fence: a revocation since then refuses the session.
+// The SSO callback also records the provider login the session came from.
 func (s *Server) mintSession(w http.ResponseWriter, r *http.Request, sess Session) error {
 	u, err := s.users.Get(sess.UserID)
 	if err != nil {
@@ -638,7 +633,7 @@ func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
 	s.mfaLockout.recordSuccess(ch.UserID)
 
 	s.mfaChallenges.Delete(ch.ID)
-	if err := s.startSession(w, r, u.ID); err != nil {
+	if err := s.mintSession(w, r, Session{UserID: u.ID, revocations: ch.Fence}); err != nil {
 		http.Error(w, "session creation failed", http.StatusInternalServerError)
 		return
 	}
@@ -691,7 +686,7 @@ func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
 	s.mfaLockout.recordSuccess(ch.UserID)
 
 	s.mfaChallenges.Delete(ch.ID)
-	if err := s.startSession(w, r, u.ID); err != nil {
+	if err := s.mintSession(w, r, Session{UserID: u.ID, revocations: ch.Fence}); err != nil {
 		http.Error(w, "session creation failed", http.StatusInternalServerError)
 		return
 	}

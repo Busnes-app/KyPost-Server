@@ -717,4 +717,19 @@ func TestMFAChallengeDoesNotSurviveRevocation(t *testing.T) {
 	if rec := login(); rec.Code == http.StatusOK || bytes.Contains(rec.Body.Bytes(), []byte("challengeId")) {
 		t.Fatalf("a sign-in overtaken by a revocation got a challenge: %d %s", rec.Code, rec.Body.String())
 	}
+
+	// A revocation whose purge misses the challenge (the finish already took
+	// it) still refuses the session: the challenge carries the sign-in's fence.
+	loginKDFBilledSeconds = orig
+	if rec = login(); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &ch) != nil || ch.ChallengeID == "" {
+		t.Fatalf("login: %d %s", rec.Code, rec.Body.String())
+	}
+	srv.sessMu.Lock()
+	srv.revokedAt[u.ID] = srv.revocations.Add(1)
+	srv.sessMu.Unlock()
+	finish = doJSON(srv, srv.handleMFATOTP, http.MethodPost, "/api/auth/mfa/totp",
+		map[string]string{"challengeId": ch.ChallengeID, "code": totpCodeForTest(t, secret, time.Now())})
+	if finish.Code == http.StatusOK || findCookie(finish.Result().Cookies(), "kypost_session") != nil {
+		t.Fatalf("a finish overtaken by a revocation minted a session: %d %s", finish.Code, finish.Body.String())
+	}
 }
