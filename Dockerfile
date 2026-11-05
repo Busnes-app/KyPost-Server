@@ -48,7 +48,7 @@ RUN npm run build
 # the stage above, and the admin-password hashing that once needed `node` is now
 # `kypost-server --mode bootstrap-admin`. Keep it that way — a Node runtime here
 # is a CVE stream to track for no runtime benefit. See scripts/AGENTS.md.
-FROM debian:stable-slim@sha256:eb593cf2c358cacef45ca0a424bbc7d30cfa3466265fc2662b9466a0ca6ba1c5
+FROM debian:stable-slim@sha256:13e0a2e78aa0554ad5ff66e4e260c6dbcdff807eb1f39d43b9fb0288aae88b04
 
 # The GHCR package is the documented install path, and without
 # org.opencontainers.image.source it is an orphan: the package page links back
