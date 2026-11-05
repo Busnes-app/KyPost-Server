@@ -48,6 +48,7 @@ func TestContactsSyncReplayOmitsOnlyUnusableKeys(t *testing.T) {
 		{"valid-v6", replayV6Key(t), true}, {"expired", expired, false},
 		{"revoked", revoked, false}, {"wrong-address", wrong.ArmoredPublicKey, false},
 		{"private", must1(private.Armor()), false}, {"malformed", "garbage", false},
+		{"whitespace", " \t\n", false},
 	} {
 		if got := validateContactKey(tc.key, []contacts.ContactValue{{Value: "bob@example.com"}}) == nil; got != tc.valid {
 			t.Fatalf("fixture%s usable%v want%v", tc.name, got, tc.valid)
