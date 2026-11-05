@@ -18,6 +18,11 @@ non-prerelease version.
 
 ## Unreleased
 
+- Mobile contact imports may opt in to `omitUnusableKey:true`: import a kept
+  contact without a revoked, expired, mismatched or otherwise invalid new key.
+  The existing validator decides on the relay; ordinary writes remain strict.
+  Android Bring needs its coordinated client update. Wire contract: `docs/API.md`.
+
 ### Added
 
 - Email signatures (#440). Settings → Mail → Signatures holds up to ten plain-text

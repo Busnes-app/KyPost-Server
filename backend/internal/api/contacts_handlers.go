@@ -559,11 +559,13 @@ func (s *Server) handleContactsDAVPassword(w http.ResponseWriter, r *http.Reques
 // contactSyncChange is one mobile-side create/update/delete pushed via
 // POST /api/contacts/sync. Rev carries the client's last-known revision but
 // is not currently used for conflict rejection — v1 policy is last-write-wins
-// (see backend/AGENTS.md and Mobile_Contact_Sync.md).
+// (see backend/AGENTS.md and docs/API.md).
 type contactSyncChange struct {
 	UID     string `json:"uid"`
 	Rev     int64  `json:"rev"`
 	Deleted bool   `json:"deleted,omitempty"`
+	// Explicit consent to import a kept contact without a rejected key.
+	OmitUnusableKey bool `json:"omitUnusableKey,omitempty"`
 	contactPayload
 }
 
@@ -680,8 +682,11 @@ func (s *Server) handleContactsSync(w http.ResponseWriter, r *http.Request) {
 			change.GroupIDs = ids
 			c := change.toContact(uid)
 			if err := checkContactKeyWrite(c, storedKeys[uid]); err != nil {
-				http.Error(w, "invalid PGP key for contact "+uid+": "+err.Error(), http.StatusBadRequest)
-				return
+				if !change.OmitUnusableKey {
+					http.Error(w, "invalid PGP key for contact "+uid+": "+err.Error(), http.StatusBadRequest)
+					return
+				}
+				c.PGPKey = ""
 			}
 			ops = append(ops, contacts.BatchOp{Contact: c})
 		}

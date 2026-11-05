@@ -147,3 +147,12 @@ and native receiving is still in qualification. Each is in
 
 This case is updated when a trust boundary or a security requirement changes. A pull request that
 moves one must update this page in the same change.
+
+## Kept-contact imports
+
+The optional per-change `omitUnusableKey:true` on device-authenticated contact
+sync is consent to import a contact without a key the existing validator refuses.
+Only that validation error can remove its submitted key; unrelated failures still
+refuse/roll back. Default edits stay strict. This does not authorize plaintext
+mail fallback or change contact-pin/encryption trust. See `docs/API.md` and
+`TestContactsSyncReplay*` in `backend/internal/api/contact_key_replay_test.go`.

@@ -180,7 +180,19 @@ Contacts:
 - `POST|GET|DELETE /api/contacts/{id}/photo`
 - `POST /api/contacts/{id}/self`
 - `POST /api/contacts/{id}/pgp-key/confirm` (`{fingerprint, authSecret}`: marks the contact's pinned key confirmed after the user compared fingerprints; step-up as above; 409 when the fingerprint is not the pinned key)
-- `GET|POST /api/contacts/sync` (mobile two-way sync. A pairing token authenticates the call.)
+- `GET|POST /api/contacts/sync` (mobile two-way sync, authenticated with
+  `X-Kypost-Device-Id` and `X-Kypost-Device-Secret`, not a pairing token).
+  POST takes `{baseCursor, changes[]}`. A change may opt in to
+  `omitUnusableKey:true` when bringing kept contacts into this account: the relay
+  uses its existing contact-key validator and imports that contact without a
+  rejected key. Valid keys still pass admission unchanged and existing stored-key
+  compatibility remains; the store applies its normal public-armor normalization.
+  Ordinary changes omit the flag and still refuse invalid keys. Other validation,
+  authentication and storage failures retain their existing refusal and atomic
+  rollback. A malformed flag refuses the request. Bounds remain500changes/1MiB.
+  This flag grants no PGP trust and never changes encryption/signature policy.
+  Older relays ignore it and may refuse the import; clients must keep that change
+  queued and explain the failure, rather than inferring key removal from a400.
 
 Groups:
 

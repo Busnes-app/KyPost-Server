@@ -18,7 +18,7 @@ KyPost polls unread mail, classifies each message, and applies IMAP keywords. It
 - Sending quotas across immediate and scheduled mail: 60 messages an hour and 1000 recipients a day by default, adjustable by administrators per installation or account.
 - Automatic keyword labels from an on-device embedding sorter backed by a local Ollama model; each account keeps its own labels. Labels are a hint, not a security boundary — see [Architecture](docs/ARCHITECTURE.md#architecture).
 - PGP encryption and signing, recipient key discovery, Web Key Directory publishing and opt-in incoming encryption. Browser encryption, signing and signature trust require RSA keys of at least 2048 bits. Read [Where your PGP private key lives](docs/PGP-KEYS.md#where-your-pgp-private-key-lives) before relying on it.
-- Contacts with CardDAV server and client, groups, CSV/vCard import and export, and Confirm key for keys learned from correspondents' mail.
+- Contacts with CardDAV server and client, groups, CSV/vCard import and export, and Confirm key for keys learned from correspondents' mail. Mobile imports can opt in to omitting keys the existing validator refuses; ordinary edits stay strict.
 - Multi-user with admin and user roles; TOTP, recovery codes and push-approval MFA; OpenID Connect single sign-on; self-hosted proof-of-work login CAPTCHA by default.
 - Browser push, and native push for the mobile apps through the [push relays](docs/CLIENTS-AND-PUSH.md#push-relays-cloudflare-workers).
 - Opt-in native mailboxes: KyIdentity provisioning across several domains, quotas, receiving through Cloudflare Email Routing or an operator-supplied receiver (both still in qualification), operator-owned relay sending, sender blocks, quarantine, and mail import and export.
