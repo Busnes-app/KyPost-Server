@@ -637,6 +637,25 @@ func (s *Store) QuarantineOutbound(ctx context.Context, id string, sequence int)
 	return nil
 }
 
+// HasPendingOutbound is a read-only scheduling hint for a ledger-selected mailbox
+// directory. It grants no storage or send authority and creates no schema. Errors
+// must take the normal validated discovery path, never be treated as an empty queue.
+// A concurrent enqueue after a false answer is discovered on the next pass.
+func HasPendingOutbound(ctx context.Context, dir string) (bool, error) {
+	db, err := openReadOnly(filepath.Join(dir, "mailbox.db"))
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = db.Close() }()
+	var pending bool
+	err = db.QueryRowContext(ctx, "SELECT EXISTS ("+pendingOutboundSQL+")", time.Now().Unix(), 1).Scan(&pending)
+	return pending, err
+}
+
+const pendingOutboundSQL = `SELECT DISTINCT o.id,o.created_at FROM outbox o JOIN outbox_deliveries d ON d.job=o.id
+ WHERE (d.state IN ('queued','retryable') AND d.next_attempt<=? AND (EXISTS (SELECT 1 FROM outbox_independent i WHERE i.job=o.id) OR d.sequence=0 OR EXISTS (SELECT 1 FROM outbox_deliveries p WHERE p.job=o.id AND p.sequence=0 AND p.state='accepted'))) OR (d.state='accepted' AND o.sent_reserved=1)
+ ORDER BY o.created_at,o.id LIMIT ?`
+
 // PendingOutbound finds bounded local work in oldest-first order. Crashed or
 // uncertain submissions are deliberately excluded; Sent retry is independent.
 // Discovery is not authorization: callers must revalidate before claiming.
@@ -644,9 +663,7 @@ func (s *Store) PendingOutbound(ctx context.Context, limit int) ([]string, error
 	if limit < 1 || limit > 1000 {
 		return nil, ErrOutbound
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT o.id,o.created_at FROM outbox o JOIN outbox_deliveries d ON d.job=o.id
- WHERE (d.state IN ('queued','retryable') AND d.next_attempt<=? AND (EXISTS (SELECT 1 FROM outbox_independent i WHERE i.job=o.id) OR d.sequence=0 OR EXISTS (SELECT 1 FROM outbox_deliveries p WHERE p.job=o.id AND p.sequence=0 AND p.state='accepted'))) OR (d.state='accepted' AND o.sent_reserved=1)
- ORDER BY o.created_at,o.id LIMIT ?`, time.Now().Unix(), limit)
+	rows, err := s.db.QueryContext(ctx, pendingOutboundSQL, time.Now().Unix(), limit)
 	if err != nil {
 		return nil, err
 	}

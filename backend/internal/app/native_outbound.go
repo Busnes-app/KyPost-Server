@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -42,6 +44,10 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 			} else {
 				// ponytail: four concurrent mailboxes, sequential jobs per owner; raise only
 				// after measuring relay limits and storage contention with representative load.
+				dirs := make(map[string]string, len(mailboxes))
+				for _, m := range mailboxes {
+					dirs[m.ID] = m.Dir
+				}
 				slots := make(chan struct{}, 4)
 				var workers sync.WaitGroup
 				for _, mailboxID := range outboxMailboxes(all, mailboxes) {
@@ -52,9 +58,17 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 						return
 					}
 					workers.Add(1)
-					go func(mailboxID string) {
+					go func(mailboxID, dir string) {
 						defer workers.Done()
 						defer func() { <-slots }()
+						// The hint can only defer an empty queue. All positive/error
+						// paths retain fresh storage/owner validation and recovery claims.
+						if dir != "" {
+							pending, err := mailbox.HasPendingOutbound(ctx, filepath.Join(dir, "mailbox"))
+							if err == nil && !pending {
+								return
+							}
+						}
 						ids, err := sender.Pending(ctx, mailboxID, 50)
 						if err != nil {
 							if ctx.Err() == nil {
@@ -70,7 +84,7 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 								d.logger.Error("native outbox recovery deferred; inspect delivery evidence before resubmitting", "correlation_id", id, "error", "storage, sender authority or relay unavailable")
 							}
 						}
-					}(mailboxID)
+					}(mailboxID, dirs[mailboxID])
 				}
 				workers.Wait()
 			}
