@@ -154,14 +154,22 @@ func (x nativeLedgerAddress) heldBy(mailbox string, generation int64) bool {
 // historical snapshots and migration; the runtime reads version 2 alone.
 func parseNativeLedger(raw []byte, historical bool) (nativeAssignments, int, error) {
 	var head struct {
-		Version  int                         `json:"version"`
-		Accounts map[string]NativeAssignment `json:"accounts"`
+		Version int `json:"version"`
 	}
 	if err := json.Unmarshal(raw, &head); err != nil {
 		return nativeAssignments{}, 0, err
 	}
-	if head.Version == 1 && historical && head.Accounts != nil {
-		return nativeAssignments{Accounts: head.Accounts}, 1, nil
+	if head.Version == 1 && historical {
+		// Current ledgers must not allocate and decode a discarded v1 view.
+		var legacy struct {
+			Accounts map[string]NativeAssignment `json:"accounts"`
+		}
+		if err := json.Unmarshal(raw, &legacy); err != nil {
+			return nativeAssignments{}, 0, err
+		}
+		if legacy.Accounts != nil {
+			return nativeAssignments{Accounts: legacy.Accounts}, 1, nil
+		}
 	}
 	var l nativeLedger
 	if head.Version != 2 || json.Unmarshal(raw, &l) != nil || l.Accounts == nil || l.Mailboxes == nil || l.Addresses == nil {

@@ -20,6 +20,11 @@ non-prerelease version.
 
 ### Performance
 
+- Native mailbox ledger reads avoid decoding current accounts into a discarded legacy
+  representation before validating the current format. Admission, revocation and
+  exclusive-lock behavior remain unchanged. The same fenced admission also reuses its
+  format validation instead of decoding the ledger header again for the domain read.
+
 - Native mailbox admission reuses its validated assignment and lifecycle snapshot within
   the existing directory fence, avoiding duplicate JSON reads without retaining access
   between operations. Cancellable exclusive file-lock retries wait 1 ms instead of 10 ms;

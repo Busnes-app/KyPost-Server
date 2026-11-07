@@ -133,7 +133,10 @@ func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, stateRoot, iss
 		return NativeAssignment{}, ErrNativeAdministrator
 	}
 	// The primary address may sit on any configured, non-retired domain.
-	domains, err := NewNativeDomainStore(filepath.Dir(s.path)).ReadSet()
+	// nativeUserStorageForAdmission already checked the native format under
+	// this directory fence; read the current domain set without decoding the
+	// same ledger header again. Standalone ReadSet callers keep their guard.
+	domains, err := NewNativeDomainStore(filepath.Dir(s.path)).readSet()
 	domain := AddressDomain(a.Address)
 	if _, configured := domains.Domains[domain]; err != nil || domains.Issuer != issuer || !configured {
 		return NativeAssignment{}, ErrNativeProvisioning
