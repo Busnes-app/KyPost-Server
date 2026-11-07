@@ -14,6 +14,7 @@ import (
 // is charged by their callers instead (admitSend, chargeSend).
 var sendSinks = map[string]bool{
 	"SMTPDeliver": true, "SMTPDeliverPrepared": true, "Deliver": true, "NativeOutbound": true,
+	"directDeliver": true, "finishNativeDirectSend": true,
 	"nativeOutbound": true, "finishMailSend": true, "finishNativeSend": true, "deliverIMAP": true,
 	"sendPickupNotifications": true, "sendPickupNotification": true,
 }
@@ -22,6 +23,8 @@ var sendSinks = map[string]bool{
 // name a sink, each with why the quota holds there. A new one fails the test
 // until it is charged too.
 var sendCallers = map[string]string{
+	"mailmsg.Deliver":               "a transport sink reached from durable native claims",
+	"api.finishNativeDirectSend":    "a sink reached only from finishNativeSend; recipients charged before enqueue",
 	"api.handleMailSend":            "admitSend",
 	"api.handleMailSendPGP":         "admitSend",
 	"api.handleSendAsCreate":        "admitSend; the per-address cooldown alone resets on delete and re-add",
