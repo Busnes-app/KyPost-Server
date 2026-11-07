@@ -31,8 +31,8 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"configured": exists, "domain": domain, "domains": append([]string{}, c.Domains...),
 			"retiredDomains": append([]string{}, c.RetiredDomains...), "issuer": c.Issuer,
-			"host": c.Host, "port": c.Port, "generation": c.Generation,
-			"transport": "implicit-tls", "authRequired": true, "sendingEnabled": s.nativeMail && exists,
+			"host": c.Host, "port": c.Port, "generation": c.Generation, "mode": c.Mode,
+			"transport": map[bool]string{true: "mx-starttls", false: "implicit-tls"}[c.Mode == "direct"], "authRequired": c.Mode != "direct", "sendingEnabled": s.nativeMail && exists,
 		})
 	}
 	if r.Method == http.MethodGet {
@@ -45,6 +45,7 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
+		Mode         string   `json:"mode"`
 		Host         string   `json:"host"`
 		Port         int      `json:"port"`
 		SMTPUsername string   `json:"smtpUsername"`
@@ -66,7 +67,7 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Domains alone change only the set and keep the relay generation.
-	domainsOnly := body.Domains != nil && body.Host == "" && body.Port == 0 && body.SMTPUsername == "" && body.SMTPPassword == ""
+	domainsOnly := body.Mode == "" && body.Domains != nil && body.Host == "" && body.Port == 0 && body.SMTPUsername == "" && body.SMTPPassword == ""
 	prior, exists, err := mailmsg.ReadDomainRelay(path, keyPath)
 	if err != nil {
 		http.Error(w, mailmsg.ErrDomainRelay.Error(), http.StatusConflict)
@@ -148,11 +149,11 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 	if domainsOnly {
 		c, err = mailmsg.SetDomainRelayDomains(ctx, path, keyPath, domains)
 	} else {
-		if body.Port == 0 {
+		if body.Port == 0 && body.Mode != "direct" {
 			body.Port = 465
 		}
 		c, err = mailmsg.SaveDomainRelay(ctx, path, keyPath, mailmsg.DomainRelay{
-			Domains: domains, Issuer: settings.IssuerURL, Host: body.Host, Port: body.Port, Username: body.SMTPUsername, Password: body.SMTPPassword,
+			Mode: body.Mode, Domains: domains, Issuer: settings.IssuerURL, Host: body.Host, Port: body.Port, Username: body.SMTPUsername, Password: body.SMTPPassword,
 		})
 	}
 	if err != nil {

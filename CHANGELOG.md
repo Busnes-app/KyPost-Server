@@ -37,6 +37,8 @@ non-prerelease version.
 
 ### Added
 
+- Opt-in native direct recipient-MX delivery through the protected profile API, using verified STARTTLS and the existing encrypted outbox. Per-recipient claims preserve uncertainty, independent retries and one Sent copy; relay settings remain the default. Public deliverability and workforce capacity remain unqualified; see `docs/DIRECT_DELIVERY.md`.
+
 - Email signatures (#440). Settings → Mail → Signatures holds up to ten plain-text
   signatures, a default, a choice per sending address, and whether replies and forwards get
   one (both on by default). They are stored on the server (`GET|PUT /api/mail/signatures`)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/smtp"
 	"net/textproto"
 	"os"
@@ -25,6 +26,8 @@ var ErrDomainRelay = errors.New("domain relay configuration missing or invalid; 
 // Domains may be used as From; RetiredDomains only validate historical jobs.
 // Both are sorted and disjoint.
 type DomainRelay struct {
+	// Mode is empty for the existing relay, or direct for recipient MX delivery.
+	Mode           string
 	Generation     string
 	Domains        []string
 	RetiredDomains []string
@@ -44,12 +47,13 @@ func (c DomainRelay) Historical(domain string) bool {
 }
 
 func (c DomainRelay) Equal(o DomainRelay) bool {
-	return c.Generation == o.Generation && slices.Equal(c.Domains, o.Domains) && slices.Equal(c.RetiredDomains, o.RetiredDomains) && c.Issuer == o.Issuer && c.Host == o.Host && c.Port == o.Port && c.Username == o.Username && c.Password == o.Password
+	return c.Mode == o.Mode && c.Generation == o.Generation && slices.Equal(c.Domains, o.Domains) && slices.Equal(c.RetiredDomains, o.RetiredDomains) && c.Issuer == o.Issuer && c.Host == o.Host && c.Port == o.Port && c.Username == o.Username && c.Password == o.Password
 }
 
 // domainRelayFile is the sealed JSON. Version 2 holds a domain set; version 1
 // (a single "domain") is read only by migration and backup validation.
 type domainRelayFile struct {
+	Mode           string   `json:"mode,omitempty"`
 	Version        int      `json:"version"`
 	Generation     string   `json:"generation"`
 	Domain         string   `json:"domain,omitempty"`
@@ -80,6 +84,12 @@ func (c DomainRelay) Deliver(from string, recipients []string, msg []byte) error
 	if err != nil {
 		return err
 	}
+	if c.Mode == "direct" {
+		if err := c.directDeliver(from, recipients, normalized); err != nil {
+			return domainRelaySubmissionError{cause: err}
+		}
+		return nil
+	}
 	if err := smtpSendWithImplicitTLS(relayDial, c.Host, c.Port, c.Username, c.Password, from, recipients, normalized, 45*time.Second, true); err != nil {
 		return domainRelaySubmissionError{cause: err}
 	}
@@ -89,6 +99,9 @@ func (c DomainRelay) Deliver(from string, recipients []string, msg []byte) error
 // Check authenticates the saved relay without sending an envelope or message.
 // Success proves this connection only, not From authority or delivery readiness.
 func (c DomainRelay) Check(ctx context.Context) error {
+	if c.Mode == "direct" {
+		return errors.New("direct delivery has no relay login to check; qualify controlled recipient delivery separately")
+	}
 	if err := c.Validate(); err != nil {
 		return err
 	}
@@ -151,6 +164,15 @@ func (c DomainRelay) Validate() error {
 	if len(c.Domains) == 0 || !slices.IsSorted(c.Domains) || !slices.IsSorted(c.RetiredDomains) || len(slices.Compact(slices.Sorted(slices.Values(all)))) != len(all) || slices.ContainsFunc(all, func(d string) bool { return !relayDNSName(d) }) {
 		return ErrDomainRelay
 	}
+	if c.Mode == "direct" {
+		if len(c.Generation) != 36 || !fsutil.SafePathComponent(c.Generation) || !relayDNSName(c.Host) || net.ParseIP(c.Host) != nil || c.Port != 0 || c.Username != "" || c.Password != "" || c.Issuer == "" || len(c.Issuer) > 2048 || strings.ContainsAny(c.Issuer, "\r\n\x00") {
+			return ErrDomainRelay
+		}
+		return nil
+	}
+	if c.Mode != "" {
+		return ErrDomainRelay
+	}
 	if len(c.Generation) != 36 || !fsutil.SafePathComponent(c.Generation) || !relayDNSName(c.Host) || c.Issuer == "" || len(c.Issuer) > 2048 || strings.ContainsAny(c.Issuer, "\r\n\x00") || c.Port < 1 || c.Port > 65535 || c.Username == "" || len(c.Username) > 512 || c.Password == "" || len(c.Password) > 4096 || strings.ContainsAny(c.Username+c.Password, "\r\n\x00") {
 		return ErrDomainRelay
 	}
@@ -173,7 +195,7 @@ func DecodeDomainRelay(raw, key []byte) (DomainRelay, int, error) {
 	if err != nil || json.Unmarshal(plain, &f) != nil {
 		return DomainRelay{}, 0, ErrDomainRelay
 	}
-	c := DomainRelay{Generation: f.Generation, Domains: f.Domains, RetiredDomains: f.RetiredDomains, Issuer: f.Issuer, Host: f.Host, Port: f.Port, Username: f.Username, Password: f.Password}
+	c := DomainRelay{Mode: f.Mode, Generation: f.Generation, Domains: f.Domains, RetiredDomains: f.RetiredDomains, Issuer: f.Issuer, Host: f.Host, Port: f.Port, Username: f.Username, Password: f.Password}
 	switch {
 	case f.Version == 1 && f.Domains == nil && f.RetiredDomains == nil:
 		c.Domains = []string{f.Domain}
@@ -192,7 +214,7 @@ func SealDomainRelay(c DomainRelay, key []byte) ([]byte, error) {
 	if c.Validate() != nil {
 		return nil, ErrDomainRelay
 	}
-	plain, err := json.Marshal(domainRelayFile{Version: 2, Generation: c.Generation, Domains: c.Domains, RetiredDomains: append([]string{}, c.RetiredDomains...), Issuer: c.Issuer, Host: c.Host, Port: c.Port, Username: c.Username, Password: c.Password})
+	plain, err := json.Marshal(domainRelayFile{Mode: c.Mode, Version: 2, Generation: c.Generation, Domains: c.Domains, RetiredDomains: append([]string{}, c.RetiredDomains...), Issuer: c.Issuer, Host: c.Host, Port: c.Port, Username: c.Username, Password: c.Password})
 	if err != nil {
 		return nil, err
 	}

@@ -251,7 +251,7 @@ processed by KyPost is eligible; this does not sweep historical or read mail.
 For opt-in native mailboxes, the polling mailbox is INBOX and leftover IMAP
 configuration is ignored; primary key User IDs come from admitted domain
 provisioning. Key custody and WKD publication proofs are unchanged. Native
-primary sending uses the operator relay and durable outbox. Client-prepared
+primary sending uses the configured relay or explicit [direct delivery](DIRECT_DELIVERY.md) and durable outbox. Client-prepared
 PGP keeps current material-generation/device enrollment gates; independently
 encrypted Sent bytes are retained before SMTP, with no plaintext fallback.
 Replies add `outboxId`; confirmed primary acceptance still controls `ok:true`.
@@ -1134,3 +1134,5 @@ key; Linux retains GnuPG keys but accepts only one primary key per enrollment
 import. All three need explicit versioned bundle support before retirement can
 safely distribute historical keys. Mac is now Swift; the earlier Qt/mobile
 implementation guidance above is historical, not evidence of current storage.
+
+Direct MX transport preserves each client-prepared wire body and independently encrypted Sent copy. Each recipient has its own durable claim; splitting a delivery group does not grant keys, replace MIME, change enrollment or turn uncertain acceptance into permission to resend. Existing aggregate wire/Sent quota bounds apply per copied wire delivery. See [direct mode](DIRECT_DELIVERY.md) for the additive response counts and unchanged primary-acceptance contract.

@@ -52,7 +52,7 @@ the diagnostic `only` mode. Go's TLS clients then accept only certificate chains
 whose every certificate, including a root you trust explicitly, uses RSA-2048+,
 ECDSA P-256/P-384/P-521 or Ed25519 keys, with FIPS-approved versions and cipher
 suites. That covers each TLS client in KyPost's code: IMAP, SMTP submission and
-the domain relay, OIDC discovery/token/JWKS, CardDAV, WKD lookups, web and
+the domain relay and explicit direct MX/STARTTLS transport, OIDC discovery/token/JWKS, CardDAV, WKD lookups, web and
 native push, KyCalendar, KyRecovery, release checks and the pairing pin probe.
 Certificate and hostname verification stay on. A private CA does not waive the
 floor: replace a weak chain, never disable verification.

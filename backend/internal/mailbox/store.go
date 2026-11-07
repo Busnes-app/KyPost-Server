@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS receipts (gateway TEXT NOT NULL, delivery TEXT NOT NU
 CREATE TABLE IF NOT EXISTS changes (revision INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL, folder TEXT NOT NULL, removed INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS usage (id INTEGER PRIMARY KEY CHECK(id=1), records INTEGER NOT NULL, payload_bytes INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, ciphertext BLOB NOT NULL, sent_bytes INTEGER NOT NULL, sent_reserved INTEGER NOT NULL, sent_id INTEGER REFERENCES messages(id), created_at INTEGER NOT NULL DEFAULT (unixepoch()));
+CREATE TABLE IF NOT EXISTS outbox_independent (job TEXT PRIMARY KEY REFERENCES outbox(id));
 CREATE TABLE IF NOT EXISTS outbox_deliveries (job TEXT NOT NULL REFERENCES outbox(id), sequence INTEGER NOT NULL, state TEXT NOT NULL CHECK(state IN ('queued','submitting','accepted','retryable','failed','uncertain','quarantined')), claim TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(job,sequence));
 CREATE TRIGGER IF NOT EXISTS outbox_insert AFTER INSERT ON outbox BEGIN UPDATE usage SET records=records+1+NEW.sent_reserved,payload_bytes=payload_bytes+length(NEW.ciphertext)+NEW.sent_bytes WHERE id=1; END;
 CREATE TRIGGER IF NOT EXISTS outbox_update AFTER UPDATE ON outbox BEGIN UPDATE usage SET records=records+NEW.sent_reserved-OLD.sent_reserved,payload_bytes=payload_bytes+length(NEW.ciphertext)-length(OLD.ciphertext)+NEW.sent_bytes-OLD.sent_bytes WHERE id=1; END;

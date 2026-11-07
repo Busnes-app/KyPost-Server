@@ -26,6 +26,7 @@ var ErrOutbound = errors.New("native outbox unavailable or conflicting; preserve
 // separately prepared Sent copy. Even signed-only wire MIME is encrypted on
 // disk. This is server custody, not end-to-end confidentiality.
 type OutboundJob struct {
+	Independent        bool `json:",omitempty"`
 	From               string
 	RelayGeneration    string
 	Deliveries         []OutboundDelivery
@@ -53,6 +54,7 @@ type OutboundJob struct {
 // outboundReceiptPrefix. Sent is the filed Sent copy's messages.digest, if any.
 type outboundReceipt struct {
 	Receipt         int
+	Independent     bool `json:",omitempty"`
 	From            string
 	RelayGeneration string
 	Deliveries      int
@@ -106,6 +108,9 @@ func (s *Store) validateOutbound(job OutboundJob) error {
 	}
 	recipients := map[string]bool{}
 	for _, delivery := range job.Deliveries {
+		if job.Independent && len(delivery.Recipients) != 1 {
+			return ErrOutbound
+		}
 		if len(delivery.Recipients) == 0 || len(delivery.Recipients) > 100 || int64(len(delivery.Raw)) > s.limits.MessageBytes {
 			return ErrOutbound
 		}
@@ -210,6 +215,11 @@ func (s *Store) QueueOutbound(ctx context.Context, master []byte, id string, job
 	if _, err = tx.ExecContext(ctx, "INSERT INTO outbox(id,ciphertext,sent_bytes,sent_reserved) VALUES(?,?,?,?)", id, sealed, len(job.Sent), reserved); err != nil {
 		return err
 	}
+	if job.Independent {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO outbox_independent(job) VALUES(?)", id); err != nil {
+			return err
+		}
+	}
 	for sequence := range job.Deliveries {
 		if _, err = tx.ExecContext(ctx, "INSERT INTO outbox_deliveries(job,sequence,state) VALUES(?,?,'queued')", id, sequence); err != nil {
 			return err
@@ -253,7 +263,7 @@ func (s *Store) readOutbound(ctx context.Context, tx *sql.Tx, master []byte, id 
 		if r.Receipt != 1 || err != nil || from.Address != r.From || !strings.Contains(r.From, "@") || !outboundID(r.RelayGeneration) || r.Deliveries < 1 || r.Deliveries > 100 || len(r.Intent) != sha256.Size || sentBytes != 0 || sentReserved != 0 || sentID.Valid != (r.Sent != "") || (sentID.Valid && !filed(r.Sent)) {
 			return OutboundJob{}, nil, 0, ErrOutbound
 		}
-		job = OutboundJob{From: r.From, RelayGeneration: r.RelayGeneration, Deliveries: make([]OutboundDelivery, r.Deliveries), intent: r.Intent}
+		job = OutboundJob{Independent: r.Independent, From: r.From, RelayGeneration: r.RelayGeneration, Deliveries: make([]OutboundDelivery, r.Deliveries), intent: r.Intent}
 	} else if json.Unmarshal(plain, &job) != nil || s.validateOutbound(job) != nil {
 		return OutboundJob{}, nil, 0, ErrOutbound
 	} else if sentID.Valid {
@@ -262,6 +272,12 @@ func (s *Store) readOutbound(ctx context.Context, tx *sql.Tx, master []byte, id 
 		}
 	} else if sentBytes != int64(len(job.Sent)) || (len(job.Sent) > 0 && sentReserved != 1) || (len(job.Sent) == 0 && sentReserved != 0) {
 		return OutboundJob{}, nil, 0, ErrOutbound
+	}
+	if job.Independent {
+		var marker int
+		if tx.QueryRowContext(ctx, "SELECT count(*) FROM outbox_independent WHERE job=?", id).Scan(&marker) != nil || marker != 1 {
+			return OutboundJob{}, nil, 0, ErrOutbound
+		}
 	}
 	rows, err := tx.QueryContext(ctx, "SELECT sequence,state,attempts,next_attempt,claim FROM outbox_deliveries WHERE job=? ORDER BY sequence", id)
 	if err != nil {
@@ -404,7 +420,7 @@ func (s *Store) compactOutbound(ctx context.Context, tx *sql.Tx, master []byte, 
 		return
 	}
 	intent := sha256.Sum256(plain)
-	receipt := outboundReceipt{Receipt: 1, From: job.From, RelayGeneration: job.RelayGeneration, Deliveries: len(job.Deliveries), Intent: intent[:]}
+	receipt := outboundReceipt{Receipt: 1, Independent: job.Independent, From: job.From, RelayGeneration: job.RelayGeneration, Deliveries: len(job.Deliveries), Intent: intent[:]}
 	if sent > 0 {
 		receipt.Sent = hashIncoming(job.Sent)
 	}
@@ -496,7 +512,7 @@ func ValidateOutboundSnapshot(ctx context.Context, path string, master []byte, r
 		return false, err
 	}
 	var orphaned int
-	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check WHERE "table" IN ('outbox','outbox_deliveries')`).Scan(&orphaned); err != nil || orphaned != 0 {
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check WHERE "table" IN ('outbox','outbox_deliveries','outbox_independent')`).Scan(&orphaned); err != nil || orphaned != 0 {
 		return true, ErrOutbound
 	}
 	var deliveries int
@@ -629,7 +645,7 @@ func (s *Store) PendingOutbound(ctx context.Context, limit int) ([]string, error
 		return nil, ErrOutbound
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT o.id,o.created_at FROM outbox o JOIN outbox_deliveries d ON d.job=o.id
- WHERE (d.state IN ('queued','retryable') AND d.next_attempt<=? AND (d.sequence=0 OR EXISTS (SELECT 1 FROM outbox_deliveries p WHERE p.job=o.id AND p.sequence=0 AND p.state='accepted'))) OR (d.sequence=0 AND d.state='accepted' AND o.sent_reserved=1)
+ WHERE (d.state IN ('queued','retryable') AND d.next_attempt<=? AND (EXISTS (SELECT 1 FROM outbox_independent i WHERE i.job=o.id) OR d.sequence=0 OR EXISTS (SELECT 1 FROM outbox_deliveries p WHERE p.job=o.id AND p.sequence=0 AND p.state='accepted'))) OR (d.state='accepted' AND o.sent_reserved=1)
  ORDER BY o.created_at,o.id LIMIT ?`, time.Now().Unix(), limit)
 	if err != nil {
 		return nil, err

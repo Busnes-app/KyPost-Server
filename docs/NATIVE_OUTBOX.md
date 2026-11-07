@@ -1,7 +1,7 @@
 # Native outbox storage and qualification
 
 Native sending from the primary or an owned alias, of the primary or an extra mailbox, is available with `KYPOST_NATIVE_MAIL=true` and
-an admin-configured operator-owned relay. Ordinary compose, public-key encrypted
+an admin-configured operator-owned relay, or explicit [direct MX delivery](DIRECT_DELIVERY.md). Ordinary compose, public-key encrypted
 compose and client-prepared PGP use the same durable admission/claim boundary.
 API and daemon processes recover due definite-refusal attempts and accepted Sent
 obligations; SQLite claims arbitrate competing processes. External IMAP behavior
@@ -66,7 +66,7 @@ Sent filing status. It exposes no MIME, recipients, credentials or device witnes
 unknown/unreadable jobs return an explicit 503. There is no retry/reconcile route.
 
 Recovery discovers at most 50 due jobs per owner per pass, with four concurrent
-owners and a 30-second cadence. Follow-ons wait for accepted primary evidence;
+owners and a 30-second cadence. Relay follow-ons wait for accepted primary evidence; explicit direct recipients have independent claims and progress separately;
 blocked/uncertain primary groups cannot starve unrelated work discovery. Definite
 authority changes quarantine unclaimed work; transient DNS/storage failures retain
 it. Sent failure cannot suppress an eligible delivery or authorize SMTP again.
@@ -74,7 +74,7 @@ Cancellation stops fresh work; shutdown joins connection/TLS (45 seconds),
 SMTP after connection (another 45 seconds), and local finalization (30 seconds), in addition to ordinary HTTP/backup draining.
 These bounds assume healthy local filesystems. Foreground HTTP sends may exceed
 the ordinary 20-second drain; process exit preserves their durable claims for
-reconciliation rather than authorizing automatic resend. No new dependency or setting exists.
+reconciliation rather than authorizing automatic resend. No additional queue service or dependency is used.
 
 ## Persistent contract
 
@@ -158,7 +158,7 @@ in one transaction with the exact message and immutable filing receipt. Retry
 returns the same numeric ID even after move/deletion. Missing Sent folders or
 filing failure preserve the accepted job; retry filing never submits SMTP again.
 Discovery finds accepted Sent obligations independently of delivery retries.
-No existing client response is changed to mean merely queued.
+No existing client response is changed to mean merely queued. Direct responses retain primary acceptance and add per-recipient counts; see [direct API semantics](DIRECT_DELIVERY.md#recipient-outcomes-and-api-semantics).
 
 ## Backup and restore
 

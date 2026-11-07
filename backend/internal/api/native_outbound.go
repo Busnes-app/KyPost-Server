@@ -36,6 +36,10 @@ func (s *Server) finishNativeSend(w http.ResponseWriter, r *http.Request, ac Aut
 	// The selected mailbox sends and files Sent; a primary's ID is its user's.
 	mailboxID := cmp.Or(ac.Mailbox, ac.UserID)
 	first, sendErr := sender.Send(r.Context(), mailboxID, id, job)
+	if first.Independent {
+		s.finishNativeDirectSend(w, r, sender, mailboxID, id, first, len(sent) > 0, warning)
+		return
+	}
 	if !first.Accepted {
 		if s.refuseNativeAdministrator(w, r, ac.UserID, sendErr) {
 			return
@@ -69,6 +73,59 @@ func (s *Server) finishNativeSend(w http.ResponseWriter, r *http.Request, ac Aut
 		warning = joinWarnings(warning, "email accepted but Sent filing remains pending; sending it again will not repair Sent")
 	}
 	writeJSON(w, http.StatusOK, withCalendarReplyAck(r, map[string]any{"ok": true, "sentSaved": first.SentSaved, "warning": warning, "outboxId": id}))
+}
+
+// Each direct recipient is attempted independently; an earlier refusal must
+// never suppress unrelated recipients or authorize retry of an accepted one.
+func (s *Server) finishNativeDirectSend(w http.ResponseWriter, r *http.Request, sender sso.NativeOutbound, mailboxID, id string, first sso.NativeOutboundResult, hasSent bool, warning string) {
+	accepted := make([]bool, first.Deliveries)
+	accepted[0] = first.Accepted
+	saved := first.SentSaved
+	for sequence := 1; sequence < first.Deliveries; sequence++ {
+		if r.Context().Err() != nil {
+			break
+		}
+		result, _ := sender.Submit(r.Context(), mailboxID, id, sequence)
+		accepted[sequence] = result.Accepted
+		saved = saved || result.SentSaved
+	}
+	// A background worker may have won a follow-on claim. Its durable receipt
+	// still counts even when this caller could not acquire that same claim.
+	if statuses, filed, err := sender.Status(r.Context(), mailboxID, id); err == nil {
+		saved = saved || filed
+		for _, status := range statuses {
+			if status.State == "accepted" && status.Sequence < len(accepted) {
+				accepted[status.Sequence] = true
+			}
+		}
+	} else {
+		warning = joinWarnings(warning, "outbox status unavailable; retain the outbox ID and inspect it before resubmitting")
+	}
+	confirmed := 0
+	for _, yes := range accepted {
+		if yes {
+			confirmed++
+		}
+	}
+	if confirmed > 0 && !saved && hasSent {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+		saved = sender.FileSent(ctx, mailboxID, id) == nil
+		cancel()
+	}
+	status := http.StatusOK
+	response := map[string]any{"ok": accepted[0], "outboxId": id, "sentSaved": saved, "deliveryMode": "per-recipient", "deliveriesConfirmed": confirmed, "deliveriesTotal": first.Deliveries}
+	if confirmed != first.Deliveries {
+		warning = joinWarnings(warning, "some recipients are failed, pending or uncertain; inspect each outbox delivery before resubmitting to avoid duplicates")
+	}
+	if !accepted[0] {
+		status = http.StatusServiceUnavailable
+		response["error"] = "primary recipient submission was not confirmed; other recipients may already have accepted; inspect the outbox before resubmitting"
+	}
+	if confirmed > 0 && !saved && hasSent {
+		warning = joinWarnings(warning, "Sent filing remains pending; do not resend to repair Sent")
+	}
+	response["warning"] = warning
+	writeJSON(w, status, withCalendarReplyAck(r, response))
 }
 
 // outboundJob normalizes deliveries and freezes the request's sender authority

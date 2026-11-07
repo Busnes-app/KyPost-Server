@@ -31,10 +31,16 @@ type NativeOutbound struct {
 	Settings                        *Store
 }
 
-type NativeOutboundResult struct{ Accepted, SentSaved bool }
+type NativeOutboundResult struct {
+	Accepted, SentSaved bool
+	Independent         bool
+	Deliveries          int
+}
 type nativeOutboundClaim struct {
 	id, token, from, source, dir string
 	sequence                     int
+	independent                  bool
+	deliveries                   int
 	owner                        mailbox.Owner
 	limits                       mailbox.Limits
 	relay                        mailmsg.DomainRelay
@@ -177,7 +183,7 @@ func (s NativeOutbound) withJobAuthority(ctx context.Context, u users.User, a Na
 	if job.From != from.Address || from.Mailbox != a.Owner.Mailbox || from.State != "active" || job.FromGeneration != from.Generation && (job.FromGeneration != 0 || job.From != a.Address) {
 		return ErrNativeOutboundStale
 	}
-	if job.RelayGeneration != relay.Generation || job.DirectoryRevision != d.Revision {
+	if job.Independent != (relay.Mode == "direct") || job.RelayGeneration != relay.Generation || job.DirectoryRevision != d.Revision {
 		return ErrNativeOutboundStale
 	}
 	if err := SenderAuthorityCurrent(u, job); err != nil {
@@ -245,6 +251,18 @@ func (s NativeOutbound) queue(ctx context.Context, mailboxID, id string, job mai
 		if job.RelayGeneration != "" && job.RelayGeneration != relay.Generation || job.FromGeneration != 0 && job.FromGeneration != x.Generation || job.PGPFingerprint != "" && job.PGPFingerprint != u.PGPFingerprint {
 			return ErrNativeOutboundStale
 		}
+		if relay.Mode == "direct" {
+			var recipients []mailbox.OutboundDelivery
+			for _, delivery := range job.Deliveries {
+				for _, recipient := range delivery.Recipients {
+					recipients = append(recipients, mailbox.OutboundDelivery{Recipients: []string{recipient}, Raw: delivery.Raw})
+				}
+			}
+			job.Deliveries = recipients
+			job.Independent = true
+		} else if job.Independent {
+			return ErrNativeOutboundStale
+		}
 		job.RelayGeneration = relay.Generation
 		job.DirectoryRevision = d.Revision
 		job.FromGeneration = x.Generation
@@ -260,7 +278,7 @@ func (s NativeOutbound) queue(ctx context.Context, mailboxID, id string, job mai
 			if err != nil {
 				return err
 			}
-			claim = nativeOutboundClaim{id: id, token: token, from: job.From, source: a.Source, dir: a.Dir(s.StateRoot), owner: a.Owner, limits: a.Limits, relay: relay, delivery: delivery}
+			claim = nativeOutboundClaim{id: id, token: token, from: job.From, source: a.Source, dir: a.Dir(s.StateRoot), owner: a.Owner, limits: a.Limits, relay: relay, delivery: delivery, independent: job.Independent, deliveries: len(job.Deliveries)}
 			return nil
 		})
 	})
@@ -302,7 +320,7 @@ func (s NativeOutbound) Submit(ctx context.Context, mailboxID, id string, sequen
 		if err != nil {
 			return err
 		}
-		if sequence > 0 && (len(statuses) == 0 || statuses[0].State != "accepted") {
+		if !job.Independent && sequence > 0 && (len(statuses) == 0 || statuses[0].State != "accepted") {
 			return mailbox.ErrOutbound
 		}
 		return s.withJobAuthority(ctx, u, a, x, d, relay, job, unproven, func(ctx context.Context) error {
@@ -310,7 +328,7 @@ func (s NativeOutbound) Submit(ctx context.Context, mailboxID, id string, sequen
 			if err != nil {
 				return err
 			}
-			claim = nativeOutboundClaim{id: id, token: token, from: job.From, sequence: sequence, source: a.Source, dir: a.Dir(s.StateRoot), owner: a.Owner, limits: a.Limits, relay: relay, delivery: delivery}
+			claim = nativeOutboundClaim{id: id, token: token, from: job.From, sequence: sequence, source: a.Source, dir: a.Dir(s.StateRoot), owner: a.Owner, limits: a.Limits, relay: relay, delivery: delivery, independent: job.Independent, deliveries: len(job.Deliveries)}
 			return nil
 		})
 	})
@@ -324,7 +342,7 @@ func (s NativeOutbound) deliver(ctx context.Context, c nativeOutboundClaim) (Nat
 	// All authority/device locks are released before TLS/AUTH/DATA. Record the
 	// real outcome even if the HTTP caller disconnected after the durable claim.
 	submission := c.relay.Deliver(c.from, c.delivery.Recipients, c.delivery.Raw)
-	result := NativeOutboundResult{Accepted: submission == nil || errors.Is(submission, mailmsg.ErrSMTPAcceptedThenFailed)}
+	result := NativeOutboundResult{Accepted: submission == nil || errors.Is(submission, mailmsg.ErrSMTPAcceptedThenFailed), Independent: c.independent, Deliveries: c.deliveries}
 	if submission != nil && s.Logger != nil {
 		// Provider text can echo credentials or correspondence. Retain only a
 		// bounded reply code and existing acceptance classification, never Error().
@@ -445,15 +463,21 @@ func (s NativeOutbound) Recover(ctx context.Context, mailboxID, id string) error
 		return mailbox.ErrOutbound
 	}
 	primaryAccepted := statuses[0].State == "accepted"
+	accepted := primaryAccepted
+	if job.Independent {
+		for _, status := range statuses {
+			accepted = accepted || status.State == "accepted"
+		}
+	}
 	var filingErr error
-	if primaryAccepted && len(job.Sent) > 0 && sent == 0 {
+	if accepted && len(job.Sent) > 0 && sent == 0 {
 		filingErr = s.FileSent(ctx, mailboxID, id)
 	}
 	for _, status := range statuses {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if status.Sequence > 0 && !primaryAccepted {
+		if !job.Independent && status.Sequence > 0 && !primaryAccepted {
 			break
 		}
 		if (status.State != "queued" && status.State != "retryable") || status.NextAttempt > time.Now().Unix() {
@@ -469,7 +493,10 @@ func (s NativeOutbound) Recover(ctx context.Context, mailboxID, id string) error
 					return quarantineErr
 				}
 			}
-			return errors.Join(filingErr, submitErr)
+			filingErr = errors.Join(filingErr, submitErr)
+			if !job.Independent {
+				return filingErr
+			}
 		}
 	}
 	return filingErr
