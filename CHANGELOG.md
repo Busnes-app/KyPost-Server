@@ -20,6 +20,10 @@ non-prerelease version.
 
 ### Performance
 
+- Native outbox recovery skips empty/not-yet-due queues using a read-only SQLite
+  hint before loading full account authority. Due work and failed probes retain
+  existing storage, ownership, revocation and durable-claim checks.
+
 - Native mailbox ledger reads avoid decoding current accounts into a discarded legacy
   representation before validating the current format. Admission, revocation and
   exclusive-lock behavior remain unchanged. The same fenced admission also reuses its

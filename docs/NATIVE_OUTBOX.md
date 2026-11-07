@@ -66,7 +66,11 @@ Sent filing status. It exposes no MIME, recipients, credentials or device witnes
 unknown/unreadable jobs return an explicit 503. There is no retry/reconcile route.
 
 Recovery discovers at most 50 due jobs per owner per pass, with four concurrent
-owners and a 30-second cadence. Relay follow-ons wait for accepted primary evidence; explicit direct recipients have independent claims and progress separately;
+owners and a 30-second cadence. Each pass uses a read-only, uncached SQLite
+hint to skip mailboxes without due work, avoiding full authority reloads for empty
+queues. Positive hints and read errors take the existing validated discovery and
+recovery path. The hint grants no permission; a concurrent enqueue after a negative
+hint waits until the next pass, as with ordinary discovery. Relay follow-ons wait for accepted primary evidence; explicit direct recipients have independent claims and progress separately;
 blocked/uncertain primary groups cannot starve unrelated work discovery. Definite
 authority changes quarantine unclaimed work; transient DNS/storage failures retain
 it. Sent failure cannot suppress an eligible delivery or authorize SMTP again.
