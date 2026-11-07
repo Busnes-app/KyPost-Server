@@ -72,7 +72,7 @@ func LockFileContext(ctx context.Context, path string) (release func(), err erro
 			_ = f.Close()
 			return nil, fmt.Errorf("lock %s: %w", path, err)
 		}
-		timer := time.NewTimer(10 * time.Millisecond)
+		timer := time.NewTimer(time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

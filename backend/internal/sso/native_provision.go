@@ -314,10 +314,16 @@ func (s *LifecycleStore) loadNativeLedger(historical bool) (nativeAssignments, i
 	if err != nil {
 		return nativeAssignments{}, 0, err
 	}
+	return s.readNativeLedger(lifecycle, historical)
+}
+
+// readNativeLedger uses the initialization and generation metadata supplied by
+// this read. Runtime admission supplies its own current directory-fenced snapshot.
+func (s *LifecycleStore) readNativeLedger(lifecycle lifecycleFile, historical bool) (nativeAssignments, int, error) {
 	f := nativeAssignments{Accounts: map[string]NativeAssignment{}}
 	loaded, version := false, 0
 	var parseErr error
-	err = fsutil.LoadJSONFile(s.nativePath(), func(raw json.RawMessage) {
+	err := fsutil.LoadJSONFile(s.nativePath(), func(raw json.RawMessage) {
 		loaded = true
 		f, version, parseErr = parseNativeLedger(raw, historical)
 	}, func() error {

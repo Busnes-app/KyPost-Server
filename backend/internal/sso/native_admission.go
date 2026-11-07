@@ -103,10 +103,11 @@ func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, stateRoot, iss
 	if issuer == "" || u.NativeMailboxIssuer != issuer || u.NativeMailboxSource == "" || !u.Active || u.SSOLinkRevoked() {
 		return NativeAssignment{}, ErrNativeProvisioning
 	}
-	d, known, err := s.Directory(issuer, u.SSOSub)
+	lifecycle, err := s.load()
 	if err != nil {
 		return NativeAssignment{}, err
 	}
+	d, known := lifecycle.Directory[directoryKey(issuer, u.SSOSub)]
 	if !known || !d.Active || d.Resource == nil || d.Resource.Active == nil || !*d.Resource.Active || d.Resource.ID != u.SSOSub {
 		return NativeAssignment{}, ErrNativeProvisioning
 	}
@@ -121,10 +122,9 @@ func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, stateRoot, iss
 	if u.Role != role {
 		return NativeAssignment{}, ErrNativeProvisioning
 	}
-	if err := s.ValidateNativeUserStorage(stateRoot, u); err != nil {
-		return NativeAssignment{}, err
-	}
-	a, _, err := s.NativeAssignment(issuer, u.SSOSub)
+	// Reuse only this fenced call's validated assignment; later operations
+	// still perform their own fresh admission.
+	a, err := s.nativeUserStorageForAdmission(stateRoot, u, lifecycle)
 	if err != nil {
 		return NativeAssignment{}, err
 	}
