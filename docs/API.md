@@ -236,3 +236,9 @@ Logs (admin only):
 
 - `GET /api/logs?file=<name>.log&lines=<n>`
 - `GET /api/logs/list`
+
+## Native direct outbound profile
+
+`PUT /api/admin/mail-relay` accepts explicit `mode:"direct"` with an EHLO `host` and the proved domain set; port/credentials are omitted. GET adds `mode` and reports `transport:"mx-starttls"`, `authRequired:false`, `port:0`. Existing administrator, CSRF, request-bound confirmation, generation and restore gates apply. Saved-relay login tests refuse direct profiles. [Direct delivery](DIRECT_DELIVERY.md) specifies egress/TLS and rollback.
+
+Direct send responses preserve primary-acceptance `ok`/HTTP semantics and add `deliveryMode:"per-recipient"`, `deliveriesConfirmed`, `deliveriesTotal`; other recipients can have accepted even when the primary returns 503. Inspect each existing owner-scoped outbox sequence before resubmission. This is not a queued-success or exactly-once API.

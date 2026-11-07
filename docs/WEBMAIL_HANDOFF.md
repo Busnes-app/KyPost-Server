@@ -202,3 +202,7 @@ entry into "sent". Inspect `GET /api/mail/outbox/{id}` for the acting owner's
 state before resubmitting; `submitting`/`uncertain` need delivery evidence, and
 pending Sent filing does not justify sending again. Native pickup/alias/system
 routes remain gated. See [NATIVE_OUTBOX.md](NATIVE_OUTBOX.md).
+
+### Explicit native direct outbound mode
+
+Direct profile configuration and recipient semantics are specified in [DIRECT_DELIVERY.md](DIRECT_DELIVERY.md). Direct sends add `deliveryMode:"per-recipient"`, `deliveriesConfirmed` and `deliveriesTotal` while preserving primary-acceptance `ok`/HTTP semantics. A 503 primary failure can coexist with other accepted recipients; inspect each owner-scoped outbox sequence before resending. Clients may ignore the additive counts but must retain uncertainty warnings. Native app UI adoption and full-product workforce qualification are not established by server checks.

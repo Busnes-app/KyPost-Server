@@ -1,5 +1,7 @@
 # Operator-owned domain relay configuration
 
+The same protected profile API also supports explicit [direct MX delivery](DIRECT_DELIVERY.md). Relay behavior remains the default; direct profiles have no provider credentials or saved-login check.
+
 Native sending (primary address or an administrator-assigned active alias) uses
 the configured operator-owned relay in
 explicit native mode. Saving credentials makes no provider connection;

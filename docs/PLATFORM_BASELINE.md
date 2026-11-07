@@ -635,3 +635,7 @@ restore revokes the historical CardDAV app password; after qualified recovery,
 configure a new app password in each CardDAV client. Contact data remains retained.
 Legacy IMAP accounts keep their existing CardDAV behavior. This does not authorize
 restore hold release; see [RESTORE.md](RESTORE.md).
+
+### Explicit native direct outbound mode
+
+Direct profile configuration and recipient semantics are specified in [DIRECT_DELIVERY.md](DIRECT_DELIVERY.md). Direct sends add `deliveryMode:"per-recipient"`, `deliveriesConfirmed` and `deliveriesTotal` while preserving primary-acceptance `ok`/HTTP semantics. A 503 primary failure can coexist with other accepted recipients; inspect each owner-scoped outbox sequence before resending. Clients may ignore the additive counts but must retain uncertainty warnings. Native app UI adoption and full-product workforce qualification are not established by server checks.
