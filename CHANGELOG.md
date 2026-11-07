@@ -18,6 +18,13 @@ non-prerelease version.
 
 ## Unreleased
 
+### Performance
+
+- Native mailbox admission reuses its validated assignment and lifecycle snapshot within
+  the existing directory fence, avoiding duplicate JSON reads without retaining access
+  between operations. Cancellable exclusive file-lock retries wait 1 ms instead of 10 ms;
+  this reduces contention latency at a small measured CPU cost.
+
 - Mobile contact imports may opt in to `omitUnusableKey:true`: import a kept
   contact without a revoked, expired, mismatched or otherwise invalid new key.
   The existing validator decides on the relay; ordinary writes remain strict.

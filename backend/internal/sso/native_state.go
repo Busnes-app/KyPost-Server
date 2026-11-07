@@ -13,39 +13,81 @@ import (
 // revocation must still reach inactive users. Mail admission checks access
 // separately under the directory fence before performing mail operations.
 func (s *LifecycleStore) ValidateNativeUserStorage(stateRoot string, u users.User) error {
+	_, err := s.nativeUserStorage(stateRoot, u)
+	return err
+}
+
+// nativeUserStorage returns the assignment this call validated. A caller already
+// holding the directory fence can reuse it without reading the ledger twice;
+// it grants no authority to a later operation.
+func (s *LifecycleStore) nativeUserStorage(stateRoot string, u users.User) (NativeAssignment, error) {
 	if u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" {
-		return nil
+		return NativeAssignment{}, nil
 	}
 	if err := RequireNativeRestoreReleased(stateRoot); err != nil {
-		return err
+		return NativeAssignment{}, err
 	}
-	return s.ValidateNativeUserOwnership(stateRoot, u)
+	return s.nativeUserOwnership(stateRoot, u)
 }
 
 // ValidateNativeUserOwnership permits only ownership validation without a hold
 // release. Credential revocation uses this; ordinary state access must use
 // ValidateNativeUserStorage so held mail remains inaccessible.
 func (s *LifecycleStore) ValidateNativeUserOwnership(stateRoot string, u users.User) error {
-	if !fsutil.SafePathComponent(u.ID) || u.NativeMailboxIssuer == "" || u.NativeMailboxSource == "" || u.SSOSub == "" {
-		return ErrNativeProvisioning
+	_, err := s.nativeUserOwnership(stateRoot, u)
+	return err
+}
+
+// nativeUserStorageForAdmission reuses only a lifecycle snapshot read under the
+// caller's current directory fence. It never retains permission for another call.
+func (s *LifecycleStore) nativeUserStorageForAdmission(stateRoot string, u users.User, lifecycle lifecycleFile) (NativeAssignment, error) {
+	if err := RequireNativeRestoreReleased(stateRoot); err != nil {
+		return NativeAssignment{}, err
 	}
-	root, err := filepath.Abs(stateRoot)
+	root, err := nativeUserRoot(stateRoot, u)
 	if err != nil {
-		return err
+		return NativeAssignment{}, err
+	}
+	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
+		return NativeAssignment{}, err
+	}
+	f, _, err := s.readNativeLedger(lifecycle, false)
+	if err != nil {
+		return NativeAssignment{}, err
+	}
+	a, ok := f.Accounts[directoryKey(u.NativeMailboxIssuer, u.SSOSub)]
+	return validateNativeUserAssignment(root, u, a, ok)
+}
+
+func (s *LifecycleStore) nativeUserOwnership(stateRoot string, u users.User) (NativeAssignment, error) {
+	root, err := nativeUserRoot(stateRoot, u)
+	if err != nil {
+		return NativeAssignment{}, err
 	}
 	a, ok, err := s.NativeAssignment(u.NativeMailboxIssuer, u.SSOSub)
 	if err != nil {
-		return err
+		return NativeAssignment{}, err
 	}
+	return validateNativeUserAssignment(root, u, a, ok)
+}
+
+func nativeUserRoot(stateRoot string, u users.User) (string, error) {
+	if !fsutil.SafePathComponent(u.ID) || u.NativeMailboxIssuer == "" || u.NativeMailboxSource == "" || u.SSOSub == "" {
+		return "", ErrNativeProvisioning
+	}
+	return filepath.Abs(stateRoot)
+}
+
+func validateNativeUserAssignment(root string, u users.User, a NativeAssignment, ok bool) (NativeAssignment, error) {
 	if !ok || a.Owner != (mailbox.Owner{Issuer: u.NativeMailboxIssuer, Subject: u.SSOSub, Mailbox: u.ID}) || a.Source != u.NativeMailboxSource || a.StateRoot != root {
-		return ErrNativeProvisioning
+		return NativeAssignment{}, ErrNativeProvisioning
 	}
 	source, err := mailbox.ValidatePreparedAccount(root, a.Owner, a.Address, a.Limits)
 	if err != nil {
-		return err
+		return NativeAssignment{}, err
 	}
 	if source != a.Source {
-		return ErrNativeProvisioning
+		return NativeAssignment{}, ErrNativeProvisioning
 	}
-	return nil
+	return a, nil
 }
