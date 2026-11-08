@@ -40,10 +40,10 @@ func getOrCreateUserStore[T any](mu *sync.Mutex, cache map[string]T, lastSeen ma
 // acquireUserStore is getOrCreateUserStore with control over whether the access
 // counts as the user being seen.
 //
-// touch=false exists for the server's own maintenance passes. rescanDeviceIndex
-// opens EVERY user's store on every rebuild, and a rebuild is triggered — under
-// a 30-second throttle — by any caller presenting an unknown device id, i.e. by
-// an unauthenticated request. Stamping there meant that on any instance with
+// touch=false exists for the server's own maintenance passes: sweepDeviceIndex
+// and the compatibility fallback for device discovery. A rebuild is triggered
+// under a 30-second throttle by an unknown device id, i.e. by an unauthenticated
+// request. Stamping maintenance as activity meant that on any instance with
 // device traffic every user looked freshly active twice a minute, so
 // sweepIdleUserStores could never evict anything and the idle TTL it enforces
 // was unreachable. The bookkeeping recorded the server's own polling as user
@@ -1072,14 +1072,7 @@ func (s *Server) revokeUserDevices(userID string) error {
 func (s *Server) rescanDeviceIndex() {
 	next := map[string]string{}
 	for _, userID := range s.knownUserIDs() {
-		// Not userStore: this pass touches every account and is driven by an
-		// unauthenticated caller's unknown device id, so counting it as user
-		// activity made the idle-store sweep unreachable.
-		store, err := s.userStoreForMaintenance(userID)
-		if err != nil {
-			continue
-		}
-		devices, err := store.ListNativeDevicesStrict()
+		devices, err := s.deviceDiscoveryRows(userID)
 		if err != nil {
 			continue
 		}
@@ -1105,6 +1098,28 @@ func (s *Server) rescanDeviceIndex() {
 		s.deviceIndex[id] = owner
 	}
 	s.userMu.Unlock()
+}
+
+// deviceDiscoveryRows reads owner-resolution hints, never credentials admitted for
+// use. Avoid loading the full native authority ledger and retaining a writable
+// state handle for every account on an unauthenticated cold index miss. The
+// selected owner's normal userStore and device/mail admission still validate
+// current storage, ownership, restore state and credentials on every request.
+func (s *Server) deviceDiscoveryRows(userID string) ([]state.NativeDevice, error) {
+	if store, err := state.OpenReadOnly(s.userStateDir(userID)); err == nil {
+		devices, readErr := store.ListNativeDevicesStrict()
+		closeErr := store.Close()
+		if readErr == nil && closeErr == nil {
+			return devices, nil
+		}
+	}
+	// Old schemas/JSON state still need the existing validated migration path.
+	// A failed read is never evidence that the account has no devices.
+	store, err := s.userStoreForMaintenance(userID)
+	if err != nil {
+		return nil, err
+	}
+	return store.ListNativeDevicesStrict()
 }
 
 // All mail operations reject an account source mismatch before touching IDs.

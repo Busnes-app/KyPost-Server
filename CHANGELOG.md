@@ -20,6 +20,11 @@ non-prerelease version.
 
 ### Performance
 
+- Cold device-owner discovery reads existing state through temporary read-only
+  handles rather than loading native authority and caching writable stores for
+  every account. Authentication retains fresh storage, ownership, restore and
+  credential checks; older storage uses the existing validated migration path.
+
 - Native provisioning discovers pending repairs with one lifecycle/ledger snapshot
   per pass instead of reloading full authority for every acknowledged account.
   Actual repairs retain fresh validation, restore/release fences and local revocation.
