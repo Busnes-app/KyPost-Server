@@ -393,6 +393,8 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 ## Work Guidance
 
+- Native ledger reads parse freshly read file bytes directly, avoiding a separate successful RawMessage scan/copy. Failed parses still run the prior syntax probe so syntax error types/text, partial-result shape, version dispatch and native refusal behavior stay compatible. Keep missing/uninitialized ledger refusal, read errors, directory-derived generations and every format/restore/ownership/access fence; no file content or permission is cached.
+
 - Current native ledgers decode once into the version-2 representation, then run the complete shared ownership/address/history validation. Historical and malformed inputs retain version/error dispatch into fresh values; runtime v1 still refuses. Every read stays fresh, with initialization, format/tombstone, generation, restore and access fences unchanged. This parser optimization adds no retained permission or file-content cache.
 
 - Device-owner index rebuilds use `state.OpenReadOnly` and strict device rows as temporary resolution hints, closing each handle. They neither admit credentials nor cache writable stores. Read/open/close failures fall back to `userStoreForMaintenance` for validated compatibility/migration; do not turn errors into an empty device set. Keep index merge/in-flight collision reservations, sweep behavior and every fresh selected-owner `userStore`/device/mail authority check. No permission snapshot survives a request.
