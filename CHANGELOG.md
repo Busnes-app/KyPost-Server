@@ -20,6 +20,11 @@ non-prerelease version.
 
 ### Performance
 
+- Current native mailbox ledgers decode directly into their version-2
+  representation before full ownership/address/history validation, avoiding a
+  separate version-only JSON scan. Historical migration and malformed-input
+  behavior retain their compatibility path; authority reads remain fresh.
+
 - Cold device-owner discovery reads existing state through temporary read-only
   handles rather than loading native authority and caching writable stores for
   every account. Authentication retains fresh storage, ownership, restore and

@@ -153,6 +153,12 @@ func (x nativeLedgerAddress) heldBy(mailbox string, generation int64) bool {
 // parseNativeLedger returns the file's version. Version 1 is accepted only for
 // historical snapshots and migration; the runtime reads version 2 alone.
 func parseNativeLedger(raw []byte, historical bool) (nativeAssignments, int, error) {
+	var l nativeLedger
+	// Current ledgers need one typed decode. Keep historical and malformed
+	// input dispatch below so version/error behavior remains unchanged.
+	if !historical && json.Unmarshal(raw, &l) == nil && l.Version == 2 {
+		return validateNativeLedger(l)
+	}
 	var head struct {
 		Version int `json:"version"`
 	}
@@ -171,9 +177,18 @@ func parseNativeLedger(raw []byte, historical bool) (nativeAssignments, int, err
 			return nativeAssignments{Accounts: legacy.Accounts}, 1, nil
 		}
 	}
-	var l nativeLedger
-	if head.Version != 2 || json.Unmarshal(raw, &l) != nil || l.Accounts == nil || l.Mailboxes == nil || l.Addresses == nil {
+	// A failed current decode may have populated maps before reporting an
+	// error. The compatibility path must decode into a fresh value.
+	l = nativeLedger{}
+	if head.Version != 2 || json.Unmarshal(raw, &l) != nil {
 		return nativeAssignments{}, head.Version, ErrNativeProvisioning
+	}
+	return validateNativeLedger(l)
+}
+
+func validateNativeLedger(l nativeLedger) (nativeAssignments, int, error) {
+	if l.Accounts == nil || l.Mailboxes == nil || l.Addresses == nil {
+		return nativeAssignments{}, 2, ErrNativeProvisioning
 	}
 	addressOf := map[string]string{}
 	for address, x := range l.Addresses {
