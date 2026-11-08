@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"net/mail"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -344,19 +345,30 @@ func (s *LifecycleStore) loadNativeLedger(historical bool) (nativeAssignments, i
 // this read. Runtime admission supplies its own current directory-fenced snapshot.
 func (s *LifecycleStore) readNativeLedger(lifecycle lifecycleFile, historical bool) (nativeAssignments, int, error) {
 	f := nativeAssignments{Accounts: map[string]NativeAssignment{}}
-	loaded, version := false, 0
-	var parseErr error
-	err := fsutil.LoadJSONFile(s.nativePath(), func(raw json.RawMessage) {
-		loaded = true
-		f, version, parseErr = parseNativeLedger(raw, historical)
-	}, func() error {
+	version := 0
+	raw, err := os.ReadFile(s.nativePath())
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		err = nil
 		if lifecycle.NativeProvisioningInitialized {
-			return ErrNativeProvisioning
+			err = ErrNativeProvisioning
 		}
-		return nil
-	})
-	if err == nil && (parseErr != nil || loaded && !lifecycle.NativeProvisioningInitialized) {
-		err = ErrNativeProvisioning
+	case err == nil:
+		parsed, parsedVersion, parseErr := parseNativeLedger(raw, historical)
+		if parseErr != nil {
+			// Preserve the prior RawMessage reader's syntax errors and empty
+			// result. Successful parses already validate all JSON, without
+			// the extra whole-file scan and RawMessage copy.
+			var syntaxProbe json.RawMessage
+			if syntaxErr := json.Unmarshal(raw, &syntaxProbe); syntaxErr != nil {
+				err = syntaxErr
+				break
+			}
+		}
+		f, version = parsed, parsedVersion
+		if parseErr != nil || !lifecycle.NativeProvisioningInitialized {
+			err = ErrNativeProvisioning
+		}
 	}
 	f.stored.seedGenerations(lifecycle.Directory)
 	return f, version, err

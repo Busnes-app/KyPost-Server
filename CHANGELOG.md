@@ -20,6 +20,10 @@ non-prerelease version.
 
 ### Performance
 
+- Native ledger reads validate fresh file bytes without a redundant successful
+  JSON RawMessage scan and copy. Failed parses retain the prior syntax-error
+  behavior; initialization, ownership, restore and authorization checks remain.
+
 - Current native mailbox ledgers decode directly into their version-2
   representation before full ownership/address/history validation, avoiding a
   separate version-only JSON scan. Historical migration and malformed-input
