@@ -393,6 +393,8 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 ## Work Guidance
 
+- Native provisioning discovers unfinished subjects with `NativeDirectoryRepairSubjects`: one directory-fenced lifecycle/ledger read per pass, skipping existing external accounts and acknowledged native revision/digest pairs. Returned subjects still reconcile under fresh fences; missing users, lookup errors, pending/mismatched assignments and release floors remain on that path. Discovery grants no access, retains no snapshot between passes and never replays signed activity over local deactivation. Keep the startup/minute retry cadence and independent address reconciliation.
+
 - `fsutil.LockFileContext` retries cancellable exclusive flock contention after 1 ms; preserve the stable sibling lock inode, exclusive mode, cancellation without future acquisition and immediate release. The shorter retry is an experimental latency/CPU trade-off, not a permission cache.
 
 - Native admission reuses its freshly read lifecycle snapshot and validated assignment only within its existing directory-fenced call (`nativeUserStorageForAdmission`). The ledger reader still checks initialization, format and directory-derived generations; ordinary storage/ownership validators read their own current ledger. Keep restore-hold, storage owner/source/schema and current directory/role checks; no assignment or permission survives into a later operation. The exported storage/ownership validators retain their existing contracts. After successful `nativeUserStorageForAdmission`, admission uses `NativeDomainStore.readSet` under the same directory fence to avoid repeating the format decode; standalone `ReadSet` keeps its format guard.

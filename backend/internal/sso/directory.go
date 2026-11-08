@@ -16,6 +16,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/syncauth"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // AdminAppRole is the KySignOn application role that makes a subject a
@@ -300,18 +301,49 @@ func (s *LifecycleStore) Directory(issuer, subject string) (DirectoryState, bool
 	return st, ok, nil
 }
 
-// NativeDirectorySubjects supplies retained signed resources for startup repair.
-// It grants no access: each repair reloads the resource under its directory fence.
-func (s *LifecycleStore) NativeDirectorySubjects(issuer string) ([]string, error) {
+// NativeDirectoryRepairSubjects discovers unfinished work from one fenced
+// lifecycle/ledger snapshot. Skipping an already-applied revision grants no
+// access; every returned subject still needs fresh reconciliation. Nothing is
+// retained across passes, and discovery never replays access over local revocation.
+func (s *LifecycleStore) NativeDirectoryRepairSubjects(ctx context.Context, issuer string, accounts *users.Store) ([]string, error) {
+	release, err := s.LockDirectoryContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	f, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
+		return nil, err
+	}
+	assignments, _, err := s.readNativeLedger(f, false)
 	if err != nil {
 		return nil, err
 	}
 	var subjects []string
 	for key, d := range f.Directory {
-		if d.Resource != nil && key == directoryKey(issuer, d.Resource.ID) {
-			subjects = append(subjects, d.Resource.ID)
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
+		if d.Resource == nil || key != directoryKey(issuer, d.Resource.ID) {
+			continue
+		}
+		u, lookupErr := accounts.GetBySSOSubIssuer(issuer, d.Resource.ID)
+		if lookupErr == nil {
+			if u.NativeMailboxIssuer == "" && u.NativeMailboxSource == "" {
+				continue // Existing external/admin accounts never migrate through repair.
+			}
+			a, reserved := assignments.Accounts[key]
+			floor := f.ReleaseFloors[key]
+			if reserved && a.Status == "applied" && a.Revision == d.Revision && a.Digest == d.Digest && !floor.refuses(d.Revision, d.Active) {
+				continue
+			}
+		}
+		// Missing users and lookup errors remain work for the normal path,
+		// including unpublished storage and issuer conflicts. No guessed owner.
+		subjects = append(subjects, d.Resource.ID)
 	}
 	return subjects, nil
 }
