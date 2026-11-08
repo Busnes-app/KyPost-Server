@@ -47,6 +47,22 @@ We acknowledge security researchers and community members who help us improve. I
 
 ## Known Limitations & Trust Boundaries
 
+### Native admission decoded contents
+
+Each API/daemon process may retain one private decoded directory view and one
+primary-assignment view. Every operation first reads the current complete file;
+reuse requires exact byte equality, and read/parse failures refuse access without
+using older contents. Current user, role, domain, ownership/source/storage,
+migration and restore checks remain live. Mutation and historical/recovery
+readers keep their ordinary fresh decoders. No permission decision is cached.
+
+This trades bounded process memory for fewer repeated JSON decodes: each retained
+input is at most 8 MiB and each view at most 4,096 directory/account entries, with
+bounded directory collection shapes. Decoded values and copied results use
+additional memory; 16 MiB of retained input is not a total heap bound. Larger or
+ineligible inputs still work through ordinary decoding. This optimization alone
+establishes no worker capacity or smaller safe RAM budget.
+
 ### Browser OpenPGP RSA policy
 
 `frontend/src/lib/pgpClient.ts` supplies a literal 2048-bit RSA minimum to
