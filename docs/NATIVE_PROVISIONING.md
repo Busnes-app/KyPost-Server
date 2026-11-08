@@ -531,6 +531,14 @@ revisions apply activity/roles before retention; storage retries leave local
 deactivation intact. Mailboxes get the [native limits](#mailbox-quotas); a
 reservation keeps its ledger limits, which `migrate-native` keeps current.
 
+Each worker pass reads lifecycle and mailbox preparation evidence once to find
+unfinished repairs. Already-applied revision/digest pairs with an existing account
+are skipped; this avoids repeatedly decoding the whole instance ledger per user.
+Discovery is not authorization: pending repairs still re-read current authority
+and storage through the usual fenced path. Lookup failures and unpublished accounts
+remain work, while local deactivation is never undone by replaying an acknowledged
+revision. Discovery errors are reported and retried on the next normal pass.
+
 Every mailbox operation and mail-authenticated cache read checks the configured
 active issuer, current user and retained directory activity/role, primary
 address on a configured, non-retired domain, reservation revision and immutable

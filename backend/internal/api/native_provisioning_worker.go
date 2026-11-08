@@ -122,7 +122,7 @@ func (s *Server) StartNativeProvisioning(ctx context.Context) {
 			}
 		}
 		if settings.Enabled {
-			subjects, err := s.ssoLifecycle.NativeDirectorySubjects(settings.IssuerURL)
+			subjects, err := s.ssoLifecycle.NativeDirectoryRepairSubjects(ctx, settings.IssuerURL, s.users)
 			if err != nil {
 				s.logger.Error("native directory repair unavailable", "error", err.Error())
 			} else {

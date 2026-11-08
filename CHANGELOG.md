@@ -20,6 +20,10 @@ non-prerelease version.
 
 ### Performance
 
+- Native provisioning discovers pending repairs with one lifecycle/ledger snapshot
+  per pass instead of reloading full authority for every acknowledged account.
+  Actual repairs retain fresh validation, restore/release fences and local revocation.
+
 - Native outbox recovery skips empty/not-yet-due queues using a read-only SQLite
   hint before loading full account authority. Due work and failed probes retain
   existing storage, ownership, revocation and durable-claim checks.
