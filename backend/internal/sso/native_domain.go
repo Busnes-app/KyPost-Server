@@ -134,11 +134,15 @@ func checkNativeFormat(configDir string) error {
 	// v2 write (Configure included) could adopt it. The relay needs its key
 	// to read the version; its runtime reader refuses version 1 itself.
 	if raw, err := os.ReadFile(filepath.Join(configDir, nativeProvisioningFile)); err == nil {
-		var head struct {
-			Version int `json:"version"`
-		}
-		if json.Unmarshal(raw, &head) != nil || head.Version != 2 {
-			return ErrNativeMigration
+		// The admission view already fully validated identical v2 bytes. Reuse
+		// only that version predicate; the filesystem checks still run below.
+		if !nativeAssignmentsAlreadyDecoded(raw) {
+			var head struct {
+				Version int `json:"version"`
+			}
+			if json.Unmarshal(raw, &head) != nil || head.Version != 2 {
+				return ErrNativeMigration
+			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return ErrNativeMigration
