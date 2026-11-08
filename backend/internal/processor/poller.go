@@ -73,7 +73,7 @@ type Poller struct {
 	ctxOnce sync.Once
 	ctx     context.Context
 	cancel  context.CancelFunc
-	// wg tracks the tick loop and the eager startup goroutines it spawns, so
+	// wg tracks the tick loop, health publisher and eager startup goroutines, so
 	// a caller can wait for all poller-owned work to unwind before tearing
 	// down the state directory underneath it. Start seeds the counter before
 	// Run begins, which is what makes the children's Add calls inside Run
@@ -386,18 +386,30 @@ func (p *Poller) Run() {
 	wkdTicker := time.NewTicker(recheckWKDInterval)
 	defer wkdTicker.Stop()
 
-	// The heartbeat runs on its own ticker rather than at the end of each poll
-	// tick, and that separation is the point: a tick can legitimately take
-	// minutes (tickTimeout is 8), and a heartbeat derived from tick completion
-	// would report a busy daemon as a dead one. This says "the poller loop is
-	// alive and here is what it has observed", which is a different question
-	// from "how fast is it getting through the mail".
-	//
-	// Written once eagerly so a freshly started daemon is not reported missing
-	// for its first interval.
-	heartbeatTicker := time.NewTicker(daemonHeartbeatInterval)
-	defer heartbeatTicker.Stop()
+	// Publish eagerly, then independently of the synchronous scan/maintenance
+	// loop. A separate ticker in that loop still stops reporting during a long
+	// scan. One joined publisher owns all subsequent writes; completed ticks
+	// request a fresh snapshot without queuing another scan or report writer.
 	p.reportDaemonHealth()
+	healthUpdates := make(chan struct{}, 1)
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		heartbeatTicker := time.NewTicker(daemonHeartbeatInterval)
+		defer heartbeatTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-heartbeatTicker.C:
+			case <-healthUpdates:
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			p.reportDaemonHealth()
+		}
+	}()
 
 	// time.NewTicker only fires after the first full interval, so a host that
 	// restarts more often than recheckWKDInterval (12h) would never run
@@ -433,9 +445,10 @@ func (p *Poller) Run() {
 			// when the subsystem flags actually change, and waiting up to
 			// daemonHeartbeatInterval to publish a classifier failure would
 			// leave the health page stale for no reason.
-			p.reportDaemonHealth()
-		case <-heartbeatTicker.C:
-			p.reportDaemonHealth()
+			select {
+			case healthUpdates <- struct{}{}:
+			default:
+			}
 		case <-wkdTicker.C:
 			p.recheckWKDDomains()
 		case <-cleanupTicker.C:
@@ -480,8 +493,8 @@ const (
 
 	// daemonHeartbeatInterval is how often the poller publishes its health to
 	// shared state for the API process to serve. Comfortably under
-	// health.DaemonHeartbeatMaxAge (5m) so an ordinary missed beat — a tick
-	// holding the loop, a slow disk — does not read as a dead daemon.
+	// health.DaemonHeartbeatMaxAge (5m). Poll/maintenance work cannot hold the
+	// publisher's loop; a failed or blocked state write can still age out.
 	daemonHeartbeatInterval = 30 * time.Second
 
 	// stateCleanupInterval is how often processed-message IDs and decisions are

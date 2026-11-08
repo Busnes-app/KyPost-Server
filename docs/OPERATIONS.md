@@ -21,6 +21,13 @@ Persistence behavior:
 - `docker compose up --build` keeps the named volumes.
 - `docker compose down -v` removes the named volumes and the stored app data.
 
+The daemon publishes health independently of mail scans and housekeeping every
+30 seconds, and after completed scans. Long scans do not by themselves make
+`daemonStale` true. Missing or unwritable reports still become stale after five
+minutes, and observed polling, classifier and push failures remain in the report.
+A fresh heartbeat proves liveness; inspect poll completion logs, queue backlog
+and message delivery separately to establish progress and capacity.
+
 ## Updating KyPost
 
 KyPost checks GitHub releases hourly. When a newer KyPost release is found, it

@@ -32,11 +32,11 @@ import (
 // DaemonHeartbeatMaxAge is how stale a report may be before the daemon counts
 // as unavailable.
 //
-// Well above the default 90s scan interval AND above tickTimeout (8 minutes),
-// because a heartbeat is not written by the tick: a tick that legitimately runs
-// long must not be reported as a dead daemon. The poller writes on its own
-// ticker (daemonHeartbeatInterval) precisely so this stays a liveness signal
-// rather than a throughput one.
+// Above the default 90s scan interval. A heartbeat does not wait for a poll
+// tick (whose per-user timeout is 8 minutes): a tick that legitimately runs
+// long must not be reported as a dead daemon. The poller uses a separate,
+// joined publisher with its own ticker (daemonHeartbeatInterval), so this is
+// a liveness signal rather than a throughput one.
 const DaemonHeartbeatMaxAge = 5 * time.Minute
 
 // DaemonReport is the subsystem health one process observed at a point in time.

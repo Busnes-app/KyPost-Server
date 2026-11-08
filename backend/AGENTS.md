@@ -393,6 +393,8 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 ## Work Guidance
 
+- Daemon health has one joined publisher, independent of synchronous poll and maintenance work. Publish eagerly and every30seconds, with a bounded coalesced notification after completed ticks. Keep current subsystem failure flags, five-minute expiry when reports stop, and `Stop`/`Wait` joining every publisher before state teardown. Heartbeat freshness proves liveness, never scan progress or workforce capacity; preserve latency/delivery checks separately.
+
 - Native provisioning discovers unfinished subjects with `NativeDirectoryRepairSubjects`: one directory-fenced lifecycle/ledger read per pass, skipping existing external accounts and acknowledged native revision/digest pairs. Returned subjects still reconcile under fresh fences; missing users, lookup errors, pending/mismatched assignments and release floors remain on that path. Discovery grants no access, retains no snapshot between passes and never replays signed activity over local deactivation. Keep the startup/minute retry cadence and independent address reconciliation.
 
 - `fsutil.LockFileContext` retries cancellable exclusive flock contention after 1 ms; preserve the stable sibling lock inode, exclusive mode, cancellation without future acquisition and immediate release. The shorter retry is an experimental latency/CPU trade-off, not a permission cache.

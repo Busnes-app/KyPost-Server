@@ -78,6 +78,11 @@ non-prerelease version.
 
 ### Fixed
 
+- Daemon health publication runs independently of long mail scans and housekeeping,
+  retaining observed failures and joined shutdown. A busy scan no longer blocks
+  the heartbeat until the API incorrectly reports a stale daemon; heartbeat
+  freshness does not establish scan throughput or user capacity.
+
 - Hostile-review pass 2 fixes. Generating a CardDAV app password takes the account password
   (or a KyIdentity confirmation). An AI agent's search is charged per page it walks, and a
   refusal says how long to wait. Finished native sends shrink to a small receipt instead of
