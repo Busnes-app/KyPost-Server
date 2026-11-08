@@ -56,6 +56,13 @@ using older contents. Current user, role, domain, ownership/source/storage,
 migration and restore checks remain live. Mutation and historical/recovery
 readers keep their ordinary fresh decoders. No permission decision is cached.
 
+The format guard also reads complete current ledger bytes: exact equality with
+that already fully validated version-2 assignment view can skip a redundant
+version-header scan. A miss runs the original header decoder. Legacy-domain,
+tombstone and required-file checks still run every time. No migration decision,
+extra raw copy or additional view is retained; ordinary readers still decode
+complete current records.
+
 This trades bounded process memory for fewer repeated JSON decodes: each retained
 input is at most 8 MiB and each view at most 4,096 directory/account entries, with
 bounded directory collection shapes. Decoded values and copied results use

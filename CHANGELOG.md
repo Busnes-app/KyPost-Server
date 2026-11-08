@@ -20,6 +20,11 @@ non-prerelease version.
 
 ### Performance
 
+- Native format guards reuse only the version predicate of freshly read ledger
+  bytes already fully validated by the bounded admission view. Migration files
+  remain freshly checked; changed inputs keep the original header decoder and
+  refusal behavior. No new cache or retained raw copy.
+
 - Native mailbox admission reuses bounded private decoded directory and primary
   assignment contents only after freshly reading identical file bytes. Current
   authorization, storage and restore checks still run for every operation;

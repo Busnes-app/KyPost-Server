@@ -53,6 +53,14 @@ type nativeDirectoryContents struct {
 var nativeDirectoryView nativeContentView[nativeDirectoryContents]
 var nativeAssignmentView nativeContentView[map[string]NativeAssignment]
 
+// nativeAssignmentsAlreadyDecoded proves only that these exact current bytes
+// passed the complete runtime v2 decoder. It grants no access or migration state.
+func nativeAssignmentsAlreadyDecoded(raw []byte) bool {
+	nativeAssignmentView.mu.Lock()
+	defer nativeAssignmentView.mu.Unlock()
+	return nativeAssignmentView.raw != nil && bytes.Equal(raw, nativeAssignmentView.raw)
+}
+
 func decodeNativeDirectory(raw []byte) (nativeDirectoryContents, error) {
 	var f lifecycleFile
 	// Decode the complete original type, including fields admission does not
