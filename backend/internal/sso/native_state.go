@@ -38,9 +38,9 @@ func (s *LifecycleStore) ValidateNativeUserOwnership(stateRoot string, u users.U
 	return err
 }
 
-// nativeUserStorageForAdmission reuses only a lifecycle snapshot read under the
-// caller's current directory fence. It never retains permission for another call.
-func (s *LifecycleStore) nativeUserStorageForAdmission(stateRoot string, u users.User, lifecycle lifecycleFile) (NativeAssignment, error) {
+// nativeUserStorageForAdmission uses the initialization fence from this call's
+// current lifecycle bytes. Storage and format checks still run on every call.
+func (s *LifecycleStore) nativeUserStorageForAdmission(stateRoot string, u users.User, initialized bool) (NativeAssignment, error) {
 	if err := RequireNativeRestoreReleased(stateRoot); err != nil {
 		return NativeAssignment{}, err
 	}
@@ -51,11 +51,10 @@ func (s *LifecycleStore) nativeUserStorageForAdmission(stateRoot string, u users
 	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
 		return NativeAssignment{}, err
 	}
-	f, _, err := s.readNativeLedger(lifecycle, false)
+	a, ok, err := s.nativeAssignmentForAdmission(directoryKey(u.NativeMailboxIssuer, u.SSOSub), initialized)
 	if err != nil {
 		return NativeAssignment{}, err
 	}
-	a, ok := f.Accounts[directoryKey(u.NativeMailboxIssuer, u.SSOSub)]
 	return validateNativeUserAssignment(root, u, a, ok)
 }
 

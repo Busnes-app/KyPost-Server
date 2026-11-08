@@ -20,6 +20,11 @@ non-prerelease version.
 
 ### Performance
 
+- Native mailbox admission reuses bounded private decoded directory and primary
+  assignment contents only after freshly reading identical file bytes. Current
+  authorization, storage and restore checks still run for every operation;
+  mutations and historical readers remain uncached.
+
 - Native ledger reads validate fresh file bytes without a redundant successful
   JSON RawMessage scan and copy. Failed parses retain the prior syntax-error
   behavior; initialization, ownership, restore and authorization checks remain.
