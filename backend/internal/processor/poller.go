@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -100,14 +101,15 @@ type Poller struct {
 	// only be tested a piece at a time. nil means the real client.
 	newMailClient func(configPath, keyPath string) imapadapter.Client
 
-	userMu         sync.Mutex
-	stores         map[string]*state.Store
-	mailClients    map[string]*mailClientEntry
-	mailCaches     map[string]*mailcache.Store
-	rulesStores    map[string]*rules.Store
-	sendAsStores   map[string]*sendas.Store
-	contactsStores map[string]*contacts.Store
-	rate           map[string][]time.Time
+	userMu            sync.Mutex
+	stores            map[string]*state.Store
+	nativeMailClients map[string]*mailClientEntry
+	mailClients       map[string]*mailClientEntry
+	mailCaches        map[string]*mailcache.Store
+	rulesStores       map[string]*rules.Store
+	sendAsStores      map[string]*sendas.Store
+	contactsStores    map[string]*contacts.Store
+	rate              map[string][]time.Time
 
 	// The embedding sorter (hybrid engine). embed is nil when it is off, and
 	// then every message goes to the LLM exactly as before. heads caches each
@@ -200,6 +202,7 @@ func New(cfg config.Config, log *logging.Logger, globalStore *state.Store, users
 		configDir:            configDir,
 		imapKeyPath:          config.SecretFile("IMAP_CONFIG_KEY_FILE", "imap-config.key"),
 		stores:               map[string]*state.Store{},
+		nativeMailClients:    map[string]*mailClientEntry{},
 		mailClients:          map[string]*mailClientEntry{},
 		mailCaches:           map[string]*mailcache.Store{},
 		rulesStores:          map[string]*rules.Store{},
@@ -277,7 +280,7 @@ func (p *Poller) userStore(userID string) (*state.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.stores[userID] = st
+	retainPollerResource(p.stores, userID, st)
 	return st, nil
 }
 
@@ -533,6 +536,7 @@ func (p *Poller) cleanupAllUsers() {
 		if err := store.Cleanup(stateRetentionDays); err != nil {
 			p.log.Error("state cleanup failed", "user_id", u.ID, "error", err.Error())
 		}
+		runtime.KeepAlive(store)
 	}
 	p.cleanupExtraMailboxes()
 }
@@ -575,6 +579,7 @@ func (p *Poller) forExtraMailboxStores(what string, action func(*state.Store) er
 			}
 			if err == nil {
 				err = action(store)
+				runtime.KeepAlive(store)
 			}
 			if err != nil {
 				p.log.Error("mailbox "+what+" failed", "user_id", userID, "error", err.Error())
@@ -635,6 +640,7 @@ func (p *Poller) TriggerUnreadSweep() {
 			if err := store.SetCheckpoint(""); err != nil {
 				p.log.Error("failed to reset checkpoint for unread sweep", "user_id", u.ID, "error", err.Error())
 			}
+			runtime.KeepAlive(store)
 		}
 		p.forExtraMailboxStores("unread sweep", func(store *state.Store) error { return store.SetCheckpoint("") })
 	}
@@ -823,6 +829,10 @@ func (p *Poller) tickMailbox(u users.User, mailboxID string, imapConfigModTime t
 	if err != nil {
 		return err
 	}
+
+	// Cache eviction may make these the last references. Retain the whole
+	// context through every synchronous poll/notification/state operation.
+	defer runtime.KeepAlive(uc)
 
 	// Derived from lifetimeCtx, not context.Background(), so Stop() cancels the
 	// IMAP fetch, classifier call and state writes that Wait() blocks on.

@@ -47,6 +47,18 @@ We acknowledge security researchers and community members who help us improve. I
 
 ## Known Limitations & Trust Boundaries
 
+### Daemon resource cache lifetimes
+
+The daemon retains at most64 state-store and64 native-mailbox-client cache
+entries, including extra mailboxes. Eviction drops a reference and never closes
+a resource under a live caller. Existing runtime cleanup releases unreachable
+handles; poll and maintenance operations explicitly retain their live holders.
+This bounds cache retention, not instantaneous descriptors, process memory or
+workforce capacity. External IMAP sessions and rate-limit history are separate.
+Native acquisition and each mailbox operation still recheck current admission,
+source/owner/restore state. Mailbox WAL/FULL durability is unchanged.
+
+
 ### Native admission decoded contents
 
 Each API/daemon process may retain one private decoded directory view and one

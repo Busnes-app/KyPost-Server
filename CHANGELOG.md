@@ -20,6 +20,12 @@ non-prerelease version.
 
 ### Performance
 
+- Bound daemon state-store and native mailbox-client cache retention to64 entries
+  each. Eviction preserves live callers and existing reachability cleanup;
+  authorization, rate limits and mail durability remain unchanged. Long workload
+  resource/capacity qualification is separate.
+
+
 - Native format guards reuse only the version predicate of freshly read ledger
   bytes already fully validated by the bounded admission view. Migration files
   remain freshly checked; changed inputs keep the original header decoder and

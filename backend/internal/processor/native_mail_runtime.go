@@ -46,7 +46,7 @@ func (p *Poller) mailClientForMailbox(userID, mailboxID string, modTime time.Tim
 	key := a.Owner.Mailbox
 	p.userMu.Lock()
 	defer p.userMu.Unlock()
-	if entry, ok := p.mailClients[key]; ok && entry.source == a.Source {
+	if entry, ok := p.nativeMailClients[key]; ok && entry.source == a.Source {
 		return entry.client, a, nil
 	}
 	client, err := mailbox.OpenClient(filepath.Join(a.Dir(p.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context) error {
@@ -62,7 +62,10 @@ func (p *Poller) mailClientForMailbox(userID, mailboxID string, modTime time.Tim
 	if err != nil {
 		return nil, a, err
 	}
-	p.mailClients[key] = &mailClientEntry{client: client, source: a.Source}
+	if p.nativeMailClients == nil {
+		p.nativeMailClients = map[string]*mailClientEntry{}
+	}
+	retainPollerResource(p.nativeMailClients, key, &mailClientEntry{client: client, source: a.Source})
 	return client, a, nil
 }
 
@@ -78,7 +81,7 @@ func (p *Poller) mailboxStore(a sso.NativeAssignment) (*state.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.stores[a.Owner.Mailbox] = st
+	retainPollerResource(p.stores, a.Owner.Mailbox, st)
 	return st, nil
 }
 
