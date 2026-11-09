@@ -110,9 +110,8 @@ var userStoreSweepInterval = 30 * time.Minute
 // StartUserStoreSweeper reclaims per-user stores idle past userStoreIdleTTL and
 // prunes deviceIndex residue. Call once after NewServer.
 //
-// The device-index prune rides this ticker because it needs the same walk over
-// every account's store. Order matters: prune first, while the stores are about
-// to be opened anyway, then evict.
+// The device-index prune rides this ticker and uses temporary device reads
+// where compatible. Afterwards evict stores idle since real request activity.
 func (s *Server) StartUserStoreSweeper(ctx context.Context) {
 	ticker := time.NewTicker(userStoreSweepInterval)
 	defer ticker.Stop()
@@ -856,24 +855,22 @@ func (s *Server) endReservationLocked(deviceID string) {
 // closes.
 //
 // Driven by StartUserStoreSweeper, which already walks the user list on a timer.
-// sweepDeviceIndex uses the NON-warming accessor: it runs on the line before
-// sweepIdleUserStores, and touching lastSeen for every user microseconds
-// earlier meant the idle sweep could never evict anything. Its sibling
-// rescanDeviceIndex was switched for this reason and this one was missed.
+// Preserve fresh storage validation before temporary device-row discovery.
+// Valid current stores are read without retaining a writable cache entry;
+// compatibility failures keep the existing validated maintenance fallback.
 func (s *Server) sweepDeviceIndex() int {
 	live := map[string]bool{}
 	unreadable := map[string]bool{}
 	for _, userID := range s.knownUserIDs() {
-		store, err := s.userStoreForMaintenance(userID)
+		if _, err := s.validateUserStorage(userID); err != nil {
+			unreadable[userID] = true
+			continue
+		}
+		devices, err := s.deviceDiscoveryRows(userID)
 		if err != nil {
 			// Cannot prove this user's devices are gone. Keep their entries:
 			// dropping them on a transient open error would unpair working
 			// devices and cost each one a lockout strike on its next request.
-			unreadable[userID] = true
-			continue
-		}
-		devices, err := store.ListNativeDevicesStrict()
-		if err != nil {
 			unreadable[userID] = true
 			continue
 		}

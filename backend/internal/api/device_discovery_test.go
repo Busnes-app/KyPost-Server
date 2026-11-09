@@ -5,6 +5,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,48 +18,55 @@ import (
 
 func TestDeviceDiscoveryFallsBackForOlderStorage(t *testing.T) {
 	for _, layout := range []string{"json", "older-schema"} {
-		t.Run(layout, func(t *testing.T) {
-			t.Setenv("STATE_DIR", t.TempDir())
-			s := newTestServer(t)
-			u := newStoreCacheUser(t, s, "discovery-upgrade")
-			dir := s.userStateDir(u.ID)
-			if layout == "json" {
-				if err := os.MkdirAll(dir, 0700); err != nil {
-					t.Fatal(err)
+		for _, sweep := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/sweep=%t", layout, sweep), func(t *testing.T) {
+				t.Setenv("STATE_DIR", t.TempDir())
+				s := newTestServer(t)
+				u := newStoreCacheUser(t, s, "discovery-upgrade")
+				dir := s.userStateDir(u.ID)
+				if layout == "json" {
+					if err := os.MkdirAll(dir, 0700); err != nil {
+						t.Fatal(err)
+					}
+					raw, err := json.Marshal(map[string]any{"nativeDevices": []state.NativeDevice{{DeviceID: "discovery-old", Platform: "android", UserID: u.ID}}})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(dir, "state.json"), raw, 0600); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					pairNativeDevice(t, s, u.ID, "discovery-old")
+					if err := s.userStores[u.ID].Close(); err != nil {
+						t.Fatal(err)
+					}
+					clear(s.userStores)
+					db, err := sql.Open("sqlite", filepath.Join(dir, "state.db"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer db.Close()
+					if _, err := db.Exec("DROP TABLE backup_audit"); err != nil {
+						t.Fatal(err)
+					}
 				}
-				raw, err := json.Marshal(map[string]any{"nativeDevices": []state.NativeDevice{{DeviceID: "discovery-old", Platform: "android", UserID: u.ID}}})
-				if err != nil {
-					t.Fatal(err)
+				clear(s.deviceIndex)
+				if sweep {
+					s.deviceIndex["discovery-old"] = u.ID
+					s.sweepDeviceIndex()
+				} else {
+					s.rescanDeviceIndex()
 				}
-				if err := os.WriteFile(filepath.Join(dir, "state.json"), raw, 0600); err != nil {
-					t.Fatal(err)
+				if s.deviceIndex["discovery-old"] != u.ID {
+					t.Fatalf("%s device lost during compatible fallback", layout)
 				}
-			} else {
-				pairNativeDevice(t, s, u.ID, "discovery-old")
-				if err := s.userStores[u.ID].Close(); err != nil {
-					t.Fatal(err)
+				if layout == "json" {
+					if _, err := os.Stat(filepath.Join(dir, "state.json.migrated")); err != nil {
+						t.Fatal("legacy input was not preserved", err)
+					}
 				}
-				clear(s.userStores)
-				db, err := sql.Open("sqlite", filepath.Join(dir, "state.db"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer db.Close()
-				if _, err := db.Exec("DROP TABLE backup_audit"); err != nil {
-					t.Fatal(err)
-				}
-			}
-			clear(s.deviceIndex)
-			s.rescanDeviceIndex()
-			if s.deviceIndex["discovery-old"] != u.ID {
-				t.Fatalf("%s device lost during compatible fallback", layout)
-			}
-			if layout == "json" {
-				if _, err := os.Stat(filepath.Join(dir, "state.json.migrated")); err != nil {
-					t.Fatal("legacy input was not preserved", err)
-				}
-			}
-		})
+			})
+		}
 	}
 }
 
