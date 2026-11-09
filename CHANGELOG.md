@@ -20,6 +20,10 @@ non-prerelease version.
 
 ### Performance
 
+- Avoid retaining API state stores opened only by periodic device-index
+  maintenance. Preserve fresh native storage validation, unreadable-owner hints,
+  collision reservations, live holders and legacy migration fallback.
+
 - Bound daemon state-store and native mailbox-client cache retention to64 entries
   each. Eviction preserves live callers and existing reachability cleanup;
   authorization, rate limits and mail durability remain unchanged. Long workload
