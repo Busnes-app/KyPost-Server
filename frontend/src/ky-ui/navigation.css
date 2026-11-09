@@ -21,6 +21,13 @@
 }
 .ky-nav-item:disabled,
 .ky-nav-item[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
+/* Forced colours drop the tint and the bar: outline the current row instead (focus keeps its ring). */
+@media (forced-colors: active) {
+  [class].ky-nav-item:is(.active, .sidebar-link-active, .selected, [aria-current="page"], [data-selected="true"]):not(:focus-visible) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
 @media (max-width: 720px) {
   [class].ky-nav-item.active,
   [class].ky-nav-item.sidebar-link-active,
@@ -109,13 +116,16 @@
    scrolls, unfaded. */
 @media (max-width: 720px) {
   .ky-nav { flex-direction: row; overflow-x: auto; }
-  :is(.ky-nav, .ky-settings-tabs) {
-    scroll-padding-inline: 3.5rem;
-    mask-image: linear-gradient(to right, transparent, #000 var(--ky-fade-start), #000 calc(100% - var(--ky-fade-end)), transparent);
-    animation: ky-nav-fade linear both;
-    animation-timeline: scroll(self inline);
+  :is(.ky-nav, .ky-settings-tabs) { scroll-padding-inline: 3.5rem; }
+  /* Without scroll timelines the 0s animation would hold its last frame and fade the start. */
+  @supports (animation-timeline: scroll()) {
+    :is(.ky-nav, .ky-settings-tabs) {
+      mask-image: linear-gradient(to right, transparent, #000 var(--ky-fade-start), #000 calc(100% - var(--ky-fade-end)), transparent);
+      animation: ky-nav-fade linear both;
+      animation-timeline: scroll(self inline);
+    }
+    :is(.ky-nav, .ky-settings-tabs):focus-within { mask-image: none; }
   }
-  :is(.ky-nav, .ky-settings-tabs):focus-within { mask-image: none; }
   :where(.ky-nav) > .ky-nav-item { flex: none; width: auto; padding-inline: var(--ky-space-3); white-space: nowrap; }
   /* The row scrolls, so it clips anything drawn outside a tab: keep the focus ring inside. */
   .ky-nav > .ky-nav-item:focus-visible { outline-offset: -2px; }

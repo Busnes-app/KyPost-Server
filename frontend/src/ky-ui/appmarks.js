@@ -21,3 +21,16 @@ export function appMark(id) {
   const letter = /^(?:ky)?([a-z0-9])/i.exec(String(id))?.[1].toUpperCase() ?? '?';
   return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="11" fill="#182326"/><text x="32" y="43" text-anchor="middle" font-family="system-ui,sans-serif" font-size="30" font-weight="700" fill="#f2efe8">${letter}</text></svg>`)}`;
 }
+
+// An entry's `url` as a rail link, or null to drop the entry: only http(s) URLs, so a
+// `javascript:`, `data:` or `vbscript:` URL from the directory never runs in this page.
+// A relative URL resolves against the page.
+export function appHref(url, base = globalThis.location?.href) {
+  if (typeof url !== 'string' || !url) return null;
+  try {
+    const href = new URL(url, base);
+    return href.protocol === 'https:' || href.protocol === 'http:' ? href.href : null;
+  } catch {
+    return null;
+  }
+}
