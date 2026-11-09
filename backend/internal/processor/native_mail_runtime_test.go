@@ -101,10 +101,28 @@ func TestNativeRuntimePollsWithoutIMAP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Saturate the native-only cache while retaining a live caller. A fresh
+	// access must insert within the cap without closing that caller's handle.
+	clear(p.nativeMailClients)
+	for i := 0; i < maxRetainedPollerResources; i++ {
+		p.nativeMailClients[strconv.Itoa(i)] = &mailClientEntry{client: held, source: a.Source}
+	}
+	reopened, err := p.mailClientForUser(u.ID, time.Time{})
+	if err != nil || reopened == held || len(p.nativeMailClients) != maxRetainedPollerResources {
+		t.Fatalf("bounded reopen: %v cache=%d", err, len(p.nativeMailClients))
+	}
+	if _, err := held.ListOverviews(context.Background(), "INBOX", 10); err != nil {
+		t.Fatalf("evicted client closed under its holder: %v", err)
+	}
+	if len(p.mailClients) != 0 {
+		t.Fatal("native clients retained in external IMAP cache")
+	}
 	if _, err := p.users.Deactivate(u.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := held.ListOverviews(context.Background(), "INBOX", 10); err == nil {
-		t.Fatal("held daemon client retained access after deactivation")
+	for _, client := range []imapadapter.Client{held, reopened} {
+		if _, err := client.ListOverviews(context.Background(), "INBOX", 10); err == nil {
+			t.Fatal("held or reloaded daemon client retained access after deactivation")
+		}
 	}
 }
