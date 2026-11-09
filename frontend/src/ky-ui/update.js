@@ -12,8 +12,10 @@ export function buildAssets(html, parser = new DOMParser()) {
 }
 
 // The same list from a live document. Read it at start-up, before code adds stylesheets.
+// <noscript> content is text in a live page but elements in a DOMParser document, so skip it.
 export function pageAssets(doc = globalThis.document) {
   return [...doc.querySelectorAll('script[src], link[rel~="stylesheet"][href]')]
+    .filter(node => !node.closest('noscript'))
     .map(node => node.getAttribute(node.localName === 'script' ? 'src' : 'href'))
     .filter(Boolean);
 }
@@ -26,6 +28,7 @@ export function watchForUpdate({ name = 'This app', url = '/', interval = 5 * 60
   const loaded = pageAssets(doc).join('\n');
   let last = Date.now();
   let busy = false;
+  let stopped = false;
   let notice = null;
 
   const check = async () => {
@@ -33,12 +36,15 @@ export function watchForUpdate({ name = 'This app', url = '/', interval = 5 * 60
     if (Date.now() - last < interval) return;
     busy = true;
     last = Date.now();
+    // A request that never settles would otherwise leave busy set for good.
+    const abort = new AbortController();
+    const timeout = view.setTimeout(() => abort.abort(), 30_000);
     try {
-      const response = await fetch(url, { cache: 'no-store', credentials: 'same-origin', redirect: 'manual', headers: { Accept: 'text/html' } });
+      const response = await fetch(url, { cache: 'no-store', credentials: 'same-origin', redirect: 'manual', headers: { Accept: 'text/html' }, signal: abort.signal });
       if (!response.ok || !/text\/html/i.test(response.headers.get('content-type') ?? '')) return;
       const served = buildAssets(await response.text(), new view.DOMParser());
-      if (served.length && loaded && served.join('\n') !== loaded) show();
-    } catch { /* Offline or the server is restarting: try again later. */ } finally { busy = false; }
+      if (!stopped && served.length && loaded && served.join('\n') !== loaded) show();
+    } catch { /* Offline, timed out or the server is restarting: try again later. */ } finally { view.clearTimeout(timeout); busy = false; }
   };
 
   const show = () => {
@@ -77,5 +83,5 @@ export function watchForUpdate({ name = 'This app', url = '/', interval = 5 * 60
     view.removeEventListener('focus', check);
     view.removeEventListener('online', check);
   }
-  return () => { stop(); notice?.remove(); };
+  return () => { stopped = true; stop(); notice?.remove(); };
 }

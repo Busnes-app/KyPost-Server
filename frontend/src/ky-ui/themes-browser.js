@@ -38,13 +38,15 @@ const THEME_PAIRS = Object.freeze([
   pair('nord-pair', 'Nord', 'paper', 'nord'),
 ]);
 
-// Suite palettes never defined hover or strong lines; derive them as Busnes does
-// (panel a step toward ink, line strengthened). Base themes pass their actual values,
+// Suite palettes never defined hover, strong lines or muted text; derive them as Busnes does
+// (panel a step toward ink, line strengthened). Muted text is ink a step toward panel, kept
+// at 4.5:1 on bg, panel, hover and sidebar by check-status-colours.mjs. Base themes pass their actual values,
 // plus status colours. Palettes without a status colour use the shared semantic
 // default for their own scheme, including when it differs from the OS scheme.
 const p = (bg, panel, ink, inkStrong, accent, accentSoft, line, glow, sidebarStart, sidebarEnd, buttonText,
   panelHover = `color-mix(in srgb, ${panel} 93%, ${inkStrong})`, lineStrong = `color-mix(in srgb, ${line} 60%, ${inkStrong})`, danger, success) =>
-  Object.freeze({ bg, panel, ink, inkStrong, accent, accentSoft, line, glow, sidebarStart, sidebarEnd, buttonText, panelHover, lineStrong, ...(danger && { danger }), ...(success && { success }) });
+  Object.freeze({ bg, panel, ink, inkStrong, accent, accentSoft, line, glow, sidebarStart, sidebarEnd, buttonText, panelHover, lineStrong,
+    inkMuted: `color-mix(in srgb, ${ink} 90%, ${panel})`, ...(danger && { danger }), ...(success && { success }) });
 
 // Every named theme except Busnes Light/Dark.
 const THEME_PALETTES = Object.freeze({
