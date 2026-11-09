@@ -3,23 +3,23 @@
   "source": "https://github.com/Busnes-app/ky-ui",
   "files": {
     "tokens.css": "9790d18239c1f4c9e48a32850f2a1480da038454251b5d93506b6b81849ee1ce",
-    "navigation.css": "c2f03877391492785630b289f049f0a715d918869a806b8ddf83068cfeddd125",
-    "shell.css": "d9ae4addc4bd4fae617f2d43e13f60d0a178ca980b9ed9d2a8bdd592648d2614",
+    "navigation.css": "6f3bdb994c0fde683cec39213e847108ae4594f401ab5fa82bbeaa68a2e311b1",
+    "shell.css": "8f523f25e9c60e7a696fc494c9d9f12888f8237facc2cbf7840772b3a8ed7a7c",
     "appearance.css": "891ca83ec13d8f9d1d83e2707b14d0e6652150f90be46852e246e9e2c275be1c",
     "appearance-themes.css": "25440167f1897152f97de8ae58fc0da33c98fc6b660e145379cbdbd0c1927382",
-    "themes.js": "6a4852b5c5e990818404a7eb189790e371d6e033b798712f38a6e14f13db75f5",
-    "themes.d.ts": "0cc2f64ac7791432ecfb1080f9500ea966c536a80fe29fb2d5b3c533cfda9860",
-    "theme.js": "7ef7a273203468d0c5fd5292219f940fafa02df35dd974c59a4d98acadc2ec05",
+    "themes.js": "b4affeaae07234d7e87ff455b955fc99abe1f8c55bff059c4787c9f934067a73",
+    "themes.d.ts": "61c17fed4e2b74b6b392414348b5369723100b75c36d4ce643968948e6ba2887",
+    "theme.js": "2c93313f5994e76651f49ad5ad6f0a3b85e5a70f82b78c14be0b961067ab3812",
     "theme.d.ts": "cb4531828970899ba232a3321403f08a1251813adbb8906b391789d5b0771fba",
-    "appmarks.js": "e9aa6df70b24f133e00eb1290855163d409f61ff04f45f3b74d754067be62efd",
-    "appmarks.d.ts": "e786d8a6faf3d00a42e03977a417392665da69f0a90a8cdc0838737f01d7b3e1",
+    "appmarks.js": "3b2879d264666d6897ebc7fc050a73b24b25474a288daa1839f466f95f3c472b",
+    "appmarks.d.ts": "d12ecd1a026db0253fe6e7b58a90dc92d2a2d50340b6469aba296a62df58cf91",
     "menu.js": "830944016c3dc63bcf654c456fd6646b10e3e7afd0697be0b62f383bb0ab990e",
     "menu.d.ts": "04bf30e7cd94a29995efe1da4b699114f92976c70cfaf561ae9d21ae044ae309",
-    "update.js": "a4ca2d798219cbd5cd885e371337d244b196f8949d784c5c166e266c826eb19c",
+    "update.js": "bf64de4e765cbee329a29455d69323899f065c01e25e8c10772cf690f57af4e4",
     "update.d.ts": "af047788c0c52979ead9e4d12edf01ecea63ce4ad3a8d715d298bd89d8632dc9",
     "check-vendor.mjs": "1fdca377e486e52d9e660893ebfc2f1a90ddb6578eca24d8f844bb5485f3e053",
     "palettes.ts": "334a6881a5c6cc051a9eae024dbbb75756493c483c98c72eddbeb84a5392b447",
     "palettes-browser.js": "1d0eefa32f87773162bcc21dd7419d077c99ac133d01afe637a4e3acc738c532",
-    "themes-browser.js": "29be9423733580dc9f9d43b85e5407af420aacdbeb8b9823036bd65e7f0e8bc9"
+    "themes-browser.js": "19a9efd7964d08019079d70974f6fc88f0eb867dba8b6fff045d1ab1b71a289f"
   }
 }

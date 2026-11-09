@@ -88,6 +88,10 @@
   font: inherit;
   font-size: var(--ky-type-body);
 }
+/* iOS Safari zooms the page into any focused field under 16px. */
+@media (pointer: coarse) {
+  :is(.ky-auth-field > input, .ky-auth-theme select) { font-size: 1rem; }
+}
 .ky-auth-field > input::placeholder { color: var(--ink, var(--ky-ink)); opacity: 1; }
 .ky-auth-field > input:hover:not(:disabled) { border-color: var(--ink, var(--ky-ink)); }
 .ky-auth-check {
@@ -196,6 +200,11 @@
   flex-direction: column;
   gap: var(--ky-space-4);
   height: 100vh;
+  height: 100dvh;
+  /* A short window (a landscape phone, a long admin menu) scrolls the sidebar, so the account
+     footer stays reachable while the page scrolls under it; focus scrolls keep rings in view. */
+  overflow-y: auto;
+  scroll-padding-block: var(--ky-space-2);
   padding: var(--ky-space-4) var(--ky-space-3) var(--ky-space-3);
   border-right: 1px solid var(--line, var(--ky-line));
   background: linear-gradient(180deg, var(--sidebar-start, var(--panel, var(--ky-panel))), var(--sidebar-end, var(--panel, var(--ky-panel))));
@@ -272,6 +281,7 @@
   .ky-app { display: block; }
   .ky-sidebar {
     height: auto;
+    overflow: visible;
     gap: var(--ky-space-2);
     padding: var(--ky-space-2) var(--ky-space-3) 0;
     border-right: 0;
@@ -347,6 +357,9 @@
   width: max-content;
   min-width: 12rem;
   max-width: calc(100vw - 2 * var(--ky-space-3));
+  /* A short viewport scrolls the list instead of pushing items off-screen. */
+  max-height: calc(100dvh - 7rem);
+  overflow-y: auto;
   margin: 0;
   padding: var(--ky-space-1);
   border: 1px solid var(--line, var(--ky-line));
@@ -355,7 +368,8 @@
   box-shadow: var(--ky-shadow-overlay);
 }
 .ky-menu-list[hidden] { display: none; }
-.ky-user .ky-menu-list { top: auto; bottom: calc(100% + var(--ky-space-2)); inset-inline: 0; width: auto; min-width: 0; }
+/* Opening upward, it has the window less the account footer below its anchor. */
+.ky-user .ky-menu-list { top: auto; bottom: calc(100% + var(--ky-space-2)); inset-inline: 0; width: auto; min-width: 0; max-height: calc(100dvh - 9rem); }
 .ky-menu-list > [role="menuitem"] {
   box-sizing: border-box;
   display: flex;
@@ -474,7 +488,8 @@
   border: 1px solid color-mix(in srgb, var(--accent, var(--ky-accent)) 35%, transparent);
   border-radius: 999px;
   background: var(--accent-soft, var(--ky-accent-soft));
-  color: var(--accent, var(--ky-accent));
+  /* Accent on its own tint falls under 4.5:1 in some palettes (Forest Dark 3.1). */
+  color: var(--ink-strong, var(--ky-ink-strong));
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.02em;
