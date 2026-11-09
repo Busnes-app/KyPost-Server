@@ -71,21 +71,25 @@ Native acquisition and each mailbox operation still recheck current admission,
 source/owner/restore state. Mailbox WAL/FULL durability is unchanged.
 
 
-### Native admission decoded contents
+### Native authority decoded contents
 
 Each API/daemon process may retain one private decoded directory view and one
-primary-assignment view. Every operation first reads the current complete file;
+primary-assignment view. Admission and ordinary storage/ownership validation
+share these existing bounded views. Every operation first reads the current complete file;
 reuse requires exact byte equality, and read/parse failures refuse access without
-using older contents. Current user, role, domain, ownership/source/storage,
+using older contents. Ordinary validation still checks format, lifecycle
+initialization and prepared storage; it grants no mail access. Ownership-only
+revocation remains available under a hold, while ordinary storage access refuses.
+Current user, role, domain, ownership/source/storage,
 migration and restore checks remain live. Mutation and historical/recovery
-readers keep their ordinary fresh decoders. No permission decision is cached.
+full-record readers keep their fresh decoders. No permission decision is cached.
 
 The format guard also reads complete current ledger bytes: exact equality with
 that already fully validated version-2 assignment view can skip a redundant
 version-header scan. A miss runs the original header decoder. Legacy-domain,
 tombstone and required-file checks still run every time. No migration decision,
-extra raw copy or additional view is retained; ordinary readers still decode
-complete current records.
+extra raw copy or additional view is retained; mutable and historical readers
+still decode complete current records.
 
 This trades bounded process memory for fewer repeated JSON decodes: each retained
 input is at most 8 MiB and each view at most 4,096 directory/account entries, with

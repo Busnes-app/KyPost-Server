@@ -24,6 +24,10 @@ non-prerelease version.
 
 ### Performance
 
+- Reuse exact-current decoded native authority contents for ordinary storage and
+  ownership checks, retaining fresh reads, restore holds and prepared-storage
+  validation without caching permission decisions.
+
 - Avoid retaining API state stores opened only by periodic device-index
   maintenance. Preserve fresh native storage validation, unreadable-owner hints,
   collision reservations, live holders and legacy migration fallback.
