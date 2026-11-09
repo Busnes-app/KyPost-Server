@@ -735,6 +735,8 @@ failed. The envelope carries its own `kdf`/`iterations`/`salt`/`iv`, so
 clients must derive from the blob rather than hardcoding parameters; that is
 what lets the KDF change later without stranding them.
 
+Immediate external-account sends, including `/api/mail/send-pgp`, report a definite invalid-recipient RCPT refusal as `422 invalid_recipient`; display the plain-text explanation and retain compose for correction. See [the API contract](API.md). This does not change encryption, acceptance uncertainty or partial-delivery handling.
+
 Web UI (wired):
 
 - **Cold start** in `App.tsx`: every authenticated page load fetches

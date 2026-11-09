@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_ATTACHMENT_BYTES,
+  mailSendErrorMessage,
   combineWarnings,
   deliverSealedPickupLinks,
   formatBytes,
@@ -171,5 +172,28 @@ describe("keyChangedRecipientsFrom409", () => {
 
   it("returns null for anything that is not a 409", () => {
     expect(keyChangedRecipientsFrom409(new Error("boom"))).toBeNull();
+  });
+});
+
+
+describe("mailSendErrorMessage", () => {
+  it("shows the recipient correction without an HTTP status prefix", () => {
+    const message = "The mail server rejected bob@example.com: the recipient domain could not be found. Check the recipient address and try again.";
+    expect(mailSendErrorMessage(new HttpError("request failed: 422", 422, { code: "invalid_recipient", error: message }))).toBe(message);
+  });
+
+  it("keeps quota, gateway, uncertainty and malformed refusals distinct", () => {
+    for (const [status, body] of [
+      [422, { error: "quota exceeded" }],
+      [502, { code: "invalid_recipient", error: "proxy failure" }],
+      [422, { code: "invalid_recipient", error: 42 }],
+      [422, { code: "invalid_recipient", error: " " }],
+      [422, null],
+      [422, "gateway HTML"]
+    ] satisfies [number, unknown][]) {
+      expect(mailSendErrorMessage(new HttpError("original failure", status, body))).toBe("original failure");
+    }
+    expect(mailSendErrorMessage(new Error("smtp: acceptance uncertain"))).toBe("smtp: acceptance uncertain");
+    expect(mailSendErrorMessage(null)).toBe("failed to send email");
   });
 });

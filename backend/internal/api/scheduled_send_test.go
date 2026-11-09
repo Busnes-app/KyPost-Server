@@ -28,6 +28,7 @@ import (
 // scriptedSMTP accepts any number of loopback sessions and answers each DATA
 // with reply; "" hangs up instead, which leaves acceptance uncertain. It
 // counts connections, so "nothing was sent" means nothing even dialed.
+// A "RCPT " prefix instead sends the remaining reply at RCPT, before DATA.
 // ponytail: a multi-session sibling of captureSMTPDelivery.
 type scriptedSMTP struct {
 	host  string
@@ -90,6 +91,8 @@ func (s *scriptedSMTP) serve(conn net.Conn, reply string) {
 				_, _ = conn.Write([]byte("221 bye\r\n"))
 			}
 			return
+		case strings.HasPrefix(line, "RCPT ") && strings.HasPrefix(reply, "RCPT "):
+			_, _ = conn.Write([]byte(strings.TrimPrefix(reply, "RCPT ") + "\r\n"))
 		case line == "DATA\r\n":
 			inData = true
 			_, _ = conn.Write([]byte("354 go\r\n"))

@@ -312,7 +312,7 @@ func (s *Server) handleMailSendPGP(w http.ResponseWriter, r *http.Request) {
 	failed, saved, sendErr := s.deliverIMAP(r.Context(), ac.UserID, account, envelopeFrom, groups, sentCopy)
 	if sendErr != nil {
 		s.logger.Error("client-encrypted mail send failed", "error", sendErr.Error())
-		http.Error(w, "failed to send email: "+sendErr.Error(), http.StatusBadGateway)
+		writeMailSendError(w, sendErr)
 		return
 	}
 
