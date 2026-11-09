@@ -47,6 +47,18 @@ We acknowledge security researchers and community members who help us improve. I
 
 ## Known Limitations & Trust Boundaries
 
+### Periodic device-index maintenance
+
+The API device-index sweep validates each owner's current native storage before
+reading device rows through temporary read-only handles. Compatible reads do
+not populate per-user store/activity caches. Older layouts and read/open/close
+failures retain the validated migration fallback. Validation or read failure is
+not an empty device list: keep that owner's index entries, and preserve in-flight
+collision reservations. These rows remain resolution hints; every request still
+validates current credentials, ownership/source and restore state. No global API
+memory bound or workforce capacity is established by this change.
+
+
 ### Daemon resource cache lifetimes
 
 The daemon retains at most64 state-store and64 native-mailbox-client cache
