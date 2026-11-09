@@ -29,6 +29,7 @@ import {
   readFileAsAttachment,
   formatBytes,
   keylessRecipientsFrom409,
+  mailSendErrorMessage,
   keyChangedRecipientsFrom409,
   deliverSealedPickupLinks,
   combineWarnings,
@@ -902,7 +903,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
           ? `The PGP key on file for ${keyChanged.join(", ")} no longer matches the key now published for that address. This can mean the key was rotated — or substituted. Verify the new fingerprint with them directly, then update the contact. This message was NOT sent, and a pickup link is not offered here.`
           : keyless !== null
             ? `No PGP key on file for: ${keyless.join(", ")}. Tick "Secure link if no key" to send those recipients a one-time pickup link instead (stored on this server in plaintext for 7 days), or remove them from the recipients.`
-            : toErrorMessage(e, "failed to send email");
+            : mailSendErrorMessage(e);
       setComposeError(`Send failed: ${message}`);
     } finally {
       setComposeSending(false);

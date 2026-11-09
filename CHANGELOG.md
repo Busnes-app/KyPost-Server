@@ -18,6 +18,10 @@ non-prerelease version.
 
 ## Unreleased
 
+### Fixed
+
+- Show an actionable invalid-recipient explanation for external-account sends when SMTP reports a missing mailbox, unknown domain or invalid address. Return HTTP 422 JSON so proxies preserve it, name the rejected recipient, and retain compose for correction; plain and client-encrypted sends share the behavior.
+
 ### Performance
 
 - Avoid retaining API state stores opened only by periodic device-index

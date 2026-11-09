@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net"
+	"net/textproto"
 	"runtime"
 	"strings"
 	"testing"
@@ -210,4 +211,19 @@ func TestSMTPSendWithTimeoutDoesNotLeakOnHang(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("goroutines: before=%d after=%d — the timed-out send leaked", before, runtime.NumGoroutine())
+}
+
+func TestSMTPInvalidRecipientErrorPreservesCodeWithoutLoggingAddress(t *testing.T) {
+	cause := &textproto.Error{Code: 550, Msg: "5.1.2 provider-private-reply"}
+	err := &SMTPInvalidRecipientError{Recipient: "private-recipient@example.com", reason: "the recipient domain could not be found", cause: cause}
+	if strings.Contains(err.Error(), "private-recipient") || strings.Contains(err.Error(), "provider-private-reply") {
+		t.Fatalf("diagnostic leaks correspondence: %s", err)
+	}
+	if !strings.Contains(err.UserMessage(), "private-recipient@example.com") {
+		t.Fatal("sender cannot identify the rejected recipient")
+	}
+	var reply *textproto.Error
+	if !errors.As(err, &reply) || reply != cause || !errors.Is(err, cause) {
+		t.Fatal("SMTP refusal code lost; retry classification would change")
+	}
 }

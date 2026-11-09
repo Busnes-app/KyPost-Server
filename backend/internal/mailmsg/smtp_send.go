@@ -249,6 +249,26 @@ func (e smtpAcceptanceUncertainError) Unwrap() []error {
 	return []error{ErrSMTPAcceptanceUncertain, e.cause}
 }
 
+// SMTPInvalidRecipientError is a definite RCPT refusal, before any DATA.
+// Keep the original SMTP code for retry classification without rendering the
+// provider's untrusted reply (which can echo credentials or other recipients).
+type SMTPInvalidRecipientError struct {
+	Recipient string
+	reason    string
+	cause     error
+}
+
+func (e *SMTPInvalidRecipientError) Error() string {
+	return "smtp: invalid recipient: " + e.reason
+}
+
+// UserMessage is for the sending user's response only, never instance logs.
+func (e *SMTPInvalidRecipientError) UserMessage() string {
+	return fmt.Sprintf("The mail server rejected %s: %s. Check the recipient address and try again.", e.Recipient, e.reason)
+}
+
+func (e *SMTPInvalidRecipientError) Unwrap() error { return e.cause }
+
 // writeSMTPMessage runs the MAIL/RCPT/DATA/QUIT half of a send, shared by
 // the STARTTLS and implicit-TLS paths.
 func writeSMTPMessage(client *smtp.Client, from string, recipients []string, msg []byte) error {
@@ -261,6 +281,25 @@ func writeSMTPMessage(client *smtp.Client, from string, recipients []string, msg
 	}
 	for _, recipient := range recipients {
 		if err := client.Rcpt(recipient); err != nil {
+			var reply *textproto.Error
+			if errors.As(err, &reply) && reply.Code >= 500 && reply.Code <= 599 {
+				// Some providers quote the entire enhanced-status reply.
+				fields := strings.Fields(strings.Trim(reply.Msg, "\""))
+				if len(fields) > 0 {
+					var reason string
+					switch fields[0] {
+					case "5.1.1":
+						reason = "the mailbox does not exist"
+					case "5.1.2":
+						reason = "the recipient domain could not be found"
+					case "5.1.3":
+						reason = "the recipient address is invalid"
+					}
+					if reason != "" {
+						return &SMTPInvalidRecipientError{Recipient: recipient, reason: reason, cause: err}
+					}
+				}
+			}
 			return err
 		}
 	}

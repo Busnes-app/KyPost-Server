@@ -2,8 +2,19 @@
 // Pure — no React — so the base64 stripping and the 409 shape are testable
 // without mounting the app shell.
 
-import { HttpError } from "../api/client";
+import { HttpError, toErrorMessage } from "../api/client";
 import type { ComposeAttachment } from "./types";
+
+export function mailSendErrorMessage(error: unknown): string {
+  if (error instanceof HttpError && error.status === 422) {
+    const body = error.body;
+    if (typeof body === "object" && body !== null && "code" in body && body.code === "invalid_recipient" &&
+        "error" in body && typeof body.error === "string" && body.error.trim()) {
+      return body.error;
+    }
+  }
+  return toErrorMessage(error, "failed to send email");
+}
 
 // Mirror of the backend's derived maxMailAttachmentBytes in
 // internal/api/server.go: (25 MiB request cap - 1 MiB overhead) * 3/4.

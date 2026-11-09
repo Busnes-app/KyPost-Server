@@ -195,7 +195,8 @@ inside the container. On systems without systemd, schedule
   message and password in the clear. Fix the relay, or, for a plaintext relay on
   a network you trust, set `ALLOW_INSECURE_SMTP=true` and understand what you
   are giving up.
-- Check `api.err.log` for `mail send failed` details.
+- An invalid-recipient error names the address rejected by the relay. Check its spelling or contact the recipient another way: `5.1.1` means the mailbox does not exist, `5.1.2` means its domain could not be found, and `5.1.3` means the address is invalid. Immediate external-account sends return this as HTTP 422 so proxies preserve the explanation. The message stays open for correction.
+- Check `api.err.log` for `mail send failed` or `client-encrypted mail send failed` details.
 - `smtp: acceptance uncertain` means the final DATA acknowledgment was lost or
   invalid. The relay may already have accepted the message; check its logs and
   the recipient before retrying to avoid duplicate mail. A pickup notification

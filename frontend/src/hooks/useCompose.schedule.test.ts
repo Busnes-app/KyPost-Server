@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
 import { createElement } from "react";
+import { HttpError } from "../api/client";
 import { ComposeWindow } from "../components/ComposeWindow";
 
 // A scheduled send carries its time to the server and, on the browser PGP
@@ -8,7 +9,9 @@ import { ComposeWindow } from "../components/ComposeWindow";
 
 const postJSON = vi.fn(async (_url: string, _body: unknown) => ({ scheduled: true }));
 vi.mock("../api/client", () => ({
-  HttpError: class HttpError extends Error {},
+  HttpError: class HttpError extends Error {
+    constructor(message: string, public status: number, public body: unknown) { super(message); }
+  },
   postJSON: (url: string, body: unknown) => postJSON(url, body),
   toErrorMessage: (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback),
   selectedMailboxId: () => "",
@@ -116,6 +119,26 @@ describe("scheduled send", () => {
 });
 
 describe("compose error labels", () => {
+  it.each([false, true])("keeps compose open with the recipient correction (encrypted=%s)", async (encrypted) => {
+    session.clientProtected = encrypted;
+    const message = "The mail server rejected bob@example.com: the recipient domain could not be found. Check the recipient address and try again.";
+    const error = new HttpError("request failed: 422", 422, { code: "invalid_recipient", error: message });
+    if (encrypted) sendClientEncryptedMail.mockRejectedValueOnce(error);
+    else postJSON.mockRejectedValueOnce(error);
+    const result = composeTo(encrypted);
+    act(() => {
+      result.current.openComposeWindow();
+      result.current.setComposeTo({ tokens: [], draft: "bob@example.com" });
+      result.current.setComposeSubject("later");
+      result.current.setComposeEncrypt(encrypted);
+    });
+    await act(() => result.current.sendComposeEmail());
+    expect(result.current.composeError).toBe(`Send failed: ${message}`);
+    expect(result.current.composeOpen).toBe(true);
+    expect(result.current.composeSubject).toBe("later");
+    expect(result.current.composeTo.draft).toBe("bob@example.com");
+  });
+
   it("labels a failed draft save as a draft failure, not a send failure", async () => {
     session.clientProtected = false;
     postJSON.mockRejectedValueOnce(new Error("IMAP is not configured"));

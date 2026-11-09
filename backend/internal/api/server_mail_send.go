@@ -1003,6 +1003,19 @@ func (s *Server) sendPickupNotifications(userID, envelopeFrom string, recipients
 // happens to have a PGP identity configured, costing them deniability they
 // never asked to give up.
 
+// A recipient correction is a 422, so proxies do not replace it with a
+// branded 502 page and hide the actionable explanation from the sender.
+func writeMailSendError(w http.ResponseWriter, err error) {
+	var invalid *mailmsg.SMTPInvalidRecipientError
+	if errors.As(err, &invalid) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"code": "invalid_recipient", "error": invalid.UserMessage(),
+		})
+		return
+	}
+	http.Error(w, "failed to send email: "+err.Error(), http.StatusBadGateway)
+}
+
 // finishMailSend sends msg over SMTP to recipients and best-effort saves it
 // to the Sent folder, writing the JSON response. Returns false if the send
 // itself failed (response already written), so callers with follow-up work
@@ -1026,7 +1039,7 @@ func (s *Server) finishMailSend(w http.ResponseWriter, r *http.Request, userID, 
 		// so a 502 here would invite a retry that duplicates it.
 		if sendErr := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, smtpUsername, smtpPassword, from, recipients, msg); sendErr != nil && !errors.Is(sendErr, mailmsg.ErrSMTPAcceptedThenFailed) {
 			s.logger.Error("mail send failed", "smtp_host", smtpHost, "smtp_port", strconv.Itoa(smtpPort), "error", sendErr.Error())
-			http.Error(w, fmt.Sprintf("failed to send email: %s", sendErr.Error()), http.StatusBadGateway)
+			writeMailSendError(w, sendErr)
 			return false
 		}
 	}
