@@ -128,14 +128,6 @@ func retainNativeAssignments(v map[string]NativeAssignment) bool {
 	return len(v) <= nativeViewAccounts
 }
 
-func (s *LifecycleStore) nativeAssignmentForAdmission(key string, initialized bool) (NativeAssignment, bool, error) {
-	raw, err := os.ReadFile(s.nativePath())
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return NativeAssignment{}, false, err
-	}
-	return nativeAssignmentFromLedger(raw, err == nil, key, initialized)
-}
-
 // nativeAssignmentFromLedger decodes ledger bytes the caller read for this
 // operation. A missing ledger is valid only before initialization.
 func nativeAssignmentFromLedger(raw []byte, exists bool, key string, initialized bool) (a NativeAssignment, known bool, err error) {
