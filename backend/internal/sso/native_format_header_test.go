@@ -69,6 +69,24 @@ func TestNativeFormatHeaderReuseKeepsFilesystemFences(t *testing.T) {
 			} else if !errors.Is(err, ErrNativeMigration) {
 				t.Fatal("warm bytes bypassed migration refusal", err)
 			}
+			// Admission decodes the ledger bytes its format check read, so it
+			// must refuse exactly where the standalone check does.
+			id := f.ids["one"]
+			_, err = f.life.AdmitNativeMailbox(context.Background(), f.root, nativeIssuer, id, id, f.accounts)
+			switch damage {
+			case "none":
+				if err != nil {
+					t.Fatal("shared ledger read refused valid admission", err)
+				}
+			case "unvalidated-v2":
+				if err == nil {
+					t.Fatal("admitted an unvalidated ledger")
+				}
+			default:
+				if !errors.Is(err, ErrNativeMigration) {
+					t.Fatal("admission bypassed migration refusal", err)
+				}
+			}
 			if damage == "unvalidated-v2" {
 				if nativeAssignmentsAlreadyDecoded([]byte(`{"version":2}`)) {
 					t.Fatal("format-only check published an unvalidated view")
@@ -178,6 +196,40 @@ func BenchmarkNativeFormatHeader(b *testing.B) {
 							if err != nil || json.Unmarshal(raw, &head) != nil || head.Version != 2 {
 								b.Fatal("original format check failed", err)
 							}
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// Admission's ledger step: format check plus assignment, reading once or twice.
+func BenchmarkNativeAdmissionLedgerRead(b *testing.B) {
+	for _, n := range []int{200, 3000} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			s := NewLifecycleStore(b.TempDir())
+			if err := fsutil.PersistJSONFile(s.nativePath(), ledgerDecodeFixture(n).ledger(nil)); err != nil {
+				b.Fatal(err)
+			}
+			dir := filepath.Dir(s.path)
+			for _, mode := range []string{"twice", "once"} {
+				b.Run(mode, func(b *testing.B) {
+					b.ReportAllocs()
+					for b.Loop() {
+						var err error
+						if mode == "twice" {
+							if err = checkNativeFormat(dir); err == nil {
+								_, _, err = s.nativeAssignmentForAdmission("absent", true)
+							}
+						} else {
+							ledger, exists, ferr := currentNativeFormat(dir)
+							if err = ferr; err == nil {
+								_, _, err = nativeAssignmentFromLedger(ledger, exists, "absent", true)
+							}
+						}
+						if err != nil {
+							b.Fatal(err)
 						}
 					}
 				})

@@ -28,6 +28,10 @@ func (c *nativeContentView[T]) withCurrent(path string, decode func([]byte) (T, 
 	if err != nil {
 		return err
 	}
+	return c.with(raw, decode, eligible, copyValue)
+}
+
+func (c *nativeContentView[T]) with(raw []byte, decode func([]byte) (T, error), eligible func(T) bool, copyValue func(T)) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.raw != nil && bytes.Equal(raw, c.raw) {
@@ -124,13 +128,27 @@ func retainNativeAssignments(v map[string]NativeAssignment) bool {
 	return len(v) <= nativeViewAccounts
 }
 
-func (s *LifecycleStore) nativeAssignmentForAdmission(key string, initialized bool) (a NativeAssignment, known bool, err error) {
-	err = nativeAssignmentView.withCurrent(s.nativePath(), decodeNativeAssignments, retainNativeAssignments, func(v map[string]NativeAssignment) {
+func (s *LifecycleStore) nativeAssignmentForAdmission(key string, initialized bool) (NativeAssignment, bool, error) {
+	raw, err := os.ReadFile(s.nativePath())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return NativeAssignment{}, false, err
+	}
+	return nativeAssignmentFromLedger(raw, err == nil, key, initialized)
+}
+
+// nativeAssignmentFromLedger decodes ledger bytes the caller read for this
+// operation. A missing ledger is valid only before initialization.
+func nativeAssignmentFromLedger(raw []byte, exists bool, key string, initialized bool) (a NativeAssignment, known bool, err error) {
+	if !exists {
+		if initialized {
+			err = ErrNativeProvisioning
+		}
+		return
+	}
+	err = nativeAssignmentView.with(raw, decodeNativeAssignments, retainNativeAssignments, func(v map[string]NativeAssignment) {
 		a, known = v[key] // NativeAssignment contains values and immutable strings only.
 	})
-	if errors.Is(err, os.ErrNotExist) && !initialized {
-		err = nil
-	} else if err == nil && !initialized || errors.Is(err, os.ErrNotExist) {
+	if err == nil && !initialized {
 		err = ErrNativeProvisioning
 	}
 	return

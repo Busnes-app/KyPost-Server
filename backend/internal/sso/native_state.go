@@ -48,10 +48,12 @@ func (s *LifecycleStore) nativeUserStorageForAdmission(stateRoot string, u users
 	if err != nil {
 		return NativeAssignment{}, err
 	}
-	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
+	// Decode the same ledger read the format check accepted, not a second read.
+	ledger, exists, err := currentNativeFormat(filepath.Dir(s.path))
+	if err != nil {
 		return NativeAssignment{}, err
 	}
-	a, ok, err := s.nativeAssignmentForAdmission(directoryKey(u.NativeMailboxIssuer, u.SSOSub), initialized)
+	a, ok, err := nativeAssignmentFromLedger(ledger, exists, directoryKey(u.NativeMailboxIssuer, u.SSOSub), initialized)
 	if err != nil {
 		return NativeAssignment{}, err
 	}

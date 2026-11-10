@@ -87,7 +87,8 @@ full-record readers keep their fresh decoders. No permission decision is cached.
 The format guard also reads complete current ledger bytes: exact equality with
 that already fully validated version-2 assignment view can skip a redundant
 version-header scan. A miss runs the original header decoder. Legacy-domain,
-tombstone and required-file checks still run every time. No migration decision,
+tombstone and required-file checks still run every time. Mail admission decodes
+its assignment from that same read, so both checks judge one snapshot. No migration decision,
 extra raw copy or additional view is retained; mutable and historical readers
 still decode complete current records.
 
