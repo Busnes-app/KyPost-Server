@@ -79,7 +79,7 @@ func (s *Server) nativeMailAssignment(ctx context.Context, userID string) (sso.N
 
 // nativeMailboxAssignment is sso.AdmitUserMailbox ("" is the primary).
 func (s *Server) nativeMailboxAssignment(ctx context.Context, userID, mailboxID string) (sso.NativeAssignment, bool, error) {
-	return sso.AdmitUserMailbox(ctx, s.nativeMail, s.ssoStore, s.ssoLifecycle, s.users, s.stateDir, userID, mailboxID)
+	return sso.AdmitUserMailbox(ctx, s.nativeMail, s.ssoStore, s.ssoLifecycle, s.users, s.stateDir, userID, mailboxID, nil)
 }
 
 // The client cache is keyed by mailbox ID (a primary's is its user ID).
@@ -94,8 +94,8 @@ func (s *Server) nativeMailboxClient(userID, mailboxID string) (imapadapter.Clie
 	if entry, ok := s.userMail[key]; ok && entry.updatedAt == a.Source {
 		return entry.client, true, nil
 	}
-	client, err := mailbox.OpenClient(filepath.Join(a.Dir(s.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context) error {
-		current, _, err := s.nativeMailboxAssignment(ctx, userID, mailboxID)
+	client, err := mailbox.OpenClient(filepath.Join(a.Dir(s.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context, held *mailbox.Prepared) error {
+		current, _, err := sso.AdmitUserMailbox(ctx, s.nativeMail, s.ssoStore, s.ssoLifecycle, s.users, s.stateDir, userID, mailboxID, held)
 		if err != nil {
 			return err
 		}

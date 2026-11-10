@@ -2,10 +2,12 @@ package mailbox
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"net/mail"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -23,7 +25,8 @@ import (
 type Client struct {
 	store *Store
 	from  string
-	admit func(context.Context) error
+	admit func(context.Context, *Prepared) error
+	held  *Prepared
 }
 
 var _ imapadapter.Client = (*Client)(nil)
@@ -44,23 +47,36 @@ func NewClient(store *Store, from string) (*Client, error) {
 }
 
 // OpenClient owns an existing runtime database. Cached clients retain storage
-// identity only: every operation calls admit again, including PGP replacement.
+// identity only: every operation calls admit again, including PGP replacement,
+// with the client's own read-only preparation handles (dir's parent).
 // Eviction drops the client; cleanup waits until its operations are unreachable.
-func OpenClient(dir string, owner Owner, limits Limits, from, source string, admit func(context.Context) error) (*Client, error) {
+func OpenClient(dir string, owner Owner, limits Limits, from, source string, admit func(context.Context, *Prepared) error) (*Client, error) {
 	if admit == nil {
 		return nil, ErrOwner
 	}
+	account, err := filepath.Abs(filepath.Dir(dir))
+	if err != nil {
+		return nil, err
+	}
+	held := &Prepared{dir: account}
+	if s, e := held.check(owner, from, limits); e != nil || s != source {
+		held.Close()
+		return nil, cmp.Or(e, ErrPreparation)
+	}
 	store, err := OpenExisting(dir, owner, limits, source)
 	if err != nil {
+		held.Close()
 		return nil, err
 	}
 	c, err := NewClient(store, from)
 	if err != nil {
 		_ = store.Close()
+		held.Close()
 		return nil, err
 	}
-	c.admit = admit
+	c.admit, c.held = admit, held
 	runtime.AddCleanup(c, func(s *Store) { _ = s.Close() }, store)
+	runtime.AddCleanup(c, func(p *Prepared) { p.Close() }, held)
 	return c, nil
 }
 
@@ -69,7 +85,7 @@ func (c *Client) checkAccess(ctx context.Context) error {
 		return err
 	}
 	if c.admit != nil {
-		return c.admit(ctx)
+		return c.admit(ctx, c.held)
 	}
 	return nil
 }

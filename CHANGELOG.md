@@ -24,6 +24,10 @@ non-prerelease version.
 
 ### Performance
 
+- Check an open mail client's own storage on handles it keeps open instead of
+  reopening both mailbox databases for every operation. Every check still runs,
+  and deleted or replaced storage is still refused on the next operation.
+
 - Read the native ledger once per mail admission and per ordinary storage or
   ownership validation: the format check and the assignment lookup share one
   fresh read. All checks are unchanged.

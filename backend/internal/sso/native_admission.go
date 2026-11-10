@@ -16,6 +16,12 @@ import (
 // mailboxID equal to the user ID is the primary. Unknown, foreign and
 // disabled mailboxes refuse alike with ErrNativeMailboxUnknown.
 func (s *LifecycleStore) AdmitNativeMailbox(ctx context.Context, stateRoot, issuer, userID, mailboxID string, accounts *users.Store) (NativeAssignment, error) {
+	return s.AdmitOpenMailbox(ctx, stateRoot, issuer, userID, mailboxID, accounts, nil)
+}
+
+// AdmitOpenMailbox is AdmitNativeMailbox; held is the open client's storage
+// (nil without one), re-validated without reopening its databases.
+func (s *LifecycleStore) AdmitOpenMailbox(ctx context.Context, stateRoot, issuer, userID, mailboxID string, accounts *users.Store, held *mailbox.Prepared) (NativeAssignment, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	release, err := fsutil.LockFileContext(ctx, s.path)
@@ -27,7 +33,7 @@ func (s *LifecycleStore) AdmitNativeMailbox(ctx context.Context, stateRoot, issu
 	if err != nil {
 		return NativeAssignment{}, err
 	}
-	return s.admitNativeMailbox(ctx, stateRoot, issuer, u, mailboxID)
+	return s.admitNativeMailbox(ctx, stateRoot, issuer, u, mailboxID, held)
 }
 
 // WithNativeMailAccess holds coherent directory and user authority through a
@@ -62,7 +68,7 @@ func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, is
 			if !ok || !found {
 				return ErrNativeProvisioning
 			}
-			a, err := s.admitNativeMailbox(ctx, stateRoot, issuer, u, id)
+			a, err := s.admitNativeMailbox(ctx, stateRoot, issuer, u, id, nil)
 			if err != nil {
 				return err
 			}
@@ -75,8 +81,8 @@ func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, is
 // admitNativeMailbox admits the owner, then the mailbox: the primary when
 // mailboxID is the user's ID, else an extra one owned by the same subject,
 // not administrator-disabled, with its storage intact.
-func (s *LifecycleStore) admitNativeMailbox(ctx context.Context, stateRoot, issuer string, u users.User, mailboxID string) (NativeAssignment, error) {
-	a, err := s.admitNativeMailUser(ctx, stateRoot, issuer, u)
+func (s *LifecycleStore) admitNativeMailbox(ctx context.Context, stateRoot, issuer string, u users.User, mailboxID string, held *mailbox.Prepared) (NativeAssignment, error) {
+	a, err := s.admitNativeMailUser(ctx, stateRoot, issuer, u, held)
 	if err != nil || mailboxID == u.ID {
 		return a, err
 	}
@@ -88,7 +94,7 @@ func (s *LifecycleStore) admitNativeMailbox(ctx context.Context, stateRoot, issu
 	if !ok || record.State != "active" || m.Owner.Issuer != issuer || m.Owner.Subject != u.SSOSub || m.Source == "" || m.StateRoot != a.StateRoot {
 		return NativeAssignment{}, ErrNativeMailboxUnknown
 	}
-	source, err := mailbox.ValidatePreparedMailbox(filepath.Join(m.StateRoot, nativeMailboxesDir), m.Owner, m.Address, m.Limits)
+	source, err := held.ValidatePreparedMailbox(filepath.Join(m.StateRoot, nativeMailboxesDir), m.Owner, m.Address, m.Limits)
 	if err != nil {
 		return NativeAssignment{}, err
 	}
@@ -99,7 +105,7 @@ func (s *LifecycleStore) admitNativeMailbox(ctx context.Context, stateRoot, issu
 }
 
 // Caller holds the directory fence and supplies a current user snapshot.
-func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, stateRoot, issuer string, u users.User) (NativeAssignment, error) {
+func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, stateRoot, issuer string, u users.User, held *mailbox.Prepared) (NativeAssignment, error) {
 	if issuer == "" || u.NativeMailboxIssuer != issuer || u.NativeMailboxSource == "" || !u.Active || u.SSOLinkRevoked() {
 		return NativeAssignment{}, ErrNativeProvisioning
 	}
@@ -123,7 +129,7 @@ func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, stateRoot, iss
 	}
 	// Reuse only this fenced call's validated assignment; later operations
 	// still perform their own fresh admission.
-	a, err := s.nativeUserStorageForAdmission(stateRoot, u, initialized)
+	a, err := s.nativeUserStorageForAdmission(stateRoot, u, initialized, held)
 	if err != nil {
 		return NativeAssignment{}, err
 	}

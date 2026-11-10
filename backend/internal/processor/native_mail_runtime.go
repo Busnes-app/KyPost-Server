@@ -26,7 +26,11 @@ func (p *Poller) nativeMailAssignment(ctx context.Context, userID string) (sso.N
 
 // nativeMailboxAssignment is sso.AdmitUserMailbox ("" is the primary).
 func (p *Poller) nativeMailboxAssignment(ctx context.Context, userID, mailboxID string) (sso.NativeAssignment, bool, error) {
-	return sso.AdmitUserMailbox(ctx, p.nativeMail, sso.NewStore(p.configDir), sso.NewLifecycleStore(p.configDir), p.users, p.stateDir, userID, mailboxID)
+	return p.openMailboxAssignment(ctx, userID, mailboxID, nil)
+}
+
+func (p *Poller) openMailboxAssignment(ctx context.Context, userID, mailboxID string, held *mailbox.Prepared) (sso.NativeAssignment, bool, error) {
+	return sso.AdmitUserMailbox(ctx, p.nativeMail, sso.NewStore(p.configDir), sso.NewLifecycleStore(p.configDir), p.users, p.stateDir, userID, mailboxID, held)
 }
 
 // mailClientForMailbox returns the admitted mailbox's client ("" is the
@@ -49,8 +53,8 @@ func (p *Poller) mailClientForMailbox(userID, mailboxID string, modTime time.Tim
 	if entry, ok := p.nativeMailClients[key]; ok && entry.source == a.Source {
 		return entry.client, a, nil
 	}
-	client, err := mailbox.OpenClient(filepath.Join(a.Dir(p.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context) error {
-		current, _, err := p.nativeMailboxAssignment(ctx, userID, mailboxID)
+	client, err := mailbox.OpenClient(filepath.Join(a.Dir(p.stateDir), "mailbox"), a.Owner, a.Limits, a.Address, a.Source, func(ctx context.Context, held *mailbox.Prepared) error {
+		current, _, err := p.openMailboxAssignment(ctx, userID, mailboxID, held)
 		if err != nil {
 			return err
 		}

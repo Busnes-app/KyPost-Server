@@ -112,7 +112,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, mailboxID, from strin
 				if u.ID != userID {
 					continue
 				}
-				a, err := life.admitNativeMailbox(ctx, s.StateRoot, current.Issuer, u, mailboxID)
+				a, err := life.admitNativeMailbox(ctx, s.StateRoot, current.Issuer, u, mailboxID, nil)
 				if err != nil {
 					return err
 				}

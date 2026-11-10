@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -16,7 +17,8 @@ var ErrNativeMailDisabled = fmt.Errorf("native mailbox mode is disabled; enable 
 // refused one (mode off, SSO off, authority stale) never falls back to IMAP.
 // An account that is not native has no extra mailboxes.
 // It uses only exported sso API so it can move to internal/native as is.
-func AdmitUserMailbox(ctx context.Context, nativeMode bool, settings *Store, life *LifecycleStore, accounts *users.Store, stateRoot, userID, mailboxID string) (a NativeAssignment, native bool, err error) {
+// held is an open client's storage (nil without one); see mailbox.Prepared.
+func AdmitUserMailbox(ctx context.Context, nativeMode bool, settings *Store, life *LifecycleStore, accounts *users.Store, stateRoot, userID, mailboxID string, held *mailbox.Prepared) (a NativeAssignment, native bool, err error) {
 	u, err := accounts.Get(userID)
 	if err != nil {
 		return NativeAssignment{}, false, err
@@ -34,6 +36,6 @@ func AdmitUserMailbox(ctx context.Context, nativeMode bool, settings *Store, lif
 	if !current.Enabled {
 		return NativeAssignment{}, true, ErrNativeProvisioning
 	}
-	a, err = life.AdmitNativeMailbox(ctx, stateRoot, current.IssuerURL, userID, cmp.Or(mailboxID, userID), accounts)
+	a, err = life.AdmitOpenMailbox(ctx, stateRoot, current.IssuerURL, userID, cmp.Or(mailboxID, userID), accounts, held)
 	return a, true, err
 }
