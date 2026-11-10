@@ -111,7 +111,7 @@ func TestNativeStorageViewRechecksCurrentFiles(t *testing.T) {
 			// Keep the original full reader as an independent semantic reference.
 			a, ok, want := f.life.NativeAssignment(u.NativeMailboxIssuer, u.SSOSub)
 			if want == nil {
-				_, want = validateNativeUserAssignment(f.root, u, a, ok)
+				_, want = validateNativeUserAssignment(f.root, u, a, ok, nil)
 			}
 			if want == nil {
 				t.Fatal("damaged fixture must fail the original reader")

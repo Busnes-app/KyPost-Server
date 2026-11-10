@@ -48,7 +48,7 @@ func TestAdmitUserMailbox(t *testing.T) {
 			if err := settings.Save(SSOSettings{Enabled: tc.sso, IssuerURL: nativeIssuer, ClientID: "kypost"}); err != nil {
 				t.Fatal(err)
 			}
-			a, gotNative, err := AdmitUserMailbox(ctx, tc.mode, settings, f.life, f.accounts, f.root, tc.user, tc.mailbox)
+			a, gotNative, err := AdmitUserMailbox(ctx, tc.mode, settings, f.life, f.accounts, f.root, tc.user, tc.mailbox, nil)
 			if gotNative != tc.wantNative || !errors.Is(err, tc.wantErr) || (tc.wantErr == nil) != (err == nil) || a.Owner.Mailbox != tc.wantMailbox {
 				t.Fatalf("got (%q, %v, %v), want (%q, %v, %v)", a.Owner.Mailbox, gotNative, err, tc.wantMailbox, tc.wantNative, tc.wantErr)
 			}

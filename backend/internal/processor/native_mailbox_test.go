@@ -19,20 +19,18 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // The poller classifies each active mailbox into its own state, notifies
 // through the primary's devices with the mailbox ID, and skips a disabled one.
-func TestNativePollerPollsEachMailbox(t *testing.T) {
+// nativeMailboxFixture is a native-mode poller with one prepared primary
+// and one extra mailbox.
+func nativeMailboxFixture(t *testing.T) (*Poller, *sso.LifecycleStore, users.User, sso.NativeMailbox) {
+	t.Helper()
 	ctx := context.Background()
 	p, _ := newTickTestPoller(t, nil)
 	p.EnableNativeMail()
-	var logs bytes.Buffer
-	logger, err := logging.NewWithOutput(&logs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.log = logger
 	const issuer = "https://identity.example.test"
 	if err := sso.NewStore(p.configDir).Save(sso.SSOSettings{Enabled: true, IssuerURL: issuer, ClientID: "kypost"}); err != nil {
 		t.Fatal(err)
@@ -69,12 +67,24 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return p, life, u, m
+}
+
+func TestNativePollerPollsEachMailbox(t *testing.T) {
+	ctx := context.Background()
+	p, life, u, m := nativeMailboxFixture(t)
+	var logs bytes.Buffer
+	logger, err := logging.NewWithOutput(&logs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.log = logger
 	// The daemon answers exactly as sso.AdmitUserMailbox, which the api also uses.
 	for _, mode := range []bool{false, true} {
 		p.nativeMail = mode
 		for _, id := range []string{"", u.ID, m.ID, "mbx-unknown"} {
 			a, native, err := p.nativeMailboxAssignment(ctx, u.ID, id)
-			wa, wnative, werr := sso.AdmitUserMailbox(ctx, mode, sso.NewStore(p.configDir), life, p.users, p.stateDir, u.ID, id)
+			wa, wnative, werr := sso.AdmitUserMailbox(ctx, mode, sso.NewStore(p.configDir), life, p.users, p.stateDir, u.ID, id, nil)
 			if a.Owner != wa.Owner || native != wnative || !errors.Is(err, werr) || !mode && !errors.Is(err, sso.ErrNativeMailDisabled) {
 				t.Fatalf("mode %v mailbox %q: daemon (%v, %v, %v) shared (%v, %v, %v)", mode, id, a.Owner, native, err, wa.Owner, wnative, werr)
 			}
@@ -158,7 +168,7 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 	setEncrypt(false)
 	// A creation interrupted before publication (no source) is not polled.
 	ledgerPath := filepath.Join(p.configDir, "native-provisioning.json")
-	raw, err = os.ReadFile(ledgerPath)
+	raw, err := os.ReadFile(ledgerPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,5 +206,39 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 	p.tick()
 	if d := mustDecisions(t, extra, 10); len(d) != 1 || bytes.Contains(logs.Bytes(), []byte("mailbox admission refused")) {
 		t.Fatalf("disabled mailbox polled %+v", d)
+	}
+}
+
+// Each open client re-admits its own storage through its held handles: a
+// valid copy renamed over state.db passes the full storage check, which
+// reopens by path, but the open client still refuses, primary and extra alike.
+func TestNativeClientAdmitsItsOpenStorage(t *testing.T) {
+	ctx := context.Background()
+	p, _, u, m := nativeMailboxFixture(t)
+	for _, id := range []string{"", m.ID} {
+		client, a, err := p.mailClientForMailbox(u.ID, id, time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = client.ListLabels(ctx); err != nil {
+			t.Fatal("open client refused intact storage:", err)
+		}
+		path := filepath.Join(a.Dir(p.stateDir), "state.db")
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			err = os.WriteFile(path+".copy", raw, 0o600)
+		}
+		if err == nil {
+			err = os.Rename(path+".copy", path)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err = p.nativeMailboxAssignment(ctx, u.ID, id); err != nil {
+			t.Fatal("full admission refused a valid copy:", err)
+		}
+		if _, err = client.ListLabels(ctx); !errors.Is(err, mailbox.ErrPreparation) {
+			t.Fatalf("mailbox %q: open client accepted replaced state.db: %v", id, err)
+		}
 	}
 }

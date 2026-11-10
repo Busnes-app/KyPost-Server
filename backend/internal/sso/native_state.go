@@ -40,7 +40,7 @@ func (s *LifecycleStore) ValidateNativeUserOwnership(stateRoot string, u users.U
 
 // nativeUserStorageForAdmission uses the initialization fence from this call's
 // current lifecycle bytes. Storage and format checks still run on every call.
-func (s *LifecycleStore) nativeUserStorageForAdmission(stateRoot string, u users.User, initialized bool) (NativeAssignment, error) {
+func (s *LifecycleStore) nativeUserStorageForAdmission(stateRoot string, u users.User, initialized bool, held *mailbox.Prepared) (NativeAssignment, error) {
 	if err := RequireNativeRestoreReleased(stateRoot); err != nil {
 		return NativeAssignment{}, err
 	}
@@ -57,7 +57,7 @@ func (s *LifecycleStore) nativeUserStorageForAdmission(stateRoot string, u users
 	if err != nil {
 		return NativeAssignment{}, err
 	}
-	return validateNativeUserAssignment(root, u, a, ok)
+	return validateNativeUserAssignment(root, u, a, ok, held)
 }
 
 func (s *LifecycleStore) nativeUserOwnership(stateRoot string, u users.User) (NativeAssignment, error) {
@@ -83,7 +83,7 @@ func (s *LifecycleStore) nativeUserOwnership(stateRoot string, u users.User) (Na
 	if err != nil {
 		return NativeAssignment{}, err
 	}
-	return validateNativeUserAssignment(root, u, a, ok)
+	return validateNativeUserAssignment(root, u, a, ok, nil)
 }
 
 func nativeUserRoot(stateRoot string, u users.User) (string, error) {
@@ -93,11 +93,12 @@ func nativeUserRoot(stateRoot string, u users.User) (string, error) {
 	return filepath.Abs(stateRoot)
 }
 
-func validateNativeUserAssignment(root string, u users.User, a NativeAssignment, ok bool) (NativeAssignment, error) {
+// held, when non-nil, is an open client's storage; see mailbox.Prepared.
+func validateNativeUserAssignment(root string, u users.User, a NativeAssignment, ok bool, held *mailbox.Prepared) (NativeAssignment, error) {
 	if !ok || a.Owner != (mailbox.Owner{Issuer: u.NativeMailboxIssuer, Subject: u.SSOSub, Mailbox: u.ID}) || a.Source != u.NativeMailboxSource || a.StateRoot != root {
 		return NativeAssignment{}, ErrNativeProvisioning
 	}
-	source, err := mailbox.ValidatePreparedAccount(root, a.Owner, a.Address, a.Limits)
+	source, err := held.ValidatePreparedMailbox(filepath.Join(root, "users"), a.Owner, a.Address, a.Limits)
 	if err != nil {
 		return NativeAssignment{}, err
 	}

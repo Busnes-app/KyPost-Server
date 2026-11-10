@@ -155,13 +155,59 @@ func ValidatePreparedMailbox(parent string, owner Owner, address string, limits 
 // Check before any constructor: constructors create missing schemas/identities.
 // Read-only opens reject incomplete state without silently initializing it.
 func preparedSource(dir string, owner Owner, address string, limits Limits) (string, error) {
+	p := &Prepared{dir: dir}
+	defer p.Close()
+	source, err := p.check(owner, address, limits)
+	if err != nil {
+		return "", err
+	}
+	// A successful retry also repairs a lost acknowledgement of the parent sync.
+	if err = fsutil.SyncDir(filepath.Dir(dir)); err != nil {
+		return "", err
+	}
+	return source, nil
+}
+
+// Prepared keeps a prepared mailbox's state.db and mailbox.db open read-only,
+// so per-operation admission re-runs every preparation check on these handles
+// instead of reopening both databases. Each check also requires both paths to
+// still name the files the handles opened.
+type Prepared struct {
+	dir                 string
+	state, mail         *sql.DB
+	stateFile, mailFile os.FileInfo
+}
+
+// ValidatePreparedMailbox is the package function; for p's own mailbox it
+// reuses p's handles. A nil p or another mailbox takes the full path.
+func (p *Prepared) ValidatePreparedMailbox(parent string, owner Owner, address string, limits Limits) (string, error) {
+	dir, err := filepath.Abs(filepath.Join(parent, owner.Mailbox))
+	if p == nil || err != nil || !fsutil.SafePathComponent(owner.Mailbox) || dir != p.dir {
+		return ValidatePreparedMailbox(parent, owner, address, limits)
+	}
+	return p.check(owner, address, limits)
+}
+
+// Close releases the handles.
+func (p *Prepared) Close() {
+	for _, db := range []*sql.DB{p.state, p.mail} {
+		if db != nil {
+			_ = db.Close()
+		}
+	}
+}
+
+// check opens the handles on first use, recording each file before its first
+// connection; a file still in place after the queries is the one they read.
+func (p *Prepared) check(owner Owner, address string, limits Limits) (string, error) {
+	dir := p.dir
 	for _, path := range []string{dir, filepath.Join(dir, "mailbox")} {
 		info, err := os.Lstat(path)
 		if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
 			return "", ErrPreparation
 		}
 	}
-	var p preparedAccount
+	var pa preparedAccount
 	path := filepath.Join(dir, preparationFile)
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 8192 {
@@ -171,29 +217,27 @@ func preparedSource(dir string, owner Owner, address string, limits Limits) (str
 	if err != nil {
 		return "", err
 	}
-	if err = json.Unmarshal(raw, &p); err != nil || p.Owner != owner || p.Address != address || p.Limits != limits {
+	if err = json.Unmarshal(raw, &pa); err != nil || pa.Owner != owner || pa.Address != address || pa.Limits != limits {
 		return "", ErrPreparation
 	}
-	db, err := openReadOnly(filepath.Join(dir, "state.db"))
-	if err != nil {
-		return "", err
+	statePath, mailPath := filepath.Join(dir, "state.db"), filepath.Join(dir, "mailbox", "mailbox.db")
+	if p.state == nil {
+		if p.state, p.stateFile, err = openHeld(statePath); err != nil {
+			return "", err
+		}
+		if p.mail, p.mailFile, err = openHeld(mailPath); err != nil {
+			return "", err
+		}
 	}
 	var tables int
-	if e := db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('backup_audit','meta','processed','decisions','notifications','native_devices','pull_notifications','deferrals','sorter_predictions','sorter_corrections')").Scan(&tables); e != nil || tables != 10 {
-		_ = db.Close()
+	if e := p.state.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('backup_audit','meta','processed','decisions','notifications','native_devices','pull_notifications','deferrals','sorter_predictions','sorter_corrections')").Scan(&tables); e != nil || tables != 10 {
 		return "", ErrPreparation
 	}
 	var source string
-	err = db.QueryRow("SELECT value FROM meta WHERE key='mail_source'").Scan(&source)
-	_ = db.Close()
-	if err != nil || source != p.Source {
+	if err = p.state.QueryRow("SELECT value FROM meta WHERE key='mail_source'").Scan(&source); err != nil || source != pa.Source {
 		return "", ErrPreparation
 	}
-	db, err = openReadOnly(filepath.Join(dir, "mailbox", "mailbox.db"))
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = db.Close() }()
+	db := p.mail
 	if err = db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('identity','namespace','incoming_replacements','folders','labels','messages','receipts','changes','usage')").Scan(&tables); err != nil || tables != 9 {
 		return "", ErrPreparation
 	}
@@ -213,11 +257,24 @@ func preparedSource(dir string, owner Owner, address string, limits Limits) (str
 	if client.MailSourceIdentity() != source {
 		return "", ErrPreparation
 	}
-	// A successful retry also repairs a lost acknowledgement of the parent sync.
-	if err = fsutil.SyncDir(filepath.Dir(dir)); err != nil {
-		return "", err
+	for _, f := range []struct {
+		path string
+		info os.FileInfo
+	}{{statePath, p.stateFile}, {mailPath, p.mailFile}} {
+		if info, err = os.Lstat(f.path); err != nil || !os.SameFile(info, f.info) {
+			return "", ErrPreparation
+		}
 	}
 	return source, nil
+}
+
+func openHeld(path string) (*sql.DB, os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, ErrPreparation
+	}
+	db, err := openReadOnly(path)
+	return db, info, err
 }
 
 // openSQLite opens an existing regular database file, never creating one.

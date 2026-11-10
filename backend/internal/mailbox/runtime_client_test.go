@@ -1,3 +1,5 @@
+//go:build linux
+
 package mailbox
 
 import (
@@ -14,13 +16,10 @@ import (
 
 func runtimeTestClient(t *testing.T, admit func(context.Context) error) *Client {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "mailbox#runtime?%")
-	s := openTest(t, dir, testOwner, testLimits)
-	c, err := NewClient(s, "alice@example.test")
+	root := filepath.Join(t.TempDir(), "state#runtime?%")
+	source, err := PrepareAccount(root, testOwner, "alice@example.test", testLimits)
 	must(t, err)
-	source := c.MailSourceIdentity()
-	must(t, s.Close())
-	c, err = OpenClient(dir, testOwner, testLimits, "alice@example.test", source, admit)
+	c, err := OpenClient(filepath.Join(root, "users", testOwner.Mailbox, "mailbox"), testOwner, testLimits, "alice@example.test", source, func(ctx context.Context, _ *Prepared) error { return admit(ctx) })
 	must(t, err)
 	return c
 }

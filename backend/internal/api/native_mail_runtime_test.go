@@ -231,7 +231,7 @@ func TestNativeAdmissionMatchesDaemon(t *testing.T) {
 		s.nativeMail = mode
 		for _, id := range []string{"", u.ID, m.ID, "mbx-unknown"} {
 			a, native, err := s.nativeMailboxAssignment(ctx, u.ID, id)
-			wa, wnative, werr := sso.AdmitUserMailbox(ctx, mode, sso.NewStore(s.configDir), sso.NewLifecycleStore(s.configDir), s.users, s.stateDir, u.ID, id)
+			wa, wnative, werr := sso.AdmitUserMailbox(ctx, mode, sso.NewStore(s.configDir), sso.NewLifecycleStore(s.configDir), s.users, s.stateDir, u.ID, id, nil)
 			if a.Owner != wa.Owner || native != wnative || !errors.Is(err, werr) {
 				t.Fatalf("mode %v mailbox %q: api (%v, %v, %v) shared (%v, %v, %v)", mode, id, a.Owner, native, err, wa.Owner, wnative, werr)
 			}
@@ -245,6 +245,53 @@ func TestNativeAdmissionMatchesDaemon(t *testing.T) {
 		w := httptest.NewRecorder()
 		if _, ok := s.admitMailbox(w, r, m.ID); ok != mode || !mode && w.Code != http.StatusServiceUnavailable {
 			t.Fatalf("mode %v: admitMailbox ok=%v status %d", mode, ok, w.Code)
+		}
+	}
+}
+
+// The api's cached client re-admits its own storage through held handles: a
+// valid copy renamed over state.db passes the full storage check, which
+// reopens by path, but the open client refuses, primary and extra alike.
+func TestNativeClientAdmitsItsOpenStorage(t *testing.T) {
+	ctx := context.Background()
+	s := newNativeRuntimeServer(t)
+	directoryStatus(t, postDirectory(t, s, testSyncKey, "user.created", "held-create", 1, runtimeDirectoryUser(true)))
+	u, err := s.users.GetBySSOSubIssuer("https://idp.example", "native-runtime-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.ssoLifecycle.CreateNativeMailbox(ctx, s.stateDir, u.ID, "sales@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"", m.ID} {
+		client, _, err := s.nativeMailboxClient(u.ID, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = client.ListLabels(ctx); err != nil {
+			t.Fatal("open client refused intact storage:", err)
+		}
+		a, _, err := s.nativeMailboxAssignment(ctx, u.ID, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(a.Dir(s.stateDir), "state.db")
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			err = os.WriteFile(path+".copy", raw, 0o600)
+		}
+		if err == nil {
+			err = os.Rename(path+".copy", path)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err = s.nativeMailboxAssignment(ctx, u.ID, id); err != nil {
+			t.Fatal("full admission refused a valid copy:", err)
+		}
+		if _, err = client.ListLabels(ctx); !errors.Is(err, mailbox.ErrPreparation) {
+			t.Fatalf("mailbox %q: open client accepted replaced state.db: %v", id, err)
 		}
 	}
 }
