@@ -393,6 +393,7 @@ func (s *LifecycleStore) persistNative(f nativeAssignments, overlay map[string]D
 	if err != nil {
 		return err
 	}
+	// nativeUserOwnership relies on this flag preceding every ledger write.
 	if !lifecycle.NativeProvisioningInitialized {
 		lifecycle.NativeProvisioningInitialized = true
 		if err = fsutil.PersistJSONFile(s.path, lifecycle); err != nil {

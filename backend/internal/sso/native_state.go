@@ -72,8 +72,9 @@ func (s *LifecycleStore) nativeUserOwnership(stateRoot string, u users.User) (Na
 	key := directoryKey(u.NativeMailboxIssuer, u.SSOSub)
 	// Reuse decoded contents only after reading this call's current bytes.
 	// Ownership validation grants no access and still checks prepared storage.
-	// The lifecycle supplies only the initialization flag, which can only
-	// refuse; acceptance rests on the ledger bytes the format check accepted.
+	// The lifecycle supplies only the initialization flag. Decoding the ledger
+	// read above is safe because persistNative sets the flag before writing
+	// any ledger and never clears it; keep that order.
 	_, _, initialized, err := s.nativeDirectoryForAdmission(key)
 	if err != nil {
 		return NativeAssignment{}, err

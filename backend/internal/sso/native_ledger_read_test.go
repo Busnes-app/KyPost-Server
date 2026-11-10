@@ -116,3 +116,19 @@ func TestNativeLedgerReadRefreshAndIOFailure(t *testing.T) {
 		t.Fatalf("read failure changed or admitted old data: %v / %v", err, wantErr)
 	}
 }
+
+// nativeUserOwnership decodes a ledger read taken before its lifecycle read,
+// which is safe only while the initialization flag precedes every ledger write.
+func TestNativeInitializationPrecedesLedgerWrite(t *testing.T) {
+	s := NewLifecycleStore(t.TempDir())
+	if err := os.Mkdir(s.nativePath(), 0700); err != nil { // the ledger write must fail
+		t.Fatal(err)
+	}
+	if err := s.saveNative(nativeAssignments{}); err == nil {
+		t.Fatal("ledger write unexpectedly succeeded")
+	}
+	lifecycle, err := s.load()
+	if err != nil || !lifecycle.NativeProvisioningInitialized {
+		t.Fatal("ledger written before the initialization flag", err)
+	}
+}
