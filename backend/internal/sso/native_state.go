@@ -65,17 +65,20 @@ func (s *LifecycleStore) nativeUserOwnership(stateRoot string, u users.User) (Na
 	if err != nil {
 		return NativeAssignment{}, err
 	}
-	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
+	ledger, exists, err := currentNativeFormat(filepath.Dir(s.path))
+	if err != nil {
 		return NativeAssignment{}, err
 	}
 	key := directoryKey(u.NativeMailboxIssuer, u.SSOSub)
 	// Reuse decoded contents only after reading this call's current bytes.
 	// Ownership validation grants no access and still checks prepared storage.
+	// The lifecycle supplies only the initialization flag, which can only
+	// refuse; acceptance rests on the ledger bytes the format check accepted.
 	_, _, initialized, err := s.nativeDirectoryForAdmission(key)
 	if err != nil {
 		return NativeAssignment{}, err
 	}
-	a, ok, err := s.nativeAssignmentForAdmission(key, initialized)
+	a, ok, err := nativeAssignmentFromLedger(ledger, exists, key, initialized)
 	if err != nil {
 		return NativeAssignment{}, err
 	}

@@ -71,20 +71,27 @@ func TestNativeFormatHeaderReuseKeepsFilesystemFences(t *testing.T) {
 			}
 			// Admission decodes the ledger bytes its format check read, so it
 			// must refuse exactly where the standalone check does.
+			// Storage and ownership validation share that read the same way.
 			id := f.ids["one"]
-			_, err = f.life.AdmitNativeMailbox(context.Background(), f.root, nativeIssuer, id, id, f.accounts)
-			switch damage {
-			case "none":
-				if err != nil {
-					t.Fatal("shared ledger read refused valid admission", err)
-				}
-			case "unvalidated-v2":
-				if err == nil {
-					t.Fatal("admitted an unvalidated ledger")
-				}
-			default:
-				if !errors.Is(err, ErrNativeMigration) {
-					t.Fatal("admission bypassed migration refusal", err)
+			u, err := f.accounts.Get(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, admitErr := f.life.AdmitNativeMailbox(context.Background(), f.root, nativeIssuer, id, id, f.accounts)
+			for _, err := range []error{admitErr, f.life.ValidateNativeUserStorage(f.root, u), f.life.ValidateNativeUserOwnership(f.root, u)} {
+				switch damage {
+				case "none":
+					if err != nil {
+						t.Fatal("shared ledger read refused valid access", err)
+					}
+				case "unvalidated-v2":
+					if err == nil {
+						t.Fatal("accepted an unvalidated ledger")
+					}
+				default:
+					if !errors.Is(err, ErrNativeMigration) {
+						t.Fatal("bypassed migration refusal", err)
+					}
 				}
 			}
 			if damage == "unvalidated-v2" {

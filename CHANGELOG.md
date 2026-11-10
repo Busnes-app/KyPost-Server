@@ -24,8 +24,9 @@ non-prerelease version.
 
 ### Performance
 
-- Read the native ledger once per mail admission: the format check and the
-  assignment lookup share one fresh read. All admission checks are unchanged.
+- Read the native ledger once per mail admission and per ordinary storage or
+  ownership validation: the format check and the assignment lookup share one
+  fresh read. All checks are unchanged.
 
 - Reuse exact-current decoded native authority contents for ordinary storage and
   ownership checks, retaining fresh reads, restore holds and prepared-storage

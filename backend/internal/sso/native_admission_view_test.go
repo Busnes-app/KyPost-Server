@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -364,4 +365,14 @@ func BenchmarkNativeAdmissionView(b *testing.B) {
 			}
 		})
 	}
+}
+
+// nativeAssignmentForAdmission reads the ledger itself; production callers
+// pass the bytes their format check read.
+func (s *LifecycleStore) nativeAssignmentForAdmission(key string, initialized bool) (NativeAssignment, bool, error) {
+	raw, err := os.ReadFile(s.nativePath())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return NativeAssignment{}, false, err
+	}
+	return nativeAssignmentFromLedger(raw, err == nil, key, initialized)
 }
