@@ -126,14 +126,22 @@ func legacyNativeDomain(configDir string) (tombstone, data bool, err error) {
 // checkNativeFormat is the runtime refusal for unmigrated or half-migrated
 // storage. A fresh install (neither file) passes as "not configured".
 func checkNativeFormat(configDir string) error {
+	_, _, err := currentNativeFormat(configDir)
+	return err
+}
+
+// currentNativeFormat also returns the ledger bytes it checked, so a fenced
+// caller can decode that same read instead of reading the ledger again.
+func currentNativeFormat(configDir string) (ledger []byte, exists bool, err error) {
 	tombstone, data, err := legacyNativeDomain(configDir)
 	if err != nil || data {
-		return ErrNativeMigration
+		return nil, false, ErrNativeMigration
 	}
 	// A leftover version-1 ledger means migration failed; refuse before any
 	// v2 write (Configure included) could adopt it. The relay needs its key
 	// to read the version; its runtime reader refuses version 1 itself.
-	if raw, err := os.ReadFile(filepath.Join(configDir, nativeProvisioningFile)); err == nil {
+	raw, err := os.ReadFile(filepath.Join(configDir, nativeProvisioningFile))
+	if err == nil {
 		// The admission view already fully validated identical v2 bytes. Reuse
 		// only that version predicate; the filesystem checks still run below.
 		if !nativeAssignmentsAlreadyDecoded(raw) {
@@ -141,21 +149,22 @@ func checkNativeFormat(configDir string) error {
 				Version int `json:"version"`
 			}
 			if json.Unmarshal(raw, &head) != nil || head.Version != 2 {
-				return ErrNativeMigration
+				return nil, false, ErrNativeMigration
 			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return ErrNativeMigration
+		return nil, false, ErrNativeMigration
 	}
+	exists = err == nil
 	if !tombstone {
-		return nil
+		return raw, exists, nil
 	}
 	for _, name := range []string{NativeDomainsFile, nativeProvisioningFile} {
 		if _, err := os.Lstat(filepath.Join(configDir, name)); err != nil {
-			return ErrNativeMigration
+			return nil, false, ErrNativeMigration
 		}
 	}
-	return nil
+	return raw, exists, nil
 }
 
 // validNativeDomain is the version-1 claim rule, unchanged. It also rejects
