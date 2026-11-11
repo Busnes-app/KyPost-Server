@@ -27,6 +27,9 @@ non-prerelease version.
 - Bound the API's mail-client cache to 64 entries, like the daemon's, so open
   files no longer grow with every mailbox used since startup.
 
+- The web inbox refreshes every 30 seconds instead of 15, and only while its tab is
+  visible; a hidden tab refreshes as soon as it is shown again.
+
 - Check an open mail client's own storage on handles it keeps open instead of
   reopening both mailbox databases for every operation. Every check still runs,
   and deleted or replaced storage is still refused on the next operation.
