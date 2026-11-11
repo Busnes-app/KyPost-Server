@@ -422,8 +422,7 @@ func (s *LifecycleStore) writeNative(w authorityWriter, f nativeAssignments, ove
 		}
 	}
 	for key, a := range l.Accounts {
-		issuer, subject, _ := strings.Cut(key, "\x00")
-		if err = w.PutAccount(issuer, subject, a); err != nil {
+		if err = w.PutAccount(key, a); err != nil {
 			return err
 		}
 	}

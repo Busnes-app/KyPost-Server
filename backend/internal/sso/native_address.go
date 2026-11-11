@@ -83,21 +83,19 @@ func (s *LifecycleStore) NativeAddress(address string) (a NativeAddress, err err
 
 // NativeMailboxes lists mailboxes, sorted, with their addresses sorted.
 func (s *LifecycleStore) NativeMailboxes() ([]NativeMailbox, error) {
-	return s.nativeMailboxes("")
+	return s.nativeMailboxes(func(string) bool { return true })
 }
 
 // NativeMailboxesOf is NativeMailboxes for one owning account's mailboxes.
 // ponytail: filters the whole ledger (JSON backend); per-owner reads arrive
 // with the SQLite backend.
+// An empty userID still reads the ledger, so its errors surface.
 func (s *LifecycleStore) NativeMailboxesOf(userID string) ([]NativeMailbox, error) {
-	if userID == "" {
-		return []NativeMailbox{}, nil
-	}
-	return s.nativeMailboxes(userID)
+	return s.nativeMailboxes(func(user string) bool { return user == userID })
 }
 
-// nativeMailboxes lists every mailbox, or only user's when user is set.
-func (s *LifecycleStore) nativeMailboxes(user string) ([]NativeMailbox, error) {
+// nativeMailboxes lists the mailboxes whose owning user keep accepts.
+func (s *LifecycleStore) nativeMailboxes(keep func(user string) bool) ([]NativeMailbox, error) {
 	f, err := s.loadNative()
 	if err != nil {
 		return nil, err
@@ -106,7 +104,7 @@ func (s *LifecycleStore) nativeMailboxes(user string) ([]NativeMailbox, error) {
 	for _, id := range slices.Sorted(maps.Keys(f.stored.Mailboxes)) {
 		m := f.stored.Mailboxes[id]
 		box := NativeMailbox{ID: id, User: f.stored.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].PrimaryMailbox, Kind: m.Kind, State: m.State, Prepared: m.Source != "", Addresses: []NativeAddress{}, QuotaBytes: m.Limits.PayloadBytes}
-		if user != "" && box.User != user {
+		if !keep(box.User) {
 			continue
 		}
 		if a, _, ok := f.mailbox(id); ok {

@@ -3,15 +3,19 @@
 package sso
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/oidcverify"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 )
 
@@ -28,6 +32,9 @@ func TestAuthorityLifecycleWriteIgnoresLedger(t *testing.T) {
 	}
 	if _, err := f.life.NativeAddress("one@example.test"); err == nil {
 		t.Fatal("broken ledger read as an address")
+	}
+	if _, err := f.life.NativeMailboxesOf(""); err == nil {
+		t.Fatal("broken ledger hidden behind an empty user")
 	}
 }
 
@@ -73,5 +80,133 @@ func TestAuthorityFixturePaths(t *testing.T) {
 	dir := filepath.Dir(s.path)
 	if ssotest.LifecyclePath(dir) != s.path || ssotest.LedgerPath(dir) != s.nativePath() || ssotest.DirectoryLockPath(dir) != s.path+".lock" {
 		t.Fatal("ssotest authority paths drifted from the JSON backend")
+	}
+}
+
+// A v1 account key without the issuer separator migrates byte for byte as
+// persistNative wrote it: writeNative puts the stored key, never a re-join.
+func TestAuthorityMigrationKeepsLegacyAccountKey(t *testing.T) {
+	ctx := context.Background()
+	config, keyPath, _ := v1Fixture(t)
+	path := filepath.Join(config, nativeProvisioningFile)
+	v1, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(v1), `\u0000one"`) != 1 {
+		t.Fatal("fixture key not found")
+	}
+	v1 = []byte(strings.Replace(string(v1), `\u0000one"`, `one"`, 1))
+	if err := os.WriteFile(path, v1, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MigrateNative(ctx, config, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pre-seam write: the whole rendered ledger, persisted as is.
+	life := NewLifecycleStore(config)
+	f, err := life.migratedNativeLedger(v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, err := life.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(t.TempDir(), "want.json")
+	if err := fsutil.PersistJSONFile(want, f.ledger(lifecycle.Directory)); err != nil {
+		t.Fatal(err)
+	}
+	wantRaw, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, wantRaw) || !strings.Contains(string(got), nativeIssuer+`one"`) {
+		t.Fatalf("legacy key bytes changed:\n%s\nwant\n%s", got, wantRaw)
+	}
+}
+
+// SetInitialized after PutLifecycle would write the flag before the put
+// lifecycle; it is refused.
+func TestAuthoritySetInitializedAfterPutLifecycle(t *testing.T) {
+	f := newAddressFixture(t, "one")
+	err := f.life.update(func(w authorityWriter) error {
+		life, err := w.Lifecycle()
+		if err != nil {
+			return err
+		}
+		if err := w.PutLifecycle(life); err != nil {
+			return err
+		}
+		return w.SetInitialized()
+	})
+	if !errors.Is(err, errAuthorityOrder) {
+		t.Fatal("SetInitialized after PutLifecycle", err)
+	}
+}
+
+// MarkRoutesPending needs a ledger to find the state root in.
+func TestAuthorityMarkRoutesPendingNeedsLedger(t *testing.T) {
+	f := newAddressFixture(t, "one")
+	err := f.life.update(func(w authorityWriter) error {
+		return w.MarkRoutesPending(map[string]int64{"one@example.test": 1})
+	})
+	if !errors.Is(err, errAuthorityOrder) {
+		t.Fatal("MarkRoutesPending without a ledger", err)
+	}
+	err = f.life.update(func(w authorityWriter) error {
+		if _, _, err := w.Snapshot(); err != nil {
+			return err
+		}
+		return w.MarkRoutesPending(map[string]int64{})
+	})
+	if err != nil {
+		t.Fatal("MarkRoutesPending after Snapshot", err)
+	}
+}
+
+// Lifecycle hands out copies: a caller's edit reaches later reads, and the
+// file, only through PutLifecycle.
+func TestAuthorityLifecycleEditsOnlyByPut(t *testing.T) {
+	f := newAddressFixture(t, "one")
+	key := directoryKey(nativeIssuer, "one")
+	err := f.life.update(func(w authorityWriter) error {
+		life, err := w.Lifecycle()
+		if err != nil {
+			return err
+		}
+		life.Directory[key] = DirectoryState{Revision: 99}
+		life.SignOns["jti"] = 1
+		if life.RecoveryFloors == nil {
+			life.RecoveryFloors = map[string]int64{}
+		}
+		life.RecoveryFloors[key] = 7
+		if d, _, err := w.Directory(nativeIssuer, "one"); err != nil || d.Revision == 99 {
+			t.Fatal("unput edit seen by Directory", d.Revision, err)
+		}
+		again, err := w.Lifecycle()
+		if err != nil || again.Directory[key].Revision == 99 || again.SignOns["jti"] != 0 || again.RecoveryFloors[key] != 0 {
+			t.Fatal("unput edit seen by Lifecycle", err)
+		}
+		if err := w.PutLifecycle(life); err != nil {
+			return err
+		}
+		life.SignOns["late"] = 2 // after the put: not written
+		put, err := w.Lifecycle()
+		if err != nil || put.Directory[key].Revision != 99 || put.SignOns["late"] != 0 {
+			t.Fatal("put not seen, or a post-put edit seen", err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := f.life.load()
+	if err != nil || after.Directory[key].Revision != 99 || after.SignOns["jti"] != 1 || after.SignOns["late"] != 0 || after.RecoveryFloors[key] != 7 {
+		t.Fatal("written lifecycle", err)
 	}
 }

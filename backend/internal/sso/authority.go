@@ -29,7 +29,9 @@ type authorityReader interface {
 	Mailbox(id string) (NativeAssignment, nativeLedgerMailbox, bool, error)
 	Address(address string) (nativeLedgerAddress, bool, error) // with history
 	// Lifecycle is the whole lifecycle record: logouts, sign-ons, directory,
-	// events, floors, recovery and release.
+	// events, floors, recovery and release. Each call returns a copy (see
+	// lifecycleFile.clone), so a caller's edits reach later reads only by
+	// PutLifecycle.
 	Lifecycle() (lifecycleFile, error)
 	Snapshot() (nativeAssignments, map[string]DirectoryState, error) // cold paths only
 }
@@ -37,12 +39,16 @@ type authorityReader interface {
 type authorityWriter interface {
 	authorityReader
 	// SetInitialized starts every ledger write: the flag precedes the ledger.
+	// It refuses after PutLifecycle, which would be written after it.
 	SetInitialized() error
-	PutAccount(issuer, subject string, a nativeLedgerAccount) error
+	// PutAccount takes the stored ledger key, directoryKey(issuer, subject)
+	// for a v2 ledger; a migrating v1 ledger keeps its legacy keys byte for byte.
+	PutAccount(key string, a nativeLedgerAccount) error
 	PutMailbox(id string, m nativeLedgerMailbox) error
 	PutAddress(address string, x nativeLedgerAddress) error
 	PutLifecycle(l lifecycleFile) error
 	// MarkRoutesPending writes these addresses' routes inactive after the ledger.
+	// It needs the ledger: one put in this Update, or the stored one already read.
 	MarkRoutesPending(inactive map[string]int64) error
 }
 
@@ -66,7 +72,15 @@ func (s *LifecycleStore) update(fn func(authorityWriter) error) error {
 // skips the lifecycle write, as applyDirectory did.
 // ponytail: the ledger written is exactly the records put in this Update, as
 // persistNative wrote its whole rendered ledger, so writers put every record
-// (writeNative). Reads inside an Update see the committed files, not puts.
+// (writeNative). Reads inside an Update see the committed files, except that
+// after PutLifecycle the lifecycle reads (Lifecycle, Directory, Initialized,
+// Snapshot's directory) see the put record. Ledger puts are never read back.
+//
+// Reads without the flock may interleave with a writer. loadNative reads the
+// lifecycle bytes before the ledger, so the decoded ledger is never older than
+// the lifecycle it is checked against, as the old second ledger read was.
+// Account (admission) reads the ledger first and the flag after it; under the
+// flag-first write order a reader that sees a ledger sees the flag.
 type jsonAuthority struct{ path string }
 
 type jsonAuthorityTx struct {
@@ -135,7 +149,8 @@ func (t *jsonAuthorityTx) readLifecycle() error {
 	return t.lifeReadErr
 }
 
-// Lifecycle decodes the whole file as LifecycleStore.load always did.
+// Lifecycle decodes the whole file as LifecycleStore.load always did, once,
+// and hands out copies.
 func (t *jsonAuthorityTx) Lifecycle() (lifecycleFile, error) {
 	if !t.lifeLoaded {
 		t.lifeLoaded = true
@@ -147,7 +162,7 @@ func (t *jsonAuthorityTx) Lifecycle() (lifecycleFile, error) {
 		f.ensureMaps()
 		t.life, t.lifeErr = f, err
 	}
-	return t.life, t.lifeErr
+	return t.life.clone(), t.lifeErr
 }
 
 // directoryView answers from the bounded view unless the whole file is decoded.
@@ -188,10 +203,13 @@ func (t *jsonAuthorityTx) readLedger() error {
 	return t.ledgerErr
 }
 
-// loadNative is the old LifecycleStore.loadNative: format, lifecycle, ledger.
+// loadNative is the old LifecycleStore.loadNative. It reads the lifecycle
+// bytes, then the ledger once, and reports errors in the old order: format,
+// lifecycle, ledger.
 func (t *jsonAuthorityTx) loadNative() (nativeAssignments, error) {
 	if !t.nativeLoaded {
 		t.nativeLoaded = true
+		_ = t.readLifecycle() // its error is reported by Lifecycle below
 		if t.nativeErr = t.readLedger(); t.nativeErr == nil {
 			var life lifecycleFile
 			if life, t.nativeErr = t.Lifecycle(); t.nativeErr == nil {
@@ -247,7 +265,13 @@ func (t *jsonAuthorityTx) Snapshot() (nativeAssignments, map[string]DirectorySta
 	return f, maps.Clone(t.life.Directory), err
 }
 
+// errAuthorityOrder is a writer calling the transaction out of its order.
+var errAuthorityOrder = errors.New("sso: authority transaction used out of order")
+
 func (t *jsonAuthorityTx) SetInitialized() error {
+	if t.lifeDirty {
+		return errAuthorityOrder // the flag would be written before the put lifecycle
+	}
 	life, err := t.Lifecycle()
 	if err != nil {
 		return err
@@ -278,10 +302,10 @@ func (t *jsonAuthorityTx) pending() (*nativeLedger, error) {
 	return t.ledger, nil
 }
 
-func (t *jsonAuthorityTx) PutAccount(issuer, subject string, a nativeLedgerAccount) error {
+func (t *jsonAuthorityTx) PutAccount(key string, a nativeLedgerAccount) error {
 	l, err := t.pending()
 	if err == nil {
-		l.Accounts[directoryKey(issuer, subject)] = a
+		l.Accounts[key] = a
 	}
 	return err
 }
@@ -305,11 +329,14 @@ func (t *jsonAuthorityTx) PutAddress(address string, x nativeLedgerAddress) erro
 // PutLifecycle replaces the whole record, flag included, as the old writers did.
 func (t *jsonAuthorityTx) PutLifecycle(l lifecycleFile) error {
 	t.lifeRead, t.lifeLoaded, t.lifeErr = true, true, nil
-	t.life, t.lifeDirty = l, true
+	t.life, t.lifeDirty = l.clone(), true
 	return nil
 }
 
 func (t *jsonAuthorityTx) MarkRoutesPending(inactive map[string]int64) error {
+	if t.ledger == nil && (!t.nativeLoaded || t.nativeErr != nil) {
+		return errAuthorityOrder // no ledger to find the routes' state root in
+	}
 	t.routes, t.inactive = true, inactive
 	return nil
 }

@@ -3,6 +3,7 @@ package sso
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"path/filepath"
 	"time"
 
@@ -96,6 +97,32 @@ func decodeLifecycle(raw []byte, f *lifecycleFile) error {
 	}
 	*f = v
 	return nil
+}
+
+// clone copies f one level deep: its maps and the records its pointers name.
+// Values nested deeper (a DirectoryState's Resource, a record's slices) are
+// shared; no caller edits them in place.
+func (f lifecycleFile) clone() lifecycleFile {
+	f.RecoveryRepair = clonePtr(f.RecoveryRepair)
+	f.RecoveryChallenge = clonePtr(f.RecoveryChallenge)
+	f.RecoveryReceipt = clonePtr(f.RecoveryReceipt)
+	f.RestoreRelease = clonePtr(f.RestoreRelease)
+	f.RecoveryRepairBarriers = maps.Clone(f.RecoveryRepairBarriers)
+	f.RecoveryFloors = maps.Clone(f.RecoveryFloors)
+	f.ReleaseFloors = maps.Clone(f.ReleaseFloors)
+	f.Logouts = maps.Clone(f.Logouts)
+	f.Directory = maps.Clone(f.Directory)
+	f.Events = maps.Clone(f.Events)
+	f.SignOns = maps.Clone(f.SignOns)
+	return f
+}
+
+func clonePtr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	c := *p
+	return &c
 }
 
 func (f *lifecycleFile) ensureMaps() {

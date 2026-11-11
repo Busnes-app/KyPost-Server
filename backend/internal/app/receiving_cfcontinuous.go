@@ -389,12 +389,17 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 		if len(fresh) > 0 {
 			_ = r.withAuthority(ctx, []string{id}, fresh, freshProofs, func(current map[string]sso.NativeAssignment) error {
 				a := current[id]
+				if err := l.hit("routes-admitted"); err != nil {
+					return err
+				}
+				// One read for every fresh address: a failure publishes no
+				// fresh route for this mailbox, so all keep their previous one.
+				now, err := r.life.NativeAddresses()
+				if err != nil {
+					return err
+				}
 				for _, address := range fresh {
-					x, err := r.life.NativeAddress(address)
-					if err != nil {
-						return err
-					}
-					if x.State == "active" && x.Mailbox == id {
+					if x := now[address]; x.State == "active" && x.Mailbox == id {
 						routes = append(routes, cfreceiving.Route{Address: address, Generation: x.Generation, MaxBytes: min(receivingLimits.MessageBytes, a.Limits.MessageBytes, cfreceiving.MaxMessageBytes), Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox})
 						added[address] = true
 					}
