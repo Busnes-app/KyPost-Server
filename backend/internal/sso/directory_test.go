@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/Busnes-app/ky-primitives/syncauth"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -105,19 +106,19 @@ func TestDirectoryDesiredResourceSurvivesRetryAndFailure(t *testing.T) {
 		t.Fatal("failed callback acknowledged")
 	}
 	verify(1, "primary@example.test")
-	backup := store.path + ".saved"
+	db := filepath.Join(filepath.Dir(store.path), NativeAuthorityFile)
+	backup := db + ".saved"
 	if _, err := store.ApplyDirectoryUser("https://idp.example", ev, resource, "digest-two", func() (bool, error) {
-		if err := os.Rename(store.path, backup); err != nil {
+		// Replace the database under the open transaction: its commit must
+		// refuse (the os.SameFile check), so nothing is acknowledged.
+		if err := os.Rename(db, backup); err != nil {
 			return false, err
 		}
-		return false, os.Mkdir(store.path, 0700) // JSON publication now cannot rename over a directory.
+		return false, os.WriteFile(db, mustRead(t, backup), 0600)
 	}); err == nil {
 		t.Fatal("failed persistence acknowledged")
 	}
-	if err := os.Remove(store.path); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(backup, store.path); err != nil {
+	if err := os.Rename(backup, db); err != nil {
 		t.Fatal(err)
 	}
 	verify(1, "primary@example.test")

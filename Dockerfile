@@ -33,7 +33,7 @@ RUN cd backend && CGO_ENABLED=0 go build -trimpath \
 	-ldflags="-X github.com/Busnes-app/kypost-server/backend/internal/appversion.release=${VERSION}" \
 	-o /app/bin/kypost-server ./cmd/main.go
 
-FROM node:26.13.0-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS frontend-builder
+FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS frontend-builder
 WORKDIR /frontend
 # `npm ci` and a required, non-globbed lockfile. `npm install` re-resolves
 # every caret range at build time, so two builds of the same commit can ship
@@ -48,7 +48,7 @@ RUN npm run build
 # the stage above, and the admin-password hashing that once needed `node` is now
 # `kypost-server --mode bootstrap-admin`. Keep it that way — a Node runtime here
 # is a CVE stream to track for no runtime benefit. See scripts/AGENTS.md.
-FROM debian:stable-slim@sha256:13e0a2e78aa0554ad5ff66e4e260c6dbcdff807eb1f39d43b9fb0288aae88b04
+FROM debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0
 
 # The GHCR package is the documented install path, and without
 # org.opencontainers.image.source it is an orphan: the package page links back

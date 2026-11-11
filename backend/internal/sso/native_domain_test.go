@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func provenNativeDomain(t *testing.T, config string) *NativeDomainStore {
+func provenNativeDomain(t testing.TB, config string) *NativeDomainStore {
 	t.Helper()
 	s := NewNativeDomainStore(config)
 	if _, err := s.Configure(context.Background(), "example.test", nativeIssuer); err != nil {

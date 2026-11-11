@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -256,13 +255,8 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 // written inactive. Any load or write failure fails the event, so the sender
 // retries it and the rule converges.
 func (s *LifecycleStore) syncNativeDirectory(w authorityWriter, key string, d DirectoryState) error {
-	// While version-1 domain data awaits migration, directory sync must keep
-	// working, IMAP deployments included: migration recomputes the flag from
-	// the directory resource recorded here, so the demotion still lands. Any
-	// other load failure (a lost or corrupt ledger) fails the event.
-	if _, v1, err := legacyNativeDomain(filepath.Dir(s.path)); err == nil && v1 {
-		return nil
-	}
+	// Any load failure (a corrupt ledger) fails the event. Unmigrated storage
+	// never gets here: the runtime refuses it before the Update.
 	f, _, err := w.Snapshot()
 	if err != nil {
 		return err

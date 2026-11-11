@@ -508,20 +508,7 @@ func TestNativeExtraMailboxExcludesIncomingEncryption(t *testing.T) {
 	}
 	// An active mailbox whose creation never published storage is not listed
 	// and does not block incoming encryption.
-	path := ssotest.LedgerPath(srv.configDir)
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ledger map[string]any
-	if err := json.Unmarshal(raw, &ledger); err != nil {
-		t.Fatal(err)
-	}
-	delete(ledger["mailboxes"].(map[string]any)[extra.ID].(map[string]any), "source")
-	if raw, err = json.Marshal(ledger); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	if err := ssotest.DamageAuthority(srv.configDir, "UPDATE mailboxes SET source = '' WHERE id = ?", extra.ID); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest("GET", "/api/mailboxes", nil)

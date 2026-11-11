@@ -1,12 +1,16 @@
-# Native authority per account (design, not shipped)
+# Native authority per account
 
-Status: design, 2026-11-10. PR 1 (the `authorityStore` seam) and PR 2 (the read-only
-v3 reader for backups, `backend/internal/sso/authority_v3.go`) are merged or in review;
-no binary writes v3 yet. It replaces
+Status: PR 1 (the `authorityStore` seam), PR 2 (the read-only v3 reader for
+backups) and PR 3 (the SQLite runtime backend, `MigrateAuthority` in
+`migrate-native`, `backend/internal/sso/authority_sqlite.go` and
+`authority_migrate.go`) are implemented, 2026-11-11. The runtime reads and writes
+only v3; the JSON backend remains for offline v1/v2 stores (restore staging,
+the v1 → v2 step) until PR 4. It replaces
 the whole-file reads of `sso-lifecycle.json` and `native-provisioning.json` on every
 mail-client operation with reads of single records, so that admission costs O(1) in
-the number of accounts. Shipped contracts remain [NATIVE_ADDRESSING_V2.md](NATIVE_ADDRESSING_V2.md)
-and [NATIVE_PROVISIONING.md](NATIVE_PROVISIONING.md) until the rollout below lands.
+the number of accounts. [NATIVE_ADDRESSING_V2.md](NATIVE_ADDRESSING_V2.md) and
+[NATIVE_PROVISIONING.md](NATIVE_PROVISIONING.md) remain the record semantics;
+section 11 lists where PR 3 departs from this design.
 
 ## Problem and decision summary
 
@@ -570,3 +574,41 @@ files (`ky-primitives` `capsule.MaxFiles`).
 Still unproven, owned by PR 3's measurements: the row sizes, the ~8 MB lifecycle
 estimate at 10,000 accounts, the claim that page visits stay ≤ 24, and the total
 daemon CPU after the change.
+
+## 11. Where PR 3 departs from this design
+
+PR 3 is implemented in `backend/internal/sso/authority_sqlite.go` (runtime
+backend, format table) and `authority_migrate.go` (`MigrateAuthority`). It
+departs from the sections above in these places:
+
+| Area | Design | PR 3 | Why |
+|---|---|---|---|
+| Interface | Section 2's per-record writer (`PutDirectory`, `PutEvent`, `DirectoryPrimaryTaken`, `MailboxesOwnedBy`) | PR 1's interface kept (`Lifecycle`/`PutLifecycle` whole, `PutAccount` by key), plus `OwnerMailboxes`, `Logouts`, `Change` and `Check` | Every caller keeps its algorithm; the reads on the hot paths (section 7) are point reads. `PutLifecycle` and the ledger puts write only the rows that differ from the stored ones. Ceiling: lifecycle writers (logout, sign-on, directory events) and ledger writers still read the whole lifecycle or ledger, O(N) per write; the alias rule still scans the directory in admin writes. |
+| Desired-state rule | Evaluate the touched owner plus `routes_pending` | Evaluated in memory over the whole ledger the writer already read; only changed rows are written and only their routes (plus `routes_pending`) are deactivated | Restricting the evaluation saves nothing while writers read the whole ledger; the expensive parts (row writes, route writes) are bounded. Bulk provisioning at N accounts still reads O(N) per commit. |
+| Route failure in a directory event | (section 3) one `Update`, then routes | The same; unlike the JSON backend, the event is recorded and the retry is answered `already_applied`, the route is retried from `routes_pending` | Follows section 3. |
+| Directory sync while v1 data awaits migration | (not covered) | Refused with `ErrNativeMigration`, like every authority access before `migrate-native` | Owner decision Q2: the lifecycle moves too. |
+| Fresh-create crash with a domain tombstone | Served | Refused (the tombstone requires the ledger stub) | A tombstone means native mail was configured, so a missing ledger stub is damage, not a first write. |
+| Replaced file | `os.SameFile` after each `View` | Also checked when the handle is taken: a file replaced between calls is reopened (with every open-time check) before any query | Never queries a stale file. A replacement during a call still refuses that call. |
+| Open-time checks | On every handle open | On every pooled connection (a `driver.Connector` wrapper) | A pool opens connections lazily. |
+| Restore staging writes | `Update` on the staging store | The same, offline: each write checkpoints and closes, leaving no WAL; the historical opener refuses a non-empty WAL, and a staging database with a WAL is read through the runtime-verified opener | `immutable=1` ignores the WAL, so fenced rows would be unseen. The runtime DSN sets `journal_mode=WAL`, which converts a restored `VACUUM INTO` copy on its first open. |
+| `S1` (no v2 adoption while D exists) | Refuse | Refuse when the database differs from the conversion of the existing copies; a database equal to it (a crash after step 3) is rebuilt | Distinguishes a crash from a hand adoption without a new meta key. |
+| Migration output | Rows of the converter | Plus a `routes_pending` row for every non-active address | v2 rewrote every inactive route on each commit; the first v3 write converges them once. |
+| `meta.change` | +1 per mailbox/address commit | The same; account-only and lifecycle-only commits leave it | |
+| Fixture | `WriteNativeAuthorityV3ForTest` (PR 2) | Removed; tests reach v3 through the runtime or `MigrateAuthority` | The runtime writes v3. |
+
+Measured on one host (medians of 5 × 3 s, Go 1.27.4; `BenchmarkAdmitOpenMailbox`
+is one admission among n accounts without a held client, so it reopens both
+mailbox databases; `BenchmarkAdmissionAuthorityReads` is the authority reads
+alone):
+
+| | 1,000 | 3,000 | 10,000 | 10k / 3k |
+|---|---|---|---|---|
+| main 7ff87f1a, admission | 1.21 ms, 1.84 MB | 2.11 ms, 5.45 MB | 94.0 ms, 44.6 MB | 44.5×, 8.2× |
+| PR 3, admission | 1.003 ms, 37.7 KB | 1.008 ms, 37.8 KB | 1.008 ms, 37.8 KB | 1.00×, 1.00× |
+| main, authority reads | 0.45 ms, 1.82 MB | 1.21 ms, 5.45 MB | 92.7 ms, 44.7 MB | 76.8×, 8.2× |
+| PR 3, authority reads | 127 µs, 13.2 KB | 128 µs, 13.2 KB | 128 µs, 13.2 KB | 1.00×, 1.00× |
+
+About a third of the 127 µs is SQLite re-parsing each statement (no prepared
+statement cache). Still unproven here: the busnes.app matched-pair
+measurement (section 9), lock wait (H4) and the row-size and page-visit
+estimates of section 1.
