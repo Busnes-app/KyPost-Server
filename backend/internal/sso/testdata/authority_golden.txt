@@ -1,0 +1,1829 @@
+== directory events before any ledger
+-- sso-lifecycle.json
+{
+  "logouts": {},
+  "directory": {
+    "https://identity.example.test\u0000one": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "one",
+        "externalId": "one",
+        "userName": "one",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "active": true,
+      "eventId": "one-1"
+    },
+    "https://identity.example.test\u0000two": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "two",
+        "externalId": "two",
+        "userName": "two",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "two@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "active": true,
+      "eventId": "two-1"
+    }
+  },
+  "events": {
+    "one-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "expiresAt": 4070909100
+    },
+    "two-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "expiresAt": 4070909100
+    }
+  },
+  "signOns": {}
+}
+-- native-provisioning.json
+(absent)
+== first reconcile: initialization flag, then ledger
+-- sso-lifecycle.json
+{
+  "nativeProvisioningInitialized": true,
+  "logouts": {},
+  "directory": {
+    "https://identity.example.test\u0000one": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "one",
+        "externalId": "one",
+        "userName": "one",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "active": true,
+      "eventId": "one-1"
+    },
+    "https://identity.example.test\u0000two": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "two",
+        "externalId": "two",
+        "userName": "two",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "two@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "active": true,
+      "eventId": "two-1"
+    }
+  },
+  "events": {
+    "one-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "expiresAt": 4070909100
+    },
+    "two-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "expiresAt": 4070909100
+    }
+  },
+  "signOns": {}
+}
+-- native-provisioning.json
+{
+  "version": 2,
+  "accounts": {
+    "https://identity.example.test\u0000one": {
+      "revision": 1,
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-one",
+      "legacyMixedUse": false
+    }
+  },
+  "mailboxes": {
+    "local-one": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id1>"
+    }
+  },
+  "addresses": {
+    "one@example.test": {
+      "mailbox": "local-one",
+      "kind": "primary",
+      "state": "disabled",
+      "generation": 2,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        }
+      ]
+    }
+  },
+  "addressGenerations": true
+}
+== domain configured; directory sync activates the address
+-- sso-lifecycle.json
+{
+  "nativeProvisioningInitialized": true,
+  "logouts": {},
+  "directory": {
+    "https://identity.example.test\u0000one": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "one",
+        "externalId": "one",
+        "userName": "one",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"3\""
+        }
+      },
+      "revision": 3,
+      "digest": "3ebcba5511f8d70e6630b8b500a1d4f5ad9f55275327a7e72d2db96ea3986288",
+      "active": true,
+      "eventId": "one-3"
+    },
+    "https://identity.example.test\u0000two": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "two",
+        "externalId": "two",
+        "userName": "two",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "two@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "active": true,
+      "eventId": "two-1"
+    }
+  },
+  "events": {
+    "one-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "expiresAt": 4070909100
+    },
+    "one-3": {
+      "issuer": "https://identity.example.test",
+      "digest": "3ebcba5511f8d70e6630b8b500a1d4f5ad9f55275327a7e72d2db96ea3986288",
+      "expiresAt": 4070909100
+    },
+    "two-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "expiresAt": 4070909100
+    }
+  },
+  "signOns": {}
+}
+-- native-provisioning.json
+{
+  "version": 2,
+  "accounts": {
+    "https://identity.example.test\u0000one": {
+      "revision": 1,
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-one",
+      "legacyMixedUse": false
+    }
+  },
+  "mailboxes": {
+    "local-one": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id1>"
+    }
+  },
+  "addresses": {
+    "one@example.test": {
+      "mailbox": "local-one",
+      "kind": "primary",
+      "state": "active",
+      "generation": 3,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        }
+      ]
+    }
+  },
+  "addressGenerations": true
+}
+== second reconcile and a recorded address conflict
+-- sso-lifecycle.json
+{
+  "nativeProvisioningInitialized": true,
+  "logouts": {},
+  "directory": {
+    "https://identity.example.test\u0000one": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "one",
+        "externalId": "one",
+        "userName": "one",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"3\""
+        }
+      },
+      "revision": 3,
+      "digest": "3ebcba5511f8d70e6630b8b500a1d4f5ad9f55275327a7e72d2db96ea3986288",
+      "active": true,
+      "eventId": "one-3"
+    },
+    "https://identity.example.test\u0000three": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "three",
+        "externalId": "three",
+        "userName": "three",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "active": true,
+      "eventId": "three-1"
+    },
+    "https://identity.example.test\u0000two": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "two",
+        "externalId": "two",
+        "userName": "two",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "two@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "active": true,
+      "eventId": "two-1"
+    }
+  },
+  "events": {
+    "one-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "expiresAt": 4070909100
+    },
+    "one-3": {
+      "issuer": "https://identity.example.test",
+      "digest": "3ebcba5511f8d70e6630b8b500a1d4f5ad9f55275327a7e72d2db96ea3986288",
+      "expiresAt": 4070909100
+    },
+    "three-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "expiresAt": 4070909100
+    },
+    "two-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "expiresAt": 4070909100
+    }
+  },
+  "signOns": {}
+}
+-- native-provisioning.json
+{
+  "version": 2,
+  "accounts": {
+    "https://identity.example.test\u0000one": {
+      "revision": 1,
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-one",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000three": {
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "desiredActive": true,
+      "status": "failed",
+      "failure": "address_conflict",
+      "primaryMailbox": "local-three",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000two": {
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-two",
+      "legacyMixedUse": false
+    }
+  },
+  "mailboxes": {
+    "local-one": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id1>"
+    },
+    "local-three": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "three"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      }
+    },
+    "local-two": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "two"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id2>"
+    }
+  },
+  "addresses": {
+    "one@example.test": {
+      "mailbox": "local-one",
+      "kind": "primary",
+      "state": "active",
+      "generation": 3,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        }
+      ]
+    },
+    "two@example.test": {
+      "mailbox": "local-two",
+      "kind": "primary",
+      "state": "active",
+      "generation": 1,
+      "history": [
+        {
+          "mailbox": "local-two",
+          "generation": 1
+        }
+      ]
+    }
+  },
+  "addressGenerations": true
+}
+== alias add, release and reassign
+-- sso-lifecycle.json
+{
+  "nativeProvisioningInitialized": true,
+  "logouts": {},
+  "directory": {
+    "https://identity.example.test\u0000one": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "one",
+        "externalId": "one",
+        "userName": "one",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"3\""
+        }
+      },
+      "revision": 3,
+      "digest": "3ebcba5511f8d70e6630b8b500a1d4f5ad9f55275327a7e72d2db96ea3986288",
+      "active": true,
+      "eventId": "one-3"
+    },
+    "https://identity.example.test\u0000three": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "three",
+        "externalId": "three",
+        "userName": "three",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "active": true,
+      "eventId": "three-1"
+    },
+    "https://identity.example.test\u0000two": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "two",
+        "externalId": "two",
+        "userName": "two",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "two@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "active": true,
+      "eventId": "two-1"
+    }
+  },
+  "events": {
+    "one-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "expiresAt": 4070909100
+    },
+    "one-3": {
+      "issuer": "https://identity.example.test",
+      "digest": "3ebcba5511f8d70e6630b8b500a1d4f5ad9f55275327a7e72d2db96ea3986288",
+      "expiresAt": 4070909100
+    },
+    "three-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "expiresAt": 4070909100
+    },
+    "two-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "expiresAt": 4070909100
+    }
+  },
+  "signOns": {}
+}
+-- native-provisioning.json
+{
+  "version": 2,
+  "accounts": {
+    "https://identity.example.test\u0000one": {
+      "revision": 1,
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-one",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000three": {
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "desiredActive": true,
+      "status": "failed",
+      "failure": "address_conflict",
+      "primaryMailbox": "local-three",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000two": {
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-two",
+      "legacyMixedUse": false
+    }
+  },
+  "mailboxes": {
+    "local-one": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id1>"
+    },
+    "local-three": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "three"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      }
+    },
+    "local-two": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "two"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id2>"
+    }
+  },
+  "addresses": {
+    "one@example.test": {
+      "mailbox": "local-one",
+      "kind": "primary",
+      "state": "active",
+      "generation": 3,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        }
+      ]
+    },
+    "sales@example.test": {
+      "mailbox": "local-two",
+      "kind": "alias",
+      "state": "active",
+      "generation": 3,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        },
+        {
+          "mailbox": "local-two",
+          "generation": 3
+        }
+      ]
+    },
+    "two@example.test": {
+      "mailbox": "local-two",
+      "kind": "primary",
+      "state": "active",
+      "generation": 1,
+      "history": [
+        {
+          "mailbox": "local-two",
+          "generation": 1
+        }
+      ]
+    }
+  },
+  "addressGenerations": true
+}
+== extra mailbox created and disabled
+-- sso-lifecycle.json
+{
+  "nativeProvisioningInitialized": true,
+  "logouts": {},
+  "directory": {
+    "https://identity.example.test\u0000one": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "one",
+        "externalId": "one",
+        "userName": "one",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"3\""
+        }
+      },
+      "revision": 3,
+      "digest": "3ebcba5511f8d70e6630b8b500a1d4f5ad9f55275327a7e72d2db96ea3986288",
+      "active": true,
+      "eventId": "one-3"
+    },
+    "https://identity.example.test\u0000three": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "three",
+        "externalId": "three",
+        "userName": "three",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "active": true,
+      "eventId": "three-1"
+    },
+    "https://identity.example.test\u0000two": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "two",
+        "externalId": "two",
+        "userName": "two",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "two@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "active": true,
+      "eventId": "two-1"
+    }
+  },
+  "events": {
+    "one-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "expiresAt": 4070909100
+    },
+    "one-3": {
+      "issuer": "https://identity.example.test",
+      "digest": "3ebcba5511f8d70e6630b8b500a1d4f5ad9f55275327a7e72d2db96ea3986288",
+      "expiresAt": 4070909100
+    },
+    "three-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "expiresAt": 4070909100
+    },
+    "two-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "expiresAt": 4070909100
+    }
+  },
+  "signOns": {}
+}
+-- native-provisioning.json
+{
+  "version": 2,
+  "accounts": {
+    "https://identity.example.test\u0000one": {
+      "revision": 1,
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-one",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000three": {
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "desiredActive": true,
+      "status": "failed",
+      "failure": "address_conflict",
+      "primaryMailbox": "local-three",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000two": {
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-two",
+      "legacyMixedUse": false
+    }
+  },
+  "mailboxes": {
+    "local-one": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id1>"
+    },
+    "local-three": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "three"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      }
+    },
+    "local-two": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "two"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id2>"
+    },
+    "<id3>": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "extra",
+      "state": "disabled",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id4>"
+    }
+  },
+  "addresses": {
+    "box@example.test": {
+      "mailbox": "<id3>",
+      "kind": "primary",
+      "state": "disabled",
+      "generation": 3,
+      "history": [
+        {
+          "mailbox": "<id3>",
+          "generation": 1
+        }
+      ]
+    },
+    "one@example.test": {
+      "mailbox": "local-one",
+      "kind": "primary",
+      "state": "active",
+      "generation": 3,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        }
+      ]
+    },
+    "sales@example.test": {
+      "mailbox": "local-two",
+      "kind": "alias",
+      "state": "active",
+      "generation": 3,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        },
+        {
+          "mailbox": "local-two",
+          "generation": 3
+        }
+      ]
+    },
+    "two@example.test": {
+      "mailbox": "local-two",
+      "kind": "primary",
+      "state": "active",
+      "generation": 1,
+      "history": [
+        {
+          "mailbox": "local-two",
+          "generation": 1
+        }
+      ]
+    }
+  },
+  "addressGenerations": true
+}
+== deactivation and promotion sync address states
+-- sso-lifecycle.json
+{
+  "nativeProvisioningInitialized": true,
+  "logouts": {},
+  "directory": {
+    "https://identity.example.test\u0000one": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "one",
+        "externalId": "one",
+        "userName": "one",
+        "active": true,
+        "roles": [
+          "kypost.admin"
+        ],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"4\""
+        }
+      },
+      "revision": 4,
+      "digest": "e56f2fda1f6bb342f1023fb730322ef2f05abf5ebf9c3bde5c3092afa0ba1f41",
+      "active": true,
+      "eventId": "one-4"
+    },
+    "https://identity.example.test\u0000three": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "three",
+        "externalId": "three",
+        "userName": "three",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "active": true,
+      "eventId": "three-1"
+    },
+    "https://identity.example.test\u0000two": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "two",
+        "externalId": "two",
+        "userName": "two",
+        "active": false,
+        "roles": [],
+        "emails": [
+          {
+            "value": "two@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"2\""
+        }
+      },
+      "revision": 2,
+      "digest": "433f1d2e485265708c1cbc4bb687e19ba1ef5c1b2b009b0c299ba231ad98561b",
+      "active": false,
+      "eventId": "two-2"
+    }
+  },
+  "events": {
+    "one-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "expiresAt": 4070909100
+    },
+    "one-3": {
+      "issuer": "https://identity.example.test",
+      "digest": "3ebcba5511f8d70e6630b8b500a1d4f5ad9f55275327a7e72d2db96ea3986288",
+      "expiresAt": 4070909100
+    },
+    "one-4": {
+      "issuer": "https://identity.example.test",
+      "digest": "e56f2fda1f6bb342f1023fb730322ef2f05abf5ebf9c3bde5c3092afa0ba1f41",
+      "expiresAt": 4070909100
+    },
+    "three-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "expiresAt": 4070909100
+    },
+    "two-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "expiresAt": 4070909100
+    },
+    "two-2": {
+      "issuer": "https://identity.example.test",
+      "digest": "433f1d2e485265708c1cbc4bb687e19ba1ef5c1b2b009b0c299ba231ad98561b",
+      "expiresAt": 4070909100
+    }
+  },
+  "signOns": {}
+}
+-- native-provisioning.json
+{
+  "version": 2,
+  "accounts": {
+    "https://identity.example.test\u0000one": {
+      "revision": 1,
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-one",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000three": {
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "desiredActive": true,
+      "status": "failed",
+      "failure": "address_conflict",
+      "primaryMailbox": "local-three",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000two": {
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-two",
+      "legacyMixedUse": false
+    }
+  },
+  "mailboxes": {
+    "local-one": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id1>"
+    },
+    "local-three": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "three"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      }
+    },
+    "local-two": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "two"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id2>"
+    },
+    "<id3>": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "extra",
+      "state": "disabled",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id4>"
+    }
+  },
+  "addresses": {
+    "box@example.test": {
+      "mailbox": "<id3>",
+      "kind": "primary",
+      "state": "disabled",
+      "generation": 3,
+      "history": [
+        {
+          "mailbox": "<id3>",
+          "generation": 1
+        }
+      ]
+    },
+    "one@example.test": {
+      "mailbox": "local-one",
+      "kind": "primary",
+      "state": "disabled",
+      "generation": 4,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        }
+      ]
+    },
+    "sales@example.test": {
+      "mailbox": "local-two",
+      "kind": "alias",
+      "state": "disabled",
+      "generation": 4,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        },
+        {
+          "mailbox": "local-two",
+          "generation": 3
+        }
+      ]
+    },
+    "two@example.test": {
+      "mailbox": "local-two",
+      "kind": "primary",
+      "state": "disabled",
+      "generation": 2,
+      "history": [
+        {
+          "mailbox": "local-two",
+          "generation": 1
+        }
+      ]
+    }
+  },
+  "addressGenerations": true
+}
+== unchanged reconcile pass, logout, sign-on and release floor
+-- sso-lifecycle.json
+{
+  "releaseFloors": {
+    "https://identity.example.test\u0000two": {
+      "revision": 2,
+      "active": false
+    }
+  },
+  "nativeProvisioningInitialized": true,
+  "logouts": {
+    "https://identity.example.test\u0000client\u0000jti": {
+      "issuer": "https://identity.example.test",
+      "clientId": "client",
+      "subject": "one",
+      "sid": "sid",
+      "issuedAt": 4070908800,
+      "retainUntil": 4070908800
+    }
+  },
+  "directory": {
+    "https://identity.example.test\u0000one": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "one",
+        "externalId": "one",
+        "userName": "one",
+        "active": true,
+        "roles": [
+          "kypost.admin"
+        ],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"4\""
+        }
+      },
+      "revision": 4,
+      "digest": "e56f2fda1f6bb342f1023fb730322ef2f05abf5ebf9c3bde5c3092afa0ba1f41",
+      "active": true,
+      "eventId": "one-4"
+    },
+    "https://identity.example.test\u0000three": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "three",
+        "externalId": "three",
+        "userName": "three",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "active": true,
+      "eventId": "three-1"
+    },
+    "https://identity.example.test\u0000two": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "two",
+        "externalId": "two",
+        "userName": "two",
+        "active": false,
+        "roles": [],
+        "emails": [
+          {
+            "value": "two@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"2\""
+        }
+      },
+      "revision": 2,
+      "digest": "433f1d2e485265708c1cbc4bb687e19ba1ef5c1b2b009b0c299ba231ad98561b",
+      "active": false,
+      "eventId": "two-2"
+    }
+  },
+  "events": {
+    "one-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "expiresAt": 4070909100
+    },
+    "one-3": {
+      "issuer": "https://identity.example.test",
+      "digest": "3ebcba5511f8d70e6630b8b500a1d4f5ad9f55275327a7e72d2db96ea3986288",
+      "expiresAt": 4070909100
+    },
+    "one-4": {
+      "issuer": "https://identity.example.test",
+      "digest": "e56f2fda1f6bb342f1023fb730322ef2f05abf5ebf9c3bde5c3092afa0ba1f41",
+      "expiresAt": 4070909100
+    },
+    "three-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "expiresAt": 4070909100
+    },
+    "two-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "expiresAt": 4070909100
+    },
+    "two-2": {
+      "issuer": "https://identity.example.test",
+      "digest": "433f1d2e485265708c1cbc4bb687e19ba1ef5c1b2b009b0c299ba231ad98561b",
+      "expiresAt": 4070909100
+    }
+  },
+  "signOns": {
+    "https://identity.example.test\u0000client\u0000sign-on": 4070908800
+  }
+}
+-- native-provisioning.json
+{
+  "version": 2,
+  "accounts": {
+    "https://identity.example.test\u0000one": {
+      "revision": 1,
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-one",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000three": {
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "desiredActive": true,
+      "status": "failed",
+      "failure": "address_conflict",
+      "primaryMailbox": "local-three",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000two": {
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-two",
+      "legacyMixedUse": false
+    }
+  },
+  "mailboxes": {
+    "local-one": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id1>"
+    },
+    "local-three": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "three"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      }
+    },
+    "local-two": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "two"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id2>"
+    },
+    "<id3>": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "extra",
+      "state": "disabled",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 100
+      },
+      "source": "<id4>"
+    }
+  },
+  "addresses": {
+    "box@example.test": {
+      "mailbox": "<id3>",
+      "kind": "primary",
+      "state": "disabled",
+      "generation": 3,
+      "history": [
+        {
+          "mailbox": "<id3>",
+          "generation": 1
+        }
+      ]
+    },
+    "one@example.test": {
+      "mailbox": "local-one",
+      "kind": "primary",
+      "state": "disabled",
+      "generation": 4,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        }
+      ]
+    },
+    "sales@example.test": {
+      "mailbox": "local-two",
+      "kind": "alias",
+      "state": "disabled",
+      "generation": 4,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        },
+        {
+          "mailbox": "local-two",
+          "generation": 3
+        }
+      ]
+    },
+    "two@example.test": {
+      "mailbox": "local-two",
+      "kind": "primary",
+      "state": "disabled",
+      "generation": 2,
+      "history": [
+        {
+          "mailbox": "local-two",
+          "generation": 1
+        }
+      ]
+    }
+  },
+  "addressGenerations": true
+}
+== limit migration rewrites the ledger without the state rule
+-- sso-lifecycle.json
+{
+  "releaseFloors": {
+    "https://identity.example.test\u0000two": {
+      "revision": 2,
+      "active": false
+    }
+  },
+  "nativeProvisioningInitialized": true,
+  "logouts": {
+    "https://identity.example.test\u0000client\u0000jti": {
+      "issuer": "https://identity.example.test",
+      "clientId": "client",
+      "subject": "one",
+      "sid": "sid",
+      "issuedAt": 4070908800,
+      "retainUntil": 4070908800
+    }
+  },
+  "directory": {
+    "https://identity.example.test\u0000one": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "one",
+        "externalId": "one",
+        "userName": "one",
+        "active": true,
+        "roles": [
+          "kypost.admin"
+        ],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"4\""
+        }
+      },
+      "revision": 4,
+      "digest": "e56f2fda1f6bb342f1023fb730322ef2f05abf5ebf9c3bde5c3092afa0ba1f41",
+      "active": true,
+      "eventId": "one-4"
+    },
+    "https://identity.example.test\u0000three": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "three",
+        "externalId": "three",
+        "userName": "three",
+        "active": true,
+        "roles": [],
+        "emails": [
+          {
+            "value": "one@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"1\""
+        }
+      },
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "active": true,
+      "eventId": "three-1"
+    },
+    "https://identity.example.test\u0000two": {
+      "resource": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "two",
+        "externalId": "two",
+        "userName": "two",
+        "active": false,
+        "roles": [],
+        "emails": [
+          {
+            "value": "two@example.test",
+            "primary": true
+          }
+        ],
+        "meta": {
+          "version": "W/\"2\""
+        }
+      },
+      "revision": 2,
+      "digest": "433f1d2e485265708c1cbc4bb687e19ba1ef5c1b2b009b0c299ba231ad98561b",
+      "active": false,
+      "eventId": "two-2"
+    }
+  },
+  "events": {
+    "one-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "expiresAt": 4070909100
+    },
+    "one-3": {
+      "issuer": "https://identity.example.test",
+      "digest": "3ebcba5511f8d70e6630b8b500a1d4f5ad9f55275327a7e72d2db96ea3986288",
+      "expiresAt": 4070909100
+    },
+    "one-4": {
+      "issuer": "https://identity.example.test",
+      "digest": "e56f2fda1f6bb342f1023fb730322ef2f05abf5ebf9c3bde5c3092afa0ba1f41",
+      "expiresAt": 4070909100
+    },
+    "three-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "expiresAt": 4070909100
+    },
+    "two-1": {
+      "issuer": "https://identity.example.test",
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "expiresAt": 4070909100
+    },
+    "two-2": {
+      "issuer": "https://identity.example.test",
+      "digest": "433f1d2e485265708c1cbc4bb687e19ba1ef5c1b2b009b0c299ba231ad98561b",
+      "expiresAt": 4070909100
+    }
+  },
+  "signOns": {
+    "https://identity.example.test\u0000client\u0000sign-on": 4070908800
+  }
+}
+-- native-provisioning.json
+{
+  "version": 2,
+  "accounts": {
+    "https://identity.example.test\u0000one": {
+      "revision": 1,
+      "digest": "40658dff535412a18c751d2d241120813286570b8e693e701e7e0e3ebd52802f",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-one",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000three": {
+      "revision": 1,
+      "digest": "1e3cb15d115de7a54050fe37ad94e25baab63569c27ae0c9949716c9aee2b194",
+      "desiredActive": true,
+      "status": "failed",
+      "failure": "address_conflict",
+      "primaryMailbox": "local-three",
+      "legacyMixedUse": false
+    },
+    "https://identity.example.test\u0000two": {
+      "revision": 1,
+      "digest": "d5f0a6a4d10b815ebbeeaebb2e1eb7a4ab848e56688e3389b93b4948a5e351f4",
+      "desiredActive": true,
+      "status": "applied",
+      "primaryMailbox": "local-two",
+      "legacyMixedUse": false
+    }
+  },
+  "mailboxes": {
+    "local-one": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 101
+      },
+      "source": "<id1>"
+    },
+    "local-three": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "three"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 101
+      }
+    },
+    "local-two": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "two"
+      },
+      "kind": "primary",
+      "state": "active",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 101
+      },
+      "source": "<id2>"
+    },
+    "<id3>": {
+      "owner": {
+        "issuer": "https://identity.example.test",
+        "subject": "one"
+      },
+      "kind": "extra",
+      "state": "disabled",
+      "stateRoot": "$ROOT",
+      "limits": {
+        "MessageBytes": 1048576,
+        "PayloadBytes": 4194304,
+        "Records": 101
+      },
+      "source": "<id4>"
+    }
+  },
+  "addresses": {
+    "box@example.test": {
+      "mailbox": "<id3>",
+      "kind": "primary",
+      "state": "disabled",
+      "generation": 3,
+      "history": [
+        {
+          "mailbox": "<id3>",
+          "generation": 1
+        }
+      ]
+    },
+    "one@example.test": {
+      "mailbox": "local-one",
+      "kind": "primary",
+      "state": "disabled",
+      "generation": 4,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        }
+      ]
+    },
+    "sales@example.test": {
+      "mailbox": "local-two",
+      "kind": "alias",
+      "state": "disabled",
+      "generation": 4,
+      "history": [
+        {
+          "mailbox": "local-one",
+          "generation": 1
+        },
+        {
+          "mailbox": "local-two",
+          "generation": 3
+        }
+      ]
+    },
+    "two@example.test": {
+      "mailbox": "local-two",
+      "kind": "primary",
+      "state": "disabled",
+      "generation": 2,
+      "history": [
+        {
+          "mailbox": "local-two",
+          "generation": 1
+        }
+      ]
+    }
+  },
+  "addressGenerations": true
+}
