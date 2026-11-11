@@ -117,18 +117,22 @@ func TestNativeLedgerReadRefreshAndIOFailure(t *testing.T) {
 	}
 }
 
-// nativeUserOwnership decodes a ledger read taken before its lifecycle read,
-// which is safe only while the initialization flag precedes every ledger write.
-func TestNativeInitializationPrecedesLedgerWrite(t *testing.T) {
+// The initialization flag and the ledger rows commit in one transaction: a
+// first ledger write that fails leaves neither.
+func TestNativeInitializationCommitsWithLedger(t *testing.T) {
 	s := NewLifecycleStore(t.TempDir())
-	if err := os.Mkdir(s.nativePath(), 0700); err != nil { // the ledger write must fail
-		t.Fatal(err)
-	}
-	if err := s.saveNative(nativeAssignments{}); err == nil {
-		t.Fatal("ledger write unexpectedly succeeded")
+	bad := nativeAssignments{stored: nativeLedger{Addresses: map[string]nativeLedgerAddress{"x@example.test": {Mailbox: "no-such-mailbox", Kind: "alias", State: "active", Generation: 1, History: []nativeAddressHistory{{"no-such-mailbox", 1}}}}}}
+	if err := s.saveNative(bad); err == nil {
+		t.Fatal("invalid ledger written")
 	}
 	lifecycle, err := s.load()
-	if err != nil || !lifecycle.NativeProvisioningInitialized {
-		t.Fatal("ledger written before the initialization flag", err)
+	if err != nil || lifecycle.NativeProvisioningInitialized {
+		t.Fatal("initialization flag committed without its ledger", err)
+	}
+	if err := s.saveNative(nativeAssignments{}); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle, err = s.load(); err != nil || !lifecycle.NativeProvisioningInitialized {
+		t.Fatal("initialization flag", err)
 	}
 }

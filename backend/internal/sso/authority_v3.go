@@ -14,7 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"testing"
+	"sync"
 	"unicode"
 )
 
@@ -177,20 +177,28 @@ func authorityV3Rows(life lifecycleFile, l *nativeLedger) (authorityRows, error)
 			return nil, err
 		}
 	}
+	r := authorityRows{}
+	r.add("meta", "change", "0")
+	r.add("meta", "format", "3")
+	r.add("meta", "initialized", strconv.FormatInt(flag(life.NativeProvisioningInitialized), 10))
+	if l != nil {
+		r.ledgerRows(*l)
+	}
+	return r, r.lifecycleRows(life)
+}
+
+// lifecycleRows adds the lifecycle's rows, meta aside.
+func (r authorityRows) lifecycleRows(life lifecycleFile) error {
 	var err error
 	js := func(v any) string {
 		raw, e := json.Marshal(v)
 		err = cmp.Or(err, e)
 		return string(raw)
 	}
-	r := authorityRows{}
-	r.add("meta", "change", "0")
-	r.add("meta", "format", "3")
-	r.add("meta", "initialized", strconv.FormatInt(flag(life.NativeProvisioningInitialized), 10))
 	for key, d := range life.Directory {
 		issuer, subject, ok := strings.Cut(key, "\x00")
 		if !ok {
-			return nil, ErrNativeProvisioning
+			return ErrNativeProvisioning
 		}
 		var resource any
 		if d.Resource != nil {
@@ -200,21 +208,6 @@ func authorityV3Rows(life lifecycleFile, l *nativeLedger) (authorityRows, error)
 	}
 	for k := range primaryEmails(life.Directory) {
 		r.add("directory_primary_emails", k[0], k[1], k[2])
-	}
-	if l != nil {
-		for id, m := range l.Mailboxes {
-			r.add("mailboxes", id, m.Owner.Issuer, m.Owner.Subject, m.Kind, m.State, m.StateRoot, m.Limits.MessageBytes, m.Limits.PayloadBytes, int64(m.Limits.Records), m.Source)
-		}
-		for key, a := range l.Accounts {
-			issuer, subject, _ := strings.Cut(key, "\x00") // validated: key is the owner's
-			r.add("accounts", issuer, subject, a.Revision, a.Digest, flag(a.DesiredActive), a.Status, a.Failure, a.PrimaryMailbox, flag(a.LegacyMixedUse))
-		}
-		for address, x := range l.Addresses {
-			r.add("addresses", address, x.Mailbox, x.Kind, x.State, x.Generation)
-			for _, h := range x.History {
-				r.add("address_history", address, h.Generation, h.Mailbox)
-			}
-		}
 	}
 	for k, e := range life.Events {
 		r.add("directory_events", k, js(e), e.ExpiresAt)
@@ -239,7 +232,24 @@ func authorityV3Rows(life lifecycleFile, l *nativeLedger) (authorityRows, error)
 			r.add("lifecycle_records", name, js(v))
 		}
 	}
-	return r, err
+	return err
+}
+
+// ledgerRows adds a validated ledger's rows. Account keys are owner keys.
+func (r authorityRows) ledgerRows(l nativeLedger) {
+	for id, m := range l.Mailboxes {
+		r.add("mailboxes", id, m.Owner.Issuer, m.Owner.Subject, m.Kind, m.State, m.StateRoot, m.Limits.MessageBytes, m.Limits.PayloadBytes, int64(m.Limits.Records), m.Source)
+	}
+	for key, a := range l.Accounts {
+		issuer, subject, _ := strings.Cut(key, "\x00") // validated: key is the owner's
+		r.add("accounts", issuer, subject, a.Revision, a.Digest, flag(a.DesiredActive), a.Status, a.Failure, a.PrimaryMailbox, flag(a.LegacyMixedUse))
+	}
+	for address, x := range l.Addresses {
+		r.add("addresses", address, x.Mailbox, x.Kind, x.State, x.Generation)
+		for _, h := range x.History {
+			r.add("address_history", address, h.Generation, h.Mailbox)
+		}
+	}
 }
 
 // rowDecoder reads typed values from rows; the first mismatch sticks.
@@ -288,7 +298,17 @@ func decodeMap[V any](d *rowDecoder, rows [][]any) map[string]V {
 	return m
 }
 
-// decodeLifecycle (rows) is the inverse of authorityV3Rows: the lifecycle
+// directory decodes one directory row.
+func (d *rowDecoder) directory(row []any) DirectoryState {
+	s := DirectoryState{Revision: d.int(row[2]), Digest: d.str(row[3]), Active: d.bool(row[4]), EventID: d.str(row[5]), RevokedBefore: d.int(row[6])}
+	if row[7] != nil {
+		s.Resource = &DirectoryUser{}
+		d.json(row[7], s.Resource)
+	}
+	return s
+}
+
+// decode is the inverse of authorityV3Rows: the lifecycle
 // record and, when initialized, the v2-shaped ledger.
 func (r authorityRows) decode() (lifecycleFile, *nativeLedger, error) {
 	d := &rowDecoder{}
@@ -304,12 +324,7 @@ func (r authorityRows) decode() (lifecycleFile, *nativeLedger, error) {
 	life.NativeProvisioningInitialized = meta["initialized"] == "1"
 	life.ensureMaps()
 	for _, row := range r["directory"] {
-		s := DirectoryState{Revision: d.int(row[2]), Digest: d.str(row[3]), Active: d.bool(row[4]), EventID: d.str(row[5]), RevokedBefore: d.int(row[6])}
-		if row[7] != nil {
-			s.Resource = &DirectoryUser{}
-			d.json(row[7], s.Resource)
-		}
-		life.Directory[directoryKey(d.str(row[0]), d.str(row[1]))] = s
+		life.Directory[directoryKey(d.str(row[0]), d.str(row[1]))] = d.directory(row)
 	}
 	stored := map[[3]string]bool{}
 	for _, row := range r["directory_primary_emails"] {
@@ -382,26 +397,38 @@ func (r authorityRows) decode() (lifecycleFile, *nativeLedger, error) {
 	return life, l, d.err
 }
 
+// queryer is a database handle, connection or transaction.
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+const schemaQuery = "SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_schema ORDER BY type, name"
+
 // normalizedSchema lists sqlite_schema with whitespace collapsed, rootpage aside.
-func normalizedSchema(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx, "SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_schema ORDER BY type, name")
-	if err != nil {
+func normalizedSchema(ctx context.Context, db queryer) ([]string, error) {
+	r := authorityRows{}
+	if err := queryRows(ctx, db, "schema", schemaQuery, r); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	return schemaOf(r["schema"]), nil
+}
+
+func schemaOf(rows [][]any) []string {
 	var out []string
-	for rows.Next() {
-		var typ, name, table, text string
-		if err := rows.Scan(&typ, &name, &table, &text); err != nil {
-			return nil, err
+	for _, row := range rows {
+		parts := make([]string, len(row))
+		for i, v := range row {
+			parts[i], _ = v.(string)
 		}
-		out = append(out, strings.Join([]string{typ, name, table, strings.Join(strings.Fields(text), " ")}, "\x00"))
+		parts[3] = strings.Join(strings.Fields(parts[3]), " ")
+		out = append(out, strings.Join(parts, "\x00"))
 	}
-	return out, rows.Err()
+	return out
 }
 
 // referenceSchemaV3 is sqlite_schema of a fresh database built from authoritySchemaV3.
-func referenceSchemaV3(ctx context.Context) ([]string, error) {
+var referenceSchemaV3 = sync.OnceValues(func() ([]string, error) {
+	ctx := context.Background()
 	db, err := sql.Open("sqlite", "file::memory:")
 	if err != nil {
 		return nil, err
@@ -412,7 +439,7 @@ func referenceSchemaV3(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return normalizedSchema(ctx, db)
-}
+})
 
 // readAuthorityV3Historical opens a staged v3 database read-only and immutable
 // and returns its rows. It refuses (ErrNativeMigration) unless the file is a
@@ -422,8 +449,12 @@ func referenceSchemaV3(ctx context.Context) ([]string, error) {
 // foreign_key_check pass,
 // all before any row is read (findings S2, S3).
 func readAuthorityV3Historical(ctx context.Context, path string) (authorityRows, error) {
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+	info, err := privateRegular(path)
+	if err != nil {
+		return nil, err
+	}
+	// immutable=1 ignores a WAL: committed rows still in one would be unseen.
+	if wal, err := os.Lstat(path + "-wal"); err == nil && wal.Size() > 0 || err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNativeMigration
 	}
 	abs, err := filepath.Abs(path)
@@ -448,7 +479,7 @@ func readAuthorityV3Historical(ctx context.Context, path string) (authorityRows,
 	if err := db.QueryRowContext(ctx, "PRAGMA writable_schema").Scan(&defensive); err != nil || trusted != 0 || recursive != 1 || queryOnly != 1 || defensive != 0 || version != 3 {
 		return nil, ErrNativeMigration
 	}
-	want, err := referenceSchemaV3(ctx)
+	want, err := referenceSchemaV3()
 	if err != nil {
 		return nil, err
 	}
@@ -478,8 +509,13 @@ func readAuthorityV3Historical(ctx context.Context, path string) (authorityRows,
 	return r, nil
 }
 
-func readTable(ctx context.Context, db *sql.DB, table string, r authorityRows) error {
-	rows, err := db.QueryContext(ctx, "SELECT * FROM "+table) // fixed table names only
+func readTable(ctx context.Context, db queryer, table string, r authorityRows) error {
+	return queryRows(ctx, db, table, "SELECT * FROM "+table, r) // fixed table names only
+}
+
+// queryRows adds the rows of a fixed query to r under name.
+func queryRows(ctx context.Context, db queryer, name, query string, r authorityRows, args ...any) error {
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -497,7 +533,7 @@ func readTable(ctx context.Context, db *sql.DB, table string, r authorityRows) e
 		if err := rows.Scan(dst...); err != nil {
 			return err
 		}
-		r.add(table, values...)
+		r.add(name, values...)
 	}
 	return rows.Err()
 }
@@ -520,6 +556,7 @@ func jsonStub(path string, want map[string]any) (bool, error) {
 func (s *LifecycleStore) historicalAuthority() (lifecycleFile, nativeAssignments, int, error) {
 	dir := filepath.Dir(s.path)
 	if _, err := os.Lstat(filepath.Join(dir, NativeAuthorityFile)); errors.Is(err, os.ErrNotExist) {
+		s := s.staged()
 		lifecycle, err := s.load()
 		if err != nil {
 			return lifecycle, nativeAssignments{}, 0, err
@@ -532,11 +569,20 @@ func (s *LifecycleStore) historicalAuthority() (lifecycleFile, nativeAssignments
 			return lifecycleFile{}, nativeAssignments{}, 0, ErrNativeMigration
 		}
 	}
-	rows, err := readAuthorityV3Historical(context.Background(), filepath.Join(dir, NativeAuthorityFile))
-	if err != nil {
-		return lifecycleFile{}, nativeAssignments{}, 0, err
+	path := filepath.Join(dir, NativeAuthorityFile)
+	var life lifecycleFile
+	var l *nativeLedger
+	var err error
+	if wal, walErr := os.Lstat(path + "-wal"); walErr == nil && wal.Size() > 0 {
+		// A written store (live, or staging mid-write): its WAL holds rows
+		// the immutable opener would not see. Read it as the runtime does.
+		life, l, err = readAuthorityFile(context.Background(), path)
+	} else {
+		var rows authorityRows
+		if rows, err = readAuthorityV3Historical(context.Background(), path); err == nil {
+			life, l, err = rows.decode()
+		}
 	}
-	life, l, err := rows.decode()
 	if err != nil || l == nil {
 		return life, nativeAssignments{Accounts: map[string]NativeAssignment{}}, 0, err
 	}
@@ -545,7 +591,7 @@ func (s *LifecycleStore) historicalAuthority() (lifecycleFile, nativeAssignments
 }
 
 // writeAuthorityV3 creates path (which must not exist) with schema and rows,
-// in one transaction. Only tests call it until the SQLite backend lands.
+// in one transaction (buildAuthority's first step).
 func writeAuthorityV3(ctx context.Context, path, schema string, r authorityRows) (err error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
@@ -579,49 +625,10 @@ func writeAuthorityV3(ctx context.Context, path, schema string, r authorityRows)
 			}
 		}
 	}
-	return tx.Commit()
-}
-
-// WriteNativeAuthorityV3ForTest converts configDir's v2 lifecycle and ledger
-// into native-authority.db plus both stubs, as migration will. No binary
-// writes v3 yet, so this is a test fixture only.
-func WriteNativeAuthorityV3ForTest(configDir string) error {
-	if !testing.Testing() {
-		panic("v3 native authority fixture outside tests")
-	}
-	s := NewLifecycleStore(configDir)
-	life, err := s.load()
-	if err != nil {
+	if err := tx.Commit(); err != nil {
 		return err
 	}
-	var l *nativeLedger
-	if raw, err := os.ReadFile(s.nativePath()); err == nil {
-		l = &nativeLedger{}
-		if err := json.Unmarshal(raw, l); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	rows, err := authorityV3Rows(life, l)
-	if err != nil {
-		return err
-	}
-	if err := writeAuthorityV3(context.Background(), filepath.Join(configDir, NativeAuthorityFile), authoritySchemaV3, rows); err != nil {
-		return err
-	}
-	// The ledger stub last, as migration writes it.
-	for _, stub := range []struct {
-		path string
-		doc  map[string]any
-	}{{s.path, lifecycleStubV3}, {s.nativePath(), ledgerStubV3}} {
-		raw, err := json.Marshal(stub.doc)
-		if err == nil {
-			err = os.WriteFile(stub.path, raw, 0600)
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	// Leave every row in the file itself, so a copy or rename needs no WAL.
+	_, err = db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+	return err
 }

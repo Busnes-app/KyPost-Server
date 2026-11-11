@@ -28,6 +28,18 @@ non-prerelease version.
 
 ### Performance
 
+- Native authority (the SSO lifecycle and the native mailbox ledger) moves into
+  one SQLite database, `native-authority.db`, so each mail-client operation reads
+  only its own account's rows instead of the two whole JSON files: admission
+  cost no longer grows with the number of accounts. Every operation still reads
+  current committed authority; nothing is cached. `migrate-native` converts
+  existing installs at the next start (keeping `*.v2-migrated` copies; delete
+  them after the first backup on this version), for every SSO install. If it
+  fails, native mail and SSO sign-in stay refused until it is fixed, while
+  password logins and external IMAP keep working. Older binaries refuse the
+  converted files; roll back by restoring the pre-upgrade backup. See
+  docs/NATIVE_AUTHORITY_PER_ACCOUNT.md and docs/RESTORE.md.
+
 - Bound the API's mail-client cache to 64 entries, like the daemon's, so open
   files no longer grow with every mailbox used since startup.
 

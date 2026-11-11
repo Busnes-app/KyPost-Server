@@ -71,27 +71,36 @@ Native acquisition and each mailbox operation still recheck current admission,
 source/owner/restore state. Mailbox WAL/FULL durability is unchanged.
 
 
-### Native authority decoded contents
+### Native authority storage
 
-Each API/daemon process may retain one private decoded directory view and one
-primary-assignment view. Admission and ordinary storage/ownership validation
-share these existing bounded views. Every operation first reads the current complete file;
-reuse requires exact byte equality, and read/parse failures refuse access without
-using older contents. Ordinary validation still checks format, lifecycle
-initialization and prepared storage; it grants no mail access. Ownership-only
-revocation remains available under a hold, while ordinary storage access refuses.
-Current user, role, domain, ownership/source/storage,
-migration and restore checks remain live. Mutation and historical/recovery
-full-record readers keep their fresh decoders. No permission decision is cached.
+Native authority (the directory lifecycle and the mailbox/address ledger) is
+one SQLite database, `$CONFIG/native-authority.db`, beside two small stubs that
+make older binaries refuse ([design](docs/NATIVE_AUTHORITY_PER_ACCOUNT.md)).
+Every admission, ownership check, outbound claim and receiving bind runs its
+own read transaction on current committed rows; nothing decoded outlives the
+call and no permission decision, view or byte cache is retained (the bounded
+decoded views of earlier releases are gone). Each process holds the database
+open (owner decision Q1): SQLite's change-counter protocol makes each
+transaction see the latest commit, and after each read the store requires the
+path to still name the file it opened (`os.SameFile`), refusing and reopening
+otherwise.
 
-The format guard also reads complete current ledger bytes: exact equality with
-that already fully validated version-2 assignment view can skip a redundant
-version-header scan. A miss runs the original header decoder. Legacy-domain,
-tombstone and required-file checks still run every time. Mail admission and ordinary
-storage/ownership validation decode their assignment from that same read, so
-both checks judge one snapshot. No migration decision,
-extra raw copy or additional view is retained; mutable and historical readers
-still decode complete current records.
+Every connection is checked when it opens: `trusted_schema=OFF`, defensive mode,
+`recursive_triggers=ON`, foreign keys, WAL, `synchronous=FULL`, `user_version`
+3 and an exact `sqlite_schema` match, so the keys, the never-delete and
+append-only triggers and the immutable-identity triggers that carry the global
+invariants cannot be dropped behind the store. Writers never use REPLACE. The
+file is a private regular file (mode `&0077 == 0`, not a symlink), created by
+rename. Each read validates the rows it uses; the whole store (integrity, foreign
+keys, every row) is validated at migration, at `migrate-native` startup, in
+every backup and in the minute reconcile pass, whose failure refuses only that
+pass's writes (owner decision Q5): damage to one account's rows no longer
+refuses every other account. A process able to write the config root can still
+rewrite the database, as it could the JSON files.
+
+`migrate-native` keeps `sso-lifecycle.json.v2-migrated` and
+`native-provisioning.json.v2-migrated`, which hold directory PII and stale
+authority; delete them after the first successful v3 backup (docs/RESTORE.md).
 
 An open mail client's per-operation admission re-runs every prepared-storage
 check on two read-only handles the client keeps for its own `state.db` and
@@ -100,13 +109,6 @@ still name the files those handles opened, so deleted or replaced storage is
 refused on the next operation. Every other caller keeps the full reopening path.
 Each cached client holds about 8 file descriptors instead of 3; the API and the
 daemon each retain at most 64 cached mail clients.
-
-This trades bounded process memory for fewer repeated JSON decodes: each retained
-input is at most 8 MiB and each view at most 4,096 directory/account entries, with
-bounded directory collection shapes. Decoded values and copied results use
-additional memory; 16 MiB of retained input is not a total heap bound. Larger or
-ineligible inputs still work through ordinary decoding. This optimization alone
-establishes no worker capacity or smaller safe RAM budget.
 
 ### Browser OpenPGP RSA policy
 

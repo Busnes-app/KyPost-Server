@@ -40,6 +40,9 @@ func legacyMixedUseAdmin(t *testing.T, s *Server, resource map[string]any) {
 	if migrated, err := sso.MigrateNative(context.Background(), s.configDir, key); err != nil || !migrated {
 		t.Fatal("legacy migration", migrated, err)
 	}
+	if migrated, err := sso.MigrateAuthority(context.Background(), s.configDir); err != nil || !migrated {
+		t.Fatal("v3 migration", migrated, err)
+	}
 }
 
 func adminRuntimeUser(admin bool) map[string]any {
