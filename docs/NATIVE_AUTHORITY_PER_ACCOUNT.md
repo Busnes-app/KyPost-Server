@@ -610,7 +610,19 @@ alone):
 | main, authority reads | 0.45 ms, 1.82 MB | 1.21 ms, 5.45 MB | 92.7 ms, 44.7 MB | 76.8×, 8.2× |
 | PR 3, authority reads | 127 µs, 13.2 KB | 128 µs, 13.2 KB | 128 µs, 13.2 KB | 1.00×, 1.00× |
 
-About a third of the 127 µs is SQLite re-parsing each statement (no prepared
-statement cache). Still unproven here: the busnes.app matched-pair
+About a third of the 127 µs was SQLite re-parsing each statement. Held
+admission handles and per-connection statements (0c1a1b20, against main
+9395bed3, the same host, medians of 5 × 3 s; flat across 1k/3k/10k):
+
+| | 1,000 | 3,000 | 10,000 |
+|---|---|---|---|
+| main, admission | 967 µs, 36.6 KB | 970 µs, 36.7 KB | 969 µs, 36.8 KB |
+| held handles, admission (api/daemon) | 320 µs, 30.1 KB | 320 µs, 30.1 KB | 321 µs, 30.1 KB |
+| no pool, admission (other processes) | 901 µs, 37.3 KB | 898 µs, 37.4 KB | 897 µs, 37.4 KB |
+| main, authority reads | 124 µs, 13.2 KB | 125 µs, 13.2 KB | 125 µs, 13.2 KB |
+| prepared statements, authority reads | 74 µs, 13.3 KB | 73 µs, 13.3 KB | 74 µs, 13.3 KB |
+
+In the held admission, re-preparing the mailbox check's own queries is now
+about a fifth of its CPU (not cached there). Still unproven here: the busnes.app matched-pair
 measurement (section 9), lock wait (H4) and the row-size and page-visit
 estimates of section 1.
