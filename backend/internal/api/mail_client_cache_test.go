@@ -90,8 +90,7 @@ func TestMailClientEvictionDoesNotHoldUserMu(t *testing.T) {
 		s.userMu.Lock()
 		s.retainMailClient("new", &serverMailEntry{client: newClosingClient()})
 		s.userMu.Unlock()
-		s.userMu.Lock() // a later request on any user
-		s.userMu.Unlock()
+		s.invalidateUserMail("another-user") // a later request takes userMu
 		close(done)
 	}()
 	select {
