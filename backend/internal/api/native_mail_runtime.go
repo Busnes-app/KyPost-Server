@@ -110,6 +110,6 @@ func (s *Server) nativeMailboxClient(userID, mailboxID string) (imapadapter.Clie
 	if entry, ok := s.userMail[key]; ok {
 		closeMailClient(entry.client)
 	}
-	s.userMail[key] = &serverMailEntry{client: client, updatedAt: a.Source}
+	s.retainMailClient(key, &serverMailEntry{client: client, updatedAt: a.Source})
 	return client, true, nil
 }

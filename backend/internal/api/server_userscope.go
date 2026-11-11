@@ -509,7 +509,7 @@ func (s *Server) configuredMailboxClient(userID, mailboxID string) (imapadapter.
 		closeMailClient(entry.client)
 	}
 	client := imapadapter.NewAPIClientFromStoredConfig(s.userIMAPConfigPath(userID), s.imapConfigKeyPath)
-	s.userMail[userID] = &serverMailEntry{client: client, updatedAt: payload.UpdatedAt}
+	s.retainMailClient(userID, &serverMailEntry{client: client, updatedAt: payload.UpdatedAt})
 	return client, nil
 }
 
@@ -562,6 +562,23 @@ func (s *Server) mailboxMailClient(userID, mailboxID string) (imapadapter.Client
 //
 // io.Closer rather than a Close method on imapadapter.Client: the interface has
 // six test fakes with nothing to close. A client that isn't a Closer is a no-op.
+// maxRetainedMailClients bounds the API mail-client cache, like the daemon's
+// 64. Evicted IMAP clients are closed (they reconnect lazily if still held);
+// native clients have no Close and are freed by runtime cleanup once unused.
+const maxRetainedMailClients = 64
+
+// retainMailClient requires userMu. Arbitrary eviction, as in the daemon.
+func (s *Server) retainMailClient(key string, entry *serverMailEntry) {
+	if _, exists := s.userMail[key]; !exists && len(s.userMail) >= maxRetainedMailClients {
+		for old, e := range s.userMail {
+			closeMailClient(e.client)
+			delete(s.userMail, old)
+			break
+		}
+	}
+	s.userMail[key] = entry
+}
+
 func closeMailClient(client imapadapter.Client) {
 	if c, ok := client.(io.Closer); ok {
 		_ = c.Close()

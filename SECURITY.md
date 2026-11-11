@@ -98,7 +98,8 @@ check on two read-only handles the client keeps for its own `state.db` and
 `mailbox.db`, instead of reopening both. Each check also requires both paths to
 still name the files those handles opened, so deleted or replaced storage is
 refused on the next operation. Every other caller keeps the full reopening path.
-Each cached client holds about 8 file descriptors instead of 3.
+Each cached client holds about 8 file descriptors instead of 3; the API and the
+daemon each retain at most 64 cached mail clients.
 
 This trades bounded process memory for fewer repeated JSON decodes: each retained
 input is at most 8 MiB and each view at most 4,096 directory/account entries, with
