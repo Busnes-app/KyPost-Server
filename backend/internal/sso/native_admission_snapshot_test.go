@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 func TestNativeAdmissionSnapshotRechecksLifecycleFence(t *testing.T) {
@@ -26,14 +24,10 @@ func TestNativeAdmissionSnapshotRechecksLifecycleFence(t *testing.T) {
 			}
 			switch damage {
 			case "uninitialized":
-				current, err := f.life.load()
-				if err != nil {
-					t.Fatal(err)
-				}
-				current.NativeProvisioningInitialized = false
-				if err := fsutil.PersistJSONFile(f.life.path, current); err != nil {
-					t.Fatal(err)
-				}
+				// Never written by the store (the flag only rises): outside damage.
+				rewriteAuthorityForTest(t, f.life, authoritySchemaV3, func(life *lifecycleFile, _ **nativeLedger) {
+					life.NativeProvisioningInitialized = false
+				})
 			case "unreadable":
 				if err := os.WriteFile(f.life.path, []byte("not-json"), 0600); err != nil {
 					t.Fatal(err)

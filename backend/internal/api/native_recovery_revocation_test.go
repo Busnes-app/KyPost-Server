@@ -188,18 +188,15 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 }
 func assertRecoveryReceiptInvalidated(t *testing.T, s *Server) {
 	t.Helper()
-	body, e := os.ReadFile(ssotest.LifecyclePath(s.configDir))
+	receipt, e := ssotest.LifecycleRecord(s.configDir, "recoveryReceipt")
 	if e != nil {
 		t.Fatal(e)
 	}
-	var f struct {
-		RecoveryReceipt   json.RawMessage `json:"recoveryReceipt"`
-		RecoveryChallenge json.RawMessage `json:"recoveryChallenge"`
-	}
-	if e = json.Unmarshal(body, &f); e != nil {
+	challenge, e := ssotest.LifecycleRecord(s.configDir, "recoveryChallenge")
+	if e != nil {
 		t.Fatal(e)
 	}
-	if len(f.RecoveryReceipt) != 0 || len(f.RecoveryChallenge) != 0 {
+	if receipt != nil || challenge != nil {
 		t.Fatal("ordinary loss retained evidence qualification")
 	}
 }

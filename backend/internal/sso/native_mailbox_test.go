@@ -60,7 +60,7 @@ func TestNativeExtraMailboxCreateRefusals(t *testing.T) {
 
 func TestNativeLegacyMixedUseGainsNoExtraMailbox(t *testing.T) {
 	config, keyPath, ids := v1Fixture(t)
-	if _, err := MigrateNative(context.Background(), config, keyPath); err != nil {
+	if _, err := migrateNativeV3(context.Background(), config, keyPath); err != nil {
 		t.Fatal(err)
 	}
 	life := NewLifecycleStore(config)
@@ -177,14 +177,14 @@ func TestNativeExtraMailboxCreationResumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger, err := f.life.loadNative()
-	if err != nil {
-		t.Fatal(err)
-	}
-	record := ledger.stored.Mailboxes[m.ID]
-	record.Source = ""
-	ledger.stored.Mailboxes[m.ID] = record
-	if err := f.life.commitNative(ledger, nil); err != nil {
+	// The reservation as committed before its storage (a set source never
+	// changes, so the crash state is written outside the store).
+	editLedgerForTest(t, f.life, func(l *nativeLedger) {
+		record := l.Mailboxes[m.ID]
+		record.Source = ""
+		l.Mailboxes[m.ID] = record
+	})
+	if err := f.life.ReconcileNativeAddresses(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if x := f.address(t, "sales@example.test"); x.State != "disabled" {
@@ -329,15 +329,11 @@ func TestNativeRecoveryDigestIncludesExtraMailboxes(t *testing.T) {
 	if digest() == disabled {
 		t.Fatal("extra mailbox state missing from the recovery digest")
 	}
-	without, err := life.loadNative()
-	if err != nil {
-		t.Fatal(err)
-	}
-	delete(without.stored.Mailboxes, "mbx-extra")
-	delete(without.stored.Addresses, "extra@example.test")
-	if err := life.saveNative(without); err != nil {
-		t.Fatal(err)
-	}
+	// Rows are never deleted by the store; compare with the ledger before.
+	editLedgerForTest(t, life, func(l *nativeLedger) {
+		delete(l.Mailboxes, "mbx-extra")
+		delete(l.Addresses, "extra@example.test")
+	})
 	if digest() != challenge.AuthorityDigest {
 		t.Fatal("a ledger without extra mailboxes must keep earlier digests valid")
 	}

@@ -34,6 +34,16 @@ type authorityReader interface {
 	// PutLifecycle.
 	Lifecycle() (lifecycleFile, error)
 	Snapshot() (nativeAssignments, map[string]DirectoryState, error) // cold paths only
+	// OwnerMailboxes is the account whose primary mailbox is userID, with its
+	// mailboxes and their addresses (history aside); empty when there is none.
+	OwnerMailboxes(userID string) (nativeAssignments, error)
+	// Logouts is the accepted-logout records alone (the login-time check).
+	Logouts() (map[string]LogoutEvent, error)
+	// Change is the publication mark for the Cloudflare routing table: it
+	// grows with every committed mailbox or address change.
+	Change() (int64, error)
+	// Check is the whole-store validation (section 4).
+	Check() error
 }
 
 type authorityWriter interface {
@@ -52,7 +62,7 @@ type authorityWriter interface {
 	MarkRoutesPending(inactive map[string]int64) error
 }
 
-func (s *LifecycleStore) authority() authorityStore { return jsonAuthority{s.path} }
+func (s *LifecycleStore) authority() authorityStore { return storeAuthority{s} }
 
 // update is one authority write under the directory lock.
 func (s *LifecycleStore) update(fn func(authorityWriter) error) error {
@@ -62,9 +72,10 @@ func (s *LifecycleStore) update(fn func(authorityWriter) error) error {
 }
 
 // jsonAuthority serves authority from sso-lifecycle.json and, beside it,
-// native-provisioning.json. A transaction reads each file at most once, on
-// first use, so a lifecycle-only call never fails on the ledger. Readers on
-// the admission path decode through the bounded content views.
+// native-provisioning.json: the v1/v2 files, which only offline stores
+// (restore staging, migrate-native) and a fresh install's reads use. A
+// transaction reads each file at most once, on first use, so a
+// lifecycle-only call never fails on the ledger.
 //
 // Update writes in persistNative's order, under the caller's flock: the
 // initialization flag (at once, so a later failure leaves the fence set),
@@ -76,11 +87,8 @@ func (s *LifecycleStore) update(fn func(authorityWriter) error) error {
 // after PutLifecycle the lifecycle reads (Lifecycle, Directory, Initialized,
 // Snapshot's directory) see the put record. Ledger puts are never read back.
 //
-// Reads without the flock may interleave with a writer. loadNative reads the
-// lifecycle bytes before the ledger, so the decoded ledger is never older than
-// the lifecycle it is checked against, as the old second ledger read was.
-// Account (admission) reads the ledger first and the flag after it; under the
-// flag-first write order a reader that sees a ledger sees the flag.
+// loadNative reads the lifecycle bytes before the ledger, so the decoded
+// ledger is never older than the lifecycle it is checked against.
 type jsonAuthority struct{ path string }
 
 type jsonAuthorityTx struct {
@@ -89,7 +97,6 @@ type jsonAuthorityTx struct {
 	lifeRead, lifeAbsent bool
 	lifeRaw              []byte
 	lifeReadErr          error
-	initRead, init       bool
 
 	lifeLoaded bool
 	life       lifecycleFile
@@ -128,7 +135,11 @@ func (a jsonAuthority) Update(_ context.Context, fn func(authorityWriter) error)
 		if l == nil {
 			l = &t.native.stored
 		}
-		if err := deactivateRoutes(*l, t.inactive); err != nil {
+		root := ""
+		for _, m := range l.Mailboxes {
+			root = m.StateRoot // all mailboxes share it
+		}
+		if err := deactivateRoutes(root, t.inactive); err != nil {
 			return err
 		}
 	}
@@ -165,40 +176,22 @@ func (t *jsonAuthorityTx) Lifecycle() (lifecycleFile, error) {
 	return t.life.clone(), t.lifeErr
 }
 
-// directoryView answers from the bounded view unless the whole file is decoded.
-func (t *jsonAuthorityTx) directoryView(key string) (d DirectoryState, known, initialized bool, err error) {
-	if t.lifeLoaded {
-		d, known = t.life.Directory[key]
-		return d, known, t.life.NativeProvisioningInitialized, t.lifeErr
-	}
-	if err = t.readLifecycle(); err != nil || t.lifeAbsent {
-		return d, false, false, err
-	}
-	d, known, initialized, err = nativeDirectoryFromLifecycle(t.lifeRaw, key)
-	if err == nil {
-		t.initRead, t.init = true, initialized
-	}
-	return d, known, initialized, err
-}
-
 func (t *jsonAuthorityTx) Initialized() (bool, error) {
-	if t.initRead && !t.lifeLoaded {
-		return t.init, nil
-	}
-	_, _, initialized, err := t.directoryView("")
-	return initialized, err
+	life, err := t.Lifecycle()
+	return life.NativeProvisioningInitialized, err
 }
 
 func (t *jsonAuthorityTx) Directory(issuer, subject string) (DirectoryState, bool, error) {
-	d, known, _, err := t.directoryView(directoryKey(issuer, subject))
-	return d, known, err
+	life, err := t.Lifecycle()
+	d, ok := life.Directory[directoryKey(issuer, subject)]
+	return d, ok, err
 }
 
 // readLedger is the format check and the ledger bytes it read.
 func (t *jsonAuthorityTx) readLedger() error {
 	if !t.ledgerRead {
 		t.ledgerRead = true
-		t.ledgerRaw, t.ledgerExists, t.ledgerErr = currentNativeFormat(filepath.Dir(t.path))
+		t.ledgerRaw, t.ledgerExists, t.ledgerErr = v2NativeFormat(filepath.Dir(t.path))
 	}
 	return t.ledgerErr
 }
@@ -225,19 +218,9 @@ func (t *jsonAuthorityTx) loadNative() (nativeAssignments, error) {
 }
 
 func (t *jsonAuthorityTx) Account(issuer, subject string) (NativeAssignment, bool, error) {
-	key := directoryKey(issuer, subject)
-	if t.nativeLoaded {
-		a, ok := t.native.Accounts[key]
-		return a, ok, t.nativeErr
-	}
-	if err := t.readLedger(); err != nil {
-		return NativeAssignment{}, false, err
-	}
-	initialized, err := t.Initialized()
-	if err != nil {
-		return NativeAssignment{}, false, err
-	}
-	return nativeAssignmentFromLedger(t.ledgerRaw, t.ledgerExists, key, initialized)
+	f, err := t.loadNative()
+	a, ok := f.Accounts[directoryKey(issuer, subject)]
+	return a, ok, err
 }
 
 func (t *jsonAuthorityTx) Mailbox(id string) (NativeAssignment, nativeLedgerMailbox, bool, error) {
@@ -263,6 +246,20 @@ func (t *jsonAuthorityTx) Snapshot() (nativeAssignments, map[string]DirectorySta
 	f.stored.Mailboxes = maps.Clone(f.stored.Mailboxes)
 	f.stored.Addresses = maps.Clone(f.stored.Addresses)
 	return f, maps.Clone(t.life.Directory), err
+}
+
+func (t *jsonAuthorityTx) OwnerMailboxes(string) (nativeAssignments, error) { return t.loadNative() }
+
+func (t *jsonAuthorityTx) Change() (int64, error) { return 0, nil }
+
+func (t *jsonAuthorityTx) Logouts() (map[string]LogoutEvent, error) {
+	life, err := t.Lifecycle()
+	return life.Logouts, err
+}
+
+func (t *jsonAuthorityTx) Check() error {
+	_, err := t.loadNative()
+	return err
 }
 
 // errAuthorityOrder is a writer calling the transaction out of its order.
