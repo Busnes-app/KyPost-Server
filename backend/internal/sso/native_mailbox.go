@@ -155,15 +155,16 @@ func (s *LifecycleStore) withNativeMailboxes(ctx context.Context, stateRoot stri
 	if err != nil {
 		return err
 	}
-	f, err := s.loadNative()
+	var f nativeAssignments
+	var directory map[string]DirectoryState
+	err = s.authority().View(ctx, func(r authorityReader) error {
+		f, directory, err = r.Snapshot()
+		return err
+	})
 	if err != nil {
 		return err
 	}
-	lifecycle, err := s.load()
-	if err != nil {
-		return err
-	}
-	return action(f, domains, lifecycle.Directory)
+	return action(f, domains, directory)
 }
 
 // nativeMailboxListing reads the committed mailbox back; pending is a

@@ -324,11 +324,11 @@ func (s *LifecycleStore) nativePath() string {
 	return filepath.Join(filepath.Dir(s.path), nativeProvisioningFile)
 }
 
-func (s *LifecycleStore) loadNative() (nativeAssignments, error) {
-	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
-		return nativeAssignments{}, err
-	}
-	f, _, err := s.loadNativeLedger(false)
+func (s *LifecycleStore) loadNative() (f nativeAssignments, err error) {
+	err = s.authority().View(context.Background(), func(r authorityReader) error {
+		f, _, err = r.Snapshot()
+		return err
+	})
 	return f, err
 }
 
@@ -344,9 +344,14 @@ func (s *LifecycleStore) loadNativeLedger(historical bool) (nativeAssignments, i
 // readNativeLedger uses the initialization and generation metadata supplied by
 // this read. Runtime admission supplies its own current directory-fenced snapshot.
 func (s *LifecycleStore) readNativeLedger(lifecycle lifecycleFile, historical bool) (nativeAssignments, int, error) {
+	raw, err := os.ReadFile(s.nativePath())
+	return decodeNativeLedger(raw, err, lifecycle, historical)
+}
+
+// decodeNativeLedger takes one ledger read and its error.
+func decodeNativeLedger(raw []byte, err error, lifecycle lifecycleFile, historical bool) (nativeAssignments, int, error) {
 	f := nativeAssignments{Accounts: map[string]NativeAssignment{}}
 	version := 0
-	raw, err := os.ReadFile(s.nativePath())
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		err = nil
@@ -389,31 +394,50 @@ func (s *LifecycleStore) commitNative(f nativeAssignments, overlay map[string]Di
 // Initialization fences missing-ledger repair. A crash after the fence but
 // before the first ledger requires explicit recovery; it never frees addresses.
 func (s *LifecycleStore) persistNative(f nativeAssignments, overlay map[string]DirectoryState, sync bool) error {
-	lifecycle, err := s.load()
-	if err != nil {
+	return s.authority().Update(context.Background(), func(w authorityWriter) error {
+		return s.writeNative(w, f, overlay, sync)
+	})
+}
+
+// writeNative renders f as the whole ledger and puts every record.
+func (s *LifecycleStore) writeNative(w authorityWriter, f nativeAssignments, overlay map[string]DirectoryState, sync bool) error {
+	// nativeUserOwnership relies on this flag preceding every ledger write.
+	if err := w.SetInitialized(); err != nil {
 		return err
 	}
-	// nativeUserOwnership relies on this flag preceding every ledger write.
-	if !lifecycle.NativeProvisioningInitialized {
-		lifecycle.NativeProvisioningInitialized = true
-		if err = fsutil.PersistJSONFile(s.path, lifecycle); err != nil {
-			return err
-		}
+	lifecycle, err := w.Lifecycle()
+	if err != nil {
+		return err
 	}
 	directory := maps.Clone(lifecycle.Directory)
 	maps.Copy(directory, overlay)
 	l := f.ledger(directory)
-	if !sync {
-		return fsutil.PersistJSONFile(s.nativePath(), l)
+	if sync {
+		inactive, err := s.syncAddressStates(&l, directory)
+		if err != nil {
+			return err
+		}
+		if err = w.MarkRoutesPending(inactive); err != nil {
+			return err
+		}
 	}
-	inactive, err := s.syncAddressStates(&l, directory)
-	if err != nil {
-		return err
+	for key, a := range l.Accounts {
+		issuer, subject, _ := strings.Cut(key, "\x00")
+		if err = w.PutAccount(issuer, subject, a); err != nil {
+			return err
+		}
 	}
-	if err = fsutil.PersistJSONFile(s.nativePath(), l); err != nil {
-		return err
+	for id, m := range l.Mailboxes {
+		if err = w.PutMailbox(id, m); err != nil {
+			return err
+		}
 	}
-	return deactivateRoutes(l, inactive)
+	for address, x := range l.Addresses {
+		if err = w.PutAddress(address, x); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ErrNativeRoutesPending: the ledger change is durable but a route could not be
@@ -509,9 +533,11 @@ func (s *LifecycleStore) ensureNativeLedgerLocked() error {
 
 // NativeAssignment reads persisted status only. Consumers must recheck the live
 // directory fence: this snapshot may precede a newer deactivation.
-func (s *LifecycleStore) NativeAssignment(issuer, subject string) (NativeAssignment, bool, error) {
-	f, err := s.loadNative()
-	a, ok := f.Accounts[directoryKey(issuer, subject)]
+func (s *LifecycleStore) NativeAssignment(issuer, subject string) (a NativeAssignment, ok bool, err error) {
+	err = s.authority().View(context.Background(), func(r authorityReader) error {
+		a, ok, err = r.Account(issuer, subject)
+		return err
+	})
 	return a, ok, err
 }
 
@@ -519,27 +545,30 @@ func (s *LifecycleStore) NativeAssignment(issuer, subject string) (NativeAssignm
 // records address (primary or alias, any state): ownership, not permission.
 // Receiving callers must still admit the account and check the address under
 // the directory fence before binding mail.
-func (s *LifecycleStore) NativeAssignmentForAddress(issuer, address string) (NativeAssignment, bool, error) {
-	f, err := s.loadNative()
-	if err != nil {
+func (s *LifecycleStore) NativeAssignmentForAddress(issuer, address string) (a NativeAssignment, found bool, err error) {
+	err = s.authority().View(context.Background(), func(r authorityReader) error {
+		x, ok, err := r.Address(address)
+		if err != nil || !ok {
+			return err
+		}
+		a, _, found, err = r.Mailbox(x.Mailbox)
+		found = found && a.Owner.Issuer == issuer
+		return err
+	})
+	if err != nil || !found {
 		return NativeAssignment{}, false, err
 	}
-	x, ok := f.stored.Addresses[address]
-	if a, _, found := f.mailbox(x.Mailbox); ok && found && a.Owner.Issuer == issuer {
-		return a, true, nil
-	}
-	return NativeAssignment{}, false, nil
+	return a, true, nil
 }
 
 // NativeMailboxAssignment reads one mailbox, primary or extra: ownership, not
 // permission. Import uses it to open frozen owners' storage.
-func (s *LifecycleStore) NativeMailboxAssignment(mailboxID string) (NativeAssignment, bool, error) {
-	f, err := s.loadNative()
-	if err != nil {
-		return NativeAssignment{}, false, err
-	}
-	a, _, ok := f.mailbox(mailboxID)
-	return a, ok, nil
+func (s *LifecycleStore) NativeMailboxAssignment(mailboxID string) (a NativeAssignment, ok bool, err error) {
+	err = s.authority().View(context.Background(), func(r authorityReader) error {
+		a, _, ok, err = r.Mailbox(mailboxID)
+		return err
+	})
+	return a, ok, err
 }
 
 // ReconcileNativeMailbox is the blocking internal compatibility wrapper.

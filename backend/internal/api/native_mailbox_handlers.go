@@ -75,7 +75,7 @@ func (s *Server) extraMailboxIDs(userID string) []string {
 	if !s.nativeMail {
 		return nil
 	}
-	all, err := s.ssoLifecycle.NativeMailboxes()
+	all, err := s.ssoLifecycle.NativeMailboxesOf(userID)
 	if err != nil {
 		s.logger.Error("cannot list mailboxes", "user_id", userID, "error", err.Error())
 		return nil
@@ -133,7 +133,7 @@ func (s *Server) handleMailboxes(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"mailboxes": out})
 		return
 	}
-	all, err := s.ssoLifecycle.NativeMailboxes()
+	all, err := s.ssoLifecycle.NativeMailboxesOf(ac.UserID)
 	if err != nil {
 		http.Error(w, "mailbox authority is unavailable", http.StatusServiceUnavailable)
 		return
@@ -247,16 +247,8 @@ var (
 // extraMailboxOwner returns the owning user ID, fixed for a mailbox's life;
 // "" for an unknown id, which is left to the ledger's 404.
 func (s *Server) extraMailboxOwner(id string) (string, error) {
-	all, err := s.ssoLifecycle.NativeMailboxes()
-	if err != nil {
-		return "", err
-	}
-	for _, m := range all {
-		if m.ID == id {
-			return m.User, nil
-		}
-	}
-	return "", nil
+	a, _, err := s.ssoLifecycle.NativeMailboxAssignment(id)
+	return a.UserID(), err
 }
 
 // withIncomingEncryptionOff runs change under the owner's settings lock once
@@ -293,7 +285,7 @@ func (s *Server) ownsActiveExtraMailbox(userID string) (bool, error) {
 	if err != nil || u.NativeMailboxSource == "" {
 		return false, err
 	}
-	all, err := s.ssoLifecycle.NativeMailboxes()
+	all, err := s.ssoLifecycle.NativeMailboxesOf(userID)
 	if err != nil {
 		return false, err
 	}

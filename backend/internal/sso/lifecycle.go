@@ -1,12 +1,12 @@
 package sso
 
 import (
+	"context"
+	"encoding/json"
 	"path/filepath"
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/oidcverify"
-
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // SessionIdentity is what a session remembers about the login that minted
@@ -53,9 +53,9 @@ func (e LogoutEvent) Covers(id SessionIdentity) bool {
 // process, but a replayed logout token, a login racing a logout, and a
 // stale directory event must still be refused afterwards.
 //
-// ponytail: one JSON file under a file lock. Directory resources persist per
-// subject and whole-file rewrites scale with account count; migrate to SQLite
-// if this becomes a measured provisioning bottleneck.
+// ponytail: one JSON file under a file lock, behind authorityStore (the JSON
+// backend); whole-file rewrites scale with account count. The SQLite backend
+// in docs/NATIVE_AUTHORITY_PER_ACCOUNT.md replaces it.
 type LifecycleStore struct {
 	path string
 }
@@ -81,9 +81,24 @@ func NewLifecycleStore(configDir string) *LifecycleStore {
 	return &LifecycleStore{path: filepath.Join(configDir, "sso-lifecycle.json")}
 }
 
-func (s *LifecycleStore) load() (lifecycleFile, error) {
-	f := lifecycleFile{}
-	err := fsutil.LoadJSONFile(s.path, func(v lifecycleFile) { f = v }, nil)
+func (s *LifecycleStore) load() (f lifecycleFile, err error) {
+	err = s.authority().View(context.Background(), func(r authorityReader) error {
+		f, err = r.Lifecycle()
+		return err
+	})
+	return f, err
+}
+
+func decodeLifecycle(raw []byte, f *lifecycleFile) error {
+	var v lifecycleFile
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return err
+	}
+	*f = v
+	return nil
+}
+
+func (f *lifecycleFile) ensureMaps() {
 	if f.Logouts == nil {
 		f.Logouts = map[string]LogoutEvent{}
 	}
@@ -96,7 +111,11 @@ func (s *LifecycleStore) load() (lifecycleFile, error) {
 	if f.SignOns == nil {
 		f.SignOns = map[string]int64{}
 	}
-	return f, err
+}
+
+// persistLifecycle writes a lifecycle the caller loaded under the directory lock.
+func (s *LifecycleStore) persistLifecycle(f lifecycleFile) error {
+	return s.authority().Update(context.Background(), func(w authorityWriter) error { return w.PutLifecycle(f) })
 }
 
 func logoutKey(issuer, clientID, jti string) string {
@@ -121,8 +140,8 @@ func (s *LifecycleStore) RecordLogout(clientID string, c oidcverify.LogoutClaims
 		RetainUntil: retainUntil.Unix(),
 	}
 	fresh := false
-	err := fsutil.WithFileLock(s.path, func() error {
-		f, err := s.load()
+	err := s.update(func(w authorityWriter) error {
+		f, err := w.Lifecycle()
 		if err != nil {
 			return err
 		}
@@ -138,7 +157,7 @@ func (s *LifecycleStore) RecordLogout(clientID string, c oidcverify.LogoutClaims
 		}
 		f.Logouts[key] = ev
 		fresh = true
-		return fsutil.PersistJSONFile(s.path, f)
+		return w.PutLifecycle(f)
 	})
 	return ev, fresh, err
 }
@@ -148,8 +167,8 @@ func (s *LifecycleStore) RecordLogout(clientID string, c oidcverify.LogoutClaims
 // token's window cannot replay it; expired entries are pruned on every write.
 func (s *LifecycleStore) RecordSignOnJTI(issuer, clientID, jti string, expiresAt time.Time) (bool, error) {
 	fresh := false
-	err := fsutil.WithFileLock(s.path, func() error {
-		f, err := s.load()
+	err := s.update(func(w authorityWriter) error {
+		f, err := w.Lifecycle()
 		if err != nil {
 			return err
 		}
@@ -165,7 +184,7 @@ func (s *LifecycleStore) RecordSignOnJTI(issuer, clientID, jti string, expiresAt
 		}
 		f.SignOns[key] = expiresAt.Unix()
 		fresh = true
-		return fsutil.PersistJSONFile(s.path, f)
+		return w.PutLifecycle(f)
 	})
 	return fresh, err
 }

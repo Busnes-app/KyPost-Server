@@ -194,12 +194,12 @@ func (s *Server) scheduleSend(w http.ResponseWriter, r *http.Request, ac AuthCon
 	j.Job.PGPFingerprint = u.PGPFingerprint
 	if j.Native {
 		// Frozen so a released and re-added alias cannot inherit the job.
-		addresses, err := s.ssoLifecycle.NativeAddresses()
+		fromAddress, err := s.ssoLifecycle.NativeAddress(j.Job.From)
 		if err != nil {
 			http.Error(w, "native mailbox unavailable; preserve mail and repair account authority", http.StatusServiceUnavailable)
 			return
 		}
-		j.Job.FromGeneration = addresses[j.Job.From].Generation
+		j.Job.FromGeneration = fromAddress.Generation
 	}
 	sealed, err := sealScheduled(key, j)
 	summary, summaryErr := sealScheduled(key, scheduledSummary{Subject: subject, To: to})

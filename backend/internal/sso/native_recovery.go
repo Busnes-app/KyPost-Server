@@ -272,7 +272,7 @@ func (s *LifecycleStore) BeginNativeRecoveryHeld(ctx context.Context, root strin
 	if err != nil || epoch != c.Epoch {
 		return NativeRecoveryChallenge{}, ErrNativeRecovery
 	}
-	err = fsutil.PersistJSONFile(s.path, f)
+	err = s.persistLifecycle(f)
 	return c, err
 }
 
@@ -314,7 +314,7 @@ func (s *LifecycleStore) AcceptNativeRecoveryHeld(ctx context.Context, root stri
 	}
 	f.RecoveryReceipt = &nativeRecoveryReceipt{Challenge: *c, Body: bytes.Clone(body), Headers: headers, ExpiresAt: evidence.ExpiresAt}
 	f.RecoveryChallenge = nil
-	return fsutil.PersistJSONFile(s.path, f)
+	return s.persistLifecycle(f)
 }
 
 // The same strict verifier checks imports and stored bytes immediately before

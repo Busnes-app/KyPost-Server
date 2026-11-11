@@ -11,8 +11,6 @@ import (
 
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
-
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -166,7 +164,7 @@ func (s *LifecycleStore) RecordNativeRecoveryRepairIntentHeld(ctx context.Contex
 	if err != nil || epoch != before.Epoch || !time.Now().Before(f.RecoveryRepair.ExpiresAt) {
 		return ErrNativeRecovery
 	}
-	return fsutil.PersistJSONFile(s.path, f)
+	return s.persistLifecycle(f)
 }
 
 func minRecoveryExpiry(r *nativeRecoveryReceipt) time.Time {
@@ -239,7 +237,7 @@ func (s *LifecycleStore) CompleteNativeRecoveryRepairHeld(ctx context.Context, r
 	}
 	now := time.Now().UTC()
 	repair.CompletedAt = &now
-	return fsutil.PersistJSONFile(s.path, f)
+	return s.persistLifecycle(f)
 }
 
 // openRepairReasons gates completion: the journal must not be completed yet.

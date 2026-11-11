@@ -3,8 +3,6 @@ package sso
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
-	"os"
 	"slices"
 	"sync"
 )
@@ -21,14 +19,6 @@ type nativeContentView[T any] struct {
 	mu    sync.Mutex
 	raw   []byte
 	value T
-}
-
-func (c *nativeContentView[T]) withCurrent(path string, decode func([]byte) (T, error), eligible func(T) bool, copyValue func(T)) error {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return c.with(raw, decode, eligible, copyValue)
 }
 
 func (c *nativeContentView[T]) with(raw []byte, decode func([]byte) (T, error), eligible func(T) bool, copyValue func(T)) error {
@@ -87,8 +77,11 @@ func retainNativeDirectory(v nativeDirectoryContents) bool {
 	return true
 }
 
-func (s *LifecycleStore) nativeDirectoryForAdmission(key string) (d DirectoryState, known, initialized bool, err error) {
-	err = nativeDirectoryView.withCurrent(s.path, decodeNativeDirectory, retainNativeDirectory, func(v nativeDirectoryContents) {
+// nativeDirectoryFromLifecycle decodes lifecycle bytes the caller read for
+// this operation; the caller maps a missing file to the empty, uninitialized
+// result, as LifecycleStore.load does.
+func nativeDirectoryFromLifecycle(raw []byte, key string) (d DirectoryState, known, initialized bool, err error) {
+	err = nativeDirectoryView.with(raw, decodeNativeDirectory, retainNativeDirectory, func(v nativeDirectoryContents) {
 		d, known = v.directory[key]
 		initialized = v.initialized
 		if d.Resource != nil {
@@ -103,9 +96,6 @@ func (s *LifecycleStore) nativeDirectoryForAdmission(key string) (d DirectorySta
 			d.Resource = &r
 		}
 	})
-	if errors.Is(err, os.ErrNotExist) {
-		err = nil // Same empty, uninitialized result as LifecycleStore.load.
-	}
 	return
 }
 

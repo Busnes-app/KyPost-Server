@@ -389,12 +389,12 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 		if len(fresh) > 0 {
 			_ = r.withAuthority(ctx, []string{id}, fresh, freshProofs, func(current map[string]sso.NativeAssignment) error {
 				a := current[id]
-				now, err := r.life.NativeAddresses()
-				if err != nil {
-					return err
-				}
 				for _, address := range fresh {
-					if x := now[address]; x.State == "active" && x.Mailbox == id {
+					x, err := r.life.NativeAddress(address)
+					if err != nil {
+						return err
+					}
+					if x.State == "active" && x.Mailbox == id {
 						routes = append(routes, cfreceiving.Route{Address: address, Generation: x.Generation, MaxBytes: min(receivingLimits.MessageBytes, a.Limits.MessageBytes, cfreceiving.MaxMessageBytes), Issuer: a.Owner.Issuer, Subject: a.Owner.Subject, Mailbox: a.Owner.Mailbox})
 						added[address] = true
 					}

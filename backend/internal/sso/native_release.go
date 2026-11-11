@@ -30,15 +30,15 @@ var ErrNativeReleaseFloor = errors.New("native subject is at or below its restor
 // RecordNativeReleaseFloors raises floors monotonically: a lower revision never
 // replaces a higher one, and disagreeing evidence at one revision keeps inactive.
 func (s *LifecycleStore) RecordNativeReleaseFloors(issuer string, floors map[string]NativeReleaseFloor) error {
-	return fsutil.WithFileLock(s.path, func() error {
-		f, err := s.load()
+	return s.update(func(w authorityWriter) error {
+		f, err := w.Lifecycle()
 		if err != nil {
 			return err
 		}
 		if err = f.raiseReleaseFloors(issuer, floors); err != nil {
 			return err
 		}
-		return fsutil.PersistJSONFile(s.path, f)
+		return w.PutLifecycle(f)
 	})
 }
 
@@ -254,7 +254,7 @@ func (p *NativeRestoreReleasePlan) RecordIntent(ctx context.Context) error {
 	}
 	record := p.Record
 	f.RestoreRelease = &record
-	return fsutil.PersistJSONFile(p.s.path, f)
+	return p.s.persistLifecycle(f)
 }
 
 // Commit runs after the intent and account writes, under the plan's fences.
@@ -336,7 +336,7 @@ func (p *NativeRestoreReleasePlan) Commit(ctx context.Context, hit func(string) 
 	if err = f.raiseReleaseFloors(p.issuer, p.floors); err != nil {
 		return err
 	}
-	if err = fsutil.PersistJSONFile(p.s.path, f); err != nil {
+	if err = p.s.persistLifecycle(f); err != nil {
 		return err
 	}
 	if err = hit("lifecycle"); err != nil {
@@ -379,7 +379,7 @@ func (s *LifecycleStore) NativeRestoreReleased(root string) (NativeRestoreReleas
 
 // CompleteNativeRestoreRelease records completion once, after its audit.
 func (s *LifecycleStore) CompleteNativeRestoreRelease(root string) error {
-	return fsutil.WithFileLock(s.path, func() error {
+	return s.update(func(w authorityWriter) error {
 		record, released, err := s.NativeRestoreReleased(root)
 		if err != nil || !released {
 			return errors.Join(err, ErrNativeRecovery)
@@ -387,12 +387,12 @@ func (s *LifecycleStore) CompleteNativeRestoreRelease(root string) error {
 		if record.CompletedAt != nil {
 			return nil
 		}
-		f, err := s.load()
+		f, err := w.Lifecycle()
 		if err != nil {
 			return err
 		}
 		now := time.Now().UTC()
 		f.RestoreRelease.CompletedAt = &now
-		return fsutil.PersistJSONFile(s.path, f)
+		return w.PutLifecycle(f)
 	})
 }

@@ -33,7 +33,12 @@ func (s *LifecycleStore) AdmitOpenMailbox(ctx context.Context, stateRoot, issuer
 	if err != nil {
 		return NativeAssignment{}, err
 	}
-	return s.admitNativeMailbox(ctx, stateRoot, issuer, u, mailboxID, held)
+	var a NativeAssignment
+	err = s.authority().View(ctx, func(r authorityReader) error {
+		a, err = s.admitNativeMailbox(ctx, r, stateRoot, issuer, u, mailboxID, held)
+		return err
+	})
+	return a, err
 }
 
 // WithNativeMailAccess holds coherent directory and user authority through a
@@ -56,23 +61,27 @@ func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, is
 		for _, u := range current {
 			byID[u.ID] = u
 		}
-		f, err := s.loadNative()
+		assignments := make(map[string]NativeAssignment, len(mailboxIDs))
+		err := s.authority().View(ctx, func(r authorityReader) error {
+			for _, id := range mailboxIDs {
+				m, _, ok, err := r.Mailbox(id)
+				if err != nil {
+					return err
+				}
+				u, found := byID[m.UserID()]
+				if !ok || !found {
+					return ErrNativeProvisioning
+				}
+				a, err := s.admitNativeMailbox(ctx, r, stateRoot, issuer, u, id, nil)
+				if err != nil {
+					return err
+				}
+				assignments[id] = a
+			}
+			return nil
+		})
 		if err != nil {
 			return err
-		}
-		assignments := make(map[string]NativeAssignment, len(mailboxIDs))
-		for _, id := range mailboxIDs {
-			m, _, ok := f.mailbox(id)
-			owner := f.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].Owner.Mailbox
-			u, found := byID[owner]
-			if !ok || !found {
-				return ErrNativeProvisioning
-			}
-			a, err := s.admitNativeMailbox(ctx, stateRoot, issuer, u, id, nil)
-			if err != nil {
-				return err
-			}
-			assignments[id] = a
 		}
 		return action(assignments)
 	})
@@ -81,16 +90,15 @@ func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, is
 // admitNativeMailbox admits the owner, then the mailbox: the primary when
 // mailboxID is the user's ID, else an extra one owned by the same subject,
 // not administrator-disabled, with its storage intact.
-func (s *LifecycleStore) admitNativeMailbox(ctx context.Context, stateRoot, issuer string, u users.User, mailboxID string, held *mailbox.Prepared) (NativeAssignment, error) {
-	a, err := s.admitNativeMailUser(ctx, stateRoot, issuer, u, held)
+func (s *LifecycleStore) admitNativeMailbox(ctx context.Context, r authorityReader, stateRoot, issuer string, u users.User, mailboxID string, held *mailbox.Prepared) (NativeAssignment, error) {
+	a, err := s.admitNativeMailUser(ctx, r, stateRoot, issuer, u, held)
 	if err != nil || mailboxID == u.ID {
 		return a, err
 	}
-	f, err := s.loadNative()
+	m, record, ok, err := r.Mailbox(mailboxID)
 	if err != nil {
 		return NativeAssignment{}, err
 	}
-	m, record, ok := f.mailbox(mailboxID)
 	if !ok || record.State != "active" || m.Owner.Issuer != issuer || m.Owner.Subject != u.SSOSub || m.Source == "" || m.StateRoot != a.StateRoot {
 		return NativeAssignment{}, ErrNativeMailboxUnknown
 	}
@@ -105,11 +113,11 @@ func (s *LifecycleStore) admitNativeMailbox(ctx context.Context, stateRoot, issu
 }
 
 // Caller holds the directory fence and supplies a current user snapshot.
-func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, stateRoot, issuer string, u users.User, held *mailbox.Prepared) (NativeAssignment, error) {
+func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, r authorityReader, stateRoot, issuer string, u users.User, held *mailbox.Prepared) (NativeAssignment, error) {
 	if issuer == "" || u.NativeMailboxIssuer != issuer || u.NativeMailboxSource == "" || !u.Active || u.SSOLinkRevoked() {
 		return NativeAssignment{}, ErrNativeProvisioning
 	}
-	d, known, initialized, err := s.nativeDirectoryForAdmission(directoryKey(issuer, u.SSOSub))
+	d, known, err := r.Directory(issuer, u.SSOSub)
 	if err != nil {
 		return NativeAssignment{}, err
 	}
@@ -129,7 +137,7 @@ func (s *LifecycleStore) admitNativeMailUser(ctx context.Context, stateRoot, iss
 	}
 	// Reuse only this fenced call's validated assignment; later operations
 	// still perform their own fresh admission.
-	a, err := s.nativeUserStorageForAdmission(stateRoot, u, initialized, held)
+	a, err := s.nativeUserStorageForAdmission(stateRoot, u, r, held)
 	if err != nil {
 		return NativeAssignment{}, err
 	}

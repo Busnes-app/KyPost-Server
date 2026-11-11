@@ -376,3 +376,24 @@ func (s *LifecycleStore) nativeAssignmentForAdmission(key string, initialized bo
 	}
 	return nativeAssignmentFromLedger(raw, err == nil, key, initialized)
 }
+
+// nativeDirectoryForAdmission reads the lifecycle itself; production callers
+// decode the bytes their transaction read.
+func (s *LifecycleStore) nativeDirectoryForAdmission(key string) (DirectoryState, bool, bool, error) {
+	raw, err := os.ReadFile(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return DirectoryState{}, false, false, nil
+	}
+	if err != nil {
+		return DirectoryState{}, false, false, err
+	}
+	return nativeDirectoryFromLifecycle(raw, key)
+}
+
+func (c *nativeContentView[T]) withCurrent(path string, decode func([]byte) (T, error), eligible func(T) bool, copyValue func(T)) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return c.with(raw, decode, eligible, copyValue)
+}
