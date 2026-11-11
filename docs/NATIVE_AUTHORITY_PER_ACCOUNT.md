@@ -273,11 +273,18 @@ one transaction.
 - Fail closed: any open, query, scan, schema or decode error, `meta.format != 3`, a
   `user_version` mismatch, a missing required table or a row that breaks a Go-side
   rule gives `ErrNativeProvisioning`, or `ErrNativeMigration` for format errors. Older
-  contents are never used. The schema check (`user_version`, required tables) runs
-  once per handle open. `meta.format` is read in every `View`.
+  contents are never used. On every handle open (runtime, migration and the
+  historical restore opener) the store opens with `PRAGMA trusted_schema=OFF` and
+  defensive mode on. It requires `user_version` 3 and an **exact** match between
+  `sqlite_schema` and the built-in schema: every table, index and trigger,
+  compared after whitespace normalisation, with no extra objects. Any difference
+  refuses with `ErrNativeMigration`. This matters because the constraints and
+  triggers carry the global invariants, and `Snapshot` loads into maps that would
+  silently collapse duplicate rows. `meta.format` is read in every `View`.
 - Changed scope of validation: today every read validates the **whole** ledger, so
   damage to an unrelated record refuses everyone. In v3, the constraints and triggers
-  make the global invariants structurally impossible to break through SQL writes,
+  make the global invariants structurally impossible to break through SQL writes
+  (given the exact-schema check above),
   and each read validates the rows it uses. A whole-store validation
   (`validateNativeLedger` over `Snapshot`, plus `PRAGMA quick_check`) runs at
   migration, at startup (`migrate-native`), in every backup, and in the minute
@@ -513,10 +520,8 @@ The owner accepted every recommended answer below and approved starting PR 1:
 ## Review findings and answers
 
 The hostile review and a design-scope security audit were run on this document and
-checked against the code. The audit notes are in
-`~/security-audit-skill/KyPost-Server/run-native-per-account-authority/REPORT.md`.
-The audit found no exploitable findings. These findings survived and are answered
-above, or here:
+checked against the code. The audit found no exploitable findings. These findings
+survived and are answered above, or here:
 
 | # | Finding (verified) | Answer |
 |---|---|---|
@@ -529,6 +534,7 @@ above, or here:
 | H7 | Short-lived `receiving` processes open the database on every invocation. | O(1) per invocation (section 7). The WAL is shared with the long-running api and daemon handles. |
 | S1 | `*.v2-migrated` copies keep stale authority and directory PII indefinitely. Adopting them by hand after v3 traffic could reuse generations. | Section 5 warns against this. PR 3 has `migrate-native` refuse a v2 adoption while D exists, and RESTORE.md tells operators to delete the copies after the first successful v3 backup. |
 | S2 | A staged v3 database is trusted row by row during restore validation. | The historical opener runs `PRAGMA integrity_check` before reading rows (PR 2). |
+| S3 | PR #574 security review: the open-time check covered only `user_version` and table presence, so a database missing the address primary key, the one-primary index or a never-delete trigger would pass. Duplicates would then go unseen, because `Snapshot` collapses them into maps and `integrity_check` checks storage, not schema meaning. | Every open now requires an exact `sqlite_schema` match with the built-in schema, under `trusted_schema=OFF` and defensive mode (section 4). PR 2/3 test `TestAuthoritySchemaMismatchRefuses`: a fixture with the right tables and `user_version` but a dropped key, index or trigger is refused by both the runtime and historical openers. |
 | S3 | Existing, outside this design: the `users.json` cache is keyed on size+mtime, not inode. | Recorded under Q3. Adding the inode to the key is a one-line follow-up, independent of this rollout. |
 
 Claims checked and confirmed: every v2 `LifecycleStore.load` caller refuses on a
