@@ -28,12 +28,3 @@ github.com/Busnes-app/kypost-server/backend/internal/ollamaupdate.SetReleasesURL
 # Marks a test pairing as KyIdentity's for api's per-user default tests;
 # panics outside a test binary.
 github.com/Busnes-app/kypost-server/backend/internal/kycalendar.NewKyIdentityForTest
-
-# Writes a v3 native-authority.db fixture plus both stubs for sso and backup
-# tests; panics outside a test binary. The pure v2 → v3 converter and writer
-# it calls are the inputs of the v3 migration (docs/NATIVE_AUTHORITY_PER_ACCOUNT.md
-# PR 3); drop these entries when migrate-native calls them.
-github.com/Busnes-app/kypost-server/backend/internal/sso.WriteNativeAuthorityV3ForTest
-github.com/Busnes-app/kypost-server/backend/internal/sso.authorityV3Rows
-github.com/Busnes-app/kypost-server/backend/internal/sso.flag
-github.com/Busnes-app/kypost-server/backend/internal/sso.writeAuthorityV3

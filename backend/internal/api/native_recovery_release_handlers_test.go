@@ -165,12 +165,12 @@ func TestNativeRestoreReleaseHTTPPreconditions(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			lifecycle, _ := os.ReadFile(ssotest.LifecyclePath(f.s.configDir))
+			lifecycle, _ := ssotest.AuthorityContent(f.s.configDir)
 			w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody(f.s), "")
 			if w.Code != 409 || !strings.Contains(w.Body.String(), reason) || !releaseHeld(t, f.s) {
 				t.Fatalf("%d %s", w.Code, w.Body.String())
 			}
-			if after, _ := os.ReadFile(ssotest.LifecyclePath(f.s.configDir)); !bytes.Equal(lifecycle, after) {
+			if after, _ := ssotest.AuthorityContent(f.s.configDir); !bytes.Equal(lifecycle, after) {
 				t.Fatal("refusal wrote the lifecycle")
 			}
 			if legacy, err := f.s.users.GetByUsername("legacy-admin"); err != nil || !legacy.Active {

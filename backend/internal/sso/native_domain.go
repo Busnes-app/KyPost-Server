@@ -124,15 +124,19 @@ func legacyNativeDomain(configDir string) (tombstone, data bool, err error) {
 }
 
 // checkNativeFormat is the runtime refusal for unmigrated or half-migrated
-// storage. A fresh install (neither file) passes as "not configured".
+// storage: v3 (or a fresh install) only, with the domain tombstone rule.
 func checkNativeFormat(configDir string) error {
-	_, _, err := currentNativeFormat(configDir)
+	format, err := detectAuthority(configDir)
+	if err == nil && format == authorityV2 {
+		err = ErrNativeMigration
+	}
 	return err
 }
 
-// currentNativeFormat also returns the ledger bytes it checked, so a fenced
-// caller can decode that same read instead of reading the ledger again.
-func currentNativeFormat(configDir string) (ledger []byte, exists bool, err error) {
+// v2NativeFormat is the v2 runtime's check, kept for the JSON backend
+// (offline stores): it returns the ledger bytes it checked, so the caller
+// decodes that same read.
+func v2NativeFormat(configDir string) (ledger []byte, exists bool, err error) {
 	tombstone, data, err := legacyNativeDomain(configDir)
 	if err != nil || data {
 		return nil, false, ErrNativeMigration
@@ -142,15 +146,11 @@ func currentNativeFormat(configDir string) (ledger []byte, exists bool, err erro
 	// to read the version; its runtime reader refuses version 1 itself.
 	raw, err := os.ReadFile(filepath.Join(configDir, nativeProvisioningFile))
 	if err == nil {
-		// The admission view already fully validated identical v2 bytes. Reuse
-		// only that version predicate; the filesystem checks still run below.
-		if !nativeAssignmentsAlreadyDecoded(raw) {
-			var head struct {
-				Version int `json:"version"`
-			}
-			if json.Unmarshal(raw, &head) != nil || head.Version != 2 {
-				return nil, false, ErrNativeMigration
-			}
+		var head struct {
+			Version int `json:"version"`
+		}
+		if json.Unmarshal(raw, &head) != nil || head.Version != 2 {
+			return nil, false, ErrNativeMigration
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, false, ErrNativeMigration

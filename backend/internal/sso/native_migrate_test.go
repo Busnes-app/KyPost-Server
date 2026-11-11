@@ -139,7 +139,7 @@ func TestNativeMigrationLedgerRelayAndIdempotence(t *testing.T) {
 	if err != nil || !migrated {
 		t.Fatal(migrated, err)
 	}
-	life := NewLifecycleStore(config)
+	life := NewLifecycleStore(config).staged() // the v2 files
 	got, err := life.loadNative()
 	if err != nil || !maps.Equal(got.Accounts, want.Accounts) {
 		t.Fatalf("assignments changed: %v\n%+v\n%+v", err, got.Accounts, want.Accounts)
@@ -184,6 +184,11 @@ func TestNativeMigrationLedgerRelayAndIdempotence(t *testing.T) {
 	}
 	if after := configFiles(t, config, keyPath); !maps.Equal(before, after) {
 		t.Fatal("second run changed files")
+	}
+	// The same boot's next step: v2 -> v3, read by the runtime unchanged.
+	migrateForTest(t, config)
+	if v3, err := NewLifecycleStore(config).loadNative(); err != nil || !maps.Equal(v3.Accounts, want.Accounts) {
+		t.Fatal("v3 assignments changed", err)
 	}
 }
 
@@ -253,10 +258,10 @@ func TestNativeMigrationCrashAndV1RollbackConverge(t *testing.T) {
 	if _, err := MigrateNative(ctx, dir, keyPath); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := NewNativeDomainStore(dir).Read(); err != nil || got.Token != d.Token {
-		t.Fatal("rolled-back domain not converged", got, err)
+	if set, err := NewNativeDomainStore(dir).readSet(); err != nil || set.Domains[set.Founding].Token != d.Token {
+		t.Fatal("rolled-back domain not converged", set, err)
 	}
-	if got, _, err := NewLifecycleStore(dir).NativeAssignment(nativeIssuer, "one"); err != nil || got != a {
+	if got, _, err := NewLifecycleStore(dir).staged().NativeAssignment(nativeIssuer, "one"); err != nil || got != a {
 		t.Fatal("rolled-back ledger not converged", got, err)
 	}
 }
@@ -303,10 +308,32 @@ func TestNativeMigrationV1BinaryFailsClosed(t *testing.T) {
 	}
 }
 
+// A v1 domain without a ledger (a pending challenge) migrates to v3 with an
+// empty, initialized ledger; the container entrypoint check seeds this case.
+func TestNativeMigrationDomainWithoutLedger(t *testing.T) {
+	ctx := context.Background()
+	config := t.TempDir()
+	domain := `{"domain": "example.test", "issuer": "https://idp.example", "token": "` + strings.Repeat("0", 64) + `", "expiresAt": 4102444800}`
+	if err := os.WriteFile(filepath.Join(config, legacyNativeDomainFile), []byte(domain), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for run := range 2 {
+		if migrated, err := migrateNativeV3(ctx, config, filepath.Join(config, "absent.key")); err != nil || migrated != (run == 0) {
+			t.Fatal(run, migrated, err)
+		}
+	}
+	if tombstone, _, err := legacyNativeDomain(config); err != nil || !tombstone {
+		t.Fatal("tombstone", err)
+	}
+	if f, err := NewLifecycleStore(config).loadNative(); err != nil || f.stored.Accounts == nil || len(f.stored.Accounts) != 0 {
+		t.Fatal("empty ledger", err)
+	}
+}
+
 func TestNativeMigrationFreshInstallAndConfigure(t *testing.T) {
 	ctx := context.Background()
 	config := t.TempDir()
-	if migrated, err := MigrateNative(ctx, config, filepath.Join(config, "absent.key")); err != nil || migrated {
+	if migrated, err := migrateNativeV3(ctx, config, filepath.Join(config, "absent.key")); err != nil || migrated {
 		t.Fatal(migrated, err)
 	}
 	if entries, _ := os.ReadDir(config); len(entries) != 0 {
@@ -322,8 +349,14 @@ func TestNativeMigrationFreshInstallAndConfigure(t *testing.T) {
 	if got := string(mustRead(t, filepath.Join(config, legacyNativeDomainFile))); got != "{\n  \"migratedTo\": \"native-domains.json\"\n}" {
 		t.Fatal("tombstone", got)
 	}
-	if got := string(mustRead(t, filepath.Join(config, nativeProvisioningFile))); got != "{\n  \"version\": 2,\n  \"accounts\": {},\n  \"mailboxes\": {},\n  \"addresses\": {},\n  \"addressGenerations\": true\n}" {
-		t.Fatal("empty ledger", got)
+	// A fresh install starts in v3: the database, then both stubs.
+	for path, stub := range map[string]map[string]any{filepath.Join(config, nativeProvisioningFile): ledgerStubV3, filepath.Join(config, nativeLifecycleFile): lifecycleStubV3} {
+		if ok, err := jsonStub(path, stub); err != nil || !ok {
+			t.Fatal("stub", path, err)
+		}
+	}
+	if f, err := NewLifecycleStore(config).loadNative(); err != nil || f.stored.Accounts == nil || len(f.stored.Addresses) != 0 {
+		t.Fatal("empty ledger", err)
 	}
 	var set nativeDomainSet
 	if err := json.Unmarshal(mustRead(t, s.path), &set); err != nil || set.Version != 1 || set.Issuer != nativeIssuer || len(set.Domains) != 1 || set.Retired == nil || len(set.Retired) != 0 {
@@ -333,8 +366,8 @@ func TestNativeMigrationFreshInstallAndConfigure(t *testing.T) {
 	if err != nil || !lifecycle.NativeProvisioningInitialized {
 		t.Fatal("ledger not initialized", err)
 	}
-	if migrated, err := MigrateNative(ctx, config, filepath.Join(config, "absent.key")); err != nil || migrated {
-		t.Fatal("migration touched a v2 install", migrated, err)
+	if migrated, err := migrateNativeV3(ctx, config, filepath.Join(config, "absent.key")); err != nil || migrated {
+		t.Fatal("migration touched a v3 install", migrated, err)
 	}
 	// Native allocation then starts at once (outboundFixture and every
 	// allocation test run through this Configure path).
@@ -371,7 +404,7 @@ func TestNativeMigrationRefusals(t *testing.T) {
 	// v1 refused a ledger behind an unset initialization fence; migration must
 	// not grant it authority, and writes nothing but the preserved copies.
 	unfenced := copyConfig(t, config)
-	unfencedLife := NewLifecycleStore(unfenced)
+	unfencedLife := NewLifecycleStore(unfenced).staged()
 	lifecycle, err := unfencedLife.load()
 	if err != nil {
 		t.Fatal(err)
@@ -409,13 +442,13 @@ func TestNativeMigrationRefusals(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lost, legacyNativeDomainFile), domainBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if migrated, err := MigrateNative(ctx, lost, keyPath); err != nil || !migrated {
+	if migrated, err := migrateNativeV3(ctx, lost, keyPath); err != nil || !migrated {
 		t.Fatal("migration did not recover", migrated, err)
 	}
 	if _, err := NewNativeDomainStore(lost).Read(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := MigrateNative(ctx, config, keyPath); err != nil {
+	if _, err := migrateNativeV3(ctx, config, keyPath); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Configure(ctx, "other.test", nativeIssuer); !errors.Is(err, ErrNativeDomain) {
@@ -501,7 +534,7 @@ func TestNativeMigrationKeepsRecoveryDigestAndHold(t *testing.T) {
 	if err := WriteNativeV1ForTest(dir, keyPath); err != nil {
 		t.Fatal(err)
 	}
-	if migrated, err := MigrateNative(context.Background(), dir, keyPath); err != nil || !migrated {
+	if migrated, err := migrateNativeV3(context.Background(), dir, keyPath); err != nil || !migrated {
 		t.Fatal(migrated, err)
 	}
 	if !bytes.Equal(hold, mustRead(t, filepath.Join(dir, NativeRestoreHoldFile))) {
@@ -531,7 +564,7 @@ func TestNativeMigrationKeepsQueuedOutboxJob(t *testing.T) {
 	if _, err = sender.Submit(ctx, u.ID, id, 0); err == nil {
 		t.Fatal("unmigrated storage submitted")
 	}
-	if migrated, err := MigrateNative(ctx, sender.ConfigDir, sender.keyPath()); err != nil || !migrated {
+	if migrated, err := migrateNativeV3(ctx, sender.ConfigDir, sender.keyPath()); err != nil || !migrated {
 		t.Fatal(migrated, err)
 	}
 	result, err := sender.Submit(ctx, u.ID, id, 0)

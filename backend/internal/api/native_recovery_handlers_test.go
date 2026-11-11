@@ -15,7 +15,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,9 +108,9 @@ func TestNativeRecoveryHTTPRejectsClientSecretFallback(t *testing.T) {
 	srv, cookie, c := nativeRecoveryHTTPFixture(t)
 	settings := srv.ssoStore.Load()
 	body := recoveryHTTPUpload(t, srv, c, 0, settings.ClientSecret)
-	before, _ := os.ReadFile(ssotest.LifecyclePath(srv.configDir))
+	before, _ := ssotest.AuthorityContent(srv.configDir)
 	rec := gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/evidence", body, "")
-	after, _ := os.ReadFile(ssotest.LifecyclePath(srv.configDir))
+	after, _ := ssotest.AuthorityContent(srv.configDir)
 	if rec.Code != 409 || !bytes.Equal(before, after) {
 		t.Fatal("fallback/changing authority accepted or mutated", rec.Code)
 	}
@@ -219,7 +218,7 @@ func TestNativeRecoveryRefusesAdminCycleAfterStepUp(t *testing.T) {
 	if _, err = other.Reactivate(sess.UserID); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.ReadFile(ssotest.LifecyclePath(srv.configDir))
+	before, _ := ssotest.AuthorityContent(srv.configDir)
 	release()
 	released = true
 	select {
@@ -230,7 +229,7 @@ func TestNativeRecoveryRefusesAdminCycleAfterStepUp(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("request did not finish")
 	}
-	after, _ := os.ReadFile(ssotest.LifecyclePath(srv.configDir))
+	after, _ := ssotest.AuthorityContent(srv.configDir)
 	if !bytes.Equal(before, after) {
 		t.Fatal("stale admin proof committed evidence")
 	}
@@ -274,9 +273,9 @@ func TestNativeRecoveryChallengeRefusesStaleSSOAuthority(t *testing.T) {
 			if err := mutate(srv, sess); err != nil {
 				t.Fatal(err)
 			}
-			before, _ := os.ReadFile(ssotest.LifecyclePath(srv.configDir))
+			before, _ := ssotest.AuthorityContent(srv.configDir)
 			rec := gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/challenge", body, grant)
-			after, _ := os.ReadFile(ssotest.LifecyclePath(srv.configDir))
+			after, _ := ssotest.AuthorityContent(srv.configDir)
 			if rec.Code == 200 || rec.Code == 500 || !bytes.Equal(before, after) {
 				t.Fatalf("stale SSO authority accepted/mutated: %d %s", rec.Code, rec.Body.String())
 			}
@@ -308,13 +307,13 @@ func TestNativeRecoveryHTTPDecodedEvidenceBoundary(t *testing.T) {
 			wrapper["bodyBase64"] = base64.StdEncoding.EncodeToString(raw)
 			wrapper["signature"] = headers.Signature
 			encoded, _ := json.Marshal(wrapper)
-			before, _ := os.ReadFile(ssotest.LifecyclePath(srv.configDir))
+			before, _ := ssotest.AuthorityContent(srv.configDir)
 			rec := gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/evidence", string(encoded), "")
 			if extra == 0 && rec.Code != 200 {
 				t.Fatalf("maximum decoded evidence %d: %s", rec.Code, rec.Body.String())
 			}
 			if extra == 1 {
-				after, _ := os.ReadFile(ssotest.LifecyclePath(srv.configDir))
+				after, _ := ssotest.AuthorityContent(srv.configDir)
 				if rec.Code != 400 || !bytes.Equal(before, after) {
 					t.Fatal("decoded overflow accepted or mutated lifecycle", rec.Code)
 				}
@@ -328,9 +327,9 @@ func TestNativeRecoveryStatusIsAdminOnlyAndLeaksNoEvidence(t *testing.T) {
 	if rec := gatedCall(t, srv, cookie, "POST", "/api/admin/native-recovery/evidence", recoveryHTTPUpload(t, srv, c, 64, testSyncKey), ""); rec.Code != 200 {
 		t.Fatalf("upload %d: %s", rec.Code, rec.Body.String())
 	}
-	before, _ := os.ReadFile(ssotest.LifecyclePath(srv.configDir))
+	before, _ := ssotest.AuthorityContent(srv.configDir)
 	rec := gatedCall(t, srv, cookie, "GET", "/api/admin/native-recovery/status", "", "")
-	after, _ := os.ReadFile(ssotest.LifecyclePath(srv.configDir))
+	after, _ := ssotest.AuthorityContent(srv.configDir)
 	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "no-store" || !bytes.Equal(before, after) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}

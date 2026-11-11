@@ -51,11 +51,12 @@ func treeDigest(t *testing.T, roots ...string) map[string]string {
 				return err
 			}
 			// Every SQLite reader of a WAL database updates the -shm index;
-			// its content, and every durable file, must stay unchanged.
+			// every durable file must stay unchanged.
 			entry := info.Mode().String()
-			if !strings.HasSuffix(path, "-shm") {
-				entry += info.ModTime().String()
+			if strings.HasSuffix(path, "-shm") {
+				return nil
 			}
+			entry += info.ModTime().String()
 			if info.Mode().IsRegular() {
 				raw, err := os.ReadFile(path)
 				if err != nil {
@@ -172,7 +173,7 @@ func TestNativeRestoreReleaseStatusBarrierMismatch(t *testing.T) {
 	barrier := f.RecoveryRepairBarriers[k]
 	barrier.Nonce = strings.Repeat("0", 64)
 	f.RecoveryRepairBarriers[k] = barrier
-	if err = fsutil.PersistJSONFile(life.path, f); err != nil {
+	if err = life.persistLifecycle(f); err != nil {
 		t.Fatal(err)
 	}
 	if p2 := precondition(t, releaseStatus(t, life, root, settings, key, accounts, time.Now()), "P2"); p2.OK || !reflect.DeepEqual(p2.Reasons, []string{"repair barrier for account " + u.ID + " does not match"}) {
@@ -296,14 +297,14 @@ func TestNativeRecoveryRepairJournalTamper(t *testing.T) {
 				t.Fatal(err)
 			}
 			c.tamper(t, &f, root, u)
-			if err = fsutil.PersistJSONFile(life.path, f); err != nil {
+			if err = life.persistLifecycle(f); err != nil {
 				t.Fatal(err)
 			}
-			before, _ := os.ReadFile(life.path)
+			before, _ := authorityContent(life)
 			if err = completePublishedRecoveryBatch(t, life, root, settings, key, accounts); err == nil {
 				t.Fatal("tampered repair completed")
 			}
-			if after, _ := os.ReadFile(life.path); !bytes.Equal(before, after) {
+			if after, _ := authorityContent(life); !bytes.Equal(before, after) {
 				t.Fatal("refused completion mutated the journal")
 			}
 			st := releaseStatus(t, life, root, settings, key, accounts, time.Now())

@@ -54,11 +54,20 @@ func (e LogoutEvent) Covers(id SessionIdentity) bool {
 // process, but a replayed logout token, a login racing a logout, and a
 // stale directory event must still be refused afterwards.
 //
-// ponytail: one JSON file under a file lock, behind authorityStore (the JSON
-// backend); whole-file rewrites scale with account count. The SQLite backend
-// in docs/NATIVE_AUTHORITY_PER_ACCOUNT.md replaces it.
+// It sits with the native ledger behind authorityStore: native-authority.db
+// at runtime (docs/NATIVE_AUTHORITY_PER_ACCOUNT.md), the v1/v2 JSON files
+// only offline. path stays sso-lifecycle.json, whose ".lock" is the
+// directory fence.
 type LifecycleStore struct {
 	path string
+	// offline is an exclusive, stopped store (restore staging, migrate-native):
+	// it also reads and writes the v1/v2 files and leaves no WAL after a write.
+	offline bool
+}
+
+// staged is this store for offline work on stopped storage.
+func (s *LifecycleStore) staged() *LifecycleStore {
+	return &LifecycleStore{path: s.path, offline: true}
 }
 
 type lifecycleFile struct {
@@ -220,11 +229,15 @@ func (s *LifecycleStore) RecordSignOnJTI(issuer, clientID, jti string, expiresAt
 // this identity, so the callback refuses to mint a session for a login the
 // provider ended while the browser was still on its way back.
 func (s *LifecycleStore) LoggedOut(id SessionIdentity) (bool, error) {
-	f, err := s.load()
+	var logouts map[string]LogoutEvent
+	err := s.authority().View(context.Background(), func(r authorityReader) (err error) {
+		logouts, err = r.Logouts()
+		return err
+	})
 	if err != nil {
 		return false, err
 	}
-	for _, ev := range f.Logouts {
+	for _, ev := range logouts {
 		if ev.Covers(id) {
 			return true, nil
 		}
