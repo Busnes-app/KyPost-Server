@@ -882,6 +882,31 @@ func (t *sqliteTx) OwnerMailboxes(userID string) (nativeAssignments, error) {
 	return f, d.err
 }
 
+// Mailboxes reads the mailbox rows and each owner's primary mailbox ID: no
+// addresses and no whole-ledger decode or validation (Check is the
+// validation; admission reads its own rows).
+func (t *sqliteTx) Mailboxes() ([]NativeMailbox, error) {
+	r := authorityRows{}
+	if err := queryRows(t.ctx, t.c, "mailboxes", `SELECT m.id, a.primary_mailbox, m.kind, m.state, m.source, m.state_root, m.payload_bytes
+FROM mailboxes m JOIN accounts a ON a.issuer = m.issuer AND a.subject = m.subject ORDER BY m.id`, r); err != nil {
+		return nil, authorityErr(err)
+	}
+	if initialized, _ := t.Initialized(); !initialized && len(r["mailboxes"]) > 0 {
+		return nil, ErrNativeProvisioning // ledger rows behind an unset flag
+	}
+	d := &rowDecoder{}
+	mailboxes := make([]NativeMailbox, 0, len(r["mailboxes"]))
+	for _, row := range r["mailboxes"] {
+		m := NativeMailbox{ID: d.str(row[0]), User: d.str(row[1]), Kind: d.str(row[2]), State: d.str(row[3]), Prepared: d.str(row[4]) != "", QuotaBytes: d.int(row[6])}
+		// As mailboxStorage: a primary mailbox is its account's, else no storage.
+		if m.Kind == "extra" || m.ID == m.User {
+			m.Dir = NativeAssignment{Owner: mailbox.Owner{Mailbox: m.ID}, extra: m.Kind == "extra"}.Dir(d.str(row[5]))
+		}
+		mailboxes = append(mailboxes, m)
+	}
+	return mailboxes, d.err
+}
+
 func (t *sqliteTx) SetInitialized() error {
 	t.init = true
 	return nil

@@ -410,9 +410,15 @@ republish trigger).
 | `LoggedOut`, `RecordLogout`, `RecordSignOnJTI` (login, logout) | lifecycle whole | `logouts` scan (bounded by retention), keyed `sign_ons` |
 | api `extraMailboxOwner` (`withMailbox` with `X-KyPost-Mailbox`, every extra-mailbox request), `handleMailboxes` (`GET /api/mailboxes`), `extraMailboxIDs` (contacts), `ownsActiveExtraMailbox` (PGP incoming) | `NativeMailboxes()` whole, per request | `Mailbox(id)` / `MailboxesOwnedBy` (finding H1) |
 
+**Discovery passes** (`processor/poller.go` `activeExtraMailboxes` once per tick
+round, `app/native_outbound.go` outbox discovery every 30 s) read
+`NativeMailboxesWithoutAddresses`: the `Mailboxes` reader, one query over the
+mailbox rows joined to their accounts, without addresses or whole-ledger
+validation. It is discovery, never admission: every send, recovery and poll still
+admits afresh. `BenchmarkNativeOutboxDiscovery` measures it at 1k/3k/10k.
+
 **Cold paths. They keep whole reads through `Snapshot`, at most once per pass:**
-`NativeMailboxes` (admin lists, `processor/poller.go` `activeExtraMailboxes` once per
-tick round, `app/native_outbound.go` discovery every 30 s),
+`NativeMailboxes` (admin lists; linear in mailboxes plus addresses),
 `NativeDirectoryRepairSubjects` and `ReconcileNativeAddresses` (minute), the
 `NativeAddresses` admin handler, `NativeQueuedFromDomains`, `RetireDomain`, recovery
 and release planning, `ValidateNativeSnapshot`, `NativeRestoreMailboxes`, migration
@@ -583,7 +589,7 @@ departs from the sections above in these places:
 
 | Area | Design | PR 3 | Why |
 |---|---|---|---|
-| Interface | Section 2's per-record writer (`PutDirectory`, `PutEvent`, `DirectoryPrimaryTaken`, `MailboxesOwnedBy`) | PR 1's interface kept (`Lifecycle`/`PutLifecycle` whole, `PutAccount` by key), plus `OwnerMailboxes`, `Logouts`, `Change` and `Check` | Every caller keeps its algorithm; the reads on the hot paths (section 7) are point reads. `PutLifecycle` and the ledger puts write only the rows that differ from the stored ones. Ceiling: lifecycle writers (logout, sign-on, directory events) and ledger writers still read the whole lifecycle or ledger, O(N) per write; the alias rule still scans the directory in admin writes. |
+| Interface | Section 2's per-record writer (`PutDirectory`, `PutEvent`, `DirectoryPrimaryTaken`, `MailboxesOwnedBy`) | PR 1's interface kept (`Lifecycle`/`PutLifecycle` whole, `PutAccount` by key), plus `OwnerMailboxes`, `Mailboxes`, `Logouts`, `Change` and `Check` | Every caller keeps its algorithm; the reads on the hot paths (section 7) are point reads. `PutLifecycle` and the ledger puts write only the rows that differ from the stored ones. Ceiling: lifecycle writers (logout, sign-on, directory events) and ledger writers still read the whole lifecycle or ledger, O(N) per write; the alias rule still scans the directory in admin writes. |
 | Desired-state rule | Evaluate the touched owner plus `routes_pending` | Evaluated in memory over the whole ledger the writer already read; only changed rows are written and only their routes (plus `routes_pending`) are deactivated | Restricting the evaluation saves nothing while writers read the whole ledger; the expensive parts (row writes, route writes) are bounded. Bulk provisioning at N accounts still reads O(N) per commit. |
 | Route failure in a directory event | (section 3) one `Update`, then routes | The same; unlike the JSON backend, the event is recorded and the retry is answered `already_applied`, the route is retried from `routes_pending` | Follows section 3. |
 | Directory sync while v1 data awaits migration | (not covered) | Refused with `ErrNativeMigration`, like every authority access before `migrate-native` | Owner decision Q2: the lifecycle moves too. |

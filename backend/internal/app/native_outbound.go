@@ -37,7 +37,7 @@ func startNativeOutboundRuntime(ctx context.Context, d runDeps, sender sso.Nativ
 			all, err := d.users.List()
 			var mailboxes []sso.NativeMailbox
 			if err == nil {
-				mailboxes, err = sso.NewLifecycleStore(sender.ConfigDir).NativeMailboxes()
+				mailboxes, err = sso.NewLifecycleStore(sender.ConfigDir).NativeMailboxesWithoutAddresses()
 			}
 			if err != nil {
 				d.logger.Error("native outbox discovery deferred; retain queued mail", "error", "account storage unavailable")

@@ -90,6 +90,20 @@ func (s *LifecycleStore) NativeMailboxes() ([]NativeMailbox, error) {
 	return nativeMailboxes(f, func(string) bool { return true }), nil
 }
 
+// NativeMailboxesWithoutAddresses is NativeMailboxes with Addresses nil, read
+// without the address rows or a whole-ledger decode: discovery for the outbox
+// and extra-mailbox polling. It grants nothing; every operation admits afresh.
+func (s *LifecycleStore) NativeMailboxesWithoutAddresses() (mailboxes []NativeMailbox, err error) {
+	err = s.authority().View(context.Background(), func(r authorityReader) error {
+		mailboxes, err = r.Mailboxes()
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return mailboxes, nil
+}
+
 // NativeMailboxesOf is NativeMailboxes for one owning account's mailboxes,
 // read by owner (OwnerMailboxes), not from the whole ledger.
 func (s *LifecycleStore) NativeMailboxesOf(userID string) (mailboxes []NativeMailbox, err error) {
@@ -106,20 +120,21 @@ func (s *LifecycleStore) NativeMailboxesOf(userID string) (mailboxes []NativeMai
 
 // nativeMailboxes lists the mailboxes of f whose owning user keep accepts.
 func nativeMailboxes(f nativeAssignments, keep func(user string) bool) []NativeMailbox {
+	// One pass over the sorted addresses groups them by mailbox, in order.
+	addresses := map[string][]NativeAddress{}
+	for _, address := range slices.Sorted(maps.Keys(f.stored.Addresses)) {
+		x := f.stored.Addresses[address]
+		addresses[x.Mailbox] = append(addresses[x.Mailbox], x.public(address))
+	}
 	mailboxes := []NativeMailbox{}
 	for _, id := range slices.Sorted(maps.Keys(f.stored.Mailboxes)) {
 		m := f.stored.Mailboxes[id]
-		box := NativeMailbox{ID: id, User: f.stored.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].PrimaryMailbox, Kind: m.Kind, State: m.State, Prepared: m.Source != "", Addresses: []NativeAddress{}, QuotaBytes: m.Limits.PayloadBytes}
+		box := NativeMailbox{ID: id, User: f.stored.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].PrimaryMailbox, Kind: m.Kind, State: m.State, Prepared: m.Source != "", Addresses: append([]NativeAddress{}, addresses[id]...), QuotaBytes: m.Limits.PayloadBytes}
 		if !keep(box.User) {
 			continue
 		}
-		if a, _, ok := f.mailbox(id); ok {
+		if a, _, ok := f.mailboxStorage(id); ok {
 			box.Dir = a.Dir(a.StateRoot)
-		}
-		for _, address := range slices.Sorted(maps.Keys(f.stored.Addresses)) {
-			if x := f.stored.Addresses[address]; x.Mailbox == id {
-				box.Addresses = append(box.Addresses, x.public(address))
-			}
 		}
 		mailboxes = append(mailboxes, box)
 	}
