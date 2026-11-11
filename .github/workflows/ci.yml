@@ -130,9 +130,7 @@ jobs:
 
   backend-other-strong:
     name: ci-backend-other (strong-key profile)
-    # ubuntu-latest is moving to 26.04, whose apt cannot resolve the Ubuntu
-    # mirrors, so "install restic" fails. Back to ubuntu-latest once it can.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     defaults:
       run:
@@ -160,8 +158,12 @@ jobs:
             "$(pin EMBED_TOKENIZER_SHA256)" "$dir/tokenizer.json" | sha256sum -c -
           echo "EMBED_MODEL_DIR=$dir" >> "$GITHUB_ENV"
 
+      # Built through the Go module proxy (checksum-verified): the runners
+      # cannot always resolve the Ubuntu mirrors apt needs.
       - name: install restic
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends restic
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/restic/restic/cmd/restic@v0.18.1
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: go test -race (all packages except api, strong-key profile)
         env:
@@ -170,9 +172,7 @@ jobs:
 
   backend-other-default:
     name: ci-backend-other (default profile)
-    # ubuntu-latest is moving to 26.04, whose apt cannot resolve the Ubuntu
-    # mirrors, so "install restic" fails. Back to ubuntu-latest once it can.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     defaults:
       run:
@@ -236,8 +236,12 @@ jobs:
       # users, pgpmail, contacts, state, rules, mailmsg, adapters, and
       # utility packages. These can safely run together and complete in ~4-5 minutes.
       # Mail bulk backup tests run the real restic CLI and fail without it in CI.
+      # Built through the Go module proxy (checksum-verified): the runners
+      # cannot always resolve the Ubuntu mirrors apt needs.
       - name: install restic
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends restic
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/restic/restic/cmd/restic@v0.18.1
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: go test -race (all packages except api)
         run: go list ./... | grep -v "^github.com/Busnes-app/kypost-server/backend/internal/api$" | xargs go test -race -count=1 -timeout=20m
