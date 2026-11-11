@@ -60,6 +60,9 @@ import {
   buildReplyAllRecipients
 } from "./read/compose";
 
+// Visible-tab inbox refresh; the cursor makes each one a cheap delta.
+const INBOX_REFRESH_MS = 30_000;
+
 const SEARCH_FIELDS = [
   ["all", "All"],
   ["sender", "Sender"],
@@ -560,8 +563,17 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
     setDecrypted({});
     bodyCacheRef.current.clear();
     void reloadInbox();
-    const timer = setInterval(() => void reloadInbox(), 15_000);
-    return () => clearInterval(timer);
+    // Hidden tabs skip the timer and refresh as soon as they are shown again;
+    // push notifications announce new mail meanwhile.
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") void reloadInbox();
+    };
+    const timer = setInterval(refreshIfVisible, INBOX_REFRESH_MS);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
   }, [mailbox]);
 
   // Wide screens read in a pane (a non-modal dialog the layout places beside or
