@@ -214,9 +214,10 @@ func HistoricalNativeDomains(configDir string) (NativeDomainSet, int, error) {
 
 // NativeSnapshotFormatsConsistent is the format-mix rule for snapshots: a v1
 // domain may sit beside v1 or v2 files (migration crash windows), a v2 domain
-// only beside v2 files, and no domain beside none. Versions are 0 when absent.
+// only beside v2 files or a v3 ledger (native-authority.db), and no domain
+// beside none. Versions are 0 when absent.
 func NativeSnapshotFormatsConsistent(domainFormat, fileVersion int) bool {
-	return fileVersion == 0 || domainFormat == 1 || domainFormat == 2 && fileVersion == 2
+	return fileVersion == 0 || domainFormat == 1 && fileVersion <= 2 || domainFormat == 2 && (fileVersion == 2 || fileVersion == 3)
 }
 
 // SetLookupForTest follows the existing test-only transport override contract.

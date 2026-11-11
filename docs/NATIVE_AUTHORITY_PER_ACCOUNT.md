@@ -1,6 +1,8 @@
 # Native authority per account (design, not shipped)
 
-Status: proposed design, 2026-11-10. No product code implements it yet. It replaces
+Status: design, 2026-11-10. PR 1 (the `authorityStore` seam) and PR 2 (the read-only
+v3 reader for backups, `backend/internal/sso/authority_v3.go`) are merged or in review;
+no binary writes v3 yet. It replaces
 the whole-file reads of `sso-lifecycle.json` and `native-provisioning.json` on every
 mail-client operation with reads of single records, so that admission costs O(1) in
 the number of accounts. Shipped contracts remain [NATIVE_ADDRESSING_V2.md](NATIVE_ADDRESSING_V2.md)

@@ -31,16 +31,16 @@ const scratchDirName = "backup-scratch"
 var required = []string{"config/config.yaml", "config/users.json", "private/totp-secret.key", "state/state.db"}
 
 func snapshotDatabase(name string) bool {
-	return name == "state.db" || name == "mailbox.db" || name == "ingress.db" || name == cfreceiving.DBFile
+	return name == "state.db" || name == "mailbox.db" || name == "ingress.db" || name == cfreceiving.DBFile || name == sso.NativeAuthorityFile
 }
 
-// ".v1-migrated" (native storage migration copies) needs its own rule: it ends
-// in "-migrated", which the ".migrated" rule does not match.
+// ".v1-migrated" and ".v2-migrated" (native storage migration copies) need
+// their own rule: they end in "-migrated", which ".migrated" does not match.
 func skip(name string) bool {
 	// The Cloudflare host record is this host's live marker: a restore must start fenced.
 	// A restore qualification or release proves one restore, never a later one.
 	return name == "supervisor.sock" || name == "supervisord.pid" || name == "poll-now.trigger" || name == "mailcache.json" || name == scratchDirName || name == bulkManifestName || name == sso.NativeRestoreQualificationFile || name == sso.NativeRestoreReleasedFile || strings.HasPrefix(name, cfreceiving.HostFile) || name == ingress.EvidenceDamagedFile || strings.HasSuffix(name, ".lock") ||
-		strings.HasSuffix(name, ".migrated") || strings.HasSuffix(name, ".v1-migrated") || strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")
+		strings.HasSuffix(name, ".migrated") || strings.HasSuffix(name, ".v1-migrated") || strings.HasSuffix(name, ".v2-migrated") || strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")
 }
 
 func (s *Service) Collect() (recoveryclient.Payload, error) { return s.collect(context.Background()) }

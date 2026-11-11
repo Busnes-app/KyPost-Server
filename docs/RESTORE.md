@@ -108,6 +108,17 @@ restore hold left in place. Configuring a mail domain now also initializes an
 empty native ledger, so restoring a deployment that configured a domain but has
 no native accounts is held like a relay-only restore.
 
+Validation and drills also read the per-account authority format (version 3,
+[design](NATIVE_AUTHORITY_PER_ACCOUNT.md)), which no shipped binary writes yet:
+`native-authority.db` beside the exact `sso-lifecycle.json` and
+`native-provisioning.json` stubs, beside a version-2 domain set. The database is
+collected as a SQLite snapshot and opened read-only; a schema that is not exactly
+the built-in one, a failed integrity or foreign-key check, a group- or
+world-readable or non-regular file, or any other mix (a version-2 file beside the
+database, a stub without it) is refused. `*.v2-migrated` copies are never
+collected. Until the SQLite runtime ships, a version-3 restore is refused at the
+credential fence, held and unpublished.
+
 With several domains, validation checks each domain's proof format, that every
 ledger address sits on a domain in the set (configured or retired), that the
 relay's `domains` and `retiredDomains` are within the same set, and outbox jobs

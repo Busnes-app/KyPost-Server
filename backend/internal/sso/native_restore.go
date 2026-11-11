@@ -80,12 +80,9 @@ func (s *LifecycleStore) FenceRestoredNativeTokens(stateRoot string, accounts []
 // All storage reads use stateRoot, not the ledger's original absolute StateRoot.
 // It must not create storage, acknowledge preparations or rewrite reservations.
 func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []users.User) (bool, error) {
-	lifecycle, err := s.load()
-	if err != nil {
-		return true, err
-	}
-	// Snapshots may predate migration: accept version-1 and version-2 files.
-	f, ledgerVersion, err := s.loadNativeLedger(true)
+	// Snapshots may predate migration: accept version-1 and version-2 files,
+	// and the v3 database beside its stubs.
+	lifecycle, f, ledgerVersion, err := s.historicalAuthority()
 	if err != nil {
 		return true, err
 	}
@@ -128,9 +125,9 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 	if err != nil {
 		return native, err
 	}
-	// An account-less v2 ledger without a domain is Configure's crash window
+	// An account-less v2 or v3 ledger without a domain is Configure's crash window
 	// (ledger before set); it carries no authority, so it must not fail backups.
-	configureCrashWindow := domainFormat == 0 && ledgerVersion == 2 && len(f.Accounts) == 0
+	configureCrashWindow := domainFormat == 0 && ledgerVersion >= 2 && len(f.Accounts) == 0
 	if !configureCrashWindow && !NativeSnapshotFormatsConsistent(domainFormat, ledgerVersion) {
 		return true, ErrNativeProvisioning
 	}

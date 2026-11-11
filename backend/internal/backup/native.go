@@ -104,7 +104,7 @@ func validateNativePayload(ctx context.Context, files []recoveryclient.File, sta
 			if _, err := ingress.ParseBlocks(f.Data); err != nil {
 				return fmt.Errorf("refusing to seal %s: %w", f.Path, err)
 			}
-		case "native-provisioning.json", sso.NativeDomainsFile, "native-mailbox.json", "mailbox.db", "ingress.db", "native-relay.json":
+		case "native-provisioning.json", sso.NativeAuthorityFile, sso.NativeDomainsFile, "native-mailbox.json", "mailbox.db", "ingress.db", "native-relay.json":
 			native = true
 		case "sso-lifecycle.json":
 			var doc struct {
