@@ -130,7 +130,9 @@ jobs:
 
   backend-other-strong:
     name: ci-backend-other (strong-key profile)
-    runs-on: ubuntu-latest
+    # ubuntu-latest is moving to 26.04, whose apt cannot resolve the Ubuntu
+    # mirrors, so "install restic" fails. Back to ubuntu-latest once it can.
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     defaults:
       run:
@@ -168,7 +170,9 @@ jobs:
 
   backend-other-default:
     name: ci-backend-other (default profile)
-    runs-on: ubuntu-latest
+    # ubuntu-latest is moving to 26.04, whose apt cannot resolve the Ubuntu
+    # mirrors, so "install restic" fails. Back to ubuntu-latest once it can.
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     defaults:
       run:
