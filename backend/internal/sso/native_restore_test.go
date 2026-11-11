@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -165,9 +164,13 @@ func editAssignment(t *testing.T, s *LifecycleStore, edit func(*NativeAssignment
 	a := f.Accounts[key]
 	edit(&a)
 	f.Accounts[key] = a
-	if err := s.saveNative(f); err != nil {
+	life, err := s.load()
+	if err != nil {
 		t.Fatal(err)
 	}
+	// Edits identity columns too, so written as outside damage would be.
+	l := f.ledger(life.Directory)
+	rewriteAuthorityForTest(t, s, authoritySchemaV3, func(_ *lifecycleFile, p **nativeLedger) { *p = &l })
 }
 
 func removePreparedFile(rel string) func(*testing.T, *LifecycleStore, string, users.User) []users.User {
@@ -232,7 +235,7 @@ func TestNativeRestoreTokenCutoffRefusesUnsafeInputsAndWriteFailure(t *testing.T
 					t.Fatal(e)
 				}
 				delete(f.Directory, directoryKey(u.NativeMailboxIssuer, u.SSOSub))
-				if err = fsutil.PersistJSONFile(life.path, f); err != nil {
+				if err = life.persistLifecycle(f); err != nil {
 					t.Fatal(err)
 				}
 			case "foreign-owner":
@@ -242,20 +245,21 @@ func TestNativeRestoreTokenCutoffRefusesUnsafeInputsAndWriteFailure(t *testing.T
 					}
 				}
 			case "blocked-write":
-				dir := filepath.Dir(life.path)
-				if err = os.Chmod(dir, 0500); err != nil {
+				db := filepath.Join(filepath.Dir(life.path), NativeAuthorityFile)
+				dropAuthorityHandle(db) // the next open finds the file read-only
+				if err = os.Chmod(db, 0400); err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+				t.Cleanup(func() { _ = os.Chmod(db, 0600) })
 			}
-			before, err := os.ReadFile(life.path)
+			before, err := authorityContent(life)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if err = life.FenceRestoredNativeTokens(root, all); err == nil {
 				t.Fatal("unsafe cutoff mutation accepted")
 			}
-			after, err := os.ReadFile(life.path)
+			after, err := authorityContent(life)
 			if err != nil {
 				t.Fatal(err)
 			}

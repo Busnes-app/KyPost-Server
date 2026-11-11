@@ -201,17 +201,18 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 
 func repairLifecycle(t *testing.T, s *Server) (bool, bool) {
 	t.Helper()
-	raw, err := os.ReadFile(ssotest.LifecyclePath(s.configDir))
+	raw, err := ssotest.LifecycleRecord(s.configDir, "recoveryRepair")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var f struct {
-		RecoveryRepair *struct{ CompletedAt *time.Time } `json:"recoveryRepair"`
+	if raw == nil {
+		return false, false
 	}
-	if err = json.Unmarshal(raw, &f); err != nil {
+	var repair struct{ CompletedAt *time.Time }
+	if err = json.Unmarshal(raw, &repair); err != nil {
 		t.Fatal(err)
 	}
-	return f.RecoveryRepair != nil, f.RecoveryRepair != nil && f.RecoveryRepair.CompletedAt != nil
+	return true, repair.CompletedAt != nil
 }
 
 func TestNativeRecoveryRepairHTTPReconcilesAndRevokesWhileHeld(t *testing.T) {
@@ -448,7 +449,7 @@ func TestNativeRecoveryRepairHTTPRechecksConfirmedActor(t *testing.T) {
 			} else {
 				f.s.revokeUserSessions(actor.ID, "")
 			}
-			before, _ := os.ReadFile(ssotest.LifecyclePath(f.s.configDir))
+			before, _ := ssotest.AuthorityContent(f.s.configDir)
 			release()
 			released = true
 			select {
@@ -459,7 +460,7 @@ func TestNativeRecoveryRepairHTTPRechecksConfirmedActor(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("stale request did not finish")
 			}
-			after, _ := os.ReadFile(ssotest.LifecyclePath(f.s.configDir))
+			after, _ := ssotest.AuthorityContent(f.s.configDir)
 			if !bytes.Equal(before, after) {
 				t.Fatal("stale proof changed recovery state")
 			}
