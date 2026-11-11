@@ -65,8 +65,37 @@ func (s *LifecycleStore) NativeAddresses() (map[string]NativeAddress, error) {
 	return addresses, nil
 }
 
+// NativeAddress reads one ledger address, the zero value when it has none.
+// Callers that act on the answer hold the directory lock.
+func (s *LifecycleStore) NativeAddress(address string) (a NativeAddress, err error) {
+	err = s.authority().View(context.Background(), func(r authorityReader) error {
+		x, ok, err := r.Address(address)
+		if ok {
+			a = x.public(address)
+		}
+		return err
+	})
+	if err != nil {
+		return NativeAddress{}, err
+	}
+	return a, nil
+}
+
 // NativeMailboxes lists mailboxes, sorted, with their addresses sorted.
 func (s *LifecycleStore) NativeMailboxes() ([]NativeMailbox, error) {
+	return s.nativeMailboxes(func(string) bool { return true })
+}
+
+// NativeMailboxesOf is NativeMailboxes for one owning account's mailboxes.
+// ponytail: filters the whole ledger (JSON backend); per-owner reads arrive
+// with the SQLite backend.
+// An empty userID still reads the ledger, so its errors surface.
+func (s *LifecycleStore) NativeMailboxesOf(userID string) ([]NativeMailbox, error) {
+	return s.nativeMailboxes(func(user string) bool { return user == userID })
+}
+
+// nativeMailboxes lists the mailboxes whose owning user keep accepts.
+func (s *LifecycleStore) nativeMailboxes(keep func(user string) bool) ([]NativeMailbox, error) {
 	f, err := s.loadNative()
 	if err != nil {
 		return nil, err
@@ -75,6 +104,9 @@ func (s *LifecycleStore) NativeMailboxes() ([]NativeMailbox, error) {
 	for _, id := range slices.Sorted(maps.Keys(f.stored.Mailboxes)) {
 		m := f.stored.Mailboxes[id]
 		box := NativeMailbox{ID: id, User: f.stored.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)].PrimaryMailbox, Kind: m.Kind, State: m.State, Prepared: m.Source != "", Addresses: []NativeAddress{}, QuotaBytes: m.Limits.PayloadBytes}
+		if !keep(box.User) {
+			continue
+		}
 		if a, _, ok := f.mailbox(id); ok {
 			box.Dir = a.Dir(a.StateRoot)
 		}
@@ -98,24 +130,22 @@ func (s *LifecycleStore) ReconcileNativeAddresses(ctx context.Context) error {
 		return err
 	}
 	defer release()
-	f, err := s.loadNative()
-	if err != nil || len(f.Accounts) == 0 {
-		return err
-	}
-	lifecycle, err := s.load()
-	if err != nil {
-		return err
-	}
-	l := f.ledger(lifecycle.Directory)
-	before := maps.Clone(l.Addresses)
-	inactive, err := s.syncAddressStates(&l, lifecycle.Directory)
-	if err != nil {
-		return err
-	}
-	if maps.EqualFunc(before, l.Addresses, func(a, b nativeLedgerAddress) bool { return a.State == b.State && a.Generation == b.Generation }) {
-		return deactivateRoutes(l, inactive)
-	}
-	return s.commitNative(f, nil)
+	return s.authority().Update(ctx, func(w authorityWriter) error {
+		f, directory, err := w.Snapshot()
+		if err != nil || len(f.Accounts) == 0 {
+			return err
+		}
+		l := f.ledger(directory)
+		before := maps.Clone(l.Addresses)
+		inactive, err := s.syncAddressStates(&l, directory)
+		if err != nil {
+			return err
+		}
+		if maps.EqualFunc(before, l.Addresses, func(a, b nativeLedgerAddress) bool { return a.State == b.State && a.Generation == b.Generation }) {
+			return w.MarkRoutesPending(inactive)
+		}
+		return s.writeNative(w, f, nil, true)
+	})
 }
 
 // AddNativeAlias gives an everyday identity's mailbox a new address. Records
@@ -238,16 +268,17 @@ func (s *LifecycleStore) changeNativeAddress(ctx context.Context, stateRoot, add
 	if err != nil {
 		return NativeAddress{}, err
 	}
-	f, err := s.loadNative()
-	if err != nil {
-		return NativeAddress{}, err
-	}
-	lifecycle, err := s.load()
+	var f nativeAssignments
+	var directory map[string]DirectoryState
+	err = s.authority().View(ctx, func(r authorityReader) error {
+		f, directory, err = r.Snapshot()
+		return err
+	})
 	if err != nil {
 		return NativeAddress{}, err
 	}
 	x, exists := f.stored.Addresses[address]
-	x, err = change(f, domains, lifecycle.Directory, x, exists)
+	x, err = change(f, domains, directory, x, exists)
 	if err != nil {
 		return NativeAddress{}, err
 	}

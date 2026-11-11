@@ -34,14 +34,14 @@ func RequireNativeRestoreReleased(stateRoot string) error {
 // FenceRestoredNativeTokens is only for exclusive, stopped restore staging.
 // Qualification proves historical ownership, not current access or hold release.
 func (s *LifecycleStore) FenceRestoredNativeTokens(stateRoot string, accounts []users.User) error {
-	return fsutil.WithFileLock(s.path, func() error {
+	return s.update(func(w authorityWriter) error {
 		if _, err := nativeRecoveryEpoch(stateRoot); err != nil {
 			return err
 		}
 		if _, err := s.ValidateNativeSnapshot(stateRoot, accounts); err != nil {
 			return err
 		}
-		f, err := s.load()
+		f, err := w.Lifecycle()
 		if err != nil {
 			return err
 		}
@@ -72,7 +72,7 @@ func (s *LifecycleStore) FenceRestoredNativeTokens(stateRoot string, accounts []
 		if !changed {
 			return nil
 		}
-		return fsutil.PersistJSONFile(s.path, f)
+		return w.PutLifecycle(f)
 	})
 }
 

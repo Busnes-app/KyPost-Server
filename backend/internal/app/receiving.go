@@ -414,12 +414,11 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 // activeAddress reads the current ledger record under the caller's directory
 // fence; only an active address routes.
 func (r *receivingRuntime) activeAddress(address string) (sso.NativeAddress, error) {
-	addresses, err := r.life.NativeAddresses()
+	x, err := r.life.NativeAddress(address)
 	if err != nil {
 		return sso.NativeAddress{}, err
 	}
-	x, ok := addresses[address]
-	if !ok || x.State != "active" {
+	if x.State != "active" {
 		return x, ingress.ErrRoute
 	}
 	return x, nil

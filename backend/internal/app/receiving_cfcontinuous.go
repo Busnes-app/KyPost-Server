@@ -389,6 +389,11 @@ func (l *cfLoop) buildRoutes(ctx context.Context) ([]cfreceiving.Route, error) {
 		if len(fresh) > 0 {
 			_ = r.withAuthority(ctx, []string{id}, fresh, freshProofs, func(current map[string]sso.NativeAssignment) error {
 				a := current[id]
+				if err := l.hit("routes-admitted"); err != nil {
+					return err
+				}
+				// One read for every fresh address: a failure publishes no
+				// fresh route for this mailbox, so all keep their previous one.
 				now, err := r.life.NativeAddresses()
 				if err != nil {
 					return err

@@ -23,6 +23,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -507,7 +508,7 @@ func TestNativeExtraMailboxExcludesIncomingEncryption(t *testing.T) {
 	}
 	// An active mailbox whose creation never published storage is not listed
 	// and does not block incoming encryption.
-	path := filepath.Join(srv.configDir, "native-provisioning.json")
+	path := ssotest.LedgerPath(srv.configDir)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

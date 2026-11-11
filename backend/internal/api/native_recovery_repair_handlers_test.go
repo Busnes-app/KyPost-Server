@@ -25,6 +25,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail"
 	"github.com/Busnes-app/kypost-server/backend/internal/pgpmail/pgpmailtest"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -200,7 +201,7 @@ func nativeRepairHTTPFixture(t *testing.T, scenario string, revoked bool) native
 
 func repairLifecycle(t *testing.T, s *Server) (bool, bool) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(s.configDir, "sso-lifecycle.json"))
+	raw, err := os.ReadFile(ssotest.LifecyclePath(s.configDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +448,7 @@ func TestNativeRecoveryRepairHTTPRechecksConfirmedActor(t *testing.T) {
 			} else {
 				f.s.revokeUserSessions(actor.ID, "")
 			}
-			before, _ := os.ReadFile(filepath.Join(f.s.configDir, "sso-lifecycle.json"))
+			before, _ := os.ReadFile(ssotest.LifecyclePath(f.s.configDir))
 			release()
 			released = true
 			select {
@@ -458,7 +459,7 @@ func TestNativeRecoveryRepairHTTPRechecksConfirmedActor(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("stale request did not finish")
 			}
-			after, _ := os.ReadFile(filepath.Join(f.s.configDir, "sso-lifecycle.json"))
+			after, _ := os.ReadFile(ssotest.LifecyclePath(f.s.configDir))
 			if !bytes.Equal(before, after) {
 				t.Fatal("stale proof changed recovery state")
 			}

@@ -160,8 +160,7 @@ func (s *Server) nativeFrom(a sso.NativeAssignment, requested string) (string, b
 	if requested == "" || requested == a.Address {
 		return a.Address, true, nil
 	}
-	addresses, err := s.ssoLifecycle.NativeAddresses()
-	x := addresses[requested]
+	x, err := s.ssoLifecycle.NativeAddress(requested)
 	return requested, err == nil && x.Mailbox == a.Owner.Mailbox && x.State == "active", err
 }
 

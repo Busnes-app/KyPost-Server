@@ -189,8 +189,8 @@ func (s *LifecycleStore) ApplyDirectoryUser(issuer string, ev syncauth.Event, re
 
 func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subject string, revision int64, digest string, active bool, resource *DirectoryUser, apply func() (bool, error)) (string, error) {
 	status := DirectoryAlreadyApplied
-	err := fsutil.WithFileLock(s.path, func() error {
-		f, err := s.load()
+	err := s.update(func(w authorityWriter) error {
+		f, err := w.Lifecycle()
 		if err != nil {
 			return err
 		}
@@ -229,7 +229,7 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 			if fence {
 				state.RevokedBefore = max(prior.RevokedBefore, now)
 			}
-			if err := s.syncNativeDirectory(key, state); err != nil {
+			if err := s.syncNativeDirectory(w, key, state); err != nil {
 				return err
 			}
 			f.Directory[key] = state
@@ -245,17 +245,17 @@ func (s *LifecycleStore) applyDirectory(issuer string, ev syncauth.Event, subjec
 			status = DirectoryApplied
 		}
 		f.Events[ev.ID] = directoryEvent{Issuer: issuer, Digest: digest, ExpiresAt: ev.At.Add(syncauth.DefaultWindow).Unix()}
-		return fsutil.PersistJSONFile(s.path, f)
+		return w.PutLifecycle(f)
 	})
 	return status, err
 }
 
-// syncNativeDirectory runs under the directory lock before the revision is
+// syncNativeDirectory runs in the event's Update before the revision is
 // recorded: a demotion clears legacyMixedUse, and every ledger address is set
-// to its desired state with a generation bump (commitNative), its route
+// to its desired state with a generation bump (writeNative), its route
 // written inactive. Any load or write failure fails the event, so the sender
 // retries it and the rule converges.
-func (s *LifecycleStore) syncNativeDirectory(key string, d DirectoryState) error {
+func (s *LifecycleStore) syncNativeDirectory(w authorityWriter, key string, d DirectoryState) error {
 	// While version-1 domain data awaits migration, directory sync must keep
 	// working, IMAP deployments included: migration recomputes the flag from
 	// the directory resource recorded here, so the demotion still lands. Any
@@ -263,7 +263,7 @@ func (s *LifecycleStore) syncNativeDirectory(key string, d DirectoryState) error
 	if _, v1, err := legacyNativeDomain(filepath.Dir(s.path)); err == nil && v1 {
 		return nil
 	}
-	f, err := s.loadNative()
+	f, _, err := w.Snapshot()
 	if err != nil {
 		return err
 	}
@@ -274,7 +274,7 @@ func (s *LifecycleStore) syncNativeDirectory(key string, d DirectoryState) error
 		a.LegacyMixedUse = false
 		f.Accounts[key] = a
 	}
-	return s.commitNative(f, map[string]DirectoryState{key: d})
+	return s.writeNative(w, f, map[string]DirectoryState{key: d}, true)
 }
 
 // LockDirectory holds the lock ApplyDirectory applies under, so a caller can
@@ -292,12 +292,14 @@ func (s *LifecycleStore) LockDirectoryContext(ctx context.Context) (release func
 
 // Directory returns the last applied state for a subject, and whether the
 // directory has ever spoken about it.
-func (s *LifecycleStore) Directory(issuer, subject string) (DirectoryState, bool, error) {
-	f, err := s.load()
+func (s *LifecycleStore) Directory(issuer, subject string) (st DirectoryState, ok bool, err error) {
+	err = s.authority().View(context.Background(), func(r authorityReader) error {
+		st, ok, err = r.Directory(issuer, subject)
+		return err
+	})
 	if err != nil {
 		return DirectoryState{}, false, err
 	}
-	st, ok := f.Directory[directoryKey(issuer, subject)]
 	return st, ok, nil
 }
 
@@ -311,14 +313,15 @@ func (s *LifecycleStore) NativeDirectoryRepairSubjects(ctx context.Context, issu
 		return nil, err
 	}
 	defer release()
-	f, err := s.load()
-	if err != nil {
-		return nil, err
-	}
-	if err := checkNativeFormat(filepath.Dir(s.path)); err != nil {
-		return nil, err
-	}
-	assignments, _, err := s.readNativeLedger(f, false)
+	var f lifecycleFile
+	var assignments nativeAssignments
+	err = s.authority().View(ctx, func(r authorityReader) error {
+		if f, err = r.Lifecycle(); err != nil {
+			return err
+		}
+		assignments, _, err = r.Snapshot()
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -295,7 +296,7 @@ func TestNativeRestoreQualification(t *testing.T) {
 		var lifecycle struct {
 			Directory map[string]sso.DirectoryState `json:"directory"`
 		}
-		raw, err := os.ReadFile(filepath.Join(dir, "config/sso-lifecycle.json"))
+		raw, err := os.ReadFile(ssotest.LifecyclePath(filepath.Join(dir, "config")))
 		if err == nil {
 			err = json.Unmarshal(raw, &lifecycle)
 		}
@@ -427,7 +428,7 @@ func TestNativeRestoreFencesUnpublishedLedgerMailbox(t *testing.T) {
 	if err != nil || len(devices) != 0 {
 		t.Fatalf("unpublished mailbox devices kept: %v %v", devices, err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "config/sso-lifecycle.json"))
+	raw, err := os.ReadFile(ssotest.LifecyclePath(filepath.Join(dir, "config")))
 	if err != nil {
 		t.Fatal(err)
 	}

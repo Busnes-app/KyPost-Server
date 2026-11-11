@@ -13,6 +13,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -50,7 +51,7 @@ func TestNativeRecoveryEvidenceCannotApplyDirectoryState(t *testing.T) {
 			if _, err := syncauth.Verify([]byte(testSyncKey), signed, body, syncauth.Options{}); err != nil {
 				t.Fatal(err)
 			}
-			paths := []string{filepath.Join(srv.configDir, "users.json"), filepath.Join(srv.configDir, "sso-lifecycle.json"), hold}
+			paths := []string{filepath.Join(srv.configDir, "users.json"), ssotest.LifecyclePath(srv.configDir), hold}
 			before := make([][]byte, len(paths))
 			for i, path := range paths {
 				before[i], err = os.ReadFile(path)

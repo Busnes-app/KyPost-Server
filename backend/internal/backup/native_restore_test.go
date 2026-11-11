@@ -23,6 +23,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -79,7 +80,7 @@ func TestNativeRestoreRaisesTokenCutoffPreservesDirectory(t *testing.T) {
 			if _, err := life.ApplyDirectory("https://legacy.example", syncauth.Event{ID: "legacy", Type: "user.updated", At: time.Now()}, "legacy", 1, "retained", true, func() (bool, error) { return false, nil }); err != nil {
 				t.Fatal(err)
 			}
-			path := filepath.Join(s.dirs.Config, "sso-lifecycle.json")
+			path := ssotest.LifecyclePath(s.dirs.Config)
 			read := func() map[string]json.RawMessage {
 				t.Helper()
 				raw, err := os.ReadFile(path)
@@ -121,7 +122,7 @@ func TestNativeRestoreRaisesTokenCutoffPreservesDirectory(t *testing.T) {
 			if _, _, err := capsule.Open(raw, sealKey, root); err != nil {
 				t.Fatal(err)
 			}
-			path = filepath.Join(root, "config/sso-lifecycle.json")
+			path = ssotest.LifecyclePath(filepath.Join(root, "config"))
 			before = read()
 			for attempt := 0; attempt < 2; attempt++ {
 				start := time.Now().Unix()
@@ -236,7 +237,7 @@ func TestNativeBackupRestoreOwnershipAndHold(t *testing.T) {
 			if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(hold.Epoch) {
 				t.Fatal("successful or failed restore lacks a valid epoch")
 			}
-			if _, err := os.Stat(filepath.Join(dir, "config/native-provisioning.json")); err != nil {
+			if _, err := os.Stat(ssotest.LedgerPath(filepath.Join(dir, "config"))); err != nil {
 				t.Fatal("restore erased ownership", err)
 			}
 			switch damage {

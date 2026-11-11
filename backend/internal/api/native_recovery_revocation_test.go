@@ -8,6 +8,7 @@ import (
 	"errors"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 	"net/http"
@@ -187,7 +188,7 @@ func TestNativeRecoveryPublishedNativeRevocation(t *testing.T) {
 }
 func assertRecoveryReceiptInvalidated(t *testing.T, s *Server) {
 	t.Helper()
-	body, e := os.ReadFile(filepath.Join(s.configDir, "sso-lifecycle.json"))
+	body, e := os.ReadFile(ssotest.LifecyclePath(s.configDir))
 	if e != nil {
 		t.Fatal(e)
 	}

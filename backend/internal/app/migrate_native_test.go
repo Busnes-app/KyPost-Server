@@ -17,6 +17,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 )
 
 // Mail bound under v1 behaves identically after migration: a binding at an
@@ -70,7 +71,7 @@ func TestNativeMigrationKeepsReceivingBindings(t *testing.T) {
 	var ledger struct {
 		Addresses map[string]struct{ Generation int64 } `json:"addresses"`
 	}
-	raw, err := os.ReadFile(filepath.Join(r.configDir, "native-provisioning.json"))
+	raw, err := os.ReadFile(ssotest.LedgerPath(r.configDir))
 	if err != nil || json.Unmarshal(raw, &ledger) != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestMigrateNativeCommandAppliesMailboxQuota(t *testing.T) {
 	r, created := receivingFixture(t)
 	t.Setenv("CONFIG_DIR", r.configDir)
 	t.Setenv("SECRET_DIR", t.TempDir())
-	ledger := filepath.Join(r.configDir, "native-provisioning.json")
+	ledger := ssotest.LedgerPath(r.configDir)
 	before, err := os.ReadFile(ledger)
 	if err != nil {
 		t.Fatal(err)

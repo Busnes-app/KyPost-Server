@@ -112,20 +112,32 @@ func (s NativeOutbound) withAuthority(ctx context.Context, mailboxID, from strin
 				if u.ID != userID {
 					continue
 				}
-				a, err := life.admitNativeMailbox(ctx, s.StateRoot, current.Issuer, u, mailboxID, nil)
+				var a NativeAssignment
+				var fromAddress NativeAddress
+				var d DirectoryState
+				err := life.authority().View(ctx, func(r authorityReader) error {
+					var err error
+					if a, err = life.admitNativeMailbox(ctx, r, s.StateRoot, current.Issuer, u, mailboxID, nil); err != nil {
+						return err
+					}
+					x, ok, err := r.Address(from)
+					if err != nil {
+						return err
+					}
+					if ok {
+						fromAddress = x.public(from)
+					}
+					if u.MustChangePassword {
+						return ErrNativeOutboundStale
+					}
+					var known bool
+					if d, known, err = r.Directory(current.Issuer, u.SSOSub); err != nil || !known {
+						return ErrNativeProvisioning
+					}
+					return nil
+				})
 				if err != nil {
 					return err
-				}
-				addresses, err := life.NativeAddresses()
-				if err != nil {
-					return err
-				}
-				if u.MustChangePassword {
-					return ErrNativeOutboundStale
-				}
-				d, known, err := life.Directory(current.Issuer, u.SSOSub)
-				if err != nil || !known {
-					return ErrNativeProvisioning
 				}
 				relay, exists, err := mailmsg.ReadDomainRelay(filepath.Join(s.ConfigDir, "native-relay.json"), s.keyPath())
 				if err != nil || !exists || relay.Issuer != current.Issuer {
@@ -146,7 +158,7 @@ func (s NativeOutbound) withAuthority(ctx context.Context, mailboxID, from strin
 				if err := RequireNativeRestoreReleased(s.StateRoot); err != nil {
 					return err
 				}
-				return action(ctx, u, a, addresses[from], d, relay, box, key, unproven)
+				return action(ctx, u, a, fromAddress, d, relay, box, key, unproven)
 			}
 			return ErrNativeProvisioning
 		})

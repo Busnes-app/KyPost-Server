@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
@@ -164,7 +165,7 @@ func TestDeviceDiscoveryHintsDoNotAuthorizeNativeMail(t *testing.T) {
 			case "mailbox":
 				absent = filepath.Join(s.userStateDir(u.ID), "mailbox", "mailbox.db")
 			case "ledger":
-				absent = filepath.Join(s.configDir, "native-provisioning.json")
+				absent = ssotest.LedgerPath(s.configDir)
 			case "state":
 				absent = filepath.Join(s.userStateDir(u.ID), "state.db")
 			}

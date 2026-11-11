@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -1291,5 +1293,55 @@ func TestCloudflareContinuousSendersMatchWorker(t *testing.T) {
 		if cfreceiving.ValidSender(sender) {
 			t.Error("Worker refuses a sender Maddy would accept", sender)
 		}
+	}
+}
+
+// A ledger read failure after admission publishes no fresh route for the
+// mailbox: every address keeps the route the Worker already has.
+func TestCloudflareContinuousRouteReadFailureKeepsPrevious(t *testing.T) {
+	e := cfFixture(t)
+	ctx := context.Background()
+	e.cycle(t)
+	installed, _, _, err := e.db.LastInstalled(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, _, err := e.db.Routes(ctx, installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.r.life.AddNativeAlias(ctx, e.r.stateDir, e.users[0].ID, "sales@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	ledger := ssotest.LedgerPath(e.r.configDir)
+	good, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	e.l.crash = func(point string) error {
+		if point == "routes-admitted" {
+			reads++
+			return os.WriteFile(ledger, []byte("{"), 0o600)
+		}
+		return nil
+	}
+	routes, err := e.l.buildRoutes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reads == 0 {
+		t.Fatal("route read never ran after admission")
+	}
+	want := slices.SortedFunc(maps.Values(previous), func(a, b cfreceiving.Route) int { return strings.Compare(a.Address, b.Address) })
+	if !slices.Equal(routes, want) {
+		t.Fatalf("read failure routes %+v, want previous %+v", routes, want)
+	}
+	e.l.crash = nil
+	if err := os.WriteFile(ledger, good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if routes, err = e.l.buildRoutes(ctx); err != nil || len(routes) != 3 || routes[1].Address != "sales@example.test" {
+		t.Fatalf("routes after recovery %+v, %v", routes, err)
 	}
 }
