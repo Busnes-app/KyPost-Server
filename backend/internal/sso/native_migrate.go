@@ -113,12 +113,12 @@ func MigrateNative(ctx context.Context, configDir, relayKeyPath string) (bool, e
 	if err := nativeMigrationStep(2); err != nil {
 		return false, err
 	}
-	// 3. Ledger, or an empty one when a domain exists without a ledger.
-	if hasLedger {
-		if err := life.saveNative(ledger); err != nil {
-			return false, fmt.Errorf("native-provisioning.json: %w", err)
-		}
-	} else if err := life.ensureNativeLedgerLocked(); err != nil {
+	// 3. Ledger, or an empty one when a domain exists without a ledger (any
+	// v2 ledger already here is this migration's own empty one).
+	if !hasLedger {
+		ledger = nativeAssignments{Accounts: map[string]NativeAssignment{}}
+	}
+	if err := life.saveNative(ledger); err != nil {
 		return false, fmt.Errorf("native-provisioning.json: %w", err)
 	}
 	if err := nativeMigrationStep(3); err != nil {

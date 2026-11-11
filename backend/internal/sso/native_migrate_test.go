@@ -308,6 +308,28 @@ func TestNativeMigrationV1BinaryFailsClosed(t *testing.T) {
 	}
 }
 
+// A v1 domain without a ledger (a pending challenge) migrates to v3 with an
+// empty, initialized ledger; the container entrypoint check seeds this case.
+func TestNativeMigrationDomainWithoutLedger(t *testing.T) {
+	ctx := context.Background()
+	config := t.TempDir()
+	domain := `{"domain": "example.test", "issuer": "https://idp.example", "token": "` + strings.Repeat("0", 64) + `", "expiresAt": 4102444800}`
+	if err := os.WriteFile(filepath.Join(config, legacyNativeDomainFile), []byte(domain), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for run := range 2 {
+		if migrated, err := migrateNativeV3(ctx, config, filepath.Join(config, "absent.key")); err != nil || migrated != (run == 0) {
+			t.Fatal(run, migrated, err)
+		}
+	}
+	if tombstone, _, err := legacyNativeDomain(config); err != nil || !tombstone {
+		t.Fatal("tombstone", err)
+	}
+	if f, err := NewLifecycleStore(config).loadNative(); err != nil || f.stored.Accounts == nil || len(f.stored.Accounts) != 0 {
+		t.Fatal("empty ledger", err)
+	}
+}
+
 func TestNativeMigrationFreshInstallAndConfigure(t *testing.T) {
 	ctx := context.Background()
 	config := t.TempDir()
