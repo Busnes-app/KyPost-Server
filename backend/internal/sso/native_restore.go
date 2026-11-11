@@ -34,6 +34,7 @@ func RequireNativeRestoreReleased(stateRoot string) error {
 // FenceRestoredNativeTokens is only for exclusive, stopped restore staging.
 // Qualification proves historical ownership, not current access or hold release.
 func (s *LifecycleStore) FenceRestoredNativeTokens(stateRoot string, accounts []users.User) error {
+	s = s.staged() // v1/v2 or v3 staging; a v3 write leaves no WAL
 	return s.update(func(w authorityWriter) error {
 		if _, err := nativeRecoveryEpoch(stateRoot); err != nil {
 			return err

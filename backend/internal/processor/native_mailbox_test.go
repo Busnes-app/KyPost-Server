@@ -168,36 +168,19 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 	}
 	setEncrypt(false)
 	// A creation interrupted before publication (no source) is not polled.
-	ledgerPath := ssotest.LedgerPath(p.configDir)
-	raw, err := os.ReadFile(ledgerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ledger map[string]any
-	if err := json.Unmarshal(raw, &ledger); err != nil {
-		t.Fatal(err)
-	}
-	record := ledger["mailboxes"].(map[string]any)[m.ID].(map[string]any)
-	source := record["source"]
-	delete(record, "source")
-	write := func() {
+	setSource := func(source string) {
 		t.Helper()
-		data, err := json.Marshal(ledger)
-		if err == nil {
-			err = os.WriteFile(ledgerPath, data, 0o600)
-		}
-		if err != nil {
+		if err := ssotest.DamageAuthority(p.configDir, "UPDATE mailboxes SET source = ? WHERE id = ?", source, m.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write()
+	setSource("")
 	logs.Reset()
 	p.tick()
 	if d := mustDecisions(t, extra, 10); len(d) != 1 || bytes.Contains(logs.Bytes(), []byte("mailbox admission refused")) {
 		t.Fatalf("unprepared mailbox polled %+v %s", d, logs.Bytes())
 	}
-	record["source"] = source
-	write()
+	setSource(a.Source)
 	// A disabled mailbox is not polled; its mail waits.
 	appendTo(m.ID, "while-disabled")
 	if _, err := life.SetNativeMailboxState(ctx, p.stateDir, m.ID, false); err != nil {

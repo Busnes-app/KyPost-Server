@@ -19,7 +19,6 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
-	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -293,17 +292,11 @@ func TestNativeRestoreQualification(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var lifecycle struct {
-			Directory map[string]sso.DirectoryState `json:"directory"`
-		}
-		raw, err := os.ReadFile(ssotest.LifecyclePath(filepath.Join(dir, "config")))
-		if err == nil {
-			err = json.Unmarshal(raw, &lifecycle)
-		}
+		d, _, err := sso.NewLifecycleStore(filepath.Join(dir, "config")).Directory(u.NativeMailboxIssuer, u.SSOSub)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if d := lifecycle.Directory[u.NativeMailboxIssuer+"\x00"+u.SSOSub]; q.CreatedAt.Unix()+31 > d.RevokedBefore {
+		if q.CreatedAt.Unix()+31 > d.RevokedBefore {
 			t.Fatalf("createdAt %d not before the fence cutoff %d", q.CreatedAt.Unix(), d.RevokedBefore)
 		}
 	})
@@ -428,17 +421,11 @@ func TestNativeRestoreFencesUnpublishedLedgerMailbox(t *testing.T) {
 	if err != nil || len(devices) != 0 {
 		t.Fatalf("unpublished mailbox devices kept: %v %v", devices, err)
 	}
-	raw, err := os.ReadFile(ssotest.LifecyclePath(filepath.Join(dir, "config")))
+	d, _, err := sso.NewLifecycleStore(filepath.Join(dir, "config")).Directory(u.NativeMailboxIssuer, u.SSOSub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var lifecycle struct {
-		Directory map[string]sso.DirectoryState `json:"directory"`
-	}
-	if err := json.Unmarshal(raw, &lifecycle); err != nil {
-		t.Fatal(err)
-	}
-	if d := lifecycle.Directory[u.NativeMailboxIssuer+"\x00"+u.SSOSub]; d.RevokedBefore < start+31 {
+	if d.RevokedBefore < start+31 {
 		t.Fatalf("unpublished subject token cutoff %d not raised", d.RevokedBefore)
 	}
 }

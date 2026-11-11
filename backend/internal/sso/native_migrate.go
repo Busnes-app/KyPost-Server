@@ -92,7 +92,7 @@ func MigrateNative(ctx context.Context, configDir, relayKeyPath string) (bool, e
 	if err != nil {
 		return false, fmt.Errorf("native-domain.json: %w", err)
 	}
-	life := NewLifecycleStore(configDir)
+	life := NewLifecycleStore(configDir).staged() // writes the v2 files
 	var ledger nativeAssignments
 	if hasLedger {
 		if ledger, err = life.migratedNativeLedger(ledgerRaw); err != nil {
@@ -333,8 +333,24 @@ func WriteNativeV1ForTest(configDir, relayKeyPath string) error {
 	if err != nil {
 		return err
 	}
-	f, err := NewLifecycleStore(configDir).loadNative()
+	life := NewLifecycleStore(configDir)
+	f, err := life.loadNative()
 	if err != nil {
+		return err
+	}
+	// A v1 binary kept the lifecycle as JSON and had no database.
+	lifecycle, err := life.load()
+	if err != nil {
+		return err
+	}
+	db := filepath.Join(configDir, NativeAuthorityFile)
+	dropAuthorityHandle(db)
+	for _, path := range []string{db, db + "-wal", db + "-shm", life.nativePath()} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if err := fsutil.PersistJSONFile(life.path, lifecycle); err != nil {
 		return err
 	}
 	relayPath := filepath.Join(configDir, "native-relay.json")

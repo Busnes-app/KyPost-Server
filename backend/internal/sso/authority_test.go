@@ -23,9 +23,11 @@ import (
 // stop logouts, as before the seam.
 func TestAuthorityLifecycleWriteIgnoresLedger(t *testing.T) {
 	f := newAddressFixture(t, "one")
-	if err := os.WriteFile(f.life.nativePath(), []byte("{broken"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	editLedgerForTest(t, f.life, func(l *nativeLedger) {
+		x := l.Addresses["one@example.test"]
+		x.History = nil // breaks validHistory
+		l.Addresses["one@example.test"] = x
+	})
 	until := time.Now().Add(time.Hour)
 	if _, fresh, err := f.life.RecordLogout("client", oidcverify.LogoutClaims{Issuer: nativeIssuer, Subject: "one", JWTID: "jti", IssuedAt: time.Now()}, until); err != nil || !fresh {
 		t.Fatal("logout refused on a broken ledger", fresh, err)
@@ -33,8 +35,13 @@ func TestAuthorityLifecycleWriteIgnoresLedger(t *testing.T) {
 	if _, err := f.life.NativeAddress("one@example.test"); err == nil {
 		t.Fatal("broken ledger read as an address")
 	}
-	if _, err := f.life.NativeMailboxesOf(""); err == nil {
-		t.Fatal("broken ledger hidden behind an empty user")
+	// Per-row validation (finding H3): other owners' reads still work, the
+	// whole-ledger reads refuse.
+	if _, err := f.life.NativeMailboxesOf(""); err != nil {
+		t.Fatal("unrelated read refused", err)
+	}
+	if _, err := f.life.NativeMailboxes(); err == nil {
+		t.Fatal("broken ledger read whole")
 	}
 }
 
@@ -108,7 +115,7 @@ func TestAuthorityMigrationKeepsLegacyAccountKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The pre-seam write: the whole rendered ledger, persisted as is.
-	life := NewLifecycleStore(config)
+	life := NewLifecycleStore(config).staged()
 	f, err := life.migratedNativeLedger(v1)
 	if err != nil {
 		t.Fatal(err)
@@ -133,8 +140,8 @@ func TestAuthorityMigrationKeepsLegacyAccountKey(t *testing.T) {
 // SetInitialized after PutLifecycle would write the flag before the put
 // lifecycle; it is refused.
 func TestAuthoritySetInitializedAfterPutLifecycle(t *testing.T) {
-	f := newAddressFixture(t, "one")
-	err := f.life.update(func(w authorityWriter) error {
+	life := NewLifecycleStore(t.TempDir()).staged() // the JSON backend
+	err := life.update(func(w authorityWriter) error {
 		life, err := w.Lifecycle()
 		if err != nil {
 			return err
@@ -151,14 +158,14 @@ func TestAuthoritySetInitializedAfterPutLifecycle(t *testing.T) {
 
 // MarkRoutesPending needs a ledger to find the state root in.
 func TestAuthorityMarkRoutesPendingNeedsLedger(t *testing.T) {
-	f := newAddressFixture(t, "one")
-	err := f.life.update(func(w authorityWriter) error {
+	life := NewLifecycleStore(t.TempDir()).staged() // the JSON backend
+	err := life.update(func(w authorityWriter) error {
 		return w.MarkRoutesPending(map[string]int64{"one@example.test": 1})
 	})
 	if !errors.Is(err, errAuthorityOrder) {
 		t.Fatal("MarkRoutesPending without a ledger", err)
 	}
-	err = f.life.update(func(w authorityWriter) error {
+	err = life.update(func(w authorityWriter) error {
 		if _, _, err := w.Snapshot(); err != nil {
 			return err
 		}

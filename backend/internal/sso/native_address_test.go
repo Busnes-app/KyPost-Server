@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,7 +28,7 @@ type addressFixture struct {
 	ids          map[string]string
 }
 
-func newAddressFixture(t *testing.T, subjects ...string) addressFixture {
+func newAddressFixture(t testing.TB, subjects ...string) addressFixture {
 	t.Helper()
 	ctx := context.Background()
 	f := addressFixture{config: t.TempDir(), root: t.TempDir(), ids: map[string]string{}}
@@ -216,7 +215,7 @@ func TestNativeAddressGenerationsFollowOnlyStateChanges(t *testing.T) {
 func TestNativeLegacyMixedUseGainsNoAlias(t *testing.T) {
 	ctx := context.Background()
 	config, keyPath, ids := v1Fixture(t)
-	if _, err := MigrateNative(ctx, config, keyPath); err != nil {
+	if _, err := migrateNativeV3(ctx, config, keyPath); err != nil {
 		t.Fatal(err)
 	}
 	life := NewLifecycleStore(config)
@@ -241,13 +240,13 @@ func TestNativeDirectoryReplayConverges(t *testing.T) {
 	if _, err := f.life.AddNativeAlias(ctx, f.root, f.ids["one"], "sales@example.test"); err != nil {
 		t.Fatal(err)
 	}
-	ledgerPath := filepath.Join(f.config, nativeProvisioningFile)
-	if err := os.Rename(ledgerPath, ledgerPath+".away"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(ledgerPath, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	var saved nativeLedgerAddress
+	editLedgerForTest(t, f.life, func(l *nativeLedger) {
+		saved = l.Addresses["sales@example.test"]
+		x := saved
+		x.History = nil // the ledger can no longer be read whole, nor written
+		l.Addresses["sales@example.test"] = x
+	})
 	raw := `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"one","externalId":"one","userName":"one","active":false,"emails":[{"value":"one@example.test","primary":true}],"meta":{"version":"W/\"2\""}}`
 	var u DirectoryUser
 	if err := json.Unmarshal([]byte(raw), &u); err != nil {
@@ -260,12 +259,7 @@ func TestNativeDirectoryReplayConverges(t *testing.T) {
 	if d, _, _ := f.life.Directory(nativeIssuer, "one"); d.Revision != 1 {
 		t.Fatal("failed event recorded", d.Revision)
 	}
-	if err := os.Remove(ledgerPath); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(ledgerPath+".away", ledgerPath); err != nil {
-		t.Fatal(err)
-	}
+	editLedgerForTest(t, f.life, func(l *nativeLedger) { l.Addresses["sales@example.test"] = saved })
 	for range 2 {
 		if _, err := f.life.ApplyDirectoryUser(nativeIssuer, ev, u, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return true, nil }); err != nil {
 			t.Fatal(err)
@@ -293,15 +287,15 @@ func TestNativeDirectoryReplayConverges(t *testing.T) {
 	if x := f.address(t, "sales@example.test"); x.State != "disabled" || x.Generation != 3 {
 		t.Fatal("worker did not reconcile divergence", x)
 	}
-	stable, err := os.Stat(ledgerPath)
+	stable, err := f.life.NativeChange()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := f.life.ReconcileNativeAddresses(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// Atomic writes replace the file, so the same inode means no write.
-	if again, err := os.Stat(ledgerPath); err != nil || !os.SameFile(again, stable) {
+	// Every mailbox or address write moves the change counter.
+	if again, err := f.life.NativeChange(); err != nil || again != stable {
 		t.Fatal("a converged ledger was rewritten", err)
 	}
 }
@@ -313,6 +307,8 @@ func TestNativeAddressGenerationSeeding(t *testing.T) {
 	for revision := 2; revision <= 4; revision++ {
 		nativeDesired(t, f.life, "one", "one@example.test", revision, true)
 	}
+	// A v2 ledger without the marker: the v3 migration seeds it.
+	writeV2ForTest(t, f.config)
 	path := filepath.Join(f.config, nativeProvisioningFile)
 	var raw map[string]any
 	if err := fsutil.LoadJSONFile(path, func(m json.RawMessage) { _ = json.Unmarshal(m, &raw) }, nil); err != nil {
@@ -322,6 +318,7 @@ func TestNativeAddressGenerationSeeding(t *testing.T) {
 	if err := fsutil.PersistJSONFile(path, raw); err != nil {
 		t.Fatal(err)
 	}
+	migrateForTest(t, f.config)
 	if g := f.address(t, "one@example.test").Generation; g != 4 {
 		t.Fatal("unseeded generation not raised to the directory revision", g)
 	}
@@ -462,15 +459,22 @@ func TestNativeDirectoryEventWithPendingRouteIsRetried(t *testing.T) {
 	if _, err := f.life.ApplyDirectoryUser(nativeIssuer, ev, u, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return true, nil }); !errors.Is(err, ErrNativeRoutesPending) {
 		t.Fatal("route failure not reported", err)
 	}
-	if d, _, _ := f.life.Directory(nativeIssuer, "one"); d.Revision != 1 {
-		t.Fatal("event recorded over a pending route", d.Revision)
+	// v3 commits the event, the directory row and the ledger change in one
+	// Update (section 3); only the route is owed, in routes_pending.
+	if d, _, _ := f.life.Directory(nativeIssuer, "one"); d.Revision != 2 {
+		t.Fatal("event and ledger split", d.Revision)
 	}
-	// The ledger never stays ahead of the recorded directory: the worker
-	// converges it back (another bump), and KyIdentity's retry redoes the event.
-	if err := f.life.ReconcileNativeAddresses(ctx); err != nil {
-		t.Fatal(err)
+	if x := f.address(t, "one@example.test"); x.State != "disabled" || x.Generation != 2 {
+		t.Fatal("ledger change not durable", x)
 	}
-	if x := f.address(t, "one@example.test"); x.State != "active" || x.Generation != 3 {
-		t.Fatal("ledger left ahead of the recorded directory", x)
+	if pending := routesPendingForTest(t, f.life); pending["one@example.test"] != 2 {
+		t.Fatal("route not owed", pending)
+	}
+	// The worker retries it on every pass, and KyIdentity's retry is answered.
+	if err := f.life.ReconcileNativeAddresses(ctx); !errors.Is(err, ErrNativeRoutesPending) {
+		t.Fatal("pending route forgotten", err)
+	}
+	if status, err := f.life.ApplyDirectoryUser(nativeIssuer, ev, u, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return true, nil }); err != nil || status != DirectoryAlreadyApplied {
+		t.Fatal("retried event", status, err)
 	}
 }

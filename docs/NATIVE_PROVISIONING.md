@@ -139,6 +139,43 @@ token), ledger version 2 and relay version 2, so domain setup, allocation,
 receiving, admission and sending all refuse. To roll back, restore the backup
 taken before the upgrade; see [restore](RESTORE.md#storage-format-migration).
 
+### Version 2 → 3: per-account authority store
+
+The same `migrate-native` run then moves the lifecycle (`sso-lifecycle.json`)
+and the ledger (`native-provisioning.json`) into one SQLite database,
+`native-authority.db` ([design](NATIVE_AUTHORITY_PER_ACCOUNT.md) section 5), for
+every SSO install, native or not (owner decision Q2), under the same locks:
+
+1. copy both files to `*.v2-migrated` while each still holds version-2 data;
+2. validate the copies before any output: the whole lifecycle, the whole
+   version-2 ledger, generations seeded where the marker is missing, and the
+   initialization rule (a ledger behind an unset flag is refused);
+3. build `native-authority.db.tmp` from scratch, check it (exact schema,
+   `integrity_check`, foreign keys, every row decoded and validated, and a
+   round trip: the database reads back as the copies, with the same recovery
+   authority digest), fsync it, rename it over `native-authority.db` and fsync
+   the directory;
+4. replace `sso-lifecycle.json` with its stub, and 5. `native-provisioning.json`
+   last.
+
+Every output derives from the copies, so a crash anywhere converges on re-run,
+and a version-2 binary run between steps 1 and 3 is picked up. Once both stubs
+are in place the step only validates the database (integrity, foreign keys and
+every row) and writes nothing. A fresh install has nothing to move: its first
+authority write creates the database, then both stubs; a crash between the two
+is finished by the next write. Version-2 files found beside a database that
+already took version-3 writes are refused, never adopted.
+
+On failure the cause is logged with a remediation and the container keeps
+booting: native mail **and SSO sign-in** refuse (`ErrNativeMigration`), while
+password logins and external IMAP keep working. The runtime serves only the
+database beside both exact stubs (or a fresh install); any other mix refuses.
+A version-2 binary fails closed on the stubs: its lifecycle reader cannot
+decode `{"movedTo":"native-authority.db",…}` and its format check refuses
+ledger version 3. Rollback is restoring the pre-upgrade backup (owner decision
+Q4); the `*.v2-migrated` copies are a valid version-2 state only as of the
+migration and must never be adopted after version-3 traffic.
+
 ## Mailbox quotas
 
 Every native mailbox, primary and extra, has the same limits (owner decision
@@ -309,9 +346,10 @@ administrator identity and owns no native mailbox, per the suite rule and
   surviving flag. While an initialized ledger is missing or unreadable, every
   applied revision therefore fails and is retried (the address state rule must
   run); a deactivation's account revocation inside the apply still takes effect,
-  only its record waits. Deployments that never initialized a native ledger, or whose
-  version-1 domain data still awaits storage migration, are unaffected:
-  migration recomputes the flag from the directory recorded meanwhile. Nothing sets the flag again; restoring an older backup brings
+  only its record waits. Deployments that never initialized a native ledger are
+  unaffected. While storage awaits `migrate-native`, directory events refuse
+  (`ErrNativeMigration`) and KyIdentity retries them after the migration, which
+  recomputes the flag from the directory it moves. Nothing sets the flag again; restoring an older backup brings
   back flag and directory together, and the replayed demotion clears it. Snapshot
   validation refuses a flag on a demoted subject; the recovery authority digest
   includes it.
@@ -337,13 +375,16 @@ recorded as `address_conflict`.
   re-added domain): `active` iff the owner is active, has no
   `kypost.admin` role (or is `legacyMixedUse`) and the address domain is
   configured (not retired); otherwise `disabled`; `reserved` stays `reserved`.
-  Each change bumps the generation. The same write then writes the ingress route
-  of every non-`active` address inactive at its generation
-  (`ingress.DeactivateRoutes`; no receiving store is a no-op). A failed ledger or
-  route write fails the webhook; KyIdentity retries and the rule converges. The
-  ledger is written first, so a route write that fails after it leaves the change
-  durable (`ErrNativeRoutesPending`); every later commit and the worker pass
-  retry the routes, and import already quarantines on the ledger generation.
+  Each change bumps the generation. Every address a commit changes to a
+  non-`active` state is recorded in `routes_pending` in the same transaction;
+  after the commit its ingress route is written inactive at its generation
+  (`ingress.DeactivateRoutes`; no receiving store is a no-op) and the row
+  cleared. A directory event commits its directory record, event record and
+  ledger changes in one transaction, so a failed ledger write fails the webhook
+  and KyIdentity's retry converges. A route write that fails after the commit
+  leaves the change durable (`ErrNativeRoutesPending`, the event recorded);
+  every later commit and the worker pass retry `routes_pending`, and import
+  already quarantines on the ledger generation.
 - **Administrator actions** (`withAdmin`, CSRF, `withActionDigest` +
   `confirmActor` step-up, audited with actor, action, mailbox and result; never
   the address), under domain → directory locks and refused by a restore hold:
@@ -453,8 +494,9 @@ updates; whole-file reservation rewrites/address scans require scale measurement
 
 ## Reservations, failure and restore
 
-`$CONFIG_DIR/native-provisioning.json` (version 2: `accounts`, `mailboxes`,
-`addresses`) retains immutable issuer/subject/local ID (the primary mailbox ID),
+The ledger (`accounts`, `mailboxes` and `addresses` rows of
+`$CONFIG_DIR/native-authority.db`; the version-2 file before the store moved)
+retains immutable issuer/subject/local ID (the primary mailbox ID),
 primary address, absolute state root and limits; revision/digest/activity;
 pending/applied/failed status, failure code and acknowledged source. Every
 address keeps its state, a `generation` that never decreases and its `history`
@@ -468,9 +510,9 @@ Conflicting primary updates retain current failed status and the old address.
 Offboarding revokes access without deleting mailbox data or freeing an address.
 Status is historical preparation evidence, never a live access/receiver grant.
 
-The lifecycle initialization fence refuses a missing ledger or a ledger paired
-with an unfenced restored lifecycle. A kill between first fence and ledger write
-requires explicit recovery, sacrificing availability to preserve reservations.
+The lifecycle initialization flag commits in the same transaction as the first
+ledger rows; ledger rows behind an unset flag (a restored, unfenced lifecycle)
+are refused, and a missing database beside its stubs refuses everything.
 Backup exports/drills and offline restore validate historical domain claim,
 users/issuer/source, directory lifecycle, reservations, mailbox/state and receiver
 bindings together. Restored roots are authoritative for file lookup, never saved
@@ -480,7 +522,7 @@ refuses any present/unreadable hold until it is released; see
 [releasing the hold](RESTORE.md#releasing-the-hold). Follow
 [restore gates](RESTORE.md#offline-restore-and-native-quarantine), including fresh
 access repair and stale-message-ID fencing, before runtime activation.
-Release floors in `sso-lifecycle.json` refuse provisioning, allocation and
+Release floors in the lifecycle (`native-authority.db`) refuse provisioning, allocation and
 activating directory events from state older than, or contradicting, the
 evidence the hold release consumed; deactivation always applies
 ([release design](NATIVE_RESTORE_RELEASE.md)).

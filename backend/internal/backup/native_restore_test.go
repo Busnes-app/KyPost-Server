@@ -80,35 +80,38 @@ func TestNativeRestoreRaisesTokenCutoffPreservesDirectory(t *testing.T) {
 			if _, err := life.ApplyDirectory("https://legacy.example", syncauth.Event{ID: "legacy", Type: "user.updated", At: time.Now()}, "legacy", 1, "retained", true, func() (bool, error) { return false, nil }); err != nil {
 				t.Fatal(err)
 			}
-			path := ssotest.LifecyclePath(s.dirs.Config)
-			read := func() map[string]json.RawMessage {
+			config := s.dirs.Config
+			key := u.NativeMailboxIssuer + "\x00" + u.SSOSub
+			// The directory rows, and every other authority row.
+			read := func() (map[string]sso.DirectoryState, string) {
 				t.Helper()
-				raw, err := os.ReadFile(path)
+				life := sso.NewLifecycleStore(config)
+				directory := map[string]sso.DirectoryState{}
+				for _, owner := range [][2]string{{u.NativeMailboxIssuer, u.SSOSub}, {"https://legacy.example", "legacy"}} {
+					d, ok, err := life.Directory(owner[0], owner[1])
+					if err != nil || !ok {
+						t.Fatal("directory row", owner, err)
+					}
+					directory[owner[0]+"\x00"+owner[1]] = d
+				}
+				content, err := ssotest.AuthorityContent(config)
 				if err != nil {
 					t.Fatal(err)
 				}
-				var d map[string]json.RawMessage
-				if err := json.Unmarshal(raw, &d); err != nil {
-					t.Fatal(err)
+				var other []string
+				for _, line := range strings.Split(string(content), "\n") {
+					if !strings.HasPrefix(line, "directory ") {
+						other = append(other, line)
+					}
 				}
-				return d
+				return directory, strings.Join(other, "\n")
 			}
-			before := read()
-			var directory map[string]sso.DirectoryState
-			if err := json.Unmarshal(before["directory"], &directory); err != nil {
-				t.Fatal(err)
-			}
-			key := u.NativeMailboxIssuer + "\x00" + u.SSOSub
 			if higher {
-				d := directory[key]
-				d.RevokedBefore = time.Now().Unix() + 3600
-				directory[key] = d
-				before["directory"], _ = json.Marshal(directory)
-				raw, _ := json.Marshal(before)
-				if err := os.WriteFile(path, raw, 0600); err != nil {
+				if err := ssotest.DamageAuthority(config, "UPDATE directory SET revoked_before = ? WHERE issuer = ? AND subject = ?", time.Now().Unix()+3600, u.NativeMailboxIssuer, u.SSOSub); err != nil {
 					t.Fatal(err)
 				}
 			}
+			directory, _ := read()
 			sealKey := pinTestKey(t, s)
 			result, err := s.Run(context.Background())
 			if err != nil {
@@ -122,18 +125,14 @@ func TestNativeRestoreRaisesTokenCutoffPreservesDirectory(t *testing.T) {
 			if _, _, err := capsule.Open(raw, sealKey, root); err != nil {
 				t.Fatal(err)
 			}
-			path = ssotest.LifecyclePath(filepath.Join(root, "config"))
-			before = read()
+			config = filepath.Join(root, "config")
+			_, before := read()
 			for attempt := 0; attempt < 2; attempt++ {
 				start := time.Now().Unix()
 				if native, err := QuarantineNativeRestore(root); !native || err != nil {
 					t.Fatalf("native=%v err=%v", native, err)
 				}
-				after := read()
-				var current map[string]sso.DirectoryState
-				if err := json.Unmarshal(after["directory"], &current); err != nil {
-					t.Fatal(err)
-				}
+				current, after := read()
 				d := current[key]
 				if d.RevokedBefore < max(directory[key].RevokedBefore, start+31) || d.RevokedBefore > max(directory[key].RevokedBefore, time.Now().Unix()+31) {
 					t.Fatal("restore did not fence every previously admissible issuance timestamp")
@@ -144,21 +143,7 @@ func TestNativeRestoreRaisesTokenCutoffPreservesDirectory(t *testing.T) {
 				if !reflect.DeepEqual(directory, current) {
 					t.Fatal("restore altered directory authority or legacy entries")
 				}
-				delete(before, "directory")
-				delete(after, "directory")
-				canonical := func(d map[string]json.RawMessage) map[string]any {
-					t.Helper()
-					raw, err := json.Marshal(d)
-					if err != nil {
-						t.Fatal(err)
-					}
-					var v map[string]any
-					if err = json.Unmarshal(raw, &v); err != nil {
-						t.Fatal(err)
-					}
-					return v
-				}
-				if !reflect.DeepEqual(canonical(before), canonical(after)) {
+				if before != after {
 					t.Fatal("restore altered unrelated lifecycle evidence")
 				}
 				d.RevokedBefore = floor

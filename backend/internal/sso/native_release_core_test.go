@@ -307,7 +307,7 @@ type releaseSnapshot struct{ lifecycle, ledger, hold []byte }
 
 func (fx releaseFix) snapshot(t *testing.T) (releaseSnapshot, []users.User) {
 	t.Helper()
-	l, _ := os.ReadFile(fx.life.path)
+	l, _ := authorityContent(fx.life)
 	n, _ := os.ReadFile(fx.life.nativePath())
 	h, _ := os.ReadFile(filepath.Join(fx.root, NativeRestoreHoldFile))
 	all, _ := fx.accounts.List()
@@ -321,7 +321,7 @@ func TestNativeRestoreReleaseRefusesWithoutMutation(t *testing.T) {
 			t.Fatal(err)
 		}
 		edit(&f)
-		if err = fsutil.PersistJSONFile(fx.life.path, f); err != nil {
+		if err = fx.life.persistLifecycle(f); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -509,7 +509,7 @@ func TestNativeRestoreReleaseRefusesOlderReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.RecoveryReceipt, f.RecoveryRepair = old.RecoveryReceipt, old.RecoveryRepair
-	if err = fsutil.PersistJSONFile(fx.life.path, f); err != nil {
+	if err = fx.life.persistLifecycle(f); err != nil {
 		t.Fatal(err)
 	}
 	_, err = fx.runRelease(t, time.Now().UTC(), nil)
@@ -528,7 +528,7 @@ func TestNativeRestoreReleaseIgnoresOtherEpochRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.RestoreRelease = &NativeRestoreReleaseRecord{Epoch: "12345678-1234-4123-8123-123456789abd", Actor: "earlier"}
-	if err = fsutil.PersistJSONFile(fx.life.path, f); err != nil {
+	if err = fx.life.persistLifecycle(f); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := fx.runRelease(t, time.Now().UTC(), nil)

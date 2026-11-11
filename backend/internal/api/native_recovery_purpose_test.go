@@ -51,13 +51,17 @@ func TestNativeRecoveryEvidenceCannotApplyDirectoryState(t *testing.T) {
 			if _, err := syncauth.Verify([]byte(testSyncKey), signed, body, syncauth.Options{}); err != nil {
 				t.Fatal(err)
 			}
-			paths := []string{filepath.Join(srv.configDir, "users.json"), ssotest.LifecyclePath(srv.configDir), hold}
+			paths := []string{filepath.Join(srv.configDir, "users.json"), hold}
 			before := make([][]byte, len(paths))
 			for i, path := range paths {
 				before[i], err = os.ReadFile(path)
 				if err != nil {
 					t.Fatal(err)
 				}
+			}
+			authority, err := ssotest.AuthorityContent(srv.configDir)
+			if err != nil {
+				t.Fatal(err)
 			}
 			req := httptest.NewRequest(http.MethodPost, "/api/sync/webhook", bytes.NewReader(body))
 			signed.Apply(req)
@@ -71,6 +75,9 @@ func TestNativeRecoveryEvidenceCannotApplyDirectoryState(t *testing.T) {
 				if err != nil || !bytes.Equal(before[i], after) {
 					t.Fatalf("refused recovery evidence changed %s: %v", filepath.Base(path), err)
 				}
+			}
+			if after, err := ssotest.AuthorityContent(srv.configDir); err != nil || !bytes.Equal(authority, after) {
+				t.Fatal("refused recovery evidence changed native authority", err)
 			}
 			// Refusal must not consume a directory event ID or prevent ordinary sync.
 			directoryStatus(t, postDirectory(t, srv, testSyncKey, "user.updated", nonce, 2, scimUser(subject, "restored_user", true, sso.AdminAppRole)))
