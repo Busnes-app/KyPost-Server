@@ -25,6 +25,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/processor"
 	"github.com/Busnes-app/kypost-server/backend/internal/sorter"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -201,6 +202,10 @@ func Run(args []string) error {
 	defer stopSignals()
 	go kycal.Run(ctx, kyIdentityDirectory(configDir), logger)
 
+	if nativeMail {
+		// Here, not for the receiving commands above: they run under ulimit -n 256.
+		mailbox.HoldAdmissionHandles(mailbox.MaxHeldAdmissions)
+	}
 	switch *mode {
 	case "daemon":
 		return runDaemon(ctx, deps)
