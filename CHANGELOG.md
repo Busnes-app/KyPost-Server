@@ -20,6 +20,10 @@ non-prerelease version.
 
 ### Fixed
 
+- Built with Go 1.27.4, which fixes an HTTP/1 server crash from a
+  `MaxBytesReader` header race in `net/http` (GO-2026-6859). The API server
+  is reachable from the affected code.
+
 - Show an actionable invalid-recipient explanation for external-account sends when SMTP reports a missing mailbox, unknown domain or invalid address. Return HTTP 422 JSON so proxies preserve it, name the rejected recipient, and retain compose for correction; plain and client-encrypted sends share the behavior.
 
 ### Performance

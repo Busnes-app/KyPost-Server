@@ -2,7 +2,7 @@ module github.com/Busnes-app/kypost-server/backend
 
 go 1.26.9
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	github.com/BrianLeishman/go-imap v0.1.28
