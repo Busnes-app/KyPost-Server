@@ -567,12 +567,14 @@ func (s *Server) mailboxMailClient(userID, mailboxID string) (imapadapter.Client
 // native clients have no Close and are freed by runtime cleanup once unused.
 const maxRetainedMailClients = 64
 
-// retainMailClient requires userMu. Arbitrary eviction, as in the daemon.
+// retainMailClient requires userMu. Arbitrary eviction, as in the daemon. The
+// evicted client may belong to another user and be mid-dial to a slow host,
+// so it closes off the lock rather than stalling every request on userMu.
 func (s *Server) retainMailClient(key string, entry *serverMailEntry) {
 	if _, exists := s.userMail[key]; !exists && len(s.userMail) >= maxRetainedMailClients {
 		for old, e := range s.userMail {
-			closeMailClient(e.client)
 			delete(s.userMail, old)
+			go closeMailClient(e.client)
 			break
 		}
 	}
