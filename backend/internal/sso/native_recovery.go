@@ -102,6 +102,13 @@ func (s *LifecycleStore) nativeRecoveryInputs(root string, settings SSOSettings,
 	if err != nil {
 		return NativeRecoveryChallenge{}, nil, nil, err
 	}
+	return recoveryInputs(epoch, settings, key, accounts, f, ledger)
+}
+
+// recoveryInputs computes the challenge from one read of lifecycle and ledger,
+// so the digest depends on their decoded values, never on their storage.
+func recoveryInputs(epoch string, settings SSOSettings, key []byte, accounts []users.User, f lifecycleFile, ledger nativeAssignments) (NativeRecoveryChallenge, map[string]int64, map[string]bool, error) {
+	var err error
 	revisions := map[string]int64{}
 	directory := map[string]DirectoryState{}
 	reservations := map[string]NativeAssignment{}
