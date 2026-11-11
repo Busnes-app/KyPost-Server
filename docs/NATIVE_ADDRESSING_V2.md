@@ -103,6 +103,13 @@ domain; mail stays where it is.
 
 ### Mailbox and address ledger: `$CONFIG/native-provisioning.json` (version 2)
 
+Since the per-account authority store ([design](NATIVE_AUTHORITY_PER_ACCOUNT.md),
+storage format v3) the runtime keeps these records, and the lifecycle, as rows
+of `$CONFIG/native-authority.db`; `native-provisioning.json` and
+`sso-lifecycle.json` are stubs. The shape below is still the decoded value
+(every rule, generation and history semantic is unchanged), the migration input,
+and what backups of older releases hold.
+
 ```
 {version: 2,
  accounts:  {"<issuer>\x00<subject>": {revision, digest, desiredActive, status,
@@ -287,6 +294,10 @@ binary fails closed: it refuses ledger and relay version 2, and its domain `Read
 rejects the tombstone (empty token), so `Configure`, `Verify`, receiving and
 admission all refuse instead of accepting a new domain. Recovery is restoring the
 pre-migration backup.
+
+The same boot then runs the v2 → v3 step (`MigrateAuthority`, see
+[storage format migration](NATIVE_PROVISIONING.md#storage-format-migration)), so a
+v1 install reaches v3 in one start.
 
 Migration grants no authority and runs **while a restore hold is in place**: it is
 an offline format change and keeps the hold. The recovery authority digest hashes

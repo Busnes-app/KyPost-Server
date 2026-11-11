@@ -157,20 +157,21 @@ func startCloudflareReceiving(ctx context.Context, d runDeps) (<-chan struct{}, 
 	return done, nil
 }
 
-// cfChangeMark changes when the address ledger or the sender block list is
-// rewritten, so either publishes within one tick. The domain file is
-// rewritten by every proof, so it is not watched.
+// cfChangeMark changes when a ledger mailbox or address changes (the
+// ledger's change counter) or the sender block list is rewritten, so either
+// publishes within one tick. The domain file is rewritten by every proof, so
+// it is not watched.
 func cfChangeMark(r *receivingRuntime) string {
-	mark := ""
-	for _, path := range []string{filepath.Join(r.configDir, "native-provisioning.json"), filepath.Join(r.stateDir, "receiving", ingress.BlocksFile)} {
-		if info, err := os.Stat(path); err == nil {
-			mark += info.ModTime().String() + strconv.FormatInt(info.Size(), 10)
-			// Both files publish by rename: a new inode even within one mtime tick.
-			if st, ok := info.Sys().(*syscall.Stat_t); ok {
-				mark += "/" + strconv.FormatUint(st.Ino, 10)
-			}
+	mark := "?|"
+	if n, err := r.life.NativeChange(); err == nil {
+		mark = strconv.FormatInt(n, 10) + "|"
+	}
+	if info, err := os.Stat(filepath.Join(r.stateDir, "receiving", ingress.BlocksFile)); err == nil {
+		mark += info.ModTime().String() + strconv.FormatInt(info.Size(), 10)
+		// The list publishes by rename: a new inode even within one mtime tick.
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			mark += "/" + strconv.FormatUint(st.Ino, 10)
 		}
-		mark += "|"
 	}
 	return mark
 }

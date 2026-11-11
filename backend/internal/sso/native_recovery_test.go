@@ -34,7 +34,7 @@ func recoveryFixture(t *testing.T) (*LifecycleStore, string, SSOSettings, []byte
 	}
 	// Retained preparation has never published a local account.
 	if err := life.saveNative(nativeAssignments{Accounts: map[string]NativeAssignment{
-		directoryKey(settings.IssuerURL, "subject"): {Owner: mailbox.Owner{Issuer: settings.IssuerURL, Subject: "subject", Mailbox: "reserved-mailbox"}, Revision: 1, Digest: "old-digest"},
+		directoryKey(settings.IssuerURL, "subject"): {Owner: mailbox.Owner{Issuer: settings.IssuerURL, Subject: "subject", Mailbox: "reserved-mailbox"}, Revision: 1, Digest: "old-digest", Status: "pending"},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -100,12 +100,12 @@ func TestNativeRecoveryAtomicReceiptAndDirectoryBarriers(t *testing.T) {
 			t.Fatal("floor after replay shortcut", id, err)
 		}
 	}
-	before, _ := os.ReadFile(life.path)
+	before, _ := authorityContent(life)
 	_, err = life.ApplyDirectory(settings.IssuerURL, syncauth.Event{ID: "new", At: time.Now()}, "subject", 3, "new-digest", false, func() (bool, error) { return false, errors.New("injected account failure") })
 	if err == nil {
 		t.Fatal("callback failure ignored")
 	}
-	after, _ := os.ReadFile(life.path)
+	after, _ := authorityContent(life)
 	if !bytes.Equal(before, after) {
 		t.Fatal("failed callback mutated receipt")
 	}
@@ -133,7 +133,7 @@ func TestNativeRecoveryRejectsUnqualifiedEvidenceWithoutMutation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			life, root, settings, key, c := recoveryFixture(t)
 			body, h := recoveryPayload(t, c, key, mutate)
-			before, _ := os.ReadFile(life.path)
+			before, _ := authorityContent(life)
 			release, err := life.LockDirectory()
 			if err != nil {
 				t.Fatal(err)
@@ -143,7 +143,7 @@ func TestNativeRecoveryRejectsUnqualifiedEvidenceWithoutMutation(t *testing.T) {
 			if err == nil {
 				t.Fatal("unqualified evidence accepted")
 			}
-			after, _ := os.ReadFile(life.path)
+			after, _ := authorityContent(life)
 			if !bytes.Equal(before, after) {
 				t.Fatal("refusal mutated lifecycle")
 			}
@@ -157,7 +157,7 @@ func TestNativeRecoveryRetainsFloorSubjectsAndRejectsEpochChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.RecoveryFloors = map[string]int64{directoryKey(settings.IssuerURL, "offboarded"): 9}
-	if err = fsutil.PersistJSONFile(life.path, f); err != nil {
+	if err = life.persistLifecycle(f); err != nil {
 		t.Fatal(err)
 	}
 	current, revisions, _, err := life.nativeRecoveryInputs(root, settings, key, nil)
@@ -185,13 +185,13 @@ func TestNativeRecoveryRefusesPartialNativeAccountMarkers(t *testing.T) {
 func TestNativeRecoveryRefusesUnusableHoldAndCancelledCommit(t *testing.T) {
 	life, root, settings, key, c := recoveryFixture(t)
 	body, h := recoveryPayload(t, c, key, nil)
-	before, _ := os.ReadFile(life.path)
+	before, _ := authorityContent(life)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := life.AcceptNativeRecoveryHeld(ctx, root, settings, key, nil, body, h); !errors.Is(err, context.Canceled) {
 		t.Fatal("cancelled commit admitted", err)
 	}
-	after, _ := os.ReadFile(life.path)
+	after, _ := authorityContent(life)
 	if !bytes.Equal(before, after) {
 		t.Fatal("cancelled commit mutated lifecycle")
 	}
@@ -221,14 +221,14 @@ func TestNativeRecoveryPublishedFloorSafety(t *testing.T) {
 					d.Revision = 3
 					f.Directory[k] = d
 				}
-				if err = fsutil.PersistJSONFile(life.path, f); err != nil {
+				if err = life.persistLifecycle(f); err != nil {
 					t.Fatal(err)
 				}
 				u := users.User{ID: "published", SSOSub: "subject"}
 				if byID {
 					u = users.User{ID: "reserved-mailbox"}
 				}
-				before, err := os.ReadFile(life.path)
+				before, err := authorityContent(life)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -240,7 +240,7 @@ func TestNativeRecoveryPublishedFloorSafety(t *testing.T) {
 				} else if !errors.Is(err, ErrNativeRecovery) {
 					t.Fatal("unsafe published floor admitted", err)
 				}
-				after, err := os.ReadFile(life.path)
+				after, err := authorityContent(life)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -302,14 +302,14 @@ func TestNativeRecoveryPublicationAboveFloorAndRetry(t *testing.T) {
 func TestNativeRecoveryUnlinkedPublicationInvalidatesChallenge(t *testing.T) {
 	life, root, settings, key, c := recoveryFixture(t)
 	body, headers := recoveryPayload(t, c, key, nil)
-	before, err := os.ReadFile(life.path)
+	before, err := authorityContent(life)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = life.AcceptNativeRecoveryHeld(context.Background(), root, settings, key, []users.User{{ID: "reserved-mailbox"}}, body, headers); !errors.Is(err, ErrNativeRecovery) {
 		t.Fatal("publication under reserved ID did not invalidate challenge", err)
 	}
-	after, err := os.ReadFile(life.path)
+	after, err := authorityContent(life)
 	if err != nil {
 		t.Fatal(err)
 	}

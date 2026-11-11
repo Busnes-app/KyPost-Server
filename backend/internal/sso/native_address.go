@@ -83,23 +83,29 @@ func (s *LifecycleStore) NativeAddress(address string) (a NativeAddress, err err
 
 // NativeMailboxes lists mailboxes, sorted, with their addresses sorted.
 func (s *LifecycleStore) NativeMailboxes() ([]NativeMailbox, error) {
-	return s.nativeMailboxes(func(string) bool { return true })
-}
-
-// NativeMailboxesOf is NativeMailboxes for one owning account's mailboxes.
-// ponytail: filters the whole ledger (JSON backend); per-owner reads arrive
-// with the SQLite backend.
-// An empty userID still reads the ledger, so its errors surface.
-func (s *LifecycleStore) NativeMailboxesOf(userID string) ([]NativeMailbox, error) {
-	return s.nativeMailboxes(func(user string) bool { return user == userID })
-}
-
-// nativeMailboxes lists the mailboxes whose owning user keep accepts.
-func (s *LifecycleStore) nativeMailboxes(keep func(user string) bool) ([]NativeMailbox, error) {
 	f, err := s.loadNative()
 	if err != nil {
 		return nil, err
 	}
+	return nativeMailboxes(f, func(string) bool { return true }), nil
+}
+
+// NativeMailboxesOf is NativeMailboxes for one owning account's mailboxes,
+// read by owner (OwnerMailboxes), not from the whole ledger.
+func (s *LifecycleStore) NativeMailboxesOf(userID string) (mailboxes []NativeMailbox, err error) {
+	err = s.authority().View(context.Background(), func(r authorityReader) error {
+		f, err := r.OwnerMailboxes(userID)
+		mailboxes = nativeMailboxes(f, func(user string) bool { return user == userID })
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return mailboxes, nil
+}
+
+// nativeMailboxes lists the mailboxes of f whose owning user keep accepts.
+func nativeMailboxes(f nativeAssignments, keep func(user string) bool) []NativeMailbox {
 	mailboxes := []NativeMailbox{}
 	for _, id := range slices.Sorted(maps.Keys(f.stored.Mailboxes)) {
 		m := f.stored.Mailboxes[id]
@@ -117,13 +123,13 @@ func (s *LifecycleStore) nativeMailboxes(keep func(user string) bool) ([]NativeM
 		}
 		mailboxes = append(mailboxes, box)
 	}
-	return mailboxes, nil
+	return mailboxes
 }
 
-// ReconcileNativeAddresses is the worker's level-triggered pass. It commits
-// only when an address state diverged from the rule (for example after a
-// retired domain is re-added), so a healthy ledger is not rewritten; it always
-// retries the inactive routes a failed commit left pending.
+// ReconcileNativeAddresses is the worker's level-triggered pass. It first
+// validates the whole store, then commits only when an address state diverged
+// from the rule (for example after a retired domain is re-added), so a
+// healthy ledger is not rewritten; it always retries routes_pending.
 func (s *LifecycleStore) ReconcileNativeAddresses(ctx context.Context) error {
 	release, err := fsutil.LockFileContext(ctx, s.path)
 	if err != nil {
@@ -131,6 +137,11 @@ func (s *LifecycleStore) ReconcileNativeAddresses(ctx context.Context) error {
 	}
 	defer release()
 	return s.authority().Update(ctx, func(w authorityWriter) error {
+		// Whole-store validation (owner decision Q5): a failure refuses this
+		// pass's writes only; the worker logs it.
+		if err := w.Check(); err != nil {
+			return err
+		}
 		f, directory, err := w.Snapshot()
 		if err != nil || len(f.Accounts) == 0 {
 			return err

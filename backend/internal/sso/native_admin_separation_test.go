@@ -149,7 +149,7 @@ func TestNativeAdmissionRefusesPromotedSubject(t *testing.T) {
 func TestNativeLegacyMixedUseClearedOnlyByDemotion(t *testing.T) {
 	ctx := context.Background()
 	config, keyPath, ids := v1Fixture(t)
-	if _, err := MigrateNative(ctx, config, keyPath); err != nil {
+	if _, err := migrateNativeV3(ctx, config, keyPath); err != nil {
 		t.Fatal(err)
 	}
 	life := NewLifecycleStore(config)
@@ -197,7 +197,7 @@ func TestNativeLegacyMixedUseClearedOnlyByDemotion(t *testing.T) {
 func TestNativeLegacyMixedUseReconcileAndSnapshot(t *testing.T) {
 	ctx := context.Background()
 	config, keyPath, _ := v1Fixture(t)
-	if _, err := MigrateNative(ctx, config, keyPath); err != nil {
+	if _, err := migrateNativeV3(ctx, config, keyPath); err != nil {
 		t.Fatal(err)
 	}
 	life := NewLifecycleStore(config)
@@ -289,7 +289,7 @@ func TestNativeRecoveryDigestIncludesLegacyMixedUse(t *testing.T) {
 func TestNativeLegacyMixedUseDemotionFailsOnUnreadableLedger(t *testing.T) {
 	ctx := context.Background()
 	config, keyPath, ids := v1Fixture(t)
-	if _, err := MigrateNative(ctx, config, keyPath); err != nil {
+	if _, err := migrateNativeV3(ctx, config, keyPath); err != nil {
 		t.Fatal(err)
 	}
 	life := NewLifecycleStore(config)
@@ -297,14 +297,13 @@ func TestNativeLegacyMixedUseDemotionFailsOnUnreadableLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger := life.nativePath()
-	saved, err := os.ReadFile(ledger)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(ledger, []byte("{unreadable"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	var saved nativeLedgerAddress
+	editLedgerForTest(t, life, func(l *nativeLedger) {
+		saved = l.Addresses["boss@example.test"]
+		x := saved
+		x.History = nil // the whole ledger no longer validates
+		l.Addresses["boss@example.test"] = x
+	})
 	raw := fmt.Sprintf(`{"schemas":[%q],"id":"boss","externalId":"boss","userName":"boss","active":true,"roles":[],"emails":[{"value":"boss@example.test","primary":true}],"meta":{"version":"W/\"3\""}}`, scimUserSchema)
 	var demoted DirectoryUser
 	if err := json.Unmarshal([]byte(raw), &demoted); err != nil {
@@ -321,9 +320,7 @@ func TestNativeLegacyMixedUseDemotionFailsOnUnreadableLedger(t *testing.T) {
 	if d, _, err := life.Directory(nativeIssuer, "boss"); err != nil || d.Revision != 2 {
 		t.Fatal("failed demotion advanced the directory", d.Revision, err)
 	}
-	if err := os.WriteFile(ledger, saved, 0600); err != nil {
-		t.Fatal(err)
-	}
+	editLedgerForTest(t, life, func(l *nativeLedger) { l.Addresses["boss@example.test"] = saved })
 	if err := apply(); err != nil || legacyFlag(t, life, "boss") {
 		t.Fatal("retried demotion did not clear the flag", err)
 	}
@@ -350,16 +347,28 @@ func TestNativeDirectorySyncDuringPendingMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	ev := syncauth.Event{ID: "boss-3", Type: "user.updated", At: time.Now()}
-	if _, err := life.ApplyDirectoryUser(nativeIssuer, ev, demoted, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return true, nil }); err != nil {
-		t.Fatal("directory sync blocked by a pending storage migration", err)
+	apply := func() error {
+		_, err := life.ApplyDirectoryUser(nativeIssuer, ev, demoted, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return true, nil })
+		return err
+	}
+	// The lifecycle moves with the ledger (owner decision Q2): until
+	// migrate-native converts, directory sync refuses and the sender retries.
+	if err := apply(); !errors.Is(err, ErrNativeMigration) {
+		t.Fatal("directory sync over unmigrated storage", err)
+	}
+	if _, err := migrateNativeV3(ctx, config, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	if !legacyFlag(t, life, "boss") {
+		t.Fatal("migration lost the flag of a subject still an administrator")
+	}
+	if err := apply(); err != nil {
+		t.Fatal(err)
 	}
 	if d, _, err := life.Directory(nativeIssuer, "boss"); err != nil || d.Revision != 3 {
 		t.Fatal("demotion not recorded", d.Revision, err)
 	}
-	if _, err := MigrateNative(ctx, config, keyPath); err != nil {
-		t.Fatal(err)
-	}
 	if legacyFlag(t, life, "boss") {
-		t.Fatal("migration kept the flag for a subject demoted before it ran")
+		t.Fatal("the retried demotion kept the flag")
 	}
 }
