@@ -130,7 +130,16 @@ The triggers record the never-delete and never-decrease rules, which the code en
 today. `BEFORE DELETE` on `accounts`, `mailboxes`, `addresses` and `address_history`
 raises an error. `BEFORE UPDATE OF generation ON addresses WHEN NEW.generation <
 OLD.generation` raises an error. `BEFORE INSERT ON address_history` requires a
-generation above the address's current maximum. `accounts.primary_mailbox` must name a
+generation above the address's current maximum. `BEFORE UPDATE ON address_history`
+always raises, because history rows are only appended and never changed: route
+quarantine trusts (address, generation) → mailbox. The identity columns the code treats
+as immutable are guarded by `BEFORE UPDATE` triggers that raise when the value changes:
+- `mailboxes`: `issuer`, `subject`, `kind`, `state_root`, and `source` once non-empty;
+- `accounts`: `issuer`, `subject`, `primary_mailbox`.
+
+The columns that legitimately change stay writable: limits, mailbox and address
+`state`, `addresses.mailbox` with a raised generation, and account status and
+revision. PR 3 checks this list against every current writer. `accounts.primary_mailbox` must name a
 `kind='primary'` mailbox with the same owner (a trigger, since the foreign key is
 deferred). The per-record validity rules that today run inside
 `validateNativeLedger` (`validHistory`, primary-address presence for extras) are
@@ -232,7 +241,7 @@ Postgres tables match the SQLite schema, with `TEXT`/`BIGINT`/`BOOLEAN`, the sam
 | Local ID / mailbox ID uniqueness, extras disjoint from primaries | loops over `f.Accounts`, re-validated on read | `mailboxes.id PRIMARY KEY` (one namespace for both kinds), `accounts.primary_mailbox UNIQUE` |
 | A primary is never an alias or reserved address of anyone | `f.stored.Addresses` lookup | the same, by `Address(address)` |
 | An alias never takes a directory primary | scan of every resource's `primary` emails with `strings.EqualFold` | `DirectoryPrimaryTaken`: lookup in `directory_primary_emails` by a Go-computed Unicode simple-fold key, so it matches exactly what `EqualFold` matched (finding H2) |
-| Generations only increase and are never reused; history is append-only | Go code (`syncAddressStates`, `validHistory`) | the same Go code, plus triggers; `PutAddress` writes only the new history rows |
+| Generations only increase and are never reused; history is append-only | Go code (`syncAddressStates`, `validHistory`) | the same Go code, plus triggers: no delete on any authority table, no generation decrease on `addresses`, no update at all on `address_history`, immutable identity columns (section 1); `PutAddress` writes only the new history rows |
 | One primary address per mailbox | `addressOf` check | partial unique index |
 
 **Directory event (`applyDirectory`).** Today this is three separate writes:
@@ -440,8 +449,9 @@ stored here.
   become path components of authority storage. That removes the traversal surface a
   per-account-file design would have. Mailbox storage paths keep
   `fsutil.SafePathComponent`.
-- **Integrity.** Constraints and triggers enforce uniqueness and the never-delete and
-  never-decrease rules even if Go code is wrong. That holds because writers never use
+- **Integrity.** Constraints and triggers enforce uniqueness, the never-delete and
+  never-decrease rules, append-only history (`address_history` refuses every update)
+  and the immutable identity columns listed in section 1, even if Go code is wrong. That holds because writers never use
   REPLACE and every handle runs with `recursive_triggers=ON` (section 1). `quick_check` and whole-store
   validation run at startup, at migration and in backups. A process able to write the
   config root could rewrite D. That is also true of today's JSON files and is not a
@@ -545,6 +555,7 @@ survived and are answered above, or here:
 | H7 | Short-lived `receiving` processes open the database on every invocation. | O(1) per invocation (section 7). The WAL is shared with the long-running api and daemon handles. |
 | S1 | `*.v2-migrated` copies keep stale authority and directory PII indefinitely. Adopting them by hand after v3 traffic could reuse generations. | Section 5 warns against this. PR 3 has `migrate-native` refuse a v2 adoption while D exists, and RESTORE.md tells operators to delete the copies after the first successful v3 backup. |
 | S2 | A staged v3 database is trusted row by row during restore validation. | The historical opener runs `PRAGMA integrity_check` before reading rows (PR 2). |
+| S5 | PR #574 security re-review: `address_history` was guarded against DELETE and INSERT but not UPDATE. Since writers use plain `UPDATE`, a bug could rewrite a history row's mailbox or generation unnoticed until the minute pass, and route quarantine trusts that history. | `BEFORE UPDATE ON address_history` always raises. Immutable identity columns on `mailboxes` and `accounts` get value-change triggers, and all of them join the exact-schema check (section 1). PR 3 extends `TestAuthorityReplaceCannotBypassTriggers`: plain `UPDATE`s of a history row's `mailbox` and `generation`, and of each immutable column, fail and leave the row unchanged. It also extends `TestAuthoritySchemaMismatchRefuses`: a fixture missing any of these triggers is refused. |
 | S4 | PR #574 security re-review: REPLACE conflict resolution deletes and re-inserts a row without firing delete triggers (unless `recursive_triggers` is on) or update triggers. A writer bug could then lower an address generation or rewrite an account unnoticed until the minute pass, and route quarantine relies on generations. | Writers never use REPLACE (plain `UPDATE` or `ON CONFLICT DO UPDATE`). Every handle sets and verifies `recursive_triggers=ON` (sections 1 and 4). PR 3 test `TestAuthorityReplaceCannotBypassTriggers`: a REPLACE on a store-opened handle against an existing `addresses` row with a lower generation, and against an `accounts` row, both fail and leave the rows unchanged. |
 | S3 | PR #574 security review: the open-time check covered only `user_version` and table presence, so a database missing the address primary key, the one-primary index or a never-delete trigger would pass. Duplicates would then go unseen, because `Snapshot` collapses them into maps and `integrity_check` checks storage, not schema meaning. | Every open now requires an exact `sqlite_schema` match with the built-in schema, under `trusted_schema=OFF` and defensive mode (section 4). PR 2/3 test `TestAuthoritySchemaMismatchRefuses`: a fixture with the right tables and `user_version` but a dropped key, index or trigger is refused by both the runtime and historical openers. |
 | S3 | Existing, outside this design: the `users.json` cache is keyed on size+mtime, not inode. | Recorded under Q3. Adding the inode to the key is a one-line follow-up, independent of this rollout. |
