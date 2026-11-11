@@ -554,7 +554,7 @@ func (p *Poller) activeExtraMailboxes() map[string][]string {
 	if !p.nativeMail {
 		return extras
 	}
-	mailboxes, err := sso.NewLifecycleStore(p.configDir).NativeMailboxes()
+	mailboxes, err := sso.NewLifecycleStore(p.configDir).NativeMailboxesWithoutAddresses()
 	if err != nil {
 		p.log.Error("failed to list extra mailboxes", "error", err.Error())
 		return extras
