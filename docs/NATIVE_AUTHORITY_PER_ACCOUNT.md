@@ -477,7 +477,17 @@ may now dominate.
 | Per-account flock instead of the install-wide directory lock | No contention has been measured. With O(1) reads the lock is held for microseconds. It would change the fence semantics that `users.json` writes depend on. Revisit only with a profile. |
 | Fresh SQLite connection per operation | O(1), but it pays schema parse and WAL setup each time, and the last-close checkpoint churns. The held handle with the `os.SameFile` check is the #571 precedent. Kept as a Q1 fallback. |
 
-## Open questions for the owner
+## Owner decisions (2026-11-10)
+
+The owner accepted every recommended answer below and approved starting PR 1:
+
+- **Q1:** (a) a held handle, with SQLite's change-counter protocol plus the `os.SameFile` check.
+- **Q2:** (a) every SSO install migrates.
+- **Q3:** (a) leave `users.json` as is and measure after PR 3.
+- **Q4:** (a) the only rollback is restoring the pre-upgrade backup.
+- **Q5:** (a) on whole-store validation failure, log, alert, and refuse that pass's writes only.
+
+## Open questions for the owner (answered above)
 
 - **Q1. Is the SQLite page cache "fresh"?** Options: (a) a held handle; each
   transaction sees the latest commit through SQLite's change-counter protocol, plus the
