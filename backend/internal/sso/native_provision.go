@@ -332,8 +332,18 @@ func (s *LifecycleStore) loadNative() (f nativeAssignments, err error) {
 	return f, err
 }
 
-// loadNativeLedger also reports the file's version (0 when absent).
+// loadNativeLedger also reports the file's version (0 when absent). A v3
+// database reads through the store (version 3), so a write still in its WAL
+// is seen. Historical reads (staging, release planning) use the offline
+// store, which takes whichever format it finds.
 func (s *LifecycleStore) loadNativeLedger(historical bool) (nativeAssignments, int, error) {
+	if historical {
+		s = s.staged()
+	}
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(s.path), NativeAuthorityFile)); err == nil {
+		f, err := s.loadNative()
+		return f, 3, err
+	}
 	lifecycle, err := s.load()
 	if err != nil {
 		return nativeAssignments{}, 0, err
@@ -444,13 +454,9 @@ func (s *LifecycleStore) writeNative(w authorityWriter, f nativeAssignments, ove
 // then import still quarantines on the ledger generation.
 var ErrNativeRoutesPending = errors.New("address change saved, but its receiving route is not yet inactive; it is retried automatically, check the receiving store if this persists")
 
-// deactivateRoutes writes the routes of non-active addresses inactive under the
-// ledger's state root (all mailboxes share it).
-func deactivateRoutes(l nativeLedger, inactive map[string]int64) error {
-	root := ""
-	for _, m := range l.Mailboxes {
-		root = m.StateRoot
-	}
+// deactivateRoutes writes the routes of non-active addresses inactive under
+// the ledger's state root (all mailboxes share it; "" when it has none).
+func deactivateRoutes(root string, inactive map[string]int64) error {
 	if root == "" {
 		return nil
 	}
@@ -466,8 +472,9 @@ func deactivateRoutes(l nativeLedger, inactive map[string]int64) error {
 // owner is active, has no administrator role (or is legacyMixedUse) and the
 // domain is configured, not retired; reserved stays reserved. Every change
 // bumps the generation. It returns each non-active address's generation.
-// ponytail: every commit rewrites all non-active routes in one transaction;
-// track changed addresses instead if ledgers grow to many thousands.
+// The v3 backend writes only the rows this changes, and only their routes
+// plus routes_pending (section 3); the evaluation itself stays in memory over
+// the whole ledger the writer already read.
 func (s *LifecycleStore) syncAddressStates(l *nativeLedger, directory map[string]DirectoryState) (map[string]int64, error) {
 	inactive := map[string]int64{}
 	if len(l.Addresses) == 0 {
@@ -517,17 +524,27 @@ func (s *LifecycleStore) ensureNativeLedger(ctx context.Context) error {
 	return s.ensureNativeLedgerLocked()
 }
 
-// An existing ledger counts only when it is version 2; a version-1 one means
-// migration has not finished and must never be adopted behind its back.
+// An existing ledger counts only when it is current; a version-1 one means
+// migration has not finished and must never be adopted behind its back (the
+// format checks refuse it).
 func (s *LifecycleStore) ensureNativeLedgerLocked() error {
-	f, version, err := s.loadNativeLedger(false)
-	if version != 0 && version != 2 {
-		return ErrNativeMigration
-	}
-	if err != nil || version == 2 {
+	return s.authority().Update(context.Background(), func(w authorityWriter) error {
+		f, _, err := w.Snapshot()
+		if err != nil || f.stored.Accounts != nil {
+			return err
+		}
+		return s.writeNative(w, f, nil, false)
+	})
+}
+
+// NativeChange is the ledger's publication mark (meta.change): it grows with
+// every committed mailbox or address change.
+func (s *LifecycleStore) NativeChange() (n int64, err error) {
+	err = s.authority().View(context.Background(), func(r authorityReader) error {
+		n, err = r.Change()
 		return err
-	}
-	return s.saveNative(f)
+	})
+	return n, err
 }
 
 // NativeAssignment reads persisted status only. Consumers must recheck the live

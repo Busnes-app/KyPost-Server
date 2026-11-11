@@ -65,22 +65,23 @@ func TestNativeMigrationKeepsReceivingBindings(t *testing.T) {
 	if err := r.importDelivery(ctx, "bound-at-revision-two"); err == nil {
 		t.Fatal("unmigrated storage imported mail")
 	}
+	// One boot: v1 -> v2, then v2 -> v3.
 	if migrated, err := sso.MigrateNative(ctx, r.configDir, keyPath); err != nil || !migrated {
 		t.Fatal(migrated, err)
 	}
-	var ledger struct {
-		Addresses map[string]struct{ Generation int64 } `json:"addresses"`
-	}
-	raw, err := os.ReadFile(ssotest.LedgerPath(r.configDir))
-	if err != nil || json.Unmarshal(raw, &ledger) != nil {
-		t.Fatal(err)
+	if migrated, err := sso.MigrateAuthority(ctx, r.configDir); err != nil || !migrated {
+		t.Fatal(migrated, err)
 	}
 	for _, id := range []string{"bound-at-revision-one", "bound-at-revision-two"} {
 		d, err := r.holding.Get(ctx, receivingGateway, id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if g := ledger.Addresses[d.Bindings[0].Address].Generation; g < d.Bindings[0].Generation {
+		x, err := r.life.NativeAddress(d.Bindings[0].Address)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if g := x.Generation; g < d.Bindings[0].Generation {
 			t.Fatalf("address generation %d below binding generation %d", g, d.Bindings[0].Generation)
 		}
 	}
@@ -119,8 +120,7 @@ func TestMigrateNativeCommandAppliesMailboxQuota(t *testing.T) {
 	r, created := receivingFixture(t)
 	t.Setenv("CONFIG_DIR", r.configDir)
 	t.Setenv("SECRET_DIR", t.TempDir())
-	ledger := ssotest.LedgerPath(r.configDir)
-	before, err := os.ReadFile(ledger)
+	before, err := ssotest.AuthorityContent(r.configDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestMigrateNativeCommandAppliesMailboxQuota(t *testing.T) {
 	if err := Run([]string{"migrate-native"}); err == nil || !strings.Contains(err.Error(), "KYPOST_MAILBOX_QUOTA_BYTES") {
 		t.Fatal("bad quota accepted", err)
 	}
-	if after, _ := os.ReadFile(ledger); !bytes.Equal(before, after) {
+	if after, _ := ssotest.AuthorityContent(r.configDir); !bytes.Equal(before, after) {
 		t.Fatal("bad quota wrote the ledger")
 	}
 	t.Setenv("KYPOST_MAILBOX_QUOTA_BYTES", "10737418240")

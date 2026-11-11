@@ -15,16 +15,19 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/oidcverify"
 	"github.com/Busnes-app/ky-primitives/syncauth"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 // The golden file was written by the code before the authority seam (commit
-// c2eef67d). The JSON backend must write the same bytes for each mutation.
+// c2eef67d). The v3 database must hold the same values after each mutation:
+// rendered as the v2 files would have been, the bytes are equal.
 // Regenerate only for a deliberate format change: UPDATE_AUTHORITY_GOLDEN=1.
 const authorityGolden = "testdata/authority_golden.txt"
 
 var goldenSources = regexp.MustCompile(`native:[0-9a-f]{64}|mbx-[0-9a-f-]{36}`)
 
-func TestAuthorityJSONWritesGoldenBytes(t *testing.T) {
+func TestAuthorityWritesGoldenValues(t *testing.T) {
 	ctx := context.Background()
 	config, root := t.TempDir(), t.TempDir()
 	s := NewLifecycleStore(config)
@@ -41,11 +44,24 @@ func TestAuthorityJSONWritesGoldenBytes(t *testing.T) {
 		}
 	}
 	var out bytes.Buffer
+	rendered := t.TempDir()
 	names := map[string]string{}
 	snapshot := func(step string) {
 		fmt.Fprintf(&out, "== %s\n", step)
+		life, ledger, err := readAuthorityFile(ctx, filepath.Join(config, NativeAuthorityFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, v := range map[string]any{"sso-lifecycle.json": life, nativeProvisioningFile: ledger} {
+			if v == (*nativeLedger)(nil) {
+				continue
+			}
+			if err := fsutil.PersistJSONFile(filepath.Join(rendered, name), v); err != nil {
+				t.Fatal(err)
+			}
+		}
 		for _, name := range []string{"sso-lifecycle.json", nativeProvisioningFile} {
-			raw, err := os.ReadFile(filepath.Join(config, name))
+			raw, err := os.ReadFile(filepath.Join(rendered, name))
 			if os.IsNotExist(err) {
 				raw = []byte("(absent)")
 			} else if err != nil {
@@ -121,6 +137,6 @@ func TestAuthorityJSONWritesGoldenBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(out.Bytes(), want) {
-		t.Fatalf("authority files differ from %s:\n%s", authorityGolden, out.Bytes())
+		t.Fatalf("authority values differ from %s:\n%s", authorityGolden, out.Bytes())
 	}
 }

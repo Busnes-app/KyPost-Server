@@ -88,6 +88,7 @@ func TestAuthorityV3RoundTrip(t *testing.T) {
 		}
 		return c.AuthorityDigest
 	}
+	writeV2ForTest(t, f.config)
 	life2, ledger2, version := historical(t, f.config)
 	if version != 2 || len(ledger2.Accounts) != 2 || len(ledger2.stored.Mailboxes) != 3 || len(ledger2.stored.Addresses["sales@example.test"].History) != 2 {
 		t.Fatal("fixture lacks a shape", version, ledger2)
@@ -116,9 +117,7 @@ func TestAuthorityV3RoundTrip(t *testing.T) {
 		t.Fatal("lifecycle records did not round-trip", err)
 	}
 
-	if err := WriteNativeAuthorityV3ForTest(f.config); err != nil {
-		t.Fatal(err)
-	}
+	migrateForTest(t, f.config)
 	life3, ledger3, version := historical(t, f.config)
 	if version != 3 || canonical(t, life3) != canonical(t, life2) || canonical(t, ledger3.stored) != canonical(t, ledger2.stored) || !reflect.DeepEqual(ledger3.Accounts, ledger2.Accounts) {
 		t.Fatalf("v3 read differs from v2:\n%s\n%s", canonical(t, ledger3.stored), canonical(t, ledger2.stored))
@@ -126,11 +125,19 @@ func TestAuthorityV3RoundTrip(t *testing.T) {
 	if digest(life3, ledger3) != digest(life2, ledger2) {
 		t.Fatal("recovery digest changed across conversion")
 	}
-	if _, err := f.life.load(); err == nil {
-		t.Fatal("runtime read the lifecycle stub")
+	// A v2 binary against the v3 files: its lifecycle reader and its ledger
+	// format check both refuse the stubs.
+	if err := (jsonAuthority{f.life.path}).View(context.Background(), func(r authorityReader) error {
+		_, err := r.Lifecycle()
+		return err
+	}); err == nil {
+		t.Fatal("v2 reader read the lifecycle stub")
 	}
-	if err := checkNativeFormat(f.config); !errors.Is(err, ErrNativeMigration) {
-		t.Fatal("runtime accepted the ledger stub", err)
+	if _, _, err := v2NativeFormat(f.config); !errors.Is(err, ErrNativeMigration) {
+		t.Fatal("v2 format check accepted the ledger stub", err)
+	}
+	if runtime, err := f.life.load(); err != nil || canonical(t, runtime) != canonical(t, life2) {
+		t.Fatal("v3 runtime read", err)
 	}
 	if _, err := f.life.ValidateNativeSnapshot(f.root, accounts); err != nil {
 		t.Fatal("v3 snapshot refused", err)
@@ -167,8 +174,8 @@ func fixtureRows(t *testing.T) authorityRows {
 	return rows
 }
 
-// TestAuthoritySchemaMismatchRefuses is the historical-opener half of the
-// design's test: the right tables and user_version but a dropped key, index or
+// TestAuthoritySchemaMismatchRefuses, both the historical and the runtime
+// opener: the right tables and user_version but a dropped key, index or
 // any trigger, an extra object, a wrong version or a corrupt page is refused.
 func TestAuthoritySchemaMismatchRefuses(t *testing.T) {
 	rows := fixtureRows(t)
@@ -178,9 +185,21 @@ func TestAuthoritySchemaMismatchRefuses(t *testing.T) {
 			t.Fatal("accepted", err)
 		}
 	}
+	// The runtime opener refuses the same files (a corrupt page aside: only
+	// integrity_check, at migration and in backups, sees it).
+	runtimeRefuses := func(t *testing.T, config string) {
+		t.Helper()
+		if _, err := NewLifecycleStore(config).load(); !errors.Is(err, ErrNativeMigration) {
+			t.Fatal("runtime accepted", err)
+		}
+	}
 	// Whitespace is normalised: a reformatted but identical schema reads.
-	if _, _, v, err := NewLifecycleStore(v3Config(t, rows, strings.ReplaceAll(authoritySchemaV3, "  ", "\t "))).historicalAuthority(); err != nil || v != 3 {
+	reformatted := v3Config(t, rows, strings.ReplaceAll(authoritySchemaV3, "  ", "\t "))
+	if _, _, v, err := NewLifecycleStore(reformatted).historicalAuthority(); err != nil || v != 3 {
 		t.Fatal("reformatted schema refused", v, err)
+	}
+	if _, err := NewLifecycleStore(reformatted).load(); err != nil {
+		t.Fatal("runtime refused a reformatted schema", err)
 	}
 	cases := map[string]string{
 		"mailbox primary key":    strings.Replace(authoritySchemaV3, "id TEXT PRIMARY KEY,", "id TEXT NOT NULL UNIQUE,", 1),
@@ -204,7 +223,9 @@ func TestAuthoritySchemaMismatchRefuses(t *testing.T) {
 			if schema == authoritySchemaV3 {
 				t.Fatal("mutation did not apply")
 			}
-			refuses(t, v3Config(t, rows, schema))
+			config := v3Config(t, rows, schema)
+			refuses(t, config)
+			runtimeRefuses(t, config)
 		})
 	}
 	t.Run("corrupt page", func(t *testing.T) {
@@ -238,6 +259,7 @@ func TestAuthoritySchemaMismatchRefuses(t *testing.T) {
 			t.Fatal(err)
 		}
 		refuses(t, config)
+		runtimeRefuses(t, config)
 		if err := os.Chmod(path, 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -248,6 +270,7 @@ func TestAuthoritySchemaMismatchRefuses(t *testing.T) {
 			t.Fatal(err)
 		}
 		refuses(t, config)
+		runtimeRefuses(t, config)
 	})
 }
 
@@ -259,13 +282,12 @@ func TestAuthorityV3MixedFormatsRefuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeV2ForTest(t, f.config)
 	v2 := map[string][]byte{}
 	for _, name := range []string{"sso-lifecycle.json", nativeProvisioningFile} {
 		v2[name] = mustRead(t, filepath.Join(f.config, name))
 	}
-	if err := WriteNativeAuthorityV3ForTest(f.config); err != nil {
-		t.Fatal(err)
-	}
+	migrateForTest(t, f.config)
 	stubs := map[string][]byte{}
 	for _, name := range []string{"sso-lifecycle.json", nativeProvisioningFile} {
 		stubs[name] = mustRead(t, filepath.Join(f.config, name))
@@ -300,8 +322,14 @@ func TestAuthorityV3MixedFormatsRefuse(t *testing.T) {
 		"ledger stub beside a v2 lifecycle": {l: v2[l], p: stubs[p]},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewLifecycleStore(install(files)).ValidateNativeSnapshot(f.root, accounts); err == nil {
+			config := install(files)
+			if _, err := NewLifecycleStore(config).ValidateNativeSnapshot(f.root, accounts); err == nil {
 				t.Fatal("mixed format accepted")
+			}
+			// The runtime refuses them too: with the domain tombstone even
+			// the fresh-create crash rows (no ledger stub) are refused.
+			if _, err := NewLifecycleStore(config).load(); !errors.Is(err, ErrNativeMigration) {
+				t.Fatal("runtime accepted a mixed format", err)
 			}
 		})
 	}

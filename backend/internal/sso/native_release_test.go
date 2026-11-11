@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 )
 
 const releaseIssuer = "https://idp.example"
@@ -96,7 +95,7 @@ func TestReleaseFloorSnapshotValidation(t *testing.T) {
 		{directoryKey(releaseIssuer, "subject"): {Revision: 0}},
 		{"no-separator": {Revision: 2}},
 	} {
-		if err := fsutil.PersistJSONFile(s.path, lifecycleFile{ReleaseFloors: floors}); err != nil {
+		if err := s.persistLifecycle(lifecycleFile{ReleaseFloors: floors}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.ValidateNativeSnapshot(state, nil); !errors.Is(err, ErrNativeProvisioning) {

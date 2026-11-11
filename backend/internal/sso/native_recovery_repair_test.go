@@ -82,7 +82,7 @@ func TestNativeRecoveryRepairPlanUsesUnchangedRevisionAuthority(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			life, root, settings, key, accounts, u := publishedRecoveryFixture(t, active)
 			before, _ := accounts.List()
-			lifecycle, _ := os.ReadFile(life.path)
+			lifecycle, _ := authorityContent(life)
 			hold, _ := os.ReadFile(filepath.Join(root, NativeRestoreHoldFile))
 			release, err := life.LockDirectory()
 			if err != nil {
@@ -104,7 +104,7 @@ func TestNativeRecoveryRepairPlanUsesUnchangedRevisionAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 			after, _ := accounts.List()
-			currentLifecycle, _ := os.ReadFile(life.path)
+			currentLifecycle, _ := authorityContent(life)
 			currentHold, _ := os.ReadFile(filepath.Join(root, NativeRestoreHoldFile))
 			if !reflect.DeepEqual(before, after) || !bytes.Equal(lifecycle, currentLifecycle) || !bytes.Equal(hold, currentHold) {
 				t.Fatal("planning mutated retained authority or released hold")
@@ -151,7 +151,7 @@ func TestNativeRecoveryRepairPlanRechecksReceiptAndStorage(t *testing.T) {
 				case "no-receipt":
 					f.RecoveryReceipt = nil
 				}
-				if err = fsutil.PersistJSONFile(life.path, f); err != nil {
+				if err = life.persistLifecycle(f); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -159,7 +159,7 @@ func TestNativeRecoveryRepairPlanRechecksReceiptAndStorage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			before, _ := os.ReadFile(life.path)
+			before, _ := authorityContent(life)
 			release, err := life.LockDirectory()
 			if err != nil {
 				t.Fatal(err)
@@ -172,7 +172,7 @@ func TestNativeRecoveryRepairPlanRechecksReceiptAndStorage(t *testing.T) {
 			if damage == "cancel" && !errors.Is(err, context.Canceled) {
 				t.Fatal("cancellation lost", err)
 			}
-			after, _ := os.ReadFile(life.path)
+			after, _ := authorityContent(life)
 			if !bytes.Equal(before, after) || !errors.Is(RequireNativeRestoreReleased(root), ErrNativeRestoreHold) {
 				t.Fatal("refusal modified lifecycle or hold")
 			}
@@ -310,7 +310,7 @@ func TestNativeRecoveryRepairProvenanceSurvivesFreshRestoreButRejectsMismatch(t 
 			if damage == "missing" {
 				delete(f.RecoveryRepairBarriers, k)
 			}
-			if err = fsutil.PersistJSONFile(life.path, f); err != nil {
+			if err = life.persistLifecycle(f); err != nil {
 				t.Fatal(err)
 			}
 			// A later offline restore changes the epoch, not immutable ownership.
@@ -318,7 +318,7 @@ func TestNativeRecoveryRepairProvenanceSurvivesFreshRestoreButRejectsMismatch(t 
 				t.Fatal(err)
 			}
 			fingerprint := sha256.Sum256(key)
-			before, _ := os.ReadFile(life.path)
+			before, _ := authorityContent(life)
 			release, err := life.LockDirectory()
 			if err != nil {
 				t.Fatal(err)
@@ -332,7 +332,7 @@ func TestNativeRecoveryRepairProvenanceSurvivesFreshRestoreButRejectsMismatch(t 
 				t.Fatal("incorrect provenance acceptance", err)
 			}
 			if damage != "none" {
-				after, _ := os.ReadFile(life.path)
+				after, _ := authorityContent(life)
 				if !bytes.Equal(before, after) {
 					t.Fatal("mismatched provenance changed lifecycle")
 				}
@@ -413,15 +413,15 @@ func TestNativeRecoveryRepairCompletionRejectsChangedAuthority(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if err = fsutil.PersistJSONFile(life.path, f); err != nil {
+				if err = life.persistLifecycle(f); err != nil {
 					t.Fatal(err)
 				}
 			}
-			before, _ := os.ReadFile(life.path)
+			before, _ := authorityContent(life)
 			if err := completePublishedRecoveryBatch(t, life, root, settings, key, accounts); err == nil {
 				t.Fatal("changed authority completed repair")
 			}
-			after, _ := os.ReadFile(life.path)
+			after, _ := authorityContent(life)
 			f, _ := life.load()
 			k := directoryKey(settings.IssuerURL, u.SSOSub)
 			if !bytes.Equal(before, after) || f.RecoveryFloors[k] != 1 || !errors.Is(RequireNativeRestoreReleased(root), ErrNativeRestoreHold) {
@@ -454,7 +454,7 @@ func TestNativeRecoveryRepairIntentRejectsUnplannedAccountChanges(t *testing.T) 
 				t.Fatal(err)
 			}
 			before, _ := accounts.List()
-			lifecycle, _ := os.ReadFile(life.path)
+			lifecycle, _ := authorityContent(life)
 			err = accounts.RepairNativeAccounts(ctx, settings.IssuerURL, plan, func(current, repaired []users.User) (func(), error) {
 				for i := range repaired {
 					if repaired[i].ID == native.ID {
@@ -478,7 +478,7 @@ func TestNativeRecoveryRepairIntentRejectsUnplannedAccountChanges(t *testing.T) 
 				t.Fatal("unplanned account changes qualified")
 			}
 			after, _ := accounts.List()
-			currentLifecycle, _ := os.ReadFile(life.path)
+			currentLifecycle, _ := authorityContent(life)
 			if !reflect.DeepEqual(before, after) || !bytes.Equal(lifecycle, currentLifecycle) {
 				t.Fatal("invalid batch changed durable data")
 			}

@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
@@ -26,7 +25,7 @@ const nativeIssuer = "https://identity.example.test"
 
 var nativeLimits = mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100}
 
-func nativeDesired(t *testing.T, s *LifecycleStore, sub, address string, revision int, active bool) {
+func nativeDesired(t testing.TB, s *LifecycleStore, sub, address string, revision int, active bool) {
 	t.Helper()
 	raw := fmt.Sprintf(`{"schemas":[%q],"id":%q,"externalId":%q,"userName":%q,"active":%t,"emails":[{"value":%q,"primary":true}],"meta":{"version":%q}}`, scimUserSchema, sub, sub, sub, active, address, fmt.Sprintf(`W/"%d"`, revision))
 	var u DirectoryUser
@@ -149,7 +148,7 @@ func TestNativeProvisioningRefusesUnverifiedAmbiguousAndPartialState(t *testing.
 					d.Resource.Emails = append(d.Resource.Emails, d.Resource.Emails[0])
 				}
 				f.Directory[directoryKey(nativeIssuer, "one")] = d
-				if err := fsutil.PersistJSONFile(s.path, f); err != nil {
+				if err := s.persistLifecycle(f); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -331,45 +330,40 @@ func TestNativeProvisioningRefusesMissingLedgerAndRestoredDirectory(t *testing.T
 	config, root := t.TempDir(), t.TempDir()
 	s := NewLifecycleStore(config)
 	nativeDesired(t, s, "one", "one@example.test", 1, true)
-	lifecycleBefore, err := os.ReadFile(s.path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.ReconcileNativeMailbox(root, nativeIssuer, "one", "local-one", "example.test", nativeLimits); err != nil {
-		t.Fatal(err)
-	}
-	ledger, err := os.ReadFile(s.nativePath())
-	if err != nil {
+	if _, err := s.ReconcileNativeMailbox(root, nativeIssuer, "one", "local-one", "example.test", nativeLimits); err != nil {
 		t.Fatal(err)
 	}
 	nativeDesired(t, s, "two", "one@example.test", 1, true)
-	if err = os.Remove(s.nativePath()); err != nil {
+	// The ledger and its initialization flag share one database: a lost
+	// ledger is a lost database beside its stubs, refused as half-migrated.
+	db := filepath.Join(config, NativeAuthorityFile)
+	dropAuthorityHandle(db)
+	if err := os.Rename(db, db+".away"); err != nil {
 		t.Fatal(err)
 	}
-	// An active everyday revision may clear legacyMixedUse, so a lost ledger
-	// fails it for retry; it must not be recorded past the flag.
 	raw := fmt.Sprintf(`{"schemas":[%q],"id":"two","externalId":"two","userName":"two","active":true,"emails":[{"value":"one@example.test","primary":true}],"meta":{"version":"W/\"2\""}}`, scimUserSchema)
 	var update DirectoryUser
-	if err = json.Unmarshal([]byte(raw), &update); err != nil {
+	if err := json.Unmarshal([]byte(raw), &update); err != nil {
 		t.Fatal(err)
 	}
 	ev := syncauth.Event{ID: "two-2", Type: "user.updated", At: time.Now()}
-	if _, err = s.ApplyDirectoryUser(nativeIssuer, ev, update, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return false, nil }); !errors.Is(err, ErrNativeProvisioning) {
+	if _, err := s.ApplyDirectoryUser(nativeIssuer, ev, update, EventDigest(ev.Type, []byte(raw)), func() (bool, error) { return false, nil }); !errors.Is(err, ErrNativeMigration) {
 		t.Fatal("directory revision recorded over a lost ledger", err)
 	}
-	if _, err = s.ReconcileNativeMailbox(root, nativeIssuer, "two", "local-two", "example.test", nativeLimits); !errors.Is(err, ErrNativeProvisioning) {
+	if _, err := s.ReconcileNativeMailbox(root, nativeIssuer, "two", "local-two", "example.test", nativeLimits); !errors.Is(err, ErrNativeMigration) {
 		t.Fatal("lost ledger freed reservation", err)
 	}
-	if _, _, err = s.NativeAssignment(nativeIssuer, "one"); !errors.Is(err, ErrNativeProvisioning) {
+	if _, _, err := s.NativeAssignment(nativeIssuer, "one"); !errors.Is(err, ErrNativeMigration) {
 		t.Fatal("missing ledger reported empty", err)
 	}
-	if err = os.WriteFile(s.nativePath(), ledger, 0600); err != nil {
+	if err := os.Rename(db+".away", db); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(s.path, lifecycleBefore, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.ReconcileNativeMailbox(root, nativeIssuer, "one", "local-one", "example.test", nativeLimits); !errors.Is(err, ErrNativeProvisioning) {
+	// A lifecycle restored from before initialization beside the ledger rows.
+	rewriteAuthorityForTest(t, s, authoritySchemaV3, func(life *lifecycleFile, _ **nativeLedger) {
+		life.NativeProvisioningInitialized = false
+	})
+	if _, err := s.ReconcileNativeMailbox(root, nativeIssuer, "one", "local-one", "example.test", nativeLimits); !errors.Is(err, ErrNativeProvisioning) {
 		t.Fatal("restored unfenced directory adopted ledger", err)
 	}
 }

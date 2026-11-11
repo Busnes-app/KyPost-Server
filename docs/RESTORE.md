@@ -108,16 +108,18 @@ restore hold left in place. Configuring a mail domain now also initializes an
 empty native ledger, so restoring a deployment that configured a domain but has
 no native accounts is held like a relay-only restore.
 
-Validation and drills also read the per-account authority format (version 3,
-[design](NATIVE_AUTHORITY_PER_ACCOUNT.md)), which no shipped binary writes yet:
-`native-authority.db` beside the exact `sso-lifecycle.json` and
-`native-provisioning.json` stubs, beside a version-2 domain set. The database is
-collected as a SQLite snapshot and opened read-only; a schema that is not exactly
+Native authority is stored in the per-account format (version 3,
+[design](NATIVE_AUTHORITY_PER_ACCOUNT.md)): `native-authority.db` beside the
+exact `sso-lifecycle.json` and `native-provisioning.json` stubs, beside a
+version-2 domain set. Backups collect the database as a SQLite snapshot;
+validation and drills open it read-only and refuse a schema that is not exactly
 the built-in one, a failed integrity or foreign-key check, a group- or
-world-readable or non-regular file, or any other mix (a version-2 file beside the
-database, a stub without it) is refused. `*.v2-migrated` copies are never
-collected. Until the SQLite runtime ships, a version-3 restore is refused at the
-credential fence, held and unpublished.
+world-readable or non-regular file, or any other mix (a version-2 file beside
+the database, a stub without it). `*.v2-migrated` copies are never collected.
+Restore fencing, qualification and the hold write a version-3 staging copy
+through the store itself, offline, and leave every row in the database file (no
+WAL) before publication. A version-1 or version-2 snapshot is restored as
+before and converted by the next start's `migrate-native`, hold in place.
 
 With several domains, validation checks each domain's proof format, that every
 ledger address sits on a domain in the set (configured or retired), that the
@@ -440,11 +442,24 @@ version-2 formats; see [native provisioning](NATIVE_PROVISIONING.md#storage-form
 It keeps the version-1 sources as `$CONFIG_DIR/*.v1-migrated` and ends by replacing
 `native-domain.json` with a tombstone. Take a backup before upgrading.
 
-If migration fails, the log names the cause; native mail stays refused while
-external IMAP works. Fix the cause and restart; re-running is safe. A version-1
-binary refuses migrated state instead of reading it, so rollback to one means
-restoring the backup taken before the upgrade with the procedure above, not
-editing or deleting the tombstone, copies or ledger.
+The same run then moves the lifecycle and the ledger into `native-authority.db`
+(version 3), keeping the version-2 files as `$CONFIG_DIR/*.v2-migrated` and
+replacing both with small stubs, the ledger stub last; see
+[version 2 → 3](NATIVE_PROVISIONING.md#version-2--3-per-account-authority-store).
+A v1 install goes through both steps in one start.
+
+If migration fails, the log names the cause; native mail (and, for the version 3
+step, SSO sign-in) stays refused while password logins and external IMAP work.
+Fix the cause and restart; re-running is safe. Older binaries refuse migrated
+state instead of reading it, so rollback means restoring the backup taken before
+the upgrade with the procedure above, not editing or deleting the tombstone,
+stubs, copies, database or ledger.
+
+The `*.v2-migrated` copies hold directory PII and authority as of the migration.
+Delete them after the first successful backup taken on the new version. Never
+put them back over the stubs: they lack every later reservation and generation,
+and `migrate-native` refuses version-2 files beside a database that has taken
+writes since.
 
 ## Verification commands
 
