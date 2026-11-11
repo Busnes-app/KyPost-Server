@@ -136,6 +136,16 @@ deferred). The per-record validity rules that today run inside
 `validateNativeLedger` (`validHistory`, primary-address presence for extras) are
 checked by the writer on the rows it touches, before commit.
 
+Triggers only bind writes that fire them. SQLite's REPLACE conflict resolution
+(`INSERT OR REPLACE`, `REPLACE INTO`, `ON CONFLICT REPLACE`) deletes the conflicting row
+without firing delete triggers unless `recursive_triggers` is on, then inserts a new
+row, so no update trigger fires either. Therefore:
+- Writers never use REPLACE. They use plain `UPDATE`, or `INSERT ... ON CONFLICT DO
+  UPDATE`, which fires the update triggers.
+- Every handle sets `PRAGMA recursive_triggers=ON`, so a REPLACE that slips through
+  hits `BEFORE DELETE` and aborts.
+- The per-open checks (section 4) verify it alongside `trusted_schema=OFF`.
+
 ### Cost per operation, with numbers
 
 Assumed row sizes, to be checked in PR 3: directory about 0.8 KB (resource JSON),
@@ -274,7 +284,7 @@ one transaction.
   `user_version` mismatch, a missing required table or a row that breaks a Go-side
   rule gives `ErrNativeProvisioning`, or `ErrNativeMigration` for format errors. Older
   contents are never used. On every handle open (runtime, migration and the
-  historical restore opener) the store opens with `PRAGMA trusted_schema=OFF` and
+  historical restore opener) the store opens with `PRAGMA trusted_schema=OFF`, `PRAGMA recursive_triggers=ON` and
   defensive mode on. It requires `user_version` 3 and an **exact** match between
   `sqlite_schema` and the built-in schema: every table, index and trigger,
   compared after whitespace normalisation, with no extra objects. Any difference
@@ -431,7 +441,8 @@ stored here.
   per-account-file design would have. Mailbox storage paths keep
   `fsutil.SafePathComponent`.
 - **Integrity.** Constraints and triggers enforce uniqueness and the never-delete and
-  never-decrease rules even if Go code is wrong. `quick_check` and whole-store
+  never-decrease rules even if Go code is wrong. That holds because writers never use
+  REPLACE and every handle runs with `recursive_triggers=ON` (section 1). `quick_check` and whole-store
   validation run at startup, at migration and in backups. A process able to write the
   config root could rewrite D. That is also true of today's JSON files and is not a
   new boundary.
@@ -534,6 +545,7 @@ survived and are answered above, or here:
 | H7 | Short-lived `receiving` processes open the database on every invocation. | O(1) per invocation (section 7). The WAL is shared with the long-running api and daemon handles. |
 | S1 | `*.v2-migrated` copies keep stale authority and directory PII indefinitely. Adopting them by hand after v3 traffic could reuse generations. | Section 5 warns against this. PR 3 has `migrate-native` refuse a v2 adoption while D exists, and RESTORE.md tells operators to delete the copies after the first successful v3 backup. |
 | S2 | A staged v3 database is trusted row by row during restore validation. | The historical opener runs `PRAGMA integrity_check` before reading rows (PR 2). |
+| S4 | PR #574 security re-review: REPLACE conflict resolution deletes and re-inserts a row without firing delete triggers (unless `recursive_triggers` is on) or update triggers. A writer bug could then lower an address generation or rewrite an account unnoticed until the minute pass, and route quarantine relies on generations. | Writers never use REPLACE (plain `UPDATE` or `ON CONFLICT DO UPDATE`). Every handle sets and verifies `recursive_triggers=ON` (sections 1 and 4). PR 3 test `TestAuthorityReplaceCannotBypassTriggers`: a REPLACE on a store-opened handle against an existing `addresses` row with a lower generation, and against an `accounts` row, both fail and leave the rows unchanged. |
 | S3 | PR #574 security review: the open-time check covered only `user_version` and table presence, so a database missing the address primary key, the one-primary index or a never-delete trigger would pass. Duplicates would then go unseen, because `Snapshot` collapses them into maps and `integrity_check` checks storage, not schema meaning. | Every open now requires an exact `sqlite_schema` match with the built-in schema, under `trusted_schema=OFF` and defensive mode (section 4). PR 2/3 test `TestAuthoritySchemaMismatchRefuses`: a fixture with the right tables and `user_version` but a dropped key, index or trigger is refused by both the runtime and historical openers. |
 | S3 | Existing, outside this design: the `users.json` cache is keyed on size+mtime, not inode. | Recorded under Q3. Adding the inode to the key is a one-line follow-up, independent of this rollout. |
 
