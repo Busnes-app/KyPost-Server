@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -289,7 +288,7 @@ func TestNativeSignOnOffboardedBeforeAdmitRefused(t *testing.T) {
 // refused the lifecycle flock: the caller is running under LockDirectory.
 func assertDirectoryLockHeld(t *testing.T, srv *Server) {
 	t.Helper()
-	f, err := os.OpenFile(filepath.Join(srv.configDir, "sso-lifecycle.json.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.OpenFile(ssotest.DirectoryLockPath(srv.configDir), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Errorf("open lifecycle lock: %v", err)
 		return

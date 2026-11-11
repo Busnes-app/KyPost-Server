@@ -17,6 +17,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
@@ -164,12 +165,12 @@ func TestNativeRestoreReleaseHTTPPreconditions(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			lifecycle, _ := os.ReadFile(filepath.Join(f.s.configDir, "sso-lifecycle.json"))
+			lifecycle, _ := os.ReadFile(ssotest.LifecyclePath(f.s.configDir))
 			w := gatedCall(t, f.s, f.cookie, "POST", nativeReleasePath, nativeRepairBody(f.s), "")
 			if w.Code != 409 || !strings.Contains(w.Body.String(), reason) || !releaseHeld(t, f.s) {
 				t.Fatalf("%d %s", w.Code, w.Body.String())
 			}
-			if after, _ := os.ReadFile(filepath.Join(f.s.configDir, "sso-lifecycle.json")); !bytes.Equal(lifecycle, after) {
+			if after, _ := os.ReadFile(ssotest.LifecyclePath(f.s.configDir)); !bytes.Equal(lifecycle, after) {
 				t.Fatal("refusal wrote the lifecycle")
 			}
 			if legacy, err := f.s.users.GetByUsername("legacy-admin"); err != nil || !legacy.Active {

@@ -18,6 +18,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -167,7 +168,7 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 	}
 	setEncrypt(false)
 	// A creation interrupted before publication (no source) is not polled.
-	ledgerPath := filepath.Join(p.configDir, "native-provisioning.json")
+	ledgerPath := ssotest.LedgerPath(p.configDir)
 	raw, err := os.ReadFile(ledgerPath)
 	if err != nil {
 		t.Fatal(err)
