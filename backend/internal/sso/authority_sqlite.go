@@ -218,11 +218,95 @@ func (c verifiedConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	sc, ok := conn.(sqliteConn)
+	if !ok {
+		_ = conn.Close()
+		return nil, ErrNativeMigration
+	}
 	if err := verifyAuthorityConn(ctx, conn); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
-	return conn, nil
+	return &stmtConn{sqliteConn: sc, stmts: map[string]driver.Stmt{}}, nil
+}
+
+// sqliteConn is the driver connection with the interfaces database/sql uses.
+type sqliteConn interface {
+	driver.Conn
+	driver.ConnBeginTx
+	driver.ConnPrepareContext
+	driver.ExecerContext
+	driver.QueryerContext
+	driver.Pinger
+	driver.SessionResetter
+	driver.Validator
+}
+
+// maxConnStmts bounds the statements kept per connection; the store's
+// queries are fixed strings, about 20.
+const maxConnStmts = 64
+
+// stmtConn prepares each query once per physical connection and finalizes
+// the statements when the connection closes. SQLite re-prepares a statement
+// itself after a schema change, and every run of it reads in the caller's
+// transaction, so only the parse is reused, never a value.
+type stmtConn struct {
+	sqliteConn
+	stmts map[string]driver.Stmt
+}
+
+// QueryContext takes the query's statement out of the cache until its rows
+// close, so a nested run of the same query prepares its own.
+func (c *stmtConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	s := c.stmts[query]
+	delete(c.stmts, query)
+	if s == nil {
+		var err error
+		if s, err = c.PrepareContext(ctx, query); err != nil {
+			return nil, err
+		}
+	}
+	q, ok := s.(driver.StmtQueryContext)
+	if !ok {
+		_ = s.Close()
+		return nil, ErrNativeMigration
+	}
+	rows, err := q.QueryContext(ctx, args)
+	if err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	return &stmtRows{Rows: rows, c: c, query: query, s: s}, nil
+}
+
+func (c *stmtConn) Close() error {
+	for _, s := range c.stmts {
+		_ = s.Close()
+	}
+	c.stmts = nil
+	return c.sqliteConn.Close()
+}
+
+// stmtRows returns its statement to the cache when it closes.
+type stmtRows struct {
+	driver.Rows
+	c     *stmtConn
+	query string
+	s     driver.Stmt
+}
+
+func (r *stmtRows) Close() error {
+	err := r.Rows.Close()
+	if r.s == nil {
+		return err
+	}
+	if err == nil && r.c.stmts != nil && r.c.stmts[r.query] == nil && len(r.c.stmts) < maxConnStmts {
+		r.c.stmts[r.query] = r.s
+	} else {
+		_ = r.s.Close()
+	}
+	r.s = nil
+	return err
 }
 
 func driverRows(ctx context.Context, conn driver.Conn, query string) ([][]any, error) {
