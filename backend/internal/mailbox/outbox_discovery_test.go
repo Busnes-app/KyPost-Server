@@ -35,8 +35,13 @@ func TestNativeOutboxReadOnlyDiscovery(t *testing.T) {
 	check(false) // Crashed/submitting work must never be automatically replayed.
 	must(t, writer.CompleteOutbound(ctx, outboxMaster, outboxTestID, 0, claim, &textproto.Error{Code: 451, Msg: "fixture"}))
 	check(false) // Future backoff remains future.
+	if m := readIdle(t, dir); m.Until != retryAt(t, writer) {
+		t.Fatalf("idle mark until %d, want the retry time", m.Until)
+	}
+	// The retry comes due: move it and the mark it bounded into the past.
 	_, err = writer.db.Exec("UPDATE outbox_deliveries SET next_attempt=?", time.Now().Add(-time.Minute).Unix())
 	must(t, err)
+	must(t, os.Remove(filepath.Join(dir, OutboundIdleFile)))
 	check(true)
 	_, claim, err = writer.ClaimOutbound(ctx, outboxMaster, outboxTestID, 0, outboxGeneration)
 	must(t, err)
