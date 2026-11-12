@@ -83,7 +83,9 @@ decoded views of earlier releases are gone). Each process holds the database
 open (owner decision Q1): SQLite's change-counter protocol makes each
 transaction see the latest commit, and after each read the store requires the
 path to still name the file it opened (`os.SameFile`), refusing and reopening
-otherwise.
+otherwise. Each connection prepares a query once and keeps the statement until
+the connection closes; only the parse is reused, every run reads in its own
+transaction.
 
 Every connection is checked when it opens: `trusted_schema=OFF`, defensive mode,
 `recursive_triggers=ON`, foreign keys, WAL, `synchronous=FULL`, `user_version`
@@ -106,9 +108,12 @@ An open mail client's per-operation admission re-runs every prepared-storage
 check on two read-only handles the client keeps for its own `state.db` and
 `mailbox.db`, instead of reopening both. Each check also requires both paths to
 still name the files those handles opened, so deleted or replaced storage is
-refused on the next operation. Every other caller keeps the full reopening path.
-Each cached client holds about 8 file descriptors instead of 3; the API and the
-daemon each retain at most 64 cached mail clients.
+refused on the next operation. In the API and the daemon, an admission without
+an open client runs the same checks on handles from a per-process pool of at
+most 1,024 mailboxes (2 descriptors each), closed after 5 to 10 minutes without
+an admission and at once when a check refuses; every other process keeps the
+full reopening path. Each cached client holds about 8 file descriptors instead
+of 3; the API and the daemon each retain at most 64 cached mail clients.
 
 ### Browser OpenPGP RSA policy
 

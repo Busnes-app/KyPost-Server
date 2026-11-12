@@ -51,22 +51,31 @@ var benchAccounts = []int{1000, 3000, 10000}
 
 // BenchmarkAdmitOpenMailbox is one admission of one account among n. The O(1)
 // claim of docs/NATIVE_AUTHORITY_PER_ACCOUNT.md: ns/op and B/op at 10k within
-// 1.2x of 3k. Without a held client the storage check reopens both mailbox
-// databases, a cost independent of n.
+// 1.2x of 3k. Without a held client the storage check uses the process's
+// admission pool, as in the api and daemon; pool=off reopens both mailbox
+// databases, as every other process does.
 func BenchmarkAdmitOpenMailbox(b *testing.B) {
-	for _, n := range benchAccounts {
-		b.Run(fmt.Sprintf("accounts=%d", n), func(b *testing.B) {
-			f := benchAuthority(b, n)
-			ctx := context.Background()
-			id := f.ids["one"]
-			b.ReportAllocs()
-			b.ResetTimer()
-			for range b.N {
-				if _, err := f.life.AdmitOpenMailbox(ctx, f.root, nativeIssuer, id, id, f.accounts, nil); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
+	for _, pool := range []int{mailbox.MaxHeldAdmissions, 0} {
+		for _, n := range benchAccounts {
+			b.Run(fmt.Sprintf("pool=%v/accounts=%d", pool != 0, n), func(b *testing.B) {
+				mailbox.HoldAdmissionHandles(pool)
+				defer mailbox.HoldAdmissionHandles(0)
+				benchmarkAdmitOpenMailbox(b, n)
+			})
+		}
+	}
+}
+
+func benchmarkAdmitOpenMailbox(b *testing.B, n int) {
+	f := benchAuthority(b, n)
+	ctx := context.Background()
+	id := f.ids["one"]
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := f.life.AdmitOpenMailbox(ctx, f.root, nativeIssuer, id, id, f.accounts, nil); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -96,6 +105,40 @@ func BenchmarkAdmissionAuthorityReads(b *testing.B) {
 				})
 				if err != nil {
 					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkNativeMailboxes is the whole-ledger mailbox listing with addresses.
+func BenchmarkNativeMailboxes(b *testing.B) {
+	for _, n := range benchAccounts {
+		b.Run(fmt.Sprintf("accounts=%d", n), func(b *testing.B) {
+			f := benchAuthority(b, n)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				if m, err := f.life.NativeMailboxes(); err != nil || len(m) != n {
+					b.Fatal(len(m), err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkNativeOutboxDiscovery is the outbox runtime's per-pass ledger read
+// (origin/main read NativeMailboxes here). Target: 10k within 1.2x of 3k per
+// mailbox.
+func BenchmarkNativeOutboxDiscovery(b *testing.B) {
+	for _, n := range benchAccounts {
+		b.Run(fmt.Sprintf("accounts=%d", n), func(b *testing.B) {
+			f := benchAuthority(b, n)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				if m, err := f.life.NativeMailboxesWithoutAddresses(); err != nil || len(m) != n {
+					b.Fatal(len(m), err)
 				}
 			}
 		})

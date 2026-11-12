@@ -63,7 +63,7 @@ section 10.
 | Primary address | whole ledger | `addresses` via the partial index `(mailbox) WHERE kind='primary'` | O(log N) |
 | Extra mailbox | whole ledger, read a **second** time (`loadNative`) | `mailboxes` row by ID plus its primary address | O(log N) |
 | Domain set | `native-domains.json` | unchanged | O(domains) |
-| Prepared storage | `mailbox.Prepared` held handles (#571) | unchanged | O(1) |
+| Prepared storage | `mailbox.Prepared` held handles (#571) | unchanged; admissions without a client use a per-process pool of `Prepared` handles (section 11) | O(1) |
 
 ### Records and where they live
 
@@ -410,9 +410,15 @@ republish trigger).
 | `LoggedOut`, `RecordLogout`, `RecordSignOnJTI` (login, logout) | lifecycle whole | `logouts` scan (bounded by retention), keyed `sign_ons` |
 | api `extraMailboxOwner` (`withMailbox` with `X-KyPost-Mailbox`, every extra-mailbox request), `handleMailboxes` (`GET /api/mailboxes`), `extraMailboxIDs` (contacts), `ownsActiveExtraMailbox` (PGP incoming) | `NativeMailboxes()` whole, per request | `Mailbox(id)` / `MailboxesOwnedBy` (finding H1) |
 
+**Discovery passes** (`processor/poller.go` `activeExtraMailboxes` once per tick
+round, `app/native_outbound.go` outbox discovery every 30 s) read
+`NativeMailboxesWithoutAddresses`: the `Mailboxes` reader, one query over the
+mailbox rows joined to their accounts, without addresses or whole-ledger
+validation. It is discovery, never admission: every send, recovery and poll still
+admits afresh. `BenchmarkNativeOutboxDiscovery` measures it at 1k/3k/10k.
+
 **Cold paths. They keep whole reads through `Snapshot`, at most once per pass:**
-`NativeMailboxes` (admin lists, `processor/poller.go` `activeExtraMailboxes` once per
-tick round, `app/native_outbound.go` discovery every 30 s),
+`NativeMailboxes` (admin lists; linear in mailboxes plus addresses),
 `NativeDirectoryRepairSubjects` and `ReconcileNativeAddresses` (minute), the
 `NativeAddresses` admin handler, `NativeQueuedFromDomains`, `RetireDomain`, recovery
 and release planning, `ValidateNativeSnapshot`, `NativeRestoreMailboxes`, migration
@@ -583,13 +589,15 @@ departs from the sections above in these places:
 
 | Area | Design | PR 3 | Why |
 |---|---|---|---|
-| Interface | Section 2's per-record writer (`PutDirectory`, `PutEvent`, `DirectoryPrimaryTaken`, `MailboxesOwnedBy`) | PR 1's interface kept (`Lifecycle`/`PutLifecycle` whole, `PutAccount` by key), plus `OwnerMailboxes`, `Logouts`, `Change` and `Check` | Every caller keeps its algorithm; the reads on the hot paths (section 7) are point reads. `PutLifecycle` and the ledger puts write only the rows that differ from the stored ones. Ceiling: lifecycle writers (logout, sign-on, directory events) and ledger writers still read the whole lifecycle or ledger, O(N) per write; the alias rule still scans the directory in admin writes. |
+| Interface | Section 2's per-record writer (`PutDirectory`, `PutEvent`, `DirectoryPrimaryTaken`, `MailboxesOwnedBy`) | PR 1's interface kept (`Lifecycle`/`PutLifecycle` whole, `PutAccount` by key), plus `OwnerMailboxes`, `Mailboxes`, `Logouts`, `Change` and `Check` | Every caller keeps its algorithm; the reads on the hot paths (section 7) are point reads. `PutLifecycle` and the ledger puts write only the rows that differ from the stored ones. Ceiling: lifecycle writers (logout, sign-on, directory events) and ledger writers still read the whole lifecycle or ledger, O(N) per write; the alias rule still scans the directory in admin writes. |
 | Desired-state rule | Evaluate the touched owner plus `routes_pending` | Evaluated in memory over the whole ledger the writer already read; only changed rows are written and only their routes (plus `routes_pending`) are deactivated | Restricting the evaluation saves nothing while writers read the whole ledger; the expensive parts (row writes, route writes) are bounded. Bulk provisioning at N accounts still reads O(N) per commit. |
 | Route failure in a directory event | (section 3) one `Update`, then routes | The same; unlike the JSON backend, the event is recorded and the retry is answered `already_applied`, the route is retried from `routes_pending` | Follows section 3. |
 | Directory sync while v1 data awaits migration | (not covered) | Refused with `ErrNativeMigration`, like every authority access before `migrate-native` | Owner decision Q2: the lifecycle moves too. |
 | Fresh-create crash with a domain tombstone | Served | Refused (the tombstone requires the ledger stub) | A tombstone means native mail was configured, so a missing ledger stub is damage, not a first write. |
 | Replaced file | `os.SameFile` after each `View` | Also checked when the handle is taken: a file replaced between calls is reopened (with every open-time check) before any query | Never queries a stale file. A replacement during a call still refuses that call. |
 | Open-time checks | On every handle open | On every pooled connection (a `driver.Connector` wrapper) | A pool opens connections lazily. |
+| Statements | Not specified | Each pooled connection prepares a query once and finalizes its statements when it closes (`stmtConn`) | Parsing was about a third of the authority reads. Only the parse is reused; each run reads in its own transaction. |
+| Storage check without a client | Full reopening path | api and daemon: a pool of at most 1,024 mailboxes' `Prepared` handles (`mailbox.HoldAdmissionHandles`), the same checks plus `os.SameFile`, closed on a refused check and after 5–10 minutes idle; other processes reopen | Reopening and re-parsing both schemas was most of an admission. The bound keeps memory near 340 MiB per process (341 KiB measured per held mailbox); with more accounts than the bound, the share past it still reopens. |
 | Restore staging writes | `Update` on the staging store | The same, offline: each write checkpoints and closes, leaving no WAL; the historical opener refuses a non-empty WAL, and a staging database with a WAL is read through the runtime-verified opener | `immutable=1` ignores the WAL, so fenced rows would be unseen. The runtime DSN sets `journal_mode=WAL`, which converts a restored `VACUUM INTO` copy on its first open. |
 | `S1` (no v2 adoption while D exists) | Refuse | Refuse when the database differs from the conversion of the existing copies; a database equal to it (a crash after step 3) is rebuilt | Distinguishes a crash from a hand adoption without a new meta key. |
 | Migration output | Rows of the converter | Plus a `routes_pending` row for every non-active address | v2 rewrote every inactive route on each commit; the first v3 write converges them once. |
@@ -608,7 +616,19 @@ alone):
 | main, authority reads | 0.45 ms, 1.82 MB | 1.21 ms, 5.45 MB | 92.7 ms, 44.7 MB | 76.8×, 8.2× |
 | PR 3, authority reads | 127 µs, 13.2 KB | 128 µs, 13.2 KB | 128 µs, 13.2 KB | 1.00×, 1.00× |
 
-About a third of the 127 µs is SQLite re-parsing each statement (no prepared
-statement cache). Still unproven here: the busnes.app matched-pair
+About a third of the 127 µs was SQLite re-parsing each statement. Held
+admission handles and per-connection statements (0c1a1b20, against main
+9395bed3, the same host, medians of 5 × 3 s; flat across 1k/3k/10k):
+
+| | 1,000 | 3,000 | 10,000 |
+|---|---|---|---|
+| main, admission | 967 µs, 36.6 KB | 970 µs, 36.7 KB | 969 µs, 36.8 KB |
+| held handles, admission (api/daemon) | 320 µs, 30.1 KB | 320 µs, 30.1 KB | 321 µs, 30.1 KB |
+| no pool, admission (other processes) | 901 µs, 37.3 KB | 898 µs, 37.4 KB | 897 µs, 37.4 KB |
+| main, authority reads | 124 µs, 13.2 KB | 125 µs, 13.2 KB | 125 µs, 13.2 KB |
+| prepared statements, authority reads | 74 µs, 13.3 KB | 73 µs, 13.3 KB | 74 µs, 13.3 KB |
+
+In the held admission, re-preparing the mailbox check's own queries is now
+about a fifth of its CPU (not cached there). Still unproven here: the busnes.app matched-pair
 measurement (section 9), lock wait (H4) and the row-size and page-visit
 estimates of section 1.

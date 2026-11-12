@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // heldClient opens a prepared account's client whose admission is only the
@@ -168,4 +171,170 @@ func BenchmarkAdmissionStorage(b *testing.B) {
 			}
 		}
 	})
+}
+
+// pooledAccount prepares an account and holds its handles in this process's
+// admission pool (bound max), as the api and daemon do.
+func pooledAccount(t *testing.T, max int) (account string, admit func() (string, error)) {
+	t.Helper()
+	HoldAdmissionHandles(max)
+	t.Cleanup(func() { HoldAdmissionHandles(0) })
+	root := t.TempDir()
+	owner, limits := preparationOwner(), preparationLimits()
+	source, err := PrepareAccount(root, owner, "one@example.test", limits)
+	must(t, err)
+	admit = func() (string, error) {
+		got, err := (*Prepared)(nil).ValidatePreparedMailbox(filepath.Join(root, "users"), owner, "one@example.test", limits)
+		if err == nil && got != source {
+			err = ErrPreparation
+		}
+		return got, err
+	}
+	if _, err = admit(); err != nil {
+		t.Fatal("intact storage refused:", err)
+	}
+	return filepath.Join(root, "users", owner.Mailbox), admit
+}
+
+func heldCount() int {
+	heldAdmissions.Lock()
+	defer heldAdmissions.Unlock()
+	return len(heldAdmissions.m)
+}
+
+// copyAccount makes a byte-identical copy of the account directory, with
+// its modes, at dst: storage the full check accepts.
+func copyAccount(t *testing.T, src, dst string) {
+	t.Helper()
+	must(t, os.CopyFS(dst, os.DirFS(src)))
+	must(t, filepath.WalkDir(dst, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return os.Chmod(path, 0o700)
+		}
+		return os.Chmod(path, 0o600)
+	}))
+}
+
+// A held admission handle sees every change the reopening check sees: each
+// file replaced by a valid copy, the directory retargeted to a valid copy,
+// a schema change and a content change in place. A refusal drops the
+// handles, so storage that is valid again (the copies) admits by reopening.
+func TestPooledAdmissionRefusesChangedStorage(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mutate  func(t *testing.T, account string)
+		recover bool // the change is itself valid storage
+	}{
+		"state.db replaced":   {mutate: func(t *testing.T, a string) { replaceWithCopy(t, filepath.Join(a, "state.db")) }, recover: true},
+		"mailbox.db replaced": {mutate: func(t *testing.T, a string) { replaceWithCopy(t, filepath.Join(a, "mailbox", "mailbox.db")) }, recover: true},
+		"directory retargeted": {mutate: func(t *testing.T, a string) {
+			copyAccount(t, a, a+".copy")
+			must(t, os.Rename(a, a+".old"))
+			must(t, os.Rename(a+".copy", a))
+		}, recover: true},
+		"account deleted": {mutate: func(t *testing.T, a string) { must(t, os.RemoveAll(a)) }},
+		"mailbox.db gone": {mutate: func(t *testing.T, a string) { must(t, os.Remove(filepath.Join(a, "mailbox", "mailbox.db"))) }},
+		"preparation file": {mutate: func(t *testing.T, a string) {
+			rewritePreparation(t, a, func(p *preparedAccount) { p.Source = "native:other" })
+		}},
+		"state table dropped": {mutate: func(t *testing.T, a string) {
+			db, err := openSQLite(filepath.Join(a, "state.db"), "mode=rw")
+			must(t, err)
+			defer db.Close()
+			_, err = db.Exec("DROP TABLE sorter_corrections")
+			must(t, err)
+		}},
+		"identity changed": {mutate: func(t *testing.T, a string) {
+			db, err := openSQLite(filepath.Join(a, "mailbox", "mailbox.db"), "mode=rw")
+			must(t, err)
+			defer db.Close()
+			_, err = db.Exec("UPDATE identity SET subject='subject-two'")
+			must(t, err)
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			account, admit := pooledAccount(t, MaxHeldAdmissions)
+			if heldCount() != 1 {
+				t.Fatal("admission did not hold its handles")
+			}
+			tc.mutate(t, account)
+			if _, err := admit(); !errors.Is(err, ErrPreparation) {
+				t.Fatalf("held handle accepted %s: %v", name, err)
+			}
+			if heldCount() != 0 {
+				t.Fatal("a refused handle was kept")
+			}
+			if _, err := admit(); (err == nil) != tc.recover {
+				t.Fatalf("after reopening: accept %v, want %v", err == nil, tc.recover)
+			}
+		})
+	}
+}
+
+// Another process changes the mailbox while this one holds its handles:
+// the next admission reads the committed change or refuses the replacement.
+func TestPooledAdmissionSeesOtherProcess(t *testing.T) {
+	for _, change := range []string{"identity", "replace-state", "replace-mailbox"} {
+		t.Run(change, func(t *testing.T) {
+			account, admit := pooledAccount(t, MaxHeldAdmissions)
+			command := exec.Command(os.Args[0], "-test.run=^TestPooledAdmissionWriterProcess$")
+			command.Env = append(os.Environ(), "KYPOST_MAILBOX_CHILD="+change, "KYPOST_MAILBOX_ACCOUNT="+account)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("independent writer failed: %v\n%s", err, output)
+			}
+			if _, err := admit(); !errors.Is(err, ErrPreparation) {
+				t.Fatal("held handle missed another process's change", err)
+			}
+		})
+	}
+}
+
+func TestPooledAdmissionWriterProcess(t *testing.T) {
+	account := os.Getenv("KYPOST_MAILBOX_ACCOUNT")
+	switch os.Getenv("KYPOST_MAILBOX_CHILD") {
+	case "identity":
+		db, err := openSQLite(filepath.Join(account, "mailbox", "mailbox.db"), "mode=rw")
+		must(t, err)
+		defer db.Close()
+		_, err = db.Exec("UPDATE identity SET records=99")
+		must(t, err)
+	case "replace-state":
+		replaceWithCopy(t, filepath.Join(account, "state.db"))
+	case "replace-mailbox":
+		replaceWithCopy(t, filepath.Join(account, "mailbox", "mailbox.db"))
+	}
+}
+
+// The bound, the single entry per mailbox and the idle close.
+func TestPooledAdmissionBounds(t *testing.T) {
+	account, admit := pooledAccount(t, 1)
+	other := filepath.Join(filepath.Dir(account), "other")
+	copyAccount(t, account, other)
+	if _, err := checkHeld(other, preparationOwner(), "one@example.test", preparationLimits()); err != nil {
+		t.Fatal(err)
+	}
+	if heldCount() != 1 || heldAdmissions.m[other] != nil {
+		t.Fatal("held past the bound")
+	}
+	HoldAdmissionHandles(2)
+	_, err := admit()
+	must(t, err)
+	heldAdmissions.Lock()
+	p := heldAdmissions.m[account]
+	heldAdmissions.Unlock()
+	if holdAdmission(&Prepared{dir: account}) || heldAdmissions.m[account] != p {
+		t.Fatal("a second handle replaced the held one")
+	}
+	_, err = checkHeld(other, preparationOwner(), "one@example.test", preparationLimits())
+	must(t, err)
+	heldAdmissions.Lock()
+	idle := heldAdmissions.m[other]
+	idle.used = time.Now().Add(-heldIdle)
+	heldAdmissions.Unlock()
+	closeIdleAdmissions()
+	if heldCount() != 1 || heldAdmissions.m[account] == nil || idle.state.Ping() == nil {
+		t.Fatal("idle close missed the idle handle or closed the used one")
+	}
 }

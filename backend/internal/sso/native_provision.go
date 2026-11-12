@@ -217,32 +217,38 @@ func validateNativeLedger(l nativeLedger) (nativeAssignments, int, error) {
 		}
 	}
 	// Every other mailbox is an extra one of an existing account, with its
-	// own primary address and an ID that is no account's.
+	// own primary address and an ID that is no account's (the account loop
+	// above gave every account ID its own primary mailbox).
 	for id, m := range l.Mailboxes {
 		key := directoryKey(m.Owner.Issuer, m.Owner.Subject)
 		if a, ok := l.Accounts[key]; ok && a.PrimaryMailbox == id && m.Kind == "primary" {
 			continue
 		}
-		if _, owned := l.Accounts[key]; !owned || m.Kind != "extra" || m.State != "active" && m.State != "disabled" || addressOf[id] == "" || f.primaryMailbox(id) {
+		if _, owned := l.Accounts[key]; !owned || m.Kind != "extra" || m.State != "active" && m.State != "disabled" || addressOf[id] == "" {
 			return nativeAssignments{}, 2, ErrNativeProvisioning
 		}
 	}
 	return f, 2, nil
 }
 
-func (f nativeAssignments) primaryMailbox(id string) bool {
-	for _, a := range f.Accounts {
-		if a.Owner.Mailbox == id {
-			return true
-		}
-	}
-	return false
-}
-
 // mailbox resolves a ledger mailbox: a primary one is its account; an extra
 // one carries its account's authority with its own ID, primary address and
 // storage. It locates ownership, not permission.
 func (f nativeAssignments) mailbox(id string) (NativeAssignment, nativeLedgerMailbox, bool) {
+	a, m, ok := f.mailboxStorage(id)
+	if ok && a.extra {
+		for address, x := range f.stored.Addresses {
+			if x.Mailbox == id && x.Kind == "primary" {
+				a.Address = address
+			}
+		}
+	}
+	return a, m, ok
+}
+
+// mailboxStorage is mailbox minus an extra mailbox's primary address (left
+// empty), whose lookup scans every address.
+func (f nativeAssignments) mailboxStorage(id string) (NativeAssignment, nativeLedgerMailbox, bool) {
 	m, ok := f.stored.Mailboxes[id]
 	a, owned := f.Accounts[directoryKey(m.Owner.Issuer, m.Owner.Subject)]
 	if !ok || !owned || m.Kind == "primary" && a.Owner.Mailbox != id || m.Kind != "primary" && m.Kind != "extra" {
@@ -254,11 +260,6 @@ func (f nativeAssignments) mailbox(id string) (NativeAssignment, nativeLedgerMai
 	a.user = a.Owner.Mailbox
 	a.Owner.Mailbox, a.StateRoot, a.Limits, a.Source, a.extra = id, m.StateRoot, m.Limits, m.Source, true
 	a.Address = ""
-	for address, x := range f.stored.Addresses {
-		if x.Mailbox == id && x.Kind == "primary" {
-			a.Address = address
-		}
-	}
 	return a, m, true
 }
 

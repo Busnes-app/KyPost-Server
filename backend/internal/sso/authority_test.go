@@ -82,6 +82,57 @@ func TestAuthorityPointReadsMatchWholeReads(t *testing.T) {
 	}
 }
 
+// The discovery read is NativeMailboxes without addresses, on both backends,
+// and a primary mailbox that is not its account's has no storage.
+func TestAuthorityMailboxesMatchNativeMailboxes(t *testing.T) {
+	f := v3Fixture(t)
+	check := func(life *LifecycleStore, n int) {
+		t.Helper()
+		want, err := life.NativeMailboxes()
+		if err != nil || len(want) != n {
+			t.Fatal(want, err)
+		}
+		for i := range want {
+			if want[i].Dir == "" {
+				t.Fatal("fixture mailbox without storage", want[i])
+			}
+			want[i].Addresses = nil
+		}
+		if got, err := life.NativeMailboxesWithoutAddresses(); err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("%v %v\nwant %v", got, err, want)
+		}
+	}
+	check(f.life, 3)
+	if err := ssotest.DamageAuthority(f.config, "UPDATE accounts SET primary_mailbox = 'elsewhere' WHERE subject = 'two'"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.life.NativeMailboxesWithoutAddresses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unowned := 0
+	for _, m := range got {
+		if m.User == "elsewhere" {
+			unowned++
+			if m.Dir != "" {
+				t.Fatal("unowned primary mailbox listed with storage", m)
+			}
+		}
+	}
+	if unowned != 1 {
+		t.Fatal("damage did not apply", got)
+	}
+	if err := ssotest.DamageAuthority(f.config, "UPDATE meta SET value = '0' WHERE key = 'initialized'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.life.NativeMailboxesWithoutAddresses(); !errors.Is(err, ErrNativeProvisioning) {
+		t.Fatal("ledger rows behind an unset flag listed", err)
+	}
+	g := v3Fixture(t)
+	writeV2ForTest(t, g.config)
+	check(NewLifecycleStore(g.config).staged(), 3)
+}
+
 func TestAuthorityFixturePaths(t *testing.T) {
 	s := NewLifecycleStore(t.TempDir())
 	dir := filepath.Dir(s.path)
