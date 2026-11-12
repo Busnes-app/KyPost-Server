@@ -110,7 +110,7 @@ check on two read-only handles the client keeps for its own `state.db` and
 still name the files those handles opened, so deleted or replaced storage is
 refused on the next operation. In the API and the daemon, an admission without
 an open client runs the same checks on handles from a per-process pool of at
-most 1,024 mailboxes (2 descriptors each), closed after 5 to 10 minutes without
+most 4,096 mailboxes (2 descriptors each), closed after 5 to 10 minutes without
 an admission and at once when a check refuses; every other process keeps the
 full reopening path. Each cached client holds about 8 file descriptors instead
 of 3; the API and the daemon each retain at most 64 cached mail clients.

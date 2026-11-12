@@ -176,7 +176,7 @@ func preparedSource(dir string, owner Owner, address string, limits Limits) (str
 // still name the files the handles opened.
 type Prepared struct {
 	dir                 string
-	state, mail         *sql.DB
+	state, mail         *heldDB
 	stateFile, mailFile os.FileInfo
 	used                time.Time // last admission, for the idle close of heldAdmissions
 }
@@ -196,12 +196,12 @@ func (p *Prepared) ValidatePreparedMailbox(parent string, owner Owner, address s
 
 // MaxHeldAdmissions is the bound the api and daemon pass to
 // HoldAdmissionHandles. A held mailbox costs two descriptors and about
-// 340 KiB of SQLite memory, so 1,024 is at most 2,048 descriptors and about
-// 340 MiB per process.
+// 415 KiB of SQLite memory, so 4,096 is at most 8,192 descriptors and about
+// 1.7 GiB per process (Go raises the soft descriptor limit to the hard one).
 // ponytail: past the bound a mailbox takes the reopening path; the poller
 // visits every account each tick, so with more accounts than the bound only
 // that share of its admissions is held. Raise it if memory allows.
-const MaxHeldAdmissions = 1024
+const MaxHeldAdmissions = 4096
 
 // heldIdle closes a held mailbox after 5–10 minutes without an admission:
 // longer than a scan interval (90 s by default), short enough that an
@@ -296,11 +296,50 @@ func closeIdleAdmissions() {
 
 // Close releases the handles.
 func (p *Prepared) Close() {
-	for _, db := range []*sql.DB{p.state, p.mail} {
+	for _, db := range []*heldDB{p.state, p.mail} {
 		if db != nil {
-			_ = db.Close()
+			db.Close()
 		}
 	}
+}
+
+// heldDB prepares each check query once per handle. SQLite re-prepares a
+// statement itself after a schema change and every run reads the file anew,
+// so only the parse is reused, never a value.
+type heldDB struct {
+	*sql.DB
+	mu    sync.Mutex
+	stmts map[string]*sql.Stmt
+}
+
+func (h *heldDB) QueryRow(query string, args ...any) *sql.Row {
+	h.mu.Lock()
+	s := h.stmts[query]
+	h.mu.Unlock()
+	if s == nil {
+		var err error
+		if s, err = h.Prepare(query); err != nil {
+			return h.DB.QueryRow(query, args...) // reports the error on Scan
+		}
+		h.mu.Lock()
+		if old := h.stmts[query]; old != nil {
+			_ = s.Close()
+			s = old
+		} else {
+			h.stmts[query] = s
+		}
+		h.mu.Unlock()
+	}
+	return s.QueryRow(args...)
+}
+
+func (h *heldDB) Close() {
+	h.mu.Lock()
+	for _, s := range h.stmts {
+		_ = s.Close()
+	}
+	h.mu.Unlock()
+	_ = h.DB.Close()
 }
 
 // check opens the handles on first use, recording each file before its first
@@ -374,13 +413,16 @@ func (p *Prepared) check(owner Owner, address string, limits Limits) (string, er
 	return source, nil
 }
 
-func openHeld(path string) (*sql.DB, os.FileInfo, error) {
+func openHeld(path string) (*heldDB, os.FileInfo, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, nil, ErrPreparation
 	}
 	db, err := openReadOnly(path)
-	return db, info, err
+	if err != nil {
+		return nil, nil, err
+	}
+	return &heldDB{DB: db, stmts: map[string]*sql.Stmt{}}, info, nil
 }
 
 // openSQLite opens an existing regular database file, never creating one.
