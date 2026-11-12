@@ -7,7 +7,7 @@ import (
 )
 
 // BenchmarkHasPendingOutbound is the per-mailbox, per-pass outbox hint on an
-// empty queue: one read-only open, one query and a close.
+// empty queue after the first pass: a stat and a read of the idle mark.
 func BenchmarkHasPendingOutbound(b *testing.B) {
 	ctx := context.Background()
 	dir := filepath.Join(b.TempDir(), "mailbox")

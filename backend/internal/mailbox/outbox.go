@@ -11,8 +11,10 @@ import (
 	"net/mail"
 	"net/textproto"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
@@ -172,6 +174,11 @@ func (s *Store) QueueOutbound(ctx context.Context, master []byte, id string, job
 	if err != nil || len(sealed) > maxOutboundBytes {
 		return ErrOutbound
 	}
+	release, err := s.clearOutboundIdle()
+	if err != nil {
+		return err
+	}
+	defer release()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -362,6 +369,11 @@ func (s *Store) CompleteOutbound(ctx context.Context, master []byte, id string, 
 	if !outboundID(id) || !outboundID(claim) {
 		return ErrOutbound
 	}
+	release, err := s.clearOutboundIdle()
+	if err != nil {
+		return err
+	}
+	defer release()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -637,18 +649,42 @@ func (s *Store) QuarantineOutbound(ctx context.Context, id string, sequence int)
 	return nil
 }
 
-// HasPendingOutbound is a read-only scheduling hint for a ledger-selected mailbox
-// directory. It grants no storage or send authority and creates no schema. Errors
+// HasPendingOutbound is a scheduling hint for a ledger-selected mailbox directory.
+// It grants no storage or send authority, never writes mailbox.db and creates no
+// schema; an empty answer may come from the idle mark (outbox_idle.go). Errors
 // must take the normal validated discovery path, never be treated as an empty queue.
 // A concurrent enqueue after a false answer is discovered on the next pass.
 func HasPendingOutbound(ctx context.Context, dir string) (bool, error) {
-	db, err := openReadOnly(filepath.Join(dir, "mailbox.db"))
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	path := filepath.Join(dir, "mailbox.db")
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	now := time.Now()
+	if idleMarked(dir, info, now) {
+		return false, nil
+	}
+	// A busy lock is a writer mid-transaction: answer without marking.
+	release, lockErr := lockOutboundIdle(dir, syscall.LOCK_EX|syscall.LOCK_NB)
+	if lockErr == nil {
+		defer release()
+	}
+	db, err := openReadOnly(path)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = db.Close() }()
 	var pending bool
-	err = db.QueryRowContext(ctx, "SELECT EXISTS ("+pendingOutboundSQL+")", time.Now().Unix(), 1).Scan(&pending)
+	var next int64
+	err = db.QueryRowContext(ctx, "SELECT EXISTS ("+pendingOutboundSQL+"), (SELECT coalesce(min(next_attempt),0) FROM outbox_deliveries WHERE state IN ('queued','retryable') AND next_attempt>?)", now.Unix(), 1, now.Unix()).Scan(&pending, &next)
+	if err == nil && !pending && lockErr == nil {
+		if again, statErr := os.Stat(path); statErr == nil && os.SameFile(info, again) {
+			markOutboundIdle(dir, info, now, next)
+		}
+	}
 	return pending, err
 }
 
