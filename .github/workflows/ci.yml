@@ -39,15 +39,18 @@ concurrency:
 # standard. Dependabot keeps these current — see .github/dependabot.yml.
 
 jobs:
-  backend-api:
-    name: ci-backend-api
+  # Static checks and fuzzing, once. The test legs below run in parallel with
+  # this job instead of after it.
+  backend-checks:
+    name: ci-backend-checks
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Its own cache key (tools/go.sum is listed): the race legs share another.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: backend/go.mod
@@ -102,108 +105,6 @@ jobs:
             exit 1
           fi
 
-      # internal/api package tests run serially due to global hashParams state
-      # managed by TestMain. This job runs only the api package tests, which
-      # are dominated by Argon2id derivations. The default and strong-key
-      # (docs/STRONG-CRYPTO.md, GODEBUG=fips140=on) passes run side by side,
-      # each to its own log; the step fails if either does.
-      - name: go test -race (api package; default and strong-key profiles)
-        run: |
-          set +e
-          go test -race -count=1 -timeout=20m ./internal/api/... > "$RUNNER_TEMP/default.log" 2>&1 & d=$!
-          GODEBUG=fips140=on go test -race -count=1 -timeout=20m ./internal/api/... > "$RUNNER_TEMP/strong.log" 2>&1 & s=$!
-          wait "$d"; dx=$?; wait "$s"; sx=$?
-          echo "::group::default profile: exit $dx"; cat "$RUNNER_TEMP/default.log"; echo "::endgroup::"
-          echo "::group::strong-key profile: exit $sx"; cat "$RUNNER_TEMP/strong.log"; echo "::endgroup::"
-          [ "$dx" = 0 ] && [ "$sx" = 0 ]
-
-  # The required name: green only when both profile legs passed. In one job the two passes
-  # shared the runner's cores and took 735 s against 532 s in turn (runs 40708712908,
-  # 40615381503), so each profile has its own job.
-  backend-other:
-    name: ci-backend-other
-    needs: [backend-other-default, backend-other-strong]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - run: test "${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') }}" = true
-
-  backend-other-strong:
-    name: ci-backend-other (strong-key profile)
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # No cache: finishing first, this job would save one without the default leg's tools.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: backend/go.mod
-          cache: false
-
-      # As the default leg: the model's pins come from the Dockerfile.
-      - name: fetch the pinned embedding model
-        run: |
-          set -eu
-          pin() { sed -n "s/^ARG $1=//p" ../Dockerfile | tr -d '\r'; }
-          dir="$RUNNER_TEMP/potion-base-8M"
-          base="https://huggingface.co/minishlab/potion-base-8M/resolve/$(pin EMBED_MODEL_REVISION)"
-          mkdir -p "$dir"
-          curl -fsSL -o "$dir/model.safetensors" "$base/model.safetensors"
-          curl -fsSL -o "$dir/tokenizer.json" "$base/tokenizer.json"
-          printf '%s  %s\n%s  %s\n' \
-            "$(pin EMBED_MODEL_SHA256)" "$dir/model.safetensors" \
-            "$(pin EMBED_TOKENIZER_SHA256)" "$dir/tokenizer.json" | sha256sum -c -
-          echo "EMBED_MODEL_DIR=$dir" >> "$GITHUB_ENV"
-
-      # Built through the Go module proxy (checksum-verified): the runners
-      # cannot always resolve the Ubuntu mirrors apt needs.
-      - name: install restic
-        run: |
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/restic/restic/cmd/restic@v0.18.1
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-
-      - name: go test -race (all packages except api, strong-key profile)
-        env:
-          GODEBUG: fips140=on
-        run: go list ./... | grep -v "^github.com/Busnes-app/kypost-server/backend/internal/api$" | xargs go test -race -count=1 -timeout=20m
-
-  backend-other-default:
-    name: ci-backend-other (default profile)
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: |
-            backend/go.sum
-            tools/go.sum
-
-      - name: gofmt
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "These files are not gofmt-clean:" >&2
-            echo "$unformatted" >&2
-            exit 1
-          fi
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: golangci-lint
-        run: go tool -modfile=../tools/go.mod golangci-lint run ./...
-
-      - name: govulncheck
-        run: go tool -modfile=../tools/go.mod govulncheck ./...
-
       # backend/osv-scanner.toml ignores GO-2026-5932 (x/crypto/openpgp is
       # unmaintained) because nothing imports it. Keep that true.
       - name: x/crypto/openpgp stays out of the build graph
@@ -213,6 +114,96 @@ jobs:
             echo "::error::golang.org/x/crypto/openpgp entered the build; remove it or drop the GO-2026-5932 ignore in backend/osv-scanner.toml" >&2
             exit 1
           fi
+
+      # Seed corpora run as ordinary tests in the race legs; this mutates past
+      # them. A failure prints the input: commit it under that package's testdata/fuzz.
+      - name: fuzz smoke (20s per target)
+        run: |
+          go test -run='^$' -fuzz='^FuzzParseRuleText$' -fuzztime=20s ./internal/rules/
+          go test -run='^$' -fuzz='^FuzzDefaultPatterns$' -fuzztime=20s ./internal/redaction/
+          go test -run='^$' -fuzz='^FuzzReplyThreading$' -fuzztime=20s ./internal/mailmsg/
+          go test -run='^$' -fuzz='^FuzzParseHeaderFieldsRecords$' -fuzztime=20s ./internal/adapters/imap/
+
+  # The required names. Each is green only when the checks and every one of its
+  # test legs passed; publish-main.yml and release-image.yml gate on these names.
+  backend-api:
+    name: ci-backend-api
+    needs: [backend-checks, backend-api-test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') }}" = true
+
+  backend-other:
+    name: ci-backend-other
+    needs: [backend-checks, backend-other-test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') }}" = true
+
+  # internal/api is one package of ~1,000 serial tests (TestMain sets global
+  # hash parameters), so it is split by test name: sorted, then dealt round-robin
+  # across the shards. Each shard is its own process with its own TestMain, and
+  # a test added later lands in a shard without editing this file.
+  # Both profiles run every test: strong-key is docs/STRONG-CRYPTO.md
+  # (GODEBUG=fips140=on).
+  backend-api-test:
+    name: ci-backend-api (${{ matrix.profile }}, ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [default, strong-key]
+        shard: [1, 2, 3, 4]
+    env:
+      GODEBUG: ${{ matrix.profile == 'strong-key' && 'fips140=on' || '' }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: go test -race (api package, one shard)
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARDS: 4
+        run: |
+          set -euo pipefail
+          go test -race -list . ./internal/api/ | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > "$RUNNER_TEMP/all"
+          awk -v s="$SHARD" -v n="$SHARDS" 'NR % n == s % n' "$RUNNER_TEMP/all" > "$RUNNER_TEMP/mine"
+          echo "$(wc -l < "$RUNNER_TEMP/mine") of $(wc -l < "$RUNNER_TEMP/all") top-level tests"
+          test -s "$RUNNER_TEMP/mine"
+          go test -race -count=1 -timeout=20m -run "^($(paste -sd'|' "$RUNNER_TEMP/mine"))\$" ./internal/api/
+
+  # Every other package, split into two package groups per profile. The heavy
+  # group is listed by name; anything new lands in the other group.
+  backend-other-test:
+    name: ci-backend-other (${{ matrix.profile }}, ${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [default, strong-key]
+        group: [listed, rest]
+    env:
+      GODEBUG: ${{ matrix.profile == 'strong-key' && 'fips140=on' || '' }}
+      LISTED: '/internal/(sso|ingress|contacts|processor)$'
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
 
       # The sorter's parity test and the poller's hybrid-engine tests skip
       # without the real model, so CI fetches it. The pins are read from the
@@ -232,9 +223,6 @@ jobs:
             "$(pin EMBED_TOKENIZER_SHA256)" "$dir/tokenizer.json" | sha256sum -c -
           echo "EMBED_MODEL_DIR=$dir" >> "$GITHUB_ENV"
 
-      # Run all non-api backend tests in parallel. This includes processor,
-      # users, pgpmail, contacts, state, rules, mailmsg, adapters, and
-      # utility packages. These can safely run together and complete in ~4-5 minutes.
       # Mail bulk backup tests run the real restic CLI and fail without it in CI.
       # Built through the Go module proxy (checksum-verified): the runners
       # cannot always resolve the Ubuntu mirrors apt needs.
@@ -243,17 +231,15 @@ jobs:
           GOBIN="$RUNNER_TEMP/bin" go install github.com/restic/restic/cmd/restic@v0.18.1
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
-      - name: go test -race (all packages except api)
-        run: go list ./... | grep -v "^github.com/Busnes-app/kypost-server/backend/internal/api$" | xargs go test -race -count=1 -timeout=20m
-
-      # Seed corpora already ran as tests above; this mutates past them. A
-      # failure prints the input: commit it under that package's testdata/fuzz.
-      - name: fuzz smoke (20s per target)
+      - name: go test -race (one package group)
+        env:
+          GROUP: ${{ matrix.group }}
         run: |
-          go test -run='^$' -fuzz='^FuzzParseRuleText$' -fuzztime=20s ./internal/rules/
-          go test -run='^$' -fuzz='^FuzzDefaultPatterns$' -fuzztime=20s ./internal/redaction/
-          go test -run='^$' -fuzz='^FuzzReplyThreading$' -fuzztime=20s ./internal/mailmsg/
-          go test -run='^$' -fuzz='^FuzzParseHeaderFieldsRecords$' -fuzztime=20s ./internal/adapters/imap/
+          set -euo pipefail
+          go list ./... | grep -v '/internal/api$' > "$RUNNER_TEMP/all"
+          if [ "$GROUP" = listed ]; then grep -E "$LISTED" "$RUNNER_TEMP/all"; else grep -vE "$LISTED" "$RUNNER_TEMP/all"; fi > "$RUNNER_TEMP/mine"
+          test "$(grep -cE "$LISTED" "$RUNNER_TEMP/all")" = 4
+          xargs go test -race -count=1 -timeout=20m < "$RUNNER_TEMP/mine"
 
   frontend:
     name: ci-frontend

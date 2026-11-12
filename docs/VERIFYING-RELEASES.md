@@ -65,7 +65,7 @@ docker buildx imagetools inspect ghcr.io/busnes-app/kypost-server@$d --format '{
 The Dockerfile builds `kypost-server` with `-trimpath` and `CGO_ENABLED=0`, and the build context
 has no `.git`, so the same commit, Go version and version string give the same binary on any
 machine and in any directory. CI checks this on every push (`release binary is repeatable` in
-`ci-backend-api`). This was checked byte for byte against the 0.4.3 image; earlier releases
+`ci-backend-checks`, required through `ci-backend-api`). This was checked byte for byte against the 0.4.3 image; earlier releases
 were not checked.
 
 ```bash
