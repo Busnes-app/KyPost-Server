@@ -195,13 +195,14 @@ func (p *Prepared) ValidatePreparedMailbox(parent string, owner Owner, address s
 }
 
 // MaxHeldAdmissions is the bound the api and daemon pass to
-// HoldAdmissionHandles. A held mailbox costs two descriptors and about
-// 415 KiB of SQLite memory, so 4,096 is at most 8,192 descriptors and about
-// 1.7 GiB per process (Go raises the soft descriptor limit to the hard one).
+// HoldAdmissionHandles. A 3,000-account profile measured about 0.46 MiB and
+// 10 descriptors of daemon growth per held mailbox, so 1,024 is about
+// 470 MiB and 10,500 descriptors per process; at 4,096 the daemon filled a
+// 2 GiB container (Go raises the soft descriptor limit to the hard one).
 // ponytail: past the bound a mailbox takes the reopening path; the poller
 // visits every account each tick, so with more accounts than the bound only
 // that share of its admissions is held. Raise it if memory allows.
-const MaxHeldAdmissions = 4096
+const MaxHeldAdmissions = 1024
 
 // heldIdle closes a held mailbox after 5–10 minutes without an admission:
 // longer than a scan interval (90 s by default), short enough that an
