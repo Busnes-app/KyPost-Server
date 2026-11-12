@@ -37,6 +37,9 @@ type authorityReader interface {
 	// OwnerMailboxes is the account whose primary mailbox is userID, with its
 	// mailboxes and their addresses (history aside); empty when there is none.
 	OwnerMailboxes(userID string) (nativeAssignments, error)
+	// Mailboxes is every mailbox sorted by ID, Addresses nil: a discovery
+	// read (outbox, extra-mailbox polling), never admission.
+	Mailboxes() ([]NativeMailbox, error)
 	// Logouts is the accepted-logout records alone (the login-time check).
 	Logouts() (map[string]LogoutEvent, error)
 	// Change is the publication mark for the Cloudflare routing table: it
@@ -249,6 +252,18 @@ func (t *jsonAuthorityTx) Snapshot() (nativeAssignments, map[string]DirectorySta
 }
 
 func (t *jsonAuthorityTx) OwnerMailboxes(string) (nativeAssignments, error) { return t.loadNative() }
+
+func (t *jsonAuthorityTx) Mailboxes() ([]NativeMailbox, error) {
+	f, err := t.loadNative()
+	if err != nil {
+		return nil, err
+	}
+	mailboxes := nativeMailboxes(f, func(string) bool { return true })
+	for i := range mailboxes {
+		mailboxes[i].Addresses = nil
+	}
+	return mailboxes, nil
+}
 
 func (t *jsonAuthorityTx) Change() (int64, error) { return 0, nil }
 

@@ -669,3 +669,53 @@ func TestAuthorityRuntimeRefusesMixes(t *testing.T) {
 		})
 	}
 }
+
+// Each connection prepares a query once: a nested run of the same query
+// prepares its own statement, the cache stays bounded and the statements
+// are finalized with the connection.
+func TestAuthorityStatementCache(t *testing.T) {
+	f := newAddressFixture(t, "one")
+	db, err := openAuthorityDB(filepath.Join(f.config, NativeAuthorityFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	c, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const query = "SELECT value FROM meta WHERE key = ?"
+	r := authorityRows{}
+	if err := queryRows(ctx, c, "warm", query, r, "format"); err != nil {
+		t.Fatal(err)
+	}
+	outer, err := c.QueryContext(ctx, query, "format")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queryRows(ctx, c, "inner", query, r, "initialized"); err != nil || len(r["inner"]) != 1 || r["inner"][0][0] != "1" {
+		t.Fatal("nested run of a cached query", r, err)
+	}
+	var conn *stmtConn
+	if err := c.Raw(func(dc any) error { conn = dc.(*stmtConn); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	inner := conn.stmts[query]
+	var format string
+	if !outer.Next() || outer.Scan(&format) != nil || format != "3" || outer.Next() || outer.Close() != nil {
+		t.Fatal("outer rows disturbed by the nested run", format)
+	}
+	for i := range maxConnStmts + 8 {
+		if err := queryRows(ctx, c, "n", fmt.Sprintf("SELECT %d", i), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if conn.stmts[query] != inner || len(conn.stmts) != maxConnStmts {
+		t.Fatal("cache size or a second statement replaced the cached one", len(conn.stmts))
+	}
+	_ = c.Close()
+	if err := db.Close(); err != nil || conn.stmts != nil {
+		t.Fatal("statements outlived their connection", err)
+	}
+}
