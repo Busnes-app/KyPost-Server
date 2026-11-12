@@ -493,8 +493,13 @@ K80–K82. A = `main` at PR 3's merge-base image, B = PR 3 image, the same 3,000
 / 3-client workload, alternating A/B pairs on the same hosts. Then a 10,000-account
 run of B only (A is expected to be unusable there). Acceptance:
 
-- admission frames (`AdmitOpenMailbox` and below, plus `nativeUserOwnership`) are below
-  5% of daemon CPU in B's profile;
+- authority reads inside admission (`sso.queryRows` under the admission frames
+  `AdmitOpenMailbox` and below, plus `nativeUserOwnership`) are below 5% of daemon CPU
+  in B's profile. This criterion first counted every admission frame. That set includes
+  the per-mailbox storage check and the authority read transaction, which cost the same
+  at any account count and which fresh admission before every operation requires. In
+  the baseline profile the storage check alone (reopening both mailbox databases) was
+  23% of daemon CPU. The narrower set measures the O(accounts) cost this design removes;
 - daemon CPU per completed client operation in B is lower than in A, with a
   matched-pair confidence interval that excludes zero;
 - B's per-operation admission CPU at 10,000 accounts is within 1.2× of B at 3,000.
