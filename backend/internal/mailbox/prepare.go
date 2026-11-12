@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -176,16 +178,120 @@ type Prepared struct {
 	dir                 string
 	state, mail         *sql.DB
 	stateFile, mailFile os.FileInfo
+	used                time.Time // last admission, for the idle close of heldAdmissions
 }
 
 // ValidatePreparedMailbox is the package function; for p's own mailbox it
-// reuses p's handles. A nil p or another mailbox takes the full path.
+// reuses p's handles. A nil p or another mailbox uses checkHeld.
 func (p *Prepared) ValidatePreparedMailbox(parent string, owner Owner, address string, limits Limits) (string, error) {
 	dir, err := filepath.Abs(filepath.Join(parent, owner.Mailbox))
-	if p == nil || err != nil || !fsutil.SafePathComponent(owner.Mailbox) || dir != p.dir {
+	if err != nil || !fsutil.SafePathComponent(owner.Mailbox) {
 		return ValidatePreparedMailbox(parent, owner, address, limits)
 	}
-	return p.check(owner, address, limits)
+	if p != nil && dir == p.dir {
+		return p.check(owner, address, limits)
+	}
+	return checkHeld(dir, owner, address, limits)
+}
+
+// MaxHeldAdmissions is the bound the api and daemon pass to
+// HoldAdmissionHandles. A held mailbox costs two descriptors and about
+// 340 KiB of SQLite memory, so 1,024 is at most 2,048 descriptors and about
+// 340 MiB per process.
+// ponytail: past the bound a mailbox takes the reopening path; the poller
+// visits every account each tick, so with more accounts than the bound only
+// that share of its admissions is held. Raise it if memory allows.
+const MaxHeldAdmissions = 1024
+
+// heldIdle closes a held mailbox after 5–10 minutes without an admission:
+// longer than a scan interval (90 s by default), short enough that an
+// offboarded mailbox's deleted files are released.
+const heldIdle = 5 * time.Minute
+
+// heldAdmissions holds idle Prepared handles between admissions that have no
+// open client. An admission takes its mailbox's entry out of the map, so no
+// two use one Prepared, and puts it back only after a successful check.
+var heldAdmissions = struct {
+	sync.Mutex
+	max   int
+	m     map[string]*Prepared
+	timer *time.Timer
+}{m: map[string]*Prepared{}}
+
+// HoldAdmissionHandles lets this process hold up to max mailboxes between
+// admissions (0, the default, holds none) and closes those held now. It is
+// for long-running processes; short commands run with few descriptors.
+func HoldAdmissionHandles(max int) {
+	heldAdmissions.Lock()
+	heldAdmissions.max = max
+	old := heldAdmissions.m
+	heldAdmissions.m = map[string]*Prepared{}
+	heldAdmissions.Unlock()
+	for _, p := range old {
+		p.Close()
+	}
+}
+
+// checkHeld is the full check with this process's held handles for dir, if
+// any. A handle opened here repairs a lost parent sync, as preparedSource
+// does; a held one did so when it opened (the #571 rule). A failed check
+// closes the handles, so the next admission reopens.
+func checkHeld(dir string, owner Owner, address string, limits Limits) (string, error) {
+	heldAdmissions.Lock()
+	p := heldAdmissions.m[dir]
+	delete(heldAdmissions.m, dir)
+	heldAdmissions.Unlock()
+	opened := p == nil
+	if opened {
+		p = &Prepared{dir: dir}
+	}
+	source, err := p.check(owner, address, limits)
+	if err == nil && opened {
+		err = fsutil.SyncDir(filepath.Dir(dir))
+	}
+	if err != nil || !holdAdmission(p) {
+		p.Close()
+	}
+	if err != nil {
+		return "", err
+	}
+	return source, nil
+}
+
+// holdAdmission keeps p unless the bound is reached or another admission of
+// the same mailbox already put one back.
+func holdAdmission(p *Prepared) bool {
+	heldAdmissions.Lock()
+	defer heldAdmissions.Unlock()
+	if heldAdmissions.m[p.dir] != nil || len(heldAdmissions.m) >= heldAdmissions.max {
+		return false
+	}
+	p.used = time.Now()
+	heldAdmissions.m[p.dir] = p
+	if heldAdmissions.timer == nil {
+		heldAdmissions.timer = time.AfterFunc(heldIdle, closeIdleAdmissions)
+	}
+	return true
+}
+
+// closeIdleAdmissions closes the mailboxes not admitted for heldIdle.
+func closeIdleAdmissions() {
+	var idle []*Prepared
+	heldAdmissions.Lock()
+	for dir, p := range heldAdmissions.m {
+		if time.Since(p.used) >= heldIdle {
+			idle = append(idle, p)
+			delete(heldAdmissions.m, dir)
+		}
+	}
+	heldAdmissions.timer = nil
+	if len(heldAdmissions.m) > 0 {
+		heldAdmissions.timer = time.AfterFunc(heldIdle, closeIdleAdmissions)
+	}
+	heldAdmissions.Unlock()
+	for _, p := range idle {
+		p.Close()
+	}
 }
 
 // Close releases the handles.
