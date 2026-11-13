@@ -80,7 +80,7 @@ func benchmarkAdmitOpenMailbox(b *testing.B, n int) {
 }
 
 // BenchmarkAdmissionAuthorityReads is the authority part of one admission
-// alone: one View with the directory entry, the initialization flag and the
+// alone: one viewSubject with the directory entry, the initialization flag and the
 // account, as admitNativeMailUser reads them.
 func BenchmarkAdmissionAuthorityReads(b *testing.B) {
 	for _, n := range benchAccounts {
@@ -90,7 +90,7 @@ func BenchmarkAdmissionAuthorityReads(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				err := f.life.authority().View(ctx, func(r authorityReader) error {
+				err := storeAuthority{f.life}.viewSubject(ctx, nativeIssuer, "one", func(r authorityReader) error {
 					if _, ok, err := r.Directory(nativeIssuer, "one"); err != nil || !ok {
 						return cmp.Or(err, ErrNativeProvisioning)
 					}

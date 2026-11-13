@@ -34,7 +34,7 @@ func (s *LifecycleStore) AdmitOpenMailbox(ctx context.Context, stateRoot, issuer
 		return NativeAssignment{}, err
 	}
 	var a NativeAssignment
-	err = s.authority().View(ctx, func(r authorityReader) error {
+	err = storeAuthority{s}.viewSubject(ctx, issuer, u.SSOSub, func(r authorityReader) error {
 		a, err = s.admitNativeMailbox(ctx, r, stateRoot, issuer, u, mailboxID, held)
 		return err
 	})
