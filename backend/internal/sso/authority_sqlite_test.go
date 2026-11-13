@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -717,5 +718,58 @@ func TestAuthorityStatementCache(t *testing.T) {
 	_ = c.Close()
 	if err := db.Close(); err != nil || conn.stmts != nil {
 		t.Fatal("statements outlived their connection", err)
+	}
+}
+
+// viewSubject's single statement reads what View's separate queries read:
+// for its subject, another subject, a missing one, and damaged meta.
+func TestAuthoritySubjectView(t *testing.T) {
+	ctx := context.Background()
+	f := newAddressFixture(t, "one")
+	a := storeAuthority{f.life}
+	type reads struct {
+		Dir       DirectoryState
+		DirOK     bool
+		Account   NativeAssignment
+		AccountOK bool
+		Init      bool
+		Change    int64
+	}
+	read := func(view func(func(authorityReader) error) error, subject string) reads {
+		t.Helper()
+		var got reads
+		if err := view(func(r authorityReader) (err error) {
+			if got.Dir, got.DirOK, err = r.Directory(nativeIssuer, subject); err != nil {
+				return err
+			}
+			if got.Account, got.AccountOK, err = r.Account(nativeIssuer, subject); err != nil {
+				return err
+			}
+			got.Init, _ = r.Initialized()
+			got.Change, err = r.Change()
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	plain := func(fn func(authorityReader) error) error { return a.View(ctx, fn) }
+	if r := read(plain, "one"); !r.DirOK || !r.AccountOK || !r.Init {
+		t.Fatal("fixture has no account one", r)
+	}
+	for _, pre := range []string{"one", "other"} {
+		for _, subject := range []string{"one", "absent"} {
+			want := read(plain, subject)
+			got := read(func(fn func(authorityReader) error) error { return a.viewSubject(ctx, nativeIssuer, pre, fn) }, subject)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("subject view of %q reading %q:\n got %+v\nwant %+v", pre, subject, got, want)
+			}
+		}
+	}
+	if err := ssotest.DamageAuthority(f.config, "UPDATE meta SET value = '2' WHERE key = 'format'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.viewSubject(ctx, nativeIssuer, "one", func(authorityReader) error { return nil }); !errors.Is(err, ErrNativeMigration) {
+		t.Fatal("damaged format read", err)
 	}
 }
