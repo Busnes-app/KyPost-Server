@@ -2,9 +2,12 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strings"
+
+	"github.com/Busnes-app/ky-primitives/netallow"
 )
 
 // TrustedProxies is which peers may name the client address, and the one
@@ -53,4 +56,15 @@ func ParseTrustedProxies(cidrs, header string) (TrustedProxies, error) {
 		p.Nets = append(p.Nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
 	}
 	return p, nil
+}
+
+// LoadRateLimitExemptCIDRs reads RATE_LIMIT_EXEMPT_CIDRS, the operator's office
+// networks whose requests skip per-IP sign-in limits, and returns its canonical
+// form. Too broad, loopback or malformed refuses startup.
+func LoadRateLimitExemptCIDRs() (string, error) {
+	l, err := netallow.Parse(os.Getenv("RATE_LIMIT_EXEMPT_CIDRS"))
+	if err != nil {
+		return "", fmt.Errorf("RATE_LIMIT_EXEMPT_CIDRS: %w", err)
+	}
+	return l.String(), nil
 }

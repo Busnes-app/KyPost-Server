@@ -117,6 +117,18 @@ non-prerelease version.
 
 ### Added
 
+- Office networks can skip the per-address sign-in limits. Staff behind one NAT
+  address share the proof-of-work challenge budget, the sign-in parameter and
+  SSO start bucket and the failed-sign-in address lock, and a Monday morning
+  trips them. An administrator lists the office's networks under Server →
+  Office networks (step-up confirmed, logged), or the operator sets
+  `RATE_LIMIT_EXEMPT_CIDRS`; the two are combined. Per-account lockouts, the
+  instance-wide sign-in budget, the CAPTCHA, MFA and SSO checks still apply.
+  Empty by default; ranges broader than /16 or /48 and loopback are refused at
+  save and at startup. New admin routes `GET|PUT /api/admin/rate-limit-networks`.
+  `ky-primitives` moves to the revision that adds `netallow`. See
+  [SECURITY.md](SECURITY.md#office-networks-rate-limit-allowlist).
+
 - Opt-in native direct recipient-MX delivery through the protected profile API, using verified STARTTLS and the existing encrypted outbox. Per-recipient claims preserve uncertainty, independent retries and one Sent copy; relay settings remain the default. Public deliverability and workforce capacity remain unqualified; see `docs/DIRECT_DELIVERY.md`.
 
 - Email signatures (#440). Settings → Mail → Signatures holds up to ten plain-text

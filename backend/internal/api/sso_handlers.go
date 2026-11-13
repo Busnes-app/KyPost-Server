@@ -181,7 +181,15 @@ func (s *Server) ssoProvider(r *http.Request, settings sso.SSOSettings) (*sso.Pr
 // no longer reflects one request per request received, but a cold cache, a
 // settings change or an IdP that is down all put the fetch back on the request
 // path. A real sign-in spends one token per leg.
+//
+// An allowlisted office network skips it (perIPExempt); ssoMetered does not.
 func (s *Server) ssoRateLimited(w http.ResponseWriter, r *http.Request) bool {
+	return !s.perIPExempt(r) && s.ssoMetered(w, r)
+}
+
+// ssoMetered is ssoRateLimited without the office-network exemption, for the
+// one refusal that is not a sign-in: spending another session's link grant.
+func (s *Server) ssoMetered(w http.ResponseWriter, r *http.Request) bool {
 	if s.loginParamsLimiter == nil {
 		return false
 	}
@@ -417,7 +425,7 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 			// request; this one refuses a well-formed attempt to spend somebody
 			// else's step-up, and answering it for free is an oracle for when
 			// one is live.
-			if s.ssoRateLimited(w, r) {
+			if s.ssoMetered(w, r) {
 				return
 			}
 			http.Error(w, "this SSO link was not authorized; start it from the Security page", http.StatusForbidden)

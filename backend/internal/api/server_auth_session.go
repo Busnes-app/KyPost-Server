@@ -180,7 +180,11 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 	// egress or an office must not be easier to lock out than an account. Login is
 	// where a constant clientIP does the most damage, so it is where the proxy
 	// misconfiguration announces itself.
+	//
+	// An allowlisted office network skips this lockout (perIPExempt); the
+	// per-account lockout and the instance budget above still bound it.
 	s.warnOnUnusedProxyHeaders(r)
+	exempt := s.perIPExempt(r)
 	ipLockoutKey := lockoutKeyForIP(clientIP(r))
 	ipLocked := func(retryAfter time.Duration) {
 		retrySeconds := int(retryAfter.Seconds()) + 1
@@ -191,7 +195,7 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 		})
 	}
 	// Read-only, so a locked address never reaches the CAPTCHA provider.
-	if wait := s.loginIPLockout.lockedFor(ipLockoutKey); wait > 0 {
+	if wait := s.loginIPLockout.lockedFor(ipLockoutKey); wait > 0 && !exempt {
 		ipLocked(wait)
 		return users.User{}, false
 	}
@@ -219,16 +223,22 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 		case !ok:
 			// A strike on the address only, so one address cannot keep provider
 			// calls in flight (each holds instance budget) indefinitely.
-			s.loginIPLockout.tryAttempt(ipLockoutKey)
+			if !exempt {
+				s.loginIPLockout.tryAttempt(ipLockoutKey)
+			}
 			http.Error(w, "captcha verification failed", http.StatusUnauthorized)
 			return users.User{}, false
 		}
 	}
 
-	allowed, retryAfter, ipStrike := s.loginIPLockout.tryAttempt(ipLockoutKey)
-	if !allowed {
-		ipLocked(retryAfter)
-		return users.User{}, false
+	var ipStrike lockoutReservation // zero when exempt: cancelAttempt ignores it
+	if !exempt {
+		var allowed bool
+		var retryAfter time.Duration
+		if allowed, retryAfter, ipStrike = s.loginIPLockout.tryAttempt(ipLockoutKey); !allowed {
+			ipLocked(retryAfter)
+			return users.User{}, false
+		}
 	}
 
 	// Three-strikes/15-minute lockout, keyed on username+client IP: on the username
