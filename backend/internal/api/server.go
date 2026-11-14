@@ -32,6 +32,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/groups"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
+	"github.com/Busnes-app/kypost-server/backend/internal/kydrive"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -193,6 +194,8 @@ type Server struct {
 	accountWriteLimiter *keyedLimiter
 	// peopleLimiter meters GET /api/suite/people per account (autocomplete).
 	peopleLimiter *keyedLimiter
+	// kydriveLimiter meters every /api/kydrive route per account.
+	kydriveLimiter *keyedLimiter
 	// pushPollLimiter meters the two unauthenticated push-MFA endpoints per IP.
 	// They were the only public routes with no meter, and both take mfa.Store's
 	// process-wide lock. See withPushPollRateLimit.
@@ -268,8 +271,10 @@ type Server struct {
 	nativeDomains *sso.NativeDomainStore
 	nativeMail    bool
 	kycal         *kycalendar.Client
+	kydrive       *kydrive.Client
 	suiteApps     sync.Map // user ID -> suiteAppsEntry
 	suitePeople   suitePeopleCache
+	driveStatuses sync.Map // user ID -> driveStatusEntry
 	aiDisabled    bool
 	ssoLifecycle  *sso.LifecycleStore
 	ollamaMu      sync.Mutex
@@ -464,6 +469,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		wkdLimiter:               newKeyedLimiter(wkdRateBurst, wkdRateRefillPerSec),
 		accountWriteLimiter:      newKeyedLimiter(accountWriteBurst, accountWriteRefillPerSec),
 		peopleLimiter:            newKeyedLimiter(30, 2),
+		kydriveLimiter:           newKeyedLimiter(kydriveBurst, kydriveRefillPerSec),
 		pushPollLimiter:          newKeyedLimiter(pushPollBurst, pushPollRefillPerSec),
 		loginParamsLimiter:       newKeyedLimiter(loginParamsBurst, loginParamsRefillPerSec),
 		deviceRescan:             newKeyedLimiter(1, 1/deviceRescanInterval.Seconds()),
@@ -560,7 +566,8 @@ func (s *Server) routes() http.Handler {
 	s.routesAgents(mux)
 	s.routesFrontend(mux)
 
-	return withGzip(withSecurityHeaders(mux, buildContentSecurityPolicy(s.captchaProvider)))
+	// The paired KyDrive origin can change at run time, so the policy is per response.
+	return withGzip(withSecurityHeaders(mux, func() string { return buildContentSecurityPolicy(s.captchaProvider, s.kydrive.Origin()) }))
 }
 
 // routesAuth registers sign-in, session, and second-factor endpoints.
@@ -615,6 +622,7 @@ func (s *Server) routesAuth(mux *http.ServeMux) {
 func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/backup/status", s.withAdmin(s.handleBackupStatus))
 	mux.HandleFunc("GET /api/admin/kycalendar", s.withAdmin(s.handleAdminKyCalendar))
+	mux.HandleFunc("GET /api/admin/kydrive", s.withAdmin(s.handleAdminKyDrive))
 	mux.HandleFunc("GET /api/admin/native-recovery/status", s.withAdmin(s.handleNativeRecoveryStatus))
 	mux.HandleFunc("POST /api/admin/native-recovery/repair", s.withAdmin(withActionDigest(s.handleNativeRecoveryRepair)))
 	mux.HandleFunc("POST /api/admin/native-recovery/release", s.withAdmin(withActionDigest(s.handleNativeRecoveryRelease)))
@@ -676,6 +684,11 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/settings/kycalendar", s.withAuth(s.handleKyCalendarSettings))
 	mux.HandleFunc("GET /api/suite/apps", s.withAuth(s.handleSuiteApps))
 	mux.HandleFunc("GET /api/suite/people", s.withAuth(s.handleSuitePeople))
+	mux.HandleFunc("GET /api/kydrive/status", s.withMailAuth(s.handleKyDriveStatus))
+	mux.HandleFunc("POST /api/kydrive/upload-tickets", s.withMailAuth(s.handleKyDriveTicket))
+	mux.HandleFunc("POST /api/kydrive/links", s.withMailAuth(s.handleKyDriveLink))
+	mux.HandleFunc("POST /api/kydrive/recipients", s.withMailAuth(s.handleKyDriveRecipients))
+	mux.HandleFunc("POST /api/kydrive/save-attachment", s.withMailAuth(s.withMailbox(s.handleKyDriveSaveAttachment)))
 	mux.HandleFunc("GET /api/labels", s.withAuth(s.handleLabels))
 	mux.HandleFunc("GET /api/decisions", s.withAuth(s.withMailbox(s.handleDecisions)))
 	mux.HandleFunc("GET /api/logs", s.withAdmin(s.handleLogs))

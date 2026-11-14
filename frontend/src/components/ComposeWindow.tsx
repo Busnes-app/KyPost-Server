@@ -11,6 +11,7 @@ import { formatBytes } from "../app/compose";
 import { CloseIcon } from "../pages/read/icons";
 import type { UserMailbox } from "../app/mailboxes";
 import { openNewMeeting } from "../lib/meetingLink";
+import { ComposeDrive } from "./ComposeDrive";
 
 /** The compose dialog. All state lives in useCompose, which App owns so pages can open it. */
 export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { compose: Compose; mailboxes: UserMailbox[]; calendarOrigin?: string }) {
@@ -23,8 +24,9 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
     composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning,
     composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot,
     quillEditorRef, attachmentInputRef,
-    closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft
+    closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft, drive
   } = compose;
+  const uploading = drive.driveUploads.length > 0;
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const composeDialogRef = useRef<HTMLDialogElement | null>(null);
@@ -175,6 +177,18 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
                   <span key={`${attachment.name}-${index}`} className="compose-attachment-chip">
                     <span className="compose-attachment-name">{attachment.name}</span>
                     <span className="compose-attachment-size">({formatBytes(attachment.size)})</span>
+                    {drive.driveStatus.available ? (
+                      <button
+                        type="button"
+                        className="compose-attachment-remove"
+                        aria-label={`Upload ${attachment.name} to KyDrive and send a link`}
+                        title="Upload to KyDrive and send a link"
+                        onClick={() => void drive.attachmentToDrive(index)}
+                        disabled={composeSending || composeSavingDraft}
+                      >
+                        Link
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="compose-attachment-remove"
@@ -188,6 +202,7 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
                 ))}
               </div>
             ) : null}
+            <ComposeDrive compose={compose} />
 
             <div
               ref={quillEditorRef}
@@ -248,8 +263,8 @@ export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { com
                 />
             </div>
             <div className="compose-actionbar" role="group" aria-label="Message actions">
-                <button type="button" className="compose-send btn-primary" onClick={() => void sendComposeEmail()} disabled={composeSending || composeSavingDraft}>{composeSending ? "Sending..." : "Send"}</button>
-                <button type="button" className="compose-save-draft" onClick={() => setScheduleOpen(true)} disabled={composeSending || composeSavingDraft}>Schedule…</button>
+                <button type="button" className="compose-send btn-primary" onClick={() => void sendComposeEmail()} disabled={composeSending || composeSavingDraft || uploading}>{composeSending ? "Sending..." : "Send"}</button>
+                <button type="button" className="compose-save-draft" onClick={() => setScheduleOpen(true)} disabled={composeSending || composeSavingDraft || uploading}>Schedule…</button>
                 <button type="button" className="compose-save-draft" onClick={() => void saveComposeDraft()} disabled={composeSending || composeSavingDraft}>Save Draft</button>
                 <button type="button" className="compose-attach" onClick={() => attachmentInputRef.current?.click()} disabled={composeSending || composeSavingDraft}>Attach</button>
                 <button type="button" className="compose-attach" onClick={() => setContactPickerOpen(true)} disabled={composeSending || composeSavingDraft}>Contacts</button>

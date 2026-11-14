@@ -32,12 +32,17 @@ import (
 //     attributes. Sanitized email HTML carries none — see emailHtml.ts.
 //   - img-src/media-src https: http: data:: remote email content, shown only
 //     after the user opts in per message
+//   - driveOrigin (connect): the paired KyDrive, which compose uploads to
+//     with a ticket; named only while paired (docs/KYDRIVE.md)
 //
 // Never add 'unsafe-inline'/'unsafe-eval' to script-src, or a wildcard script
 // or connect source.
-func buildContentSecurityPolicy(provider captcha.Provider) string {
+func buildContentSecurityPolicy(provider captcha.Provider, driveOrigin string) string {
 	scriptSrc := []string{"'self'"}
 	connectSrc := []string{"'self'"}
+	if driveOrigin != "" {
+		connectSrc = append(connectSrc, driveOrigin)
+	}
 	workerSrc := []string{"'self'"}
 	var frameSrc []string
 
@@ -106,10 +111,10 @@ const permissionsPolicy = "accelerometer=(), autoplay=(), camera=(), display-cap
 // provider now loads nothing cross-origin at all.) Buying isolation by breaking
 // the CAPTCHA that guards the login form is the wrong trade; revisit if those
 // origins ever serve CORP headers.
-func withSecurityHeaders(next http.Handler, policy string) http.Handler {
+func withSecurityHeaders(next http.Handler, policy func() string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", policy)
+		h.Set("Content-Security-Policy", policy())
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")

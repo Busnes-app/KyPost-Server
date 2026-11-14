@@ -3,6 +3,7 @@ import { ApplicationRuntime } from "../../admin/sections/ApplicationRuntime";
 import { SSOConfig } from "../../admin/sections/SSOConfig";
 import { OfficeNetworks } from "../../admin/sections/OfficeNetworks";
 import { KyCalendarStatus } from "../../admin/sections/KyCalendarStatus";
+import { KyDriveStatus } from "../../admin/sections/KyDriveStatus";
 import { WkdDomains } from "../../admin/sections/WkdDomains";
 import { LabelRules } from "../../admin/sections/LabelRules";
 import { MailDefaults } from "../../admin/sections/MailDefaults";
@@ -41,6 +42,7 @@ export function ServerPanel() {
           { id: "sso", label: "Single Sign-On (SSO)", body: <SSOConfig /> },
           { id: "office-networks", label: "Office networks", body: <OfficeNetworks /> },
           { id: "kycalendar", label: "KyCalendar", body: <KyCalendarStatus /> },
+          { id: "kydrive", label: "KyDrive", body: <KyDriveStatus /> },
           { id: "mail-domain", label: "Mail domain", body: <MailDomain /> },
           { id: "mail-addresses", label: "Mail addresses", body: <MailAddresses /> },
           { id: "quarantine", label: "Quarantine", body: <Quarantine /> },

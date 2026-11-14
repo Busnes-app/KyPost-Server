@@ -43,6 +43,7 @@ import {
   restoreNotice,
   saveDraftSnapshot
 } from "../app/draftAutosave";
+import { useComposeDrive } from "./useComposeDrive";
 
 // loadQuill pulls the editor and its theme CSS in one chunk. The module is
 // cached after the first call, so reopening compose costs nothing.
@@ -107,6 +108,9 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   const signatureSettingsRef = useRef<SignatureSettings | null>(null);
   const signatureLoad = useRef(0);
   const composeFromRef = useRef("");
+  const drive = useComposeDrive({
+    composeOpen, quill: quillInstanceRef, attachments: composeAttachments, setAttachments: setComposeAttachments, setError: setComposeError
+  });
 
   // Enforce the compose autosave's 24-hour bound. The snapshot is unencrypted
   // plaintext of a message that may have been headed for PGP encryption, and
@@ -187,6 +191,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     setComposeNotice("");
     setComposeAutosaveFailed(false);
     setComposeAttachments([]);
+    drive.resetDrive();
     setComposeEncrypt(false);
     setComposeEncryptOverridden(false);
     composeSignOverridden.current = false;
@@ -207,6 +212,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     event.target.value = ""; // allow re-picking the same file
     if (files.length === 0) return;
     setComposeError("");
+    const total = [...composeAttachments, ...files].reduce((sum, a) => sum + a.size, 0);
+    if (total > MAX_ATTACHMENT_BYTES && drive.offerDrive(files)) return;
     try {
       const picked = await Promise.all(files.map(readFileAsAttachment));
       setComposeAttachments((current) => {
@@ -829,7 +836,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   }
 
   /** Sends now, or at sendAt when given. */
-  async function sendComposeEmail(sendAt?: Date) {
+  async function sendComposeEmail(sendAt?: Date, driveChecked = false) {
     if (composeSending) return;
     const to = serializeRecipientField(composeTo);
     if (!to) {
@@ -841,6 +848,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     setComposeSuccess("");
     const body = quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody;
     try {
+      const recipients = [to, serializeRecipientField(composeCc), serializeRecipientField(composeBcc)].flatMap(splitAddressList);
+      if (!driveChecked && !(await drive.driveRecipientsOk(body, recipients, sendAt))) return;
       // A client-protected account's key is not on the server, so the server
       // cannot sign or encrypt on its behalf — the browser does it and posts
       // ciphertext. Falling through to /api/mail/send here would get a 409
@@ -1014,6 +1023,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     composeSendLinkForKeyless, setComposeSendLinkForKeyless, composeRecipientTiers, composeRecipientKeyWarning,
     composeUnlockOpen, setComposeUnlockOpen, composeSnapshotPending, restoreComposeSnapshot,
     quillEditorRef, attachmentInputRef,
-    openComposeWindow, openDraftInCompose, closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft
+    openComposeWindow, openDraftInCompose, closeComposeWindow, trashComposeDraft, sendComposeEmail, saveComposeDraft,
+    drive
   };
 }
