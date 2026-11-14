@@ -24,6 +24,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
+	"github.com/Busnes-app/kypost-server/backend/internal/kydrive"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/processor"
@@ -107,6 +108,10 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
+	drive, err := kydrive.FromEnv()
+	if err != nil {
+		return err
+	}
 	proxies, err := config.LoadTrustedProxies()
 	if err != nil {
 		return err
@@ -184,6 +189,7 @@ func Run(args []string) error {
 		nativeReceiving:   nativeReceiving,
 		aiSortingDisabled: aiSortingDisabled,
 		kycal:             kycal,
+		kydrive:           drive,
 		cfg:               cfg,
 		configPath:        paths.ConfigFile,
 		configDir:         configDir,
@@ -204,6 +210,10 @@ func Run(args []string) error {
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignals()
 	go kycal.Run(ctx, kyIdentityDirectory(configDir), logger)
+	if *mode != "daemon" {
+		dir := kyIdentityDirectory(configDir)
+		go drive.Run(ctx, func() kydrive.Directory { return kydrive.Directory(dir()) }, logger)
+	}
 
 	if nativeMail {
 		// Here, not for the receiving commands above: they run under ulimit -n 256.
@@ -226,6 +236,7 @@ type runDeps struct {
 	nativeReceiving   bool
 	aiSortingDisabled bool
 	kycal             *kycalendar.Client
+	kydrive           *kydrive.Client
 	cfg               config.Config
 	configPath        string
 	configDir         string
@@ -386,6 +397,7 @@ func runServer(ctx context.Context, d runDeps) error {
 	defer func() { cancelOutbound(); <-outboundDone; <-dkimDone }()
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, nil, d.wkdStore)
 	srv.SetKyCalendar(d.kycal)
+	srv.SetKyDrive(d.kydrive)
 	if d.nativeMail {
 		srv.EnableNativeMail()
 	}
@@ -461,6 +473,7 @@ func runAll(ctx context.Context, d runDeps) error {
 	poller.SetConfigPath(d.configPath)
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, poller.UpdateConfig, d.wkdStore)
 	srv.SetKyCalendar(d.kycal)
+	srv.SetKyDrive(d.kydrive)
 	poller.SetKyCalendar(d.kycal)
 	if d.nativeMail {
 		poller.EnableNativeMail()

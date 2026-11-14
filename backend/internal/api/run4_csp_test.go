@@ -21,7 +21,7 @@ import (
 // default install (no CAPTCHA) carries neither.
 
 func TestCSPOmitsCaptchaSourcesWhenNoProviderIsConfigured(t *testing.T) {
-	policy := buildContentSecurityPolicy("")
+	policy := buildContentSecurityPolicy("", "")
 
 	for _, forbidden := range []string{"cdn.jsdelivr.net", "challenges.cloudflare.com", "wasm-unsafe-eval", "blob:"} {
 		if strings.Contains(policy, forbidden) {
@@ -38,7 +38,7 @@ func TestCSPOmitsCaptchaSourcesWhenNoProviderIsConfigured(t *testing.T) {
 }
 
 func TestCSPAllowsOnlyFriendlySourcesForFriendly(t *testing.T) {
-	policy := buildContentSecurityPolicy(captcha.ProviderFriendly)
+	policy := buildContentSecurityPolicy(captcha.ProviderFriendly, "")
 
 	if !strings.Contains(policy, "https://cdn.jsdelivr.net") {
 		t.Fatalf("friendly needs jsDelivr:\n%s", policy)
@@ -52,7 +52,7 @@ func TestCSPAllowsOnlyFriendlySourcesForFriendly(t *testing.T) {
 }
 
 func TestCSPAllowsOnlyTurnstileSourcesForTurnstile(t *testing.T) {
-	policy := buildContentSecurityPolicy(captcha.ProviderTurnstile)
+	policy := buildContentSecurityPolicy(captcha.ProviderTurnstile, "")
 
 	if !strings.Contains(policy, "script-src") || !strings.Contains(policy, "https://challenges.cloudflare.com") {
 		t.Fatalf("turnstile needs its script and frame sources:\n%s", policy)
@@ -72,7 +72,7 @@ func TestCSPAllowsOnlyTurnstileSourcesForTurnstile(t *testing.T) {
 // present and must never gain a wildcard or an inline-script escape.
 func TestCSPNeverAllowsInlineOrWildcardScript(t *testing.T) {
 	for _, provider := range []captcha.Provider{"", captcha.ProviderFriendly, captcha.ProviderTurnstile} {
-		policy := buildContentSecurityPolicy(provider)
+		policy := buildContentSecurityPolicy(provider, "")
 		if strings.Contains(policy, "'unsafe-inline'") {
 			// style-src legitimately carries 'unsafe-inline'; script-src must not.
 			for _, directive := range strings.Split(policy, "; ") {
@@ -103,7 +103,7 @@ func TestCSPNamesNoThirdPartyFontOrigin(t *testing.T) {
 		captcha.ProviderNone, captcha.ProviderPoW,
 		captcha.ProviderFriendly, captcha.ProviderTurnstile,
 	} {
-		policy := buildContentSecurityPolicy(provider)
+		policy := buildContentSecurityPolicy(provider, "")
 		want := map[string]string{
 			"style-src": "style-src 'self' 'unsafe-inline'",
 			"font-src":  "font-src 'self' data:",
@@ -131,11 +131,11 @@ func TestCSPNamesNoThirdPartyFontOrigin(t *testing.T) {
 // That is the main reason to choose it over Turnstile or Friendly Captcha, so
 // it is worth a test rather than a comment.
 func TestCSPAddsNothingForSelfHostedPoW(t *testing.T) {
-	policy := buildContentSecurityPolicy(captcha.ProviderPoW)
+	policy := buildContentSecurityPolicy(captcha.ProviderPoW, "")
 
-	if policy != buildContentSecurityPolicy(captcha.ProviderNone) {
+	if policy != buildContentSecurityPolicy(captcha.ProviderNone, "") {
 		t.Fatalf("pow must not widen the default policy:\n got: %s\nwant: %s",
-			policy, buildContentSecurityPolicy(captcha.ProviderNone))
+			policy, buildContentSecurityPolicy(captcha.ProviderNone, ""))
 	}
 	for _, forbidden := range []string{
 		"cdn.jsdelivr.net", "challenges.cloudflare.com", "wasm-unsafe-eval", "blob:",
