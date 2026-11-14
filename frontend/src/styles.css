@@ -4117,6 +4117,18 @@ pre {
   color: var(--accent);
 }
 
+.recipient-autocomplete-group {
+  padding: 8px 8px 2px;
+  border-top: 1px solid var(--line);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.recipient-autocomplete > :first-child > .recipient-autocomplete-group {
+  border-top: 0;
+}
+
 .recipient-autocomplete-empty {
   padding: 6px 8px;
   font-size: 0.85rem;
