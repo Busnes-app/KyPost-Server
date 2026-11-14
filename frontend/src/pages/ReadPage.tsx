@@ -51,6 +51,8 @@ import {
   READING_PANE_QUERY
 } from "./read/types";
 import type { InboxDeltaResponse } from "./read/inboxDelta";
+import { SaveToDrive } from "./read/SaveToDrive";
+import { loadDriveStatus } from "../api/kydrive";
 import { applyInboxDelta, messageIDsIn, withoutMessages } from "./read/inboxDelta";
 import { formatBytes, formatTimestamp, formatInboxListTime, formatReaderTime, formatUpdatedLabel, senderName } from "./read/format";
 import {
@@ -143,6 +145,12 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [attachmentsError, setAttachmentsError] = useState("");
+  const [driveOn, setDriveOn] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void loadDriveStatus().then((s) => { if (live) setDriveOn(s.available); });
+    return () => { live = false; };
+  }, []);
   // Bumped per opened message, so a late list cannot land on another message.
   const attachmentsLoadRef = useRef(0);
   const [keywordDraft, setKeywordDraft] = useState("");
@@ -2159,7 +2167,8 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                   ) : null}
                   <div className="email-attachment-list">
                     {attachments.map((attachment) => (
-                      box ? (
+                      <span key={attachment.index} className="email-attachment-item">
+                      {box ? (
                         // A link cannot carry the mailbox header; opened or saved directly it would fetch the primary's file.
                         <button
                           key={attachment.index}
@@ -2181,7 +2190,9 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin 
                         >
                           📎 {attachment.name} <span className="email-attachment-size">({formatBytes(attachment.size)})</span>
                         </a>
-                      )
+                      )}
+                      {driveOn ? <SaveToDrive messageId={selected.messageId} folder={mailbox} index={attachment.index} name={attachment.name} /> : null}
+                      </span>
                     ))}
                   </div>
                 </div>

@@ -128,3 +128,10 @@ export function driveLinksIn(html: string, origin: string): string[] {
     .map((a) => a.getAttribute("href") ?? "")
     .filter((href) => isDriveLink(href, origin));
 }
+
+/** Recipients who are not people in the organisation, so cannot open a KyDrive link. */
+export async function checkOutsideRecipients(addresses: string[]): Promise<string[]> {
+  const answer = await postJSON<{ outside?: unknown }>("/api/kydrive/recipients", { addresses });
+  if (!Array.isArray(answer.outside)) throw new Error("bad answer");
+  return answer.outside.filter((a): a is string => typeof a === "string");
+}

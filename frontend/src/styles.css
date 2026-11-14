@@ -3882,6 +3882,23 @@ pre {
   text-decoration: underline;
 }
 
+.email-attachment-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.email-attachment-drive {
+  font-size: 0.85rem;
+}
+
+.email-attachment-drive button {
+  min-height: 28px;
+  padding: 2px 8px;
+  font-size: 0.85rem;
+}
+
 .email-attachment-size {
   opacity: 0.7;
 }
@@ -5232,6 +5249,11 @@ html:root:not([data-theme]):not([data-ky-theme]) {
 .compose-field-row > span { font-size: 12px; font-weight: 500; color: var(--ink); }
 .compose-window > .compose-editor-html.ql-container.ql-snow { margin: 0 24px 16px; width: auto; min-width: 0; min-height: 120px; flex: 1 1 180px; resize: none; background: var(--panel); }
 .compose-window > .compose-attachments { margin: 12px 24px 0; }
+.compose-window > .compose-drive, .compose-window > .compose-drive-upload { margin: 12px 24px 0; }
+.compose-drive p { margin: 0; }
+.compose-drive-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.compose-drive-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.85rem; }
+.compose-drive-upload progress { flex: 1 1 120px; accent-color: var(--accent); }
 .compose-security { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 24px; border-top: 1px solid var(--line); background: var(--panel); }
 .compose-security label { min-height: 32px; color: var(--ink-strong); }
 .compose-security input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
