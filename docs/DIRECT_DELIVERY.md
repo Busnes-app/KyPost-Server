@@ -84,7 +84,8 @@ locally signed test message, its single SPF record, its DMARC record (or the
 organizational domain's), and that every A/AAAA of `host` has reverse DNS back
 to `host`. Results are `pass`, `warn`, `fail` or `unknown`; a DNS timeout or
 error is `unknown`, never `pass`. SPF evaluates only `ip4`, `ip6`, `a:<host>`
-and `all`; `include`, `redirect`, `exists` and similar report `unknown`. SPF and
+and `all`; `include`, `redirect`, `exists` and similar report `unknown`, and
+`+all` or an authorizing `ip4` range wider than /8 (`ip6` wider than /32) fails. SPF and
 PTR use the EHLO host's addresses (`egressObserved:false`), and no mail is sent
 (`mailSent:false`). Each lookup has 5 seconds, the request 30, at most 16
 addresses are reverse-checked, DNS text echoed back is cut to 512 bytes and the

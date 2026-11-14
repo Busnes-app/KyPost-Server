@@ -64,7 +64,9 @@ function DirectDelivery({ relay }: { relay: DirectRelay }) {
       if (live.current) setChecking(false);
     }
   }
-  const rows = result ? [...result.domains.flatMap(d => d.checks.map(c => ({ domain: d.domain, c }))), { domain: relay.domains.join(", "), c: result.ptr }] : [];
+  // Reverse DNS belongs to the server, not a domain: its row and notice name the EHLO host.
+  const rows = result ? [...result.domains.flatMap(d => d.checks.map(c => ({ domain: d.domain, c }))), { domain: relay.host, c: result.ptr }] : [];
+  const failing = rows.filter(({ c }) => c.status !== "pass");
   const records = relay.domains.flatMap(domain => [
     ...relay.dkim.filter(r => r.domain === domain).map(r => ({ label: "DKIM", r })),
     ...relay.recommended.filter(r => r.domain === domain).map(r => ({ label: r.kind === "spf" ? "SPF" : "DMARC", r })),
@@ -80,7 +82,12 @@ function DirectDelivery({ relay }: { relay: DirectRelay }) {
     {checking && <p role="status">Checking DNS…</p>}
     {error && <p className="notice notice-error" role="alert">{error}</p>}
     {!result && !error && !checking && <p className="notice" role="status">These records are unchecked. Publish them, then run Check DNS.</p>}
-    {rows.filter(({ c }) => c.status !== "pass").map(({ domain, c }) => <p key={`${domain}:${c.check}`} className="notice notice-error" role="alert">Mail from {domain} may be rejected or marked as spam: {c.message}</p>)}
+    {result && <p className="notice" role="status">{failing.length === 0 ? "DNS check finished: all checks passed." : `DNS check finished: ${failing.length} ${failing.length === 1 ? "check needs" : "checks need"} attention.`}</p>}
+    {failing.length > 0 && <div role="alert">
+      {failing.map(({ domain, c }) => <p key={`${domain}:${c.check}`} className={`notice ${c.status === "fail" ? "notice-error" : "notice-warning"}`}>
+        {c.check === "ptr" ? `Mail from this server (${domain})` : `Mail from ${domain}`} may be rejected or marked as spam: {c.message}
+      </p>)}
+    </div>}
     {result && <div className="users-table-wrap"><table className="users-table mail-dns-checks" aria-label="DNS check results">
       <thead><tr><th scope="col">Domain</th><th scope="col">Check</th><th scope="col">Result</th><th scope="col">Details</th></tr></thead>
       <tbody>{rows.map(({ domain, c }) => <tr key={`${domain}:${c.check}`}>

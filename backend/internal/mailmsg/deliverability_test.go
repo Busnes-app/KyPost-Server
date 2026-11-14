@@ -167,6 +167,13 @@ func TestDeliverabilityChecks(t *testing.T) {
 		{"spf plus all", "spf", "fail", "", spf("v=spf1 a:mail.example.test +all")},
 		{"spf bare all", "spf", "fail", "", spf("v=spf1 all")},
 		{"spf negative first", "spf", "fail", "", spf("v=spf1 -ip4:203.0.113.5 a:mail.example.test -all")},
+		{"spf ip4 everything", "spf", "fail", "", spf("v=spf1 ip4:0.0.0.0/0 -all")},
+		{"spf ip4 too wide", "spf", "fail", "", spf("v=spf1 ip4:192.0.0.0/7 -all")},
+		{"spf ip6 everything", "spf", "fail", "", func(f *fakeDNS) {
+			f.ips = append(f.ips, net.ParseIP("2001:db8::5"))
+			f.txt[domain+"."] = []string{"v=spf1 ip4:203.0.113.5 ip6:::/0 -all"}
+		}},
+		{"spf negative wide range", "spf", "pass", "", spf("v=spf1 -ip4:198.0.0.0/7 a:mail.example.test -all")},
 		{"spf invalid ip4", "spf", "fail", "", spf("v=spf1 ip4:300.1.1.1 -all")},
 		{"spf timeout", "spf", "unknown", "", func(f *fakeDNS) { f.errs[domain+"."] = &net.DNSError{IsTimeout: true} }},
 		{"spf host lookup fails", "spf", "unknown", "", func(f *fakeDNS) { f.errs["mail.example.test."] = servfail }},

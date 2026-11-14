@@ -482,6 +482,7 @@ it("shows passing DNS checks as text without notices", async () => {
   expect(table.getAllByText("Pass")).toHaveLength(4);
   expect(panel.queryByRole("alert")).toBeNull();
   expect(panel.queryByText(/unchecked/)).toBeNull();
+  expect(panel.getByRole("status").textContent).toBe("DNS check finished: all checks passed.");
   // The check is a read: no credential, step-up or write.
   expect(fetchMock.mock.calls.filter(([, init]) => init?.method && init.method !== "GET")).toHaveLength(0);
   expect(deriveCredential).not.toHaveBeenCalled();
@@ -503,12 +504,20 @@ it("raises a notice for every failing check and renders DNS text as text", async
   const panel = within(await screen.findByRole("region", { name: "Direct delivery" }));
   fireEvent.click(panel.getByRole("button", { name: "Check DNS" }));
   await panel.findByRole("table", { name: "DNS check results" });
-  expect(panel.getAllByRole("alert").map(a => a.textContent)).toEqual([
+  // One live region announces every notice; fail reads as an error, the rest as warnings.
+  const alerts = panel.getAllByRole("alert");
+  expect(alerts).toHaveLength(1);
+  const notices = [...alerts[0]!.querySelectorAll("p")];
+  expect(notices.map(n => n.textContent)).toEqual([
     "Mail from example.com may be rejected or marked as spam: No DKIM record found",
     "Mail from example.com may be rejected or marked as spam: DNS lookup timed out or failed; check the resolver and run the check again",
     "Mail from example.com may be rejected or marked as spam: DMARC policy is none",
-    "Mail from example.com may be rejected or marked as spam: No reverse DNS",
+    "Mail from this server (mail.example.com) may be rejected or marked as spam: No reverse DNS",
   ]);
+  expect(notices.map(n => n.classList.contains("notice-error"))).toEqual([true, false, false, true]);
+  expect(notices.map(n => n.classList.contains("notice-warning"))).toEqual([false, true, true, false]);
+  expect(panel.getByRole("status").textContent).toBe("DNS check finished: 4 checks need attention.");
+  expect(panel.getByRole("rowheader", { name: "mail.example.com" })).toBeDefined();
   for (const label of ["Fail", "Unknown", "Warning"]) expect(panel.getAllByText(label).length).toBeGreaterThan(0);
   expect(panel.getByText(hostile)).toBeDefined();
   expect(rendered.container.querySelector("img")).toBeNull();

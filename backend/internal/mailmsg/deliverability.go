@@ -294,6 +294,10 @@ func spfVerdict(record, host string, addrs []net.IP) (string, string) {
 				if err != nil || (network.IP.To4() != nil) != (mechanism == "ip4") {
 					return "fail", "The SPF record has an invalid " + mechanism + " mechanism"
 				}
+				// A range this wide authorizes much of the Internet, as +all does.
+				if ones, _ := network.Mask.Size(); qualifier == '+' && ones < map[bool]int{true: 8, false: 32}[mechanism == "ip4"] {
+					return "fail", "The SPF record's " + mechanism + " range authorizes far more servers than this one; list only " + host + "'s addresses"
+				}
 				if network.Contains(ip) {
 					result = string(qualifier)
 					break evaluate
