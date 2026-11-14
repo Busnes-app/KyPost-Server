@@ -20,6 +20,13 @@ non-prerelease version.
 
 ### Added
 
+- KyDrive pairing (`KYPOST_KYDRIVE_URL`, `KYPOST_KYDRIVE_SECRET_FILE`,
+  `KYPOST_KYDRIVE_ALLOW_PRIVATE`, or automatic through KyIdentity). Compose
+  uploads files over the attachment limit, or any attachment, to KyDrive and
+  inserts an organisation-only link, checking first that every recipient is
+  in the organisation; the reader saves attachments to KyDrive. The CSP's
+  `connect-src` names the paired KyDrive only while paired. Server → KyDrive
+  shows the pairing. Contract: `docs/KYDRIVE.md`.
 - Recipient autocomplete lists people in the organisation under an
   "Organisation" heading after your own contacts, from KyIdentity's suite
   directory through `GET /api/suite/people?q=`. Contract: `docs/SUITE-PEOPLE.md`.

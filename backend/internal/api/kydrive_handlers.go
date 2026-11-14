@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/mail"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -361,4 +363,63 @@ func (s *Server) handleKyDriveSaveAttachment(w http.ResponseWriter, r *http.Requ
 	s.logger.Info("kydrive save completed", "actor", u.ID, "target", ans.FileID, "result", "saved")
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, map[string]any{"fileId": ans.FileID, "name": ans.Name, "size": ans.Size, "folder": "Mail attachments", "appUrl": st.AppURL})
+}
+
+// maxDriveRecipients bounds one outside-recipient check (the send route's own cap).
+const maxDriveRecipients = 500
+
+// handleKyDriveRecipients answers which addresses are not people in the
+// organisation (suitedir.Resolve), so cannot open an organisation link. The
+// client asks before sending a message that carries KyDrive links.
+func (s *Server) handleKyDriveRecipients(w http.ResponseWriter, r *http.Request) {
+	u, _, ok := s.driveUser(w, r, true)
+	if !ok {
+		return
+	}
+	var req struct {
+		Addresses []string `json:"addresses"`
+	}
+	if json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req) != nil || len(req.Addresses) == 0 || len(req.Addresses) > maxDriveRecipients {
+		writeDrive(w, http.StatusBadRequest, "bad_request", "1 to 500 addresses are required")
+		return
+	}
+	var addrs []string
+	for _, raw := range req.Addresses {
+		a, err := mail.ParseAddress(raw)
+		if err != nil || a.Name != "" || a.Address != strings.TrimSpace(raw) {
+			writeDrive(w, http.StatusBadRequest, "bad_request", "addresses must be bare addresses")
+			return
+		}
+		if addr := strings.ToLower(a.Address); !slices.Contains(addrs, addr) {
+			addrs = append(addrs, addr)
+		}
+	}
+	dir, ok := s.ssoStore.Load().SuiteDirectory()
+	if !ok || !linkedTo(u, dir.Issuer) {
+		writeDrive(w, http.StatusConflict, "kydrive_off", "this account cannot look up organisation members")
+		return
+	}
+	known := map[string]bool{}
+	for chunk := range slices.Chunk(addrs, 100) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		people, err := dir.Resolve(ctx, u.SSOSub, chunk)
+		cancel()
+		if err != nil {
+			// suitedir errors carry neither the query (addresses, sub) nor the credentials.
+			s.logger.Warn("kydrive recipient check failed", "actor", u.ID, "error", err.Error())
+			writeDrive(w, http.StatusServiceUnavailable, "unavailable", "could not check the recipients; try again")
+			return
+		}
+		for _, p := range people {
+			known[strings.ToLower(p.Email)] = true
+		}
+	}
+	outside := []string{}
+	for _, a := range addrs {
+		if !known[a] {
+			outside = append(outside, a)
+		}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"outside": outside})
 }

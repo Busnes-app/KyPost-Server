@@ -686,6 +686,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/kydrive/status", s.withMailAuth(s.handleKyDriveStatus))
 	mux.HandleFunc("POST /api/kydrive/upload-tickets", s.withMailAuth(s.handleKyDriveTicket))
 	mux.HandleFunc("POST /api/kydrive/links", s.withMailAuth(s.handleKyDriveLink))
+	mux.HandleFunc("POST /api/kydrive/recipients", s.withMailAuth(s.handleKyDriveRecipients))
 	mux.HandleFunc("POST /api/kydrive/save-attachment", s.withMailAuth(s.withMailbox(s.handleKyDriveSaveAttachment)))
 	mux.HandleFunc("GET /api/labels", s.withAuth(s.handleLabels))
 	mux.HandleFunc("GET /api/decisions", s.withAuth(s.withMailbox(s.handleDecisions)))

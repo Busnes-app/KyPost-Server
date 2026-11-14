@@ -221,8 +221,27 @@ type driveFixture struct {
 func newDriveFixture(t *testing.T) *driveFixture {
 	t.Helper()
 	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if id, secret, ok := r.BasicAuth(); r.URL.Path != "/api/suite/apps" || !ok || id != "kypost" || secret != "suite-secret" {
+		if id, secret, ok := r.BasicAuth(); !ok || id != "kypost" || secret != "suite-secret" {
 			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/api/suite/people" {
+			emails := r.URL.Query()["email"]
+			if r.URL.Query().Get("sub") != "sub-ann" || len(emails) == 0 || len(emails) > 100 || emails[0] == "down@example.com" {
+				http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
+				return
+			}
+			var people []string
+			for _, e := range emails {
+				if strings.HasSuffix(e, "@example.com") {
+					people = append(people, fmt.Sprintf(`{"sub":"s-%s","name":"N","email":%q}`, e, strings.ToUpper(e)))
+				}
+			}
+			fmt.Fprintf(w, `{"people":[%s]}`, strings.Join(people, ","))
+			return
+		}
+		if r.URL.Path != "/api/suite/apps" {
+			http.NotFound(w, r)
 			return
 		}
 		apps := `{"id":"kypost","name":"KyPost","url":"https://mail.example.com/"}`
@@ -468,5 +487,39 @@ func TestCSPConnectsToKyDriveOnlyWhilePaired(t *testing.T) {
 	f.srv.SetKyDrive(nil)
 	if p := csp(); !strings.Contains(p, "connect-src 'self';") || strings.Contains(p, f.drive.URL) {
 		t.Fatalf("unpaired CSP: %s", p)
+	}
+}
+
+func TestKyDriveRecipients(t *testing.T) {
+	f := newDriveFixture(t)
+	many := make([]string, 0, 150)
+	for i := range 150 {
+		many = append(many, fmt.Sprintf(`"p%d@example.com"`, i))
+	}
+	for name, tc := range map[string]struct {
+		body    string
+		status  int
+		outside string
+	}{
+		"mixed":         {`{"addresses":["ann@example.com","Bob@Example.NET","bob@example.net"]}`, 200, `["bob@example.net"]`},
+		"all inside":    {`{"addresses":["ann@example.com"]}`, 200, `[]`},
+		"over 100":      {`{"addresses":[` + strings.Join(many, ",") + `,"x@other.test"]}`, 200, `["x@other.test"]`},
+		"display name":  {`{"addresses":["Ann <ann@example.com>"]}`, 400, ""},
+		"none":          {`{"addresses":[]}`, 400, ""},
+		"identity down": {`{"addresses":["down@example.com"]}`, 503, ""},
+	} {
+		rec := requestBodyAs(f.srv, f.ann.ID, "POST", "/api/kydrive/recipients", tc.body)
+		var out struct{ Outside json.RawMessage }
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		if rec.Code != tc.status || (tc.outside != "" && string(out.Outside) != tc.outside) {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+	local := ssoUser(t, f.srv, "loc", "", "")
+	if rec := requestBodyAs(f.srv, local.ID, "POST", "/api/kydrive/recipients", `{"addresses":["ann@example.com"]}`); rec.Code != 409 {
+		t.Fatalf("unlinked account: %d %s", rec.Code, rec.Body)
+	}
+	if logs := f.logs.String(); strings.Contains(logs, "bob@example.net") || strings.Contains(logs, "down@example.com") {
+		t.Fatalf("logs carry an address: %s", logs)
 	}
 }
