@@ -17,7 +17,8 @@ describe("ComposeWindow New meeting", () => {
     composeTo: { tokens: [{ email: "bob@example.net", isCustom: true }], draft: "" },
     composeCc: { tokens: [{ email: "carol@example.org", isCustom: true }], draft: "" },
     composeBcc: { tokens: [{ email: "hidden@example.org", isCustom: true }], draft: "" },
-    composeSubject: "Budget", composeAttachments: [], composeRecipientTiers: {}
+    composeSubject: "Budget", composeAttachments: [], composeRecipientTiers: {},
+    drive: { driveStatus: { available: false }, driveOffer: [], driveUploads: [], driveOutside: null }
   });
 
   it("is absent without KyCalendar and opens the editor with subject, To and Cc (never Bcc)", async () => {
