@@ -100,6 +100,10 @@ function DirectDelivery({ relay, keys }: { relay: DirectRelay; keys: KeyActions 
   const [result, setResult] = useState<Deliverability | null>(null);
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
+  // A key change makes the last check describe records that are no longer current.
+  const keySet = relay.dkim.map(r => `${r.selector}:${r.state}`).join();
+  const [checkedKeys, setCheckedKeys] = useState(keySet);
+  if (checkedKeys !== keySet) { setCheckedKeys(keySet); setResult(null); }
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   async function check() {
     setChecking(true); setError("");
