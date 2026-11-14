@@ -293,6 +293,22 @@ A malformed `TRUSTED_PROXY_CIDRS` entry or any other `TRUSTED_PROXY_HEADER` valu
 
 This replaces the old `TRUST_PROXY_HEADERS=true`, which trusted forwarded headers on *every* connection from any peer and was only ever safe when nothing but the proxy could reach the port.
 
+### Office networks (rate-limit allowlist)
+
+Staff in one office usually share one public NAT address, so they share every per-address limit and can lock each other out on a busy morning. An administrator can list the office's networks under **Server → Office networks**, and the operator can set `RATE_LIMIT_EXEMPT_CIDRS`; the two lists are combined. Empty by default: with nothing listed every limit behaves as before.
+
+A request from a listed network skips the per-address limits only:
+
+- the proof-of-work challenge budget (30 a minute per address);
+- `GET /api/auth/login-params` and the SSO sign-in routes (one shared bucket: 30, then 1 a second per address);
+- the failed-sign-in address lock (50 failures in 15 minutes).
+
+Everything else still applies to it: the per-account lockout (3 failures per account per address), the instance-wide sign-in budget, the CAPTCHA or proof of work (and its difficulty escalation), MFA, SSO state, nonce and PKCE checks, and the CardDAV, agent-token and push-poll limits. A compromised machine on a listed network can still guess only three passwords per account per 15 minutes, and only as fast as the whole server's sign-in budget allows, but it can spread those guesses over many accounts without the address lock stopping it.
+
+The match uses the client address resolved through `TRUSTED_PROXY_CIDRS` and nothing else, so a forged `X-Forwarded-For` from an untrusted peer, or an address prepended to the chain behind a trusted proxy, claims nothing. Ranges broader than /16 (IPv4) or /48 (IPv6), loopback and malformed entries are refused when saved and at startup. A change needs the admin's step-up and is logged (`set_exempt_networks`, with actor and old and new lists). The screen shows how many requests skipped a limit since the last change or restart.
+
+**List only networks you control.** Everyone behind a listed address loses the per-address limits, so never list guest Wi-Fi, a shared or public network (a café, a coworking space, a carrier-grade NAT range), a VPN provider's exit, or the reverse proxy's own address: with the proxy listed, a misconfigured `TRUSTED_PROXY_CIDRS` would exempt every visitor.
+
 ### Verification: Confirm Your Setup
 
 **Verify rather than assume.** Sign in and fetch `GET /api/status`. Check two fields:
