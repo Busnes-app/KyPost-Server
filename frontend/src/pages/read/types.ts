@@ -115,6 +115,8 @@ export type ReadPageProps = {
   onCompose?: () => void;
   /** The account's folders, for their RFC 6154 roles (a Trash not named "Trash"). */
   folders?: InboxFolder[];
+  /** KyCalendar's origin when it is in the suite app list; "" hides Reply with meeting. */
+  calendarOrigin?: string;
 };
 
 export type InboxResponse = {

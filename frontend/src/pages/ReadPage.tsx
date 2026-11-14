@@ -9,7 +9,8 @@ import { OtpCard } from "./read/OtpCard";
 import { InviteCard } from "./read/InviteCard";
 import { inviteAttachment } from "./read/invite";
 import { displayBody } from "./read/body";
-import { firstAddressFromText } from "../lib/addressText";
+import { firstAddressFromText, listAddressesFromText } from "../lib/addressText";
+import { openNewMeeting } from "../lib/meetingLink";
 import { isFlaggedPhishing } from "../lib/phishing";
 import { decryptMessage, verifySignedMessage } from "../lib/pgpClient";
 import { getPGPMessagePayload } from "../api/pgp";
@@ -80,7 +81,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps) {
+export function ReadPage({ onOpenDraft, onCompose, folders = [], calendarOrigin = "" }: ReadPageProps) {
   const readerActionsId = useId();
   const searchScopeName = useId();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1462,6 +1463,18 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
     setSelected(null);
   }
 
+  // Title from the subject; attendees From, To and Cc minus the user's own addresses.
+  function replyWithMeeting() {
+    if (!selected) return;
+    const own = new Set([...(mailboxes.find((m) => (box ? m.id === box : m.kind === "primary"))?.addresses ?? []), ...(box ? [] : [accountAddress()])]
+      .map((a) => a.toLowerCase()));
+    const { to, cc } = buildReplyAllRecipients(selected);
+    openNewMeeting(calendarOrigin, {
+      title: decrypted[decryptedKey(selected.messageId)]?.subject ?? selected.subject ?? "",
+      attendees: [to, ...listAddressesFromText(cc)].filter((a) => a && !own.has(a.toLowerCase()))
+    });
+  }
+
   function replyAllToSelectedEmail() {
     if (!selected || !onOpenDraft) return;
     const recipients = buildReplyAllRecipients(selected);
@@ -1923,6 +1936,7 @@ export function ReadPage({ onOpenDraft, onCompose, folders = [] }: ReadPageProps
                 <button type="button" onClick={replyToSelectedEmail} disabled={actionLoading}>Reply</button>
                 <button type="button" onClick={replyAllToSelectedEmail} disabled={actionLoading}>Reply All</button>
                 <button type="button" onClick={forwardSelectedEmail} disabled={actionLoading}>Forward</button>
+                {calendarOrigin ? <button type="button" onClick={replyWithMeeting}>Reply with meeting</button> : null}
               </div>
               <button type="button" className="btn-danger email-reader-delete" onClick={() => applyInboxAction("delete", [selected.messageId], { closeModal: true })} disabled={actionLoading}>
                 <TrashIcon />

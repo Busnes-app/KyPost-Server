@@ -74,4 +74,28 @@ describe("ContactsPage", () => {
     await userEvent.click(within(form).getByRole("button", { name: "Add contact" }));
     expect(links.open).toBe(true);
   });
+
+  it("offers New meeting for a contact with an address only when KyCalendar is in the suite", async () => {
+    fetchMock.mockImplementation(async (url) => {
+      if (String(url).startsWith("/api/contacts")) {
+        return json({ contacts: [
+          { uid: "c1", rev: 1, createdAt: "", updatedAt: "", fn: "Dana Ops", emails: [{ value: "dana@example.com" }] },
+          { uid: "c2", rev: 1, createdAt: "", updatedAt: "", fn: "No Mail" }
+        ] });
+      }
+      if (String(url).startsWith("/api/groups")) return json({ groups: [] });
+      return json({});
+    });
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const { unmount } = render(<ContactsPage />);
+    await screen.findByRole("button", { name: "Actions for Dana Ops" });
+    expect(screen.queryByRole("button", { name: "New meeting", hidden: true })).toBeNull();
+    unmount();
+    render(<ContactsPage calendarOrigin="https://cal.example" />);
+    await screen.findByRole("button", { name: "Actions for Dana Ops" });
+    const buttons = screen.getAllByRole("button", { name: "New meeting", hidden: true });
+    expect(buttons).toHaveLength(1);
+    await userEvent.click(buttons[0]);
+    expect(open).toHaveBeenCalledWith("https://cal.example/new?attendees=dana%40example.com", "_blank", "noopener,noreferrer");
+  });
 });

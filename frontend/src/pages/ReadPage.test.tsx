@@ -43,6 +43,7 @@ vi.mock("../lib/pgpClient", () => ({
 }));
 
 vi.mock("../lib/pgpSession", () => ({
+  accountAddress: () => "me@example.com",
   isClientProtected: () => false,
   needsUnlock: () => false,
   subscribePGPSession: () => () => {}
@@ -102,10 +103,10 @@ function mockEndpoints() {
   postJSON.mockResolvedValue({ ok: true, results: [] });
 }
 
-function renderReadPage() {
+function renderReadPage(props: { calendarOrigin?: string } = {}) {
   return render(
     <MemoryRouter>
-      <ReadPage />
+      <ReadPage {...props} />
     </MemoryRouter>
   );
 }
@@ -616,6 +617,25 @@ describe("reader layout", () => {
     expect(names).toEqual(
       expect.arrayContaining(["Archive", "Snooze", "Mark as unread", "Mark as Spam", "Print", "Show Remote Content"])
     );
+  });
+
+  it("offers Reply with meeting only when KyCalendar is in the suite, prefilled from the message", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const user = userEvent.setup();
+    const { unmount } = renderReadPage();
+    await user.click(await screen.findByText("Weekly Digest"));
+    expect(within(await screen.findByRole("dialog", { name: "Weekly Digest" })).queryByRole("button", { name: "Reply with meeting" })).toBeNull();
+    unmount();
+
+    renderReadPage({ calendarOrigin: "https://cal.example" });
+    await user.click(await screen.findByText("Weekly Digest"));
+    await user.click(within(await screen.findByRole("dialog", { name: "Weekly Digest" })).getByRole("button", { name: "Reply with meeting" }));
+    expect(open).toHaveBeenCalledTimes(1);
+    const [url, target, features] = open.mock.calls[0] as [string, string, string];
+    const q = new URL(url).searchParams;
+    expect(url.startsWith("https://cal.example/new?")).toBe(true);
+    expect([q.get("title"), q.get("attendees"), target, features]).toEqual(["Weekly Digest", "news@publisher.example", "_blank", "noopener,noreferrer"]);
+    open.mockRestore();
   });
 
   it("shows Delete in the action row, not in More actions, and deletes and closes from there", async () => {

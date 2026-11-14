@@ -45,8 +45,9 @@ import { PGPKeyInfo } from "./contacts/PGPKeyInfo";
 import { ContactAvatar } from "./contacts/ContactAvatar";
 import { ContactDetailsDialog } from "./contacts/ContactDetailsDialog";
 import { ChevronIcon, CloseIcon, MoreIcon, PlusIcon } from "./read/icons";
+import { openNewMeeting } from "../lib/meetingLink";
 
-export function ContactsPage() {
+export function ContactsPage({ calendarOrigin = "" }: { calendarOrigin?: string } = {}) {
   const contactActionsId = useId();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -680,6 +681,9 @@ export function ContactsPage() {
                                   if (event.target instanceof Element && event.target.closest("button")) event.currentTarget.hidePopover?.();
                                 }}>
                                 <button type="button" className="btn-ghost" onClick={() => openEditForm(contact)}>Edit</button>
+                                {calendarOrigin && contact.emails?.[0]?.value ? (
+                                  <button type="button" className="btn-ghost" onClick={() => openNewMeeting(calendarOrigin, { attendees: [contact.emails![0].value] })}>New meeting</button>
+                                ) : null}
                                 <button type="button" className="btn-ghost" onClick={() => void removeContact(contact)}>Delete</button>
                               </div>
                             </div>
