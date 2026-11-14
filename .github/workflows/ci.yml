@@ -384,6 +384,8 @@ jobs:
       - name: shellcheck
         run: shellcheck scripts/*.sh
 
+      - run: scripts/check-no-binaries.sh
+
       - name: update-host self-check
         run: scripts/update-host.test.sh
 
