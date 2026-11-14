@@ -598,6 +598,21 @@ it("rotates a DKIM key through the confirmed request flow", async () => {
   expect(await screen.findByLabelText("New DKIM record for example.com")).toBeDefined();
 });
 
+it("drops a DNS check result once the DKIM keys change", async () => {
+  setResponse = domainSet; relayResponse = directRelay;
+  serveCheck(() => json(deliverability));
+  render(view());
+  const panel = within(await screen.findByRole("region", { name: "Direct delivery" }));
+  fireEvent.click(panel.getByRole("button", { name: "Check DNS" }));
+  await panel.findByRole("table", { name: "DNS check results" });
+  fill("Account password", "account-secret");
+  relayResponse = { ...directRelay, dkim: [dkimRecord, nextRecord] };
+  fireEvent.click(screen.getByRole("button", { name: "Rotate DKIM key for example.com" }));
+  await screen.findByText(/New DKIM key for example.com created/);
+  expect(panel.queryByRole("table", { name: "DNS check results" })).toBeNull();
+  expect(panel.getByRole("status").textContent).toContain("These records are unchecked");
+});
+
 it("checks and switches only when the new record is live", async () => {
   setResponse = domainSet; relayResponse = { ...directRelay, dkim: [dkimRecord, nextRecord] };
   let live = false;
