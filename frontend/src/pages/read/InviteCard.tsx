@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getBytes, postJSON } from "../../api/client";
 import type { AttachmentInfo } from "./types";
-import { answerByMail, answerThroughKyCalendar, parseInvite, partType, rsvpAttendee, rsvpMail, type Invite, type InviteEvent, type Partstat } from "./invite";
+import { answerByMail, answerThroughKyCalendar, parseInvite, partType, priorAnswer, recordAnswer, rsvpAttendee, rsvpMail, type Invite, type InviteEvent, type Partstat, type PriorAnswer } from "./invite";
 
 type Props = {
   attachment: AttachmentInfo;
@@ -18,6 +18,13 @@ type Props = {
 };
 
 const answers: [Partstat, string][] = [["ACCEPTED", "Accept"], ["TENTATIVE", "Maybe"], ["DECLINED", "Decline"]];
+const answered: Record<Partstat, string> = { ACCEPTED: "accepted", TENTATIVE: "answered maybe", DECLINED: "declined" };
+
+function changedText(changed: string[]): string {
+  if (changed.length === 0) return "This invitation was updated since you answered.";
+  const list = changed.length === 1 ? changed[0] : `${changed.slice(0, -1).join(", ")} and ${changed[changed.length - 1]}`;
+  return `Changed since you answered: ${list}.`;
+}
 
 function when(e: InviteEvent): string {
   if (e.allDay) {
@@ -40,6 +47,7 @@ export function InviteCard({ attachment, query, messageId, folder, sender, phish
   const [choice, setChoice] = useState<Partstat>("ACCEPTED");
   const [status, setStatus] = useState("");
   const [noEvent, setNoEvent] = useState(false);
+  const [prior, setPrior] = useState<PriorAnswer>({ kind: "none" });
 
   useEffect(() => {
     let live = true;
@@ -51,11 +59,31 @@ export function InviteCard({ attachment, query, messageId, folder, sender, phish
     };
   }, [query, attachment.index, reload]);
 
+  const attendeeKey = invite ? rsvpAttendee(invite.event, ownAddresses) : "";
+  useEffect(() => {
+    let live = true;
+    setPrior({ kind: "none" });
+    if (invite?.method === "REQUEST") {
+      priorAnswer(invite.event, attendeeKey).then((p) => live && setPrior(p)).catch(() => undefined);
+    }
+    return () => {
+      live = false;
+    };
+  }, [invite, attendeeKey]);
+
   if (!invite) return null;
   const e = invite.event;
+  const cancelled = invite.method === "CANCEL";
   const offersRsvp = invite.method === "REQUEST" && e.canReply
     && partType(attachment) === "text/calendar" && attachment.calendarMethod === "REQUEST";
-  const attendee = rsvpAttendee(e, ownAddresses);
+  const attendee = attendeeKey;
+  let joinHost = "";
+  try {
+    joinHost = e.conference && !cancelled ? new URL(e.conference).hostname : "";
+  } catch {
+    joinHost = "";
+  }
+  const remember = (partstat: Partstat) => void recordAnswer(e, attendee, partstat).catch(() => undefined);
 
   async function answer(partstat: Partstat) {
     setChoice(partstat);
@@ -63,6 +91,7 @@ export function InviteCard({ attachment, query, messageId, folder, sender, phish
     setStatus("");
     const result = await answerThroughKyCalendar(postJSON, { messageId, mailbox: folder, index: attachment.index, partstat });
     if (result.kind === "answered") {
+      remember(partstat);
       setPhase("done");
       setStatus("Answered through KyCalendar.");
     } else if (result.kind === "off") {
@@ -83,6 +112,7 @@ export function InviteCard({ attachment, query, messageId, folder, sender, phish
     }
     setPhase("busy");
     const result = await answerByMail(postJSON, mail, attendee);
+    if (result.kind === "sent" || result.kind === "plain") remember(choice);
     setPhase(result.kind === "retry" ? "idle" : result.kind === "uncertain" ? "stuck" : "done");
     setStatus(result.kind === "sent" ? `Your answer was sent to ${e.organizer}.` : result.message);
   }
@@ -90,6 +120,7 @@ export function InviteCard({ attachment, query, messageId, folder, sender, phish
   return (
     <section className="invite-card" aria-label="Calendar invitation">
       <strong className="invite-card-title">{e.summary || "Invitation"}</strong>
+      {cancelled ? <p className="invite-card-cancelled">Cancelled</p> : null}
       <dl className="invite-card-facts">
         <dt>When</dt>
         <dd>{when(e)}{e.repeats ? " (repeats)" : ""}</dd>
@@ -100,8 +131,16 @@ export function InviteCard({ attachment, query, messageId, folder, sender, phish
       {e.organizer && sender && e.organizer.toLowerCase() !== sender.toLowerCase() ? (
         <p className="invite-card-warning">The organizer is not the sender ({sender}).</p>
       ) : null}
-      {invite.method === "CANCEL" ? <p className="invite-card-warning">This event was cancelled.</p> : null}
-      {invite.method === "REQUEST" && e.sequence > 0 ? <p className="invite-card-warning">This updates an earlier invitation.</p> : null}
+      {joinHost ? (
+        <a className="btn-primary invite-card-join" href={e.conference} target="_blank" rel="noopener noreferrer">
+          Join meeting <span className="invite-card-host">({joinHost})</span>
+        </a>
+      ) : null}
+      {prior.kind === "newer" ? (
+        <p className="invite-card-warning">{changedText(prior.changed)} You had {answered[prior.partstat]}; answer again.</p>
+      ) : prior.kind === "same" ? (
+        <p className="invite-card-note">You {answered[prior.partstat]}.</p>
+      ) : invite.method === "REQUEST" && e.sequence > 0 ? <p className="invite-card-warning">This updates an earlier invitation.</p> : null}
       {e.unknownZone ? <p className="invite-card-warning">Time zone “{e.unknownZone}” is unknown; shown in your local time.</p> : null}
       {offersRsvp && phase === "confirm" ? (
         <div className="invite-card-actions">

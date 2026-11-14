@@ -26,6 +26,10 @@ export type InviteEvent = {
   /** A TZID that resolved to nothing, so local time was used; "" otherwise. */
   unknownZone: string;
   canReply: boolean;
+  /** DTSTAMP in UTC milliseconds; 0 when absent or unreadable. */
+  stamp: number;
+  /** The first CONFERENCE property as an https: URL; "" for anything else. */
+  conference: string;
 };
 
 export type Invite = { method: string; event: InviteEvent };
@@ -175,6 +179,26 @@ function eventTime(line: Line): EventTime | null {
   return { at: new Date(y, mo - 1, d, h, mi, s), allDay: false, unknownZone: tzid ? visible(tzid, 64) : "" };
 }
 
+/** RFC 7986 §5.11 CONFERENCE: https only, no credentials, bounded. */
+function conferenceUrl(line: Line | undefined): string {
+  const value = line?.value.trim() ?? "";
+  if (!value || value.length > 2048 || isoControlRe.test(value)) return "";
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname && !url.username && !url.password ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+/** DTSTAMP is UTC by definition (RFC 5545 §3.8.7.2). */
+function utcStamp(line: Line | undefined): number {
+  const dt = dateTimeRe.exec(line?.value.trim() ?? "");
+  if (!dt || !dt[7]) return 0;
+  const [y, mo, d, h, mi, s] = dt.slice(1, 7).map(Number);
+  return validDay(y, mo, d) && h <= 23 && mi <= 59 && s <= 59 ? Date.UTC(y, mo - 1, d, h, mi, s) : 0;
+}
+
 /** RFC 5545 §3.3.6: days and weeks are nominal, hours, minutes and seconds exact. */
 function addDuration(start: Date, value: string): Date | null {
   const m = durationRe.exec(value);
@@ -217,7 +241,9 @@ function toEvent(props: Map<string, Line>, attendees: string[]): { event: Invite
       allDay: start.allDay,
       repeats: props.has("RRULE"),
       unknownZone: start.unknownZone || endTime?.unknownZone || "",
-      canReply: uid !== "" && organizer !== "" && sequence >= 0
+      canReply: uid !== "" && organizer !== "" && sequence >= 0,
+      stamp: utcStamp(props.get("DTSTAMP")),
+      conference: conferenceUrl(props.get("CONFERENCE"))
     }
   };
 }
@@ -323,6 +349,74 @@ export function rsvpMail(event: InviteEvent, attendee: string, partstat: Partsta
     body: `${attendee} has ${verbs[partstat][1]} this invitation.`,
     ics
   };
+}
+
+// The answered revision of each event, so a newer REQUEST can say what
+// changed. Kept in this browser only, and only as digests: no title, place,
+// time, address or UID is stored readable.
+const ANSWERS_KEY = "kypost.invite-answers.v1";
+const MAX_ANSWERS = 200;
+
+export type AnswerRecord = { seq: number; stamp: number; when: string; title: string; place: string; partstat: Partstat; at: number };
+export type Changed = "time" | "place" | "title";
+
+async function digest(value: string): Promise<string> {
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return Array.from(hash.subarray(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function fingerprint(e: InviteEvent, attendee: string) {
+  const [key, when, title, place] = await Promise.all([
+    digest(`${attendee.toLowerCase()}\0${e.organizer.toLowerCase()}\0${e.uid}`),
+    digest(`${e.begin.getTime()}|${e.end.getTime()}|${e.allDay}`),
+    digest(e.summary),
+    digest(e.location)
+  ]);
+  return { key, when, title, place };
+}
+
+function loadAnswers(): Record<string, AnswerRecord> {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(ANSWERS_KEY) ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, AnswerRecord>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Remembers that attendee answered this revision of the event. */
+export async function recordAnswer(e: InviteEvent, attendee: string, partstat: Partstat): Promise<void> {
+  const f = await fingerprint(e, attendee);
+  const all = loadAnswers();
+  all[f.key] = { seq: e.sequence, stamp: e.stamp, when: f.when, title: f.title, place: f.place, partstat, at: Date.now() };
+  const kept = Object.entries(all).sort(([, a], [, b]) => (b.at ?? 0) - (a.at ?? 0)).slice(0, MAX_ANSWERS);
+  try {
+    window.localStorage.setItem(ANSWERS_KEY, JSON.stringify(Object.fromEntries(kept)));
+  } catch {
+    // storage full or blocked: the card simply will not remember
+  }
+}
+
+export type PriorAnswer =
+  | { kind: "none" }
+  /** This revision (or a later one) was answered. */
+  | { kind: "same"; partstat: Partstat }
+  /** A newer revision than the one answered: higher SEQUENCE or, at equal SEQUENCE, a later DTSTAMP. */
+  | { kind: "newer"; partstat: Partstat; changed: Changed[] };
+
+export async function priorAnswer(e: InviteEvent, attendee: string): Promise<PriorAnswer> {
+  if (!e.canReply || !attendee) return { kind: "none" };
+  const f = await fingerprint(e, attendee);
+  const r = loadAnswers()[f.key];
+  if (!r || typeof r.seq !== "number" || typeof r.stamp !== "number" || typeof r.partstat !== "string" || !Object.prototype.hasOwnProperty.call(verbs, r.partstat)) return { kind: "none" };
+  if (e.sequence > r.seq || (e.sequence === r.seq && e.stamp > r.stamp)) {
+    const changed: Changed[] = [];
+    if (r.when !== f.when) changed.push("time");
+    if (r.place !== f.place) changed.push("place");
+    if (r.title !== f.title) changed.push("title");
+    return { kind: "newer", partstat: r.partstat, changed };
+  }
+  return { kind: "same", partstat: r.partstat };
 }
 
 type Post = <T>(path: string, body: unknown) => Promise<T>;

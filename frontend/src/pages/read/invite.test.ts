@@ -36,6 +36,18 @@ describe("parseInvite", () => {
     expect(e.begin.toISOString()).toBe("2026-10-20T10:00:00.000Z");
     expect(e.end.toISOString()).toBe("2026-10-20T11:00:00.000Z");
     expect(e.attendees).toEqual(["Bob@Example.net"]);
+    expect(e.stamp).toBe(0);
+    expect(e.conference).toBe("");
+  });
+
+  it("reads DTSTAMP in UTC and an https CONFERENCE, ignoring other schemes", () => {
+    const e = parseInvite(ics(`${base}\r\nDTSTAMP:20261001T080000Z\r\nCONFERENCE;VALUE=URI;FEATURE=VIDEO:https://meet.example.com/a?b=c`))!.event;
+    expect(e.stamp).toBe(Date.UTC(2026, 9, 1, 8));
+    expect(e.conference).toBe("https://meet.example.com/a?b=c");
+    expect(parseInvite(ics(`${base}\r\nDTSTAMP:20261001T080000`))!.event.stamp).toBe(0);
+    for (const uri of ["javascript:alert(1)", "http://meet.example.com/", "tel:+1555", "https://u:p@meet.example.com/", "https://" + "a".repeat(2100) + ".example"]) {
+      expect(parseInvite(ics(`${base}\r\nCONFERENCE;VALUE=URI:${uri}`))!.event.conference).toBe("");
+    }
   });
 
   it("unfolds on bytes, so a fold inside a UTF-8 sequence rejoins it", () => {
