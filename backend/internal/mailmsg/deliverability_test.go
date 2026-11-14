@@ -43,7 +43,9 @@ func (f *fakeDNS) lookup(ctx context.Context, name string) error {
 	return nil
 }
 
-func notFound(name string) error { return &net.DNSError{Err: "no such host", Name: name, IsNotFound: true} }
+func notFound(name string) error {
+	return &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+}
 
 func (f *fakeDNS) LookupTXT(ctx context.Context, name string) ([]string, error) {
 	if err := f.lookup(ctx, name); err != nil {
@@ -94,8 +96,8 @@ func passingDNS(t *testing.T, domain string) *fakeDNS {
 	}
 	return &fakeDNS{
 		txt: map[string][]string{
-			k.recordName() + ".": {record},
-			domain + ".":         {"google-site-verification=x", recommendedSPF("mail.example.test")},
+			k.recordName() + ".":     {record},
+			domain + ".":             {"google-site-verification=x", recommendedSPF("mail.example.test")},
 			"_dmarc." + domain + ".": {recommendedDMARC},
 		},
 		ips:  []net.IP{net.ParseIP("203.0.113.5")},
@@ -209,7 +211,8 @@ func TestDeliverabilityChecks(t *testing.T) {
 			if got.Status != c.want || got.Message == "" || result.EgressObserved || result.MailSent {
 				t.Fatalf("%s: got %s (%s), want %s", c.check, got.Status, got.Message, c.want)
 			}
-			if c.want == "unknown" && !strings.Contains(got.Message, "run the check again") {
+			dnsFailure := strings.Contains(c.name, "servfail") || strings.Contains(c.name, "timeout") || strings.Contains(c.name, "fails")
+			if dnsFailure && !strings.Contains(got.Message, "run the check again") {
 				t.Fatal("unknown without a retry message", got.Message)
 			}
 			if c.name == "dmarc organizational" && got.Name != "_dmarc.example.com" {

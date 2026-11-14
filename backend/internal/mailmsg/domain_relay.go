@@ -62,17 +62,17 @@ const maxDomainRelayFile = 1 << 20
 // domainRelayFile is the sealed JSON. Version 2 holds a domain set; version 1
 // (a single "domain") is read only by migration and backup validation.
 type domainRelayFile struct {
-	Mode           string   `json:"mode,omitempty"`
-	Version        int      `json:"version"`
-	Generation     string   `json:"generation"`
-	Domain         string   `json:"domain,omitempty"`
-	Domains        []string `json:"domains"`
-	RetiredDomains []string `json:"retiredDomains"`
-	Issuer         string   `json:"issuer"`
-	Host           string   `json:"host"`
-	Port           int      `json:"port"`
-	Username       string   `json:"smtpUsername"`
-	Password       string   `json:"smtpPassword"`
+	Mode           string    `json:"mode,omitempty"`
+	Version        int       `json:"version"`
+	Generation     string    `json:"generation"`
+	Domain         string    `json:"domain,omitempty"`
+	Domains        []string  `json:"domains"`
+	RetiredDomains []string  `json:"retiredDomains"`
+	Issuer         string    `json:"issuer"`
+	Host           string    `json:"host"`
+	Port           int       `json:"port"`
+	Username       string    `json:"smtpUsername"`
+	Password       string    `json:"smtpPassword"`
 	DKIM           []DKIMKey `json:"dkim,omitempty"` // absent before DKIM signing existed
 }
 
