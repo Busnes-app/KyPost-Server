@@ -277,11 +277,18 @@ func (s *LifecycleStore) syncNativeDirectory(w authorityWriter, key string, d Di
 // the lock is not reentrant. It is a flock shared by every lifecycle write in
 // every process, so hold it briefly: local disk work only, never network I/O.
 func (s *LifecycleStore) LockDirectory() (release func(), err error) {
-	return fsutil.LockFile(s.path)
+	return s.LockDirectoryContext(context.Background())
 }
 
 func (s *LifecycleStore) LockDirectoryContext(ctx context.Context) (release func(), err error) {
-	return fsutil.LockFileContext(ctx, s.path)
+	return fsutil.LockFileGated(ctx, s.path)
+}
+
+// lockDirectoryShared is the directory fence for a read-only decision such as
+// admission: it excludes every writer but not other readers. Nothing under it
+// may write authority, users or a mailbox.
+func (s *LifecycleStore) lockDirectoryShared(ctx context.Context) (release func(), err error) {
+	return fsutil.LockFileShared(ctx, s.path)
 }
 
 // Directory returns the last applied state for a subject, and whether the

@@ -501,7 +501,7 @@ func (s *NativeDomainStore) RetireDomain(ctx context.Context, domain, stateRoot,
 		return ErrNativeDomainInUse
 	}
 	life := NewLifecycleStore(filepath.Dir(s.path))
-	releaseDirectory, err := fsutil.LockFileContext(ctx, life.path)
+	releaseDirectory, err := life.LockDirectoryContext(ctx)
 	if err != nil {
 		return err
 	}

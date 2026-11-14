@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -24,7 +23,7 @@ func (s *LifecycleStore) AdmitNativeMailbox(ctx context.Context, stateRoot, issu
 func (s *LifecycleStore) AdmitOpenMailbox(ctx context.Context, stateRoot, issuer, userID, mailboxID string, accounts *users.Store, held *mailbox.Prepared) (NativeAssignment, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	release, err := fsutil.LockFileContext(ctx, s.path)
+	release, err := s.lockDirectoryShared(ctx)
 	if err != nil {
 		return NativeAssignment{}, err
 	}

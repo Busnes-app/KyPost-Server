@@ -69,9 +69,12 @@ func (s *LifecycleStore) authority() authorityStore { return storeAuthority{s} }
 
 // update is one authority write under the directory lock.
 func (s *LifecycleStore) update(fn func(authorityWriter) error) error {
-	return fsutil.WithFileLock(s.path, func() error {
-		return s.authority().Update(context.Background(), fn)
-	})
+	release, err := s.LockDirectory()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.authority().Update(context.Background(), fn)
 }
 
 // jsonAuthority serves authority from sso-lifecycle.json and, beside it,

@@ -175,6 +175,7 @@ func preparedSource(dir string, owner Owner, address string, limits Limits) (str
 // instead of reopening both databases. Each check also requires both paths to
 // still name the files the handles opened.
 type Prepared struct {
+	mu                  sync.Mutex // an open client's checks run concurrently under a shared fence
 	dir                 string
 	state, mail         *heldDB
 	stateFile, mailFile os.FileInfo
@@ -297,6 +298,8 @@ func closeIdleAdmissions() {
 
 // Close releases the handles.
 func (p *Prepared) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	for _, db := range []*heldDB{p.state, p.mail} {
 		if db != nil {
 			db.Close()
@@ -346,6 +349,8 @@ func (h *heldDB) Close() {
 // check opens the handles on first use, recording each file before its first
 // connection; a file still in place after the queries is the one they read.
 func (p *Prepared) check(owner Owner, address string, limits Limits) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	dir := p.dir
 	for _, path := range []string{dir, filepath.Join(dir, "mailbox")} {
 		info, err := os.Lstat(path)

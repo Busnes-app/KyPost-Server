@@ -146,7 +146,7 @@ func (s *LifecycleStore) withNativeMailboxes(ctx context.Context, stateRoot stri
 		return err
 	}
 	defer release()
-	releaseDirectory, err := fsutil.LockFileContext(ctx, s.path)
+	releaseDirectory, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return err
 	}

@@ -73,7 +73,7 @@ func (s *LifecycleStore) AllocateNativeAccount(ctx context.Context, stateRoot, i
 	if _, nowConfigured := current.Domains[domain]; configured != nowConfigured || configured && !current.CurrentProof(proof) {
 		return users.User{}, ErrNativeDomain
 	}
-	releaseDirectory, err := fsutil.LockFileContext(ctx, s.path)
+	releaseDirectory, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return users.User{}, err
 	}
