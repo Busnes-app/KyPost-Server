@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Link } from "react-router";
 import { useAuth } from "../../auth";
 import { credentialFields, deriveCredential } from "../../api/auth";
@@ -46,17 +46,25 @@ const statusText = { pass: { label: "Pass", tone: "success" }, warn: { label: "W
 type DirectRelay = Extract<MailRelay, { kind: "configured" }>;
 type DkimAction = "dkim-rotate" | "dkim-confirm" | "dkim-emergency";
 // Key actions go through the form's confirmed request flow (account credential or KySignOn step-up).
-type KeyActions = { unlocked: boolean; busy: boolean; run: (action: DkimAction, domain: string) => void };
+// focus names the domain whose last key action just finished, so its keys get keyboard focus;
+// it is a new object for every finished action.
+type KeyActions = { unlocked: boolean; busy: boolean; focus: { domain: string } | null; run: (action: DkimAction, domain: string) => void };
 
 // One domain's DKIM selectors: the signing key, a waiting next key and old
 // keys still published or ready to delete, with the step-up-gated actions.
 function DkimKeys({ relay, domain, keys }: { relay: DirectRelay; domain: string; keys: KeyActions }) {
   const [accepted, setAccepted] = useState(false);
+  const group = useRef<HTMLDivElement>(null);
+  // After a key action finishes, return focus to this domain's keys, whose
+  // controls may stay disabled until the next confirmation.
+  const focusNextStep = useEffectEvent(() => { if (keys.focus?.domain === domain) group.current?.focus(); });
+  useEffect(() => { focusNextStep(); }, [keys.focus]);
   const records = relay.dkim.filter(r => r.domain === domain);
   const active = records.find(r => r.state === "active");
   const next = records.find(r => r.state === "next");
   const locked = !keys.unlocked || keys.busy;
-  return <div className="mail-dkim-domain" role="group" aria-label={`DKIM keys for ${domain}`}>
+  const why = keys.unlocked ? undefined : "dkim-unlock-hint";
+  return <div ref={group} tabIndex={-1} className="mail-dkim-domain" role="group" aria-label={`DKIM keys for ${domain}`}>
     {active && <>
       <RecordCard label="DKIM" domain={domain} name={active.recordName} value={active.recordValue} />
       <p>Signing selector <code>{active.selector}</code>, {active.ageDays} {active.ageDays === 1 ? "day" : "days"} old. Rotation recommended from {at(active.rotationRecommendedAt / 1000)}.</p>
@@ -70,17 +78,17 @@ function DkimKeys({ relay, domain, keys }: { relay: DirectRelay; domain: string;
     {records.filter(r => r.state === "removable").map(r => <p key={r.selector}><code>{r.recordName}</code> can now be removed from DNS</p>)}
     <div className="config-actions">
       {next
-        ? <button type="button" className="button secondary" disabled={locked} onClick={() => keys.run("dkim-confirm", domain)}>Check and switch</button>
-        : <button type="button" className="button secondary" aria-label={`Rotate DKIM key for ${domain}`} disabled={locked} onClick={() => keys.run("dkim-rotate", domain)}>Rotate DKIM key</button>}
+        ? <button type="button" className="button secondary" aria-label={`Check and switch DKIM key for ${domain}`} aria-describedby={why} disabled={locked} onClick={() => keys.run("dkim-confirm", domain)}>Check and switch</button>
+        : <button type="button" className="button secondary" aria-label={`Rotate DKIM key for ${domain}`} aria-describedby={why} disabled={locked} onClick={() => keys.run("dkim-rotate", domain)}>Rotate DKIM key</button>}
     </div>
     <details>
       <summary>Emergency: rotate now</summary>
-      <p className="notice notice-warning">Mail from {domain} will fail DKIM until you publish the new record. Receivers may reject it or mark it as spam.{active && <> Remove the old record <code>{active.recordName}</code> now.</>} Use this only if the current key may be exposed.</p>
+      <p className="notice notice-warning">Mail from {domain} will fail DKIM until you publish the new record. Receivers may reject it or mark it as spam.{active && <> Remove the old record <code>{active.recordName}</code> now.</>} Use this only if the current key may be exposed.{next && " The new key you were about to publish is replaced; publish the record that appears after this."}</p>
       <label className="config-checkbox">
         <input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} />
         <span>I accept that mail will fail DKIM until the new record is published</span>
       </label>
-      <button type="button" className="button secondary" disabled={locked || !accepted} onClick={() => { setAccepted(false); keys.run("dkim-emergency", domain); }}>Rotate now</button>
+      <button type="button" className="button secondary" aria-label={`Emergency rotate DKIM key for ${domain}`} aria-describedby={why} disabled={locked || !accepted} onClick={() => { setAccepted(false); keys.run("dkim-emergency", domain); }}>Rotate now</button>
     </details>
   </div>;
 }
@@ -111,7 +119,7 @@ function DirectDelivery({ relay, keys }: { relay: DirectRelay; keys: KeyActions 
   return <section className="config-card" aria-labelledby="direct-delivery-heading">
     <h4 id="direct-delivery-heading">Direct delivery</h4>
     <p>KyPost delivers straight to recipient mail servers from {relay.host} and signs every message with the DKIM key of its From domain. Publish these records at your DNS provider; KyPost does not change DNS.</p>
-    {!keys.unlocked && <p className="config-muted">Confirm key actions with your account password above.</p>}
+    {!keys.unlocked && <p id="dkim-unlock-hint" className="config-muted">Confirm key actions with your account password above.</p>}
     <div className="mail-domain-records">
       {relay.domains.map(domain => <div key={domain}>
         <DkimKeys relay={relay} domain={domain} keys={keys} />
@@ -156,6 +164,7 @@ function MailDomainForm() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [warning, setWarning] = useState("");
+  const [keyFocus, setKeyFocus] = useState<{ domain: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [domain, setDomain] = useState("");
   const [host, setHost] = useState("");
@@ -259,7 +268,7 @@ function MailDomainForm() {
       }
     } finally {
       inFlight.current = false;
-      if (live.current) { setPassword(""); setSecret(""); setUsername(""); setBusy(false); }
+      if (live.current) { setPassword(""); setSecret(""); setUsername(""); setBusy(false); setKeyFocus(action.startsWith("dkim-") ? { domain: target } : null); }
     }
   }
   const unlocked = ssoSession || password.length > 0;
@@ -385,7 +394,7 @@ function MailDomainForm() {
       </>}
     </fieldset>
     {busy && <p role="status">Working…</p>}
-    {relay?.kind === "configured" && relay.mode === "direct" && <DirectDelivery key={`${relay.generation}:${relay.domains.join()}`} relay={relay} keys={{ unlocked, busy, run: (action, domain) => void act(action, domain) }} />}
+    {relay?.kind === "configured" && relay.mode === "direct" && <DirectDelivery key={`${relay.generation}:${relay.domains.join()}`} relay={relay} keys={{ unlocked, busy, focus: keyFocus, run: (action, domain) => void act(action, domain) }} />}
     <h4>3. Back up and test</h4>
     <p>Configure <Link to="/admin/server?tab=backup">sealed backups</Link> and run a restore drill. Assign a new test identity in KyIdentity, then send from its primary address to a recipient you control. Provider acceptance does not prove inbox placement.</p>
     <p>Public receiving is not ready from this screen. A qualified receiving gateway must hold accepted mail until KyPost commits it. Complete controlled gateway, TLS, DNS and restore qualification before changing production MX.</p>

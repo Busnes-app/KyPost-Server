@@ -165,10 +165,14 @@ func TestDKIMRotationWaitsForLiveDNS(t *testing.T) {
 	ctx := context.Background()
 	other, _ := testDKIMKey("example.test").publicRecord()
 	for name, serve := range map[string]func(f rotationFixture, next DKIMKey){
-		"missing":  func(rotationFixture, DKIMKey) {},
-		"other-p":  func(f rotationFixture, next DKIMKey) { f.dns.txt[next.recordName()+"."] = []string{other} },
-		"servfail": func(f rotationFixture, next DKIMKey) { f.dns.errs[next.recordName()+"."] = &net.DNSError{IsTemporary: true} },
-		"timeout":  func(f rotationFixture, next DKIMKey) { f.dns.errs[next.recordName()+"."] = &net.DNSError{IsTimeout: true} },
+		"missing": func(rotationFixture, DKIMKey) {},
+		"other-p": func(f rotationFixture, next DKIMKey) { f.dns.txt[next.recordName()+"."] = []string{other} },
+		"servfail": func(f rotationFixture, next DKIMKey) {
+			f.dns.errs[next.recordName()+"."] = &net.DNSError{IsTemporary: true}
+		},
+		"timeout": func(f rotationFixture, next DKIMKey) {
+			f.dns.errs[next.recordName()+"."] = &net.DNSError{IsTimeout: true}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newRotation(t)
@@ -472,14 +476,20 @@ func TestDKIMRotationCrashResume(t *testing.T) {
 				}
 				return err
 			}},
-		{"switch", false, prepared, func(f rotationFixture, now time.Time) error { _, _, _, err := f.r.Confirm(ctx, now, "example.test"); return err }},
+		{"switch", false, prepared, func(f rotationFixture, now time.Time) error {
+			_, _, _, err := f.r.Confirm(ctx, now, "example.test")
+			return err
+		}},
 		{"destruction", true, func(t *testing.T, f rotationFixture) time.Time {
 			prepared(t, f)
 			f.confirm(t, time.Now())
 			return f.key(t, DKIMRetiring).KeepPublishedUntil
 		}, func(f rotationFixture, now time.Time) error { _, _, err := f.r.Tick(ctx, now); return err }},
 		{"emergency", false, func(*testing.T, rotationFixture) time.Time { return time.Now() },
-			func(f rotationFixture, now time.Time) error { _, _, err := f.r.RotateNow(ctx, now, "example.test"); return err }},
+			func(f rotationFixture, now time.Time) error {
+				_, _, err := f.r.RotateNow(ctx, now, "example.test")
+				return err
+			}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newRotation(t)

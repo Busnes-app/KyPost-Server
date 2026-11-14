@@ -5,6 +5,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -25,21 +27,21 @@ import (
 )
 
 type dkimEntry struct {
-	Domain, Selector, State, RecordName, RecordType, RecordValue string
-	CreatedAt, RotationRecommendedAt, RetiredAt, KeepPublishedUntil  *time.Time
-	AgeDays                                                          *int
-	RotationRecommended                                              *bool
+	Domain, Selector, State, RecordName, RecordType, RecordValue    string
+	CreatedAt, RotationRecommendedAt, RetiredAt, KeepPublishedUntil *time.Time
+	AgeDays                                                         *int
+	RotationRecommended                                             *bool
 }
 
 type dkimFixture struct {
-	t            *testing.T
-	s            *Server
-	token, csrf  string
-	secret       string
-	resolver     *recordDNS
+	t             *testing.T
+	s             *Server
+	token, csrf   string
+	secret        string
+	resolver      *recordDNS
 	path, keyPath string
-	now          time.Time
-	bodies       [][]byte
+	now           time.Time
+	bodies        [][]byte
 }
 
 // newDKIMFixture saves a direct profile for example.test through the API.
@@ -346,24 +348,25 @@ func TestDKIMKeyLockRequiresStepUp(t *testing.T) {
 		case "wrong password":
 			body["authSecret"] = userAuthSecret(f.s, f.mustUser().ID, "not-the-password")
 		case "sso without grant":
-			f.s.sessMu.Lock()
-			session := f.s.sessions[f.token]
-			session.SSOKySignOn, session.SSOAppAdmin = true, true
-			session.SSO = sso.SessionIdentity{Issuer: f.s.ssoStore.Load().IssuerURL, Subject: "rotation-admin-sub"}
-			f.s.sessions[f.token] = session
-			f.s.sessMu.Unlock()
-		case "no digest":
-			f.s.sessMu.Lock()
-			session := f.s.sessions[f.token]
-			session.SSOKySignOn, session.SSOAppAdmin = true, true
-			f.s.sessions[f.token] = session
-			f.s.sessMu.Unlock()
+			f.useKySignOn()
+			body["authSecret"] = ""
+		case "no digest", "sso with grant":
+			// A KySignOn session holding a verified grant for this exact request:
+			// only the route's action digest decides the outcome.
+			delete(body, "authSecret")
 			raw, _ := json.Marshal(body)
+			grant := f.grantStepUp(method, a.path, raw)
 			req := httptest.NewRequest(method, a.path, bytes.NewReader(raw))
 			req.AddCookie(&http.Cookie{Name: "kypost_session", Value: f.token})
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-CSRF-Token", f.csrf)
+			req.Header.Set(stepUpHeader, grant)
 			w := httptest.NewRecorder()
+			if mode == "sso with grant" {
+				f.s.routes().ServeHTTP(w, req)
+				f.bodies = append(f.bodies, w.Body.Bytes())
+				return w.Code
+			}
 			handler := map[string]http.HandlerFunc{"/api/admin/mail-relay": f.s.handleNativeMailRelay, "/api/admin/mail-relay/dkim/rotate": f.s.handleDKIMRotate, "/api/admin/mail-relay/dkim/confirm": f.s.handleDKIMConfirm}[a.path]
 			f.s.withAdmin(handler)(w, req)
 			f.bodies = append(f.bodies, w.Body.Bytes())
@@ -383,7 +386,8 @@ func TestDKIMKeyLockRequiresStepUp(t *testing.T) {
 				want := send(newDKIMFixture(t), relayPut, mode)
 				before := f.fileBytes()
 				got := send(f, a, mode)
-				if got < 400 || got != want || !bytes.Equal(before, f.fileBytes()) {
+				// 403: credential or KySignOn grant missing; 500: no action digest to bind a grant to.
+				if got != map[string]int{"no secret": 403, "wrong password": 403, "sso without grant": 403, "no digest": 500}[mode] || got != want || !bytes.Equal(before, f.fileBytes()) {
 					t.Fatalf("%s %s: got %d, relay PUT %d, or the file changed", mode, a.name, got, want)
 				}
 				seen := map[string]mailmsg.DKIMKey{}
@@ -395,14 +399,19 @@ func TestDKIMKeyLockRequiresStepUp(t *testing.T) {
 		}
 	}
 	t.Run("valid step-up", func(t *testing.T) {
-		for _, a := range actions {
-			f := newDKIMFixture(t)
-			if a.name == "confirm" {
-				f.rotate(map[string]any{"domain": "example.test"})
-				f.publish(f.entries()[1])
-			}
-			if got := send(f, a, "valid"); got != 200 {
-				t.Fatal(a.name, got)
+		// The same grant that the no-digest case is refused with succeeds
+		// through the registered route, so that refusal is the digest's.
+		for _, mode := range []string{"valid", "sso with grant"} {
+			for _, a := range actions {
+				f := newDKIMFixture(t)
+				if a.name == "confirm" {
+					f.rotate(map[string]any{"domain": "example.test"})
+					f.publish(f.entries()[1])
+					f.s.deliverabilityCooldown = newCooldown(10 * time.Second)
+				}
+				if got := send(f, a, mode); got != 200 {
+					t.Fatal(mode, a.name, got)
+				}
 			}
 		}
 	})
@@ -416,11 +425,47 @@ func TestDKIMKeyLockRequiresStepUp(t *testing.T) {
 			routes = append(routes, string(m[1]))
 		}
 		slices.Sort(routes)
+		// Every key action keeps the relay PUT's wrappers.
+		for _, route := range []string{"PUT /api/admin/mail-relay", "POST /api/admin/mail-relay/dkim/rotate", "POST /api/admin/mail-relay/dkim/confirm"} {
+			if !regexp.MustCompile(`mux\.HandleFunc\("` + regexp.QuoteMeta(route) + `", s\.withAdmin\(withActionDigest\(s\.`).Match(raw) {
+				t.Fatal("route lost withAdmin(withActionDigest(...))", route)
+			}
+		}
 		want := []string{"GET /api/admin/mail-relay", "GET /api/admin/mail-relay/deliverability", "POST /api/admin/mail-relay/dkim/confirm", "POST /api/admin/mail-relay/dkim/rotate", "POST /api/admin/mail-relay/test", "PUT /api/admin/mail-relay"}
 		if !slices.Equal(routes, want) {
 			t.Fatal("mail-relay routes", routes)
 		}
 	})
+}
+
+// useKySignOn switches the fixture to a KySignOn administrator session.
+func (f *dkimFixture) useKySignOn() {
+	f.t.Helper()
+	admin, err := f.s.users.CreateSSOUser("rotation-sso-admin", users.RoleAdmin, "rotation-admin-sub", "", "")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.token, f.csrf = mintSessionForTest(f.s, admin.ID)
+	f.s.sessMu.Lock()
+	session := f.s.sessions[f.token]
+	session.SSOKySignOn, session.SSOAppAdmin = true, true
+	session.SSO = sso.SessionIdentity{Issuer: f.s.ssoStore.Load().IssuerURL, Subject: "rotation-admin-sub"}
+	f.s.sessions[f.token] = session
+	f.s.sessMu.Unlock()
+}
+
+// grantStepUp switches to a KySignOn session and records a verified grant for
+// exactly this request, as a completed popup would.
+func (f *dkimFixture) grantStepUp(method, path string, body []byte) string {
+	f.useKySignOn()
+	h := sha256.New()
+	h.Write([]byte(method + "\x00" + path + "\x00application/json\x00"))
+	h.Write(body)
+	id := "dkim-grant-" + hex.EncodeToString(h.Sum(nil))[:16]
+	f.s.stepUpMu.Lock()
+	f.s.stepUps[id] = ssoStepUp{session: f.token, action: hex.EncodeToString(h.Sum(nil)), created: time.Now(), expires: time.Now().Add(time.Minute), started: true, verified: true}
+	f.s.stepUpMu.Unlock()
+	return id
 }
 
 func (f *dkimFixture) mustUser() users.User {
