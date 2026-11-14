@@ -206,3 +206,4 @@ the old way: `calendarReply` on `POST /api/mail/send`. The web client does
 the same, after the same confirmation, on 404 `no_event`: an invitation
 KyCalendar never received (unaligned, encrypted, or older than pairing) can
 still be answered.
+Native clients follow [NATIVE-RSVP.md](NATIVE-RSVP.md).

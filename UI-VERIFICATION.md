@@ -139,3 +139,7 @@ Captured with `captures/drivers/kypost-440-signatures.mjs` (Playwright Chromium,
 ## Suite integrations wave 1 — 2026-11-14
 
 Invitation card updates, Cancelled and Join (#606), and New meeting / Reply with meeting (#607). Before and after captures (1440×900 and 390×844, Busnes Light and Dark) come from a disposable server and the loopback kypost-demo-IMAP fixture with three added invitation messages, signed in for real. The meeting captures stub `GET /api/suite/apps` in the browser. Conditions, what each driver asserted, and what was not exercised are in [docs/ui-suite-wave1-2026-11-14/README.md](docs/ui-suite-wave1-2026-11-14/README.md).
+
+## Organisation people in recipient autocomplete — 2026-11-14
+
+Captured with `docs/ui-suite-2026-11-14/people/capture-driver.mjs.txt` (Playwright Chromium, 1440×900 and 390×844, Busnes Light and Dark) against a disposable KyPost server and the kypost-demo-IMAP fixture, through real sign-in, typing `al` in To. Before uses the `origin/main` frontend (no contacts match, "No contacts found"); after shows the "Organisation" group. `/api/suite/people` is a Playwright-routed fixture (no KyIdentity was running). No view scrolls sideways.

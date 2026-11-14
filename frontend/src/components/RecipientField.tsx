@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, KeyboardEvent } from "react";
-import type { Contact } from "../api/contacts";
 import type { PGPRecipientTier } from "../api/pgp";
-import { contactToToken, isPlausibleEmail } from "../lib/recipients";
+import { isPlausibleEmail } from "../lib/recipients";
 import type { RecipientFieldState, RecipientToken } from "../lib/recipients";
-import { useContactAutocomplete } from "../hooks/useContactAutocomplete";
+import { useContactAutocomplete, type Suggestion } from "../hooks/useContactAutocomplete";
 import { RecipientAutocomplete } from "./RecipientAutocomplete";
 
 // recipientTierBadge maps a recipients-check tier to the short label shown
@@ -54,12 +53,9 @@ export function RecipientField({ label, state, onDraftChange, onAddToken, onRemo
     setActiveIndex(0);
   }, [results]);
 
-  function selectContact(contact: Contact) {
+  function selectContact(suggestion: Suggestion) {
     justHandledRef.current = true;
-    const token = contactToToken(contact);
-    if (token) {
-      onAddToken(token);
-    }
+    onAddToken({ email: suggestion.email, name: suggestion.name || undefined, isCustom: false });
     onDraftChange("");
     setFieldError("");
     setDismissed(false);
