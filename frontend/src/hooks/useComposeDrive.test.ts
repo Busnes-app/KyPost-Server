@@ -134,3 +134,23 @@ it("holds a send with KyDrive links to people outside the organisation", async (
   expect(ok).toBe(false);
   expect(view.result.current.drive.driveOutside).toMatchObject({ addresses: ["ann@example.com"], unverified: true, canAttach: false });
 });
+
+it("drops a queued batch when compose is reset, so nothing reaches the next draft", async () => {
+  const { quill, setError, view } = setup();
+  await waitFor(() => expect(view.result.current.drive.driveStatus.available).toBe(true));
+  let release!: () => void;
+  api.ticket.mockImplementationOnce(() => new Promise((resolve) => {
+    release = () => resolve({ uploadUrl: "https://drive.example.com/api/suite/upload/t", expires: "", maxChunk: 64 });
+  }));
+  act(() => { view.result.current.drive.offerDrive([file("first.bin", 1), file("second.bin", 2)]); });
+  let done!: Promise<void>;
+  act(() => { done = view.result.current.drive.acceptDriveOffer(); });
+  await waitFor(() => expect(api.ticket).toHaveBeenCalledTimes(1));
+  act(() => view.result.current.drive.resetDrive());
+  release();
+  await act(() => done);
+  expect(api.ticket).toHaveBeenCalledTimes(1);
+  expect(api.link).not.toHaveBeenCalled();
+  expect(quill.inserted).toEqual([]);
+  expect(setError).not.toHaveBeenCalled();
+});

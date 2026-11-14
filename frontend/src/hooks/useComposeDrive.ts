@@ -36,6 +36,8 @@ export function useComposeDrive({
   // Link URL -> the file behind it, for "attach instead"; this window only.
   const files = useRef(new Map<string, File>());
   const seq = useRef(0);
+  // Bumped by resetDrive: work started for an earlier compose never touches the next one.
+  const generation = useRef(0);
 
   useEffect(() => {
     if (!composeOpen) return;
@@ -45,6 +47,7 @@ export function useComposeDrive({
   }, [composeOpen]);
 
   function resetDrive() {
+    generation.current += 1;
     for (const c of aborts.current.values()) c.abort();
     aborts.current.clear();
     files.current.clear();
@@ -64,22 +67,26 @@ export function useComposeDrive({
   }
 
   /** Uploads one file and links it. A failure leaves the draft as it was. */
-  async function uploadToDrive(file: File): Promise<boolean> {
+  async function uploadToDrive(file: File, gen = generation.current): Promise<boolean> {
+    if (gen !== generation.current) return false;
     const id = ++seq.current;
     const abort = new AbortController();
     aborts.current.set(id, abort);
     setDriveUploads((u) => [...u, { id, name: file.name, loaded: 0, size: file.size }]);
     try {
+      const stale = () => abort.signal.aborted || gen !== generation.current;
       const ticket = await requestUploadTicket(file.name, file.size);
+      if (stale()) return false;
       const saved = await uploadToTicket(ticket, file, (loaded) =>
         setDriveUploads((u) => u.map((x) => (x.id === id ? { ...x, loaded } : x))), abort.signal);
+      if (stale()) return false;
       const link = await createDriveLink(saved.file_id);
-      if (abort.signal.aborted) return false;
+      if (stale()) return false;
       insertLink(saved.name || file.name, link.url, file.size, link.expires);
       files.current.set(link.url, file);
       return true;
     } catch (e) {
-      if (!abort.signal.aborted) setError(`Upload to KyDrive failed: ${driveMessage(e)}`);
+      if (!abort.signal.aborted && gen === generation.current) setError(`Upload to KyDrive failed: ${driveMessage(e)}`);
       return false;
     } finally {
       aborts.current.delete(id);
@@ -100,16 +107,21 @@ export function useComposeDrive({
 
   async function acceptDriveOffer() {
     const picked = driveOffer;
+    const gen = generation.current;
     setDriveOffer([]);
-    for (const f of picked) await uploadToDrive(f);
+    for (const f of picked) {
+      if (gen !== generation.current) return;
+      await uploadToDrive(f, gen);
+    }
   }
 
   /** Moves an existing attachment to KyDrive; it stays attached if that fails. */
   async function attachmentToDrive(index: number) {
     const a = attachments[index];
     if (!a) return;
+    const gen = generation.current;
     const bytes = Uint8Array.from(atob(a.dataBase64), (c) => c.charCodeAt(0));
-    if (await uploadToDrive(new File([bytes], a.name, { type: a.mimeType }))) {
+    if (await uploadToDrive(new File([bytes], a.name, { type: a.mimeType }), gen)) {
       setAttachments((current) => current.filter((x) => x !== a));
     }
   }
