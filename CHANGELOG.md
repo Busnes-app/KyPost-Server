@@ -20,6 +20,11 @@ non-prerelease version.
 
 ### Added
 
+- KyCalendar can send invitations, cancellations and replies from a
+  KyPost-hosted (native) mailbox. They go through the native outbox and domain
+  relay with the same checks, sending quota and Sent copy as an IMAP account;
+  `native_unsupported` is gone.
+
 - Direct delivery signs every message with DKIM. Saving a direct profile
   creates one RSA-2048 key per sending domain, sealed with the relay profile;
   keys survive mode switches, and `migrate-native` adds them to direct profiles

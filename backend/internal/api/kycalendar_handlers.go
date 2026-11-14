@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/mail"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,8 +19,10 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sendas"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -122,7 +125,8 @@ func (s *Server) sendITIP(ctx context.Context, eventID string, body []byte) *iti
 		return refuse(http.StatusNotFound, "no_user", "no active KyPost account for this subject")
 	case err != nil:
 		return errUnavailable
-	case !u.Active || u.SSOLinkRevokedAt != 0:
+	// Dedicated administrator identities have no mailbox in native mode.
+	case !u.Active || u.SSOLinkRevokedAt != 0 || s.nativeMail && u.Role == users.RoleAdmin:
 		return refuse(http.StatusNotFound, "no_user", "no active KyPost account for this subject")
 	}
 	settings, err := config.LoadUserSettings(s.userSettingsPath(u.ID))
@@ -132,26 +136,61 @@ func (s *Server) sendITIP(ctx context.Context, eventID string, body []byte) *iti
 	if !settings.KyCalendarOn(s.kycal.DefaultOn()) {
 		return refuse(http.StatusConflict, "sending_off", "the user has not let KyCalendar send from their mailbox")
 	}
-	if u.NativeMailboxIssuer != "" || u.NativeMailboxSource != "" {
-		return refuse(http.StatusConflict, "native_unsupported", "KyCalendar sending is not available for KyPost-hosted mailboxes yet")
-	}
-	payload, exists, err := s.outboundMailConfig(u.ID)
-	if err != nil {
+	// deliver sends the built message and files its Sent copy.
+	var deliver func(wire, sent []byte) *itipRefusal
+	var headerFrom, envelopeFrom string
+	a, native, err := s.nativeMailboxAssignment(ctx, u.ID, "")
+	switch {
+	case errors.Is(err, sso.ErrNativeAdministrator):
+		return refuse(http.StatusNotFound, "no_user", "no active KyPost account for this subject")
+	case errors.Is(err, sso.ErrNativeMailDisabled):
+		return refuse(http.StatusConflict, "no_mailbox", "native mail is off on this server")
+	case err != nil:
 		return errUnavailable
-	}
-	smtpHost, smtpPort, addr, err := mailmsg.ResolveSMTPTarget(payload)
-	accountAddr := sanitizeHeaderValue(payload.Username)
-	if !exists || err != nil || accountAddr == "" {
-		return refuse(http.StatusConflict, "no_mailbox", "the user has no outgoing mail server configured")
-	}
-	headerFrom, envelopeFrom, status, _ := resolveMailFrom(accountAddr, req.From, func() (*sendas.Store, error) {
-		return s.userSendAsStore(u.ID)
-	})
-	if status == http.StatusInternalServerError {
-		return errUnavailable
-	}
-	if status != 0 {
-		return refuse(http.StatusConflict, "bad_from", "from is neither the account address nor a verified send-as alias")
+	case native:
+		envelopeFrom = strings.ToLower(strings.TrimSpace(req.From))
+		headerFrom = envelopeFrom
+		mailboxID, f := s.nativeITIPMailbox(ctx, u.ID, a, envelopeFrom)
+		if f != nil {
+			return f
+		}
+		deliver = func(wire, sent []byte) *itipRefusal {
+			return s.sendNativeITIP(ctx, u, mailboxID, envelopeFrom, recipients, wire, sent)
+		}
+	default:
+		payload, exists, err := s.outboundMailConfig(u.ID)
+		if err != nil {
+			return errUnavailable
+		}
+		smtpHost, smtpPort, addr, err := mailmsg.ResolveSMTPTarget(payload)
+		accountAddr := sanitizeHeaderValue(payload.Username)
+		if !exists || err != nil || accountAddr == "" {
+			return refuse(http.StatusConflict, "no_mailbox", "the user has no outgoing mail server configured")
+		}
+		var status int
+		headerFrom, envelopeFrom, status, _ = resolveMailFrom(accountAddr, req.From, func() (*sendas.Store, error) {
+			return s.userSendAsStore(u.ID)
+		})
+		if status == http.StatusInternalServerError {
+			return errUnavailable
+		}
+		if status != 0 {
+			return refuse(http.StatusConflict, "bad_from", "from is neither the account address nor a verified send-as alias")
+		}
+		deliver = func(wire, sent []byte) *itipRefusal {
+			if err := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, payload.Username, payload.Password, envelopeFrom, recipients, wire); err != nil &&
+				!errors.Is(err, mailmsg.ErrSMTPAcceptedThenFailed) {
+				f := refuse(http.StatusServiceUnavailable, "smtp_failed", "the user's mail server did not accept the message; retry later")
+				f.keep = errors.Is(err, mailmsg.ErrSMTPAcceptanceUncertain)
+				return f
+			}
+			if mailClient, err := s.userMailClient(u.ID); err == nil {
+				if err := mailClient.SaveSent(ctx, imapadapter.DraftMessage{To: recipients, Raw: sent}); err != nil {
+					s.logger.Error("kycalendar send not saved to Sent", "event_id", eventID)
+				}
+			}
+			return nil
+		}
 	}
 
 	it, ics, err := mailmsg.ParseITIP(req.ICS, req.Method)
@@ -196,7 +235,7 @@ func (s *Server) sendITIP(ctx context.Context, eventID string, body []byte) *iti
 		return errUnavailable
 	}
 
-	msg, sent, _ := composeSend(mailmsg.Message{
+	wire, sent, _ := composeSend(mailmsg.Message{
 		From:           headerFrom,
 		To:             recipients,
 		Subject:        mailmsg.ITIPSubject(it),
@@ -204,18 +243,99 @@ func (s *Server) sendITIP(ctx context.Context, eventID string, body []byte) *iti
 		Calendar:       ics,
 		CalendarMethod: req.Method,
 	}, nil)
-	if err := mailmsg.SMTPDeliver(smtpHost, smtpPort, addr, payload.Username, payload.Password, envelopeFrom, recipients, msg); err != nil &&
-		!errors.Is(err, mailmsg.ErrSMTPAcceptedThenFailed) {
-		f := refuse(http.StatusServiceUnavailable, "smtp_failed", "the user's mail server did not accept the message; retry later")
-		f.keep = errors.Is(err, mailmsg.ErrSMTPAcceptanceUncertain)
-		return f
+	return deliver(wire, sent)
+}
+
+// nativeITIPMailbox picks the user's native mailbox that owns from as an
+// active address: the primary, or an extra one admitted for this user.
+func (s *Server) nativeITIPMailbox(ctx context.Context, userID string, primary sso.NativeAssignment, from string) (string, *itipRefusal) {
+	relay, exists, err := mailmsg.ReadDomainRelay(filepath.Join(s.configDir, "native-relay.json"), filepath.Join(config.SecretDir(), "native-relay.key"))
+	noRelay := refuse(http.StatusConflict, "no_mailbox", "no outgoing relay is configured for this address's domain")
+	if err != nil || !exists {
+		return "", noRelay
 	}
-	if mailClient, err := s.userMailClient(u.ID); err == nil {
-		if err := mailClient.SaveSent(ctx, imapadapter.DraftMessage{To: recipients, Raw: sent}); err != nil {
-			s.logger.Error("kycalendar send not saved to Sent", "event_id", eventID)
+	badFrom := refuse(http.StatusConflict, "bad_from", "from is not an active address of the user's mailbox")
+	mailboxID := userID
+	if from != primary.Address {
+		x, err := s.ssoLifecycle.NativeAddress(from)
+		if err != nil {
+			return "", errUnavailable
+		}
+		if x.State != "active" || x.Mailbox == "" {
+			return "", badFrom
+		}
+		if x.Mailbox != primary.Owner.Mailbox {
+			_, _, err := s.nativeMailboxAssignment(ctx, userID, x.Mailbox)
+			if errors.Is(err, sso.ErrNativeProvisioning) {
+				return "", badFrom
+			}
+			if err != nil {
+				return "", errUnavailable
+			}
+			mailboxID = x.Mailbox
 		}
 	}
-	return nil
+	if !relay.Sends(sso.AddressDomain(from)) {
+		return "", noRelay
+	}
+	return mailboxID, nil
+}
+
+// sendNativeITIP sends through the native outbox, which files Sent. The
+// event ID is forgotten only when nothing went out and nothing will: the job
+// was never queued, or every delivery failed for good. Otherwise a retry of
+// the same event would queue a second copy.
+func (s *Server) sendNativeITIP(ctx context.Context, u users.User, mailboxID, from string, recipients []string, wire, sent []byte) *itipRefusal {
+	raw, err := mailmsg.NormalizeSMTPMessage(wire)
+	if err != nil {
+		return refuse(http.StatusUnprocessableEntity, "bad_ics", "the invitation cannot be sent as mail")
+	}
+	id, err := fsutil.NewUUIDv4()
+	if err != nil {
+		return errUnavailable
+	}
+	job := mailbox.OutboundJob{From: from, Deliveries: []mailbox.OutboundDelivery{{Recipients: recipients, Raw: raw}}, Sent: sent,
+		NativeSendEpoch: u.NativeSendEpoch, PGPRevision: u.PGPRevision}
+	if u.PGPKeyring != nil {
+		job.MaterialGeneration = u.PGPKeyring.MaterialGeneration
+	}
+	sender := s.nativeOutbound()
+	first, sendErr := sender.Send(ctx, mailboxID, id, job)
+	// Direct mode: one delivery per recipient; workers finish any left over.
+	for seq := 1; first.Independent && seq < first.Deliveries && ctx.Err() == nil; seq++ {
+		_, _ = sender.Submit(ctx, mailboxID, id, seq)
+	}
+	if first.Accepted {
+		if !first.SentSaved {
+			finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			if sender.FileSent(finish, mailboxID, id) != nil {
+				s.logger.Error("kycalendar send not saved to Sent", "correlation_id", id)
+			}
+			cancel()
+		}
+		return nil
+	}
+	f := refuse(http.StatusServiceUnavailable, "smtp_failed", "the mail relay did not accept the message; retry later")
+	if first.Deliveries == 0 && nativeRefusedBeforeQueue(sendErr) {
+		return f
+	}
+	f.keep = true
+	if statuses, _, err := sender.Status(context.WithoutCancel(ctx), mailboxID, id); err == nil && len(statuses) > 0 {
+		f.keep = slices.ContainsFunc(statuses, func(st mailbox.OutboundStatus) bool { return st.State != "failed" || st.NextAttempt != 0 })
+	}
+	s.logger.Info("kycalendar native send not confirmed", "correlation_id", id)
+	return f
+}
+
+// nativeRefusedBeforeQueue reports an authority refusal, which the outbox
+// returns only before it stores the job.
+func nativeRefusedBeforeQueue(err error) bool {
+	for _, target := range []error{sso.ErrNativeProvisioning, sso.ErrNativeOutboundStale, sso.ErrNativeDomain, sso.ErrNativeRestoreHold, mailmsg.ErrDomainRelay} {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
 }
 
 var itipBody = map[string]string{
