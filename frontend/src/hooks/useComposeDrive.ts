@@ -134,6 +134,7 @@ export function useComposeDrive({
   async function driveRecipientsOk(body: string, recipients: string[], sendAt?: Date): Promise<boolean> {
     const links = driveLinksIn(body, driveStatus.origin ?? "");
     if (links.length === 0 || recipients.length === 0) return true;
+    const gen = generation.current;
     let outside: string[];
     let unverified = false;
     try {
@@ -142,6 +143,7 @@ export function useComposeDrive({
       outside = recipients;
       unverified = true;
     }
+    if (gen !== generation.current) return false;
     if (outside.length === 0) return true;
     const held = links.map((l) => files.current.get(l));
     const total = attachments.reduce((s, a) => s + a.size, 0) + held.reduce((s, f) => s + (f?.size ?? 0), 0);
@@ -153,16 +155,18 @@ export function useComposeDrive({
   async function attachDriveFilesInstead(): Promise<boolean> {
     const q = quill.current;
     if (!q) return false;
+    const gen = generation.current;
     try {
       const anchors = Array.from(q.root.querySelectorAll<HTMLAnchorElement>("a[href]")).filter((a) => files.current.has(a.getAttribute("href") ?? ""));
       const picked = await Promise.all(anchors.map((a) => readFileAsAttachment(files.current.get(a.getAttribute("href") ?? "") as File)));
+      if (gen !== generation.current) return false;
       for (const a of anchors) (a.closest("p") ?? a).remove();
       q.update("user");
       setAttachments((current) => [...current, ...picked]);
       setDriveOutside(null);
       return true;
     } catch (e) {
-      setError(toErrorMessage(e, "failed to attach the files"));
+      if (gen === generation.current) setError(toErrorMessage(e, "failed to attach the files"));
       return false;
     }
   }

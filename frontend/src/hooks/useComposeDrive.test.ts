@@ -154,3 +154,39 @@ it("drops a queued batch when compose is reset, so nothing reaches the next draf
   expect(quill.inserted).toEqual([]);
   expect(setError).not.toHaveBeenCalled();
 });
+
+it("leaves the next draft alone when attach-instead or the recipient check finishes after a reset", async () => {
+  const { quill, setError, view } = setup();
+  await waitFor(() => expect(view.result.current.drive.driveStatus.available).toBe(true));
+  act(() => { view.result.current.drive.offerDrive([file("big.bin", 10)]); });
+  await act(() => view.result.current.drive.acceptDriveOffer());
+  const body = quill.root.innerHTML;
+
+  // Attach instead, with the file read finishing after compose was reset.
+  const reader = vi.spyOn(FileReader.prototype, "readAsDataURL");
+  let finish!: () => void;
+  reader.mockImplementationOnce(function (this: FileReader) {
+    finish = () => { Object.defineProperty(this, "result", { value: "data:x;base64,AAAA" }); this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>); };
+  });
+  let attached!: Promise<boolean>;
+  act(() => { attached = view.result.current.drive.attachDriveFilesInstead(); });
+  act(() => view.result.current.drive.resetDrive());
+  finish();
+  let result = true;
+  await act(async () => { result = await attached; });
+  expect(result).toBe(false);
+  expect(view.result.current.attachments).toEqual([]);
+  expect(quill.root.innerHTML).toBe(body);
+  reader.mockRestore();
+
+  // The recipient check answering after a reset holds nothing in the next draft.
+  let answer!: (a: string[]) => void;
+  api.outside.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+  let ok!: Promise<boolean>;
+  act(() => { ok = view.result.current.drive.driveRecipientsOk(body, ["bob@example.net"]); });
+  act(() => view.result.current.drive.resetDrive());
+  answer(["bob@example.net"]);
+  await act(async () => { await ok; });
+  expect(view.result.current.drive.driveOutside).toBeNull();
+  expect(setError).not.toHaveBeenCalled();
+});
