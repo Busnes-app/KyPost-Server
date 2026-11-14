@@ -72,6 +72,10 @@ func TestNativeOutboundAPIProcess(t *testing.T) {
 		qualifyScheduledNativeDelivery(t, s, u.ID, root)
 		return
 	}
+	if strings.HasPrefix(mode, "kycalendar") {
+		qualifyNativeITIP(t, s, u.ID, mode)
+		return
+	}
 	path := "/api/mail/send"
 	body := []byte(`{"to":"visible@outside.test","bcc":"hidden@outside.test","subject":"native — café ✉","body":"native compose"}`)
 	var sender, recipient *pgpmail.Identity
@@ -305,7 +309,7 @@ func TestNativeOutboundAPIActualTLSAndPGP(t *testing.T) {
 	certServer := httptest.NewTLSServer(nil)
 	certificate := certServer.TLS.Certificates[0]
 	certServer.Close()
-	modes := []string{"plain", "pgp", "device-plain", "device-pgp", "lost-ack", "refused", "recovery", "scheduled"}
+	modes := []string{"plain", "pgp", "device-plain", "device-pgp", "lost-ack", "refused", "recovery", "scheduled", "kycalendar", "kycalendar-refused", "kycalendar-lost-ack"}
 	if os.Getenv("KYPOST_NATIVE_ANDROID_TEST_SERIAL") != "" {
 		modes = append(modes, "device-android")
 	}
@@ -398,11 +402,11 @@ func TestNativeOutboundAPIActualTLSAndPGP(t *testing.T) {
 						if err = os.WriteFile(filepath.Join(root, "received.eml"), raw.Bytes(), 0600); err != nil {
 							break
 						}
-						if mode == "lost-ack" {
+						if strings.HasSuffix(mode, "lost-ack") {
 							completed <- nil
 							return
 						}
-						if mode == "refused" {
+						if strings.HasSuffix(mode, "refused") {
 							completed <- write("554 untrusted-reply operator-secret hidden@outside.test\r\n")
 							return
 						}

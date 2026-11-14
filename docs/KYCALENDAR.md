@@ -98,18 +98,17 @@ Checks run in this order. Every refusal is `{"error","code"}`; codes are
 | 401 | `bad_signature` | Wrong event type or signature. |
 | 200 | `duplicate` (as `outcome`) | Verified replay; nothing sent. |
 | 400 | `bad_body` | Malformed JSON, a missing field, a recipient that is not a bare address, more than 500 recipients, or `method` not `REQUEST`, `CANCEL` or `REPLY`. |
-| 404 | `no_user` | No active account for `(issuer, sub)`, or its SSO link is revoked. |
+| 404 | `no_user` | No active account for `(issuer, sub)`, or its SSO link is revoked, or (native mail on) a dedicated administrator identity. |
 | 409 | `sending_off` | The user has not turned KyCalendar on. |
-| 409 | `native_unsupported` | The account is a KyPost-hosted (native) mailbox; sending through its relay is not built yet. |
-| 409 | `no_mailbox` | No outgoing mail server configured. |
-| 409 | `bad_from` | `from` is neither the account address nor a verified send-as alias. |
+| 409 | `no_mailbox` | No outgoing mail server configured. Native mailbox: native mail off, no domain relay, or the relay does not send for `from`'s domain. |
+| 409 | `bad_from` | `from` is neither the account address nor a verified send-as alias. Native mailbox: `from` is not an active address of one of the user's own mailboxes. |
 | 422 | `bad_ics` | Not exactly one VCALENDAR whose single METHOD equals `method`, with VEVENTs sharing one UID and one mailto: ORGANIZER; over 1 MiB; a parameter value over 1 KiB; control characters. |
 | 409 | `bad_recipient` | REQUEST/CANCEL: `from` is not the ORGANIZER, or a recipient is not an ATTENDEE. REPLY: `from` is not an ATTENDEE, or a recipient is not the ORGANIZER. Case-insensitive. |
 | 409 | `no_invitation` | REPLY only: this mailbox has no recorded invitation with that UID from that ORGANIZER (provenance, below). |
 | 429 | `rate_limited` | The user's sending quota; `Retry-After` set. Charged per recipient, keyed by the event ID. |
 | 422 | `too_many_recipients` | More recipients than the user's daily quota allows at all. |
 | 503 | `unavailable` | Storage unreadable; retry. |
-| 503 | `smtp_failed` | The user's SMTP server did not accept; retry. |
+| 503 | `smtp_failed` | The user's SMTP server (native: the domain relay) did not accept; retry. |
 | 202 | `sent` (as `outcome`) | Delivered and a copy saved to Sent. |
 
 The message is a fixed template: From the user's address (with the display
@@ -120,12 +119,24 @@ the object as a `text/calendar; method=<METHOD>; charset=UTF-8` alternative.
 No caller-supplied header reaches the message. It goes out through the
 user's own SMTP account and is charged to their quota like any send.
 
+A KyPost-hosted (native) mailbox sends the same message through the native
+outbox (`docs/NATIVE_OUTBOX.md`) under the same fresh admission as compose:
+from the mailbox owning `from` (the primary or an extra mailbox of the same
+user), relay or direct mode, with the outbox filing the Sent copy. The quota
+charge is the same, keyed by the event ID. The replay guard forgets the event
+ID only when the outbox refused before storing the job, or every delivery
+ended `failed` with no further attempt; otherwise (accepted, uncertain, or
+left for the outbox to retry) the ID is kept, because a second job would send
+a second copy. Direct mode answers `sent` when the first recipient accepted;
+the outbox workers finish the rest.
+
 ATTENDEE and ORGANIZER are read from VEVENTs only; an ATTENDEE inside a
 VALARM is not a recipient.
 
 ## Inbound: KyPost → KyCalendar
 
-For each new message in a polled mailbox of a user with KyCalendar on, the
+For each new message in a polled mailbox (IMAP, or a native primary or
+extra mailbox: the poller runs one path for both) of a user with KyCalendar on, the
 poller looks for a `text/calendar` part whose METHOD is `REQUEST`, `REPLY`
 or `CANCEL` and that passes the `bad_ics` rules above. It forwards it only
 when a DKIM signature whose `d=` exactly equals the From address's domain
