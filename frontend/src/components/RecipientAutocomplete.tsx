@@ -1,14 +1,14 @@
 import type { ReactNode } from "react";
-import type { Contact } from "../api/contacts";
+import type { Suggestion } from "../hooks/useContactAutocomplete";
 
 type RecipientAutocompleteProps = {
   query: string;
-  results: Contact[];
+  results: Suggestion[];
   loading: boolean;
   searched: boolean;
   activeIndex: number;
   onHoverIndex: (i: number) => void;
-  onSelect: (contact: Contact) => void;
+  onSelect: (suggestion: Suggestion) => void;
 };
 
 function highlightMatch(text: string, query: string): ReactNode {
@@ -45,25 +45,24 @@ export function RecipientAutocomplete({
   return (
     <div className="recipient-autocomplete">
       {showEmpty ? (
-        <div className="recipient-autocomplete-empty">No contacts found</div>
+        <div className="recipient-autocomplete-empty">No matches</div>
       ) : (
-        results.map((contact, index) => {
-          const email = contact.emails?.[0]?.value ?? "";
-          return (
+        results.map((item, index) => (
+          <div key={item.key} role="presentation">
+            {item.organisation && !results[index - 1]?.organisation ? (
+              <div className="recipient-autocomplete-group">Organisation</div>
+            ) : null}
             <div
-              key={contact.uid}
               className={`recipient-autocomplete-row${index === activeIndex ? " active" : ""}`}
               onMouseEnter={() => onHoverIndex(index)}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => onSelect(contact)}
+              onClick={() => onSelect(item)}
             >
-              <span className="recipient-autocomplete-name">{highlightMatch(contact.fn, query)}</span>
-              {email ? (
-                <span className="recipient-autocomplete-email">{highlightMatch(email, query)}</span>
-              ) : null}
+              <span className="recipient-autocomplete-name">{highlightMatch(item.name || item.email, query)}</span>
+              {item.name ? <span className="recipient-autocomplete-email">{highlightMatch(item.email, query)}</span> : null}
             </div>
-          );
-        })
+          </div>
+        ))
       )}
     </div>
   );

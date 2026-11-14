@@ -1,0 +1,231 @@
+// KyPost ↔ KyDrive links (KyPost-Server feat/kydrive-links). Same boot as kypost-440-signatures.mjs:
+// a disposable KyPost server, real sign-in, the kypost-demo-IMAP fixture (charlie's "Quarterly deck
+// attached" carries quarterly.pdf). KyDrive itself is not running: /api/kydrive/* and the KyDrive
+// origin are Playwright-routed fixtures, and the context bypasses CSP because the server is unpaired
+// (so its connect-src does not name the fixture origin). Before: origin/main frontend. After: branch.
+// Desktop 1440×900 and phone 390×844, Busnes Light and Dark.
+// Usage: node kypost-kydrive-links.mjs <binary> <frontend dist> <fixture dir> <out dir> <prefix>
+import { mkdir, readFile, readdir, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { NOW, DESKTOP, MOBILE, secret, tempDir, pw, waitReady, startServer, settle } from './lib.mjs';
+
+const { chromium } = await pw('KyCalendar/web');
+const PORT = '5881', IMAP = '5883', SMTP = '5884', HTTPS = '5885';
+const ORIGIN = `http://localhost:${PORT}`;
+const DRIVE = 'https://drive.example.test';
+const [binary, frontend, fixtureDir, OUT] = process.argv.slice(2, 6).map((p) => resolve(p ?? ''));
+const PREFIX = process.argv[6];
+if (!PREFIX) throw new Error('usage: kypost-kydrive-links.mjs <binary> <dist> <fixture> <out> <prefix>');
+const AFTER = PREFIX.includes('kydrive-after');
+await mkdir(OUT, { recursive: true });
+const results = [];
+const shot = async (page, file) => {
+  await page.screenshot({ path: join(OUT, `${file}.png`) });
+  results.push({ file, overflow: await page.evaluate(() => document.documentElement.scrollWidth - innerWidth) });
+  console.log(file);
+};
+const dir = await tempDir('post-kydrive');
+const d = (...p) => join(dir, ...p);
+for (const p of ['config', 'state', 'logs', 'secrets', 'keys', 'public']) await mkdir(d(p), { recursive: true });
+const USER = 'charlie';
+const pws = { admin: secret(), user: secret() };
+let fixture, srv;
+
+// KyDrive's side, as fixtures. holdUpload keeps the PUT open so the progress row can be captured.
+async function routeDrive(ctx, { holdUpload = false, outside = [] } = {}) {
+  const json = (route, status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  await ctx.route('**/api/kydrive/status', (r) => json(r, 200, { available: true, freeBytes: 40e9, maxFileBytes: 5e9, appUrl: `${DRIVE}/`, origin: DRIVE }));
+  await ctx.route('**/api/kydrive/upload-tickets', (r) => json(r, 201, { uploadUrl: `${DRIVE}/api/suite/upload/fixture`, expires: '2026-10-28T15:30:00Z', maxChunk: 64 << 20 }));
+  await ctx.route('**/api/kydrive/links', (r) => json(r, 201, { url: `${DRIVE}/l/#fixture-token`, expires: '2026-11-27T15:15:00Z' }));
+  await ctx.route('**/api/kydrive/recipients', (r) => json(r, 200, { outside }));
+  await ctx.route('**/api/suite/people?*', (r) => json(r, 200, { people: [
+    { name: 'Alex Rivera', email: 'alex.rivera@kypost-demo.local' }, { name: 'Alicia Moreno', email: 'alicia@kypost-demo.local' }] }));
+  await ctx.route('**/api/kydrive/save-attachment', (r) => json(r, 201, { fileId: 'f1', name: 'quarterly.pdf', size: 3072, folder: 'Mail attachments', appUrl: `${DRIVE}/` }));
+  await ctx.route(`${DRIVE}/**`, (r) => {
+    if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: { 'Access-Control-Allow-Origin': ORIGIN, 'Access-Control-Allow-Methods': 'PUT', 'Access-Control-Allow-Headers': 'Content-Type, Content-Range' } });
+    if (holdUpload) return; // never answered: the upload stays in progress
+    return r.fulfill({ status: 201, headers: { 'Access-Control-Allow-Origin': ORIGIN }, contentType: 'application/json', body: JSON.stringify({ file_id: 'f1', name: 'site-survey.mov', size: 19 << 20 }) });
+  });
+}
+
+try {
+  fixture = startServer(process.execPath, ['src/index.js'], {
+    cwd: fixtureDir,
+    env: { PATH: process.env.PATH, BIND_ADDRESS: '127.0.0.1', IMAP_PORT: IMAP, SMTP_PORT: SMTP, HTTPS_PORT: HTTPS,
+      ALLOWED_CLIENT_IPS: '127.0.0.1,::1', TLS_KEY_DIR: d('keys'), TLS_PUBLISH_DIR: d('public') },
+  });
+  for (let i = 0; i < 80 && !(await readdir(d('public'))).length; i++) await new Promise((r) => setTimeout(r, 250));
+  srv = startServer(binary, [], {
+    cwd: dir,
+    env: { PATH: process.env.PATH, HOME: dir, CONFIG_DIR: d('config'), STATE_DIR: d('state'), LOG_DIR: d('logs'), SECRET_DIR: d('secrets'),
+      FRONTEND_DIR: frontend, WEB_PORT: PORT, SSL_CERT_DIR: d('public'), SANDBOX_PRIVATE_HOSTS: 'localhost', KYPOST_DISABLE_AI_SORTING: 'true',
+      PUSH_RELAY_URL: '', APNS_RELAY_URL: '' },
+  });
+  await waitReady(`${ORIGIN}/api/health`, 90000);
+  const firstRun = d('config', 'first-run-password.txt');
+  for (let i = 0; i < 40 && !existsSync(firstRun); i++) await new Promise((r) => setTimeout(r, 250));
+  const bootstrap = (await readFile(firstRun, 'utf8')).match(/^password: (.+)$/m)[1];
+  await rm(firstRun);
+
+  const browser = await chromium.launch();
+  const context = (scheme, viewport = DESKTOP) => browser.newContext({ viewport, colorScheme: scheme, timezoneId: 'America/New_York', locale: 'en-US', bypassCSP: true });
+  const login = async (page, user, password) => {
+    await page.goto(`${ORIGIN}/login`);
+    await page.getByLabel('Username', { exact: true }).fill(user);
+    await page.getByLabel('Password', { exact: true }).fill(password);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  };
+  const changePassword = async (page, next) => {
+    await page.getByLabel('New password', { exact: true }).fill(next);
+    await page.locator('button.auth-submit').click();
+    await page.waitForURL('**/read', { timeout: 60000 });
+  };
+
+  {
+    const ctx = await context('light');
+    const page = await ctx.newPage();
+    await login(page, 'admin', bootstrap);
+    await changePassword(page, pws.admin);
+    await page.goto(`${ORIGIN}/admin/server`);
+    await page.getByRole('tab', { name: 'Manage Users' }).click();
+    await page.getByLabel('Your account password').fill(pws.admin);
+    const create = page.locator('form.users-create-card');
+    await create.getByLabel('Username').fill(USER);
+    const temp = secret();
+    await create.getByLabel('Temporary Password').fill(temp);
+    await create.getByRole('button', { name: 'Create User' }).click();
+    await page.locator('.users-list-card').getByText(USER, { exact: true }).first().waitFor();
+    await ctx.clearCookies();
+    await login(page, USER, temp);
+    await changePassword(page, pws.user);
+    await page.goto(`${ORIGIN}/settings/mail`);
+    const card = page.locator('.config-card').first();
+    const field = (label) => card.locator('label', { has: page.locator(`div:text-is("${label}")`) }).locator('input');
+    await field('Host').fill('localhost');
+    await field('Port').fill(IMAP);
+    await field('Username').fill('charlie@kypost-demo.local');
+    await field('Password or App Password').fill(secret());
+    await field('Mailbox').fill('INBOX');
+    await field('SMTP Host (optional)').fill('localhost');
+    await field('SMTP Port (optional)').fill(SMTP);
+    await card.getByRole('button', { name: 'Save', exact: true }).click();
+    await card.getByText('IMAP configuration saved.').waitFor({ timeout: 30000 });
+    await ctx.close();
+  }
+
+  const big = { name: 'site-survey.mov', mimeType: 'video/quicktime', buffer: Buffer.alloc(19 << 20, 7) };
+  for (const scheme of ['light', 'dark']) {
+    for (const [size, viewport] of [['desktop', DESKTOP], ['phone', MOBILE]]) {
+      const tag = `${size}-${scheme}`;
+      const open = async (opts) => {
+        const ctx = await context(scheme, viewport);
+        await routeDrive(ctx, opts);
+        const page = await ctx.newPage();
+        await page.clock.setFixedTime(NOW);
+        await login(page, USER, pws.user);
+        await page.waitForURL('**/read', { timeout: 60000 });
+        await page.goto(`${ORIGIN}/settings/appearance`);
+        await page.getByRole('group', { name: 'Busnes' }).getByRole('radio', { name: scheme === 'dark' ? 'Dark' : 'Light' }).check();
+        await settle(page);
+        return { ctx, page };
+      };
+      const compose = async (page) => {
+        await page.goto(`${ORIGIN}/read`);
+        await page.getByRole('button', { name: 'New email' }).first().click();
+        await page.locator('.ql-editor').waitFor({ timeout: 30000 });
+        await settle(page, 800);
+      };
+
+      // 1. Reader: the attachment list (and, after, Save to KyDrive and its result).
+      {
+        const { ctx, page } = await open();
+        await page.goto(`${ORIGIN}/read`);
+        await page.locator('.inbox-unit', { hasText: 'Quarterly deck attached' }).first().click();
+        await page.locator('.email-attachment-list').waitFor({ timeout: 60000 });
+        await page.locator('.email-attachment-link').first().waitFor({ timeout: 60000 });
+        await page.locator('.email-attachments').scrollIntoViewIfNeeded();
+        await settle(page, 800);
+        await shot(page, `${PREFIX}-1-reader-${tag}`);
+        if (AFTER) {
+          await page.getByRole('button', { name: 'Save quarterly.pdf to KyDrive' }).click();
+          await page.getByText('Saved to KyDrive in Mail attachments').waitFor();
+          await settle(page, 300);
+          await shot(page, `${PREFIX}-2-reader-saved-${tag}`);
+        }
+        await ctx.close();
+      }
+
+      // 2. Compose: a file over the attachment limit (before: the error; after: the KyDrive offer).
+      {
+        const { ctx, page } = await open({ holdUpload: true });
+        await compose(page);
+        await page.locator('input[type="file"]').setInputFiles(big);
+        await settle(page, 800);
+        await shot(page, `${PREFIX}-3-compose-oversize-${tag}`);
+        if (AFTER) {
+          await page.getByRole('button', { name: 'Upload to KyDrive and send a link' }).click();
+          await page.locator('.compose-drive-upload').waitFor();
+          await settle(page, 300);
+          await shot(page, `${PREFIX}-4-compose-uploading-${tag}`);
+        }
+        await ctx.close();
+      }
+
+      // 3. After: the link in the body, then Send to someone outside the organisation.
+      if (AFTER) {
+        const { ctx, page } = await open({ outside: ['dana@partner.example'] });
+        await compose(page);
+        const to = page.getByLabel('To recipients', { exact: true });
+        await to.fill('dana@partner.example');
+        await to.press('Enter');
+        await page.getByPlaceholder('Subject').fill('Site survey footage');
+        await page.locator('.ql-editor').click();
+        await page.keyboard.type('Here is the walkthrough from Tuesday: ');
+        await page.locator('input[type="file"]').setInputFiles(big);
+        await page.getByRole('button', { name: 'Upload to KyDrive and send a link' }).click();
+        await page.locator('.ql-editor a').first().waitFor();
+        await settle(page, 300);
+        await shot(page, `${PREFIX}-5-compose-link-${tag}`);
+        await page.getByRole('button', { name: 'Send', exact: true }).click();
+        await page.getByText('cannot open the KyDrive links').waitFor();
+        await settle(page, 300);
+        await shot(page, `${PREFIX}-6-compose-outside-${tag}`);
+        results.push({ tag, body: await page.locator('.ql-editor').innerHTML() });
+        await ctx.close();
+      }
+
+      // 3b. Recipient autocomplete (PR #604: the Organisation group; before: contacts only).
+      {
+        const { ctx, page } = await open();
+        await compose(page);
+        await page.getByLabel('To recipients', { exact: true }).pressSequentially('al', { delay: 50 });
+        await page.locator('.recipient-autocomplete').waitFor();
+        await settle(page, 800);
+        await shot(page, `${PREFIX}-8-autocomplete-${tag}`);
+        await ctx.close();
+      }
+
+      // 4. Admin: Server tabs (after: the KyDrive tab, read from the real, unpaired server).
+      {
+        const ctx = await context(scheme, viewport);
+        const page = await ctx.newPage();
+        await login(page, 'admin', pws.admin);
+        await page.waitForURL('**/read', { timeout: 60000 });
+        await page.goto(`${ORIGIN}/settings/appearance`);
+        await page.getByRole('group', { name: 'Busnes' }).getByRole('radio', { name: scheme === 'dark' ? 'Dark' : 'Light' }).check();
+        await page.goto(`${ORIGIN}/admin/server?tab=${AFTER ? 'kydrive' : 'kycalendar'}`);
+        await page.getByRole('status').first().waitFor({ timeout: 30000 });
+        await settle(page, 800);
+        await shot(page, `${PREFIX}-7-admin-${tag}`);
+        await ctx.close();
+      }
+    }
+  }
+  await browser.close();
+} finally {
+  await srv?.stop();
+  await fixture?.stop();
+  await rm(dir, { recursive: true, force: true });
+}
+for (const r of results) console.log(JSON.stringify(r));

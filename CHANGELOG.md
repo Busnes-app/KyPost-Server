@@ -20,6 +20,9 @@ non-prerelease version.
 
 ### Added
 
+- Recipient autocomplete lists people in the organisation under an
+  "Organisation" heading after your own contacts, from KyIdentity's suite
+  directory through `GET /api/suite/people?q=`. Contract: `docs/SUITE-PEOPLE.md`.
 - New meeting (compose, contacts) and Reply with meeting (reader) open
   KyCalendar's event editor prefilled with the subject and people, when
   KyCalendar is in your suite apps.
