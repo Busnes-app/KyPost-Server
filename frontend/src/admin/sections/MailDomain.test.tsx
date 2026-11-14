@@ -574,6 +574,11 @@ it("recommends rotation at 180 days without rotating", async () => {
   const keys = within(await screen.findByRole("group", { name: "DKIM keys for example.com" }));
   expect(keys.getByRole("status").textContent).toBe("The DKIM key for example.com is 181 days old. M3AAWG recommends rotating DKIM keys at least every six months. Press Rotate DKIM key to start.");
   expect(dkimPosts()).toHaveLength(0);
+  cleanup();
+  relayResponse = directRelay; // 30 days old: no notice yet
+  render(view());
+  await screen.findByRole("group", { name: "DKIM keys for example.com" });
+  expect(screen.queryByText(/M3AAWG recommends/)).toBeNull();
 });
 
 it("rotates a DKIM key through the confirmed request flow", async () => {
