@@ -1,6 +1,6 @@
 # Operator-owned domain relay configuration
 
-The same protected profile API also supports explicit [direct MX delivery](DIRECT_DELIVERY.md). Relay behavior remains the default; direct profiles have no provider credentials or saved-login check.
+The same protected profile API also supports explicit [direct MX delivery](DIRECT_DELIVERY.md). Relay behavior remains the default; direct profiles have no provider credentials or saved-login check. A relay profile is never DKIM-signed by KyPost; DKIM keys created for direct mode stay sealed in the profile across a switch to a relay and back.
 
 Native sending (primary address or an administrator-assigned active alias) uses
 the configured operator-owned relay in

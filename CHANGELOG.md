@@ -18,6 +18,18 @@ non-prerelease version.
 
 ## Unreleased
 
+### Added
+
+- Direct delivery signs every message with DKIM. Saving a direct profile
+  creates one RSA-2048 key per sending domain, sealed with the relay profile;
+  keys survive mode switches, and `migrate-native` adds them to direct profiles
+  saved earlier. A message whose domain has no usable key is refused (451) and
+  never sent unsigned. Server → Mail domain shows the DKIM, SPF and DMARC
+  records to publish and a **Check DNS** button
+  (`GET /api/admin/mail-relay/deliverability`) that checks them and reverse DNS
+  for the EHLO host, with a notice for every check that would get mail rejected
+  or filed as spam. The check reads DNS only and sends no mail.
+
 ### Fixed
 
 - Built with Go 1.27.4, which fixes an HTTP/1 server crash from a

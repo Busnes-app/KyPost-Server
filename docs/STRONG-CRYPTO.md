@@ -36,6 +36,7 @@ rewrites, rotates or deletes a stored key.
 | Browser push (VAPID, RFC 8291) | P-256 key generated in `CONFIG_DIR`; aes128gcm | Subscriptions must carry a valid P-256 key. |
 | Push relays | FCM RS256 service-account key; APNs ES256 `.p8` | FCM refuses RSA under 2048 bits (`worker/src/fcm.ts`); APNs imports only P-256. |
 | Cloudflare continuous receiving | Ed25519 routing-table signatures, 32-byte pickup tokens | Fixed sizes. |
+| Direct-delivery DKIM | One RSA-2048 key per sending domain, generated with `crypto/rand`, signing `rsa-sha256`; sealed in `native-relay.json` with the domain-relay key | Only server-generated; there is no import path or size choice (`backend/internal/mailmsg/dkim.go`). |
 | TOTP | 20 random bytes (HMAC-SHA1, RFC 6238) | Only server-generated and sealed; there is no import path. HMAC-SHA1 is a keyed PRF here; no collision resistance is relied on. |
 | Generated tokens | Session and CSRF tokens 192 random bits; relay API keys 256, stored as SHA-256 | Not operator-supplied. |
 

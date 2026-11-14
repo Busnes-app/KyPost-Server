@@ -157,10 +157,20 @@ are kept, so **Re-add** restores them after fresh proof.
 | SPF | `<domain>` | Cloudflare's SPF record (policy `~all`) | A | Cloudflare replaces the apex SPF when Email Routing is enabled. If your relay needs an include on the same name, merge it into that one record. Disabling Email Routing deletes it: restore your own |
 | MX | `<domain>` | your receiving hostname (`KYPOST_RECEIVING_HOSTNAME`) | B | You |
 | A / AAAA | receiving hostname | the public address whose TCP 25 reaches `KYPOST_SMTP_BIND:KYPOST_SMTP_PORT` | B | You; the certificate must name this host |
-| SPF, DKIM, custom MAIL FROM | as your relay provider specifies | as your relay provider specifies | Both | You, from the relay provider's instructions. KyPost does not sign DKIM; the relay does |
-| DMARC | `_dmarc.<domain>` | your policy | Both | You. KyPost neither publishes nor checks your own DMARC record |
+| SPF, DKIM, custom MAIL FROM | as your relay provider specifies | as your relay provider specifies | Both, relay | You, from the relay provider's instructions. With a relay, the relay signs DKIM |
+| DMARC | `_dmarc.<domain>` | your policy | Both, relay | You. With a relay, KyPost neither publishes nor checks your DMARC record |
+| DKIM | `kypost-<id>._domainkey.<domain>` | `v=DKIM1; k=rsa; p=…` exactly as shown | Both, direct | You, from Server → Mail domain → Direct delivery. KyPost signs every direct message with this domain's key |
+| SPF | `<domain>` | `v=spf1 a:<EHLO host> -all` (or merge `a:<EHLO host>` into your one SPF record) | Both, direct | You. **Check DNS** passes only when SPF covers every A/AAAA address of the EHLO host |
+| DMARC | `_dmarc.<domain>` | `v=DMARC1; p=quarantine; adkim=s; aspf=s` | Both, direct | You. **Check DNS** warns on `p=none` or `pct` below 100 |
+| PTR | reverse DNS of each EHLO host address | the EHLO host | Both, direct | Your hosting provider. Not needed with a relay, whose servers carry their own reverse DNS |
 | MTA-STS, TLS-RPT | — | — | — | Not provided by KyPost. Maddy already refuses senders that cannot use STARTTLS |
-| PTR | — | — | — | Not needed: KyPost sends only through your relay, whose servers carry their own reverse DNS |
+
+With [direct delivery](../DIRECT_DELIVERY.md) (no relay), Server → Mail domain
+shows a **Direct delivery** panel with the exact DKIM, SPF and DMARC records.
+**Check DNS** looks them up, plus reverse DNS for the EHLO host, and shows a
+notice for every check that would get mail rejected or filed as spam. It reads
+DNS only, sends no mail and runs at most once every 10 seconds. It checks the
+EHLO host's own addresses, not the address your mail actually leaves from.
 
 Leave the `_kypost-mail` TXT record untouched when Cloudflare or the relay
 provider rewrites other records. Full domain rules: [native provisioning](../NATIVE_PROVISIONING.md#operator-domain-setup).

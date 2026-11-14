@@ -12,7 +12,7 @@ Hosting your own mailboxes is opt-in, and receiving mail for them is still in qu
 
 KyPost polls unread mail, classifies each message, and applies IMAP keywords. It also gives you a web UI to read mail, change the configuration, manage notifications, view logs, and compose mail. Compose supports send and draft save.
 
-Native direct outbound delivery is available as an explicit protected-API profile; see [direct delivery](docs/DIRECT_DELIVERY.md) for configuration, recipient outcomes and qualification limits. Existing relay sending remains the default.
+Native direct outbound delivery is available as an explicit protected-API profile. It signs every message with a per-domain DKIM key, and Mail domain shows and checks the DKIM, SPF, DMARC and reverse DNS records; see [direct delivery](docs/DIRECT_DELIVERY.md) for configuration, recipient outcomes and qualification limits. Existing relay sending remains the default.
 
 ## Features
 
