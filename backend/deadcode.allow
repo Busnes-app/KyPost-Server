@@ -28,3 +28,7 @@ github.com/Busnes-app/kypost-server/backend/internal/ollamaupdate.SetReleasesURL
 # Marks a test pairing as KyIdentity's for api's per-user default tests;
 # panics outside a test binary.
 github.com/Busnes-app/kypost-server/backend/internal/kycalendar.NewKyIdentityForTest
+
+# Captures signed direct-delivery wire bytes for sso's outbox tests; panics
+# outside a test binary.
+github.com/Busnes-app/kypost-server/backend/internal/mailmsg.SetDirectTransportForTest

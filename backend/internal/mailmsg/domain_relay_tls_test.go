@@ -32,7 +32,7 @@ func TestDomainRelayStrictTLSRuntime(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c := DomainRelay{Generation: "12345678-1234-4234-8234-123456789abc", Domains: []string{"example.test"}, Issuer: "https://idp.example", Host: host, Port: port, Username: "operator-relay-login", Password: "operator-relay-secret"}
+		c := DomainRelay{Generation: "12345678-1234-4234-8234-123456789abc", Domains: []string{"example.test"}, Issuer: "https://idp.example", Host: host, Port: port, Username: "operator-relay-login", Password: "operator-relay-secret", DKIM: []DKIMKey{testDKIMKey("example.test")}} // relay mode never signs
 		mode := os.Getenv("KYPOST_RELAY_TLS_PROOF_CASE")
 		if strings.HasPrefix(mode, "check-") {
 			// Cases that must complete get room for a fresh process's first handshake (FIPS

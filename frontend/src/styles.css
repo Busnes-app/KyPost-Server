@@ -1855,6 +1855,11 @@ pre {
   overflow-wrap: anywhere;
 }
 
+/* DNS-supplied text: long records wrap inside their cell. */
+.mail-dns-checks td {
+  overflow-wrap: anywhere;
+}
+
 /* Sender-controlled text: stacked marks and long tokens stay inside their cell. */
 .quarantine-table td {
   overflow: hidden;

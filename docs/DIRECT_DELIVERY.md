@@ -23,8 +23,10 @@ CSRF and action-bound KyIdentity step-up remain mandatory where applicable.
 No endpoint is added and configuring a profile sends no mail.
 
 GET returns `mode:"direct"`, `transport:"mx-starttls"`, `authRequired:false`,
-`host`, `port:0` and its generation. The existing Mail domain browser form
-configures relay profiles; direct mode is currently configured through this API.
+`host`, `port:0`, its generation, the `dkim` records and `recommended` SPF and
+DMARC records. The existing Mail domain browser form configures relay profiles;
+direct mode is currently configured through this API, and the form then shows
+its DNS records and check.
 The saved-relay login check explicitly refuses a direct profile: there is no
 relay login to test, and configuration alone is not delivery readiness.
 To return to a relay, submit the complete normal host/port/credential profile
@@ -55,12 +57,84 @@ those policies are not implemented. A verified MX certificate alone does not
 prove the recipient domain authorized that MX. Qualify DNS and TLS policy for
 the intended deployment before public mail use.
 
+## DKIM, SPF, DMARC and reverse DNS
+
+Saving a direct profile creates one RSA-2048 DKIM key per sending domain, with
+a selector `kypost-<8 hex>`. The key is sealed inside `native-relay.json` with
+`native-relay.key`, never returned by the API, logged or shown by
+`setup-status`. Saving the same profile, editing the domain set or switching to
+a relay and back keeps every existing key; a key is dropped only when its domain
+leaves both the domain set and the retired set. `migrate-native` adds keys to a
+direct profile saved before signing existed, keeping its generation. Keys
+rotate only when an administrator rotates them (below).
+
+Every direct message gets one `DKIM-Signature` (`a=rsa-sha256`,
+`c=relaxed/relaxed`, `d=` the From domain, no `l=`) over From (oversigned), To,
+Cc, Subject, Date, Message-ID, Reply-To, In-Reply-To, References, MIME-Version,
+Content-Type and Content-Transfer-Encoding when present; never Bcc. The signature
+is prepended at each attempt; the stored outbox bytes are not changed. A missing
+or unusable key is a definite 451 before any DNS lookup or connection, so direct
+mail is never sent unsigned. Relay profiles are never signed by KyPost.
+
+`GET /api/admin/mail-relay` lists each domain's DKIM record and recommends
+`v=spf1 a:<host> -all` and `_dmarc.<domain>` `v=DMARC1; p=quarantine; adkim=s;
+aspf=s`. `GET /api/admin/mail-relay/deliverability` (admin session; read-only)
+checks each sending domain's DKIM record against the stored key and verifies a
+locally signed test message, its single SPF record, its DMARC record (or the
+organizational domain's), and that every A/AAAA of `host` has reverse DNS back
+to `host`. Results are `pass`, `warn`, `fail` or `unknown`; a DNS timeout or
+error is `unknown`, never `pass`. SPF evaluates only `ip4`, `ip6`, `a:<host>`
+and `all`; `include`, `redirect`, `exists` and similar report `unknown`, and
+`+all` or an authorizing `ip4` range wider than /8 (`ip6` wider than /32) fails. SPF and
+PTR use the EHLO host's addresses (`egressObserved:false`), and no mail is sent
+(`mailSent:false`). Each lookup has 5 seconds, the request 30, at most 16
+addresses are reverse-checked, DNS text echoed back is cut to 512 bytes and the
+check runs once per 10 seconds per instance (otherwise 429 with `Retry-After`).
+The Mail domain screen shows the records, a **Check DNS** button and a notice
+for every non-passing check.
+
+## DKIM key rotation
+
+DKIM (RFC 6376) and DMARC (RFC 7489) do not require key rotation. KyPost
+recommends rotating at 180 days, following M3AAWG's DKIM Key Rotation Best
+Common Practices (rotate at least every six months). KyPost never rotates
+on its own: from day 180 Mail domain shows a notice recommending rotation.
+
+Each step needs the administrator's step-up confirmation, as the relay save does:
+
+1. **Rotate DKIM key** creates a *next* key with a new selector and shows its
+   record. Publish it. The current key keeps signing.
+2. **Check and switch** (`POST /api/admin/mail-relay/dkim/confirm`) looks the
+   record up. If it is not live yet the answer says why and nothing changes; it
+   shares the DNS check's limit of one run per 10 seconds. Once the record
+   carries the new key and verifies a locally signed test message, the new key
+   signs from then on. Queued mail is signed at send time, so it goes out with
+   the key active then; the relay generation and queued jobs are untouched.
+3. The old key is *retiring*: keep its record published until the date shown
+   (7 days), so mail already signed with it still verifies. It never signs.
+4. After that date KyPost destroys the old private key in the live profile and
+   shows "<record> can now be removed from DNS" for 30 days. Delete the record.
+   Older backups keep the key, encrypted, until their retention expires.
+
+A normal rotation is refused while an old key is still retiring ("finish the
+previous rotation first"). **Emergency: rotate now** is for a key that may be
+exposed: after you accept the gap, a fresh key signs at once, any waiting next
+key is dropped and the old key is destroyed with no window. Mail fails DKIM
+until you publish the new record, and receivers may reject it or mark it as
+spam; remove the old record at once. A background tick (at start, then hourly)
+only advances the retire and removal windows; it never creates or switches a
+key and makes no DNS lookup. Each step writes the sealed profile atomically, so
+a crash leaves the previous state, with the active key still signing; retry the
+step. Every step logs `dkim rotation` with domain, selectors, phase and trigger
+(`manual`, `emergency` or `window`), never key material.
+
 ## Recipient outcomes and API semantics
 
 Each recipient has a separate durable delivery claim. A refused, uncertain or
 crashed attempt for one recipient cannot prevent unrelated recipients from
 progressing, and accepted recipients are not automatically sent again. Exact
-wire MIME, Date, Message-ID and PGP bytes are retained across retries; Bcc stays
+wire MIME, Date, Message-ID and PGP bytes are retained across retries (each
+attempt prepends a fresh DKIM-Signature); Bcc stays
 in the envelope/private Sent copy and never enters the wire headers.
 
 The existing `ok:true` send contract still means primary SMTP acceptance,
@@ -96,9 +170,9 @@ realistic mail sizes before making capacity claims.
 
 ## Acceptance and operations
 
-Before public activation, qualify public DNS/PTR, reachable outbound port 25,
-SPF/DKIM/DMARC and recipient receipt/inbox placement. This mode does not add DKIM
-signing or a DNS installer. Preserve native ownership/revocation, restore holds,
+Before public activation, qualify reachable outbound port 25 and recipient
+receipt/inbox placement, and publish the DNS records below. There is no DNS
+installer: KyPost shows the records and checks them; you publish them. Preserve native ownership/revocation, restore holds,
 existing backups, sending quotas and inbound/background processing. Include
 receiver, scanner, inference and storage budgets in workforce tests.
 

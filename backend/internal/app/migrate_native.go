@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
 
@@ -29,6 +32,11 @@ func runMigrateNative(args []string) error {
 		var moved bool
 		moved, err = sso.MigrateAuthority(ctx, config.ConfigDir())
 		migrated = migrated || moved
+	}
+	if err == nil {
+		var keyed bool
+		keyed, err = reconcileDKIMKeys(ctx, config.ConfigDir(), filepath.Join(config.SecretDir(), "native-relay.key"))
+		migrated = migrated || keyed
 	}
 	if err == nil {
 		var quota int64
@@ -53,4 +61,25 @@ func runMigrateNative(args []string) error {
 		return fmt.Errorf("native mail storage migration failed; native mail and SSO sign-in stay refused, password logins and external IMAP are unaffected. Keep the config volume and its *%s and *%s copies, fix the cause below and restart, or restore the pre-migration backup: %w", sso.NativeMigrationCopySuffix, sso.NativeAuthorityCopySuffix, err)
 	}
 	return nil
+}
+
+// reconcileDKIMKeys gives a direct profile saved before DKIM signing a key per
+// sending domain, under the native domain fence the admin save path holds.
+// Relay damage is left to the runtime reader, which refuses it the same way;
+// it must not block SSO sign-in.
+func reconcileDKIMKeys(ctx context.Context, configDir, keyPath string) (bool, error) {
+	path := filepath.Join(configDir, "native-relay.json")
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	release, err := fsutil.LockFileContext(ctx, filepath.Join(configDir, sso.NativeDomainsFile))
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	keyed, err := mailmsg.ReconcileDKIMKeys(ctx, path, keyPath)
+	if errors.Is(err, mailmsg.ErrDomainRelay) {
+		return false, nil
+	}
+	return keyed, err
 }

@@ -16,7 +16,7 @@ import (
 )
 
 func directTestProfile() DomainRelay {
-	return DomainRelay{Mode: "direct", Generation: "12345678-1234-4234-8234-123456789abc", Domains: []string{"example.test"}, Issuer: "https://identity.example.test", Host: "mail.example.test"}
+	return DomainRelay{Mode: "direct", Generation: "12345678-1234-4234-8234-123456789abc", Domains: []string{"example.test"}, Issuer: "https://identity.example.test", Host: "mail.example.test", DKIM: []DKIMKey{testDKIMKey("example.test")}}
 }
 func preserveDirectSeams(t *testing.T) {
 	t.Helper()
@@ -184,8 +184,9 @@ func TestDirectMXSMTPRecipientEvidence(t *testing.T) {
 					t.Fatal("unsafe peer received mail")
 				}
 			} else {
+				// One verifying DKIM-Signature, then the exact stored MIME.
 				normalized, e := NormalizeSMTPMessage([]byte(got.raw))
-				if e != nil || string(normalized) != relayProofMIME || got.recipients != 1 {
+				if e != nil || verifyWire(t, directTestProfile(), string(normalized)) != relayProofMIME || got.recipients != 1 {
 					t.Fatal("recipient MIME/envelope mismatch", got)
 				}
 			}
