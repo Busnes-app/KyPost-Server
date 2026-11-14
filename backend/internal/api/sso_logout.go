@@ -42,7 +42,7 @@ func (s *Server) handleSSOBackchannelLogout(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Single Sign-On is not configured or disabled", http.StatusServiceUnavailable)
 		return
 	}
-	if s.ssoRateLimited(w, r) {
+	if s.ssoMetered(w, r) { // the identity provider calling, not an office sign-in
 		return
 	}
 

@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/captcha"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
@@ -321,5 +323,171 @@ func TestNoExemptNetworksByDefault(t *testing.T) {
 	srv := newTestServer(t)
 	if srv.exemptNetworks.Load().Len() != 0 || !throttled(srv, loginParamsPath, officeIP, "", 40) {
 		t.Fatal("an address was exempt with no list configured")
+	}
+}
+
+// freezeLimiters stops the refill of each limiter, so a test can count a
+// budget exactly however long the run takes.
+func freezeLimiters(ls ...*keyedLimiter) {
+	at := time.Now()
+	for _, l := range ls {
+		l.now = func() time.Time { return at }
+	}
+}
+
+// Offices share one budget per limit. Past it their requests meet the
+// ordinary per-IP limit again, so one host inside an office cannot make
+// unbounded requests; another office address still has its own per-IP limit.
+func TestOfficeBudgetFallsBackToThePerIPLimit(t *testing.T) {
+	srv := officeServer(t)
+	freezeLimiters(srv.officeLoginParams, srv.loginParamsLimiter)
+	for i := range officeRequestsPerMinute + loginParamsBurst {
+		if code := exemptGet(srv, loginParamsPath, officeIP, ""); code != http.StatusOK {
+			t.Fatalf("office request %d answered %d, want the office budget and then the per-IP burst", i+1, code)
+		}
+	}
+	if code := exemptGet(srv, loginParamsPath, officeIP, ""); code != http.StatusTooManyRequests {
+		t.Fatalf("past both budgets the office answered %d, want 429", code)
+	}
+	if code := exemptGet(srv, loginParamsPath, "203.0.113.77", ""); code != http.StatusOK {
+		t.Fatalf("a second office address answered %d: throttled by the first one's per-IP limit", code)
+	}
+	// The SSO meter draws on the same spent office budget.
+	if err := srv.ssoStore.Save(sso.SSOSettings{Enabled: true, IssuerURL: "https://127.0.0.1:1", ClientID: "kypost"}); err != nil {
+		t.Fatal(err)
+	}
+	srv.serverBaseURL = "https://mail.example.test"
+	if code := exemptGet(srv, "/api/auth/oidc/login", officeIP, ""); code != http.StatusTooManyRequests {
+		t.Fatalf("SSO start past both budgets answered %d, want 429", code)
+	}
+	// Exempted counts only requests that skipped the per-IP limit.
+	if got := srv.exemptNetworks.Load().Exempted(); got != officeRequestsPerMinute {
+		t.Fatalf("exempted = %d, want %d", got, officeRequestsPerMinute)
+	}
+}
+
+// The same for the PoW challenge budget.
+func TestOfficePoWBudgetFallsBackToThePerIPLimit(t *testing.T) {
+	srv := officeServer(t)
+	v, err := captcha.NewPoWVerifier([]byte("test-hmac-key"), 5_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.powVerifier = v
+	freezeLimiters(srv.officePoW, srv.powChallenges)
+	const path = "/api/auth/pow-challenge"
+	for i := range officeRequestsPerMinute + powChallengeBurst {
+		if code := exemptGet(srv, path, officeIP, ""); code != http.StatusOK {
+			t.Fatalf("office challenge %d answered %d", i+1, code)
+		}
+	}
+	if code := exemptGet(srv, path, officeIP, ""); code != http.StatusTooManyRequests {
+		t.Fatalf("past both budgets the office answered %d, want 429", code)
+	}
+	if code := exemptGet(srv, path, "203.0.113.77", ""); code != http.StatusOK {
+		t.Fatalf("a second office address answered %d", code)
+	}
+}
+
+// Sign-in failures from offices draw on one office budget standing in for the
+// address lock. Past it the address lock applies again, and the instance-wide
+// login budget applies throughout.
+func TestOfficeLoginBudgetFallsBackToTheAddressLock(t *testing.T) {
+	srv := officeServer(t)
+	srv.loginIPLockout = newFailureLockout(4, loginIPLockoutFor)
+	srv.loginRateLimiter = nil // the instance budget has its own part below
+	freezeLimiters(srv.officeLogin)
+	for i := range officeLoginBurst + 4 {
+		if code := loginFrom(t, srv, officeIP, "spray"+strconv.Itoa(i), "wrong-password-here"); code != http.StatusUnauthorized {
+			t.Fatalf("office failure %d answered %d, want 401", i+1, code)
+		}
+	}
+	rec := loginAttempt(srv, "spray-next", "wrong-password-here", officeIP+":1234")
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "from this address") {
+		t.Fatalf("past the office budget answered %d %s, want the address lock", rec.Code, rec.Body)
+	}
+	if code := loginFrom(t, srv, "203.0.113.77", "spray-other", "wrong-password-here"); code != http.StatusUnauthorized {
+		t.Fatalf("a second office address answered %d: locked by the first one's failures", code)
+	}
+
+	// The instance budget still stops an office whose own budget is untouched.
+	srv = officeServer(t)
+	resetInstanceBudget(t, srv)
+	freezeLimiters(srv.loginRateLimiter, srv.officeLogin)
+	for i := range loginRateBurst + 1 {
+		rec := loginAttempt(srv, "budget"+strconv.Itoa(i), "wrong-password-here", officeIP+":1234")
+		if rec.Code == http.StatusTooManyRequests {
+			if !strings.Contains(rec.Body.String(), "right now") {
+				t.Fatalf("attempt %d: 429 from the wrong limiter: %s", i+1, rec.Body)
+			}
+			return
+		}
+	}
+	t.Fatal("the office was never stopped by the instance-wide login budget")
+}
+
+// A correct sign-in hands its office reservation back: only failures spend it.
+func TestSuccessfulOfficeSignInsDoNotSpendTheOfficeBudget(t *testing.T) {
+	srv := officeServer(t)
+	srv.loginIPLockout = newFailureLockout(1, loginIPLockoutFor)
+	srv.loginRateLimiter = nil
+	freezeLimiters(srv.officeLogin)
+	if _, err := srv.users.Create(t.Context(), "dana", "dana-office-password", users.RoleUser); err != nil {
+		t.Fatal(err)
+	}
+	for i := range officeLoginBurst + 5 {
+		if rec := loginAttempt(srv, "dana", "dana-office-password", officeIP+":1234"); rec.Code != http.StatusOK {
+			t.Fatalf("sign-in %d answered %d %s", i+1, rec.Code, rec.Body)
+		}
+	}
+	if ok, _ := srv.officeLogin.allow(officeBudgetKey); !ok || srv.officeLogin.entries[officeBudgetKey].tokens != officeLoginBurst-1 {
+		t.Fatal("successful sign-ins spent the office budget")
+	}
+}
+
+// Concurrent wrong guesses at one account from an office reserve their place
+// in the account lockout before any verification: however they interleave, no
+// more than loginMaxFailures reach the password check.
+func TestConcurrentOfficeGuessesCannotOutrunTheAccountLockout(t *testing.T) {
+	srv := officeServer(t)
+	srv.loginRateLimiter = nil
+	if _, err := srv.users.Create(t.Context(), "erin", "erin-office-password", users.RoleUser); err != nil {
+		t.Fatal(err)
+	}
+	const guesses = 30
+	codes := make([]int, guesses)
+	var wg sync.WaitGroup
+	for i := range guesses {
+		wg.Go(func() {
+			codes[i] = loginAttempt(srv, "erin", "wrong-password-here", officeIP+":1234").Code
+		})
+	}
+	wg.Wait()
+	verified := 0
+	for _, code := range codes {
+		switch code {
+		case http.StatusUnauthorized: // the only 401 past the lockout is a failed verification
+			verified++
+		case http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		default:
+			t.Fatalf("unexpected status %d", code)
+		}
+	}
+	if verified > loginMaxFailures {
+		t.Fatalf("%d guesses reached verification, want at most %d", verified, loginMaxFailures)
+	}
+}
+
+// The office budgets are sized against what they stand beside: the sign-in
+// budget never admits more than the instance login budget, and an office
+// failing at full rate for a whole lockout window cannot reach the size at
+// which the per-account lockout table sweeps, let alone evicts.
+func TestOfficeBudgetsFitTheLimiters(t *testing.T) {
+	if officeLoginBurst > loginRateBurst || officeLoginRefillPerSec > loginKDFDutyCycle/loginKDFReserveSeconds {
+		t.Fatal("the office sign-in budget exceeds the instance login budget")
+	}
+	perWindow := officeLoginBurst + officeLoginRefillPerSec*loginLockoutFor.Seconds() + loginIPMaxFailures
+	if perWindow >= loginLockoutSweepThreshold/10 {
+		t.Fatalf("an office can write %v lockout keys per window, want under %d", perWindow, loginLockoutSweepThreshold/10)
 	}
 }

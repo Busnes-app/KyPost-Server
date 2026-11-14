@@ -236,8 +236,15 @@ type Server struct {
 	// so a caller cycling through usernames from one address runs out of budget.
 	loginIPLockout *failureLockout
 	// exemptNetworks is the office-network allowlist (RATE_LIMIT_EXEMPT_CIDRS
-	// plus the admin setting) whose requests skip per-IP limits. See perIPExempt.
-	exemptNetworks    atomic.Pointer[netallow.List]
+	// plus the admin setting) whose requests may skip per-IP limits, each by
+	// drawing on that limit's shared office budget below. See officeDraw.
+	exemptNetworks atomic.Pointer[netallow.List]
+	// officePoW, officeLoginParams (shared by login-params and the SSO meter)
+	// and officeLogin (in failures, standing in for loginIPLockout) are the
+	// office budgets, one key each. See exempt_networks.go.
+	officePoW         *keyedLimiter
+	officeLoginParams *keyedLimiter
+	officeLogin       *keyedLimiter
 	exemptNetworksEnv string
 
 	// classifier and globalStore back the Ollama version/update-check block on the
@@ -464,6 +471,9 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		powDifficulty:            newPowEscalation(),
 		loginRateLimiter:         newKeyedLimiter(loginKDFBurstSeconds, loginKDFDutyCycle),
 		loginIPLockout:           newFailureLockout(loginIPMaxFailures, loginIPLockoutFor),
+		officePoW:                newOfficeRequestBudget(),
+		officeLoginParams:        newOfficeRequestBudget(),
+		officeLogin:              newOfficeLoginBudget(),
 		globalStore:              globalStore,
 		wkdStore:                 wkdStore,
 		ssoStore:                 sso.NewStore(configDir),

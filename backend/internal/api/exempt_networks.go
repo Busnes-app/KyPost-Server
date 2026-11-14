@@ -17,15 +17,68 @@ import (
 // in root state.db's meta table. RATE_LIMIT_EXEMPT_CIDRS is the other half.
 const exemptNetworksSetting = "rate_limit_exempt_networks"
 
-// perIPExempt reports whether r comes from an allowlisted office network and so
-// skips the per-IP sign-in limits: the PoW challenge budget, login-params, the
-// SSO start/callback meter and loginIPLockout. Only those. Per-account
-// lockouts, the instance-wide login budget, the CAPTCHA, PoW difficulty, MFA
-// and SSO state checks still run. It matches clientIP, so a forwarding header
-// counts only from a trusted proxy, and only its right-most hop.
-func (s *Server) perIPExempt(r *http.Request) bool {
+// Office budgets. A request from an allowlisted office network skips a per-IP
+// limit only by drawing one request from that limit's shared office budget:
+// one bucket per limiter, shared by every listed network. Once it is spent the
+// ordinary per-IP limit applies to office requests again, so one host inside
+// an office cannot make unbounded attempts.
+const (
+	// officeBudgetKey is the single key of each office budget.
+	officeBudgetKey = "office"
+
+	// officeRequestsPerMinute is the office budget for the PoW challenge
+	// budget and for login-params and the SSO meter, which share one bucket:
+	// ten times the 30-a-minute address burst, enough for 3,000 staff
+	// arriving over ten minutes. Neither route has an instance-wide budget,
+	// and neither writes per-account state, so nothing caps this from above.
+	officeRequestsPerMinute = 300
+
+	// officeLoginBurst/officeLoginRefillPerSec are the office budget standing
+	// in for loginIPLockout, in failures: the instance login budget's own
+	// burst and its steady-state rate at the reference derivation cost
+	// (loginKDFDutyCycle / loginKDFReserveSeconds, one a second), so the
+	// office can never be allowed more than the instance budget admits.
+	// Sustained for loginLockoutFor it writes at most 915 per-account
+	// lockout keys, plus the 50 the address lock allows after it: under a
+	// tenth of loginLockoutSweepThreshold and far below loginLockoutHardCap,
+	// so office churn alone cannot evict the live strikes of other accounts.
+	// Pinned by TestOfficeBudgetsFitTheLimiters.
+	officeLoginBurst        = loginRateBurst
+	officeLoginRefillPerSec = loginKDFDutyCycle / loginKDFReserveSeconds
+)
+
+func newOfficeRequestBudget() *keyedLimiter {
+	return newKeyedLimiter(officeRequestsPerMinute, officeRequestsPerMinute/60.0)
+}
+
+func newOfficeLoginBudget() *keyedLimiter {
+	return newKeyedLimiter(officeLoginBurst, officeLoginRefillPerSec)
+}
+
+// officeDraw reports whether r comes from an allowlisted office network AND
+// took one request from budget, the office budget of one per-IP limit; only
+// then does the caller skip that per-IP limit. Only per-IP limits ask:
+// per-account lockouts, the instance login budget, the CAPTCHA, PoW
+// difficulty, MFA and SSO state checks run regardless. It matches clientIP, so
+// a forwarding header counts only from a trusted proxy, and only its right-most
+// hop. A request counts as exempted only when it skipped the per-IP limit.
+func (s *Server) officeDraw(r *http.Request, budget *keyedLimiter) bool {
+	list := s.exemptNetworks.Load()
 	addr, err := netip.ParseAddr(clientIP(r))
-	return err == nil && s.exemptNetworks.Load().Exempt(addr)
+	if err != nil || budget == nil || !list.Contains(addr) {
+		return false
+	}
+	if ok, _ := budget.allow(officeBudgetKey); !ok {
+		return false
+	}
+	list.Exempt(addr)
+	return true
+}
+
+// officeRefund hands back one request officeDraw took from budget, for an
+// attempt that turned out not to be a failure.
+func officeRefund(budget *keyedLimiter) {
+	budget.settleCost(officeBudgetKey, -1)
 }
 
 // storedExemptNetworks reads the admin's list; unset reads as empty.
