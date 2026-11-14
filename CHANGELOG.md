@@ -20,6 +20,10 @@ non-prerelease version.
 
 ### Added
 
+- New meeting (compose, contacts) and Reply with meeting (reader) open
+  KyCalendar's event editor prefilled with the subject and people, when
+  KyCalendar is in your suite apps.
+
 - KyCalendar can send invitations, cancellations and replies from a
   KyPost-hosted (native) mailbox. They go through the native outbox and domain
   relay with the same checks, sending quota and Sent copy as an IMAP account;
