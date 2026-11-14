@@ -24,6 +24,9 @@ non-prerelease version.
   KyPost-hosted (native) mailbox. They go through the native outbox and domain
   relay with the same checks, sending quota and Sent copy as an IMAP account;
   `native_unsupported` is gone.
+- The invitation card asks again when an invitation you answered is
+  updated, naming what changed (time, place, title). It shows "Cancelled" for a
+  cancellation, and a Join meeting button for an `https:` meeting link.
 
 - Direct delivery signs every message with DKIM. Saving a direct profile
   creates one RSA-2048 key per sending domain, sealed with the relay profile;
