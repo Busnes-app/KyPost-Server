@@ -146,7 +146,7 @@ func nativeMailboxes(f nativeAssignments, keep func(user string) bool) []NativeM
 // from the rule (for example after a retired domain is re-added), so a
 // healthy ledger is not rewritten; it always retries routes_pending.
 func (s *LifecycleStore) ReconcileNativeAddresses(ctx context.Context) error {
-	release, err := fsutil.LockFileContext(ctx, s.path)
+	release, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -285,7 +285,7 @@ func (s *LifecycleStore) changeNativeAddress(ctx context.Context, stateRoot, add
 		return NativeAddress{}, err
 	}
 	defer release()
-	releaseDirectory, err := fsutil.LockFileContext(ctx, s.path)
+	releaseDirectory, err := s.LockDirectoryContext(ctx)
 	if err != nil {
 		return NativeAddress{}, err
 	}

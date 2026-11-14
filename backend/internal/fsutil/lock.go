@@ -46,12 +46,39 @@ func LockFile(path string) (release func(), err error) {
 // LockFileContext cancels contention without abandoning a goroutine holding a
 // future lock. Filesystem open/fsync itself still requires a healthy volume.
 func LockFileContext(ctx context.Context, path string) (release func(), err error) {
+	return lockSibling(ctx, path, ".lock", syscall.LOCK_EX)
+}
+
+// LockFileShared holds path's lock together with other LockFileShared
+// holders, excluding LockFileGated. Use it only for a read-only section.
+func LockFileShared(ctx context.Context, path string) (release func(), err error) {
+	return lockGated(ctx, path, syscall.LOCK_SH)
+}
+
+// LockFileGated is LockFileContext for a path that also has LockFileShared
+// holders. Both first pass "<path>.gate", which a waiting writer keeps, so a
+// stream of overlapping readers cannot starve it: flock itself has no writer
+// preference. A LockFileContext on the same path still excludes both.
+func LockFileGated(ctx context.Context, path string) (release func(), err error) {
+	return lockGated(ctx, path, syscall.LOCK_EX)
+}
+
+func lockGated(ctx context.Context, path string, how int) (func(), error) {
+	pass, err := lockSibling(ctx, path, ".gate", how)
+	if err != nil {
+		return nil, err
+	}
+	defer pass()
+	return lockSibling(ctx, path, ".lock", how)
+}
+
+func lockSibling(ctx context.Context, path, suffix string, how int) (release func(), err error) {
 	// Per-user state dirs are created lazily by the stores' own save paths, so
 	// on a first-ever write the directory may not exist yet.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create dir for lock file %s: %w", path, err)
 	}
-	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.OpenFile(path+suffix, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open lock file for %s: %w", path, err)
 	}
@@ -60,7 +87,7 @@ func LockFileContext(ctx context.Context, path string) (release func(), err erro
 			_ = f.Close()
 			return nil, err
 		}
-		flags := syscall.LOCK_EX
+		flags := how
 		if ctx.Done() != nil {
 			flags |= syscall.LOCK_NB
 		}
