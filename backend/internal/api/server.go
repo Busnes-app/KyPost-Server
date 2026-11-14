@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/netallow"
 	"github.com/Busnes-app/kypost-server/backend/internal/adapters/classifier"
 	"github.com/Busnes-app/kypost-server/backend/internal/appversion"
 	"github.com/Busnes-app/kypost-server/backend/internal/backup"
@@ -234,6 +235,17 @@ type Server struct {
 	// loginIPLockout is a second, coarser lockout keyed on the client IP ALONE,
 	// so a caller cycling through usernames from one address runs out of budget.
 	loginIPLockout *failureLockout
+	// exemptNetworks is the office-network allowlist (RATE_LIMIT_EXEMPT_CIDRS
+	// plus the admin setting) whose requests may skip per-IP limits, each by
+	// drawing on that limit's shared office budget below. See officeDraw.
+	exemptNetworks atomic.Pointer[netallow.List]
+	// officePoW, officeLoginParams (shared by login-params and the SSO meter)
+	// and officeLogin (in failures, standing in for loginIPLockout) are the
+	// office budgets, one key each. See exempt_networks.go.
+	officePoW         *keyedLimiter
+	officeLoginParams *keyedLimiter
+	officeLogin       *keyedLimiter
+	exemptNetworksEnv string
 
 	// classifier and globalStore back the Ollama version/update-check block on the
 	// Prompt Tuning page and its admin-notification email. classifier is nil until
@@ -459,6 +471,9 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		powDifficulty:            newPowEscalation(),
 		loginRateLimiter:         newKeyedLimiter(loginKDFBurstSeconds, loginKDFDutyCycle),
 		loginIPLockout:           newFailureLockout(loginIPMaxFailures, loginIPLockoutFor),
+		officePoW:                newOfficeRequestBudget(),
+		officeLoginParams:        newOfficeRequestBudget(),
+		officeLogin:              newOfficeLoginBudget(),
 		globalStore:              globalStore,
 		wkdStore:                 wkdStore,
 		ssoStore:                 sso.NewStore(configDir),
@@ -475,6 +490,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 			panic(err)
 		}
 	}
+	s.loadExemptNetworks()
 	return s
 }
 
@@ -637,6 +653,8 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/mail-defaults", s.withAdmin(s.handleMailDefaults))
 	mux.HandleFunc("GET /api/admin/sso", s.withAdmin(s.handleAdminSSOGet))
 	mux.HandleFunc("PUT /api/admin/sso", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleAdminSSOPut))))
+	mux.HandleFunc("GET /api/admin/rate-limit-networks", s.withAdmin(s.handleExemptNetworksGet))
+	mux.HandleFunc("PUT /api/admin/rate-limit-networks", s.withAdmin(withActionDigest(s.withAdminStepUp(s.handleExemptNetworksPut))))
 	mux.HandleFunc("POST /api/sync/webhook", withPublicRoute(s.handleSyncWebhook))
 	mux.HandleFunc("POST /api/calendar/itip/send", withPublicRoute(s.handleITIPSend))
 	mux.HandleFunc("POST /api/calendar/rsvp", s.withMailAuth(s.withMailbox(s.handleCalendarRSVP)))

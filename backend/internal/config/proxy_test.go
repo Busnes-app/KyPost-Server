@@ -2,6 +2,7 @@ package config
 
 import (
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -65,4 +66,21 @@ func contains(nets []*net.IPNet, ip string) bool {
 		}
 	}
 	return false
+}
+
+func TestLoadRateLimitExemptCIDRs(t *testing.T) {
+	t.Setenv("RATE_LIMIT_EXEMPT_CIDRS", "")
+	if got, err := LoadRateLimitExemptCIDRs(); err != nil || got != "" {
+		t.Fatalf("unset: %q, %v; want empty", got, err)
+	}
+	t.Setenv("RATE_LIMIT_EXEMPT_CIDRS", " 203.0.113.9/24, 2001:db8:1::/48 ")
+	if got, err := LoadRateLimitExemptCIDRs(); err != nil || got != "203.0.113.0/24,2001:db8:1::/48" {
+		t.Fatalf("got %q, %v; want the canonical list", got, err)
+	}
+	for _, bad := range []string{"0.0.0.0/0", "::/0", "10.0.0.0/8", "2001:db8::/32", "127.0.0.1", "office", "203.0.113.0/24,nope"} {
+		t.Setenv("RATE_LIMIT_EXEMPT_CIDRS", bad)
+		if _, err := LoadRateLimitExemptCIDRs(); err == nil || !strings.Contains(err.Error(), "RATE_LIMIT_EXEMPT_CIDRS") {
+			t.Errorf("%q: err = %v, want a startup failure naming the variable", bad, err)
+		}
+	}
 }

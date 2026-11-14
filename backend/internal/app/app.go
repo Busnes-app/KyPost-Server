@@ -112,6 +112,9 @@ func Run(args []string) error {
 		return err
 	}
 	api.SetTrustedProxies(proxies)
+	if _, err := config.LoadRateLimitExemptCIDRs(); err != nil {
+		return err
+	}
 	// The quota is native-only configuration: a bad value never stops IMAP.
 	if nativeMail {
 		quota, err := config.MailboxQuotaBytes()

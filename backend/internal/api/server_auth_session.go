@@ -180,7 +180,19 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 	// egress or an office must not be easier to lock out than an account. Login is
 	// where a constant clientIP does the most damage, so it is where the proxy
 	// misconfiguration announces itself.
+	//
+	// An allowlisted office network skips this lockout by reserving one failure
+	// from the shared office budget instead (officeDraw), settled exactly where
+	// an address strike would be. Once that budget is spent the office meets
+	// this lockout again. The per-account lockout and the instance budget above
+	// bound it either way.
 	s.warnOnUnusedProxyHeaders(r)
+	exempt := s.officeDraw(r, s.officeLogin)
+	refundOffice := func() {
+		if exempt {
+			officeRefund(s.officeLogin)
+		}
+	}
 	ipLockoutKey := lockoutKeyForIP(clientIP(r))
 	ipLocked := func(retryAfter time.Duration) {
 		retrySeconds := int(retryAfter.Seconds()) + 1
@@ -191,7 +203,7 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 		})
 	}
 	// Read-only, so a locked address never reaches the CAPTCHA provider.
-	if wait := s.loginIPLockout.lockedFor(ipLockoutKey); wait > 0 {
+	if wait := s.loginIPLockout.lockedFor(ipLockoutKey); wait > 0 && !exempt {
 		ipLocked(wait)
 		return users.User{}, false
 	}
@@ -205,30 +217,46 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 		case errors.Is(err, captcha.ErrChallengeExpired):
 			// Self-hosted proof-of-work only: a signed solution past its deadline, a
 			// tab left open. 401, not the provider-down 503 below.
+			refundOffice()
 			http.Error(w, "security check expired, please try again", http.StatusUnauthorized)
 			return users.User{}, false
 		case errors.Is(err, captcha.ErrChallengeWrongClient):
 			// Self-hosted proof-of-work only: a valid solution from a different address
 			// than it was issued to, e.g. a phone moving from wifi to cellular.
+			refundOffice()
 			http.Error(w, "your network address changed during the security check, please try again", http.StatusUnauthorized)
 			return users.User{}, false
 		case err != nil:
 			s.logger.Error("captcha verification failed", "error", err.Error())
+			refundOffice()
 			http.Error(w, "captcha verification unavailable", http.StatusServiceUnavailable)
 			return users.User{}, false
 		case !ok:
 			// A strike on the address only, so one address cannot keep provider
-			// calls in flight (each holds instance budget) indefinitely.
-			s.loginIPLockout.tryAttempt(ipLockoutKey)
+			// calls in flight (each holds instance budget) indefinitely. An
+			// office keeps its reserved failure instead.
+			if !exempt {
+				s.loginIPLockout.tryAttempt(ipLockoutKey)
+			}
 			http.Error(w, "captcha verification failed", http.StatusUnauthorized)
 			return users.User{}, false
 		}
 	}
 
-	allowed, retryAfter, ipStrike := s.loginIPLockout.tryAttempt(ipLockoutKey)
-	if !allowed {
-		ipLocked(retryAfter)
-		return users.User{}, false
+	var ipStrike lockoutReservation // zero when exempt: cancelAttempt ignores it
+	// releaseIPStrike refunds this attempt's address strike, or the office's
+	// reserved failure, for an attempt that was not a failure.
+	releaseIPStrike := func() {
+		s.loginIPLockout.cancelAttempt(ipStrike)
+		refundOffice()
+	}
+	if !exempt {
+		var allowed bool
+		var retryAfter time.Duration
+		if allowed, retryAfter, ipStrike = s.loginIPLockout.tryAttempt(ipLockoutKey); !allowed {
+			ipLocked(retryAfter)
+			return users.User{}, false
+		}
 	}
 
 	// Three-strikes/15-minute lockout, keyed on username+client IP: on the username
@@ -284,7 +312,7 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 			// while a real account still waits for a slot is the timing
 			// disclosure equalizeLoginTiming exists to erase.
 			accountLockout.cancelAttempt(strike)
-			s.loginIPLockout.cancelAttempt(ipStrike)
+			releaseIPStrike()
 			writeKDFBusy(w)
 			return users.User{}, false
 		}
@@ -309,7 +337,7 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 		// three unlucky arrivals during a burst would lock out a user who typed
 		// everything correctly. recordFailure is skipped for the same reason.
 		accountLockout.cancelAttempt(strike)
-		s.loginIPLockout.cancelAttempt(ipStrike)
+		releaseIPStrike()
 		writeKDFBusy(w)
 		return users.User{}, false
 	}
@@ -322,7 +350,7 @@ func (s *Server) verifyLogin(w http.ResponseWriter, r *http.Request, accountLock
 	accountLockout.recordSuccess(lockoutKey)
 	// Refund only this attempt's strike: clearing the address's budget let one
 	// valid account reset failures spent guessing other accounts' passwords.
-	s.loginIPLockout.cancelAttempt(ipStrike)
+	releaseIPStrike()
 
 	// Transparently upgrade a hash written at an older, cheaper Argon2id cost.
 	// Best-effort: a failure keeps the old hash and retries next sign-in.

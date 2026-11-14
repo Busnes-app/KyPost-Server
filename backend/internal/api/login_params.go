@@ -35,7 +35,7 @@ func (s *Server) handleLoginParams(w http.ResponseWriter, r *http.Request) {
 	// priced a ~5us HMAC at 0.2 core-seconds: sixteen free requests emptied that
 	// bucket and denied sign-in to every user, from any single address, with no
 	// per-IP proxy rule able to restore it.
-	if s.loginParamsLimiter != nil {
+	if s.loginParamsLimiter != nil && !s.officeDraw(r, s.officeLoginParams) {
 		if ok, _ := s.loginParamsLimiter.allow(lockoutKeyForIP(clientIP(r))); !ok {
 			writeJSON(w, http.StatusTooManyRequests, map[string]any{
 				"error": "too many sign-in attempts right now, try again shortly",

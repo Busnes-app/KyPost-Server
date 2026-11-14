@@ -86,6 +86,9 @@ services:
       # x-forwarded-for (nginx, Caddy) or cf-connecting-ip (cloudflared); only
       # that one header is read. See .env.example.
       TRUSTED_PROXY_HEADER: ${TRUSTED_PROXY_HEADER:-x-forwarded-for}
+      # Office networks that skip the per-address sign-in limits; never the
+      # proxy's own address, which would exempt everyone. See .env.example.
+      RATE_LIMIT_EXEMPT_CIDRS: ${RATE_LIMIT_EXEMPT_CIDRS:-}
       # Optional inbound TLS. Set both to serve HTTPS directly instead of plain
       # HTTP; leave both empty for the default. Setting only one is a startup
       # error rather than a silent fallback to cleartext.

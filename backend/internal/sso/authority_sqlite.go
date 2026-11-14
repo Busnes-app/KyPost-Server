@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -136,6 +137,20 @@ func (a storeAuthority) backend(ctx context.Context, write bool) (authorityStore
 func (a storeAuthority) View(ctx context.Context, fn func(authorityReader) error) error {
 	b, err := a.backend(ctx, false)
 	if err != nil {
+		return err
+	}
+	return b.View(ctx, fn)
+}
+
+// viewSubject is View for one admission: on the database, its meta,
+// directory and account reads are one statement.
+func (a storeAuthority) viewSubject(ctx context.Context, issuer, subject string, fn func(authorityReader) error) error {
+	b, err := a.backend(ctx, false)
+	if err != nil {
+		return err
+	}
+	if db, ok := b.(sqliteAuthority); ok {
+		_, err = db.run(ctx, false, &subjectRows{issuer: issuer, subject: subject}, func(t *sqliteTx) error { return fn(t) })
 		return err
 	}
 	return b.View(ctx, fn)
@@ -482,7 +497,7 @@ type sqliteAuthority struct {
 }
 
 func (a sqliteAuthority) View(ctx context.Context, fn func(authorityReader) error) error {
-	_, err := a.run(ctx, false, func(t *sqliteTx) error { return fn(t) })
+	_, err := a.run(ctx, false, nil, func(t *sqliteTx) error { return fn(t) })
 	return err
 }
 
@@ -490,14 +505,15 @@ func (a sqliteAuthority) View(ctx context.Context, fn func(authorityReader) erro
 // routes_pending inactive when the writer asked (MarkRoutesPending). A route
 // failure leaves the commit and its routes_pending rows: ErrNativeRoutesPending.
 func (a sqliteAuthority) Update(ctx context.Context, fn func(authorityWriter) error) error {
-	t, err := a.run(ctx, true, func(t *sqliteTx) error { return fn(t) })
+	t, err := a.run(ctx, true, nil, func(t *sqliteTx) error { return fn(t) })
 	if err != nil || !t.routes {
 		return err
 	}
 	return a.flushRoutes(ctx)
 }
 
-func (a sqliteAuthority) run(ctx context.Context, write bool, fn func(*sqliteTx) error) (*sqliteTx, error) {
+// run reads one subject's rows with meta when pre is set (read only).
+func (a sqliteAuthority) run(ctx context.Context, write bool, pre *subjectRows, fn func(*sqliteTx) error) (*sqliteTx, error) {
 	h, err := acquireAuthority(a.path)
 	if err != nil {
 		return nil, err
@@ -523,7 +539,7 @@ func (a sqliteAuthority) run(ctx context.Context, write bool, fn func(*sqliteTx)
 			_, _ = c.ExecContext(context.Background(), "ROLLBACK")
 		}
 	}()
-	t := &sqliteTx{ctx: ctx, c: c}
+	t := &sqliteTx{ctx: ctx, c: c, pre: pre}
 	if err := t.readMeta(); err != nil {
 		return nil, err
 	}
@@ -556,7 +572,7 @@ func (a sqliteAuthority) run(ctx context.Context, write bool, fn func(*sqliteTx)
 // rows it wrote. The caller still holds the directory flock.
 func (a sqliteAuthority) flushRoutes(ctx context.Context) error {
 	r := authorityRows{}
-	if _, err := a.run(ctx, false, func(t *sqliteTx) error {
+	if _, err := a.run(ctx, false, nil, func(t *sqliteTx) error {
 		if err := queryRows(ctx, t.c, "routes", "SELECT address, generation FROM routes_pending", r); err != nil {
 			return err
 		}
@@ -574,7 +590,7 @@ func (a sqliteAuthority) flushRoutes(ctx context.Context) error {
 	} else if err := deactivateRoutes(root, pending); err != nil {
 		return err
 	}
-	_, err := a.run(ctx, true, func(t *sqliteTx) error {
+	_, err := a.run(ctx, true, nil, func(t *sqliteTx) error {
 		for address, generation := range pending {
 			if _, err := t.c.ExecContext(ctx, "DELETE FROM routes_pending WHERE address = ? AND generation = ?", address, generation); err != nil {
 				return err
@@ -591,6 +607,7 @@ type sqliteTx struct {
 	ctx  context.Context
 	c    *sql.Conn
 	meta authorityRows
+	pre  *subjectRows
 
 	life   *lifecycleFile
 	ledger *nativeLedger
@@ -607,7 +624,11 @@ type sqliteTx struct {
 
 func (t *sqliteTx) readMeta() error {
 	t.meta = authorityRows{}
-	if err := queryRows(t.ctx, t.c, "meta", "SELECT key, value FROM meta", t.meta); err != nil {
+	if t.pre != nil {
+		if err := t.readSubject(); err != nil {
+			return err
+		}
+	} else if err := queryRows(t.ctx, t.c, "meta", "SELECT key, value FROM meta", t.meta); err != nil {
 		return authorityErr(err)
 	}
 	if t.metaValue("format") != "3" {
@@ -653,7 +674,14 @@ func (t *sqliteTx) Directory(issuer, subject string) (DirectoryState, bool, erro
 		d, ok := t.lifePut.Directory[directoryKey(issuer, subject)]
 		return d, ok, nil
 	}
-	row, ok, err := t.row("SELECT * FROM directory WHERE issuer = ? AND subject = ?", issuer, subject)
+	var row []any
+	var ok bool
+	var err error
+	if t.pre.has(issuer, subject) {
+		row, ok = t.pre.dir, t.pre.dir != nil
+	} else {
+		row, ok, err = t.row("SELECT * FROM directory WHERE issuer = ? AND subject = ?", issuer, subject)
+	}
 	if err != nil || !ok {
 		return DirectoryState{}, false, err
 	}
@@ -662,14 +690,63 @@ func (t *sqliteTx) Directory(issuer, subject string) (DirectoryState, bool, erro
 	return s, true, d.err
 }
 
-const accountQuery = `SELECT a.revision, a.digest, a.desired_active, a.status, a.failure, a.primary_mailbox, a.legacy_mixed_use,
+const accountColumns = `a.revision, a.digest, a.desired_active, a.status, a.failure, a.primary_mailbox, a.legacy_mixed_use,
   m.kind, m.issuer, m.subject, m.state_root, m.message_bytes, m.payload_bytes, m.records, m.source,
-  (SELECT address FROM addresses WHERE mailbox = a.primary_mailbox AND kind = 'primary')
+  (SELECT address FROM addresses WHERE mailbox = a.primary_mailbox AND kind = 'primary')`
+
+const accountQuery = `SELECT ` + accountColumns + `
 FROM accounts a LEFT JOIN mailboxes m ON m.id = a.primary_mailbox WHERE a.issuer = ? AND a.subject = ?`
+
+// subjectQuery is readMeta, Directory and account for one subject: the meta
+// rows as JSON, then the directory row (8 columns), then accountColumns (16).
+// The keys are primary keys, so it returns exactly one row.
+const subjectQuery = `SELECT (SELECT json_group_array(json_array(key, value)) FROM meta), d.*, ` + accountColumns + `
+FROM (SELECT 1) LEFT JOIN directory d ON d.issuer = ?1 AND d.subject = ?2
+LEFT JOIN accounts a ON a.issuer = ?1 AND a.subject = ?2 LEFT JOIN mailboxes m ON m.id = a.primary_mailbox`
+
+// subjectRows holds one transaction's subjectQuery row; a nil row is absent.
+type subjectRows struct {
+	issuer, subject string
+	dir, account    []any
+}
+
+// has reports whether p holds subject's rows; nil holds none.
+func (p *subjectRows) has(issuer, subject string) bool {
+	return p != nil && p.issuer == issuer && p.subject == subject
+}
+
+func (t *sqliteTx) readSubject() error {
+	row, ok, err := t.row(subjectQuery, t.pre.issuer, t.pre.subject)
+	if err != nil || !ok || len(row) != 25 {
+		return cmp.Or(err, ErrNativeProvisioning)
+	}
+	text, _ := row[0].(string)
+	var meta [][2]string
+	if err := json.Unmarshal([]byte(text), &meta); err != nil {
+		return ErrNativeProvisioning
+	}
+	for _, kv := range meta {
+		t.meta.add("meta", kv[0], kv[1])
+	}
+	if row[1] != nil {
+		t.pre.dir = row[1:9]
+	}
+	if row[9] != nil { // a.revision is NOT NULL
+		t.pre.account = row[9:]
+	}
+	return nil
+}
 
 // account reads the subject's account row, primary mailbox and primary address.
 func (t *sqliteTx) account(issuer, subject string) (NativeAssignment, nativeLedgerAccount, bool, error) {
-	row, ok, err := t.row(accountQuery, issuer, subject)
+	var row []any
+	var ok bool
+	var err error
+	if t.pre.has(issuer, subject) {
+		row, ok = t.pre.account, t.pre.account != nil
+	} else {
+		row, ok, err = t.row(accountQuery, issuer, subject)
+	}
 	if err != nil || !ok {
 		return NativeAssignment{}, nativeLedgerAccount{}, false, err
 	}

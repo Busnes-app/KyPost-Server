@@ -99,10 +99,12 @@ func (s *Server) handlePoWChallenge(w http.ResponseWriter, r *http.Request) {
 	// refunded by handleLogin rather than penalised.
 	ip := clientIP(r)
 	budgetKey := lockoutKeyForIP(ip)
-	if ok, retryAfter := s.powChallenges.allow(budgetKey); !ok {
-		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
-		http.Error(w, "too many challenge requests, try again shortly", http.StatusTooManyRequests)
-		return
+	if !s.officeDraw(r, s.officePoW) {
+		if ok, retryAfter := s.powChallenges.allow(budgetKey); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
+			http.Error(w, "too many challenge requests, try again shortly", http.StatusTooManyRequests)
+			return
+		}
 	}
 	// Difficulty rises with this client's recent failed logins, so an honest
 	// first login stays nearly free. Priced per budgetKey but bound to the exact
