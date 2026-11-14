@@ -182,13 +182,15 @@ func (s *Server) ssoProvider(r *http.Request, settings sso.SSOSettings) (*sso.Pr
 // settings change or an IdP that is down all put the fetch back on the request
 // path. A real sign-in spends one token per leg.
 //
-// An allowlisted office network skips it (perIPExempt); ssoMetered does not.
+// An allowlisted office network skips it while the office budget it shares
+// with login-params lasts (officeDraw); ssoMetered does not.
 func (s *Server) ssoRateLimited(w http.ResponseWriter, r *http.Request) bool {
-	return !s.perIPExempt(r) && s.ssoMetered(w, r)
+	return !s.officeDraw(r, s.officeLoginParams) && s.ssoMetered(w, r)
 }
 
 // ssoMetered is ssoRateLimited without the office-network exemption, for the
-// one refusal that is not a sign-in: spending another session's link grant.
+// SSO requests that are not a sign-in: spending another session's link grant,
+// and the identity provider's back-channel logout.
 func (s *Server) ssoMetered(w http.ResponseWriter, r *http.Request) bool {
 	if s.loginParamsLimiter == nil {
 		return false

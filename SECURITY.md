@@ -297,13 +297,17 @@ This replaces the old `TRUST_PROXY_HEADERS=true`, which trusted forwarded header
 
 Staff in one office usually share one public NAT address, so they share every per-address limit and can lock each other out on a busy morning. An administrator can list the office's networks under **Server → Office networks**, and the operator can set `RATE_LIMIT_EXEMPT_CIDRS`; the two lists are combined. Empty by default: with nothing listed every limit behaves as before.
 
-A request from a listed network skips the per-address limits only:
+A request from a listed network skips the per-address limits only, and only by drawing on a shared **office budget** instead: one budget per limit, shared by every listed network. Once it is spent, office requests meet the ordinary per-address limit again until it refills, so one machine inside an office cannot make unlimited requests.
 
-- the proof-of-work challenge budget (30 a minute per address);
-- `GET /api/auth/login-params` and the SSO sign-in routes (one shared bucket: 30, then 1 a second per address);
-- the failed-sign-in address lock (50 failures in 15 minutes).
+| Per-address limit skipped | Office budget in its place |
+|---|---|
+| Proof-of-work challenge budget (30 a minute per address) | 300 a minute |
+| `GET /api/auth/login-params` and the SSO sign-in routes (one shared bucket: 30, then 1 a second per address) | 300 a minute, shared the same way |
+| Failed-sign-in address lock (50 failures in 15 minutes) | 15 failures at once, then 1 a second: the instance-wide sign-in budget's own size. Correct sign-ins hand their place back |
 
-Everything else still applies to it: the per-account lockout (3 failures per account per address), the instance-wide sign-in budget, the CAPTCHA or proof of work (and its difficulty escalation), MFA, SSO state, nonce and PKCE checks, and the CardDAV, agent-token and push-poll limits. A compromised machine on a listed network can still guess only three passwords per account per 15 minutes, and only as fast as the whole server's sign-in budget allows, but it can spread those guesses over many accounts without the address lock stopping it.
+The sign-in budget is sized so that an office failing at full rate for a whole 15-minute lockout window writes under a thousand per-account lockout entries, far below the table's capacity, so a flood from a listed network cannot push other accounts' partial lockouts out of it. The identity provider's back-channel logout is not a sign-in and keeps its per-address limit.
+
+Everything else still applies to it: the per-account lockout (3 failures per account per address), the instance-wide sign-in budget, the CAPTCHA or proof of work (and its difficulty escalation), MFA, SSO state, nonce and PKCE checks, and the CardDAV, agent-token and push-poll limits. A compromised machine on a listed network can still guess only three passwords per account per 15 minutes, and only as fast as the whole server's sign-in budget allows, and it can spread those guesses over many accounts only while the office budget lasts; then the address lock applies to it again. A host that spends the office budget slows sign-in for the rest of the office back to the per-address limits that apply without the list.
 
 The match uses the client address resolved through `TRUSTED_PROXY_CIDRS` and nothing else, so a forged `X-Forwarded-For` from an untrusted peer, or an address prepended to the chain behind a trusted proxy, claims nothing. Ranges broader than /16 (IPv4) or /48 (IPv6), loopback and malformed entries are refused when saved and at startup. A change needs the admin's step-up and is logged (`set_exempt_networks`, with actor and old and new lists). The screen shows how many requests skipped a limit since the last change or restart.
 

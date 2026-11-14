@@ -99,7 +99,7 @@ func (s *Server) handlePoWChallenge(w http.ResponseWriter, r *http.Request) {
 	// refunded by handleLogin rather than penalised.
 	ip := clientIP(r)
 	budgetKey := lockoutKeyForIP(ip)
-	if !s.perIPExempt(r) {
+	if !s.officeDraw(r, s.officePoW) {
 		if ok, retryAfter := s.powChallenges.allow(budgetKey); !ok {
 			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
 			http.Error(w, "too many challenge requests, try again shortly", http.StatusTooManyRequests)
