@@ -274,6 +274,7 @@ type Server struct {
 	kydrive       *kydrive.Client
 	suiteApps     sync.Map // user ID -> suiteAppsEntry
 	suitePeople   suitePeopleCache
+	driveStatuses sync.Map // user ID -> driveStatusEntry
 	aiDisabled    bool
 	ssoLifecycle  *sso.LifecycleStore
 	ollamaMu      sync.Mutex
