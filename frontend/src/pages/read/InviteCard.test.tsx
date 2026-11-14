@@ -24,6 +24,7 @@ const props = {
 const refusal = (status: number, code: string) => new HttpError(`request failed: ${status}`, status, { code, error: `says ${code}` });
 
 beforeEach(() => {
+  window.localStorage.clear();
   client.getBytes.mockResolvedValue(invite());
   client.postJSON.mockReset();
 });
@@ -43,7 +44,7 @@ describe("InviteCard", () => {
     client.getBytes.mockResolvedValue(invite("CANCEL"));
     render(<InviteCard {...props} sender="mallory@example.org" phishing />);
     expect(await screen.findByText("The organizer is not the sender (mallory@example.org).")).toBeDefined();
-    expect(screen.getByText("This event was cancelled.")).toBeDefined();
+    expect(screen.getByText("Cancelled")).toBeDefined();
     expect(screen.getByText("This message was flagged as possible phishing.")).toBeDefined();
     expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
   });
@@ -111,5 +112,65 @@ describe("InviteCard", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Send answer" }));
     expect(await screen.findByText(/may have been sent/)).toBeDefined();
     expect((screen.getByRole("button", { name: "Accept" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("asks again after an update and says what changed", async () => {
+    client.postJSON.mockResolvedValue({ outcome: "answered" });
+    const first = render(<InviteCard {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Accept" }));
+    await screen.findByText("Answered through KyCalendar.");
+    await vi.waitFor(() => expect(window.localStorage.getItem("kypost.invite-answers.v1")).toContain("ACCEPTED"));
+    // Nothing readable is stored: no title, place, address or UID.
+    for (const secret of ["Room 1", "alice@example.com", "bob@example.net", "u1", "img"]) {
+      expect(window.localStorage.getItem("kypost.invite-answers.v1")).not.toContain(secret);
+    }
+    first.unmount();
+
+    const again = render(<InviteCard {...props} />);
+    expect(await screen.findByText("You accepted.")).toBeDefined();
+    again.unmount();
+
+    client.getBytes.mockResolvedValue(new TextEncoder().encode(new TextDecoder().decode(invite())
+      .replace("SEQUENCE:1", "SEQUENCE:2").replace("Room 1", "Room 2").replace("T110000Z", "T113000Z")));
+    render(<InviteCard {...props} />);
+    expect(await screen.findByText("Changed since you answered: time and place. You had accepted; answer again.")).toBeDefined();
+    expect((screen.getByRole("button", { name: "Accept" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("treats a later DTSTAMP at the same SEQUENCE as newer", async () => {
+    client.getBytes.mockResolvedValue(invite("REQUEST", "DTSTAMP:20261001T080000Z\r\n"));
+    client.postJSON.mockResolvedValue({ outcome: "answered" });
+    const first = render(<InviteCard {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Decline" }));
+    await vi.waitFor(() => expect(window.localStorage.getItem("kypost.invite-answers.v1")).toContain("DECLINED"));
+    first.unmount();
+    client.getBytes.mockResolvedValue(invite("REQUEST", "DTSTAMP:20261002T080000Z\r\n"));
+    render(<InviteCard {...props} />);
+    expect(await screen.findByText("This invitation was updated since you answered. You had declined; answer again.")).toBeDefined();
+  });
+
+  it("shows a Join button for an https CONFERENCE only", async () => {
+    client.getBytes.mockResolvedValue(invite("REQUEST", "CONFERENCE;VALUE=URI;FEATURE=VIDEO;LABEL=KyMessages:https://chat.example.com/#/room/!abc:example\r\n"));
+    const { unmount } = render(<InviteCard {...props} />);
+    const join = await screen.findByRole("link", { name: /Join meeting/ });
+    expect(join.textContent).toBe("Join meeting (chat.example.com)");
+    expect(join.getAttribute("href")).toBe("https://chat.example.com/#/room/!abc:example");
+    expect(join.getAttribute("target")).toBe("_blank");
+    expect(join.getAttribute("rel")).toBe("noopener noreferrer");
+    unmount();
+    for (const uri of ["javascript:alert(1)", "http://chat.example.com/", "https://user:pw@chat.example.com/", "data:text/html,x"]) {
+      client.getBytes.mockResolvedValue(invite("REQUEST", `CONFERENCE;VALUE=URI:${uri}\r\n`));
+      const r = render(<InviteCard {...props} />);
+      await screen.findByText("Room 1");
+      expect(screen.queryByRole("link", { name: /Join meeting/ })).toBeNull();
+      r.unmount();
+    }
+  });
+
+  it("offers no Join on a cancellation", async () => {
+    client.getBytes.mockResolvedValue(invite("CANCEL", "CONFERENCE;VALUE=URI:https://chat.example.com/x\r\n"));
+    render(<InviteCard {...props} />);
+    expect(await screen.findByText("Cancelled")).toBeDefined();
+    expect(screen.queryByRole("link", { name: /Join meeting/ })).toBeNull();
   });
 });
