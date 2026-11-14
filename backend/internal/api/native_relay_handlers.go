@@ -3,9 +3,12 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
@@ -27,13 +30,19 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 				domain = founding.Domain
 			}
 		}
-		// Neither relay authentication username nor password is a read API field.
-		writeJSON(w, http.StatusOK, map[string]any{
+		// Neither relay authentication username nor password nor a DKIM private
+		// key is a read API field. Records are computed locally, without DNS.
+		status := map[string]any{
 			"configured": exists, "domain": domain, "domains": append([]string{}, c.Domains...),
 			"retiredDomains": append([]string{}, c.RetiredDomains...), "issuer": c.Issuer,
 			"host": c.Host, "port": c.Port, "generation": c.Generation, "mode": c.Mode,
 			"transport": map[bool]string{true: "mx-starttls", false: "implicit-tls"}[c.Mode == "direct"], "authRequired": c.Mode != "direct", "sendingEnabled": s.nativeMail && exists,
-		})
+			"dkim": c.DKIMRecords(),
+		}
+		if c.Mode == "direct" {
+			status["recommended"] = c.RecommendedRecords()
+		}
+		writeJSON(w, http.StatusOK, status)
 	}
 	if r.Method == http.MethodGet {
 		c, exists, err := mailmsg.ReadDomainRelay(path, keyPath)
@@ -161,6 +170,35 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(c, true)
+}
+
+// handleNativeMailDeliverability reads public DNS for the saved direct
+// profile. It is read-only (admin session, no step-up), creates no mail,
+// outbox or audit state, and is rate limited instance-wide.
+func (s *Server) handleNativeMailDeliverability(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	c, exists, err := mailmsg.ReadDomainRelay(filepath.Join(s.configDir, "native-relay.json"), filepath.Join(config.SecretDir(), "native-relay.key"))
+	if err != nil {
+		http.Error(w, mailmsg.ErrDomainRelay.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	if !exists || c.Mode != "direct" {
+		http.Error(w, "DNS checks apply to direct delivery only; with a relay, the provider is responsible for SPF, DKIM and DMARC. Save a direct profile first.", http.StatusConflict)
+		return
+	}
+	// ponytail: one profile per instance, so one fixed key bounds DNS load.
+	if ok, wait := s.deliverabilityCooldown.allow("deliverability"); !ok {
+		seconds := int(math.Ceil(wait.Seconds()))
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		http.Error(w, fmt.Sprintf("DNS check ran recently; wait %d seconds before retrying", seconds), http.StatusTooManyRequests)
+		return
+	}
+	result, err := c.CheckDeliverability(r.Context(), s.dnsResolver)
+	if err != nil {
+		http.Error(w, mailmsg.ErrDomainRelay.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // A check uses only the saved profile and never creates mail or outbox state.

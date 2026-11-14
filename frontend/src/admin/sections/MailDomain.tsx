@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { useAuth } from "../../auth";
 import { credentialFields, deriveCredential } from "../../api/auth";
-import { deleteJSON, HttpError, postJSON, putJSON, toErrorMessage } from "../../api/client";
-import { loadNativeMail, readMailRelayCheck, type MailDomainEntry, type NativeMailSetup } from "../../api/nativeMail";
+import { deleteJSON, getJSON, HttpError, postJSON, putJSON, toErrorMessage } from "../../api/client";
+import { loadNativeMail, readDeliverability, readMailRelayCheck, type Deliverability, type MailDomainEntry, type MailRelay, type NativeMailSetup } from "../../api/nativeMail";
 import { withSSOStepUp } from "../../api/stepup";
 
 type Action = "claim" | "rotate" | "verify" | "retire" | "relay" | "domains" | "check";
@@ -28,12 +28,69 @@ function copy(text: string) {
   void navigator.clipboard?.writeText(text);
 }
 
-function TxtRecord({ d }: { d: MailDomainEntry }) {
-  return <dl className="mail-domain-record" aria-label={`TXT record for ${d.domain}`}>
-    <dt>{d.domain}</dt>
-    <dd><span>Name</span><code>{d.recordName}</code><button type="button" className="button secondary" aria-label={`Copy TXT name for ${d.domain}`} onClick={() => copy(d.recordName)}>Copy</button></dd>
-    <dd><span>Value</span><code>{d.recordValue}</code><button type="button" className="button secondary" aria-label={`Copy TXT value for ${d.domain}`} onClick={() => copy(d.recordValue)}>Copy</button></dd>
+function RecordCard({ label, domain, name, value }: { label: string; domain: string; name: string; value: string }) {
+  return <dl className="mail-domain-record" aria-label={`${label} record for ${domain}`}>
+    <dt>{label === "TXT" ? domain : `${label} · ${domain}`}</dt>
+    <dd><span>Name</span><code>{name}</code><button type="button" className="button secondary" aria-label={`Copy ${label} name for ${domain}`} onClick={() => copy(name)}>Copy</button></dd>
+    {label !== "TXT" && <dd><span>Type</span><code>TXT</code></dd>}
+    <dd><span>Value</span><code>{value}</code><button type="button" className="button secondary" aria-label={`Copy ${label} value for ${domain}`} onClick={() => copy(value)}>Copy</button></dd>
   </dl>;
+}
+
+function TxtRecord({ d }: { d: MailDomainEntry }) {
+  return <RecordCard label="TXT" domain={d.domain} name={d.recordName} value={d.recordValue} />;
+}
+
+const checkLabel = { dkim: "DKIM", spf: "SPF", dmarc: "DMARC", ptr: "Reverse DNS" } as const;
+const statusText = { pass: { label: "Pass", tone: "success" }, warn: { label: "Warning", tone: "warning" }, fail: { label: "Fail", tone: "danger" }, unknown: { label: "Unknown", tone: undefined } } as const;
+type DirectRelay = Extract<MailRelay, { kind: "configured" }>;
+
+// Records to publish for direct delivery, a read-only DNS check and a notice
+// for every check that would get mail rejected or filed as spam.
+function DirectDelivery({ relay }: { relay: DirectRelay }) {
+  const live = useRef(true);
+  const [result, setResult] = useState<Deliverability | null>(null);
+  const [error, setError] = useState("");
+  const [checking, setChecking] = useState(false);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  async function check() {
+    setChecking(true); setError("");
+    try {
+      const answer = readDeliverability(await getJSON<unknown>("/api/admin/mail-relay/deliverability"), relay);
+      if (live.current) setResult(answer);
+    } catch (e: unknown) {
+      if (live.current) setError(toErrorMessage(e, "DNS check failed; run it again."));
+    } finally {
+      if (live.current) setChecking(false);
+    }
+  }
+  const rows = result ? [...result.domains.flatMap(d => d.checks.map(c => ({ domain: d.domain, c }))), { domain: relay.domains.join(", "), c: result.ptr }] : [];
+  const records = relay.domains.flatMap(domain => [
+    ...relay.dkim.filter(r => r.domain === domain).map(r => ({ label: "DKIM", r })),
+    ...relay.recommended.filter(r => r.domain === domain).map(r => ({ label: r.kind === "spf" ? "SPF" : "DMARC", r })),
+  ]);
+  return <section className="config-card" aria-labelledby="direct-delivery-heading">
+    <h4 id="direct-delivery-heading">Direct delivery</h4>
+    <p>KyPost delivers straight to recipient mail servers from {relay.host} and signs every message with the DKIM key of its From domain. Publish these records at your DNS provider; KyPost does not change DNS.</p>
+    <div className="mail-domain-records">
+      {records.map(({ label, r }) => <RecordCard key={`${label}:${r.recordName}`} label={label} domain={r.domain} name={r.recordName} value={r.recordValue} />)}
+    </div>
+    <p className="config-muted">SPF and reverse DNS are checked against the addresses of {relay.host}, not an observed outgoing address. The check reads DNS and signs a test message locally; no email is sent.</p>
+    <div className="config-actions"><button type="button" className="button secondary" disabled={checking} onClick={() => void check()}>Check DNS</button></div>
+    {checking && <p role="status">Checking DNS…</p>}
+    {error && <p className="notice notice-error" role="alert">{error}</p>}
+    {!result && !error && !checking && <p className="notice" role="status">These records are unchecked. Publish them, then run Check DNS.</p>}
+    {rows.filter(({ c }) => c.status !== "pass").map(({ domain, c }) => <p key={`${domain}:${c.check}`} className="notice notice-error" role="alert">Mail from {domain} may be rejected or marked as spam: {c.message}</p>)}
+    {result && <div className="users-table-wrap"><table className="users-table mail-dns-checks" aria-label="DNS check results">
+      <thead><tr><th scope="col">Domain</th><th scope="col">Check</th><th scope="col">Result</th><th scope="col">Details</th></tr></thead>
+      <tbody>{rows.map(({ domain, c }) => <tr key={`${domain}:${c.check}`}>
+        <th scope="row">{domain}</th>
+        <td>{checkLabel[c.check]}<br /><code>{c.name}</code></td>
+        <td><span className="ky-status" data-ky-status={statusText[c.status].tone}>{statusText[c.status].label}</span></td>
+        <td>{c.message}{c.found && <><br />Found: <code>{c.found}</code></>}</td>
+      </tr>)}</tbody>
+    </table></div>}
+  </section>;
 }
 
 export function MailDomain() {
@@ -88,7 +145,7 @@ function MailDomainForm() {
   }, []);
   // target names the domain for domain-set actions; the single-domain view leaves it empty.
   async function act(action: Action, target = "") {
-    if (!setup || inFlight.current || action === "check" && setup.relay.kind !== "configured") return;
+    if (!setup || inFlight.current || action === "check" && (setup.relay.kind !== "configured" || setup.relay.mode === "direct")) return;
     if (action === "rotate" && !window.confirm(`Replace the TXT challenge${target ? ` for ${target}` : ""}? This clears domain verification and pauses native account allocation and sending${target ? " on it" : ""} until the new record is verified.`)) return;
     if (action === "retire" && !window.confirm(retireWarning(target))) return;
     if (action === "relay" && setup.relay.kind === "configured" && !window.confirm("Replace the relay profile? This rotates its generation and stops unclaimed deliveries queued under the old profile. Check outbox and provider evidence before resubmitting to avoid duplicates.")) return;
@@ -237,7 +294,9 @@ function MailDomainForm() {
         {domainSet?.founding && <p className="config-muted">Older clients and the single-domain API use the founding domain. Retiring it hands that role to the alphabetically first remaining domain.</p>}
       </>}
       <h4>2. Configure outgoing delivery</h4>
-      {relay?.kind === "configured" && <p>Saved relay: {relay.host}:{relay.port}. {relay.sendingEnabled ? "Native primary sending is enabled." : "Native sending is disabled; enable KYPOST_NATIVE_MAIL in deployment to use it."} Provider delivery remains untested.</p>}
+      {relay?.kind === "configured" && (relay.mode === "direct"
+        ? <p>Saved: direct delivery from {relay.host}. {relay.sendingEnabled ? "Native primary sending is enabled." : "Native sending is disabled; enable KYPOST_NATIVE_MAIL in deployment to use it."} Saving a relay below replaces direct delivery; DKIM keys are kept.</p>
+        : <p>Saved relay: {relay.host}:{relay.port}. {relay.sendingEnabled ? "Native primary sending is enabled." : "Native sending is disabled; enable KYPOST_NATIVE_MAIL in deployment to use it."} Provider delivery remains untested.</p>)}
       <p>Use an authenticated implicit TLS endpoint, usually port 465. STARTTLS and plaintext endpoints are unsupported. Your provider must authorize the From addresses of every sending domain.</p>
       <p>KyPost holds this domain-wide credential on the server. A compromise exposing both its encrypted file and key exposes the relay account.</p>
       {domainSet && <fieldset>
@@ -262,12 +321,13 @@ function MailDomainForm() {
       <p>Every save replaces the complete relay profile. Credentials are never shown again and are cleared after each action.</p>
       {relay?.kind === "configured" && <p>Replacing this profile invalidates unclaimed queued deliveries. Check outbox and provider evidence before resubmitting; uncertain mail must never be blindly retried.</p>}
       <button className="button secondary" disabled={!unlocked || !canSave || !host || !username || !secret || !validPort} onClick={() => void act("relay")}>Save outgoing relay</button>
-      {relay?.kind === "configured" && <>
+      {relay?.kind === "configured" && relay.mode === "relay" && <>
         <p>Check saved relay contacts {relay.host}:{relay.port} using its stored credential. Unsaved edits above are not tested. The provider can record this login attempt; no email is sent.</p>
         <button className="button secondary" disabled={!unlocked || !canCheck} onClick={() => void act("check")}>Check saved relay</button>
       </>}
     </fieldset>
     {busy && <p role="status">Working…</p>}
+    {relay?.kind === "configured" && relay.mode === "direct" && <DirectDelivery key={`${relay.generation}:${relay.domains.join()}`} relay={relay} />}
     <h4>3. Back up and test</h4>
     <p>Configure <Link to="/admin/server?tab=backup">sealed backups</Link> and run a restore drill. Assign a new test identity in KyIdentity, then send from its primary address to a recipient you control. Provider acceptance does not prove inbox placement.</p>
     <p>Public receiving is not ready from this screen. A qualified receiving gateway must hold accepted mail until KyPost commits it. Complete controlled gateway, TLS, DNS and restore qualification before changing production MX.</p>

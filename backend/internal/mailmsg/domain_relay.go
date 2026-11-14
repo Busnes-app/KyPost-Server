@@ -1,6 +1,7 @@
 package mailmsg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,9 @@ type DomainRelay struct {
 	Port           int
 	Username       string
 	Password       string
+	// DKIM holds at most one key per domain in Domains ∪ RetiredDomains, sorted
+	// by domain. Only direct mode signs; relay mode keeps keys for a switch back.
+	DKIM []DKIMKey
 }
 
 // Sends reports whether From may use domain.
@@ -47,8 +51,13 @@ func (c DomainRelay) Historical(domain string) bool {
 }
 
 func (c DomainRelay) Equal(o DomainRelay) bool {
-	return c.Mode == o.Mode && c.Generation == o.Generation && slices.Equal(c.Domains, o.Domains) && slices.Equal(c.RetiredDomains, o.RetiredDomains) && c.Issuer == o.Issuer && c.Host == o.Host && c.Port == o.Port && c.Username == o.Username && c.Password == o.Password
+	return c.Mode == o.Mode && c.Generation == o.Generation && slices.Equal(c.Domains, o.Domains) && slices.Equal(c.RetiredDomains, o.RetiredDomains) && c.Issuer == o.Issuer && c.Host == o.Host && c.Port == o.Port && c.Username == o.Username && c.Password == o.Password && slices.EqualFunc(c.DKIM, o.DKIM, func(a, b DKIMKey) bool {
+		return a.Domain == b.Domain && a.Selector == b.Selector && bytes.Equal(a.Private, b.Private)
+	})
 }
+
+// Each DKIM key adds about 2.2 KiB sealed, so this fits hundreds of domains.
+const maxDomainRelayFile = 1 << 20
 
 // domainRelayFile is the sealed JSON. Version 2 holds a domain set; version 1
 // (a single "domain") is read only by migration and backup validation.
@@ -64,6 +73,7 @@ type domainRelayFile struct {
 	Port           int      `json:"port"`
 	Username       string   `json:"smtpUsername"`
 	Password       string   `json:"smtpPassword"`
+	DKIM           []DKIMKey `json:"dkim,omitempty"` // absent before DKIM signing existed
 }
 
 // Deliver is the native relay transport boundary, not account admission. Its
@@ -85,7 +95,13 @@ func (c DomainRelay) Deliver(from string, recipients []string, msg []byte) error
 		return err
 	}
 	if c.Mode == "direct" {
-		if err := c.directDeliver(from, recipients, normalized); err != nil {
+		// Never send direct mail unsigned: a missing or broken key is a definite
+		// refusal before any DNS or dial, which the outbox retries.
+		signed, err := c.dkimSign(strings.ToLower(domain), normalized)
+		if err != nil {
+			return domainRelaySubmissionError{cause: directRefusal(451)}
+		}
+		if err := c.directDeliver(from, recipients, signed); err != nil {
 			return domainRelaySubmissionError{cause: err}
 		}
 		return nil
@@ -164,6 +180,9 @@ func (c DomainRelay) Validate() error {
 	if len(c.Domains) == 0 || !slices.IsSorted(c.Domains) || !slices.IsSorted(c.RetiredDomains) || len(slices.Compact(slices.Sorted(slices.Values(all)))) != len(all) || slices.ContainsFunc(all, func(d string) bool { return !relayDNSName(d) }) {
 		return ErrDomainRelay
 	}
+	if !validDKIMKeys(c.DKIM, c.Historical) {
+		return ErrDomainRelay
+	}
 	if c.Mode == "direct" {
 		if len(c.Generation) != 36 || !fsutil.SafePathComponent(c.Generation) || !relayDNSName(c.Host) || net.ParseIP(c.Host) != nil || c.Port != 0 || c.Username != "" || c.Password != "" || c.Issuer == "" || len(c.Issuer) > 2048 || strings.ContainsAny(c.Issuer, "\r\n\x00") {
 			return ErrDomainRelay
@@ -183,7 +202,7 @@ func (c DomainRelay) Validate() error {
 // and reports the format version (1 or 2). Backup validation and migration
 // accept both; runtime reads go through ReadDomainRelay, which accepts 2 only.
 func DecodeDomainRelay(raw, key []byte) (DomainRelay, int, error) {
-	if len(raw) > 64<<10 {
+	if len(raw) > maxDomainRelayFile {
 		return DomainRelay{}, 0, ErrDomainRelay
 	}
 	envelope, ok := cryptutil.ParseEnvelope(raw)
@@ -195,9 +214,9 @@ func DecodeDomainRelay(raw, key []byte) (DomainRelay, int, error) {
 	if err != nil || json.Unmarshal(plain, &f) != nil {
 		return DomainRelay{}, 0, ErrDomainRelay
 	}
-	c := DomainRelay{Mode: f.Mode, Generation: f.Generation, Domains: f.Domains, RetiredDomains: f.RetiredDomains, Issuer: f.Issuer, Host: f.Host, Port: f.Port, Username: f.Username, Password: f.Password}
+	c := DomainRelay{Mode: f.Mode, Generation: f.Generation, Domains: f.Domains, RetiredDomains: f.RetiredDomains, Issuer: f.Issuer, Host: f.Host, Port: f.Port, Username: f.Username, Password: f.Password, DKIM: f.DKIM}
 	switch {
-	case f.Version == 1 && f.Domains == nil && f.RetiredDomains == nil:
+	case f.Version == 1 && f.Domains == nil && f.RetiredDomains == nil && f.DKIM == nil:
 		c.Domains = []string{f.Domain}
 	case f.Version == 2 && f.Domain == "":
 	default:
@@ -214,7 +233,7 @@ func SealDomainRelay(c DomainRelay, key []byte) ([]byte, error) {
 	if c.Validate() != nil {
 		return nil, ErrDomainRelay
 	}
-	plain, err := json.Marshal(domainRelayFile{Mode: c.Mode, Version: 2, Generation: c.Generation, Domains: c.Domains, RetiredDomains: append([]string{}, c.RetiredDomains...), Issuer: c.Issuer, Host: c.Host, Port: c.Port, Username: c.Username, Password: c.Password})
+	plain, err := json.Marshal(domainRelayFile{Mode: c.Mode, Version: 2, Generation: c.Generation, Domains: c.Domains, RetiredDomains: append([]string{}, c.RetiredDomains...), Issuer: c.Issuer, Host: c.Host, Port: c.Port, Username: c.Username, Password: c.Password, DKIM: c.DKIM})
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +241,11 @@ func SealDomainRelay(c DomainRelay, key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(envelope)
+	raw, err := json.Marshal(envelope)
+	if err == nil && len(raw) > maxDomainRelayFile {
+		return nil, ErrDomainRelay // refuse at save rather than write an unreadable file
+	}
+	return raw, err
 }
 
 // ReadDomainRelayAnyVersion returns version 0 when the file is absent.
@@ -235,8 +258,8 @@ func ReadDomainRelayAnyVersion(path, keyPath string) (DomainRelay, int, error) {
 		return DomainRelay{}, 0, ErrDomainRelay
 	}
 	defer f.Close()
-	raw, err := io.ReadAll(io.LimitReader(f, (64<<10)+1))
-	if err != nil || len(raw) > 64<<10 {
+	raw, err := io.ReadAll(io.LimitReader(f, maxDomainRelayFile+1))
+	if err != nil || len(raw) > maxDomainRelayFile {
 		return DomainRelay{}, 0, ErrDomainRelay
 	}
 	key, err := cryptutil.LoadKey(keyPath) // Never replace a missing decryption key.
@@ -271,6 +294,30 @@ func SetDomainRelayDomains(ctx context.Context, path, keyPath string, domains []
 	return saveDomainRelay(ctx, path, keyPath, DomainRelay{Domains: domains}, false)
 }
 
+// ReconcileDKIMKeys gives a saved direct profile a key for every sending
+// domain that lacks one (a profile saved before DKIM signing existed). It keeps
+// Generation and rewrites nothing when every key exists. Callers hold the
+// native domain fence.
+func ReconcileDKIMKeys(ctx context.Context, path, keyPath string) (bool, error) {
+	release, err := fsutil.LockFileContext(ctx, path)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	prior, exists, err := ReadDomainRelay(path, keyPath)
+	if err != nil || !exists || prior.Mode != "direct" {
+		return false, err
+	}
+	c := prior
+	if err := c.keepDKIMKeys(prior.DKIM); err != nil {
+		return false, err
+	}
+	if c.Equal(prior) {
+		return false, nil
+	}
+	return true, writeDomainRelay(ctx, path, keyPath, c)
+}
+
 // Domains leaving the set move to RetiredDomains; re-added ones leave it.
 func saveDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay, transport bool) (DomainRelay, error) {
 	domains := slices.Compact(slices.Sorted(slices.Values(c.Domains)))
@@ -300,19 +347,26 @@ func saveDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay, t
 	if c.Validate() != nil {
 		return DomainRelay{}, ErrDomainRelay
 	}
-	key, err := cryptutil.LoadOrCreateKey(keyPath)
-	if err != nil {
-		return DomainRelay{}, ErrDomainRelay
-	}
-	raw, err := SealDomainRelay(c, key)
-	if err != nil {
+	if err := c.keepDKIMKeys(prior.DKIM); err != nil {
 		return DomainRelay{}, err
 	}
-	if err := ctx.Err(); err != nil {
-		return DomainRelay{}, err
-	}
-	if err := fsutil.AtomicWriteFile(path, raw, 0600); err != nil {
+	if err := writeDomainRelay(ctx, path, keyPath, c); err != nil {
 		return DomainRelay{}, err
 	}
 	return c, nil
+}
+
+func writeDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay) error {
+	key, err := cryptutil.LoadOrCreateKey(keyPath)
+	if err != nil {
+		return ErrDomainRelay
+	}
+	raw, err := SealDomainRelay(c, key)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fsutil.AtomicWriteFile(path, raw, 0600)
 }

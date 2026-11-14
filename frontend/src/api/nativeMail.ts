@@ -12,9 +12,12 @@ export type MailDomain =
       expiresAt: number;
       verifiedUntil: number;
     };
+// A record the administrator publishes; kind is empty for a DKIM key record.
+export type DnsRecord = { domain: string; kind: "" | "spf" | "dmarc"; selector: string; recordName: string; recordType: "TXT"; recordValue: string };
+// direct: KyPost delivers to recipient MX servers and signs with its DKIM keys.
 export type MailRelay =
   | { kind: "unconfigured" }
-  | { kind: "configured"; domain: string; domains: string[]; retiredDomains: string[]; issuer: string; host: string; port: number; generation: string; sendingEnabled: boolean };
+  | { kind: "configured"; mode: "relay" | "direct"; domain: string; domains: string[]; retiredDomains: string[]; issuer: string; host: string; port: number; generation: string; sendingEnabled: boolean; dkim: DnsRecord[]; recommended: DnsRecord[] };
 export type MailDomainEntry = { domain: string; retired: boolean; recordName: string; recordValue: string; established: boolean; expiresAt: number; verifiedUntil: number };
 export type MailDomainSet = { issuer: string; founding: string; domains: MailDomainEntry[] };
 
@@ -60,22 +63,68 @@ export function readMailDomain(value: unknown): MailDomain {
     established: claim.established === true, expiresAt: integer(claim.expiresAt),
     verifiedUntil: integer(claim.verifiedUntil ?? 0) };
 }
+function readRecords(value: unknown, domains: string[], dkim: boolean): DnsRecord[] {
+  if (!Array.isArray(value) || value.length > 2000) throw new Error("Invalid mail relay records.");
+  return value.map((item: unknown) => {
+    const r = object(item);
+    const domain = text(r.domain), recordName = text(r.recordName), recordValue = text(r.recordValue);
+    const selector = r.selector === undefined ? "" : text(r.selector);
+    const kind = r.kind === undefined ? "" : r.kind === "spf" || r.kind === "dmarc" ? r.kind : null;
+    const valid = kind !== null && domains.includes(domain) && r.recordType === "TXT" && (dkim
+      ? kind === "" && /^kypost-[0-9a-f]{8}$/.test(selector) && recordName === `${selector}._domainkey.${domain}` && /^v=DKIM1; k=rsa; p=[A-Za-z0-9+/]+={0,2}$/.test(recordValue)
+      : selector === "" && (kind === "spf" && recordName === domain && recordValue.startsWith("v=spf1 ") ||
+        kind === "dmarc" && recordName === `_dmarc.${domain}` && recordValue.startsWith("v=DMARC1;")));
+    if (!valid || kind === null) throw new Error("Invalid mail relay record; reload before publishing DNS.");
+    return { domain, kind, selector, recordName, recordType: "TXT", recordValue };
+  });
+}
 export function readMailRelay(value: unknown): MailRelay {
   const data = object(value);
-  if (data.transport !== "implicit-tls" || data.authRequired !== true || typeof data.sendingEnabled !== "boolean") {
+  const direct = data.mode === "direct";
+  if ((direct ? data.transport !== "mx-starttls" || data.authRequired !== false : (data.mode ?? "") !== "" || data.transport !== "implicit-tls" || data.authRequired !== true) ||
+      typeof data.sendingEnabled !== "boolean") {
     throw new Error("Unsupported relay transport; reload with a compatible client.");
   }
-  if (data.configured === false && data.sendingEnabled === false) return { kind: "unconfigured" };
+  if (data.configured === false && data.sendingEnabled === false && !direct) return { kind: "unconfigured" };
   if (data.configured !== true) throw new Error("Invalid mail relay status.");
   const port = integer(data.port);
   const host = text(data.host), domain = text(data.domain), issuer = text(data.issuer);
   const generation = text(data.generation);
-  if (!host || !domain || !issuer || !generation || port < 1 || port > 65535) throw new Error("Invalid mail relay profile.");
+  if (!host || !domain || !issuer || !generation || (direct ? port !== 0 : port < 1 || port > 65535)) throw new Error("Invalid mail relay profile.");
   // Servers before the domain set report only the one relay domain.
   const domains = data.domains === undefined ? [domain] : texts(data.domains);
   const retiredDomains = data.retiredDomains === undefined ? [] : texts(data.retiredDomains);
   if (!domains.includes(domain)) throw new Error("Invalid mail relay profile.");
-  return { kind: "configured", domain, domains, retiredDomains, issuer, host, port, generation, sendingEnabled: data.sendingEnabled };
+  // Only direct mode signs; servers before DKIM signing report no records.
+  const dkim = direct && data.dkim !== undefined ? readRecords(data.dkim, domains, true) : [];
+  const recommended = direct && data.recommended !== undefined ? readRecords(data.recommended, domains, false) : [];
+  return { kind: "configured", mode: direct ? "direct" : "relay", domain, domains, retiredDomains, issuer, host, port, generation, sendingEnabled: data.sendingEnabled, dkim, recommended };
+}
+
+export type DnsCheckStatus = "pass" | "warn" | "fail" | "unknown";
+// found is DNS-supplied text: show it as text only.
+export type DnsCheck = { check: "dkim" | "spf" | "dmarc" | "ptr"; name: string; status: DnsCheckStatus; message: string; found: string };
+export type Deliverability = { host: string; domains: { domain: string; checks: DnsCheck[] }[]; ptr: DnsCheck };
+const invalidCheck = "Invalid DNS check answer; run the check again.";
+function readCheck(value: unknown, kinds: readonly string[]): DnsCheck {
+  const c = object(value);
+  const check = kinds.find(k => k === c.check), status = (["pass", "warn", "fail", "unknown"] as const).find(s => s === c.status);
+  if (!check || !status) throw new Error(invalidCheck);
+  return { check: check as DnsCheck["check"], name: text(c.name), status, message: text(c.message), found: c.found === undefined ? "" : text(c.found) };
+}
+// The answer must cover the saved profile, and must not claim mail was sent or egress observed.
+export function readDeliverability(value: unknown, relay: MailRelay): Deliverability {
+  const data = object(value);
+  if (relay.kind !== "configured" || data.host !== relay.host || data.egressObserved !== false || data.mailSent !== false ||
+      !Array.isArray(data.domains) || data.domains.length !== relay.domains.length) throw new Error(invalidCheck);
+  const domains = data.domains.map((item: unknown, i) => {
+    const d = object(item);
+    if (d.domain !== relay.domains[i] || !Array.isArray(d.checks) || d.checks.length !== 3) throw new Error(invalidCheck);
+    const checks = d.checks.map((c: unknown) => readCheck(c, ["dkim", "spf", "dmarc"]));
+    if (new Set(checks.map(c => c.check)).size !== 3) throw new Error(invalidCheck);
+    return { domain: relay.domains[i], checks };
+  });
+  return { host: relay.host, domains, ptr: readCheck(data.ptr, ["ptr"]) };
 }
 export function readMailDomains(value: unknown): MailDomainSet {
   const data = object(value);

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -207,6 +208,8 @@ type Server struct {
 	// push fanout on demand. See notificationTestCooldownFor.
 	notificationTestCooldown *keyedLimiter
 	nativeRelayCheckCooldown *keyedLimiter
+	deliverabilityCooldown   *keyedLimiter
+	dnsResolver              mailmsg.DNSResolver // replaced by tests
 	captchaVerifier          captcha.Verifier
 	captchaProvider          captcha.Provider
 	captchaSiteKey           string
@@ -463,6 +466,8 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		sendAsCooldown:           newCooldown(sendAsVerificationCooldownFor),
 		notificationTestCooldown: newCooldown(notificationTestCooldownFor),
 		nativeRelayCheckCooldown: newCooldown(30 * time.Second),
+		deliverabilityCooldown:   newCooldown(10 * time.Second),
+		dnsResolver:              net.DefaultResolver,
 		captchaVerifier:          captchaVerifier,
 		captchaProvider:          captchaProvider,
 		captchaSiteKey:           captchaSiteKey,
@@ -634,6 +639,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/mail-relay", s.withAdmin(s.handleNativeMailRelay))
 	mux.HandleFunc("PUT /api/admin/mail-relay", s.withAdmin(withActionDigest(s.handleNativeMailRelay)))
 	mux.HandleFunc("POST /api/admin/mail-relay/test", s.withAdmin(withActionDigest(s.handleNativeMailRelayTest)))
+	mux.HandleFunc("GET /api/admin/mail-relay/deliverability", s.withAdmin(s.handleNativeMailDeliverability))
 
 	mux.HandleFunc("POST /api/admin/backup/run", s.withAdmin(withActionDigest(s.handleBackupRun)))
 	mux.HandleFunc("POST /api/admin/backup/drill", s.withAdmin(withActionDigest(s.handleBackupDrill)))
@@ -1251,7 +1257,7 @@ func (s *Server) StartCooldownSweeper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, c := range []*keyedLimiter{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown, s.mfaPushLimiter, s.mcpCallLimiter} {
+			for _, c := range []*keyedLimiter{s.sendAsCooldown, s.notificationTestCooldown, s.nativeRelayCheckCooldown, s.deliverabilityCooldown, s.mfaPushLimiter, s.mcpCallLimiter} {
 				c.sweep()
 			}
 		}

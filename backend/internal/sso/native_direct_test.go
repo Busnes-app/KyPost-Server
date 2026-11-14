@@ -4,6 +4,7 @@ package sso
 
 import (
 	"context"
+	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 	"path/filepath"
@@ -61,5 +62,49 @@ func TestNativeOutboundDirectIndependentRefusalsAndRevocation(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A direct profile saved before DKIM signing gains keys at startup without a
+// new generation, so a job queued under it still reaches a claim.
+func TestNativeOutboundDirectDKIMReconcileKeepsQueuedJob(t *testing.T) {
+	ctx := context.Background()
+	sender, u, job := outboundFixture(t)
+	path := filepath.Join(sender.ConfigDir, "native-relay.json")
+	direct, err := mailmsg.SaveDomainRelay(ctx, path, sender.keyPath(), mailmsg.DomainRelay{Mode: "direct", Domains: []string{"example.test"}, Issuer: nativeIssuer, Host: "mail.example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := cryptutil.LoadKey(sender.keyPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct.DKIM = nil
+	keyless, err := mailmsg.SealDomainRelay(direct, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = fsutil.AtomicWriteFile(path, keyless, 0600); err != nil {
+		t.Fatal(err)
+	}
+	job.Deliveries[0].Recipients = []string{"first@invalid"} // refused before DNS or TCP
+	id, err := fsutil.NewUUIDv4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = sender.Queue(ctx, u.ID, id, job); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := mailmsg.ReconcileDKIMKeys(ctx, path, sender.keyPath()); err != nil || !changed {
+		t.Fatal("keys not added", err)
+	}
+	keyed, _, err := mailmsg.ReadDomainRelay(path, sender.keyPath())
+	if err != nil || keyed.Generation != direct.Generation || len(keyed.DKIM) != 1 {
+		t.Fatal("reconciliation changed the generation", err)
+	}
+	_ = sender.Recover(ctx, u.ID, id)
+	statuses, _, err := sender.Status(ctx, u.ID, id)
+	if err != nil || len(statuses) != 1 || statuses[0].State != "failed" || statuses[0].Attempts != 1 {
+		t.Fatalf("queued job did not reach a claim after reconciliation: %+v %v", statuses, err)
 	}
 }

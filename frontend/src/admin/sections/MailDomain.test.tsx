@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { AuthContext, type AuthState } from "../../auth";
@@ -412,4 +412,123 @@ it("says a committed change was saved when the follow-up status read fails", asy
   fireEvent.click(screen.getByRole("button", { name: "Verify TXT record" }));
   expect((await screen.findByRole("alert")).textContent).toBe("Change saved; reload to see current mail setup. Invalid mail domain proof; reload before making changes.");
   expect((screen.getByRole("group", { name: "Confirm each action" }) as HTMLFieldSetElement).disabled).toBe(true);
+});
+
+const dkimRecord = { domain: "example.com", selector: "kypost-0a1b2c3d", recordName: "kypost-0a1b2c3d._domainkey.example.com", recordType: "TXT", recordValue: "v=DKIM1; k=rsa; p=MIIBIjANBgkq+/abc=" };
+const directRelay = {
+  ...setRelay, mode: "direct", transport: "mx-starttls", authRequired: false, host: "mail.example.com", port: 0,
+  dkim: [dkimRecord],
+  recommended: [
+    { domain: "example.com", kind: "spf", recordName: "example.com", recordType: "TXT", recordValue: "v=spf1 a:mail.example.com -all" },
+    { domain: "example.com", kind: "dmarc", recordName: "_dmarc.example.com", recordType: "TXT", recordValue: "v=DMARC1; p=quarantine; adkim=s; aspf=s" },
+  ],
+};
+const passing = (check: string, name: string) => ({ check, name, status: "pass", message: `${check} ok` });
+const deliverability = {
+  host: "mail.example.com", egressObserved: false, mailSent: false,
+  domains: [{ domain: "example.com", checks: [passing("dkim", dkimRecord.recordName), passing("spf", "example.com"), passing("dmarc", "_dmarc.example.com")] }],
+  ptr: passing("ptr", "mail.example.com"),
+};
+// Serves the deliverability check; everything else goes to the shared mock.
+function serveCheck(answer: () => Response) {
+  const read = fetchMock.getMockImplementation();
+  fetchMock.mockImplementation(async (url, init) => url === "/api/admin/mail-relay/deliverability" ? answer() : read!(url, init));
+}
+const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+
+it("validates direct delivery records and check answers at the boundary", async () => {
+  const { readDeliverability } = await import("../../api/nativeMail");
+  const relay = readMailRelay(directRelay);
+  expect(relay).toMatchObject({ kind: "configured", mode: "direct", port: 0, dkim: [{ selector: "kypost-0a1b2c3d" }] });
+  expect(readMailRelay(setRelay)).toMatchObject({ mode: "relay", dkim: [], recommended: [] });
+  for (const value of [{ ...directRelay, authRequired: true }, { ...directRelay, port: 25 }, { ...directRelay, dkim: [{ ...dkimRecord, recordName: "attacker.example" }] },
+    { ...directRelay, dkim: [{ ...dkimRecord, domain: "other.example", recordName: "kypost-0a1b2c3d._domainkey.other.example" }] }, { ...directRelay, recommended: [{ ...directRelay.recommended[0], kind: "mx" }] }]) {
+    expect(() => readMailRelay(value)).toThrow();
+  }
+  expect(readDeliverability(deliverability, relay).ptr.status).toBe("pass");
+  for (const value of [{ ...deliverability, mailSent: true }, { ...deliverability, egressObserved: true }, { ...deliverability, host: "other.example" },
+    { ...deliverability, ptr: { ...deliverability.ptr, status: "ok" } }, { ...deliverability, domains: [] }]) {
+    expect(() => readDeliverability(value, relay)).toThrow();
+  }
+});
+
+it("lists direct delivery records with copy buttons and marks them unchecked", async () => {
+  setResponse = domainSet; relayResponse = directRelay;
+  const writeText = vi.fn<(text: string) => Promise<void>>(async () => undefined);
+  const original = navigator.clipboard;
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  onTestFinished(() => { Object.defineProperty(navigator, "clipboard", { value: original, configurable: true }); });
+  render(view());
+  const panel = within(await screen.findByRole("region", { name: "Direct delivery" }));
+  expect(panel.getByRole("status").textContent).toContain("These records are unchecked");
+  expect(panel.queryByRole("alert")).toBeNull();
+  for (const label of ["DKIM", "SPF", "DMARC"]) {
+    expect(panel.getByLabelText(`${label} record for example.com`)).toBeDefined();
+  }
+  fireEvent.click(panel.getByRole("button", { name: "Copy DKIM value for example.com" }));
+  expect(writeText).toHaveBeenCalledWith(dkimRecord.recordValue);
+  fireEvent.click(panel.getByRole("button", { name: "Copy DMARC value for example.com" }));
+  expect(writeText).toHaveBeenLastCalledWith("v=DMARC1; p=quarantine; adkim=s; aspf=s");
+  expect(screen.queryByRole("button", { name: "Check saved relay" })).toBeNull();
+});
+
+it("shows passing DNS checks as text without notices", async () => {
+  setResponse = domainSet; relayResponse = directRelay;
+  serveCheck(() => json(deliverability));
+  render(view());
+  const panel = within(await screen.findByRole("region", { name: "Direct delivery" }));
+  fireEvent.click(panel.getByRole("button", { name: "Check DNS" }));
+  const table = within(await panel.findByRole("table", { name: "DNS check results" }));
+  expect(table.getAllByText("Pass")).toHaveLength(4);
+  expect(panel.queryByRole("alert")).toBeNull();
+  expect(panel.queryByText(/unchecked/)).toBeNull();
+  // The check is a read: no credential, step-up or write.
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method && init.method !== "GET")).toHaveLength(0);
+  expect(deriveCredential).not.toHaveBeenCalled();
+});
+
+it("raises a notice for every failing check and renders DNS text as text", async () => {
+  setResponse = domainSet; relayResponse = directRelay;
+  const hostile = "<img src=x onerror=alert(1)>";
+  serveCheck(() => json({
+    ...deliverability,
+    domains: [{ domain: "example.com", checks: [
+      { ...passing("dkim", dkimRecord.recordName), status: "fail", message: "No DKIM record found", found: hostile },
+      { ...passing("spf", "example.com"), status: "unknown", message: "DNS lookup timed out or failed; check the resolver and run the check again" },
+      { ...passing("dmarc", "_dmarc.example.com"), status: "warn", message: "DMARC policy is none" },
+    ] }],
+    ptr: { ...deliverability.ptr, status: "fail", message: "No reverse DNS" },
+  }));
+  const rendered = render(view());
+  const panel = within(await screen.findByRole("region", { name: "Direct delivery" }));
+  fireEvent.click(panel.getByRole("button", { name: "Check DNS" }));
+  await panel.findByRole("table", { name: "DNS check results" });
+  expect(panel.getAllByRole("alert").map(a => a.textContent)).toEqual([
+    "Mail from example.com may be rejected or marked as spam: No DKIM record found",
+    "Mail from example.com may be rejected or marked as spam: DNS lookup timed out or failed; check the resolver and run the check again",
+    "Mail from example.com may be rejected or marked as spam: DMARC policy is none",
+    "Mail from example.com may be rejected or marked as spam: No reverse DNS",
+  ]);
+  for (const label of ["Fail", "Unknown", "Warning"]) expect(panel.getAllByText(label).length).toBeGreaterThan(0);
+  expect(panel.getByText(hostile)).toBeDefined();
+  expect(rendered.container.querySelector("img")).toBeNull();
+});
+
+it("shows the retry wait when the DNS check is rate limited", async () => {
+  setResponse = domainSet; relayResponse = directRelay;
+  serveCheck(() => new Response("DNS check ran recently; wait 7 seconds before retrying", { status: 429, headers: { "Retry-After": "7" } }));
+  render(view());
+  const panel = within(await screen.findByRole("region", { name: "Direct delivery" }));
+  fireEvent.click(panel.getByRole("button", { name: "Check DNS" }));
+  expect((await panel.findByRole("alert")).textContent).toContain("wait 7 seconds");
+  expect((panel.getByRole("button", { name: "Check DNS" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+it("shows no direct delivery panel or DNS notices in relay mode", async () => {
+  setResponse = domainSet; relayResponse = setRelay;
+  render(view()); await screen.findByRole("table", { name: "Mail domains" });
+  expect(screen.queryByRole("region", { name: "Direct delivery" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Check DNS" })).toBeNull();
+  expect(screen.queryByText(/may be rejected or marked as spam/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Check saved relay" })).toBeDefined();
 });
