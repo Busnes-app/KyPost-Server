@@ -10,9 +10,10 @@ import { isClientProtected } from "../lib/pgpSession";
 import { formatBytes } from "../app/compose";
 import { CloseIcon } from "../pages/read/icons";
 import type { UserMailbox } from "../app/mailboxes";
+import { openNewMeeting } from "../lib/meetingLink";
 
 /** The compose dialog. All state lives in useCompose, which App owns so pages can open it. */
-export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailboxes: UserMailbox[] }) {
+export function ComposeWindow({ compose, mailboxes, calendarOrigin = "" }: { compose: Compose; mailboxes: UserMailbox[]; calendarOrigin?: string }) {
   const {
     composeOpen, composeSending, composeSavingDraft, composeError, composeSuccess, composeNotice, setComposeNotice, composeAutosaveFailed,
     composeFrom, setComposeFrom, composeFromChoices, sendAsOptions,
@@ -252,6 +253,12 @@ export function ComposeWindow({ compose, mailboxes }: { compose: Compose; mailbo
                 <button type="button" className="compose-save-draft" onClick={() => void saveComposeDraft()} disabled={composeSending || composeSavingDraft}>Save Draft</button>
                 <button type="button" className="compose-attach" onClick={() => attachmentInputRef.current?.click()} disabled={composeSending || composeSavingDraft}>Attach</button>
                 <button type="button" className="compose-attach" onClick={() => setContactPickerOpen(true)} disabled={composeSending || composeSavingDraft}>Contacts</button>
+                {calendarOrigin ? (
+                  <button type="button" className="compose-attach" onClick={() => openNewMeeting(calendarOrigin, {
+                    title: composeSubject,
+                    attendees: [...composeTo.tokens, ...composeCc.tokens].map((t) => t.email)
+                  })}>New meeting</button>
+                ) : null}
                 <button type="button" className="compose-trash btn-ghost btn-danger" onClick={trashComposeDraft} disabled={composeSending || composeSavingDraft}>Trash</button>
             </div>
             </footer>
