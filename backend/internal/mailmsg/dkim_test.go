@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/emersion/go-msgauth/dkim"
@@ -26,7 +27,7 @@ func testDKIMKey(domain string) DKIMKey {
 	if k, ok := testDKIMKeys.Load(domain); ok {
 		return k.(DKIMKey)
 	}
-	k, err := newDKIMKey(domain)
+	k, err := DomainRelay{}.newDKIMKey(domain, DKIMActive, time.Now())
 	if err != nil {
 		panic(err)
 	}
@@ -88,19 +89,18 @@ func TestDKIMKeysCreatedOncePerDirectDomain(t *testing.T) {
 	}
 }
 
-func sameDKIM(a, b DKIMKey) bool {
-	return a.Domain == b.Domain && a.Selector == b.Selector && bytes.Equal(a.Private, b.Private)
-}
+func sameDKIM(a, b DKIMKey) bool { return a.equal(b) }
 
 // requireNoPrivateKey refuses PEM markers and any 32-character run of the
-// key's base64 encoding.
+// key's base64 encoding. The first 64 characters are skipped: they encode the
+// PKCS #8 RSA-2048 header every key shares, so another key would match them.
 func requireNoPrivateKey(t *testing.T, out []byte, k DKIMKey) {
 	t.Helper()
 	if bytes.Contains(out, []byte("PRIVATE KEY")) {
 		t.Fatal("output contains a PEM private key")
 	}
 	encoded := base64.StdEncoding.EncodeToString(k.Private)
-	for i := 0; i+32 <= len(encoded); i += 16 {
+	for i := 64; i+32 <= len(encoded); i += 16 {
 		if bytes.Contains(out, []byte(encoded[i:i+32])) {
 			t.Fatal("output contains part of the DKIM private key")
 		}
@@ -134,7 +134,7 @@ func TestDKIMKeysOutliveModeSwitches(t *testing.T) {
 	requireDKIMKeys(t, back, "example.test") // relay-only.test is retired: no new key
 	// A key goes only once its domain leaves both Domains and RetiredDomains.
 	retired := DomainRelay{Mode: "direct", Domains: []string{"new.test"}, RetiredDomains: []string{"example.test"}}
-	if err := retired.keepDKIMKeys([]DKIMKey{testDKIMKey("example.test"), testDKIMKey("gone.test")}); err != nil {
+	if err := retired.keepDKIMKeys([]DKIMKey{testDKIMKey("example.test"), testDKIMKey("gone.test")}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	requireDKIMKeys(t, retired, "example.test", "new.test")
@@ -232,7 +232,7 @@ func signatureField(t *testing.T, wire string) (map[string]string, string) {
 func verifyWire(t *testing.T, c DomainRelay, wire string) string {
 	t.Helper()
 	records := map[string]string{}
-	for _, r := range c.DKIMRecords() {
+	for _, r := range c.DKIMRecords(time.Now()) {
 		records[r.RecordName] = r.RecordValue
 	}
 	result, err := dkim.VerifyWithOptions(strings.NewReader(wire), &dkim.VerifyOptions{LookupTXT: func(name string) ([]string, error) {
@@ -245,7 +245,7 @@ func verifyWire(t *testing.T, c DomainRelay, wire string) string {
 		t.Fatal("wire signature does not verify", err, result)
 	}
 	tags, rest := signatureField(t, wire)
-	k, _ := c.dkimKey("example.test")
+	k, _ := c.dkimKey("example.test", DKIMActive)
 	if tags["d"] != "example.test" || tags["s"] != k.Selector || tags["a"] != "rsa-sha256" || tags["c"] != "relaxed/relaxed" {
 		t.Fatal("signature tags", tags)
 	}
@@ -282,7 +282,7 @@ func TestDKIMSignedHeaders(t *testing.T) {
 
 func verifyWireResult(c DomainRelay, wire string) (*dkim.Verification, error) {
 	records := map[string]string{}
-	for _, r := range c.DKIMRecords() {
+	for _, r := range c.DKIMRecords(time.Now()) {
 		records[r.RecordName] = r.RecordValue
 	}
 	result, err := dkim.VerifyWithOptions(strings.NewReader(wire), &dkim.VerifyOptions{LookupTXT: func(name string) ([]string, error) {

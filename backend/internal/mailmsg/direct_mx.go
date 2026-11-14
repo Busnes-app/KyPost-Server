@@ -11,6 +11,7 @@ import (
 	"net/textproto"
 	"sort"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/netguard"
@@ -22,6 +23,19 @@ var directLookupMX = net.DefaultResolver.LookupMX
 var directLookupIP = net.DefaultResolver.LookupIP
 var directDial = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
 var directRoots *x509.CertPool
+
+// directTestTransport, when set, receives signed direct wire bytes instead of
+// the MX conversation.
+var directTestTransport func(from string, recipients []string, wire []byte) error
+
+// SetDirectTransportForTest lets other packages' tests capture the signed wire
+// bytes of direct delivery; nil restores MX delivery. Panics outside tests.
+func SetDirectTransportForTest(send func(from string, recipients []string, wire []byte) error) {
+	if !testing.Testing() {
+		panic("direct transport replaced outside tests")
+	}
+	directTestTransport = send
+}
 
 // Bound untrusted greeting/reply and TLS input independently of the clock.
 // SMTP uploads are already bounded by the stored message's size limits.

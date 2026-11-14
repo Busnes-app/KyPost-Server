@@ -3,10 +3,16 @@
 package sso
 
 import (
+	"bytes"
 	"context"
+	"net"
+	"strings"
+	"time"
+
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
+	"github.com/emersion/go-msgauth/dkim"
 	"path/filepath"
 	"testing"
 )
@@ -65,8 +71,9 @@ func TestNativeOutboundDirectIndependentRefusalsAndRevocation(t *testing.T) {
 	}
 }
 
-// A direct profile saved before DKIM signing gains keys at startup without a
-// new generation, so a job queued under it still reaches a claim.
+// A direct profile saved before DKIM signing gains keys at startup, and a
+// later rotation switches keys, without a new generation: a job queued before
+// both still reaches a claim and goes out signed with the key active then.
 func TestNativeOutboundDirectDKIMReconcileKeepsQueuedJob(t *testing.T) {
 	ctx := context.Background()
 	sender, u, job := outboundFixture(t)
@@ -87,7 +94,6 @@ func TestNativeOutboundDirectDKIMReconcileKeepsQueuedJob(t *testing.T) {
 	if err = fsutil.AtomicWriteFile(path, keyless, 0600); err != nil {
 		t.Fatal(err)
 	}
-	job.Deliveries[0].Recipients = []string{"first@invalid"} // refused before DNS or TCP
 	id, err := fsutil.NewUUIDv4()
 	if err != nil {
 		t.Fatal(err)
@@ -102,9 +108,48 @@ func TestNativeOutboundDirectDKIMReconcileKeepsQueuedJob(t *testing.T) {
 	if err != nil || keyed.Generation != direct.Generation || len(keyed.DKIM) != 1 {
 		t.Fatal("reconciliation changed the generation", err)
 	}
-	_ = sender.Recover(ctx, u.ID, id)
-	statuses, _, err := sender.Status(ctx, u.ID, id)
-	if err != nil || len(statuses) != 1 || statuses[0].State != "failed" || statuses[0].Attempts != 1 {
-		t.Fatalf("queued job did not reach a claim after reconciliation: %+v %v", statuses, err)
+	// An administrator rotates and confirms before the job is sent.
+	dns := directTXT{}
+	rotation := mailmsg.DKIMRotation{Path: path, KeyPath: sender.keyPath(), Fence: filepath.Join(sender.ConfigDir, NativeDomainsFile), Resolver: dns}
+	c, next, _, err := rotation.Rotate(ctx, time.Now(), "example.test")
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, r := range c.DKIMRecords(time.Now()) {
+		dns[r.RecordName+"."] = r.RecordValue
+	}
+	if c, _, _, err = rotation.Confirm(ctx, time.Now(), "example.test"); err != nil || c.Generation != direct.Generation {
+		t.Fatal("switch", err)
+	}
+	var wire []byte
+	mailmsg.SetDirectTransportForTest(func(_ string, _ []string, w []byte) error { wire = w; return nil })
+	t.Cleanup(func() { mailmsg.SetDirectTransportForTest(nil) })
+	if err = sender.Recover(ctx, u.ID, id); err != nil {
+		t.Fatal(err)
+	}
+	statuses, _, err := sender.Status(ctx, u.ID, id)
+	if err != nil || len(statuses) != 1 || statuses[0].State != "accepted" || statuses[0].Attempts != 1 {
+		t.Fatalf("queued job did not reach a claim after reconciliation and rotation: %+v %v", statuses, err)
+	}
+	result, err := dkim.VerifyWithOptions(bytes.NewReader(wire), &dkim.VerifyOptions{LookupTXT: func(name string) ([]string, error) { return []string{dns[name+"."]}, nil }})
+	unfolded := strings.ReplaceAll(string(wire), "\r\n ", "")
+	if err != nil || len(result) != 1 || result[0].Err != nil || !strings.Contains(unfolded, "s="+next.Selector+";") {
+		t.Fatal("queued job not signed with the new key", err, result)
+	}
+}
+
+// directTXT serves fixed TXT records.
+type directTXT map[string]string
+
+func (d directTXT) LookupTXT(_ context.Context, name string) ([]string, error) {
+	if v, ok := d[name]; ok {
+		return []string{v}, nil
+	}
+	return nil, &net.DNSError{IsNotFound: true}
+}
+func (directTXT) LookupIP(context.Context, string, string) ([]net.IP, error) {
+	return nil, &net.DNSError{IsNotFound: true}
+}
+func (directTXT) LookupAddr(context.Context, string) ([]string, error) {
+	return nil, &net.DNSError{IsNotFound: true}
 }

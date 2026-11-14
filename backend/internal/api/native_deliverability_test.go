@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
@@ -283,7 +284,7 @@ func TestDeliverabilityAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, r := range direct.DKIMRecords() {
+	for _, r := range direct.DKIMRecords(time.Now()) {
 		resolver.txt[r.RecordName+"."] = []string{r.RecordValue}
 	}
 	for _, r := range direct.RecommendedRecords() {

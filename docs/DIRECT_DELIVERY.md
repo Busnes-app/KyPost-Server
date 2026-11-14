@@ -65,8 +65,8 @@ a selector `kypost-<8 hex>`. The key is sealed inside `native-relay.json` with
 `setup-status`. Saving the same profile, editing the domain set or switching to
 a relay and back keeps every existing key; a key is dropped only when its domain
 leaves both the domain set and the retired set. `migrate-native` adds keys to a
-direct profile saved before signing existed, keeping its generation. There is no
-key rotation yet.
+direct profile saved before signing existed, keeping its generation. Keys
+rotate only when an administrator rotates them (below).
 
 Every direct message gets one `DKIM-Signature` (`a=rsa-sha256`,
 `c=relaxed/relaxed`, `d=` the From domain, no `l=`) over From (oversigned), To,
@@ -92,6 +92,41 @@ addresses are reverse-checked, DNS text echoed back is cut to 512 bytes and the
 check runs once per 10 seconds per instance (otherwise 429 with `Retry-After`).
 The Mail domain screen shows the records, a **Check DNS** button and a notice
 for every non-passing check.
+
+## DKIM key rotation
+
+DKIM (RFC 6376) and DMARC (RFC 7489) do not require key rotation. KyPost
+recommends rotating at 180 days, following M3AAWG's DKIM Key Rotation Best
+Common Practices (rotate at least every six months). KyPost never rotates
+on its own: from day 180 Mail domain shows a notice recommending rotation.
+
+Each step needs the administrator's step-up confirmation, as the relay save does:
+
+1. **Rotate DKIM key** creates a *next* key with a new selector and shows its
+   record. Publish it. The current key keeps signing.
+2. **Check and switch** (`POST /api/admin/mail-relay/dkim/confirm`) looks the
+   record up. If it is not live yet the answer says why and nothing changes; it
+   shares the DNS check's limit of one run per 10 seconds. Once the record
+   carries the new key and verifies a locally signed test message, the new key
+   signs from then on. Queued mail is signed at send time, so it goes out with
+   the key active then; the relay generation and queued jobs are untouched.
+3. The old key is *retiring*: keep its record published until the date shown
+   (7 days), so mail already signed with it still verifies. It never signs.
+4. After that date KyPost destroys the old private key in the live profile and
+   shows "<record> can now be removed from DNS" for 30 days. Delete the record.
+   Older backups keep the key, encrypted, until their retention expires.
+
+A normal rotation is refused while an old key is still retiring ("finish the
+previous rotation first"). **Emergency: rotate now** is for a key that may be
+exposed: after you accept the gap, a fresh key signs at once, any waiting next
+key is dropped and the old key is destroyed with no window. Mail fails DKIM
+until you publish the new record, and receivers may reject it or mark it as
+spam; remove the old record at once. A background tick (at start, then hourly)
+only advances the retire and removal windows; it never creates or switches a
+key and makes no DNS lookup. Each step writes the sealed profile atomically, so
+a crash leaves the previous state, with the active key still signing; retry the
+step. Every step logs `dkim rotation` with domain, selectors, phase and trigger
+(`manual`, `emergency` or `window`), never key material.
 
 ## Recipient outcomes and API semantics
 

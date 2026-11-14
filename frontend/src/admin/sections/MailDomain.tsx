@@ -3,10 +3,10 @@ import { Link } from "react-router";
 import { useAuth } from "../../auth";
 import { credentialFields, deriveCredential } from "../../api/auth";
 import { deleteJSON, getJSON, HttpError, postJSON, putJSON, toErrorMessage } from "../../api/client";
-import { loadNativeMail, readDeliverability, readMailRelayCheck, type Deliverability, type MailDomainEntry, type MailRelay, type NativeMailSetup } from "../../api/nativeMail";
+import { loadNativeMail, readDeliverability, readDkimWarning, readMailRelayCheck, type Deliverability, type MailDomainEntry, type MailRelay, type NativeMailSetup } from "../../api/nativeMail";
 import { withSSOStepUp } from "../../api/stepup";
 
-type Action = "claim" | "rotate" | "verify" | "retire" | "relay" | "domains" | "check";
+type Action = "claim" | "rotate" | "verify" | "retire" | "relay" | "domains" | "check" | DkimAction;
 
 function retireWarning(domain: string) {
   return `Retire ${domain}? KyPost refuses while any address on it is active, queued or retryable mail sends from it, accepted incoming mail is waiting for it, or the relay still sends for it, or while a restore hold is in place. Existing address records are kept. You can re-add it later, but it then needs a new TXT challenge and fresh DNS proof before it carries mail.`;
@@ -44,10 +44,50 @@ function TxtRecord({ d }: { d: MailDomainEntry }) {
 const checkLabel = { dkim: "DKIM", spf: "SPF", dmarc: "DMARC", ptr: "Reverse DNS" } as const;
 const statusText = { pass: { label: "Pass", tone: "success" }, warn: { label: "Warning", tone: "warning" }, fail: { label: "Fail", tone: "danger" }, unknown: { label: "Unknown", tone: undefined } } as const;
 type DirectRelay = Extract<MailRelay, { kind: "configured" }>;
+type DkimAction = "dkim-rotate" | "dkim-confirm" | "dkim-emergency";
+// Key actions go through the form's confirmed request flow (account credential or KySignOn step-up).
+type KeyActions = { unlocked: boolean; busy: boolean; run: (action: DkimAction, domain: string) => void };
+
+// One domain's DKIM selectors: the signing key, a waiting next key and old
+// keys still published or ready to delete, with the step-up-gated actions.
+function DkimKeys({ relay, domain, keys }: { relay: DirectRelay; domain: string; keys: KeyActions }) {
+  const [accepted, setAccepted] = useState(false);
+  const records = relay.dkim.filter(r => r.domain === domain);
+  const active = records.find(r => r.state === "active");
+  const next = records.find(r => r.state === "next");
+  const locked = !keys.unlocked || keys.busy;
+  return <div className="mail-dkim-domain" role="group" aria-label={`DKIM keys for ${domain}`}>
+    {active && <>
+      <RecordCard label="DKIM" domain={domain} name={active.recordName} value={active.recordValue} />
+      <p>Signing selector <code>{active.selector}</code>, {active.ageDays} {active.ageDays === 1 ? "day" : "days"} old. Rotation recommended from {at(active.rotationRecommendedAt / 1000)}.</p>
+      {active.rotationRecommended && !next && <p className="notice notice-warning" role="status">The DKIM key for {domain} is {active.ageDays} days old. M3AAWG recommends rotating DKIM keys at least every six months. Press Rotate DKIM key to start.</p>}
+    </>}
+    {next && <>
+      <RecordCard label="New DKIM" domain={domain} name={next.recordName} value={next.recordValue} />
+      <p>Publish this record, then press Check and switch. KyPost keeps signing with the current key until you do.</p>
+    </>}
+    {records.filter(r => r.state === "retiring").map(r => <p key={r.selector}><code>{r.recordName}</code> retiring: keep published until {at(r.keepPublishedUntil / 1000)}</p>)}
+    {records.filter(r => r.state === "removable").map(r => <p key={r.selector}><code>{r.recordName}</code> can now be removed from DNS</p>)}
+    <div className="config-actions">
+      {next
+        ? <button type="button" className="button secondary" disabled={locked} onClick={() => keys.run("dkim-confirm", domain)}>Check and switch</button>
+        : <button type="button" className="button secondary" aria-label={`Rotate DKIM key for ${domain}`} disabled={locked} onClick={() => keys.run("dkim-rotate", domain)}>Rotate DKIM key</button>}
+    </div>
+    <details>
+      <summary>Emergency: rotate now</summary>
+      <p className="notice notice-warning">Mail from {domain} will fail DKIM until you publish the new record. Receivers may reject it or mark it as spam.{active && <> Remove the old record <code>{active.recordName}</code> now.</>} Use this only if the current key may be exposed.</p>
+      <label className="config-checkbox">
+        <input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} />
+        <span>I accept that mail will fail DKIM until the new record is published</span>
+      </label>
+      <button type="button" className="button secondary" disabled={locked || !accepted} onClick={() => { setAccepted(false); keys.run("dkim-emergency", domain); }}>Rotate now</button>
+    </details>
+  </div>;
+}
 
 // Records to publish for direct delivery, a read-only DNS check and a notice
 // for every check that would get mail rejected or filed as spam.
-function DirectDelivery({ relay }: { relay: DirectRelay }) {
+function DirectDelivery({ relay, keys }: { relay: DirectRelay; keys: KeyActions }) {
   const live = useRef(true);
   const [result, setResult] = useState<Deliverability | null>(null);
   const [error, setError] = useState("");
@@ -67,15 +107,16 @@ function DirectDelivery({ relay }: { relay: DirectRelay }) {
   // Reverse DNS belongs to the server, not a domain: its row and notice name the EHLO host.
   const rows = result ? [...result.domains.flatMap(d => d.checks.map(c => ({ domain: d.domain, c }))), { domain: relay.host, c: result.ptr }] : [];
   const failing = rows.filter(({ c }) => c.status !== "pass");
-  const records = relay.domains.flatMap(domain => [
-    ...relay.dkim.filter(r => r.domain === domain).map(r => ({ label: "DKIM", r })),
-    ...relay.recommended.filter(r => r.domain === domain).map(r => ({ label: r.kind === "spf" ? "SPF" : "DMARC", r })),
-  ]);
+  const recommended = (domain: string) => relay.recommended.filter(r => r.domain === domain).map(r => ({ label: r.kind === "spf" ? "SPF" : "DMARC", r }));
   return <section className="config-card" aria-labelledby="direct-delivery-heading">
     <h4 id="direct-delivery-heading">Direct delivery</h4>
     <p>KyPost delivers straight to recipient mail servers from {relay.host} and signs every message with the DKIM key of its From domain. Publish these records at your DNS provider; KyPost does not change DNS.</p>
+    {!keys.unlocked && <p className="config-muted">Confirm key actions with your account password above.</p>}
     <div className="mail-domain-records">
-      {records.map(({ label, r }) => <RecordCard key={`${label}:${r.recordName}`} label={label} domain={r.domain} name={r.recordName} value={r.recordValue} />)}
+      {relay.domains.map(domain => <div key={domain}>
+        <DkimKeys relay={relay} domain={domain} keys={keys} />
+        {recommended(domain).map(({ label, r }) => <RecordCard key={`${label}:${r.recordName}`} label={label} domain={r.domain} name={r.recordName} value={r.recordValue} />)}
+      </div>)}
     </div>
     <p className="config-muted">SPF and reverse DNS are checked against the addresses of {relay.host}, not an observed outgoing address. The check reads DNS and signs a test message locally; no email is sent.</p>
     <div className="config-actions"><button type="button" className="button secondary" disabled={checking} onClick={() => void check()}>Check DNS</button></div>
@@ -114,6 +155,7 @@ function MailDomainForm() {
   const [setup, setSetup] = useState<NativeMailSetup | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [warning, setWarning] = useState("");
   const [busy, setBusy] = useState(false);
   const [domain, setDomain] = useState("");
   const [host, setHost] = useState("");
@@ -157,7 +199,7 @@ function MailDomainForm() {
     if (action === "retire" && !window.confirm(retireWarning(target))) return;
     if (action === "relay" && setup.relay.kind === "configured" && !window.confirm("Replace the relay profile? This rotates its generation and stops unclaimed deliveries queued under the old profile. Check outbox and provider evidence before resubmitting to avoid duplicates.")) return;
     inFlight.current = true;
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError(""); setNotice(""); setWarning("");
     // Freeze the request before credential derivation or KySignOn confirmation.
     const set = setup.mode === "set";
     const fields = action === "relay"
@@ -165,6 +207,8 @@ function MailDomainForm() {
       : action === "domains" ? { domains: selected }
       : action === "check" && setup.relay.kind === "configured" ? { expectedGeneration: setup.relay.generation }
       : action === "verify" || action === "retire" ? {}
+      : action === "dkim-emergency" ? { domain: target, emergency: true, acceptGap: true }
+      : action === "dkim-rotate" || action === "dkim-confirm" ? { domain: target }
       : { domain: target || (setup.mode === "single" && setup.domain.kind === "configured" ? setup.domain.domain : domain) };
     const path = `/api/admin/mail-domains/${encodeURIComponent(target)}`;
     const accountPassword = password;
@@ -177,6 +221,8 @@ function MailDomainForm() {
       const result = await withSSOStepUp((headers) => {
         requireLive();
         return action === "check" ? postJSON<unknown>("/api/admin/mail-relay/test", body, headers)
+          : action === "dkim-confirm" ? postJSON<unknown>("/api/admin/mail-relay/dkim/confirm", body, headers)
+          : action === "dkim-rotate" || action === "dkim-emergency" ? postJSON<unknown>("/api/admin/mail-relay/dkim/rotate", body, headers)
           : action === "relay" || action === "domains" ? putJSON<unknown>("/api/admin/mail-relay", body, headers)
           : action === "retire" ? deleteJSON<unknown>(path, body, headers)
           : action === "verify" ? postJSON<unknown>(set ? `${path}/verify` : "/api/admin/mail-domain/verify", body, headers)
@@ -186,6 +232,7 @@ function MailDomainForm() {
       requireLive();
       if (action === "check") readMailRelayCheck(result, setup.relay);
       else committed = true;
+      if (action === "dkim-emergency") setWarning(readDkimWarning(result));
       // A successful mutation followed by an unreadable GET must not leave stale controls enabled.
       setSetup(null);
       const refreshed = await refresh();
@@ -197,6 +244,9 @@ function MailDomainForm() {
         : action === "domains" ? "Relay sending domains saved. Credentials and relay generation are unchanged."
         : action === "retire" ? `${target} retired. Its address records are kept; re-adding it needs a new TXT challenge and DNS proof.`
         : action === "verify" ? "TXT record matched. KyPost rechecks DNS before native operations."
+        : action === "dkim-rotate" ? `New DKIM key for ${target} created. Publish its record, then press Check and switch. The current key keeps signing until then.`
+        : action === "dkim-confirm" ? `The new DKIM record for ${target} is live. KyPost now signs with it; keep the old record published until the date shown.`
+        : action === "dkim-emergency" ? `New DKIM key for ${target} is signing now.`
         : "Challenge created. Publish the exact TXT record below, then verify it.");
     } catch (e: unknown) {
       if (live.current) {
@@ -231,6 +281,7 @@ function MailDomainForm() {
     <p>First configure <Link to="/admin/server?tab=sso">Single Sign-On (SSO)</Link> with KyIdentity. Existing IMAP accounts are never adopted into native mailboxes.</p>
     {error && <p className="notice notice-error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
+    {warning && <p className="notice notice-warning" role="alert">{warning}</p>}
     {!setup && <p>{error ? "Setup status unavailable. Reload this page before making changes." : "Loading mail setup…"}</p>}
     <fieldset className="config-card config-grid" disabled={busy || !setup}>
       <legend>Confirm each action</legend>
@@ -334,7 +385,7 @@ function MailDomainForm() {
       </>}
     </fieldset>
     {busy && <p role="status">Working…</p>}
-    {relay?.kind === "configured" && relay.mode === "direct" && <DirectDelivery key={`${relay.generation}:${relay.domains.join()}`} relay={relay} />}
+    {relay?.kind === "configured" && relay.mode === "direct" && <DirectDelivery key={`${relay.generation}:${relay.domains.join()}`} relay={relay} keys={{ unlocked, busy, run: (action, domain) => void act(action, domain) }} />}
     <h4>3. Back up and test</h4>
     <p>Configure <Link to="/admin/server?tab=backup">sealed backups</Link> and run a restore drill. Assign a new test identity in KyIdentity, then send from its primary address to a recipient you control. Provider acceptance does not prove inbox placement.</p>
     <p>Public receiving is not ready from this screen. A qualified receiving gateway must hold accepted mail until KyPost commits it. Complete controlled gateway, TLS, DNS and restore qualification before changing production MX.</p>

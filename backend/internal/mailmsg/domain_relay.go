@@ -1,7 +1,6 @@
 package mailmsg
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,8 +36,9 @@ type DomainRelay struct {
 	Port           int
 	Username       string
 	Password       string
-	// DKIM holds at most one key per domain in Domains ∪ RetiredDomains, sorted
-	// by domain. Only direct mode signs; relay mode keeps keys for a switch back.
+	// DKIM holds the keys of domains in Domains ∪ RetiredDomains in
+	// compareDKIM order. Only direct mode signs, with each domain's active key;
+	// relay mode keeps keys for a switch back.
 	DKIM []DKIMKey
 }
 
@@ -51,9 +51,7 @@ func (c DomainRelay) Historical(domain string) bool {
 }
 
 func (c DomainRelay) Equal(o DomainRelay) bool {
-	return c.Mode == o.Mode && c.Generation == o.Generation && slices.Equal(c.Domains, o.Domains) && slices.Equal(c.RetiredDomains, o.RetiredDomains) && c.Issuer == o.Issuer && c.Host == o.Host && c.Port == o.Port && c.Username == o.Username && c.Password == o.Password && slices.EqualFunc(c.DKIM, o.DKIM, func(a, b DKIMKey) bool {
-		return a.Domain == b.Domain && a.Selector == b.Selector && bytes.Equal(a.Private, b.Private)
-	})
+	return c.Mode == o.Mode && c.Generation == o.Generation && slices.Equal(c.Domains, o.Domains) && slices.Equal(c.RetiredDomains, o.RetiredDomains) && c.Issuer == o.Issuer && c.Host == o.Host && c.Port == o.Port && c.Username == o.Username && c.Password == o.Password && slices.EqualFunc(c.DKIM, o.DKIM, DKIMKey.equal)
 }
 
 // Each DKIM key adds about 2.2 KiB sealed, so this fits hundreds of domains.
@@ -101,7 +99,11 @@ func (c DomainRelay) Deliver(from string, recipients []string, msg []byte) error
 		if err != nil {
 			return domainRelaySubmissionError{cause: directRefusal(451)}
 		}
-		if err := c.directDeliver(from, recipients, signed); err != nil {
+		send := c.directDeliver
+		if directTestTransport != nil {
+			send = directTestTransport
+		}
+		if err := send(from, recipients, signed); err != nil {
 			return domainRelaySubmissionError{cause: err}
 		}
 		return nil
@@ -309,7 +311,7 @@ func ReconcileDKIMKeys(ctx context.Context, path, keyPath string) (bool, error) 
 		return false, err
 	}
 	c := prior
-	if err := c.keepDKIMKeys(prior.DKIM); err != nil {
+	if err := c.keepDKIMKeys(prior.DKIM, time.Now()); err != nil {
 		return false, err
 	}
 	if c.Equal(prior) {
@@ -347,7 +349,7 @@ func saveDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay, t
 	if c.Validate() != nil {
 		return DomainRelay{}, ErrDomainRelay
 	}
-	if err := c.keepDKIMKeys(prior.DKIM); err != nil {
+	if err := c.keepDKIMKeys(prior.DKIM, time.Now()); err != nil {
 		return DomainRelay{}, err
 	}
 	if err := writeDomainRelay(ctx, path, keyPath, c); err != nil {
@@ -368,5 +370,8 @@ func writeDomainRelay(ctx context.Context, path, keyPath string, c DomainRelay) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return fsutil.AtomicWriteFile(path, raw, 0600)
+	return relayWriteFile(path, raw, 0600)
 }
+
+// relayWriteFile is replaced only by package tests that fail a write.
+var relayWriteFile = fsutil.AtomicWriteFile

@@ -414,7 +414,8 @@ it("says a committed change was saved when the follow-up status read fails", asy
   expect((screen.getByRole("group", { name: "Confirm each action" }) as HTMLFieldSetElement).disabled).toBe(true);
 });
 
-const dkimRecord = { domain: "example.com", selector: "kypost-0a1b2c3d", recordName: "kypost-0a1b2c3d._domainkey.example.com", recordType: "TXT", recordValue: "v=DKIM1; k=rsa; p=MIIBIjANBgkq+/abc=" };
+const dkimRecord = { domain: "example.com", selector: "kypost-0a1b2c3d", state: "active", createdAt: "2026-06-01T00:00:00Z", ageDays: 30, rotationRecommendedAt: "2026-11-28T00:00:00Z", rotationRecommended: false,
+  recordName: "kypost-0a1b2c3d._domainkey.example.com", recordType: "TXT", recordValue: "v=DKIM1; k=rsa; p=MIIBIjANBgkq+/abc=" };
 const directRelay = {
   ...setRelay, mode: "direct", transport: "mx-starttls", authRequired: false, host: "mail.example.com", port: 0,
   dkim: [dkimRecord],
@@ -540,4 +541,131 @@ it("shows no direct delivery panel or DNS notices in relay mode", async () => {
   expect(screen.queryByRole("button", { name: "Check DNS" })).toBeNull();
   expect(screen.queryByText(/may be rejected or marked as spam/)).toBeNull();
   expect(screen.getByRole("button", { name: "Check saved relay" })).toBeDefined();
+});
+
+const nextRecord = { domain: "example.com", selector: "kypost-11112222", state: "next", createdAt: "2026-07-01T00:00:00Z", recordName: "kypost-11112222._domainkey.example.com", recordType: "TXT", recordValue: "v=DKIM1; k=rsa; p=TkVYVA==" };
+const retiringRecord = { domain: "example.com", selector: "kypost-33334444", state: "retiring", createdAt: "2026-01-01T00:00:00Z", retiredAt: "2026-07-01T00:00:00Z", keepPublishedUntil: "2026-07-08T00:00:00Z", recordName: "kypost-33334444._domainkey.example.com", recordType: "TXT", recordValue: "v=DKIM1; k=rsa; p=T0xE" };
+const removableRecord = { domain: "example.com", selector: "kypost-55556666", state: "removable", createdAt: "2025-06-01T00:00:00Z", retiredAt: "2026-01-01T00:00:00Z", keepPublishedUntil: "2026-01-08T00:00:00Z", recordName: "kypost-55556666._domainkey.example.com", recordType: "TXT" };
+// Answers POSTs to path; other requests go to the shared mock.
+function serveWrite(path: string, answer: () => Response) {
+  const read = fetchMock.getMockImplementation();
+  fetchMock.mockImplementation(async (url, init) => url === path && init?.method === "POST" ? answer() : read!(url, init));
+}
+const dkimPosts = () => fetchMock.mock.calls.filter(([url, init]) => String(url).startsWith("/api/admin/mail-relay/dkim/") && init?.method === "POST");
+
+it("shows every DKIM key state in the direct delivery panel", async () => {
+  setResponse = domainSet; relayResponse = { ...directRelay, dkim: [dkimRecord, nextRecord, retiringRecord, removableRecord] };
+  render(view());
+  const keys = within(await screen.findByRole("group", { name: "DKIM keys for example.com" }));
+  expect(keys.getByText(/Signing selector/).textContent).toContain("kypost-0a1b2c3d, 30 days old. Rotation recommended from");
+  expect(keys.getByLabelText("New DKIM record for example.com")).toBeDefined();
+  expect(keys.getByRole("button", { name: "Copy New DKIM value for example.com" })).toBeDefined();
+  expect(keys.getByText("Publish this record, then press Check and switch. KyPost keeps signing with the current key until you do.")).toBeDefined();
+  expect(keys.getByText(/retiring: keep published until/).textContent).toContain("kypost-33334444._domainkey.example.com retiring: keep published until");
+  expect(keys.getByText(/can now be removed from DNS/).textContent).toBe("kypost-55556666._domainkey.example.com can now be removed from DNS");
+  expect(keys.getByRole("button", { name: "Check and switch" })).toBeDefined();
+  expect(keys.queryByRole("button", { name: "Rotate DKIM key for example.com" })).toBeNull();
+  expect(keys.queryByText(/M3AAWG recommends/)).toBeNull(); // a next key is already waiting
+});
+
+it("recommends rotation at 180 days without rotating", async () => {
+  setResponse = domainSet; relayResponse = { ...directRelay, dkim: [{ ...dkimRecord, ageDays: 181, rotationRecommended: true }] };
+  render(view());
+  const keys = within(await screen.findByRole("group", { name: "DKIM keys for example.com" }));
+  expect(keys.getByRole("status").textContent).toBe("The DKIM key for example.com is 181 days old. M3AAWG recommends rotating DKIM keys at least every six months. Press Rotate DKIM key to start.");
+  expect(dkimPosts()).toHaveLength(0);
+});
+
+it("rotates a DKIM key through the confirmed request flow", async () => {
+  setResponse = domainSet; relayResponse = directRelay;
+  render(view());
+  const rotate = await screen.findByRole("button", { name: "Rotate DKIM key for example.com" });
+  expect((rotate as HTMLButtonElement).disabled).toBe(true); // no credential yet
+  fill("Account password", "account-secret");
+  relayResponse = { ...directRelay, dkim: [dkimRecord, nextRecord] };
+  fireEvent.click(rotate);
+  await screen.findByText(/New DKIM key for example.com created/);
+  const posts = dkimPosts();
+  expect(posts).toHaveLength(1);
+  expect(posts[0]?.[0]).toBe("/api/admin/mail-relay/dkim/rotate");
+  expect(JSON.parse(String(posts[0]?.[1]?.body))).toEqual({ domain: "example.com", authSecret: "derived-test-secret" });
+  expect(deriveCredential).toHaveBeenCalledWith("", "account-secret");
+  expect(await screen.findByLabelText("New DKIM record for example.com")).toBeDefined();
+});
+
+it("checks and switches only when the new record is live", async () => {
+  setResponse = domainSet; relayResponse = { ...directRelay, dkim: [dkimRecord, nextRecord] };
+  let live = false;
+  serveWrite("/api/admin/mail-relay/dkim/confirm", () => live ? new Response("{}")
+    : new Response("The new DKIM record is not live yet (fail): No DKIM record found. KyPost keeps signing with the current key.", { status: 409 }));
+  render(view());
+  fill("Account password", "account-secret");
+  fireEvent.click(await screen.findByRole("button", { name: "Check and switch" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("not live yet (fail)");
+  fill("Account password", "account-secret");
+  live = true;
+  relayResponse = { ...directRelay, dkim: [{ ...dkimRecord, selector: nextRecord.selector, recordName: nextRecord.recordName }, { ...retiringRecord, selector: "kypost-0a1b2c3d", recordName: dkimRecord.recordName }] };
+  fireEvent.click(await screen.findByRole("button", { name: "Check and switch" }));
+  await screen.findByText(/The new DKIM record for example.com is live/);
+  expect(dkimPosts().map(([url]) => url)).toEqual(["/api/admin/mail-relay/dkim/confirm", "/api/admin/mail-relay/dkim/confirm"]);
+  expect(JSON.parse(String(dkimPosts()[1]?.[1]?.body))).toEqual({ domain: "example.com", authSecret: "derived-test-secret" });
+  expect(screen.getByText(/retiring: keep published until/)).toBeDefined();
+});
+
+it("rate limited confirms show the wait as text", async () => {
+  setResponse = domainSet; relayResponse = { ...directRelay, dkim: [dkimRecord, nextRecord] };
+  serveWrite("/api/admin/mail-relay/dkim/confirm", () => new Response("DNS check ran recently; wait 6 seconds before retrying", { status: 429 }));
+  render(view());
+  fill("Account password", "account-secret");
+  fireEvent.click(await screen.findByRole("button", { name: "Check and switch" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("wait 6 seconds");
+});
+
+it("gates emergency rotation behind the acceptance checkbox and shows its warning", async () => {
+  setResponse = domainSet; relayResponse = directRelay;
+  const warning = "Mail from example.com will fail DKIM until you publish kypost-99998888._domainkey.example.com. Receivers may reject it or mark it as spam. Remove the old record kypost-0a1b2c3d._domainkey.example.com now.";
+  serveWrite("/api/admin/mail-relay/dkim/rotate", () => json({ warning }));
+  render(view());
+  const keys = within(await screen.findByRole("group", { name: "DKIM keys for example.com" }));
+  fill("Account password", "account-secret");
+  fireEvent.click(keys.getByText("Emergency: rotate now"));
+  expect(keys.getByText(/will fail DKIM until you publish the new record/).textContent).toContain("Remove the old record kypost-0a1b2c3d._domainkey.example.com now.");
+  const now = keys.getByRole("button", { name: "Rotate now" }) as HTMLButtonElement;
+  expect(now.disabled).toBe(true);
+  fireEvent.click(keys.getByLabelText("I accept that mail will fail DKIM until the new record is published"));
+  expect(now.disabled).toBe(false);
+  fireEvent.click(now);
+  expect((await screen.findByText(warning)).getAttribute("role")).toBe("alert");
+  expect(JSON.parse(String(dkimPosts()[0]?.[1]?.body))).toEqual({ domain: "example.com", emergency: true, acceptGap: true, authSecret: "derived-test-secret" });
+});
+
+it("opens the step-up confirmation before any key request", async () => {
+  setResponse = domainSet; relayResponse = { ...directRelay, dkim: [dkimRecord, nextRecord] };
+  // A KySignOn session whose confirmation is never completed sends nothing.
+  vi.mocked(withSSOStepUp).mockImplementation(() => new Promise(() => undefined));
+  render(view({ ...admin, ssoSession: true }));
+  const keys = within(await screen.findByRole("group", { name: "DKIM keys for example.com" }));
+  fireEvent.click(keys.getByRole("button", { name: "Check and switch" }));
+  await waitFor(() => expect(withSSOStepUp).toHaveBeenCalledTimes(1));
+  expect(dkimPosts()).toHaveLength(0);
+  cleanup();
+  relayResponse = directRelay;
+  for (const press of [
+    (k: typeof keys) => fireEvent.click(k.getByRole("button", { name: "Rotate DKIM key for example.com" })),
+    (k: typeof keys) => { fireEvent.click(k.getByText("Emergency: rotate now")); fireEvent.click(k.getByLabelText("I accept that mail will fail DKIM until the new record is published")); fireEvent.click(k.getByRole("button", { name: "Rotate now" })); },
+  ]) {
+    vi.mocked(withSSOStepUp).mockClear();
+    render(view({ ...admin, ssoSession: true }));
+    press(within(await screen.findByRole("group", { name: "DKIM keys for example.com" })));
+    await waitFor(() => expect(withSSOStepUp).toHaveBeenCalledTimes(1));
+    expect(dkimPosts()).toHaveLength(0);
+    cleanup();
+  }
+});
+
+it("shows no rotation controls in relay mode", async () => {
+  setResponse = domainSet; relayResponse = setRelay;
+  render(view()); await screen.findByRole("table", { name: "Mail domains" });
+  for (const name of [/Rotate DKIM key/, "Check and switch", "Rotate now"]) expect(screen.queryByRole("button", { name })).toBeNull();
+  expect(screen.queryByText("Emergency: rotate now")).toBeNull();
 });

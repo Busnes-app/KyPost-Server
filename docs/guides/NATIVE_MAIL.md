@@ -159,7 +159,7 @@ are kept, so **Re-add** restores them after fresh proof.
 | A / AAAA | receiving hostname | the public address whose TCP 25 reaches `KYPOST_SMTP_BIND:KYPOST_SMTP_PORT` | B | You; the certificate must name this host |
 | SPF, DKIM, custom MAIL FROM | as your relay provider specifies | as your relay provider specifies | Both, relay | You, from the relay provider's instructions. With a relay, the relay signs DKIM |
 | DMARC | `_dmarc.<domain>` | your policy | Both, relay | You. With a relay, KyPost neither publishes nor checks your DMARC record |
-| DKIM | `kypost-<id>._domainkey.<domain>` | `v=DKIM1; k=rsa; p=…` exactly as shown | Both, direct | You, from Server → Mail domain → Direct delivery. KyPost signs every direct message with this domain's key |
+| DKIM | `kypost-<id>._domainkey.<domain>` | `v=DKIM1; k=rsa; p=…` exactly as shown | Both, direct | You, from Server → Mail domain → Direct delivery. KyPost signs every direct message with this domain's active key; during a rotation publish the new record too, and remove the old one when the panel says so |
 | SPF | `<domain>` | `v=spf1 a:<EHLO host> -all` (or merge `a:<EHLO host>` into your one SPF record) | Both, direct | You. **Check DNS** passes only when SPF covers every A/AAAA address of the EHLO host |
 | DMARC | `_dmarc.<domain>` | `v=DMARC1; p=quarantine; adkim=s; aspf=s` | Both, direct | You. **Check DNS** warns on `p=none` or `pct` below 100 |
 | PTR | reverse DNS of each EHLO host address | the EHLO host | Both, direct | Your hosting provider. Not needed with a relay, whose servers carry their own reverse DNS |
@@ -171,6 +171,24 @@ shows a **Direct delivery** panel with the exact DKIM, SPF and DMARC records.
 notice for every check that would get mail rejected or filed as spam. It reads
 DNS only, sends no mail and runs at most once every 10 seconds. It checks the
 EHLO host's own addresses, not the address your mail actually leaves from.
+
+### DKIM key rotation (direct delivery)
+
+DKIM (RFC 6376) and DMARC (RFC 7489) do not require key rotation. KyPost
+recommends rotating at 180 days, following M3AAWG's DKIM Key Rotation Best
+Common Practices (rotate at least every six months). KyPost never rotates
+on its own; from day 180 the Direct delivery panel recommends it.
+
+1. Enter your account password (or confirm with KySignOn) and press **Rotate
+   DKIM key**. Publish the new record it shows; the current key keeps signing.
+2. Press **Check and switch**. Until the record is live, KyPost says so and
+   keeps the current key. Once it is live, the new key signs.
+3. Keep the old record published until the "keep published until" date (7 days).
+4. When it reads "can now be removed from DNS", delete the old record.
+
+**Emergency: rotate now** (behind a disclosure and a checkbox) replaces a key
+that may be exposed at once. Mail fails DKIM until you publish the new record;
+remove the old record immediately. See [direct delivery](../DIRECT_DELIVERY.md#dkim-key-rotation).
 
 Leave the `_kypost-mail` TXT record untouched when Cloudflare or the relay
 provider rewrites other records. Full domain rules: [native provisioning](../NATIVE_PROVISIONING.md#operator-domain-setup).

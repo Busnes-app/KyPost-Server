@@ -29,6 +29,12 @@ non-prerelease version.
   (`GET /api/admin/mail-relay/deliverability`) that checks them and reverse DNS
   for the EHLO host, with a notice for every check that would get mail rejected
   or filed as spam. The check reads DNS only and sends no mail.
+- DKIM key rotation for direct delivery, always started by an administrator
+  with step-up: **Rotate DKIM key** prepares a new selector, **Check and switch**
+  moves signing once its record is live, the old key stays published for 7 days
+  and is then destroyed. From 180 days the panel recommends rotating (M3AAWG);
+  KyPost never rotates on its own. **Emergency: rotate now** replaces an
+  exposed key at once after an explicit acceptance of the DKIM gap.
 
 ### Fixed
 

@@ -151,14 +151,22 @@ func dkimTags(record string) (map[string]string, bool) {
 }
 
 func (c DomainRelay) checkDKIM(q dnsQuery, domain string) DNSCheck {
-	ch := DNSCheck{Check: "dkim"}
-	k, ok := c.dkimKey(domain)
+	k, ok := c.dkimKey(domain, DKIMActive)
+	if !ok {
+		return DNSCheck{Check: "dkim", Name: domain, Status: "fail", Message: "KyPost has no usable DKIM key for " + domain + ", so direct mail from it is refused; restart KyPost to create a key"}
+	}
+	return checkDKIMKey(q, k)
+}
+
+// checkDKIMKey looks up k's record: it must carry k's public key and verify a
+// message k signs locally.
+func checkDKIMKey(q dnsQuery, k DKIMKey) DNSCheck {
+	ch := DNSCheck{Check: "dkim", Name: k.recordName()}
 	want, err := k.publicRecord()
-	if !ok || err != nil {
-		ch.Name, ch.Status, ch.Message = domain, "fail", "KyPost has no usable DKIM key for "+domain+", so direct mail from it is refused; restart KyPost to create a key"
+	if err != nil {
+		ch.Status, ch.Message = "fail", "KyPost has no usable DKIM key for "+k.Domain+", so direct mail from it is refused; restart KyPost to create a key"
 		return ch
 	}
-	ch.Name = k.recordName()
 	publish := "publish TXT " + ch.Name + " with the value \"" + want + "\""
 	txts, err := q.txt(ch.Name)
 	switch {
@@ -187,7 +195,7 @@ func (c DomainRelay) checkDKIM(q dnsQuery, domain string) DNSCheck {
 		ch.Status, ch.Message = "fail", "The DKIM record cannot be parsed; "+publish
 	case !published.Equal(&key.PublicKey):
 		ch.Status, ch.Message = "fail", "The published DKIM key is not KyPost's key; "+publish
-	case !c.dkimSelfTest(domain, ch.Name, txts[0]):
+	case !dkimSelfTest(k, txts[0]):
 		ch.Status, ch.Message = "fail", "A message signed by KyPost does not verify against the published record; "+publish
 	case slices.Contains(strings.Split(strings.ReplaceAll(tags["t"], " ", ""), ":"), "y"):
 		ch.Status, ch.Message = "warn", "The DKIM record is in testing mode (t=y), so receivers may ignore failures; remove t=y"
@@ -197,16 +205,17 @@ func (c DomainRelay) checkDKIM(q dnsQuery, domain string) DNSCheck {
 	return ch
 }
 
-// dkimSelfTest signs a synthetic message with the stored key and verifies it
-// against the fetched record. Nothing is sent.
-func (c DomainRelay) dkimSelfTest(domain, name, record string) bool {
+// dkimSelfTest signs a synthetic message with k and verifies it against the
+// fetched record. Nothing is sent.
+func dkimSelfTest(k DKIMKey, record string) bool {
+	domain := k.Domain
 	msg := "From: dkim-check@" + domain + "\r\nTo: dkim-check@" + domain + "\r\nSubject: KyPost DKIM check\r\nDate: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\nMessage-ID: <dkim-check@" + domain + ">\r\n\r\nKyPost DKIM self-test. Never sent.\r\n"
-	signed, err := c.dkimSign(domain, []byte(msg))
+	signed, err := k.sign([]byte(msg))
 	if err != nil {
 		return false
 	}
 	result, err := dkim.VerifyWithOptions(bytes.NewReader(signed), &dkim.VerifyOptions{LookupTXT: func(n string) ([]string, error) {
-		if n != name {
+		if n != k.recordName() {
 			return nil, &net.DNSError{IsNotFound: true}
 		}
 		return []string{record}, nil

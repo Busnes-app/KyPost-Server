@@ -210,6 +210,7 @@ type Server struct {
 	nativeRelayCheckCooldown *keyedLimiter
 	deliverabilityCooldown   *keyedLimiter
 	dnsResolver              mailmsg.DNSResolver // replaced by tests
+	dkimNow                  func() time.Time    // replaced by tests
 	captchaVerifier          captcha.Verifier
 	captchaProvider          captcha.Provider
 	captchaSiteKey           string
@@ -468,6 +469,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		nativeRelayCheckCooldown: newCooldown(30 * time.Second),
 		deliverabilityCooldown:   newCooldown(10 * time.Second),
 		dnsResolver:              net.DefaultResolver,
+		dkimNow:                  time.Now,
 		captchaVerifier:          captchaVerifier,
 		captchaProvider:          captchaProvider,
 		captchaSiteKey:           captchaSiteKey,
@@ -640,6 +642,8 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/admin/mail-relay", s.withAdmin(withActionDigest(s.handleNativeMailRelay)))
 	mux.HandleFunc("POST /api/admin/mail-relay/test", s.withAdmin(withActionDigest(s.handleNativeMailRelayTest)))
 	mux.HandleFunc("GET /api/admin/mail-relay/deliverability", s.withAdmin(s.handleNativeMailDeliverability))
+	mux.HandleFunc("POST /api/admin/mail-relay/dkim/rotate", s.withAdmin(withActionDigest(s.handleDKIMRotate)))
+	mux.HandleFunc("POST /api/admin/mail-relay/dkim/confirm", s.withAdmin(withActionDigest(s.handleDKIMConfirm)))
 
 	mux.HandleFunc("POST /api/admin/backup/run", s.withAdmin(withActionDigest(s.handleBackupRun)))
 	mux.HandleFunc("POST /api/admin/backup/drill", s.withAdmin(withActionDigest(s.handleBackupDrill)))

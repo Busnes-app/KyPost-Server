@@ -14,10 +14,14 @@ export type MailDomain =
     };
 // A record the administrator publishes; kind is empty for a DKIM key record.
 export type DnsRecord = { domain: string; kind: "" | "spf" | "dmarc"; selector: string; recordName: string; recordType: "TXT"; recordValue: string };
+// A DKIM selector and where it is in rotation. Times are Unix ms; 0 when absent.
+// Only the active key signs; a removable entry names a record to delete and has no value.
+export type DkimState = "active" | "next" | "retiring" | "removable";
+export type DkimRecord = DnsRecord & { state: DkimState; createdAt: number; ageDays: number; rotationRecommendedAt: number; rotationRecommended: boolean; retiredAt: number; keepPublishedUntil: number };
 // direct: KyPost delivers to recipient MX servers and signs with its DKIM keys.
 export type MailRelay =
   | { kind: "unconfigured" }
-  | { kind: "configured"; mode: "relay" | "direct"; domain: string; domains: string[]; retiredDomains: string[]; issuer: string; host: string; port: number; generation: string; sendingEnabled: boolean; dkim: DnsRecord[]; recommended: DnsRecord[] };
+  | { kind: "configured"; mode: "relay" | "direct"; domain: string; domains: string[]; retiredDomains: string[]; issuer: string; host: string; port: number; generation: string; sendingEnabled: boolean; dkim: DkimRecord[]; recommended: DnsRecord[] };
 export type MailDomainEntry = { domain: string; retired: boolean; recordName: string; recordValue: string; established: boolean; expiresAt: number; verifiedUntil: number };
 export type MailDomainSet = { issuer: string; founding: string; domains: MailDomainEntry[] };
 
@@ -63,19 +67,45 @@ export function readMailDomain(value: unknown): MailDomain {
     established: claim.established === true, expiresAt: integer(claim.expiresAt),
     verifiedUntil: integer(claim.verifiedUntil ?? 0) };
 }
-function readRecords(value: unknown, domains: string[], dkim: boolean): DnsRecord[] {
+const dkimStates: readonly DkimState[] = ["active", "next", "retiring", "removable"];
+function time(value: unknown): number {
+  if (value === undefined) return 0;
+  const ms = Date.parse(text(value));
+  if (!Number.isFinite(ms)) throw new Error("Invalid mail relay record time.");
+  return ms;
+}
+function readRecords(value: unknown, domains: string[]): DnsRecord[] {
   if (!Array.isArray(value) || value.length > 2000) throw new Error("Invalid mail relay records.");
   return value.map((item: unknown) => {
     const r = object(item);
     const domain = text(r.domain), recordName = text(r.recordName), recordValue = text(r.recordValue);
-    const selector = r.selector === undefined ? "" : text(r.selector);
-    const kind = r.kind === undefined ? "" : r.kind === "spf" || r.kind === "dmarc" ? r.kind : null;
-    const valid = kind !== null && domains.includes(domain) && r.recordType === "TXT" && (dkim
-      ? kind === "" && /^kypost-[0-9a-f]{8}$/.test(selector) && recordName === `${selector}._domainkey.${domain}` && /^v=DKIM1; k=rsa; p=[A-Za-z0-9+/]+={0,2}$/.test(recordValue)
-      : selector === "" && (kind === "spf" && recordName === domain && recordValue.startsWith("v=spf1 ") ||
-        kind === "dmarc" && recordName === `_dmarc.${domain}` && recordValue.startsWith("v=DMARC1;")));
-    if (!valid || kind === null) throw new Error("Invalid mail relay record; reload before publishing DNS.");
-    return { domain, kind, selector, recordName, recordType: "TXT", recordValue };
+    const kind = r.kind === "spf" || r.kind === "dmarc" ? r.kind : null;
+    if (kind === null || !domains.includes(domain) || r.recordType !== "TXT" || r.selector !== undefined ||
+        !(kind === "spf" && recordName === domain && recordValue.startsWith("v=spf1 ") ||
+          kind === "dmarc" && recordName === `_dmarc.${domain}` && recordValue.startsWith("v=DMARC1;"))) {
+      throw new Error("Invalid mail relay record; reload before publishing DNS.");
+    }
+    return { domain, kind, selector: "", recordName, recordType: "TXT", recordValue };
+  });
+}
+function readDkim(value: unknown, domains: string[]): DkimRecord[] {
+  if (!Array.isArray(value) || value.length > 2000) throw new Error("Invalid mail relay records.");
+  return value.map((item: unknown) => {
+    const r = object(item);
+    const domain = text(r.domain), selector = text(r.selector), recordName = text(r.recordName);
+    const state = dkimStates.find(s => s === r.state);
+    const removable = state === "removable";
+    const recordValue = r.recordValue === undefined ? "" : text(r.recordValue);
+    const active = state === "active";
+    if (!state || !domains.includes(domain) || r.recordType !== "TXT" || r.kind !== undefined || !/^kypost-[0-9a-f]{8}$/.test(selector) ||
+        recordName !== `${selector}._domainkey.${domain}` ||
+        (removable ? recordValue !== "" : !/^v=DKIM1; k=rsa; p=[A-Za-z0-9+/]+={0,2}$/.test(recordValue)) ||
+        (active && (typeof r.rotationRecommended !== "boolean" || r.ageDays === undefined))) {
+      throw new Error("Invalid DKIM record; reload before publishing DNS.");
+    }
+    return { domain, kind: "", selector, recordName, recordType: "TXT", recordValue, state, createdAt: time(r.createdAt),
+      ageDays: active ? integer(r.ageDays) : 0, rotationRecommendedAt: time(r.rotationRecommendedAt), rotationRecommended: r.rotationRecommended === true,
+      retiredAt: time(r.retiredAt), keepPublishedUntil: time(r.keepPublishedUntil) };
   });
 }
 export function readMailRelay(value: unknown): MailRelay {
@@ -96,9 +126,14 @@ export function readMailRelay(value: unknown): MailRelay {
   const retiredDomains = data.retiredDomains === undefined ? [] : texts(data.retiredDomains);
   if (!domains.includes(domain)) throw new Error("Invalid mail relay profile.");
   // Only direct mode signs; servers before DKIM signing report no records.
-  const dkim = direct && data.dkim !== undefined ? readRecords(data.dkim, domains, true) : [];
-  const recommended = direct && data.recommended !== undefined ? readRecords(data.recommended, domains, false) : [];
+  const dkim = direct && data.dkim !== undefined ? readDkim(data.dkim, domains) : [];
+  const recommended = direct && data.recommended !== undefined ? readRecords(data.recommended, domains) : [];
   return { kind: "configured", mode: direct ? "direct" : "relay", domain, domains, retiredDomains, issuer, host, port, generation, sendingEnabled: data.sendingEnabled, dkim, recommended };
+}
+
+// An emergency rotation's answer carries the warning the administrator must act on.
+export function readDkimWarning(value: unknown): string {
+  return warningOf(value);
 }
 
 export type DnsCheckStatus = "pass" | "warn" | "fail" | "unknown";

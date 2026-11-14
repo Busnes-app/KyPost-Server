@@ -287,7 +287,8 @@ func runDaemon(ctx context.Context, d runDeps) error {
 	go monitorHealth(ctx, d.logger, d.health, healthCheckInterval, restart)
 	outboundCtx, cancelOutbound := context.WithCancel(ctx)
 	outboundDone := startNativeOutbound(outboundCtx, d)
-	defer func() { cancelOutbound(); <-outboundDone }()
+	dkimDone := startDKIMRotation(outboundCtx, d)
+	defer func() { cancelOutbound(); <-outboundDone; <-dkimDone }()
 	receivingCtx, cancelReceiving := context.WithCancel(ctx)
 	receivingDone, err := startReceivingImport(receivingCtx, d)
 	if err != nil {
@@ -381,7 +382,8 @@ func runSweepers(ctx context.Context, logger *logging.Logger, drain time.Duratio
 func runServer(ctx context.Context, d runDeps) error {
 	outboundCtx, cancelOutbound := context.WithCancel(ctx)
 	outboundDone := startNativeOutbound(outboundCtx, d)
-	defer func() { cancelOutbound(); <-outboundDone }()
+	dkimDone := startDKIMRotation(outboundCtx, d)
+	defer func() { cancelOutbound(); <-outboundDone; <-dkimDone }()
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, nil, d.wkdStore)
 	srv.SetKyCalendar(d.kycal)
 	if d.nativeMail {
@@ -432,7 +434,8 @@ func runAll(ctx context.Context, d runDeps) error {
 	go monitorHealth(ctx, d.logger, d.health, healthCheckInterval, restart)
 	outboundCtx, cancelOutbound := context.WithCancel(ctx)
 	outboundDone := startNativeOutbound(outboundCtx, d)
-	defer func() { cancelOutbound(); <-outboundDone }()
+	dkimDone := startDKIMRotation(outboundCtx, d)
+	defer func() { cancelOutbound(); <-outboundDone; <-dkimDone }()
 	receivingCtx, cancelReceiving := context.WithCancel(ctx)
 	receivingDone, err := startReceivingImport(receivingCtx, d)
 	if err != nil {

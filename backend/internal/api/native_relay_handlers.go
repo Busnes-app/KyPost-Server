@@ -17,33 +17,36 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
 
+// relayStatus is the GET /api/admin/mail-relay body. Neither relay
+// authentication username nor password nor a DKIM private key is a field.
+// Records are computed locally, without DNS.
+func (s *Server) relayStatus(c mailmsg.DomainRelay, exists bool) map[string]any {
+	// "domain" is the founding domain the single-domain UI pairs with its claim.
+	domain := ""
+	if exists {
+		domain = c.Domains[0]
+		if founding, err := s.nativeDomains.Read(); err == nil && c.Sends(founding.Domain) {
+			domain = founding.Domain
+		}
+	}
+	status := map[string]any{
+		"configured": exists, "domain": domain, "domains": append([]string{}, c.Domains...),
+		"retiredDomains": append([]string{}, c.RetiredDomains...), "issuer": c.Issuer,
+		"host": c.Host, "port": c.Port, "generation": c.Generation, "mode": c.Mode,
+		"transport": map[bool]string{true: "mx-starttls", false: "implicit-tls"}[c.Mode == "direct"], "authRequired": c.Mode != "direct", "sendingEnabled": s.nativeMail && exists,
+		"dkim": c.DKIMRecords(s.dkimNow()),
+	}
+	if c.Mode == "direct" {
+		status["recommended"] = c.RecommendedRecords()
+	}
+	return status
+}
+
 func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	path := filepath.Join(s.configDir, "native-relay.json")
 	keyPath := filepath.Join(config.SecretDir(), "native-relay.key")
-	respond := func(c mailmsg.DomainRelay, exists bool) {
-		// "domain" is the founding domain the single-domain UI pairs with its claim.
-		domain := ""
-		if exists {
-			domain = c.Domains[0]
-			if founding, err := s.nativeDomains.Read(); err == nil && c.Sends(founding.Domain) {
-				domain = founding.Domain
-			}
-		}
-		// Neither relay authentication username nor password nor a DKIM private
-		// key is a read API field. Records are computed locally, without DNS.
-		status := map[string]any{
-			"configured": exists, "domain": domain, "domains": append([]string{}, c.Domains...),
-			"retiredDomains": append([]string{}, c.RetiredDomains...), "issuer": c.Issuer,
-			"host": c.Host, "port": c.Port, "generation": c.Generation, "mode": c.Mode,
-			"transport": map[bool]string{true: "mx-starttls", false: "implicit-tls"}[c.Mode == "direct"], "authRequired": c.Mode != "direct", "sendingEnabled": s.nativeMail && exists,
-			"dkim": c.DKIMRecords(),
-		}
-		if c.Mode == "direct" {
-			status["recommended"] = c.RecommendedRecords()
-		}
-		writeJSON(w, http.StatusOK, status)
-	}
+	respond := func(c mailmsg.DomainRelay, exists bool) { writeJSON(w, http.StatusOK, s.relayStatus(c, exists)) }
 	if r.Method == http.MethodGet {
 		c, exists, err := mailmsg.ReadDomainRelay(path, keyPath)
 		if err != nil {

@@ -15,7 +15,9 @@ keys and pairing, PoW and VAPID keys), `.env`, the KyRecovery pin and every
 Compose overlay you already use. A refused key is a reason to replace that one
 key or certificate, never to regenerate master keys, delete accounts or touch
 stored mail. KyPost refuses an undersized key with an error naming it; it never
-rewrites, rotates or deletes a stored key.
+rewrites, rotates or deletes a stored key, except that direct-delivery DKIM keys
+rotate as [documented](DIRECT_DELIVERY.md#dkim-key-rotation), always on an
+administrator's request.
 
 ## Key rules in every mode
 
@@ -36,7 +38,7 @@ rewrites, rotates or deletes a stored key.
 | Browser push (VAPID, RFC 8291) | P-256 key generated in `CONFIG_DIR`; aes128gcm | Subscriptions must carry a valid P-256 key. |
 | Push relays | FCM RS256 service-account key; APNs ES256 `.p8` | FCM refuses RSA under 2048 bits (`worker/src/fcm.ts`); APNs imports only P-256. |
 | Cloudflare continuous receiving | Ed25519 routing-table signatures, 32-byte pickup tokens | Fixed sizes. |
-| Direct-delivery DKIM | One RSA-2048 key per sending domain, generated with `crypto/rand`, signing `rsa-sha256`; sealed in `native-relay.json` with the domain-relay key | Only server-generated; there is no import path or size choice (`backend/internal/mailmsg/dkim.go`). |
+| Direct-delivery DKIM | One signing RSA-2048 key per sending domain, generated with `crypto/rand`, signing `rsa-sha256`; sealed in `native-relay.json` with the domain-relay key. Rotation is recommended at 180 days and done by an administrator; the old key is destroyed 7 days after the switch (at once after an emergency rotation) | Only server-generated; there is no import path or size choice (`backend/internal/mailmsg/dkim.go`, `dkim_rotation.go`). |
 | TOTP | 20 random bytes (HMAC-SHA1, RFC 6238) | Only server-generated and sealed; there is no import path. HMAC-SHA1 is a keyed PRF here; no collision resistance is relied on. |
 | Generated tokens | Session and CSRF tokens 192 random bits; relay API keys 256, stored as SHA-256 | Not operator-supplied. |
 
