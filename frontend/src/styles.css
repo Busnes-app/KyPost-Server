@@ -3840,8 +3840,26 @@ pre {
   flex-basis: 100%;
 }
 
-.invite-card > button {
+.invite-card > button,
+.invite-card-join {
   justify-self: start;
+}
+
+.invite-card-cancelled {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.invite-card-join {
+  border: 1px solid var(--accent);
+  border-radius: var(--ky-control-radius);
+  padding: 9px 14px;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.invite-card-host {
+  font-weight: 400;
 }
 
 .email-attachments-error {
