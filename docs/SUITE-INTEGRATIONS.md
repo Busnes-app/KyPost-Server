@@ -8,7 +8,8 @@ native clients answer invitations as [NATIVE-RSVP.md](NATIVE-RSVP.md) says
 once it exists.
 
 Status in KyPost: F first bullet built (native send, KYCALENDAR.md "Send").
-F second bullet and E: in progress on their own pull requests.
+F second bullet built (web invitation card: updates, cancellations, Join);
+E is on its own pull request.
 
 ## E. "New meeting" deep link: KyPost → KyCalendar
 
