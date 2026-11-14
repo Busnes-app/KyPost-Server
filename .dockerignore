@@ -17,6 +17,11 @@ share/
 # is never wanted and can only mask a broken build.
 frontend/dist/
 
+# Go binaries a local build leaves in backend/ (see .gitignore).
+/backend/main
+/backend/modeleval
+/backend/cmd/cmd
+
 # Tooling, editor and agent scratch directories.
 .playwright-mcp/
 .claude/
