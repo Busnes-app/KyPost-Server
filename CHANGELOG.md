@@ -20,6 +20,12 @@ non-prerelease version.
 
 ### Added
 
+- KyMessages pairing (`KYPOST_KYMESSAGE_URL`, `KYPOST_KYMESSAGE_SECRET_FILE`,
+  `KYPOST_KYMESSAGE_ALLOW_PRIVATE`, or automatic through KyIdentity). **Chat**
+  beside a message's sender and in a contact's menu, for people in the
+  organisation, opens their direct chat in KyMessages through the signed
+  `kypost.chat.open`. Server → KyMessages shows the pairing. Contract:
+  `docs/KYMESSAGES.md`.
 - KyDrive pairing (`KYPOST_KYDRIVE_URL`, `KYPOST_KYDRIVE_SECRET_FILE`,
   `KYPOST_KYDRIVE_ALLOW_PRIVATE`, or automatic through KyIdentity). Compose
   uploads files over the attachment limit, or any attachment, to KyDrive and
