@@ -171,3 +171,34 @@ func TestStepUpFailuresDoNotDenyTheOwnersSecondFactor(t *testing.T) {
 			"their own sign-in second factor and recovery codes")
 	}
 }
+
+// A passed step-up stamps the session, which is what guest links read; a
+// failed one does not.
+func TestStepUpRecordsItsTimeOnTheSession(t *testing.T) {
+	srv := newTestServer(t)
+	u, err := srv.users.Create(context.Background(), "hal", "pw-hal-testpassword", users.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamped := func() time.Time {
+		srv.sessMu.RLock()
+		defer srv.sessMu.RUnlock()
+		return srv.sessions["session-token-"+u.ID].SteppedUpAt
+	}
+	stepUpRequest(t, srv, u.ID, map[string]string{"authSecret": authSecretFor(srv, "wrong")})
+	if !stamped().IsZero() {
+		t.Fatal("a failed step-up stamped the session")
+	}
+	before := time.Now()
+	if resp := stepUpRequest(t, srv, u.ID, map[string]string{"authSecret": authSecretFor(srv, "pw-hal-testpassword")}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("step-up %d", resp.StatusCode)
+	}
+	r := httptest.NewRequest("GET", "/", nil)
+	r.AddCookie(&http.Cookie{Name: "kypost_session", Value: "session-token-" + u.ID})
+	if at := stamped(); at.Before(before) || !srv.stepUpFresh(r, guestStepUpWindow) {
+		t.Fatalf("step-up not recorded: %v", at)
+	}
+	if srv.stepUpFresh(httptest.NewRequest("GET", "/", nil), guestStepUpWindow) {
+		t.Fatal("a request without a session counted as stepped up")
+	}
+}

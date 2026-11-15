@@ -27,11 +27,12 @@ import (
 // A caller who skips the page and posts straight to the endpoints gets nowhere
 // new, because every endpoint that matters still re-verifies for itself.
 //
-// It deliberately records nothing. There is no "stepped-up session" flag to
-// mint, expire, or forget to check, because no server-side decision is made
-// from the result — the client asks, the server answers, and the client decides
-// what to draw. Adding session state here would look like an authorisation
-// boundary without being one.
+// It records one thing: Session.SteppedUpAt, the time of the last success.
+// Exactly one server-side decision reads it, stepUpFresh, which gates
+// KyDrive guest links (docs/KYDRIVE.md "Guest links": a step-up within the
+// last 10 minutes before a send that makes links for people outside the
+// organisation). Everything else still re-verifies for itself; do not let a
+// second gate lean on this timestamp without the same reasoning.
 
 // totpCodeShape distinguishes a TOTP code from a recovery code by shape, so a
 // mistyped six-digit code is never run through ConsumeRecoveryCode and never
@@ -49,6 +50,7 @@ func (s *Server) handleAuthStepUp(w http.ResponseWriter, r *http.Request) {
 	// KySignOn instead, and KySignOn applies its own second factor.
 	if sess, token, ok := s.sessionOf(r); ok && sess.SSOKySignOn {
 		if s.confirmSSOStepUp(w, r, token) {
+			s.recordStepUp(token)
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		}
 		return
@@ -95,7 +97,27 @@ func (s *Server) handleAuthStepUp(w http.ResponseWriter, r *http.Request) {
 	// wrong password here deny the owner their own TOTP.
 	s.passwordChangeLockout.recordSuccess(stepUpLockoutKey(ac.UserID, r))
 	s.mfaLockout.recordSuccess(ac.UserID)
+	if _, token, ok := s.sessionOf(r); ok {
+		s.recordStepUp(token)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// recordStepUp stamps the session with the time it last proved itself here.
+func (s *Server) recordStepUp(token string) {
+	s.sessMu.Lock()
+	defer s.sessMu.Unlock()
+	if sess, ok := s.sessions[token]; ok {
+		sess.SteppedUpAt = time.Now()
+		s.sessions[token] = sess
+	}
+}
+
+// stepUpFresh reports whether this request's session stepped up within the
+// last d. A request without a session (a paired device) never has.
+func (s *Server) stepUpFresh(r *http.Request, d time.Duration) bool {
+	sess, _, ok := s.sessionOf(r)
+	return ok && !sess.SteppedUpAt.IsZero() && time.Since(sess.SteppedUpAt) <= d
 }
 
 // confirmSecondFactor verifies a TOTP code, or a one-time recovery code in its

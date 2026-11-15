@@ -83,6 +83,9 @@ type Session struct {
 	// minted into the victim's cookie and never shown to anyone else, so
 	// requiring it back is what ties the grant to the flow it paid for.
 	SSOLinkState string
+	// SteppedUpAt is when this session last passed POST /api/auth/step-up.
+	// Only stepUpFresh reads it, for KyDrive guest links.
+	SteppedUpAt time.Time
 	// SSO names the provider login this session was minted from, so a
 	// back-channel logout token can find it. Zero for a password login.
 	SSO sso.SessionIdentity
