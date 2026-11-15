@@ -126,6 +126,7 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
+	pulse := suitepair.FromKyIdentity(api.KyPulsePeer)
 	proxies, err := config.LoadTrustedProxies()
 	if err != nil {
 		return err
@@ -205,6 +206,7 @@ func Run(args []string) error {
 		kycal:             kycal,
 		kydrive:           drive,
 		kymessage:         chat,
+		kypulse:           pulse,
 		cfg:               cfg,
 		configPath:        paths.ConfigFile,
 		configDir:         configDir,
@@ -229,6 +231,7 @@ func Run(args []string) error {
 		dir := kyIdentityDirectory(configDir)
 		go drive.Run(ctx, func() kydrive.Directory { return kydrive.Directory(dir()) }, logger)
 		go chat.Run(ctx, func() suitepair.Directory { return suitepair.Directory(dir()) }, logger)
+		go pulse.Run(ctx, func() suitepair.Directory { return suitepair.Directory(dir()) }, logger)
 	}
 
 	if nativeMail {
@@ -254,6 +257,7 @@ type runDeps struct {
 	kycal             *kycalendar.Client
 	kydrive           *kydrive.Client
 	kymessage         *suitepair.Client
+	kypulse           *suitepair.Client
 	cfg               config.Config
 	configPath        string
 	configDir         string
@@ -416,6 +420,7 @@ func runServer(ctx context.Context, d runDeps) error {
 	srv.SetKyCalendar(d.kycal)
 	srv.SetKyDrive(d.kydrive)
 	srv.SetKyMessage(d.kymessage)
+	srv.SetKyPulse(d.kypulse)
 	if d.nativeMail {
 		srv.EnableNativeMail()
 	}
@@ -493,6 +498,7 @@ func runAll(ctx context.Context, d runDeps) error {
 	srv.SetKyCalendar(d.kycal)
 	srv.SetKyDrive(d.kydrive)
 	srv.SetKyMessage(d.kymessage)
+	srv.SetKyPulse(d.kypulse)
 	poller.SetKyCalendar(d.kycal)
 	if d.nativeMail {
 		poller.EnableNativeMail()

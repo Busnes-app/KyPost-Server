@@ -1070,6 +1070,7 @@ const (
 	pairingPurposeNativeDevice = "native-device"
 	pairingPurposePGPQRKey     = "pgp-qr-key"
 	pairingPurposePickupLink   = "pickup-link"
+	pairingPurposeKyPulse      = "kypulse-confirm"
 )
 
 type pairingTokenClaims struct {
