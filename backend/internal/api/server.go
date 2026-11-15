@@ -567,7 +567,7 @@ func (s *Server) routes() http.Handler {
 	s.routesFrontend(mux)
 
 	// The paired KyDrive origin can change at run time, so the policy is per response.
-	return withGzip(withSecurityHeaders(mux, func() string { return buildContentSecurityPolicy(s.captchaProvider, s.kydrive.Origin()) }))
+	return withGzip(withSecurityHeaders(mux, func() string { return buildContentSecurityPolicy(s.captchaProvider, s.kydrive.Origin()) }, s.kydrive.Origin))
 }
 
 // routesAuth registers sign-in, session, and second-factor endpoints.
@@ -687,6 +687,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/kydrive/status", s.withMailAuth(s.handleKyDriveStatus))
 	mux.HandleFunc("POST /api/kydrive/upload-tickets", s.withMailAuth(s.handleKyDriveTicket))
 	mux.HandleFunc("POST /api/kydrive/links", s.withMailAuth(s.handleKyDriveLink))
+	mux.HandleFunc("POST /api/kydrive/copies", s.withMailAuth(s.handleKyDriveCopy))
 	mux.HandleFunc("POST /api/kydrive/recipients", s.withMailAuth(s.handleKyDriveRecipients))
 	mux.HandleFunc("POST /api/kydrive/save-attachment", s.withMailAuth(s.withMailbox(s.handleKyDriveSaveAttachment)))
 	mux.HandleFunc("GET /api/labels", s.withAuth(s.handleLabels))

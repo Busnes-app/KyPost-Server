@@ -2,11 +2,14 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -43,6 +46,7 @@ type fakeDrive struct {
 	maxChunk int64
 	maxFile  int64
 	linkURL  string // overrides the link answer when set
+	fetchCT  string // overrides the fetch answer's Content-Type when set
 }
 
 type driveTicketState struct {
@@ -59,7 +63,8 @@ type driveFile struct {
 func newFakeDrive(t *testing.T, issuer string) *fakeDrive {
 	d := &fakeDrive{issuer: issuer, enabled: map[string]bool{}, seen: map[string]bool{}, tickets: map[string]*driveTicketState{},
 		files: map[string]driveFile{}, calls: map[string]int{}, maxChunk: 64 << 20, maxFile: 100 << 20}
-	routes := map[string]string{kydrive.PathTicket: kydrive.EventTicket, kydrive.PathLink: kydrive.EventLink, kydrive.PathStatus: kydrive.EventStatus}
+	routes := map[string]string{kydrive.PathTicket: kydrive.EventTicket, kydrive.PathLink: kydrive.EventLink, kydrive.PathStatus: kydrive.EventStatus,
+		kydrive.PathFetch: kydrive.EventFetch}
 	d.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -97,6 +102,7 @@ func newFakeDrive(t *testing.T, issuer string) *fakeDrive {
 			FileIDSnake       string `json:"file_id"`
 			Size              int64
 			Days              *int
+			MaxBytes          *int64 `json:"max_bytes"`
 		}
 		if json.Unmarshal(body, &req) != nil {
 			refuse(http.StatusBadRequest, "bad_body")
@@ -152,6 +158,20 @@ func newFakeDrive(t *testing.T, issuer string) *fakeDrive {
 			}
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprintf(w, `{"url":%q,"expires":"2026-12-14T00:00:00Z"}`, u)
+		case kydrive.EventFetch:
+			f, ok := d.files[req.FileIDSnake]
+			switch {
+			case req.MaxBytes == nil || *req.MaxBytes <= 0:
+				refuse(http.StatusBadRequest, "bad_body")
+			case !ok || f.owner != req.Sub:
+				refuse(http.StatusNotFound, "not_found")
+			case int64(len(f.data)) > *req.MaxBytes:
+				refuse(http.StatusRequestEntityTooLarge, "too_large")
+			default:
+				w.Header().Set("Content-Type", cmp.Or(d.fetchCT, "application/octet-stream"))
+				w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": f.name}))
+				_, _ = w.Write(f.data)
+			}
 		}
 	}))
 	t.Cleanup(d.Close)
@@ -435,6 +455,58 @@ func TestKyDriveSaveAttachment(t *testing.T) {
 	}
 }
 
+// Attach a copy (contract I2): the file the user picked comes back as an
+// attachment, signed as kypost.drive.fetch with the attachment limit as
+// max_bytes; KyDrive's refusals and an odd answer never reach compose as a file.
+func TestKyDriveCopy(t *testing.T) {
+	f := newDriveFixture(t)
+	f.drive.files["file-1"] = driveFile{owner: "sub-ann", name: "Résumé été.pdf", data: []byte("%PDF-1.7 hello")}
+	f.drive.files["file-2"] = driveFile{owner: "sub-bob", name: "bob.pdf", data: []byte("x")}
+	f.drive.files["file-3"] = driveFile{owner: "sub-ann", name: "big.bin", data: make([]byte, maxMailAttachmentBytes+1)}
+	f.drive.files["file-4"] = driveFile{owner: "sub-ann", name: "a\u0007b", data: []byte("y")}
+	code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", `{"fileId":"file-1"}`)
+	if code != 200 || out["name"] != "Résumé été.pdf" || out["mimeType"] != "application/pdf" || out["size"] != float64(14) ||
+		out["dataBase64"] != base64.StdEncoding.EncodeToString([]byte("%PDF-1.7 hello")) {
+		t.Fatalf("copy %d %v", code, out)
+	}
+	if code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", `{"fileId":"file-4"}`); code != 200 || out["name"] != "attachment" {
+		t.Fatalf("unsafe name: %d %v", code, out["name"])
+	}
+	for name, tc := range map[string]struct {
+		body   string
+		status int
+		code   string
+	}{
+		"no file id":     {`{}`, 400, "bad_request"},
+		"space in id":    {`{"fileId":"a b"}`, 400, "bad_request"},
+		"long id":        {`{"fileId":"` + strings.Repeat("a", 129) + `"}`, 400, "bad_request"},
+		"someone else's": {`{"fileId":"file-2"}`, 404, "not_found"},
+		"missing":        {`{"fileId":"file-9"}`, 404, "not_found"},
+		"over the limit": {`{"fileId":"file-3"}`, 413, "too_large"},
+	} {
+		if code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", tc.body); code != tc.status || out["code"] != tc.code || out["dataBase64"] != nil {
+			t.Errorf("%s: %d %v", name, code, out["code"])
+		}
+	}
+	f.drive.fetchCT = "text/html"
+	if code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", `{"fileId":"file-1"}`); code != 502 || out["dataBase64"] != nil {
+		t.Fatalf("wrong content type: %d %v", code, out["code"])
+	}
+	f.drive.fetchCT = ""
+	if logs := f.logs.String(); strings.Contains(logs, "Résumé") || strings.Contains(logs, "sub-ann") || strings.Contains(logs, "hello") {
+		t.Fatalf("logs carry a name, subject or content: %s", logs)
+	}
+	// Switch off in KyDrive passes through; unpaired hides the option.
+	f.drive.enabled["sub-ann"] = false
+	if code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", `{"fileId":"file-1"}`); code != 409 || out["code"] != "sharing_off" {
+		t.Fatalf("sharing off: %d %v", code, out)
+	}
+	f.srv.SetKyDrive(nil)
+	if code, out := f.call(t, f.ann, "POST", "/api/kydrive/copies", `{"fileId":"file-1"}`); code != 409 || out["code"] != "kydrive_off" {
+		t.Fatalf("unpaired: %d %v", code, out)
+	}
+}
+
 func TestKyDriveRateLimit(t *testing.T) {
 	f := newDriveFixture(t)
 	f.srv.kydriveLimiter = newKeyedLimiter(1, 0)
@@ -487,6 +559,24 @@ func TestCSPConnectsToKyDriveOnlyWhilePaired(t *testing.T) {
 	f.srv.SetKyDrive(nil)
 	if p := csp(); !strings.Contains(p, "connect-src 'self';") || strings.Contains(p, f.drive.URL) {
 		t.Fatalf("unpaired CSP: %s", p)
+	}
+}
+
+// The KyDrive picker answers through window.opener, so COOP lets popups keep
+// it while paired and is same-origin otherwise.
+func TestCOOPAllowsPopupsOnlyWhileKyDrivePaired(t *testing.T) {
+	f := newDriveFixture(t)
+	coop := func() string {
+		w := httptest.NewRecorder()
+		f.srv.routes().ServeHTTP(w, httptest.NewRequest("GET", "/api/health", nil))
+		return w.Header().Get("Cross-Origin-Opener-Policy")
+	}
+	if got := coop(); got != "same-origin-allow-popups" {
+		t.Fatalf("paired COOP %q", got)
+	}
+	f.srv.SetKyDrive(nil)
+	if got := coop(); got != "same-origin" {
+		t.Fatalf("unpaired COOP %q", got)
 	}
 }
 
