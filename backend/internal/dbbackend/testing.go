@@ -196,3 +196,13 @@ func RemoveFileForTest(path string) error {
 	_, err = cat.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+QuoteIdent(schema)+` CASCADE; DELETE FROM kypost_catalog.stores WHERE path='`+strings.ReplaceAll(rel, "'", "''")+`'`)
 	return err
 }
+
+// IsolateForTest gives the test an empty database of its own on Postgres (see
+// FreshDatabaseForTest) and does nothing on SQLite: for tests whose code refuses a
+// database other tests share, such as restore.
+func IsolateForTest(t testing.TB) {
+	t.Helper()
+	if OnPostgresTest() {
+		FreshDatabaseForTest(t)
+	}
+}
