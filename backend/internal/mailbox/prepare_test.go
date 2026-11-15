@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
@@ -23,6 +24,7 @@ func preparationOwner() Owner {
 func preparationLimits() Limits { return Limits{1 << 20, 4 << 20, 100} }
 
 func TestPrepareAccountReferenceGenerationReadOnly(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads sqlite_schema")
 	root := t.TempDir()
 	owner, limits := preparationOwner(), preparationLimits()
 	source, err := PrepareAccount(root, owner, "one@example.test", limits)
@@ -141,6 +143,7 @@ func TestPrepareAccountRetriesPreserveMail(t *testing.T) {
 func TestPrepareAccountRefusesIncompleteOrLegacy(t *testing.T) {
 	for _, broken := range []string{"legacy", "state.db", "mailbox/mailbox.db", "native-mailbox.json", "corrupt-mailbox", "corrupt-state", "empty-mailbox"} {
 		t.Run(broken, func(t *testing.T) {
+			skipFileCase(t, broken)
 			root := t.TempDir()
 			owner := preparationOwner()
 			dir := filepath.Join(root, "users", owner.Mailbox)

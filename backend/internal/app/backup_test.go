@@ -12,10 +12,12 @@ import (
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/ky-primitives/recoverykey"
 	"github.com/Busnes-app/kypost-server/backend/internal/backup"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 )
 
 func TestRestoreCLIUsesCustodianSharesAndRefusesOverwrite(t *testing.T) {
+	dbbackend.IsolateForTest(t)
 	key, err := recoverykey.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -57,6 +59,7 @@ func TestRestoreCLIUsesCustodianSharesAndRefusesOverwrite(t *testing.T) {
 }
 
 func TestRestoreCLIFailurePreservesNativeDataWithoutSuccess(t *testing.T) {
+	dbbackend.IsolateForTest(t)
 	key, err := recoverykey.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -98,6 +101,7 @@ func TestRestoreCLIFailurePreservesNativeDataWithoutSuccess(t *testing.T) {
 
 // A capsule naming a bulk snapshot never restores without its repository.
 func TestRestoreCLIRefusesBulkWithoutRepository(t *testing.T) {
+	dbbackend.IsolateForTest(t)
 	t.Setenv("KYPOST_BULK_BACKUP_REPOSITORY", "")
 	key, err := recoverykey.Generate()
 	if err != nil {
@@ -133,6 +137,7 @@ func (u *unreadable) Read([]byte) (int, error) { u.read = true; return 0, io.EOF
 // The capsule's clear recipe lets a bulk restore without its repository fail
 // before custodians type any share.
 func TestRestoreCLIRefusesBulkBeforeShares(t *testing.T) {
+	dbbackend.IsolateForTest(t)
 	t.Setenv("KYPOST_BULK_BACKUP_REPOSITORY", "")
 	key, err := recoverykey.Generate()
 	if err != nil {

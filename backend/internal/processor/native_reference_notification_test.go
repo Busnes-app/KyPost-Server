@@ -7,12 +7,14 @@ import (
 
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
 )
 
 func TestNativeNotificationReferencesPreserveHistoricalGeneration(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "restore rotation runs on SQLite staging files")
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	owner := mailbox.Owner{Issuer: "https://identity.example.test", Subject: "one", Mailbox: "one"}
 	limits := mailbox.Limits{MessageBytes: 1 << 20, PayloadBytes: 4 << 20, Records: 100}

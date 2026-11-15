@@ -32,3 +32,21 @@ github.com/Busnes-app/kypost-server/backend/internal/kycalendar.NewKyIdentityFor
 # Captures signed direct-delivery wire bytes for sso's outbox tests; panics
 # outside a test binary.
 github.com/Busnes-app/kypost-server/backend/internal/mailmsg.SetDirectTransportForTest
+
+# The Postgres test hooks every store package's tests share: they point the
+# process at a database (SetURLForTest, ReloadForTest, FreshDatabaseForTest),
+# read the catalog, drop one database, and skip by backend. They reach
+# dbbackend's unexported selection; the mutating ones panic outside a test binary.
+github.com/Busnes-app/kypost-server/backend/internal/dbbackend.SetURLForTest
+github.com/Busnes-app/kypost-server/backend/internal/dbbackend.ReloadForTest
+github.com/Busnes-app/kypost-server/backend/internal/dbbackend.FreshDatabaseForTest
+github.com/Busnes-app/kypost-server/backend/internal/dbbackend.CatalogUnderForTest
+github.com/Busnes-app/kypost-server/backend/internal/dbbackend.RemoveFileForTest
+github.com/Busnes-app/kypost-server/backend/internal/dbbackend.OnPostgresTest
+github.com/Busnes-app/kypost-server/backend/internal/dbbackend.SkipOnPostgres
+github.com/Busnes-app/kypost-server/backend/internal/dbbackend.RequirePostgres
+github.com/Busnes-app/kypost-server/backend/internal/dbbackend.IsolateForTest
+
+# Fails migrate-to-postgres before its commit or changes its recount for app's
+# refusal tests; panics outside a test binary.
+github.com/Busnes-app/kypost-server/backend/internal/backup.SetImportHooksForTest

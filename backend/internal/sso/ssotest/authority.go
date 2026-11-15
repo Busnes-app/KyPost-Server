@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	_ "modernc.org/sqlite"
 )
 
@@ -55,15 +56,20 @@ func AuthorityContent(configDir string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+	db, err := dbbackend.OpenFile(path, "mode=ro")
+	if errors.Is(err, os.ErrNotExist) {
 		return []byte(strings.Join(out, "\n")), nil
-	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=ro")
-	if err != nil {
+	} else if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	tables, err := db.Query("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")
+	query := "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name"
+	if pg, err := dbbackend.Held(path); err != nil {
+		return nil, err
+	} else if pg {
+		query = "SELECT tablename FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename"
+	}
+	tables, err := db.Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +118,28 @@ func DamageAuthority(configDir, query string, args ...any) error {
 	path, err := filepath.Abs(AuthorityPath(configDir))
 	if err != nil {
 		return err
+	}
+	if pg, err := dbbackend.Held(path); err != nil {
+		return err
+	} else if pg {
+		// Postgres lifts every trigger (and foreign key) for the transaction instead.
+		db, err := dbbackend.OpenFile(path, "")
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := tx.Exec("SET LOCAL session_replication_role = replica"); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(query, args...); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=rw&_txlock=immediate")
 	if err != nil {
@@ -162,7 +190,7 @@ func LifecycleRecord(configDir, name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=ro")
+	db, err := dbbackend.OpenFile(path, "mode=ro")
 	if err != nil {
 		return nil, err
 	}

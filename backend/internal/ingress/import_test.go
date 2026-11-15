@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 )
 
@@ -359,6 +360,7 @@ func TestArchivedReceiptsFreeRecordLimitAndDedupe(t *testing.T) {
 // A writer that dies between the tombstone and the delete leaves the pending
 // delivery intact; the retry imports once and archives.
 func TestArchiveIsAtomicWithAcknowledgment(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "injects a failure with a SQLite trigger")
 	ctx := context.Background()
 	root := t.TempDir()
 	s, err := Open(filepath.Join(root, "holding"), proofLimits)
@@ -407,6 +409,7 @@ func TestArchiveIsAtomicWithAcknowledgment(t *testing.T) {
 // Receipts acknowledged before tombstones existed are archived on the next
 // open; staged, pending and quarantined deliveries never are.
 func TestArchiveMigratesOnlyImportedReceipts(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "builds a SQLite file from before tombstones")
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "holding")
 	s, err := Open(dir, proofLimits)

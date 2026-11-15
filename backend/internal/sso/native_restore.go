@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -281,6 +282,9 @@ func (s *LifecycleStore) ValidateNativeSnapshot(stateRoot string, accounts []use
 // route can lag a reassignment, so it is historical too); version 1 had only
 // primary addresses keyed to the directory revision.
 func validateNativeReceiving(path string, f nativeAssignments, ledgerVersion int) error {
+	if err := dbbackend.SQLiteOnly(path); err != nil {
+		return err
+	}
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return ErrNativeProvisioning
@@ -343,6 +347,9 @@ func validateNativeReceiving(path string, f nativeAssignments, ledgerVersion int
 // mailOnlyState refuses an extra mailbox state.db holding any device,
 // pairing, subscriber or notification row: those belong to the primary.
 func mailOnlyState(path string) error {
+	if err := dbbackend.SQLiteOnly(path); err != nil {
+		return err
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err

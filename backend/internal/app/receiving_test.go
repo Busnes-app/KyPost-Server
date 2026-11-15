@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -366,6 +367,7 @@ func TestNativeReceivingDirectoryEditKeepsAcceptedMail(t *testing.T) {
 }
 
 func TestNativeReceivingPartialQuotaFailureRetriesWithoutDuplicate(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads ingress.db as a SQLite file")
 	r, created := receivingFixture(t)
 	ctx := context.Background()
 	stores := make([]*mailbox.Store, 0, 2)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -26,6 +27,7 @@ func aliasJob(job mailbox.OutboundJob) mailbox.OutboundJob {
 // retryable, releasing the alias (or releasing and reassigning it) ends it
 // stale on the next worker run, before any network attempt.
 func TestNativeOutboundAliasFromIsFencedByGeneration(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "edits mailbox.db as a SQLite file")
 	for _, mode := range []string{"released", "reassigned", "reassigned-back"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()

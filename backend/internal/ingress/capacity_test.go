@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 func TestHoldingPhysicalAdmissionPreservesRecovery(t *testing.T) {
@@ -72,6 +74,7 @@ func TestHoldingPhysicalAdmissionPreservesRecovery(t *testing.T) {
 }
 
 func TestHoldingPinnedWALRefusesAndRecovers(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "pins the SQLite WAL")
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "holding")
 	s, err := Open(dir, proofLimits)
@@ -168,6 +171,7 @@ func TestHoldingPhysicalLimitsAndFreeSpace(t *testing.T) {
 }
 
 func TestHoldingPhysicalRefusalAcrossProcesses(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "grows the SQLite -shm file")
 	ctx := context.Background()
 	root := t.TempDir()
 	dir := filepath.Join(root, "holding")

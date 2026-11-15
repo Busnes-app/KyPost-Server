@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 func newSorterStore(t *testing.T) *Store {
@@ -115,6 +117,7 @@ func TestCleanupPrunesSorterPredictionsNotCorrections(t *testing.T) {
 
 // The sorter tables must never hold correspondence text.
 func TestSorterTablesHoldNoText(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads pragma_table_info")
 	s := newSorterStore(t)
 	for _, table := range []string{"sorter_predictions", "sorter_corrections"} {
 		rows, err := s.db.Query(`SELECT name FROM pragma_table_info(?)`, table)

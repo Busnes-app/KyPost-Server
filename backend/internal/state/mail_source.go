@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 var ErrMailSource = errors.New("mail source differs from durable account state; restore the original source or use a reviewed migration; source switching is disabled")
@@ -30,6 +32,12 @@ func NewNative(baseDir, source string) (*Store, error) {
 	}
 	if err := os.Mkdir(baseDir, 0700); err != nil {
 		return nil, err
+	}
+	// A schema left for this path is not a new account either.
+	if dbbackend.Postgres() {
+		if held, err := dbbackend.Exists(filepath.Join(baseDir, "state.db")); err != nil || held {
+			return nil, errors.Join(ErrMailSource, err)
+		}
 	}
 	return newWithMailSource(baseDir, source, false)
 }

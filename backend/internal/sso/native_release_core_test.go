@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -184,6 +185,7 @@ func crashAt(point string) func(string) error {
 }
 
 func TestNativeRestoreReleaseAppliesEvidence(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	fx := releaseCoreFixture(t, true)
 	before := time.Now().Unix()
 	plan, err := fx.runRelease(t, time.Now().UTC(), nil)
@@ -315,6 +317,7 @@ func (fx releaseFix) snapshot(t *testing.T) (releaseSnapshot, []users.User) {
 }
 
 func TestNativeRestoreReleaseRefusesWithoutMutation(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	persist := func(t *testing.T, fx releaseFix, edit func(*lifecycleFile)) {
 		f, err := fx.life.load()
 		if err != nil {
@@ -429,6 +432,7 @@ func TestNativeRestoreReleaseZeroSubjects(t *testing.T) {
 // Each crash point, then the documented recovery: before the rename the intent
 // refuses a retry; a new challenge, fresh evidence and repair release cleanly.
 func TestNativeRestoreReleaseCrashPointsAndRecovery(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	for _, point := range []string{"intent", "ledger", "lifecycle", "rename"} {
 		t.Run(point, func(t *testing.T) {
 			fx := releaseCoreFixture(t, true)
@@ -498,6 +502,7 @@ func (fx releaseFix) assertReleased(t *testing.T) {
 
 // A real older receipt and repair replayed over a newer repair is refused.
 func TestNativeRestoreReleaseRefusesOlderReceipt(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	fx := releaseCoreFixture(t, true)
 	old, err := fx.life.load()
 	if err != nil {
@@ -522,6 +527,7 @@ func TestNativeRestoreReleaseRefusesOlderReceipt(t *testing.T) {
 // A release record restored from a post-release backup belongs to an older
 // epoch; it neither refuses nor survives the new hold's release.
 func TestNativeRestoreReleaseIgnoresOtherEpochRecord(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	fx := releaseCoreFixture(t, true)
 	f, err := fx.life.load()
 	if err != nil {
@@ -543,6 +549,7 @@ func TestNativeRestoreReleaseIgnoresOtherEpochRecord(t *testing.T) {
 
 // With a receiving store present, the expired subject's route is written inactive.
 func TestNativeRestoreReleaseDeactivatesRoutes(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	ctx := context.Background()
 	fx := releaseCoreFixture(t, true)
 	ledger, err := fx.life.loadNative()
@@ -579,6 +586,7 @@ func TestNativeRestoreReleaseDeactivatesRoutes(t *testing.T) {
 // A directory event racing release lands wholly before (release refused: the
 // newer revision drops the receipt) or after (released, floors in place).
 func TestNativeRestoreReleaseRacesDirectoryEvent(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	for i := range 4 {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
 			fx := releaseCoreFixture(t, true)
@@ -618,6 +626,7 @@ func TestNativeRestoreReleaseRacesDirectoryEvent(t *testing.T) {
 
 // A new restore epoch landing after the lifecycle write must not be renamed away.
 func TestNativeRestoreReleaseRechecksEpochBeforeRename(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "simulates restore staging, which stays SQLite files on Postgres")
 	fx := releaseCoreFixture(t, true)
 	hold := filepath.Join(fx.root, NativeRestoreHoldFile)
 	_, err := fx.runRelease(t, time.Now().UTC(), func(point string) error {
