@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/mail"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +46,24 @@ var errUnimportable = &receivingCommandError{err: mailbox.ErrUnimportable, code:
 // mailboxRoom refuses a message of size bytes that a's mailbox cannot hold,
 // counting accepted mail still waiting to import into it. Acceptance runs
 // under the directory fence, so concurrent deliveries see each other.
+// quotaFence holds each mailbox's receiving quota lock, in ID order, so a
+// quota check and the accept it admits, or an import, run one at a time per
+// mailbox even under the shared directory fence. Lock order: directory ->
+// users -> quota -> holding and mailbox SQLite.
+func (r *receivingRuntime) quotaFence(ctx context.Context, current map[string]sso.NativeAssignment, action func() error) error {
+	for _, id := range slices.Sorted(maps.Keys(current)) {
+		if !fsutil.SafePathComponent(id) {
+			return sso.ErrNativeProvisioning
+		}
+		release, err := fsutil.LockFileContext(ctx, filepath.Join(r.stateDir, "receiving", "quota-"+id))
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	return action()
+}
+
 func (r *receivingRuntime) mailboxRoom(ctx context.Context, a sso.NativeAssignment, size int64) error {
 	u, err := mailbox.ReadUsage(filepath.Join(a.Dir(r.stateDir), "mailbox"))
 	if err != nil {
@@ -558,18 +578,20 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 // owners' current authority and their per-message limits.
 func (r *receivingRuntime) commitAccept(ctx context.Context, d ingress.Delivery, sender string, raw []byte, proofs []sso.NativeDomain) error {
 	return r.frozenAuthority(ctx, true, d, proofs, func(current map[string]sso.NativeAssignment) error {
-		for _, a := range current {
-			if int64(len(raw)) > a.Limits.MessageBytes {
-				return errMailboxMessageLimit
+		return r.quotaFence(ctx, current, func() error {
+			for _, a := range current {
+				if int64(len(raw)) > a.Limits.MessageBytes {
+					return errMailboxMessageLimit
+				}
+				if mailbox.ImportValid(raw, a.Limits.MessageBytes) != nil {
+					return errUnimportable
+				}
+				if err := r.mailboxRoom(ctx, a, int64(len(raw))); err != nil {
+					return err
+				}
 			}
-			if mailbox.ImportValid(raw, a.Limits.MessageBytes) != nil {
-				return errUnimportable
-			}
-			if err := r.mailboxRoom(ctx, a, int64(len(raw))); err != nil {
-				return err
-			}
-		}
-		return r.holding.Accept(ctx, r.gatewayID(), d.ID, sender, bytes.NewReader(raw))
+			return r.holding.Accept(ctx, r.gatewayID(), d.ID, sender, bytes.NewReader(raw))
+		})
 	})
 }
 
@@ -679,12 +701,14 @@ func (r *receivingRuntime) importFrozen(ctx context.Context, d ingress.Delivery,
 				return sso.ErrNativeProvisioning
 			}
 		}
-		return r.holding.ImportTo(ctx, r.gatewayID(), id, folder, func(owner mailbox.Owner) (*mailbox.Store, error) {
-			store := stores[owner]
-			if store == nil {
-				return nil, ingress.ErrRoute
-			}
-			return store, nil
+		return r.quotaFence(ctx, current, func() error {
+			return r.holding.ImportTo(ctx, r.gatewayID(), id, folder, func(owner mailbox.Owner) (*mailbox.Store, error) {
+				store := stores[owner]
+				if store == nil {
+					return nil, ingress.ErrRoute
+				}
+				return store, nil
+			})
 		})
 	})
 }

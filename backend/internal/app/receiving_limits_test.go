@@ -15,6 +15,8 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
+	"github.com/Busnes-app/kypost-server/backend/internal/sso"
+	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 // A full mailbox refuses at RCPT and at DATA with exit 9 (452 4.2.2) and
@@ -158,10 +160,12 @@ func TestNativeReceivingQuotaCountsHeldMail(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// 7 MiB left: two parallel 4 MiB messages, one fits.
+	// 7 MiB left: two parallel 4 MiB messages, one fits. Each accept is its
+	// own receiver process, so no in-process lock can serialize them.
 	results := make(chan error, 2)
 	for _, id := range []string{"p1", "p2"} {
-		go func() { results <- r.accept(ctx, id, "", bytes.NewReader(message(4<<20))) }()
+		other := separateReceiver(t, r)
+		go func() { results <- other.accept(ctx, id, "", bytes.NewReader(message(4<<20))) }()
 	}
 	accepted, refused := 0, 0
 	for range 2 {
@@ -218,4 +222,24 @@ func TestNativeReceivingRefusesUnimportableMessage(t *testing.T) {
 	if d, err := r.holding.Get(ctx, receivingGateway, "stuck"); err != nil || d.State != "quarantined" {
 		t.Fatalf("unimportable delivery not quarantined: state=%s err=%v", d.State, err)
 	}
+}
+
+// separateReceiver opens r's stores again, as another receiver process would.
+func separateReceiver(t *testing.T, r *receivingRuntime) *receivingRuntime {
+	t.Helper()
+	accounts, err := users.OpenExisting(context.Background(), r.configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holding, err := ingress.OpenExisting(filepath.Join(r.stateDir, "receiving"), receivingLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = holding.Close() })
+	domains := sso.NewNativeDomainStore(r.configDir)
+	domains.SetLookupForTest(func(context.Context, string) ([]string, error) {
+		d, err := domains.Read()
+		return []string{d.RecordValue()}, err
+	})
+	return &receivingRuntime{gateway: r.gateway, configDir: r.configDir, stateDir: r.stateDir, accounts: accounts, life: sso.NewLifecycleStore(r.configDir), domains: domains, holding: holding}
 }
