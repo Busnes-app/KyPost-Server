@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -81,6 +82,7 @@ func TestSweepDeviceIndexDoesNotRetainMaintenanceStores(t *testing.T) {
 }
 
 func TestSweepDeviceIndexNativeRefusalKeepsOwnerHints(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads or changes database files directly")
 	for _, damage := range []string{"hold", "owner", "source", "ledger", "state", "mailbox"} {
 		t.Run(damage, func(t *testing.T) {
 			t.Setenv("STATE_DIR", t.TempDir())
@@ -146,6 +148,7 @@ func TestSweepDeviceIndexNativeRefusalKeepsOwnerHints(t *testing.T) {
 }
 
 func TestSweepDeviceIndexUnreadableRowsPreserveOwner(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads or changes database files directly")
 	t.Setenv("STATE_DIR", t.TempDir())
 	s := newTestServer(t)
 	u := s.mustBootstrapUserID(t)

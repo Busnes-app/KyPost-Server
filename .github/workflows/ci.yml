@@ -241,6 +241,54 @@ jobs:
           test "$(grep -cE "$LISTED" "$RUNNER_TEMP/all")" = 4
           xargs go test -race -count=1 -timeout=20m < "$RUNNER_TEMP/mine"
 
+  # The store, backup, restore and migration suites again with every store on a Postgres
+  # 17 service (UTF8, C locale, as docs/RUNNING.md requires). Each test opens a schema of
+  # its own (dbbackend's test hook); tests about SQLite files skip, visibly in -v output.
+  backend-postgres:
+    name: ci-backend-postgres
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17@sha256:3b0cda93be7c8dba2ed484d19393d93845dc3dafb88973e248ba8e6d99d784e1
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_INITDB_ARGS: --locale=C --encoding=UTF8
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: install restic
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/restic/restic/cmd/restic@v0.18.1
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # Every open store holds a small pool and two packages run at once: the stock 100
+      # connections is too tight. A service takes no server flags, so set it and restart.
+      - name: raise max_connections
+        env:
+          PG: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$PG" psql -U postgres -c 'ALTER SYSTEM SET max_connections = 400'
+          docker restart "$PG"
+          timeout 60 sh -c "until docker exec $PG pg_isready -U postgres; do sleep 1; done"
+          test "$(docker exec "$PG" psql -U postgres -Atc 'SHOW max_connections')" = 400
+      - name: go test -race on Postgres
+        env:
+          KYPOST_TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
+        run: go test -race -count=1 -timeout=30m -p 2 ./internal/dbbackend/... ./internal/state/... ./internal/mailbox/... ./internal/ingress/... ./internal/cfreceiving/... ./internal/sso/... ./internal/backup/... ./internal/app/...
+
   frontend:
     name: ci-frontend
     runs-on: ubuntu-latest

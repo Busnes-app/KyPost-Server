@@ -8,10 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
 )
 
 func TestNativeOutboxReadOnlyDiscovery(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads the idle mark beside mailbox.db")
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	s := openTest(t, dir, testOwner, testLimits)

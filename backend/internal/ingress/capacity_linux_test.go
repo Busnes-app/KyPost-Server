@@ -13,9 +13,12 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 func TestHoldingCheckpointHeadroom(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "checkpoints the SQLite WAL")
 	unshare, err := exec.LookPath("unshare")
 	if err != nil {
 		t.Skip("private mount namespaces unavailable")

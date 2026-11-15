@@ -19,6 +19,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/api"
 	"github.com/Busnes-app/kypost-server/backend/internal/backup"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -201,6 +202,17 @@ func runRestore(rest []string, stdin io.Reader, stdout io.Writer) error {
 	}
 	if err := state.FenceRestoredAgentTokens(filepath.Join(staging, "state")); err != nil {
 		return fmt.Errorf("cannot revoke restored AI agent tokens; preserve private staging %s for inspection: %w", stage, err)
+	}
+	// Every hold and revocation above ran on the staged SQLite files; Postgres gets them
+	// as they are now, in one transaction, and the published tree holds no copy.
+	if dbbackend.Postgres() {
+		roots := []backup.Root{{Dir: filepath.Join(staging, "config"), Prefix: "config"}, {Dir: filepath.Join(staging, "state"), Prefix: "state"}}
+		if _, err := backup.ImportDatabases(context.Background(), roots, stage); err != nil {
+			return fmt.Errorf("restore into Postgres failed; preserve private staging %s for inspection: %w", stage, err)
+		}
+		if err := backup.RemoveDatabaseFiles(roots); err != nil {
+			return fmt.Errorf("restored into Postgres but the staged database files remain; keep workers stopped and remove them from %s before publishing: %w", stage, err)
+		}
 	}
 	if native {
 		err = fsutil.PublishDirectory(staging, target)

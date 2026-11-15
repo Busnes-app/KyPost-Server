@@ -6,6 +6,10 @@ Compare the key fingerprint out of band. The pin is write-once; unpair removes t
 URL and token but keeps the key, receipts and local copies. A KyRecovery admin must
 separately revoke the token. Products cannot download from KyRecovery.
 
+On Postgres a capsule holds the same SQLite members as on SQLite: each database is exported
+from its own snapshot. Restore with the database variable set loads them into an empty
+Postgres database after the holds below; see [restoring into Postgres](RUNNING.md#restoring-into-postgres).
+
 Set `KYPOST_BACKUP_DIR=/kypost/state/backups` for local copies on the existing volume,
 or mount a separate writable host directory outside the data roots. Backups on the
 same disk do not protect against disk loss. Retention defaults to seven own-prefix

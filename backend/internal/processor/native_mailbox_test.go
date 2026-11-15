@@ -15,6 +15,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -197,6 +198,7 @@ func TestNativePollerPollsEachMailbox(t *testing.T) {
 // valid copy renamed over state.db passes the full storage check, which
 // reopens by path, but the open client still refuses, primary and extra alike.
 func TestNativeClientAdmitsItsOpenStorage(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads or changes database files directly")
 	ctx := context.Background()
 	p, _, u, m := nativeMailboxFixture(t)
 	for _, id := range []string{"", m.ID} {

@@ -568,6 +568,11 @@ func TestCalendarRSVP(t *testing.T) {
 	if rec := rsvp(`{"messageId":"5","index":1,"partstat":"DECLINED"}`); rec.Code != http.StatusNotFound || answerCode(rec) != "no_event" {
 		t.Fatalf("no_event: %d %s", rec.Code, rec.Body.String())
 	}
+	// No KyCalendar account for this user: off for them, so the client mails the answer.
+	status, answer = http.StatusNotFound, `{"error":"x","code":"no_user"}`
+	if rec := rsvp(`{"messageId":"5","index":1,"partstat":"ACCEPTED"}`); rec.Code != http.StatusConflict || answerCode(rec) != "kycalendar_off" {
+		t.Fatalf("no_user: %d %s", rec.Code, rec.Body.String())
+	}
 	status, answer = http.StatusUnauthorized, `{"error":"Bad signature","code":"bad_signature"}`
 	if rec := rsvp(`{"messageId":"5","index":1,"partstat":"DECLINED"}`); rec.Code != http.StatusBadGateway {
 		t.Fatalf("kycalendar refused our signature: %d %s", rec.Code, rec.Body.String())

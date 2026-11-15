@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
 
 func TestNativeUserStorageAdmission(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "removes database files")
 	for _, damage := range []string{"none", "inactive", "hold", "missing-state", "missing-mailbox", "missing-ledger", "foreign-owner", "source", "root"} {
 		t.Run(damage, func(t *testing.T) {
 			config, root := t.TempDir(), t.TempDir()

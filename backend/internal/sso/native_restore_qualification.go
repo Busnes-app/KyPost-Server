@@ -2,6 +2,7 @@ package sso
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 )
@@ -115,8 +117,30 @@ func (s *LifecycleStore) CheckNativeRestoreQualification(stateRoot string) (Nati
 		}
 	}
 	// Every mailbox database, published or not, must hold no sendable work.
-	// Only the mailbox trees: backup scratch holds unquarantined copies.
+	// Only the mailbox trees: backup scratch holds unquarantined copies. On Postgres
+	// the mailbox schemas the catalog lists under the trees, never files.
+	// The install's own state.db says which backend its mailboxes are on.
+	pg, err := dbbackend.Held(filepath.Join(stateRoot, "state.db"))
+	if err != nil {
+		reasons = append(reasons, "the mailbox databases cannot be listed")
+	} else if pg {
+		paths, err := dbbackend.StoresUnder(context.Background(), mailbox.Kind, filepath.Join(stateRoot, "users"), filepath.Join(stateRoot, nativeMailboxesDir))
+		if err != nil {
+			reasons = append(reasons, "the mailbox databases cannot be listed")
+		}
+		for _, path := range paths {
+			rel, _ := filepath.Rel(stateRoot, path)
+			if _, pending, err := mailbox.InspectRestored(path); err != nil {
+				reasons = append(reasons, fmt.Sprintf("mailbox database %s cannot be read", rel))
+			} else if pending != 0 {
+				reasons = append(reasons, fmt.Sprintf("mailbox database %s has %d queued or retryable outbound deliveries", rel, pending))
+			}
+		}
+	}
 	for _, tree := range []string{"users", nativeMailboxesDir} {
+		if pg || err != nil {
+			break
+		}
 		root := filepath.Join(stateRoot, tree)
 		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 			if errors.Is(err, os.ErrNotExist) && path == root {

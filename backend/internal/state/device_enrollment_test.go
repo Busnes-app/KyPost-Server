@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 // legacyDevicesDDL is native_devices exactly as it was before the enrollment
@@ -192,6 +194,7 @@ func TestReRegistrationByPushTokenPreservesTheEnrollmentKey(t *testing.T) {
 // This builds the pre-migration table shape by hand and then opens the store
 // over it, which is the only way to exercise what an upgrade actually does.
 func TestEnrollmentColumnsAreAddedToAnExistingDatabase(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "builds a pre-enrollment SQLite file")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.db")
 

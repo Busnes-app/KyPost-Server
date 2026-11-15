@@ -22,6 +22,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/recoverykey"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -133,6 +134,7 @@ func emptyDir(t *testing.T, dir string) {
 // A mailbox past the capsule's per-file cap backs up through restic without
 // being read into memory, restores byte-exact and passes the drill.
 func TestBulkBackupLargeMailboxRoundTrip(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "grows mailbox.db with a SQLite probe table")
 	ctx := context.Background()
 	var before, after runtime.MemStats
 	runtime.GC()
@@ -508,6 +510,7 @@ func TestBulkRefusesWithoutScratchSpace(t *testing.T) {
 }
 
 func TestBulkRunBudgetGrowsWithMail(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "sizes mail by its database files")
 	s := validService(t)
 	if s.RunBudget() != 16*time.Minute {
 		t.Fatal("budget without bulk", s.RunBudget())

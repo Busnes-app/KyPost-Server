@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -82,6 +83,7 @@ func TestNativeDomainSetFencesOnlyTheTouchedDomain(t *testing.T) {
 }
 
 func TestNativeTwoDomainsAllocateLapseAndRetire(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "deletes a directory to delete its databases; on Postgres they are schemas")
 	ctx := context.Background()
 	config, root := t.TempDir(), t.TempDir()
 	life := NewLifecycleStore(config)

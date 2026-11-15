@@ -17,6 +17,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -127,6 +128,7 @@ func TestNativeQuarantineReleaseToFrozenMailbox(t *testing.T) {
 // A disabled mailbox, a different frozen owner and an offboarded owner refuse
 // release with the stated reason; discard still works and leaves a tombstone.
 func TestNativeQuarantineReleaseRefusesChangedMailbox(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "edits ingress.db as a SQLite file")
 	r, created := receivingFixture(t)
 	ctx := context.Background()
 	m, err := r.life.CreateNativeMailbox(ctx, r.stateDir, created[0].ID, "sales@example.test")

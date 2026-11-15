@@ -20,6 +20,15 @@ non-prerelease version.
 
 ### Added
 
+- Postgres backend, one instance per database. `KYPOST_DATABASE_URL` or
+  `KYPOST_DATABASE_URL_FILE` keeps every store in one Postgres 16+ database
+  (UTF8, C locale), one schema per SQLite file; unset keeps SQLite unchanged.
+  Startup refuses both variables, a bad URL or file, an older server or another
+  locale before writing, and never logs or returns the URL. `kypost-server
+  migrate-to-postgres -from <state dir>` moves a stopped install in one
+  transaction and verifies every table's count. Backups, the drill, restore
+  and capsules work on both backends. `/api/health` and `/api/status` report
+  `databaseBackend`. Docs: `docs/RUNNING.md#postgres`.
 - KyMessages pairing (`KYPOST_KYMESSAGE_URL`, `KYPOST_KYMESSAGE_SECRET_FILE`,
   `KYPOST_KYMESSAGE_ALLOW_PRIVATE`, or automatic through KyIdentity). **Chat**
   beside a message's sender and in a contact's menu, for people in the
@@ -66,9 +75,19 @@ non-prerelease version.
 
 ### Fixed
 
+- An invitation card answer from someone with no KyCalendar account no longer
+  ends in "KyCalendar could not record the answer; try again" with no way out:
+  KyCalendar's `no_user` now answers 409 `kycalendar_off`, so web and native
+  clients mail the answer after the usual confirmation.
 - Built with Go 1.27.4, which fixes an HTTP/1 server crash from a
   `MaxBytesReader` header race in `net/http` (GO-2026-6859). The API server
   is reachable from the affected code.
+
+- Security: an image-map `<area>` or SVG `<a xlink:href>` in a message kept the
+  sender's `rel="opener"` or named `target`, so the page it opened held a
+  `window.opener` into KyPost, which COOP no longer severs while KyDrive is
+  paired. Every link in a message now opens with `noopener noreferrer` in a new
+  tab, and those elements get the same `[Blocked link]` scheme check as `<a>`.
 
 - Show an actionable invalid-recipient explanation for external-account sends when SMTP reports a missing mailbox, unknown domain or invalid address. Return HTTP 422 JSON so proxies preserve it, name the rejected recipient, and retain compose for correction; plain and client-encrypted sends share the behavior.
 

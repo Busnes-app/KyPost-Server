@@ -3,13 +3,11 @@ package sso
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"maps"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -473,10 +472,14 @@ func (s *NativeDomainStore) VerifyDomain(ctx context.Context, domain string) (Na
 	return d, nil
 }
 
-// CurrentProof reports whether proof is still the domain's stored, unexpired
-// proof. Callers hold the domain fence; other domains never affect it.
+// CurrentProof reports whether proof's challenge is still the domain's stored,
+// proven challenge and both are unexpired. A concurrent refresh of the same
+// challenge only moves VerifiedUntil, so it is not a change (as in
+// VerifyDomain). Callers hold the domain fence; other domains never affect it.
 func (s NativeDomainSet) CurrentProof(proof NativeDomain) bool {
-	return proof.Domain != "" && s.Domains[proof.Domain] == proof && proof.VerifiedUntil > time.Now().Unix()
+	cur, now := s.Domains[proof.Domain], time.Now().Unix()
+	return proof.Domain != "" && cur.Domain == proof.Domain && cur.Issuer == proof.Issuer && cur.Token == proof.Token &&
+		cur.ExpiresAt == proof.ExpiresAt && cur.Established && cur.VerifiedUntil > now && proof.VerifiedUntil > now
 }
 
 // RetireDomain moves a configured domain to retired until re-added: no proof,
@@ -550,11 +553,10 @@ func nativeHeldRecipients(ctx context.Context, stateRoot string) ([]string, erro
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+	db, err := dbbackend.OpenFile(path, "mode=ro")
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
-	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=ro")
-	if err != nil {
+	} else if err != nil {
 		return nil, err
 	}
 	defer db.Close()

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 )
 
@@ -186,6 +187,7 @@ func TestDiscardAfterInterruptedReleaseIsPartial(t *testing.T) {
 // A store whose tombstones predate dispositions gains the column, reading
 // existing tombstones as imports, and keeps archiving.
 func TestArchiveGainsDispositionColumn(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "builds a SQLite file from before dispositions")
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "holding")
 	s, err := Open(dir, proofLimits)

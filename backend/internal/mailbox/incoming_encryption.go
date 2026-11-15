@@ -159,12 +159,8 @@ func (c *Client) ReplaceIncoming(ctx context.Context, source imapadapter.Incomin
 	}
 	// Copy current flags/date, not the stale prepare snapshot. SQL retains labels
 	// verbatim; native metadata has no plaintext body index to copy.
-	result, err := tx.ExecContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels) SELECT 'INBOX',?,?,?,?,?,?,?,at_utc,seen,starred,draft,labels FROM messages WHERE id=?`, encrypted, hashIncoming(encrypted), headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), source.UID)
-	if err != nil {
-		return 0, err
-	}
-	replacement, err := result.LastInsertId()
-	if err != nil {
+	var replacement int64
+	if err = tx.QueryRowContext(ctx, `INSERT INTO messages(folder,raw,digest,sender,subject,sent_to,cc,bcc,at_utc,seen,starred,draft,labels) SELECT 'INBOX',?,?,?,?,?,?,?,at_utc,seen,starred,draft,labels FROM messages WHERE id=? RETURNING id`, encrypted, hashIncoming(encrypted), headers.Get("From"), headers.Get("Subject"), headers.Get("To"), headers.Get("Cc"), headers.Get("Bcc"), source.UID).Scan(&replacement); err != nil {
 		return 0, err
 	}
 	id = int(replacement)

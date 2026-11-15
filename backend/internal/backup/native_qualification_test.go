@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
@@ -354,6 +355,7 @@ func TestNativeRestoreQualification(t *testing.T) {
 // A ledger mailbox whose owner users.json does not publish (a crash between
 // reservation and publication) is fenced like a published one, never skipped.
 func TestNativeRestoreFencesUnpublishedLedgerMailbox(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "edits staged SQLite files")
 	ctx := context.Background()
 	s, u := nativeService(t)
 	st, err := state.OpenNative(filepath.Join(s.dirs.State, "users", u.ID), u.NativeMailboxSource)

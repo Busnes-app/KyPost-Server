@@ -7,9 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 func TestNativeReferenceGenerationRollbackAndFailure(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "restore rotation runs on SQLite staging files")
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	s := openTest(t, dir, testOwner, testLimits)
@@ -78,6 +81,7 @@ func TestNativeReferenceGenerationRollbackAndFailure(t *testing.T) {
 }
 
 func TestNativeReferenceGenerationOlderSchemaAndCorruption(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "restore rotation runs on SQLite staging files")
 	for _, mode := range []string{"older", "missing-row", "invalid", "view"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "mailbox")

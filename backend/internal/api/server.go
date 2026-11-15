@@ -29,6 +29,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/captcha"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/groups"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
 	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
@@ -97,6 +98,8 @@ type Server struct {
 	// ssoEpoch counts SSO trust changes (endSSOSessions); an SSO session
 	// minted under an older epoch is dead.
 	ssoEpoch atomic.Uint64
+	// ssoStates are the sign-in states whose callback is already paid for.
+	ssoStates issuedSSOStates
 	// pairingMu serializes native registration with credential revocation. A
 	// pairing token resolves its owner before it writes a device; revocation must
 	// not delete devices and rotate the subscriber between those two operations.
@@ -1354,6 +1357,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{
 		"version":                 appversion.String(),
+		"databaseBackend":         dbbackend.Name(),
 		"scanIntervalSeconds":     cfg.Scan.IntervalSeconds,
 		"rateLimits":              cfg.RateLimits,
 		"checkpoint":              checkpoint,
