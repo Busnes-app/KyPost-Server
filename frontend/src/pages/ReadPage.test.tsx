@@ -23,7 +23,8 @@ vi.mock("../api/client", () => ({
   selectedMailboxId: () => "",
   mailboxHeaders: () => ({}),
   postJSON: (url: string, body: unknown) => postJSON(url, body),
-  toErrorMessage: (_e: unknown, fallback: string) => fallback
+  toErrorMessage: (_e: unknown, fallback: string) => fallback,
+  HttpError: class extends Error {}
 }));
 
 const getPGPMessagePayload = vi.fn();
@@ -55,6 +56,7 @@ vi.mock("../components/PgpUnlockDialog", () => ({
 
 import { ReadPage } from "./ReadPage";
 import { ReadingPane } from "../settings/sections/ReadingPane";
+import { forgetChatPeople } from "../api/kymessage";
 
 // Testing Library only registers auto-cleanup when vitest runs with globals
 // enabled, which this project does not. Without it each test inherits the
@@ -103,7 +105,7 @@ function mockEndpoints() {
   postJSON.mockResolvedValue({ ok: true, results: [] });
 }
 
-function renderReadPage(props: { calendarOrigin?: string } = {}) {
+function renderReadPage(props: { calendarOrigin?: string; chatOrigin?: string } = {}) {
   return render(
     <MemoryRouter>
       <ReadPage {...props} />
@@ -635,6 +637,34 @@ describe("reader layout", () => {
     const q = new URL(url).searchParams;
     expect(url.startsWith("https://cal.example/new?")).toBe(true);
     expect([q.get("title"), q.get("attendees"), target, features]).toEqual(["Weekly Digest", "news@publisher.example", "_blank", "noopener,noreferrer"]);
+    open.mockRestore();
+  });
+
+  it("offers Chat beside the sender only for an organisation person, and opens the checked link in a new tab", async () => {
+    forgetChatPeople();
+    const tab = { opener: {}, location: { replace: vi.fn() }, close: vi.fn() };
+    const open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    postJSON.mockImplementation((url: string, body: { addresses?: string[] }) => {
+      if (url === "/api/kymessage/people") return Promise.resolve({ inside: body.addresses });
+      if (url === "/api/kymessage/chat") return Promise.resolve({ url: "https://chat.example/#/user/@news:publisher.example" });
+      return Promise.resolve({ ok: true, results: [] });
+    });
+    const user = userEvent.setup();
+    const { unmount } = renderReadPage();
+    await user.click(await screen.findByText("Weekly Digest"));
+    await screen.findByRole("dialog", { name: "Weekly Digest" });
+    expect(screen.queryByRole("button", { name: "Chat" })).toBeNull();
+    expect(postJSON).not.toHaveBeenCalledWith("/api/kymessage/people", expect.anything());
+    unmount();
+
+    renderReadPage({ chatOrigin: "https://chat.example" });
+    await user.click(await screen.findByText("Weekly Digest"));
+    await user.click(await within(await screen.findByRole("dialog", { name: "Weekly Digest" })).findByRole("button", { name: "Chat" }));
+    expect(postJSON).toHaveBeenCalledWith("/api/kymessage/people", { addresses: ["news@publisher.example"] });
+    expect(postJSON).toHaveBeenCalledWith("/api/kymessage/chat", { address: "news@publisher.example" });
+    expect(open).toHaveBeenCalledWith("", "_blank");
+    expect(tab.opener).toBeNull();
+    await waitFor(() => expect(tab.location.replace).toHaveBeenCalledWith("https://chat.example/#/user/@news:publisher.example"));
     open.mockRestore();
   });
 

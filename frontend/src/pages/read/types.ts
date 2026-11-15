@@ -117,6 +117,8 @@ export type ReadPageProps = {
   folders?: InboxFolder[];
   /** KyCalendar's origin when it is in the suite app list; "" hides Reply with meeting. */
   calendarOrigin?: string;
+  /** Element's origin when Chat may be offered (api/kymessage.ts chatOrigin); "" hides it. */
+  chatOrigin?: string;
 };
 
 export type InboxResponse = {

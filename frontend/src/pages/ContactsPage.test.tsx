@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ContactsPage } from "./ContactsPage";
+import { forgetChatPeople } from "../api/kymessage";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const fetchMock = vi.fn<typeof fetch>();
@@ -97,5 +98,39 @@ describe("ContactsPage", () => {
     expect(buttons).toHaveLength(1);
     await userEvent.click(buttons[0]);
     expect(open).toHaveBeenCalledWith("https://cal.example/new?attendees=dana%40example.com", "_blank", "noopener,noreferrer");
+  });
+
+  it("offers Chat for a contact only when Element is in the suite and the address is in the organisation", async () => {
+    forgetChatPeople();
+    fetchMock.mockImplementation(async (url, init) => {
+      if (String(url).startsWith("/api/contacts")) {
+        return json({ contacts: [
+          { uid: "c1", rev: 1, createdAt: "", updatedAt: "", fn: "Dana Ops", emails: [{ value: "dana@example.com" }] },
+          { uid: "c2", rev: 1, createdAt: "", updatedAt: "", fn: "Out Side", emails: [{ value: "out@other.org" }] }
+        ] });
+      }
+      if (String(url).startsWith("/api/groups")) return json({ groups: [] });
+      if (url === "/api/kymessage/people") return json({ inside: ["dana@example.com"] });
+      if (url === "/api/kymessage/chat") {
+        expect(JSON.parse(String(init?.body))).toEqual({ address: "dana@example.com" });
+        return json({ error: "x", code: "no_target" }, 404);
+      }
+      return json({});
+    });
+    const { unmount } = render(<ContactsPage />);
+    await screen.findByRole("button", { name: "Actions for Dana Ops" });
+    expect(screen.queryByRole("button", { name: "Chat", hidden: true })).toBeNull();
+    unmount();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/kymessage/people")).toBe(false);
+
+    const tab = { opener: {}, location: { replace: vi.fn() }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    render(<ContactsPage chatOrigin="https://chat.example" />);
+    const buttons = await screen.findAllByRole("button", { name: "Chat", hidden: true });
+    expect(buttons).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/kymessage/people")).toHaveLength(1);
+    await userEvent.click(buttons[0]);
+    expect(await screen.findByText("This person isn't on KyMessages yet.")).toBeDefined();
+    expect(tab.close).toHaveBeenCalled();
   });
 });
