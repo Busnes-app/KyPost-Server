@@ -390,3 +390,26 @@ func TestNativeClientLabelCatalogBoundAtSharedSink(t *testing.T) {
 		t.Fatalf("partial catalog commit: %d", len(labels))
 	}
 }
+
+// Admission takes the shared directory lock, so a batch admits once; a refused
+// admission still refuses the batch, and a single read still admits.
+func TestNativeClientBatchAdmitsOnce(t *testing.T) {
+	ctx := context.Background()
+	s, c := newTestClient(t)
+	var uids []int
+	for _, id := range []string{"a", "b", "c"} {
+		uids = append(uids, importClient(t, s, id, mailmsg.Message{From: "sender@outside.test", To: []string{"alice@example.test"}, Subject: id, Body: id}.Build()))
+	}
+	admits, refuse := 0, error(nil)
+	c.admit = func(context.Context, *Prepared) error { admits++; return refuse }
+	if bodies, err := c.GetMessageBodies(ctx, "", uids); err != nil || len(bodies) != 3 || admits != 1 {
+		t.Fatalf("bodies %d, err %v, admits %d; want 3, nil, 1", len(bodies), err, admits)
+	}
+	if _, err := c.FetchRawMessage(ctx, "", uids[0]); err != nil || admits != 2 {
+		t.Fatalf("single read: err %v, admits %d", err, admits)
+	}
+	refuse = ErrOwner
+	if _, err := c.GetMessageBodies(ctx, "", uids); !errors.Is(err, ErrOwner) {
+		t.Fatal("refused admission read bodies", err)
+	}
+}
