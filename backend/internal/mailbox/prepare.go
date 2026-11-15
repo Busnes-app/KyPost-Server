@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -235,14 +236,33 @@ func (p *Prepared) ValidatePreparedMailbox(parent string, owner Owner, address s
 }
 
 // MaxHeldAdmissions is the bound the api and daemon pass to
-// HoldAdmissionHandles. A 3,000-account profile measured about 0.46 MiB and
-// 10 descriptors of daemon growth per held mailbox, so 1,024 is about
-// 470 MiB and 10,500 descriptors per process; at 4,096 the daemon filled a
-// 2 GiB container (Go raises the soft descriptor limit to the hard one).
-// ponytail: past the bound a mailbox takes the reopening path; the poller
-// visits every account each tick, so with more accounts than the bound only
-// that share of its admissions is held. Raise it if memory allows.
-const MaxHeldAdmissions = 1024
+// HoldAdmissionHandles: a quarter of this process's memory limit at 512 KiB a
+// mailbox. A held mailbox measured about 420 KiB and 6 descriptors; past the
+// bound a mailbox reopens and re-parses both databases on every admission,
+// which took a quarter of the api's CPU at 2,000 accounts with 1,024 held.
+func MaxHeldAdmissions() int { return heldBound(memoryLimit()) }
+
+// heldBound keeps at least 1,024 (a 2 GiB limit) and at most 32,768, about
+// 200,000 descriptors (Go raises the soft descriptor limit to the hard one).
+func heldBound(limit int) int { return min(max(limit/4/(512<<10), 1024), 32768) }
+
+// memoryLimit is this process's cgroup v2 memory.max, else the machine's
+// memory, in bytes; 0 if neither can be read.
+func memoryLimit() int {
+	raw, _ := os.ReadFile("/proc/self/cgroup")
+	for line := range strings.Lines(string(raw)) {
+		if path, ok := strings.CutPrefix(strings.TrimSpace(line), "0::"); ok {
+			limit, _ := os.ReadFile(filepath.Join("/sys/fs/cgroup", path, "memory.max"))
+			if n, err := strconv.Atoi(strings.TrimSpace(string(limit))); err == nil {
+				return n
+			}
+		}
+	}
+	raw, _ = os.ReadFile("/proc/meminfo")
+	var kib int
+	_, _ = fmt.Sscanf(string(raw), "MemTotal: %d kB", &kib)
+	return kib << 10
+}
 
 // heldIdle closes a held mailbox after 5–10 minutes without an admission:
 // longer than a scan interval (90 s by default), short enough that an

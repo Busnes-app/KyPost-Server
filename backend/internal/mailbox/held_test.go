@@ -259,7 +259,7 @@ func TestPooledAdmissionRefusesChangedStorage(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			skipFileCase(t, name)
-			account, admit := pooledAccount(t, MaxHeldAdmissions)
+			account, admit := pooledAccount(t, MaxHeldAdmissions())
 			if heldCount() != 1 {
 				t.Fatal("admission did not hold its handles")
 			}
@@ -283,7 +283,7 @@ func TestPooledAdmissionSeesOtherProcess(t *testing.T) {
 	for _, change := range []string{"identity", "replace-state", "replace-mailbox"} {
 		t.Run(change, func(t *testing.T) {
 			skipFileCase(t, change)
-			account, admit := pooledAccount(t, MaxHeldAdmissions)
+			account, admit := pooledAccount(t, MaxHeldAdmissions())
 			command := exec.Command(os.Args[0], "-test.run=^TestPooledAdmissionWriterProcess$")
 			command.Env = append(os.Environ(), "KYPOST_MAILBOX_CHILD="+change, "KYPOST_MAILBOX_ACCOUNT="+account)
 			if output, err := command.CombinedOutput(); err != nil {
@@ -342,5 +342,16 @@ func TestPooledAdmissionBounds(t *testing.T) {
 	closeIdleAdmissions()
 	if heldCount() != 1 || heldAdmissions.m[account] == nil || idle.state.Ping() == nil {
 		t.Fatal("idle close missed the idle handle or closed the used one")
+	}
+}
+
+func TestHeldBoundScalesWithMemory(t *testing.T) {
+	for limit, want := range map[int]int{0: 1024, 2 << 30: 1024, 4 << 30: 2048, 16 << 30: 8192, 1 << 40: 32768} {
+		if got := heldBound(limit); got != want {
+			t.Errorf("heldBound(%d GiB) = %d, want %d", limit>>30, got, want)
+		}
+	}
+	if memoryLimit() <= 0 {
+		t.Fatal("no memory limit or total read on Linux")
 	}
 }
