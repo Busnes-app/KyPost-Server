@@ -86,7 +86,7 @@ export function ComposeDrive({ compose }: { compose: Compose }) {
             {driveOutside.canAttach ? (
               <button type="button" disabled={composeSending} onClick={() => void drive.attachDriveFilesInstead()}>Attach the files instead</button>
             ) : null}
-            <button type="button" className="btn-ghost" onClick={() => drive.setDriveOutside(null)}>Cancel</button>
+            <button type="button" className="btn-ghost" onClick={drive.cancelGuest}>Cancel</button>
           </div>
           {driveOutside.canGuest ? (
             <div className="compose-drive-guest">
@@ -113,15 +113,18 @@ export function ComposeDrive({ compose }: { compose: Compose }) {
           ) : null}
         </div>
       ) : null}
-      {driveGuestStepUp ? <GuestStepUp compose={compose} /> : null}
+      {driveGuestStepUp ? <GuestStepUp compose={compose} latest={latest} draftKey={draftKey} /> : null}
     </>
   );
 }
 
 /** Confirm it is you before guest links are made (KyPost's step-up, then the held send). */
-function GuestStepUp({ compose }: { compose: Compose }) {
+/**
+ * latest and draftKey come from ComposeDrive, which stays mounted: this form
+ * unmounts as soon as the step-up passes, while the links are still being made.
+ */
+function GuestStepUp({ compose, latest, draftKey }: { compose: Compose; latest: { current: Compose }; draftKey: () => string }) {
   const { drive, composeSending } = compose;
-  const { latest, draftKey } = useLatest(compose);
   const sso = useAuth().ssoSession === true;
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -151,7 +154,7 @@ function GuestStepUp({ compose }: { compose: Compose }) {
       {sso ? (
         <div className="compose-drive-actions">
           <button type="button" disabled={busy || composeSending} onClick={() => void confirm(reauthenticateWithSSO)}>Confirm with KySignOn</button>
-          <button type="button" className="btn-ghost" onClick={() => drive.setDriveGuestStepUp(null)}>Cancel</button>
+          <button type="button" className="btn-ghost" onClick={drive.cancelGuest}>Cancel</button>
         </div>
       ) : (
         <form className="compose-drive-stepup" onSubmit={submit}>
@@ -159,7 +162,7 @@ function GuestStepUp({ compose }: { compose: Compose }) {
           <label>Two-factor code, if you use one <input type="text" autoComplete="one-time-code" spellCheck={false} value={code} onChange={(e) => setCode(e.target.value)} /></label>
           <div className="compose-drive-actions">
             <button type="submit" disabled={busy || composeSending || !password}>{busy ? "Confirming…" : "Confirm and send"}</button>
-            <button type="button" className="btn-ghost" onClick={() => drive.setDriveGuestStepUp(null)}>Cancel</button>
+            <button type="button" className="btn-ghost" onClick={drive.cancelGuest}>Cancel</button>
           </div>
         </form>
       )}

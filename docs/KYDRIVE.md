@@ -225,7 +225,9 @@ another origin still severs; links KyPost opens carry `noopener`.
   are fixed when the user chooses guest links: if any of them changes before
   the links are made (during the step-up or while KyDrive answers), nothing
   is rewritten or sent and the user is told to check the message and send
-  again; the send that follows uses the compose as it is then. Links already made stay in KyDrive,
+  again; the send that follows uses the compose as it is then. Cancel (on
+  the warning or the step-up form) stops a guest-link send in flight: a
+  confirmation that succeeds afterwards makes no link and sends nothing. Links already made stay in KyDrive,
   where the owner can revoke them.
 - Compose: **Attach from KyDrive** (a ky-ui menu) offers **Share a link**
   (`mode=link`; each link is inserted as above, and counts for the

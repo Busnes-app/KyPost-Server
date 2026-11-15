@@ -54,6 +54,9 @@ export function useComposeDrive({
   const seq = useRef(0);
   // Bumped by resetDrive: work started for an earlier compose never touches the next one.
   const generation = useRef(0);
+  // Bumped by each guest-link send and by cancelGuest: a cancelled or
+  // superseded send stops at its next await.
+  const guestOp = useRef(0);
 
   useEffect(() => {
     if (!composeOpen) return;
@@ -247,9 +250,10 @@ export function useComposeDrive({
    * driveGuestStepUp and returns false. A reset compose makes nothing more.
    * Returns true when the body is ready to send.
    */
-  async function sendWithGuestLinks(days: number, sendAt: Date | undefined, draftKey: DraftKey, gen = generation.current, snapshot?: string): Promise<boolean> {
+  async function sendWithGuestLinks(days: number, sendAt: Date | undefined, draftKey: DraftKey, gen = generation.current, snapshot?: string, op = ++guestOp.current): Promise<boolean> {
     const q = quill.current;
-    if (!q || gen !== generation.current) return false;
+    const live = () => gen === generation.current && op === guestOp.current;
+    if (!q || !live()) return false;
     // Recipients, subject and body as the user confirmed them: any edit while
     // links are made (or the step-up runs) cancels the send.
     const now = () => draftKey() + "\u0000" + q.root.innerHTML;
@@ -263,10 +267,10 @@ export function useComposeDrive({
     try {
       for (const href of hrefs) {
         made.set(href, await createDriveLink(fileIds.current.get(href) as string, days, "guest"));
-        if (gen !== generation.current) return false;
+        if (!live()) return false;
       }
     } catch (e) {
-      if (gen !== generation.current) return false;
+      if (!live()) return false;
       if (driveErrorCode(e) === "step_up_required") {
         setDriveOutside(null);
         setDriveGuestStepUp({ days, sendAt, snapshot: before });
@@ -295,15 +299,23 @@ export function useComposeDrive({
   async function confirmGuestStepUp(reauth: () => Promise<void>, draftKey: DraftKey): Promise<DriveGuestStepUp | null> {
     const held = driveGuestStepUp;
     const gen = generation.current;
+    const op = ++guestOp.current;
     if (!held) return null;
     await reauth();
-    if (gen !== generation.current) return null;
+    if (gen !== generation.current || op !== guestOp.current) return null;
     setDriveGuestStepUp(null);
-    return (await sendWithGuestLinks(held.days, held.sendAt, draftKey, gen, held.snapshot)) ? held : null;
+    return (await sendWithGuestLinks(held.days, held.sendAt, draftKey, gen, held.snapshot, op)) ? held : null;
+  }
+
+  /** Cancel on the warning or the step-up: a guest-link send in flight makes nothing more and sends nothing. */
+  function cancelGuest() {
+    guestOp.current += 1;
+    setDriveGuestStepUp(null);
+    setDriveOutside(null);
   }
 
   return {
-    driveGuestStepUp, setDriveGuestStepUp, sendWithGuestLinks, confirmGuestStepUp,
+    driveGuestStepUp, sendWithGuestLinks, confirmGuestStepUp, cancelGuest,
     driveStatus, driveOffer, setDriveOffer, acceptDriveOffer, attachFromDrive, driveUploads, cancelDriveUpload, offerDrive,
     attachmentToDrive, driveOutside, setDriveOutside, driveRecipientsOk, attachDriveFilesInstead, resetDrive
   };
