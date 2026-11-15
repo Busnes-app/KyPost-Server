@@ -41,6 +41,8 @@ var sendCallers = map[string]string{
 	"api.sendAdminNotice":           "system mail to the admin's own address",
 	"processor.sendRejectionNotice": "notice to the account's own address",
 	"processor.sendSendAsProbe":     "probe to the account's own address",
+	"processor.oooSendSMTP":         "a sink, reached only from outOfOfficeReply after admitOOO",
+	"processor.oooQueueNative":      "a sink, reached only from outOfOfficeReply after admitOOO",
 	"sso.deliver":                   "delivers outbox jobs charged when api admitted them",
 	"app.startNativeOutbound":       "recovers pending outbox jobs; queues none",
 	"mailmsg.SMTPDeliverPrepared":   "a sink",

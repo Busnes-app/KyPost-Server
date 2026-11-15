@@ -271,6 +271,10 @@ func (s *Server) mcpServer(caller mcpCaller) *mcp.Server {
 		Description: "Archive messages (not from Trash or Junk). Confirm with the user first."}, t.archiveMessages)
 	mcp.AddTool(srv, &mcp.Tool{Name: "create_draft", Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)},
 		Description: "Save a plain-text draft in the user's Drafts folder. It is not sent: the user reviews and sends it from KyPost. Confirm the recipients and text with the user first."}, t.createDraft)
+	mcp.AddTool(srv, &mcp.Tool{Name: "get_out_of_office", Annotations: read,
+		Description: "Read the user's out-of-office automatic reply: on or off, its period, the reply for people in the organisation, and whether a reply to outside senders is set."}, t.getOutOfOffice)
+	mcp.AddTool(srv, &mcp.Tool{Name: "set_out_of_office", Annotations: write,
+		Description: "Turn the out-of-office reply on or off, and set its period and the reply for people in the organisation. It cannot change or turn on the reply to outside senders. Confirm with the user first."}, t.setOutOfOffice)
 	return srv
 }
 

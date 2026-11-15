@@ -91,7 +91,8 @@ export function ApplicationRuntime() {
         logLevel: cfg.logLevel,
         scan: cfg.scan,
         rateLimits: cfg.rateLimits,
-        sendQuota: cfg.sendQuota
+        sendQuota: cfg.sendQuota,
+        outOfOfficeRemote: cfg.outOfOfficeRemote
       });
       setConfigStatus("Configuration saved.");
     } catch {
@@ -181,6 +182,14 @@ export function ApplicationRuntime() {
             value={cfg.sendQuota.recipientsPerDay}
             onChange={(event) => updateConfig("sendQuota", { ...cfg.sendQuota, recipientsPerDay: Number(event.target.value) || 0 })}
           />
+        </label>
+        <label className="config-checkbox">
+          <input
+            type="checkbox"
+            checked={cfg.outOfOfficeRemote}
+            onChange={(event) => updateConfig("outOfOfficeRemote", event.target.checked)}
+          />
+          <span>Allow out-of-office replies to outside senders</span>
         </label>
         <label>
           <div>Theme</div>
