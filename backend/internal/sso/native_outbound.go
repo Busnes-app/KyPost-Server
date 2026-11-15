@@ -103,7 +103,8 @@ func (s NativeOutbound) withAuthority(ctx context.Context, mailboxID, from strin
 		if !settings.Enabled || settings.IssuerURL != current.Issuer {
 			return ErrNativeDomain
 		}
-		release, err := life.LockDirectoryContext(ctx)
+		// Sends write only the mailbox outbound queue: share the directory fence.
+		release, err := life.lockDirectoryShared(ctx)
 		if err != nil {
 			return err
 		}

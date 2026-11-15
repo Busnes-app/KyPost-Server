@@ -53,9 +53,9 @@ func TestNativeAdmissionSharesTheDirectoryFence(t *testing.T) {
 	wg.Wait()
 }
 
-// A receiving bind or accept writes only the holding store, so it shares the
-// directory fence like admission; mail access for an import stays exclusive.
-func TestNativeHoldingAccessSharesTheDirectoryFence(t *testing.T) {
+// Receiving writes no authority or users, so it shares the directory fence
+// like admission; WithNativeMailAccess stays exclusive.
+func TestNativeSharedAccessSharesTheDirectoryFence(t *testing.T) {
 	f := newAddressFixture(t, "one")
 	id := f.ids["one"]
 	access := func(with func(context.Context, string, string, *users.Store, []string, func(map[string]NativeAssignment) error) error, d time.Duration) error {
@@ -67,8 +67,8 @@ func TestNativeHoldingAccessSharesTheDirectoryFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := access(f.life.WithNativeHoldingAccess, time.Second); err != nil {
-		t.Fatal("holding access waited for a reader:", err)
+	if err := access(f.life.WithNativeSharedAccess, time.Second); err != nil {
+		t.Fatal("shared access waited for a reader:", err)
 	}
 	if err := access(f.life.WithNativeMailAccess, 50*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("mail access did not wait for a reader:", err)
@@ -79,7 +79,7 @@ func TestNativeHoldingAccessSharesTheDirectoryFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writer()
-	if err := access(f.life.WithNativeHoldingAccess, 50*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatal("holding access did not wait for a writer:", err)
+	if err := access(f.life.WithNativeSharedAccess, 50*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("shared access did not wait for a writer:", err)
 	}
 }

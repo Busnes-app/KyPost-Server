@@ -48,10 +48,10 @@ func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, is
 	return s.withNativeMailAccess(ctx, s.LockDirectoryContext, stateRoot, issuer, accounts, mailboxIDs, action)
 }
 
-// WithNativeHoldingAccess is WithNativeMailAccess for an action that writes
-// only the receiving holding store (a receiving bind or accept), never
-// authority, users or a mailbox: it shares the directory fence like admission.
-func (s *LifecycleStore) WithNativeHoldingAccess(ctx context.Context, stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(map[string]NativeAssignment) error) error {
+// WithNativeSharedAccess is WithNativeMailAccess for an action that writes
+// neither authority nor users (a receiving bind, accept or import): it shares
+// the directory fence like admission, so directory writers still wait for it.
+func (s *LifecycleStore) WithNativeSharedAccess(ctx context.Context, stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(map[string]NativeAssignment) error) error {
 	return s.withNativeMailAccess(ctx, s.lockDirectoryShared, stateRoot, issuer, accounts, mailboxIDs, action)
 }
 

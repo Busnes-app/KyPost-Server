@@ -314,9 +314,9 @@ func (r *receivingRuntime) verifyDomains(ctx context.Context, addresses []string
 // withAuthority fences only the recipients' domains: each must still be an
 // established member of the set, and every supplied proof still current.
 // Import supplies none, since accepted bytes are owed without fresh DNS.
-// holdingOnly says the action writes only the holding store, so the directory
-// fence is shared (sso.WithNativeHoldingAccess); an import writes a mailbox.
-func (r *receivingRuntime) withAuthority(ctx context.Context, holdingOnly bool, ids, addresses []string, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
+// shared says the action writes neither authority nor users, so the directory
+// fence is shared (sso.WithNativeSharedAccess).
+func (r *receivingRuntime) withAuthority(ctx context.Context, shared bool, ids, addresses []string, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
 	// Match allocator lock order. DNS and stdin work happen before this fence.
 	// It only reads the domain set, so deliveries share it and exclude writers.
 	release, err := fsutil.LockFileShared(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
@@ -340,8 +340,8 @@ func (r *receivingRuntime) withAuthority(ctx context.Context, holdingOnly bool, 
 		}
 	}
 	access := r.life.WithNativeMailAccess
-	if holdingOnly {
-		access = r.life.WithNativeHoldingAccess
+	if shared {
+		access = r.life.WithNativeSharedAccess
 	}
 	return access(ctx, r.stateDir, settings.IssuerURL, r.accounts, ids, action)
 }
@@ -442,12 +442,12 @@ func (r *receivingRuntime) refreshRoute(ctx context.Context, a sso.NativeAssignm
 	return r.holding.SetRoute(ctx, route)
 }
 
-func (r *receivingRuntime) frozenAuthority(ctx context.Context, holdingOnly bool, d ingress.Delivery, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
+func (r *receivingRuntime) frozenAuthority(ctx context.Context, shared bool, d ingress.Delivery, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
 	ids := make([]string, 0, len(d.Bindings))
 	for _, b := range d.Bindings {
 		ids = append(ids, b.Mailbox)
 	}
-	return r.withAuthority(ctx, holdingOnly, ids, bindingAddresses(d), proofs, func(current map[string]sso.NativeAssignment) error {
+	return r.withAuthority(ctx, shared, ids, bindingAddresses(d), proofs, func(current map[string]sso.NativeAssignment) error {
 		quarantine := func() error {
 			if d.State == "pending" {
 				if err := r.holding.QuarantinePending(ctx, r.gatewayID(), d.ID); err != nil {
@@ -673,7 +673,7 @@ func (r *receivingRuntime) importFrozen(ctx context.Context, d ingress.Delivery,
 	}
 	// Import authority does not require fresh DNS: already accepted bytes are
 	// owed to the frozen owner. Refresh authorized TTLs before Claim sees them.
-	return r.frozenAuthority(ctx, false, d, nil, func(current map[string]sso.NativeAssignment) error {
+	return r.frozenAuthority(ctx, true, d, nil, func(current map[string]sso.NativeAssignment) error {
 		for _, a := range current {
 			if sources[a.Owner] != a.Source {
 				return sso.ErrNativeProvisioning
