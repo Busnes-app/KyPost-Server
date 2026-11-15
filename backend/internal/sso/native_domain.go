@@ -463,10 +463,14 @@ func (s *NativeDomainStore) VerifyDomain(ctx context.Context, domain string) (Na
 	return d, nil
 }
 
-// CurrentProof reports whether proof is still the domain's stored, unexpired
-// proof. Callers hold the domain fence; other domains never affect it.
+// CurrentProof reports whether proof's challenge is still the domain's stored,
+// proven challenge and both are unexpired. A concurrent refresh of the same
+// challenge only moves VerifiedUntil, so it is not a change (as in
+// VerifyDomain). Callers hold the domain fence; other domains never affect it.
 func (s NativeDomainSet) CurrentProof(proof NativeDomain) bool {
-	return proof.Domain != "" && s.Domains[proof.Domain] == proof && proof.VerifiedUntil > time.Now().Unix()
+	cur, now := s.Domains[proof.Domain], time.Now().Unix()
+	return proof.Domain != "" && cur.Domain == proof.Domain && cur.Issuer == proof.Issuer && cur.Token == proof.Token &&
+		cur.ExpiresAt == proof.ExpiresAt && cur.Established && cur.VerifiedUntil > now && proof.VerifiedUntil > now
 }
 
 // RetireDomain moves a configured domain to retired until re-added: no proof,

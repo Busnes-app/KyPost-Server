@@ -102,6 +102,37 @@ func TestNativeDomainConcurrentRefreshOfSameChallenge(t *testing.T) {
 	}
 }
 
+// A proof taken a second before another delivery's refresh of the same
+// challenge stays current; a rotated or lapsed challenge does not.
+func TestNativeDomainProofSurvivesLaterRefreshOfSameChallenge(t *testing.T) {
+	s := provenNativeDomain(t, t.TempDir())
+	proof, err := s.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := s.ReadSet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := set.Domains[proof.Domain]
+	stored.VerifiedUntil++
+	set.Domains[proof.Domain] = stored
+	if !set.CurrentProof(proof) {
+		t.Fatal("a later refresh of the same challenge staled the proof")
+	}
+	for name, change := range map[string]func(*NativeDomain){
+		"rotated": func(d *NativeDomain) { d.Token += "x" },
+		"lapsed":  func(d *NativeDomain) { d.VerifiedUntil = 0 },
+	} {
+		d := stored
+		change(&d)
+		set.Domains[proof.Domain] = d
+		if set.CurrentProof(proof) {
+			t.Fatal(name, "challenge still current")
+		}
+	}
+}
+
 func TestNativeDomainRotationDuringLookup(t *testing.T) {
 	s := provenNativeDomain(t, t.TempDir())
 	old, _ := s.Read()
