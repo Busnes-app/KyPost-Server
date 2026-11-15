@@ -294,7 +294,7 @@ func (s *Server) handleNativeRecoveryRelease(w http.ResponseWriter, r *http.Requ
 	var refused *sso.NativeRestoreRefusedError
 	errAudit := errors.New("release audit unavailable")
 	err = func() error {
-		release, err := fsutil.LockFileContext(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
+		release, err := fsutil.LockFileGated(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
 		if err != nil {
 			return err
 		}

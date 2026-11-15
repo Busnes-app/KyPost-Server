@@ -72,7 +72,7 @@ func reconcileDKIMKeys(ctx context.Context, configDir, keyPath string) (bool, er
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(configDir, sso.NativeDomainsFile))
+	release, err := fsutil.LockFileGated(ctx, filepath.Join(configDir, sso.NativeDomainsFile))
 	if err != nil {
 		return false, err
 	}

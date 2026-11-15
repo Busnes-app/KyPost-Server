@@ -316,7 +316,8 @@ func (r *receivingRuntime) verifyDomains(ctx context.Context, addresses []string
 // Import supplies none, since accepted bytes are owed without fresh DNS.
 func (r *receivingRuntime) withAuthority(ctx context.Context, ids, addresses []string, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
 	// Match allocator lock order. DNS and stdin work happen before this fence.
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
+	// It only reads the domain set, so deliveries share it and exclude writers.
+	release, err := fsutil.LockFileShared(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
 	if err != nil {
 		return err
 	}

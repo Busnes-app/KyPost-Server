@@ -122,7 +122,7 @@ func (r *receivingRuntime) writeConfig(ctx context.Context, executable, address,
 			proofs = append(proofs, proof)
 		}
 	}
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
+	release, err := fsutil.LockFileGated(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
 	if err != nil {
 		return err
 	}

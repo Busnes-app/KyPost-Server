@@ -141,7 +141,7 @@ func (s *LifecycleStore) withNativeMailboxes(ctx context.Context, stateRoot stri
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(filepath.Dir(s.path), NativeDomainsFile))
+	release, err := fsutil.LockFileGated(ctx, filepath.Join(filepath.Dir(s.path), NativeDomainsFile))
 	if err != nil {
 		return err
 	}

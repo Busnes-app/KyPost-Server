@@ -44,7 +44,7 @@ type DKIMRotation struct {
 }
 
 func (r DKIMRotation) edit(ctx context.Context, apply func(c *DomainRelay) ([]DKIMEvent, error)) (DomainRelay, []DKIMEvent, error) {
-	fence, err := fsutil.LockFileContext(ctx, r.Fence)
+	fence, err := fsutil.LockFileGated(ctx, r.Fence)
 	if err != nil {
 		return DomainRelay{}, nil, err
 	}

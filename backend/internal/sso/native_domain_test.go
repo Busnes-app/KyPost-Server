@@ -102,6 +102,33 @@ func TestNativeDomainConcurrentRefreshOfSameChallenge(t *testing.T) {
 	}
 }
 
+// A fresh matching lookup reuses a recently saved proof without rewriting the
+// set; a failed lookup still lapses it.
+func TestNativeDomainFreshProofIsNotRewritten(t *testing.T) {
+	ctx := context.Background()
+	s := provenNativeDomain(t, t.TempDir())
+	first, err := s.Verify(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(s.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.Verify(ctx)
+	after, statErr := os.Stat(s.path)
+	if err != nil || statErr != nil || again != first || !os.SameFile(before, after) {
+		t.Fatal("fresh proof rewritten or changed", err, statErr, again, first)
+	}
+	s.SetLookupForTest(func(context.Context, string) ([]string, error) { return nil, nil })
+	if _, err := s.Verify(ctx); !errors.Is(err, ErrNativeDomain) {
+		t.Fatal("failed lookup verified", err)
+	}
+	if set, err := s.ReadSet(); err != nil || set.CurrentProof(first) {
+		t.Fatal("failed lookup left the proof current", err)
+	}
+}
+
 func TestNativeDomainRotationDuringLookup(t *testing.T) {
 	s := provenNativeDomain(t, t.TempDir())
 	old, _ := s.Read()

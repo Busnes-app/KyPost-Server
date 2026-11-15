@@ -81,7 +81,8 @@ func (s NativeOutbound) withAuthority(ctx context.Context, mailboxID, from strin
 		ctx, expire = context.WithDeadline(ctx, time.Unix(proof.VerifiedUntil, 0))
 		defer expire()
 	}
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(s.ConfigDir, NativeDomainsFile))
+	// Read-only use of the domain set: sends share the fence and exclude writers.
+	release, err := fsutil.LockFileShared(ctx, filepath.Join(s.ConfigDir, NativeDomainsFile))
 	if err != nil {
 		return err
 	}

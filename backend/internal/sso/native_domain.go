@@ -27,6 +27,10 @@ import (
 // The version-1 single-domain file native-domain.json becomes a tombstone.
 const NativeDomainsFile = "native-domains.json"
 
+// nativeProofReuse is how much of a saved five-minute proof must remain for
+// VerifyDomain to return it rather than rewrite the set.
+const nativeProofReuse = 4 * time.Minute
+
 const legacyNativeDomainFile = "native-domain.json"
 
 var ErrNativeDomain = errors.New("mail domain proof missing, expired or changed; configure and verify the current DNS challenge")
@@ -342,7 +346,7 @@ func (s *NativeDomainStore) configure(ctx context.Context, domain, issuer string
 	if err := ValidateNativeDomainSetup(domain, issuer); err != nil {
 		return NativeDomain{}, err
 	}
-	release, err := fsutil.LockFileContext(ctx, s.path)
+	release, err := fsutil.LockFileGated(ctx, s.path)
 	if err != nil {
 		return NativeDomain{}, err
 	}
@@ -422,7 +426,12 @@ func (s *NativeDomainStore) VerifyDomain(ctx context.Context, domain string) (Na
 			}
 		}
 	}
-	release, err := fsutil.LockFileContext(ctx, s.path)
+	// Fresh evidence agreeing with a proof saved within the last minute needs
+	// no write; every fence still compares it under the lock (CurrentProof).
+	if match && d.Established && d.VerifiedUntil-time.Now().Unix() >= int64(nativeProofReuse.Seconds()) {
+		return d, nil
+	}
+	release, err := fsutil.LockFileGated(ctx, s.path)
 	if err != nil {
 		return d, err
 	}
@@ -481,7 +490,7 @@ func (s *NativeDomainStore) RetireDomain(ctx context.Context, domain, stateRoot,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	release, err := fsutil.LockFileContext(ctx, s.path)
+	release, err := fsutil.LockFileGated(ctx, s.path)
 	if err != nil {
 		return err
 	}
