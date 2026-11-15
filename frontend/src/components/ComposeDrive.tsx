@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import type { Compose } from "../hooks/useCompose";
 import { formatBytes, MAX_ATTACHMENT_BYTES } from "../app/compose";
 import { guestDayChoices } from "../api/kydrive";
@@ -8,8 +8,25 @@ import { useAuth } from "../auth";
 
 const list = (items: string[]) => items.join(", ");
 
+/**
+ * The recipients and subject of the compose as it is now (not as a render
+ * captured it), so a guest-link send that waited can tell the draft changed,
+ * and the send that follows uses the latest compose.
+ */
+function useLatest(compose: Compose) {
+  const latest = useRef(compose);
+  latest.current = compose;
+  const draftKey = () => {
+    const c = latest.current;
+    return JSON.stringify([c.composeTo.tokens.map((t) => t.email), c.composeTo.draft, c.composeCc.tokens.map((t) => t.email), c.composeCc.draft,
+      c.composeBcc.tokens.map((t) => t.email), c.composeBcc.draft, c.composeSubject]);
+  };
+  return { latest, draftKey };
+}
+
 /** Compose's KyDrive notices: the over-limit offer, uploads in progress, and the outside-recipient check. */
 export function ComposeDrive({ compose }: { compose: Compose }) {
+  const { latest, draftKey } = useLatest(compose);
   const { drive, sendComposeEmail, composeSending } = compose;
   const { driveOffer, driveUploads, driveOutside, driveGuestStepUp, driveStatus } = drive;
   const maxDays = driveStatus.guestMaxDays ?? 0;
@@ -75,7 +92,7 @@ export function ComposeDrive({ compose }: { compose: Compose }) {
                   disabled={composeSending}
                   onClick={async () => {
                     const at = driveOutside.sendAt;
-                    if (await drive.sendWithGuestLinks(days, at)) void sendComposeEmail(at, true);
+                    if (await drive.sendWithGuestLinks(days, at, draftKey)) void latest.current.sendComposeEmail(at, true);
                   }}
                 >
                   Send a guest link instead
@@ -92,7 +109,8 @@ export function ComposeDrive({ compose }: { compose: Compose }) {
 
 /** Confirm it is you before guest links are made (KyPost's step-up, then the held send). */
 function GuestStepUp({ compose }: { compose: Compose }) {
-  const { drive, sendComposeEmail, composeSending } = compose;
+  const { drive, composeSending } = compose;
+  const { latest, draftKey } = useLatest(compose);
   const sso = useAuth().ssoSession === true;
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -102,8 +120,8 @@ function GuestStepUp({ compose }: { compose: Compose }) {
     setBusy(true);
     setError("");
     try {
-      const held = await drive.confirmGuestStepUp(reauth);
-      if (held) void sendComposeEmail(held.sendAt, true);
+      const held = await latest.current.drive.confirmGuestStepUp(reauth, draftKey);
+      if (held) void latest.current.sendComposeEmail(held.sendAt, true);
     } catch (e) {
       setError(toErrorMessage(e, "could not confirm it is you"));
       setCode("");

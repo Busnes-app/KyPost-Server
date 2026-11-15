@@ -20,7 +20,10 @@ export type DriveUpload = { id: number; name: string; loaded: number; size: numb
 /** Recipients who cannot open the message's KyDrive links. unverified: the check itself failed. */
 export type DriveOutside = { addresses: string[]; unverified: boolean; canAttach: boolean; canGuest: boolean; sendAt?: Date };
 /** A guest-link send waiting for the user to confirm it is them. */
-export type DriveGuestStepUp = { days: number; sendAt?: Date };
+export type DriveGuestStepUp = { days: number; sendAt?: Date; snapshot: string };
+/** The draft's recipients and subject as one string, read fresh each call. */
+export type DraftKey = () => string;
+const CHANGED = "The message changed while KyPost was making the guest links. Check it and send again.";
 
 /** KyDrive in compose (docs/KYDRIVE.md "KyPost side"): offer, upload, link, and the send-time check. */
 export function useComposeDrive({
@@ -192,9 +195,17 @@ export function useComposeDrive({
    * driveGuestStepUp and returns false. A reset compose makes nothing more.
    * Returns true when the body is ready to send.
    */
-  async function sendWithGuestLinks(days: number, sendAt?: Date, gen = generation.current): Promise<boolean> {
+  async function sendWithGuestLinks(days: number, sendAt: Date | undefined, draftKey: DraftKey, gen = generation.current, snapshot?: string): Promise<boolean> {
     const q = quill.current;
     if (!q || gen !== generation.current) return false;
+    // Recipients, subject and body as the user confirmed them: any edit while
+    // links are made (or the step-up runs) cancels the send.
+    const now = () => draftKey() + "\u0000" + q.root.innerHTML;
+    const before = snapshot ?? now();
+    if (now() !== before) {
+      setError(CHANGED);
+      return false;
+    }
     const hrefs = [...new Set(Array.from(q.root.querySelectorAll("a[href]")).map((a) => a.getAttribute("href") ?? ""))].filter((h) => fileIds.current.has(h));
     const made = new Map<string, DriveLink>();
     try {
@@ -206,10 +217,15 @@ export function useComposeDrive({
       if (gen !== generation.current) return false;
       if (driveErrorCode(e) === "step_up_required") {
         setDriveOutside(null);
-        setDriveGuestStepUp({ days, sendAt });
+        setDriveGuestStepUp({ days, sendAt, snapshot: before });
       } else {
         setError(`Guest links failed: ${driveMessage(e)}`);
       }
+      return false;
+    }
+    if (now() !== before) {
+      setDriveOutside(null);
+      setError(CHANGED);
       return false;
     }
     toGuestLinks(q.root, made);
@@ -224,14 +240,14 @@ export function useComposeDrive({
   }
 
   /** Runs the step-up (reauth throws on failure), then the held guest-link send. */
-  async function confirmGuestStepUp(reauth: () => Promise<void>): Promise<DriveGuestStepUp | null> {
+  async function confirmGuestStepUp(reauth: () => Promise<void>, draftKey: DraftKey): Promise<DriveGuestStepUp | null> {
     const held = driveGuestStepUp;
     const gen = generation.current;
     if (!held) return null;
     await reauth();
     if (gen !== generation.current) return null;
     setDriveGuestStepUp(null);
-    return (await sendWithGuestLinks(held.days, held.sendAt, gen)) ? held : null;
+    return (await sendWithGuestLinks(held.days, held.sendAt, draftKey, gen, held.snapshot)) ? held : null;
   }
 
   return {

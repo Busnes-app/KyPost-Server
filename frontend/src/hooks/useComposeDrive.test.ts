@@ -192,6 +192,10 @@ it("leaves the next draft alone when attach-instead or the recipient check finis
   expect(setError).not.toHaveBeenCalled();
 });
 
+// The draft's recipients and subject as the component reads them; tests change it to edit the draft.
+let recipients = "dana@partner.example";
+const draftKey = () => recipients;
+
 const guestStatus = { available: true, origin: "https://drive.example.com", appUrl: "https://drive.example.com/", guestLinks: true, guestMaxDays: 14 };
 const stepUpRequired = () => Object.assign(new HttpError("step up", 403, { code: "step_up_required" }));
 
@@ -218,7 +222,7 @@ it("makes guest links at send time and says they expire", async () => {
   const { quill, view } = await heldForOutsider();
   api.link.mockResolvedValueOnce({ url: "https://drive.example.com/g/#guest", expires: "2026-11-21T00:00:00Z" });
   let ok = false;
-  await act(async () => { ok = await view.result.current.drive.sendWithGuestLinks(7); });
+  await act(async () => { ok = await view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
   expect(ok).toBe(true);
   expect(api.link).toHaveBeenLastCalledWith("f1", 7, "guest");
   const a = quill.root.querySelector("a") as HTMLAnchorElement;
@@ -232,18 +236,18 @@ it("holds the send for a step-up, then makes the links once confirmed", async ()
   const { quill, view } = await heldForOutsider();
   api.link.mockRejectedValueOnce(stepUpRequired());
   let ok = true;
-  await act(async () => { ok = await view.result.current.drive.sendWithGuestLinks(7); });
+  await act(async () => { ok = await view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
   expect(ok).toBe(false);
-  expect(view.result.current.drive.driveGuestStepUp).toEqual({ days: 7, sendAt: undefined });
+  expect(view.result.current.drive.driveGuestStepUp).toMatchObject({ days: 7, sendAt: undefined });
   expect(quill.root.querySelector("a")?.getAttribute("href")).toBe("https://drive.example.com/l/#tok");
 
   // A failed confirmation (wrong password, or a step-up the server says lapsed) makes nothing.
-  await expect(act(() => view.result.current.drive.confirmGuestStepUp(async () => { throw new Error("wrong password"); }))).rejects.toThrow("wrong password");
+  await expect(act(() => view.result.current.drive.confirmGuestStepUp(async () => { throw new Error("wrong password"); }, draftKey))).rejects.toThrow("wrong password");
   expect(api.link).toHaveBeenCalledTimes(2);
   api.link.mockResolvedValueOnce({ url: "https://drive.example.com/g/#guest", expires: "" });
   let held: unknown = null;
-  await act(async () => { held = await view.result.current.drive.confirmGuestStepUp(async () => {}); });
-  expect(held).toEqual({ days: 7, sendAt: undefined });
+  await act(async () => { held = await view.result.current.drive.confirmGuestStepUp(async () => {}, draftKey); });
+  expect(held).toMatchObject({ days: 7, sendAt: undefined });
   expect(quill.root.querySelector("a")?.getAttribute("href")).toBe("https://drive.example.com/g/#guest");
 });
 
@@ -251,11 +255,11 @@ it("never makes guest links for the next draft after compose is reset", async ()
   // Reset while the step-up is being confirmed.
   const first = await heldForOutsider();
   api.link.mockRejectedValueOnce(stepUpRequired());
-  await act(async () => { await first.view.result.current.drive.sendWithGuestLinks(7); });
+  await act(async () => { await first.view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
   const calls = api.link.mock.calls.length;
   let confirmed!: () => void;
   let done!: Promise<unknown>;
-  act(() => { done = first.view.result.current.drive.confirmGuestStepUp(() => new Promise((r) => { confirmed = r; })); });
+  act(() => { done = first.view.result.current.drive.confirmGuestStepUp(() => new Promise((r) => { confirmed = r; }), draftKey); });
   act(() => first.view.result.current.drive.resetDrive());
   confirmed();
   let held: unknown = "unset";
@@ -274,7 +278,7 @@ it("never makes guest links for the next draft after compose is reset", async ()
   api.link.mockImplementationOnce(() => new Promise((r) => { made = r; }));
   const before = api.link.mock.calls.length;
   let sending!: Promise<boolean>;
-  act(() => { sending = second.view.result.current.drive.sendWithGuestLinks(7); });
+  act(() => { sending = second.view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
   act(() => second.view.result.current.drive.resetDrive());
   made({ url: "https://drive.example.com/g/#late", expires: "" });
   let ok = true;
@@ -283,4 +287,43 @@ it("never makes guest links for the next draft after compose is reset", async ()
   expect(api.link).toHaveBeenCalledTimes(before + 1);
   expect(second.quill.root.innerHTML).not.toContain("/g/");
   expect(second.setError).not.toHaveBeenCalled();
+});
+
+it("sends nothing when the draft changes while guest links are made or the step-up runs", async () => {
+  // Recipients changed while KyDrive was making the link.
+  const { quill, setError, view } = await heldForOutsider();
+  let made!: (l: { url: string; expires: string }) => void;
+  api.link.mockImplementationOnce(() => new Promise((r) => { made = r; }));
+  let sending!: Promise<boolean>;
+  act(() => { sending = view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
+  recipients = "someone@else.example";
+  made({ url: "https://drive.example.com/g/#guest", expires: "" });
+  let ok = true;
+  await act(async () => { ok = await sending; });
+  expect(ok).toBe(false);
+  expect(setError).toHaveBeenLastCalledWith(expect.stringMatching(/^The message changed/));
+  expect(quill.root.innerHTML).not.toContain("/g/");
+  recipients = "dana@partner.example";
+
+  // The body changed instead.
+  api.link.mockImplementationOnce(() => new Promise((r) => { made = r; }));
+  act(() => { sending = view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
+  quill.root.insertAdjacentHTML("beforeend", "<p>a new paragraph</p>");
+  made({ url: "https://drive.example.com/g/#guest", expires: "" });
+  await act(async () => { ok = await sending; });
+  expect(ok).toBe(false);
+  expect(quill.root.innerHTML).not.toContain("/g/");
+
+  // Edited between the step-up request and its confirmation: no link is made.
+  api.link.mockRejectedValueOnce(Object.assign(new HttpError("step up", 403, { code: "step_up_required" })));
+  await act(async () => { await view.result.current.drive.sendWithGuestLinks(7, undefined, draftKey); });
+  expect(view.result.current.drive.driveGuestStepUp).not.toBeNull();
+  const calls = api.link.mock.calls.length;
+  recipients = "someone@else.example";
+  let held: unknown = "unset";
+  await act(async () => { held = await view.result.current.drive.confirmGuestStepUp(async () => {}, draftKey); });
+  expect(held).toBeNull();
+  expect(api.link).toHaveBeenCalledTimes(calls);
+  expect(quill.root.innerHTML).not.toContain("/g/");
+  recipients = "dana@partner.example";
 });

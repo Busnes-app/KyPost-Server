@@ -181,7 +181,11 @@ only while it is paired, so the browser can PUT to the ticket.
   the send behind a "Confirm it is you" form (password and two-factor code,
   or KySignOn for a KySignOn session); confirming makes the links and sends.
   A compose reset during the step-up or between links makes no further link
-  and changes nothing in the next draft. Links already made stay in KyDrive,
+  and changes nothing in the next draft. The recipients, subject and body
+  are fixed when the user chooses guest links: if any of them changes before
+  the links are made (during the step-up or while KyDrive answers), nothing
+  is rewritten or sent and the user is told to check the message and send
+  again; the send that follows uses the compose as it is then. Links already made stay in KyDrive,
   where the owner can revoke them.
 - Reading: each attachment has **Save to KyDrive**; success shows the folder
   and name it got and an **Open KyDrive** link to the app's suite URL.
