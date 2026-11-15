@@ -65,7 +65,15 @@ Out of scope: an attacker who already runs code in the container or holds both t
    in `/kypost/private`, separate from the data they protect.
 5. **KyPost → AI agents.** `/mcp` accepts only a bearer agent token and refuses any request that
    carries an `Origin` header.
-6. **Self-hosted servers → push relays.** The relays store only the SHA-256 of each API key, and
+6. **KyPulse → KyPost.** `POST /api/suite/kypulse/alert` takes no session: a `syncauth`
+   signature under the secret KyIdentity's suite directory hands both apps, with a replay guard
+   (`backend/internal/suitepair`). It can only send a fixed plain-text template from a member's
+   own outbox, after the member turned it on, to their own addresses or extra ones that
+   confirmed through a signed link (`GET` renders only, the `POST` confirms), at most 30 an hour
+   per mailbox in the shared send ledger, on top of the sending quota. Nothing KyPulse sends
+   reaches a header except the subject text (`backend/internal/api/kypulse_handlers.go`,
+   `kypulse_handlers_test.go`).
+7. **Self-hosted servers → push relays.** The relays store only the SHA-256 of each API key, and
    the first key to deliver to a device token owns it; another key gets `403`
    (`worker/README.md#token-pinning`, `push-relay-shared/push-relay-common.ts`).
    New FCM service-account assertions require a literal RSA-2048 minimum
@@ -108,6 +116,7 @@ Out of scope: an attacker who already runs code in the container or holds both t
 | Session theft or fixation | A fresh 24-byte `crypto/rand` token per sign-in, in an `HttpOnly`, `SameSite=Lax` cookie, `Secure` on HTTPS; 24-hour idle expiry; removed on sign-out | `backend/internal/api/server_auth_session.go`, `randomToken` in `server.go` |
 | CSRF | Double-submit token per session, compared in constant time on state-changing requests | `csrfCheckOK` in `backend/internal/api/server_auth_session.go` |
 | Cross-site scripting through mail | DOMPurify, an iframe sandbox without `allow-scripts`, and a CSP with no `'unsafe-inline'` or `'unsafe-eval'` in `script-src`, `object-src 'none'`, `frame-ancestors 'none'` | `frontend/src/lib/emailHtml.ts`, `frontend/src/pages/read/EmailBodyFrame.tsx`, `backend/internal/api/security_headers.go` |
+| Alert mail abused as a spam or phishing relay | KyPulse can mail only recipients the owner listed and that confirmed by a button press (a link fetch confirms nothing), from the owner's own address, as plain text with a fixed `[KyPulse] ` subject prefix and `Auto-Submitted`; per-mailbox limit and sending quota; addresses, subjects and bodies never logged | `backend/internal/api/kypulse_handlers.go`, `kypulse_handlers_test.go` |
 | SQL injection | `database/sql` with `?` parameters; the one formatted statement adds columns whose names are constants in the same file | `backend/internal/state/schema.go` |
 | Command injection | The only subprocess is `restic`, started with an argument list, never a shell | `backend/internal/backup/bulk.go` |
 | Server-side request forgery | User-supplied hosts use one guarded dialer, address checked after resolution and before connect; the operator's classifier and SSO issuer are trusted configuration | `backend/internal/netguard/netguard.go`, `backend/internal/api/ssrf_guard.go` |
