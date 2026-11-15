@@ -286,7 +286,7 @@ func (s *LifecycleStore) LockDirectoryContext(ctx context.Context) (release func
 
 // lockDirectoryShared is the directory fence for a read-only decision such as
 // admission: it excludes every writer but not other readers. Nothing under it
-// may write authority, users or a mailbox.
+// may write authority or users; mailbox writes commit in their own SQLite.
 func (s *LifecycleStore) lockDirectoryShared(ctx context.Context) (release func(), err error) {
 	return fsutil.LockFileShared(ctx, s.path)
 }

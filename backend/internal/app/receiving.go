@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/mail"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +46,24 @@ var errUnimportable = &receivingCommandError{err: mailbox.ErrUnimportable, code:
 // mailboxRoom refuses a message of size bytes that a's mailbox cannot hold,
 // counting accepted mail still waiting to import into it. Acceptance runs
 // under the directory fence, so concurrent deliveries see each other.
+// quotaFence holds each mailbox's receiving quota lock, in ID order, so a
+// quota check and the accept it admits, or an import, run one at a time per
+// mailbox even under the shared directory fence. Lock order: directory ->
+// users -> quota -> holding and mailbox SQLite.
+func (r *receivingRuntime) quotaFence(ctx context.Context, current map[string]sso.NativeAssignment, action func() error) error {
+	for _, id := range slices.Sorted(maps.Keys(current)) {
+		if !fsutil.SafePathComponent(id) {
+			return sso.ErrNativeProvisioning
+		}
+		release, err := fsutil.LockFileContext(ctx, filepath.Join(r.stateDir, "receiving", "quota-"+id))
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	return action()
+}
+
 func (r *receivingRuntime) mailboxRoom(ctx context.Context, a sso.NativeAssignment, size int64) error {
 	u, err := mailbox.ReadUsage(filepath.Join(a.Dir(r.stateDir), "mailbox"))
 	if err != nil {
@@ -314,9 +334,12 @@ func (r *receivingRuntime) verifyDomains(ctx context.Context, addresses []string
 // withAuthority fences only the recipients' domains: each must still be an
 // established member of the set, and every supplied proof still current.
 // Import supplies none, since accepted bytes are owed without fresh DNS.
-func (r *receivingRuntime) withAuthority(ctx context.Context, ids, addresses []string, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
+// shared says the action writes neither authority nor users, so the directory
+// fence is shared (sso.WithNativeSharedAccess).
+func (r *receivingRuntime) withAuthority(ctx context.Context, shared bool, ids, addresses []string, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
 	// Match allocator lock order. DNS and stdin work happen before this fence.
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
+	// It only reads the domain set, so deliveries share it and exclude writers.
+	release, err := fsutil.LockFileShared(ctx, filepath.Join(r.configDir, sso.NativeDomainsFile))
 	if err != nil {
 		return err
 	}
@@ -336,7 +359,11 @@ func (r *receivingRuntime) withAuthority(ctx context.Context, ids, addresses []s
 			return sso.ErrNativeDomain
 		}
 	}
-	return r.life.WithNativeMailAccess(ctx, r.stateDir, settings.IssuerURL, r.accounts, ids, action)
+	access := r.life.WithNativeMailAccess
+	if shared {
+		access = r.life.WithNativeSharedAccess
+	}
+	return access(ctx, r.stateDir, settings.IssuerURL, r.accounts, ids, action)
 }
 
 // errInvalidSender is a sender shape neither profile accepts.
@@ -386,7 +413,7 @@ func (r *receivingRuntime) bindExpected(ctx context.Context, id, sender, recipie
 	if _, err := r.activeAddress(recipient); err != nil {
 		return err
 	}
-	return r.withAuthority(ctx, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
+	return r.withAuthority(ctx, true, []string{a.Owner.Mailbox}, []string{recipient}, proofs, func(current map[string]sso.NativeAssignment) error {
 		admitted := current[a.Owner.Mailbox]
 		x, err := r.activeAddress(recipient)
 		if err != nil {
@@ -435,12 +462,12 @@ func (r *receivingRuntime) refreshRoute(ctx context.Context, a sso.NativeAssignm
 	return r.holding.SetRoute(ctx, route)
 }
 
-func (r *receivingRuntime) frozenAuthority(ctx context.Context, d ingress.Delivery, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
+func (r *receivingRuntime) frozenAuthority(ctx context.Context, shared bool, d ingress.Delivery, proofs []sso.NativeDomain, action func(map[string]sso.NativeAssignment) error) error {
 	ids := make([]string, 0, len(d.Bindings))
 	for _, b := range d.Bindings {
 		ids = append(ids, b.Mailbox)
 	}
-	return r.withAuthority(ctx, ids, bindingAddresses(d), proofs, func(current map[string]sso.NativeAssignment) error {
+	return r.withAuthority(ctx, shared, ids, bindingAddresses(d), proofs, func(current map[string]sso.NativeAssignment) error {
 		quarantine := func() error {
 			if d.State == "pending" {
 				if err := r.holding.QuarantinePending(ctx, r.gatewayID(), d.ID); err != nil {
@@ -550,19 +577,21 @@ func (r *receivingRuntime) accept(ctx context.Context, id, sender string, input 
 // commitAccept stores scanned bytes for a staged delivery under its frozen
 // owners' current authority and their per-message limits.
 func (r *receivingRuntime) commitAccept(ctx context.Context, d ingress.Delivery, sender string, raw []byte, proofs []sso.NativeDomain) error {
-	return r.frozenAuthority(ctx, d, proofs, func(current map[string]sso.NativeAssignment) error {
-		for _, a := range current {
-			if int64(len(raw)) > a.Limits.MessageBytes {
-				return errMailboxMessageLimit
+	return r.frozenAuthority(ctx, true, d, proofs, func(current map[string]sso.NativeAssignment) error {
+		return r.quotaFence(ctx, current, func() error {
+			for _, a := range current {
+				if int64(len(raw)) > a.Limits.MessageBytes {
+					return errMailboxMessageLimit
+				}
+				if mailbox.ImportValid(raw, a.Limits.MessageBytes) != nil {
+					return errUnimportable
+				}
+				if err := r.mailboxRoom(ctx, a, int64(len(raw))); err != nil {
+					return err
+				}
 			}
-			if mailbox.ImportValid(raw, a.Limits.MessageBytes) != nil {
-				return errUnimportable
-			}
-			if err := r.mailboxRoom(ctx, a, int64(len(raw))); err != nil {
-				return err
-			}
-		}
-		return r.holding.Accept(ctx, r.gatewayID(), d.ID, sender, bytes.NewReader(raw))
+			return r.holding.Accept(ctx, r.gatewayID(), d.ID, sender, bytes.NewReader(raw))
+		})
 	})
 }
 
@@ -666,18 +695,20 @@ func (r *receivingRuntime) importFrozen(ctx context.Context, d ingress.Delivery,
 	}
 	// Import authority does not require fresh DNS: already accepted bytes are
 	// owed to the frozen owner. Refresh authorized TTLs before Claim sees them.
-	return r.frozenAuthority(ctx, d, nil, func(current map[string]sso.NativeAssignment) error {
+	return r.frozenAuthority(ctx, true, d, nil, func(current map[string]sso.NativeAssignment) error {
 		for _, a := range current {
 			if sources[a.Owner] != a.Source {
 				return sso.ErrNativeProvisioning
 			}
 		}
-		return r.holding.ImportTo(ctx, r.gatewayID(), id, folder, func(owner mailbox.Owner) (*mailbox.Store, error) {
-			store := stores[owner]
-			if store == nil {
-				return nil, ingress.ErrRoute
-			}
-			return store, nil
+		return r.quotaFence(ctx, current, func() error {
+			return r.holding.ImportTo(ctx, r.gatewayID(), id, folder, func(owner mailbox.Owner) (*mailbox.Store, error) {
+				store := stores[owner]
+				if store == nil {
+					return nil, ingress.ErrRoute
+				}
+				return store, nil
+			})
 		})
 	})
 }

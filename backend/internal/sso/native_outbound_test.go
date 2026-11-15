@@ -317,3 +317,35 @@ func TestNativeOutboundConvertedDeviceKeyFence(t *testing.T) {
 		})
 	}
 }
+
+// A send writes only its mailbox outbound queue, so it shares the directory
+// fence with admissions and waits only for a directory writer.
+func TestNativeOutboundSharesTheDirectoryFence(t *testing.T) {
+	sender, u, job := outboundFixture(t)
+	life := NewLifecycleStore(sender.ConfigDir)
+	queue := func(d time.Duration) error {
+		ctx, cancel := context.WithTimeout(context.Background(), d)
+		defer cancel()
+		id, err := fsutil.NewUUIDv4()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sender.Queue(ctx, u.ID, id, job)
+	}
+	writer, err := life.LockDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queue(100 * time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("send did not wait for a directory writer:", err)
+	}
+	writer()
+	reader, err := life.lockDirectoryShared(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader()
+	if err := queue(5 * time.Second); err != nil {
+		t.Fatal("send waited for an admission:", err)
+	}
+}

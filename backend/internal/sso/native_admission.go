@@ -45,12 +45,23 @@ func (s *LifecycleStore) AdmitOpenMailbox(ctx context.Context, stateRoot, issuer
 // store or perform network I/O. Partial mailbox commits recover via receipts.
 // mailboxIDs name primary or extra mailboxes; each owner is admitted.
 func (s *LifecycleStore) WithNativeMailAccess(ctx context.Context, stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(map[string]NativeAssignment) error) error {
+	return s.withNativeMailAccess(ctx, s.LockDirectoryContext, stateRoot, issuer, accounts, mailboxIDs, action)
+}
+
+// WithNativeSharedAccess is WithNativeMailAccess for an action that writes
+// neither authority nor users (a receiving bind, accept or import): it shares
+// the directory fence like admission, so directory writers still wait for it.
+func (s *LifecycleStore) WithNativeSharedAccess(ctx context.Context, stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(map[string]NativeAssignment) error) error {
+	return s.withNativeMailAccess(ctx, s.lockDirectoryShared, stateRoot, issuer, accounts, mailboxIDs, action)
+}
+
+func (s *LifecycleStore) withNativeMailAccess(ctx context.Context, lock func(context.Context) (func(), error), stateRoot, issuer string, accounts *users.Store, mailboxIDs []string, action func(map[string]NativeAssignment) error) error {
 	if len(mailboxIDs) == 0 || len(mailboxIDs) > 100 || action == nil {
 		return ErrNativeProvisioning
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	release, err := s.LockDirectoryContext(ctx)
+	release, err := lock(ctx)
 	if err != nil {
 		return err
 	}

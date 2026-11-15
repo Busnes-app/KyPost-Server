@@ -121,7 +121,7 @@ func (s *Server) handleNativeMailRelay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "relay setup requires fresh issuer-bound proof of at least one relay domain; verify the current TXT records", http.StatusConflict)
 		return
 	}
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
+	release, err := fsutil.LockFileGated(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
 	if err != nil {
 		http.Error(w, "relay setup busy or cancelled; retry without deleting configuration", http.StatusServiceUnavailable)
 		return
@@ -279,7 +279,7 @@ func (s *Server) nativeRelayCheckProfile(ctx context.Context, generation string,
 	if len(proofs) == 0 {
 		return mailmsg.DomainRelay{}, nil, refused
 	}
-	release, err := fsutil.LockFileContext(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
+	release, err := fsutil.LockFileGated(ctx, filepath.Join(s.configDir, sso.NativeDomainsFile))
 	if err != nil {
 		return mailmsg.DomainRelay{}, nil, refused
 	}

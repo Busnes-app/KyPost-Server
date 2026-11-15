@@ -782,7 +782,8 @@ func (s *Store) WithCurrentUsers(ctx context.Context, action func([]User) error)
 		return err
 	}
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFileContext(ctx, s.path)
+	// Read-only: snapshots share the lock and exclude every (gated) writer.
+	release, err := fsutil.LockFileShared(ctx, s.path)
 	if err != nil {
 		return err
 	}
@@ -798,6 +799,17 @@ func (s *Store) WithCurrentUsers(ctx context.Context, action func([]User) error)
 		return errors.New("unsupported account authority version")
 	}
 	return action(f.Users)
+}
+
+// withWriteLock is fsutil.WithFileLock through the gate, so a stream of
+// WithCurrentUsers readers sharing the lock cannot starve a writer.
+func withWriteLock(path string, fn func() error) error {
+	release, err := fsutil.LockFileGated(context.Background(), path)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return fn()
 }
 
 func (s *Store) lockContext(ctx context.Context) error {
@@ -1180,7 +1192,7 @@ func (s *Store) updateSSOLinks(fn func(*User) bool) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	changed := 0
-	err := fsutil.WithFileLock(s.path, func() error {
+	err := withWriteLock(s.path, func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -1219,7 +1231,7 @@ func (s *Store) linkSSO(issuer, userID, ssoSub, ssoUsername, ssoEmail string) er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return fsutil.WithFileLock(s.path, func() error {
+	return withWriteLock(s.path, func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -1267,7 +1279,7 @@ func (s *Store) RevokeSSOLink(userID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return fsutil.WithFileLock(s.path, func() error {
+	return withWriteLock(s.path, func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -1292,7 +1304,7 @@ func (s *Store) UnlinkSSO(userID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return fsutil.WithFileLock(s.path, func() error {
+	return withWriteLock(s.path, func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -1356,7 +1368,7 @@ func (s *Store) createSSOUser(ctx context.Context, id, username string, role Rol
 		return User{}, err
 	}
 	defer s.mu.Unlock()
-	release, err := fsutil.LockFileContext(ctx, s.path)
+	release, err := fsutil.LockFileGated(ctx, s.path)
 	if err != nil {
 		return User{}, err
 	}
@@ -1434,7 +1446,7 @@ func (s *Store) Create(ctx context.Context, username, password string, role Role
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var created User
-	err := fsutil.WithFileLock(s.path, func() error {
+	err := withWriteLock(s.path, func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -1529,7 +1541,7 @@ func (s *Store) SweepExpiredEnvelopes() (int, error) {
 	defer s.mu.Unlock()
 
 	removed := 0
-	err := fsutil.WithFileLock(s.path, func() error {
+	err := withWriteLock(s.path, func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err
@@ -1569,7 +1581,7 @@ func (s *Store) mutateGuarded(id string, guard func(all []User, target User) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var updated User
-	err := fsutil.WithFileLock(s.path, func() error {
+	err := withWriteLock(s.path, func() error {
 		f, err := s.readFileUnlocked()
 		if err != nil {
 			return err

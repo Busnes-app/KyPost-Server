@@ -109,7 +109,7 @@ func TestNativeReceivingSeveralDomains(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	if err = r.withAuthority(ctx, []string{created[0].ID}, []string{"one@example.test"}, proofs, func(map[string]sso.NativeAssignment) error { called = true; return nil }); err != nil || !called {
+	if err = r.withAuthority(ctx, false, []string{created[0].ID}, []string{"one@example.test"}, proofs, func(map[string]sso.NativeAssignment) error { called = true; return nil }); err != nil || !called {
 		t.Fatal("second domain fenced the first", err)
 	}
 }
