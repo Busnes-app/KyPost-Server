@@ -787,3 +787,40 @@ func TestAuthoritySubjectView(t *testing.T) {
 		t.Fatal("damaged format read", err)
 	}
 }
+
+// Concurrent admissions keep their connections: reopening one re-verifies the
+// schema and re-prepares every statement, which cost 18% of API CPU at 1,000
+// staff when the pool kept only four.
+func TestAuthorityKeepsConnectionsAfterConcurrentViews(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "measures the SQLite pool")
+	f := newAddressFixture(t, "one")
+	const n = 16
+	held, release, errs := make(chan struct{}, n), make(chan struct{}), make(chan error, n)
+	for range n {
+		go func() {
+			errs <- f.life.authority().View(context.Background(), func(authorityReader) error {
+				held <- struct{}{}
+				<-release
+				return nil
+			})
+		}()
+	}
+	for range n {
+		<-held
+	}
+	close(release)
+	for range n {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(f.config, NativeAuthorityFile)
+	h, err := acquireAuthority(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseAuthority(path, h, false)
+	if idle := h.db.Stats().Idle; idle < n {
+		t.Fatalf("kept %d of %d connections", idle, n)
+	}
+}

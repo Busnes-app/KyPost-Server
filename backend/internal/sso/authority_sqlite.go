@@ -399,7 +399,9 @@ func openAuthorityDB(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	db := sql.OpenDB(verifiedConnector{base})
-	db.SetMaxIdleConns(4)
+	// Keep a connection per concurrent request: a new one re-verifies the
+	// schema and re-prepares every statement.
+	db.SetMaxIdleConns(64)
 	// Open one connection now, so a refused file refuses here.
 	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
