@@ -154,29 +154,25 @@ The administrator switch is a field of the existing server settings document
 - **Inbox:** while a reply is on, a bar reads "Out of office is on", with the period
   when there is one, and a "Turn off" button that saves `enabled:false`.
 
-## KyCalendar tie (deliverable 2)
+## KyCalendar tie
 
-This uses the existing KyPost↔KyCalendar pair (`docs/KYCALENDAR.md`). It adds no pair,
-and KyCalendar never sets out-of-office:
+Built under the existing pair; the wire contract is in [KYCALENDAR.md](KYCALENDAR.md) ("Out of
+office").
 
-- **New settings:** `calendarAway` ("Show me as away in KyCalendar") and
-  `calendarTentative` ("Answer new invitations Tentative while I'm away"). They need
-  dates, the pair, and the user's KyCalendar switch.
-- **New KyPost → KyCalendar event:** `kypost.ooo.set` (`POST /api/kypost/ooo`) with
-  `{sub, issuer, start, end, all_day, time_zone, away, tentative, comment_local,
-  comment_remote}`. It is idempotent: KyCalendar keeps one integration-owned event per
-  user, marked out-of-office and `TRANSP:OPAQUE`. A new body moves it, and `away:false`
-  or an empty period removes it. The event ID is a hash of the user and the settings
-  revision.
-- **Sent on every save** that changes the calendar-relevant fields. A failure is shown to
-  the user and retried on the next save. KyPost stays the source of truth: on the next
-  save it resends the whole state, and KyCalendar applies it as given.
-- **Auto-Tentative:** KyCalendar answers new invitations that arrive during the period
-  `TENTATIVE`, and never declines. The comment is the local text when the organiser is a
-  KyCalendar user, the remote text when the remote reply is `on`, and empty otherwise.
-- The contract goes in `docs/KYCALENDAR.md`, KyCalendar `docs/`, and the shared
-  contracts file. The full route table and its negative tests are written there in the
-  same change set.
+- Two more settings, shown only when KyCalendar takes this user's period: `calendarAway` ("Show
+  me as away in KyCalendar") and `calendarTentative` ("Answer new invitations Tentative while
+  I'm away", which needs `calendarAway`). KyCalendar takes the period when it is paired, the
+  user's KyCalendar switch is on, and the account has a live SSO link. `GET` reports this as
+  `calendarAvailable`.
+- **Every save sends the whole state** (`kypost.ooo.set`): `away` is true only while the reply
+  is on, both dates are set and `calendarAway` is ticked. Saves come from the web, the inbox
+  Turn off and the MCP agent. The PUT answer's `calendarSync` is `synced` or `failed`, and the
+  web says so. The next save sends again; nothing retries in the background.
+- KyCalendar keeps one integration-owned `TRANSP:OPAQUE` out-of-office event and, when asked,
+  answers new invitations TENTATIVE with `comment_local`, or with `comment_remote`. KyPost
+  sends `comment_remote` only while its remote reply goes to everyone and the administrator
+  allows it. KyCalendar never turns out-of-office on.
+- An agent's save keeps the calendar settings as they are.
 
 ## Not built
 

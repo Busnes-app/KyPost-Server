@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
+	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/kycalendar"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
 )
@@ -25,6 +29,11 @@ type outOfOfficeView struct {
 	config.OutOfOffice
 	Active        bool `json:"active"`
 	RemoteAllowed bool `json:"remoteAllowed"`
+	// CalendarAvailable: KyCalendar is paired and takes this user's period.
+	CalendarAvailable bool `json:"calendarAvailable"`
+	// CalendarSync answers a save: "synced", or "failed" when KyCalendar did
+	// not take it; absent when KyCalendar is not in use.
+	CalendarSync string `json:"calendarSync,omitempty"`
 }
 
 func (s *Server) oooRemoteAllowed() bool {
@@ -33,10 +42,61 @@ func (s *Server) oooRemoteAllowed() bool {
 	return s.cfg.OutOfOfficeRemote
 }
 
-func (s *Server) oooView(o config.OutOfOffice) outOfOfficeView {
+func (s *Server) oooView(userID string, o config.OutOfOffice) outOfOfficeView {
 	o.Remote = o.RemoteMode()
-	return outOfOfficeView{OutOfOffice: o, Active: o.ActiveAt(time.Now()), RemoteAllowed: s.oooRemoteAllowed()}
+	_, calendar := s.oooCalendarUser(userID)
+	return outOfOfficeView{OutOfOffice: o, Active: o.ActiveAt(time.Now()), RemoteAllowed: s.oooRemoteAllowed(), CalendarAvailable: calendar}
 }
+
+// oooCalendarUser is the user KyCalendar knows, when it takes their period:
+// paired, their KyCalendar switch on, and a live SSO link.
+func (s *Server) oooCalendarUser(userID string) (users.User, bool) {
+	if !s.kycal.Available() {
+		return users.User{}, false
+	}
+	u, err := s.users.Get(userID)
+	if err != nil || u.SSOSub == "" || u.SSOIssuer == "" || u.SSOLinkRevokedAt != 0 {
+		return users.User{}, false
+	}
+	st, err := config.LoadUserSettings(s.userSettingsPath(userID))
+	return u, err == nil && st.KyCalendarOn(s.kycal.DefaultOn())
+}
+
+// syncOOOCalendar sends KyCalendar the user's whole out-of-office state
+// (docs/KYCALENDAR.md, Out of office): away only while the reply is on with
+// both dates and the user asked for it. KyPost is the only source; a failure
+// is reported, and the next save sends it again.
+func (s *Server) syncOOOCalendar(ctx context.Context, userID string, o config.OutOfOffice) string {
+	u, ok := s.oooCalendarUser(userID)
+	if !ok {
+		return ""
+	}
+	body := map[string]any{"sub": u.SSOSub, "issuer": u.SSOIssuer, "revision": time.Now().UnixMilli(), "away": false}
+	if start, end := o.Window(); o.Enabled && o.CalendarAway && !start.IsZero() && !end.IsZero() {
+		body["away"], body["start"], body["end"] = true, o.Start, o.End
+		if zone, err := time.LoadLocation(o.TimeZone); o.TimeZone != "" && err == nil && midnight(start.In(zone)) && midnight(end.In(zone)) {
+			body["all_day"], body["time_zone"] = true, o.TimeZone
+		}
+		body["tentative"], body["comment_local"] = o.CalendarTentative, o.LocalMessage
+		if o.RemoteMode() == config.RemoteOn && s.oooRemoteAllowed() {
+			body["comment_remote"] = o.RemoteMessage
+		}
+	}
+	id, err := fsutil.NewUUIDv4()
+	if err != nil {
+		return "failed"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	status, answer, err := s.kycal.Post(ctx, "/api/kypost/out-of-office", kycalendar.EventOOO, "kypost-ooo-"+id, body)
+	if err != nil || status != http.StatusOK {
+		s.logger.Info("kycalendar out-of-office not taken", "user_id", userID, "result", strconv.Itoa(status)+" "+kycalendar.Outcome(answer))
+		return "failed"
+	}
+	return "synced"
+}
+
+func midnight(t time.Time) bool { return t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 }
 
 // loadOutOfOffice reads the user's setting.
 func (s *Server) loadOutOfOffice(userID string) (config.OutOfOffice, error) {
@@ -89,7 +149,7 @@ func (s *Server) handleOutOfOffice(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to read out-of-office settings", http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, s.oooView(o))
+		writeJSON(w, http.StatusOK, s.oooView(ac.UserID, o))
 		return
 	}
 	var req config.OutOfOffice
@@ -109,5 +169,7 @@ func (s *Server) handleOutOfOffice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logger.Info("out-of-office settings saved", "user_id", ac.UserID)
-	writeJSON(w, http.StatusOK, s.oooView(saved))
+	view := s.oooView(ac.UserID, saved)
+	view.CalendarSync = s.syncOOOCalendar(r.Context(), ac.UserID, saved)
+	writeJSON(w, http.StatusOK, view)
 }

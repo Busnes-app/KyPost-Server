@@ -33,6 +33,11 @@ type OutOfOffice struct {
 	Remote        string `yaml:"remote,omitempty" json:"remote"`
 	RemoteMessage string `yaml:"remoteMessage,omitempty" json:"remoteMessage"`
 	Period        string `yaml:"period,omitempty" json:"-"`
+	// CalendarAway shows the dated period as an out-of-office event in
+	// KyCalendar; CalendarTentative also answers new invitations TENTATIVE
+	// during it (docs/KYCALENDAR.md, Out of office).
+	CalendarAway      bool `yaml:"calendarAway,omitempty" json:"calendarAway"`
+	CalendarTentative bool `yaml:"calendarTentative,omitempty" json:"calendarTentative"`
 }
 
 // RemoteMode is Remote with "" read as off.
@@ -64,7 +69,7 @@ func (o OutOfOffice) ActiveAt(now time.Time) bool {
 // while it is off the remote mode may still be stored, but turning the reply
 // on needs a text for a reply that would actually be sent.
 func NormalizeOutOfOffice(prev, next OutOfOffice, remoteAllowed bool) (OutOfOffice, error) {
-	out := OutOfOffice{Enabled: next.Enabled, Remote: next.RemoteMode()}
+	out := OutOfOffice{Enabled: next.Enabled, Remote: next.RemoteMode(), CalendarAway: next.CalendarAway, CalendarTentative: next.CalendarAway && next.CalendarTentative}
 	switch out.Remote {
 	case RemoteOff, RemoteOn, RemoteContacts:
 	default:

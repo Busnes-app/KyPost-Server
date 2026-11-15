@@ -55,8 +55,9 @@ export function OutOfOffice() {
     setBusy(true);
     setMessage("");
     try {
-      load(await putOutOfOffice({ ...settings, start: fromInput(start), end: fromInput(end), timeZone: browserZone() }));
-      setMessage("Automatic reply saved.");
+      const saved = await putOutOfOffice({ ...settings, start: fromInput(start), end: fromInput(end), timeZone: browserZone() });
+      load(saved);
+      setMessage(saved.calendarSync === "failed" ? "Automatic reply saved, but KyCalendar did not take it. Save again to retry." : "Automatic reply saved.");
     } catch (error: unknown) {
       setMessage(`Could not save your automatic reply: ${toErrorMessage(error, "unknown error")}`);
     } finally {
@@ -85,6 +86,18 @@ export function OutOfOffice() {
           <input type="datetime-local" value={end} min={start || undefined} onChange={(event) => setEnd(event.target.value)} />
         </label>
       </div>
+      {settings.calendarAvailable ? (
+        <div className="signature-switches">
+          <label className="config-checkbox">
+            <input type="checkbox" checked={settings.calendarAway} onChange={(event) => update({ calendarAway: event.target.checked, calendarTentative: event.target.checked && settings.calendarTentative })} />
+            <span>Show me as away in KyCalendar (needs a start and an end)</span>
+          </label>
+          <label className="config-checkbox">
+            <input type="checkbox" checked={settings.calendarTentative} disabled={!settings.calendarAway} onChange={(event) => update({ calendarTentative: event.target.checked })} />
+            <span>Answer new invitations Tentative while I'm away</span>
+          </label>
+        </div>
+      ) : null}
       <p className="config-muted">Times are in {settings.timeZone && settings.timeZone !== browserZone() ? `${browserZone()} (saved in ${settings.timeZone})` : browserZone() || "your local time"}.</p>
       <label>
         <div>Message for people in your organisation</div>

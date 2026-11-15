@@ -39,6 +39,11 @@ non-prerelease version.
   turns it off in one click. MCP agents can read it and, with the organize
   level, change the in-organisation reply but never the outside one.
   Contract: `docs/OUT_OF_OFFICE.md`.
+- Out-of-office in KyCalendar: "Show me as away in KyCalendar" keeps one busy
+  out-of-office event over the period, and "Answer new invitations Tentative"
+  has KyCalendar answer new invitations Tentative (never Decline) while away.
+  KyPost sends its whole state on every save (`kypost.ooo.set`,
+  `docs/KYCALENDAR.md`); KyCalendar never turns it on.
 
 - Postgres backend, one instance per database. `KYPOST_DATABASE_URL` or
   `KYPOST_DATABASE_URL_FILE` keeps every store in one Postgres 16+ database

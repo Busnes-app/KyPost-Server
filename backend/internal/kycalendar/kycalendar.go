@@ -33,6 +33,7 @@ const (
 	EventSend    = "kycalendar.itip.send"
 	EventInbound = "kypost.itip.inbound"
 	EventRespond = "kypost.itip.respond"
+	EventOOO     = "kypost.ooo.set"
 )
 
 // MinSecretBytes is the shortest shared secret accepted, after trimming.

@@ -14,6 +14,10 @@ export type OutOfOffice = {
   localMessage: string;
   remote: RemoteMode;
   remoteMessage: string;
+  /** Show the dated period as an out-of-office event in KyCalendar. */
+  calendarAway: boolean;
+  /** Also answer new invitations Tentative during it (needs calendarAway). */
+  calendarTentative: boolean;
 };
 
 /** GET /api/mail/out-of-office adds what the server decides. */
@@ -22,6 +26,10 @@ export type OutOfOfficeView = OutOfOffice & {
   active: boolean;
   /** The administrator lets replies go to outside senders. */
   remoteAllowed: boolean;
+  /** KyCalendar is paired and takes this user's period. */
+  calendarAvailable: boolean;
+  /** After a save: "synced", or "failed" when KyCalendar did not take it. */
+  calendarSync?: "synced" | "failed";
 };
 
 export const MAX_OUT_OF_OFFICE_TEXT = 4000;
@@ -31,6 +39,8 @@ export function getOutOfOffice(): Promise<OutOfOfficeView> {
 }
 
 export function putOutOfOffice(o: OutOfOffice): Promise<OutOfOfficeView> {
-  const { enabled, start, end, timeZone, localMessage, remote, remoteMessage } = o;
-  return putJSON<OutOfOfficeView>("/api/mail/out-of-office", { enabled, start, end, timeZone, localMessage, remote, remoteMessage });
+  const { enabled, start, end, timeZone, localMessage, remote, remoteMessage, calendarAway, calendarTentative } = o;
+  return putJSON<OutOfOfficeView>("/api/mail/out-of-office", {
+    enabled, start, end, timeZone, localMessage, remote, remoteMessage, calendarAway, calendarTentative
+  });
 }

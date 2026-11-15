@@ -208,3 +208,77 @@ the same, after the same confirmation, on 404 `no_event`: an invitation
 KyCalendar never received (unaligned, encrypted, or older than pairing) can
 still be answered.
 Native clients follow [NATIVE-RSVP.md](NATIVE-RSVP.md).
+
+## Out of office: KyPost → KyCalendar
+
+Section O of the suite contracts, added 2026-11-15 under this pair (no new pair). KyPost's
+out-of-office setting is the single source of truth (KyPost `docs/OUT_OF_OFFICE.md`).
+KyCalendar stores what KyPost last sent and never turns out-of-office on itself, so the two
+cannot loop.
+
+`POST {KyCalendar}/api/kypost/out-of-office`, event type `kypost.ooo.set`, signed with
+`ky-primitives/syncauth` v1 under the pair secret. The body is the user's whole state, every
+time:
+
+```json
+{"sub":"…","issuer":"https://id.example","revision":1794760000123,
+ "away":true,"start":"2026-12-01T05:00:00Z","end":"2026-12-05T05:00:00Z",
+ "all_day":true,"time_zone":"America/New_York",
+ "tentative":true,"comment_local":"…","comment_remote":"…"}
+```
+
+- `revision`: KyPost's save time in milliseconds, which only grows. KyCalendar keeps the
+  newest revision it has seen. An older one is answered `{"outcome":"stale"}` and changes
+  nothing. The same revision again is applied again, so a retry after a failure works.
+- `away` false, sent when out-of-office is off or the user unticks "Show me as away", removes
+  the event and stops automatic answers. The other fields are then ignored.
+- With `away` true:
+  - `start` and `end` (RFC 3339) are required. `end` is after `start`, and the period is at
+    most 366 days.
+  - `all_day` needs an IANA `time_zone` in which both instants are midnight; the event then
+    uses DATE values.
+  - The comments are plain text, at most 4000 characters each, with no control characters
+    except newline and tab.
+
+**The event.** One per user, UID `kypost-ooo-<hash of the user>`, in the default calendar
+(or wherever the user moved it):
+
+- `SUMMARY:Out of office`, `TRANSP:OPAQUE`, `X-MICROSOFT-CDO-BUSYSTATUS:OOF` and
+  `X-KYCALENDAR-OUT-OF-OFFICE:TRUE`. Free/busy shows it as busy.
+- A new period moves it; `away:false` deletes it. It has no attendees and produces no iTIP.
+
+**Automatic Tentative.** With `tentative` true, while `start <= now < end`, KyCalendar answers
+each new invitation `PARTSTAT=TENTATIVE`, never anything else. The REPLY carries `COMMENT`:
+
+- `comment_local` when the organizer is a KyCalendar user;
+- `comment_remote` otherwise. KyPost sends it only when its remote reply is on for everyone
+  and allowed by its administrator; otherwise it is empty and the answer has no comment.
+
+This covers external invitations (`kypost.itip.inbound` answers `applied` instead of
+`pending`) and internal ones (the outbox delivery). Updates to an invitation already in the
+calendar are not answered again. Such an answer is the user's standing consent, so the copy
+is written the way `kypost.itip.respond` writes it.
+
+| Status | Answer | When |
+|---|---|---|
+| 404 | (plain) | KyPost unlinked, or scheduling off |
+| 401 | `bad_signature` | Wrong signature or event type |
+| 200 | `{"outcome":"duplicate"}` | A verified replay |
+| 400 | `bad_body` | Malformed JSON, or a rule above broken |
+| 404 | `no_user` | No active everyday account for `(sub, issuer)`; administrator identities included |
+| 429 | `rate_limited` | 60 per user per hour, its own budget (not invitations') |
+| 507 | `quota` | The calendar is full |
+| 500 | `error` | Retry under the same event ID; KyCalendar forgets it |
+| 200 | `{"outcome":"applied"\|"stale"}` | Done, or an older revision |
+
+**KyPost's side.**
+- KyPost sends the whole state on every save (the web, an agent, the inbox Turn off) while
+  the pair is up, the user's KyCalendar switch is on and the account has a live SSO link. It sends `away:true` only when out-of-office is on with both dates and
+  "Show me as away in KyCalendar" is ticked.
+- A failure is reported to the user and resent on their next save. KyPost never retries in
+  the background.
+- Logs and audit carry IDs only, never the period or the texts.
+
+KyPost's half: `api/out_of_office.go` `syncOOOCalendar`, run after every
+`PUT /api/mail/out-of-office` (its answer carries `calendarSync`) and every agent
+`set_out_of_office`. Tests: `TestOutOfOfficeSyncsKyCalendar`.
