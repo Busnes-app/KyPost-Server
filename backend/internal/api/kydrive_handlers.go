@@ -32,6 +32,10 @@ const (
 	kydriveStatusTTL = time.Minute
 	// kydriveUploadBudget bounds a server-side save to KyDrive.
 	kydriveUploadBudget = 10 * time.Minute
+	// guestStepUpWindow is how recent a step-up a guest link needs.
+	guestStepUpWindow = 10 * time.Minute
+	// maxGuestDays caps KyDrive's guest_max_days as KyPost reads it.
+	maxGuestDays = 365
 )
 
 // SetKyDrive pairs KyDrive. Startup-only; nil or unpaired leaves it off.
@@ -52,6 +56,11 @@ type driveStatus struct {
 	FreeBytes    int64  `json:"freeBytes,omitempty"`
 	MaxFileBytes int64  `json:"maxFileBytes,omitempty"`
 	AppURL       string `json:"appUrl,omitempty"`
+	// GuestLinks is true only when KyDrive's status carried guest_links:true
+	// (an old KyDrive omits it and would ignore audience); GuestMaxDays is
+	// then its guest_max_days, 1 to maxGuestDays.
+	GuestLinks   bool `json:"guestLinks,omitempty"`
+	GuestMaxDays int  `json:"guestMaxDays,omitempty"`
 	// Origin is the paired KyDrive, so the client can find its links in a
 	// body even while the user's own status is off.
 	Origin string `json:"origin,omitempty"`
@@ -123,9 +132,14 @@ func (s *Server) driveStatusFor(ctx context.Context, u users.User) driveStatus {
 			Enabled      bool  `json:"enabled"`
 			FreeBytes    int64 `json:"free_bytes"`
 			MaxFileBytes int64 `json:"max_file_bytes"`
+			GuestLinks   *bool `json:"guest_links"`
+			GuestMaxDays int   `json:"guest_max_days"`
 		}
 		if err == nil && status == http.StatusOK && json.Unmarshal(body, &ans) == nil && ans.Enabled {
 			st.Available, st.FreeBytes, st.MaxFileBytes = true, max(0, ans.FreeBytes), max(0, ans.MaxFileBytes)
+			if ans.GuestLinks != nil && *ans.GuestLinks && ans.GuestMaxDays >= 1 {
+				st.GuestLinks, st.GuestMaxDays = true, min(ans.GuestMaxDays, maxGuestDays)
+			}
 		}
 	}
 	if ctx.Err() == nil {
@@ -161,12 +175,13 @@ var driveErrors = map[string]string{
 	"sharing_off":      "KyPost is not allowed to save to your KyDrive; turn it on in KyDrive settings",
 	"not_found":        "that file is no longer in your KyDrive",
 	"no_user":          "you have no KyDrive account yet",
+	"guest_links_off":  "KyDrive does not allow guest links for you; turn them on in KyDrive settings",
 }
 
 // writeDriveRefusal maps a KyDrive answer that was not the expected success.
 func (s *Server) writeDriveRefusal(w http.ResponseWriter, status int, body []byte) {
 	code := kydrive.Outcome(body)
-	if code == "sharing_off" {
+	if code == "sharing_off" || code == "guest_links_off" {
 		// The user's switch changed: show or hide on the next status read.
 		s.driveStatuses.Clear()
 	}
@@ -242,15 +257,19 @@ func (s *Server) handleKyDriveTicket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"uploadUrl": t.UploadURL, "expires": t.Expires, "maxChunk": t.MaxChunk})
 }
 
-// handleKyDriveLink makes an organisation link to a file the user uploaded.
+// handleKyDriveLink makes a link to a file the user uploaded: an
+// organisation link, or with audience "guest" a guest link for people outside
+// the organisation (contract K). A guest link needs KyDrive's status to offer
+// them, days within its maximum, and a step-up within guestStepUpWindow.
 func (s *Server) handleKyDriveLink(w http.ResponseWriter, r *http.Request) {
-	u, _, ok := s.driveUser(w, r, false)
+	u, st, ok := s.driveUser(w, r, false)
 	if !ok {
 		return
 	}
 	var req struct {
-		FileID string `json:"fileId"`
-		Days   *int   `json:"days"`
+		FileID   string `json:"fileId"`
+		Days     *int   `json:"days"`
+		Audience string `json:"audience"`
 	}
 	if json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req) != nil || req.FileID == "" || len(req.FileID) > 128 ||
 		strings.ContainsFunc(req.FileID, func(r rune) bool { return r <= 0x20 || r >= 0x7f }) {
@@ -261,11 +280,36 @@ func (s *Server) handleKyDriveLink(w http.ResponseWriter, r *http.Request) {
 	if req.Days != nil {
 		days = *req.Days
 	}
-	if days != 0 && days != 1 && days != 7 && days != 30 {
-		writeDrive(w, http.StatusBadRequest, "bad_request", "days must be 0, 1, 7 or 30")
+	fields := map[string]any{"file_id": req.FileID, "days": days}
+	prefix := kydrive.LinkPrefix
+	switch req.Audience {
+	case "", "organisation":
+		if days != 0 && days != 1 && days != 7 && days != 30 {
+			writeDrive(w, http.StatusBadRequest, "bad_request", "days must be 0, 1, 7 or 30")
+			return
+		}
+	case "guest":
+		// Only a KyDrive whose status names guest_links ever sees audience.
+		if !st.GuestLinks {
+			writeDrive(w, http.StatusConflict, "guest_links_off", "KyDrive does not offer guest links for this account")
+			return
+		}
+		if days < 1 || days > st.GuestMaxDays {
+			writeDrive(w, http.StatusBadRequest, "bad_request", "days must be 1 to "+strconv.Itoa(st.GuestMaxDays))
+			return
+		}
+		if !s.stepUpFresh(r, guestStepUpWindow) {
+			s.logger.Info("kydrive request refused", "actor", u.ID, "action", kydrive.EventLink, "result", "step_up_required")
+			writeDrive(w, http.StatusForbidden, "step_up_required", "confirm it is you before sending guest links")
+			return
+		}
+		fields["audience"] = "guest"
+		prefix = kydrive.GuestLinkPrefix
+	default:
+		writeDrive(w, http.StatusBadRequest, "bad_request", "audience must be organisation or guest")
 		return
 	}
-	status, body, err := s.drivePost(r.Context(), u, kydrive.PathLink, kydrive.EventLink, map[string]any{"file_id": req.FileID, "days": days})
+	status, body, err := s.drivePost(r.Context(), u, kydrive.PathLink, kydrive.EventLink, fields)
 	if err != nil {
 		writeDrive(w, http.StatusBadGateway, "kydrive_unavailable", "KyDrive could not be reached; try again")
 		return
@@ -278,10 +322,14 @@ func (s *Server) handleKyDriveLink(w http.ResponseWriter, r *http.Request) {
 		URL     string `json:"url"`
 		Expires string `json:"expires"`
 	}
-	if json.Unmarshal(body, &ans) != nil || !s.kydrive.OnOrigin(ans.URL, kydrive.LinkPrefix) {
+	// A guest request answered with an organisation link (or the reverse) is refused.
+	if json.Unmarshal(body, &ans) != nil || !s.kydrive.OnOrigin(ans.URL, prefix) {
 		s.logger.Warn("kydrive link answer refused", "actor", u.ID, "result", "bad_answer")
 		writeDrive(w, http.StatusBadGateway, "kydrive_unavailable", "KyDrive gave an unusable link")
 		return
+	}
+	if fields["audience"] == "guest" {
+		s.logger.Info("kydrive guest link created", "actor", u.ID, "target", req.FileID, "result", "created")
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, map[string]any{"url": ans.URL, "expires": ans.Expires})

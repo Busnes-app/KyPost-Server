@@ -45,8 +45,10 @@ const (
 	PathStatus = "/api/suite/kypost/status"
 	// UploadPrefix is where every ticket URL must point.
 	UploadPrefix = "/api/suite/upload/"
-	// LinkPrefix is where every link URL must point.
+	// LinkPrefix is where every organisation link URL must point.
 	LinkPrefix = "/l/"
+	// GuestLinkPrefix is where every guest link URL must point.
+	GuestLinkPrefix = "/g/"
 )
 
 // MinSecretBytes is the shortest shared secret accepted, after trimming.
