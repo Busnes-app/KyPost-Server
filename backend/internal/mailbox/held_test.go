@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 // heldClient opens a prepared account's client whose admission is only the
@@ -112,6 +114,7 @@ func TestHeldAdmissionRefusesChangedStorage(t *testing.T) {
 		"owner mismatch": {mutate: func(_ *testing.T, _ string, admitAs *Owner) { admitAs.Subject = "subject-two" }},
 	} {
 		t.Run(name, func(t *testing.T) {
+			skipFileCase(t, name)
 			ctx := context.Background()
 			c, account, admitAs := heldClient(t)
 			if _, err := c.ListLabels(ctx); err != nil {
@@ -255,6 +258,7 @@ func TestPooledAdmissionRefusesChangedStorage(t *testing.T) {
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
+			skipFileCase(t, name)
 			account, admit := pooledAccount(t, MaxHeldAdmissions)
 			if heldCount() != 1 {
 				t.Fatal("admission did not hold its handles")
@@ -278,6 +282,7 @@ func TestPooledAdmissionRefusesChangedStorage(t *testing.T) {
 func TestPooledAdmissionSeesOtherProcess(t *testing.T) {
 	for _, change := range []string{"identity", "replace-state", "replace-mailbox"} {
 		t.Run(change, func(t *testing.T) {
+			skipFileCase(t, change)
 			account, admit := pooledAccount(t, MaxHeldAdmissions)
 			command := exec.Command(os.Args[0], "-test.run=^TestPooledAdmissionWriterProcess$")
 			command.Env = append(os.Environ(), "KYPOST_MAILBOX_CHILD="+change, "KYPOST_MAILBOX_ACCOUNT="+account)
@@ -309,6 +314,7 @@ func TestPooledAdmissionWriterProcess(t *testing.T) {
 
 // The bound, the single entry per mailbox and the idle close.
 func TestPooledAdmissionBounds(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "copies the SQLite files of an account")
 	account, admit := pooledAccount(t, 1)
 	other := filepath.Join(filepath.Dir(account), "other")
 	copyAccount(t, account, other)

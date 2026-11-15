@@ -16,6 +16,7 @@ import (
 
 	"github.com/Busnes-app/ky-primitives/recoveryclient"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
@@ -236,6 +237,9 @@ func QuarantineNativeRestore(dir string) (bool, error) {
 // evidence. Each database commits atomically; partial multi-store failure keeps
 // the whole restore unpublished and held, and retry is idempotent.
 func quarantineRestoredOutbox(path string) (err error) {
+	if err := dbbackend.SQLiteOnly(path); err != nil {
+		return err
+	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return err
@@ -300,6 +304,9 @@ func fenceRestoredNativeAccounts(dir string) error {
 // Fresh pairing is required after recovery; mail and wrapped key material stay
 // intact. No schema initialization/migration or native-to-IMAP adoption occurs.
 func revokeRestoredDeviceCredentials(path, source string) (err error) {
+	if err := dbbackend.SQLiteOnly(path); err != nil {
+		return err
+	}
 	if !strings.HasPrefix(source, "native:") {
 		return state.ErrMailSource
 	}

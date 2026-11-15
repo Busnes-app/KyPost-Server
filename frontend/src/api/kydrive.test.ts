@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { driveLinksIn, isDriveLink, loadDriveStatus, parsePicked, pickFromDrive, uploadToTicket } from "./kydrive";
+import { driveLinksIn, guestDayChoices, isDriveLink, isGuestLink, loadDriveStatus, parsePicked, pickFromDrive, toGuestLinks, uploadToTicket } from "./kydrive";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -90,6 +90,31 @@ it("cancels before sending once aborted", async () => {
   abort.abort();
   await expect(uploadToTicket({ uploadUrl: `${origin}/api/suite/upload/t`, expires: "", maxChunk: 4 }, new Blob(["abc"]), () => {}, abort.signal)).rejects.toThrow(/cancelled/);
   expect(sent).toHaveLength(0);
+});
+
+it("reads guest links from the status only when they are well formed", async () => {
+  const answer = (body: unknown) => vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } })));
+  const base = { available: true, appUrl: "https://drive.example.com/", origin };
+  answer({ ...base, guestLinks: true, guestMaxDays: 14 });
+  expect(await loadDriveStatus()).toMatchObject({ guestLinks: true, guestMaxDays: 14 });
+  for (const odd of [{}, { guestLinks: true }, { guestLinks: "true", guestMaxDays: 7 }, { guestLinks: true, guestMaxDays: 0 }, { guestLinks: true, guestMaxDays: 1.5 }, { guestLinks: true, guestMaxDays: 9999 }]) {
+    answer({ ...base, ...odd });
+    const s = await loadDriveStatus();
+    expect(s.available).toBe(true);
+    expect(s.guestLinks).toBeUndefined();
+  }
+});
+
+it("rewrites organisation links into guest links with their expiry", () => {
+  expect(isGuestLink(`${origin}/g/#t`, origin)).toBe(true);
+  expect(isGuestLink(`${origin}/l/#t`, origin)).toBe(false);
+  expect(guestDayChoices(14)).toEqual([1, 7, 14]);
+  expect(guestDayChoices(1)).toEqual([1]);
+  expect(guestDayChoices(30)).toEqual([1, 7, 14, 30]);
+  const root = document.createElement("div");
+  root.innerHTML = `<p><a href="${origin}/l/#a">a.pdf</a> (2 MB, KyDrive, link expires 1/1/2027)</p><p><a href="${origin}/l/#b">b.pdf</a> edited</p><p><a href="${origin}/l/#c">c</a></p>`;
+  toGuestLinks(root, new Map([[`${origin}/l/#a`, { url: `${origin}/g/#ga`, expires: "" }], [`${origin}/l/#b`, { url: `${origin}/g/#gb`, expires: "" }]]));
+  expect(root.innerHTML).toBe(`<p><a href="${origin}/g/#ga">a.pdf</a> (2 MB, KyDrive guest link, expires)</p><p><a href="${origin}/g/#gb">b.pdf</a> (KyDrive guest link, expires) edited</p><p><a href="${origin}/l/#c">c</a></p>`);
 });
 
 it("reads a picker message as untrusted text", () => {

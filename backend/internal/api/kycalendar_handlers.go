@@ -475,6 +475,10 @@ func (s *Server) handleCalendarRSVP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case status == http.StatusOK:
 		writeJSON(w, http.StatusOK, map[string]any{"outcome": "answered"})
+	case status == http.StatusNotFound && code == "no_user":
+		// The user has no KyCalendar account: KyCalendar is not in use for them, so the
+		// client mails the answer, as when their switch is off.
+		writeITIP(w, http.StatusConflict, "kycalendar_off", "KyCalendar is not in use for this account; send the reply by mail")
 	case rsvpErrors[code] != "" && (status < 500 || status == http.StatusInsufficientStorage):
 		writeITIP(w, status, code, rsvpErrors[code])
 	default:

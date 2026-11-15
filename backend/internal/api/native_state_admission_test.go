@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/ky-primitives/syncauth"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/users"
@@ -45,6 +46,7 @@ func allocateNativeStateTestUser(t *testing.T, srv *Server, issuer, subject stri
 }
 
 func TestNativeStateAdmissionBeforeCache(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "reads or changes database files directly")
 	srv := newTestServer(t)
 	u := allocateNativeStateTestUser(t, srv, "https://identity.example.test", "one")
 	held, err := srv.userStore(u.ID)

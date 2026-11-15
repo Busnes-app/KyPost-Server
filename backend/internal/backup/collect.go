@@ -17,6 +17,7 @@ import (
 	"github.com/Busnes-app/kypost-server/backend/internal/cfreceiving"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/ingress"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -27,7 +28,7 @@ import (
 )
 
 const ErrMailExcluded = "IMAP mail and the rebuildable mail cache are excluded; local mailbox/receiving databases and encrypted pickup messages awaiting collection are included"
-const scratchDirName = "backup-scratch"
+const scratchDirName = dbbackend.ScratchDir
 
 var required = []string{"config/config.yaml", "config/users.json", "private/totp-secret.key", "state/state.db"}
 
@@ -123,8 +124,14 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 	// tombstone captured before its mailbox commit would lose that mail.
 	const ingressRel = "receiving/ingress.db"
 	ingressPath := filepath.Join(s.dirs.State, filepath.FromSlash(ingressRel))
-	if info, err := os.Lstat(ingressPath); err == nil {
-		if !info.Mode().IsRegular() {
+	ingressHeld := false
+	if dbbackend.Postgres() {
+		if ingressHeld, err = dbbackend.Exists(ingressPath); err != nil {
+			return empty, err
+		}
+	}
+	if info, err := os.Lstat(ingressPath); ingressHeld || err == nil && !dbbackend.Postgres() {
+		if !ingressHeld && !info.Mode().IsRegular() {
 			return empty, fmt.Errorf("cannot back up non-regular file state/%s", ingressRel)
 		}
 		if bulk != nil {
@@ -138,7 +145,7 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 		if err != nil {
 			return empty, fmt.Errorf("collect state/%s: %w", ingressRel, err)
 		}
-	} else if !os.IsNotExist(err) {
+	} else if err != nil && !os.IsNotExist(err) {
 		return empty, err
 	}
 	for _, r := range []struct{ path, prefix string }{{s.dirs.Config, "config"}, {s.dirs.Secret, "private"}, {s.dirs.State, "state"}} {
@@ -171,6 +178,13 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 				}
 				if d.IsDir() || r.prefix == "state" && rel == ingressRel {
 					return nil
+				}
+				if snapshotDatabase(d.Name()) {
+					if pg, err := dbbackend.Held(full); err != nil {
+						return err
+					} else if pg {
+						return nil // the SQLite source left after a move to Postgres; its schema is added below
+					}
 				}
 				if !d.Type().IsRegular() {
 					return fmt.Errorf("cannot back up non-regular file %s/%s", r.prefix, rel)
@@ -221,6 +235,11 @@ func (s *Service) collect(ctx context.Context) (recoveryclient.Payload, error) {
 			})
 		}()
 		if err != nil {
+			return empty, err
+		}
+	}
+	if dbbackend.Postgres() {
+		if err := s.collectPostgres(ctx, bulk, scratch, ingressPath, add); err != nil {
 			return empty, err
 		}
 	}

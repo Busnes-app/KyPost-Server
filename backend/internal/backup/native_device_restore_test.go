@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/ky-primitives/capsule"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso"
 	"github.com/Busnes-app/kypost-server/backend/internal/state"
@@ -40,6 +41,7 @@ func seedRestoreDevice(t *testing.T, st *state.Store, userID string) string {
 }
 
 func TestNativeRestoreRevokesDevicesAndPairingPreservesMailAndLegacy(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "opens an extracted capsule's SQLite files as live stores; restore into Postgres is TestPostgresCapsuleRoundTrips")
 	ctx := context.Background()
 	s, u := nativeService(t)
 	assignment, _, err := sso.NewLifecycleStore(s.dirs.Config).NativeAssignment(u.NativeMailboxIssuer, u.SSOSub)
@@ -226,6 +228,7 @@ func TestNativeRestoreRevokesDevicesAndPairingPreservesMailAndLegacy(t *testing.
 }
 
 func TestNativeRestoreDeviceRevocationSourceFenceAndAtomicFailure(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "edits staged SQLite files")
 	t.Chdir(t.TempDir())
 	source := "native:" + strings.Repeat("1", 64)
 	st, err := state.NewNative("account", source)

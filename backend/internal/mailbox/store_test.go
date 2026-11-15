@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 var testOwner = Owner{Issuer: "https://identity.example.test", Subject: "alice", Mailbox: "alice"}
@@ -333,6 +335,7 @@ func TestMailboxPayloadQuotaAcrossWriters(t *testing.T) {
 }
 
 func TestMailboxQuotaCountersBackfillAndRollback(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "backfills a SQLite file from before the usage counters")
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	s := openTest(t, dir, testOwner, testLimits)

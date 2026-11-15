@@ -14,6 +14,7 @@ import (
 	imapadapter "github.com/Busnes-app/kypost-server/backend/internal/adapters/imap"
 	"github.com/Busnes-app/kypost-server/backend/internal/config"
 	"github.com/Busnes-app/kypost-server/backend/internal/contacts"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/health"
 	"github.com/Busnes-app/kypost-server/backend/internal/logging"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailcache"
@@ -504,6 +505,7 @@ func breakDeferralLedger(t *testing.T, p *Poller, u users.User) {
 // below it, and the tick reports failure so the state-store outage is visible
 // rather than showing up as mail that quietly stopped being processed.
 func TestTickUser_UnwritableDeferralLedgerHoldsTheCheckpoint(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "drops a table through the SQLite file")
 	mail := &scriptedMailbox{
 		msgs: []imapadapter.Message{{ID: "9", Subject: "first", Sender: "a@example.com"}},
 		applyLabelErr: map[string]error{

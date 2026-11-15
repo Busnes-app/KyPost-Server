@@ -3,13 +3,11 @@ package sso
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"maps"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kypost-server/backend/internal/cryptutil"
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailbox"
 	"github.com/Busnes-app/kypost-server/backend/internal/mailmsg"
@@ -545,11 +544,10 @@ func nativeHeldRecipients(ctx context.Context, stateRoot string) ([]string, erro
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+	db, err := dbbackend.OpenFile(path, "mode=ro")
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
-	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=ro")
-	if err != nil {
+	} else if err != nil {
 		return nil, err
 	}
 	defer db.Close()

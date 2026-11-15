@@ -23,6 +23,7 @@ import (
 	"github.com/Busnes-app/ky-primitives/oidcverify"
 	"modernc.org/sqlite"
 
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 	"github.com/Busnes-app/kypost-server/backend/internal/fsutil"
 	"github.com/Busnes-app/kypost-server/backend/internal/sso/ssotest"
 )
@@ -34,6 +35,10 @@ func rewriteAuthorityForTest(t *testing.T, s *LifecycleStore, schema string, edi
 	t.Helper()
 	dir := filepath.Dir(s.path)
 	path := filepath.Join(dir, NativeAuthorityFile)
+	if pg, _ := onPostgres(path); pg {
+		rewriteAuthorityPostgresForTest(t, s, schema, edit)
+		return
+	}
 	db, err := openAuthorityDB(path)
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +108,7 @@ func writeV2ForTest(t *testing.T, config string) {
 		t.Fatal(err)
 	}
 	dropAuthorityHandle(path)
+	removeAuthorityForTest(t, path)
 	for _, p := range []string{path, path + "-wal", path + "-shm", filepath.Join(config, nativeProvisioningFile)} {
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatal(err)
@@ -166,6 +172,7 @@ func authorityContent(s *LifecycleStore) ([]byte, error) {
 // an account), and plain UPDATEs of history and of every immutable column,
 // fail and leave every row unchanged.
 func TestAuthorityReplaceCannotBypassTriggers(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "opens, replaces or damages the SQLite file itself")
 	f := v3Fixture(t)
 	path := filepath.Join(f.config, NativeAuthorityFile)
 	h, err := acquireAuthority(path)
@@ -361,6 +368,7 @@ func TestAuthorityRuntimeFormatTable(t *testing.T) {
 // another process are seen by the next admission, and a database replaced
 // under the handle is refused inside the View that saw it, then reopened.
 func TestAuthorityHeldHandleSeesOtherProcess(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "opens, replaces or damages the SQLite file itself")
 	for _, change := range []string{"offboard", "source", "role"} {
 		t.Run(change, func(t *testing.T) {
 			f := newAddressFixture(t, "one")
@@ -476,6 +484,7 @@ func durableFiles(t *testing.T, config string) map[string]string {
 // required pragma is refused by the connector itself (the runtime DSN always
 // sets them, so only this test reaches the checks).
 func TestAuthorityConnectionChecks(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "checks the SQLite connection pragmas")
 	f := newAddressFixture(t, "one")
 	path, err := filepath.Abs(filepath.Join(f.config, NativeAuthorityFile))
 	if err != nil {
@@ -575,6 +584,7 @@ func TestAuthorityWriterRules(t *testing.T) {
 // A corrupt page that no read touches is caught by the whole-store checks:
 // the minute pass (quick_check, refusing its writes) and migrate-native.
 func TestAuthorityWholeStoreChecks(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "opens, replaces or damages the SQLite file itself")
 	f := newAddressFixture(t, "one")
 	path := filepath.Join(f.config, NativeAuthorityFile)
 	dropAuthorityHandle(path) // checkpoint: every page in the file
@@ -606,6 +616,7 @@ func TestAuthorityWholeStoreChecks(t *testing.T) {
 
 // The immutable historical opener refuses a database whose WAL holds rows.
 func TestAuthorityHistoricalOpenerRefusesWAL(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "the SQLite WAL")
 	f := newAddressFixture(t, "one")
 	path := filepath.Join(f.config, NativeAuthorityFile)
 	if wal, err := os.Stat(path + "-wal"); err != nil || wal.Size() == 0 {
@@ -618,6 +629,7 @@ func TestAuthorityHistoricalOpenerRefusesWAL(t *testing.T) {
 
 // A WAL left by an earlier database is never replayed onto a new one.
 func TestAuthorityFreshCreateIgnoresStaleWAL(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "the SQLite WAL")
 	old := newAddressFixture(t, "one")
 	at := time.Now().Add(time.Hour).Truncate(time.Second)
 	if _, _, err := old.life.RecordLogout("client", oidcverify.LogoutClaims{Issuer: nativeIssuer, Subject: "one", JWTID: "old", IssuedAt: at}, at); err != nil {
@@ -642,6 +654,7 @@ func TestAuthorityFreshCreateIgnoresStaleWAL(t *testing.T) {
 
 // Without a domain tombstone, any mix outside the format table refuses.
 func TestAuthorityRuntimeRefusesMixes(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "opens, replaces or damages the SQLite file itself")
 	at := time.Now().Add(time.Hour)
 	for name, edit := range map[string]func(config string) error{
 		"v2 ledger beside the database": func(c string) error {
@@ -675,6 +688,7 @@ func TestAuthorityRuntimeRefusesMixes(t *testing.T) {
 // prepares its own statement, the cache stays bounded and the statements
 // are finalized with the connection.
 func TestAuthorityStatementCache(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "the SQLite statement cache")
 	f := newAddressFixture(t, "one")
 	db, err := openAuthorityDB(filepath.Join(f.config, NativeAuthorityFile))
 	if err != nil {

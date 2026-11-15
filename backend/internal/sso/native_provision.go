@@ -341,7 +341,21 @@ func (s *LifecycleStore) loadNativeLedger(historical bool) (nativeAssignments, i
 	if historical {
 		s = s.staged()
 	}
-	if _, err := os.Lstat(filepath.Join(filepath.Dir(s.path), NativeAuthorityFile)); err == nil {
+	db := filepath.Join(filepath.Dir(s.path), NativeAuthorityFile)
+	var exists bool
+	pg, err := onPostgres(db)
+	if err != nil {
+		return nativeAssignments{}, 0, err
+	}
+	if s.offline && !pg {
+		_, err := os.Lstat(db)
+		exists = err == nil
+	} else if held, err := authorityExists(db); err != nil {
+		return nativeAssignments{}, 0, err
+	} else {
+		exists = held
+	}
+	if exists {
 		f, err := s.loadNative()
 		return f, 3, err
 	}

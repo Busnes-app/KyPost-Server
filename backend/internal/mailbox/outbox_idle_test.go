@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 func readIdle(t *testing.T, dir string) outboundIdle {
@@ -44,6 +46,7 @@ func queueBehindMark(t *testing.T, s *Store) {
 }
 
 func TestOutboundIdleMarkSkipsUntilAWriterClearsIt(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "the idle mark follows the mailbox.db inode; Postgres has none")
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	s := openTest(t, dir, testOwner, testLimits)
 	if probe(t, dir) {
@@ -67,6 +70,7 @@ func TestOutboundIdleMarkSkipsUntilAWriterClearsIt(t *testing.T) {
 }
 
 func TestOutboundIdleMarkNotWrittenDuringAWrite(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "the idle mark follows the mailbox.db inode; Postgres has none")
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	s := openTest(t, dir, testOwner, testLimits)
 	release, err := s.clearOutboundIdle()
@@ -81,6 +85,7 @@ func TestOutboundIdleMarkNotWrittenDuringAWrite(t *testing.T) {
 }
 
 func TestOutboundIdleMarkRefusedWhenStale(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "the idle mark follows the mailbox.db inode; Postgres has none")
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	s := openTest(t, dir, testOwner, testLimits)
 	probe(t, dir)
@@ -107,6 +112,7 @@ func TestOutboundIdleMarkRefusedWhenStale(t *testing.T) {
 }
 
 func TestOutboundIdleMarkFollowsTheDatabaseFile(t *testing.T) {
+	dbbackend.SkipOnPostgres(t, "the idle mark follows the mailbox.db inode; Postgres has none")
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	s := openTest(t, dir, testOwner, testLimits)
 	probe(t, dir)

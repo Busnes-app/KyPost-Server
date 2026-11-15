@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+
+	"github.com/Busnes-app/kypost-server/backend/internal/dbbackend"
 )
 
 // Scheduled send states. scheduled, sending and returning are pending; the rest
@@ -37,10 +39,14 @@ func scheduledFinal(status string) bool {
 // pending rows or maxBytes of pending sealed data; the checks and the insert
 // are one statement.
 func (s *Store) AddScheduledSend(ctx context.Context, r ScheduledSend, limit int, maxBytes int64) error {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO scheduled_sends(id,user_id,mailbox,send_at,status,sealed,summary,created_at)
+	res, err := s.db.ExecContext(ctx, dbbackend.SQL(`INSERT INTO scheduled_sends(id,user_id,mailbox,send_at,status,sealed,summary,created_at)
 		SELECT ?1,?2,?3,?4,'scheduled',?5,?6,?7 FROM (SELECT count(*) AS n, coalesce(sum(length(sealed)),0) AS bytes
 			FROM scheduled_sends WHERE user_id=?2 AND status IN ('scheduled','sending','returning'))
 		WHERE n < ?8 AND bytes + coalesce(length(?5),0) <= ?9`,
+		`INSERT INTO scheduled_sends(id,user_id,mailbox,send_at,status,sealed,summary,created_at)
+		SELECT ?1::text,?2::text,?3::text,?4::bigint,'scheduled',?5::bytea,?6::bytea,?7::bigint FROM (SELECT count(*) AS n, coalesce(sum(length(sealed)),0) AS bytes
+			FROM scheduled_sends WHERE user_id=?2 AND status IN ('scheduled','sending','returning')) q
+		WHERE n < ?8 AND bytes + coalesce(length(?5::bytea),0) <= ?9`),
 		r.ID, r.UserID, r.Mailbox, r.SendAt, r.Sealed, r.Summary, r.CreatedAt, limit, maxBytes)
 	if err != nil {
 		return err
@@ -102,8 +108,11 @@ func (s *Store) HasScheduledWork(ctx context.Context) (bool, error) {
 // ScheduledReturns lists returning rows whose draft is due to be saved, the
 // earliest per user, so one account's unreachable mailbox cannot fill a sweep.
 func (s *Store) ScheduledReturns(ctx context.Context, now int64) ([]ScheduledSend, error) {
-	return s.scheduledRows(ctx, `SELECT id,user_id,mailbox,min(send_at),status,reason,sealed,summary,created_at,returning_since
-		FROM scheduled_sends WHERE status='returning' AND next_attempt<=? GROUP BY user_id LIMIT 100`, now)
+	return s.scheduledRows(ctx, dbbackend.SQL(`SELECT id,user_id,mailbox,min(send_at),status,reason,sealed,summary,created_at,returning_since
+		FROM scheduled_sends WHERE status='returning' AND next_attempt<=? GROUP BY user_id LIMIT 100`,
+		// SQLite's min() with bare columns reads the earliest row of each group; DISTINCT ON is that.
+		`SELECT DISTINCT ON (user_id) id,user_id,mailbox,send_at,status,reason,sealed,summary,created_at,returning_since
+		FROM scheduled_sends WHERE status='returning' AND next_attempt<=? ORDER BY user_id, send_at, id LIMIT 100`), now)
 }
 
 // ListScheduledSends returns one mailbox's rows, newest send time first, without the sealed job.
@@ -150,6 +159,9 @@ const ScheduledRestored = "restored from a backup; review it and send again"
 // server may already have sent what the backup still lists as waiting, so
 // waiting rows return to Drafts and interrupted ones become uncertain.
 func FenceRestoredScheduledSends(stateDir string) (err error) {
+	if err := dbbackend.SQLiteOnly(filepath.Join(stateDir, "state.db")); err != nil {
+		return err
+	}
 	absolute, err := filepath.Abs(filepath.Join(stateDir, "state.db"))
 	if err != nil {
 		return err
