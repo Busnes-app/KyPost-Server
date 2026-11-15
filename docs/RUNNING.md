@@ -182,10 +182,13 @@ either backend.
    (one from an older release is brought up to date on a private copy first). It never
    modifies the SQLite files and exits non-zero on any failure; a failure before the
    commit leaves Postgres as it was.
-4. Give the service the same file and variable, and start it. In `docker-compose.yml`,
-   under `kypost-server`:
+4. Give the service the same file and variable, and start it. Put this in
+   `docker-compose.override.yml` beside `docker-compose.yml` (Compose merges it in; the
+   service already has an `environment:` block, so do not paste it into that file):
 
    ```yaml
+   services:
+     kypost-server:
        environment:
          KYPOST_DATABASE_URL_FILE: /run/secrets/kypost-db-url
        secrets:
