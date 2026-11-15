@@ -340,7 +340,8 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
   // wherever the work is finished or deliberately abandoned; closing the
   // window is NOT one of those, so it does not call this.
   function discardComposeDraft() {
-    if (userId) {
+    // A kept snapshot is someone else's unsent draft, not this window's.
+    if (userId && !composeSnapshotKept.current) {
       clearDraftSnapshot(userId);
     }
     resetComposeForm();
@@ -447,7 +448,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     // replacing it would lose that text (and autosave would bury it).
     if (composeOpenNow.current) return;
     composeOpenNow.current = true;
-    composeSnapshotKept.current = false;
+    composeSnapshotKept.current = payload.keepSnapshot === true;
     composeSignOverridden.current = false;
     setComposeSign(isClientProtected() && isUnlocked());
     pinComposeMailbox(payload.mailbox);
@@ -459,6 +460,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
     setComposeAttachments(payload.attachments ?? []);
     setComposeError("");
     setComposeSuccess("");
+    if (payload.keepSnapshot) setComposeNotice("Your earlier unsent draft is kept; this message is not saved automatically. Use Save Draft to keep it.");
     setComposeOpen(true);
     loadSendAsOptions();
     // A reply or forward gets the signature (if the account wants one there);
@@ -980,7 +982,7 @@ export function useCompose({ userId, mailboxes }: { userId?: string; mailboxes: 
       // The work is now a real IMAP draft, so the local safety net has
       // nothing left to protect. Clear it rather than leave a stale copy to
       // resurrect over the saved one on next open.
-      if (userId) {
+      if (userId && !composeSnapshotKept.current) {
         clearDraftSnapshot(userId);
       }
       setComposeSuccess("Draft saved.");
