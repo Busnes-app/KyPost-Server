@@ -233,7 +233,7 @@ func Run(args []string) error {
 
 	if nativeMail {
 		// Here, not for the receiving commands above: they run under ulimit -n 256.
-		mailbox.HoldAdmissionHandles(mailbox.MaxHeldAdmissions)
+		mailbox.HoldAdmissionHandles(mailbox.MaxHeldAdmissions())
 	}
 	switch *mode {
 	case "daemon":
