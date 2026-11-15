@@ -96,6 +96,8 @@ type Server struct {
 	// ssoEpoch counts SSO trust changes (endSSOSessions); an SSO session
 	// minted under an older epoch is dead.
 	ssoEpoch atomic.Uint64
+	// ssoStates are the sign-in states whose callback is already paid for.
+	ssoStates issuedSSOStates
 	// pairingMu serializes native registration with credential revocation. A
 	// pairing token resolves its owner before it writes a device; revocation must
 	// not delete devices and rotate the subscriber between those two operations.
