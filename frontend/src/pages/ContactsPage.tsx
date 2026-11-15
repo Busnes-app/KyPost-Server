@@ -46,8 +46,9 @@ import { ContactAvatar } from "./contacts/ContactAvatar";
 import { ContactDetailsDialog } from "./contacts/ContactDetailsDialog";
 import { ChevronIcon, CloseIcon, MoreIcon, PlusIcon } from "./read/icons";
 import { openNewMeeting } from "../lib/meetingLink";
+import { ChatButton } from "../components/ChatButton";
 
-export function ContactsPage({ calendarOrigin = "" }: { calendarOrigin?: string } = {}) {
+export function ContactsPage({ calendarOrigin = "", chatOrigin = "" }: { calendarOrigin?: string; chatOrigin?: string } = {}) {
   const contactActionsId = useId();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -684,6 +685,7 @@ export function ContactsPage({ calendarOrigin = "" }: { calendarOrigin?: string 
                                 {calendarOrigin && contact.emails?.[0]?.value ? (
                                   <button type="button" className="btn-ghost" onClick={() => openNewMeeting(calendarOrigin, { attendees: [contact.emails![0].value] })}>New meeting</button>
                                 ) : null}
+                                <ChatButton address={contact.emails?.[0]?.value ?? ""} origin={chatOrigin} onMessage={setStatus} />
                                 <button type="button" className="btn-ghost" onClick={() => void removeContact(contact)}>Delete</button>
                               </div>
                             </div>
