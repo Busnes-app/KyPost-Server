@@ -55,7 +55,7 @@ var benchAccounts = []int{1000, 3000, 10000}
 // admission pool, as in the api and daemon; pool=off reopens both mailbox
 // databases, as every other process does.
 func BenchmarkAdmitOpenMailbox(b *testing.B) {
-	for _, pool := range []int{mailbox.MaxHeldAdmissions, 0} {
+	for _, pool := range []int{mailbox.MaxHeldAdmissions(), 0} {
 		for _, n := range benchAccounts {
 			b.Run(fmt.Sprintf("pool=%v/accounts=%d", pool != 0, n), func(b *testing.B) {
 				mailbox.HoldAdmissionHandles(pool)
