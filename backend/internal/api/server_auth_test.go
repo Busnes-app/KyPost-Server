@@ -19,7 +19,8 @@ func authRequestAs(s *Server, req *http.Request, userID string) {
 	token := "session-token-" + userID
 	csrfToken := "csrf-token-" + userID
 	s.sessMu.Lock()
-	s.sessions[token] = Session{UserID: userID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken}
+	// SteppedUpAt survives, so a test can step a session up between requests.
+	s.sessions[token] = Session{UserID: userID, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken, SteppedUpAt: s.sessions[token].SteppedUpAt}
 	s.sessMu.Unlock()
 	// Represent a fully-onboarded session: users are created with
 	// MustChangePassword=true, which is now enforced server-side (see withAuth),
